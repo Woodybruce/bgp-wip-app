@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore, lazy, Suspense } from "react";
-import { Switch, Route, useLocation } from "wouter";
+import { Switch, Route, useLocation, Redirect } from "wouter";
 import { queryClient, getQueryFn, apiRequest, refreshSession, sessionIdentity, subscribeSessionVerification, getSessionVerificationSnapshot } from "./lib/queryClient";
 import { isEquityUser } from "./lib/utils";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
@@ -57,9 +57,7 @@ const LandsecViewings = lazy(() => import("@/pages/landsec-viewings"));
 const LandsecTasks = lazy(() => import("@/pages/landsec-tasks"));
 const LandsecChat = lazy(() => import("@/pages/landsec-chat"));
 const JointAgentChat = lazy(() => import("@/components/landsec/joint-agent-chat").then(m => ({ default: m.JointAgentChat })));
-const LandsecBrandCases = lazy(() => import("@/pages/landsec-brand-cases"));
 const LandsecBrandCrm = lazy(() => import("@/pages/landsec-brand-crm"));
-const LandsecBrandCase = lazy(() => import("@/pages/landsec-brand-case"));
 const PropertiesHub = lazy(() => import("@/pages/properties-hub"));
 const DealsHub = lazy(() => import("@/pages/deals-hub"));
 const Requirements = lazy(() => import("@/pages/requirements"));
@@ -413,9 +411,9 @@ function Router() {
       <Route path="/landsec/calendar" component={AvailableUnitsPage} />
       <Route path="/landsec/tasks" component={LandsecTasks} />
       <Route path="/landsec/chat" component={LandsecChat} />
-      <Route path="/landsec/brand-cases" component={LandsecBrandCases} />
+      <Route path="/landsec/brand-cases">{() => <Redirect to="/brands" />}</Route>
       <Route path="/landsec/brand-crm" component={LandsecBrandCrm} />
-      <Route path="/landsec/brand-case/:companyId" component={LandsecBrandCase} />
+      <Route path="/landsec/brand-case/:companyId">{(params: any) => <Redirect to={`/companies/${params.companyId}`} />}</Route>
       <Route path="/login" component={LoginRedirect} />
       <Route path="/messages" component={MessagesRedirect} />
       <Route path="/instructions" component={Instructions} />

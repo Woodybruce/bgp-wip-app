@@ -1007,7 +1007,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // The Landsec brand case (docs/landsec-pitch-plan.md, item 5) is one
   // click from the brand profile for anyone in the Landsec view.
   const { brand: viewBrand } = useBrand();
-  const landsecBrandCaseLink = viewBrand.id === "landsec";
   // 'BGP portfolio — potential pitches' is parked as a WIP — removed from the
   // brand profile for now (the £0pa rows aren't ready). The data + code stay;
   // flip this to true (or move it to a dedicated admin page) when it's ready.
@@ -1724,11 +1723,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {landsecBrandCaseLink && (
-            <Link href={`/landsec/brand-case/${companyId}`}>
-              <Button variant="outline" size="sm" data-testid="button-brand-case">Brand case</Button>
-            </Link>
-          )}
           <Button
             variant="ghost"
             size="sm"
@@ -3110,11 +3104,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     {emailContact && <Button variant="outline" size="sm" asChild><a href={`mailto:${emailContact.email}`} data-testid="link-email"><Mail />Email</a></Button>}
     {c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
     <Button variant="outline" size="sm" onClick={() => window.open(`/api/brand/${companyId}/pack.pdf`, "_blank")} title="Download the brand pack PDF" data-testid="button-brand-pack"><Download />Brand pack</Button>
-    {landsecBrandCaseLink && (
-      <Link href={`/landsec/brand-case/${companyId}`}>
-        <Button variant="outline" size="sm" data-testid="button-brand-case">Brand case</Button>
-      </Link>
-    )}
     <BrandMoreMenu items={brandMoreItems} />
   </> : null;
   const brandHousekeepingDialog = brandTop ? (
