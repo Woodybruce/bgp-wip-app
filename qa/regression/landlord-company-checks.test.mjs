@@ -132,7 +132,7 @@ test('a brand page card rests on its summary and the checks run, with the toggle
     assert.equal(all.some(node => node.props['data-testid'] === 'brand-checks-verdict-line'), false, 'the full verdict replaces its first sentence');
     assert.equal(all.some(node => node.type === 'Kyc4uStatusStrip'), !isClientViewer);
   }
-  // A Landsec asset manager (no covenant report is asked for) is shown no company facts, at rest or opened, and no empty toggle.
+  // A restricted Landsec role (a joint agent: no covenant report is asked for) is shown no company facts, at rest or opened, and no empty toggle.
   open = false;
   const restricted = component(panel, 'LandlordCompanyChecksCard', { ...bindings(undefined, null), useLandsecRestricted: () => true });
   const restrictedAll = nodes(restricted({ ...props, isClientViewer: true }));

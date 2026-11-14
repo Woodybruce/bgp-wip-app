@@ -24,8 +24,9 @@ const upload = multer({
   },
 });
 
-// Brand cases are portfolio-wide for asset managers (decided 2026-11-11);
-// joint agents are refused at the gateway (landsec-access.ts).
+// Brand cases are read and answered by every Landsec login but a joint
+// agent, whatever schemes are on the login; joint agents are refused at the
+// gateway (shared/landsec.ts).
 async function landsecScope(req: Request) {
   const v = await landsecViewer(req);
   return v && v.role !== "joint_agent" ? v : null;

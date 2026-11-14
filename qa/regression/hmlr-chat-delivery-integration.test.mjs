@@ -31,7 +31,7 @@ function mainFixture({ context = messages, getFile = async () => null, receipts 
   const saved = [];
   const runs = new Map([['thread', { partial: '' }]]);
   const shared = {
-    verifyHmlrChatDelivery, result: { data: { messages: context } }, hmlrReceipts: receipts, getFile,
+    verifyHmlrChatDelivery, result: { data: { messages: context } }, hmlrReceipts: receipts, getFile, jointAgentChat: false,
     clearInterval() {}, heartbeat: 1, verifiedThreadId: 'thread', activeChatRuns: runs, thisRun: runs.get('thread'),
     pool: { query: async () => ({ rows: [] }) },
     storage: { createChatMessage: async message => { saved.push(message); return { ...message, id: 'saved-assistant-message' }; } },

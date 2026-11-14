@@ -28,7 +28,7 @@ import { rasterisePdfPage } from "./pdf-image-extract";
 import { renderEvidencePlanPdf, originalPlanPdfKey } from "./plan-image-render";
 import { redInkHiddenPlanImage } from "./plan-display-image";
 import { isValidPolygon, pointInPolygon, interiorPoint } from "@shared/plan-geometry";
-import { resolveBrandIdSubquery } from "./tenant-brand-resolver";
+import { relinkTenantAfterNameEdit, TenantWriteRefused, type TenantActor } from "./tenancy-tenant";
 import type { ScanReviewCandidate } from "@shared/plan-scan-review";
 import { applyPlanScanReview, buildPlanScanReview, persistPlanScanReview, PlanScanReviewError, readPlanScanReview } from "./plan-scan-review";
 import { resolveEvidenceScheduleMatch } from "./evidence-plan-schedule";
@@ -767,7 +767,7 @@ const UNIT_FIELDS: Record<string, string> = {
 };
 
 export async function saveEvidenceUnit(
-  unitId: string, body: any, canEditProperty: (propertyId: string | null) => Promise<boolean>,
+  unitId: string, body: any, canEditProperty: (propertyId: string | null) => Promise<boolean>, actor: TenantActor,
 ): Promise<any> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(unitId)) throw new EvidencePlanError(400, "Invalid unit ID");
   const patch = validateEvidenceUnitPatch(body);
@@ -863,7 +863,8 @@ export async function saveEvidenceUnit(
       values.push(matched.id);
       await db.query(`UPDATE tenancy_schedule_units SET ${assignments.join(", ")}, updated_at = now() WHERE id = $${values.length}`, values);
       if ("tenantName" in patch) {
-        await db.query(`UPDATE tenancy_schedule_units SET tenant_company_id = ${resolveBrandIdSubquery("coalesce(trading_name, tenant_name, '')")} WHERE id = $1`, [matched.id]);
+        await relinkTenantAfterNameEdit(db, matched.id, { tenant_name: matched.tenant_name ?? null, trading_name: matched.trading_name ?? null,
+          tenant_company_id: matched.tenant_company_id ?? null, tenant_entity_id: matched.tenant_entity_id ?? null }, actor);
       }
     }
     const localKeys = Object.keys(patch).filter(key => !matched || !(key in factMap) || key === "tenantName");
@@ -896,9 +897,15 @@ router.put("/api/evidence-plans/units/:unitId", requireAuth, async (req: Request
   try {
     const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
     const scope = await resolveCompanyScope(req as any);
+    // The tenant door's actor: a client scope, or a shared-plan editor from
+    // outside BGP, is a client; never the system.
+    const userId = (req as any).session?.userId || (req as any).tokenUserId;
+    const user = userId ? (await pool.query(`SELECT username FROM users WHERE id = $1`, [userId])).rows[0] : null;
+    const actor: TenantActor = { userId: userId ? String(userId) : "unknown", name: user?.username || (userId ? String(userId) : "shared plan editor"),
+      viewer: scope || isEvidencePlanEditorRequest(req) ? "client" : "staff" };
     res.json(await saveEvidenceUnit(String(req.params.unitId), req.body,
-      async propertyId => evidencePlanEditorPropertyAllowed(propertyId) ?? (!scope || !!propertyId && await isPropertyInScope(scope, propertyId))));
-  } catch (e: any) { res.status(e instanceof EvidencePlanError ? e.status : 500).json({ error: e.message }); }
+      async propertyId => evidencePlanEditorPropertyAllowed(propertyId) ?? (!scope || !!propertyId && await isPropertyInScope(scope, propertyId)), actor));
+  } catch (e: any) { res.status(e instanceof EvidencePlanError || e instanceof TenantWriteRefused ? e.status : 500).json({ error: e.message }); }
 });
 
 router.delete("/api/evidence-plans/units/:unitId", requireAuth, async (req: Request, res: Response) => {

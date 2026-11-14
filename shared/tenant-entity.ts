@@ -61,7 +61,7 @@ export interface TenantWriteFacts {
 export type TenantRefusalCode =
   | "ROW_NOT_FOUND" | "ADD_TO_SCHEDULE_FIRST" | "BRAND_NOT_FOUND" | "BRAND_MERGED" | "BRAND_NOT_IN_LIST"
   | "ENTITY_NOT_FOUND" | "ENTITY_NOT_UNDER_BRAND" | "BRAND_FIRST" | "ENTITY_NAME_REQUIRED"
-  | "STAFF_ONLY" | "ENTITY_SET_BY_BGP";
+  | "STAFF_ONLY";
 
 export const TENANT_ENTITY_REFUSALS: Record<TenantRefusalCode, { status: number; message: string }> = {
   ROW_NOT_FOUND: { status: 404, message: "This schedule row was not found." },
@@ -74,7 +74,6 @@ export const TENANT_ENTITY_REFUSALS: Record<TenantRefusalCode, { status: number;
   BRAND_FIRST: { status: 409, message: "Set the brand first, then the company on the lease." },
   ENTITY_NAME_REQUIRED: { status: 400, message: "Give the company's name." },
   STAFF_ONLY: { status: 403, message: "Only BGP can set the company on the lease." },
-  ENTITY_SET_BY_BGP: { status: 409, message: "BGP has recorded the company on this lease. Ask BGP to change the tenant." },
 };
 
 /** What the write did, for the reply and the audit note. */
@@ -118,7 +117,8 @@ export function planTenantWrite(current: TenantRowState, input: TenantWriteInput
   const createSent = input.createEntity !== undefined;
   const picked = brandSent || entitySent || createSent;
 
-  // R8, first half: the company on the lease is BGP's to set.
+  // R8: the company on the lease is BGP's to set. A client's change of brand,
+  // vacancy or lease name still takes it off by R2, R5 and R7 (Woody, 2026-11-13: "let it through").
   if (viewer === "client" && (entitySent || createSent)) return refuse(current, "STAFF_ONLY");
 
   // R1 Text.
@@ -202,9 +202,6 @@ export function planTenantWrite(current: TenantRowState, input: TenantWriteInput
       notes.push("entity_cleared_brand_changed");
     }
   }
-
-  // R8, second half: a client never clears or changes the company BGP recorded.
-  if (viewer === "client" && current.tenant_entity_id && entity !== current.tenant_entity_id) return refuse(current, "ENTITY_SET_BY_BGP");
 
   return { set: { ...text, tenant_company_id: brand, tenant_entity_id: entity }, notes, ...(create ? { create } : {}) };
 }

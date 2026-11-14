@@ -486,7 +486,9 @@ export function setupAuth(app: Express) {
       (safeUser as any).companyScopeName = (await getScopeCompanyName(scopeCompanyId)) || user.team;
     }
     // Landsec role logins (docs/landsec-pitch-plan.md, item 6): the client
-    // jails its routes and menu on these.
+    // jails a joint agent's routes and menu on these. For an asset manager
+    // the role and the schemes are labels (who they are, which schemes they
+    // answer for): they limit nothing.
     if (user.role === "Client") {
       try {
         const { getLandsecAccess } = await import("./landsec-access");

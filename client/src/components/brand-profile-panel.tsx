@@ -993,8 +993,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // Current user — the 'BGP portfolio — potential pitches' block is parked
   // admin-only (work-in-progress) so it's hidden from the team.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  // A Landsec asset manager or joint agent is refused the company list, the
-  // viewings list and the chat: this page does not ask for them.
+  // A Landsec joint agent is refused the company list, the viewings list
+  // and the chat: this page does not ask for them.
   const landsecRestricted = useLandsecRestricted();
   const isAdmin = !!currentUser?.isAdmin;
   // Client viewers (e.g. Landsec) read the profile but can't fire the
@@ -1282,14 +1282,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     // Kicks off the background research and polls /status until the job
     // finishes. For big brands (H&M has hundreds of UK locations) this
     // can run 1-3 minutes — past Railway's 60s edge timeout.
-    mutationFn: async ({ scope = "uk" }: { scope?: "uk" | "global"; auto?: boolean } = {}) => {
-      const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`, { scope });
+    mutationFn: async ({ scope = "uk", depth = "standard" }: { scope?: "uk" | "global"; auto?: boolean; depth?: "standard" | "full" } = {}) => {
+      const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`, { scope, depth });
       if (!res.ok && res.status !== 202) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `HTTP ${res.status}`);
       }
       const started = Date.now();
-      const MAX_WAIT = 5 * 60_000;
+      const MAX_WAIT = (depth === "full" ? 25 : 5) * 60_000;
       const POLL_INTERVAL = 5000;
       return await new Promise<any>((resolve, reject) => {
         const poll = async () => {
@@ -1674,9 +1674,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // A tenant brand's own page: its Overview holds the take, the CRM plan and
   // Menu highlights (showBrandPlan, above, says who gets the plan card).
   const brandOverview = isBrand && !isLandlord && !isAgentFirm && !isLender;
-  // A Landsec asset manager cannot reach the CRM plan (the server refuses
-  // that role); BGP's shared actions reach them on Schemes and units.
-  const noPlanCard = isClientViewer && (currentUser as any)?.landsecRole === "asset_manager";
   // "Schemes and units" (the Brand CRM): BGP staff and a Landsec view. It
   // carries the Targeted and Pitched lists for them; every other client
   // login keeps those lists where they were.
@@ -2750,6 +2747,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     companyId={companyId} stores={stores} reportedTotal={c.store_count} canRefresh={!isClientViewer}
     refreshing={researchStoresMutation.isPending} diagnostic={storesDiagnostic} velocity={rolloutVelocity?.net12m ?? null}
     onRefresh={() => researchStoresMutation.mutate({ scope: "uk" })}
+    onMapAll={() => researchStoresMutation.mutate({ scope: "uk", depth: "full" })}
   />;
   // On a brand's page these blocks follow the one card pattern (the same
   // small uppercase title with a count, a cap with "Show all N"); every other
@@ -3616,7 +3614,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         {editing
           ? <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 min-w-0 self-start" data-testid="brand-profile-card">{editForm}</div>
           : brandBand}
-        {/* An asset manager has no chat (the server refuses it), so no box. */}
+        {/* A joint agent has no chat (the server refuses it), so no box. */}
         {!landsecRestricted && <div className="min-w-0 [&>*]:h-full" data-testid="brand-conversation">
           <CompanyMiniChat companyId={companyId} companyName={c.name} compact stacked={topStacked} title="Brand conversation" starters={askTopics(c.name)} />
         </div>}
@@ -3721,7 +3719,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {brandOverview && (
                 <div className="grid grid-cols-1 gap-3 [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4 [&>*:only-child]:col-span-full items-start empty:hidden" data-testid="brand-overview-cards">
                   {showBrandPlan
-                    ? !noPlanCard && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
+                    ? <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
                     : <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} hideWhenEmpty />}
                   <MenuIntelCard companyId={companyId} companyName={c.name} industry={c.industry} companyType={c.company_type} intel={c.menu_intel} refreshedAt={c.menu_intel_at} />
                 </div>
@@ -5222,8 +5220,9 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
   const { toast } = useToast();
   const companyNumber = company.companies_house_number?.trim();
   const covenant = useCovenantReport(companyNumber);
-  // A Landsec asset manager is shown what the card held before the company
-  // facts were added (nothing new for that role without Woody's yes).
+  // A restricted Landsec role (a joint agent, who is refused the covenant
+  // report) is shown the card without the company facts. An asset manager is
+  // a full Landsec login since 13 November 2026 and is shown them.
   const restricted = useLandsecRestricted();
   const brandPage = brandSummary;
   const entityName = company.uk_entity_name?.trim() || "";
@@ -5443,7 +5442,7 @@ export function BrandComplianceCard({
   // kyc_status === "verified", a value nothing in the codebase ever sets,
   // so the row could never tick — found 2026-08-18.)
   const covNum = (company.companies_house_number || "").trim();
-  // A login that is refused the report (a Landsec asset manager) is not sent
+  // A login that is refused the report (a Landsec joint agent) is not sent
   // to ask for it, and is not shown the covenant row as a check not run.
   const covEnabled = useCovenantReportEnabled(covNum);
   const { data: covReport, isError: covFailed } = useQuery<any>({
@@ -6041,7 +6040,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
 // scrolls inside, with Expand for a longer read.
 // stacked (compact, on a page too narrow to put it beside the band): one row
 // with the message count, the input and Open, so it never pushes the page down.
-export function CompanyMiniChat({ companyId, companyName, fill, title, starters, landlord = false, compact = false, stacked = false }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[]; landlord?: boolean; compact?: boolean; stacked?: boolean }) {
+export function CompanyMiniChat({ companyId, companyName, fill, title, starters, landlord = false, compact = false, stacked = false, linkedType = "company" }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[]; landlord?: boolean; compact?: boolean; stacked?: boolean; linkedType?: "company" | "property" }) {
   const [threadSelection, setThreadSelection] = useState<{ companyId: string; id: string } | null>(null);
   // The same panel can be reused while navigating between company records.
   // Hide the old Landlord thread immediately, before effects or polling run.
@@ -6060,7 +6059,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
   useEffect(() => {
     if (threadId) return;
     const existing = (Array.isArray(threads) ? threads : []).find(
-      (t: any) => t.linkedId === companyId && !t.isAiChat && t.hasAiMember
+      (t: any) => t.linkedId === companyId && (t.linkedType || "company") === linkedType && !t.isAiChat && t.hasAiMember
     );
     if (existing) setThreadId(existing.id);
   }, [threads, companyId, threadId]);
@@ -6136,6 +6135,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
       if (!res.ok) return { comments: [] };
       return res.json();
     },
+    enabled: linkedType === "company",
     staleTime: 2 * 60 * 1000,
   });
   const trackerComments: any[] = trackerData?.comments || [];
@@ -6162,9 +6162,11 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
       title: `${companyName} — discussion`,
       memberIds: ["__chatbgp__"],
       isAiChat: false,
-      linkedType: "company",
+      linkedType,
       linkedId: companyId,
       linkedName: companyName,
+      // A property's conversation is the property's thread too, so it shows wherever that property's chats do.
+      ...(linkedType === "property" ? { propertyId: companyId, propertyName: companyName } : {}),
     });
     const created = await res.json();
     if (!landlord || activeCompany.current === companyId) setThreadId(created.id);
@@ -6558,7 +6560,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
                 {starterPills("flex flex-wrap justify-center gap-1.5 max-w-md mx-auto")}
               </>}
               <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                {starters && starters.length > 0 ? "Answers stay here for the team. " : ""}Ask anything about {companyName} — @ tags properties and deals, and teammates you @ join the conversation.
+                {starters && starters.length > 0 ? "Answers stay here for the team. " : ""}Ask anything about {companyName} — @ tags {linkedType === "property" ? "Letting Tracker units" : "properties"} and deals, and teammates you @ join the conversation.
               </p>
             </div>
           ) : (
@@ -6790,7 +6792,7 @@ function LandlordSidebarBlock({
 
 // The agents acting for this brand — first thing in Key contacts.
 // compact (a brand's own page): shorter rows, so four agents do not take 200px.
-function TenantRepsBlock({ companyId, reps, compact = false }: { companyId: string; reps: any[]; compact?: boolean }) {
+function TenantRepsBlock({ companyId, reps, reqAgents = [], compact = false }: { companyId: string; reps: any[]; reqAgents?: any[]; compact?: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -6800,16 +6802,28 @@ function TenantRepsBlock({ companyId, reps, compact = false }: { companyId: stri
     onSuccess: () => { toast({ title: "Representation ended" }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] }); },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
-  if (!reps.length && isClient) return null;
+  if (!reps.length && !reqAgents.length && isClient) return null;
+  // Agents named on the brand's requirements (not recorded as acting for it).
+  const reqRows = reqAgents.map((r: any) => (
+    <div key={`req-${r.contact_id}`} className="flex flex-wrap items-center gap-x-2 py-1 text-[13px] min-w-0" data-testid={`tenant-rep-requirement-${r.contact_id}`}>
+      {r.agent_company_id && r.agent_name
+        ? <Link href={`/companies/${r.agent_company_id}`} className="font-medium hover:text-primary hover:underline">{r.agent_name}</Link>
+        : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
+      {r.contact_name && <Link href={`/contacts/${r.contact_id}`} className="text-muted-foreground hover:text-primary hover:underline">{r.contact_name}</Link>}
+      <span className="text-[11px] text-muted-foreground">on a requirement</span>
+    </div>
+  ));
+  const total = reps.length + reqAgents.length;
   // compact (a brand's own page): the agents sit under the people, one plain
   // line each ("CBRE · Jess Lindqvist"), with Add agent as a text link.
   if (compact) return (
     <div className="mt-3 pt-2.5 border-t border-border/60" data-testid="key-contacts-tenant-reps">
       <div className="flex items-center justify-between gap-3 mb-1">
-        <BandHeading count={reps.length || null}><Handshake className="w-3.5 h-3.5" /> Tenant rep</BandHeading>
+        <BandHeading count={total || null}><Handshake className="w-3.5 h-3.5" /> Tenant rep</BandHeading>
         {!isClient && <button type="button" className={brandCardAction} onClick={() => window.dispatchEvent(new CustomEvent("brand-add-agent", { detail: { companyId } }))} data-testid="button-add-agent">Add agent</button>}
       </div>
-      {reps.length === 0 ? <p className="text-[13px] text-muted-foreground">No agent recorded.</p> : <div className="divide-y divide-border/40">
+      {total === 0 ? <p className="text-[13px] text-muted-foreground">No agent recorded.</p> : <div className="divide-y divide-border/40">
+        {reqRows}
         {reps.map((r: any) => (
           <div key={r.id} className="group flex flex-wrap items-center gap-x-2 py-1 text-[13px] min-w-0">
             {r.agent_type && r.agent_type !== "tenant_rep" && <Pill>{r.agent_type.replace(/_/g, " ")}</Pill>}
@@ -6832,7 +6846,8 @@ function TenantRepsBlock({ companyId, reps, compact = false }: { companyId: stri
         {!isClient && <Button size="sm" variant="outline" className="min-h-11 md:min-h-0 md:h-7 text-sm md:text-xs"
           onClick={() => window.dispatchEvent(new CustomEvent("brand-add-agent", { detail: { companyId } }))} data-testid="button-add-agent"><Plus className="w-3 h-3 mr-0.5" /> Add agent</Button>}
       </div>
-      {reps.length === 0 ? <p className="text-xs text-muted-foreground">No agent recorded.</p> : <div className="space-y-1">
+      {total === 0 ? <p className="text-xs text-muted-foreground">No agent recorded.</p> : <div className="space-y-1">
+        {reqRows}
         {reps.map((r: any) => (
           <div key={r.id} className={`text-sm flex flex-wrap items-center gap-2 rounded-lg border border-border ${compact ? "px-2 py-0.5" : "p-2"}`}>
             {r.agent_type && r.agent_type !== "tenant_rep" && <Pill>{r.agent_type.replace(/_/g, " ")}</Pill>}
@@ -7284,8 +7299,8 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
         filterPropertyTier={!(!isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))}
         pattern={brandPage}
         headerActions={brandPage && !sbIsClient ? <LandlordContactActions links key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} /> : null}
-        bottomSlot={brandPage ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} compact />{agentFacts}{contactExtras}</> : null}
-        topSlot={brandPage ? null : isBrand ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} />{agentFacts}{!sbIsClient && <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} />}</>
+        bottomSlot={brandPage ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} reqAgents={(data as any).requirementAgents || []} compact />{agentFacts}{contactExtras}</> : null}
+        topSlot={brandPage ? null : isBrand ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} reqAgents={(data as any).requirementAgents || []} />{agentFacts}{!sbIsClient && <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} />}</>
           : isLandlord && !sbIsClient ? <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} /> : null} />}
       {/* Brand page: Company checks beside Key contacts, as on the landlord page. */}
       {/* Not stretched to the contacts board's depth: a long people list left a tall empty card (Woody, 2026-11-02). */}

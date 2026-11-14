@@ -1609,7 +1609,7 @@ router.post("/api/properties/:id/adopt-deal", requireAuth, async (req: Request, 
           AND (
             ($2::varchar IS NOT NULL AND t.tenant_company_id = $2)
             OR ($2::varchar IS NOT NULL AND
-                lower(trim(coalesce(t.trading_name, t.tenant_name, ''))) =
+                lower(trim(coalesce(NULLIF(btrim(t.trading_name), ''), NULLIF(btrim(t.tenant_name), ''), ''))) =
                 lower(trim(coalesce((SELECT name FROM crm_companies WHERE id = $2), ''))))
           )
         LIMIT 1`,

@@ -31,7 +31,6 @@ const SCHEMES = [
 ];
 const STAFF = { kind: "staff" as const, clientCompanyId: null, schemes: null };
 const LANDSEC_FULL = { kind: "landsec" as const, clientCompanyId: LANDSEC, schemes: null };
-const ASSET_MANAGER = { kind: "asset_manager" as const, clientCompanyId: LANDSEC, schemes: new Set(["bluewater"]) };
 const JOINT_AGENT = { kind: "joint_agent" as const, clientCompanyId: LANDSEC, schemes: new Set(["bluewater"]) };
 
 // One evidence row as the evidence query returns it.
@@ -213,7 +212,17 @@ test("requirement detail reaches a client only for a PIPnet listing or its own r
   assert.equal(api.requirementDetailHidden({ company_id: BRAND, sources: null }, STAFF), false);
 });
 
-test("an asset manager gets own-scheme lines and a count of the other schemes, with no tracker, deal or property links", async () => {
+// An asset manager is a full Landsec login (Woody, 2026-11-13: "asset
+// managers and leasing landsec should be the same"): the Landsec door gives
+// it the "landsec" viewer with no scheme list, whatever schemes are stored
+// on the login. Only a joint agent is held to its own schemes.
+test("an asset manager is the full Landsec viewer: every scheme, no count of 'other' schemes, and the tracker, deal and property links", async () => {
+  const source = readFileSync(new URL("./brand-scheme-plan.ts", import.meta.url), "utf8");
+  const door = source.slice(source.indexOf("export async function landsecPlanViewer"), source.indexOf("async function landsecSchemes"));
+  assert.match(door, /const kind: PlanViewerKind = v\.role === "joint_agent" \? "joint_agent" : "landsec";/);
+  assert.match(door, /schemes: kind === "landsec" \? null : v\.schemes \|\| new Set<string>\(\)/);
+  assert.ok(!source.includes('"asset_manager"'), "no asset manager kind is left in the plan");
+
   const db = fakeDb(baseAnswers({
     evidence: [
       ev({ ...unit("ts-1", "Unit L104"), tracker_id: "au-1", tracker_deal_id: "d-1", src: "offer", st: "Pending", at: "2026-11-02", x: { offerId: "o-1" } }),
@@ -223,18 +232,18 @@ test("an asset manager gets own-scheme lines and a count of the other schemes, w
     "case-units": [{ company_id: BRAND, case_status: "sent", at: "2026-11-11T10:00:00Z", pu: null }],
     brands: [{ ...brandRow }],
   }));
-  const plan = (await api.brandPlan(db, BRAND, ASSET_MANAGER, SCHEMES, NOW))!;
-  assert.deepEqual(plan.rows.map(r => r.scheme.key), ["bluewater"]);
-  assert.deepEqual(plan.notProceeding, []);
-  assert.equal(plan.otherSchemeCount, 1);            // Liverpool ONE once: the passed line there is not counted again
-  assert.deepEqual(plan.rows[0].links, {
-    tracker: null, deal: null, unitPage: "/landsec/unit/ts-1", property: null, scheme: "/landsec/scheme/bluewater", brandCase: `/landsec/brand-case/${BRAND}`,
+  const plan = (await api.brandPlan(db, BRAND, LANDSEC_FULL, SCHEMES, NOW))!;
+  assert.deepEqual(plan.rows.map(r => r.scheme.key).sort(), ["bluewater", "liverpool-one"]);
+  assert.deepEqual(plan.notProceeding.map(r => r.scheme.key), ["liverpool-one"]);
+  assert.equal("otherSchemeCount" in plan, false);
+  assert.deepEqual(plan.rows.find(r => r.scheme.key === "bluewater")!.links, {
+    tracker: "/available?propertyId=p-blue&unitId=au-1", deal: "/deals/d-1", unitPage: "/landsec/unit/ts-1", property: "/properties/p-blue",
+    scheme: "/landsec/scheme/bluewater", brandCase: `/landsec/brand-case/${BRAND}`,
   });
-  assert.equal(plan.brand.id, BRAND);                // asset managers open brand pages
-  // The grid tells an asset manager the same count; the brand is theirs to open.
-  const grid = await api.brandGrid(db, ASSET_MANAGER, SCHEMES, "(TRUE)", NOW);
-  assert.deepEqual(grid.brands.map(x => [x.id, x.otherSchemeCount, Object.keys(x.cells)]), [[BRAND, 1, ["bluewater"]]]);
-  assert.ok(!JSON.stringify(plan).includes("Liverpool"));
+  assert.equal(plan.brand.id, BRAND);
+  const grid = await api.brandGrid(db, LANDSEC_FULL, SCHEMES, "(TRUE)", NOW);
+  assert.deepEqual(grid.schemes.map(x => x.key), SCHEMES.map(x => x.key));
+  assert.deepEqual(grid.brands.map(x => [x.id, x.otherSchemeCount, Object.keys(x.cells).sort()]), [[BRAND, undefined, ["bluewater", "liverpool-one"]]]);
 });
 
 test("a joint agent gets brand names and stages on its own schemes: no company id, no brand case, no BGP notes, and only the actions BGP shared at its schemes", async () => {
@@ -518,13 +527,21 @@ test("Wanted lines: staff create, change and rule out; nothing is ever a deal", 
   await assert.rejects(api.updateWish(q, SCHEMES, "w-gone", { note: "x" }), (e: any) => e.status === 404);
 });
 
-test("the gateway: asset managers and joint agents reach the Landsec Brand CRM door and never the staff one", async () => {
+test("the gateway: a joint agent reaches the Landsec Brand CRM door and never the staff one; an asset manager is left to the ordinary client gateway", async () => {
   const req = (role: string, method = "GET") => ({ method, _landsecAccessResolved: true, _landsecAccess: { role, schemes: ["bluewater"], firm: null } }) as any;
-  for (const role of ["asset_manager", "joint_agent"]) {
+  for (const role of ["joint_agent"]) {
     assert.equal(await access.restrictedLandsecApiDecision(req(role), "/api/landsec/brand-crm/plan"), "allow", role);
     assert.equal(await access.restrictedLandsecApiDecision(req(role), "/api/brand-crm/plan"), "deny", role);
     assert.equal(await access.restrictedLandsecApiDecision(req(role), "/api/brand-crm/plan/abc"), "deny", role);
     assert.equal(await access.restrictedLandsecApiDecision(req(role, "POST"), "/api/brand-crm/targets"), "deny", role);
+  }
+  // An asset manager (and a leasing manager) is not decided here at all: null
+  // hands the request to the client gateway, exactly as for a Landsec login
+  // with no role, and /api/brand-crm is on none of its lists (below).
+  for (const role of ["asset_manager", "leasing_manager"]) {
+    for (const [method, path] of [["GET", "/api/landsec/brand-crm/plan"], ["GET", "/api/brand-crm/plan"], ["GET", "/api/brand-crm/plan/abc"], ["POST", "/api/brand-crm/targets"], ["GET", "/api/crm/deals"], ["GET", "/api/chat/threads"]]) {
+      assert.equal(await access.restrictedLandsecApiDecision(req(role, method), path), null, `${role} ${method} ${path}`);
+    }
   }
   // Brand cases stay closed to a joint agent.
   assert.equal(await access.restrictedLandsecApiDecision(req("joint_agent"), "/api/landsec/brand-case/abc"), "deny");

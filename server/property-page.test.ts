@@ -340,8 +340,9 @@ const skip = !databaseUrl ? "set PROPERTY_PAGE_DATABASE_URL to a local PostgreSQ
 
 // Every table the feed, the board and the three writes read, with what they
 // call: resolveBrandIdSubquery (crm_companies), stageSinceFor (deal_audit_log)
-// and validatePlanUnitLink (property_units).
-const TABLES = ["crm_companies", "crm_properties", "tenancy_schedule_units", "available_units", "crm_deals", "unit_briefs", "landsec_units", "unit_viewings",
+// and validatePlanUnitLink (property_units). crm_trading_entities is the
+// company on the lease.
+const TABLES = ["crm_companies", "crm_trading_entities", "crm_properties", "tenancy_schedule_units", "available_units", "crm_deals", "unit_briefs", "landsec_units", "unit_viewings",
   "unit_offers", "unit_target_operators", "property_plans", "property_plan_units", "property_plan_scans", "deal_audit_log", "property_units"];
 type Pool = InstanceType<typeof pg.Pool>;
 type Insert = (table: string, row: Record<string, any>) => Promise<void>;
@@ -583,6 +584,80 @@ test("the feed runs the same number of queries for 3 units as for 30", { skip },
     assert.deepEqual([a.units.length, b.units.length], [6, 60]);
     assert.equal(small.n, large.n);
     assert.ok(small.n <= 10, `${small.n} queries`);
+  });
+});
+
+test("the company on the lease and the brand's KYC4U for staff and clients; the state and the work list for BGP staff only; no extra query", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await insert("crm_properties", { id: P, name: "Bluewater" });
+    await insert("crm_companies", { id: "co-waga", name: "Wagamama", kyc_status: "approved", kyc_expires_at: "2027-05-01 10:00" });
+    await insert("crm_companies", { id: "co-zizzi", name: "Zizzi" });
+    await insert("crm_companies", { id: "co-old", name: "Old Wagamama", merged_into_id: "co-waga" });
+    await insert("crm_trading_entities", { id: "te-waga", parent_company_id: "co-waga", name: "Wagamama Limited", companies_house_number: "02605467" });
+    const ts = (id: string, unit_number: string, over: Record<string, any> = {}) => insert("tenancy_schedule_units", { id, property_id: P, unit_number, status: "Occupied", ...over });
+    await ts("ts-linked", "U1", { tenant_name: "Wagamama Limited", trading_name: "Wagamama", tenant_company_id: "co-waga", tenant_entity_id: "te-waga" });
+    await ts("ts-none", "U2", { tenant_name: "Gourmet Holdings Ltd", trading_name: "Wagamama", tenant_company_id: "co-waga" });
+    await ts("ts-own-name", "U3", { tenant_name: "Wagamama", trading_name: "Wagamama", tenant_company_id: "co-waga" });
+    await ts("ts-soft", "U4", { tenant_name: "Zizzi Restaurants Ltd", trading_name: "Zizzi" });
+    await ts("ts-nobrand", "U5", { tenant_name: "Acme Trading Ltd" });
+    await ts("ts-merged", "U7", { tenant_name: "Gourmet Holdings Ltd", trading_name: "Wagamama", tenant_company_id: "co-old" });
+    await ts("ts-vacant", "U6", { status: "Vacant", tenant_name: "Gourmet Holdings Ltd", tenant_company_id: "co-waga" });
+    await insert("available_units", { id: "au-only", property_id: P, unit_name: "Kiosk 1", marketing_status: "AVA" });
+
+    const counted = { n: 0, query: (sql: string, values?: any[]) => { counted.n++; return db.query(sql, values); } };
+    const feed = (await units.loadPropertyUnits(counted, P, TODAY))!;
+    const tenant = (id: string) => unitById(feed, id).tenant;
+    const line = (id: string) => { const t = tenant(id); return [t.entityId, t.entityName, t.companiesHouseNumber, t.leaseCompany, unitById(feed, id).flags.noLeaseCompany]; };
+    assert.deepEqual(line("ts-linked"), ["te-waga", "Wagamama Limited", "02605467", "linked", false]);
+    assert.deepEqual(line("ts-none"), [null, null, null, "none", true]);
+    assert.deepEqual(line("ts-own-name"), [null, null, null, "lease_in_brand_name", false]);
+    // The state is the schedule's tenant cell's (leaseCompanyState of the row, on the
+    // stored brand): a brand found by name only offers no "+ Company" there, so it is
+    // not on the work list here either; nor is a stored brand merged away.
+    assert.deepEqual(line("ts-soft"), [null, null, null, "no_brand", false], "a brand found by name only is not the stored brand");
+    assert.equal(tenant("ts-soft").companyId, "co-zizzi", "the brand line still shows the name match");
+    assert.deepEqual(line("ts-merged"), [null, null, null, "none", false], "a merged-away brand has no live brand to put a company under");
+    assert.deepEqual(line("ts-nobrand"), [null, null, null, "no_brand", false]);
+    assert.deepEqual(line("ts-vacant"), [null, null, null, "none", false], "a vacant unit is not on the work list");
+    assert.deepEqual(line("tracker:au-only"), [null, null, null, null, false]);
+    // The brand's own KYC4U fields, a calendar day; none without a brand.
+    assert.deepEqual(tenant("ts-linked").kyc, { status: "approved", expiresAt: "2027-05-01" });
+    assert.deepEqual(tenant("ts-soft").kyc, { status: null, expiresAt: null });
+    assert.equal(tenant("ts-nobrand").kyc, null);
+    assert.equal(tenant("tracker:au-only").kyc, null);
+    assert.equal(feed.counts.noLeaseCompany, 1);
+
+    // The same number of queries as a property with no company on any lease.
+    const plain = { n: 0, query: (sql: string, values?: any[]) => { plain.n++; return db.query(sql, values); } };
+    await insert("crm_properties", { id: OTHER, name: "Elsewhere" });
+    await insert("tenancy_schedule_units", { id: "ts-plain", property_id: OTHER, unit_number: "U1", status: "Vacant" });
+    await insert("available_units", { id: "au-plain", property_id: OTHER, unit_name: "Kiosk 1", marketing_status: "AVA" });
+    await units.loadPropertyUnits(plain, OTHER, TODAY);
+    assert.equal(counted.n, plain.n);
+
+    // A client (Woody, 2026-11-13: "yes"): the company and the brand's KYC4U as
+    // staff see them; the state blank, the flag false and the count 0.
+    const client = units.unitsForViewer(feed, { staff: false });
+    for (const u of client.units) {
+      const staffTenant = unitById(feed, u.id).tenant;
+      assert.deepEqual([u.tenant.entityId, u.tenant.entityName, u.tenant.companiesHouseNumber, u.tenant.kyc], [staffTenant.entityId, staffTenant.entityName, staffTenant.companiesHouseNumber, staffTenant.kyc], u.id);
+      assert.deepEqual([u.tenant.leaseCompany, u.flags.noLeaseCompany], [null, false], u.id);
+    }
+    assert.deepEqual([unitById(client, "ts-linked").tenant.entityName, unitById(client, "ts-linked").tenant.companiesHouseNumber], ["Wagamama Limited", "02605467"]);
+    assert.equal(client.counts.noLeaseCompany, 0);
+    const sent = JSON.stringify(client);
+    for (const word of ["te-waga", "02605467", "approved", "2027-05-01"]) assert.ok(sent.includes(word), word);
+    assert.ok(!sent.includes("lease_in_brand_name"));
+    assert.equal(units.unitsForViewer(feed, { staff: true }), feed, "staff get the feed as read");
+    assert.equal(client.units.length, feed.units.length);
+
+    // The unit panel: the same cut.
+    const staffDetail = (await units.loadPropertyUnitDetail(db, P, "ts-linked", { staff: true }, TODAY))!;
+    assert.deepEqual([staffDetail.unit.tenant.entityName, staffDetail.unit.tenant.companiesHouseNumber, staffDetail.unit.tenant.kyc?.status], ["Wagamama Limited", "02605467", "approved"]);
+    const clientDetail = (await units.loadPropertyUnitDetail(db, P, "ts-none", { staff: false }, TODAY))!;
+    assert.deepEqual([clientDetail.unit.tenant.entityId, clientDetail.unit.tenant.leaseCompany, clientDetail.unit.tenant.kyc?.status, clientDetail.unit.flags.noLeaseCompany], [null, null, "approved", false]);
+    const clientLinked = (await units.loadPropertyUnitDetail(db, P, "ts-linked", { staff: false }, TODAY))!;
+    assert.deepEqual([clientLinked.unit.tenant.entityName, clientLinked.unit.tenant.companiesHouseNumber, clientLinked.unit.tenant.leaseCompany], ["Wagamama Limited", "02605467", null]);
   });
 });
 

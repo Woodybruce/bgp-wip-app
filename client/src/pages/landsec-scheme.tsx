@@ -14,8 +14,8 @@ import { SchemeUnitsList, schemeUnitCounts, type SchemeData } from "@/components
 export default function LandsecScheme() {
   const { key } = useParams<{ key: string }>();
   const { data, isLoading, error } = useQuery<SchemeData>({ queryKey: [`/api/landsec/scheme/${key}`], staleTime: 60 * 1000 });
-  // An asset manager or joint agent login has no property record page; a
-  // joint agent has their own tracker for the scheme instead.
+  // A joint agent login has no property record page; it has its own
+  // tracker for the scheme instead.
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const landsecRole = String(me?.landsecRole || "");
   const restricted = (RESTRICTED_LANDSEC_ROLES as string[]).includes(landsecRole);

@@ -41,8 +41,9 @@ export interface BriefAccess {
 
 // Who is asking, and may they open a brief on this property? Returns null
 // when they may not. BGP staff reach every brief; a client login reaches
-// briefs on its own properties; a Landsec asset manager or joint agent only
-// on the schemes on their login. A joint agent on their scheme has the same
+// briefs on its own properties (a Landsec asset manager is a full Landsec
+// login: every scheme); a Landsec joint agent only on the schemes on their
+// login. A joint agent on their scheme has the same
 // control as BGP (agentControl) but is never isStaff: the staff branches skip
 // the property check and open BGP's directory and CRM.
 export async function briefAccess(req: Request, propertyId: string | null | undefined): Promise<BriefAccess | null> {
@@ -77,8 +78,8 @@ export async function briefAccess(req: Request, propertyId: string | null | unde
   return { ...base, landsecRole, canEditTerms: true, agentControl: jointAgent, seesBgpNotes: !jointAgent };
 }
 
-// The properties a restricted Landsec login may see briefs on (null = no
-// extra restriction). For the brief list on the tracker.
+// The properties a restricted Landsec login (a joint agent) may see briefs
+// on (null = no extra restriction). For the brief list on the tracker.
 export async function briefSchemePropertyIds(req: Request): Promise<Set<string> | null> {
   if (!(await isClientRequestUser(req))) return null;
   const { landsecViewer } = await import("./landsec-access");
@@ -407,8 +408,9 @@ export async function ensureBriefForUnit(
 
 // The client's people who can be put on a brief: its logins and its CRM
 // contacts. A joint agent is offered the people for this brief's scheme only
-// (the leasing team, the asset managers on the scheme, the contacts linked to
-// it). One list for the people picker and for the check on the write, so a
+// (the leasing team, the asset managers who answer for the scheme, the
+// contacts linked to it; an asset manager login with no schemes stored
+// answers for all of them, as a leasing manager does). One list for the people picker and for the check on the write, so a
 // joint agent cannot add by id someone the picker would not have shown them.
 // Emails are as stored: the caller decides who is sent them.
 async function briefClientCandidates(brief: any, access: BriefAccess): Promise<{ clientId: string | null; clientName: string | null; client: BriefPeopleCandidates["client"] }> {
@@ -432,7 +434,8 @@ async function briefClientCandidates(brief: any, access: BriefAccess): Promise<{
       `SELECT u.id, u.name, u.email, a.landsec_role, a.schemes FROM users u LEFT JOIN landsec_access a ON a.user_id = u.id
         WHERE COALESCE(u.is_active, true) AND u.role = 'Client' AND lower(u.team) = lower($1) AND COALESCE(a.landsec_role, '') <> 'joint_agent' ORDER BY u.name`, [clientName || ""]).catch(() => ({ rows: [] as any[] }))).rows;
     for (const u of logins) {
-      if (jointAgent && u.landsec_role === "asset_manager" && !(schemeKey && Array.isArray(u.schemes) && u.schemes.includes(schemeKey))) continue;
+      const answersFor: string[] = Array.isArray(u.schemes) ? u.schemes : [];
+      if (jointAgent && u.landsec_role === "asset_manager" && answersFor.length > 0 && !(schemeKey && answersFor.includes(schemeKey))) continue;
       client.push({ contactId: null, userId: u.id, name: u.name || u.email, role: u.landsec_role === "asset_manager" ? "Asset manager (login)" : "Login", email: u.email });
     }
     const contacts = jointAgent

@@ -1,0 +1,284 @@
+=== hasOverrides=true
+--- values
+["c",null]
+--- text
+WITH props AS (SELECT p.id, p.name FROM crm_properties p
+  WHERE p.landlord_id = $1 OR EXISTS (
+    SELECT 1 FROM crm_company_properties cp WHERE cp.company_id = $1 AND cp.property_id = p.id
+  )),
+    overrides AS (SELECT o.property_id, o.contact_id, o.kind FROM property_contact_overrides o JOIN props p ON p.id = o.property_id),
+    pdeals AS (
+      SELECT d.id, d.name, d.status, d.property_id, d.unit_id, d.tenant_id,
+        d.client_contact_id, d.tenant_contact_id, d.landlord_contact_id, d.vendor_contact_id, d.purchaser_contact_id,
+        d.vendor_agent_contact_id, d.acquisition_agent_contact_id, d.purchaser_agent_contact_id, d.leasing_agent_contact_id,
+        COALESCE(pu.unit_name, NULLIF(ts.unit_number, ''), ts.premises) AS unit_name
+      FROM crm_deals d JOIN props p ON p.id = d.property_id
+      LEFT JOIN property_units pu ON pu.id = d.unit_id AND pu.property_id = d.property_id
+      LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id AND ts.property_id = d.property_id
+    ),
+    portfolio_units AS (SELECT a.* FROM available_units a JOIN props p ON p.id = a.property_id),
+    active_units AS (SELECT * FROM portfolio_units WHERE lower(btrim(COALESCE(marketing_status,''))) IN ('neg', 'hot', 'sol', 'exc', 'under negotiation', 'in negotiation', 'negotiation', 'negotiating', 'hots', 'heads of terms', 'under offer', 'sols', 'solicitors', 'exchanged')),
+    tracker_parties AS (
+      SELECT a.id AS tracker_id, co.id AS company_id, 'recorded brand'::text AS source
+      FROM active_units a JOIN crm_companies co ON co.id = a.tenant_company_id
+      UNION SELECT a.id, co.id, 'linked portfolio deal' FROM active_units a
+      JOIN pdeals d ON d.id = a.deal_id JOIN crm_companies co ON co.id = d.tenant_id
+      UNION SELECT a.id, latest.company_id, 'latest offer' FROM active_units a
+      JOIN LATERAL (SELECT o.company_id FROM unit_offers o JOIN crm_companies co ON co.id = o.company_id
+        WHERE o.unit_id = a.id ORDER BY o.offer_date DESC NULLS LAST, o.id LIMIT 1) latest ON true
+    ),
+    tenancy AS (
+      SELECT ts.*, COALESCE(NULLIF(btrim(ts.trading_name), ''), NULLIF(btrim(ts.tenant_name), ''), 'Unresolved occupier') AS occupier_name
+      FROM tenancy_schedule_units ts JOIN props p ON p.id = ts.property_id
+      WHERE ts.tenant_company_id IS NOT NULL OR (
+        COALESCE(NULLIF(btrim(ts.trading_name), ''), NULLIF(btrim(ts.tenant_name), '')) IS NOT NULL
+        AND lower(btrim(COALESCE(ts.status, ''))) NOT IN ('vacant', 'void', 'available')
+        AND lower(btrim(COALESCE(NULLIF(ts.trading_name, ''), ts.tenant_name, ''))) NOT IN ('vacant', 'void', 'available')
+      )
+    ),
+    resolved_occupiers AS (
+      SELECT t.*, COALESCE(canonical.id, matched.company_id) AS resolved_company_id,
+        canonical.id IS NOT NULL AS confirmed,
+        CASE WHEN canonical.id IS NOT NULL THEN 'recorded tenancy'
+             WHEN matched.company_id IS NOT NULL THEN 'matched by name'
+             ELSE 'from the tenancy schedule' END AS match_source
+      FROM tenancy t LEFT JOIN crm_companies canonical ON canonical.id = t.tenant_company_id
+      LEFT JOIN LATERAL (
+        SELECT CASE WHEN count(*) = 1 THEN min(candidate.id) END AS company_id
+        FROM (
+          SELECT co.id, rank() OVER (ORDER BY CASE
+            WHEN lower(co.name) IN (lower(COALESCE(t.tenant_name, '')), lower(COALESCE(t.trading_name, ''))) THEN 0 ELSE 1 END) AS preference
+          FROM crm_companies co WHERE t.tenant_company_id IS NULL AND (
+            lower(co.name) IN (lower(COALESCE(t.tenant_name, '')), lower(COALESCE(t.trading_name, '')))
+            OR (length(co.name) >= 5 AND lower(COALESCE(t.tenant_name, '')) LIKE lower(co.name) || ' %'))
+        ) candidate WHERE candidate.preference = 1
+      ) matched ON true
+    ),
+    links AS (SELECT NULL::text AS contact_id, NULL::text AS company_id, pa.user_id::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'internal'::text AS group_key, 'Assigned BGP team · ' || COALESCE(pa.role, 'Agent')::text AS source, pa.property_id::text AS property_id, NULL::text AS deal_id, NULL::text AS unit_id, NULL::text AS tracker_id, NULL::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM crm_property_agents pa JOIN props p ON p.id = pa.property_id
+UNION ALL
+SELECT c.id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'internal'::text AS group_key, 'Client company director'::text AS source, NULL::text AS property_id, NULL::text AS deal_id, NULL::text AS unit_id, NULL::text AS tracker_id, NULL::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM crm_contacts c WHERE c.company_id = $1 AND lower(COALESCE(c.role, '')) LIKE '%director%'
+UNION ALL
+SELECT pc.contact_id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'internal'::text AS group_key, 'Named property contact' || CASE WHEN NULLIF(pc.role, '') IS NULL THEN '' ELSE ' · ' || pc.role END::text AS source, pc.property_id::text AS property_id, NULL::text AS deal_id, NULL::text AS unit_id, NULL::text AS tracker_id, NULL::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM crm_property_clients pc JOIN props p ON p.id = pc.property_id WHERE NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = pc.contact_id AND o.property_id = pc.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT o.contact_id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, CASE WHEN c.company_id = $1 THEN 'internal' ELSE 'deals' END::text AS group_key, 'Pinned on property'::text AS source, o.property_id::text AS property_id, NULL::text AS deal_id, NULL::text AS unit_id, NULL::text AS tracker_id, NULL::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM overrides o JOIN crm_contacts c ON c.id = o.contact_id WHERE o.kind = 'pin'
+UNION ALL
+SELECT named.contact_id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, CASE WHEN c.company_id = $1 THEN 'internal' ELSE 'deals' END::text AS group_key, 'Named deal contact · ' || named.role::text AS source, d.property_id::text AS property_id, d.id::text AS deal_id, d.unit_id::text AS unit_id, NULL::text AS tracker_id, d.unit_name::text AS unit_name, d.status::text AS status, true::boolean AS confirmed FROM pdeals d CROSS JOIN LATERAL (VALUES
+        (d.client_contact_id, 'Client'), (d.tenant_contact_id, 'Tenant'), (d.landlord_contact_id, 'Landlord'),
+        (d.vendor_contact_id, 'Vendor'), (d.purchaser_contact_id, 'Purchaser'),
+        (d.vendor_agent_contact_id, 'Vendor agent'), (d.acquisition_agent_contact_id, 'Acquisition agent'),
+        (d.purchaser_agent_contact_id, 'Purchaser agent'), (d.leasing_agent_contact_id, 'Leasing agent')
+      ) named(contact_id, role) JOIN crm_contacts c ON c.id = named.contact_id
+      WHERE NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = d.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT c.id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'deals'::text AS group_key, 'Contact at tenant company · live deal'::text AS source, d.property_id::text AS property_id, d.id::text AS deal_id, d.unit_id::text AS unit_id, NULL::text AS tracker_id, d.unit_name::text AS unit_name, d.status::text AS status, true::boolean AS confirmed FROM pdeals d JOIN crm_contacts c ON c.company_id = d.tenant_id
+      WHERE lower(btrim(COALESCE(d.status, ''))) NOT IN ('wit', 'com', 'inv', 'arch', 'completed', 'complete', 'let', 'invoiced', 'billed', 'occupied', 'withdrawn', 'lost', 'dead', 'archived') AND c.last_interaction IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = d.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT NULL::text AS contact_id, d.tenant_id::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'deals'::text AS group_key, 'Tenant on live deal · no named contact shown'::text AS source, d.property_id::text AS property_id, d.id::text AS deal_id, d.unit_id::text AS unit_id, NULL::text AS tracker_id, d.unit_name::text AS unit_name, d.status::text AS status, true::boolean AS confirmed FROM pdeals d WHERE lower(btrim(COALESCE(d.status, ''))) NOT IN ('wit', 'com', 'inv', 'arch', 'completed', 'complete', 'let', 'invoiced', 'billed', 'occupied', 'withdrawn', 'lost', 'dead', 'archived') AND d.tenant_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM crm_contacts c WHERE c.company_id = d.tenant_id
+         AND NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = d.property_id AND o.kind = 'hide'
+  ) AND (c.last_interaction IS NOT NULL OR c.id IN (
+           d.client_contact_id, d.tenant_contact_id, d.landlord_contact_id, d.vendor_contact_id,
+           d.purchaser_contact_id, d.vendor_agent_contact_id, d.acquisition_agent_contact_id,
+           d.purchaser_agent_contact_id, d.leasing_agent_contact_id)))
+UNION ALL
+SELECT c.id::text AS contact_id, CASE WHEN c.id IS NULL THEN party.company_id END::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'deals'::text AS group_key, CASE WHEN c.id IS NULL THEN 'Tracker company — no named contact yet' ELSE 'Contact at tracker company' END || ' · ' || party.source::text AS source, a.property_id::text AS property_id, NULL::text AS deal_id, a.unit_id::text AS unit_id, a.id::text AS tracker_id, a.unit_name::text AS unit_name, a.marketing_status::text AS status, true::boolean AS confirmed FROM active_units a JOIN tracker_parties party ON party.tracker_id = a.id
+      LEFT JOIN crm_contacts c ON c.company_id = party.company_id AND NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = a.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT NULL::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, 'tracker:' || a.id::text AS fallback_id, a.unit_name::text AS fallback_name, 'deals'::text AS group_key, 'Tracker unit · no brand linked'::text AS source, a.property_id::text AS property_id, NULL::text AS deal_id, a.unit_id::text AS unit_id, a.id::text AS tracker_id, a.unit_name::text AS unit_name, a.marketing_status::text AS status, true::boolean AS confirmed FROM active_units a WHERE NOT EXISTS (SELECT 1 FROM tracker_parties party WHERE party.tracker_id = a.id)
+UNION ALL
+SELECT v.contact_id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'deals'::text AS group_key, 'Named viewing contact'::text AS source, a.property_id::text AS property_id, NULL::text AS deal_id, a.unit_id::text AS unit_id, a.id::text AS tracker_id, a.unit_name::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM unit_viewings v JOIN portfolio_units a ON a.id = v.unit_id JOIN crm_contacts c ON c.id = v.contact_id WHERE v.deleted_at IS NULL AND COALESCE(v.status,'') NOT IN ('cancelled','not_leasing') AND NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = a.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT o.contact_id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'deals'::text AS group_key, 'Named offer contact'::text AS source, a.property_id::text AS property_id, NULL::text AS deal_id, a.unit_id::text AS unit_id, a.id::text AS tracker_id, a.unit_name::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM unit_offers o JOIN portfolio_units a ON a.id = o.unit_id JOIN crm_contacts c ON c.id = o.contact_id WHERE NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = a.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT c.id::text AS contact_id, CASE WHEN c.id IS NULL THEN t.resolved_company_id END::text AS company_id, NULL::text AS user_id, CASE WHEN t.resolved_company_id IS NULL THEN 'tenancy:' || t.id END::text AS fallback_id, t.occupier_name::text AS fallback_name, 'tenants'::text AS group_key, CASE WHEN c.id IS NOT NULL THEN 'Contact at occupier company · ' ELSE 'Occupier · ' END || t.match_source::text AS source, t.property_id::text AS property_id, NULL::text AS deal_id, NULLIF(to_jsonb(t)->>'property_unit_id', '')::text AS unit_id, NULL::text AS tracker_id, COALESCE(NULLIF(t.unit_number, ''), NULLIF(t.premises, ''))::text AS unit_name, t.status::text AS status, t.confirmed::boolean AS confirmed FROM resolved_occupiers t LEFT JOIN crm_contacts c ON c.company_id = t.resolved_company_id AND NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = t.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT c.id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'consultants'::text AS group_key, 'Contact at linked consultancy · ' || COALESCE(co.company_type, 'Consultant')::text AS source, cp.property_id::text AS property_id, NULL::text AS deal_id, NULL::text AS unit_id, NULL::text AS tracker_id, NULL::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM crm_company_properties cp JOIN props p ON p.id = cp.property_id
+      JOIN crm_companies co ON co.id = cp.company_id JOIN crm_contacts c ON c.company_id = co.id
+      WHERE (co.company_type ILIKE '%consult%' OR co.company_type ILIKE '%architect%'
+        OR co.company_type ILIKE '%advis%' OR co.company_type ILIKE '%planning%'
+        OR co.company_type ILIKE '%project man%' OR co.company_type ILIKE '%engineer%'
+        OR co.company_type ILIKE '%solicitor%' OR co.company_type ILIKE '%lawyer%')
+        AND NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = cp.property_id AND o.kind = 'hide'
+  ))
+    SELECT CASE WHEN c.id IS NOT NULL THEN 'contact:' || c.id WHEN u.id IS NOT NULL THEN 'user:' || u.id
+             WHEN co.id IS NOT NULL THEN 'company:' || co.id ELSE l.fallback_id END AS entry_id,
+      CASE WHEN c.id IS NOT NULL OR u.id IS NOT NULL THEN 'person' WHEN l.fallback_id LIKE 'tracker:%' THEN 'unit' ELSE 'company' END AS kind,
+      COALESCE(c.name, u.name, co.name, l.fallback_name) AS name,
+      CASE WHEN u.id IS NOT NULL THEN 'BGP team' ELSE c.role END AS role,
+      COALESCE(c.email, u.email) AS email, COALESCE(NULLIF(btrim(c.phone_mobile), ''), NULLIF(btrim(c.phone), ''), NULLIF(btrim(u.phone), '')) AS phone,
+      c.id AS contact_id, co.id AS company_id, co.name AS company_name,
+      c.id IS NOT NULL AND ($2::varchar IS NULL OR co.id = $2 OR co.company_type ILIKE 'Agent%' OR false) AS can_open_contact,
+      co.id IS NOT NULL AND ($2::varchar IS NULL OR co.id = $2 OR co.company_type ILIKE 'Agent%' OR false
+        OR co.agent_type = 'tenant_rep' OR EXISTS (SELECT 1 FROM brand_agent_representations r
+          WHERE r.agent_company_id = co.id AND r.end_date IS NULL AND r.agent_type = 'tenant_rep')) AS can_open_company,
+      CASE WHEN u.id IS NOT NULL THEN 'bgp' WHEN c.company_id = $1 THEN 'client' END AS side,
+      jsonb_build_object('group', l.group_key, 'source', l.source,
+        'property', CASE WHEN p.id IS NOT NULL THEN jsonb_build_object('id',p.id,'name',p.name) END,
+        'deal', CASE WHEN d.id IS NOT NULL THEN jsonb_build_object('id',d.id,'name',d.name) END,
+        'unit', CASE WHEN pu.id IS NOT NULL THEN jsonb_build_object('id',pu.id,'name',pu.unit_name) END,
+        'trackerId', l.tracker_id, 'unitName', l.unit_name, 'status', l.status, 'confirmed', l.confirmed) AS relationship
+    FROM links l LEFT JOIN crm_contacts c ON c.id = l.contact_id
+    LEFT JOIN users u ON u.id = l.user_id
+    LEFT JOIN crm_companies co ON co.id = COALESCE(c.company_id, l.company_id)
+    LEFT JOIN props p ON p.id = l.property_id
+    LEFT JOIN pdeals d ON d.id = l.deal_id
+    LEFT JOIN property_units pu ON pu.id = l.unit_id AND pu.property_id = l.property_id
+    WHERE c.id IS NOT NULL OR u.id IS NOT NULL OR co.id IS NOT NULL OR l.fallback_id IS NOT NULL
+=== hasOverrides=false
+--- values
+["c",null]
+--- text
+WITH props AS (SELECT p.id, p.name FROM crm_properties p
+  WHERE p.landlord_id = $1 OR EXISTS (
+    SELECT 1 FROM crm_company_properties cp WHERE cp.company_id = $1 AND cp.property_id = p.id
+  )),
+    overrides AS (SELECT NULL::varchar AS property_id, NULL::varchar AS contact_id, NULL::text AS kind WHERE false),
+    pdeals AS (
+      SELECT d.id, d.name, d.status, d.property_id, d.unit_id, d.tenant_id,
+        d.client_contact_id, d.tenant_contact_id, d.landlord_contact_id, d.vendor_contact_id, d.purchaser_contact_id,
+        d.vendor_agent_contact_id, d.acquisition_agent_contact_id, d.purchaser_agent_contact_id, d.leasing_agent_contact_id,
+        COALESCE(pu.unit_name, NULLIF(ts.unit_number, ''), ts.premises) AS unit_name
+      FROM crm_deals d JOIN props p ON p.id = d.property_id
+      LEFT JOIN property_units pu ON pu.id = d.unit_id AND pu.property_id = d.property_id
+      LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id AND ts.property_id = d.property_id
+    ),
+    portfolio_units AS (SELECT a.* FROM available_units a JOIN props p ON p.id = a.property_id),
+    active_units AS (SELECT * FROM portfolio_units WHERE lower(btrim(COALESCE(marketing_status,''))) IN ('neg', 'hot', 'sol', 'exc', 'under negotiation', 'in negotiation', 'negotiation', 'negotiating', 'hots', 'heads of terms', 'under offer', 'sols', 'solicitors', 'exchanged')),
+    tracker_parties AS (
+      SELECT a.id AS tracker_id, co.id AS company_id, 'recorded brand'::text AS source
+      FROM active_units a JOIN crm_companies co ON co.id = a.tenant_company_id
+      UNION SELECT a.id, co.id, 'linked portfolio deal' FROM active_units a
+      JOIN pdeals d ON d.id = a.deal_id JOIN crm_companies co ON co.id = d.tenant_id
+      UNION SELECT a.id, latest.company_id, 'latest offer' FROM active_units a
+      JOIN LATERAL (SELECT o.company_id FROM unit_offers o JOIN crm_companies co ON co.id = o.company_id
+        WHERE o.unit_id = a.id ORDER BY o.offer_date DESC NULLS LAST, o.id LIMIT 1) latest ON true
+    ),
+    tenancy AS (
+      SELECT ts.*, COALESCE(NULLIF(btrim(ts.trading_name), ''), NULLIF(btrim(ts.tenant_name), ''), 'Unresolved occupier') AS occupier_name
+      FROM tenancy_schedule_units ts JOIN props p ON p.id = ts.property_id
+      WHERE ts.tenant_company_id IS NOT NULL OR (
+        COALESCE(NULLIF(btrim(ts.trading_name), ''), NULLIF(btrim(ts.tenant_name), '')) IS NOT NULL
+        AND lower(btrim(COALESCE(ts.status, ''))) NOT IN ('vacant', 'void', 'available')
+        AND lower(btrim(COALESCE(NULLIF(ts.trading_name, ''), ts.tenant_name, ''))) NOT IN ('vacant', 'void', 'available')
+      )
+    ),
+    resolved_occupiers AS (
+      SELECT t.*, COALESCE(canonical.id, matched.company_id) AS resolved_company_id,
+        canonical.id IS NOT NULL AS confirmed,
+        CASE WHEN canonical.id IS NOT NULL THEN 'recorded tenancy'
+             WHEN matched.company_id IS NOT NULL THEN 'matched by name'
+             ELSE 'from the tenancy schedule' END AS match_source
+      FROM tenancy t LEFT JOIN crm_companies canonical ON canonical.id = t.tenant_company_id
+      LEFT JOIN LATERAL (
+        SELECT CASE WHEN count(*) = 1 THEN min(candidate.id) END AS company_id
+        FROM (
+          SELECT co.id, rank() OVER (ORDER BY CASE
+            WHEN lower(co.name) IN (lower(COALESCE(t.tenant_name, '')), lower(COALESCE(t.trading_name, ''))) THEN 0 ELSE 1 END) AS preference
+          FROM crm_companies co WHERE t.tenant_company_id IS NULL AND (
+            lower(co.name) IN (lower(COALESCE(t.tenant_name, '')), lower(COALESCE(t.trading_name, '')))
+            OR (length(co.name) >= 5 AND lower(COALESCE(t.tenant_name, '')) LIKE lower(co.name) || ' %'))
+        ) candidate WHERE candidate.preference = 1
+      ) matched ON true
+    ),
+    links AS (SELECT NULL::text AS contact_id, NULL::text AS company_id, pa.user_id::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'internal'::text AS group_key, 'Assigned BGP team · ' || COALESCE(pa.role, 'Agent')::text AS source, pa.property_id::text AS property_id, NULL::text AS deal_id, NULL::text AS unit_id, NULL::text AS tracker_id, NULL::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM crm_property_agents pa JOIN props p ON p.id = pa.property_id
+UNION ALL
+SELECT c.id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'internal'::text AS group_key, 'Client company director'::text AS source, NULL::text AS property_id, NULL::text AS deal_id, NULL::text AS unit_id, NULL::text AS tracker_id, NULL::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM crm_contacts c WHERE c.company_id = $1 AND lower(COALESCE(c.role, '')) LIKE '%director%'
+UNION ALL
+SELECT pc.contact_id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'internal'::text AS group_key, 'Named property contact' || CASE WHEN NULLIF(pc.role, '') IS NULL THEN '' ELSE ' · ' || pc.role END::text AS source, pc.property_id::text AS property_id, NULL::text AS deal_id, NULL::text AS unit_id, NULL::text AS tracker_id, NULL::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM crm_property_clients pc JOIN props p ON p.id = pc.property_id WHERE NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = pc.contact_id AND o.property_id = pc.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT o.contact_id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, CASE WHEN c.company_id = $1 THEN 'internal' ELSE 'deals' END::text AS group_key, 'Pinned on property'::text AS source, o.property_id::text AS property_id, NULL::text AS deal_id, NULL::text AS unit_id, NULL::text AS tracker_id, NULL::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM overrides o JOIN crm_contacts c ON c.id = o.contact_id WHERE o.kind = 'pin'
+UNION ALL
+SELECT named.contact_id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, CASE WHEN c.company_id = $1 THEN 'internal' ELSE 'deals' END::text AS group_key, 'Named deal contact · ' || named.role::text AS source, d.property_id::text AS property_id, d.id::text AS deal_id, d.unit_id::text AS unit_id, NULL::text AS tracker_id, d.unit_name::text AS unit_name, d.status::text AS status, true::boolean AS confirmed FROM pdeals d CROSS JOIN LATERAL (VALUES
+        (d.client_contact_id, 'Client'), (d.tenant_contact_id, 'Tenant'), (d.landlord_contact_id, 'Landlord'),
+        (d.vendor_contact_id, 'Vendor'), (d.purchaser_contact_id, 'Purchaser'),
+        (d.vendor_agent_contact_id, 'Vendor agent'), (d.acquisition_agent_contact_id, 'Acquisition agent'),
+        (d.purchaser_agent_contact_id, 'Purchaser agent'), (d.leasing_agent_contact_id, 'Leasing agent')
+      ) named(contact_id, role) JOIN crm_contacts c ON c.id = named.contact_id
+      WHERE NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = d.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT c.id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'deals'::text AS group_key, 'Contact at tenant company · live deal'::text AS source, d.property_id::text AS property_id, d.id::text AS deal_id, d.unit_id::text AS unit_id, NULL::text AS tracker_id, d.unit_name::text AS unit_name, d.status::text AS status, true::boolean AS confirmed FROM pdeals d JOIN crm_contacts c ON c.company_id = d.tenant_id
+      WHERE lower(btrim(COALESCE(d.status, ''))) NOT IN ('wit', 'com', 'inv', 'arch', 'completed', 'complete', 'let', 'invoiced', 'billed', 'occupied', 'withdrawn', 'lost', 'dead', 'archived') AND c.last_interaction IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = d.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT NULL::text AS contact_id, d.tenant_id::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'deals'::text AS group_key, 'Tenant on live deal · no named contact shown'::text AS source, d.property_id::text AS property_id, d.id::text AS deal_id, d.unit_id::text AS unit_id, NULL::text AS tracker_id, d.unit_name::text AS unit_name, d.status::text AS status, true::boolean AS confirmed FROM pdeals d WHERE lower(btrim(COALESCE(d.status, ''))) NOT IN ('wit', 'com', 'inv', 'arch', 'completed', 'complete', 'let', 'invoiced', 'billed', 'occupied', 'withdrawn', 'lost', 'dead', 'archived') AND d.tenant_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM crm_contacts c WHERE c.company_id = d.tenant_id
+         AND NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = d.property_id AND o.kind = 'hide'
+  ) AND (c.last_interaction IS NOT NULL OR c.id IN (
+           d.client_contact_id, d.tenant_contact_id, d.landlord_contact_id, d.vendor_contact_id,
+           d.purchaser_contact_id, d.vendor_agent_contact_id, d.acquisition_agent_contact_id,
+           d.purchaser_agent_contact_id, d.leasing_agent_contact_id)))
+UNION ALL
+SELECT c.id::text AS contact_id, CASE WHEN c.id IS NULL THEN party.company_id END::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'deals'::text AS group_key, CASE WHEN c.id IS NULL THEN 'Tracker company — no named contact yet' ELSE 'Contact at tracker company' END || ' · ' || party.source::text AS source, a.property_id::text AS property_id, NULL::text AS deal_id, a.unit_id::text AS unit_id, a.id::text AS tracker_id, a.unit_name::text AS unit_name, a.marketing_status::text AS status, true::boolean AS confirmed FROM active_units a JOIN tracker_parties party ON party.tracker_id = a.id
+      LEFT JOIN crm_contacts c ON c.company_id = party.company_id AND NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = a.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT NULL::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, 'tracker:' || a.id::text AS fallback_id, a.unit_name::text AS fallback_name, 'deals'::text AS group_key, 'Tracker unit · no brand linked'::text AS source, a.property_id::text AS property_id, NULL::text AS deal_id, a.unit_id::text AS unit_id, a.id::text AS tracker_id, a.unit_name::text AS unit_name, a.marketing_status::text AS status, true::boolean AS confirmed FROM active_units a WHERE NOT EXISTS (SELECT 1 FROM tracker_parties party WHERE party.tracker_id = a.id)
+UNION ALL
+SELECT v.contact_id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'deals'::text AS group_key, 'Named viewing contact'::text AS source, a.property_id::text AS property_id, NULL::text AS deal_id, a.unit_id::text AS unit_id, a.id::text AS tracker_id, a.unit_name::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM unit_viewings v JOIN portfolio_units a ON a.id = v.unit_id JOIN crm_contacts c ON c.id = v.contact_id WHERE v.deleted_at IS NULL AND COALESCE(v.status,'') NOT IN ('cancelled','not_leasing') AND NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = a.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT o.contact_id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'deals'::text AS group_key, 'Named offer contact'::text AS source, a.property_id::text AS property_id, NULL::text AS deal_id, a.unit_id::text AS unit_id, a.id::text AS tracker_id, a.unit_name::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM unit_offers o JOIN portfolio_units a ON a.id = o.unit_id JOIN crm_contacts c ON c.id = o.contact_id WHERE NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = a.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT c.id::text AS contact_id, CASE WHEN c.id IS NULL THEN t.resolved_company_id END::text AS company_id, NULL::text AS user_id, CASE WHEN t.resolved_company_id IS NULL THEN 'tenancy:' || t.id END::text AS fallback_id, t.occupier_name::text AS fallback_name, 'tenants'::text AS group_key, CASE WHEN c.id IS NOT NULL THEN 'Contact at occupier company · ' ELSE 'Occupier · ' END || t.match_source::text AS source, t.property_id::text AS property_id, NULL::text AS deal_id, NULLIF(to_jsonb(t)->>'property_unit_id', '')::text AS unit_id, NULL::text AS tracker_id, COALESCE(NULLIF(t.unit_number, ''), NULLIF(t.premises, ''))::text AS unit_name, t.status::text AS status, t.confirmed::boolean AS confirmed FROM resolved_occupiers t LEFT JOIN crm_contacts c ON c.company_id = t.resolved_company_id AND NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = t.property_id AND o.kind = 'hide'
+  )
+UNION ALL
+SELECT c.id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id, NULL::text AS fallback_id, NULL::text AS fallback_name, 'consultants'::text AS group_key, 'Contact at linked consultancy · ' || COALESCE(co.company_type, 'Consultant')::text AS source, cp.property_id::text AS property_id, NULL::text AS deal_id, NULL::text AS unit_id, NULL::text AS tracker_id, NULL::text AS unit_name, NULL::text AS status, true::boolean AS confirmed FROM crm_company_properties cp JOIN props p ON p.id = cp.property_id
+      JOIN crm_companies co ON co.id = cp.company_id JOIN crm_contacts c ON c.company_id = co.id
+      WHERE (co.company_type ILIKE '%consult%' OR co.company_type ILIKE '%architect%'
+        OR co.company_type ILIKE '%advis%' OR co.company_type ILIKE '%planning%'
+        OR co.company_type ILIKE '%project man%' OR co.company_type ILIKE '%engineer%'
+        OR co.company_type ILIKE '%solicitor%' OR co.company_type ILIKE '%lawyer%')
+        AND NOT EXISTS (
+    SELECT 1 FROM overrides o WHERE o.contact_id = c.id AND o.property_id = cp.property_id AND o.kind = 'hide'
+  ))
+    SELECT CASE WHEN c.id IS NOT NULL THEN 'contact:' || c.id WHEN u.id IS NOT NULL THEN 'user:' || u.id
+             WHEN co.id IS NOT NULL THEN 'company:' || co.id ELSE l.fallback_id END AS entry_id,
+      CASE WHEN c.id IS NOT NULL OR u.id IS NOT NULL THEN 'person' WHEN l.fallback_id LIKE 'tracker:%' THEN 'unit' ELSE 'company' END AS kind,
+      COALESCE(c.name, u.name, co.name, l.fallback_name) AS name,
+      CASE WHEN u.id IS NOT NULL THEN 'BGP team' ELSE c.role END AS role,
+      COALESCE(c.email, u.email) AS email, COALESCE(NULLIF(btrim(c.phone_mobile), ''), NULLIF(btrim(c.phone), ''), NULLIF(btrim(u.phone), '')) AS phone,
+      c.id AS contact_id, co.id AS company_id, co.name AS company_name,
+      c.id IS NOT NULL AND ($2::varchar IS NULL OR co.id = $2 OR co.company_type ILIKE 'Agent%' OR false) AS can_open_contact,
+      co.id IS NOT NULL AND ($2::varchar IS NULL OR co.id = $2 OR co.company_type ILIKE 'Agent%' OR false
+        OR co.agent_type = 'tenant_rep' OR EXISTS (SELECT 1 FROM brand_agent_representations r
+          WHERE r.agent_company_id = co.id AND r.end_date IS NULL AND r.agent_type = 'tenant_rep')) AS can_open_company,
+      CASE WHEN u.id IS NOT NULL THEN 'bgp' WHEN c.company_id = $1 THEN 'client' END AS side,
+      jsonb_build_object('group', l.group_key, 'source', l.source,
+        'property', CASE WHEN p.id IS NOT NULL THEN jsonb_build_object('id',p.id,'name',p.name) END,
+        'deal', CASE WHEN d.id IS NOT NULL THEN jsonb_build_object('id',d.id,'name',d.name) END,
+        'unit', CASE WHEN pu.id IS NOT NULL THEN jsonb_build_object('id',pu.id,'name',pu.unit_name) END,
+        'trackerId', l.tracker_id, 'unitName', l.unit_name, 'status', l.status, 'confirmed', l.confirmed) AS relationship
+    FROM links l LEFT JOIN crm_contacts c ON c.id = l.contact_id
+    LEFT JOIN users u ON u.id = l.user_id
+    LEFT JOIN crm_companies co ON co.id = COALESCE(c.company_id, l.company_id)
+    LEFT JOIN props p ON p.id = l.property_id
+    LEFT JOIN pdeals d ON d.id = l.deal_id
+    LEFT JOIN property_units pu ON pu.id = l.unit_id AND pu.property_id = l.property_id
+    WHERE c.id IS NOT NULL OR u.id IS NOT NULL OR co.id IS NOT NULL OR l.fallback_id IS NOT NULL

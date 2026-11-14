@@ -1442,8 +1442,11 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
-  // Team chat is BGP-internal — client logins use ChatBGP (AI) only, so skip
-  // the team-thread/notification polling that would otherwise 403.
+  // A client login (Landsec) lists its own conversations with people and
+  // their unread count here, as the phone's Messages tab does (Woody,
+  // 13 November 2026: "Relax all of those"). The server lists only the
+  // threads it created or is a member of. Controls the client gateway
+  // refuses (adding people, linking a property) are not offered to it.
   const chatIsClient = (currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId;
 
   const { data: status } = useQuery<{ connected: boolean }>({
@@ -1454,20 +1457,18 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   const { data: threads } = useQuery<ThreadData[]>({
     queryKey: ["/api/chat/threads"],
     queryFn: getQueryFn({ on401: "throw" }),
-    enabled: !chatIsClient,
   });
 
   const { data: notifications } = useQuery<{ unseenCount: number }>({
     queryKey: ["/api/chat/notifications"],
     queryFn: getQueryFn({ on401: "throw" }),
     refetchInterval: 15000,
-    enabled: !chatIsClient,
   });
 
   const { data: activeThread } = useQuery<ThreadData>({
     queryKey: ["/api/chat/threads", activeThreadId],
     queryFn: getQueryFn({ on401: "throw" }),
-    enabled: !!activeThreadId && !chatIsClient,
+    enabled: !!activeThreadId,
     refetchInterval: 8000,
   });
 
@@ -1641,13 +1642,15 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       inserted = "@ChatBGP";
       // Summoning the AI adds it to the conversation immediately, same as
       // picking a person — the server also auto-joins on send as a backstop.
-      if (activeThreadId && !activeThread?.hasAiMember) {
+      // (A client login cannot add members: the server adds ChatBGP when the
+      // message is sent.)
+      if (activeThreadId && !activeThread?.hasAiMember && !chatIsClient) {
         addMemberToThread.mutate({ threadId: activeThreadId, userId: "__chatbgp__" });
       }
     } else if (opt.kind === "user") {
       inserted = `@${opt.name.split(" ")[0]}`;
       pendingUserTagsRef.current.set(inserted, opt.id);
-      if (activeThreadId) {
+      if (activeThreadId && !chatIsClient) {
         const existingMemberIds = new Set(activeThread?.members?.map((m) => m.id) || []);
         const creatorId = activeThread?.createdBy || currentUser?.id || "";
         if (!existingMemberIds.has(opt.id) && opt.id !== creatorId) {
@@ -1674,7 +1677,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       textarea.selectionEnd = cursorPos;
       textarea.focus();
     }, 0);
-  }, [input, mentionStart, activeThreadId, activeThread, currentUser, addMemberToThread]);
+  }, [input, mentionStart, activeThreadId, activeThread, currentUser, addMemberToThread, chatIsClient]);
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -3004,7 +3007,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           </div>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
-          {view === "chat" && !activeThreadId && !chatIsClient && (
+          {view === "chat" && !activeThreadId && (
             <Button
               variant="ghost"
               size="icon"
@@ -3036,16 +3039,20 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               >
                 <ImageIcon className="w-3.5 h-3.5" />
               </Button>
-              <AddMemberPopover
-                threadId={activeThreadId}
-                existingMemberIds={threadMembers.map(m => m.id)}
-                creatorId={threadCreatorId}
-                hasAiMember={!!activeThread?.hasAiMember}
-              />
-              <PropertyPicker
-                threadId={activeThreadId}
-                currentPropertyName={activeThread?.propertyName || null}
-              />
+              {!chatIsClient && (
+                <>
+                  <AddMemberPopover
+                    threadId={activeThreadId}
+                    existingMemberIds={threadMembers.map(m => m.id)}
+                    creatorId={threadCreatorId}
+                    hasAiMember={!!activeThread?.hasAiMember}
+                  />
+                  <PropertyPicker
+                    threadId={activeThreadId}
+                    currentPropertyName={activeThread?.propertyName || null}
+                  />
+                </>
+              )}
             </>
           )}
           {view === "chat" && !fullPage && (

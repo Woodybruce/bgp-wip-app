@@ -10,11 +10,12 @@ const TODAY = "2026-11-13";
 function unit(over: Partial<PropertyUnit> = {}): PropertyUnit {
   const base: PropertyUnit = {
     id: "row-1", scheduleRowId: "row-1", trackerId: null, label: "U036", floor: "Upper Level", grouping: null, use: "Restaurant", scheduleStatus: "Occupied",
-    tenant: { name: "Nando's", tradingName: "Nando's", legalName: "Nando's Chickenland Limited", companyId: "co-1", companyName: "Nando's" },
+    tenant: { name: "Nando's", tradingName: "Nando's", legalName: "Nando's Chickenland Limited", companyId: "co-1", companyName: "Nando's",
+      entityId: "te-1", entityName: "Nando's Chickenland Limited", companiesHouseNumber: "01234567", leaseCompany: "linked", kyc: { status: "approved", expiresAt: "2027-05-01" } },
     sqft: 3200, passingRent: 180000, erv: 200000, quotingRent: null,
     leaseStart: "2018-03-25", leaseExpiry: "2033-03-24", breakDate: null, landlordBreakDate: null, nextReview: "2028-03-25",
     occupancy: "occupied", stage: null, deal: null, brief: null, counts: { viewings: 0, offers: 0, targets: 0 }, outlines: [],
-    flags: { expiryOrBreakSoon: false, vacantNoLetting: false, stuck: false, noAgreedBrief: false, notOnSchedule: false, notOnPlan: false, duplicateOutline: false },
+    flags: { expiryOrBreakSoon: false, vacantNoLetting: false, stuck: false, noAgreedBrief: false, notOnSchedule: false, notOnPlan: false, duplicateOutline: false, noLeaseCompany: false },
   };
   const merged = { ...base, ...over };
   return { ...merged, flags: unitFlags(merged, { today: TODAY, propertyHasPlans: true }) };
@@ -107,6 +108,20 @@ test("plan and schedule coverage flags", () => {
   assert.equal(trackerOnly.flags.notOnPlan, false, "only a schedule row can be drawn, so a tracker-only unit is not on schedule, not not on plan");
 });
 
+test("no company on the lease: occupied, a lease name and a brand, with no company recorded and the lease not in the brand's own name", () => {
+  const tenant = (over: Partial<PropertyUnit["tenant"]>) => ({ ...unit().tenant, entityId: null, entityName: null, companiesHouseNumber: null, leaseCompany: "none" as const, ...over });
+  assert.equal(unit().flags.noLeaseCompany, false, "a company on the lease is recorded");
+  assert.equal(unit({ tenant: tenant({}) }).flags.noLeaseCompany, true);
+  assert.equal(unit({ tenant: tenant({ leaseCompany: "lease_in_brand_name" }) }).flags.noLeaseCompany, false, "the lease is in the brand's own name");
+  assert.equal(unit({ tenant: tenant({ leaseCompany: "no_brand", companyId: null }) }).flags.noLeaseCompany, false, "no brand: set the brand first");
+  assert.equal(unit({ tenant: tenant({ leaseCompany: null }) }).flags.noLeaseCompany, false, "a client is sent no state");
+  assert.equal(unit({ tenant: tenant({ companyId: null, companyName: null }) }).flags.noLeaseCompany, false, "a stored brand merged away: no live brand to put a company under");
+  assert.equal(unit({ tenant: tenant({ legalName: "VACANT" }) }).flags.noLeaseCompany, false, "a placeholder is not a lease name");
+  assert.equal(unit({ tenant: tenant({ legalName: null }) }).flags.noLeaseCompany, false);
+  assert.equal(unit({ occupancy: "vacant", tenant: tenant({}) }).flags.noLeaseCompany, false, "only an occupied unit");
+  assert.equal(unit({ occupancy: "unknown", tenant: tenant({}) }).flags.noLeaseCompany, false);
+});
+
 test("the next lease event is the first dated one on or after today", () => {
   assert.deepEqual(nextLeaseEvent(unit({ leaseExpiry: "2033-03-24", breakDate: "2027-03-25", nextReview: "2026-12-25" }), TODAY), { kind: "review", date: "2026-12-25" });
   assert.deepEqual(nextLeaseEvent(unit({ leaseExpiry: "2026-11-13", nextReview: null }), TODAY), { kind: "expiry", date: "2026-11-13" });
@@ -121,22 +136,26 @@ test("counts and filters agree with each other", () => {
     unit({ id: "d", leaseExpiry: "2027-01-01", stage: "NEG" }),
     unit({ id: "tracker:e", scheduleRowId: null, trackerId: "e", occupancy: "vacant", stage: "SOL" }),
     unit({ id: "f", occupancy: "unknown" }),
+    unit({ id: "g", tenant: { ...unit().tenant, entityId: null, entityName: null, companiesHouseNumber: null, leaseCompany: "none" } }),
   ];
   const plans = [{ id: "p1", floor: "Upper Level", outlines: 3, unlinkedOutlines: 2, proposals: 10 }, { id: "p2", floor: "Lower Level", outlines: 0, unlinkedOutlines: 0, proposals: 4 }];
   const counts = propertyUnitCounts(units, plans);
-  assert.equal(counts.units, 6);
-  assert.deepEqual([counts.occupied, counts.vacant, counts.unknown], [2, 3, 1]);
+  assert.equal(counts.units, 7);
+  assert.deepEqual([counts.occupied, counts.vacant, counts.unknown], [3, 3, 1]);
   assert.equal(counts.liveLettings, 3);
   assert.deepEqual(counts.stages, { OPP: 0, AVA: 1, NEG: 1, HOT: 0, SOL: 1 });
   assert.equal(counts.onPlan, 1);
-  assert.equal(counts.notOnPlan, 4);
+  assert.equal(counts.notOnPlan, 5);
   assert.equal(counts.notOnSchedule, 1);
   assert.equal(counts.unlinkedOutlines, 2);
   assert.equal(counts.proposals, 14);
+  assert.equal(counts.noLeaseCompany, 1);
   assert.equal(units.filter(u => unitMatchesFilter(u, "vacant")).length, counts.vacant);
   assert.equal(units.filter(u => unitMatchesFilter(u, "live")).length, counts.liveLettings);
   assert.equal(units.filter(u => unitMatchesFilter(u, "expiring")).length, counts.expiryOrBreakSoon);
   assert.equal(units.filter(u => unitMatchesFilter(u, "nobrief")).length, counts.noAgreedBrief);
   assert.equal(units.filter(u => unitMatchesFilter(u, "notonplan")).length, counts.notOnPlan);
-  assert.equal(units.filter(u => unitMatchesFilter(u, "all")).length, 6);
+  assert.equal(units.filter(u => unitMatchesFilter(u, "notonschedule")).length, counts.notOnSchedule);
+  assert.equal(units.filter(u => unitMatchesFilter(u, "nolease")).length, counts.noLeaseCompany);
+  assert.equal(units.filter(u => unitMatchesFilter(u, "all")).length, 7);
 });

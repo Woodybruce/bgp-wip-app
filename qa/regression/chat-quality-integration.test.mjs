@@ -16,14 +16,12 @@ test('staff guide is unavailable to client lists and raw calls, while ordinary c
   assert.equal(isToolAllowedForClient('search_app_guide'), false);
   assert.equal(isToolAllowedForClient('search_crm'), true);
   assert.equal(isToolAllowedForClient('create_task'), true);
-  // The raw executor checks the Landsec AI lock first (2026-11-12): the real check, with the lock off.
-  const lock = find(file, n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText() === 'LANDSEC_LOCKED_TOOLS'))
-    + '\n' + find(file, n => ts.isFunctionDeclaration(n) && n.name?.text === 'landsecLockRefusal');
-  const raw = lock + '\n' + find(file, n => ts.isFunctionDeclaration(n) && n.name?.text === 'executeCrmToolRaw');
+  const raw = find(file, n => ts.isFunctionDeclaration(n) && n.name?.text === 'executeCrmToolRaw');
   for (const isClient of [true, false]) {
     let reads = 0;
     const { executeCrmToolRaw } = evaluate(raw, { clientChatGuard: async () => ({ isClient }),
-      isLandsecLocked: () => false, LANDSEC_AI_LOCK_MESSAGE: 'Not available inside the Landsec AI lock',
+      // Not a Landsec joint agent: its gate stands aside (server/chatbgp-joint-agent.test.ts).
+      jointAgentToolGate: async () => null, JOINT_AGENT_UNVERIFIED: 'Your account could not be verified.',
       searchAppGuide: () => { reads++; return { mode: 'search', results: [{ text: 'Staff directions' }] }; } });
     const result = await executeCrmToolRaw('search_app_guide', { query: 'phone chat' }, {});
     assert.equal(reads, isClient ? 0 : 1);
@@ -66,6 +64,9 @@ test('group navigation evidence goes back to the model instead of becoming a raw
     storage: { getUser: async () => ({ name: 'Example' }), createChatMessage: async msg => { saved.push(msg); return msg; } },
     AI_MENTION_REGEX: /ChatBGP/i, stripTagTokens: text => text, resolveCompanyScope: async () => null,
     buildTaggedEntityContext: async () => '',
+    // No joint agent in this conversation.
+    groupAnswerRunner: async () => ({ runner: 'ordinary' }),
+    answerAsJointAgents: async () => { throw new Error('No joint agent: the ordinary answer'); },
   });
   await run('thread-example', 'staff-example', {});
   assert.equal(rawCalls.length, 1);

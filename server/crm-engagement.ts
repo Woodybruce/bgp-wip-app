@@ -354,6 +354,50 @@ export async function getCrmEngagementOptions(q: Queryable, companyId?: string |
     companies: companies.rows, contacts: contacts.rows.filter(contact => !isPrivateMailboxAddress(contact.email)).map(contact => ({ id: contact.id, name: contact.name, companyId: contact.company_id, role: contact.role })) };
 }
 
+// What the CRM plan holds for each of these companies, for a page that lists
+// people on a record (the property page's People tab). "Here" is that record:
+// a brand action placed at the property or at one of its schedule rows.
+// BGP staff only: the caller decides who is sent it.
+export type CompanyPlanSummary = { openCount: number; hereCount: number;
+  next: { id: string; title: string; dueAt: string | null; ownerName: string | null; here: boolean } | null;
+  strategies: Array<{ id: string; name: string; contactIds: string[] }> };
+// Two queries however many companies are asked for, none for an empty list. A
+// company with no open action and no active strategy is left out of the map.
+export async function planForCompanies(q: Queryable, companyIds: string[], here: { propertyId: string; tenancyUnitIds: string[] }): Promise<Map<string, CompanyPlanSummary>> {
+  const plans = new Map<string, CompanyPlanSummary>();
+  const ids = Array.from(new Set(companyIds.filter(Boolean)));
+  if (!ids.length) return plans;
+  const [actionRows, strategyRows] = await Promise.all([
+    // The plan columns are read through to_jsonb so this holds on a database
+    // that does not have them yet.
+    q.query(`SELECT t.id,t.title,t.due_date,t.created_at,l.company_id,u.name AS owner_name,
+      COALESCE((to_jsonb(l)->>'property_id')=$2::text OR (to_jsonb(l)->>'tenancy_unit_id')=ANY($3::text[]),false) AS here,
+      ${eventPrivacyColumns} FROM crm_engagement_actions l
+      JOIN user_tasks t ON t.id=l.task_id JOIN crm_companies c ON c.id=l.company_id LEFT JOIN users u ON u.id=t.user_id
+      LEFT JOIN marketing_events e ON e.id=l.event_id
+      WHERE l.company_id=ANY($1::text[]) AND t.status IS DISTINCT FROM 'done'`, [ids, here.propertyId || null, here.tenancyUnitIds.filter(Boolean)]),
+    q.query(`SELECT s.id,s.name,t.company_id,t.contact_ids FROM crm_strategy_targets t JOIN marketing_campaigns s ON s.id=t.strategy_id
+      WHERE t.company_id=ANY($1::text[]) AND s.status='active' ORDER BY s.name`, [ids]),
+  ]);
+  const planFor = (companyId: string) => {
+    let plan = plans.get(companyId);
+    if (!plan) plans.set(companyId, plan = { openCount: 0, hereCount: 0, next: null, strategies: [] });
+    return plan;
+  };
+  const dueTime = (row: any) => row.due_date ? new Date(row.due_date).getTime() : Infinity;
+  const createdTime = (row: any) => row.created_at ? new Date(row.created_at).getTime() : 0;
+  const open = actionRows.rows.filter(row => !isPrivateEmailRecord(row)).sort((a, b) =>
+    Number(b.here === true) - Number(a.here === true) || dueTime(a) - dueTime(b) || createdTime(b) - createdTime(a));
+  for (const row of open) {
+    const plan = planFor(row.company_id);
+    plan.openCount++;
+    if (row.here === true) plan.hereCount++;
+    if (!plan.next) plan.next = { id: row.id, title: row.title, dueAt: iso(row.due_date), ownerName: row.owner_name || null, here: row.here === true };
+  }
+  for (const row of strategyRows.rows) planFor(row.company_id).strategies.push({ id: row.id, name: row.name, contactIds: row.contact_ids || [] });
+  return plans;
+}
+
 // A save comes from one view (the Landlord CRM unless it says brand): every
 // company on it is of that kind, and only that kind's links are replaced, so
 // an older record linking both keeps what the other view put on it.
@@ -476,7 +520,7 @@ async function clientPlanCompany(pool:Queryable,req:Request):Promise<string|null
 // notes). An action BGP shared (its share marker names the viewer's company)
 // arrives as title, due date, owner name, status, scheme and unit, marked as
 // raised by BGP: never its notes, its strategy or event, who it waits on or
-// any id of BGP's. An asset manager or joint agent is given one only when it
+// any id of BGP's. A joint agent is given one only when it
 // sits at one of their own schemes.
 export interface ClientShare { companyId: string; properties: Set<string>; ownSchemesOnly: boolean }
 export function clientPlanView(data:EngagementData,ownActionIds:Set<string>,share?:ClientShare):EngagementData{
@@ -505,7 +549,7 @@ async function clientShareFor(deps:ActionPlanDeps&{viewerSchemeKeys?:(req:Reques
   try {
     const partner=(await deps.sharePartners?.()||[]).find(candidate=>candidate.id===scope);
     if(!partner)return none;
-    // null = every scheme (a full client login); a list = an asset manager's or joint agent's own.
+    // null = every scheme (a full client login, an asset manager included); a list = a joint agent's own.
     const own=await deps.viewerSchemeKeys?.(req)??null;
     return {companyId:scope,ownSchemesOnly:!!own,properties:new Set(partner.schemes.filter(scheme=>!own||own.includes(scheme.key)).flatMap(scheme=>scheme.propertyIds))};
   }catch {return none;}
@@ -635,7 +679,7 @@ export async function registerCrmEngagementRoutes(app:Express,schemaReady?:Promi
     const [company,portfolio]=await Promise.all([pool.query("SELECT name FROM crm_companies WHERE id=$1",[companyId]),resolveLandsecPortfolio(companyId)]);
     return [{id:companyId,name:company.rows[0]?.name||"Landsec",schemes:portfolio.schemes.map(scheme=>({key:scheme.key,name:scheme.name,propertyId:scheme.canonicalId,propertyIds:scheme.properties.map(property=>property.id)}))}];
   };
-  // An asset manager or joint agent is held to their own schemes.
+  // A joint agent is held to their own schemes.
   const viewerSchemeKeys=async(req:Request)=>{
     const access=await getLandsecAccess(req);
     return access&&RESTRICTED_LANDSEC_ROLES.includes(access.role)?access.schemes||[]:null;

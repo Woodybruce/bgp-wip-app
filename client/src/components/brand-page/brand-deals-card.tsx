@@ -61,8 +61,9 @@ export function BrandDealsCard({ list, staff, knownEmpty = true, dealsHref, unit
   const rows = list?.rows || [];
   const total = Math.max(list?.total || 0, rows.length);
   const cap = useCap(rows, capRows);
-  // A Landsec asset manager or joint agent has no deal page and no property
-  // record page: for them the names are plain text, never a link that is refused.
+  // A restricted Landsec role (a joint agent) has no deal page and no property
+  // record page: the names are plain text, never a link that is refused. An
+  // asset manager is a full Landsec login and gets the links.
   const plain = useLandsecRestricted();
   if (rows.length === 0) {
     return staff && knownEmpty ? (

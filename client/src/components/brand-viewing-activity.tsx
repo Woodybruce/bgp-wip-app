@@ -24,7 +24,7 @@ export function brandViewingRows(viewings: ViewingRecord[] | undefined, companyI
 export const viewingDayMonth = (value: string) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(`${value}T12:00:00Z`));
 
 export function BrandViewingActivity({ companyId }: { companyId: string }) {
-  // The viewings list is refused to a Landsec asset manager: not asked for, no card.
+  // The viewings list is refused to a Landsec joint agent: not asked for, no card.
   const landsecRestricted = useLandsecRestricted();
   const query = useQuery<{ viewings: ViewingRecord[] }>({
     queryKey: ["/api/leasing-viewings", "brand", companyId],

@@ -240,6 +240,7 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
                 SET status = 'Under Offer',
                     tenant_name = CASE WHEN tenant_name = $2 THEN NULL ELSE tenant_name END,
                     tenant_company_id = CASE WHEN tenant_company_id = $3 THEN NULL ELSE tenant_company_id END,
+                    tenant_entity_id = CASE WHEN tenant_company_id = $3 THEN NULL ELSE tenant_entity_id END,
                     passing_rent_pa = CASE WHEN passing_rent_pa = $4 THEN NULL ELSE passing_rent_pa END,
                     lease_start = CASE WHEN lease_start = $5::date THEN NULL ELSE lease_start END,
                     updated_at = NOW()

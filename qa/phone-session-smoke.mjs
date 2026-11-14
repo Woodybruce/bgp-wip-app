@@ -139,7 +139,10 @@ try {
   } else results.skipped.push('Property/brand phone scenario: set PHONE_SMOKE_DATABASE_URL for disposable synthetic fixtures');
 
   try {
-    await staff.goto(`${BASE}/deals`, { waitUntil: 'domcontentloaded' });
+    // Deals is opened from Messages, so there is a screen before it in the app.
+    await staff.goto(`${BASE}/messages`, { waitUntil: 'domcontentloaded' });
+    await staff.getByTestId('button-mobile-my-profile').waitFor({ state: 'visible', timeout: 20000 });
+    await staff.getByTestId('bottom-nav-deals').click();
     await staff.getByTestId('toggle-deals-wip-report').click({ timeout: 20000 });
     await staff.getByTestId('wip-report-page').waitFor({ state: 'visible', timeout: 25000 });
     check('phone WIP tab uses canonical URL', new URL(staff.url()).pathname === '/deals/report', new URL(staff.url()).pathname);
@@ -150,10 +153,13 @@ try {
     check('phone WIP survives reload', new URL(staff.url()).pathname === '/deals/report' && await staff.getByTestId('wip-phone-summary').isVisible());
     await staff.getByTestId('toggle-deals-deals').click();
     await staff.waitForURL('**/deals/list');
+    // A tab at the top of Deals is not a step (the Back rule of 13 November
+    // 2026, client/src/lib/go-back.ts): one Back leaves Deals for the screen
+    // before it. Until then this check expected Back to reopen the WIP tab.
     await staff.goBack({ waitUntil: 'domcontentloaded' });
-    await staff.getByTestId('wip-report-page').waitFor({ state: 'visible', timeout: 25000 });
-    check('phone Back restores WIP tab', new URL(staff.url()).pathname === '/deals/report');
-    await snap(staff, 'staff-wip-after-back.png');
+    await staff.getByTestId('button-mobile-my-profile').waitFor({ state: 'visible', timeout: 25000 });
+    check('phone Back leaves Deals in one press after a tab change', new URL(staff.url()).pathname === '/messages' && await staff.getByTestId('toggle-deals-tabs').count() === 0, new URL(staff.url()).pathname);
+    await snap(staff, 'staff-back-from-deals.png');
   } catch (error) { check('staff WIP navigation scenario', false, error.message); await snap(staff, 'staff-wip-failure.png').catch(() => {}); }
 
   try {

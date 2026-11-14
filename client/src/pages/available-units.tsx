@@ -835,9 +835,9 @@ export default function AvailableUnitsPage() {
   const [wipFeeAllocType, setWipFeeAllocType] = useState<"percentage" | "fixed">("percentage");
   const { toast } = useToast();
 
-  // The two live collaborative datasets poll faster than the app default
-  // (30s felt laggy in team sessions — edits took half a minute to appear
-  // on colleagues' screens). Reference data below stays on defaults.
+  // The units list polls faster than the app default (30s felt laggy in
+  // team sessions — edits took half a minute to appear on colleagues'
+  // screens). Reference data below stays on defaults.
   const { data: units = [], isLoading } = useQuery<AvailableUnit[]>({
     queryKey: ["/api/available-units"],
     refetchInterval: 10_000,
@@ -848,10 +848,12 @@ export default function AvailableUnitsPage() {
     queryKey: ["/api/crm/properties"],
   });
 
+  // The deals list is over 2 MB: it refreshes once a minute here, not every
+  // ten seconds (Woody, 2026-11-13). The units list above stays at ten.
   const { data: deals = [], isLoading: dealsLoading } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
-    refetchInterval: 10_000,
-    staleTime: 3_000,
+    refetchInterval: 60_000,
+    staleTime: 15_000,
   });
 
   // Briefs (with target operators) keyed by unit — the Tenant column shows
@@ -869,17 +871,25 @@ export default function AvailableUnitsPage() {
   const firstLoad = isLoading || propertiesLoading || dealsLoading || briefsLoading;
 
   // The link in a deal checklist email (/deals/letting?unit=<id>&checklist=1)
-  // opens that unit's checklist, once, when the units have loaded.
+  // opens that unit's checklist, once, when the units have loaded. The
+  // property page's unit panel links here with viewing=1 or offer=1 to open
+  // that unit's Add viewing or Add offer form.
   const checklistLinkDone = useRef(false);
   useEffect(() => {
     if (checklistLinkDone.current || units.length === 0) return;
-    let unitId: string | null = null, wanted = false, wantRecommendation = false;
-    try { const q = new URLSearchParams(window.location.search); unitId = q.get("unit"); wanted = q.get("checklist") === "1"; wantRecommendation = q.get("recommendation") === "1"; } catch { /* no query string to read */ }
+    let unitId: string | null = null, wanted = false, wantRecommendation = false, wantViewing = false, wantOffer = false;
+    try {
+      const q = new URLSearchParams(window.location.search);
+      unitId = q.get("unit"); wanted = q.get("checklist") === "1"; wantRecommendation = q.get("recommendation") === "1";
+      wantViewing = q.get("viewing") === "1"; wantOffer = q.get("offer") === "1";
+    } catch { /* no query string to read */ }
     checklistLinkDone.current = true;
-    if ((!wanted && !wantRecommendation) || !unitId) return;
+    if ((!wanted && !wantRecommendation && !wantViewing && !wantOffer) || !unitId) return;
     const u = units.find(x => x.id === unitId);
     if (u && wanted) setChecklistUnit(u);
     if (u && wantRecommendation) setRecommendationUnit(u);
+    if (u && wantViewing) { setEditingViewingId(null); setViewingForm(emptyViewingForm()); setViewingsUnit(u); setAddViewingOpen(true); }
+    else if (u && wantOffer) startOfferAdd(u);
   }, [units]);
 
   // Pitch mode: the "+ <brand>" button sits in the Target Tenant cell, which

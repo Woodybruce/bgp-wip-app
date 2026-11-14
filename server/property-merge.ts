@@ -46,6 +46,9 @@ export async function mergeProperties(keepId: string, mergeId: string): Promise<
         WHERE table_schema = 'public'
           AND column_name = ANY($1)
           AND table_name <> 'crm_properties'
+          -- Only columns that can hold a property id: ai_leads keeps an
+          -- integer related_property_id, and the merge failed on it.
+          AND data_type IN ('character varying', 'text', 'uuid')
         ORDER BY table_name`,
       [REF_COLUMNS]
     );

@@ -9,8 +9,8 @@
 import { RESTRICTED_LANDSEC_ROLES } from "./landsec";
 import { legacyToCode } from "./deal-status";
 
-// A full Landsec login (no role, or a leasing manager) and BGP staff viewing
-// as Landsec use the real pages.
+// A full Landsec login (no role, a leasing manager or an asset manager) and
+// BGP staff viewing as Landsec use the real pages.
 export const LANDSEC_MENU = {
   properties: "/deals/properties",
   deals: "/deals",
@@ -32,10 +32,10 @@ export function openTaskCount(rows: unknown): number {
   return rows.filter(t => !!t && typeof t === "object" && (t as any).status !== "done").length;
 }
 
-// An asset manager or joint agent keeps the scheme-limited pages until the
-// access rebuild (plan steps 5 to 8): the same two labels, their own
-// addresses. "/deals" is not on their route list, so they are never sent to
-// the addresses above.
+// A joint agent keeps the scheme-limited pages: the same two labels, its
+// own addresses. "/deals" is not on its route list, so it is never sent to
+// the addresses above. An asset manager is a full Landsec login (Woody,
+// 2026-11-13) and uses the menu above.
 export const LANDSEC_RESTRICTED_MENU = {
   properties: "/",
   deals: "/landsec/deals",

@@ -5,13 +5,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { restrictedLandsecApiRule } from '../../shared/landsec.ts';
+import { restrictedLandsecApiRule, RESTRICTED_LANDSEC_ROLES } from '../../shared/landsec.ts';
 const require = createRequire(import.meta.url);
 const { source, find, evaluate, ts } = require('./source-harness.cjs');
 
 const block = find('server/index.ts', (node, ast) => ts.isIfStatement(node) && node.expression.getText(ast) === 'covCrm || covNum');
 
-async function gateway({ records, visible = [], scope = 'landsec', byId = null }) {
+async function gateway({ records, visible = [], scope = 'landsec', byId = null, onLease = false }) {
   const queries = [];
   const { run } = evaluate(`exports.run = async (req, res, next, pool, covCrm, covNum) => { ${block} return 'fell through'; };`, {
     require: () => ({
@@ -19,7 +19,11 @@ async function gateway({ records, visible = [], scope = 'landsec', byId = null }
       isClientVisibleBrand: async id => visible.includes(id),
     }),
   });
-  const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: records.map(id => ({ id })) }; } };
+  const pool = { query: async (sql, params) => {
+    queries.push({ sql, params });
+    if (/tenancy_schedule_units/.test(sql)) return onLease === 'fail' ? Promise.reject(new Error('down')) : { rows: onLease ? [{ '?column?': 1 }] : [] };
+    return { rows: records.map(id => ({ id })) };
+  } };
   const res = { status: code => ({ json: () => `refused ${code}` }) };
   const outcome = await run({}, res, () => 'allowed', pool, byId ? [null, byId] : null, byId ? null : [null, '00502851']);
   return { outcome, queries };
@@ -51,13 +55,34 @@ test('the lookup is by the number asked for, is not cut to one record and is in 
   assert.doesNotMatch(queries[0].sql, /LIMIT 1\b/);
 });
 
+test('a client reads the covenant of the company on the lease of a row on its own property (Woody, 2026-11-13)', async () => {
+  const allowed = await gateway({ records: [], onLease: true });
+  assert.equal(allowed.outcome, 'allowed');
+  const lease = allowed.queries.find(q => /tenancy_schedule_units/.test(q.sql));
+  assert.deepEqual([...lease.params], ['00502851', 'landsec']);
+  // One bounded query, on the client's own properties by isPropertyInScope's two ties.
+  assert.match(lease.sql, /JOIN crm_trading_entities te ON te\.id = t\.tenant_entity_id/);
+  assert.match(lease.sql, /te\.companies_house_number = \$1/);
+  assert.match(lease.sql, /crm_company_properties cp WHERE cp\.property_id = t\.property_id AND cp\.company_id = \$2/);
+  assert.match(lease.sql, /crm_properties p WHERE p\.id = t\.property_id AND p\.landlord_id = \$2/);
+  assert.match(lease.sql, /LIMIT 1/);
+  // No such row, or a failed read: refused.
+  assert.equal((await gateway({ records: [], onLease: false })).outcome, 'refused 403');
+  assert.equal((await gateway({ records: [], onLease: 'fail' })).outcome, 'refused 403');
+  // The report by company id is not opened by it.
+  assert.equal((await gateway({ records: [], onLease: true, byId: 'retail' })).outcome, 'refused 403');
+});
+
 test('the report by company id keeps its own check of that one record', async () => {
   assert.equal((await gateway({ records: [], visible: ['restaurant'], byId: 'restaurant' })).outcome, 'allowed');
   assert.equal((await gateway({ records: [], visible: ['restaurant'], byId: 'retail' })).outcome, 'refused 403');
 });
 
-test('an asset manager or joint agent is still refused the report by company number', () => {
-  for (const role of ['asset_manager', 'joint_agent']) assert.equal(restrictedLandsecApiRule(role, 'GET', '/api/covenant/00502851'), 'deny');
+test('a joint agent is still refused the report by company number; an asset manager is no longer a restricted role', () => {
+  assert.equal(restrictedLandsecApiRule('joint_agent', 'GET', '/api/covenant/00502851'), 'deny');
+  // Woody, 13 November 2026: an asset manager is a full Landsec login. It never
+  // reaches the restricted rule, and reads the report as any client in its slice does.
+  assert.deepEqual([...RESTRICTED_LANDSEC_ROLES], ['joint_agent']);
 });
 
 test('the covenant engine picks the record behind a shared number the same way every time', () => {

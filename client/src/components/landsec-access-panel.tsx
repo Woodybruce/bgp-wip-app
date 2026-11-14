@@ -38,13 +38,15 @@ export function LandsecAccessPanel() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const { data } = useQuery<AccessData>({ queryKey: ["/api/landsec/access"], enabled: open, staleTime: 30 * 1000 });
-  const blank = { email: "", name: "", role: "asset_manager" as LandsecRole, schemes: [] as string[], firm: "", password: "" };
+  // No role is chosen for a new login: two of the three roles give the full
+  // Landsec view, so the admin picks one before Save is offered.
+  const blank = { email: "", name: "", role: "" as LandsecRole | "", schemes: [] as string[], firm: "", password: "" };
   const [form, setForm] = useState(blank);
   const [shown, setShown] = useState<{ email: string; password: string } | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   const save = useMutation({
-    mutationFn: async (body: typeof form) => (await apiRequest("POST", "/api/landsec/access", { ...body, password: body.password || undefined })).json(),
+    mutationFn: async (body: typeof form & { confirmFullView?: boolean }) => (await apiRequest("POST", "/api/landsec/access", { ...body, password: body.password || undefined })).json(),
     onSuccess: (r: any, v) => {
       queryClient.invalidateQueries({ queryKey: ["/api/landsec/access"] });
       if (r?.tempPassword) setShown({ email: v.email, password: r.tempPassword });
@@ -75,12 +77,29 @@ export function LandsecAccessPanel() {
     if (u.role === "joint_agent" && !window.confirm(`Deactivate ${u.name || u.email || "this login"}? They will be signed out and will not be able to sign in again. Viewings they are the agent on that are still to happen will show as having no agent.`)) return;
     remove.mutate(u);
   };
+  // A joint agent is an outside firm's login. Saving it with another role
+  // gives it the full Landsec view, so the admin is asked first (the server
+  // refuses the save without that answer).
+  const saveLogin = () => {
+    const email = form.email.trim().toLowerCase();
+    const stored = (data?.users || []).find(u => (u.email || "").toLowerCase() === email);
+    if (stored?.role === "joint_agent" && form.role !== "joint_agent") {
+      if (!window.confirm(`${stored.name || stored.email || "This login"} is a joint agent. Changing the role gives this login the full Landsec view: all 14 schemes, BGP's brand pages and chat. Only do this for Landsec's own staff. Save it?`)) return;
+      save.mutate({ ...form, confirmFullView: true });
+      return;
+    }
+    save.mutate(form);
+  };
   const schemesByGroup = useMemo(() => {
     const g: Record<string, { key: string; name: string }[]> = {};
     for (const s of data?.schemes || []) (g[s.group] ||= []).push(s);
     return g;
   }, [data]);
-  const restricted = form.role !== "leasing_manager";
+  // A joint agent is held to the schemes ticked (at least one). An asset
+  // manager sees what Landsec leasing sees (Woody, 2026-11-13): the schemes
+  // ticked are the ones that person answers for, and none is needed.
+  const pickSchemes = form.role === "asset_manager" || form.role === "joint_agent";
+  const schemeNames = (keys: string[]) => keys.map(k => data?.schemes.find(s => s.key === k)?.name || k).join(", ");
   const edit = (u: AccessUser) => { setForm({ email: u.email || "", name: u.name || "", role: u.role || "leasing_manager", schemes: u.schemes || [], firm: u.firm || "", password: "" }); setShown(null); };
 
   return (
@@ -99,7 +118,8 @@ export function LandsecAccessPanel() {
                   <p className="text-xs text-muted-foreground truncate">{u.email}</p>
                   <p className="text-xs">
                     {u.role ? LANDSEC_ROLES.find(r => r.key === u.role)?.label : "Full Landsec view (no role set — treated as a leasing manager)"}
-                    {u.role && u.role !== "leasing_manager" && <span className="text-muted-foreground"> · {u.schemes.map(k => data.schemes.find(s => s.key === k)?.name || k).join(", ") || "no schemes"}</span>}
+                    {u.role === "joint_agent" && <span className="text-muted-foreground"> · {schemeNames(u.schemes) || "no schemes"}</span>}
+                    {u.role === "asset_manager" && <span className="text-muted-foreground"> · sees all schemes, as Landsec leasing{u.schemes.length > 0 && `; answers for ${schemeNames(u.schemes)}`}</span>}
                     {u.firm && <span className="text-muted-foreground"> · {u.firm}</span>}
                   </p>
                 </div>
@@ -107,7 +127,7 @@ export function LandsecAccessPanel() {
                   <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => edit(u)}>Edit</Button>
                   {u.role === "joint_agent"
                     ? u.active && <Button variant="ghost" size="icon" className="h-7 w-7" title="Deactivate this login" aria-label="Deactivate this login" disabled={remove.isPending} onClick={() => removeRole(u)} data-testid={`landsec-access-deactivate-${u.id}`}><UserX className="w-3.5 h-3.5" /></Button>
-                    : u.role && <Button variant="ghost" size="icon" className="h-7 w-7" title="Remove the role (back to the full Landsec view)" disabled={remove.isPending} onClick={() => removeRole(u)}><Trash2 className="w-3.5 h-3.5" /></Button>}
+                    : u.role && <Button variant="ghost" size="icon" className="h-7 w-7" title={u.role === "asset_manager" ? "Remove the role label (access does not change)" : "Remove the role (back to the full Landsec view)"} disabled={remove.isPending} onClick={() => removeRole(u)}><Trash2 className="w-3.5 h-3.5" /></Button>}
                 </div>
               </div>
             ))}
@@ -117,15 +137,19 @@ export function LandsecAccessPanel() {
             <div className="grid sm:grid-cols-2 gap-1.5">
               <Input value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} placeholder="Email (their login)" className="h-8 text-sm" data-testid="landsec-access-email" />
               <Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Name" className="h-8 text-sm" />
-              <select className="h-8 rounded-md border bg-background px-2 text-sm" value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value as LandsecRole }))} data-testid="landsec-access-role">
+              <select className="h-8 rounded-md border bg-background px-2 text-sm" value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value as LandsecRole | "" }))} aria-label="Role" data-testid="landsec-access-role">
+                <option value="">Choose a role</option>
                 {LANDSEC_ROLES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
               </select>
               <Input value={form.password} onChange={e => setForm(p => ({ ...p, password: e.target.value }))} placeholder="Password (blank = generate one)" className="h-8 text-sm" type="text" />
               {form.role === "joint_agent" && <Input value={form.firm} onChange={e => setForm(p => ({ ...p, firm: e.target.value }))} placeholder="Firm, e.g. CBRE" className="h-8 text-sm sm:col-span-2" />}
             </div>
-            <p className="text-xs text-muted-foreground">{LANDSEC_ROLES.find(r => r.key === form.role)?.scope}</p>
-            {restricted && (
+            <p className="text-xs text-muted-foreground">{LANDSEC_ROLES.find(r => r.key === form.role)?.scope || "Choose a role. A joint agent is held to the schemes ticked; a leasing manager or an asset manager sees all of Landsec."}</p>
+            {pickSchemes && (
               <div className="space-y-1">
+                <p className="text-xs font-medium" data-testid="landsec-access-schemes-label">
+                  {form.role === "joint_agent" ? "Schemes on this login (at least one)" : "Schemes this person answers for (optional: does not limit what they see)"}
+                </p>
                 {Object.entries(schemesByGroup).map(([group, list]) => (
                   <div key={group} className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span className="text-[11px] uppercase tracking-wide text-muted-foreground w-14">{group}</span>
@@ -141,7 +165,7 @@ export function LandsecAccessPanel() {
             )}
             <div className="flex justify-end gap-1">
               <Button size="sm" variant="outline" onClick={() => { setForm(blank); setShown(null); }}>Clear</Button>
-              <Button size="sm" disabled={save.isPending || !form.email} onClick={() => save.mutate(form)} data-testid="landsec-access-save">Save login</Button>
+              <Button size="sm" disabled={save.isPending || !form.email || !form.role} title={!form.role ? "Choose a role first" : undefined} onClick={saveLogin} data-testid="landsec-access-save">Save login</Button>
             </div>
             {note && (
               <div className="rounded-md border border-amber-500/50 bg-amber-500/5 p-2 text-xs" role="status" data-testid="landsec-access-note">

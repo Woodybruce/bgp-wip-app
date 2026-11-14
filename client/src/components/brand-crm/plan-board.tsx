@@ -76,7 +76,6 @@ const underName = (brand: BrandGridBrand, staff: boolean): string => [
   brand.requirementHeld ? "Requirement held" : staff ? "No requirement" : null,
   staff && brand.lead ? `Lead ${brand.lead.name}` : null,
   staff && brand.openActions ? plural(brand.openActions, "open action") : null,
-  brand.otherSchemeCount ? `Also at ${plural(brand.otherSchemeCount, "other scheme")}` : null,
 ].filter(Boolean).join(" · ");
 
 export function PlanBoard({ staff }: { staff: boolean }) {
@@ -275,7 +274,6 @@ function BrandLines({ brand, schemeKey, schemeName, base, staff, bottom, onClose
                 <span className="shrink-0"><StageChip row={row} /></span>
               </div>)}
             </div>}
-            {!!brand.otherSchemeCount && <p className="text-xs text-muted-foreground">Also at {plural(brand.otherSchemeCount, "other scheme")} outside your own.</p>}
           </>}
       </div>
     </SheetContent>

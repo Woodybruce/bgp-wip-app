@@ -7,6 +7,7 @@ export const TENANCY_REPLACE_PAUSED = `${LETTING_REPAIR_PAUSED} — import witho
 
 type ScheduleRow = Record<string, any>;
 export type ParsedTenancyImportRow = { sourceRow: number; values: ScheduleRow };
+type TenantColumns = { tenant_name: string | null; trading_name: string | null; tenant_company_id: string | null; tenant_entity_id: string | null };
 export type TenancyImportReview = {
   sourceRow: number;
   unitNumber: string | null;
@@ -95,12 +96,16 @@ export function classifyTenancyImportRow(incoming: ParsedTenancyImportRow, exist
 }
 
 export async function importTenancyRows(pool: any, propertyId: string, rows: ParsedTenancyImportRow[],
-  options: { clearExisting?: boolean; allowedFields: readonly string[]; explicitEdits?: Array<ParsedTenancyImportRow & { id: string }> }) {
+  options: { clearExisting?: boolean; allowedFields: readonly string[]; explicitEdits?: Array<ParsedTenancyImportRow & { id: string }>;
+    afterTenantEdit?: (db: any, id: string, before: TenantColumns) => Promise<{ row: ScheduleRow }> }) {
   if (options.clearExisting && !LETTING_REPAIR_TOOLS_ENABLED) throw new TenancyImportError(409, TENANCY_REPLACE_PAUSED);
   const explicitEdits = options.explicitEdits || [];
   if (!rows.length && !explicitEdits.length) throw new TenancyImportError(400, "No tenancy rows were found for this property. The existing schedule is unchanged.");
   if (options.clearExisting && explicitEdits.length) throw new TenancyImportError(400, "A replacement import cannot also edit existing row IDs.");
   if (new Set(explicitEdits.map(row => row.id)).size !== explicitEdits.length) throw new TenancyImportError(400, "Each existing tenancy row can only be edited once per request.");
+  if (!options.afterTenantEdit && explicitEdits.some(row => "tenant_name" in row.values || "trading_name" in row.values)) {
+    throw new TenancyImportError(400, "Tenant names on existing rows cannot be changed by this import.");
+  }
   const allowed = new Set(options.allowedFields);
   for (const { values } of [...rows, ...explicitEdits]) {
     for (const [field, value] of Object.entries(values)) {
@@ -128,6 +133,10 @@ export async function importTenancyRows(pool: any, propertyId: string, rows: Par
       if (!existing.some(saved => String(saved.id) === row.id)) throw new TenancyImportError(404, `Tenancy row ${row.id} was not found on this property. No changes were saved.`);
     }
     if (options.clearExisting) {
+      // A replacement deletes every row, and with them the companies on the
+      // lease BGP recorded. Those are unlinked by a person first.
+      const withLeaseCompany = existing.filter(saved => saved.tenant_entity_id).length;
+      if (withLeaseCompany) throw new TenancyImportError(409, `${withLeaseCompany} row${withLeaseCompany === 1 ? " on this property has" : "s on this property have"} a company on the lease. Import without replacing existing rows.`);
       if (rows.some(row => !identity(row.values))) throw new TenancyImportError(400, "Every row needs a unit or demise reference before replacing a schedule. The existing schedule is unchanged.");
       await db.query("UPDATE leasing_schedule_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL", [propertyId]);
       await db.query("UPDATE available_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL", [propertyId]);
@@ -150,7 +159,14 @@ export async function importTenancyRows(pool: any, propertyId: string, rows: Par
         WHERE id = $${fields.length + 1} AND property_id = $${fields.length + 2} RETURNING *`,
         [...fields.map(field => row.values[field]), row.id, propertyId])).rows[0];
       if (!updatedRow) throw new TenancyImportError(409, "The tenancy row changed while saving. Please reload and review it.");
-      existing[index] = updatedRow;
+      const saved = existing[index];
+      // A name edit relinks the brand and the company on the lease by the
+      // tenant door's rules, from the four columns as they were before it.
+      const relinked = options.afterTenantEdit && (fields.includes("tenant_name") || fields.includes("trading_name"))
+        ? (await options.afterTenantEdit(db, row.id, { tenant_name: saved.tenant_name ?? null, trading_name: saved.trading_name ?? null,
+          tenant_company_id: saved.tenant_company_id ?? null, tenant_entity_id: saved.tenant_entity_id ?? null })).row
+        : null;
+      existing[index] = relinked || updatedRow;
       updated++;
     }
     for (const row of rows) {

@@ -5,6 +5,8 @@ import React from 'react';
 import { createRequire } from 'node:module';
 import { formatCalendarDate } from '../../shared/calendar-date.ts';
 import * as tenancyDisplay from '../../shared/tenancy-schedule-display.ts';
+import { leaseCompanyState } from '../../shared/tenant-entity.ts';
+import { namedTenant } from '../../shared/property-units.ts';
 const require = createRequire(import.meta.url);
 const { source, ts } = require('./source-harness.cjs');
 
@@ -45,11 +47,11 @@ function fixture({ presentation = 'compact', readOnly = false, saved = {}, width
     useCallback: fn => fn,
     useLocation: () => [`/properties/${propertyId}`], useSearch: () => urlSearch,
     useToast: () => ({ toast: noop }),
-    useQueryClient: () => ({ invalidateQueries: noop }),
+    useQueryClient: () => ({ invalidateQueries: noop, setQueryData: noop }),
     useQuery({ queryKey }) { return { data: queryKey[0] === '/api/auth/me' ? user : queryKey.at(-1) === 'links' ? links : units, isLoading: false }; },
     // A property without estate schemes: every row passes the scheme filter.
     usePropertySchemeList: () => ({ data: { schemes: [] } }), schemeFilterMatches: () => true, unitScheme: () => undefined,
-    useMutation(options) { return { isPending: false, mutate(value) { pending.push(Promise.resolve().then(() => options.mutationFn(value)).then(result => options.onSuccess?.(result))); } }; },
+    useMutation(options) { return { isPending: false, mutate(value) { pending.push(Promise.resolve().then(() => options.mutationFn(value)).then(result => options.onSuccess?.(result, value))); } }; },
     apiRequest: async (method, url, body) => { calls.push({ method, url, body }); return { json: async () => ({}) }; },
   });
   vm.runInNewContext(compiled, bindings);
@@ -231,4 +233,80 @@ test('a direct link to an archived tenancy reveals its history without including
   assert.deepEqual(tableRows(app, tree).map(row => row.props.unit.id), ['old']);
   assert.equal(app.find(tree, 'tenancy-show-history').props.active, true);
   assert.match(content(app.find(tree, 'tenancy-stat-passing-rent')), /Not recorded.*No current rows/);
+});
+
+// The row and its Tenant cell, run from the real source (UnitRow, TenantCell,
+// InlineEdit); every imported component is a named stand-in.
+function rowHarness() {
+  const file = 'client/src/components/PropertyTenancySchedule.tsx';
+  const ast = ts.createSourceFile(file, source(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const kept = new Set(['UnitRow', 'TenantCell', 'InlineEdit', 'fmtCurrency', 'fmtNum', 'fmtDate']);
+  const input = ast.statements.filter(node => ts.isVariableStatement(node) || ts.isFunctionDeclaration(node) && kept.has(node.name?.text)).map(node => node.getText(ast)).join('\n') + '\nexports.COLUMNS = COLUMNS;';
+  const compiled = ts.transpileModule(input, { fileName: 'row.tsx', compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+  const bindings = { React, exports: {}, console, formatCalendarDate, ...tenancyDisplay, leaseCompanyState, namedTenant };
+  for (const node of ast.statements) {
+    const names = ts.isImportDeclaration(node) ? (node.importClause?.namedBindings?.elements || []).map(member => member.name.text)
+      : ts.isFunctionDeclaration(node) && !kept.has(node.name?.text) ? [node.name.text] : [];
+    for (const name of names) if (!(name in bindings)) bindings[name] = { [name]: function () { return null; } }[name];
+  }
+  const slots = [];
+  let cursor = 0;
+  Object.assign(bindings, {
+    useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = initial; return [slots[index], next => { slots[index] = next; }]; },
+    useRef(value) { const index = cursor++; if (!(index in slots)) slots[index] = { current: value }; return slots[index]; },
+    useToast: () => ({ toast() {} }),
+  });
+  vm.runInNewContext(compiled, bindings);
+  const columns = bindings.exports.COLUMNS.filter(c => essentials.includes(c.field));
+  return {
+    bindings,
+    cell(props) {
+      const row = bindings.UnitRow({ columns, onUpdate() {}, onDelete() {}, ...props });
+      const element = descendants(row).find(node => node.type === bindings.TenantCell);
+      cursor = 0;
+      return { element, tree: element && bindings.TenantCell(element.props) };
+    },
+  };
+}
+const byTestId = (tree, id) => descendants(tree).find(node => node.props['data-testid'] === id);
+
+test('compact rows draw the Tenant cell with a brand control, for a client and for staff', () => {
+  const brand = { ...unit, tenant_company_id: 'brand-1', resolved_tenant_company_id: 'brand-1', resolved_tenant_company_name: 'Brand' };
+  for (const isClientViewer of [true, false]) {
+    for (const [row, control] of [[unit, 'tenancy-brand-set-unit-1'], [brand, 'tenancy-brand-change-unit-1']]) {
+      const harness = rowHarness();
+      const { element, tree } = harness.cell({ unit: row, isClientViewer, onSetTenant() {} });
+      assert.ok(element, 'the tenant_name column is the Tenant cell');
+      assert.equal(element.props.isClientViewer, isClientViewer);
+      assert.ok(byTestId(tree, control), `${control} for ${isClientViewer ? 'a client' : 'staff'}`);
+      assert.equal(descendants(tree).filter(node => node.type === harness.bindings.InlineEdit && node.props.field === 'tenant_name').length, 1);
+    }
+  }
+  // Read-only keeps the brand link and the lease name, with no controls.
+  const { tree } = rowHarness().cell({ unit: brand, readOnly: true, isClientViewer: true });
+  assert.ok(byTestId(tree, 'tenancy-brand-link-unit-1'));
+  assert.equal(byTestId(tree, 'tenancy-brand-change-unit-1'), undefined);
+});
+
+test('the schedule passes who is looking to each row and saves a picked brand through the tenant route', async () => {
+  for (const [user, client] of [[{ role: 'Client', companyScopeId: 'client-company' }, true], [{ role: 'Admin' }, false]]) {
+    const app = fixture({ user });
+    const row = app.row(app.render());
+    assert.equal(row.props.isClientViewer, client);
+    row.props.onSetTenant('unit-1', { companyId: 'brand-1' });
+    await app.settle();
+    assert.deepEqual(JSON.parse(JSON.stringify(app.calls)), [{ method: 'PUT', url: '/api/tenancy-schedule/unit/unit-1/tenant', body: { companyId: 'brand-1' } }]);
+  }
+});
+
+test('a lease or trading name edit shows what the tenant rules did with it', async () => {
+  const app = fixture({ user: { role: 'Admin' } });
+  const toasts = [];
+  app.bindings.useToast = () => ({ toast: event => toasts.push(event) });
+  app.bindings.apiRequest = async () => ({ json: async () => ({ id: 'unit-1', tenant_notes: ['brand_name_differs', 'entity_cleared_lease_name_changed'] }) });
+  app.row(app.render()).props.onUpdate('unit-1', 'tenant_name', 'Other Co Ltd');
+  await app.settle();
+  assert.deepEqual(JSON.parse(JSON.stringify(app.row(app.render()).props.tenantReply)), { notes: ['brand_name_differs', 'entity_cleared_lease_name_changed'] });
+  assert.equal(toasts.length, 1);
+  assert.match(toasts[0].description, /lease name now names another company/);
 });

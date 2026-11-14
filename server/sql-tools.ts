@@ -343,6 +343,19 @@ export async function executeSqlWrite(
     if (blocked) return { success: false, error: `"${blocked}" cannot be set via sql_write. Who confirmed a requirement, and where it came from, are stamped by the requirements intake when a named person confirms it.` };
   }
 
+  // The company on a schedule row's lease (a crm_trading_entities id) is set
+  // only through the tenant door, by a person. crm_deals.tenant_entity_id is
+  // a different column (a Xero contact id) and stays writable.
+  if (table.toLowerCase() === "tenancy_schedule_units") {
+    const written = [data, ...(Array.isArray(bulkRows) ? bulkRows : [])].flatMap(row => row && typeof row === "object" ? Object.keys(row) : []);
+    if (written.some(key => key.toLowerCase() === "tenant_entity_id")) {
+      return { success: false, error: `"tenant_entity_id" cannot be set via sql_write. The company on the lease is set in the tenancy schedule's Tenant cell.` };
+    }
+  }
+  if (table.toLowerCase() === "crm_trading_entities" && op === "delete") {
+    return { success: false, error: "A brand's company cannot be deleted via sql_write. Delete it from the brand page, which first checks that no deal, schedule row, property or KYC record points at it." };
+  }
+
   if (EVIDENCE_PLAN_READ_TABLES.some(item => item.name === table.toLowerCase())) {
     return { success: false, error: "Evidence plan tables must be edited through their validated editor. For current unit facts, use manage_evidence_plan_unit: read the unit, then update with its returned revision. Do not use raw SQL or add columns." };
   }

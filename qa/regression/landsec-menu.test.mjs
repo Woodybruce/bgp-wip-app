@@ -6,7 +6,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, LANDSEC_STAFF_TASKS, landsecMenuActive, landsecTasksPath } from '../../shared/landsec-menu.ts';
+import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, LANDSEC_STAFF_TASKS, landsecMenuActive, landsecRestrictedRole, landsecTasksPath } from '../../shared/landsec-menu.ts';
+import { RESTRICTED_LANDSEC_ROLES } from '../../shared/landsec.ts';
 const require = createRequire(import.meta.url);
 const { source, find, evaluate, ts } = require('./source-harness.cjs');
 
@@ -32,21 +33,29 @@ const menu = (role, staffView = false) => plain(sidebar.landsecNavFor(role, staf
 const tabs = evaluate([
   statement(TABS, 'const LANDSEC_NAV_ITEMS ='),
   statement(TABS, 'const LANDSEC_STAFF_NAV_ITEMS ='),
-  statement(TABS, 'const LANDSEC_ASSET_MANAGER_NAV_ITEMS ='),
   statement(TABS, 'const LANDSEC_JOINT_AGENT_NAV_ITEMS ='),
-  'exports.full = LANDSEC_NAV_ITEMS; exports.staff = LANDSEC_STAFF_NAV_ITEMS; exports.assetManager = LANDSEC_ASSET_MANAGER_NAV_ITEMS; exports.jointAgent = LANDSEC_JOINT_AGENT_NAV_ITEMS;',
+  'exports.full = LANDSEC_NAV_ITEMS; exports.staff = LANDSEC_STAFF_NAV_ITEMS; exports.jointAgent = LANDSEC_JOINT_AGENT_NAV_ITEMS;',
 ].join('\n'), BINDINGS);
 const phone = which => plain(tabs[which]).map(i => [i.label, i.path]);
 
 const FULL_MENU = [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Letting Tracker', '/deals/letting'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands']];
 const GONE = ['Portfolio', 'Scheme', 'Lettings', 'Ask'];
 
-test('a full Landsec login and a leasing manager have Properties, Deals, Letting Tracker, Tasks, Brands', () => {
-  for (const role of [null, undefined, '', 'leasing_manager']) assert.deepEqual(menu(role), FULL_MENU, String(role));
+test('a full Landsec login, a leasing manager and an asset manager have Properties, Deals, Letting Tracker, Tasks, Brands', () => {
+  for (const role of [null, undefined, '', 'leasing_manager', 'asset_manager']) assert.deepEqual(menu(role), FULL_MENU, String(role));
 });
 
-test('an asset manager keeps the scheme-limited pages under the new names, Tasks, and Brands', () => {
-  assert.deepEqual(menu('asset_manager'), [['Properties', '/'], ['Deals', '/landsec/deals'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands']]);
+// Woody, 2026-11-13: "asset managers and leasing landsec should be the same".
+test('an asset manager has the full Landsec menu and phone tabs: the role names no menu of its own', () => {
+  assert.deepEqual(menu('asset_manager'), menu(null));
+  assert.doesNotMatch(source(SIDEBAR), /"asset_manager"/);
+  const tabsSource = source(TABS);
+  assert.doesNotMatch(tabsSource, /asset_manager|ASSET_MANAGER/);
+  // A Client login that is not a joint agent gets the six tabs, Tasks and Chat included.
+  assert.match(tabsSource, /landsecRole === "joint_agent"[\s\S]*?: navUser\?\.role === "Client"\s*\? LANDSEC_NAV_ITEMS/);
+  // The chat unread feed is asked for by every login (a joint agent's count
+  // shows on its own Chat tab).
+  assert.match(tabsSource, /queryKey: \["\/api\/chat\/notifications"\],[\s\S]{0,120}?enabled: !!navUser,/);
 });
 
 // Woody, 2026-11-13: "we need each person to have this update their own task
@@ -56,7 +65,8 @@ test('every Landsec role has one Tasks entry, at /landsec/tasks; BGP staff viewi
     assert.deepEqual(menu(role).filter(([title]) => title === 'Tasks'), [['Tasks', '/landsec/tasks']], String(role));
   }
   assert.deepEqual(menu(null, true), FULL_MENU.map(([title, url]) => [title, title === 'Tasks' ? '/tasks' : url]));
-  for (const which of ['full', 'assetManager', 'jointAgent']) {
+  // An asset manager's phone tabs are the full login's (no list of its own).
+  for (const which of ['full', 'jointAgent']) {
     assert.deepEqual(phone(which).filter(([label]) => label === 'Tasks'), [['Tasks', '/landsec/tasks']], which);
   }
   assert.deepEqual(phone('staff').filter(([label]) => label === 'Tasks'), [['Tasks', '/tasks']]);
@@ -73,10 +83,18 @@ test('the Tasks entry carries the number of open tasks, and nothing at nought', 
   assert.match(source(TABS), /const openTasks = isLandsecNav \? openTaskCount\(landsecTaskRows\) : 0;/);
 });
 
-test('the asset manager route list lets them open their task list, and still not the tracker or viewings', () => {
+// Until 13 November 2026 the route guard kept an asset manager off the
+// tracker and viewings pages. It is a full Landsec login now: the guard
+// names only the joint agent, and an asset manager opens what the ordinary
+// client route list opens, its task list (/landsec/tasks) included.
+test('an asset manager takes the ordinary client routes: the route guard does not name the role', () => {
   const guard = fn(APP, 'ClientRouteGuard');
-  assert.match(guard, /landsecRole === "asset_manager" && \/\^\\\/landsec\\\/\(tracker\|viewings\)\(\\\/\|\$\)\/\.test\(location\)/);
-  assert.doesNotMatch(guard, /tracker\|viewings\|tasks/);
+  assert.doesNotMatch(guard, /asset_manager/);
+  assert.match(guard, /const routes = restricted \|\| CLIENT_ALLOWED_ROUTES;/);
+  const routes = plain(evaluate(`${statement(APP, 'const CLIENT_ALLOWED_ROUTES')}\nexports.routes = CLIENT_ALLOWED_ROUTES;`).routes);
+  const allowed = url => routes.some(p => p === '/' ? url === '/' : (url === p || url.startsWith(p + '/')));
+  for (const [title, url] of menu('asset_manager')) assert.ok(allowed(url), `${title} ${url}`);
+  for (const url of ['/landsec/tasks', '/messages', '/chatbgp', '/companies/x']) assert.ok(allowed(url), url);
 });
 
 test('a joint agent keeps Tracker, Viewings, Tasks and Brand CRM, in that order, after the two renamed entries', () => {
@@ -94,7 +112,7 @@ test('no login has a Portfolio, Scheme, Lettings or Ask entry, or a menu entry t
       assert.ok(url !== '/chatbgp' && url !== '/messages', `${role}: ${url}`);
     }
   }
-  for (const which of ['full', 'staff', 'assetManager', 'jointAgent']) {
+  for (const which of ['full', 'staff', 'jointAgent']) {
     for (const [label] of phone(which)) assert.ok(!GONE.includes(label), `${which}: ${label}`);
   }
 });
@@ -112,11 +130,15 @@ test('phone tabs: staff viewing as Landsec keep Home, the way out of the Landsec
   assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Tasks', '/tasks'], ['Chat', '/messages']]);
 });
 
-test('phone tabs: an asset manager and a joint agent have no Chat tab', () => {
-  assert.deepEqual(phone('assetManager'), [['Properties', '/'], ['Deals', '/landsec/deals'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands']]);
+// Woody, 2026-11-13, asked whether to build chat for joint agents: "yes go ahead".
+test('phone tabs: a joint agent has its own Chat tab, never Messages', () => {
   assert.deepEqual(phone('jointAgent'), [['Properties', '/'], ['Deals', '/landsec/deals'], ['Tracker', '/landsec/tracker'], ['Viewings', '/landsec/viewings'], ['Tasks', '/landsec/tasks']]);
-  // The joint agent's sixth tab, CRM, is added where the tabs are chosen.
-  assert.match(source(TABS), /\[\.\.\.LANDSEC_JOINT_AGENT_NAV_ITEMS, \{ label: "CRM", icon: Target, path: "\/landsec\/brand-crm" \}\]/);
+  // CRM and Chat are added where the tabs are chosen. Chat is the joint
+  // agent's own page, not /messages (the staff and client chat).
+  const tabsSource = source(TABS);
+  assert.match(tabsSource, /\[\.\.\.LANDSEC_JOINT_AGENT_NAV_ITEMS, \{ label: "CRM", icon: Target, path: "\/landsec\/brand-crm" \}, \{ label: "Chat", icon: MessageCircle, path: JOINT_AGENT_CHAT_PATH \}\]/);
+  assert.match(tabsSource, /const JOINT_AGENT_CHAT_PATH = "\/landsec\/chat";/);
+  assert.match(tabsSource, /BOTTOM_NAV_PATHS = \[[^\]]*"\/landsec\/chat"\]/);
 });
 
 test('each entry is the only one lit on its own address', () => {
@@ -128,20 +150,25 @@ test('each entry is the only one lit on its own address', () => {
   }
 });
 
-test('an asset manager or joint agent is never sent to an address their route list refuses', () => {
+test('a joint agent is never sent to an address its route list refuses', () => {
   const routes = plain(evaluate(`${statement(APP, 'const LANDSEC_RESTRICTED_ROUTES')}\nexports.routes = LANDSEC_RESTRICTED_ROUTES;`).routes);
-  for (const role of ['asset_manager', 'joint_agent']) {
+  // The joint agent is the only login with a route jail of its own: an asset
+  // manager takes the ordinary client routes, as a full Landsec login does.
+  assert.deepEqual(Object.keys(routes), ['joint_agent']);
+  assert.deepEqual(routes.joint_agent, ['/', '/home', '/landsec', '/settings/profile']);
+  assert.doesNotMatch(source(APP), /"asset_manager"/);
+  for (const role of ['joint_agent']) {
     const allowed = url => routes[role].some(p => p === '/' ? url === '/' : (url === p || url.startsWith(p + '/')));
     for (const [title, url] of menu(role)) assert.ok(allowed(url), `${role}: ${title} ${url}`);
     // The reason they are left out of the redirects: these would bounce.
     for (const url of [LANDSEC_MENU.properties, LANDSEC_MENU.deals, LANDSEC_MENU.tracker]) assert.ok(!allowed(url), `${role}: ${url}`);
   }
-  // Each redirect asks the role first and gives those two their own page.
+  // Each redirect asks the role first and gives a joint agent its own page.
   for (const [name, page] of [['Home', 'LandsecHome'], ['LandsecDealsRoute', 'LandsecDeals'], ['LandsecSchemeRoute', 'LandsecScheme']]) {
     const body = fn(APP, name);
     const keeps = body.indexOf(`return <${page} />`), moves = body.indexOf('<LandsecMoved');
     assert.ok(body.includes('landsecRestrictedRole('), name);
-    assert.ok(keeps > 0 && moves > keeps, `${name}: the restricted roles' page must be returned before the redirect`);
+    assert.ok(keeps > 0 && moves > keeps, `${name}: the joint agent's page must be returned before the redirect`);
   }
 });
 
@@ -172,8 +199,33 @@ test('on a phone only a real Landsec login is sent from the home page to Propert
   assert.match(rule, /!landsecRestricted/);
 });
 
-test('the chat rail is still hidden for an asset manager and a joint agent', () => {
-  assert.match(source(APP), /\{!landsecRestricted && <div className="flex" onMouseLeave=/);
+test('a joint agent has its own chat on the rail, never the staff chat panel', () => {
+  const app = source(APP);
+  // The staff and client panel (ChatPanel) is mounted for everyone else.
+  assert.match(app, /\{!landsecRestricted && <div className="flex" onMouseLeave=/);
+  assert.equal(app.split('<ChatPanel ').length, 2);
+  // The joint agent's rail holds only its own chat component.
+  assert.match(app, /\{landsecRestricted && location !== "\/landsec\/chat" && <div className="flex">[\s\S]{0,400}?<JointAgentChat variant="rail"/);
+  // The staff chat pages are never mounted for it: both old addresses go to
+  // its own page, with the thread a notification named, and its route list
+  // holds that page (under /landsec).
+  assert.match(app, /const landsecNoChatPage = landsecRestricted && \(location === "\/chatbgp" \|\| location === "\/messages"\);/);
+  assert.match(app, /if \(landsecNoChatPage\) navigate\(`\/landsec\/chat\$\{window\.location\.search \|\| ""\}`, \{ replace: true \}\);/);
+  assert.match(app, /if \(landsecNoChatPage\) return null;/);
+  assert.match(app, /<Route path="\/landsec\/chat" component=\{LandsecChat\} \/>/);
+  // The route guard leaves those two addresses to that redirect.
+  assert.match(fn(APP, 'ClientRouteGuard'), /if \(!ok && restricted && \(location === "\/chatbgp" \|\| location === "\/messages"\)\) ok = true;/);
+  // landsecRestricted is the shared list, and the list is the joint agent alone.
+  assert.match(app, /const landsecRestricted = \(RESTRICTED_LANDSEC_ROLES as string\[\]\)\.includes\(/);
+  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ['joint_agent']);
+  assert.equal(landsecRestrictedRole('asset_manager'), false);
+  assert.equal(landsecRestrictedRole('joint_agent'), true);
+});
+
+test('the unit page and the brand page do not key anything on the asset manager role', () => {
+  for (const file of ['client/src/pages/landsec-unit.tsx', 'client/src/pages/landsec-home.tsx', 'client/src/pages/landsec-tasks.tsx', 'client/src/pages/landsec-viewings.tsx', 'client/src/components/brand-profile-panel.tsx', 'client/src/components/mobile-brand-view.tsx']) {
+    assert.doesNotMatch(source(file), /=== "asset_manager"|!== "asset_manager"/, file);
+  }
 });
 
 test('Deals hides its own tab row in the Landsec view only', () => {
@@ -190,4 +242,22 @@ test('Brand cases is one link on Brands, never for a joint agent', () => {
   assert.match(hub, /queryKey: \["\/api\/landsec\/brand-cases"\], staleTime: 60 \* 1000, enabled: mayHaveBrandCases \}\);/);
   assert.match(hub, /const showBrandCases = mayHaveBrandCases && \(hubBrandCases\?\.cases\?\.length \|\| 0\) > 0;/);
   assert.match(hub, /\{showBrandCases && <Link href="\/landsec\/brand-cases">/);
+});
+
+// A joint agent's chat screen calls only what the gateway opens to it and
+// links to none of BGP's pages.
+test("the joint agent's chat screen calls only its own addresses", () => {
+  const chat = source('client/src/components/landsec/joint-agent-chat.tsx');
+  const called = [...chat.matchAll(/["`](\/api\/[a-z-]+(?:\/[a-z-]+)*)/g)].map(m => m[1]);
+  const allowed = ['/api/auth/me', '/api/chat/threads', '/api/landsec/chat/people', '/api/chat/tag-search', '/api/chat/upload', '/api/chat-media', '/api/chatbgp/chat', '/api/chatbgp/threads', '/api/chat/notifications'];
+  for (const path of called) assert.ok(allowed.includes(path), path);
+  for (const closed of ['/api/users', '/api/crm', '/api/search', '/api/brand', '/members', 'auto-title', 'group-pic', 'chat-with-files', '/api/chat/search']) assert.ok(!chat.includes(closed), closed);
+  // Never the staff tag links, the staff markdown or the staff panel.
+  assert.doesNotMatch(chat, /chat-tags|chatbgp-markdown|chat-panel|tagPath/);
+  for (const page of ['/companies', '/contacts', '/properties', '/deals/', '/available', '/brands']) assert.ok(!chat.includes(`"${page}`) && !chat.includes(`\`${page}`), page);
+  // A unit opens its own tracker and a deal its own Deals page.
+  assert.match(chat, /`\/landsec\/tracker\?unit=\$\{encodeURIComponent\(m\[3\]\)\}`/);
+  assert.match(chat, /"\/landsec\/deals"/);
+  // ChatBGP says in one line what it can answer.
+  assert.match(chat, /ChatBGP answers from your schemes: units, viewings, offers, heads of terms, checklists and tasks\./);
 });

@@ -123,6 +123,8 @@ test('chat adapter enforces sign-in, resolves scope and only emits change events
       } };
       if (name === './evidence-plan') return {};
       if (name === './sql-tools') return { logAudit() {} };
+      if (name === './chatbgp-tenancy-import') return { async chatTenantActor() { return { userId: 'client-user', name: 'client-user', viewer: 'client' }; } };
+      if (name === './chatbgp-internal') return { isInternalStaffRequest() { return false; } };
       assert.fail(name);
     },
   });

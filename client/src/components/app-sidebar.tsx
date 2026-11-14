@@ -122,9 +122,9 @@ const coreNavBase = [
 ];
 
 // Landsec's menu (desktop sidebar and phone overlay), for a full Landsec
-// login and for staff viewing as Landsec (Woody, 2026-11-12: "The side bar
-// should have Properties, deals and letting tracker"; Brands stays). Tasks
-// joins these four in landsecNavFor below.
+// login (an asset manager is one) and for staff viewing as Landsec (Woody,
+// 2026-11-12: "The side bar should have Properties, deals and letting
+// tracker"; Brands stays). Tasks joins these four in landsecNavFor below.
 // Portfolio and Lettings are folded into Properties and Deals, and Ask is
 // gone: chat is the ChatBGP rail on the right
 // (docs/landsec-menu-plan-2026-11-12.md, part 1).
@@ -135,8 +135,8 @@ export const LANDSEC_NAV = [
   { title: "Brands", url: LANDSEC_MENU.brands, icon: Handshake },
 ];
 
-// An asset manager or joint agent keeps the scheme-limited pages for now (the
-// Landsec home and its deals page): the same two labels, their own addresses.
+// A joint agent keeps the scheme-limited pages for now (the Landsec home and
+// its deals page): the same two labels, their own addresses.
 const LANDSEC_RESTRICTED_NAV = [
   { title: "Properties", url: LANDSEC_RESTRICTED_MENU.properties, icon: Building2 },
   { title: "Deals", url: LANDSEC_RESTRICTED_MENU.deals, icon: BarChart3 },
@@ -157,14 +157,15 @@ export const LANDSEC_JOINT_AGENT_NAV = [
 // keep their own My Tasks (/tasks) behind the same entry.
 const LANDSEC_TASKS_NAV = { title: "Tasks", url: LANDSEC_MENU.tasks, icon: ListTodo };
 
-// Asset managers keep Brands; joint agents have no Brands and have their
-// tracker, viewings and tasks. Neither has an Ask entry (nobody does now).
-// Everything is filtered to their schemes server-side.
+// A joint agent has no Brands and has its own tracker, viewings and tasks,
+// all filtered to its schemes server-side. Every other Landsec login, an
+// asset manager included (Woody, 2026-11-13: "asset managers and leasing
+// landsec should be the same"), has the five-entry menu. Nobody has an Ask
+// entry now.
 // A joint agent has no Brand Intelligence, so its Brand CRM (targets and
 // diary for its own schemes) is a page inside the Landsec workspace.
 const JOINT_AGENT_BRAND_CRM = { title: "Brand CRM", url: "/landsec/brand-crm", icon: Target };
 export function landsecNavFor(role: string | null | undefined, staffView = false) {
-  if (role === "asset_manager") return [...LANDSEC_RESTRICTED_NAV, LANDSEC_TASKS_NAV, ...LANDSEC_NAV.filter(i => i.title === "Brands")];
   if (role === "joint_agent") return [...LANDSEC_RESTRICTED_NAV, ...LANDSEC_JOINT_AGENT_NAV, JOINT_AGENT_BRAND_CRM];
   return [...LANDSEC_NAV.filter(i => i.title !== "Brands"), { ...LANDSEC_TASKS_NAV, url: landsecTasksPath(staffView) }, ...LANDSEC_NAV.filter(i => i.title === "Brands")];
 }

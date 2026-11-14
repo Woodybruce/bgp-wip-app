@@ -53,7 +53,7 @@ test('a client is given an action BGP shared with its company as title, date, ow
   assert.deepEqual([full.actions[3].schemeName, full.actions[3].unitLabel], [null, null]);
   const sent = JSON.stringify(full.actions.slice(1));
   for (const secret of ['fee', 'Landsec asset manager', 'p-blue', 'u-1', 'landsec', 'Hammerson', '"owner"']) assert.ok(!sent.includes(secret), secret);
-  // An asset manager or joint agent: only what sits at one of their own schemes.
+  // A login held to named schemes (a joint agent; an asset manager was one until 13 November 2026): only what sits at one of its own schemes.
   assert.deepEqual(clientPlanView(data, new Set(), { ...landsec, ownSchemesOnly: true }).actions.map(a => a.id), ['shared']);
   assert.deepEqual(clientPlanView(data, new Set(), { companyId: 'landsec', properties: new Set(['p-west']), ownSchemesOnly: true }).actions, []);
   // Another client, and a client whose schemes could not be read, get none of them.
@@ -386,7 +386,7 @@ test('CRM planning splits into a landlord view and a brand view without losing o
         assert.deepEqual((await request('GET', query, null, 'ham-user', 'hammerson', { 'x-schemes': 'bluewater' })).body, { strategies: [], events: [], actions: [] });
       }
 
-      // An asset manager or joint agent: only a shared action at one of their own schemes.
+      // A login held to named schemes (a joint agent; an asset manager was one until 13 November 2026): only a shared action at one of its own schemes.
       const restricted = async schemes => ids((await request('GET', '?companyId=wingstop', null, 'ls-user', 'landsec', { 'x-schemes': schemes })).body.actions).filter(actionId => actionId !== 'a-client');
       assert.deepEqual(await restricted('bluewater'), ids([shared.body, duplicate.body]));
       assert.deepEqual(await restricted('westgate'), [west.body.id]);

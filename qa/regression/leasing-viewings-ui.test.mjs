@@ -165,7 +165,7 @@ test('brand activity separates confirmed attended and scheduled rows, caps its b
     { ...viewing, id: 'invalid-date', viewingDate: '2026-99-42' },
   ];
   const exports = {}, captured = [];
-  // A Landsec asset manager is refused the viewings list, so the card neither asks for it nor draws (2026-11-13).
+  // A restricted Landsec login is refused the viewings list, so the card neither asks for it nor draws (2026-11-13). Today that is a joint agent, who has no brand page; an asset manager is a full Landsec login.
   let landsecRestricted = false;
   const bindings = { React, exports, Intl, Date, calendarDateValue, encodeURIComponent, useLandsecRestricted: () => landsecRestricted,
     useQuery: config => { captured.push(config); return { data: { viewings: rows }, isError: false, isLoading: false }; } };

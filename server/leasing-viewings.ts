@@ -44,7 +44,7 @@ const todayLondon = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/L
 const scopeSql = `(($1::text IS NULL OR p.landlord_id = $1 OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id=p.id AND cp.company_id=$1))
   AND ($2::varchar[] IS NULL OR au.property_id = ANY($2::varchar[])))`;
 
-// Who is asking. A Landsec asset manager or joint agent login is scoped to
+// Who is asking. A Landsec joint agent login is scoped to
 // the whole Landsec company, so the company alone is never enough: their
 // scheme set (propertyIds) is applied to every list, single row and write.
 export interface ViewingScope { companyId: string | null; propertyIds: Set<string> | null; jointAgent: boolean }
@@ -188,7 +188,7 @@ async function assertViewingUnit(db: PoolClient, unitId: string | null, scopeIn:
   const unit = (await db.query(`SELECT * FROM available_units WHERE id=$1`, [unitId])).rows[0];
   if (!unit) throw new ViewingError(404, "Tracker unit not found");
   if (scope.companyId && !(await isPropertyInScope(scope.companyId, unit.property_id))) throw new ViewingError(403, "Unit is outside your portfolio");
-  // A Landsec asset manager or joint agent: the schemes on their login only.
+  // A Landsec joint agent: the schemes on their login only.
   if (scope.propertyIds && !scope.propertyIds.has(unit.property_id)) throw new ViewingError(403, "Unit is outside your portfolio");
   return unit;
 }
@@ -519,7 +519,7 @@ async function callerStamp(db: PoolClient, req: Request): Promise<{ userId: stri
 }
 
 // Who is asking, checked against the unit's property and, for a Landsec
-// asset manager or joint agent, its scheme. Company scope alone is not
+// joint agent, its scheme. Company scope alone is not
 // enough for them: it covers every Landsec scheme.
 async function offerAccess(req: Request, unit: any) {
   const { briefAccess } = await import("./unit-brief-workspace");
@@ -605,7 +605,7 @@ export async function patchTrackerOffer(req: Request, offerId: string, body: any
   return transaction(async db => {
     const snapshot = (await db.query(`SELECT unit_id,viewing_id FROM unit_offers WHERE id=$1`, [offerId])).rows[0];
     if (!snapshot) throw new ViewingError(404, "Offer not found");
-    // The unit's property and, for a Landsec asset manager or joint agent,
+    // The unit's property and, for a Landsec joint agent,
     // its scheme: an offer on a scheme they are not on is refused here.
     const access = await offerAccess(req, await assertViewingUnit(db, snapshot.unit_id, scope));
     const jointAgent = access.landsecRole === "joint_agent";

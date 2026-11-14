@@ -1319,11 +1319,15 @@ test("the reader saves nothing", () => {
   assert.doesNotMatch(readerCode, /createTrackerOffer|createTrackerViewing|storage\.|db\.insert|db\.update/);
 });
 
-test("the route checks the unit, the scheme and the role before reading, and gates target comments on a BGP login", () => {
+test("the route checks the unit and the scheme before reading, and gates target comments on a BGP login", () => {
   const at = (needle: string) => { const i = readerCode.indexOf(needle); assert.ok(i > 0, needle); return i; };
-  const order = [at("FROM available_units"), at("briefAccess(req, unit.property_id)"), at('access.landsecRole === "asset_manager"'), at("readNoteBody.safeParse"),
+  const order = [at("FROM available_units"), at("briefAccess(req, unit.property_id)"), at('if (!access) return res.status(403)'), at("readNoteBody.safeParse"),
     at("access.seesBgpNotes && access.isStaff"), at("FROM unit_target_operators"), at("readLettingNote({")];
   assert.deepEqual([...order].sort((a, b) => a - b), order);
+  // An asset manager was refused here until 13 November 2026 (it could not
+  // save these forms). It is a full Landsec login now and is answered as one:
+  // nothing in the route is keyed on that role.
+  assert.doesNotMatch(readerCode.slice(readerCode.indexOf("export function setupUnitNoteReaderRoutes")), /asset_manager/);
   assert.doesNotMatch(readerCode, /contactId|contact_id/, "a contact id is never read or returned");
 });
 

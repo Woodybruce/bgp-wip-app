@@ -12,9 +12,10 @@ import fs from "fs";
 import os from "os";
 import crypto from "crypto";
 import { saveFile, getFile, recordUserUpload } from "./file-storage";
-import { contentDispositionFor } from "./utils/http-headers";
+import { contentDispositionFor, uploadShownInline, uploadNameShownInline } from "./utils/http-headers";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
+import { jointAgentOfRequest, jointAgentByUserId, chatPeopleFor, chatCreateDenial, threadHasJointAgent, threadHasJointAgentOrFailed, allowSetsFor, threadForJointAgent, postDenialForJointAgent, notificationLinesFor, liveDealsAt, jointAgentThreadKind, groupAnswerRunner, NO_JOINT_AGENT_THREAD_SQL, type ChatJointAgent } from "./chat-joint-agent";
 import { lenderAddressText } from "./lender-routes";
 import { emitNewMessage, emitMessageUpdated, emitMessageDeleted, emitThreadUpdated, emitMemberAdded, emitMemberRemoved, emitNotification, getIO } from "./websocket";
 import { saveSubscription, removeSubscription, removeSubscriptionForUser, sendPushNotification, getVapidPublicKey } from "./push-notifications";
@@ -75,7 +76,7 @@ import { invalidateContextCache } from "./chatbgp";
 import { registerLeasingViewingRoutes, createTrackerViewing, patchLeasingViewing, deleteTrackerViewing, createTrackerOffer, patchTrackerOffer, serializeViewingForScope, viewingCallerIsJointAgent, ViewingError } from "./leasing-viewings";
 
 
-// A Landsec asset manager or joint agent has the whole Landsec company as
+// A Landsec joint agent has the whole Landsec company as
 // its scope, so the company check is not enough for them: the property (or
 // the deal's property) must also be at one of their schemes.
 async function taskLinksInScope(req: Request, links: { linkedPropertyId?: unknown; linkedDealId?: unknown }): Promise<boolean> {
@@ -97,13 +98,13 @@ async function taskLinksInScope(req: Request, links: { linkedPropertyId?: unknow
   return true;
 }
 
-// The task list of a Landsec asset manager or joint agent login (both reach
-// GET /api/tasks and PATCH /api/tasks/:id since 2026-11-13, Woody: "we need
-// each person to have this update their own task list"; the rule is
-// restrictedLandsecApiRule in shared/landsec.ts). Such a login reads and
-// ticks its own tasks at its own schemes and nothing else: it does not make,
-// assign, delete or re-link a task, and a task never tells it a CRM contact,
-// a deal or a property outside its schemes.
+// The task list of a Landsec joint agent login (the one role held to its
+// own schemes; the gateway rule is restrictedLandsecApiRule in
+// shared/landsec.ts). Such a login reads and ticks its own tasks at its own
+// schemes and nothing else: it does not make, assign, delete or re-link a
+// task, and a task never tells it a CRM contact, a deal or a property
+// outside its schemes. Every other client login, an asset manager included
+// (a full Landsec login: Woody, 2026-11-13), has the ordinary task routes.
 async function restrictedLandsecTaskCaller(req: Request): Promise<{ role: string; propertyIds: Set<string> } | null> {
   const { isClientRequestUser } = await import("./company-scope");
   if (!(await isClientRequestUser(req))) return null;
@@ -147,10 +148,11 @@ function restrictedTaskRow(row: any, caller: { role: string; propertyIds: Set<st
   const viewingTask = ref.startsWith("viewing_followup:");
   if (propertyId ? !caller.propertyIds.has(propertyId) : viewingTask) return null;
   // Where the work is. A joint agent opens the checklist on their own
-  // tracker. An asset manager has no tracker: their way in is the Landsec
-  // unit page, which exists only for a unit tied to a tenancy schedule row
-  // at one of their schemes. With no unit page there is no link, never a
-  // dead one.
+  // tracker. Any other login held to named schemes (none exists today: an
+  // asset manager was one until 13 November 2026 and is a full Landsec login
+  // now) has no tracker: its way in is the Landsec unit page, which exists
+  // only for a unit tied to a tenancy schedule row at one of its schemes.
+  // With no unit page there is no link, never a dead one.
   let link: string | null = null;
   if (ref.startsWith("deal_checklist:") && row.unit_id) {
     if (caller.role === "joint_agent") {
@@ -488,7 +490,84 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>, sc
   return `\n\n## TAGGED IN THIS CONVERSATION\nThese records were tagged with @ in the chat. Questions near a tag are almost certainly about that record — use these ids directly with your tools instead of searching by name:\n${lines.join("\n")}\n`;
 }
 
+// The Landsec joint agent making this request, or null. A role read that
+// fails is answered here and gives false: the caller stops, and never falls
+// through to the answer a staff or full client login would get.
+async function jointAgentOrRefuse(req: Request, res: Response): Promise<Awaited<ReturnType<typeof jointAgentOfRequest>> | false> {
+  try {
+    return await jointAgentOfRequest(req);
+  } catch (e: any) {
+    console.warn("[chat] joint agent check failed, request refused:", e?.message);
+    res.status(503).json({ message: "Your account could not be verified. Try again in a moment." });
+    return false;
+  }
+}
+
+// ChatBGP's answer in a conversation with a joint agent in it when the
+// joint agent, or any client login, asked (Woody, 13 November 2026: "Relax
+// all of those"; BGP staff asking get their full tools: "Yes full use").
+// It never runs with the asker's tools, CRM or context: it is the joint
+// agent's locked run (runSharedJointAgentChat), reading
+// every address as a joint agent in the conversation, through a one-minute
+// sign-in made for it here and removed after, and held to the schemes every
+// joint agent in it shares.
+async function answerAsJointAgents(threadId: string, senderUserId: string, agents: ChatJointAgent[]) {
+  const { sharedJointAgentScope, runSharedJointAgentChat, JOINT_AGENT_NO_SHARED_SCHEME } = await import("./chatbgp-joint-agent");
+  const post = async (content: string) => {
+    const saved = await storage.createChatMessage({ threadId, role: "assistant", content, userId: null, actionData: null, attachments: null });
+    emitNewMessage(threadId, saved, "ChatBGP");
+  };
+  const shared = sharedJointAgentScope(agents);
+  if (!shared) return post(JOINT_AGENT_NO_SHARED_SCHEME);
+  const io = getIO();
+  if (io) io.to(`thread:${threadId}`).emit("typing", { threadId, userId: "__chatbgp__" });
+  const startTime = Date.now();
+  const token = crypto.randomBytes(32).toString("hex");
+  try {
+    const t = (await pool.query(`SELECT created_by FROM chat_threads WHERE id = $1`, [threadId])).rows[0];
+    const memberIds = [t?.created_by, ...(await storage.getChatThreadMembers(threadId)).map(m => m.userId)].filter((v): v is string => !!v);
+    const recent = (await pool.query(
+      `SELECT m.role, m.content, m.user_id, u.name AS sender_name FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
+        WHERE m.thread_id = $1 ORDER BY m.created_at DESC LIMIT 20`, [threadId])).rows.reverse();
+    const inConversation = new Set(memberIds);
+    const messages = recent.map((m: any) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: m.content,
+      senderName: m.user_id && inConversation.has(m.user_id) ? m.sender_name : null,
+    }));
+    if (!messages.some(m => m.role === "user")) return;
+    const asker = (await storage.getUser(senderUserId))?.name || null;
+    await pool.query(`INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, NOW() + interval '11 minutes')`, [token, shared.readAs.userId]);
+    const { callClaudeStreaming } = await import("./chatbgp");
+    const { chatQualitySettings } = await import("./chat-quality-settings");
+    const { resolveChatModel } = await import("./chatbgp-model-router");
+    const { model } = await resolveChatModel({ threadId: null });
+    const deadline = startTime + 10 * 60 * 1000;
+    const out = await runSharedJointAgentChat({ shared, messages, memberIds, askerName: asker && inConversation.has(senderUserId) ? asker : null }, {
+      readAs: `Bearer ${token}`, model, quality: chatQualitySettings(model), callModel: callClaudeStreaming,
+      sendProgress: () => {}, sendDelta: () => {}, isCancelled: () => Date.now() > deadline,
+    });
+    if (!out) { console.log(`[ai-group] Joint agent conversation: skipped in ${Date.now() - startTime}ms`); return; }
+    await post(out.reply);
+    console.log(`[ai-group] Joint agent conversation: answered in ${Date.now() - startTime}ms`);
+  } catch (err: any) {
+    console.error("[ai-group] Joint agent conversation: answer failed:", err?.message);
+    await post("Sorry, I had a bit of a hiccup there. Could you say that again?").catch(() => {});
+  } finally {
+    if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });
+    await pool.query(`DELETE FROM auth_tokens WHERE token = $1`, [token]).catch(() => {});
+  }
+}
+
 async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request, triggerMessageId?: string) {
+  // With a joint agent in the conversation, who ASKED decides (the posting
+  // request's own sign-in): BGP staff get the ordinary answer below with
+  // their full tools (Woody, 13 November 2026: "Yes full use"); the joint
+  // agent or any client login gets the joint agent's locked run
+  // (answerAsJointAgents). A check that fails gives no answer at all.
+  const groupRunner = await groupAnswerRunner({ threadId, req });
+  if (groupRunner.runner === "none") return;
+  if (groupRunner.runner === "joint_agent") return answerAsJointAgents(threadId, senderUserId, groupRunner.agents);
   const startTime = Date.now();
   const groupDeadline = startTime + 10 * 60 * 1000;
 
@@ -843,7 +922,30 @@ export async function registerRoutes(
       // Everything else in the store (other users' uploads, KYC passports,
       // generated staff documents) is 404 for them — a forwarded URL is not
       // an entitlement.
-      if (user.role === "Client") {
+      // A joint agent: its own upload, or a file someone else posted in a
+      // conversation between people that it is in. Its own message naming a
+      // file is no entitlement (it could type any file name it has learned).
+      const mediaJointAgent = await jointAgentByUserId(userId);
+      if (mediaJointAgent) {
+        const reach = await pool.query(
+          `SELECT 1 WHERE EXISTS (
+              SELECT 1 FROM user_upload_history
+               WHERE user_id = $1 AND storage_key = 'chat-media/' || $2::text
+            ) OR EXISTS (
+              SELECT 1 FROM chat_messages m
+                JOIN chat_threads t ON t.id = m.thread_id
+               WHERE t.is_ai_chat = false AND COALESCE(t.has_ai_member, false) = false
+                 AND t.property_id IS NULL AND t.linked_type IS NULL AND t.linked_id IS NULL
+                 AND (t.created_by = $1 OR EXISTS (
+                        SELECT 1 FROM chat_thread_members tm WHERE tm.thread_id = t.id AND tm.user_id = $1))
+                 AND m.role = 'user' AND m.user_id IS DISTINCT FROM $1
+                 AND (position(('/api/chat-media/' || $2::text) in m.content) > 0
+                      OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.attachments, '{}')) a WHERE position(('/api/chat-media/' || $2::text) in a) > 0))
+            )`,
+          [userId, filename]
+        );
+        if (!filename || (reach.rowCount || 0) === 0) return res.status(404).end();
+      } else if (user.role === "Client") {
         const reach = await pool.query(
           `SELECT 1 WHERE EXISTS (
               SELECT 1 FROM user_upload_history
@@ -862,13 +964,29 @@ export async function registerRoutes(
         if ((reach.rowCount || 0) === 0) return res.status(404).end();
       }
       res.set("Cache-Control", "private, no-store");
+      // An upload is never run as a page at the app's own address: the
+      // stated type is taken as given (nosniff), and anything a browser
+      // could run a script from (HTML, SVG, XML, an unknown type) is sent as
+      // a download in a sandbox. Any login can upload here, an outside
+      // agency's included, and staff open what they are sent.
+      res.set("X-Content-Type-Options", "nosniff");
       const file = await getFile(`chat-media/${filename}`);
       if (!file) {
         const diskPath = path.join(CHAT_MEDIA_DIR, filename);
-        if (fs.existsSync(diskPath)) return res.sendFile(diskPath);
+        if (fs.existsSync(diskPath)) {
+          if (!uploadNameShownInline(filename)) {
+            res.set("Content-Security-Policy", "sandbox; default-src 'none'");
+            res.set("Content-Disposition", contentDispositionFor(filename));
+          }
+          return res.sendFile(diskPath);
+        }
         return res.status(404).end();
       }
-      res.set("Content-Type", file.contentType);
+      res.set("Content-Type", file.contentType || "application/octet-stream");
+      if (!uploadShownInline(file.contentType)) {
+        res.set("Content-Security-Policy", "sandbox; default-src 'none'");
+        res.set("Content-Disposition", contentDispositionFor(file.originalName || filename));
+      }
       // chat-media also stores KYC documents (passports, bank statements) —
       // auth-gated content must never be publicly cacheable.
       const downloadTypes = [
@@ -920,7 +1038,8 @@ export async function registerRoutes(
         // recently" without needing the exact filename — fixes the "file
         // vanished" complaint when the user comes back in a new session.
         if (userId) {
-          recordUserUpload(userId, storageKey, f.originalname, f.mimetype, f.size, url).catch(() => {});
+          // Awaited: a joint agent's attachment is checked against this row.
+          await recordUserUpload(userId, storageKey, f.originalname, f.mimetype, f.size, url).catch(() => {});
         }
         return { url, name: f.originalname, size: f.size, type: f.mimetype };
       }));
@@ -2284,6 +2403,29 @@ export async function registerRoutes(
       const q = (req.query.q as string || "").trim();
       const results: Array<{ type: string; id: string; name: string; subtitle?: string }> = [];
 
+      // A Landsec joint agent tags the people it may talk to, and units and
+      // live deals at its own schemes. Nothing from BGP's CRM is searched.
+      const tagJointAgent = await jointAgentOfRequest(req);
+      if (tagJointAgent) {
+        const jaLike = `%${escapeLike(q)}%`;
+        const needle = q.toLowerCase();
+        for (const p of (await chatPeopleFor(tagJointAgent, tagJointAgent.userId)).filter(p => !needle || p.name.toLowerCase().includes(needle)).slice(0, 6)) {
+          results.push({ type: "user", id: p.id, name: p.name });
+        }
+        if (q.length >= 2 && tagJointAgent.propertyIds.length) {
+          const unitRows = await pool.query(
+            `SELECT au.id, au.unit_name, p.name AS property_name
+               FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+              WHERE au.property_id = ANY($2::text[]) AND (au.unit_name ILIKE $1 OR p.name ILIKE $1)
+              ORDER BY au.unit_name LIMIT 5`, [jaLike, tagJointAgent.propertyIds]);
+          for (const u of unitRows.rows) results.push({ type: "unit", id: u.id, name: u.property_name ? `${u.unit_name} · ${u.property_name}` : u.unit_name });
+          for (const d of await liveDealsAt(tagJointAgent.propertyIds, { like: jaLike, limit: 5 })) {
+            results.push({ type: "deal", id: d.id, name: d.name || `Deal ${d.ref ?? ""}`.trim() });
+          }
+        }
+        return res.json({ results });
+      }
+
       // Client accounts (and staff in client-view) only tag entities inside
       // their own portfolio — the picker must honour the same data segregation
       // the CRM does, or a landlord client would see other clients' property,
@@ -2484,6 +2626,30 @@ export async function registerRoutes(
         ORDER BY ut.updated_at DESC
       `, [userId]);
 
+      const listJointAgent = await jointAgentOrRefuse(req, res);
+      if (listJointAgent === false) return;
+      if (listJointAgent) {
+        // Only its conversations between people (no ChatBGP, linked to no
+        // record) and its own ChatBGP chats, each as named fields.
+        const kept = threadsResult.rows
+          .map(row => ({ row, members: (Array.isArray(row.members) ? row.members : []) as Array<{ id: string; name: string; seen: any }> }))
+          .map(x => ({ ...x, kind: jointAgentThreadKind({ createdBy: x.row.created_by, isAiChat: x.row.is_ai_chat, hasAiMember: x.row.has_ai_member, propertyId: x.row.property_id, linkedType: x.row.linked_type, linkedId: x.row.linked_id }, x.members.map(m => m.id), userId) }))
+          .filter((x): x is typeof x & { kind: "team" | "own_ai" } => !!x.kind);
+        const out = [];
+        for (const x of kept) {
+          const memberIds = [x.row.created_by, ...x.members.map(m => m.id)];
+          const allow = await allowSetsFor(listJointAgent, [x.row.title, x.row.last_msg_content], memberIds);
+          out.push(threadForJointAgent({
+            thread: { id: x.row.id, title: x.row.title, createdBy: x.row.created_by, hasAiMember: x.row.has_ai_member, createdAt: x.row.created_at, updatedAt: x.row.updated_at },
+            kind: x.kind, members: x.members, creatorName: x.row.creator_name || "Unknown", allow,
+            last: x.row.last_msg_content
+              ? { content: x.row.last_msg_content, senderName: x.row.last_msg_sender?.split(" ")[0] || (x.row.last_msg_role === "assistant" ? "ChatBGP" : "Unknown"), createdAt: x.row.last_msg_at }
+              : null,
+          }));
+        }
+        return res.json(out);
+      }
+
       const threads = threadsResult.rows.map(row => {
         let lastMessage = null;
         if (row.last_msg_content) {
@@ -2535,7 +2701,66 @@ export async function registerRoutes(
   app.post("/api/chat/threads", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
+      const createJointAgent = await jointAgentOrRefuse(req, res);
+      if (createJointAgent === false) return;
+      if (createJointAgent) {
+        // A joint agent makes two things: a conversation with people it may
+        // talk to, or its own ChatBGP chat. Only the title, the kind and the
+        // people are read from the request; nothing links it to a record.
+        const team = req.body?.isAiChat === false;
+        const jaTitle = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 120) : "";
+        const wanted: unknown[] = Array.isArray(req.body?.memberIds) ? req.body.memberIds : [];
+        if (wanted.some(v => typeof v !== "string" || !v)) return res.status(400).json({ message: "memberIds must be a list of people" });
+        const ids = [...new Set(wanted as string[])].filter(id => id !== userId);
+        if (team) {
+          if (!ids.length) return res.status(400).json({ message: "Pick at least one person" });
+          const allowed = new Set((await chatPeopleFor(createJointAgent, userId)).map(p => p.id));
+          if (ids.some(id => !allowed.has(id))) return res.status(403).json({ message: "You can only start a conversation with BGP, the Landsec people at your schemes and other joint agents" });
+        } else if (ids.length || wanted.length) {
+          return res.status(403).json({ message: "A ChatBGP chat is yours alone" });
+        }
+        const facts = { isAiChat: !team, hasAiMember: false, propertyId: null, linkedType: null, linkedId: null };
+        const denial = await chatCreateDenial({ creatorId: userId, memberIds: ids, thread: facts });
+        if (denial) return res.status(409).json({ message: denial });
+        const thread = await storage.createChatThread({
+          title: jaTitle || null, createdBy: userId, propertyId: null, propertyName: null,
+          linkedType: null, linkedId: null, linkedName: null, isAiChat: !team, hasAiMember: false,
+        });
+        const members: Array<{ id: string; name: string; seen: boolean }> = [];
+        if (team) {
+          try {
+            await storage.addChatThreadMember({ threadId: thread.id, userId, addedBy: userId, seen: true });
+            const self = await storage.getUser(userId);
+            members.push({ id: userId, name: self?.name || "Unknown", seen: true });
+            for (const memberId of ids) {
+              await storage.addChatThreadMember({ threadId: thread.id, userId: memberId, addedBy: userId, seen: false });
+              const added = await storage.getUser(memberId);
+              members.push({ id: memberId, name: added?.name || "Unknown", seen: false });
+              emitMemberAdded(thread.id, memberId, added?.name || "Unknown");
+            }
+          } catch (e: any) {
+            // Never leave half a conversation behind.
+            await storage.deleteChatThread(thread.id).catch(() => {});
+            return res.status(e?.code === "CHAT_MEMBER_REFUSED" ? 409 : 500).json({ message: e?.code === "CHAT_MEMBER_REFUSED" ? e.message : "The conversation could not be started" });
+          }
+        }
+        const creator = await storage.getUser(userId);
+        return res.json(threadForJointAgent({
+          thread, kind: team ? "team" : "own_ai", members, creatorName: creator?.name || "Unknown",
+          allow: { memberIds: new Set(members.map(m => m.id)), unitIds: new Set(), dealIds: new Set() },
+        }));
+      }
       const { title, propertyId, propertyName, linkedType, linkedId, linkedName, isAiChat, memberIds } = req.body;
+      // A conversation with a joint agent in it has its own rules
+      // (server/chat-joint-agent.ts): refused here, before anything is made.
+      {
+        const proposed = Array.isArray(memberIds) ? memberIds.filter((id: unknown): id is string => typeof id === "string" && !!id) : [];
+        const denial = await chatCreateDenial({
+          creatorId: userId, memberIds: proposed,
+          thread: { isAiChat: isAiChat !== undefined ? !!isAiChat : true, hasAiMember: proposed.includes("__chatbgp__"), propertyId: propertyId || null, linkedType: linkedType || null, linkedId: linkedId || null },
+        });
+        if (denial) return res.status(409).json({ message: denial });
+      }
 
       if (linkedType && linkedId && isAiChat) {
         // Only a thread the caller created or is a member of — never
@@ -2603,6 +2828,13 @@ export async function registerRoutes(
       if (!thread) return res.status(404).json({ message: "Thread not found" });
       if (!(await threadIsUsers(id, req.session.userId!))) return res.status(403).json({ message: "Not a member of this thread" });
       const { title, propertyId, propertyName, linkedType, linkedId, linkedName, hasAiMember } = req.body;
+      if (propertyId || propertyName || linkedType || linkedId || linkedName) {
+        // Throws when it cannot say, and the save is then refused. ChatBGP
+        // may be switched on there (it answers as the joint agent).
+        if (await threadHasJointAgent(id)) {
+          return res.status(409).json({ message: "A conversation with a joint agent cannot be linked to a record" });
+        }
+      }
       const updates: any = {};
       if (title !== undefined) updates.title = title;
       if (propertyId !== undefined) updates.propertyId = propertyId;
@@ -2726,12 +2958,21 @@ export async function registerRoutes(
       const members = await storage.getChatThreadMembers(thread.id);
       const isMember = thread.createdBy === userId || members.some(m => m.userId === userId);
       if (!isMember) return res.status(403).json({ message: "You are not a member of this thread" });
+      const readJointAgent = await jointAgentOrRefuse(req, res);
+      if (readJointAgent === false) return;
+      const readKind = readJointAgent ? jointAgentThreadKind(thread, members.map(m => m.userId), userId) : null;
+      if (readJointAgent && !readKind) return res.status(404).json({ message: "Thread not found" });
       const messages = await storage.getChatMessages(thread.id);
       const memberUsers = await Promise.all(members.map(async (m) => {
         const u = await storage.getUser(m.userId);
         return { id: m.userId, name: u?.name || "Unknown", seen: m.seen };
       }));
       const creator = await storage.getUser(thread.createdBy);
+      if (readJointAgent && readKind) {
+        const allow = await allowSetsFor(readJointAgent, [thread.title, ...messages.map(m => m.content)], [thread.createdBy, ...members.map(m => m.userId)]);
+        await storage.markThreadSeen(thread.id, userId);
+        return res.json(threadForJointAgent({ thread, kind: readKind, members: memberUsers, creatorName: creator?.name || "Unknown", allow, messages }));
+      }
       await storage.markThreadSeen(thread.id, userId);
       res.json({ ...thread, messages, members: memberUsers, creatorName: creator?.name || "Unknown" });
     } catch (err: any) {
@@ -2798,6 +3039,13 @@ export async function registerRoutes(
       if (thread.createdBy !== req.session.userId) {
         return res.status(403).json({ message: "Only the thread creator can delete it" });
       }
+      const deleteJointAgent = await jointAgentOrRefuse(req, res);
+      if (deleteJointAgent === false) return;
+      if (deleteJointAgent) {
+        // Its own ChatBGP chats only: a conversation holds other people's words.
+        const memberIds = (await storage.getChatThreadMembers(id)).map(m => m.userId);
+        if (jointAgentThreadKind(thread, memberIds, req.session.userId!) !== "own_ai") return res.status(403).json({ message: "A conversation cannot be deleted" });
+      }
       const { isGossipThread } = await import("./gossip-channel");
       if (isGossipThread(thread as any)) return res.status(409).json({ message: "The firm-wide gossip channel can't be deleted" });
       await storage.deleteChatThread(id);
@@ -2816,10 +3064,26 @@ export async function registerRoutes(
       const threadMembers = await storage.getChatThreadMembers(thread.id);
       const isMember = thread.createdBy === userId || threadMembers.some(m => m.userId === userId);
       if (!isMember) return res.status(403).json({ message: "You are not a member of this thread" });
-      const { content, role: requestedRole, actionData, attachments } = req.body;
+      const postJointAgent = await jointAgentOrRefuse(req, res);
+      if (postJointAgent === false) return;
+      let { content, role: requestedRole, actionData, attachments } = req.body;
+      if (postJointAgent) {
+        // A joint agent posts as itself, in one of its two kinds of
+        // conversation, with tags and files it is allowed.
+        if (!jointAgentThreadKind(thread, threadMembers.map(m => m.userId), userId)) return res.status(403).json({ message: "You are not a member of this thread" });
+        const checked = await postDenialForJointAgent(postJointAgent, [thread.createdBy, ...threadMembers.map(m => m.userId)], { content, attachments });
+        if (checked.error) return res.status(400).json({ message: checked.error });
+        requestedRole = "user";
+        actionData = null;
+        attachments = checked.attachments;
+      }
       if (!content || (typeof content === "string" && !content.trim())) {
         return res.status(400).json({ message: "Message content is required" });
       }
+      // A conversation with a joint agent in it is never read for
+      // requirements. A failed check counts as yes. (ChatBGP may answer
+      // there since 13 November 2026: triggerAiGroupResponse decides how.)
+      const jointAgentThread = !!postJointAgent || (!thread.isAiChat && await threadHasJointAgentOrFailed(thread.id));
       const role = (requestedRole === "assistant" && (thread.isAiChat || thread.hasAiMember)) ? "assistant" : "user";
       const message = await storage.createChatMessage({
         threadId: thread.id,
@@ -2843,7 +3107,7 @@ export async function registerRoutes(
         // their Messages list (Woody, 2026-09-08). Runs before the
         // notification fan-out so the tagged person is pinged too.
         try {
-          const mentioned = await resolveMentionedUserIds(content, req.body.mentionedUserIds);
+          const mentioned = postJointAgent ? [] : await resolveMentionedUserIds(content, req.body.mentionedUserIds);
           if (mentioned.length) {
             const current = new Set(threadMembers.map(m => m.userId));
             for (const uid of mentioned) {
@@ -2859,30 +3123,37 @@ export async function registerRoutes(
           console.error("[chat] Failed to auto-join tagged user:", e?.message);
         }
         const members = await storage.getChatThreadMembers(thread.id);
-        const preview = content?.substring(0, 80) || "New message";
+        const preview = (typeof content === "string" ? content.substring(0, 80) : "") || "New message";
         const threadTitle = thread.title || "Chat";
+        // What each recipient is sent: a joint agent gets the line with the
+        // tags it may not see taken out, and a link to its own chat page.
+        const recipientIds = [...new Set([...members.map(m => m.userId), thread.createdBy])].filter(id => id !== userId);
+        const lines = await notificationLinesFor({ threadId: thread.id, content, recipientIds, memberIds: [thread.createdBy, ...members.map(m => m.userId)], plain: preview });
+        const lineFor = (id: string) => lines.get(id) || { preview: "New message", url: `/chatbgp?thread=${thread.id}` };
         // The all-staff gossip channel shows as unread but never pushes to
         // every phone in the firm on each post.
         const { isGossipThread } = await import("./gossip-channel");
         const quietChannel = isGossipThread(thread as any);
         for (const m of members) {
           if (m.userId !== userId) {
-            emitNotification(m.userId, { type: "new_message", threadId: thread.id, senderName, preview });
+            const line = lineFor(m.userId);
+            emitNotification(m.userId, { type: "new_message", threadId: thread.id, senderName, preview: line.preview });
             if (!quietChannel) sendPushNotification(m.userId, {
               title: senderName,
-              body: preview,
+              body: line.preview,
               tag: `chat-${thread.id}`,
-              url: `/chatbgp?thread=${thread.id}`,
+              url: line.url,
             }).catch(() => {});
           }
         }
         if (thread.createdBy !== userId && !members.find(m => m.userId === thread.createdBy)) {
-          emitNotification(thread.createdBy, { type: "new_message", threadId: thread.id, senderName, preview });
+          const line = lineFor(thread.createdBy);
+          emitNotification(thread.createdBy, { type: "new_message", threadId: thread.id, senderName, preview: line.preview });
           sendPushNotification(thread.createdBy, {
             title: senderName,
-            body: preview,
+            body: line.preview,
             tag: `chat-${thread.id}`,
-            url: `/chatbgp?thread=${thread.id}`,
+            url: line.url,
           }).catch(() => {});
         }
 
@@ -2919,7 +3190,7 @@ export async function registerRoutes(
         // Requirements centre: a staff post that tags a brand in a staff-only
         // thread is read for a stated requirement (a suggestion only). The
         // checks are in server/requirement-feeds.ts; nothing here waits on it.
-        if (typeof content === "string" && content.includes("(tag:company/")) {
+        if (!jointAgentThread && typeof content === "string" && content.includes("(tag:company/")) {
           import("./requirement-feeds").then(m => m.chatMessagePosted(req, thread, message)).catch(() => {});
         }
       }
@@ -2936,8 +3207,11 @@ export async function registerRoutes(
       const thread = await storage.getChatThread(id);
       if (!thread) return res.status(404).json({ message: "Thread not found" });
       const { userId } = req.body;
-      if (!userId) return res.status(400).json({ message: "userId required" });
+      if (!userId || typeof userId !== "string") return res.status(400).json({ message: "userId required" });
+      if (!(await threadIsUsers(id, addedBy))) return res.status(403).json({ message: "Not a member of this thread" });
       if (userId === "__chatbgp__") {
+        // In a conversation with a joint agent in it ChatBGP answers as the
+        // joint agent may read (triggerAiGroupResponse), so it may be added.
         // The AI joins via the thread flag, not a member row — same mechanism
         // as the create-time toggle, so the group responder picks it up.
         await storage.updateChatThread(thread.id, { hasAiMember: true });
@@ -2954,6 +3228,7 @@ export async function registerRoutes(
       emitMemberAdded(thread.id, userId, addedUser?.name || "Unknown");
       res.json(member);
     } catch (err: any) {
+      if (err?.code === "CHAT_MEMBER_REFUSED") return res.status(409).json({ message: err.message });
       res.status(500).json({ message: err?.message || "Failed to add member" });
     }
   });
@@ -2987,6 +3262,16 @@ export async function registerRoutes(
       if (msg.threadId !== threadId) return res.status(400).json({ message: "Message does not belong to this thread" });
       if (msg.userId !== userId) return res.status(403).json({ message: "Can only edit your own messages" });
       if (msg.role !== "user") return res.status(403).json({ message: "Can only edit user messages" });
+      const editJointAgent = await jointAgentOrRefuse(req, res);
+      if (editJointAgent === false) return;
+      if (editJointAgent) {
+        // An edit is held to what a new message is.
+        const editThread = await storage.getChatThread(threadId);
+        const editMembers = (await storage.getChatThreadMembers(threadId)).map(m => m.userId);
+        if (!editThread || !jointAgentThreadKind(editThread, editMembers, userId)) return res.status(403).json({ message: "You are not a member of this thread" });
+        const checked = await postDenialForJointAgent(editJointAgent, [editThread.createdBy, ...editMembers], { content });
+        if (checked.error) return res.status(400).json({ message: checked.error });
+      }
       const updated = await storage.updateChatMessage(messageId, content.trim());
       emitMessageUpdated(threadId, messageId, content.trim());
       res.json(updated);
@@ -3005,6 +3290,13 @@ export async function registerRoutes(
       const thread = await storage.getChatThread(threadId);
       if (msg.userId !== userId && thread?.createdBy !== userId) {
         return res.status(403).json({ message: "Can only delete your own messages or as thread creator" });
+      }
+      const unsendJointAgent = await jointAgentOrRefuse(req, res);
+      if (unsendJointAgent === false) return;
+      if (unsendJointAgent) {
+        // Its own messages only, in a conversation it may hold.
+        const memberIds = (await storage.getChatThreadMembers(threadId)).map(m => m.userId);
+        if (msg.userId !== userId || !thread || !jointAgentThreadKind(thread, memberIds, userId)) return res.status(403).json({ message: "Can only delete your own messages" });
       }
       await storage.deleteChatMessage(messageId);
       emitMessageDeleted(threadId, messageId);
@@ -3149,6 +3441,7 @@ export async function registerRoutes(
   // Manual trigger for the client team-diary → events sync (Landsec).
   // RSS.app plan audit + prune (admin) — see server/rssapp-prune.ts.
   (await import("./rssapp-prune")).registerRssAppPruneRoutes(app);
+  (await import("./property-instagram")).registerPropertyInstagramRoutes(app);
   (await import("./brand-web-feeds")).registerBrandWebFeedRoutes(app);
   // Schema drift: what shared/schema.ts expects that the live DB lacks.
   // GET is a dry run; POST adds the missing columns (nullable). The same
@@ -3289,6 +3582,27 @@ export async function registerRoutes(
       res.json(await runStubPairsBackfill(pool, { dryRun: req.body?.dryRun !== false, by }));
     } catch (e: any) {
       res.status(e?.status || 500).json({ message: e?.message || "stub-pairs backfill failed" });
+    }
+  });
+  // The company on the lease (server/tenant-entity-backfill.ts): links only.
+  // { dryRun: true, propertyId? } previews and records; { dryRun: false, pairs }
+  // links the ticked pairs within an hour of a preview; undo takes { batch }.
+  app.post("/api/admin/tenant-entity-backfill", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { runTenantEntityBackfill } = await import("./tenant-entity-backfill");
+      const by = (req as any).session?.userId || (req as any).tokenUserId || null;
+      res.json(await runTenantEntityBackfill(pool, { dryRun: req.body?.dryRun !== false, by, propertyId: req.body?.propertyId ?? null, pairs: req.body?.pairs, previewedAt: req.body?.previewedAt }));
+    } catch (e: any) {
+      res.status(e?.status || 500).json({ message: e?.message || "The company on the lease back-fill failed." });
+    }
+  });
+  app.post("/api/admin/tenant-entity-backfill/undo", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { undoTenantEntityBackfill } = await import("./tenant-entity-backfill");
+      const by = (req as any).session?.userId || (req as any).tokenUserId || null;
+      res.json(await undoTenantEntityBackfill(pool, { batch: req.body?.batch, by }));
+    } catch (e: any) {
+      res.status(e?.status || 500).json({ message: e?.message || "The undo failed." });
     }
   });
   // Which Microsoft Graph application permissions the app's token carries
@@ -5669,7 +5983,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   });
 
   // Who is asking about a tracker unit's interest: BGP staff, a client login
-  // on its own property, or a Landsec asset manager or joint agent on their
+  // on its own property, or a Landsec joint agent on their
   // own schemes (briefAccess checks the scheme). Null = not theirs.
   async function interestCaller(req: any, propertyId: string | null | undefined): Promise<{ scope: string | null; jointAgent: boolean } | null> {
     const { briefAccess } = await import("./unit-brief-workspace");
@@ -5768,7 +6082,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const { unitInterest } = await import("@shared/schema");
       const [row] = await db.select().from(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
       // The line's unit decides who may remove it: BGP staff, a client login
-      // on its own property, a Landsec asset manager or joint agent on their
+      // on its own property, a Landsec joint agent on their
       // own schemes.
       if (row?.unitId) {
         const unit = await storage.getAvailableUnit(row.unitId);
@@ -5973,7 +6287,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (auScope && req.body?.propertyId && !(await isPropertyInScope(auScope, req.body.propertyId))) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
-      // A Landsec asset manager or joint agent: a property at one of the
+      // A Landsec joint agent: a property at one of the
       // schemes on their login only (the company scope covers all of them).
       if (auScope && req.body?.propertyId && await assertUnitInClientScope(req, req.body.propertyId, { write: true })) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
@@ -6047,7 +6361,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           if (moving && !(await isPropertyInScope(auScope, partial.propertyId as string))) {
             return res.status(403).json({ message: "Destination property is outside your portfolio" });
           }
-          // A Landsec asset manager or joint agent is scoped to the whole
+          // A Landsec joint agent is scoped to the whole
           // Landsec company: the unit, and a property it is moved to, must be
           // at a scheme on their login.
           const { briefAccess } = await import("./unit-brief-workspace");
@@ -6836,7 +7150,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           )).rows.map((r: any) => r.id)
         : null;
       if (scopedPropertyIds && scopedPropertyIds.length === 0) return res.json([]);
-      // A Landsec asset manager or joint agent sees briefs on their own
+      // A Landsec joint agent sees briefs on their own
       // schemes only, and a joint agent never BGP's notes on the targets.
       const { briefSchemePropertyIds, targetForViewer } = await import("./unit-brief-workspace");
       const schemeIds = await briefSchemePropertyIds(req);
@@ -6923,7 +7237,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     const scope = await resolveCompanyScope(req);
     if (!scope) return (await isClientRequestUser(req)) ? "out-of-scope" : null; // staff — unrestricted
     if (!propertyId || !(await isPropertyInScope(scope, propertyId))) return "out-of-scope";
-    // A Landsec asset manager or joint agent: their own schemes only.
+    // A Landsec joint agent: their own schemes only.
     const { briefAccess } = await import("./unit-brief-workspace");
     const access = await briefAccess(req, propertyId);
     if (!access) return "out-of-scope";
@@ -8742,7 +9056,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/available-units/offers/:offerId", requireAuth, async (req, res) => {
     try {
       // patchTrackerOffer checks the offer's unit against the caller's
-      // properties and, for a Landsec asset manager or joint agent, schemes.
+      // properties and, for a Landsec joint agent, schemes.
       res.json(await patchTrackerOffer(req, String(req.params.offerId), req.body));
     } catch (err: any) {
       res.status(err instanceof ViewingError ? err.status : 500).json({ message: err?.message || "Failed to update offer" });
@@ -8785,7 +9099,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const sanitized = path.basename(req.params.filename as string);
       // A client login opens a unit's file only when it can see that unit
-      // (and, for a Landsec asset manager or joint agent, its scheme); the
+      // (and, for a Landsec joint agent, its scheme); the
       // link alone is not enough (review, 2026-11-12). The generated brief
       // document carries BGP's notes on the targets, so a joint agent does
       // not get it. BGP staff are unaffected.
@@ -10359,7 +10673,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const status = req.query.status as string | undefined;
-      // A Landsec asset manager or joint agent: their own tasks at their own
+      // A Landsec joint agent: their own tasks at their own
       // schemes, with where the work is and no CRM contact or deal.
       const restrictedCaller = await restrictedLandsecTaskCaller(req);
       if (restrictedCaller) {
@@ -10462,7 +10776,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const taskId = req.params.id;
-      // A Landsec asset manager or joint agent ticks or reopens their own
+      // A Landsec joint agent ticks or reopens their own
       // task and changes nothing else on it: no property, deal, contact or
       // notebook link, no new owner, no new wording.
       const restrictedCaller = await restrictedLandsecTaskCaller(req);
@@ -10587,7 +10901,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             `SELECT DISTINCT t.id FROM chat_threads t
               JOIN chat_thread_members tm ON tm.thread_id = t.id
               JOIN users cu ON cu.id = tm.user_id AND cu.role = 'Client'
-             WHERE t.property_id = $1 AND t.is_ai_chat IS NOT TRUE`,
+             WHERE t.property_id = $1 AND t.is_ai_chat IS NOT TRUE
+               AND ${NO_JOINT_AGENT_THREAD_SQL}`,
             [row.linked_property_id]
           );
           if (!threads.rows.length) return;

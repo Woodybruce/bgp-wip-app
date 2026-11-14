@@ -48,7 +48,7 @@ interface TrackerAccess {
 // Who is asking, and which properties may they have. A joint agent gets the
 // properties of the schemes on their login; BGP staff every scheme property;
 // anyone else (an asset manager, a leasing manager, the plain Landsec login,
-// another client) gets null. No catch: if the role cannot be read the request
+// another client) gets null: a Landsec login has the real Letting Tracker. No catch: if the role cannot be read the request
 // fails, rather than a restricted login being treated as a wider one.
 async function trackerAccess(req: Request): Promise<TrackerAccess | null> {
   const userId = req.session?.userId || (req as any).tokenUserId || null;

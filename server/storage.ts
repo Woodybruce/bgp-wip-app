@@ -703,6 +703,36 @@ export class DatabaseStorage implements IStorage {
         eq(chatThreadMembers.userId, member.userId),
       ));
     if (existing.length > 0) return existing[0];
+    // A conversation with a Landsec joint agent in it is held to the rules in
+    // server/chat-joint-agent.ts, whoever is adding and from whichever
+    // route. A failed check refuses the add.
+    const { chatMemberDenial, jointAgentsAmong } = await import("./chat-joint-agent");
+    const [thread] = await db.select().from(chatThreads).where(eq(chatThreads.id, member.threadId));
+    const current = await db.select().from(chatThreadMembers).where(eq(chatThreadMembers.threadId, member.threadId));
+    const counted = await pool.query(`SELECT COUNT(*)::int AS n FROM chat_messages WHERE thread_id = $1`, [member.threadId]);
+    const denial = await chatMemberDenial({
+      thread: {
+        createdBy: thread?.createdBy || null, isAiChat: thread ? thread.isAiChat : null, hasAiMember: thread?.hasAiMember || false,
+        propertyId: thread?.propertyId || null, linkedType: thread?.linkedType || null, linkedId: thread?.linkedId || null,
+      },
+      existingMemberIds: current.map(m => m.userId),
+      targetUserId: member.userId,
+      messageCount: Number(counted.rows[0]?.n || 0),
+    });
+    if (denial) throw Object.assign(new Error(denial), { code: "CHAT_MEMBER_REFUSED" });
+    if ((await jointAgentsAmong([member.userId])).size) {
+      // A joint agent joins only a conversation with no messages: the test
+      // is part of the insert, so a message landing in between is not handed
+      // over.
+      const r = await pool.query(
+        `INSERT INTO chat_thread_members (thread_id, user_id, added_by, seen)
+         SELECT $1::varchar, $2::varchar, $3, $4
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages WHERE thread_id = $1::varchar)
+         RETURNING id, thread_id AS "threadId", user_id AS "userId", added_by AS "addedBy", seen, added_at AS "addedAt"`,
+        [member.threadId, member.userId, member.addedBy ?? null, member.seen ?? false]);
+      if (!r.rows[0]) throw Object.assign(new Error("A joint agent can only join a conversation before its first message. Start a new conversation."), { code: "CHAT_MEMBER_REFUSED" });
+      return r.rows[0] as ChatThreadMember;
+    }
     const [created] = await db.insert(chatThreadMembers).values(member).returning();
     return created;
   }

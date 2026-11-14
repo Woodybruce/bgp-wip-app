@@ -30,7 +30,7 @@ const PROPERTIES = `SELECT p.id, p.name FROM crm_properties p
   )`;
 
 // These are SQL expressions chosen below, never request-supplied identifiers.
-function evidence(select: Record<string, string>, from: string): string {
+export function evidence(select: Record<string, string>, from: string): string {
   const columns = {
     contact_id: "NULL", company_id: "NULL", user_id: "NULL", fallback_id: "NULL", fallback_name: "NULL",
     group_key: "'deals'", source: "NULL", property_id: "NULL", deal_id: "NULL", unit_id: "NULL",
@@ -38,6 +38,35 @@ function evidence(select: Record<string, string>, from: string): string {
   };
   return `SELECT ${Object.entries(columns).map(([key, value]) => `${value}::${key === "confirmed" ? "boolean" : "text"} AS ${key}`).join(", ")} ${from}`;
 }
+
+// Reads the props CTE of the query it sits in.
+export const OCCUPIER_CTES = `tenancy AS (
+      SELECT ts.*, COALESCE(NULLIF(btrim(ts.trading_name), ''), NULLIF(btrim(ts.tenant_name), ''), 'Unresolved occupier') AS occupier_name
+      FROM tenancy_schedule_units ts JOIN props p ON p.id = ts.property_id
+      WHERE ts.tenant_company_id IS NOT NULL OR (
+        COALESCE(NULLIF(btrim(ts.trading_name), ''), NULLIF(btrim(ts.tenant_name), '')) IS NOT NULL
+        AND lower(btrim(COALESCE(ts.status, ''))) NOT IN ('vacant', 'void', 'available')
+        AND lower(btrim(COALESCE(NULLIF(ts.trading_name, ''), ts.tenant_name, ''))) NOT IN ('vacant', 'void', 'available')
+      )
+    ),
+    resolved_occupiers AS (
+      SELECT t.*, COALESCE(canonical.id, matched.company_id) AS resolved_company_id,
+        canonical.id IS NOT NULL AS confirmed,
+        CASE WHEN canonical.id IS NOT NULL THEN 'recorded tenancy'
+             WHEN matched.company_id IS NOT NULL THEN 'matched by name'
+             ELSE 'from the tenancy schedule' END AS match_source
+      FROM tenancy t LEFT JOIN crm_companies canonical ON canonical.id = t.tenant_company_id
+      LEFT JOIN LATERAL (
+        SELECT CASE WHEN count(*) = 1 THEN min(candidate.id) END AS company_id
+        FROM (
+          SELECT co.id, rank() OVER (ORDER BY CASE
+            WHEN lower(co.name) IN (lower(COALESCE(t.tenant_name, '')), lower(COALESCE(t.trading_name, ''))) THEN 0 ELSE 1 END) AS preference
+          FROM crm_companies co WHERE t.tenant_company_id IS NULL AND (
+            lower(co.name) IN (lower(COALESCE(t.tenant_name, '')), lower(COALESCE(t.trading_name, '')))
+            OR (length(co.name) >= 5 AND lower(COALESCE(t.tenant_name, '')) LIKE lower(co.name) || ' %'))
+        ) candidate WHERE candidate.preference = 1
+      ) matched ON true
+    )`;
 
 export function buildPortfolioContactsQuery(companyId: string, scopeCompanyId: string | null, brandSliceSql: string, hasOverrides: boolean) {
   const visible = (contact: string, property: string) => `NOT EXISTS (
@@ -121,33 +150,7 @@ export function buildPortfolioContactsQuery(companyId: string, scopeCompanyId: s
       JOIN LATERAL (SELECT o.company_id FROM unit_offers o JOIN crm_companies co ON co.id = o.company_id
         WHERE o.unit_id = a.id ORDER BY o.offer_date DESC NULLS LAST, o.id LIMIT 1) latest ON true
     ),
-    tenancy AS (
-      SELECT ts.*, COALESCE(NULLIF(btrim(ts.trading_name), ''), NULLIF(btrim(ts.tenant_name), ''), 'Unresolved occupier') AS occupier_name
-      FROM tenancy_schedule_units ts JOIN props p ON p.id = ts.property_id
-      WHERE ts.tenant_company_id IS NOT NULL OR (
-        COALESCE(NULLIF(btrim(ts.trading_name), ''), NULLIF(btrim(ts.tenant_name), '')) IS NOT NULL
-        AND lower(btrim(COALESCE(ts.status, ''))) NOT IN ('vacant', 'void', 'available')
-        AND lower(btrim(COALESCE(NULLIF(ts.trading_name, ''), ts.tenant_name, ''))) NOT IN ('vacant', 'void', 'available')
-      )
-    ),
-    resolved_occupiers AS (
-      SELECT t.*, COALESCE(canonical.id, matched.company_id) AS resolved_company_id,
-        canonical.id IS NOT NULL AS confirmed,
-        CASE WHEN canonical.id IS NOT NULL THEN 'recorded tenancy'
-             WHEN matched.company_id IS NOT NULL THEN 'matched by name'
-             ELSE 'from the tenancy schedule' END AS match_source
-      FROM tenancy t LEFT JOIN crm_companies canonical ON canonical.id = t.tenant_company_id
-      LEFT JOIN LATERAL (
-        SELECT CASE WHEN count(*) = 1 THEN min(candidate.id) END AS company_id
-        FROM (
-          SELECT co.id, rank() OVER (ORDER BY CASE
-            WHEN lower(co.name) IN (lower(COALESCE(t.tenant_name, '')), lower(COALESCE(t.trading_name, ''))) THEN 0 ELSE 1 END) AS preference
-          FROM crm_companies co WHERE t.tenant_company_id IS NULL AND (
-            lower(co.name) IN (lower(COALESCE(t.tenant_name, '')), lower(COALESCE(t.trading_name, '')))
-            OR (length(co.name) >= 5 AND lower(COALESCE(t.tenant_name, '')) LIKE lower(co.name) || ' %'))
-        ) candidate WHERE candidate.preference = 1
-      ) matched ON true
-    ),
+    ${OCCUPIER_CTES},
     links AS (${links.join("\nUNION ALL\n")})
     SELECT CASE WHEN c.id IS NOT NULL THEN 'contact:' || c.id WHEN u.id IS NOT NULL THEN 'user:' || u.id
              WHEN co.id IS NOT NULL THEN 'company:' || co.id ELSE l.fallback_id END AS entry_id,

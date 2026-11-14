@@ -26,11 +26,13 @@ export default function LandsecHome() {
 
   const { data: cases } = useQuery<{ cases: { id: string; companyId: string; headline: string | null; status: string; brand: { name: string; logoUrl: string | null }; tally: Record<string, number>; responseCount: number }[] }>({ queryKey: ["/api/landsec/brand-cases"], staleTime: 60 * 1000, enabled: !!user && user.landsecRole !== "joint_agent" });
   const isStaff = !!data?.outOfScope;
-  // Where the stage counts open. BGP and the Landsec leasing team have the
-  // letting tracker; a joint agent has their own tracker for their schemes;
-  // an asset manager has neither, so the counts are not links for them.
+  // Where the stage counts open. A joint agent has its own tracker for its
+  // schemes. Only a joint agent draws this page today: every other Landsec
+  // login (an asset manager included, since 13 November 2026) is sent on to
+  // Properties, so the Letting Tracker link and the Brand cases strip below
+  // are for a login that is not a joint agent, should one land here.
   const role = data?.viewer?.role || user?.landsecRole || null;
-  const trackerHref = role === "joint_agent" ? "/landsec/tracker" : role === "asset_manager" ? null : "/deals/letting";
+  const trackerHref = role === "joint_agent" ? "/landsec/tracker" : "/deals/letting";
   const isAdmin = !!user?.isAdmin;
   const schemeCount = useMemo(() => data?.groups.reduce((n, g) => n + g.schemes.length, 0) ?? 0, [data]);
 

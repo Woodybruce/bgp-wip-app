@@ -14,7 +14,7 @@ import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
 import { LETTING_STATUS_LABELS } from "@shared/letting-rules";
 import { resolveLandsecPortfolio, schemeForPropertyName, type LandsecPortfolio, type ResolvedScheme } from "./landsec-schemes";
 import { landsecViewer, viewerCanSeeScheme, type LandsecViewer } from "./landsec-access";
-import { landsecNer, landsecBriefCheck, landsecIncentivesRecorded, type LandsecAgreedBrief, type LandsecDealClock } from "@shared/landsec";
+import { landsecNer, landsecBriefCheck, landsecIncentivesRecorded, landsecBriefSignerOnly, type LandsecAgreedBrief, type LandsecDealClock } from "@shared/landsec";
 import { waitingClockFor, type WaitingClock } from "@shared/deal-waiting";
 import { resolveStageSince, checkStageSinceInput, londonDay, statusLineIsMoveSql, type StageFacts } from "@shared/stage-since";
 import { prepareWaitingLink, waitingChecklistsForDeals, waitingOptionsForDeal } from "./deal-checklist";
@@ -24,9 +24,10 @@ const VACANT = ["Vacant", "Void", "Available"];
 const landsecScope = landsecViewer;
 
 // A unit is reachable when its property is one of the 14 schemes, inside a
-// client login's scope, and — for an asset manager or joint agent — one of
-// the person's own schemes. This is also who may write a deal's clock (who it
-// is waiting on): the checklist's "Deal is waiting on this" asks it too.
+// client login's scope, and — for a joint agent — one of the person's own
+// schemes. An asset manager login reaches every scheme. This is also who may
+// write a deal's clock (who it is waiting on): the checklist's "Deal is
+// waiting on this" asks it too.
 export async function unitAccess(req: Request, propertyId: string): Promise<(LandsecViewer & { schemeKey: string | null }) | null> {
   const scope = await landsecScope(req);
   if (!scope) return null;
@@ -131,9 +132,11 @@ function dealClock(status: string | null, facts: StageFacts | undefined, fallbac
 }
 
 // Who may set the date a deal reached its stage: everyone who may write the
-// clock at the scheme except an asset manager (nothing new was opened to
-// asset managers in this build).
-const canSetStageSince = (viewer: LandsecViewer): boolean => viewer.role !== "asset_manager";
+// clock at the scheme. Until 13 November 2026 an asset manager could not
+// (nothing new was being opened to that role); it is a full Landsec login
+// now (Woody, 2026-11-13: "asset managers and leasing landsec should be the
+// same") and sets it as a full Landsec login does.
+const canSetStageSince = (_viewer: LandsecViewer): boolean => true;
 
 // The property records a viewer can see: every record of the schemes the
 // viewer has (all 14 for BGP staff, a full Landsec login and a leasing
@@ -731,7 +734,7 @@ export function setupLandsecUnitRoutes(app: Express) {
       const stageCode = legacyToCode(deal.status);
       let stageSince: string | null = null;
       if (settingStage) {
-        if (!canSetStageSince(access)) return res.status(403).json({ error: "An asset manager login cannot set the date a deal reached its stage" });
+        if (!canSetStageSince(access)) return res.status(403).json({ error: "This login cannot set the date a deal reached its stage" });
         if (!stageCode || CLOSED_STATUSES.includes(stageCode)) return res.status(400).json({ error: "The date can only be set on a live deal" });
         const checked = checkStageSinceInput(b.stageSince, { today: londonDay(), createdAt: deal.created_at });
         if (!checked.ok) return res.status(400).json({ error: checked.error });
@@ -825,8 +828,9 @@ export function setupLandsecUnitRoutes(app: Express) {
   // Sign (or withdraw a signature on) the agreed brief as the Landsec
   // leasing manager or the asset manager. The signature records who the
   // signed-in person is and when; it cannot be given on an empty brief.
-  // Until the role logins exist (item 6) any Landsec or BGP login can sign
-  // in either role — the name on the signature is the accountability.
+  // A BGP login or a Landsec login with no role can sign in either role (the
+  // name on the signature is the accountability); a role login signs only
+  // its own line (landsecBriefSignerOnly).
   app.post("/api/landsec/unit/:id/brief/sign", requireAuth, async (req, res) => {
     try {
       const id = String(req.params.id);
@@ -837,8 +841,8 @@ export function setupLandsecUnitRoutes(app: Express) {
       const role = req.body?.role === "am" ? "am" : req.body?.role === "leasing" ? "leasing" : null;
       if (!role) return res.status(400).json({ error: "role must be 'leasing' or 'am'" });
       // A role login signs only as itself; BGP and legacy Landsec logins may sign either.
-      if (access.role === "asset_manager" && role !== "am") return res.status(403).json({ error: "An asset manager login signs as the asset manager" });
-      if (access.role === "leasing_manager" && role !== "leasing") return res.status(403).json({ error: "A leasing manager login signs as the leasing manager" });
+      const only = landsecBriefSignerOnly(access.role);
+      if (only && role !== only) return res.status(403).json({ error: only === "am" ? "An asset manager login signs as the asset manager" : "A leasing manager login signs as the leasing manager" });
       if (access.role === "joint_agent") return res.status(403).json({ error: "Joint agents do not sign the brief" });
       const withdraw = !!req.body?.withdraw;
       const userId = req.session?.userId || (req as any).tokenUserId;

@@ -11,8 +11,10 @@ import { stripPropertyFromTitle } from "@/lib/format";
 import type { PropertyUnitDetail, PropertyUnitsFeed } from "@shared/property-units";
 import type { PlanMatchBoard } from "@shared/property-plan-match";
 import type { PropertyPlanPolygon } from "@shared/property-plan-scan";
+import type { RecordPeopleReply } from "@shared/record-people";
 
 export const propertyUnitsKey = (propertyId: string) => ["/api/properties", propertyId, "units"] as const;
+export const propertyPeopleKey = (propertyId: string) => ["/api/properties", propertyId, "people"] as const;
 export const planMatchKey = (planId: string) => ["/api/plans", planId, "match"] as const;
 
 // "409: This unit already has an outline…" reads better without the number.
@@ -22,6 +24,18 @@ export function usePropertyUnits(propertyId: string | null) {
   return useQuery<PropertyUnitsFeed>({
     queryKey: propertyUnitsKey(propertyId || ""),
     queryFn: async () => (await apiRequest("GET", `/api/properties/${encodeURIComponent(propertyId!)}/units`)).json(),
+    enabled: !!propertyId,
+    staleTime: 30 * 1000,
+    retry: false,
+  });
+}
+
+// The property's people (GET /api/properties/:id/people): the People tab and
+// each unit panel read this one cached fetch.
+export function usePropertyPeople(propertyId: string | null) {
+  return useQuery<RecordPeopleReply>({
+    queryKey: propertyPeopleKey(propertyId || ""),
+    queryFn: async () => (await apiRequest("GET", `/api/properties/${encodeURIComponent(propertyId!)}/people`)).json(),
     enabled: !!propertyId,
     staleTime: 30 * 1000,
     retry: false,
@@ -107,7 +121,10 @@ export function usePlanMatchActions(propertyId: string, planId: string | null): 
 // The plan-led page is opt-in while it is being tried. The choice is kept in
 // this browser; ?layout=plan or ?layout=classic in the address sets it, so a
 // link can open the page either way.
-const LAYOUT_KEY = "bgp_property_plan_layout";
+// The plan-led page is the default for BGP staff (Woody, 2026-11-13: "start
+// using the new property layout for everyone"); a new key so an earlier
+// "Back to the current page" does not hold anyone on the old page.
+const LAYOUT_KEY = "bgp_property_layout_default_plan";
 export function usePlanLedLayout(): [boolean, (on: boolean) => void] {
   const [on, setOn] = useState<boolean>(() => {
     try {
@@ -116,8 +133,8 @@ export function usePlanLedLayout(): [boolean, (on: boolean) => void] {
         window.localStorage.setItem(LAYOUT_KEY, asked === "plan" ? "1" : "0");
         return asked === "plan";
       }
-      return window.localStorage.getItem(LAYOUT_KEY) === "1";
-    } catch { return false; }
+      return window.localStorage.getItem(LAYOUT_KEY) !== "0";
+    } catch { return true; }
   });
   const set = useCallback((next: boolean) => {
     try { window.localStorage.setItem(LAYOUT_KEY, next ? "1" : "0"); } catch { /* private browsing: the choice lasts for this visit */ }

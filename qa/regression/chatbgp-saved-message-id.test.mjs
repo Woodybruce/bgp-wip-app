@@ -14,7 +14,7 @@ function fixture({ threadId = 'thread', save = async message => ({ ...message, i
     clearInterval() {}, heartbeat: 1, verifiedThreadId: threadId, activeChatRuns: new Map(), thisRun: null,
     pool: { query: async () => ({ rows: duplicate ? [{ role: 'assistant', content: reply }] : [] }) },
     storage: { createChatMessage: async message => { writes.push(message); return save(message); } },
-    clientDisconnected: false,
+    clientDisconnected: false, jointAgentChat: false,
     safeSseWrite: frame => { frames.push(JSON.parse(frame.slice(6))); return true; },
     res: { end() {} }, console: { log() {}, warn() {}, error() {} },
   });

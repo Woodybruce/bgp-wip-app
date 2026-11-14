@@ -20,7 +20,11 @@ const code=source('shared/plan-geometry.ts')+'\n'+declaration('resolveBrandIdSub
     'validateEvidenceUnitPatch','validateEvidenceEntryPatch','evidenceScheduleRows','matchEvidenceScheduleRow','presentEvidenceUnit',
     'relinkEntriesToUnit','relinkAllEntries','saveEvidenceUnit','saveEvidenceEntry','planOr404'].map(name=>declaration(name)).join('\n')+
   '\nexport {relinkEntriesToUnit,relinkAllEntries,planOr404};';
-const helpers=evaluate(code,{...evaluate(source('server/evidence-plan-schedule.ts')),pool:db});
+process.env.DATABASE_URL||=supplied;
+const door=await import('../../server/tenancy-tenant.ts');
+const helpers=evaluate(code,{...evaluate(source('server/evidence-plan-schedule.ts')),pool:db,
+  assertEvidencePlanEditorScope(){},evidencePlanEditorPropertyAllowed(){return undefined;},
+  relinkTenantAfterNameEdit:(client,rowId,before,actor)=>door.relinkTenantAfterNameEdit(client,rowId,before,actor??{userId:'staff',name:'Staff',viewer:'staff'})});
 const {saveEvidenceUnit:saveUnit,saveEvidenceEntry:saveEntry,relinkAllEntries:relink}=helpers;
 const allow=async()=>true;
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
@@ -45,7 +49,8 @@ try {
       net_effective numeric,term text,concession text,notes text,source_key text,created_by varchar,created_at timestamptz DEFAULT now());
     CREATE TABLE tenancy_schedule_units(id varchar PRIMARY KEY,property_id varchar,unit_number text,trading_name text,tenant_name text,
       floor_level text,lease_expiry timestamp,break_date timestamp,next_review_date timestamp,erv_pa numeric,passing_rent_pa numeric,
-      nia_sqft numeric,gia_sqft numeric,permitted_use text,premises text,tenant_company_id varchar,updated_at timestamp DEFAULT now());
+      nia_sqft numeric,gia_sqft numeric,permitted_use text,premises text,tenant_company_id varchar,tenant_entity_id varchar,updated_at timestamp DEFAULT now());
+    CREATE TABLE crm_trading_entities(id varchar PRIMARY KEY,parent_company_id varchar,name text);
     CREATE TABLE crm_properties(id varchar PRIMARY KEY,name text);
     CREATE TABLE crm_companies(id varchar PRIMARY KEY,name text,merged_into_id varchar,trading_entities jsonb);
     INSERT INTO crm_properties VALUES ('property','Synthetic scheme'),('other-property','Other scheme');

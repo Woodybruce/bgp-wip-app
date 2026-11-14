@@ -5412,8 +5412,8 @@ function PropertiesBoardHeader({ items, landsec }: { items: CrmProperty[]; lands
   // Deals filtered to that stage. Those are the same counts as the scheme
   // cards (server/landsec-counts.ts), so this header counts nothing itself.
   const isLandsec = landsec !== undefined;
-  // An asset manager or joint agent has no Deals page: for them the stage
-  // counts are plain, never links. (They do not have this page today.)
+  // A joint agent has no Deals page: for it the stage counts are plain,
+  // never links. (It does not have this page today.)
   const landsecRestricted = useLandsecRestricted();
   const [mapOpen, setMapOpen] = useState(() => typeof window === "undefined" || window.innerWidth >= 768);
 

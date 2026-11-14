@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { rowPill } from "@/components/landsec/deal-clock";
 import { UNIT_STATE_HEX, UNIT_STATE_ORDER, UNIT_STUCK_DAYS, unitStateKey, unitStateLabel, type PropertyUnit, type UnitStateKey } from "@shared/property-units";
 import { stageDaysLabel } from "@shared/stage-since";
+import { DEAL_STATUS_LABELS } from "@shared/deal-status";
 
 // An outline with no schedule row (context) and a scan's proposal are not
 // units, so they have their own two colours on the plan.
@@ -55,4 +56,13 @@ export function UnitStateLegend({ counts, children, className }: { counts: Parti
       {children}
     </div>
   );
+}
+
+// An open deal that is not a letting (a regear, a renewal, a rent review): the
+// letting's own stage is already the state pill, so only these get a tag.
+export function UnitDealTag({ deal }: { deal: PropertyUnit["deal"] }) {
+  if (!deal || deal.letting) return null;
+  const status = deal.code ? DEAL_STATUS_LABELS[deal.code] : null;
+  const words = [deal.type || "Deal", status].filter(Boolean).join(" · ");
+  return <span className={cn(rowPill, "px-1.5 border-border text-muted-foreground")} title={deal.name || words} data-testid="unit-deal-tag">{words}</span>;
 }

@@ -4,6 +4,12 @@ Deeper review of the three areas that matter for the pitch: who can see what, th
 
 **Verdict.** The new roles' front door holds: a joint agent and an asset manager were refused every direct attempt to read or change another scheme's records, and the demo path from Add brief to Solicitors works end to end. The leaks are in older routes the new rules never reached. The handout written for Landsec says three things the code contradicts.
 
+## Update, 13 November, afternoon: asset managers are full Landsec logins
+
+Woody decided later on 13 November 2026: "asset managers should see everything the rest see so dont gate them", "asset managers and leasing landsec should be the same", which schemes: "All 14, like leasing", and "its just joint agents don't see our brand pages thats it". For access an asset manager login is now exactly a full Landsec login (a Landsec login with no role, or a leasing manager): all 14 schemes whatever is stored on the login, the real pages, brand pages in full and chat. The role stays as a label. Only a joint agent is a restricted role.
+
+This review was written before that, so wherever it speaks of "both restricted roles" or of a limit on an asset manager (its own schemes only, the pass-through on brand reads in item 2, the scheme cut on its brand page and Brand pack, the mapping-key address, an asset manager's task list) read "a joint agent" for the restriction: the asset manager is superseded out of it and is answered as a full Landsec login in that place. Nothing else here changes. Every fix below still holds for client logins and for joint agents, and an asset manager is held to whatever a full Landsec login is held to (the brand slice, the fee strip, BGP's private company fields, the AML cuts). The findings about a Bluewater-only asset manager are a record of what was tested that morning and are left as written.
+
 ## Update, 13 November, 12:30
 
 The seven items at the top of this page are fixed and live: pushed to the working branch on your word, running on the live app since 12:27. Each item below says what changed.

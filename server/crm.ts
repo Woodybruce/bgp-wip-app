@@ -2712,7 +2712,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       }
       if (scopeCompanyId) {
         // Client edits must not overwrite identity, access or staff attestations.
-        for (const field of ["id", "createdAt", "landlordId", "leasingPrivacyEnabled", "proprietorKycStatus", "proprietorKycData", "kycCheckedAt"]) {
+        for (const field of ["id", "createdAt", "landlordId", "leasingPrivacyEnabled", "proprietorKycStatus", "proprietorKycData", "kycCheckedAt", "instagramHandle"]) {
           delete updates[field];
         }
       }
@@ -3170,6 +3170,24 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       );
       if ((links.rows[0]?.n || 0) > 0) {
         return res.status(409).json({ error: `Entity is linked to ${links.rows[0].n} deal(s) — unlink first.` });
+      }
+      // Nor while a schedule row has it as the company on the lease, a
+      // property bills it, or a KYC record is filed against it. A database
+      // without one of those tables or columns has nothing pointing there.
+      const pointing = (sql: string) => pool.query(sql, [req.params.id]).then(
+        r => Number(r.rows[0]?.n) || 0,
+        (e: any) => { if (e?.code === "42P01" || e?.code === "42703") return 0; throw e; });
+      const scheduleRows = await pointing(`SELECT COUNT(*)::int AS n FROM tenancy_schedule_units WHERE tenant_entity_id = $1`);
+      if (scheduleRows > 0) {
+        return res.status(409).json({ error: `This company is on the lease of ${scheduleRows} schedule row${scheduleRows === 1 ? "" : "s"}. Unlink it first.` });
+      }
+      const billedProperties = await pointing(`SELECT COUNT(*)::int AS n FROM crm_properties WHERE billing_entity_id = $1`);
+      if (billedProperties > 0) {
+        return res.status(409).json({ error: `This company is the billing entity of ${billedProperties} propert${billedProperties === 1 ? "y" : "ies"}. Unlink it first.` });
+      }
+      const kycRecords = await pointing(`SELECT COUNT(*)::int AS n FROM crm_entity_kyc WHERE entity_id = $1`);
+      if (kycRecords > 0) {
+        return res.status(409).json({ error: `This company has ${kycRecords} KYC record${kycRecords === 1 ? "" : "s"} filed against it. It cannot be deleted.` });
       }
       await pool.query(`DELETE FROM crm_trading_entities WHERE id = $1`, [req.params.id]);
       res.json({ ok: true });
@@ -4227,6 +4245,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                     SET status = 'Under Offer',
                         tenant_name = CASE WHEN tenant_name = $2 THEN NULL ELSE tenant_name END,
                         tenant_company_id = CASE WHEN tenant_company_id = $3 THEN NULL ELSE tenant_company_id END,
+                        tenant_entity_id = CASE WHEN tenant_company_id = $3 THEN NULL ELSE tenant_entity_id END,
                         passing_rent_pa = CASE WHEN passing_rent_pa = $4 THEN NULL ELSE passing_rent_pa END,
                         lease_start = CASE WHEN lease_start = $5::date THEN NULL ELSE lease_start END,
                         updated_at = NOW()
@@ -5040,9 +5059,11 @@ Return a JSON object with these fields (use null for any field you cannot find):
   // use-hints from the unit name / use class and location hits from the
   // requirement's location chips rank the results. Scoped callers (Landsec)
   // match against their own portfolio only; staff match every instructed unit.
-  // A Landsec asset manager sees brand pages portfolio-wide but deals and
-  // figures only on its own schemes. Null = no scheme limit for this caller;
-  // an empty list (also what a failed read gives) = nothing, never the whole
+  // A Landsec login held to named schemes reads deals and figures only at
+  // those schemes. No login that reaches these routes is held to schemes
+  // today (an asset manager is a full Landsec login since 13 November 2026;
+  // a joint agent is refused at the gateway): this stays as a backstop that
+  // fails closed. Null = no scheme limit for this caller; an empty list (also what a failed read gives) = nothing, never the whole
   // Landsec portfolio.
   const brandActivitySchemeProperties = async (req: Request): Promise<string[] | null> => {
     try {
@@ -5070,8 +5091,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const brandName = nameQ.rows[0]?.name;
       if (!brandName) return res.status(404).json({ error: "Brand not found" });
       // Client callers only see activity on their own portfolio, and a
-      // Landsec login limited to its own schemes (asset manager) only the
-      // activity at those schemes.
+      // Landsec login held to named schemes only the activity at those
+      // schemes.
       const schemeProps = scope ? await brandActivitySchemeProperties(req) : null;
       const propScope = (n: number) => schemeProps
         ? `AND p.id = ANY($${n}::varchar[])`
