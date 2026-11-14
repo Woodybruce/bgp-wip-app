@@ -147,7 +147,8 @@ test('1. the tracker-only test stays in step with the tenancy schedule\'s own', 
 test('2. the unit routes check propertyReadBlocked before they load anything', () => {
   const blocked = fn(UNITS, 'propertyReadBlocked');
   assert.match(blocked, /if \(await clientBlockedForProperty\(req, propertyId\)\) return true;/);
-  assert.match(blocked, /const scope = await resolveCompanyScope\(req\);\s+return !!scope && !\(await isPropertyInScope\(scope, propertyId\)\);/);
+  assert.match(blocked, /const scope = await resolveCompanyScope\(req\);\s+if \(!scope\) return false;\s+if \(!\(await isPropertyInScope\(scope, propertyId\)\)\) return true;/);
+  assert.match(blocked, /const schemeIds = await schemeLimitedPropertyIdsOrNone\(req, "property-units"\);\s+return !!schemeIds && !schemeIds\.includes\(propertyId\);/, 'a joint agent is held to its own schemes');
   const expected = { '/api/properties/:propertyId/units': 'loadPropertyUnits(pool, propertyId)', '/api/properties/:propertyId/units/:unitId': 'loadPropertyUnitDetail(pool, propertyId,' };
   assert.deepEqual(routes(UNITS).sort(), Object.keys(expected).map(p => `get "${p}"`).sort(), 'every route in the file is one of the two checked here');
   for (const [path, load] of Object.entries(expected)) {
@@ -235,8 +236,9 @@ test('3. a viewing\'s contact name is sent only to BGP staff', () => {
   assert.equal(detail.match(/contact_name/g).length, 2, 'contact_name is selected once and read once, in the staff-only ternary');
   assert.equal((code(UNITS).match(/contact_name/g) || []).length, 2, 'contact_name appears nowhere else in the feed');
   const statements = tryStatements(routeNode(UNITS, 'get', '/api/properties/:propertyId/units/:unitId'));
-  assert.ok(statements.includes('const staff = !(await resolveCompanyScope(req));'), 'staff means no client scope (a client login, and staff viewing as one, are not staff)');
-  assert.match(statements.join('\n'), /loadPropertyUnitDetail\(pool, propertyId, String\(req\.params\.unitId\), \{ staff \}\)/);
+  assert.match(statements.join('\n'), /loadPropertyUnitDetail\(pool, propertyId, String\(req\.params\.unitId\), await unitViewerFor\(req\)\)/);
+  // staff means no client scope (a client login, and staff viewing as one, are not staff).
+  assert.match(fn(UNITS, 'unitViewerFor'), /const scope = await resolveCompanyScope\(req\);\s+if \(!scope\) return \{ staff: true, jointAgent: false \};\s+return \{ staff: false,/);
 });
 
 // 4 ─────────────────────────────────────────────────────────────────────────
@@ -273,19 +275,28 @@ test('4. loadPropertyUnits runs a fixed number of queries', () => {
 // 5 ─────────────────────────────────────────────────────────────────────────
 // An asset manager is a full Landsec login since 13 November 2026 (Woody:
 // "asset managers and leasing landsec should be the same"): the restricted
-// rule is asked for a joint agent only, and an asset manager reaches the feed
-// where any client login does (its own properties: propertyReadBlocked).
-test('5. the Landsec gateway keeps joint agents off the unit feed and the match routes', () => {
+// rule is asked for a joint agent only. Since 14 November 2026 a joint agent
+// is on the plan-led page too (Woody: "Joint agents need to be on new
+// layout"): it READS the feed, one unit and a plan's outlines at its own
+// schemes (propertyReadBlocked checks the scheme), never a match write.
+test('5. a joint agent reads the unit feed and the match board, and writes none of the matching', () => {
   const P = '36c81e04-6f16-4951-8ea7-cbaf16b83741', PLAN = '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d', UNIT = '0f8fad5b-d9cb-469f-a165-70867728950e';
-  const calls = [
+  const reads = [
     ['GET', `/api/properties/${P}/units`], ['GET', `/api/properties/${P}/units/`], ['GET', `/API/Properties/${P}/Units`],
     ['GET', `/api/properties/${P}/units/${UNIT}`], ['GET', `/api/properties/${P}/units/tracker:${UNIT}`],
     ['GET', `/api/plans/${PLAN}/match`], ['GET', `/api/plans/${PLAN}/match/`],
+  ];
+  const writes = [
     ['POST', `/api/plans/${PLAN}/match/accept`], ['POST', `/api/plans/${PLAN}/match/accept-suggested`], ['POST', `/api/plans/${PLAN}/match/dismiss`],
     ['POST', `/api/plans/${PLAN}/match/anything-new`], ['post', `/api/plans/${PLAN}/match/accept`],
+    ['POST', `/api/properties/${P}/units`], ['GET', `/api/properties/${P}/people`],
   ];
   assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ['joint_agent']);
-  for (const [method, path] of calls) assert.equal(restrictedLandsecApiRule('joint_agent', method, path), 'deny', `joint_agent ${method} ${path}`);
+  for (const [method, path] of reads) assert.equal(restrictedLandsecApiRule('joint_agent', method, path), 'allow', `joint_agent ${method} ${path}`);
+  for (const [method, path] of writes) assert.equal(restrictedLandsecApiRule('joint_agent', method, path), 'deny', `joint_agent ${method} ${path}`);
+  const src = source(UNITS);
+  assert.match(src, /const jointAgentUnit[\s\S]{0,200}kyc: null/, 'a joint agent is not sent the brand KYC record');
+  assert.match(src, /companyId: viewer\.jointAgent \? null/, 'a joint agent is not sent the brand ids behind a target');
 });
 
 // 6 ─────────────────────────────────────────────────────────────────────────

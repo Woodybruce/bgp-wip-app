@@ -42,16 +42,19 @@ test('a client is sent the company on the lease and KYC4U, but no state and no "
   assert.match(client, /flags: \{ \.\.\.unit\.flags, noLeaseCompany: false \}/);
   const viewer = collapse(fn(UNITS, 'unitsForViewer'));
   assert.match(viewer, /if \(viewer\.staff\) return feed;/);
-  assert.match(viewer, /units: feed\.units\.map\(clientUnit\), counts: \{ \.\.\.feed\.counts, noLeaseCompany: 0 \}/);
+  assert.match(viewer, /units: feed\.units\.map\(viewer\.jointAgent \? jointAgentUnit : clientUnit\), counts: \{ \.\.\.feed\.counts, noLeaseCompany: 0 \}/);
+  // A joint agent gets the client cut and no KYC4U record (2026-11-14).
+  assert.match(collapse(constant(UNITS, 'jointAgentUnit')), /const cut = clientUnit\(unit\);[\s\S]*kyc: null/);
   // The detail cuts its unit the same way.
-  assert.match(collapse(fn(UNITS, 'loadPropertyUnitDetail')), /const shown = viewer\.staff \? unit : clientUnit\(unit\);[\s\S]*unit: shown,/);
+  assert.match(collapse(fn(UNITS, 'loadPropertyUnitDetail')), /const shown = viewer\.staff \? unit : viewer\.jointAgent \? jointAgentUnit\(unit\) : clientUnit\(unit\);[\s\S]*unit: shown,/);
   // Both routes decide staff by the company scope (staff viewing as a client are a client).
   const text = source(UNITS);
   const feedRoute = text.slice(text.indexOf('router.get("/api/properties/:propertyId/units",'), text.indexOf('router.get("/api/properties/:propertyId/units/:unitId"'));
-  assert.match(feedRoute, /const staff = !\(await resolveCompanyScope\(req\)\);\s+res\.json\(unitsForViewer\(feed, \{ staff \}\)\);/);
+  assert.match(feedRoute, /res\.json\(unitsForViewer\(feed, await unitViewerFor\(req\)\)\);/);
+  assert.match(collapse(fn(UNITS, 'unitViewerFor')), /const scope = await resolveCompanyScope\(req\); if \(!scope\) return \{ staff: true, jointAgent: false \};/);
   assert.doesNotMatch(feedRoute, /res\.json\(feed\)/);
   const detailRoute = text.slice(text.indexOf('router.get("/api/properties/:propertyId/units/:unitId"'));
-  assert.match(detailRoute, /const staff = !\(await resolveCompanyScope\(req\)\);[\s\S]*loadPropertyUnitDetail\(pool, propertyId, String\(req\.params\.unitId\), \{ staff \}\)/);
+  assert.match(detailRoute, /loadPropertyUnitDetail\(pool, propertyId, String\(req\.params\.unitId\), await unitViewerFor\(req\)\)/);
 });
 
 // A file that reads a schedule row's company on the lease by joining it is a

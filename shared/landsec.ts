@@ -251,6 +251,8 @@ const JOINT_AGENT_PROPERTY = new RegExp(`^/api/crm/properties/${UNIT_ID}$`);
 const JOINT_AGENT_DEAL = new RegExp(`^/api/crm/deals/${UNIT_ID}$`);
 const JOINT_AGENT_SCHEDULE = new RegExp(`^/api/tenancy-schedule/property/${UNIT_ID}(/links)?$`);
 const JOINT_AGENT_PROPERTY_PARTS = new RegExp(`^/api/properties/${UNIT_ID}/(plans|brochures|schemes)$`);
+const JOINT_AGENT_PROPERTY_UNITS = new RegExp(`^/api/properties/${UNIT_ID}/units(/(tracker(:|%3a))?${UNIT_ID})?$`);
+const JOINT_AGENT_PLAN_MATCH = new RegExp(`^/api/plans/${UNIT_ID}/match$`);
 
 // The path a gate mounted on "/api" must judge: the one the router matches
 // the request on. Never cut it out of req.originalUrl. The router stops a
@@ -359,6 +361,11 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
       if (p === "/api/crm/deals" || JOINT_AGENT_DEAL.test(p)) return "allow";
       if (JOINT_AGENT_SCHEDULE.test(p)) return "allow";
       if (JOINT_AGENT_PROPERTY_PARTS.test(p)) return "allow";
+      // The plan-led property page (Woody, 2026-11-14: "Joint agents need to
+      // be on new layout"): the unit list, one unit, and a plan's outlines.
+      // Read only; the handlers check the scheme (propertyReadBlocked) and cut
+      // BGP's compliance record and brand links (server/property-units.ts).
+      if (JOINT_AGENT_PROPERTY_UNITS.test(p) || JOINT_AGENT_PLAN_MATCH.test(p)) return "allow";
     }
   }
   // Their own task list (Woody, 2026-11-13: "we need each person to have

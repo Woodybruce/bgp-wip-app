@@ -421,8 +421,9 @@ CRM, Chat (`JOINT_AGENT_MENU` in `shared/landsec-menu.ts`). No Brands.
   BGP notes, commentary, who covers it, contacts, comments, last contact,
   fee, invoicing, Xero or compliance. A new BGP-only column goes on the list.
   Every other address stays refused: no writes on those pages, no company
-  list, contacts, property tasks, news, AI targets, brand gap, activity or
-  the unit feed.
+  list, contacts, property tasks, news, AI targets, brand gap or activity.
+  Since 14 November 2026 the unit feed, one unit and a plan's match board are
+  open to read (the plan-led page).
 - **Screens**: read only. The property page (`jointAgent` in
   `property-detail.tsx`) leaves out Ask ChatBGP, the layout controls,
   weekly focus, news, risk register, brand gap, BGP commentary, research,
@@ -1168,9 +1169,11 @@ shows four filters with the work lists behind **More filters**, "Needs
 review" leaves out the plan's own work (it is the Plan tab's Match), and
 the People board leaves out tenant companies known only as a unit's
 occupier (the schedule shows them) and an owner's directors once anyone at
-the owner is tied to the property. A full Landsec login (leasing manager, asset manager or no role) always gets
-the plan-led page (Woody, 2026-11-14: "yes"); a joint agent and every other
-client login get the page as it was (`planLayout` in `property-detail.tsx`).
+the owner is tied to the property. Every Landsec login always gets the plan-led page (Woody, 2026-11-14:
+"yes", then "Joint agents need to be on new layout"); every other client
+login gets the page as it was (`planLayout` in `property-detail.tsx`). A
+joint agent's page has Plan, Tenancy schedule and Details only (no Brand gap,
+People, Folders, News & social, risk register or a unit's people), read only.
 A Landsec login has no Activity and conversation row and sees its own folder
 view under Folders; no client login edits a contact's job title. The page as it was is
 untouched when it is off, and
@@ -1182,9 +1185,12 @@ untouched when it is off, and
   list, the plan colours and the pills all read it. `propertyReadBlocked`
   is the read check (a client login on its own properties; BGP staff viewing
   as a client are held to that client's properties). No fee, internal agent
-  or BGP note on a target is in either reply. A joint agent cannot reach it
-  (the gateway has no rule for it, on purpose); an asset manager is a full
-  Landsec login since 13 November 2026 and reads it as one. An archived
+  or BGP note on a target is in either reply. A joint agent READS it, one
+  unit and a plan's match board (GET only, since 14 November 2026) at its own
+  schemes: `propertyReadBlocked` checks the scheme, and `unitViewerFor` /
+  `jointAgentUnit` also leave out the brand's KYC4U record and the brand ids
+  behind a target. An asset manager is a full Landsec login since 13 November
+  2026 and reads it as one. An archived
   schedule row is history, not a unit, unless a live letting still hangs off
   it: a letting is never hidden because its row was archived.
 - **Matching**: `shared/property-plan-match.ts`,

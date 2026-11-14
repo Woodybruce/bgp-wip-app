@@ -12,6 +12,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { clientBlockedForProperty, isPropertyInScope, resolveCompanyScope } from "./company-scope";
+import { schemeLimitedPropertyIdsOrNone } from "./landsec-access";
 import { BRAND_KEYS_CTE, brandNameKeySql, normUnitSql } from "./tenant-brand-resolver";
 import { briefStateOf, daysSince, stageSinceFor } from "./landsec-unit";
 import { openPlanCandidates } from "./property-plan-match";
@@ -35,7 +36,20 @@ export const londonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "E
 export async function propertyReadBlocked(req: Request, propertyId: string): Promise<boolean> {
   if (await clientBlockedForProperty(req, propertyId)) return true;
   const scope = await resolveCompanyScope(req);
-  return !!scope && !(await isPropertyInScope(scope, propertyId));
+  if (!scope) return false;
+  if (!(await isPropertyInScope(scope, propertyId))) return true;
+  // A joint agent reads its own schemes only (a failed read gives none).
+  const schemeIds = await schemeLimitedPropertyIdsOrNone(req, "property-units");
+  return !!schemeIds && !schemeIds.includes(propertyId);
+}
+
+// Who is reading: BGP staff, a client login, or a joint agent (a login held
+// to named schemes). A joint agent is another agency: it is also not sent the
+// brand's KYC4U record or the brand ids behind a target (BGP's brand pages).
+export async function unitViewerFor(req: Request): Promise<{ staff: boolean; jointAgent: boolean }> {
+  const scope = await resolveCompanyScope(req);
+  if (!scope) return { staff: true, jointAgent: false };
+  return { staff: false, jointAgent: (await schemeLimitedPropertyIdsOrNone(req, "property-units")) !== null };
 }
 
 const num = (value: unknown): number | null => { const n = Number(value); return value != null && value !== "" && Number.isFinite(n) ? n : null; };
@@ -317,11 +331,11 @@ export async function loadPropertyUnits(db: Db, propertyId: string, today: strin
 // rest of the schedule row, the tracker row with its latest viewings and
 // offers, the brief's targets and where the unit is drawn. BGP's notes on a
 // target and the brand's contact at a viewing stay with BGP staff.
-export async function loadPropertyUnitDetail(db: Db, propertyId: string, unitId: string, viewer: { staff: boolean }, today: string = londonToday()): Promise<PropertyUnitDetail | null> {
+export async function loadPropertyUnitDetail(db: Db, propertyId: string, unitId: string, viewer: { staff: boolean; jointAgent?: boolean }, today: string = londonToday()): Promise<PropertyUnitDetail | null> {
   const feed = await loadPropertyUnits(db, propertyId, today);
   const unit = feed?.units.find(u => u.id === unitId || u.trackerId === unitId);
   if (!feed || !unit) return null;
-  const shown = viewer.staff ? unit : clientUnit(unit);
+  const shown = viewer.staff ? unit : viewer.jointAgent ? jointAgentUnit(unit) : clientUnit(unit);
   const [row, tracker, outlines] = await Promise.all([
     unit.scheduleRowId
       ? db.query(`SELECT t.term_years, t.outside_lt_act, t.break_type, t.break_details, t.break_notice, t.erv_profile, t.service_charge, t.insurance, t.rates_payable,
@@ -380,7 +394,7 @@ export async function loadPropertyUnitDetail(db: Db, propertyId: string, unitId:
     } : null,
     brief: b ? {
       id: b.id, title: text(b.title), agreed: !!b.agreed_at,
-      targets: (b.targets || []).map((x: any) => ({ id: x.id, name: text(x.name) || "Unnamed brand", companyId: x.companyId || null, status: text(x.status), priority: text(x.priority) })),
+      targets: (b.targets || []).map((x: any) => ({ id: x.id, name: text(x.name) || "Unnamed brand", companyId: viewer.jointAgent ? null : x.companyId || null, status: text(x.status), priority: text(x.priority) })),
     } : null,
     deals: deals.rows.map(d => dealOf(d, since)!).filter(Boolean),
     outlines: outlines.rows.map(o => ({ planId: o.plan_id, outlineId: o.id, floor: o.floor, label: text(o.label) })),
@@ -397,9 +411,16 @@ const clientUnit = (unit: PropertyUnit): PropertyUnit => ({
   flags: { ...unit.flags, noLeaseCompany: false },
 });
 
-export function unitsForViewer(feed: PropertyUnitsFeed, viewer: { staff: boolean }): PropertyUnitsFeed {
+// A joint agent (Woody, 2026-11-14): the client cut, less the brand's KYC4U
+// record (BGP's compliance work).
+const jointAgentUnit = (unit: PropertyUnit): PropertyUnit => {
+  const cut = clientUnit(unit);
+  return { ...cut, tenant: { ...cut.tenant, kyc: null } };
+};
+
+export function unitsForViewer(feed: PropertyUnitsFeed, viewer: { staff: boolean; jointAgent?: boolean }): PropertyUnitsFeed {
   if (viewer.staff) return feed;
-  return { ...feed, units: feed.units.map(clientUnit), counts: { ...feed.counts, noLeaseCompany: 0 } };
+  return { ...feed, units: feed.units.map(viewer.jointAgent ? jointAgentUnit : clientUnit), counts: { ...feed.counts, noLeaseCompany: 0 } };
 }
 
 const router = Router();
@@ -410,8 +431,7 @@ router.get("/api/properties/:propertyId/units", requireAuth, async (req: Request
     if (await propertyReadBlocked(req, propertyId)) return res.status(403).json({ error: "Not available for this account" });
     const feed = await loadPropertyUnits(pool, propertyId);
     if (!feed) return res.status(404).json({ error: "Property not found" });
-    const staff = !(await resolveCompanyScope(req));
-    res.json(unitsForViewer(feed, { staff }));
+    res.json(unitsForViewer(feed, await unitViewerFor(req)));
   } catch (error: any) {
     console.error("[/api/properties/:id/units]", error?.message);
     res.status(500).json({ error: "Could not load this property's units" });
@@ -422,8 +442,7 @@ router.get("/api/properties/:propertyId/units/:unitId", requireAuth, async (req:
   try {
     const propertyId = String(req.params.propertyId);
     if (await propertyReadBlocked(req, propertyId)) return res.status(403).json({ error: "Not available for this account" });
-    const staff = !(await resolveCompanyScope(req));
-    const detail = await loadPropertyUnitDetail(pool, propertyId, String(req.params.unitId), { staff });
+    const detail = await loadPropertyUnitDetail(pool, propertyId, String(req.params.unitId), await unitViewerFor(req));
     if (!detail) return res.status(404).json({ error: "Unit not found on this property" });
     res.json(detail);
   } catch (error: any) {

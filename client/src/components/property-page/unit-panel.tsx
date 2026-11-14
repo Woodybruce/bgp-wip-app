@@ -43,7 +43,7 @@ const linkButton = "max-md:min-h-11";
 const positive = (value: number | null | undefined): value is number => value != null && value > 0;
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 // The same rule as the unit list's deal links (plan-workspace.tsx): the deal page is for BGP staff and the Landsec view.
-const linksDeals = (viewer: Viewer) => !viewer.restricted && (viewer.staff || viewer.landsecView);
+const linksDeals = (viewer: Viewer) => viewer.staff || viewer.landsecView || viewer.restricted;
 
 // The schedule keeps the break party as T, L or M; anything else is shown as typed.
 const BREAK_PARTIES: Record<string, string> = { T: "Tenant break", L: "Landlord break", M: "Mutual break" };
@@ -214,8 +214,8 @@ function DealLine({ deal, link, withStage }: { deal: PropertyUnitDeal; link: boo
   );
 }
 
-function LeaseBlock({ unit, schedule, card, onOpenSchedule }: {
-  unit: PropertyUnit; schedule: Schedule; card: boolean; onOpenSchedule?: (scheduleRowId: string) => void;
+function LeaseBlock({ unit, schedule, card, onOpenSchedule, readOnly = false }: {
+  unit: PropertyUnit; schedule: Schedule; card: boolean; onOpenSchedule?: (scheduleRowId: string) => void; readOnly?: boolean;
 }) {
   const day = (value: string) => <span className={figure}>{shortDate(value, true)}</span>;
   const sum = (value: number) => <span className={figure}>{money(value)}</span>;
@@ -255,7 +255,7 @@ function LeaseBlock({ unit, schedule, card, onOpenSchedule }: {
       {rows.length > 0 ? <Facts rows={rows} /> : <p className="text-sm text-muted-foreground">No lease details recorded.</p>}
       {rowId && onOpenSchedule && (
         <Button type="button" variant="outline" size="sm" onClick={() => onOpenSchedule(rowId)} data-testid="property-unit-open-schedule">
-          Edit on the tenancy schedule
+          {readOnly ? "Open on the tenancy schedule" : "Edit on the tenancy schedule"}
         </Button>
       )}
     </Block>
@@ -580,9 +580,10 @@ export function PropertyUnitPanel({ propertyId, propertyName, unit, plans, viewe
         <KeyFigures unit={unit} wide={!side} />
         {data ? (
           <div className={blocks}>
-            {data.schedule && <LeaseBlock unit={unit} schedule={data.schedule} card={card} onOpenSchedule={onOpenSchedule} />}
+            {data.schedule && <LeaseBlock unit={unit} schedule={data.schedule} card={card} onOpenSchedule={onOpenSchedule} readOnly={viewer.restricted} />}
             <LettingBlock propertyId={propertyId} unit={unit} detail={data} viewer={viewer} card={card} />
-            <UnitPeopleBlock propertyId={propertyId} propertyName={propertyName} unit={unit} card={card} />
+            {/* The people are BGP's contacts: not for a joint agent. */}
+            {!viewer.restricted && <UnitPeopleBlock propertyId={propertyId} propertyName={propertyName} unit={unit} card={card} />}
             {otherDeals.length > 0 && (
               <Block title="Other deals on this unit" card={card}>
                 <ul className="space-y-2">

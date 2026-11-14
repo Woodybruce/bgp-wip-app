@@ -416,11 +416,11 @@ export function PropertyDetail({ id }: { id: string }) {
   // being tried; the page below is unchanged when it is off.
   const [planLayoutChosen, setPlanLayout] = usePlanLedLayout();
   const landsecView = useIsLandsecView();
-  // BGP staff choose; a full Landsec login (leasing manager, asset manager,
-  // no role) always gets it (Woody, 2026-11-14: "yes"). A joint agent and
-  // every other client login keep the page they know.
+  // BGP staff choose; every Landsec login always gets it (Woody, 2026-11-14:
+  // "yes", then "Joint agents need to be on new layout"). Every other client
+  // login keeps the page it knows.
   const planLayout = isClientViewer
-    ? landsecView && !isRestrictedLandsecRole(pdViewer?.landsecRole)
+    ? landsecView || isRestrictedLandsecRole(pdViewer?.landsecRole)
     : planLayoutChosen;
   // What the Plan tab found, for the property it found it on: the tab is
   // called Units or Unit when that property has no plan.
@@ -765,7 +765,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 >
                   <MessageSquare className="w-3.5 h-3.5" /><span className="hidden [@container(min-width:720px)]:inline">Ask ChatBGP</span>
                 </Button>}
-                {planLayout && (
+                {planLayout && !jointAgent && (
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" aria-label="Property folders" data-testid="button-property-folders">
@@ -895,8 +895,9 @@ export function PropertyDetail({ id }: { id: string }) {
             <div className="flex flex-wrap gap-1.5" data-testid="property-plan-tabs">
               <Pill active={phoneSection === "plan"} onClick={() => setPhoneSection("plan")} data-testid="property-tab-plan">{planTab && planTab.plans === 0 ? (planTab.units === 1 ? "Unit" : "Units") : "Plan"}</Pill>
               <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-tab-tenancy">Tenancy schedule</Pill>
-              <Pill active={phoneSection === "brandgap"} onClick={() => setPhoneSection("brandgap")} data-testid="property-tab-brandgap">Brand gap</Pill>
-              <Pill active={phoneSection === "people"} onClick={() => setPhoneSection("people")} data-testid="property-tab-people">People</Pill>
+              {/* A joint agent has neither: brand gap is BGP's brand work, and the people are BGP's contacts. */}
+              {!jointAgent && <Pill active={phoneSection === "brandgap"} onClick={() => setPhoneSection("brandgap")} data-testid="property-tab-brandgap">Brand gap</Pill>}
+              {!jointAgent && <Pill active={phoneSection === "people"} onClick={() => setPhoneSection("people")} data-testid="property-tab-people">People</Pill>}
               <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-tab-details">Details</Pill>
             </div>
             ) : (
@@ -1566,7 +1567,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <PropertySection name={"tenancy"} active={phoneSection} simple={tabbed}>
                     <div className="grid gap-3 items-start md:grid-cols-2 md:[&>*:only-child]:col-span-2" data-testid="property-lease-events-and-risks">
                       {leaseEvents}
-                      <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>
+                      {!jointAgent && <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>}
                     </div>
                   </PropertySection>
                 );
