@@ -208,7 +208,40 @@ export type LandsecRole = (typeof LANDSEC_ROLES)[number]["key"];
 // leasing landsec should be the same"): for access that role is a full
 // Landsec login, and the schemes on it only say which ones the person
 // answers for.
-export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = ["joint_agent"];
+// Since 14 November 2026 no role is restricted to its own front door: a
+// joint agent uses the same app as a Landsec login, cut to its schemes
+// (landsecLoginSchemes), and is kept off brand pages and BGP's own records by
+// jointAgentApiDenied below (Woody: "the only difference is the lack of
+// access to the brands page"). The list stays for the code that still reads
+// it; restrictedLandsecApiRule now only opens, for a joint agent, what its
+// own pages and chat reached before (server/landsec-access.ts).
+export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = [];
+
+// What a joint agent may not reach that a Landsec login may: brand pages and
+// the brand hub, company records and their contacts (BGP's brand contacts),
+// brand cases, the correspondence log, the generated Targeting Brief (BGP's notes on targets) and making a CRM
+// requirement from a viewing. The company LIST stays open: it is what a
+// brand picker reads (a name to pick, never a page).
+export function jointAgentApiDenied(method: string, path: string): boolean {
+  const p = String(path || "").toLowerCase().split("?")[0];
+  if (/^\/api\/(brand|brands|brand-crm|brand-pack|covenant\/by-crm)(\/|$)/.test(p)) return true;
+  // Its chat stays its own (server/chat-joint-agent.ts): the addresses that
+  // chat uses are opened one by one by restrictedLandsecApiRule, every other
+  // chat or ChatBGP door is shut.
+  if (/^\/api\/(chat|chatbgp|chat-media)(\/|$)/.test(p)) return true;
+  if (/^\/api\/crm\/companies\/[^/]+/.test(p)) return true;
+  if (/^\/api\/crm\/contacts(\/|$)/.test(p)) return true;
+  // The CRM plan (strategies, events, actions on brands) and landlord records.
+  if (/^\/api\/crm\/engagement(\/|$)/.test(p)) return true;
+  if (/^\/api\/(landlord|landlords|crm\/landlords)\//.test(p)) return true;
+  if (/^\/api\/interactions(\/|$)/.test(p)) return true;
+  if (/^\/api\/landsec\/brand-case(\/|$)/.test(p)) return true;
+  if (/^\/api\/landsec\/brand-crm\/plan\/[^/]+/.test(p)) return true;
+  if (/^\/api\/unit-briefs\/[^/]+\/generate-document$/.test(p)) return true;
+  if (/^\/api\/leasing-viewings\/[^/]+\/requirement$/.test(p)) return true;
+  if (String(method).toUpperCase() === "DELETE" && /^\/api\/available-units\/[^/]+$/.test(p)) return true;
+  return false;
+}
 // What a login sees (Woody, 2026-11-14: "log in for people from landsec with
 // access only to their properties and the same for joint agents. The only
 // difference is the lack of access to the brands page"; asked, "list or ALL"

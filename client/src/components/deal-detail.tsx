@@ -240,7 +240,9 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // the terms, the parties' names and the deal clock. No editing, brand
   // profiles, files, comments or history here (BGP's records); its letting
   // work is on its own tracker.
-  const jointAgent = isRestrictedLandsecRole(ddUser?.landsecRole);
+  // A joint agent has the deal page a Landsec login has, less the brand
+  // pages (Woody, 2026-11-14): no Brand tab and no brand profiles.
+  const jointAgent = ddUser?.landsecRole === "joint_agent";
   // Same query the AML card runs (shared cache). When it lists both
   // counterparties, the KYC panel drops its own party rows — the page was
   // listing each counterparty twice (Woody, 2026-09-27).
@@ -669,7 +671,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // sections unreachable on phones.
   const sidebarLinkPanels = (
     <>
-      {!jointAgent && <SidebarSection open={sidebarSections.files} onToggle={() => toggleSidebar("files")} icon={FileText} title="Files" testId="toggle-sidebar-files">
+      {<SidebarSection open={sidebarSections.files} onToggle={() => toggleSidebar("files")} icon={FileText} title="Files" testId="toggle-sidebar-files">
         <div className="space-y-2" data-testid="deal-files-section">
           {/* The deal's files live in its property's folder — render the
               same unified Files panel (browse / upload / new folder /
@@ -729,7 +731,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     </>
   );
 
-  const sidebarActivityPanels = jointAgent ? null : (
+  const sidebarActivityPanels = (
     <>
       <SidebarSection open={sidebarSections.comments} onToggle={() => toggleSidebar("comments")} icon={MessageSquare} title="Comments" testId="toggle-sidebar-comments">
         <DealComments dealId={id} comments={deal.comments} />
@@ -923,7 +925,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           })()}
         </div>
         <div className="flex items-center gap-2 flex-wrap gap-y-1.5 w-full md:w-auto">
-          {!jointAgent && <Link className="flex-1 md:flex-none" href={`/image-studio?property=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&address=${encodeURIComponent(linkedProperty?.address ? (typeof linkedProperty.address === 'object' && linkedProperty.address !== null ? ((linkedProperty.address as any).formatted || (linkedProperty.address as any).line1 || linkedProperty.name) : String(linkedProperty.address || linkedProperty.name)) : ((deal as any).propertyName || deal.name || ""))}&propertyId=${encodeURIComponent(deal.propertyId || "")}`}>
+          {<Link className="flex-1 md:flex-none" href={`/image-studio?property=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&address=${encodeURIComponent(linkedProperty?.address ? (typeof linkedProperty.address === 'object' && linkedProperty.address !== null ? ((linkedProperty.address as any).formatted || (linkedProperty.address as any).line1 || linkedProperty.name) : String(linkedProperty.address || linkedProperty.name)) : ((deal as any).propertyName || deal.name || ""))}&propertyId=${encodeURIComponent(deal.propertyId || "")}`}>
             <Button variant="outline" size="sm" className="w-full md:w-auto" data-testid="button-deal-image-studio">
               <ImageIcon className="w-4 h-4 mr-2" />
               Image Studio
@@ -939,7 +941,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               </Button>
             </Link>
           )}
-          {!jointAgent && <Button variant="outline" size="sm" className="flex-1 md:flex-none" onClick={() => setEditOpen(true)} data-testid="button-edit-deal">
+          {<Button variant="outline" size="sm" className="flex-1 md:flex-none" onClick={() => setEditOpen(true)} data-testid="button-edit-deal">
             <Pencil className="w-4 h-4 mr-2" />
             Edit
           </Button>}
@@ -953,7 +955,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         {!isClientDeal && (
           <Pill active={phoneSection === "compliance"} onClick={() => { setPhoneSection("compliance"); setMainSections(prev => ({ ...prev, kyc: true })); }} data-testid="deal-section-compliance">KYC</Pill>
         )}
-        {!jointAgent && <>
+        {<>
         <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="deal-section-activity">Activity</Pill>
         <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="deal-section-files">Files</Pill>
         </>}
@@ -1004,7 +1006,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           {/* The BGP team on the deal, the same rows as every People board
               (Woody, 2026-11-14). Clients see who to chase; staff change the
               agents in Fee allocation, where the split lives. */}
-          {!jointAgent && dealBgpTeam.length > 0 && (
+          {dealBgpTeam.length > 0 && (
             <div className="pb-2 mb-1 border-b border-border/60" data-testid="deal-bgp-team">
               <BgpTeamGroup people={dealBgpTeam} addControl={isClientDeal ? null : <span className="text-[11px] text-muted-foreground">Change in Fee allocation</span>} />
             </div>

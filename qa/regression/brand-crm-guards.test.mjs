@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule } from '../../shared/landsec.ts';
+import { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, jointAgentApiDenied } from '../../shared/landsec.ts';
 import { BGP_ONLY_COMPANY_FIELDS, CLIENT_PROFILE_AI_KEYS, clientBrandCompanyView, clientOwnCompanyView, clientCompanyListRow, clientProfileCompanyView, clientBrandAnalysis } from '../../shared/tenant-categories.ts';
 const require = createRequire(import.meta.url);
 const { source, find, route, evaluate, ts } = require('./source-harness.cjs');
@@ -170,9 +170,12 @@ test('the gateway for a joint agent: the Landsec Brand CRM door and nothing else
   // its lists moved to shared/landsec.ts (restrictedLandsecApiRule) when
   // joint agents were given control of their schemes; it is the real one here.
   const { restrictedLandsecApiDecision } = evaluate(fn(ACCESS, 'restrictedLandsecApiDecision'),
-    { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, jointAgentPropertyRef: () => null, propertyOfRef: async () => null, schemeLimitedPropertyIdsOrNone: async () => [], getLandsecAccess: async req => req.access });
+    { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, jointAgentApiDenied, jointAgentPropertyRef: () => null, propertyOfRef: async () => null, schemeLimitedPropertyIdsOrNone: async () => [], getLandsecAccess: async req => req.access });
   const decide = (role, method, path) => restrictedLandsecApiDecision({ method, access: role ? { role, schemes: ['bluewater'], firm: null } : null }, path);
-  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ['joint_agent']);
+  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, []);
+  // Since 14 November 2026 (Woody: "the only difference is the lack of access to the brands page") a joint
+  // agent keeps what it reached before ('allow'), is refused brand pages and BGP's own records ('deny'), and
+  // is otherwise left to the ordinary client checks (null).
   // [method, path, what an asset manager had before 13 November 2026, joint agent]
   const table = [
     // Reads of the plan and the diary; the handlers cut them to the person's schemes.
@@ -203,6 +206,7 @@ test('the gateway for a joint agent: the Landsec Brand CRM door and nothing else
     ['GET', '/api/brands/search', 'client', 'deny'],
     ['GET', '/api/crm/contacts', 'deny', 'deny'],
     ['POST', '/api/landlord/b1/dismiss-contact-suggestion', 'deny', 'deny'],
+    ['GET', '/api/crm/companies', 'deny', null],                          // the company list a brand picker reads
     ['GET', '/api/landsec/brand-case/b1', 'allow', 'deny'],
     // A joint agent's own task list, read and tick only (Woody, 2026-11-13:
     // "we need each person to have this update their own task list").
@@ -210,8 +214,8 @@ test('the gateway for a joint agent: the Landsec Brand CRM door and nothing else
     // that login is a full Landsec login and has the client task routes.)
     ['GET', '/api/tasks', 'allow', 'allow'],
     ['PATCH', '/api/tasks/t1', 'allow', 'allow'],
-    ['POST', '/api/tasks', 'deny', 'deny'],
-    ['DELETE', '/api/tasks/t1', 'deny', 'deny'],
+    ['POST', '/api/tasks', 'deny', null],                                 // its own tasks, as any Landsec login
+    ['DELETE', '/api/tasks/t1', 'deny', null],
   ];
   for (const [method, path, , jointAgent] of table) {
     assert.equal(await decide('joint_agent', method, path), jointAgent, `joint agent ${method} ${path}`);

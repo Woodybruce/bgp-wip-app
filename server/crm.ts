@@ -54,7 +54,7 @@ import { getPlanningSummary } from "./planning-summary";
 import { getLandlordInterviewMentions } from "./landlord-interview-links";
 import { canReadLandlordMeetings } from "./landlord-meetings";
 import { contactViewer } from "./contact-viewer";
-import { schemeLimitedPropertyIdsOrNone } from "./landsec-access";
+import { schemeLimitedPropertyIdsOrNone, isJointAgentLogin } from "./landsec-access";
 import { withoutJointAgentFields, JOINT_AGENT_HIDDEN_PROPERTY_FIELDS, JOINT_AGENT_HIDDEN_DEAL_FIELDS } from "@shared/landsec";
 import { parseRequirementBrochure } from "./requirement-vision-parser";
 
@@ -2622,7 +2622,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         // A joint agent: its own schemes only, without BGP's own fields.
         const jaIds = await schemeLimitedPropertyIdsOrNone(req, "crm-properties");
         const rows = arr.filter((p: any) => linkedPropertyIds.has(p.id) && (!schemeIds || schemeIds.has(p.id)) && (!jaIds || jaIds.includes(p.id)));
-        res.json(jaIds ? rows.map((p: any) => withoutJointAgentFields(p, JOINT_AGENT_HIDDEN_PROPERTY_FIELDS)) : rows);
+        res.json(jaIds && await isJointAgentLogin(req) ? rows.map((p: any) => withoutJointAgentFields(p, JOINT_AGENT_HIDDEN_PROPERTY_FIELDS)) : rows);
       } else {
         res.json(result);
       }
@@ -2683,7 +2683,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const jaIds = scopeCompanyId ? await schemeLimitedPropertyIdsOrNone(req, "crm-property") : null;
       if (jaIds) {
         if (!jaIds.includes(String(req.params.id))) return res.status(403).json({ error: "Access denied" });
-        return res.json(withoutJointAgentFields(property as any, JOINT_AGENT_HIDDEN_PROPERTY_FIELDS));
+        return res.json(await isJointAgentLogin(req) ? withoutJointAgentFields(property as any, JOINT_AGENT_HIDDEN_PROPERTY_FIELDS) : property);
       }
       res.json(property);
       // Staff opening a property is the cheapest moment to fill the gaps
@@ -3661,7 +3661,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         // sending a deal to a client login (fee, %, notes, agreement doc).
         // A joint agent: deals on its own schemes only, without BGP's own fields.
         const jaIds = await schemeLimitedPropertyIdsOrNone(req, "crm-deals");
-        if (jaIds) return res.json(arr.filter((d: any) => scopeFilter(d) && d.propertyId && jaIds.includes(d.propertyId)).map((d: any) => withoutJointAgentFields(stripDealFees(d), JOINT_AGENT_HIDDEN_DEAL_FIELDS)));
+        if (jaIds) { const hide = await isJointAgentLogin(req); return res.json(arr.filter((d: any) => scopeFilter(d) && d.propertyId && jaIds.includes(d.propertyId)).map((d: any) => hide ? withoutJointAgentFields(stripDealFees(d), JOINT_AGENT_HIDDEN_DEAL_FIELDS) : stripDealFees(d))); }
         res.json(arr.filter(scopeFilter).map(stripDealFees));
       } else {
         res.json(result);
@@ -3762,7 +3762,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const jaIds = scopeCompanyId ? await schemeLimitedPropertyIdsOrNone(req, "crm-deal") : null;
       if (jaIds) {
         if (!deal.propertyId || !jaIds.includes(deal.propertyId)) return res.status(403).json({ error: "Access denied" });
-        return res.json(withoutJointAgentFields(stripDealFees(deal), JOINT_AGENT_HIDDEN_DEAL_FIELDS));
+        return res.json(await isJointAgentLogin(req) ? withoutJointAgentFields(stripDealFees(deal), JOINT_AGENT_HIDDEN_DEAL_FIELDS) : stripDealFees(deal));
       }
       if (scopeCompanyId) return res.json(stripDealFees(deal));
       res.json(deal);

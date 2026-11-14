@@ -14,7 +14,7 @@ import { pool } from "./db";
 import { requireAuth, requireAdmin, hashPassword } from "./auth";
 import { resolveCompanyScope, isClientRequestUser, clearCompanyScopeCache } from "./company-scope";
 import { landsecCompanyId, isLandsecCompany, resolveLandsecPortfolio, LANDSEC_SCHEMES } from "./landsec-schemes";
-import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, landsecLoginSchemes, restrictedLandsecApiRule, jointAgentPropertyRef, type JointAgentPropertyRef, isKnownLandsecRole, UNKNOWN_LANDSEC_ROLE_ERROR, type LandsecRole } from "@shared/landsec";
+import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, landsecLoginSchemes, jointAgentApiDenied, restrictedLandsecApiRule, jointAgentPropertyRef, type JointAgentPropertyRef, isKnownLandsecRole, UNKNOWN_LANDSEC_ROLE_ERROR, type LandsecRole } from "@shared/landsec";
 
 export interface LandsecAccessRow { role: LandsecRole; schemes: string[] | null; firm: string | null }
 
@@ -77,6 +77,13 @@ export async function landsecViewer(req: Request): Promise<LandsecViewer | null>
   return { companyId, isClient, role: access.role, schemes, firm: access.firm };
 }
 
+// A joint agent's login (another agency): BGP's own fields stay hidden from
+// it wherever a Landsec login would see them. Throws when the role cannot be
+// read, like every read of the role.
+export async function isJointAgentLogin(req: Request): Promise<boolean> {
+  return (await getLandsecAccess(req))?.role === "joint_agent";
+}
+
 export function viewerCanSeeScheme(v: LandsecViewer, schemeKey: string | null | undefined): boolean {
   if (!v.schemes) return true;
   return !!schemeKey && v.schemes.has(schemeKey);
@@ -112,19 +119,15 @@ export async function schemeLimitedPropertyIdsOrNone(req: Request, label: string
 // in server/landsec-gateway.test.ts).
 export async function restrictedLandsecApiDecision(req: Request, path: string): Promise<"allow" | "deny" | null> {
   const access = await getLandsecAccess(req);
-  if (!access || !RESTRICTED_LANDSEC_ROLES.includes(access.role)) return null;
-  const rule = restrictedLandsecApiRule(access.role, req.method, path);
-  if (rule === "allow" || access.role !== "joint_agent") return rule;
-  // A property's page at one of its own schemes is the same for a joint agent
-  // as for any Landsec login (Woody, 2026-11-14: "Everything is the same"):
-  // null hands the request to the ordinary client checks. Anywhere else, and
-  // whenever the property cannot be worked out, it stays refused.
-  const ref = jointAgentPropertyRef(path, (req as any).query || {});
-  if (!ref) return "deny";
-  const propertyId = await propertyOfRef(ref).catch(() => null);
-  if (!propertyId) return "deny";
-  const ids = await schemeLimitedPropertyIdsOrNone(req, "joint-agent-gateway");
-  return ids && ids.includes(propertyId) ? null : "deny";
+  // A joint agent: the ordinary client checks (cut to its schemes) less
+  // brand pages and BGP's own records (Woody, 2026-11-14).
+  // What its own pages already reached stays open as it was; its chat keeps
+  // its own one-by-one rules (jointAgentApiDenied shuts every other chat door).
+  if (access?.role === "joint_agent") {
+    if (restrictedLandsecApiRule("joint_agent", req.method, path) === "allow") return "allow";
+    return jointAgentApiDenied(req.method, path) ? "deny" : null;
+  }
+  return null;
 }
 
 const REF_SQL: Record<Exclude<JointAgentPropertyRef["kind"], "property">, string> = {
@@ -204,7 +207,7 @@ export function setupLandsecAccessRoutes(app: Express) {
       if (!LANDSEC_ROLES.some(r => r.key === role)) return res.status(400).json({ error: "role must be leasing_manager, asset_manager or joint_agent" });
       if (email.endsWith("@brucegillinghampollard.com")) return res.status(400).json({ error: "BGP staff use their own logins" });
       const schemes: string[] = Array.isArray(b.schemes) ? b.schemes.map(String).filter((k: string) => LANDSEC_SCHEMES.some(s => s.key === k)) : [];
-      if (RESTRICTED_LANDSEC_ROLES.includes(role) && schemes.length === 0) return res.status(400).json({ error: "Pick at least one scheme for a joint agent" });
+      if (role === "joint_agent" && schemes.length === 0) return res.status(400).json({ error: "Pick at least one scheme for a joint agent" });
       const adminId = req.session?.userId || req.tokenUserId || null;
 
       let user = (await pool.query(`SELECT id, name, role, team FROM users WHERE lower(email) = $1 OR lower(username) = $1 LIMIT 1`, [email])).rows[0];

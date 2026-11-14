@@ -90,7 +90,7 @@ test('the Tasks entry carries the number of open tasks, and nothing at nought', 
 test('an asset manager takes the ordinary client routes: the route guard does not name the role', () => {
   const guard = fn(APP, 'ClientRouteGuard');
   assert.doesNotMatch(guard, /asset_manager/);
-  assert.match(guard, /const routes = restricted \|\| CLIENT_ALLOWED_ROUTES;/);
+  assert.match(guard, /let ok = CLIENT_ALLOWED_ROUTES\.some\(at\);/);
   const routes = plain(evaluate(`${statement(APP, 'const CLIENT_ALLOWED_ROUTES')}\nexports.routes = CLIENT_ALLOWED_ROUTES;`).routes);
   const allowed = url => routes.some(p => p === '/' ? url === '/' : (url === p || url.startsWith(p + '/')));
   for (const [title, url] of menu('asset_manager')) assert.ok(allowed(url), `${title} ${url}`);
@@ -98,10 +98,12 @@ test('an asset manager takes the ordinary client routes: the route guard does no
 });
 
 // Woody, 2026-11-14: "joint agent can do anything other than see brands".
-test('a joint agent has the real Properties and Deals, its own Letting Tracker, Viewings, Tasks and Brand CRM', () => {
+// Woody, 2026-11-14: "The only difference is the lack of access to the brands page": a Landsec login's menu
+// less Brands, with its own tracker (BGP's notes on target brands left out) and its Brand CRM.
+test('a joint agent has the real Properties and Deals, its own Letting Tracker, the Calendar, Tasks and Brand CRM', () => {
   assert.deepEqual(menu('joint_agent'), [
     ['Properties', '/deals/properties'], ['Deals', '/deals'],
-    ['Letting Tracker', '/landsec/tracker'], ['Viewings', '/landsec/viewings'], ['Tasks', '/landsec/tasks'],
+    ['Letting Tracker', '/landsec/tracker'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'],
     ['Brand CRM', '/landsec/brand-crm'],
   ]);
 });
@@ -133,7 +135,7 @@ test('phone tabs: staff viewing as Landsec keep Home, the way out of the Landsec
 
 // Woody, 2026-11-13, asked whether to build chat for joint agents: "yes go ahead".
 test('phone tabs: a joint agent has its own Chat tab, never Messages', () => {
-  assert.deepEqual(phone('jointAgent'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/landsec/tracker'], ['Viewings', '/landsec/viewings'], ['Tasks', '/landsec/tasks']]);
+  assert.deepEqual(phone('jointAgent'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/landsec/tracker'], ['Tasks', '/landsec/tasks']]);
   // CRM and Chat are added where the tabs are chosen. Chat is the joint
   // agent's own page, not /messages (the staff and client chat).
   const tabsSource = source(TABS);
@@ -151,24 +153,20 @@ test('each entry is the only one lit on its own address', () => {
   }
 });
 
-test('a joint agent is never sent to an address its route list refuses', () => {
-  const routes = plain(evaluate(`${statement(APP, 'const LANDSEC_RESTRICTED_ROUTES')}\nexports.routes = LANDSEC_RESTRICTED_ROUTES;`).routes);
-  // The joint agent is the only login with a route jail of its own: an asset
-  // manager takes the ordinary client routes, as a full Landsec login does.
-  assert.deepEqual(Object.keys(routes), ['joint_agent']);
-  assert.deepEqual(routes.joint_agent, ['/', '/home', '/landsec', '/settings/profile']);
-  assert.doesNotMatch(source(APP), /"asset_manager"/);
-  // Its jail plus the real Properties and Deals pages (jointAgentRealPage).
+// Since 14 November 2026 a joint agent takes the ordinary client routes, less brand pages, company
+// records, contacts and brand cases (the server refuses their data too: jointAgentApiDenied).
+test('a joint agent opens every page on its menus and is sent away from brand pages', () => {
   const guard = fn(APP, 'ClientRouteGuard');
-  assert.match(guard, /if \(!ok && \(user as any\)\.landsecRole === "joint_agent" && jointAgentRealPage\(location\)\) ok = true;/);
+  const routes = plain(evaluate(`${statement(APP, 'const CLIENT_ALLOWED_ROUTES')}\nexports.routes = CLIENT_ALLOWED_ROUTES;`).routes);
+  const blocked = plain(evaluate(`${statement(APP, 'const JOINT_AGENT_BLOCKED_ROUTES')}\nexports.b = JOINT_AGENT_BLOCKED_ROUTES;`).b);
+  assert.doesNotMatch(source(APP), /"asset_manager"/);
   // The staff Letting Tracker sends it to its own.
-  assert.match(guard, /location === "\/deals\/letting" \|\| location === "\/available"\)\) \{\s*navigate\(JOINT_AGENT_MENU\.tracker\);/);
-  const allowed = url => routes.joint_agent.some(p => p === '/' ? url === '/' : (url === p || url.startsWith(p + '/'))) || jointAgentRealPage(url);
+  assert.match(guard, /if \(location === "\/deals\/letting" \|\| location === "\/available"\) \{ navigate\(JOINT_AGENT_MENU\.tracker\); return; \}/);
+  const at = url => p => p === '/' ? url === '/' : (url === p || url.startsWith(p + '/'));
+  const allowed = url => routes.some(at(url)) && !blocked.some(at(url));
   for (const [title, url] of menu('joint_agent')) assert.ok(allowed(url), `${title} ${url}`);
   for (const [label, url] of phone('jointAgent')) assert.ok(allowed(url), `${label} ${url}`);
-  for (const url of [LANDSEC_MENU.tracker, LANDSEC_MENU.brands, '/brands/x', '/companies/x', '/contacts', '/requirements']) assert.ok(!allowed(url), url);
-  // Every old address sends every Landsec login on: no joint agent page is
-  // kept back any more (14 November 2026).
+  for (const url of [LANDSEC_MENU.brands, '/brands/x', '/companies/x', '/contacts', '/landsec/brand-case/c1']) assert.ok(!allowed(url), url);
   for (const name of ['Home', 'LandsecDealsRoute', 'LandsecSchemeRoute']) assert.doesNotMatch(fn(APP, name), /landsecRestrictedRole\(/, name);
   assert.doesNotMatch(fn(APP, 'Home'), /LandsecHome/);
 });
@@ -215,12 +213,12 @@ test('a joint agent has its own chat on the rail, never the staff chat panel', (
   assert.match(app, /if \(landsecNoChatPage\) return null;/);
   assert.match(app, /<Route path="\/landsec\/chat" component=\{LandsecChat\} \/>/);
   // The route guard leaves those two addresses to that redirect.
-  assert.match(fn(APP, 'ClientRouteGuard'), /if \(!ok && restricted && \(location === "\/chatbgp" \|\| location === "\/messages"\)\) ok = true;/);
-  // landsecRestricted is the shared list, and the list is the joint agent alone.
-  assert.match(app, /const landsecRestricted = \(RESTRICTED_LANDSEC_ROLES as string\[\]\)\.includes\(/);
-  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ['joint_agent']);
+  assert.match(fn(APP, 'ClientRouteGuard'), /if \(location === "\/chatbgp" \|\| location === "\/messages"\) ok = true;/);
+  // In the shell landsecRestricted is the joint agent alone (its own chat, no global search);
+  // no role is restricted to its own pages any more (Woody, 2026-11-14).
+  assert.match(app, /const landsecRestricted = String\(\(currentUser as any\)\?\.landsecRole \|\| ""\) === "joint_agent";/);
+  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, []);
   assert.equal(landsecRestrictedRole('asset_manager'), false);
-  assert.equal(landsecRestrictedRole('joint_agent'), true);
 });
 
 test('the unit page and the brand page do not key anything on the asset manager role', () => {

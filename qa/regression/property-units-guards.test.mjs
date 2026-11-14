@@ -293,7 +293,9 @@ test('5. a joint agent reads the unit feed and the match board, and writes none 
     ['POST', `/api/plans/${PLAN}/match/anything-new`], ['post', `/api/plans/${PLAN}/match/accept`],
     ['POST', `/api/properties/${P}/units`], ['GET', `/api/properties/${P}/people`],
   ];
-  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ['joint_agent']);
+  // Since 14 November 2026 the rule only OPENS (its 'deny' leaves a joint agent to the ordinary client
+  // checks, as any Landsec login at its schemes); the reads stay opened by it.
+  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, []);
   for (const [method, path] of reads) assert.equal(restrictedLandsecApiRule('joint_agent', method, path), 'allow', `joint_agent ${method} ${path}`);
   for (const [method, path] of writes) assert.equal(restrictedLandsecApiRule('joint_agent', method, path), 'deny', `joint_agent ${method} ${path}`);
   const src = source(UNITS);

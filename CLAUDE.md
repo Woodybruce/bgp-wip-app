@@ -412,10 +412,29 @@ lease events). A new client query over the company's properties must do the
 same. The whole-company activity feed is empty for a limited login (its
 property feeds work), and the calendar shows it meetings at its schemes'
 properties or ones it is invited to. Test: `qa/regression/scheme-limit.test.mjs`.
-Not yet done (Woody parked it, then asked for it on 14 November): opening the
-full app to a joint agent (its restricted gateway, menus and chat are
-unchanged), and the user list (`getClientVisibleUserIds`), which still lists
-people on all the company's properties. `/api/dashboard/my-portfolio` is
+**A joint agent is a Landsec login at its schemes, less brand pages** (same
+day, stage 3: "For joint agent"). `RESTRICTED_LANDSEC_ROLES` is now `[]`.
+`restrictedLandsecApiDecision` for a joint agent: what
+`restrictedLandsecApiRule` opened before stays open ("allow", its own
+tracker, viewings, chat addresses one by one), `jointAgentApiDenied`
+(`shared/landsec.ts`) refuses brand pages and the hub, company records,
+contacts, the CRM plan, landlord records, brand cases, the correspondence
+log, every other chat or ChatBGP door, the generated Targeting Brief, a
+requirement from a viewing and deleting a unit; everything else goes to the
+ordinary client checks, cut to its schemes by the middleware above. BGP's
+own fields stay hidden from it on the real pages (`isJointAgentLogin` before
+`withoutJointAgentFields`), and `briefAccess` still gives it `agentControl`
+and no BGP notes. Client: its menu is Properties, Deals, Letting Tracker (its
+own, `/landsec/tracker`), Calendar, Tasks, Brand CRM; phone tabs Properties,
+Deals, Tracker, Tasks, CRM, Chat. `ClientRouteGuard` takes the ordinary
+client routes and sends it away from `JOINT_AGENT_BLOCKED_ROUTES` (brands,
+companies, contacts, brand cases). In the shell `landsecRestricted` means
+"is a joint agent": its own chat stays (`JointAgentChat`, the locked
+ChatBGP), and no global search. The deal page opens to it in full less the
+Brand tab and brand profiles. Not yet: the full ChatBGP for a joint agent,
+the staff Letting Tracker for it, and the user list
+(`getClientVisibleUserIds`), which still lists people on all the company's
+properties. `/api/dashboard/my-portfolio` is
 refused to client logins (it matched deals by team, with fees).
 
 **The only difference between the Landsec roles** (Woody, 2026-11-13: "its

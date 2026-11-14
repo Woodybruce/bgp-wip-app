@@ -670,7 +670,7 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
 export async function registerCrmEngagementRoutes(app:Express,schemaReady?:Promise<boolean>) {
   const [{pool},{requireAuth},{resolveCompanyScope}]=await Promise.all([import("./db"),import("./auth"),import("./company-scope")]);
   const {isClientVisibleBrand,getCompanyIdForClientTeam}=await import("./company-scope");
-  const [{landsecCompanyId,resolveLandsecPortfolio},{getLandsecAccess},{RESTRICTED_LANDSEC_ROLES}]=await Promise.all([import("./landsec-schemes"),import("./landsec-access"),import("../shared/landsec")]);
+  const [{landsecCompanyId,resolveLandsecPortfolio},{getLandsecAccess},{RESTRICTED_LANDSEC_ROLES,landsecLoginSchemes}]=await Promise.all([import("./landsec-schemes"),import("./landsec-access"),import("../shared/landsec")]);
   // Landsec is the one client with a Brand CRM, so the one a brand action can
   // be shown to; its schemes come from the registry (server/landsec-schemes.ts).
   const sharePartners=async():Promise<SharePartner[]>=>{
@@ -682,7 +682,7 @@ export async function registerCrmEngagementRoutes(app:Express,schemaReady?:Promi
   // A joint agent is held to their own schemes.
   const viewerSchemeKeys=async(req:Request)=>{
     const access=await getLandsecAccess(req);
-    return access&&RESTRICTED_LANDSEC_ROLES.includes(access.role)?access.schemes||[]:null;
+    return landsecLoginSchemes(access);
   };
   app.use("/api/crm/engagement",createCrmEngagementRouter({pool,requireAuth,resolveScope:resolveCompanyScope,isClientVisibleBrand,companyIdForClientTeam:getCompanyIdForClientTeam,schemaReady,sharePartners,viewerSchemeKeys}));
 }

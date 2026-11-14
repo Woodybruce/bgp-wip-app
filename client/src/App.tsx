@@ -26,8 +26,7 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { ConnectionStatus } from "@/components/connection-status";
 import DealVerdictAlarm from "@/components/deal-verdict-alarm";
 import { GlobalSearch } from "@/components/global-search";
-import { RESTRICTED_LANDSEC_ROLES } from "@shared/landsec";
-import { LANDSEC_MENU, JOINT_AGENT_MENU, jointAgentRealPage, landsecSchemeRedirect } from "@shared/landsec-menu";
+import { LANDSEC_MENU, JOINT_AGENT_MENU, landsecSchemeRedirect } from "@shared/landsec-menu";
 import { HeaderBack } from "@/components/header-back";
 import { useGoBack, isDealPage } from "@/lib/go-back";
 import { NotificationCenter } from "@/components/notification-center";
@@ -310,15 +309,13 @@ const CLIENT_ALLOWED_ROUTES = [
   // Landsec workspace (docs/landsec-pitch-plan.md): scheme and unit pages.
   "/landsec",
 ];
-// A Landsec joint agent login (docs/landsec-pitch-plan.md, item 6) is jailed
-// to the Landsec workspace and, since 14 November 2026, the real Properties
-// and Deals pages at its own schemes (jointAgentRealPage; the server cuts
-// what they read). Never Brands. The API gateway enforces the same boundary
-// server-side. An asset manager is a full Landsec login (Woody, 2026-11-13)
-// and takes the ordinary client routes.
-const LANDSEC_RESTRICTED_ROUTES: Record<string, string[]> = {
-  joint_agent: ["/", "/home", "/landsec", "/settings/profile"],
-};
+// A joint agent uses the same pages as a Landsec login, cut to its schemes on
+// the server (Woody, 2026-11-14: "The only difference is the lack of access
+// to the brands page"). It is sent away from brand pages, company records,
+// contacts and brand cases (the server refuses their data too:
+// jointAgentApiDenied in shared/landsec.ts), and from the staff Letting
+// Tracker to its own, which leaves BGP's notes on target brands out.
+const JOINT_AGENT_BLOCKED_ROUTES = ["/brands", "/companies", "/contacts", "/landsec/brand-case", "/people", "/brand-crm"];
 function ClientRouteGuard() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   const [location, setLocation] = useLocation();
@@ -327,22 +324,15 @@ function ClientRouteGuard() {
   const navigate = useCallback((to: string) => setLocation(to, { replace: true }), [setLocation]);
   useEffect(() => {
     if (user?.role !== "Client") return;
-    const restricted = LANDSEC_RESTRICTED_ROUTES[(user as any).landsecRole as string];
-    const routes = restricted || CLIENT_ALLOWED_ROUTES;
-    let ok = routes.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
-    if (!ok && (user as any).landsecRole === "joint_agent" && jointAgentRealPage(location)) ok = true;
-    // The staff Letting Tracker is not a joint agent's page: its own is.
-    if (!ok && (user as any).landsecRole === "joint_agent" && (location === "/deals/letting" || location === "/available")) {
-      navigate(JOINT_AGENT_MENU.tracker);
-      return;
+    const jointAgent = (user as any).landsecRole === "joint_agent";
+    const at = (p: string) => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/"));
+    let ok = CLIENT_ALLOWED_ROUTES.some(at);
+    if (jointAgent) {
+      if (location === "/deals/letting" || location === "/available") { navigate(JOINT_AGENT_MENU.tracker); return; }
+      // Its chat is /landsec/chat: the shell sends the two old chat addresses there.
+      if (location === "/chatbgp" || location === "/messages") ok = true;
+      if (JOINT_AGENT_BLOCKED_ROUTES.some(at)) ok = false;
     }
-    // A joint agent's chat is /landsec/chat: the shell sends the two old
-    // chat addresses there, keeping the thread a notification named.
-    if (!ok && restricted && (location === "/chatbgp" || location === "/messages")) ok = true;
-    // Joint agents never see brand cases (BGP's brand work).
-    if (ok && (user as any).landsecRole === "joint_agent" && location.startsWith("/landsec/brand-case")) ok = false;
-    // The Landsec calendar is the staff tracker's calendar: a joint agent's is its Viewings.
-    if (ok && (user as any).landsecRole === "joint_agent" && location.startsWith("/landsec/calendar")) { navigate("/landsec/viewings"); return; }
     if (!ok) navigate("/");
   }, [user, location, navigate]);
   return null;
@@ -632,7 +622,9 @@ function AuthenticatedApp() {
   }, [currentUser, isPushSupported, isPushSubscribed, subscribePush]);
   // Team Chat is BGP-internal — clients never poll it (and the button is hidden).
   const isClientShell = (currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId;
-  const landsecRestricted = (RESTRICTED_LANDSEC_ROLES as string[]).includes(String((currentUser as any)?.landsecRole || ""));
+  // A joint agent keeps its own chat and no global search (search lists brands);
+  // its menus and pages are a Landsec login's (Woody, 2026-11-14).
+  const landsecRestricted = String((currentUser as any)?.landsecRole || "") === "joint_agent";
   // A joint agent has its own chat (Woody, 2026-11-13: "yes go ahead"), cut
   // to its schemes on the server: /landsec/chat. The staff and client chat
   // pages are never mounted for it; their two addresses go to its own page,

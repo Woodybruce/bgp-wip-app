@@ -32,7 +32,7 @@ import { resolveCompanyScope, isClientRequestUser, getClientVisibleUserIds } fro
 import { briefAccess, briefSchemePropertyIds } from "./unit-brief-workspace";
 import { legacyToCode } from "@shared/deal-status";
 import { briefRoleLabel } from "@shared/unit-brief";
-import { RESTRICTED_LANDSEC_ROLES } from "@shared/landsec";
+import { RESTRICTED_LANDSEC_ROLES, landsecLoginSchemes } from "@shared/landsec";
 import {
   CHECKLIST_SIDES, CHECKLIST_STAGES, CHECKLIST_TEMPLATES, checklistStageFor, checklistSummary, checklistTemplateFor,
   checklistHasTaskList, checklistLinkPath, checklistTasksPath, checklistWayFor,
@@ -989,7 +989,7 @@ export async function deleteUnitChecklists(unitId: string, db: Db = pool): Promi
 export async function syncChecklistItemFromTask(taskId: string, done: boolean, by: { userId: string | null; name: string | null }, db: Db = pool): Promise<void> {
   if (by.userId) {
     const held = (await db.query(`SELECT landsec_role, schemes FROM landsec_access WHERE user_id = $1`, [by.userId])).rows[0];
-    if (held && (RESTRICTED_LANDSEC_ROLES as string[]).includes(String(held.landsec_role || ""))) {
+    if (held && landsecLoginSchemes({ role: String(held.landsec_role || ""), schemes: held.schemes })) {
       const where = (await db.query(
         `SELECT p.name AS property_name FROM deal_checklist_items i
            JOIN available_units au ON au.id = i.unit_id

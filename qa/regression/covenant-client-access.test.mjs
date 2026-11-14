@@ -83,7 +83,8 @@ test('a joint agent is still refused the report by company number; an asset mana
   assert.equal(restrictedLandsecApiRule('joint_agent', 'GET', '/api/covenant/00502851'), 'deny');
   // Woody, 13 November 2026: an asset manager is a full Landsec login. It never
   // reaches the restricted rule, and reads the report as any client in its slice does.
-  assert.deepEqual([...RESTRICTED_LANDSEC_ROLES], ['joint_agent']);
+  // Since 14 November 2026 no role is restricted: a joint agent is a Landsec login at its schemes.
+  assert.deepEqual([...RESTRICTED_LANDSEC_ROLES], []);
 });
 
 test('the covenant engine picks the record behind a shared number the same way every time', () => {

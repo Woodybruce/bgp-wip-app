@@ -1,6 +1,6 @@
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake, Target, Layers, Eye, Building2 } from "lucide-react";
+import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake, Target, Layers, Building2 } from "lucide-react";
 import { useKeyboardOpen } from "@/hooks/use-mobile";
 import { useBrand } from "@/lib/brand-context";
 import { LANDSEC_MENU, JOINT_AGENT_MENU, LANDSEC_STAFF_TASKS, landsecMenuActive, openTaskCount } from "@shared/landsec-menu";
@@ -54,7 +54,6 @@ const LANDSEC_JOINT_AGENT_NAV_ITEMS = [
   { label: "Properties", icon: Building2, path: JOINT_AGENT_MENU.properties },
   { label: "Deals", icon: BarChart3, path: JOINT_AGENT_MENU.deals },
   { label: "Tracker", icon: Layers, path: JOINT_AGENT_MENU.tracker },
-  { label: "Viewings", icon: Eye, path: "/landsec/viewings" },
   { label: "Tasks", icon: CheckSquare, path: LANDSEC_MENU.tasks },
 ] as const;
 

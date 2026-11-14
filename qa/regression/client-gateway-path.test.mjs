@@ -17,7 +17,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const express = require('express');
 const { find, evaluate, ts } = require('./source-harness.cjs');
-const { routedApiPath, restrictedLandsecApiRule, RESTRICTED_LANDSEC_ROLES } = await import('../../shared/landsec.ts');
+const { routedApiPath, restrictedLandsecApiRule, RESTRICTED_LANDSEC_ROLES, jointAgentApiDenied } = await import('../../shared/landsec.ts');
 
 const INDEX = 'server/index.ts';
 const declaration = name => find(INDEX, n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText() === name));
@@ -38,10 +38,13 @@ evaluate(['CLIENT_ALLOWED_API', 'CLIENT_ALLOWED_WRITES', 'CLIENT_BLOCKED_SUBPATH
     isClientRequestUser: async () => who.client,
     resolveCompanyScope: async () => (who.client ? 'client-a' : null),
     isClientVisibleBrand: async id => id === 'visible-brand',
-    // The real rule list, for a restricted role under test (as
-    // restrictedLandsecApiDecision in server/landsec-access.ts asks it); a
-    // full client, an asset manager included, gets no answer from it.
-    restrictedLandsecApiDecision: async (req, path) => (who.role && RESTRICTED_LANDSEC_ROLES.includes(who.role) ? restrictedLandsecApiRule(who.role, req.method, path) : null),
+    // As restrictedLandsecApiDecision in server/landsec-access.ts answers
+    // (since 14 November 2026): a joint agent keeps what its pages and chat
+    // reached, is refused brand pages and BGP's own records, and is otherwise
+    // left to the ordinary client checks; every other login gets no answer.
+    restrictedLandsecApiDecision: async (req, path) => (who.role === 'joint_agent'
+      ? (restrictedLandsecApiRule('joint_agent', req.method, path) === 'allow' ? 'allow' : jointAgentApiDenied(req.method, path) ? 'deny' : null)
+      : null),
   }),
 });
 evaluate(declaration('RETIRED_AML') + '\n' + retiredSource, { routedApiPath, process: { env: {} }, app: { use: (_, fn) => { retired = fn; } } });
@@ -97,17 +100,20 @@ test('neither gate cuts its path out of the request line any more', () => {
   }
 });
 
-test('a joint agent: the unit list stays shut however the request line is spelled', async () => {
+// Since 14 November 2026 a joint agent has a Landsec login's app at its own
+// schemes (the handlers cut every list to them), less brand pages and BGP's
+// own records: those stay shut however the request line is spelled.
+test('a joint agent: brand pages stay shut however the request line is spelled', async () => {
   as('joint_agent');
   assert.deepEqual(await send('/api/available-units/u1/files'), { status: 200, reached: '/api/available-units/u1/files' }, 'a unit\'s files are on the joint agent\'s list');
+  assert.equal((await send('/api/available-units')).status, 200, 'the unit list: cut to its schemes in the handler');
   for (const target of [
-    '/api/available-units',
-    '/api/available-units#/files',
-    '/api/available-units/#/files',
-    '/api/available-units?x=1#/u1/files',
-    '/api/available-units/all-offers#/files',
-    '/API/Available-Units',
-    '/api/available-units/',
+    '/api/brand/visible-brand/profile',
+    '/api/brand/visible-brand/profile#/x',
+    '/API/Brand/visible-brand/profile',
+    '/api/brands/hub',
+    '/api/crm/contacts',
+    '/api/crm/companies/visible-brand',
   ]) {
     const r = await send(target);
     assert.equal(r.status, 403, `${target} answered ${r.status}${r.reached ? ` and reached ${r.reached}` : ''}`);
@@ -138,12 +144,12 @@ test('the front door refuses a "#" or a "\\" in the path before any gate reads t
   assert.equal((await through('/')).status, 200);
   assert.equal((await through('/api/aml/status')).status, 410, 'and the gates behind it still answer');
   as('joint_agent');
-  assert.equal((await through('/api/available-units')).status, 403);
+  assert.equal((await through('/api/brand/visible-brand/profile')).status, 403);
   assert.equal((await through('/api/available-units#/files')).status, 400);
 });
 
 test('an asset manager reads a brand address only where a full Landsec login can', async () => {
-  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ['joint_agent']);
+  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, []);
   as('asset_manager');
   assert.equal((await send('/api/brand/visible-brand/profile')).status, 200);
   assert.equal((await send('/api/brand/client-a/profile')).status, 200, 'its own company');
@@ -182,14 +188,14 @@ test('an asset manager is answered exactly as a full Landsec login, read or writ
   }
   // The list holds both kinds, so "the same" is not "everything refused".
   assert.ok(open >= 8 && shut >= 8, `${open} open, ${shut} shut`);
-  // And a joint agent is not the same: the unit list, chat search and the
-  // brand pages stay shut to it. Its own conversations opened on
-  // 13 November 2026 (Woody: "yes go ahead"), one address at a time, and the
-  // deal and property reads on 14 November (cut to its schemes in the
-  // handlers).
+  // A joint agent is the same less brand pages and BGP's own records
+  // (Woody, 2026-11-14), and keeps its own chat: chat search, the tagging
+  // list and files to ChatBGP stay shut.
   as('joint_agent');
   assert.equal((await send('/api/crm/deals')).status, 200, 'joint agent /api/crm/deals');
-  for (const target of ['/api/available-units', '/api/chat/search', '/api/chat/threads-tagging', '/api/chatbgp/chat-with-files', '/api/brand/visible-brand/profile', '/api/crm/companies']) {
+  assert.equal((await send('/api/available-units')).status, 200, 'joint agent /api/available-units');
+  assert.equal((await send('/api/crm/companies')).status, 200, 'joint agent: the company list a brand picker reads');
+  for (const target of ['/api/chat/search', '/api/chat/threads-tagging', '/api/chatbgp/chat-with-files', '/api/brand/visible-brand/profile', '/api/crm/contacts']) {
     assert.equal((await send(target)).status, 403, `joint agent ${target}`);
   }
   assert.equal((await send('/api/chat/threads')).status, 200, 'joint agent /api/chat/threads');

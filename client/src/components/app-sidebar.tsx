@@ -149,9 +149,12 @@ const LANDSEC_RESTRICTED_NAV = [
 // (Woody, 2026-11-12: "Joint agents should have full control like us",
 // "only on their instructed properties"). Its Letting Tracker is its own
 // tracker: the staff one reads BGP's notes on target brands.
+// Since 14 November 2026 its menu is a Landsec login's less Brands (Woody:
+// "The only difference is the lack of access to the brands page"), with its
+// own tracker (BGP's notes on target brands left out) and its Brand CRM.
 export const LANDSEC_JOINT_AGENT_NAV = [
   { title: "Letting Tracker", url: JOINT_AGENT_MENU.tracker, icon: Layers },
-  { title: "Viewings", url: "/landsec/viewings", icon: Eye },
+  { title: "Calendar", url: LANDSEC_MENU.calendar, icon: Calendar },
   { title: "Tasks", url: "/landsec/tasks", icon: ListTodo },
 ];
 
