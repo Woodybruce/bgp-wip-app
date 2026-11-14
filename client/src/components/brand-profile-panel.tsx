@@ -2731,7 +2731,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // other company kind's layout place the same pieces (each is drawn once).
   const storesBoardBlock = !isLandlord && (stores.length > 0 || !isClientViewer) && <BrandStoresBoard
     pattern={brandTop}
-    companyId={companyId} stores={stores} reportedTotal={c.store_count} canRefresh={!isClientViewer}
+    companyId={companyId} stores={stores} reportedTotal={c.store_count} canRefresh
     refreshing={researchStoresMutation.isPending} diagnostic={storesDiagnostic} velocity={rolloutVelocity?.net12m ?? null}
     onRefresh={() => researchStoresMutation.mutate({ scope: "uk" })}
     onMapAll={() => researchStoresMutation.mutate({ scope: "uk", depth: "full" })}

@@ -135,6 +135,7 @@ export const LANDSEC_NAV = [
   { title: "Letting Tracker", url: LANDSEC_MENU.tracker, icon: Store },
   { title: "Calendar", url: LANDSEC_MENU.calendar, icon: Calendar },
   { title: "Brands", url: LANDSEC_MENU.brands, icon: Handshake },
+  { title: "CRM", url: LANDSEC_MENU.crm, icon: Users },
 ];
 
 // A joint agent uses the real Properties and Deals pages, cut to its own
@@ -174,7 +175,7 @@ const LANDSEC_TASKS_NAV = { title: "Tasks", url: LANDSEC_MENU.tasks, icon: ListT
 const JOINT_AGENT_BRAND_CRM = { title: "Brand CRM", url: "/landsec/brand-crm", icon: Target };
 export function landsecNavFor(role: string | null | undefined, staffView = false) {
   if (role === "joint_agent") return [...LANDSEC_RESTRICTED_NAV, ...LANDSEC_JOINT_AGENT_NAV, JOINT_AGENT_BRAND_CRM];
-  return [...LANDSEC_NAV.filter(i => i.title !== "Brands"), { ...LANDSEC_TASKS_NAV, url: landsecTasksPath(staffView) }, ...LANDSEC_NAV.filter(i => i.title === "Brands")];
+  return [...LANDSEC_NAV.filter(i => i.title !== "Brands" && i.title !== "CRM"), { ...LANDSEC_TASKS_NAV, url: landsecTasksPath(staffView) }, ...LANDSEC_NAV.filter(i => i.title === "Brands" || i.title === "CRM")];
 }
 
 // The Tasks entry with its number: the login's open tasks. Nothing is shown

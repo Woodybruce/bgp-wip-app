@@ -5164,7 +5164,8 @@ app.use("/api/branding/assets", express.static(
         // hit the enrichment button — they need to be able to use the app
         // in the same way we can"). Both only refresh derived/public data
         // on the brand record; gated on the client's brand slice.
-        const enrichTarget = resourcePath.match(/^\/api\/(?:brand\/([^/]+)\/credit-check|companies-house\/auto-kyc\/([^/]+))$/i);
+        // Refresh stores too (the standard search; the handler keeps the full one for BGP).
+        const enrichTarget = resourcePath.match(/^\/api\/(?:brand\/([^/]+)\/(?:credit-check|research-stores)|companies-house\/auto-kyc\/([^/]+))$/i);
         if (req.method === "POST" && enrichTarget) {
           const { isClientVisibleBrand, resolveCompanyScope } = await import("./company-scope");
           const scope = await resolveCompanyScope(req);
