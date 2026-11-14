@@ -214,21 +214,19 @@ test('Landlord counts distinguish emails and meetings and retain the normal scop
  const brand=renderComponent('KeyContactRow',{...props,isLandlord:false});assert.match(text(brand.tree),/12 emails/);
 });
 
-test('a client login reads a role as text and never edits it (no client login edits a job title, 2026-11-14)',()=>{
+test('a client login edits a job title as BGP does; only a joint agent reads it as text (Woody, 2026-11-14: everyone amends)',()=>{
  const props={companyId:'brand',companyName:'Greggs',isLandlord:false,plainFigures:true};
  const noRole={id:'auto',name:'Toby Example',email:'toby@example.com'},withRole={...noRole,id:'saved',role:'Property Director'};
  const staff=renderComponent('KeyContactRow',{...props,contact:noRole});
  assert.match(text(staff.tree),/add role…/);
  for(const viewer of [{role:'Client'},{role:'Client',landsecRole:'leasing_manager'},{role:'Client',landsecRole:'asset_manager'},{role:'Client',landsecRole:'joint_agent'}]) {
-  const restricted=true;
+  const restricted=viewer.landsecRole==='joint_agent';
   const empty=elements(renderComponent('KeyContactRow',{...props,contact:noRole},{viewer}).tree);
-  assert.doesNotMatch(text(empty),/add role…/);
+  assert.equal(/add role…/.test(text(empty)),!restricted);
   assert.equal(empty.some(node=>node.type==='DropdownMenuItem'&&/Add role/.test(text(node))),!restricted);
-  assert.equal(empty.some(node=>node.type==='button'&&/click to edit|Add role/.test(String(node.props.title||''))),false);
   const saved=elements(renderComponent('KeyContactRow',{...props,contact:withRole},{viewer}).tree);
-  const role=saved.find(node=>node.props['data-testid']==='key-contact-role');
-  assert.equal(role.type,'span');assert.equal(text(role),'Property Director');
   assert.equal(saved.some(node=>node.type==='DropdownMenuItem'&&/Edit role/.test(text(node))),!restricted);
+  if(restricted){const role=saved.find(node=>node.props['data-testid']==='key-contact-role');assert.equal(role.type,'span');assert.equal(text(role),'Property Director');}
  }
 });
 

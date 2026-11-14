@@ -4821,6 +4821,9 @@ app.use("/api/branding/assets", express.static(
     "/api/notifications", "/api/daily-digest", "/api/activity-feed",
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
+    // BGP staff headshots (the website photos users.profile_pic_url points
+    // at): the BGP team in People shows them to every login (2026-11-14).
+    "/api/staff-photo/",
     "/api/available-units", "/api/leasing-viewings", "/api/tasks",
     // Unit search for the deal form / Add Unit — scoped to the client's own
     // properties in the handler, like /api/available-units.

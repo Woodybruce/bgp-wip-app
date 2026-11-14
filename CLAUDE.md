@@ -1261,8 +1261,11 @@ What a login may read or save is decided on the
 server, never by hiding a control. The only differences kept: a joint agent
 does not open brand pages (no brand links), the More menu's BGP pages
 (Image Studio, documents, evidence plan, folder set-up, delete) are BGP
-staff's, a client's Folders is its own data room, and no client login edits
-a contact's job title. Do not add a hide-for-clients switch to this page.
+staff's, and a client's Folders is its own data room. A client login edits a
+contact's job title as BGP does (Woody, 2026-11-14, asking why the contact
+menu had lost options: it had been taken off for clients that morning, not
+by his decision; the server holds a client to its own contacts and its
+brand list). Do not add a hide-for-clients switch to this page.
 - **A joint agent on the page**: `restrictedLandsecApiDecision` hands a
   request the joint agent rule refuses to the ordinary client checks when it
   is about a property at one of its schemes (`jointAgentPropertyRef` in
@@ -1483,9 +1486,9 @@ untouched when it is off, and
     `onChanged`) change nothing on the landlord and brand boards
     (`qa/regression/key-contact-row-slots.test.mjs`). Each person is drawn
     once, even when on several units.
-  - Before the plan-led page opens to client logins, `KeyContactRow`'s job
-    title editor must be made staff only (the client CRM guard would let a
-    client save it).
+  - `KeyContactRow`'s job title editor is open to client logins (Woody,
+    2026-11-14: everyone amends); the client CRM guard holds the save to the
+    client's own contacts and its brand list. Only a joint agent has none.
 - **Approved by Woody on 2026-11-13** ("yes do it all"): pushing step 1
   live behind the button; loading the May 2022 Bluewater plan; the link from
   a schedule row to the tenant's legal entity (`tenant_entity_id`); the

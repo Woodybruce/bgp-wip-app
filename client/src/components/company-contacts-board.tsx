@@ -132,11 +132,11 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
   const iconLink = "p-1.5 md:p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted shrink-0";
   // A brand's own page, desktop: email, phone and LinkedIn each keep their place, so the icons line up down the list.
   const iconSlot = plainFigures ? <span className="hidden md:block w-6 shrink-0" aria-hidden="true" /> : null;
-  // The server refuses a contact edit from a Landsec joint agent (the only
-  // restricted Landsec role; an asset manager is a full Landsec login).
-  // A job title is BGP's record: no client login edits it here (2026-11-14,
-  // before the plan-led property page opened to Landsec logins).
-  const noRoleEdit = rowIsClient;
+  // Everyone amends (Woody, 2026-11-14: "the app is for everyone to be able to
+  // amend including the client"): a client login edits a job title as BGP
+  // does, and the server holds it to its own company's contacts and the
+  // brands in its list. A joint agent reads no contacts at all.
+  const noRoleEdit = rowIsClient && String(rowViewer?.landsecRole || "") === "joint_agent";
   const roleOrStatus = editingRole ? (
     <input
       autoFocus
@@ -153,8 +153,8 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
       className="text-[11px] w-full [@container(min-width:560px)]:w-48 border rounded px-1 py-0.5 bg-background"
       placeholder="e.g. Head of Leasing"
     />
-  ) : rowIsClient ? (
-    // A client login reads the role as text, and is not prompted to "add role…" on BGP's contact.
+  ) : noRoleEdit ? (
+    // Only a joint agent reads the role as text (it reads no contacts at all).
     contact.role ? <span className="text-[11px] [@container(min-width:560px)]:text-xs min-w-0 break-words [@container(min-width:560px)]:truncate text-muted-foreground" data-testid="key-contact-role">{contact.role}</span> : null
   ) : (
     <button
