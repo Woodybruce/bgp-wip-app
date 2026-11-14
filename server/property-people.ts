@@ -109,6 +109,12 @@ export function buildPropertyPeopleQuery(propertyId: string, scopeCompanyId: str
       "FROM resolved_occupiers t"),
     rel({ contact_id: "c.id", group_key: "'units'", role: "named.role", ...dealFields },
       named([["tenant_contact_id", "Tenant"], ["leasing_agent_contact_id", "Leasing agent"]])),
+    // A tenant's own contacts linked to this property sit on its units
+    // (Woody, 2026-11-14: "need to be able to add named contact here").
+    rel({ contact_id: "c.id", group_key: "'units'", role: "'Tenant'", source: "'Contact at the tenant'", schedule_row_id: "t.id", unit_name: LABEL("t"), status: "t.status", confirmed: "t.confirmed" },
+      `FROM resolved_occupiers t JOIN crm_contacts c ON c.company_id = t.resolved_company_id
+      JOIN crm_contact_properties cpx ON cpx.contact_id = c.id AND cpx.property_id = $1
+      WHERE t.resolved_company_id IS NOT NULL AND ${visible("c.id", "$1")}`),
     rel({ company_id: "d.tenant_id", group_key: "'units'", role: "'Tenant'", source: "'Tenant on a live deal'", ...dealFields },
       `FROM pdeals d WHERE ${LIVE_DEAL} AND d.tenant_id IS NOT NULL`),
     rel({ company_id: "party.company_id", group_key: "'units'", role: "'Tenant'", source: "'Tracker · ' || party.source",
@@ -129,7 +135,7 @@ export function buildPropertyPeopleQuery(propertyId: string, scopeCompanyId: str
       named([["client_contact_id", "Client"], ["landlord_contact_id", "Landlord"], ["vendor_contact_id", "Vendor"], ["purchaser_contact_id", "Purchaser"],
         ["vendor_agent_contact_id", "Vendor agent"], ["acquisition_agent_contact_id", "Acquisition agent"], ["purchaser_agent_contact_id", "Purchaser agent"]])),
     rel({ company_id: "co.id", group_key: "'deals'", role: "'Agent firm'" },
-      `FROM crm_company_properties cp JOIN crm_companies co ON co.id = cp.company_id WHERE cp.property_id = $1 AND ${AGENT_FIRM("co")}`),
+      `FROM crm_company_properties cp JOIN crm_companies co ON co.id = cp.company_id WHERE cp.property_id = $1 AND ${AGENT_FIRM("co")} AND ${notOwner("co.id")}`),
     // Advisers
     rel({ contact_id: "c.id", group_key: "'advisers'", role: "COALESCE(NULLIF(btrim(co.company_type), ''), 'Adviser')" },
       `FROM crm_company_properties cp JOIN crm_companies co ON co.id = cp.company_id JOIN crm_contacts c ON c.company_id = co.id

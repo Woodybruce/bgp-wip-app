@@ -55,6 +55,7 @@ import { Pill } from "@/components/ui/pill";
 import { EntityPicker } from "@/components/entity-picker";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { useGoBack } from "@/lib/go-back";
+import { MemberAvatar } from "@/components/ClientTeamOrgChart";
 
 function parseAlloc(val: string | string[] | null | undefined): string[] {
   if (!val) return [];
@@ -621,6 +622,21 @@ function plainNotes(notes: string): string {
 // — one plain line with real names, subjects behind a toggle (Woody,
 // 2026-09-27). Anything typed after it renders as-is.
 const EMAIL_DISCOVERY_NOTE_RE = /^Added from email — the team has emailed them (\d+) times \(([^)]*)\)\.\s*(?:Sample subjects:\s*([^\n]*))?\n?([\s\S]*)$/;
+// The BGP people on the contact's company, by name and headshot: the stored
+// list holds user ids, which read as random numbers when printed (Woody,
+// 2026-11-14). An id with no login behind it is left out.
+function BgpContactNames({ ids, fallback }: { ids: string[]; fallback: string | null }) {
+  const { data: users = [] } = useQuery<Array<{ id: string; name?: string | null; profilePicUrl?: string | null }>>({ queryKey: ["/api/users"], staleTime: 10 * 60 * 1000 });
+  const named = ids.map(id => users.find(u => String(u.id) === String(id))).filter((u): u is { id: string; name?: string | null; profilePicUrl?: string | null } => !!u && !!u.name);
+  if (!named.length) return fallback ? <span className="text-sm">{fallback}</span> : <span className="text-xs text-muted-foreground">Not set</span>;
+  return <>{named.map(u => (
+    <span key={u.id} className="inline-flex items-center gap-1.5 text-xs mr-2" data-testid={`bgp-contact-${u.id}`}>
+      <MemberAvatar member={{ full_name: u.name || "", username: u.name || "", user_id: String(u.id), profile_pic_url: u.profilePicUrl || null }} className="w-5 h-5 text-[9px]" />
+      {u.name}
+    </span>
+  ))}</>;
+}
+
 function ContactNotes({ notes }: { notes: string }) {
   const [showSubjects, setShowSubjects] = useState(false);
   const { data: users = [] } = useQuery<Array<{ name?: string | null; username?: string | null; email?: string | null }>>({
@@ -1397,9 +1413,7 @@ function ContactDetail({ id }: { id: string }) {
                     <div>
                       <p className="text-xs text-muted-foreground">BGP Contacts</p>
                       <div className="flex flex-wrap gap-1 mt-0.5">
-                        {(company?.bgpContactUserIds?.length ? company.bgpContactUserIds : company?.bgpContactCrm ? [company.bgpContactCrm] : []).map((name: string) => (
-                          <Badge key={name} variant="secondary" className="text-[10px] px-1.5 py-0">{name}</Badge>
-                        ))}
+                        <BgpContactNames ids={company?.bgpContactUserIds || []} fallback={company?.bgpContactCrm || null} />
                       </div>
                     </div>
                   </div>

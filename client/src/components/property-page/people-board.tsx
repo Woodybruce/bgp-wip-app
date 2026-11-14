@@ -12,7 +12,7 @@ import { useState, type ReactNode } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mail, MoreHorizontal, Phone, Plus } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Pill, PillCount, pillMetrics } from "@/components/ui/pill";
@@ -201,8 +201,72 @@ export function unitBlocks<T extends RecordPerson>(list: T[], feed: PropertyUnit
   return rest.length ? [...placed, { key: "none", label: "Not tied to a unit", title: undefined, units: [] as PropertyUnit[], people: rest, first: feed.length }] : placed;
 }
 
+// "No named contact" on a tenant's line: pick one of the brand's contacts, or
+// add a new one, and they are linked to this property, so they show on the
+// tenant's units here (Woody, 2026-11-14: "need to be able to add named
+// contact here ... a drop down of the contacts we have in the brands").
+function AddUnitContact({ propertyId, companyId, companyName, onChanged }: { propertyId: string; companyId: string; companyName: string; onChanged: () => void }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const { data: contacts = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/crm/contacts", "company", companyId],
+    enabled: open,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const r = await fetch(`/api/crm/contacts?companyId=${encodeURIComponent(companyId)}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      const d = await r.json();
+      return (Array.isArray(d) ? d : d.data || d.contacts || []).filter((c: any) => (c.companyId ?? c.company_id) === companyId);
+    },
+  });
+  const shown = contacts.filter((c: any) => !q.trim() || String(c.name || "").toLowerCase().includes(q.trim().toLowerCase())).slice(0, 12);
+  const link = async (contactId: string) => {
+    setBusy(true);
+    try {
+      await apiRequest("POST", `/api/crm/contacts/${encodeURIComponent(contactId)}/properties`, { propertyId });
+      setOpen(false); setQ(""); onChanged();
+    } catch (e: any) { toast({ title: "Couldn't add the contact", description: plainError(e), variant: "destructive" }); }
+    finally { setBusy(false); }
+  };
+  const create = async () => {
+    const name = q.trim();
+    if (!name) return;
+    setBusy(true);
+    try {
+      const made = await (await apiRequest("POST", "/api/crm/contacts", { name, companyId, companyName })).json();
+      await link(String(made.id));
+    } catch (e: any) { toast({ title: "Couldn't add the contact", description: plainError(e), variant: "destructive" }); setBusy(false); }
+  };
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <button type="button" data-no-min-touch className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-0.5 italic" data-testid={`people-add-unit-contact-${companyId}`}>
+          <Plus className="w-3 h-3" />Add named contact
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64 p-1.5 text-xs" onKeyDown={e => e.stopPropagation()}>
+        <Input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder={`Search ${companyName}'s contacts, or type a new name`} className="h-8 text-xs mb-1" />
+        {isLoading ? <p className="px-2 py-1 text-muted-foreground">Loading…</p>
+          : shown.length === 0 ? <p className="px-2 py-1 text-muted-foreground">{contacts.length ? "No match" : `No contacts at ${companyName} yet`}</p>
+          : shown.map((c: any) => (
+            <DropdownMenuItem key={c.id} disabled={busy} onSelect={e => { e.preventDefault(); void link(String(c.id)); }}>
+              <span className="truncate">{contactDisplayName(c.name)}{c.role ? <span className="text-muted-foreground"> · {c.role}</span> : null}</span>
+            </DropdownMenuItem>
+          ))}
+        {q.trim() && !contacts.some((c: any) => String(c.name || "").toLowerCase() === q.trim().toLowerCase()) && (
+          <DropdownMenuItem disabled={busy} onSelect={e => { e.preventDefault(); void create(); }} className="text-primary">
+            <Plus className="w-3 h-3 mr-1" />Add “{q.trim()}” as a new contact at {companyName}
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 // One line of the tenants and agents list. On a narrow board the cells stack.
-function UnitPersonLine({ person, block, menu, onChanged }: { person: RecordPerson; block: { key: string; label: string; title?: string; units: PropertyUnit[] }; menu: ReactNode[]; onChanged: () => void }) {
+function UnitPersonLine({ person, block, menu, onChanged, propertyId }: { person: RecordPerson; block: { key: string; label: string; title?: string; units: PropertyUnit[] }; menu: ReactNode[]; onChanged: () => void; propertyId?: string }) {
   const rel = person.relationships.find(r => r.group === "units") || person.relationships[0];
   const type = rel?.role || person.roleOnRecord || "";
   const unitCell = block.units.length
@@ -219,6 +283,8 @@ function UnitPersonLine({ person, block, menu, onChanged }: { person: RecordPers
   const companyId = person.company?.id || null;
   const nameCell = isPerson
     ? (person.contactId ? <Link href={`/contacts/${person.contactId}`} className="font-semibold hover:underline truncate">{contactDisplayName(person.name)}</Link> : <span className="font-semibold truncate">{contactDisplayName(person.name)}</span>)
+    : person.kind === "company" && person.company?.id && propertyId
+    ? <AddUnitContact propertyId={propertyId} companyId={person.company.id} companyName={person.name} onChanged={onChanged} />
     : <span className="text-muted-foreground italic truncate">No named contact</span>;
   const companyCell = companyName
     ? <CompanyChip id={companyId} name={companyName} size={16} testId={`people-company-${person.id}`} />
@@ -442,7 +508,7 @@ export function PropertyPeopleBoard({ propertyId, propertyName, landlordId, agen
       <div className="min-w-0" data-testid="people-units-table">
         <div className="divide-y divide-border/60">
           {blocks.flatMap(block => block.people.map(person => (
-            <UnitPersonLine key={`${block.key}:${person.id}`} person={person} block={block} menu={menuFor(person)} onChanged={() => refresh(person.company?.id)} />
+            <UnitPersonLine key={`${block.key}:${person.id}`} person={person} block={block} menu={menuFor(person)} onChanged={() => refresh(person.company?.id)} propertyId={propertyId} />
           )))}
         </div>
       </div>

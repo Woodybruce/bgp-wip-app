@@ -132,7 +132,13 @@ export async function getClientVisibleUserIds(scopeCompanyId: string | null | un
        SELECT u.id FROM users u
          JOIN crm_companies c ON c.id = $1
         WHERE LOWER(u.team) = LOWER(c.name)
-           OR c.name ILIKE ANY(COALESCE(u.additional_teams, '{}'))`,
+           OR c.name ILIKE ANY(COALESCE(u.additional_teams, '{}'))
+       UNION
+       -- Every active BGP person: a client sees who BGP's people are, with
+       -- their headshots, wherever they are named (Woody, 2026-11-14).
+       SELECT u.id FROM users u
+        WHERE u.is_active IS DISTINCT FROM false AND COALESCE(u.role, '') <> 'Client'
+          AND lower(COALESCE(u.email, '')) LIKE '%${BGP_EMAIL_DOMAIN}'`,
       [scopeCompanyId]
     );
     for (const row of r.rows) if (row.user_id) ids.add(row.user_id);
