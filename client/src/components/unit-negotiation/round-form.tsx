@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Pill } from "@/components/ui/pill";
-import { NoteFill } from "@/components/letting-note/note-fill";
+import { FillFromNotes } from "@/components/letting-note/note-fill";
 import type { LettingNoteReading } from "@shared/letting-note";
 import { parseMoney } from "@shared/unit-brief";
 import {
@@ -160,8 +160,6 @@ export function RoundForm({ idPrefix, title, base, party: startParty, roundDate:
     <div className="rounded-lg border border-border bg-card p-3 space-y-3 min-w-0" data-testid={`negotiation-${idPrefix}-form`}>
       <p className="text-sm font-medium">{title}</p>
 
-      {noteContext && <NoteFill kind="round" unitId={noteContext.unitId} offerId={noteContext.offerId} onApply={applyNote} />}
-
       <div className="space-y-1">
         <p className="text-xs text-muted-foreground" id={`neg-${idPrefix}-party-label`}>Whose position is this?</p>
         <div className="flex flex-wrap items-center gap-1.5" role="group" aria-labelledby={`neg-${idPrefix}-party-label`}>
@@ -209,13 +207,14 @@ export function RoundForm({ idPrefix, title, base, party: startParty, roundDate:
         </p>
       )}
 
-      <div className="space-y-1">
+      <FillFromNotes kind="round" unitId={noteContext?.unitId} offerId={noteContext?.offerId} word="note" className="space-y-1"
+        text={note} keepText={setNote} onApply={applyNote}>
         <Label htmlFor={`neg-${idPrefix}-note`} className="text-xs">Note</Label>
-        <Textarea id={`neg-${idPrefix}-note`} rows={2} value={note} disabled={busy} placeholder="What was said, by whom"
+        <Textarea id={`neg-${idPrefix}-note`} rows={2} value={note} disabled={busy} placeholder="What was said, by whom, e.g. Counter: £105k pax, 4 MRF"
           onChange={e => { setNote(e.target.value); setErrors(er => (er.note || er.form ? { ...er, note: undefined, form: undefined } : er)); }}
           aria-invalid={!!errors.note} data-testid={`negotiation-${idPrefix}-note`} />
         {errors.note && <p className="text-[11px] text-destructive">{errors.note}</p>}
-      </div>
+      </FillFromNotes>
 
       {errors.form && <p className="text-xs text-destructive" role="alert" data-testid={`negotiation-${idPrefix}-form-error`}>{errors.form}</p>}
 

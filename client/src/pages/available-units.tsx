@@ -66,7 +66,7 @@ import { BrandSearchInput, type BrandPick } from "@/components/brand-search-inpu
 import { trackerCompaniesQuery } from "@/lib/tracker-reads";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { TargetRowCells, LETTING_CATEGORIES, targetStatusLabel, type TargetCommentRef } from "@/components/target-operators-table";
-import { NoteFill } from "@/components/letting-note/note-fill";
+import { FillFromNotes, NoteFill } from "@/components/letting-note/note-fill";
 import { SuggestionsDialog, SuggestionsPill, seededDay, suggestionLogged, suggestionSeed } from "@/components/letting-note/suggestions-dialog";
 import type { LettingSuggestion } from "@shared/letting-suggestions";
 import type { LettingNoteReading, NoteSource } from "@shared/letting-note";
@@ -4257,8 +4257,6 @@ export default function AvailableUnitsPage() {
               phone-call expression of interest can be recorded. */}
           <div className="border-t pt-3 space-y-2">
             <p className="text-xs font-medium">Log interest</p>
-            {/* Paste a note: it is read into this form. Nothing is saved until Log interest is pressed. */}
-            {interestUnit && <NoteFill key={`${interestUnit.id}:${interestNoteRound}`} kind="interest" unitId={interestUnit.id} onApply={applyInterestNote} />}
             <div className="grid grid-cols-2 gap-2">
               <div className="min-w-0">
                 <CrmPicker
@@ -4328,7 +4326,11 @@ export default function AvailableUnitsPage() {
                 />
               </div>
             )}
-            <Input value={interestForm.notes} onChange={e => setInterestForm(f => ({ ...f, notes: e.target.value }))} placeholder="Note (e.g. rang about this unit — wants floorplans)" data-testid="interest-notes" />
+            {/* The note is read into this form as it is typed; it stays as typed. Nothing is saved until Log interest is pressed. */}
+            <FillFromNotes key={`${interestUnit?.id}:${interestNoteRound}`} kind="interest" unitId={interestUnit?.id} word="note"
+              text={interestForm.notes} keepText={v => setInterestForm(f => ({ ...f, notes: v }))} onApply={applyInterestNote}>
+              <Input value={interestForm.notes} onChange={e => setInterestForm(f => ({ ...f, notes: e.target.value }))} placeholder="Note (e.g. rang about this unit — wants floorplans)" data-testid="interest-notes" />
+            </FillFromNotes>
             <Button
               size="sm"
               disabled={(!interestForm.companyName && !interestForm.agentCompanyName) || addInterestMutation.isPending}
@@ -4414,11 +4416,10 @@ export default function AvailableUnitsPage() {
           {addViewingOpen ? (
             <div className="border rounded-lg p-3 space-y-3">
               <div className="text-sm font-medium">{editingViewingId ? "Edit Viewing" : "Add Viewing"}</div>
-              {/* Paste a note, or a target's comment sent here by "Log as viewing": read into this form, saved only by Save. */}
-              {viewingsUnit && (noteSeed?.form === "viewing" && noteSeed.unitId === viewingsUnit.id && !editingViewingId
-                ? <NoteFill key={noteSeed.key} kind="viewing" unitId={viewingsUnit.id} source={noteSeed.source} initialText={noteSeed.text} autoRead autoApply
-                    onApply={r => { applyViewingNote(r); const day = r.fields.date ? null : seededDay(noteSeed, r); if (noteSeed.day) setNoteSeed(prev => (prev ? { ...prev, day: null } : prev)); if (day) setViewingForm(prev => ({ ...prev, viewingDate: day })); }} />
-                : <NoteFill key={viewingFormKey} kind="viewing" unitId={viewingsUnit.id} onApply={applyViewingNote} />)}
+              {/* A target's comment sent here by "Log as viewing" is read into this form; typed notes are read from the Notes box. Saved only by Save. */}
+              {viewingsUnit && noteSeed?.form === "viewing" && noteSeed.unitId === viewingsUnit.id && !editingViewingId
+                && <NoteFill key={noteSeed.key} kind="viewing" unitId={viewingsUnit.id} source={noteSeed.source} initialText={noteSeed.text} autoRead autoApply
+                    onApply={r => { applyViewingNote(r); const day = r.fields.date ? null : seededDay(noteSeed, r); if (noteSeed.day) setNoteSeed(prev => (prev ? { ...prev, day: null } : prev)); if (day) setViewingForm(prev => ({ ...prev, viewingDate: day })); }} />}
               {/* Pickers stack full-width on phones — half-width triggers
                   truncated their own placeholders ("Select com…"). */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -4482,10 +4483,11 @@ export default function AvailableUnitsPage() {
                     <p className="mt-1 text-[11px] text-muted-foreground" data-testid="viewing-note-outcome">{noteHints.viewing.outcome}</p>
                   )}
                 </div>
-                <div>
+                <FillFromNotes key={viewingFormKey} kind="viewing" unitId={viewingsUnit?.id} word="notes"
+                  text={viewingForm.notes} keepText={v => setViewingForm(f => ({ ...f, notes: v }))} onApply={applyViewingNote}>
                   <Label className="text-xs">Notes</Label>
-                  <Input value={viewingForm.notes} onChange={e => setViewingForm(f => ({ ...f, notes: e.target.value }))} placeholder="Any notes" data-testid="viewing-notes" />
-                </div>
+                  <Textarea value={viewingForm.notes} onChange={e => setViewingForm(f => ({ ...f, notes: e.target.value }))} placeholder="Any notes" rows={2} data-testid="viewing-notes" />
+                </FillFromNotes>
               </div>
               <div className="flex gap-2 justify-end">
                 <Button variant="outline" size="sm" onClick={() => { setAddViewingOpen(false); setEditingViewingId(null); setViewingForm(emptyViewingForm()); }}>Cancel</Button>
@@ -4603,8 +4605,8 @@ export default function AvailableUnitsPage() {
           {addOfferOpen ? (
             <div id="offer-form" className="border rounded-lg p-3 space-y-3">
               <div className="text-sm font-medium">{editingOfferId ? "Edit Offer" : "Add Offer"}</div>
-              {/* Paste a note, or a target's comment sent here by "Log as offer": read into this form, saved only by Save.
-                  An offer that has moved on takes its terms through the negotiation log, so the box is not offered here. */}
+              {/* A target's comment sent here by "Log as offer" is read into this form; typed terms are read from the Comments box.
+                  Saved only by Save. An offer that has moved on takes its terms through the negotiation log, so nothing is read here. */}
               {offersUnit && (offerTermsLocked ? (
                 <p className="text-xs text-muted-foreground" data-testid="offer-note-locked">
                   {offerTermsLocked === "moved" ? "This bid has moved since the first offer." : "This offer is no longer open."} To read a note into its terms, add the next position in its negotiation log.{" "}
@@ -4617,7 +4619,7 @@ export default function AvailableUnitsPage() {
               ) : noteSeed?.form === "offer" && noteSeed.unitId === offersUnit.id && !editingOfferId
                 ? <NoteFill key={noteSeed.key} kind="offer" unitId={offersUnit.id} source={noteSeed.source} initialText={noteSeed.text} autoRead autoApply
                     onApply={r => { applyOfferNote(r); const day = r.fields.date ? null : seededDay(noteSeed, r); if (noteSeed.day) setNoteSeed(prev => (prev ? { ...prev, day: null } : prev)); if (day) setOfferForm(prev => ({ ...prev, offerDate: day })); }} />
-                : <NoteFill key={offerFormKey} kind="offer" unitId={offersUnit.id} onApply={applyOfferNote} />)}
+                : null)}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Company</Label>
@@ -4701,10 +4703,12 @@ export default function AvailableUnitsPage() {
                 <Label className="text-xs">Incentives</Label>
                 <Input value={offerForm.incentives} onChange={e => setOfferForm(f => ({ ...f, incentives: e.target.value }))} placeholder="Any other incentives" data-testid="offer-incentives" />
               </div>
-              <div>
+              {/* Typed comments are read into the offer's boxes; the comments stay as typed and are saved with the offer. */}
+              <FillFromNotes key={offerFormKey} kind="offer" unitId={offersUnit?.id} disabled={!!offerTermsLocked}
+                text={offerForm.comments} keepText={v => setOfferForm(f => ({ ...f, comments: v }))} onApply={applyOfferNote}>
                 <Label className="text-xs">Comments</Label>
-                <Textarea value={offerForm.comments} onChange={e => setOfferForm(f => ({ ...f, comments: e.target.value }))} rows={2} data-testid="offer-comments" />
-              </div>
+                <Textarea value={offerForm.comments} onChange={e => setOfferForm(f => ({ ...f, comments: e.target.value }))} rows={2} placeholder="e.g. Offered: 15 year lease. Rent £120k pax and 9% t/o. 6 MRF" data-testid="offer-comments" />
+              </FillFromNotes>
               <div className="flex gap-2 justify-end">
                 <Button variant="outline" size="sm" onClick={() => { setAddOfferOpen(false); setEditingOfferId(null); setOfferViewingId(null); setOfferForm(emptyOfferForm()); }}>Cancel</Button>
                 <Button size="sm" disabled={!offerForm.offerDate || addOfferMutation.isPending || updateOfferMutation.isPending} onClick={() => {

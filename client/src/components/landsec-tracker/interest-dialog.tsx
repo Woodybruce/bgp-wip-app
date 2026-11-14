@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { interestWho } from "@/components/tracker-activity-cells";
-import { NoteFill } from "@/components/letting-note/note-fill";
+import { FillFromNotes } from "@/components/letting-note/note-fill";
 import type { LettingNoteReading } from "@shared/letting-note";
 import { BrandInput, type BrandValue } from "./brand-input";
 import { addNoteLines, noteUnplaced, sameNoteName } from "./offers-dialog";
@@ -177,7 +177,6 @@ export function InterestDialog({ unit, onClose, onChanged }: {
 
         <div className="space-y-2 border-t border-border pt-3" data-testid="ja-interest-form">
           <p className="text-sm font-medium">Log interest</p>
-          {unitId && <NoteFill key={`${unitId}:${noteRound}`} kind="interest" unitId={unitId} onApply={applyNote} />}
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_10rem] gap-2">
             <label className="block min-w-0"><span className={MICRO_LABEL}>Brand</span>
               <BrandInput value={brand} onChange={setBrand} placeholder="Brand" disabled={busy} testId="ja-interest-brand" />
@@ -208,9 +207,12 @@ export function InterestDialog({ unit, onClose, onChanged }: {
               </div>
             </div>
           )}
-          <label className="block"><span className={MICRO_LABEL}>Note</span>
-            <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. rang about this unit, wants floorplans" disabled={busy} data-testid="ja-interest-notes" />
-          </label>
+          <FillFromNotes key={`${unitId}:${noteRound}`} kind="interest" unitId={unitId} word="note"
+            text={notes} keepText={setNotes} onApply={applyNote}>
+            <label className="block"><span className={MICRO_LABEL}>Note</span>
+              <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. rang about this unit, wants floorplans" disabled={busy} data-testid="ja-interest-notes" />
+            </label>
+          </FillFromNotes>
           {formError && <p className="text-sm text-destructive" role="alert" data-testid="ja-interest-error">{formError}</p>}
           <div className="flex justify-end">
             <Button size="sm" disabled={busy || !date || (!brand.name.trim() && !agent.trim())} onClick={submit} data-testid="ja-interest-add">

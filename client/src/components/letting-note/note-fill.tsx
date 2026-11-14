@@ -8,7 +8,7 @@
 // value in with its own Use button, one at a time. It asks the server one
 // question (the note reader) and nothing else, and reads nothing from the
 // CRM, so it is safe on a joint agent's pages.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FocusEvent, type ReactNode } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -159,12 +159,6 @@ function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, a
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const rows = reading ? readingRows(readingToFill(reading)) : [];
-  const unsure = (reading?.unsure || []).filter(u => u && u.field && noteValueText(u.field, u.value));
-  const unplaced = (reading?.unplaced || []).map(s => String(s || "").trim()).filter(Boolean);
-  const dropped = (reading?.dropped || []).filter(d => d && (d.field || d.reason));
-  const droppedLabel = (field: string) => (NOTE_FIELD_LABELS as Record<string, string>)[field] || field;
-
   if (!open) {
     return (
       <div className={cn("min-w-0", className)} data-testid="note-fill">
@@ -258,81 +252,256 @@ function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, a
       {error && <p className="text-xs text-destructive" role="alert" data-testid="note-fill-error">{error}</p>}
 
       {reading && (
-        <div className="space-y-2 border-t border-border pt-2" data-testid="note-fill-reading">
-          {reading.saidBy && <p className="text-[11px] text-muted-foreground" data-testid="note-fill-said-by">Written by {reading.saidBy}</p>}
-          {reading.reason && <p className="break-words text-xs text-muted-foreground" data-testid="note-fill-reason">{reading.reason}</p>}
-          {rows.length === 0 ? (
-            <p className="text-xs text-muted-foreground" data-testid="note-fill-empty">
-              {unsure.length ? "Nothing was filled from this note. Check the values below and press Use on each one you want in the form." : "Nothing in this note fits a box on this form."}
-            </p>
-          ) : (
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-              {rows.map(r => (
-                <div key={r.field} className="min-w-0" data-testid={`note-fill-row-${r.field}`}>
-                  <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{r.label}</dt>
-                  <dd className={cn("break-words text-sm", (MONEY.has(r.field) || r.field === "turnoverRentPct" || r.field === "termYears" || r.field === "rentFreeMonths") && "font-mono tabular-nums")}>{r.value}</dd>
-                  {r.quote && <dd className="break-words text-[11px] text-muted-foreground">from “{r.quote}”</dd>}
+        <ReadingView
+          reading={reading}
+          filled={filled}
+          used={used}
+          what={source ? "comment" : "note"}
+          onFill={() => { onApply(readingToFill(reading)); setFilled(true); }}
+          onUse={(one, i) => { if (used.has(i)) return; onApply(one); setUsed(prev => new Set(prev).add(i)); }}
+        />
+      )}
+    </div>
+  );
+}
+
+const NUMERIC: ReadonlySet<LettingNoteField> = new Set<LettingNoteField>(["rentPa", "premium", "fittingOutContribution", "turnoverRentPct", "termYears", "rentFreeMonths"]);
+
+// What a read found: the boxes it fills, the values to check one at a time
+// (each with Use), what it left out and why. Shared by the "Paste a note"
+// box and the comments box that fills the form.
+function ReadingView({ reading, filled, used, what, showUnplaced = true, bare = false, onFill, onUse }: {
+  reading: LettingNoteReading;
+  bare?: boolean;                                // inside its own box: no rule above it
+  filled: boolean;
+  used: ReadonlySet<number>;
+  what: string;                                  // "note", "comment", "comments", "notes"
+  showUnplaced?: boolean;
+  onFill: () => void;
+  onUse: (one: LettingNoteReading, index: number) => void;
+}) {
+  const rows = readingRows(readingToFill(reading));
+  const unsure = (reading.unsure || []).filter(u => u && u.field && noteValueText(u.field, u.value));
+  const unplaced = showUnplaced ? (reading.unplaced || []).map(s => String(s || "").trim()).filter(Boolean) : [];
+  const dropped = (reading.dropped || []).filter(d => d && (d.field || d.reason));
+  const droppedLabel = (field: string) => (NOTE_FIELD_LABELS as Record<string, string>)[field] || field;
+  return (
+    <div className={cn("space-y-2", !bare && "border-t border-border pt-2")} data-testid="note-fill-reading">
+      {reading.saidBy && <p className="text-[11px] text-muted-foreground" data-testid="note-fill-said-by">Written by {reading.saidBy}</p>}
+      {reading.reason && <p className="break-words text-xs text-muted-foreground" data-testid="note-fill-reason">{reading.reason}</p>}
+      {rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground" data-testid="note-fill-empty">
+          {unsure.length ? "Nothing was filled. Check the values below and press Use on each one you want in the form." : `Nothing in the ${what} fits a box on this form.`}
+        </p>
+      ) : (
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+          {rows.map(r => (
+            <div key={r.field} className="min-w-0" data-testid={`note-fill-row-${r.field}`}>
+              <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{r.label}</dt>
+              <dd className={cn("break-words text-sm", NUMERIC.has(r.field) && "font-mono tabular-nums")}>{r.value}</dd>
+              {r.quote && <dd className="break-words text-[11px] text-muted-foreground">from “{r.quote}”</dd>}
+            </div>
+          ))}
+        </dl>
+      )}
+      {unsure.length > 0 && (
+        <div className="space-y-1 rounded-md border border-dashed border-border p-2" data-testid="note-fill-unsure">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Not filled, check these</p>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+            {unsure.map((u, i) => {
+              const one = oneValueReading(reading, u);
+              const done = used.has(i);
+              return (
+                <div key={`${u.field}-${i}`} className="min-w-0" data-testid={`note-fill-unsure-${u.field}`}>
+                  <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{NOTE_FIELD_LABELS[u.field] || u.field}</dt>
+                  <dd className="flex min-w-0 items-baseline gap-2">
+                    <span className={cn("min-w-0 break-words text-sm", NUMERIC.has(u.field) && "font-mono tabular-nums")}>{noteValueText(u.field, u.value)}</span>
+                    {one && (done ? (
+                      <span className="shrink-0 text-[11px] text-muted-foreground" data-testid={`note-fill-unsure-used-${i}`}>Used</span>
+                    ) : (
+                      <button
+                        type="button"
+                        data-no-min-touch
+                        className="inline-flex min-h-7 shrink-0 items-center rounded-full border border-border px-2 text-[11px] font-medium hover:bg-muted"
+                        onClick={() => onUse(one, i)}
+                        aria-label={`Use ${NOTE_FIELD_LABELS[u.field] || u.field}: ${noteValueText(u.field, u.value)}`}
+                        data-testid={`note-fill-unsure-use-${i}`}
+                      >
+                        Use
+                      </button>
+                    ))}
+                  </dd>
+                  {u.quote && <dd className="break-words text-[11px] text-muted-foreground">from “{u.quote}”</dd>}
                 </div>
-              ))}
-            </dl>
-          )}
-          {unsure.length > 0 && (
-            <div className="space-y-1 rounded-md border border-dashed border-border p-2" data-testid="note-fill-unsure">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Not filled, check these</p>
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-                {unsure.map((u, i) => {
-                  const one = reading ? oneValueReading(reading, u) : null;
-                  const done = used.has(i);
-                  return (
-                    <div key={`${u.field}-${i}`} className="min-w-0" data-testid={`note-fill-unsure-${u.field}`}>
-                      <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{NOTE_FIELD_LABELS[u.field] || u.field}</dt>
-                      <dd className="flex min-w-0 items-baseline gap-2">
-                        <span className={cn("min-w-0 break-words text-sm", (MONEY.has(u.field) || u.field === "turnoverRentPct" || u.field === "termYears" || u.field === "rentFreeMonths") && "font-mono tabular-nums")}>{noteValueText(u.field, u.value)}</span>
-                        {one && (done ? (
-                          <span className="shrink-0 text-[11px] text-muted-foreground" data-testid={`note-fill-unsure-used-${i}`}>Used</span>
-                        ) : (
-                          <button
-                            type="button"
-                            data-no-min-touch
-                            className="inline-flex min-h-7 shrink-0 items-center rounded-full border border-border px-2 text-[11px] font-medium hover:bg-muted"
-                            onClick={() => { if (used.has(i)) return; onApply(one); setUsed(prev => new Set(prev).add(i)); }}
-                            aria-label={`Use ${NOTE_FIELD_LABELS[u.field] || u.field}: ${noteValueText(u.field, u.value)}`}
-                            data-testid={`note-fill-unsure-use-${i}`}
-                          >
-                            Use
-                          </button>
-                        ))}
-                      </dd>
-                      {u.quote && <dd className="break-words text-[11px] text-muted-foreground">from “{u.quote}”</dd>}
-                    </div>
-                  );
-                })}
-              </dl>
-            </div>
-          )}
-          {unplaced.length > 0 && (
-            <p className="break-words text-xs" data-testid="note-fill-unplaced">
-              <span className="text-muted-foreground">Could not place: </span>{unplaced.join("; ")}
-            </p>
-          )}
-          {dropped.length > 0 && (
-            <div className="text-xs" data-testid="note-fill-dropped">
-              <span className="text-muted-foreground">Left out: </span>
-              {dropped.map((d, i) => (
-                <span key={i} className="break-words">{i > 0 ? "; " : ""}{droppedLabel(d.field)}{d.reason ? ` (${d.reason})` : ""}</span>
-              ))}
-            </div>
-          )}
-          {rows.length > 0 && (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5">
-              <Button type="button" size="sm" variant={filled ? "outline" : "secondary"} className="h-8 text-xs" onClick={() => { onApply(readingToFill(reading)); setFilled(true); }} data-testid="note-fill-apply">
-                {filled ? "Fill again" : "Fill the form"}
-              </Button>
-              <span className="text-[11px] text-muted-foreground" data-testid="note-fill-hint">
-                {filled ? `Form filled from this ${source ? "comment" : "note"}. Check it, then save.` : "Fills the form. Check it, then save."}
-              </span>
-            </div>
-          )}
+              );
+            })}
+          </dl>
+        </div>
+      )}
+      {unplaced.length > 0 && (
+        <p className="break-words text-xs" data-testid="note-fill-unplaced">
+          <span className="text-muted-foreground">Could not place: </span>{unplaced.join("; ")}
+        </p>
+      )}
+      {dropped.length > 0 && (
+        <div className="text-xs" data-testid="note-fill-dropped">
+          <span className="text-muted-foreground">Left out: </span>
+          {dropped.map((d, i) => (
+            <span key={i} className="break-words">{i > 0 ? "; " : ""}{droppedLabel(d.field)}{d.reason ? ` (${d.reason})` : ""}</span>
+          ))}
+        </div>
+      )}
+      {rows.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5">
+          <Button type="button" size="sm" variant={filled ? "outline" : "secondary"} className="h-8 text-xs" onClick={onFill} data-testid="note-fill-apply">
+            {filled ? "Fill again" : "Fill the form"}
+          </Button>
+          <span className="text-[11px] text-muted-foreground" data-testid="note-fill-hint">
+            {filled ? `Form filled from ${what === "note" || what === "comment" ? `this ${what}` : `your ${what}`}. Check it, then save.` : "Fills the form. Check it, then save."}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export interface FillFromNotesProps {
+  kind: NoteKind;
+  unitId?: string | null;
+  offerId?: string;
+  text: string;                       // what is in the form's own Comments or Notes box now
+  keepText: (text: string) => void;   // puts the person's words back in that box after a fill
+  onApply: (reading: LettingNoteReading) => void;
+  word?: "comments" | "notes" | "note";
+  disabled?: boolean;
+  children: ReactNode;                // the form's own box (label and text box)
+  className?: string;
+}
+
+/**
+ * The form's own Comments or Notes box, read into the form (Woody,
+ * 2026-11-14: "type in the comments box and it then populate the deal and
+ * keep the comments shown"). The person types in the box as before; leaving
+ * it (or pressing "Fill the form from these comments") reads the words
+ * through the same note reader and fills the boxes it is sure of. The words
+ * stay in the box exactly as typed and are saved with the form. Nothing is
+ * saved here: the form's own Save is the only write.
+ */
+export function FillFromNotes(props: FillFromNotesProps) {
+  if (!NOTE_READER_ENABLED || !props.unitId || props.disabled) return <div className={props.className}>{props.children}</div>;
+  return <FillFromNotesBox {...props} unitId={props.unitId} />;
+}
+
+function FillFromNotesBox({ kind, unitId, offerId, text, keepText, onApply, word = "comments", children, className }: FillFromNotesProps & { unitId: string }) {
+  const [reading, setReading] = useState<LettingNoteReading | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [filled, setFilled] = useState(false);
+  const [shown, setShown] = useState(true);
+  const [used, setUsed] = useState<ReadonlySet<number>>(new Set());
+  const lastRead = useRef(text.trim());          // words already in the box when the form opened are not read by themselves
+  const latest = useRef(0);
+  const textRef = useRef(text); textRef.current = text;
+  const onApplyRef = useRef(onApply); onApplyRef.current = onApply;
+  const keepRef = useRef(keepText); keepRef.current = keepText;
+
+  // A read that comes back after the form was saved or closed fills nothing.
+  useEffect(() => () => { latest.current++; }, []);
+
+  // Fill the form, then put the person's own words back in the box: the
+  // forms add labelled lines for values with no box, which the words already say.
+  const apply = (r: LettingNoteReading) => {
+    const keep = textRef.current;
+    onApplyRef.current(r);
+    keepRef.current(keep);
+  };
+
+  const words = text.trim();
+  const changed = !!words && words !== lastRead.current;
+
+  const read = async () => {
+    const now = textRef.current.trim();
+    if (!now || now === lastRead.current) return;
+    lastRead.current = now;
+    const body: ReadNoteRequest = { kind, text: now.slice(0, NOTE_MAX), ...(offerId ? { offerId } : {}) };
+    const turn = ++latest.current;
+    setBusy(true); setError(null); setReading(null); setFilled(false); setUsed(new Set()); setShown(true);
+    try {
+      const res = await apiRequest("POST", `/api/unit-offers/unit/${encodeURIComponent(unitId)}/read-note`, body);
+      const data = (await res.json()) as LettingNoteReading;
+      if (turn !== latest.current) return;
+      if (!data || typeof data !== "object" || !data.fields) throw new Error("500: empty");
+      setReading(data);
+      const toFill = readingToFill(data);
+      if (Object.keys(toFill.fields).length) { apply(toFill); setFilled(true); }
+    } catch (e) {
+      if (turn !== latest.current) return;
+      lastRead.current = "";
+      setError(noteReadError(e));
+    } finally {
+      if (turn === latest.current) setBusy(false);
+    }
+  };
+
+  // Leaving the box reads it, when it holds a few new words.
+  const onBlur = (e: FocusEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (!target?.matches?.("textarea, input")) return;
+    if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget as Node)) return;
+    if (textRef.current.trim().split(/\s+/).filter(Boolean).length < 3) return;
+    void read();
+  };
+
+  return (
+    <div className={cn("min-w-0 space-y-1.5", className)} onBlur={onBlur} data-testid="note-fill-box">
+      {children}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {busy ? (
+          <span className="inline-flex min-h-8 items-center gap-1.5 text-xs text-muted-foreground" data-testid="note-fill-busy">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading your {word}…
+          </span>
+        ) : changed ? (
+          <button
+            type="button"
+            data-no-min-touch
+            className="inline-flex min-h-8 items-center gap-1.5 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            onClick={() => void read()}
+            data-testid="note-fill-read"
+          >
+            <Sparkles className="h-3.5 w-3.5 shrink-0" />
+            Fill the form from {word === "note" ? "this note" : `these ${word}`}
+          </button>
+        ) : !reading && !error ? (
+          <span className="inline-flex min-h-8 items-center gap-1.5 text-[11px] text-muted-foreground" data-testid="note-fill-tip">
+            <Sparkles className="h-3.5 w-3.5 shrink-0" />
+            Type the terms here: the form fills itself when you leave the box, and your {word === "note" ? "note stays" : `${word} stay`} as typed.
+          </span>
+        ) : null}
+        {reading && !busy && (
+          <button
+            type="button"
+            data-no-min-touch
+            className="inline-flex min-h-8 items-center text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            onClick={() => setShown(v => !v)}
+            data-testid="note-fill-toggle"
+          >
+            {shown ? "Hide what was read" : "Show what was read"}
+          </button>
+        )}
+      </div>
+      {error && <p className="text-xs text-destructive" role="alert" data-testid="note-fill-error">{error}</p>}
+      {reading && shown && (
+        <div className="rounded-lg border border-border bg-muted/30 p-3">
+          <ReadingView
+            reading={reading}
+            filled={filled}
+            used={used}
+            what={word}
+            showUnplaced={false}
+            bare
+            onFill={() => { apply(readingToFill(reading)); setFilled(true); }}
+            onUse={(one, i) => { if (used.has(i)) return; apply(one); setUsed(prev => new Set(prev).add(i)); }}
+          />
         </div>
       )}
     </div>

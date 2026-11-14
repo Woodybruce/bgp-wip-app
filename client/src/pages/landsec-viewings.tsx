@@ -18,7 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { NoteFill } from "@/components/letting-note/note-fill";
+import { FillFromNotes } from "@/components/letting-note/note-fill";
 import { noteDay, noteFigure, noteText } from "@/components/landsec-tracker/format";
 import { addNoteLines, noteAgentLine, noteUnplaced, sameNoteName } from "@/components/landsec-tracker/offers-dialog";
 import type { LettingNoteReading } from "@shared/letting-note";
@@ -136,7 +136,6 @@ export default function LandsecViewings() {
               {[offerFor?.companyName, [offerFor?.unitName, offerFor?.propertyName].filter(Boolean).join(", ")].filter(Boolean).join(" · ") || "The offer that followed this viewing"}. The brand and the contact are taken from the viewing.
             </DialogDescription>
           </DialogHeader>
-          {offerFor?.unitId && <NoteFill key={offerFor.id} kind="offer" unitId={offerFor.unitId} onApply={applyNote} />}
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2 space-y-1.5 sm:col-span-1"><Label htmlFor="landsec-offer-date" className={labelClass}>Offer date</Label><Input id="landsec-offer-date" type="date" value={offer.offerDate} onChange={set("offerDate")} data-testid="landsec-offer-date" /></div>
             <div className="col-span-2 space-y-1.5 sm:col-span-1"><Label htmlFor="landsec-offer-rent" className={labelClass}>Rent, £ a year</Label><Input id="landsec-offer-rent" inputMode="decimal" className="font-mono tabular-nums" value={offer.rentPa} onChange={set("rentPa")} placeholder="For example 85,000" data-testid="landsec-offer-rent" /></div>
@@ -149,7 +148,8 @@ export default function LandsecViewings() {
             <div className="col-span-2 space-y-1.5 sm:col-span-1"><Label htmlFor="landsec-offer-rent-deposit" className={labelClass}>Rent deposit</Label><Input id="landsec-offer-rent-deposit" value={offer.rentDeposit} onChange={set("rentDeposit")} placeholder="For example: 6 months" data-testid="landsec-offer-rent-deposit" /></div>
             <div className="col-span-2 space-y-1.5"><Label htmlFor="landsec-offer-rent-review" className={labelClass}>Rent review</Label><Input id="landsec-offer-rent-review" value={offer.rentReview} onChange={set("rentReview")} placeholder="For example: year 5, upward only" data-testid="landsec-offer-rent-review" /></div>
             <div className="col-span-2 space-y-1.5"><Label htmlFor="landsec-offer-incentives" className={labelClass}>Incentives</Label><Input id="landsec-offer-incentives" value={offer.incentives} onChange={set("incentives")} data-testid="landsec-offer-incentives" /></div>
-            <div className="col-span-2 space-y-1.5"><Label htmlFor="landsec-offer-comments" className={labelClass}>Comments</Label><Textarea id="landsec-offer-comments" rows={3} value={offer.comments} onChange={set("comments")} data-testid="landsec-offer-comments" /></div>
+            <FillFromNotes key={offerFor?.id} kind="offer" unitId={offerFor?.unitId} className="col-span-2 space-y-1.5"
+              text={offer.comments} keepText={v => setOffer(current => ({ ...current, comments: v }))} onApply={applyNote}><Label htmlFor="landsec-offer-comments" className={labelClass}>Comments</Label><Textarea id="landsec-offer-comments" rows={3} placeholder="e.g. Offered: 15 year lease. Rent £120k pax and 9% t/o. 6 MRF" value={offer.comments} onChange={set("comments")} data-testid="landsec-offer-comments" /></FillFromNotes>
           </div>
           <p className="text-[11px] text-muted-foreground">The offer starts as pending. Counter-offers, agreeing it and the Heads of Terms are on the unit in your tracker.</p>
           <DialogFooter>

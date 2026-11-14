@@ -13,12 +13,13 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { orderViewings } from "@/components/tracker-activity-cells";
 import { VIEWING_OUTCOMES } from "@shared/viewing-workflow";
 import { formatCalendarDate } from "@shared/calendar-date";
-import { NoteFill } from "@/components/letting-note/note-fill";
+import { FillFromNotes, NoteFill } from "@/components/letting-note/note-fill";
 import { seededDay, type SuggestionSeed } from "@/components/letting-note/suggestions-dialog";
 import type { LettingNoteReading } from "@shared/letting-note";
 import { BrandInput, type BrandValue } from "./brand-input";
@@ -234,9 +235,7 @@ export function ViewingsDialog({ unit, startAdding, seed, onSeedSaved, ownerUser
         {adding ? (
           <div className="space-y-2 rounded-lg border border-border p-3" data-testid="ja-viewing-form">
             <p className="text-sm font-medium">Add viewing</p>
-            {seedLive && seed
-              ? <NoteFill key={seed.key} kind="viewing" unitId={unitId} source={seed.source} initialText={seed.text} autoRead autoApply onApply={applyNote} />
-              : <NoteFill key="new" kind="viewing" unitId={unitId} onApply={applyNote} />}
+            {seedLive && seed && <NoteFill key={seed.key} kind="viewing" unitId={unitId} source={seed.source} initialText={seed.text} autoRead autoApply onApply={applyNote} />}
             {noteLeft && <p className="text-xs text-muted-foreground" data-testid="ja-viewing-note-left">{noteLeft}</p>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <label className="block min-w-0"><span className={MICRO_LABEL}>Brand</span>
@@ -266,9 +265,12 @@ export function ViewingsDialog({ unit, startAdding, seed, onSeedSaved, ownerUser
                   </SelectContent>
                 </Select>
               </div>
-              <label className="block min-w-0"><span className={MICRO_LABEL}>Note</span>
-                <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Anything to remember" disabled={busy} data-testid="ja-viewing-notes" />
-              </label>
+              <FillFromNotes kind="viewing" unitId={unitId} word="note" className="sm:col-span-2"
+                text={notes} keepText={setNotes} onApply={applyNote}>
+                <label className="block min-w-0"><span className={MICRO_LABEL}>Note</span>
+                  <Textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="e.g. Viewed 12 Nov 2pm, offer expected" disabled={busy} data-testid="ja-viewing-notes" />
+                </label>
+              </FillFromNotes>
             </div>
             {formError && <p className="text-sm text-destructive" role="alert" data-testid="ja-viewing-error">{formError}</p>}
             <div className="flex justify-end gap-2">
