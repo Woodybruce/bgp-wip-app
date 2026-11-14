@@ -2181,7 +2181,7 @@ export default function AvailableUnitsPage() {
           as the Deals pass 2 fix (Woody, 2026-09-27). */}
       <div className={`${isMobile ? "" : "sticky top-0 z-30 bg-background -mx-4 md:-mx-6 px-4 md:px-6 -mt-4 md:-mt-6 pt-4 md:pt-6 pb-3 border-b"} flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4`}>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">{window.location.pathname.startsWith("/landsec/calendar") ? "Calendar" : "Letting Tracker"}</h1>
+          <h1 className="hidden md:block text-2xl font-bold tracking-tight" data-testid="text-page-title">{window.location.pathname.startsWith("/landsec/calendar") ? "Calendar" : "Letting Tracker"}</h1>
           <p className="text-sm text-muted-foreground">
             {/* Recount under active search/filters — the header disagreeing
                 with the chips/table was the same class as the deals-board
@@ -2189,9 +2189,6 @@ export default function AvailableUnitsPage() {
             {trackerWorkspace === "viewings" ? "Calendar bookings, outcomes and next actions" : trackerWorkspace === "reports" ? "Viewing activity and confirmed offer conversion" : filtered.length !== teamUnits.length
               ? `${filtered.length} of ${teamUnits.length} units`
               : `${teamUnits.length} unit${teamUnits.length !== 1 ? "s" : ""}`}
-            {isClientTracker && trackerWorkspace === "units" && (
-              <span> — live deals in progress: units being marketed, under offer and completing. Updates flow to the Leasing Schedule and back to the Tenancy Schedule.</span>
-            )}
           </p>
         </div>
         <div className={trackerWorkspace === "units" ? "flex items-center gap-2 flex-wrap" : "hidden"}>

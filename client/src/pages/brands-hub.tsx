@@ -304,8 +304,8 @@ export default function BrandsHub() {
       {/* ── Header ─────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Brand Intelligence</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">{isClientHub ? "Brands across your portfolio and the wider hospitality market" : "Live view of every brand across the Hub"}</p>
+          {/* No strap line, and on a phone no title: the top bar names the page (Woody, 2026-11-14). */}
+          <h1 className="hidden md:block text-2xl font-bold tracking-tight">Brand Intelligence</h1>
         </div>
         <div className="flex items-center gap-2">
           {isClientHub && <ClientAddBrandButton />}
