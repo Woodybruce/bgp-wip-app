@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { formatCalendarDate } from '../../shared/calendar-date.ts';
 import * as tenancyDisplay from '../../shared/tenancy-schedule-display.ts';
 import { leaseCompanyState } from '../../shared/tenant-entity.ts';
-import { namedTenant } from '../../shared/property-units.ts';
+import { namedTenant, unitOccupancy } from '../../shared/property-units.ts';
 const require = createRequire(import.meta.url);
 const { source, ts } = require('./source-harness.cjs');
 
@@ -21,7 +21,7 @@ function descendants(node) {
   if (!React.isValidElement(node)) return [];
   return [node, ...descendants(node.props.children)];
 }
-function fixture({ presentation = 'compact', readOnly = false, saved = {}, width = 1200, user = { role: 'Client', companyScopeId: 'client-company' }, units = [unit], links = { deals: [], lettingUnits: [], matters: [] }, urlSearch = '' } = {}) {
+function fixture({ presentation = 'compact', readOnly = false, saved = {}, width = 1200, user = { role: 'Client', companyScopeId: 'client-company' }, units = [unit], links = { deals: [], lettingUnits: [], matters: [] }, urlSearch = '', feed = [] } = {}) {
   const file = 'client/src/components/PropertyTenancySchedule.tsx';
   const ast = ts.createSourceFile(file, source(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const kept = new Set(['PropertyTenancySchedule', 'normRefKey', 'fmtCurrency', 'fmtCurrencyCompact', 'fmtNum', 'fmtDate']);
@@ -51,6 +51,7 @@ function fixture({ presentation = 'compact', readOnly = false, saved = {}, width
     useQuery({ queryKey }) { return { data: queryKey[0] === '/api/auth/me' ? user : queryKey.at(-1) === 'links' ? links : units, isLoading: false }; },
     // A property without estate schemes: every row passes the scheme filter.
     usePropertySchemeList: () => ({ data: { schemes: [] } }), schemeFilterMatches: () => true, unitScheme: () => undefined,
+    usePropertyUnits: () => ({ data: { units: feed } }), unitOccupancy,
     useMutation(options) { return { isPending: false, mutate(value) { pending.push(Promise.resolve().then(() => options.mutationFn(value)).then(result => options.onSuccess?.(result, value))); } }; },
     apiRequest: async (method, url, body) => { calls.push({ method, url, body }); return { json: async () => ({}) }; },
   });
@@ -197,26 +198,24 @@ test('occupied and vacant pills filter the same aliases counted in their headlin
   assert.equal(tableRows(app, app.render()).length, occupied.length + vacant.length);
 });
 
-test('legacy links require unique exact nonempty unit identities, never a prefix or shared tenant name', () => {
+test('a row is tied only by the unit feed or its stored ids, never by a unit or deal name', () => {
   const app = fixture({ units: [
     { ...unit, id: 'one', unit_number: '1', premises: '', trading_name: 'Shared brand' },
-    { ...unit, id: 'blank', unit_number: '', premises: '', trading_name: 'Shared brand' },
-    { ...unit, id: 'normalised', unit_number: 'Shop A01' },
-    { ...unit, id: 'ambiguous', unit_number: 'B1' },
+    { ...unit, id: 'fed', unit_number: 'Shop A01' },
   ], links: {
-    deals: [{ id: 'prefix', name: 'Unit 10' }, { id: 'tenant', name: 'Shared brand' }, { id: 'one-deal', name: 'Unit 1' }, { id: 'a-deal', name: 'A1' }, { id: 'b-deal-1', name: 'B1' }, { id: 'b-deal-2', name: 'Unit B1' }],
-    lettingUnits: [{ id: 'prefix-tracker', unit_name: '10' }, { id: 'one-tracker', unit_name: 'Shop 1' }, { id: 'a-tracker', unit_name: 'A1' }, { id: 'b-tracker-1', unit_name: 'B1' }, { id: 'b-tracker-2', unit_name: 'Unit B1' }],
-  } });
+    deals: [{ id: 'one-deal', name: 'Unit 1' }, { id: 'tenant', name: 'Shared brand' }, { id: 'a-deal', name: 'A1' }],
+    lettingUnits: [{ id: 'one-tracker', unit_name: 'Shop 1' }, { id: 'a-tracker', unit_name: 'A1', dealId: 'a-deal' }],
+  }, feed: [{ scheduleRowId: 'fed', trackerId: 'a-tracker', deal: { id: 'a-deal' } }] });
   assert.deepEqual(tableRows(app, app.render()).map(row => [row.props.unit.id, row.props.deal?.id, row.props.letting?.id]), [
-    ['one', 'one-deal', 'one-tracker'], ['blank', undefined, undefined], ['normalised', 'a-deal', 'a-tracker'], ['ambiguous', undefined, undefined],
+    ['one', undefined, undefined], ['fed', 'a-deal', 'a-tracker'],
   ]);
 });
 
-test('canonical links remain authoritative even if missing, and a matched tracker can identify its named deal', () => {
+test('stored ids stay authoritative even if missing, and a tied tracker row gives its deal', () => {
   const app = fixture({ units: [
     { ...unit, id: 'canonical', unit_number: '1', deal_id: 'explicit-deal', letting_tracker_unit_id: 'explicit-tracker' },
     { ...unit, id: 'missing', unit_number: '1', deal_id: 'missing-deal', letting_tracker_unit_id: 'missing-tracker' },
-    { ...unit, id: 'derived', unit_number: '2' },
+    { ...unit, id: 'derived', unit_number: '2', letting_tracker_unit_id: 'second-tracker' },
   ], links: {
     deals: [{ id: 'name-deal', name: '1' }, { id: 'explicit-deal', name: 'Renamed recorded deal' }, { id: 'tracker-deal', name: 'Centre – unit 2 – brand' }],
     lettingUnits: [{ id: 'name-tracker', unit_name: '1' }, { id: 'explicit-tracker', unit_name: 'Renamed recorded unit' }, { id: 'second-tracker', unit_name: '2', dealId: 'tracker-deal' }],

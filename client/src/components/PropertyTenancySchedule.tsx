@@ -1,9 +1,11 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { unitOccupancy } from "@shared/property-units";
+import { usePropertyUnits } from "@/components/property-page/use-property-page";
 import { Link, useLocation, useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { calendarDateValue, formatCalendarDate } from "@shared/calendar-date";
-import { findTenancyUnitLink, isArchivedTenancy, normaliseTenancyUnitReference, recordedTenancyTotal, tenancyStatusMatches } from "@shared/tenancy-schedule-display";
+import { isArchivedTenancy, normaliseTenancyUnitReference, recordedTenancyTotal, tenancyStatusMatches } from "@shared/tenancy-schedule-display";
 import { useToast } from "@/hooks/use-toast";
 import { UnifiedAddUnitDialog, UNIFIED_ADD_UNIT_ENABLED } from "@/components/unified-add-unit-dialog";
 import { Card, CardContent } from "@/components/ui/card";
@@ -483,7 +485,7 @@ function TargetTenantsCell({ unit, letting, onUpdate }: {
         <Badge key={c.key} variant="outline" className="text-[11px] max-w-[130px] truncate">{c.name}</Badge>
       ))}
       {letting && (
-        <a href="/available" className="text-[11px] text-muted-foreground hover:text-foreground shrink-0" title="Targets live on the Letting Tracker brief for this unit">LT</a>
+        <a href={`/deals/letting?unitId=${encodeURIComponent(letting.id)}&propertyId=${encodeURIComponent(unit.property_id)}`} className="text-[11px] text-muted-foreground hover:text-foreground shrink-0" title="Targets live on the Letting Tracker brief for this unit">LT</a>
       )}
       {aiChips.map(a => <AiTargetChip key={a.id} target={a} onAdopt={() => adopt(a)} onDismiss={() => settle(a, "rejected")} />)}
       <BrandSearchInput
@@ -746,6 +748,13 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<{ field: string; dir: 1 | -1 } | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  // Occupied and Vacant are the one rule the unit list and the plan use
+  // (unitOccupancy, shared/property-units.ts), so the two counts agree; the
+  // other pills are the schedule's own Status words.
+  const statusFilterMatches = (unit: TenancyUnit, status: string) =>
+    status === "Occupied" ? unitOccupancy(unit as any) === "occupied"
+    : status === "Vacant" ? unitOccupancy(unit as any) === "vacant"
+    : tenancyStatusMatches(unit.status, status);
   const [showArchived, setShowArchived] = useState(false);
   useEffect(() => setShowArchived(false), [propertyId]);
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set(["__all__"]));
@@ -880,6 +889,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
     if (focusedUnitId && units.some(unit => String(unit.id) === focusedUnitId && isArchivedTenancy(unit))) setShowArchived(true);
   }, [focusedUnitId, units]);
 
+  // The unit feed: each schedule row's tracker row, deal, occupancy and stage
+  // by the one rule (shared/property-units.ts).
+  const unitFeed = usePropertyUnits(readOnly ? null : propertyId);
+  const unitFeedByRow = useMemo(() => new Map((unitFeed.data?.units || []).filter(u => u.scheduleRowId).map(u => [String(u.scheduleRowId), u])), [unitFeed.data]);
   const { data: links } = useQuery<{ deals: DealLink[]; lettingUnits: LettingLink[]; matters?: MatterLink[] }>({
     queryKey: ["/api/tenancy-schedule/property", propertyId, "links"],
     queryFn: async () => {
@@ -1207,7 +1220,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
   const filtered = units.filter(u => {
     if (!showArchived && isArchivedTenancy(u)) return false;
     if (focusedUnitId && String(u.id) !== focusedUnitId) return false;
-    if (statusFilter && !tenancyStatusMatches(u.status, statusFilter)) return false;
+    if (statusFilter && !statusFilterMatches(u, statusFilter)) return false;
     if (!schemeFilterMatches(schemes, u.grouping, schemeFilter, u.unit_number || u.premises)) return false;
     if (search) {
       const s = search.toLowerCase();
@@ -1256,7 +1269,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
   const zones = [...new Set(filtered.map(u => u.premises || "Unassigned"))];
   const currentUnits = units.filter(unit => !isArchivedTenancy(unit));
   const archivedCount = units.length - currentUnits.length;
-  const statusCount = (status: string) => currentUnits.filter(unit => tenancyStatusMatches(unit.status, status)).length;
+  const statusCount = (status: string) => currentUnits.filter(unit => statusFilterMatches(unit, status)).length;
   const occupied = statusCount("Occupied"), vacant = statusCount("Vacant");
   const inNeg = statusCount("In Negotiation"), underOffer = statusCount("Under Offer"), leaseEvent = statusCount("Lease Event");
   const nia = recordedTenancyTotal(currentUnits.map(unit => unit.nia_sqft));
@@ -1298,15 +1311,19 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
       ? waultUnits.reduce((s, u) => s + yearsToExpiry(u), 0) / waultUnits.length
       : 0;
 
+  // A row's tracker row and deal are the unit feed's (server/property-units.ts),
+  // the same answer the plan and the unit panel give, never a match on a deal's
+  // name (consistency review, 14 November 2026, part 1). The stored ids are
+  // read while the feed loads, or for a row it does not hold.
+  const feedRow = (unit: TenancyUnit) => unitFeedByRow.get(String(unit.id));
   const matchLetting = (unit: TenancyUnit): LettingLink | undefined => {
-    return findTenancyUnitLink(unit.letting_tracker_unit_id || unit.available_unit_id, unit.unit_number || unit.premises, links?.lettingUnits, link => link.unit_name);
+    const trackerId = feedRow(unit)?.trackerId || unit.letting_tracker_unit_id || unit.available_unit_id;
+    return trackerId ? links?.lettingUnits?.find(link => link.id === trackerId) : undefined;
   };
 
   const matchDeal = (unit: TenancyUnit): DealLink | undefined => {
-    if (unit.deal_id) return links?.deals.find(deal => deal.id === unit.deal_id);
-    const letting = matchLetting(unit);
-    if (letting?.dealId) return links?.deals.find(deal => deal.id === letting.dealId);
-    return findTenancyUnitLink(null, unit.unit_number || unit.premises, links?.deals, deal => deal.name);
+    const id = feedRow(unit)?.deal?.id || unit.deal_id || matchLetting(unit)?.dealId;
+    return id ? links?.deals.find(deal => deal.id === id) : undefined;
   };
 
   // Lease advisory job on this unit — matched on the canonical unit ref.
@@ -1791,7 +1808,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   </a>
                 )}
                 {letting ? (
-                  <a href="/deals/letting" title={`On the Letting Tracker (${letting.marketing_status || "listed"})`} data-testid={`tenancy-on-tracker-card-${unit.id}`}>
+                  <a href={`/deals/letting?unitId=${encodeURIComponent(letting.id)}&propertyId=${encodeURIComponent(unit.property_id)}`} title={`On the Letting Tracker (${letting.marketing_status || "listed"})`} data-testid={`tenancy-on-tracker-card-${unit.id}`}>
                     <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer border-emerald-300 text-emerald-700 hover:bg-emerald-50 whitespace-nowrap">LT</Badge>
                   </a>
                 ) : (canEdit && (
@@ -2489,7 +2506,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                 )}
                 {letting && (
                   <a
-                    href="/deals/letting"
+                    href={`/deals/letting?unitId=${encodeURIComponent(letting.id)}&propertyId=${encodeURIComponent(unit.property_id)}`}
                     className="shrink-0"
                     title={`On the Letting Tracker (${letting.marketing_status || "listed"})`}
                     data-testid={`tenancy-on-tracker-${unit.id}`}

@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { usePropertyUnits } from "@/components/property-page/use-property-page";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -94,6 +95,7 @@ import { AIActivityCard, pickTouchDates } from "@/components/ai-activity-card";
 import { DealAmlStatusCard, useDealAmlStatus } from "@/components/deal-aml-status";
 import { JointAgencyNoteCard } from "@/components/joint-agency-aml";
 import { DealClockCard, useIsLandsecView, useLandsecClocks, isRestrictedLandsecRole } from "@/components/landsec/deal-clock";
+import { CompanyChip } from "@/components/company-chip";
 
 // Collapsible card pattern reused across the deal page for heavy panels.
 function CollapsibleCard({
@@ -379,6 +381,10 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     return !!street && !ctx.includes(street) && !ctx.includes((linkedUnit.unitName || "").toLowerCase());
   })();
   const headingIsUnit = !isInvestmentDeal && !!linkedUnit && !unitOffProperty && !unitNameIsOtherAddress;
+  // The deal's unit by the one rule (the unit feed): its tracker row, so the
+  // tracker link opens on this unit (consistency review, 14 November 2026).
+  const dealUnitFeed = usePropertyUnits(!isInvestmentDeal ? ((deal as any)?.propertyId || null) : null);
+  const feedUnit = (dealUnitFeed.data?.units || []).find(u => u.deal?.id === (deal as any)?.id) || null;
   // Header "Unit 3" over a breadcrumb / side panel "South Molton - unit 3",
   // and "10 Piccadilly Time Out Market T1" restating the property linked
   // below it: one title everywhere on the page — the unit, else the deal
@@ -817,9 +823,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                     </Link>
                   )}
                   {counterparty && (
-                    <Link href={`/companies/${counterparty.id}`} className="inline-flex items-center gap-1 hover:underline hover:text-foreground" title={`Open ${counterpartyLabel.toLowerCase()}`}>
-                      <Users className="w-3.5 h-3.5" /> {counterpartyLabel}: {counterparty.name}
-                    </Link>
+                    <CompanyChip id={jointAgent ? null : counterparty.id} name={counterparty.name} domain={(counterparty as any).domain || (counterparty as any).website || null}
+                      role={counterpartyLabel} size={16} className="hover:text-foreground" title={`Open ${counterpartyLabel.toLowerCase()}`} testId="deal-counterparty" />
                   )}
                   {!counterparty && (
                     <span className="text-xs italic">{counterpartyLabel} not set</span>
@@ -879,7 +884,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                     </button>
                   )}
                   {headingIsUnit && (
-                    <Link href={`/deals/letting${linkedProperty ? `?propertyId=${linkedProperty.id}` : ""}`} className="text-xs hover:underline hover:text-foreground" data-testid="link-back-to-tracker">
+                    <Link href={feedUnit?.trackerId ? `/deals/letting?unitId=${encodeURIComponent(feedUnit.trackerId)}${linkedProperty ? `&propertyId=${linkedProperty.id}` : ""}` : `/deals/letting${linkedProperty ? `?propertyId=${linkedProperty.id}` : ""}`} className="text-xs hover:underline hover:text-foreground" data-testid="link-back-to-tracker">
                       ← Back to Letting Tracker
                     </Link>
                   )}

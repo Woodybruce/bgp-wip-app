@@ -21,7 +21,8 @@ export function tagPath(type: TagType, id: string): string | null {
     case "deal": return `/deals/${id}`;
     case "company": return `/companies/${id}`;
     case "contact": return `/contacts/${id}`;
-    case "unit": return "/available";
+    // The tracker opens on the unit itself (consistency review, 14 November 2026).
+    case "unit": return `/available?unitId=${encodeURIComponent(id)}`;
     default: return null;
   }
 }

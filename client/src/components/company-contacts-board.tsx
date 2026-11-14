@@ -20,17 +20,8 @@ import { BrandEmailHistory } from "@/components/brand-email-history";
 import { LandlordMeetingsHistory } from "@/components/landlord-meetings-summary";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Users, Mail, Linkedin, Loader2, RefreshCw, Plus, ChevronDown, ChevronRight, Phone, MoreHorizontal, X } from "lucide-react";
+import { lastContactShort } from "@shared/last-contact";
 
-function formatRelativeShort(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return "";
-  const days = Math.floor((Date.now() - then) / 86_400_000);
-  if (days < 1) return "today";
-  if (days < 7) return `${days}d`;
-  if (days < 56) return `${Math.floor(days / 7)}w`;
-  if (days < 365) return `${Math.floor(days / 30)}mo`;
-  return `${Math.floor(days / 365)}y`;
-}
 
 const AI_FLAG_LABELS: Record<string, string> = {
   not_a_person: "Not a person?", duplicate: "Duplicate?", title_mismatch: "Title?", should_be_key: "Key?", should_be_hidden: "Not key?", stale: "Left?",
@@ -120,7 +111,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
   const hideActivity = plainFigures && rowIsClient;
   const touches: number = hideActivity ? 0 : Number(hasEmailMetrics ? contact.email_count : contact.interaction_count || 0);
   const lastTouch: string | null = (hasEmailMetrics ? contact.last_email_at : contact.last_interaction_at) || null;
-  const lastTouchLabel = lastTouch ? formatRelativeShort(lastTouch) : null;
+  const lastTouchLabel = lastTouch ? lastContactShort(lastTouch) : null;
   const touchKind = isLandlord && !hasEmailMetrics ? "interaction" : "email";
   const touchText = `${touches.toLocaleString("en-GB")} ${touchKind}${touches === 1 ? "" : "s"}${lastTouchLabel ? ` · ${lastTouchLabel}` : ""}`;
   const touchTitle = `${touches} ${touchKind}${touches === 1 ? "" : "s"} with BGP${lastTouch ? ` · last ${new Date(lastTouch).toLocaleDateString("en-GB")}` : ""}`;
@@ -359,7 +350,7 @@ function PendingSendersList({ suggestions: allSuggestions, companyId, onDismiss,
           <div key={s.email} className="flex items-center gap-1.5 text-[11px] px-1 py-1 rounded hover:bg-muted/50">
             <Mail className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
             <span className="truncate flex-1 text-[11px]">{s.email}</span>
-            <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums" title="Emails with BGP · last one">{Number(s.touches || 0).toLocaleString("en-GB")} email{Number(s.touches) === 1 ? "" : "s"}{s.last_touch ? ` · ${formatRelativeShort(s.last_touch)}` : ""}</span>
+            <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums" title="Emails with BGP · last one">{Number(s.touches || 0).toLocaleString("en-GB")} email{Number(s.touches) === 1 ? "" : "s"}{s.last_touch ? ` · ${lastContactShort(s.last_touch)}` : ""}</span>
             {!psIsClient && (saved[`${companyId}:${s.email}`] ? <Link href={`/contacts/${saved[`${companyId}:${s.email}`].id}`} className="inline-flex min-h-11 md:min-h-0 items-center text-sm md:text-xs underline">In CRM</Link> : <>
             <Button variant="outline" size="sm"
               onClick={() => promote.mutate({ sender: s, sourceCompanyId: companyId })} disabled={promote.isPending}
@@ -641,7 +632,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
     return { label: k.sources?.[0] || "discovered", cls: "" };
   };
 
-  const hiddenLabel = (item: BoardItem) => item.hidden === "placeholder" ? "no name · no emails" : item.hidden === "stale" && item.sig.lastAt ? `last email ${formatRelativeShort(String(item.sig.lastAt))} ago` : null;
+  const hiddenLabel = (item: BoardItem) => item.hidden === "placeholder" ? "no name · no emails" : item.hidden === "stale" && item.sig.lastAt ? `last email ${lastContactShort(String(item.sig.lastAt))} ago` : null;
   const renderItem = (item: BoardItem) => {
     if (item.kind === "crm") {
       const dm = item.row;

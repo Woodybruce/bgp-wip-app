@@ -280,9 +280,9 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
     && !(data.requirements || []).length && !pipnetReqs?.rows?.length
     && signals.length === 0 && !c.brand_analysis;
   // A brand's own page lists the requirements the desktop page lists: the
-  // active ones. A record with no use, size or place shows its name (it drew
+  // rows the server sends by the one live rule. A record with no use, size or place shows its name (it drew
   // as a bare chip), so the title, the rows and the desktop page agree.
-  const requirements: any[] = (data.requirements || []).filter((r: any) => !brandPage || r.status === "Active");
+  const requirements: any[] = (data.requirements || []);
   const menuItemCount = (c.menu_intel?.items || []).length;
   const hasExpansionScore = !!hunter?.subScores || (hunter?.expansionScore ?? 0) > 0;
   // A brand's own page does not draw a card of noughts: BGP engagement shows once there is a deal, a touch or a team.

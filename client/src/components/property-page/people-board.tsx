@@ -35,6 +35,8 @@ import {
   type PeopleGroup, type RecordPeopleReply, type RecordPerson, type RecordRelationship,
 } from "@shared/record-people";
 import { plainError, propertyPeopleKey, unitDisplayLabel, usePropertyPeople, usePropertyUnits } from "./use-property-page";
+import { daysSinceContact } from "@shared/last-contact";
+import { CompanyChip } from "@/components/company-chip";
 
 type Viewer = RecordPeopleReply["viewer"];
 type Filter = "all" | PeopleGroup;
@@ -90,7 +92,7 @@ function asideFor(person: RecordPerson, withRole: boolean, planUnavailable: bool
   if (words) parts.push(words);
   if (withRole && person.roleSource === "derived" && person.roleOnRecord && !QUIET_ROLES.has(person.roleOnRecord)
     && person.roleOnRecord.toLowerCase() !== (person.jobTitle || "").toLowerCase()) parts.push(person.roleOnRecord);
-  const last = dayMonth(person.lastContactAt);
+  const last = daysSinceContact(person.lastContactAt) == null ? null : dayMonth(person.lastContactAt);
   if (last) parts.push(`Last contact ${last}${person.lastContactPerson ? ` with ${contactDisplayName(person.lastContactPerson.name)}` : ""}`);
   const plan = person.plan;
   if (plan && !planUnavailable) {
@@ -218,7 +220,7 @@ function UnitPersonLine({ person, block, menu, onChanged }: { person: RecordPers
     ? (person.contactId ? <Link href={`/contacts/${person.contactId}`} className="font-semibold hover:underline truncate">{contactDisplayName(person.name)}</Link> : <span className="font-semibold truncate">{contactDisplayName(person.name)}</span>)
     : <span className="text-muted-foreground italic truncate">No named contact</span>;
   const companyCell = companyName
-    ? (companyId ? <Link href={`/companies/${companyId}`} className="hover:underline truncate">{companyName}</Link> : <span className="truncate">{companyName}</span>)
+    ? <CompanyChip id={companyId} name={companyName} size={16} testId={`people-company-${person.id}`} />
     : <span className="text-muted-foreground">—</span>;
   // A named person is the landlord pages' own row (Woody, 2026-11-14: "its not
   // using the same structure as we built in the Landlord pages"), with the

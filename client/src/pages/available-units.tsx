@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { propertyUnitHref } from "@/lib/unit-links";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { LeasingViewings, type LeasingViewing } from "@/components/leasing-viewings";
 import { landsecMeetings } from "@/components/landsec/landsec-meetings";
@@ -89,6 +90,7 @@ import { FeeAllocationEditor, BGP_HOUSE_PCT, type FeeAllocationRow } from "@/com
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, WIP_STATUSES, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 import { DEFAULT_LETTING_TYPE, LEGACY_LETTING_TYPES, TRACKER_LIVE_STATUSES, HISTORIC_STATUSES, PRE_MARKETING_STATUSES } from "@shared/letting-rules";
 import { tenancyStatusMatches } from "@shared/tenancy-schedule-display";
+import { CompanyChip } from "@/components/company-chip";
 const MARKETING_STATUSES = LETTING_STATUSES;
 // The per-row Deal Status dropdown offers the deal pipeline only (Woody,
 // 2026-09-01): Opportunity/Available belong to Unit Status, Withdrawn moved
@@ -3074,7 +3076,8 @@ export default function AvailableUnitsPage() {
                             <InlineLinkSelect
                               value={u.propertyId}
                               options={propertyOptions}
-                              href={`/properties/${u.propertyId}`}
+                              // Opens the unit itself on the property page (its plan and schedule row) when it is tied to one.
+                              href={propertyUnitHref(u.propertyId, (u as any).tenancyUnitId) || `/properties/${u.propertyId}`}
                               onSave={(v) => inlineUpdate(u.id, "propertyId", v || null)}
                               onCreate={async (name) => { const c = await createProperty(name); inlineUpdate(u.id, "propertyId", c.id); }}
                               placeholder="Link property"
@@ -3097,11 +3100,13 @@ export default function AvailableUnitsPage() {
                           const vacant = !et || /^vacant$/i.test(et);
                           // "—", not "Vacant" — the status column already says it's available.
                           if (vacant) return <span className="text-xs text-muted-foreground" title="Vacant">—</span>;
-                          const match = companyByName.get(et.toLowerCase());
+                          // The schedule row's own brand first; a name match only when the row has none.
+                          const linkedId = (u as any).existingTenantCompanyId as string | null | undefined;
+                          const match = (linkedId && crmCompanies.find(c => c.id === linkedId)) || companyByName.get(et.toLowerCase());
                           return (
                             <span className="text-xs truncate flex items-center gap-1 group/et" title={et}>
                               {match ? (
-                                <a href={`/companies/${match.id}`} className="truncate hover:underline text-primary">{et}</a>
+                                <CompanyChip id={match.id} name={et} domain={(match as any).domain || (match as any).website || null} size={16} className="text-primary" testId={`existing-tenant-${u.id}`} />
                               ) : (
                                 <>
                                   <span className="truncate">{et}</span>

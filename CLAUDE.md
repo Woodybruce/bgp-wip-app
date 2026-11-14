@@ -1240,6 +1240,27 @@ untouched when it is off, and
   2026 and reads it as one. An archived
   schedule row is history, not a unit, unless a live letting still hangs off
   it: a letting is never hidden because its row was archived.
+- **Units tied together** (Woody, 2026-11-14, step 1 of
+  `docs/consistency-review-2026-11-14.md`: "Yes go ahead"). A schedule row's
+  tracker row and deal come from the unit feed or the stored ids
+  (`letting_tracker_unit_id`, `deal_id`, a tracker row's `deal_id`), never
+  from a unit or deal NAME: the schedule screen no longer uses
+  `findTenancyUnitLink`. Its Occupied and Vacant counts and pills read
+  `unitOccupancy`. Every jump to a unit goes through
+  `client/src/lib/unit-links.ts` (`trackerUnitHref`: `/available` for staff,
+  `/deals/letting` in the Landsec view, `/landsec/tracker` for a joint agent;
+  `propertyUnitHref`: the property page at `#tenancy-unit-<id>`). A new
+  schedule row is knitted to a tracker row, leasing row or deal only by
+  `normUnitSql` and only when exactly one schedule row and one candidate
+  carry that name (`server/tenancy-schedule.ts`); links that name different
+  units are reported as `unitPointersDisagree` on
+  `GET /api/admin/letting-integrity`, never repaired. Last contact on the
+  brand, landlord and property boards goes through `shared/last-contact.ts`
+  (`latestPastContact`, `daysSinceContact`, `lastContactShort`: a date ahead
+  is "Next", never a last touch). The brand page counts the requirements the
+  server sends by the live rule, never `status === "Active"`. A company on a
+  row is drawn by `client/src/components/company-chip.tsx` (logo or
+  initials, name, link only when the reply carried an id, optional role).
 - **Matching**: `shared/property-plan-match.ts`,
   `server/property-plan-match.ts` (`GET /api/plans/:id/match`, `POST
   …/match/accept`, `…/accept-suggested`, `…/dismiss`). A scan stays open and

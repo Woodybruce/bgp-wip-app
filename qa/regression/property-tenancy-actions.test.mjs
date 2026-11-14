@@ -74,6 +74,7 @@ function fixture({ units = [], user = staff, readOnly = false, links = { deals: 
     getAuthHeaders: () => ({ Authorization: 'Bearer fixture' }),
     // A property without estate schemes: every row passes the scheme filter.
     usePropertySchemeList: () => ({ data: { schemes: [] } }), schemeFilterMatches: () => true, unitScheme: () => undefined,
+    usePropertyUnits: () => ({ data: { units: [] } }), unitOccupancy: () => 'unknown',
     UNIFIED_ADD_UNIT_ENABLED: true,
     UnifiedAddUnitDialog: props => props.open ? React.createElement('div', {
       role: 'dialog', 'data-property': props.fixedPropertyId, 'data-mode': props.mode,

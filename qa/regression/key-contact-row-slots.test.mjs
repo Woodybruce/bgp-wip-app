@@ -24,7 +24,7 @@ function renderRow(props,{viewer={role:'Admin'}}={}) {
   useQuery:options=>options.queryKey[0]==='/api/auth/me'?{data:viewer}:{data:null},
   useMutation:options=>{mutations.push(options);return{isPending:false,mutate(){}};},
   apiRequest:async()=>({json:async()=>({})}),showLandlordEmployerBadge:()=>false,isEmailPlaceholderName:()=>false,
-  formatRelativeShort:()=>'',contactDisplayName:value=>value,AI_FLAG_LABELS:{},
+  lastContactShort:()=>'',contactDisplayName:value=>value,AI_FLAG_LABELS:{},
  });
  return{tree:exports.KeyContactRow(props),mutations,states};
 }

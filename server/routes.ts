@@ -5653,6 +5653,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           p.name AS "propertyName",
           p.address AS "propertyAddress",
           ts.existing_tenant AS "existingTenant",
+          -- The schedule row's own brand, so the tracker links the tenant by
+          -- id, not by its name (consistency review, 14 November 2026).
+          ts.tenant_company_id AS "existingTenantCompanyId",
           -- The estate scheme (Canary Wharf: Jubilee Place…): the listing's
           -- own, else its tenancy row's grouping, else its leasing zone.
           COALESCE(nullif(trim(au.scheme), ''), ts.grouping,
@@ -5666,7 +5669,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           -- by the tenancy link when present, else by unit name. NULL when
           -- the schedule has no occupier (genuinely vacant).
           SELECT COALESCE(nullif(trim(t.trading_name), ''), nullif(trim(t.tenant_name), '')) AS existing_tenant,
-                 nullif(trim(t.grouping), '') AS grouping
+                 nullif(trim(t.grouping), '') AS grouping,
+                 t.tenant_company_id
             FROM tenancy_schedule_units t
            WHERE (au.tenancy_unit_id IS NOT NULL AND t.id = au.tenancy_unit_id)
               OR (au.tenancy_unit_id IS NULL AND t.property_id = au.property_id

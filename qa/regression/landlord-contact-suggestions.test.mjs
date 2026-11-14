@@ -68,7 +68,7 @@ function renderComponent(name,props,{dismissed=[],history=null,historyContact=nu
   apiRequest:async(method,url,body)=>{requests.push({method,url,body});return{json:async()=>({dismissedKeys:landlordContactSuggestionKeys(body)})};},
   isDismissedLandlordContact,showLandlordEmployerBadge,landlordContactIdentityKeys,landlordDisplayContacts,useContactsCheck:()=>({check:null}),isKeyContactRole:()=>true,isMachineMailbox:()=>false,
   nameKey:value=>String(value).toLowerCase(),keyContactHiddenReason:()=>null,compareKeyContacts:rank,isEmailPlaceholderName:()=>false,
-  formatRelativeShort:()=>'',contactDisplayName:value=>value,KEY_CONTACTS_SHOWN:6,HIDDEN_ORDER:{},AI_FLAG_LABELS:{},pillMetrics:'',pillInactive:'',RESTRICTED_LANDSEC_ROLES:['joint_agent'],
+  lastContactShort:()=>'',contactDisplayName:value=>value,KEY_CONTACTS_SHOWN:6,HIDDEN_ORDER:{},AI_FLAG_LABELS:{},pillMetrics:'',pillInactive:'',RESTRICTED_LANDSEC_ROLES:['joint_agent'],
  });
  return{tree:exports[name](props),mutations,requests,invalidations,cache,stateChanges};
 }

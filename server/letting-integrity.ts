@@ -606,6 +606,39 @@ export async function lettingIntegrityReport(pool: Pool) {
     status_override_set: await count(`SELECT count(*)::int AS n FROM property_plan_units WHERE status_override IS NOT NULL`),
   }));
 
+  // (r) unit pointers that disagree (consistency review, 2026-11-14). A unit
+  // is tied three ways: the schedule row's own letting_tracker_unit_id and
+  // deal_id, the tracker row's tenancy_unit_id and deal_id, and the deal's
+  // tenancy_unit_id. The unit feed picks one winner; these are the rows
+  // where the pointers name different units or deals. Reported, never fixed.
+  const r = await section(async () => {
+    const { rows } = await pool.query(
+      `SELECT 'schedule_tracker_points_elsewhere' AS kind, t.id AS tenancy_unit_id, t.property_id, p.name AS property_name,
+              coalesce(t.unit_number, t.premises) AS unit_name, au.id AS tracker_row_id, au.tenancy_unit_id AS other_tenancy_unit_id,
+              NULL::text AS deal_id
+         FROM tenancy_schedule_units t
+         JOIN available_units au ON au.id = t.letting_tracker_unit_id
+         LEFT JOIN crm_properties p ON p.id = t.property_id
+        WHERE au.tenancy_unit_id IS NOT NULL AND au.tenancy_unit_id <> t.id
+       UNION ALL
+       SELECT 'tracker_deal_on_other_unit', au.tenancy_unit_id, au.property_id, p.name,
+              au.unit_name, au.id, d.tenancy_unit_id, d.id
+         FROM available_units au
+         JOIN crm_deals d ON d.id = au.deal_id
+         LEFT JOIN crm_properties p ON p.id = au.property_id
+        WHERE au.tenancy_unit_id IS NOT NULL AND d.tenancy_unit_id IS NOT NULL AND d.tenancy_unit_id <> au.tenancy_unit_id
+       UNION ALL
+       SELECT 'schedule_deal_on_other_unit', t.id, t.property_id, p.name,
+              coalesce(t.unit_number, t.premises), NULL, d.tenancy_unit_id, d.id
+         FROM tenancy_schedule_units t
+         JOIN crm_deals d ON d.id = t.deal_id
+         LEFT JOIN crm_properties p ON p.id = t.property_id
+        WHERE d.tenancy_unit_id IS NOT NULL AND d.tenancy_unit_id <> t.id`);
+    const byKind: Record<string, number> = {};
+    for (const row of rows) byKind[row.kind] = (byKind[row.kind] || 0) + 1;
+    return { counts: { total: rows.length, byKind }, list: cap(rows) };
+  });
+
   const sections = {
     trackerRowsWithoutDeal: a,
     liveLettingDealsWithoutTrackerRow: b,
@@ -623,6 +656,7 @@ export async function lettingIntegrityReport(pool: Pool) {
     bootLoopBornTrackerRows: o,
     hotsContent: p,
     dealsUnlinkedFromSpine: q,
+    unitPointersDisagree: r,
   };
   const counts: Record<string, any> = {};
   const lists: Record<string, any> = {};

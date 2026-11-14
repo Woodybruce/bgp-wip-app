@@ -9,6 +9,7 @@
 // the plan lines and the notes come from GET /api/properties/:id/units/:unitId
 // through usePropertyUnitDetail. The server decides what a login may read; the
 // viewer flags here only decide which links and buttons are offered.
+import { trackerUnitHref } from "@/lib/unit-links";
 import { Fragment, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -297,15 +298,8 @@ function LettingBlock({ propertyId, unit, detail, viewer, card }: {
 
   const landsecViewer = viewer.landsecView || viewer.restricted;
   const unitPageHref = landsecViewer && unit.scheduleRowId ? `/landsec/unit/${unit.scheduleRowId}` : null;
-  // The link other screens use to open one tracker unit, on the login's own
-  // Letting Tracker: BGP's, a Landsec login's (/deals/letting, the same page)
-  // or a joint agent's own (/landsec/tracker).
-  const trackerBase = viewer.restricted ? null : viewer.staff && !viewer.landsecView ? "/available" : "/deals/letting";
-  const trackerHref = unit.trackerId
-    ? viewer.restricted
-      ? `/landsec/tracker?unit=${encodeURIComponent(unit.trackerId)}`
-      : `${trackerBase}?unitId=${encodeURIComponent(unit.trackerId)}&propertyId=${encodeURIComponent(propertyId)}`
-    : null;
+  // The tracker row, on the login's own Letting Tracker (one helper, client/src/lib/unit-links.ts).
+  const trackerHref = trackerUnitHref(unit.trackerId, propertyId, viewer);
   // Letting work started from the unit, for everyone (Woody, 2026-11-14:
   // "Everything is the same"): the tracker's own Add viewing and Add offer
   // forms open on this unit, the brief opens here, and a vacant unit with no

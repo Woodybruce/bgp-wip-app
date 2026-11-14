@@ -395,25 +395,38 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
     // patterns in production logs.
     if (newId) {
       const newRow = result.rows[0];
-      const unitNum = (newRow?.unit_number || "").trim().toLowerCase();
+      const unitNum = (newRow?.unit_number || "").trim();
       if (unitNum) {
         const knit = async (label: string, sql: string, params: any[]) => {
           try { await pool.query(sql, params); }
           catch (e: any) { console.warn(`[tenancy] auto-knit ${label} failed:`, e?.message); }
         };
+        // One rule for a unit's name (normUnitSql, the unit list's own), and
+        // only when the name is unambiguous: exactly one schedule row on the
+        // property carries it and exactly one candidate row matches. Anything
+        // else is left unlinked for a person (consistency review, 2026-11-14).
+        const wanted = normUnitSql("$3::text");
+        const soleScheduleRow = `(SELECT count(*) FROM tenancy_schedule_units s
+                                   WHERE s.property_id = $2 AND ${normUnitSql("s.unit_number")} = ${wanted}) = 1`;
         await Promise.all([
           knit(
             "leasing",
             `UPDATE leasing_schedule_units SET tenancy_unit_id = $1
               WHERE property_id = $2 AND tenancy_unit_id IS NULL
-                AND lower(trim(coalesce(unit_name, ''))) = $3`,
+                AND ${normUnitSql("unit_name")} = ${wanted} AND ${soleScheduleRow}
+                AND (SELECT count(*) FROM leasing_schedule_units l2
+                      WHERE l2.property_id = $2 AND l2.tenancy_unit_id IS NULL
+                        AND ${normUnitSql("l2.unit_name")} = ${wanted}) = 1`,
             [newId, d.property_id, unitNum]
           ),
           knit(
             "available",
             `UPDATE available_units SET tenancy_unit_id = $1
               WHERE property_id = $2 AND tenancy_unit_id IS NULL
-                AND lower(trim(coalesce(unit_name, ''))) = $3`,
+                AND ${normUnitSql("unit_name")} = ${wanted} AND ${soleScheduleRow}
+                AND (SELECT count(*) FROM available_units a2
+                      WHERE a2.property_id = $2 AND a2.tenancy_unit_id IS NULL
+                        AND ${normUnitSql("a2.unit_name")} = ${wanted}) = 1`,
             [newId, d.property_id, unitNum]
           ),
           // property_units lookup is scoped to the same property as
@@ -422,9 +435,8 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
           knit(
             "deals",
             `UPDATE crm_deals d SET tenancy_unit_id = $1
-              WHERE d.property_id = $2 AND d.tenancy_unit_id IS NULL
-                AND lower(trim(coalesce(
-                  (SELECT unit_name FROM property_units pu WHERE pu.id = d.unit_id AND pu.property_id = $2), ''))) = $3`,
+              WHERE d.property_id = $2 AND d.tenancy_unit_id IS NULL AND ${soleScheduleRow}
+                AND ${normUnitSql("(SELECT unit_name FROM property_units pu WHERE pu.id = d.unit_id AND pu.property_id = $2)")} = ${wanted}`,
             [newId, d.property_id, unitNum]
           ),
         ]);

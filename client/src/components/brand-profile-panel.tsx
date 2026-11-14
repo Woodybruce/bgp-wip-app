@@ -80,6 +80,7 @@ import { AgentRelationshipCard } from "@/components/agent-relationship-card";
 import { LandlordAccountGallery } from "@/components/account-media-gallery";
 import { AccountNextActionsCard, InvestmentRequirementsCard, AccountFolderTreeCard, useAccountWorkspace } from "@/components/account-workspace-cards";
 import { AccountEntitiesPanel } from "@/components/account-entities-panel";
+import { daysSinceContact, latestPastContact } from "@shared/last-contact";
 
 interface BrandProfile {
   identity?: { status: "verified" | "review"; domain: string | null };
@@ -905,7 +906,7 @@ export function brandSectionContent(data: BrandProfile, viewer: { client: boolea
     profile: viewer.plan || any(data.images),
     relationship: any((data as any).liveLocations) || any(data.leaseEvents) || (data.spacePreferences?.sampleSize ?? 0) >= 2
       || (data.activeDeals ?? 0) > 0 || (data.completedDeals ?? 0) > 0 || (data.dealList?.total ?? 0) > 0
-      || any((data.requirements || []).filter(r => r.status === "Active")),
+      || any(data.requirements),
     stores: staff || any(data.stores) || any(c.menu_intel?.items),
     intel: staff || any((data.signals || []).filter((s: any) => !isSignalNoise(s))) || any(data.competitors) || any(c.ai_competitors)
       || !!c.brand_analysis || !!c.dept_store_presence || !!c.franchise_activity,
@@ -1851,7 +1852,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // BGP", above About. Client logins and every other kind keep them under
   // About, as before.
   const brandFactsFirst = brandOverview && !isClientViewer;
-  const liveRequirementCount = requirements.filter(r => r.status === "Active").length;
+  // The server sends only the rows the one live rule (shared/requirement-live.ts)
+  // puts on this page: live or to confirm for staff, open listings for a
+  // client. A row's free-text status is not that rule (review, 2026-11-14).
+  const liveRequirements = requirements;
+  const liveRequirementCount = liveRequirements.length;
   // One line: lead broker, last touch and email volume — from CRM
   // contacts AND the BGP inbox threads with the brand's people
   // (Honest Greens read "Last touch —" beside 49 inbox threads).
@@ -1860,8 +1865,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     // clients fall back to their visible contacts' last touch.
     const stats = data.relationshipStats;
     const touches = [...data.contacts.map((ct: any) => ct.last_interaction_at), stats?.last_touch].filter(Boolean) as string[];
-    const last = touches.sort().reverse()[0];
-    const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 864e5) : null;
+    const last = latestPastContact(touches);
+    const daysSince = daysSinceContact(last);
     const threads = stats?.threads || 0;
     const active90 = stats ? stats.people_90d : data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length;
     const num = (v: number) => <span className="font-mono tabular-nums text-foreground">{v.toLocaleString("en-GB")}</span>;
@@ -3015,7 +3020,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     </div>
                   </details>
                 );
-  const bgpRequirementsBlock = !isLandlord && requirements.filter(r => r.status === "Active").length > 0 && (
+  const bgpRequirementsBlock = !isLandlord && liveRequirements.length > 0 && (
               <div data-testid="brand-bgp-requirements">
                 {brandTop ? (
                   <BrandBlockHeading count={liveRequirementCount} action={<Link href={`/requirements?companyId=${c.id}`} className={brandCardAction}>Manage</Link>}>
@@ -3024,7 +3029,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 ) : (
                 <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1">
-                    <FileText className="w-3 h-3" /> BGP requirements ({requirements.filter(r => r.status === "Active").length})
+                    <FileText className="w-3 h-3" /> BGP requirements ({liveRequirements.length})
                   </span>
                   <Link
                     href={`/requirements?companyId=${c.id}`}
@@ -3035,7 +3040,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 </div>
                 )}
                 <div className="space-y-0.5">
-                  {(brandTop ? capRows("requirements", requirements.filter(r => r.status === "Active"), 6) : requirements.filter(r => r.status === "Active").slice(0, 6)).map((r) => {
+                  {(brandTop ? capRows("requirements", liveRequirements, 6) : liveRequirements.slice(0, 6)).map((r) => {
                     const useClass = r.use?.[0] || null;
                     // "1500-3500 ft2" → "1,500–3,500 sq ft" (Woody, 2026-09-27).
                     const size = r.size?.length ? formatSizeList(r.size) : null;
@@ -3148,8 +3153,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     // login gets the same figures it had before, from its visible contacts.
     const stats = data.relationshipStats;
     const touches = [...data.contacts.map((ct: any) => ct.last_interaction_at), stats?.last_touch].filter(Boolean) as string[];
-    const last = touches.sort().reverse()[0];
-    const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 864e5) : null;
+    const last = latestPastContact(touches);
+    const daysSince = daysSinceContact(last);
     const threads = stats?.threads || 0;
     const active90 = stats ? stats.people_90d : data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length;
     const figure = (v: number) => v.toLocaleString("en-GB");

@@ -59,3 +59,36 @@ export function lastContactCell(value: string | Date | null | undefined, now: nu
   }
   return { kind: "last", label, title: `Last contact ${ukDay(r.at, true)}, from the app's reading of emails and meetings`, days: d };
 }
+
+// The latest contact that has happened: a date ahead (a meeting booked) is
+// never a "last touch" (consistency review, 2026-11-14: brand pages read a
+// booked meeting as "-3 days ago").
+export function latestPastContact(values: Array<string | Date | null | undefined>, now: number = Date.now()): string | null {
+  let best: { at: number; value: string } | null = null;
+  for (const v of values) {
+    const r = readLastContact(v, now);
+    if (r.kind !== "last") continue;
+    if (!best || r.at > best.at) best = { at: r.at, value: v instanceof Date ? v.toISOString() : String(v) };
+  }
+  return best?.value ?? null;
+}
+
+// Whole days since a past contact, or null (nothing, unreadable, or ahead).
+export function daysSinceContact(value: string | Date | null | undefined, now: number = Date.now()): number | null {
+  const r = readLastContact(value, now);
+  return r.kind === "last" ? r.days : null;
+}
+
+// The short label people boards use beside a contact: "today", "4d", "3w",
+// "5mo", "2y"; a date ahead is "Next: 12 Feb", never a minus figure.
+export function lastContactShort(value: string | Date | null | undefined, now: number = Date.now()): string | null {
+  const r = readLastContact(value, now);
+  if (r.kind === "next") return `Next: ${ukDay(r.at, false)}`;
+  if (r.kind !== "last") return null;
+  const d = r.days;
+  if (d < 1) return "today";
+  if (d < 7) return `${d}d`;
+  if (d < 56) return `${Math.floor(d / 7)}w`;
+  if (d < 365) return `${Math.floor(d / 30)}mo`;
+  return `${Math.floor(d / 365)}y`;
+}
