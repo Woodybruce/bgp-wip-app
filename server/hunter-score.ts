@@ -182,6 +182,30 @@ function factGeography(fact: ExpansionFact): "uk" | "europe" | "row" | "unknown"
   return "unknown";
 }
 
+// One story is one fact. The same headline arrives from two feeds (a news
+// search and a newsletter, or one article under two publishers' names), and
+// until 14 November 2026 each copy was scored: one opening counted two or
+// three times. The copy that carries a date is the one kept.
+const storyKey = (headline?: string | null) => String(headline || "")
+  .replace(/\s+[-–|]\s+[^-–|]{2,40}$/, "")           // " - Retail Times" at the end
+  .toLowerCase().replace(/[^a-z0-9£$ ]+/g, " ").replace(/\s+/g, " ").trim();
+export function dedupeFacts<T extends ExpansionFact>(facts: T[]): T[] {
+  const kept: { key: string; type: string; link: string; fact: T }[] = [];
+  for (const fact of facts) {
+    const key = storyKey(fact.headline);
+    const type = String(fact.signal_type || "");
+    const source = String((fact as any).source || "");
+    const link = /^https?:\/\//i.test(source) ? source : "";
+    const same = kept.find(k => k.type === type && (
+      (!!link && k.link === link)
+      || (!!key && (k.key === key || (key.length >= 30 && k.key.startsWith(key)) || (k.key.length >= 30 && key.startsWith(k.key))))
+    ));
+    if (!same) { kept.push({ key, type, link, fact }); continue; }
+    if (!same.fact.signal_date && fact.signal_date) same.fact = fact;
+  }
+  return kept.map(k => k.fact);
+}
+
 export function computeExpansionScoreV2(input: {
   brand: HunterScoreInput["brand"] & { rollout_status?: string | null };
   facts: ExpansionFact[];
@@ -194,7 +218,7 @@ export function computeExpansionScoreV2(input: {
     if (Math.abs(points) < 0.5) return;
     lines.push({ bucket, points: Math.round(points), label });
   };
-  const facts = input.facts || [];
+  const facts = dedupeFacts(input.facts || []);
   const b = input.brand;
   const bgp: BgpEvidence = {
     activeRequirements: 0, pipnetRequirements: 0, liveDeals: 0, committedDeals: 0, completedDeals24m: 0,
@@ -203,7 +227,7 @@ export function computeExpansionScoreV2(input: {
   };
 
   // ── UK momentum — what they're actually doing on the ground ──
-  let openUk = 0, closeUk = 0;
+  let openUk = 0, closeUk = 0, headcountDown = 0;
   for (const f of facts) {
     const w = decayWeight(f) * confidenceWeight(f);
     const geo = factGeography(f);
@@ -216,12 +240,13 @@ export function computeExpansionScoreV2(input: {
       if (geo === "uk" || geo === "unknown") closeUk += 6 * w;
     } else if (f.signal_type === "hiring" && geo !== "row") {
       // Falling headcount is a contraction signal, not hiring.
-      if (isNegative(f)) closeUk += 2.5 * w;
+      if (isNegative(f)) headcountDown += 2.5 * w;
       else openUk += 2.5 * w;
     }
   }
   if (openUk > 0) add("ukMomentum", Math.min(openUk, 22), "UK openings & hiring, time-decayed");
   if (closeUk > 0) add("ukMomentum", -Math.min(closeUk, 20), "UK closures, time-decayed");
+  if (headcountDown > 0) add("ukMomentum", -Math.min(headcountDown, 8), "Headcount falling");
   if (bgp.comingSoonUk) add("ukMomentum", Math.min(bgp.comingSoonUk * 6, 14), `${bgp.comingSoonUk} UK site${bgp.comingSoonUk === 1 ? "" : "s"} "coming soon" on its own website`);
   if (bgp.comingSoonElsewhere) add("ukMomentum", Math.min(bgp.comingSoonElsewhere * 1.5, 4), `${bgp.comingSoonElsewhere} site${bgp.comingSoonElsewhere === 1 ? "" : "s"} coming soon abroad`);
   if (b.rollout_status === "entering_uk") add("ukMomentum", 8, "Marked entering UK");
@@ -239,7 +264,7 @@ export function computeExpansionScoreV2(input: {
   else if (["D", "E", "WEAK", "DISTRESS"].some(g => grade.startsWith(g))) add("capacity", -10, `Covenant grade ${grade}`);
   if (input.stock?.signals?.strongMomentum) add("capacity", 8, "Stock +40% YoY");
   else if (input.stock?.signals?.stockMomentum) add("capacity", 5, "Stock momentum");
-  if (openUk > closeUk && openUk > 2) add("capacity", 3, "Estate growing, not shrinking");
+  if (openUk > closeUk + headcountDown && openUk > 2) add("capacity", 3, "Estate growing, not shrinking");
 
   // ── Intent — are they telling the market they want space ──
   if (bgp.activeRequirements > 0) add("intent", Math.min(bgp.activeRequirements * 8, 14), `${bgp.activeRequirements} requirement${bgp.activeRequirements === 1 ? "" : "s"} on BGP's books, confirmed or logged by BGP in 12 months`);

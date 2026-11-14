@@ -848,6 +848,23 @@ not opened to them.
   (`brand-card.tsx`). Menu highlights / Best sellers is mounted once, under
   Stores & menu, with a teaser in the summary card. Keep the KEEP LIST in
   `docs/brands-review-2026-11-12.md` when changing the page.
+  - **Expansion** (Woody, 2026-11-14: "the display doesn't look great
+    between the 2 ... needs improvement and design tidy up"). The score
+    card is the figure with its band (`expansionBand`, the Hunter board's
+    bands), then the four parts one under the other, each with its bar and,
+    for staff, every why-line of that part (`SCORE_PARTS`; no separate "Why
+    this score"). The Signals card draws one line per signal in three
+    columns (kind, headline, date), with the estate list first
+    (`isEstateSignal`: every kind but plain news, plus a plain news story
+    whose headline is about sites, hiring, deals or money) and general
+    coverage folded under **Other news**; the Expansion pill counts the
+    estate list. That rule only decides which list a story is drawn in.
+    The score counts one story once (`dedupeFacts` in
+    `server/hunter-score.ts`: the same headline or the same link) and a
+    headcount fall is its own line, "Headcount falling"; `SCORE_VERSION`
+    is 4. The review of what the score cannot see, and the data that would
+    fix it, is `docs/expansion-review-2026-11-14.md`: nothing in its
+    "Ideas" list is built, each waits on Woody.
   - **People & checks is a matched pair** (Woody, 2026-11-13: "same
     height"). On two columns Key contacts and Company checks are one height
     while both are at rest; a card marked `data-own-height` (opened with

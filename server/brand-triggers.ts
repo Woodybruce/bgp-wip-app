@@ -47,9 +47,12 @@ const CLAUDE_FONT = `ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI
 // version, so the first scan after a change records scores without sending a
 // burst of hot / cooling emails. Readers of the saved score take version 2
 // and up (the scale and thresholds are unchanged).
+// Version 4 (2026-11-14): the same scale; one story is scored once (the same
+// headline from two feeds was counted twice) and a headcount fall has its own
+// line, capped at 8, in place of sitting inside "UK closures".
 const HOT_THRESHOLD = 30;
 const COOLING_THRESHOLD = 20;
-const SCORE_VERSION = 3;
+const SCORE_VERSION = 4;
 
 interface TriggerEvent {
   brandId: string;

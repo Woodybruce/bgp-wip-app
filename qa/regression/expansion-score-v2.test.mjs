@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeExpansionScoreV2 } from '../../server/hunter-score.ts';
+import { computeExpansionScoreV2, dedupeFacts } from '../../server/hunter-score.ts';
 
 const now = new Date().toISOString();
 const brand = { name: 'Bunsik' };
@@ -23,4 +23,26 @@ test('falling headcount pulls momentum down instead of up; provider vocabulary i
   assert.ok(down.lines.some(l => l.points < 0));
   const funded = computeExpansionScoreV2({ brand, facts: [{ signal_type: 'funding', headline: '£40m raise', magnitude: 'major', confidence: 'high', signal_date: now }] });
   assert.equal(funded.subScores.capacity, 14);
+});
+
+test('one story is scored once however many feeds carried it, and the dated copy is the one kept', () => {
+  const opening = { signal_type: 'opening', geography: 'uk', confidence: 'high', signal_date: now };
+  const once = computeExpansionScoreV2({ brand, facts: [{ ...opening, headline: 'Popeyes opens at The Brewery, Romford' }] });
+  const copies = computeExpansionScoreV2({ brand, facts: [
+    { ...opening, signal_date: null, headline: 'Popeyes opens at The Brewery, Romford' },
+    { ...opening, headline: 'Popeyes opens at The Brewery, Romford - Retail Times' },
+    { ...opening, headline: 'POPEYES OPENS AT THE BREWERY ROMFORD' },
+    { ...opening, headline: 'A different headline for the same link', source: 'https://example.com/a' },
+    { ...opening, headline: 'Yet another headline for that link', source: 'https://example.com/a' },
+  ] });
+  const two = computeExpansionScoreV2({ brand, facts: [{ ...opening, headline: 'Popeyes opens at The Brewery, Romford' }, { ...opening, headline: 'A different headline for the same link', source: 'https://example.com/a' }] });
+  assert.equal(once.subScores.ukMomentum, 7);
+  assert.equal(copies.subScores.ukMomentum, two.subScores.ukMomentum, 'five rows, two stories');
+  assert.equal(dedupeFacts([{ signal_type: 'opening', headline: 'Same story' }, { signal_type: 'closure', headline: 'Same story' }]).length, 2, 'an opening and a closure are never one story');
+});
+
+test('a headcount fall has its own line and is not called a closure', () => {
+  const out = computeExpansionScoreV2({ brand, facts: [{ signal_type: 'hiring', headline: 'Headcount down 20% over 12 months', sentiment: 'negative', geography: 'uk', confidence: 'high', signal_date: now }] });
+  assert.deepEqual(out.lines.map(l => l.label), ['Headcount falling']);
+  assert.equal(out.lines[0].points, -2);
 });
