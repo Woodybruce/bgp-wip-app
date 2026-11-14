@@ -321,12 +321,8 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
       {feed.data.unplacedDeals.length > 6 && ` and ${feed.data.unplacedDeals.length - 6} more`}.
     </p>
   );
-  const sideSwitch = (
-    <div className="flex gap-1.5" role="tablist" aria-label="Beside the plan" data-testid="property-side-tabs">
-      <Pill active={side === "units"} onClick={() => setSide("units")} data-testid="property-side-units">Units</Pill>
-      <Pill active={side === "news"} onClick={() => setSide("news")} data-testid="property-side-news">News &amp; social</Pill>
-    </div>
-  );
+  // News & social sits behind People in the intro row now (Woody, 2026-11-14).
+  const sideSwitch = null;
   const news = <div className="min-h-0 overflow-y-auto space-y-3" data-testid="property-side-news-panel"><PropertyInstagram propertyId={propertyId} /><PropertyNewsPanel propertyId={propertyId} propertyName={propertyName || ""} /></div>;
   const list = (dense: boolean, className?: string) => (
     <PropertyUnitList

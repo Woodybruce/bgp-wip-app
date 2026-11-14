@@ -1084,7 +1084,7 @@ export function InlineCompetitorAgent({
       <DropdownMenuTrigger asChild>
         <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
           <Plus className="w-3 h-3" />
-          Competitor agent
+          Joint agent
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-72" align="start">

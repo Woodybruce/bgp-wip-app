@@ -87,6 +87,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import type { CrmProperty, CrmCompany, User, PropertyView } from "@shared/schema";
+import { PropertyInstagram } from "@/components/property-page/property-instagram";
 import {
   STATUS_OPTIONS,
   PROPERTY_STATUS_COLORS,
@@ -483,7 +484,7 @@ export function PropertyDetail({ id }: { id: string }) {
   const uiJointAgent = jointAgent && !planLayout;
   // The two cards above the plan: the BGP take or Activity; the conversation or People.
   const [introLeft, setIntroLeft] = useState<"take" | "activity" | "focus">("take");
-  const [introRight, setIntroRight] = useState<"chat" | "people">("chat");
+  const [introRight, setIntroRight] = useState<"chat" | "people" | "news">("chat");
   // What the Plan tab found, for the property it found it on: the tab is
   // called Units or Unit when that property has no plan.
   const [planTabOf, setPlanTab] = useState<{ propertyId: string; units: number; plans: number } | null>(null);
@@ -985,7 +986,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <span className={factPill} data-testid="property-field-website"><span className={factLabel}>Website</span><InlineText value={property.website || ""} display={(property.website || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "")} onSave={(val) => inlineUpdateAsync("website", val)} label="Website" placeholder="Set website" className="truncate max-w-[14rem] block" />
                     {property.website && <a href={/^https?:\/\//i.test(property.website) ? property.website : `https://${property.website}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground" title="Open website"><ExternalLink className="w-3 h-3" /></a>}
                     <WebsiteLookup propertyId={property.id} propertyName={property.name} address={formatAddress(property.address)} hasWebsite={!!property.website} onPick={url => inlineUpdateAsync("website", url)} /></span>
-                  <span className={factPill} data-testid="property-field-competitor"><span className={factLabel}>Competitor agent</span><InlineCompetitorAgent propertyId={id} competitorAgentId={(property as any).competitorAgentId} competitorAgent={property.competitorAgent} allCompanies={allCompanies} /></span>
+                  <span className={factPill} data-testid="property-field-competitor"><span className={factLabel}>Joint agent</span><InlineCompetitorAgent propertyId={id} competitorAgentId={(property as any).competitorAgentId} competitorAgent={property.competitorAgent} allCompanies={allCompanies} /></span>
                 </div>
               );
             })()}
@@ -1012,13 +1013,19 @@ export function PropertyDetail({ id }: { id: string }) {
                         : <ErrorBoundary compact name="Weekly focus"><WeeklyFocusCard propertyId={property.id} /></ErrorBoundary>}
                     </div>
                   </Card>
-                  <div className="min-w-0 h-[372px] flex flex-col gap-1.5" data-testid="property-intro-chat">
-                    <div className="flex items-center gap-1.5" role="tablist" aria-label="Conversation and people">
+                  {/* The same card as the left one: its tabs inside it (Woody, 2026-11-14). */}
+                  <Card className="min-w-0 h-[372px] flex flex-col" data-testid="property-intro-chat">
+                    <div className="flex items-center gap-1.5 px-3 py-2.5" role="tablist" aria-label="Conversation, people, news">
                       <Pill active={introRight === "chat"} onClick={() => setIntroRight("chat")} data-testid="property-intro-chat-tab">Conversation</Pill>
                       <Pill active={introRight === "people"} onClick={() => setIntroRight("people")} data-testid="property-intro-people">People</Pill>
+                      <Pill active={introRight === "news"} onClick={() => setIntroRight("news")} data-testid="property-intro-news">News &amp; social</Pill>
                     </div>
-                    <div className="min-h-0 flex-1 flex flex-col">
-                    {introRight === "chat" ? (
+                    <div className="px-3 pb-3 min-h-0 flex-1 flex flex-col">
+                    {introRight === "news" ? (
+                    <div className="min-h-0 flex-1 overflow-y-auto space-y-3" data-testid="property-intro-news-panel">
+                      <ErrorBoundary compact name="News & social"><PropertyInstagram propertyId={property.id} /><PropertyNewsPanel propertyId={property.id} propertyName={property.name || ""} /></ErrorBoundary>
+                    </div>
+                    ) : introRight === "chat" ? (
                     <ErrorBoundary compact name="Property conversation">
                       <CompanyMiniChat companyId={property.id} companyName={property.name} linkedType="property" fill title="Property conversation"
                         starters={[
@@ -1035,7 +1042,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     </div>
                     )}
                     </div>
-                  </div>
+                  </Card>
                 </div>
               )}
             </>)}
@@ -1280,7 +1287,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   {!uiClient && (
                   <div>
                     <div className="flex items-center gap-1 mb-0.5">
-                      <p className="text-[11px] text-muted-foreground leading-tight">Competitor agent</p>
+                      <p className="text-[11px] text-muted-foreground leading-tight">Joint agent</p>
                       {property.competitorAgentStatus === "active" && property.competitorAgentInstructedAt && (
                         Date.now() - new Date(property.competitorAgentInstructedAt).getTime() > 365 * 864e5 ? (
                           <Badge variant="outline" className="text-[11px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
