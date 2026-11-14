@@ -7,7 +7,6 @@
 import { isKeyContactRole, nameKey, isEmailPlaceholderName, keyContactHiddenReason, compareKeyContacts, type KeyContactSignals, type KeyContactHiddenReason } from "@shared/contact-tiers";
 import { isDismissedLandlordContact, showLandlordEmployerBadge } from "@shared/landlord-contact-suggestions";
 import { landlordContactIdentityKeys, landlordDisplayContacts } from "@shared/landlord-contact-identity";
-import { RESTRICTED_LANDSEC_ROLES } from "@shared/landsec";
 import { useState, useEffect, type ReactNode } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -144,7 +143,9 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
   const iconSlot = plainFigures ? <span className="hidden md:block w-6 shrink-0" aria-hidden="true" /> : null;
   // The server refuses a contact edit from a Landsec joint agent (the only
   // restricted Landsec role; an asset manager is a full Landsec login).
-  const noRoleEdit = rowIsClient && (RESTRICTED_LANDSEC_ROLES as string[]).includes(String(rowViewer?.landsecRole || ""));
+  // A job title is BGP's record: no client login edits it here (2026-11-14,
+  // before the plan-led property page opened to Landsec logins).
+  const noRoleEdit = rowIsClient;
   const roleOrStatus = editingRole ? (
     <input
       autoFocus

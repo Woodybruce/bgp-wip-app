@@ -1129,9 +1129,11 @@ shows four filters with the work lists behind **More filters**, "Needs
 review" leaves out the plan's own work (it is the Plan tab's Match), and
 the People board leaves out tenant companies known only as a unit's
 occupier (the schedule shows them) and an owner's directors once anyone at
-the owner is tied to the property. A client login always gets the page as it was, whatever
-the address says (`planLayout` in `property-detail.tsx`): opening it to
-Landsec logins is roll-out, which waits on Woody. The page as it was is
+the owner is tied to the property. A full Landsec login (leasing manager, asset manager or no role) always gets
+the plan-led page (Woody, 2026-11-14: "yes"); a joint agent and every other
+client login get the page as it was (`planLayout` in `property-detail.tsx`).
+A Landsec login has no Activity and conversation row and sees its own folder
+view under Folders; no client login edits a contact's job title. The page as it was is
 untouched when it is off, and
 `PropertySection` and the tab mapping (`tab(full, simple, plan)` in
 `property-detail.tsx`) are how each existing card finds its tab.

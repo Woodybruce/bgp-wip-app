@@ -214,13 +214,13 @@ test('Landlord counts distinguish emails and meetings and retain the normal scop
  const brand=renderComponent('KeyContactRow',{...props,isLandlord:false});assert.match(text(brand.tree),/12 emails/);
 });
 
-test('a client login reads a role as text and is never prompted to add one; a restricted Landsec role has no role edit at all',()=>{
+test('a client login reads a role as text and never edits it (no client login edits a job title, 2026-11-14)',()=>{
  const props={companyId:'brand',companyName:'Greggs',isLandlord:false,plainFigures:true};
  const noRole={id:'auto',name:'Toby Example',email:'toby@example.com'},withRole={...noRole,id:'saved',role:'Property Director'};
  const staff=renderComponent('KeyContactRow',{...props,contact:noRole});
  assert.match(text(staff.tree),/add role…/);
  for(const viewer of [{role:'Client'},{role:'Client',landsecRole:'leasing_manager'},{role:'Client',landsecRole:'asset_manager'},{role:'Client',landsecRole:'joint_agent'}]) {
-  const restricted=viewer.landsecRole==='joint_agent';
+  const restricted=true;
   const empty=elements(renderComponent('KeyContactRow',{...props,contact:noRole},{viewer}).tree);
   assert.doesNotMatch(text(empty),/add role…/);
   assert.equal(empty.some(node=>node.type==='DropdownMenuItem'&&/Add role/.test(text(node))),!restricted);

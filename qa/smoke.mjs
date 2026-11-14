@@ -283,11 +283,18 @@ console.log('── client (Mark, Landsec) ──');
     await page.goto(`${BASE}/properties/${BLUEWATER}`, { waitUntil: 'networkidle' }).catch(() => {});
     await settle(page, 6000);
     await noCrash(page, 'client property page');
-    await fullPropertyPage(page, 'client');
+    // A full Landsec login gets the plan-led page (Woody, 2026-11-14), without
+    // BGP's activity and conversation row.
+    check('client property: plan-led page', await page.locator('[data-testid="property-plan-tabs"]').count() > 0);
+    check('client property: no activity and conversation row', await page.locator('[data-testid="property-intro-row"]').count() === 0);
+    await page.getByTestId('property-tab-tenancy').click();
     await page.getByTestId('btn-open-letting-tracker').waitFor({ state: 'visible', timeout: 15000 });
     check('client property: tenancy schedule', await page.locator('[data-testid="btn-open-letting-tracker"]').count() > 0);
+    await page.getByTestId('button-property-folders').click();
+    await page.locator('[data-testid="client-property-folders-panel"]').waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
     check('client property: jailed files panel (no staff panel)', await page.locator('[data-testid="client-property-folders-panel"]').count() > 0);
     check('client property: no team-name folder tabs', await page.locator('[data-testid^="folder-team-tab-"]').count() === 0);
+    await page.keyboard.press('Escape');
     await page.screenshot({ path: `${SHOTS}/client-property.png` }).catch(() => {});
 
     // Client letting activity: the scoped all-viewings branch used to return

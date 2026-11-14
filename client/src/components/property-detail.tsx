@@ -409,9 +409,13 @@ export function PropertyDetail({ id }: { id: string }) {
   // the one list of units first, everything else in tabs. Opt-in while it is
   // being tried; the page below is unchanged when it is off.
   const [planLayoutChosen, setPlanLayout] = usePlanLedLayout();
-  // BGP staff only for now: a client login keeps the page it knows, whatever
-  // the address or this browser's saved choice says.
-  const planLayout = planLayoutChosen && !isClientViewer;
+  const landsecView = useIsLandsecView();
+  // BGP staff choose; a full Landsec login (leasing manager, asset manager,
+  // no role) always gets it (Woody, 2026-11-14: "yes"). A joint agent and
+  // every other client login keep the page they know.
+  const planLayout = isClientViewer
+    ? landsecView && !isRestrictedLandsecRole(pdViewer?.landsecRole)
+    : planLayoutChosen;
   // What the Plan tab found, for the property it found it on: the tab is
   // called Units or Unit when that property has no plan.
   const [planTabOf, setPlanTab] = useState<{ propertyId: string; units: number; plans: number } | null>(null);
@@ -441,7 +445,6 @@ export function PropertyDetail({ id }: { id: string }) {
   // this record is one of the 14 schemes the page carries the scheme's units
   // as a "Units and lettings" section, the old scheme page folded in. A
   // record outside the schemes, or outside the viewer's schemes, has none.
-  const landsecView = useIsLandsecView();
   const landsecScheme = useLandsecSchemeOfProperty(landsecView ? id : null);
   const showLandsecUnits = landsecView && (landsecScheme.isLoading || !!landsecScheme.data);
   const { data: allCompanies = [], isFetched: companiesLoaded } = useQuery<CrmCompany[]>({
@@ -756,7 +759,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 >
                   <MessageSquare className="w-3.5 h-3.5" /><span className="hidden [@container(min-width:720px)]:inline">Ask ChatBGP</span>
                 </Button>
-                {planLayout && !isClientViewer && (
+                {planLayout && (
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" aria-label="Property folders" data-testid="button-property-folders">
@@ -764,10 +767,14 @@ export function PropertyDetail({ id }: { id: string }) {
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent align="end" className="w-[min(680px,calc(100vw-2rem))] max-h-[75vh] overflow-y-auto p-3 space-y-3" data-testid="property-folders-dropdown">
+                      {isClientViewer ? (
+                        <ErrorBoundary compact name="Property folders">{pdViewer ? <ClientPropertyFoldersPanel propertyName={property.name} propertyId={property.id} /> : null}</ErrorBoundary>
+                      ) : (<>
                       <ErrorBoundary compact name="Property folders">
                         <PropertyFoldersPanel propertyName={property.name} propertyId={property.id} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} bare />
                         <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
                       </ErrorBoundary>
+                      </>)}
                       <ErrorBoundary compact name="Property brochures"><PropertyBrochuresPanel propertyId={property.id} /></ErrorBoundary>
                     </PopoverContent>
                   </Popover>
