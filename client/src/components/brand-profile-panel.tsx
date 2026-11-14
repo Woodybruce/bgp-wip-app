@@ -48,7 +48,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { LandlordMeetingsSummary } from "@/components/landlord-meetings-summary";
 import { LandlordEmailSummary } from "@/components/landlord-email-summary";
-import { LandlordRelationshipTeam } from "@/components/landlord-relationship-team";
+import { CompanyBgpTeam } from "@/components/company-bgp-team";
 import { LandlordEngagementPanel } from "@/components/landlord-engagement-panel";
 import { SchemePlanCard } from "@/components/brand-crm/scheme-plan-card";
 import { LandlordCovenantSummary } from "@/components/landlord-covenant-summary";
@@ -56,8 +56,6 @@ import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { landlordConfirmedCrmAction, landlordCrmActionQueryKeys } from "@/lib/landlord-chat-actions";
 import { ChatMessageMenu } from "@/components/chat-message-menu";
 import { LandlordChatBubble } from "@/components/landlord-chat-bubble";
-import { MemberAvatar } from "@/components/ClientTeamOrgChart";
-import { BGP_ACCOUNT_ROLES, canonicalBgpRole } from "@shared/bgp-account-roles";
 import { BrandEmailHistory } from "@/components/brand-email-history";
 import { BrandFeedCard } from "@/components/brand-feed-card";
 import { AiCommentary, type CommentaryEntity } from "@/components/ai-commentary";
@@ -1088,8 +1086,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   }, [pillMark]);
   // Brand page: the housekeeping a More menu item opens (one dialog at a time).
   const [housekeeping, setHousekeeping] = useState<null | "website" | "facts" | "details" | "ticker">(null);
-  const [teamOpen, setTeamOpen] = useState(false);
-  useEffect(() => { setEditing(false); setEmailsOpen(false); setAboutOpen(false); setBackersOpen(false); setHousekeeping(null); setTeamOpen(false); }, [companyId]);
+  useEffect(() => { setEditing(false); setEmailsOpen(false); setAboutOpen(false); setBackersOpen(false); setHousekeeping(null); }, [companyId]);
   const panelRootRef = useRef<HTMLDivElement>(null);
   // Hooks stay above the loading return. One chat instance: beside the profile column on md+ screens, under About below that.
   const [wide, setWide] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches);
@@ -1891,22 +1888,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       {stats && <BrandEmailHistory companyId={companyId} companyName={c.name} open={emailsOpen} onOpenChange={setEmailsOpen} entities={commentaryEntities} />}
     </div>;
   })();
-  const bgpTeamRow = (
-            <div className="space-y-1.5 [container-type:inline-size]">
-              <div className="flex items-center gap-2">
-                <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-[11px] font-medium text-muted-foreground mr-1">BGP team</span>
-                {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
-              </div>
-              {(data.coverers || []).length > 0 && (
-                <div className="grid gap-1.5 [@container(min-width:420px)]:grid-cols-2">
-                  {(data.coverers || []).map((cov: any) => (
-                    <CovererChip key={cov.id} cov={cov} companyId={companyId} />
-                  ))}
-                </div>
-              )}
-            </div>
-  );
   const portfolioActivity = <PortfolioActivityBlock bare schemePlan={showSchemePlan} companyId={companyId} ledger={brandFactsFirst ? undefined : { completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : liveRequirementCount }} liveTenancies={liveLocations} pillsOnly={isLandlord || isAgentFirm} />;
   // Staff on a brand read the team and the lists under "Working with BGP"
   // (aboutBody), so nothing is drawn under About for them.
@@ -1914,7 +1895,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             <div className={`space-y-2 ${!(isLandlord && flat && !isLender) && (aboutLen > 0 || c.backers || c.tiktok_handle || c.dept_store_presence || c.franchise_activity || c.stock_ticker || (c.instagram_handle && !isLandlord) || (isBrand && !isClientViewer)) ? "pt-2 border-t border-border" : ""}`} data-testid="brand-relationship-summary">
             {/* Coverage sits in the header row; when nobody is set by hand the
                 server falls back to the BGP agents on this brand's deals. */}
-            {bgpTeamRow}
             {relationshipLine}
 
             {portfolioActivity}
@@ -1929,7 +1909,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 <div className="space-y-2 pb-3 border-b border-border" data-testid="brand-working-with-bgp">
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Working with BGP</h3>
                   {relationshipLine}
-                  {bgpTeamRow}
                   {portfolioActivity}
                 </div>
               )}
@@ -2654,7 +2633,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               <LandlordMeetingsSummary key={companyId} companyId={companyId} companyName={c.name} />
               <LandlordEmailSummary key={`emails-${companyId}`} companyId={companyId} companyName={c.name} entities={commentaryEntities} />
             </div>}
-            footer={!isClientViewer && <LandlordRelationshipTeam key={companyId} companyId={companyId} companyName={c.name} canEdit />} />
+            />
         </div>
         {!isClientViewer && String(currentUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
@@ -3161,7 +3140,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     const figures = [
       // When BGP was last in touch, and with how many people, is BGP's own
       // record: staff only.
-      daysSince == null || isClientViewer ? null : <BandFigure key="touch" label="Last touch" title={`Last touch ${ukDate(last)}`}
+      daysSince == null || isClientViewer ? null : <BandFigure key="touch" label="Last touch" title={`Last touch ${ukDate(last!)}`}
         value={daysSince === 0 ? "Today" : daysSince === 1 ? "Yesterday" : figure(daysSince)} suffix={daysSince > 1 ? "days ago" : undefined}
         tone={daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"} testId="brand-figure-last-touch" />,
       isClientViewer ? null : <BandFigure key="contacts" label={`CRM contact${data.contacts.length === 1 ? "" : "s"}`} value={figure(data.contacts.length)}
@@ -3269,26 +3248,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {/* One row of figures on a wide band (each as wide as its label, so none runs into the next), two rows of three on a narrower one. */}
               {figures.length > 0 && <div className="grid grid-cols-3 gap-x-4 gap-y-2.5 [@container(min-width:1080px)]:flex [@container(min-width:1080px)]:flex-wrap [@container(min-width:1080px)]:gap-x-5" data-testid="brand-relationship-line">{figures}</div>}
               {activeLine && <p className="text-[11px] text-muted-foreground" data-testid="brand-figure-active">{activeLine}</p>}
-              {(coverers.length > 0 || c.bgp_contact_crm || !isClientViewer) && (
-                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs min-w-0" data-testid="brand-band-team">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">BGP team</span>
-                  {c.bgp_contact_crm && <span className="text-muted-foreground">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span>}
-                  {coverers.slice(0, 3).map(cov => (
-                    <span key={cov.id} className="inline-flex items-center gap-1 min-w-0">
-                      <MemberAvatar member={{ full_name: cov.name, username: cov.name, user_id: cov.id, profile_pic_url: cov.profile_pic_url || null }} className="w-5 h-5 text-[9px]" />
-                      <span className="truncate font-medium">{cov.name}</span>
-                    </span>
-                  ))}
-                  {coverers.length > 3 && <span className="text-muted-foreground font-mono tabular-nums">+{coverers.length - 3}</span>}
-                  {coverers.length > 0 && <button type="button" className="text-primary hover:underline" aria-expanded={teamOpen} onClick={() => setTeamOpen(open => !open)} data-testid="button-brand-team-toggle">{teamOpen ? "Hide team" : "Show team"}</button>}
-                  {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={coverers} />}
-                </div>
-              )}
-              {teamOpen && coverers.length > 0 && (
-                <div className="grid gap-1.5 [@container(min-width:560px)]:grid-cols-2">
-                  {coverers.map(cov => <CovererChip key={cov.id} cov={cov} companyId={companyId} />)}
-                </div>
-              )}
               {stats && <BrandEmailHistory companyId={companyId} companyName={c.name} open={emailsOpen} onOpenChange={setEmailsOpen} entities={commentaryEntities} />}
             </div>
           )}
@@ -5043,138 +5002,6 @@ function TickerSuggestPicker({ companyId, onSelect, startOpen = false, onCancel 
 // who aren't yet CRM contacts. Each row has an Add button that
 // creates a stub contact (name parsed from local part) linked to
 // this company. Hidden when no suggestions.
-
-// BGP staff coverer chip — name + click-to-edit role. Saves to
-// crm_company_bgp_roles via POST /api/brand/:id/bgp-role. Empty role
-// clears the row. Same inline-edit pattern as KeyContactRow so the
-// behaviour is consistent.
-// Add/remove people on the BGP team (coverage) — the only edit point for
-// bgpContactUserIds now the sidebar relationship card is gone. CovererChip
-// alongside handles the per-person role label.
-function BgpTeamMenu({ companyId, coverers }: { companyId: string; coverers: Array<{ id: string; name: string }> }) {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-  const { data: allUsers } = useQuery<{ id: string; name: string }[]>({
-    queryKey: ["/api/users"],
-    staleTime: 5 * 60_000,
-  });
-  const currentIds = (coverers || []).map(u => u.id);
-  const save = useMutation({
-    mutationFn: async (ids: string[]) => {
-      await apiRequest("PUT", `/api/crm/companies/${companyId}`, {
-        bgpContactUserIds: ids.length > 0 ? ids : null,
-        bgpContactCrm: null,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", companyId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId] });
-    },
-    onError: (e: any) => toast({ title: "Couldn't save BGP team", description: e?.message, variant: "destructive" }),
-  });
-  const toggle = (id: string) => {
-    const next = currentIds.includes(id) ? currentIds.filter(v => v !== id) : [...currentIds, id];
-    save.mutate(next);
-  };
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button type="button" className="text-[11px] text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-0.5" data-testid={`bgp-team-edit-${companyId}`}>
-          <Plus className="w-3 h-3" />
-          {currentIds.length > 0 ? "Edit team" : "Set BGP team"}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-56 max-h-64 overflow-y-auto">
-        {(allUsers || []).slice().sort((a, b) => a.name.localeCompare(b.name)).map(u => (
-          <DropdownMenuItem key={u.id} onSelect={e => { e.preventDefault(); toggle(u.id); }}>
-            <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${currentIds.includes(u.id) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
-              {currentIds.includes(u.id) && <Check className="h-2 w-2 text-primary-foreground" />}
-            </div>
-            {u.name}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-// One card per person on the account's BGP team — photo, job title, their
-// role on this account and their own correspondence with it (Woody,
-// 2026-09-28: "beef up the team names should have maybe cards").
-function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role: string | null; bgp_title?: string | null; profile_pic_url?: string | null; threads?: number; last_touch?: string | null }; companyId: string }) {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-  const { data: ccViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const ccIsClient = !ccViewer || ccViewer.role === "Client" || !!ccViewer.companyScopeId;
-  // A role from the fixed list (it was free text) — each maps onto a Team
-  // view tab, which lists the people covering it (Woody, 2026-09-28).
-  const fromDeals = cov.role === "From deals";
-  const current = fromDeals ? null : canonicalBgpRole(cov.role) || (cov.role || null);
-
-  const save = useMutation({
-    mutationFn: async (value: string) => {
-      const res = await apiRequest("POST", `/api/brand/${companyId}/bgp-role`, { userId: cov.id, role: value });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "teams"] });
-    },
-    onError: (e: any) => toast({ title: "Couldn't save role", description: e?.message, variant: "destructive" }),
-  });
-
-  const touch = touchAgo(cov.last_touch);
-  return (
-    <div className="flex items-center gap-2 min-w-0 rounded-lg border border-border bg-card px-2 py-1.5" data-testid={`bgp-team-card-${cov.id}`}>
-      <MemberAvatar member={{ full_name: cov.name, username: cov.name, user_id: cov.id, profile_pic_url: cov.profile_pic_url || null }} className="w-9 h-9 text-[11px]" />
-      <div className="min-w-0 flex-1">
-      <div className="text-[12px] font-semibold leading-tight truncate" title={cov.name}>{cov.name}</div>
-      {cov.bgp_title && <div className="text-[11px] text-muted-foreground truncate" title={cov.bgp_title}>{cov.bgp_title}</div>}
-      {/* Wraps rather than cutting the email count to "· 66 em…". */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0 text-[11px] mt-0.5">
-      {ccIsClient ? (
-        current ? <span className="text-muted-foreground">{current}</span> : null
-      ) : (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button type="button" className="text-[11px] font-medium text-primary hover:underline decoration-dotted inline-flex items-center gap-0.5 shrink-0" title="Set this person's role on the account" data-testid={`bgp-role-${cov.id}`}>
-              {current || <span className="italic opacity-70">{fromDeals ? "from deals · set role" : "set role"}</span>}
-              <ChevronDown className="w-2.5 h-2.5" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-48">
-            {BGP_ACCOUNT_ROLES.map(r => (
-              <DropdownMenuItem key={r.role} onSelect={() => save.mutate(r.role)}>
-                <Check className={`w-3 h-3 mr-2 ${current === r.role ? "opacity-100" : "opacity-0"}`} />
-                {r.role}
-              </DropdownMenuItem>
-            ))}
-            {current && <DropdownMenuItem onSelect={() => save.mutate("")} className="text-muted-foreground">Clear role</DropdownMenuItem>}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-      {!ccIsClient && (cov.threads || 0) > 0 && (
-        <span className="text-muted-foreground whitespace-nowrap" title={cov.last_touch ? `Last email ${new Date(cov.last_touch).toLocaleDateString("en-GB")}` : undefined}>
-          <span className="font-mono tabular-nums">{cov.threads!.toLocaleString("en-GB")}</span> email{cov.threads === 1 ? "" : "s"}{touch ? ` · ${touch}` : ""}
-        </span>
-      )}
-      </div>
-      </div>
-    </div>
-  );
-}
-
-// Compact relative-time formatter ("3d", "2w", "5mo") for the touches
-// badge — full date is in the tooltip.
-function touchAgo(d: string | null | undefined): string {
-  if (!d) return "";
-  const days = Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000);
-  if (!Number.isFinite(days) || days < 0) return "";
-  return days < 1 ? "today" : days < 14 ? `${days}d` : days < 60 ? `${Math.floor(days / 7)}w` : days < 730 ? `${Math.floor(days / 30)}mo` : `${Math.floor(days / 365)}y`;
-}
-
 
 // Compliance / KYC entry-point. Gates the AML/KYC workflow on knowing the
 // brand's UK trading entity — until uk_entity_name is set, every other
@@ -7308,6 +7135,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
       {show("contacts") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} dismissedSuggestions={data.dismissedDiscoveries || []} isLandlord={landlordStyleContacts} meetingHistory={isLandlord}
         filterPropertyTier={!(!isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))}
         pattern={brandPage}
+        teamSlot={<CompanyBgpTeam key={`team-${companyId}`} companyId={companyId} companyName={c.name} coverers={data.coverers || []} landlord={isLandlord} staff={!sbIsClient} />}
         headerActions={brandPage && !sbIsClient ? <LandlordContactActions links key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} /> : null}
         bottomSlot={brandPage ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} reqAgents={(data as any).requirementAgents || []} compact />{agentFacts}{contactExtras}</> : null}
         topSlot={brandPage ? null : isBrand ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} reqAgents={(data as any).requirementAgents || []} />{agentFacts}{!sbIsClient && <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} />}</>

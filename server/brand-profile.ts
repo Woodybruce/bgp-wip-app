@@ -1006,7 +1006,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     let coverers: Array<{ id: string; name: string; email: string | null; role: string | null; bgp_title?: string | null; profile_pic_url?: string | null; threads?: number; last_touch?: string | null }> = [];
     if (Array.isArray(c.bgp_contact_user_ids) && c.bgp_contact_user_ids.length > 0) {
       const cov = await pool.query(
-        `SELECT u.id, COALESCE(u.name, u.username, u.email) AS name, u.email,
+        `SELECT u.id, COALESCE(u.name, u.username, u.email) AS name, u.email, u.phone,
                 r.role, u.role AS bgp_title, u.profile_pic_url
            FROM users u
            LEFT JOIN crm_company_bgp_roles r ON r.user_id = u.id AND r.company_id = $2
@@ -1020,7 +1020,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // its Canary Wharf letting — Woody, 2026-09-23).
     if (coverers.length === 0) {
       const fromDeals = await pool.query(
-        `SELECT DISTINCT ON (u.id) u.id, COALESCE(u.name, u.username, u.email) AS name, u.email, 'From deals' AS role, u.role AS bgp_title, u.profile_pic_url
+        `SELECT DISTINCT ON (u.id) u.id, COALESCE(u.name, u.username, u.email) AS name, u.email, u.phone, 'From deals' AS role, u.role AS bgp_title, u.profile_pic_url
            FROM crm_deals d
            CROSS JOIN LATERAL unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) AS agent(name)
            JOIN users u ON lower(u.name) = lower(agent.name) AND u.is_active IS DISTINCT FROM false

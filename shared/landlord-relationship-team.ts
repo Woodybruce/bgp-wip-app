@@ -6,7 +6,7 @@ export interface LandlordTeamContext {
   origin: "manual" | "suggested"; notes: string; sources: LandlordTeamSource[];
 }
 export interface LandlordTeamMember {
-  id: string; name: string; title: string | null; profilePicUrl: string | null; active: boolean;
+  id: string; name: string; title: string | null; profilePicUrl: string | null; email?: string | null; phone?: string | null; active: boolean;
   assigned: boolean; assignedRole: string | null; emailCount: number; meetingCount: number; dealCount: number; conversationCount: number;
   lastInteractionAt: string | null; contexts: LandlordTeamContext[];
 }

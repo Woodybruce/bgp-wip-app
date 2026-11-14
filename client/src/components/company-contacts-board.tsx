@@ -374,7 +374,7 @@ function PendingSendersList({ suggestions: allSuggestions, companyId, onDismiss,
   );
 }
 
-export function CompanyContactsBoard({ companyId, companyName, contacts, pendingSenders = [], dismissedSuggestions = [], extraSections = [], discovery = true, filterPropertyTier = true, isLandlord = false, meetingHistory = true, topSlot = null, pattern = false, bottomSlot = null, headerActions = null }: {
+export function CompanyContactsBoard({ companyId, companyName, contacts, pendingSenders = [], dismissedSuggestions = [], extraSections = [], discovery = true, filterPropertyTier = true, isLandlord = false, meetingHistory = true, topSlot = null, teamSlot = null, pattern = false, bottomSlot = null, headerActions = null }: {
   companyId: string;
   companyName: string;
   contacts: any[];
@@ -385,6 +385,8 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   extraSections?: Array<{ key: string; title: string; tint?: string; rows: any[] }>;
   /** Rendered first inside the card — the brand's tenant reps (Woody, 2026-09-23). */
   topSlot?: React.ReactNode;
+  /** The BGP team, first of all (Woody, 2026-11-14: the team is part of People). */
+  teamSlot?: React.ReactNode;
   // A brand's own page (Woody, 2026-11-12): people first. The card takes the
   // page's card title, its actions sit in the header as text links
   // (headerActions, then Refresh), the agents sit under the people
@@ -748,6 +750,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
         )}
       </CardHeader>
       <CardContent className="p-3 pt-0 [container-type:inline-size]">
+        {teamSlot}
         {topSlot}
         {accountMode && (employerOptions.length > 0 || propertyOptions.length > 0) && !(pattern && totalPeople < 8 && !accountFiltersActive) && (
           <div className="flex flex-wrap items-center gap-1.5 mb-2">

@@ -87,7 +87,9 @@ test('landlord profile and chat lead the page, with staff meeting/team brief and
   // the page draws the panel for BGP staff only, and the panel draws the notes for a landlord, never for a client.
   assert.match(code, /\{!isClientViewer && [^\n]*<LandlordEngagementPanel companyId=\{companyId\} \/>\}/);
   assert.match(source('client/src/components/landlord-engagement-panel.tsx'), /\{kind === "landlord" && !client && <LandlordInterviewNotes companyId=\{companyId\}/);
-  assert.match(code, /footer=\{!isClientViewer && <LandlordRelationshipTeam/);
+  // The BGP team is part of People (Woody, 2026-11-14), not a block under the take.
+  assert.doesNotMatch(code, /LandlordRelationshipTeam|footer=/);
+  assert.match(source(panel), /teamSlot=\{<CompanyBgpTeam [^\n]*staff=\{!sbIsClient\} \/>\}/);
   assert.ok(code.indexOf('{profileTopRow}') < code.indexOf('landlord-relationship-brief'));
   assert.ok(code.indexOf('landlord-relationship-brief') < code.indexOf('<LandlordEngagementPanel'));
   assert.ok(code.indexOf('<LandlordEngagementPanel') < code.indexOf('<CompanyPropertiesBoard'));

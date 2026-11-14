@@ -21,12 +21,13 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { KeyContactRow, contactDisplayName } from "@/components/company-contacts-board";
 import { ActionEditor } from "@/components/crm-engagement/dialogs";
 import { invalidateEngagement } from "@/components/crm-engagement/overview";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
-import { InlineAgents } from "@/pages/properties";
+import { PROPERTY_AGENT_ROLES } from "@/pages/properties";
+import { BgpTeamGroup, type BgpTeamPerson } from "@/components/bgp-team-group";
 import type { User } from "@shared/schema";
 import type { ActionInput, EngagementData, EngagementOptions } from "@shared/crm-engagement";
 import type { PropertyUnit } from "@shared/property-units";
@@ -414,7 +415,7 @@ export function PropertyPeopleBoard({ propertyId, propertyName, landlordId, agen
   // A tenant company known only as a unit's occupier is the tenancy
   // schedule's row, not a person: it shows in that unit's panel, not here.
   const occupierOnly = (p: RecordPerson) => p.group === "units" && p.kind === "company" && p.relationships.every(r => r.role === "Tenant" && !r.deal);
-  const shown = reply.people.filter(p => !(teamControl && p.group === "bgp" && p.source === "assigned") && !occupierOnly(p));
+  const shown = reply.people.filter(p => !occupierOnly(p));
   const byGroup = new Map<PeopleGroup, RecordPerson[]>(PEOPLE_GROUPS.map(g => [g.key, []]));
   for (const person of shown) byGroup.get(person.group)?.push(person);
   const groupCount = (key: PeopleGroup) => key === "bgp" ? reply.people.filter(p => p.group === "bgp").length : byGroup.get(key)!.length;
@@ -448,16 +449,69 @@ export function PropertyPeopleBoard({ propertyId, propertyName, landlordId, agen
     );
   };
 
+  // The BGP team (Woody, 2026-11-14: part of People, not a block of its
+  // own): the shared row, with the property's agent role as a pill. Staff set
+  // the role, take someone off, or put a BGP person from the deals on.
+  const userIdOf = (p: RecordPerson) => p.id.startsWith("user:") ? p.id.slice(5) : null;
+  const agentCall = async (method: "POST" | "PATCH" | "DELETE", userId: string, body?: { role?: string | null; userId?: string }) => {
+    try {
+      await apiRequest(method, method === "POST" ? `/api/crm/properties/${propertyId}/agents` : `/api/crm/properties/${propertyId}/agents/${userId}`, method === "POST" ? { userId, ...(body || {}) } : body);
+      void queryClient.invalidateQueries({ queryKey: ["/api/crm/property-agents"] });
+      refresh();
+    } catch (e: any) { toast({ title: "Couldn't save the BGP team", description: plainError(e), variant: "destructive" }); }
+  };
+  const bgpGroup = () => {
+    const list = byGroup.get("bgp")!;
+    const linkOf = (userId: string | null) => userId ? agentLinks.find(l => l.propertyId === propertyId && l.userId === userId) : undefined;
+    const userOf = (userId: string | null) => userId ? allUsers.find(u => String(u.id) === userId) : undefined;
+    const team: BgpTeamPerson[] = list.map(p => {
+      const userId = userIdOf(p);
+      const link = linkOf(userId);
+      const user = userOf(userId);
+      const role = (link?.role || "").trim() || (p.roleOnRecord && !QUIET_ROLES.has(p.roleOnRecord) ? p.roleOnRecord : "");
+      return {
+        id: userId || p.id, name: contactDisplayName(p.name), title: p.jobTitle || (user as any)?.role || null,
+        email: p.email || user?.email || null, phone: p.phone || (user as any)?.phone || null,
+        photo: (user as any)?.profilePicUrl || null,
+        roles: role ? [role] : [],
+      };
+    });
+    const onIds = new Set(agentLinks.filter(l => l.propertyId === propertyId).map(l => l.userId));
+    const menuForTeam = (t: BgpTeamPerson) => {
+      if (!teamControl || !allUsers.some(u => String(u.id) === t.id)) return null;
+      const link = linkOf(t.id);
+      if (!link) return <DropdownMenuItem onSelect={() => agentCall("POST", t.id)}>Put on this property</DropdownMenuItem>;
+      return <>
+        <DropdownMenuLabel className="text-[11px]">Role on this property</DropdownMenuLabel>
+        {PROPERTY_AGENT_ROLES.map(r => (
+          <DropdownMenuItem key={r} onSelect={() => agentCall("PATCH", t.id, { role: r === link.role ? null : r })}>{r === link.role ? `✓ ${r}` : r}</DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => agentCall("DELETE", t.id)} className="text-destructive">Take off this property</DropdownMenuItem>
+      </>;
+    };
+    const addable = allUsers.filter(u => !onIds.has(String(u.id)) && (u as any).isActive !== false).sort((a, b) => a.name.localeCompare(b.name));
+    const addControl = teamControl ? (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" data-no-min-touch className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-0.5" data-testid={`add-agent-${propertyId}`}>
+            <Plus className="w-3 h-3" />Add someone from BGP
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-56 max-h-64 overflow-y-auto text-xs">
+          {addable.map(u => <DropdownMenuItem key={u.id} onSelect={() => agentCall("POST", String(u.id))}>{u.name}</DropdownMenuItem>)}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    ) : null;
+    return <BgpTeamGroup bare people={team} menuFor={menuForTeam} addControl={addControl} emptyText={teamControl ? "Nobody at BGP is on this property yet." : undefined} />;
+  };
+
   const groupBody = (key: PeopleGroup) => {
     if (key === "units") return unitsGroup();
+    if (key === "bgp") return bgpGroup();
     const list = byGroup.get(key)!;
     return (
       <div className="space-y-0.5">
-        {key === "bgp" && teamControl && (
-          <div className="flex items-center gap-2 flex-wrap pb-1">
-            <InlineAgents propertyId={propertyId} agentLinks={agentLinks} allUsers={allUsers} colorMap={colorMap} landlordId={landlordId} />
-          </div>
-        )}
         {list.map(p => row(p, key !== "owner" && key !== "client"))}
       </div>
     );

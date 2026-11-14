@@ -96,6 +96,7 @@ import { DealAmlStatusCard, useDealAmlStatus } from "@/components/deal-aml-statu
 import { JointAgencyNoteCard } from "@/components/joint-agency-aml";
 import { DealClockCard, useIsLandsecView, useLandsecClocks, isRestrictedLandsecRole } from "@/components/landsec/deal-clock";
 import { CompanyChip } from "@/components/company-chip";
+import { BgpTeamGroup, type BgpTeamPerson } from "@/components/bgp-team-group";
 
 // Collapsible card pattern reused across the deal page for heavy panels.
 function CollapsibleCard({
@@ -315,6 +316,17 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     // with nobody to chase.
     const lead = ddBgpTeam.find(m => m.is_lead) || ddBgpTeam[0];
     return lead ? [{ name: lead.full_name || lead.username || "BGP team", email: lead.email || null }] : [];
+  })();
+
+  const dealBgpTeam: BgpTeamPerson[] = (() => {
+    if (!deal) return [];
+    if (isClientDeal) return ddBgpLeads.map(p => ({ id: `lead:${p.name}`, name: p.name, email: p.email, roles: [] }));
+    const raw = (deal as any).internalAgent;
+    const names: string[] = (Array.isArray(raw) ? raw : String(raw || "").split(",")).map((n: string) => String(n).trim()).filter(Boolean);
+    return names.map(n => {
+      const u: any = users.find(x => (x.name || "").toLowerCase() === n.toLowerCase());
+      return { id: u ? String(u.id) : `name:${n}`, name: u?.name || n, title: u?.role || null, email: u?.email || null, phone: u?.phone || null, photo: u?.profilePicUrl || null, roles: ["Agent"] };
+    });
   })();
 
   // Look up units on this deal's property so we can show breadcrumb + power
@@ -829,21 +841,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                   {!counterparty && (
                     <span className="text-xs italic">{counterpartyLabel} not set</span>
                   )}
-                  {ddBgpLeads.length > 0 && (
-                    <span className="inline-flex items-center gap-1 text-xs" title="Your BGP contact for this deal" data-testid="deal-bgp-lead">
-                      <Users className="w-3.5 h-3.5" /> BGP contact:{" "}
-                      {ddBgpLeads.map((p, i) => (
-                        <span key={p.name}>
-                          {i > 0 && ", "}
-                          {p.email ? (
-                            <a href={`mailto:${p.email}`} className="font-medium text-foreground hover:underline">{p.name}</a>
-                          ) : (
-                            <span className="font-medium text-foreground">{p.name}</span>
-                          )}
-                        </span>
-                      ))}
-                    </span>
-                  )}
                   {deal.targetDate && (
                     <span className="inline-flex items-center gap-1 text-xs" title="Target date" data-testid="deal-target-date">
                       <CalendarIcon className="w-3.5 h-3.5" /> Target: {formatDate(deal.targetDate)}
@@ -1004,18 +1001,14 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             <Users className="w-4 h-4 text-muted-foreground" />
             <h3 className="text-sm font-semibold">Parties</h3>
           </div>
-          {/* Clients see WHO at BGP runs this deal (names only, no fees) —
-              "who do I chase?" previously ended in a blank (UX #25). */}
-          {isClientDeal && (() => {
-            const raw = (deal as any).internalAgent;
-            const agents = (Array.isArray(raw) ? raw : String(raw || "").split(",")).map((a: string) => String(a).trim()).filter(Boolean);
-            if (agents.length === 0) return null;
-            return (
-              <p className="text-xs text-muted-foreground" data-testid="client-bgp-contact">
-                Your BGP contact{agents.length > 1 ? "s" : ""}: <span className="font-medium text-foreground">{agents.join(", ")}</span>
-              </p>
-            );
-          })()}
+          {/* The BGP team on the deal, the same rows as every People board
+              (Woody, 2026-11-14). Clients see who to chase; staff change the
+              agents in Fee allocation, where the split lives. */}
+          {!jointAgent && dealBgpTeam.length > 0 && (
+            <div className="pb-2 mb-1 border-b border-border/60" data-testid="deal-bgp-team">
+              <BgpTeamGroup people={dealBgpTeam} addControl={isClientDeal ? null : <span className="text-[11px] text-muted-foreground">Change in Fee allocation</span>} />
+            </div>
+          )}
           {/* Leasing deals show Landlord/Tenant; investment (Sale/Purchase)
               deals show Vendor/Purchaser — the unused pair is clutter that
               invites mis-linking (UX #19). Already-linked slots stay visible

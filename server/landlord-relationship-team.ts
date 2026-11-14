@@ -51,7 +51,7 @@ export function assembleLandlordRelationshipTeam(input: {
   const get = (id: string) => {
     const user = byId.get(id); if (!user) return null;
     if (!members.has(id)) members.set(id, { id, name: user.name || user.email, title: user.title || null,
-      profilePicUrl: user.profile_pic_url || null, active: user.is_active !== false, assigned: assigned.has(id),
+      profilePicUrl: user.profile_pic_url || null, email: user.email || null, phone: user.phone || null, active: user.is_active !== false, assigned: assigned.has(id),
       assignedRole: input.roles.find(role => role.user_id === id)?.role || null,
       emailCount: 0, meetingCount: 0, dealCount: 0, conversationCount: 0, lastInteractionAt: null, contexts: [] });
     return members.get(id)!;
@@ -127,7 +127,7 @@ export async function getLandlordRelationshipTeam(companyId: string, deps: { q?:
   const issues: string[] = [];
   const read = async (sql: string, args: any[], label: string) => { try { return (await q.query(sql,args)).rows; } catch { issues.push(`${label} could not be checked`); return []; } };
   const [staff, roles, properties, emails, manual, digest, conversations] = await Promise.all([
-    read(`SELECT u.id,COALESCE(u.name,u.username,u.email) name,lower(trim(u.email)) email,u.role title,u.profile_pic_url,u.is_active FROM users u WHERE ${STAFF}`, [], 'BGP people'),
+    read(`SELECT u.id,COALESCE(u.name,u.username,u.email) name,lower(trim(u.email)) email,u.role title,u.profile_pic_url,u.phone,u.is_active FROM users u WHERE ${STAFF}`, [], 'BGP people'),
     read(`SELECT user_id,role FROM crm_company_bgp_roles WHERE company_id=$1`, [companyId], 'Saved account roles'),
     read(PROPERTIES,[companyId],'Linked properties'),
     read(LANDLORD_TEAM_EMAIL_SQL, [companyId,landlordTeamEmailPath(landlordDomains({...company,contacts:[]}))], 'Email interactions'),

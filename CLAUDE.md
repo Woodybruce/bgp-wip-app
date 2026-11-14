@@ -1261,6 +1261,26 @@ untouched when it is off, and
   server sends by the live rule, never `status === "Active"`. A company on a
   row is drawn by `client/src/components/company-chip.tsx` (logo or
   initials, name, link only when the reply carried an id, optional role).
+- **The BGP team is part of People** (Woody, 2026-11-14: "the bGP team
+  block should be wrapped into people rather than have a block", then
+  "Go"). One row for a BGP person everywhere,
+  `client/src/components/bgp-team-group.tsx` (`BgpTeamGroup`, `BgpTeamRow`):
+  the first group of Key contacts on landlord and brand pages, desktop and
+  phone (`CompanyBgpTeam` in `company-bgp-team.tsx`, through the contacts
+  board's `teamSlot`), the BGP group of the property People board
+  (`bgpGroup` in `people-board.tsx`), and the head of the deal's Parties
+  card (`dealBgpTeam` in `deal-detail.tsx`). On a company it reads the
+  account's people (`coverers`, which now carry email and phone) for every
+  login and, for BGP staff on a landlord, the landlord team read
+  (`/api/crm/landlords/:id/team`): roles at its properties, suggested roles
+  to confirm, and email and meeting counts that open that person's history.
+  A client login gets names, roles, email and phone only: no counts, no
+  last contact, no suggestions, no menu. The separate landlord team block
+  (`landlord-relationship-team.tsx`, deleted), the brand's team cards and
+  chips (`CovererChip`, `BgpTeamMenu`), the property's agent chips on the
+  plan-led page and the deal's "BGP contact" text are gone. Deal agents are
+  still changed in Fee allocation, where the split lives. The classic
+  property page keeps `InlineAgents`.
 - **Matching**: `shared/property-plan-match.ts`,
   `server/property-plan-match.ts` (`GET /api/plans/:id/match`, `POST
   …/match/accept`, `…/accept-suggested`, `…/dismiss`). A scan stays open and

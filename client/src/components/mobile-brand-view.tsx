@@ -46,6 +46,7 @@ import { useAccountWorkspace } from "@/components/account-workspace-cards";
 import { LandlordEngagementPanel } from "@/components/landlord-engagement-panel";
 import { SchemePlanCard } from "@/components/brand-crm/scheme-plan-card";
 import { useBrand } from "@/lib/brand-context";
+import { CompanyBgpTeam } from "@/components/company-bgp-team";
 
 // The open section is kept in the address under the desktop page's names
 // (?section=people), so a link lands on its pill and Back from a contact or a
@@ -884,6 +885,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
         isLandlord={isLandlord || staffBrandContacts}
         meetingHistory={isLandlord}
         pattern={brandPage}
+        teamSlot={<CompanyBgpTeam key={`team-${companyId}`} companyId={companyId} companyName={c.name} coverers={(data as any).coverers || []} landlord={isLandlord} staff={!isClientViewer} />}
       />
       {/* A brand's own page: the agents under the people, one line each
           under one heading (boxes that each repeated "Tenant rep" took

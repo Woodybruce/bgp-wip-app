@@ -519,7 +519,7 @@ function getInitials(name: string): string {
 // Roles BGP staff can hold on a single property. Sort priority follows this
 // list — Lead surfaces first, then Investment, Leasing, Letting Surveyor,
 // then anyone with no role at the end.
-const PROPERTY_AGENT_ROLES = ["Lead", "Investment", "Leasing", "Letting Surveyor"] as const;
+export const PROPERTY_AGENT_ROLES = ["Lead", "Investment", "Leasing", "Letting Surveyor"] as const;
 type PropertyAgentRole = typeof PROPERTY_AGENT_ROLES[number];
 function rolePriority(role: string | null | undefined): number {
   const idx = PROPERTY_AGENT_ROLES.indexOf((role || "") as PropertyAgentRole);

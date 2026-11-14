@@ -5,65 +5,63 @@ import { createRequire } from 'node:module';
 import React from 'react';
 const require = createRequire(import.meta.url);
 const { source, ts } = require('./source-harness.cjs');
-const file = 'client/src/components/landlord-relationship-team.tsx';
+
+// The BGP team is the first group of Key contacts on landlord and brand pages
+// (Woody, 2026-11-14). It keeps what the old landlord team block did: each
+// person's emails and meetings with the landlord open their own history, and
+// a client login gets the people on the account and nothing of BGP's record.
+const file = 'client/src/components/company-bgp-team.tsx';
 const nodes = node => Array.isArray(node) ? node.flatMap(nodes) : React.isValidElement(node) ? [node, ...nodes(node.props.children)] : [];
-const text = node => Array.isArray(node) ? node.map(text).join('') : React.isValidElement(node) ? text(node.props.children) : node == null ? '' : String(node);
-function component(name, bindings = {}) {
+function load(bindings) {
   const ast = ts.createSourceFile(file, source(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const declaration = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
+  const kept = ast.statements.filter(n => ts.isVariableStatement(n) || (ts.isFunctionDeclaration(n) && n.name?.text === 'CompanyBgpTeam'));
   const tags = {};
-  function visit(node) { if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && ts.isIdentifier(node.tagName)) tags[node.tagName.text] = node.tagName.text; ts.forEachChild(node, visit); }
-  visit(declaration);
-  const sandbox = { exports: {}, require, ...tags, useState: initial => [initial, () => {}], useMutation: () => ({}), ...bindings };
-  vm.runInNewContext(ts.transpileModule(`${declaration.getText(ast)}\nexports.component = ${name};`, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText, sandbox);
+  for (const n of ast.statements) if (ts.isImportDeclaration(n)) for (const el of n.importClause?.namedBindings?.elements || []) tags[el.name.text] = el.name.text;
+  const sandbox = { exports: {}, ...tags, canonicalBgpRole: v => v || null, BGP_ACCOUNT_ROLES: [], LANDLORD_TEAM_ROLES: ['Relationship lead'], ...bindings };
+  vm.runInNewContext(ts.transpileModule(`${kept.map(n => n.getText(ast)).join('\n')}\nexports.component = CompanyBgpTeam;`, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText, { ...sandbox, React });
   return sandbox.exports.component;
 }
-const member = { id: 'sam', name: 'Sam Morgan', title: 'Director', profilePicUrl: null, active: true, assigned: true, assignedRole: 'Relationship lead', emailCount: 12, meetingCount: 3, dealCount: 2, conversationCount: 4, lastInteractionAt: '2026-10-27T10:00:00Z', contexts: [{ id: 'tenant-role', role: 'Tenant representative', propertyId: 'high-street', propertyName: 'High Street', origin: 'suggested', notes: 'Tenant-side work only.', sources: [{ kind: 'deal', id: 'deal-123', label: 'Tenant letting #123', url: '/deals/deal-123' }] }] };
-
-test('member email and invitation counts are accessible actions; other totals and role evidence stay intact', () => {
-  const opened = [];
-  const tree = component('TeamMember')({ companyId: 'landlord', member, properties: [], canEdit: true, onSaved: () => {}, onOpenActivity: kind => opened.push(kind) });
-  const buttons = nodes(tree).filter(node => node.type === 'button' && node.props['aria-haspopup'] === 'dialog');
-  assert.equal(buttons.length, 2);
-  assert.equal(buttons[0].props['aria-label'], 'View 12 emails involving Sam Morgan');
-  assert.equal(buttons[1].props['aria-label'], 'View 3 invitations involving Sam Morgan');
-  for (const button of buttons) { assert.equal(button.props.type, 'button'); button.props.onClick(); }
-  assert.deepEqual(opened, ['emails', 'meetings']);
-  assert.match(text(tree), /12 emails · 3 invitations · 2 deals · 4 chat messages/);
-  assert.ok(nodes(tree).some(node => node.type === 'a' && node.props.href === '/deals/deal-123'));
-  assert.ok(nodes(tree).some(node => node.type === 'button' && text(node) === 'Confirm role'));
-  assert.match(text(tree), /Tenant-side work only/);
-});
-
-test('zero counts do not create misleading activity actions or remove the saved role', () => {
-  const tree = component('TeamMember')({ companyId: 'landlord', member: { ...member, emailCount: 0, meetingCount: 0, dealCount: 0, conversationCount: 0, contexts: [] }, properties: [], canEdit: false, onSaved: () => {}, onOpenActivity: () => { throw new Error('No action expected'); } });
-  assert.equal(nodes(tree).filter(node => node.type === 'button' && node.props['aria-haspopup'] === 'dialog').length, 0);
-  assert.match(text(tree), /Saved account assignment/);
-  assert.match(text(tree), /Relationship lead/);
-});
-
-test('team mounts only the selected person’s scoped history and unmounts it when closed', () => {
-  let index = 0;
-  const state = [];
-  const render = component('LandlordRelationshipTeam', {
+const member = { id: 'sam', name: 'Sam Morgan', title: 'Director', profilePicUrl: null, email: 'sam@example.test', phone: null, active: true, assigned: true, assignedRole: 'Relationship lead', emailCount: 12, meetingCount: 3, dealCount: 2, conversationCount: 4, lastInteractionAt: '2026-10-27T10:00:00Z', contexts: [{ id: 'tenant-role', role: 'Tenant representative', propertyId: 'high-street', propertyName: 'High Street', origin: 'suggested', notes: 'Tenant-side work only.', sources: [] }] };
+function harness({ staff = true, members = [member, { ...member, id: 'jo', name: 'Jo Reed' }], coverers = [] } = {}) {
+  let index = 0; const state = [];
+  const render = load({
     useState: initial => { const i = index++; if (!(i in state)) state[i] = initial; return [state[i], value => { state[i] = value; }]; },
-    useQueryClient: () => ({ invalidateQueries: () => {} }),
-    useQuery: () => ({ data: { members: [member, { ...member, id: 'jo', name: 'Jo Reed' }], properties: [], issues: [] } }),
+    useQueryClient: () => ({ invalidateQueries: () => {} }), useToast: () => ({ toast: () => {} }), useMutation: () => ({ mutate: () => {}, isPending: false }),
+    useQuery: ({ queryKey, enabled }) => ({ data: enabled === false ? undefined : queryKey[0] === '/api/users' ? [] : { members, properties: [], issues: [] } }),
   });
-  const tree = () => { index = 0; return render({ companyId: 'landlord', companyName: 'Example Estates', canEdit: false }); };
-  assert.equal(nodes(tree()).filter(node => node.type === 'BrandEmailHistory' || node.type === 'LandlordMeetingsHistory').length, 0);
-  nodes(tree()).filter(node => node.type === 'TeamMember')[0].props.onOpenActivity('emails');
-  let dialog = nodes(tree()).find(node => node.type === 'BrandEmailHistory');
-  assert.equal(dialog.props.companyId, 'landlord');
-  assert.equal(dialog.props.companyName, 'Example Estates');
+  return () => { index = 0; return render({ companyId: 'landlord', companyName: 'Example Estates', coverers, landlord: true, staff }); };
+}
+const plain = v => JSON.parse(JSON.stringify(v));
+const group = tree => nodes(tree).find(n => n.type === 'BgpTeamGroup');
+
+test('each person’s emails and meetings open only their own history', () => {
+  const tree = harness();
+  const people = group(tree()).props.people;
+  assert.deepEqual(plain(people.map(p => p.name)), ['Sam Morgan', 'Jo Reed']);
+  assert.deepEqual(plain(people[0].history.map(h => h.label)), ['12 emails', '3 meetings', '2 deals', '4 chat messages']);
+  assert.match(people[0].note, /Suggested from records: Tenant representative · High Street/);
+  assert.equal(people[0].email, 'sam@example.test');
+  assert.equal(nodes(tree()).some(n => n.type === 'BrandEmailHistory' || n.type === 'LandlordMeetingsHistory'), false);
+  people[0].history[0].onOpen();
+  let dialog = nodes(tree()).find(n => n.type === 'BrandEmailHistory');
   assert.equal(dialog.props.landlord, true);
   assert.deepEqual(JSON.parse(JSON.stringify(dialog.props.person)), { userId: 'sam', name: 'Sam Morgan' });
-  assert.equal(nodes(tree()).some(node => node.type === 'LandlordMeetingsHistory'), false);
   dialog.props.onOpenChange(false);
-  assert.equal(nodes(tree()).some(node => node.type === 'BrandEmailHistory'), false);
-  nodes(tree()).filter(node => node.type === 'TeamMember')[1].props.onOpenActivity('meetings');
-  dialog = nodes(tree()).find(node => node.type === 'LandlordMeetingsHistory');
+  assert.equal(nodes(tree()).some(n => n.type === 'BrandEmailHistory'), false);
+  group(tree()).props.people[1].history[1].onOpen();
+  dialog = nodes(tree()).find(n => n.type === 'LandlordMeetingsHistory');
   assert.deepEqual(JSON.parse(JSON.stringify(dialog.props.person)), { userId: 'jo', name: 'Jo Reed' });
   assert.equal(dialog.props.initialPeriod, 'recent');
-  assert.equal(nodes(tree()).some(node => node.type === 'BrandEmailHistory'), false);
+});
+
+test('a client login sees the people on the account and none of BGP’s record', () => {
+  const tree = harness({ staff: false, coverers: [{ id: 'sam', name: 'Sam Morgan', email: 'sam@example.test', role: 'Relationship lead', threads: 40, last_touch: '2026-10-27T10:00:00Z' }] });
+  const g = group(tree());
+  assert.equal(g.props.addControl, null);
+  const [p] = g.props.people;
+  assert.deepEqual(plain(p.roles), ['Relationship lead']);
+  assert.deepEqual(plain(p.history), []);
+  assert.equal(p.lastAt, null);
+  assert.equal(p.note, null);
+  assert.equal(g.props.menuFor(p), null);
 });

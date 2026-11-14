@@ -81,14 +81,16 @@ test('the People board draws a CRM person through the adapter only, never by spr
  assert.doesNotMatch(contactProps[0],/\.\.\./);
  assert.doesNotMatch(board,/contact=\{\s*\{?\s*\.\.\.(entry|p|person)\b/);
  assert.match(board,/if \(!person\.contactId\) return <QuietRow/,'a person with no CRM record gets the one-line row');
- assert.match(board,/!\(teamControl && p\.group === "bgp" && p\.source === "assigned"\)/,'the BGP team control draws assigned people once');
+ assert.match(board,/if \(key === "bgp"\) return bgpGroup\(\);/,'the BGP team is drawn by the shared team rows, once');
 });
 
-test('the BGP team control is drawn only where the reply says who is assigned (staff), so no BGP person is drawn twice', () => {
+test('the BGP team is the shared group, and only staff get its controls', () => {
  const board=source('client/src/components/property-page/people-board.tsx');
  assert.match(board,/const teamControl = viewer\.staff;/);
- assert.match(board,/key === "bgp" && teamControl && \(/);
- assert.equal((board.match(/<InlineAgents /g)||[]).length,1);
+ assert.match(board,/<BgpTeamGroup bare people=\{team\}/);
+ assert.match(board,/if \(!teamControl \|\| /);
+ assert.match(board,/const addControl = teamControl \?/);
+ assert.doesNotMatch(board,/<InlineAgents /);
 });
 
 test('the units group draws every person exactly once, never matching on a null key', async () => {
