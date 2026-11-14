@@ -240,8 +240,9 @@ const router = Router();
 
 router.get("/api/properties/:id/investment", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { resolveCompanyScope } = await import("./company-scope");
-    if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Available in the staff view." });
+    // Everyone who can open the property (Woody, 2026-11-14: "Everything is the same").
+    const { propertyReadBlocked } = await import("./property-units");
+    if (await propertyReadBlocked(req, String(req.params.id))) return res.status(403).json({ error: "Not available for this account" });
     res.json(await getPropertyInvestment(String(req.params.id)));
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

@@ -385,7 +385,7 @@ export function PropertyDetail({ id }: { id: string }) {
   // brochures and deals. Not BGP's commentary, tasks, contacts, files, news,
   // brand gap, compliance or activity: the server refuses those to it.
   const jointAgent = isRestrictedLandsecRole(pdViewer?.landsecRole);
-  const schemeList = usePropertySchemeList(!isClientViewer ? id : null);
+  const schemeList = usePropertySchemeList(id);
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
     refetchInterval: (query) => {
@@ -422,6 +422,13 @@ export function PropertyDetail({ id }: { id: string }) {
   const planLayout = isClientViewer
     ? landsecView || isRestrictedLandsecRole(pdViewer?.landsecRole)
     : planLayoutChosen;
+  // On the plan-led page everyone gets the same page and can amend it (Woody,
+  // 2026-11-14: "the app is for everyone to be able to amend including the
+  // client and the joint agents ... Everything is the same"). What each login
+  // may read or save is decided on the server. uiClient / uiJointAgent are the
+  // old page's switches, off on the plan-led page.
+  const uiClient = isClientViewer && !planLayout;
+  const uiJointAgent = jointAgent && !planLayout;
   // What the Plan tab found, for the property it found it on: the tab is
   // called Units or Unit when that property has no plan.
   const [planTabOf, setPlanTab] = useState<{ propertyId: string; units: number; plans: number } | null>(null);
@@ -445,7 +452,7 @@ export function PropertyDetail({ id }: { id: string }) {
     enabled: !isClientViewer,
   });
   const linkedEvidencePlan = evidencePlans.find(p => p.property_id === id);
-  const { data: investmentData } = useQuery<{ assets: any[]; ownership: any[] }>({ queryKey: ["/api/properties", id, "investment"], enabled: !!pdViewer && !isClientViewer });
+  const { data: investmentData } = useQuery<{ assets: any[]; ownership: any[] }>({ queryKey: ["/api/properties", id, "investment"], enabled: !!pdViewer && !uiClient });
   const hasInvestment = !!(investmentData?.assets?.length || investmentData?.ownership?.length);
   // Landsec view only (docs/landsec-menu-plan-2026-11-12.md, part 3): when
   // this record is one of the 14 schemes the page carries the scheme's units
@@ -753,7 +760,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 </div>
               )}
               <div className="flex items-center gap-2 flex-wrap gap-y-1.5 ml-auto">
-                {!jointAgent && <Button
+                {!uiJointAgent && <Button
                   variant="outline"
                   size="sm"
                   className="h-7 text-xs gap-1.5"
@@ -765,7 +772,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 >
                   <MessageSquare className="w-3.5 h-3.5" /><span className="hidden [@container(min-width:720px)]:inline">Ask ChatBGP</span>
                 </Button>}
-                {planLayout && !jointAgent && (
+                {planLayout && !uiJointAgent && (
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" aria-label="Property folders" data-testid="button-property-folders">
@@ -785,7 +792,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     </PopoverContent>
                   </Popover>
                 )}
-                {!isClientViewer && (<>
+                {!uiClient && (<>
                 {/* Phones: one ⋯ menu instead of a row of five 44px icon
                     squares (plus the Street View button) above the address. */}
                 <DropdownMenu>
@@ -794,12 +801,12 @@ export function PropertyDetail({ id }: { id: string }) {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-56">
                     <DropdownMenuItem onClick={() => { setStreetViewExpanded(value => !value); if (planLayout) setPhoneSection("overview"); }}><ImageIcon className="w-3.5 h-3.5 mr-2" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => navigate(`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`)}><ImageIcon className="w-3.5 h-3.5 mr-2" />Image Studio</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => navigate(`/document-briefs?propertyId=${encodeURIComponent(property.id)}&propertyName=${encodeURIComponent(property.name)}&postcode=${encodeURIComponent(property.postcode || "")}`)}><FileText className="w-3.5 h-3.5 mr-2" />Create document</DropdownMenuItem>
-                    {linkedEvidencePlan && <DropdownMenuItem onClick={() => navigate(`/evidence-plans/${linkedEvidencePlan.id}`)}><MapIcon className="w-3.5 h-3.5 mr-2" />Evidence plan</DropdownMenuItem>}
-                    <DropdownMenuItem onClick={() => setFolderDialogOpen(true)}><FolderTree className="w-3.5 h-3.5 mr-2" />Set Up Folders</DropdownMenuItem>
-                    {planLayout && <DropdownMenuItem onClick={() => switchLayout(false)} data-testid="property-layout-classic"><Layers className="w-3.5 h-3.5 mr-2" />Back to the current page</DropdownMenuItem>}
-                    <DropdownMenuItem className="text-destructive" disabled={deleteMutation.isPending} onClick={() => { if (confirm("Are you sure you want to delete this property?")) deleteMutation.mutate(); }}><Trash2 className="w-3.5 h-3.5 mr-2" />Delete property</DropdownMenuItem>
+                    {!isClientViewer && <DropdownMenuItem onClick={() => navigate(`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`)}><ImageIcon className="w-3.5 h-3.5 mr-2" />Image Studio</DropdownMenuItem>}
+                    {!isClientViewer && <DropdownMenuItem onClick={() => navigate(`/document-briefs?propertyId=${encodeURIComponent(property.id)}&propertyName=${encodeURIComponent(property.name)}&postcode=${encodeURIComponent(property.postcode || "")}`)}><FileText className="w-3.5 h-3.5 mr-2" />Create document</DropdownMenuItem>}
+                    {!isClientViewer && linkedEvidencePlan && <DropdownMenuItem onClick={() => navigate(`/evidence-plans/${linkedEvidencePlan.id}`)}><MapIcon className="w-3.5 h-3.5 mr-2" />Evidence plan</DropdownMenuItem>}
+                    {!isClientViewer && <DropdownMenuItem onClick={() => setFolderDialogOpen(true)}><FolderTree className="w-3.5 h-3.5 mr-2" />Set Up Folders</DropdownMenuItem>}
+                    {!isClientViewer && planLayout && <DropdownMenuItem onClick={() => switchLayout(false)} data-testid="property-layout-classic"><Layers className="w-3.5 h-3.5 mr-2" />Back to the current page</DropdownMenuItem>}
+                    {!isClientViewer && <DropdownMenuItem className="text-destructive" disabled={deleteMutation.isPending} onClick={() => { if (confirm("Are you sure you want to delete this property?")) deleteMutation.mutate(); }}><Trash2 className="w-3.5 h-3.5 mr-2" />Delete property</DropdownMenuItem>}
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <div className={planLayout ? "hidden" : "hidden sm:contents"}>
@@ -859,7 +866,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 Also known as {displayAliases(property.name, (property as any).aliases).join(" · ")}
               </p>
             )}
-            {!planLayout && !jointAgent && <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="property-view-controls"
+            {!planLayout && !uiJointAgent && <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="property-view-controls"
               title={property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and tenancy information. Choose a layout to keep it fixed." : "No reliable layout suggestion yet — choose one."}>
               {/* Phones: the words go (the selects carry aria-labels) so Layout
                   and Positioning share one row. */}
@@ -875,7 +882,7 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Positioning drives the Brand gap peers and brand fit (a luxury
                   arcade is read against the luxury destinations). Stored as a
                   property tag; Automatic reads the tags and tenant mix. */}
-              {!planLayout && propertyView === "centre" && !isClientViewer && (
+              {!planLayout && propertyView === "centre" && !uiClient && (
                 <label className="flex items-center gap-2 min-w-0 max-sm:flex-1" title="Who the Brand gap compares this scheme with and which brands count as a fit. Automatic reads the property's tags and its tenants' brands."><span className="max-sm:sr-only">Positioning</span>
                   <select aria-label="Scheme positioning" data-testid="property-positioning" value={exactPositioningTag(property.tags) || "auto"} disabled={updateMutation.isPending} className="rounded border bg-background px-2 py-1 text-xs text-foreground min-w-0 w-full sm:w-auto" onChange={event => {
                     const value = event.target.value;
@@ -887,8 +894,8 @@ export function PropertyDetail({ id }: { id: string }) {
                 </label>
               )}
               {!planLayout && (propertyView === "building" || propertyView === "multi_let") && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setShowFullPage(previous => !previous); setPhoneSection("overview"); }} data-testid="property-toggle-full-page">{showFullPage ? "Return to simple view" : "Show full page"}</Button>}
-              {!isClientViewer && !planLayout && <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 max-sm:hidden" onClick={() => { setStreetViewExpanded(value => !value); if (planLayout) setPhoneSection("overview"); }} data-testid="button-expand-street-view"><ImageIcon className="w-3.5 h-3.5" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</Button>}
-              {!planLayout && !isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => switchLayout(true)} data-testid="property-layout-plan" title="The new page: the leasing plan and the list of units first, everything else in tabs.">Try the plan-led page</Button>}
+              {!uiClient && !planLayout && <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 max-sm:hidden" onClick={() => { setStreetViewExpanded(value => !value); if (planLayout) setPhoneSection("overview"); }} data-testid="button-expand-street-view"><ImageIcon className="w-3.5 h-3.5" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</Button>}
+              {!planLayout && !uiClient && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => switchLayout(true)} data-testid="property-layout-plan" title="The new page: the leasing plan and the list of units first, everything else in tabs.">Try the plan-led page</Button>}
             </div>}
 
             {planLayout ? (
@@ -896,8 +903,8 @@ export function PropertyDetail({ id }: { id: string }) {
               <Pill active={phoneSection === "plan"} onClick={() => setPhoneSection("plan")} data-testid="property-tab-plan">{planTab && planTab.plans === 0 ? (planTab.units === 1 ? "Unit" : "Units") : "Plan"}</Pill>
               <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-tab-tenancy">Tenancy schedule</Pill>
               {/* A joint agent has neither: brand gap is BGP's brand work, and the people are BGP's contacts. */}
-              {!jointAgent && <Pill active={phoneSection === "brandgap"} onClick={() => setPhoneSection("brandgap")} data-testid="property-tab-brandgap">Brand gap</Pill>}
-              {!jointAgent && <Pill active={phoneSection === "people"} onClick={() => setPhoneSection("people")} data-testid="property-tab-people">People</Pill>}
+              {!uiJointAgent && <Pill active={phoneSection === "brandgap"} onClick={() => setPhoneSection("brandgap")} data-testid="property-tab-brandgap">Brand gap</Pill>}
+              {!uiJointAgent && <Pill active={phoneSection === "people"} onClick={() => setPhoneSection("people")} data-testid="property-tab-people">People</Pill>}
               <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-tab-details">Details</Pill>
             </div>
             ) : (
@@ -909,12 +916,12 @@ export function PropertyDetail({ id }: { id: string }) {
                 <Pill active={phoneSection === "plans"} onClick={() => setPhoneSection("plans")} data-testid="property-section-plans">Plans</Pill>
               </> : <Pill active={phoneSection === "boards"} onClick={() => setPhoneSection("boards")} data-testid="property-section-boards">Boards</Pill>}
               <Pill active={phoneSection === "deals"} onClick={() => setPhoneSection("deals")} data-testid="property-section-deals">Deals &amp; units</Pill>
-              {jointAgent ? <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-section-files">Brochures</Pill> : <>
+              {uiJointAgent ? <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-section-files">Brochures</Pill> : <>
               <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-section-files">Files &amp; contacts</Pill>
               <Pill active={phoneSection === "kyc"} onClick={() => setPhoneSection("kyc")} data-testid="property-section-kyc">KYC</Pill>
               <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="property-section-activity">Activity</Pill>
               </>}
-              {simpleLayout && !jointAgent && <Pill active={phoneSection === "research"} onClick={() => setPhoneSection("research")} data-testid="property-section-research">Research</Pill>}
+              {simpleLayout && !uiJointAgent && <Pill active={phoneSection === "research"} onClick={() => setPhoneSection("research")} data-testid="property-section-research">Research</Pill>}
             </div>
             )}
 
@@ -926,7 +933,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   happened at the property, and its conversation. The
                   conversation is the landlord chat, linked to the property;
                   its @ menu tags Letting Tracker units. */}
-              {!isClientViewer && (
+              {!uiClient && (
                 <div className="grid gap-3 md:grid-cols-2 items-stretch" data-testid="property-intro-row">
                   <Card className="min-w-0 flex flex-col" data-testid="property-intro-activity">
                     <div className="flex items-center gap-2 px-3 py-2.5">
@@ -997,7 +1004,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   {/* Property covering strip — Asset Owner + Asset
                       Lead + Last activity. BGP-internal coverage (and it
                       fires the staff-only linkage-audit), so staff-only. */}
-                  {!isClientViewer && (
+                  {!uiClient && (
                   <div className="pb-2 border-b">
                     <PropertyCoveringStrip propertyId={property.id} />
                   </div>
@@ -1087,7 +1094,7 @@ export function PropertyDetail({ id }: { id: string }) {
                         <div className="grid grid-cols-[minmax(84px,110px),minmax(0,1fr)] items-center gap-2 text-[11px]">
                           <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                           <div className="min-w-0">
-                            <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={isClientViewer} roleOnChip={false} />
+                            <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={uiClient} roleOnChip={false} />
                           </div>
                         </div>
                       ) : (
@@ -1106,10 +1113,10 @@ export function PropertyDetail({ id }: { id: string }) {
                             <div key={row.field} className="grid grid-cols-[minmax(84px,110px),minmax(0,1fr)] items-center gap-2">
                               <span className="text-muted-foreground leading-tight truncate" title={row.label}>{row.label}</span>
                               <div className="min-w-0">
-                                {isClientViewer ? (
+                                {uiClient ? (
                                   <span className="truncate block">{allCompanies.find(c => c.id === row.id)?.name || "—"}</span>
                                 ) : (
-                                  <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} readOnly={isClientViewer} roleOnChip={false} />
+                                  <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} readOnly={uiClient} roleOnChip={false} />
                                 )}
                               </div>
                             </div>
@@ -1117,11 +1124,11 @@ export function PropertyDetail({ id }: { id: string }) {
                           {/* Empty roles hide behind one "+ Add owner" — a
                               column of "+ Long Leaseholder" placeholders read
                               as missing data (Woody, 2026-09-27). */}
-                          {empty.length > 0 && !isClientViewer && (addingOwner ? empty.map(row => (
+                          {empty.length > 0 && !uiClient && (addingOwner ? empty.map(row => (
                             <div key={row.field} className="grid grid-cols-[minmax(84px,110px),minmax(0,1fr)] items-center gap-2">
                               <span className="text-muted-foreground leading-tight truncate" title={row.label}>{row.label}</span>
                               <div className="min-w-0">
-                                <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} readOnly={isClientViewer} />
+                                <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} readOnly={uiClient} />
                               </div>
                             </div>
                           )) : (
@@ -1141,7 +1148,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     crm_companies row (company_type='Agent') with an
                     inline 'Add new agent' shortcut. */}
                 {!property.sqft && !(property as any).competitorAgentId && !property.competitorAgent && !showMoreFields ? (
-                  !isClientViewer && <button className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1 border-t pt-2 w-full" onClick={() => setShowMoreFields(true)} data-testid="button-add-area-agent">
+                  !uiClient && <button className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1 border-t pt-2 w-full" onClick={() => setShowMoreFields(true)} data-testid="button-add-area-agent">
                     <Plus className="w-3 h-3" />Add area / competitor agent
                   </button>
                 ) : (
@@ -1151,7 +1158,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     <InlineNumber value={property.sqft} onSave={(val) => inlineUpdateAsync("sqft", val)} label="Area (sq ft)" suffix=" sq ft" className="text-sm font-mono tabular-nums font-medium" />
                   </div>
                   {/* Competitor intel is BGP-internal — never shown to clients. */}
-                  {!isClientViewer && (
+                  {!uiClient && (
                   <div>
                     <div className="flex items-center gap-1 mb-0.5">
                       <p className="text-[11px] text-muted-foreground leading-tight">Competitor agent</p>
@@ -1177,7 +1184,7 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Weekly Focus — same width as Asset Owner, natural height. */}
               {/* Clients see + edit the focus list on their own property —
                   board parity with the BGP view (Woody, 2026-08-03). */}
-              {!jointAgent && <ErrorBoundary compact name="Weekly focus">
+              {!uiJointAgent && <ErrorBoundary compact name="Weekly focus">
                 <WeeklyFocusCard propertyId={property.id} />
               </ErrorBoundary>}
               </div>
@@ -1187,15 +1194,15 @@ export function PropertyDetail({ id }: { id: string }) {
                   is visible at a glance alongside the news ticker.
                   Brochures moved down to share a row with Brand Gap. */}
               <div className="flex flex-col gap-3 min-w-0">
-                {simpleLayout && !isClientViewer && <PropertyReviewPanel propertyId={property.id} onOpenPlans={() => { setMainSections(previous => ({ ...previous, plans: true })); setPhoneSection("plans"); }} />}
-                {simpleLayout ? <div className="flex-1 flex flex-col [&>*]:flex-1"><PropertySimpleOverview propertyId={id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} canTrack={!isClientViewer} showUnits={propertyView === "building"} rows={overviewSchedule.data} loading={overviewSchedule.isPending} failed={overviewSchedule.isError} onRetry={() => overviewSchedule.refetch()} onOpenTenancy={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }} /></div> : <>
+                {simpleLayout && !uiClient && <PropertyReviewPanel propertyId={property.id} onOpenPlans={() => { setMainSections(previous => ({ ...previous, plans: true })); setPhoneSection("plans"); }} />}
+                {simpleLayout ? <div className="flex-1 flex flex-col [&>*]:flex-1"><PropertySimpleOverview propertyId={id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} canTrack={!uiClient} showUnits={propertyView === "building"} rows={overviewSchedule.data} loading={overviewSchedule.isPending} failed={overviewSchedule.isError} onRetry={() => overviewSchedule.refetch()} onOpenTenancy={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }} /></div> : <>
                 {/* PropertyNewsPanel renders its own card + "News Feed"
                     header — the old outer Card double-framed it. */}
                 {/* On the plan-led page News is a tab beside the unit list (plan-workspace.tsx) wherever that list is shown. */}
-                {!jointAgent && !(planLayout && planTab && (planTab.plans > 0 || planTab.units > 1)) && <ErrorBoundary compact name="Property news (top-strip preview)">
+                {!uiJointAgent && !(planLayout && planTab && (planTab.plans > 0 || planTab.units > 1)) && <ErrorBoundary compact name="Property news (top-strip preview)">
                   <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
                 </ErrorBoundary>}
-                {!planLayout && !jointAgent && <ErrorBoundary compact name="Risk register">
+                {!planLayout && !uiJointAgent && <ErrorBoundary compact name="Risk register">
                   <RiskRegisterCard propertyId={property.id} />
                 </ErrorBoundary>}
                 </>}
@@ -1235,14 +1242,14 @@ export function PropertyDetail({ id }: { id: string }) {
             {/* No Notes card on any property — actions go into This week's
                 focus (Woody, 2026-09-28 for centres; 2026-10-05 for every
                 property, OneNote import included). */}
-            {!jointAgent && <PropertySection name={tab("boards", "research", "brandgap")} active={phoneSection} simple={tabbed}>
+            {!uiJointAgent && <PropertySection name={tab("boards", "research", "brandgap")} active={phoneSection} simple={tabbed}>
             {simpleLayout && <>
               <ErrorBoundary compact name="Property news"><PropertyNewsPanel propertyId={property.id} propertyName={property.name} /></ErrorBoundary>
               <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>
             </>}
             <ErrorBoundary compact name="Brand gap">
               <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand gap" testId="toggle-brands">
-                {planLayout && propertyView === "centre" && !isClientViewer && (
+                {planLayout && propertyView === "centre" && !uiClient && (
                   <label className="mb-3 flex items-center gap-2 text-xs text-muted-foreground" title="Who the Brand gap compares this scheme with and which brands count as a fit. Automatic reads the property's tags and its tenants' brands.">Compared as
                     <select aria-label="Scheme positioning" data-testid="property-positioning" value={exactPositioningTag(property.tags) || "auto"} disabled={updateMutation.isPending} className="rounded border bg-background px-2 py-1 text-xs text-foreground" onChange={event => {
                       const value = event.target.value;
@@ -1264,11 +1271,11 @@ export function PropertyDetail({ id }: { id: string }) {
                 schedule, lease risks on the Risk register. */}
 
             <PropertySection name={tab("overview", "activity", "overview")} active={phoneSection} simple={tabbed}>
-            {!jointAgent && <BgpCommentaryWrapper propertyId={property.id} />}
+            {!uiJointAgent && <BgpCommentaryWrapper propertyId={property.id} />}
             </PropertySection>
 
             <PropertySection name={tab("overview", "files", "overview")} active={phoneSection} simple={tabbed}>
-            {isClientViewer ? null : streetViewExpanded ? (
+            {uiClient ? null : streetViewExpanded ? (
               <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-2 gap-3 items-stretch">
                 <StreetViewSection
                   address={formatAddress(property.address) || property.name}
@@ -1335,10 +1342,10 @@ export function PropertyDetail({ id }: { id: string }) {
             </ErrorBoundary>
             </div>
 
-            {!jointAgent && <PropertySection name={tab("boards", "research", "overview")} active={phoneSection} simple={tabbed}>
+            {!uiJointAgent && <PropertySection name={tab("boards", "research", "overview")} active={phoneSection} simple={tabbed}>
             {/* Pathway is for single buildings — not shopping centres (Woody,
                 2026-09-28: "Pathway can be removed too"). */}
-            {!isClientViewer && propertyView !== "centre" && (
+            {!uiClient && propertyView !== "centre" && (
             <ErrorBoundary compact name="Pathway intel strip">
               <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway intel" testId="toggle-pathway">
                 <PathwayIntelStrip
@@ -1392,7 +1399,7 @@ export function PropertyDetail({ id }: { id: string }) {
               Files+Contacts, Compliance+Activity, BGP Contacts+Client
               Board, Deals+Units (Woody, 2026-07-30). */}
           <aside className={tabbed ? (planLayout ? ["files", "people", "activity", "overview", "tenancy"] : ["files", "deals", "kyc", "activity"]).includes(phoneSection) ? `grid grid-cols-1 ${planLayout ? "" : "md:grid-cols-2 "}gap-3 items-start` : "hidden" : "space-y-3 lg:sticky lg:top-4 self-start"}>
-              {!isClientViewer && !simpleLayout && (
+              {!uiClient && !simpleLayout && (
               <PropertySection name={"overview"} active={phoneSection} simple={tabbed}>
                 <PropertyReviewPanel propertyId={property.id} withoutPlanWork={planLayout} onOpenPlans={() => {
                   if (planLayout) { setPhoneSection("plan"); return; }
@@ -1406,7 +1413,7 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Clients get the read-only jailed browser (their own
                   SharePoint area, no internal team names) instead of the
                   staff panel — restored per Woody, 2026-08-03. */}
-              {!jointAgent && <PropertySection name={"files"} active={phoneSection} simple={tabbed}>
+              {!uiJointAgent && <PropertySection name={"files"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Files"
                 icon={FolderOpen}
@@ -1429,7 +1436,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </ReferenceSection>
               </PropertySection>}
 
-              {!jointAgent && <PropertySection name={planLayout ? "people" : "files"} active={phoneSection} simple={tabbed}>
+              {!uiJointAgent && <PropertySection name={planLayout ? "people" : "files"} active={phoneSection} simple={tabbed}>
               {planLayout ? (
                 <PropertyPeopleBoard propertyId={property.id} propertyName={property.name} landlordId={property.landlordId} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} />
               ) : (
@@ -1443,9 +1450,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 <div className="mb-2 pb-2 border-b">
                   <div className="flex items-center gap-2 flex-wrap">
                     <div className="text-[11px] uppercase tracking-wider text-muted-foreground">BGP team</div>
-                    <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
+                    <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={uiClient} />
                   </div>
-                  <PropertyBgpTeamFromWork propertyId={property.id} readOnly={isClientViewer} />
+                  <PropertyBgpTeamFromWork propertyId={property.id} readOnly={uiClient} />
                 </div>
                 <LinkedContactsPanel propertyId={property.id} bare />
               </ReferenceSection>
@@ -1454,7 +1461,7 @@ export function PropertyDetail({ id }: { id: string }) {
 
               {/* Visible to clients — same decision as the brand-profile
                   KYC panel (landlords need tenant AML/financial standing). */}
-              {!jointAgent && <PropertySection name={planLayout ? "overview" : "kyc"} active={phoneSection} simple={tabbed}>
+              {!uiJointAgent && <PropertySection name={planLayout ? "overview" : "kyc"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Compliance & KYC"
                 icon={ShieldCheck}
@@ -1468,7 +1475,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </ReferenceSection>
               </PropertySection>}
 
-              {!jointAgent && <PropertySection name={"activity"} active={phoneSection} simple={tabbed}>
+              {!uiJointAgent && <PropertySection name={"activity"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Activity"
                 icon={Activity}
@@ -1499,14 +1506,14 @@ export function PropertyDetail({ id }: { id: string }) {
                 testId="toggle-deals-section"
               >
                 <LinkedDealsPanel propertyId={property.id} bare />
-                {!jointAgent && <TaggedConversationsPanel entityType="property" entityId={property.id} />}
+                {!uiJointAgent && <TaggedConversationsPanel entityType="property" entityId={property.id} />}
               </ReferenceSection>
               </PropertySection>
               )}
 
               {/* On the plan-led page the live lettings are in the Plan tab's list.
                   A joint agent has them in Units and lettings. */}
-              {!planLayout && !jointAgent && (
+              {!planLayout && !uiJointAgent && (
               <PropertySection name={"deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Available units"
@@ -1516,7 +1523,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 testId="toggle-available-units-section"
               >
                 <AvailableUnitsPanel propertyId={property.id} propertyName={property.name} />
-                {!isClientViewer && <PropertySpaceFitsPanel propertyId={property.id} />}
+                {!uiClient && <PropertySpaceFitsPanel propertyId={property.id} />}
               </ReferenceSection>
               </PropertySection>
               )}
@@ -1527,7 +1534,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   (Woody, 2026-11-14: "only need that for Canary Wharf and
                   Portman Estate and Crown Estate", then "remove schemes from
                   everything other than those estates"). */}
-              {!isClientViewer && isSchemeEstate(property.name, allCompanies.find(c => c.id === (property as any).landlordId)?.name) && (
+              {!uiClient && isSchemeEstate(property.name, allCompanies.find(c => c.id === (property as any).landlordId)?.name) && (
               <PropertySection name={planLayout ? "overview" : "deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Schemes"
@@ -1548,7 +1555,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   upcoming lease dates recorded" was an empty box (the Risk
                   register already notes missing expiries). */}
               {(() => {
-                const hasEvents = !isClientViewer && !simpleLayout && (overviewSchedule.data || []).length > 0
+                const hasEvents = !uiClient && !simpleLayout && (overviewSchedule.data || []).length > 0
                   && propertyOverviewFacts(overviewSchedule.data || [], new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())).nextEvents.length > 0;
                 const leaseEvents = hasEvents && (
                   <ReferenceSection
@@ -1567,7 +1574,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <PropertySection name={"tenancy"} active={phoneSection} simple={tabbed}>
                     <div className="grid gap-3 items-start md:grid-cols-2 md:[&>*:only-child]:col-span-2" data-testid="property-lease-events-and-risks">
                       {leaseEvents}
-                      {!jointAgent && <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>}
+                      {!uiJointAgent && <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>}
                     </div>
                   </PropertySection>
                 );
@@ -1576,7 +1583,7 @@ export function PropertyDetail({ id }: { id: string }) {
 
               {/* Brands that fit now sits inside Available Units. */}
 
-              {!isClientViewer && hasInvestment && (
+              {!uiClient && hasInvestment && (
               <PropertySection name={planLayout ? "overview" : "deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Investment"
@@ -1590,7 +1597,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </PropertySection>
               )}
 
-              {!planLayout && !isClientViewer && (
+              {!planLayout && !uiClient && (
               <PropertySection name={planLayout ? "overview" : "deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 foldable
@@ -1609,7 +1616,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   (Woody, 2026-08-03) — title data lives in Property
                   Intelligence when needed. */}
 
-              {!planLayout && !isClientViewer && pdViewer?.isAdmin && (
+              {!planLayout && !uiClient && pdViewer?.isAdmin && (
               <PropertySection name={planLayout ? "overview" : "activity"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 foldable

@@ -366,6 +366,11 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
       // Read only; the handlers check the scheme (propertyReadBlocked) and cut
       // BGP's compliance record and brand links (server/property-units.ts).
       if (JOINT_AGENT_PROPERTY_UNITS.test(p) || JOINT_AGENT_PLAN_MATCH.test(p)) return "allow";
+      // A folder or file in the data room: the handler holds a joint agent to
+      // the folders of its own schemes' properties (client-sharepoint.ts).
+      if (p === "/api/client/sharepoint/list" || p === "/api/client/sharepoint/content") return "allow";
+      // Public property data on the property page (price paid, VOA, EPC, flood, planning).
+      if (p === "/api/property-lookup") return "allow";
     }
   }
   // Their own task list (Woody, 2026-11-13: "we need each person to have
@@ -378,6 +383,32 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
   return "deny";
 }
 
+// What a request is about, when it is about one property's page (Woody,
+// 2026-11-14: "the app is for everyone to be able to amend including the
+// client and the joint agents ... Everything is the same"). A joint agent's
+// request that the rule above refuses is let on to the ordinary client checks
+// when it is about a property at one of its own schemes: the property itself,
+// or a plan, plan outline or schedule row of one (looked up by the server).
+// Brand pages are not here and stay closed (Woody: "anything other than see
+// brands").
+export type JointAgentPropertyRef = { kind: "property" | "plan" | "plan-unit" | "tenancy-unit" | "leasing-unit" | "review-item"; id: string };
+export function jointAgentPropertyRef(path: string, query: Record<string, unknown> = {}): JointAgentPropertyRef | null {
+  const p = path.replace(/\/+$/, "");
+  const id = (m: RegExpMatchArray | null) => (m && m[1] && m[1].length <= 80 ? m[1] : null);
+  let m: string | null;
+  if ((m = id(p.match(/^\/api\/(?:properties|property)\/([^/]+)(?:\/|$)/i)))) return { kind: "property", id: m };
+  if ((m = id(p.match(/^\/api\/crm\/properties\/([^/]+)(?:\/|$)/i)))) return { kind: "property", id: m };
+  if ((m = id(p.match(/^\/api\/(?:tenancy|leasing)-schedule\/property\/([^/]+)(?:\/|$)/i)))) return { kind: "property", id: m };
+  if ((m = id(p.match(/^\/api\/plans\/([^/]+)(?:\/|$)/i)))) return { kind: "plan", id: m };
+  if ((m = id(p.match(/^\/api\/plan-units\/([^/]+)$/i)))) return { kind: "plan-unit", id: m };
+  if ((m = id(p.match(/^\/api\/tenancy-schedule\/unit\/([^/]+)(?:\/|$)/i)))) return { kind: "tenancy-unit", id: m };
+  if ((m = id(p.match(/^\/api\/leasing-schedule\/units?\/([^/]+)(?:\/|$)/i)))) return { kind: "leasing-unit", id: m };
+  if ((m = id(p.match(/^\/api\/review-items\/([^/]+)\/resolve$/i)))) return { kind: "review-item", id: m };
+  const q = typeof query.propertyId === "string" ? query.propertyId : null;
+  if (q && q.length <= 80 && /^\/api\/(activity-summary|lease-events|client\/sharepoint\/property-root)$/i.test(p)) return { kind: "property", id: q };
+  return null;
+}
+
 // A joint agent on the real Properties and Deals pages (Woody, 2026-11-14:
 // "joint agent can do anything other than see brands", with BGP's own
 // records kept private). It opens the properties and deals at its own
@@ -386,12 +417,10 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
 // Xero, and the compliance record. Fee and AML fields also go through the
 // client fee strip first. A new BGP-only column goes on the list.
 export const JOINT_AGENT_HIDDEN_PROPERTY_FIELDS = [
-  "notes", "bgp_engagement", "bgp_contact_crm", "bgp_contact_user_ids", "weekly_focus",
-  "bgp_commentary", "bgp_commentary_at", "strategic_principles", "competitor_agent",
-  "competitor_agent_id", "competitor_agent_instructed_at", "competitor_agent_status",
-  "proprietor_kyc_status", "proprietor_kyc_data", "billing_entity_id", "sharepoint_folder_url",
-  "sharepoint_team_folders", "folder_teams", "gap_commentary", "gap_commentary_at", "gap_live_intel",
-  "gap_live_intel_at", "monday_item_id", "asset_manager_id",
+  // Since 14 November 2026 a joint agent sees a property as any Landsec login
+  // does (Woody: "Everything is the same"); only the compliance record and
+  // BGP's billing and system links stay out.
+  "proprietor_kyc_status", "proprietor_kyc_data", "billing_entity_id", "monday_item_id",
 ] as const;
 export const JOINT_AGENT_HIDDEN_DEAL_FIELDS = [
   "comments", "last_interaction", "last_contact_at", "last_contact_source", "fee_notes", "internal_agent", "internal_agent_ids", "team", "group_name",

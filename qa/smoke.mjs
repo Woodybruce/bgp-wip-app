@@ -283,10 +283,10 @@ console.log('── client (Mark, Landsec) ──');
     await page.goto(`${BASE}/properties/${BLUEWATER}`, { waitUntil: 'networkidle' }).catch(() => {});
     await settle(page, 6000);
     await noCrash(page, 'client property page');
-    // A full Landsec login gets the plan-led page (Woody, 2026-11-14), without
-    // BGP's activity and conversation row.
+    // A Landsec login gets the plan-led page, the same as BGP's (Woody,
+    // 2026-11-14: "Everything is the same"), activity row included.
     check('client property: plan-led page', await page.locator('[data-testid="property-plan-tabs"]').count() > 0);
-    check('client property: no activity and conversation row', await page.locator('[data-testid="property-intro-row"]').count() === 0);
+    check('client property: activity and conversation row', await page.locator('[data-testid="property-intro-row"]').count() > 0);
     await page.getByTestId('property-tab-tenancy').click();
     await page.getByTestId('btn-open-letting-tracker').waitFor({ state: 'visible', timeout: 15000 });
     check('client property: tenancy schedule', await page.locator('[data-testid="btn-open-letting-tracker"]').count() > 0);

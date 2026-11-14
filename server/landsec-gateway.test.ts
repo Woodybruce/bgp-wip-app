@@ -299,10 +299,10 @@ const REAL_PAGES: Row[] = [
   ["GET", `/api/tenancy-schedule/property/${X}/export-excel`, "deny"],
   ["GET", `/api/tenancy-schedule/property/${X}/sharepoint-candidates`, "deny"],
   ["POST", `/api/properties/${X}/plans`, "deny"],
+  // A property's page at its schemes goes to the client checks in
+  // restrictedLandsecApiDecision (not this rule): the rule itself refuses.
   ["GET", `/api/properties/${X}/people`, "deny"],
-  ["GET", `/api/properties/${X}/instagram`, "deny"],
   ["POST", `/api/plans/${X}/match/accept`, "deny"],
-  ["POST", `/api/plans/${X}/match/dismiss`, "deny"],
   ["GET", `/api/properties/${X}/units/x/y`, "deny"],
   ["GET", `/api/properties/${X}/linked-contacts`, "deny"],
   ["GET", `/api/properties/${X}/tasks`, "deny"],
@@ -605,4 +605,21 @@ test("the path the router matches on: the mount put back, no query, no trailing 
   const unreadable = { baseUrl: "/api", get path(): string { throw new TypeError("Invalid URL"); } };
   assert.equal(routedApiPath(unreadable), "");
   assert.equal(restrictedLandsecApiRule("joint_agent", "GET", routedApiPath(unreadable)), "deny");
+});
+
+test("a joint agent's request about a property's page names the property, a plan, an outline, a schedule row or a review item", async () => {
+  const { jointAgentPropertyRef } = await import("../shared/landsec");
+  assert.deepEqual(jointAgentPropertyRef(`/api/properties/${X}/people`), { kind: "property", id: X });
+  assert.deepEqual(jointAgentPropertyRef(`/api/property/${X}/brand-gaps`), { kind: "property", id: X });
+  assert.deepEqual(jointAgentPropertyRef(`/api/crm/properties/${X}`), { kind: "property", id: X });
+  assert.deepEqual(jointAgentPropertyRef(`/api/tenancy-schedule/property/${X}`), { kind: "property", id: X });
+  assert.deepEqual(jointAgentPropertyRef(`/api/plans/${X}/match/accept`), { kind: "plan", id: X });
+  assert.deepEqual(jointAgentPropertyRef(`/api/plan-units/${X}`), { kind: "plan-unit", id: X });
+  assert.deepEqual(jointAgentPropertyRef(`/api/tenancy-schedule/unit/${X}`), { kind: "tenancy-unit", id: X });
+  assert.deepEqual(jointAgentPropertyRef(`/api/review-items/${X}/resolve`), { kind: "review-item", id: X });
+  assert.deepEqual(jointAgentPropertyRef("/api/activity-summary", { propertyId: X }), { kind: "property", id: X });
+  // No property, no pass: the brand pages, the company list, an unscoped feed.
+  for (const path of [`/api/brand/${X}/profile`, "/api/crm/companies", "/api/activity-summary", "/api/crm/properties", "/api/lease-events"]) {
+    assert.equal(jointAgentPropertyRef(path), null, path);
+  }
 });

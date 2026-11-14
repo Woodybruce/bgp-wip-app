@@ -4855,6 +4855,9 @@ app.use("/api/branding/assets", express.static(
     // handler confines scoped callers to a propertyId in their own
     // portfolio; unit writes stay staff-only via the write allowlist.
     "/api/property-units",
+    // A property's lease events: the handler holds a client to one property
+    // of its own (propertyId required, propertyReadBlocked).
+    "/api/lease-events",
     // Operator Targeting Briefs on the client's own units — the Letting
     // Tracker lists these, and the handler scopes the rows (and their target
     // operators) to the caller's portfolio.
@@ -4942,6 +4945,9 @@ app.use("/api/branding/assets", express.static(
     // files, deal link. Every handler scope-checks the unit's property
     // against the client's company and strips BGP fee fields.
     "/api/available-units", "/api/leasing-viewings",
+    // Answering a property's review list (Woody, 2026-11-14: "Everything is
+    // the same"): the handler checks the item's property (propertyReadBlocked).
+    "/api/review-items/",
     // Clients may add events to their own calendar — the POST forces
     // company_name to the caller's company and created_by to the caller,
     // so events land on their (company-scoped) calendar only; delete is
@@ -5133,6 +5139,8 @@ app.use("/api/branding/assets", express.static(
         // handlers scope-check via clientBlockedForProperty and only touch
         // the per-property override table, never CRM rows.
         if ((req.method === "POST" || req.method === "DELETE") && /^\/api\/properties\/[^/]+\/contact-override(\/|$)/.test(p)) return next();
+        // The property's Instagram handle (the handler checks the property).
+        if (req.method === "PUT" && /^\/api\/properties\/[^/]+\/instagram$/.test(p)) return next();
         // Brochure + plan uploads on the client's own property — handlers
         // scope-check via clientBlockedForProperty.
         if (req.method === "POST" && /^\/api\/properties\/[^/]+\/brochures\/upload$/.test(p)) return next();

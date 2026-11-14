@@ -1171,11 +1171,30 @@ the People board leaves out tenant companies known only as a unit's
 occupier (the schedule shows them) and an owner's directors once anyone at
 the owner is tied to the property. Every Landsec login always gets the plan-led page (Woody, 2026-11-14:
 "yes", then "Joint agents need to be on new layout"); every other client
-login gets the page as it was (`planLayout` in `property-detail.tsx`). A
-joint agent's page has Plan, Tenancy schedule and Details only (no Brand gap,
-People, Folders, News & social, risk register or a unit's people), read only.
-A Landsec login has no Activity and conversation row and sees its own folder
-view under Folders; no client login edits a contact's job title. The page as it was is
+login gets the page as it was (`planLayout` in `property-detail.tsx`).
+**The page is the same for everyone, and everyone amends it** (Woody,
+2026-11-14: "Why are you adding random restrictions the app is for everyone
+to be able to amend including the client and the joint agents. Put the
+activity up there for everyone. Everything is the same"). On the plan-led
+page `uiClient` / `uiJointAgent` are off: every tab, the Activity and
+conversation row, Folders, News & social, People, Brand gap, plan matching
+and the unit panel's letting buttons (to the login's own Letting Tracker)
+are there for every login. What a login may read or save is decided on the
+server, never by hiding a control. The only differences kept: a joint agent
+does not open brand pages (no brand links), the More menu's BGP pages
+(Image Studio, documents, evidence plan, folder set-up, delete) are BGP
+staff's, a client's Folders is its own data room, and no client login edits
+a contact's job title. Do not add a hide-for-clients switch to this page.
+- **A joint agent on the page**: `restrictedLandsecApiDecision` hands a
+  request the joint agent rule refuses to the ordinary client checks when it
+  is about a property at one of its schemes (`jointAgentPropertyRef` in
+  `shared/landsec.ts`: the property, a plan, an outline, a schedule row, a
+  review item, or `?propertyId=` on the activity feed, lease events and the
+  folder root; the server looks the property up). Anywhere else, or when the
+  property cannot be worked out, it stays refused. Its folders are the bound
+  folders of its schemes' properties only (`jointAgentRoots` in
+  `server/client-sharepoint.ts`). Brand pages, the company list and BGP's
+  agent list stay closed to it. The page as it was is
 untouched when it is off, and
 `PropertySection` and the tab mapping (`tab(full, simple, plan)` in
 `property-detail.tsx`) are how each existing card finds its tab.

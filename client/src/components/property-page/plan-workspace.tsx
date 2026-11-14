@@ -284,7 +284,8 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   }
 
   const counts = feed.data.counts;
-  const canEdit = !viewer.restricted;
+  // Everyone can amend (Woody, 2026-11-14); the server checks the property.
+  const canEdit = true;
   // Since 14 November 2026 a joint agent opens deal pages at its own schemes too.
   const dealHref = !(viewer.staff || viewer.landsecView || viewer.restricted) ? undefined : (dealId: string) => `/deals/${dealId}`;
   const plansDialog = (
@@ -320,8 +321,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
       {feed.data.unplacedDeals.length > 6 && ` and ${feed.data.unplacedDeals.length - 6} more`}.
     </p>
   );
-  // A joint agent is not given the news, so it has the unit list alone.
-  const sideSwitch = viewer.restricted ? null : (
+  const sideSwitch = (
     <div className="flex gap-1.5" role="tablist" aria-label="Beside the plan" data-testid="property-side-tabs">
       <Pill active={side === "units"} onClick={() => setSide("units")} data-testid="property-side-units">Units</Pill>
       <Pill active={side === "news"} onClick={() => setSide("news")} data-testid="property-side-news">News &amp; social</Pill>

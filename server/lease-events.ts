@@ -16,6 +16,12 @@ export function registerLeaseEventRoutes(app: Express) {
   app.get("/api/lease-events", requireAuth, async (req: Request, res: Response) => {
     try {
       const { status, eventType, propertyId, withinMonths } = req.query as Record<string, string>;
+      // A client login (or joint agent) reads one property of its own at a time.
+      const { resolveCompanyScope } = await import("./company-scope");
+      if (await resolveCompanyScope(req as any)) {
+        const { propertyReadBlocked } = await import("./property-units");
+        if (!propertyId || await propertyReadBlocked(req as any, String(propertyId))) return res.status(403).json({ error: "Not available for this account" });
+      }
       const conditions: string[] = [];
       const params: any[] = [];
       if (status) { params.push(status); conditions.push(`status = $${params.length}`); }

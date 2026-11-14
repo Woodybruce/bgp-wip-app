@@ -168,7 +168,7 @@ test('the gateway for a joint agent: the Landsec Brand CRM door and nothing else
   // its lists moved to shared/landsec.ts (restrictedLandsecApiRule) when
   // joint agents were given control of their schemes; it is the real one here.
   const { restrictedLandsecApiDecision } = evaluate(fn(ACCESS, 'restrictedLandsecApiDecision'),
-    { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, getLandsecAccess: async req => req.access });
+    { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, jointAgentPropertyRef: () => null, propertyOfRef: async () => null, schemeLimitedPropertyIdsOrNone: async () => [], getLandsecAccess: async req => req.access });
   const decide = (role, method, path) => restrictedLandsecApiDecision({ method, access: role ? { role, schemes: ['bluewater'], firm: null } : null }, path);
   assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ['joint_agent']);
   // [method, path, what an asset manager had before 13 November 2026, joint agent]

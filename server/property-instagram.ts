@@ -1,5 +1,5 @@
 // A property's own Instagram account (Woody, 2026-11-14: "add the instagram
-// handle"). BGP staff only. The handle lives on crm_properties.instagram_handle;
+// handle"). Anyone who can open the property. The handle lives on crm_properties.instagram_handle;
 // its posts come from one RSS.app feed, a news_sources row with category
 // `property:<id>`, made the first time staff open the property's News & social
 // after a handle is saved. Public news never reads it (a type allow-list), and
@@ -7,7 +7,6 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
-import { contactViewer } from "./contact-viewer";
 import { createRssAppFeed, isRssAppConfigured, rssappHealth } from "./rssapp";
 
 const TYPE = "rssapp_instagram";
@@ -22,9 +21,11 @@ export function propertyInstagramHandle(raw: unknown): string | null {
   return /^[a-zA-Z0-9._]{1,30}$/.test(s) ? s.toLowerCase() : null;
 }
 
+// Everyone who can open the property (Woody, 2026-11-14: "Everything is the same").
 async function staffOnly(req: Request, res: Response): Promise<boolean> {
-  if ((await contactViewer(req)).staff) return true;
-  res.status(403).json({ error: "Available to BGP staff only" });
+  const { propertyReadBlocked } = await import("./property-units");
+  if (!(await propertyReadBlocked(req, String(req.params.id)))) return true;
+  res.status(403).json({ error: "Not available for this account" });
   return false;
 }
 

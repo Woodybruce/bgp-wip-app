@@ -196,6 +196,35 @@ router.get("/api/client/sharepoint/root", requireAuth, async (req, res) => {
   }
 });
 
+// A joint agent (a Landsec login held to named schemes) opens the folders of
+// the properties at its own schemes only, never the rest of the Landsec data
+// room (Woody, 2026-11-14: the property page is the same for everyone). Null:
+// not held to schemes, so the company root is the jail.
+async function jointAgentRoots(req: Request, scope: string, root: RootRef): Promise<RootRef[] | null> {
+  const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+  const ids = await schemeLimitedPropertyIdsOrNone(req, "client-sharepoint");
+  if (ids === null) return null;
+  const roots: RootRef[] = [];
+  for (const id of ids) {
+    const bound = await resolveBoundPropertyRoot(scope, id).catch(() => null);
+    if (!bound) continue;
+    const item = await assertInRoot(root, bound.id).catch(() => null);
+    if (item) roots.push({ ...root, itemId: bound.id, name: bound.name, pathPrefix: itemFullPath(item) });
+  }
+  return roots;
+}
+
+// The item, when it sits inside the caller's jail.
+async function itemInJail(req: Request, scope: string, root: RootRef, itemId: string): Promise<any | null> {
+  const ja = await jointAgentRoots(req, scope, root);
+  if (!ja) return assertInRoot(root, itemId);
+  for (const r of ja) {
+    const item = await assertInRoot(r, itemId).catch(() => null);
+    if (item) return item;
+  }
+  return null;
+}
+
 // GET /api/client/sharepoint/list?itemId= — children of a folder under the root.
 router.get("/api/client/sharepoint/list", requireAuth, async (req, res) => {
   try {
@@ -205,7 +234,7 @@ router.get("/api/client/sharepoint/list", requireAuth, async (req, res) => {
     if (!root) return res.status(404).json({ message: "No SharePoint folder is linked for your company yet — ask your BGP team." });
 
     const itemId = String(req.query.itemId || root.itemId);
-    const item = await assertInRoot(root, itemId);
+    const item = await itemInJail(req, scope, root, itemId);
     if (!item) return res.status(403).json({ message: "That folder is outside your SharePoint area" });
 
     // graphRequest accepts absolute URLs, so @odata.nextLink pages resolve
@@ -239,7 +268,7 @@ router.get("/api/client/sharepoint/content", requireAuth, async (req, res) => {
 
     const itemId = String(req.query.itemId || "");
     if (!itemId) return res.status(400).json({ message: "itemId required" });
-    const item = await assertInRoot(root, itemId);
+    const item = await itemInJail(req, scope, root, itemId);
     if (!item || item.folder) return res.status(403).json({ message: "That file is outside your SharePoint area" });
 
     const meta = await graphRequest(`/drives/${root.driveId}/items/${itemId}?$select=id,name,@microsoft.graph.downloadUrl`);

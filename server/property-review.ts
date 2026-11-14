@@ -48,6 +48,18 @@ async function staffOnly(req: Request, res: Response): Promise<boolean> {
   if (await resolveCompanyScope(req)) { res.status(403).json({ error: "Available in the staff view." }); return false; }
   return true;
 }
+// The review list is the property's, and everyone who can open the property
+// answers it (Woody, 2026-11-14: "Everything is the same"): BGP staff, and a
+// client login or joint agent on its own property (propertyReadBlocked).
+async function canUseProperty(req: Request, res: Response, propertyId: string): Promise<boolean> {
+  const { propertyReadBlocked } = await import("./property-units");
+  if (await propertyReadBlocked(req, propertyId)) { res.status(403).json({ error: "Not available for this account" }); return false; }
+  return true;
+}
+async function isClientCaller(req: Request): Promise<boolean> {
+  const { resolveCompanyScope } = await import("./company-scope");
+  return !!(await resolveCompanyScope(req));
+}
 async function actorName(req: Request): Promise<string | null> {
   const id = (req as any).session?.userId || (req as any).tokenUserId;
   if (!id) return null;
@@ -94,7 +106,7 @@ const router = Router();
 
 router.get("/api/properties/:id/review-items", requireAuth, async (req: Request, res: Response) => {
   try {
-    if (!await staffOnly(req, res)) return;
+    if (!await canUseProperty(req, res, String(req.params.id))) return;
     const propertyId = String(req.params.id);
     const { rows } = await pool.query(`SELECT id, kind, title, detail, source, options, created_at FROM property_review_items
       WHERE property_id = $1 AND status = 'open' ORDER BY kind, created_at`, [propertyId]);
@@ -128,8 +140,11 @@ router.post("/api/properties/:id/review-items", requireAuth, async (req: Request
 router.post("/api/review-items/:id/resolve", requireAuth, async (req: Request, res: Response) => {
   const db = await pool.connect();
   try {
-    if (!await staffOnly(req, res)) return;
     const { option, dismiss } = req.body || {};
+    const owner = (await db.query(`SELECT property_id FROM property_review_items WHERE id = $1`, [req.params.id])).rows[0];
+    if (!owner) return res.status(404).json({ error: "Review item not found" });
+    if (!await canUseProperty(req, res, String(owner.property_id))) return;
+    const client = await isClientCaller(req);
     await db.query("BEGIN");
     const { rows: [item] } = await db.query(`SELECT * FROM property_review_items WHERE id = $1 FOR UPDATE`, [req.params.id]);
     if (!item) { await db.query("ROLLBACK"); return res.status(404).json({ error: "Review item not found" }); }
@@ -143,7 +158,7 @@ router.post("/api/review-items/:id/resolve", requireAuth, async (req: Request, r
     const chosen: Option | undefined = validOptions(item.options).find(o => o.key === option);
     if (!chosen) { await db.query("ROLLBACK"); return res.status(400).json({ error: "Choose one of the item's options" }); }
     const userId = (req as any).session?.userId || (req as any).tokenUserId;
-    const actor = { userId: String(userId || "unknown"), name: by || "unknown login", viewer: "staff" as const };
+    const actor = { userId: String(userId || "unknown"), name: by || "unknown login", viewer: client ? "client" as const : "staff" as const };
     let written = 0;
     for (const w of chosen.writes) {
       if (!Object.keys(w.set).length) continue;

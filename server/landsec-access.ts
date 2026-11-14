@@ -14,7 +14,7 @@ import { pool } from "./db";
 import { requireAuth, requireAdmin, hashPassword } from "./auth";
 import { resolveCompanyScope, isClientRequestUser, clearCompanyScopeCache } from "./company-scope";
 import { landsecCompanyId, isLandsecCompany, resolveLandsecPortfolio, LANDSEC_SCHEMES } from "./landsec-schemes";
-import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, isKnownLandsecRole, UNKNOWN_LANDSEC_ROLE_ERROR, type LandsecRole } from "@shared/landsec";
+import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, jointAgentPropertyRef, type JointAgentPropertyRef, isKnownLandsecRole, UNKNOWN_LANDSEC_ROLE_ERROR, type LandsecRole } from "@shared/landsec";
 
 export interface LandsecAccessRow { role: LandsecRole; schemes: string[] | null; firm: string | null }
 
@@ -111,7 +111,32 @@ export async function schemeLimitedPropertyIdsOrNone(req: Request, label: string
 export async function restrictedLandsecApiDecision(req: Request, path: string): Promise<"allow" | "deny" | null> {
   const access = await getLandsecAccess(req);
   if (!access || !RESTRICTED_LANDSEC_ROLES.includes(access.role)) return null;
-  return restrictedLandsecApiRule(access.role, req.method, path);
+  const rule = restrictedLandsecApiRule(access.role, req.method, path);
+  if (rule === "allow" || access.role !== "joint_agent") return rule;
+  // A property's page at one of its own schemes is the same for a joint agent
+  // as for any Landsec login (Woody, 2026-11-14: "Everything is the same"):
+  // null hands the request to the ordinary client checks. Anywhere else, and
+  // whenever the property cannot be worked out, it stays refused.
+  const ref = jointAgentPropertyRef(path, (req as any).query || {});
+  if (!ref) return "deny";
+  const propertyId = await propertyOfRef(ref).catch(() => null);
+  if (!propertyId) return "deny";
+  const ids = await schemeLimitedPropertyIdsOrNone(req, "joint-agent-gateway");
+  return ids && ids.includes(propertyId) ? null : "deny";
+}
+
+const REF_SQL: Record<Exclude<JointAgentPropertyRef["kind"], "property">, string> = {
+  "plan": `SELECT property_id FROM property_plans WHERE id::text = $1`,
+  "plan-unit": `SELECT p.property_id FROM property_plan_units u JOIN property_plans p ON p.id = u.plan_id WHERE u.id::text = $1`,
+  "tenancy-unit": `SELECT property_id FROM tenancy_schedule_units WHERE id = $1`,
+  "leasing-unit": `SELECT property_id FROM leasing_schedule_units WHERE id::text = $1`,
+  "review-item": `SELECT property_id FROM property_review_items WHERE id::text = $1`,
+};
+
+async function propertyOfRef(ref: JointAgentPropertyRef): Promise<string | null> {
+  if (ref.kind === "property") return ref.id;
+  const row = (await pool.query(REF_SQL[ref.kind], [ref.id])).rows[0];
+  return row?.property_id ? String(row.property_id) : null;
 }
 
 export interface JointAgentLeftovers { schemes: string[]; viewingsCleared: number; checklistItems: number; dealsResponsible: number; briefs: number }

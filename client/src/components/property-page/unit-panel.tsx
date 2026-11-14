@@ -214,8 +214,8 @@ function DealLine({ deal, link, withStage }: { deal: PropertyUnitDeal; link: boo
   );
 }
 
-function LeaseBlock({ unit, schedule, card, onOpenSchedule, readOnly = false }: {
-  unit: PropertyUnit; schedule: Schedule; card: boolean; onOpenSchedule?: (scheduleRowId: string) => void; readOnly?: boolean;
+function LeaseBlock({ unit, schedule, card, onOpenSchedule }: {
+  unit: PropertyUnit; schedule: Schedule; card: boolean; onOpenSchedule?: (scheduleRowId: string) => void;
 }) {
   const day = (value: string) => <span className={figure}>{shortDate(value, true)}</span>;
   const sum = (value: number) => <span className={figure}>{money(value)}</span>;
@@ -255,7 +255,7 @@ function LeaseBlock({ unit, schedule, card, onOpenSchedule, readOnly = false }: 
       {rows.length > 0 ? <Facts rows={rows} /> : <p className="text-sm text-muted-foreground">No lease details recorded.</p>}
       {rowId && onOpenSchedule && (
         <Button type="button" variant="outline" size="sm" onClick={() => onOpenSchedule(rowId)} data-testid="property-unit-open-schedule">
-          {readOnly ? "Open on the tenancy schedule" : "Edit on the tenancy schedule"}
+          Edit on the tenancy schedule
         </Button>
       )}
     </Block>
@@ -297,16 +297,21 @@ function LettingBlock({ propertyId, unit, detail, viewer, card }: {
 
   const landsecViewer = viewer.landsecView || viewer.restricted;
   const unitPageHref = landsecViewer && unit.scheduleRowId ? `/landsec/unit/${unit.scheduleRowId}` : null;
-  // The link other screens use to open one tracker unit (the viewings calendar, the brands that fit a vacant unit).
-  const trackerHref = !landsecViewer && viewer.staff && unit.trackerId
-    ? `/available?unitId=${encodeURIComponent(unit.trackerId)}&propertyId=${encodeURIComponent(propertyId)}`
+  // The link other screens use to open one tracker unit, on the login's own
+  // Letting Tracker: BGP's, a Landsec login's (/deals/letting, the same page)
+  // or a joint agent's own (/landsec/tracker).
+  const trackerBase = viewer.restricted ? null : viewer.staff && !viewer.landsecView ? "/available" : "/deals/letting";
+  const trackerHref = unit.trackerId
+    ? viewer.restricted
+      ? `/landsec/tracker?unit=${encodeURIComponent(unit.trackerId)}`
+      : `${trackerBase}?unitId=${encodeURIComponent(unit.trackerId)}&propertyId=${encodeURIComponent(propertyId)}`
     : null;
-  // Letting work started from the unit (BGP staff outside the Landsec view;
-  // the Landsec unit page has its own): the tracker's own Add viewing and
-  // Add offer forms open on this unit, the brief opens here, and a vacant
-  // unit with no letting starts one through Add brief.
-  const actions = !landsecViewer && viewer.staff;
-  const actionHref = (form: "viewing" | "offer") => `${trackerHref}&unit=${encodeURIComponent(unit.trackerId!)}&${form}=1`;
+  // Letting work started from the unit, for everyone (Woody, 2026-11-14:
+  // "Everything is the same"): the tracker's own Add viewing and Add offer
+  // forms open on this unit, the brief opens here, and a vacant unit with no
+  // letting starts one through Add brief.
+  const actions = true;
+  const actionHref = (form: "viewing" | "offer") => viewer.restricted ? trackerHref! : `${trackerHref}&unit=${encodeURIComponent(unit.trackerId!)}&${form}=1`;
   const canStartBrief = actions && !tracker && unit.flags.vacantNoLetting && !!unit.scheduleRowId;
   const refreshUnits = () => { void queryClient.invalidateQueries({ queryKey: propertyUnitsKey(propertyId) }); };
 
@@ -562,7 +567,7 @@ export function PropertyUnitPanel({ propertyId, propertyName, unit, plans, viewe
         </div>
         {tenant.name && (
           <p className="break-words text-sm font-medium" data-testid="property-unit-tenant">
-            {tenant.companyId && viewer.staff
+            {tenant.companyId && !viewer.restricted
               ? <Link href={`/companies/${tenant.companyId}`} className="text-primary hover:underline" data-testid="property-unit-tenant-link">{tenant.name}</Link>
               : tenant.name}
           </p>
@@ -580,10 +585,9 @@ export function PropertyUnitPanel({ propertyId, propertyName, unit, plans, viewe
         <KeyFigures unit={unit} wide={!side} />
         {data ? (
           <div className={blocks}>
-            {data.schedule && <LeaseBlock unit={unit} schedule={data.schedule} card={card} onOpenSchedule={onOpenSchedule} readOnly={viewer.restricted} />}
+            {data.schedule && <LeaseBlock unit={unit} schedule={data.schedule} card={card} onOpenSchedule={onOpenSchedule} />}
             <LettingBlock propertyId={propertyId} unit={unit} detail={data} viewer={viewer} card={card} />
-            {/* The people are BGP's contacts: not for a joint agent. */}
-            {!viewer.restricted && <UnitPeopleBlock propertyId={propertyId} propertyName={propertyName} unit={unit} card={card} />}
+            <UnitPeopleBlock propertyId={propertyId} propertyName={propertyName} unit={unit} card={card} />
             {otherDeals.length > 0 && (
               <Block title="Other deals on this unit" card={card}>
                 <ul className="space-y-2">

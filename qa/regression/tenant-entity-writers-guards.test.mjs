@@ -68,7 +68,7 @@ test('the review resolve sets a schedule row\'s brand and names through the door
   };
   let handler;
   const router = { post(_url, ...handlers) { handler = handlers.at(-1); } };
-  const bindings = { router, requireAuth: null, pool: { connect: async () => db }, staffOnly: async () => true, actorName: async () => 'Woody',
+  const bindings = { router, requireAuth: null, pool: { connect: async () => db }, staffOnly: async () => true, canUseProperty: async () => true, isClientCaller: async () => false, actorName: async () => 'Woody',
     setTenancyTenant: async (_db, id, input, actor) => { doors.push({ id, input, actor }); return { row: {}, notes: [] }; } };
   evaluate([constant(file, 'TENANT_DOOR_FIELDS'), constant(file, 'LEASING_FIELDS'), 'const TENANCY_FIELDS = ["trading_name", "tenant_name", "passing_rent_pa"];',
     constant(file, 'TABLES'), fn(file, 'validOptions'), route].join('\n'), bindings);

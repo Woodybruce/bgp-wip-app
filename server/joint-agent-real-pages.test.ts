@@ -7,9 +7,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { withoutJointAgentFields, JOINT_AGENT_HIDDEN_PROPERTY_FIELDS, JOINT_AGENT_HIDDEN_DEAL_FIELDS } from "../shared/landsec";
 
-test("BGP's own fields are left off a property, in either spelling", () => {
-  const row = { id: "p1", name: "Bluewater", notes: "BGP note", bgpCommentary: "ours", bgp_commentary_at: "x", bgpContactUserIds: ["u"], sharepointFolderUrl: "s", proprietorKycData: {}, address: "Kent" };
-  assert.deepEqual(withoutJointAgentFields(row, JOINT_AGENT_HIDDEN_PROPERTY_FIELDS), { id: "p1", name: "Bluewater", address: "Kent" });
+// Since 14 November 2026 a property reads the same for a joint agent as for
+// any Landsec login (Woody: "Everything is the same"): only the compliance
+// record and BGP's billing and system links are left off.
+test("the compliance record and BGP's billing links are left off a property, in either spelling", () => {
+  const row = { id: "p1", name: "Bluewater", notes: "a note", bgpCommentary: "ours", proprietorKycData: {}, proprietor_kyc_status: "x", billingEntityId: "b", mondayItemId: "m", address: "Kent" };
+  assert.deepEqual(withoutJointAgentFields(row, JOINT_AGENT_HIDDEN_PROPERTY_FIELDS), { id: "p1", name: "Bluewater", notes: "a note", bgpCommentary: "ours", address: "Kent" });
 });
 
 test("BGP's fee, invoicing, contacts, comments and compliance are left off a deal", () => {
