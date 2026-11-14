@@ -1869,6 +1869,22 @@ what was read, fills the form, and saves through the form's own route.
   A joint agent's forms take typed names: never a contact id or an agent
   firm id from a reading, and a brand id only for a brand already named on
   the unit.
+- **The form's own Comments or Notes box is the note** (Woody, 2026-11-14:
+  "combine that with paste a note so can actually type in the comments box
+  and it then populate the deal and keep the comments shown").
+  `FillFromNotes` in `note-fill.tsx` wraps the form's own box on every
+  letting form (staff and joint agent offer, viewing and interest forms, the
+  round's Note, Record offer, the viewing calendar's Notes for a viewing or
+  an outcome). Leaving the box with three or more new words, or pressing
+  "Fill the form from these comments", reads it through the same route and
+  applies `readingToFill` at once; the read-back (with Use per value) shows
+  under the box. The person's words are put back in the box after every fill
+  (`keepText`), so the labelled lines the forms add for values with no box
+  never land there. Words already in the box when the form opened are not
+  read by themselves, and a read that returns after the form closed fills
+  nothing. The separate "Paste a note" box stays only where there is no
+  comments box (a joint agent editing an offer someone else logged) and for
+  "Log as offer / Log as viewing", which read a stored comment.
 - **Log as offer / Log as viewing** on a target's comments (staff Letting
   Tracker) is BGP staff only, because the comments are BGP's notes. The
   server fetches the comment by target id and timestamp

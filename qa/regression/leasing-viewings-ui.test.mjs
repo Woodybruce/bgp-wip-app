@@ -607,7 +607,7 @@ test('the joint agent summary looks nothing up in the CRM and shows names withou
 });
 
 // ── "Paste a note" on the calendar (Woody, 2026-11-13). The box itself is
-// client/src/components/letting-note/note-fill.tsx, a leaf here like every
+// client/src/components/letting-note/note-fill.tsx (FillFromNotes, round the Notes box), a leaf here like every
 // other import: these tests hand its onApply a reading and check what the
 // form then holds and what Save viewing sends. Nothing is saved by a read.
 const yesterday = new Date(Date.parse(`${today}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
@@ -615,7 +615,7 @@ const tomorrow = new Date(Date.parse(`${today}T12:00:00Z`) + 86400000).toISOStri
 const reading = (kind, fields) => ({ kind, text: 'a note', fields, quotes: {}, unplaced: [], dropped: [], saidBy: null, usedAi: false });
 // Objects made inside the vm context have another realm's prototypes.
 const plain = value => JSON.parse(JSON.stringify(value));
-const noteBox = (app, tree) => descendants(tree).find(node => node.type === app.bindings.NoteFill);
+const noteBox = (app, tree) => descendants(tree).find(node => node.type === app.bindings.FillFromNotes);
 const PATCH_KEYS = ['unitId', 'companyId', 'contactId', 'agentContactId', 'ownerUserId', 'requirementId', 'viewingDate', 'viewingTime', 'status', 'outcome', 'notes', 'attendees', 'nextAction', 'followUpDate', 'confirmDetails', 'expectedUpdatedAt', 'companyName', 'contactName', 'agentContactName'];
 const everything = { brandName: 'Brand Two', brandId: 'brand-2', contactName: 'Sam Visitor', agentName: 'Alex Agent', agentCompanyName: 'Savills', agentCompanyId: 'agency-9',
   moreBrands: [{ id: 'brand-3', name: 'Brand Three' }], date: yesterday, time: '14:30', party: 'tenant', rentPa: 120000, rentFreeMonths: 6, termYears: 15, breakOption: 'Year 5',
@@ -628,7 +628,7 @@ test('the edit form and Report outcome each carry one note box, asked about the 
   let box = noteBox(app, tree);
   assert.equal(box.props.kind, 'viewing');
   assert.equal(box.props.unitId, 'unit-1');
-  assert.equal(descendants(tree).filter(node => node.type === app.bindings.NoteFill).length, 1);
+  assert.equal(descendants(tree).filter(node => node.type === app.bindings.FillFromNotes).length, 1);
   box.props.onApply(reading('viewing', everything));
   assert.equal(app.calls.length, 0, 'filling the form is not a save');
   app.byTestId(app.render(), 'viewings-form-back').props.onClick();
@@ -642,8 +642,7 @@ test('the edit form and Report outcome each carry one note box, asked about the 
   const fresh = fixture();
   fresh.button(fresh.render(), 'Add viewing').props.onClick();
   tree = fresh.render();
-  assert.equal(noteBox(fresh, tree), undefined, 'a note is read against a unit, so the box waits for one');
-  assert.ok(fresh.byTestId(tree, 'viewings-note-needs-unit'));
+  assert.ok(!noteBox(fresh, tree).props.unitId, 'a note is read against a unit, so the Notes box reads nothing until there is one');
   fresh.byTestId(tree, 'viewing-workflow-unit').props.onChange('unit-1');
   assert.equal(noteBox(fresh, fresh.render()).props.unitId, 'unit-1');
 });

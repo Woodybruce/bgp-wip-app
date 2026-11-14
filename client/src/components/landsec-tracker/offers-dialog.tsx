@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { NegotiationPanel, NegotiationSummary, type OfferNegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
-import { NoteFill } from "@/components/letting-note/note-fill";
+import { FillFromNotes, NoteFill } from "@/components/letting-note/note-fill";
 import { seededDay, type SuggestionSeed } from "@/components/letting-note/suggestions-dialog";
 import type { LettingNoteFields, LettingNoteReading } from "@shared/letting-note";
 import { isOpenOffer } from "@shared/unit-negotiation";
@@ -330,7 +330,7 @@ export function OffersDialog({ unit, startAdding, seed, onSeedSaved, onClose, on
             <p className="text-sm font-medium">{editing ? "Edit offer" : "Log an offer"}</p>
             {noteAllowed && (seedLive && seed && !editing
               ? <NoteFill key={seed.key} kind="offer" unitId={unitId} source={seed.source} initialText={seed.text} autoRead autoApply onApply={applyNote} />
-              : <NoteFill key={editing?.id || "new"} kind="offer" unitId={unitId} onApply={applyNote} />)}
+              : !ownFields ? <NoteFill key={editing?.id || "new"} kind="offer" unitId={unitId} onApply={applyNote} /> : null)}
             {noteLeft && <p className="text-xs text-muted-foreground" data-testid="ja-offer-note-left">{noteLeft}</p>}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="block min-w-0"><span className={MICRO_LABEL}>Brand</span>
@@ -372,9 +372,12 @@ export function OffersDialog({ unit, startAdding, seed, onSeedSaved, onClose, on
               <Input value={form.incentives} onChange={e => set("incentives", e.target.value)} disabled={busy} data-testid="ja-offer-incentives" />
             </label>
             {ownFields && (
-              <label className="block"><span className={MICRO_LABEL}>Comments</span>
-                <Textarea value={form.comments} onChange={e => set("comments", e.target.value)} rows={2} disabled={busy} data-testid="ja-offer-comments" />
-              </label>
+              <FillFromNotes key={editing?.id || "new"} kind="offer" unitId={unitId} disabled={!noteAllowed}
+                text={form.comments} keepText={v => set("comments", v)} onApply={applyNote}>
+                <label className="block"><span className={MICRO_LABEL}>Comments</span>
+                  <Textarea value={form.comments} onChange={e => set("comments", e.target.value)} rows={2} disabled={busy} placeholder="e.g. Offered: 15 year lease. Rent £120k pax and 9% t/o. 6 MRF" data-testid="ja-offer-comments" />
+                </label>
+              </FillFromNotes>
             )}
             {badNumber && <p className="text-xs text-destructive">The figures are numbers, for example 95000.</p>}
             {badTurnover && <p className="text-xs text-destructive">Turnover rent is a percentage, from 0 to 100.</p>}
