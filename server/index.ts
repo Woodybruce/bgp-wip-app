@@ -4945,6 +4945,9 @@ app.use("/api/branding/assets", express.static(
     // files, deal link. Every handler scope-checks the unit's property
     // against the client's company and strips BGP fee fields.
     "/api/available-units", "/api/leasing-viewings",
+    // Cann CAD on the Landsec side bar (Woody, 2026-11-14): converts a drawing
+    // the person uploads; it reads no records.
+    "/api/cad/convert-dwg",
     // Answering a property's review list (Woody, 2026-11-14: "Everything is
     // the same"): the handler checks the item's property (propertyReadBlocked).
     "/api/review-items/",

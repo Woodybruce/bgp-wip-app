@@ -83,6 +83,7 @@ import { useBrand } from "@/lib/brand-context";
 import { isEquityUser } from "@/lib/utils";
 import type { User } from "@shared/schema";
 import { LANDSEC_MENU, JOINT_AGENT_MENU, landsecMenuActive, landsecTasksPath, openTaskCount } from "@shared/landsec-menu";
+import { isRestrictedLandsecRole } from "@/components/landsec/deal-clock";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
 import { History, ClipboardCheck, QrCode, Film } from "lucide-react";
 import { dealDisplayTitle } from "@/lib/format";
@@ -528,7 +529,20 @@ export function AppSidebar() {
 
       <SidebarContent>
         {isLandsecClientNav ? (
+          <>
           <NavSection label="Landsec" items={landsecNav} storageKey="landsec" landsecMenu />
+          {/* Back on the Landsec side bar (Woody, 2026-11-14: "add back in the
+              side bar Chat BGP Image Studio Cann CAD also quick access"). A
+              joint agent's route jail does not open these pages, so its menu
+              keeps its own Chat. */}
+          {!isRestrictedLandsecRole((user as any)?.landsecRole) && (
+            <>
+              <QuickAccessSection />
+              <SidebarSeparator />
+              <NavSection label="AI Tools" items={aiNav.filter(i => i.url !== "/property-intelligence")} storageKey="landsec-ai" />
+            </>
+          )}
+          </>
         ) : (
         <>
         <NavSection label="Core" items={coreNav} storageKey="core" />
