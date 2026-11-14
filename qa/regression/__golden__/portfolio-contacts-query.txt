@@ -3,9 +3,9 @@
 ["c",null]
 --- text
 WITH props AS (SELECT p.id, p.name FROM crm_properties p
-  WHERE p.landlord_id = $1 OR EXISTS (
+  WHERE (p.landlord_id = $1 OR EXISTS (
     SELECT 1 FROM crm_company_properties cp WHERE cp.company_id = $1 AND cp.property_id = p.id
-  )),
+  ))),
     overrides AS (SELECT o.property_id, o.contact_id, o.kind FROM property_contact_overrides o JOIN props p ON p.id = o.property_id),
     pdeals AS (
       SELECT d.id, d.name, d.status, d.property_id, d.unit_id, d.tenant_id,
@@ -145,9 +145,9 @@ SELECT c.id::text AS contact_id, NULL::text AS company_id, NULL::text AS user_id
 ["c",null]
 --- text
 WITH props AS (SELECT p.id, p.name FROM crm_properties p
-  WHERE p.landlord_id = $1 OR EXISTS (
+  WHERE (p.landlord_id = $1 OR EXISTS (
     SELECT 1 FROM crm_company_properties cp WHERE cp.company_id = $1 AND cp.property_id = p.id
-  )),
+  ))),
     overrides AS (SELECT NULL::varchar AS property_id, NULL::varchar AS contact_id, NULL::text AS kind WHERE false),
     pdeals AS (
       SELECT d.id, d.name, d.status, d.property_id, d.unit_id, d.tenant_id,

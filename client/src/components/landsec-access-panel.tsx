@@ -95,10 +95,9 @@ export function LandsecAccessPanel() {
     for (const s of data?.schemes || []) (g[s.group] ||= []).push(s);
     return g;
   }, [data]);
-  // A joint agent is held to the schemes ticked (at least one). An asset
-  // manager sees what Landsec leasing sees (Woody, 2026-11-13): the schemes
-  // ticked are the ones that person answers for, and none is needed.
-  const pickSchemes = form.role === "asset_manager" || form.role === "joint_agent";
+  // Every login sees only the schemes ticked on it (Woody, 2026-11-14); a
+  // Landsec login with none ticked sees all of them, a joint agent needs one.
+  const pickSchemes = !!form.role;
   const schemeNames = (keys: string[]) => keys.map(k => data?.schemes.find(s => s.key === k)?.name || k).join(", ");
   const edit = (u: AccessUser) => { setForm({ email: u.email || "", name: u.name || "", role: u.role || "leasing_manager", schemes: u.schemes || [], firm: u.firm || "", password: "" }); setShown(null); };
 
@@ -118,8 +117,8 @@ export function LandsecAccessPanel() {
                   <p className="text-xs text-muted-foreground truncate">{u.email}</p>
                   <p className="text-xs">
                     {u.role ? LANDSEC_ROLES.find(r => r.key === u.role)?.label : "Full Landsec view (no role set — treated as a leasing manager)"}
-                    {u.role === "joint_agent" && <span className="text-muted-foreground"> · {schemeNames(u.schemes) || "no schemes"}</span>}
-                    {u.role === "asset_manager" && <span className="text-muted-foreground"> · sees all schemes, as Landsec leasing{u.schemes.length > 0 && `; answers for ${schemeNames(u.schemes)}`}</span>}
+                    {u.role === "joint_agent" && <span className="text-muted-foreground"> · sees {schemeNames(u.schemes) || "no schemes"}</span>}
+                    {u.role !== "joint_agent" && <span className="text-muted-foreground"> · sees {u.schemes.length > 0 ? schemeNames(u.schemes) : "all schemes"}</span>}
                     {u.firm && <span className="text-muted-foreground"> · {u.firm}</span>}
                   </p>
                 </div>
@@ -148,7 +147,7 @@ export function LandsecAccessPanel() {
             {pickSchemes && (
               <div className="space-y-1">
                 <p className="text-xs font-medium" data-testid="landsec-access-schemes-label">
-                  {form.role === "joint_agent" ? "Schemes on this login (at least one)" : "Schemes this person answers for (optional: does not limit what they see)"}
+                  {form.role === "joint_agent" ? "Schemes this login sees (at least one)" : "Schemes this login sees (none ticked = all schemes)"}
                 </p>
                 {Object.entries(schemesByGroup).map(([group, list]) => (
                   <div key={group} className="flex flex-wrap items-center gap-x-3 gap-y-1">

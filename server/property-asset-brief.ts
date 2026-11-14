@@ -26,6 +26,7 @@ import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { CLOSED_STATUSES, DEAL_STATUS_LABELS, TERMINAL_STATUSES, legacyToCode, statusSpellingsFor } from "@shared/deal-status";
 import { withoutPropertyName } from "@shared/property-labels";
+import { schemeLimitSql } from "./company-scope";
 
 const router = Router();
 
@@ -1650,8 +1651,8 @@ router.get("/api/company-portfolio/:companyId/tasks", requireAuth, async (req: R
     const scope = await resolveCompanyScope(req as any);
     if (scope && scope !== cid) return res.status(403).json({ error: "Not available for client accounts" });
 
-    const PROPS = `SELECT id FROM crm_properties WHERE landlord_id = $1
-       UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`;
+    const PROPS = `SELECT s.id FROM (SELECT id FROM crm_properties WHERE landlord_id = $1
+       UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1) s WHERE true${schemeLimitSql("s.id")}`;
     const r = await pool.query(
       `SELECT t.id, t.title, t.status, t.priority, t.category, t.due_date, t.completed_at, t.created_at,
               u.name AS assignee_name, p.name AS property_name, d.name AS deal_name

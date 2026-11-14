@@ -24,6 +24,7 @@ import { saveFile, getFile } from "./file-storage";
 import { getBrandIdentity, normalizeBrandDomain } from "./brand-identity";
 import { brandImageIdentityTag, publishableBrandImage } from "./brand-publishing";
 import { planLogoSources, isCheckedLogoDownload, LOGO_MAX_BYTES } from "./brand-logo-sources";
+import { schemeLimitSql, inSchemeLimit } from "./company-scope";
 
 // --- Multi-provider image generation helpers ---
 
@@ -620,8 +621,9 @@ async function requireAdmin(req: Request, res: Response, next: Function) {
 // callers (client logins + staff in a client team view) are jailed to
 // imagery and collections on their own properties or company. Hard delete,
 // dedupe, sync and the firm-wide sweeps stay admin-only.
-const SCOPED_PROPS_SQL = `SELECT id FROM crm_properties WHERE landlord_id = $1
-   UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`;
+// A Landsec login held to its schemes reads only theirs (schemeLimitSql).
+const scopedPropsSql = () => `SELECT s.id FROM (SELECT id FROM crm_properties WHERE landlord_id = $1
+   UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1) s WHERE true${schemeLimitSql("s.id")}`;
 
 async function requestScope(req: Request): Promise<string | null> {
   const { resolveCompanyScope } = await import("./company-scope");
@@ -633,7 +635,7 @@ async function imageIdsInScope(scope: string, ids: string[]): Promise<Set<string
   const r = await pool.query(
     `SELECT id FROM image_studio_images
       WHERE id = ANY($2)
-        AND (company_id = $1 OR property_id IN (${SCOPED_PROPS_SQL}))`,
+        AND (company_id = $1 OR property_id IN (${scopedPropsSql()}))`,
     [scope, ids]
   );
   return new Set(r.rows.map((x: any) => x.id));
@@ -650,7 +652,7 @@ async function collectionInScope(req: Request, collectionId: string): Promise<bo
   if (!scope) return true;
   const r = await pool.query(
     `SELECT 1 FROM image_studio_collections
-      WHERE id = $2 AND (company_id = $1 OR property_id IN (${SCOPED_PROPS_SQL}))`,
+      WHERE id = $2 AND (company_id = $1 OR property_id IN (${scopedPropsSql()}))`,
     [scope, collectionId]
   );
   return r.rows.length > 0;
@@ -1554,7 +1556,7 @@ export function registerImageStudioRoutes(app: Express) {
         const own = await pool.query(
           `SELECT id FROM crm_properties WHERE landlord_id = $1
            UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`, [isScope]);
-        const ownIds = new Set(own.rows.map((r: any) => r.id || r.property_id));
+        const ownIds = new Set(own.rows.map((r: any) => r.id || r.property_id).filter(inSchemeLimit));
         return res.json(images.filter((i: any) => (i.propertyId && ownIds.has(i.propertyId)) || i.companyId === isScope));
       }
       res.json(images);
@@ -3209,7 +3211,7 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
         ? await pool.query(`
             SELECT category, COUNT(*)::int as count
             FROM image_studio_images
-            WHERE (company_id = $1 OR property_id IN (${SCOPED_PROPS_SQL}))
+            WHERE (company_id = $1 OR property_id IN (${scopedPropsSql()}))
               AND NOT ('trashed' = ANY(COALESCE(tags, '{}')))
             GROUP BY category
             ORDER BY count DESC
@@ -3741,7 +3743,7 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
            WHERE ci.collection_id = c.id
            ORDER BY ci.added_at DESC LIMIT 1) as cover_thumbnail
         FROM image_studio_collections c
-        ${listScope ? `WHERE c.company_id = $1 OR c.property_id IN (${SCOPED_PROPS_SQL})` : ""}
+        ${listScope ? `WHERE c.company_id = $1 OR c.property_id IN (${scopedPropsSql()})` : ""}
         ORDER BY c.created_at DESC
       `, listScope ? [listScope] : []);
       res.json(result.rows);

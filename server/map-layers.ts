@@ -11,6 +11,7 @@ import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { cached, getCachedOnly } from "./utils/intel-cache";
+import { schemeLimitSql } from "./company-scope";
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 
@@ -204,7 +205,7 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
                 latitude AS lat, longitude AS lng
            FROM crm_properties
           WHERE (landlord_id = $1
-             OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+             OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("id")}
             AND latitude IS NOT NULL AND longitude IS NOT NULL
           ORDER BY name`,
         [scope]

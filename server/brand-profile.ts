@@ -24,6 +24,7 @@ import { conceptStatusForSave } from "../shared/brand-stage";
 import { clientProfileCompanyView } from "../shared/tenant-categories";
 import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
 import { registerBrandContactsCheckRoutes } from "./brand-contacts-check";
+import { schemeLimitSql } from "./company-scope";
 
 const router = Router();
 registerBrandEmailThreadRoutes(router);
@@ -570,7 +571,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // full cross-landlord pitch list is BGP BD intel. Scope the properties to
     // the client's estate when the request is client-scoped; staff see all.
     const pitchedToScope = bpScope
-      ? ` AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))`
+      ? ` AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))${schemeLimitSql("p.id")}`
       : "";
     const pitchedToQ = pool.query(
       `SELECT u.id, u.unit_name, u.target_brands, u.status, u.priority, u.updated_at,
@@ -848,7 +849,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // schemes — the brand's expiries/breaks in rival landlords' centres are
     // poaching intel, not the client's to see. Staff see all.
     const leaseEventsScope = bpScope
-      ? ` AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))`
+      ? ` AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))${schemeLimitSql("p.id")}`
       : "";
     const leaseEventsQ = pool.query(
       `SELECT u.id, u.unit_name, u.tenant_name, u.lease_expiry, u.lease_break, u.rent_review,

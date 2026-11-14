@@ -1,6 +1,7 @@
 import type { PortfolioContactEntry, PortfolioContactRelationship, PortfolioContactsResponse, PortfolioRecordRef } from "@shared/portfolio-contacts";
 import { CLOSED_STATUSES, statusSpellingsFor, type DealStatusCode } from "@shared/deal-status";
 import { TRACKER_LIVE_STATUSES } from "@shared/letting-rules";
+import { schemeLimitSql } from "./scheme-limit";
 
 const sqlList = (values: readonly string[]) => values.map((v) => `'${v}'`).join(", ");
 // Tracker units with a party worth listing: NEG through EXC.
@@ -24,10 +25,11 @@ export interface PortfolioContactEvidenceRow {
   relationship: PortfolioContactRelationship;
 }
 
-const PROPERTIES = `SELECT p.id, p.name FROM crm_properties p
-  WHERE p.landlord_id = $1 OR EXISTS (
+// A Landsec login held to its schemes reads only theirs (schemeLimitSql).
+const PROPERTIES = () => `SELECT p.id, p.name FROM crm_properties p
+  WHERE (p.landlord_id = $1 OR EXISTS (
     SELECT 1 FROM crm_company_properties cp WHERE cp.company_id = $1 AND cp.property_id = p.id
-  )`;
+  ))${schemeLimitSql("p.id")}`;
 
 // These are SQL expressions chosen below, never request-supplied identifiers.
 export function evidence(select: Record<string, string>, from: string): string {
@@ -126,7 +128,7 @@ export function buildPortfolioContactsQuery(companyId: string, scopeCompanyId: s
   ];
   return {
     values: [companyId, scopeCompanyId],
-    text: `WITH props AS (${PROPERTIES}),
+    text: `WITH props AS (${PROPERTIES()}),
     overrides AS (${hasOverrides
       ? "SELECT o.property_id, o.contact_id, o.kind FROM property_contact_overrides o JOIN props p ON p.id = o.property_id"
       : "SELECT NULL::varchar AS property_id, NULL::varchar AS contact_id, NULL::text AS kind WHERE false"}),
@@ -216,7 +218,7 @@ export function mapPortfolioContactRows(rows: PortfolioContactEvidenceRow[], pro
 
 export async function loadPortfolioContacts(client: QueryClient, companyId: string, scopeCompanyId: string | null, brandSliceSql: string): Promise<PortfolioContactsResponse> {
   const [properties, table] = await Promise.all([
-    client.query(PROPERTIES, [companyId]),
+    client.query(PROPERTIES(), [companyId]),
     client.query("SELECT to_regclass('property_contact_overrides') IS NOT NULL AS present"),
   ]);
   const query = buildPortfolioContactsQuery(companyId, scopeCompanyId, brandSliceSql, table.rows[0]?.present === true);

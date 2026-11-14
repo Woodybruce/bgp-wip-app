@@ -14,7 +14,7 @@ import { pool } from "./db";
 import { requireAuth, requireAdmin, hashPassword } from "./auth";
 import { resolveCompanyScope, isClientRequestUser, clearCompanyScopeCache } from "./company-scope";
 import { landsecCompanyId, isLandsecCompany, resolveLandsecPortfolio, LANDSEC_SCHEMES } from "./landsec-schemes";
-import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, jointAgentPropertyRef, type JointAgentPropertyRef, isKnownLandsecRole, UNKNOWN_LANDSEC_ROLE_ERROR, type LandsecRole } from "@shared/landsec";
+import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, landsecLoginSchemes, restrictedLandsecApiRule, jointAgentPropertyRef, type JointAgentPropertyRef, isKnownLandsecRole, UNKNOWN_LANDSEC_ROLE_ERROR, type LandsecRole } from "@shared/landsec";
 
 export interface LandsecAccessRow { role: LandsecRole; schemes: string[] | null; firm: string | null }
 
@@ -70,8 +70,10 @@ export async function landsecViewer(req: Request): Promise<LandsecViewer | null>
   if (!isClient) return { companyId, isClient, role: "bgp", schemes: null, firm: null };
   const access = await getLandsecAccess(req);
   if (!access) return { companyId, isClient, role: "landsec", schemes: null, firm: null };
-  const restricted = RESTRICTED_LANDSEC_ROLES.includes(access.role);
-  const schemes = restricted ? new Set((access.schemes || []).filter(k => LANDSEC_SCHEMES.some(s => s.key === k))) : null;
+  // The schemes ticked on the login limit every Landsec role (Woody,
+  // 2026-11-14); none ticked = all, except for a joint agent.
+  const ticked = landsecLoginSchemes(access);
+  const schemes = ticked ? new Set(ticked.filter(k => LANDSEC_SCHEMES.some(s => s.key === k))) : null;
   return { companyId, isClient, role: access.role, schemes, firm: access.firm };
 }
 

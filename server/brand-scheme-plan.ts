@@ -582,7 +582,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
     if (!staff) {
       if (!viewer.clientCompanyId || a.link?.shared_with_company_id !== viewer.clientCompanyId) continue;
       if (String(a.raised_by_role || "").toLowerCase() === "client") continue;
-      if (isRestricted(viewer) && !ownSchemeProperties.has(a.link?.property_id)) continue;
+      if (viewer.schemes && !ownSchemeProperties.has(a.link?.property_id)) continue;
     }
     actions.set(a.company_id, [...(actions.get(a.company_id) || []), a]);
   }
@@ -614,7 +614,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
 
     const scheme = g.scheme;
     // Own schemes only for a joint agent; the rest are counted.
-    if (restricted && !(scheme && viewer.schemes?.has(scheme.key))) {
+    if (viewer.schemes && !(scheme && viewer.schemes.has(scheme.key))) {
       if (scheme && result.stage !== "not_proceeding") otherSchemes.set(g.companyId, (otherSchemes.get(g.companyId) || new Set<string>()).add(scheme.key));
       continue;
     }
@@ -1001,10 +1001,11 @@ export async function staffDoor(req: Request, res: Response): Promise<boolean> {
 export async function landsecPlanViewer(req: Request): Promise<PlanViewer | null> {
   const v = await landsecViewer(req);
   if (!v) return null;
-  // Only a joint agent is held to its own schemes. An asset manager is a
-  // full Landsec login (Woody, 2026-11-13).
+  // Every Landsec login is held to the schemes ticked on it, or sees all of
+  // them when none is ticked (Woody, 2026-11-14); a joint agent always has a
+  // list. Only a joint agent is the restricted kind (no brand pages).
   const kind: PlanViewerKind = v.role === "joint_agent" ? "joint_agent" : "landsec";
-  return { kind, clientCompanyId: v.companyId, schemes: kind === "landsec" ? null : v.schemes || new Set<string>() };
+  return { kind, clientCompanyId: v.companyId, schemes: kind === "landsec" ? v.schemes : v.schemes || new Set<string>() };
 }
 
 async function landsecSchemes(): Promise<{ companyId: string | null; schemes: PlanScheme[] }> {

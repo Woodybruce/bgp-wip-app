@@ -3,6 +3,7 @@ import multer from "./utils/upload";
 import { requireAuth } from "./auth";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
+import { schemeLimitSql } from "./company-scope";
 
 const router = Router();
 
@@ -94,7 +95,7 @@ router.get("/api/leasing-schedule/properties", requireAuth, async (req, res) => 
         FROM crm_properties p
         JOIN leasing_schedule_units u ON u.property_id = p.id
         LEFT JOIN crm_companies c ON p.landlord_id = c.id
-        WHERE p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+        WHERE (p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("p.id")}
         GROUP BY p.id, p.name, p.address, p.asset_class, p.bgp_engagement, p.leasing_privacy_enabled, c.name, c.id
         ORDER BY p.name`, [lsPropsScope]);
       return res.json(scoped.rows);

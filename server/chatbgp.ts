@@ -60,7 +60,7 @@ import { selectChatHistory, trimChatHistory, documentExcerpt, documentTruncation
 import { resolveAccessibleChatThread } from "./utils/chat-thread-access";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
-import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, schemeLimitSql } from "./company-scope";
 import { legacyToCode, statusSpellingsFor, DEAL_STATUS_LABELS, SYSTEM_SET_STATUSES, TERMINAL_STATUSES, isExcludedLegacyStatus, type DealStatusCode } from "@shared/deal-status";
 import { LETTING_DEAL_TYPES, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, TRACKER_LIVE_STATUSES, HISTORIC_STATUSES, isLettingType } from "@shared/letting-rules";
 
@@ -2389,10 +2389,10 @@ export async function chatCrmWriteDenial(req: Request, fnName: string, fnArgs: a
   const inPortfolioDeal = async (dealId: string) => (await pool.query(
     `SELECT 1 FROM crm_deals d WHERE d.id = $1 AND (d.landlord_id = $2 OR d.property_id IN (
        SELECT p.id FROM crm_properties p WHERE p.landlord_id = $2 OR p.id IN (
-         SELECT property_id FROM crm_company_properties WHERE company_id = $2)))`, [dealId, scope])).rows.length > 0;
+         SELECT property_id FROM crm_company_properties WHERE company_id = $2))${schemeLimitSql("d.property_id")})`, [dealId, scope])).rows.length > 0;
   const inPortfolioProperty = async (propertyId: string) => (await pool.query(
     `SELECT 1 FROM crm_properties p WHERE p.id = $1 AND (p.landlord_id = $2 OR p.id IN (
-       SELECT property_id FROM crm_company_properties WHERE company_id = $2))`, [propertyId, scope])).rows.length > 0;
+       SELECT property_id FROM crm_company_properties WHERE company_id = $2))${schemeLimitSql("p.id")}`, [propertyId, scope])).rows.length > 0;
   if (fnName === "update_deal") {
     delete fnArgs.fee; delete fnArgs.feePercentage; // clients never see or set BGP fees
     if (!fnArgs.id || !(await inPortfolioDeal(String(fnArgs.id)))) return DENY;
@@ -2460,8 +2460,8 @@ export async function getClientCrmContext(scopeCompanyId: string): Promise<strin
     const propsQ = await pool.query(
       `SELECT p.id, p.name, p.address::text AS address
        FROM crm_properties p
-       WHERE p.landlord_id = $1
-          OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+       WHERE (p.landlord_id = $1
+          OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("p.id")}
        ORDER BY p.name LIMIT 50`,
       [scopeCompanyId]
     );
@@ -2531,7 +2531,7 @@ export async function clientScopedCrmSearch(scopeCompanyId: string, rawQuery: st
   const like = (col: string, startIdx: number) => patterns.map((_, i) => `${col} ILIKE $${startIdx + i}`).join(" OR ");
 
   const results: any = {};
-  const scopedPropsSql = `SELECT p.id FROM crm_properties p WHERE p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)`;
+  const scopedPropsSql = `SELECT p.id FROM crm_properties p WHERE (p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("p.id")}`;
 
   const props = await pool.query(
     `SELECT p.id, p.name, p.status, p.address::text AS address FROM crm_properties p
@@ -2592,7 +2592,7 @@ export async function clientScopedCrmSearch(scopeCompanyId: string, rawQuery: st
         OR c.landlord_company_id = $1
         OR EXISTS (
           SELECT 1 FROM crm_properties sp
-          WHERE (sp.landlord_id = $1 OR sp.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+          WHERE (sp.landlord_id = $1 OR sp.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("sp.id")}
             AND length(split_part(sp.name, ',', 1)) >= 5
             AND (c.name || ' ' || COALESCE(c.address::text, '')) ILIKE '%' || split_part(sp.name, ',', 1) || '%'
         )
@@ -10697,7 +10697,7 @@ export async function executeCrmToolRaw(
       // fails closed for unresolvable client teams.
       const lsScope = await resolveCompanyScope(req).catch(() => null);
       if (lsScope) {
-        conditions.push(`(p.landlord_id = $${idx} OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${idx}))`);
+        conditions.push(`(p.landlord_id = $${idx} OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${idx}))${schemeLimitSql("p.id")}`);
         params.push(lsScope);
         idx++;
       }

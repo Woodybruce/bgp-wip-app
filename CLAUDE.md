@@ -387,6 +387,37 @@ login to).
   again on the same email, so a login given the wrong role would have no
   way back. Whether to refuse it outright is Woody's call.
 
+**Every login sees only its own schemes (Woody, 2026-11-14)**: "we need to
+have log in for people from landsec with access only to their properties and
+the same for joint agents. The only difference is the lack of access to the
+brands page"; asked, "list or ALL" and "whole schemes". This SUPERSEDES "an
+asset manager / leasing manager sees all 14 schemes" wherever it appears
+below. The schemes ticked on a login limit what it sees; a Landsec login
+with none ticked (or no role row) sees all; a joint agent always has a list
+(`landsecLoginSchemes` in `shared/landsec.ts`, read by `landsecViewer`). On
+14 November no live Landsec login had schemes ticked, so nobody's view
+changed until an admin ticks them (logins panel: "Schemes this login sees").
+Mechanism: an `/api` middleware in `server/index.ts`, ahead of the client
+gateway, runs the request inside `runWithSchemeLimit` (`server/scheme-limit.ts`,
+AsyncLocalStorage) with the login's scheme property ids (a failed read = none).
+`isPropertyInScope` and `isDealInScope` answer no outside it (that covers
+`checkPropertyAccess`, `clientBlockedForProperty` and ~110 call sites), and
+every hand-written "client's properties" query adds `schemeLimitSql(column)`
+or filters with `inSchemeLimit` (tracker list and aggregates, unit search,
+search, map pins, company portfolio and its tasks, leasing schedule list,
+CRM property link maps, comps, contacts' properties, brand suggestions,
+client team board, contacts board, Image Studio, calendar insights, the
+covenant gateway, ChatBGP's client guards, the brand page's pitched-to and
+lease events). A new client query over the company's properties must do the
+same. The whole-company activity feed is empty for a limited login (its
+property feeds work), and the calendar shows it meetings at its schemes'
+properties or ones it is invited to. Test: `qa/regression/scheme-limit.test.mjs`.
+Not yet done (Woody parked it, then asked for it on 14 November): opening the
+full app to a joint agent (its restricted gateway, menus and chat are
+unchanged), and the user list (`getClientVisibleUserIds`), which still lists
+people on all the company's properties. `/api/dashboard/my-portfolio` is
+refused to client logins (it matched deals by team, with fees).
+
 **The only difference between the Landsec roles** (Woody, 2026-11-13: "its
 just joint agents don't see our brand pages thats it"): a joint agent does
 not see BGP's brand pages. A Landsec login with no role, a leasing manager

@@ -5029,6 +5029,23 @@ app.use("/api/branding/assets", express.static(
     }
     next();
   });
+  // A Landsec login held to the schemes ticked on it (Woody, 2026-11-14:
+  // "access only to their properties"): the rest of the request runs with
+  // those schemes' property ids, so isPropertyInScope and isDealInScope (and
+  // everything built on them) answer no outside them. A failed read of the
+  // schemes limits the request to nothing.
+  app.use("/api", async (req: any, _res, next) => {
+    let ids: string[] | null = null;
+    try {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (!(await isClientRequestUser(req))) return next();
+      const { schemeLimitedPropertyIds } = await import("./landsec-access");
+      try { ids = await schemeLimitedPropertyIds(req); } catch { ids = []; }
+    } catch { return next(); }
+    if (!ids) return next();
+    const { runWithSchemeLimit } = await import("./company-scope");
+    return runWithSchemeLimit(new Set(ids), () => next());
+  });
   app.use("/api", async (req: any, res, next) => {
     // NB: inside app.use("/api", …) the mount path is stripped from req.path,
     // so the mount is put back (routedApiPath). This is the path the router
@@ -5203,6 +5220,7 @@ app.use("/api/branding/assets", express.static(
             `SELECT 1 FROM tenancy_schedule_units t
                JOIN crm_trading_entities te ON te.id = t.tenant_entity_id
               WHERE te.companies_house_number = $1
+                ${(await import("./company-scope")).schemeLimitSql("t.property_id")}
                 AND (EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = t.property_id AND cp.company_id = $2)
                      OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.id = t.property_id AND p.landlord_id = $2))
               LIMIT 1`,

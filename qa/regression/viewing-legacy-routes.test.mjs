@@ -26,7 +26,7 @@ function fixture(path, { client = true, propertyId = 'property-in-scope', rows =
     clientUnitScopeSql: async () => client ? 'portfolio-id' : null,
     assertUnitInClientScope: async (_req, property) => client && property !== 'property-in-scope' ? 'out-of-scope' : null,
     storage: { getAvailableUnit: async () => ({ id: 'unit-1', propertyId }) },
-    sql, and, eq, inArray, isNull, serializeViewingForScope,
+    sql, and, eq, inArray, isNull, serializeViewingForScope, schemeLimitSql: () => '',
     viewingCallerIsJointAgent: async () => false,
     db: {
       execute: async query => { record(query); return { rows }; },

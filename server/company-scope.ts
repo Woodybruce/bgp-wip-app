@@ -1,5 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { pool } from "./db";
+import { currentSchemeLimit } from "./scheme-limit";
+export { runWithSchemeLimit, currentSchemeLimit, inSchemeLimit, schemeLimitSql } from "./scheme-limit";
 import { CLIENT_CRM_CATEGORIES, isClientCrmCategory } from "@shared/tenant-categories";
 import { BGP_TEAM_NAMES, RETIRED_TEAM_NAMES } from "@shared/teams";
 
@@ -262,6 +264,8 @@ export async function clientBlockedForProperty(req: Request, propertyId: string)
 }
 
 export async function isPropertyInScope(scopeCompanyId: string, propertyId: string): Promise<boolean> {
+  const limit = currentSchemeLimit();
+  if (limit && !limit.has(propertyId)) return false;
   const result = await pool.query(
     `SELECT 1 FROM crm_company_properties WHERE company_id = $1 AND property_id = $2
      UNION ALL
@@ -273,6 +277,12 @@ export async function isPropertyInScope(scopeCompanyId: string, propertyId: stri
 }
 
 export async function isDealInScope(scopeCompanyId: string, dealId: string): Promise<boolean> {
+  // Held to schemes: only a deal on one of them, whoever its parties are.
+  const limit = currentSchemeLimit();
+  if (limit) {
+    const own = await pool.query(`SELECT property_id FROM crm_deals WHERE id = $1`, [dealId]);
+    if (!own.rows[0]?.property_id || !limit.has(own.rows[0].property_id)) return false;
+  }
   const result = await pool.query(
     `SELECT 1 FROM crm_deals WHERE id = $1 AND (landlord_id = $2 OR tenant_id = $2 OR vendor_id = $2 OR purchaser_id = $2) LIMIT 1`,
     [dealId, scopeCompanyId]

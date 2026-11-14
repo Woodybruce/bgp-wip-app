@@ -132,10 +132,12 @@ test('the Landsec door: always a client view, cut by role; another client gets n
   assert.deepEqual([outside.status, outside.calls], [403, [['on its list?', 'outside', LANDSEC]]]);
   assert.equal((await app.call('GET', '/api/landsec/brand-crm/plan/gone', FULL_LANDSEC)).status, 404);
 
-  // An asset manager is that same viewer even if a scheme list were handed to the door: only a joint agent is held to one.
+  // Every Landsec login is held to the schemes ticked on it (Woody, 2026-11-14: "access only to their
+  // properties"); it stays the Landsec kind, with brand pages, and only its schemes are read.
   const amWithList = { client: true, scope: LANDSEC, landsec: viewer('asset_manager', new Set(['bluewater'])) };
-  assert.deepEqual((await app.call('GET', '/api/landsec/brand-crm/plan', amWithList)).calls, [['grid', full, `SLICE OF ${LANDSEC}`]]);
-  assert.deepEqual((await app.call('GET', '/api/landsec/diary', amWithList)).calls[0][1], { ...full, userId: 'u1' });
+  const limited = { kind: 'landsec', clientCompanyId: LANDSEC, schemes: ['bluewater'] };
+  assert.deepEqual((await app.call('GET', '/api/landsec/brand-crm/plan', amWithList)).calls, [['grid', limited, `SLICE OF ${LANDSEC}`]]);
+  assert.deepEqual((await app.call('GET', '/api/landsec/diary', amWithList)).calls[0][1], { ...limited, userId: 'u1' });
   assert.equal((await app.call('GET', '/api/landsec/brand-crm/plan/outside', ASSET_MANAGER)).status, 403);
 
   // A joint agent holds no brand ids: its lines come with the grid, and the per-brand route is shut before the brand is looked up.

@@ -198,8 +198,8 @@ export interface LandsecCaseUnit { id: string; schemeKey: string; schemeName?: s
 
 // ── Logins by role and scheme (item 6) ──────────────────────────────────
 export const LANDSEC_ROLES = [
-  { key: "leasing_manager", label: "Landsec leasing manager", scope: "all schemes" },
-  { key: "asset_manager", label: "Landsec asset manager", scope: "all schemes, as a leasing manager; the schemes ticked are the ones this person answers for" },
+  { key: "leasing_manager", label: "Landsec leasing manager", scope: "the schemes ticked on the login, or all of them when none is ticked" },
+  { key: "asset_manager", label: "Landsec asset manager", scope: "the schemes ticked on the login, or all of them when none is ticked" },
   { key: "joint_agent", label: "Joint agent", scope: "full control of the letting work on their schemes only; no brand pages, BGP contacts, email history or fees" },
 ] as const;
 export type LandsecRole = (typeof LANDSEC_ROLES)[number]["key"];
@@ -209,6 +209,19 @@ export type LandsecRole = (typeof LANDSEC_ROLES)[number]["key"];
 // Landsec login, and the schemes on it only say which ones the person
 // answers for.
 export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = ["joint_agent"];
+// What a login sees (Woody, 2026-11-14: "log in for people from landsec with
+// access only to their properties and the same for joint agents. The only
+// difference is the lack of access to the brands page"; asked, "list or ALL"
+// and "whole schemes"). The schemes ticked on a login limit it; a Landsec
+// login with none ticked, or with no role row, sees all of them. A joint
+// agent always has a list, and a joint agent with none sees nothing. Null =
+// every scheme. The caller filters the keys to real schemes.
+export function landsecLoginSchemes(access: { role: string; schemes: string[] | null } | null | undefined): string[] | null {
+  if (!access) return null;
+  const list = (access.schemes || []).map(String).filter(Boolean);
+  if (access.role === "joint_agent") return list;
+  return list.length ? list : null;
+}
 // A role row must hold one of the three roles, spelt exactly. The table has
 // no check on the column, so a row written by hand with any other value
 // ("joint-agent", "JOINT_AGENT") is refused wherever the role is read: it is

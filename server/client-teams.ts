@@ -1,6 +1,7 @@
 import { BGP_TEAM_NAMES } from "@shared/teams";
 import { Router, Request } from "express";
 import { requireAuth } from "./auth";
+import { schemeLimitSql } from "./company-scope";
 
 const router = Router();
 
@@ -83,11 +84,11 @@ router.get("/api/client-teams/:clientCompanyId", requireAuth, async (req, res) =
       ),
       scoped_props AS (
         SELECT id, name FROM crm_properties
-         WHERE landlord_id IN (SELECT id FROM board_companies)
+         WHERE landlord_id IN (SELECT id FROM board_companies)${schemeLimitSql("id")}
         UNION
         SELECT p.id, p.name FROM crm_company_properties cp
           JOIN crm_properties p ON p.id = cp.property_id
-         WHERE cp.company_id IN (SELECT id FROM board_companies)
+         WHERE cp.company_id IN (SELECT id FROM board_companies)${schemeLimitSql("p.id")}
       ),
       agent_props AS (
         SELECT pa.user_id, pa.role, s.id AS property_id, s.name AS property_name
@@ -361,8 +362,8 @@ router.get("/api/client-teams/:clientCompanyId/member/:userId/properties", requi
                 WHERE pa.property_id = p.id AND pa.user_id = $2
              ) AS assigned
       FROM crm_properties p
-      WHERE p.landlord_id = $1
-         OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+      WHERE (p.landlord_id = $1
+         OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("p.id")}
       ORDER BY p.name
     `, [clientCompanyId, userId]);
     res.json(rows.rows);
@@ -394,7 +395,7 @@ router.post("/api/client-teams/:clientCompanyId/member/:userId/properties", requ
         SELECT $1, $2 WHERE EXISTS (
           SELECT 1 FROM crm_properties p WHERE p.id = $1
              AND (p.landlord_id = $3
-                  OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $3))
+                  OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $3))${schemeLimitSql("p.id")}
         )
       `, [pid, userId, clientCompanyId]);
     }
@@ -405,7 +406,7 @@ router.post("/api/client-teams/:clientCompanyId/member/:userId/properties", requ
          WHERE pa.property_id = $1 AND pa.user_id = $2
            AND p.id = pa.property_id
            AND (p.landlord_id = $3
-                OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $3))
+                OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $3))${schemeLimitSql("p.id")}
       `, [pid, userId, clientCompanyId]);
     }
     res.json({ ok: true, added: add.length, removed: remove.length });

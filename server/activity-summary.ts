@@ -18,7 +18,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { teamEventPrivacySql } from "./team-event-privacy";
-import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, currentSchemeLimit } from "./company-scope";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 
 const router = Router();
@@ -79,6 +79,10 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
         return res.status(403).json({ message: "Access denied" });
       }
       if (!propertyId && !companyId) companyId = scopeCompanyId;
+      // A Landsec login held to its schemes (Woody, 2026-11-14) reads the
+      // feed of a property at one of them. The whole-company feed holds
+      // emails and meetings about every scheme, so it gets nothing.
+      if (currentSchemeLimit() && !propertyId) return res.json({ upcoming: [], recent: [] });
     }
 
     // ── Upcoming: future diary events in scope, deduped on cleaned title ──

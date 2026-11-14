@@ -10,7 +10,7 @@ import { requireAuth } from "./auth";
 import { db, pool } from "./db";
 import { saveFile, getFile, deleteFile as deleteStoredFile } from "./file-storage";
 import { enrichPropertyInBackground } from "./property-enrich";
-import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser, isClientVisibleBrand, getClientExtraBrandIds, clientBrandSliceSql, NO_ACCESS_SCOPE } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser, isClientVisibleBrand, getClientExtraBrandIds, clientBrandSliceSql, NO_ACCESS_SCOPE, schemeLimitSql, inSchemeLimit } from "./company-scope";
 import { buildClientAgentDirectoryQuery, mapClientAgentDirectoryRows, type ClientAgentDirectoryRow } from "./client-agent-directory";
 import { loadClientAgentsOverview } from "./client-agents-overview";
 import { loadClientOwnContacts } from "./client-own-contacts";
@@ -3360,7 +3360,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const inScope = await pool.query(
           `SELECT id FROM crm_properties WHERE landlord_id = $1
            UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`, [pdlScope]);
-        const ids = new Set(inScope.rows.map((r: any) => r.id || r.property_id));
+        const ids = new Set(inScope.rows.map((r: any) => r.id || r.property_id).filter(inSchemeLimit));
         return res.json(deals.filter((d: any) => ids.has(d.propertyId)));
       }
       res.json(deals);
@@ -3375,7 +3375,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const inScope = await pool.query(
           `SELECT id FROM crm_properties WHERE landlord_id = $1
            UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`, [paScope]);
-        const ids = new Set(inScope.rows.map((r: any) => r.id || r.property_id));
+        const ids = new Set(inScope.rows.map((r: any) => r.id || r.property_id).filter(inSchemeLimit));
         return res.json(links.filter((l: any) => ids.has(l.propertyId)));
       }
       res.json(links);
@@ -3471,7 +3471,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const inScope = await pool.query(
           `SELECT id FROM crm_properties WHERE landlord_id = $1
            UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`, [ptScope]);
-        const ids = new Set(inScope.rows.map((r: any) => r.id || r.property_id));
+        const ids = new Set(inScope.rows.map((r: any) => r.id || r.property_id).filter(inSchemeLimit));
         return res.json(links.filter((l: any) => ids.has(l.propertyId)));
       }
       res.json(links);
@@ -3648,7 +3648,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
            UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`,
           [scopeCompanyId]
         );
-        const scopedPropertyIds = new Set(scopedPropsResult.rows.map((r: any) => r.id));
+        const scopedPropertyIds = new Set(scopedPropsResult.rows.map((r: any) => r.id).filter(inSchemeLimit));
         const scopeFilter = (d: any) =>
           d.landlordId === scopeCompanyId ||
           d.tenantId === scopeCompanyId ||
@@ -5584,7 +5584,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
            JOIN crm_properties p ON p.id = au.property_id
           WHERE au.marketing_status IN ('AVA','NEG')
             AND ($1::text IS NULL OR p.landlord_id = $1
-                 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))`,
+                 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("p.id")}`,
         [scopeCompanyId]
       );
       // A client login gets fits only for the requirements its list shows
@@ -6118,7 +6118,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
         `WITH scoped_props AS (
            SELECT p.id, p.name FROM crm_properties p
             WHERE $1::varchar IS NOT NULL
-              AND (p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+              AND (p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("p.id")}
          )
          SELECT c.id, c.name, c.company_type AS "companyType", c.domain,
                 c.instagram_handle AS "instagramHandle",
@@ -6219,8 +6219,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
       if (compsScope) {
         const propRows = await pool.query(
           `SELECT id, name FROM crm_properties
-            WHERE landlord_id = $1
-               OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)`,
+            WHERE (landlord_id = $1
+               OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("id")}`,
           [compsScope]
         );
         const propIds = new Set(propRows.rows.map((r: any) => r.id));
@@ -6472,7 +6472,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const propScopeId = await resolveCompanyScope(req);
       if (propScopeId) {
         const owned = await pool.query(
-          `SELECT id FROM crm_properties p WHERE p.id = ANY($1::varchar[]) AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))`,
+          `SELECT id FROM crm_properties p WHERE p.id = ANY($1::varchar[]) AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))${schemeLimitSql("p.id")}`,
           [propertyIds, propScopeId]);
         propertyIds = owned.rows.map((r: any) => r.id);
         if (propertyIds.length === 0) return res.json([]);
@@ -9835,6 +9835,10 @@ Rules:
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const currentUser = await storage.getUser(userId);
       if (!currentUser) return res.status(401).json({ error: "User not found" });
+      // BGP's own dashboard widget. It matches deals by agent name and team
+      // and carries the fee, so a client login (whose team can be "Landsec")
+      // and staff viewing as a client get nothing from it (review, 2026-11-14).
+      if (await isClientRequestUser(req) || await resolveCompanyScope(req)) return res.json([]);
 
       const userName = currentUser.name || "";
       const userTeam = currentUser.team || "";

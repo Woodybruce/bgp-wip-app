@@ -17,6 +17,7 @@ async function gateway({ records, visible = [], scope = 'landsec', byId = null, 
     require: () => ({
       resolveCompanyScope: async () => scope,
       isClientVisibleBrand: async id => visible.includes(id),
+      schemeLimitSql: () => '',
     }),
   });
   const pool = { query: async (sql, params) => {

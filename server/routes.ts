@@ -5,7 +5,7 @@ import { pool } from "./db";
 import { teamEventPrivacySql } from "./team-event-privacy";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
-import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds, clientBrandSliceSql } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds, clientBrandSliceSql, schemeLimitSql, currentSchemeLimit } from "./company-scope";
 import multer from "./utils/upload";
 import path from "path";
 import fs from "fs";
@@ -1914,6 +1914,11 @@ export async function registerRoutes(
       // team event tagged with their company name. BGP's wider diary
       // never crosses over.
       const teScope = await resolveCompanyScope(req);
+      // A Landsec login held to its schemes (Woody, 2026-11-14) sees the
+      // meetings at those schemes' properties and the ones it is invited to,
+      // never the whole of Landsec's diary.
+      const teLimited = !!currentSchemeLimit();
+      const teEmail = teLimited ? String((await storage.getUser(req.session.userId!))?.email || "").trim().toLowerCase() : "";
       // Match the company name case/whitespace-insensitively — synced events
       // can carry name variants ("LANDSEC", trailing space) and the exact
       // string compare blanked the client calendar entirely.
@@ -1923,8 +1928,9 @@ export async function registerRoutes(
               WHERE start_time >= $1 AND start_time <= $2
                 AND ${teamEventPrivacySql()}
                 AND lower(trim(company_name)) = (SELECT lower(trim(name)) FROM crm_companies WHERE id = $3)
+                ${teLimited ? `AND ((property_id IS NOT NULL${schemeLimitSql("property_id")}) OR ($4::text <> '' AND lower(COALESCE(attendees::text, '')) LIKE '%' || $4 || '%'))` : ""}
               ORDER BY start_time`,
-            [now.toISOString(), end.toISOString(), teScope]
+            teLimited ? [now.toISOString(), end.toISOString(), teScope, teEmail] : [now.toISOString(), end.toISOString(), teScope]
           )
         : await pool.query(
             `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 AND ${teamEventPrivacySql()} ORDER BY start_time`,
@@ -2349,7 +2355,7 @@ export async function registerRoutes(
           pool.query(
             `SELECT id, name FROM crm_properties
              WHERE (name ILIKE $2 OR aliases::text ILIKE $2) AND (landlord_id = $1 OR id IN
-               (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+               (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("id")}
              LIMIT 8`, [searchScopeId, like]),
           pool.query(
             `SELECT id, name, role FROM crm_contacts WHERE company_id = $1 AND name ILIKE $2 LIMIT 8`,
@@ -5617,7 +5623,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const filters: string[] = [];
       if (auScope) {
         params.push(auScope);
-        filters.push(`(p.landlord_id = $${params.length} OR au.property_id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${params.length}))`);
+        filters.push(`(p.landlord_id = $${params.length} OR au.property_id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${params.length}))${schemeLimitSql("au.property_id")}`);
       }
       if (req.query.propertyId) {
         params.push(req.query.propertyId);
@@ -5723,7 +5729,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const where: string[] = [];
       if (scope) {
         params.push(scope);
-        where.push(`(p.landlord_id = $${params.length} OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${params.length}))`);
+        where.push(`(p.landlord_id = $${params.length} OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${params.length}))${schemeLimitSql("p.id")}`);
       }
       if (propertyId) { params.push(propertyId); where.push(`p.id = $${params.length}`); }
       let like = "", exact = "", prefix = "";
@@ -5885,7 +5891,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         ? await db.execute(sql`SELECT v.unit_id, COUNT(*)::int as count FROM unit_viewings v
              JOIN available_units u ON u.id = v.unit_id
              LEFT JOIN crm_properties p ON p.id = u.property_id
-            WHERE (p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope}))
+            WHERE (p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope}))${sql.raw(schemeLimitSql("u.property_id"))}
               AND v.deleted_at IS NULL AND v.status IN ('scheduled','completed')
             GROUP BY v.unit_id`)
         : await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_viewings WHERE deleted_at IS NULL AND unit_id IS NOT NULL AND status IN ('scheduled','completed') GROUP BY unit_id`);
@@ -5904,7 +5910,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         ? await db.execute(sql`SELECT o.unit_id, COUNT(*)::int as count FROM unit_offers o
              JOIN available_units u ON u.id = o.unit_id
              LEFT JOIN crm_properties p ON p.id = u.property_id
-            WHERE p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope})
+            WHERE (p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope}))${sql.raw(schemeLimitSql("u.property_id"))}
             GROUP BY o.unit_id`)
         : await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_offers GROUP BY unit_id`);
       const counts: Record<string, number> = {};
@@ -5938,7 +5944,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const rows = await db.execute(sql`SELECT v.* FROM unit_viewings v
              JOIN available_units u ON u.id = v.unit_id
              LEFT JOIN crm_properties p ON p.id = u.property_id
-            WHERE (p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope}))
+            WHERE (p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope}))${sql.raw(schemeLimitSql("u.property_id"))}
               AND v.deleted_at IS NULL AND v.status IN ('scheduled','completed')
             ORDER BY v.viewing_date`);
         return res.json(rows.rows.map(row => viewingRowForScope(row as Record<string, any>, true)));
@@ -5983,7 +5989,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const rows = await db.execute(sql`SELECT o.* FROM unit_offers o
              JOIN available_units u ON u.id = o.unit_id
              LEFT JOIN crm_properties p ON p.id = u.property_id
-            WHERE p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope})
+            WHERE (p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope}))${sql.raw(schemeLimitSql("u.property_id"))}
             ORDER BY o.offer_date`);
         return res.json(await withOfferLog(rows.rows.map(row => camelRow(row as Record<string, any>))));
       }
@@ -6003,7 +6009,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
              JOIN available_units u ON u.id = i.unit_id
              LEFT JOIN crm_properties p ON p.id = u.property_id
              LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
-            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            WHERE (p.landlord_id = ${scope} OR cp.company_id IS NOT NULL)${sql.raw(schemeLimitSql("u.property_id"))}
             GROUP BY i.unit_id`)
         : await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_interest GROUP BY unit_id`);
       const counts: Record<string, number> = {};
@@ -6022,7 +6028,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
              JOIN available_units u ON u.id = i.unit_id
              LEFT JOIN crm_properties p ON p.id = u.property_id
              LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
-            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            WHERE (p.landlord_id = ${scope} OR cp.company_id IS NOT NULL)${sql.raw(schemeLimitSql("u.property_id"))}
             ORDER BY i.interest_date`);
         return res.json(rows.rows.map(camelRow));
       }
@@ -7199,7 +7205,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
              UNION
              SELECT property_id FROM crm_company_properties WHERE company_id = $1`,
             [briefScope]
-          )).rows.map((r: any) => r.id)
+          )).rows.map((r: any) => r.id).filter((id: string) => !currentSchemeLimit() || currentSchemeLimit()!.has(id))
         : null;
       if (scopedPropertyIds && scopedPropertyIds.length === 0) return res.json([]);
       // A Landsec joint agent sees briefs on their own
@@ -10062,8 +10068,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         `SELECT id, name, address, status, asset_class,
                 latitude AS lat, longitude AS lng
            FROM crm_properties
-         WHERE landlord_id = $1
-            OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+         WHERE (landlord_id = $1
+            OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("id")}
          ORDER BY name`,
         [companyId]
       );

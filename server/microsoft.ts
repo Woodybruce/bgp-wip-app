@@ -12,6 +12,7 @@ import { isPrivateMailboxAddress, PRIVATE_MAILBOX } from "./private-mail";
 import { teamDiaryCoverage, teamDiaryItems } from "./team-diary-availability";
 import { teamEventPrivacySql } from "./team-event-privacy";
 import { CLOSED_STATUSES, TERMINAL_STATUSES } from "@shared/deal-status";
+import { schemeLimitSql } from "./company-scope";
 import {
   SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER,
   getSharePointDriveId, createFolderByPath, runChunked, createTreeBatched,
@@ -1095,7 +1096,7 @@ export function setupMicrosoftRoutes(app: Express) {
             WHERE uv.viewing_date ~ '^\\d{4}-\\d{2}-\\d{2}'
               AND uv.deleted_at IS NULL AND COALESCE(uv.status,'') NOT IN ('cancelled','not_leasing')
               AND uv.viewing_date::date >= (NOW() - INTERVAL '30 days')::date
-              AND (p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+              AND (p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("p.id")}
           `, [insightsScope])
         : await pool.query(`
             SELECT uv.viewing_date, uv.viewing_time, uv.company_name, p.name AS property_name
@@ -1123,7 +1124,7 @@ export function setupMicrosoftRoutes(app: Express) {
         ? await pool.query(`
             SELECT p.name, p.address, p.status, p.asset_class
             FROM crm_properties p
-            WHERE p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+            WHERE (p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("p.id")}
             ORDER BY p.created_at DESC
           `, [insightsScope])
         : await pool.query(`
