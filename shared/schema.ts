@@ -808,6 +808,9 @@ export const crmProperties = pgTable("crm_properties", {
   bgpContactUserIds: text("bgp_contact_user_ids").array(),
   leasingPrivacyEnabled: boolean("leasing_privacy_enabled").default(false),
   sharepointFolderUrl: text("sharepoint_folder_url"),
+  // The centre's own Instagram account (Woody, 2026-11-14), set by BGP staff
+  // through /api/properties/:id/instagram; its posts show behind News.
+  instagramHandle: text("instagram_handle"),
   // ── Letting hunter — track competitor agent on non-BGP-instructed stock ──
   competitorAgent: text("competitor_agent"), // legacy free-text e.g. "CBRE"
   competitorAgentId: varchar("competitor_agent_id"), // FK to crm_companies (company_type='Agent')

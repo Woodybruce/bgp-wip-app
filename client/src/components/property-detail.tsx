@@ -1505,7 +1505,11 @@ export function PropertyDetail({ id }: { id: string }) {
 
               {/* Estate schemes (Canary Wharf: Jubilee Place, Cabot Place…) —
                   each with the landlord entity its invoices go to. Staff only. */}
-              {!isClientViewer && (
+              {/* Only the estates that invoice to several landlord companies
+                  (Woody, 2026-11-14: "only need that for Canary Wharf and
+                  Portman Estate and Crown Estate"), or a property that
+                  already has schemes saved. */}
+              {!isClientViewer && (/canary\s*wharf|portman|crown\s*estate/i.test(`${property.name || ""} ${allCompanies.find(c => c.id === (property as any).landlordId)?.name || ""}`) || !!schemeList.data?.schemes?.length) && (
               <PropertySection name={planLayout ? "overview" : "deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Schemes"

@@ -2712,7 +2712,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       }
       if (scopeCompanyId) {
         // Client edits must not overwrite identity, access or staff attestations.
-        for (const field of ["id", "createdAt", "landlordId", "leasingPrivacyEnabled", "proprietorKycStatus", "proprietorKycData", "kycCheckedAt"]) {
+        for (const field of ["id", "createdAt", "landlordId", "leasingPrivacyEnabled", "proprietorKycStatus", "proprietorKycData", "kycCheckedAt", "instagramHandle"]) {
           delete updates[field];
         }
       }
