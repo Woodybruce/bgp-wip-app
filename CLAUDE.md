@@ -163,7 +163,8 @@ the status changes of 5 or more other deals (an import or bulk tidy-up) or
 there is no status change at all. `stageSinceFor` in `server/landsec-unit.ts`
 reads the facts in one pass; the clock feed, the unit page, the scheme unit
 list and `landsecCounts` all go through the rule. An unconfirmed figure is
-greyed with a question mark ("17d?") and still counts as stuck: never hide a
+greyed (no question mark: Woody, 2026-11-13, "remove question marks looks
+stupid"), its title says the date is not known, and it still counts as stuck: never hide a
 stuck deal because its date is unconfirmed. The hand-set date is
 `landsec_deal_clock.stage_since` (+ `stage_since_code`, `stage_since_by_name`;
 migration 0059), written only by `PUT /api/landsec/deal/:id/clock`
@@ -192,6 +193,19 @@ emails and meetings, `event` the latest deal event, `edit` only the deal's
 last edit, which is drawn as a quiet "No contact read yet" with the edit
 date in its title and sorts as no date. The list never writes a fallback
 into `lastInteraction` itself: the edit form saves that field back.
+
+**Every Deals table cell opens its editor, filled or empty** (Woody,
+2026-11-13: "can click empty spaces and add / edit"). An empty cell reads
+"+ Add …" or a faint dash and opens the same editor as a filled one, through
+the same save (the deal PUT, or the clock PUT); NER and "Not checked" open
+the lease terms, Brief check opens the unit's `UnitBriefDialog`, Depends on
+opens the Waiting on form. A closed deal shows its closing stage and date and
+dashes with the reason in the title: never a waiting-on or a stage date for
+it. A cell a login may not change is plain text: for a client login (Client,
+Team, BGP Contact, Instructed, Exchanged, Completed; no bin; no Completed or
+Invoiced status; party pickers create contacts and tenant brands only). A
+client's deal save never writes `poNumber` or `invoicedAt` (blanked for it by
+`stripDealFees`) and moves a deal only to a property in its scope.
 
 Properties carries what the Landsec home (Portfolio) had
 (`docs/landsec-menu-plan-2026-11-12.md`, part 3). For a Landsec viewer the
