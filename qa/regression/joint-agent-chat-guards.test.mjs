@@ -89,8 +89,10 @@ test('ChatBGP in a conversation with a joint agent: who asked decides, and only 
   }
   assert.ok(answer.includes('if (!shared) return post(JOINT_AGENT_NO_SHARED_SCHEME);'));
   const post = body(routes, 'app.post("/api/chat/threads/:id/messages"', 9000);
-  assert.ok(post.includes('if (!thread.hasAiMember && !thread.isAiChat && typeof content === "string" && AI_MENTION_REGEX.test(content))'));
-  assert.ok(post.includes('if (thread.hasAiMember && !thread.isAiChat) {'));
+  // A property's shared conversation answers only when ChatBGP is named (record-conversation-guards).
+  assert.ok(post.includes('const askedByName = typeof content === "string" && AI_MENTION_REGEX.test(content);'));
+  assert.ok(post.includes('} else if (!thread.hasAiMember && !thread.isAiChat && askedByName) {'));
+  assert.ok(post.includes('if (!sharedRecord && thread.hasAiMember && !thread.isAiChat) {'));
   // Not relaxed: never read for requirements, and a joint agent's tags never pull anyone in.
   assert.ok(post.includes('if (!jointAgentThread && typeof content === "string" && content.includes("(tag:company/"))'));
   assert.ok(post.includes('postJointAgent ? [] : await resolveMentionedUserIds('));

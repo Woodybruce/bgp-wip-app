@@ -1281,6 +1281,27 @@ untouched when it is off, and
   plan-led page and the deal's "BGP contact" text are gone. Deal agents are
   still changed in Fee allocation, where the split lives. The classic
   property page keeps `InlineAgents`.
+- **One conversation per property** (Woody, 2026-11-14: Letting Tracker
+  comments should be "nice and easy" and "all just go into the property
+  chat"). Until then the property box made a private thread per person.
+  `server/record-conversation.ts`: the shared thread's creator is the marker
+  `__record__` (nobody's own chat, nobody can delete it); `POST
+  /api/chat/threads/record/property/:id` checks `propertyReadBlocked`, makes
+  the thread once (advisory lock) and joins the caller through
+  `storage.addChatThreadMember`; everything else is the ordinary chat routes.
+  It is quiet (the message POST in `routes.ts`): a push only to the people a
+  message tags, a tag pulls in BGP staff only (`mayBeTaggedIntoRecordThread`;
+  a client joins by opening the property), and ChatBGP answers only when
+  asked by name, never joining for good. Everyone who can open the property
+  reads what is written there, ChatBGP's answers to BGP staff included: the
+  box says so. Earlier private threads stay private. Tracker comments are
+  `client/src/components/unit-comments.tsx` (`UnitCommentButton` on each
+  row of the staff tracker, desktop and phone; counts from `GET
+  /api/chat/threads/record/unit-comments?propertyIds=`, read only for
+  properties the caller may open): a message tagged with the unit. Guards:
+  `qa/regression/record-conversation-guards.test.mjs`. Not yet: a joint
+  agent (its gateway refuses the routes; parked by Woody on 2026-11-14), the
+  joint agent's tracker, company and deal conversations.
 - **Matching**: `shared/property-plan-match.ts`,
   `server/property-plan-match.ts` (`GET /api/plans/:id/match`, `POST
   …/match/accept`, `…/accept-suggested`, `…/dismiss`). A scan stays open and

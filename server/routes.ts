@@ -3134,16 +3134,24 @@ export async function registerRoutes(
         const sender = await storage.getUser(userId);
         const senderName = sender?.name || "Someone";
         emitNewMessage(thread.id, message, senderName);
+        // A property's shared conversation (server/record-conversation.ts)
+        // is quiet: only the people a message tags are pushed, and only BGP
+        // staff are pulled in by a tag.
+        const { isSharedRecordThread, mayBeTaggedIntoRecordThread } = await import("./record-conversation");
+        const sharedRecord = isSharedRecordThread(thread);
+        let mentionedIds: string[] = [];
         // Tagging a colleague pulls them into the conversation (the WhatsApp
         // model) — and for a ChatBGP thread that's what makes it appear in
         // their Messages list (Woody, 2026-09-08). Runs before the
         // notification fan-out so the tagged person is pinged too.
         try {
           const mentioned = postJointAgent ? [] : await resolveMentionedUserIds(content, req.body.mentionedUserIds);
+          mentionedIds = mentioned;
           if (mentioned.length) {
             const current = new Set(threadMembers.map(m => m.userId));
             for (const uid of mentioned) {
               if (uid === userId || uid === thread.createdBy || current.has(uid)) continue;
+              if (sharedRecord && !(await mayBeTaggedIntoRecordThread(uid))) continue;
               const added = await storage.getUser(uid);
               if (!added) continue;
               await storage.addChatThreadMember({ threadId: thread.id, userId: uid, addedBy: userId, seen: false });
@@ -3167,6 +3175,7 @@ export async function registerRoutes(
         const { isGossipThread } = await import("./gossip-channel");
         const quietChannel = isGossipThread(thread as any);
         for (const m of members) {
+          if (sharedRecord && !mentionedIds.includes(m.userId)) continue;
           if (m.userId !== userId) {
             const line = lineFor(m.userId);
             emitNotification(m.userId, { type: "new_message", threadId: thread.id, senderName, preview: line.preview });
@@ -3178,7 +3187,7 @@ export async function registerRoutes(
             }).catch(() => {});
           }
         }
-        if (thread.createdBy !== userId && !members.find(m => m.userId === thread.createdBy)) {
+        if (!sharedRecord && thread.createdBy !== userId && !members.find(m => m.userId === thread.createdBy)) {
           const line = lineFor(thread.createdBy);
           emitNotification(thread.createdBy, { type: "new_message", threadId: thread.id, senderName, preview: line.preview });
           sendPushNotification(thread.createdBy, {
@@ -3191,7 +3200,14 @@ export async function registerRoutes(
 
         // Summoning the AI by name pulls it into the conversation for good —
         // the WhatsApp mental model: mention someone and they're in the group.
-        if (!thread.hasAiMember && !thread.isAiChat && typeof content === "string" && AI_MENTION_REGEX.test(content)) {
+        // In a property's shared conversation ChatBGP answers only when it is
+        // asked by name, and never joins for good: comments are not questions.
+        const askedByName = typeof content === "string" && AI_MENTION_REGEX.test(content);
+        if (sharedRecord) {
+          if (askedByName && !thread.isAiChat) {
+            triggerAiGroupResponse(thread.id, userId, req, message.id).catch((err) => console.error("[ai-group] shared conversation answer failed:", err?.message));
+          }
+        } else if (!thread.hasAiMember && !thread.isAiChat && askedByName) {
           try {
             await storage.updateChatThread(thread.id, { hasAiMember: true });
             (thread as any).hasAiMember = true;
@@ -3201,7 +3217,7 @@ export async function registerRoutes(
           }
         }
 
-        if (thread.hasAiMember && !thread.isAiChat) {
+        if (!sharedRecord && thread.hasAiMember && !thread.isAiChat) {
           triggerAiGroupResponse(thread.id, userId, req, message.id).catch(async (err) => {
             console.error("[ai-group] Error triggering AI response:", err?.message);
             try {

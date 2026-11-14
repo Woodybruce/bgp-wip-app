@@ -91,6 +91,7 @@ import { LETTING_STATUSES, DEAL_STATUS_LABELS, WIP_STATUSES, legacyToCode, type 
 import { DEFAULT_LETTING_TYPE, LEGACY_LETTING_TYPES, TRACKER_LIVE_STATUSES, HISTORIC_STATUSES, PRE_MARKETING_STATUSES } from "@shared/letting-rules";
 import { tenancyStatusMatches } from "@shared/tenancy-schedule-display";
 import { CompanyChip } from "@/components/company-chip";
+import { UnitCommentButton, useUnitCommentSummaries } from "@/components/unit-comments";
 const MARKETING_STATUSES = LETTING_STATUSES;
 // The per-row Deal Status dropdown offers the deal pipeline only (Woody,
 // 2026-09-01): Opportunity/Available belong to Unit Status, Withdrawn moved
@@ -858,6 +859,8 @@ export default function AvailableUnitsPage() {
     refetchInterval: 10_000,
     staleTime: 3_000,
   });
+  // Quick comments: how many each unit has in its property's shared conversation.
+  const { data: commentSummaries } = useUnitCommentSummaries(useMemo(() => [...new Set(units.map(u => u.propertyId).filter(Boolean) as string[])], [units]));
 
   const { data: properties = [], isLoading: propertiesLoading } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
@@ -2739,6 +2742,7 @@ export default function AvailableUnitsPage() {
                         <BriefChip brief={briefByUnit[u.id]} onClick={() => setBriefUnit(u)} testId={`mobile-brief-chip-${u.id}`} />
                         <BriefProgressChip unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} testId={`mobile-brief-progress-chip-${u.id}`} />
                         <RecommendationChip summary={recommendationSummaries?.[u.id]} onClick={() => setRecommendationUnit(u)} testId={`mobile-recommendation-chip-${u.id}`} />
+                        <UnitCommentButton unitId={u.id} unitName={u.unitName || "Unit"} propertyId={u.propertyId} summary={commentSummaries?.units?.[u.id]} />
                       </div>
                       <TrackerChecklistCell unitId={u.id} summary={checklistSummaries?.[u.id]} onOpen={() => setChecklistUnit(u)} compact />
                       <TrackerClock deal={clockForUnit(u)} testId={`mobile-tracker-clock-${u.id}`} />
@@ -3087,6 +3091,7 @@ export default function AvailableUnitsPage() {
                             <BriefChip brief={briefByUnit[u.id]} onClick={() => setBriefUnit(u)} testId={`brief-chip-${u.id}`} />
                             <BriefProgressChip unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} />
                             <RecommendationChip summary={recommendationSummaries?.[u.id]} onClick={() => setRecommendationUnit(u)} testId={`recommendation-chip-${u.id}`} />
+                            <UnitCommentButton unitId={u.id} unitName={u.unitName || "Unit"} propertyId={u.propertyId} summary={commentSummaries?.units?.[u.id]} />
                           </div>
                         </div>
                       </TableCell>

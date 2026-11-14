@@ -5891,13 +5891,27 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
   // 2026-11-14), never a company's.
   const chatRefused = useLandsecRestricted() && linkedType !== "property";
   const { data: threads = [] } = useQuery<any[]>({ queryKey: ["/api/chat/threads"], enabled: !chatRefused });
+  // A property has ONE shared conversation (Woody, 2026-11-14): opening the
+  // box joins it (server/record-conversation.ts). A company keeps the
+  // person's own thread, as before.
+  const sharedProperty = linkedType === "property";
+  const joinShared = async (): Promise<string | null> => {
+    const res = await apiRequest("POST", `/api/chat/threads/record/property/${encodeURIComponent(companyId)}`);
+    const body = await res.json().catch(() => ({}));
+    return body?.threadId || null;
+  };
   useEffect(() => {
-    if (threadId) return;
+    if (threadId || chatRefused) return;
+    if (sharedProperty) {
+      let gone = false;
+      joinShared().then(id => { if (id && !gone) setThreadId(id); }).catch(() => {});
+      return () => { gone = true; };
+    }
     const existing = (Array.isArray(threads) ? threads : []).find(
       (t: any) => t.linkedId === companyId && (t.linkedType || "company") === linkedType && !t.isAiChat && t.hasAiMember
     );
     if (existing) setThreadId(existing.id);
-  }, [threads, companyId, threadId]);
+  }, [sharedProperty, chatRefused, threads, companyId, threadId]);
 
   const { data: thread } = useQuery<any>({
     queryKey: ["/api/chat/threads", threadId],
@@ -5993,6 +6007,12 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
 
   const ensureThread = async (): Promise<string> => {
     if (threadId) return threadId;
+    if (sharedProperty) {
+      const id = await joinShared();
+      if (!id) throw new Error("The conversation could not be opened");
+      setThreadId(id);
+      return id;
+    }
     const res = await apiRequest("POST", "/api/chat/threads", {
       title: `${companyName} — discussion`,
       memberIds: ["__chatbgp__"],
@@ -6000,8 +6020,6 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
       linkedType,
       linkedId: companyId,
       linkedName: companyName,
-      // A property's conversation is the property's thread too, so it shows wherever that property's chats do.
-      ...(linkedType === "property" ? { propertyId: companyId, propertyName: companyName } : {}),
     });
     const created = await res.json();
     if (!landlord || activeCompany.current === companyId) setThreadId(created.id);
@@ -6383,7 +6401,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
           </div>
         ) : compactEmpty ? (
           <div className="space-y-1.5" data-testid="minichat-messages">
-            <p className="text-[11px] text-muted-foreground flex items-center gap-1"><Sparkles className="w-3 h-3 text-primary shrink-0" />{starters && starters.length > 0 ? "Ask ChatBGP. Answers stay here for the team." : `Ask anything about ${companyName}.`}</p>
+            <p className="text-[11px] text-muted-foreground flex items-center gap-1"><Sparkles className="w-3 h-3 text-primary shrink-0" />{sharedProperty ? "Shared with everyone who can open this property. @ChatBGP to ask ChatBGP." : starters && starters.length > 0 ? "Ask ChatBGP. Answers stay here for the team." : `Ask anything about ${companyName}.`}</p>
             {starterPills("flex flex-wrap gap-1.5", false)}
           </div>
         ) : wrapMessages(
@@ -6395,7 +6413,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
                 {starterPills("flex flex-wrap justify-center gap-1.5 max-w-md mx-auto")}
               </>}
               <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                {starters && starters.length > 0 ? "Answers stay here for the team. " : ""}Ask anything about {companyName} — @ tags {linkedType === "property" ? "Letting Tracker units" : "properties"} and deals, and teammates you @ join the conversation.
+                {sharedProperty ? "One conversation for this property: everyone who can open it reads it, Landsec and the client team included. @ChatBGP to ask ChatBGP; @ tags Letting Tracker units and deals." : <>{starters && starters.length > 0 ? "Answers stay here for the team. " : ""}Ask anything about {companyName} — @ tags properties and deals, and teammates you @ join the conversation.</>}
               </p>
             </div>
           ) : (
