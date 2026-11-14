@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, LANDSEC_STAFF_TASKS, landsecMenuActive, landsecRestrictedRole, landsecTasksPath } from '../../shared/landsec-menu.ts';
+import { LANDSEC_MENU, JOINT_AGENT_MENU, LANDSEC_STAFF_TASKS, jointAgentRealPage, landsecMenuActive, landsecRestrictedRole, landsecTasksPath } from '../../shared/landsec-menu.ts';
 import { RESTRICTED_LANDSEC_ROLES } from '../../shared/landsec.ts';
 const require = createRequire(import.meta.url);
 const { source, find, evaluate, ts } = require('./source-harness.cjs');
@@ -17,7 +17,7 @@ const fn = (file, name) => find(file, node => ts.isFunctionDeclaration(node) && 
 // Values made inside the evaluated source belong to another realm.
 const plain = value => JSON.parse(JSON.stringify(value));
 const ICONS = Object.fromEntries(['LayoutDashboard', 'Building2', 'BarChart3', 'Store', 'Handshake', 'Layers', 'Eye', 'ListTodo', 'Target', 'MessageCircle', 'CheckSquare'].map(name => [name, name]));
-const BINDINGS = { ...ICONS, LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, LANDSEC_STAFF_TASKS, landsecTasksPath };
+const BINDINGS = { ...ICONS, LANDSEC_MENU, JOINT_AGENT_MENU, LANDSEC_STAFF_TASKS, landsecTasksPath };
 
 const sidebar = evaluate([
   statement(SIDEBAR, 'export const LANDSEC_NAV ='),
@@ -97,10 +97,11 @@ test('an asset manager takes the ordinary client routes: the route guard does no
   for (const url of ['/landsec/tasks', '/messages', '/chatbgp', '/companies/x']) assert.ok(allowed(url), url);
 });
 
-test('a joint agent keeps Tracker, Viewings, Tasks and Brand CRM, in that order, after the two renamed entries', () => {
+// Woody, 2026-11-14: "joint agent can do anything other than see brands".
+test('a joint agent has the real Properties and Deals, its own Letting Tracker, Viewings, Tasks and Brand CRM', () => {
   assert.deepEqual(menu('joint_agent'), [
-    ['Properties', '/'], ['Deals', '/landsec/deals'],
-    ['Tracker', '/landsec/tracker'], ['Viewings', '/landsec/viewings'], ['Tasks', '/landsec/tasks'],
+    ['Properties', '/deals/properties'], ['Deals', '/deals'],
+    ['Letting Tracker', '/landsec/tracker'], ['Viewings', '/landsec/viewings'], ['Tasks', '/landsec/tasks'],
     ['Brand CRM', '/landsec/brand-crm'],
   ]);
 });
@@ -132,7 +133,7 @@ test('phone tabs: staff viewing as Landsec keep Home, the way out of the Landsec
 
 // Woody, 2026-11-13, asked whether to build chat for joint agents: "yes go ahead".
 test('phone tabs: a joint agent has its own Chat tab, never Messages', () => {
-  assert.deepEqual(phone('jointAgent'), [['Properties', '/'], ['Deals', '/landsec/deals'], ['Tracker', '/landsec/tracker'], ['Viewings', '/landsec/viewings'], ['Tasks', '/landsec/tasks']]);
+  assert.deepEqual(phone('jointAgent'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/landsec/tracker'], ['Viewings', '/landsec/viewings'], ['Tasks', '/landsec/tasks']]);
   // CRM and Chat are added where the tabs are chosen. Chat is the joint
   // agent's own page, not /messages (the staff and client chat).
   const tabsSource = source(TABS);
@@ -157,28 +158,28 @@ test('a joint agent is never sent to an address its route list refuses', () => {
   assert.deepEqual(Object.keys(routes), ['joint_agent']);
   assert.deepEqual(routes.joint_agent, ['/', '/home', '/landsec', '/settings/profile']);
   assert.doesNotMatch(source(APP), /"asset_manager"/);
-  for (const role of ['joint_agent']) {
-    const allowed = url => routes[role].some(p => p === '/' ? url === '/' : (url === p || url.startsWith(p + '/')));
-    for (const [title, url] of menu(role)) assert.ok(allowed(url), `${role}: ${title} ${url}`);
-    // The reason they are left out of the redirects: these would bounce.
-    for (const url of [LANDSEC_MENU.properties, LANDSEC_MENU.deals, LANDSEC_MENU.tracker]) assert.ok(!allowed(url), `${role}: ${url}`);
-  }
-  // Each redirect asks the role first and gives a joint agent its own page.
-  for (const [name, page] of [['Home', 'LandsecHome'], ['LandsecDealsRoute', 'LandsecDeals'], ['LandsecSchemeRoute', 'LandsecScheme']]) {
-    const body = fn(APP, name);
-    const keeps = body.indexOf(`return <${page} />`), moves = body.indexOf('<LandsecMoved');
-    assert.ok(body.includes('landsecRestrictedRole('), name);
-    assert.ok(keeps > 0 && moves > keeps, `${name}: the joint agent's page must be returned before the redirect`);
-  }
+  // Its jail plus the real Properties and Deals pages (jointAgentRealPage).
+  const guard = fn(APP, 'ClientRouteGuard');
+  assert.match(guard, /if \(!ok && \(user as any\)\.landsecRole === "joint_agent" && jointAgentRealPage\(location\)\) ok = true;/);
+  // The staff Letting Tracker sends it to its own.
+  assert.match(guard, /location === "\/deals\/letting" \|\| location === "\/available"\)\) \{\s*navigate\(JOINT_AGENT_MENU\.tracker\);/);
+  const allowed = url => routes.joint_agent.some(p => p === '/' ? url === '/' : (url === p || url.startsWith(p + '/'))) || jointAgentRealPage(url);
+  for (const [title, url] of menu('joint_agent')) assert.ok(allowed(url), `${title} ${url}`);
+  for (const [label, url] of phone('jointAgent')) assert.ok(allowed(url), `${label} ${url}`);
+  for (const url of [LANDSEC_MENU.tracker, LANDSEC_MENU.brands, '/brands/x', '/companies/x', '/contacts', '/requirements']) assert.ok(!allowed(url), url);
+  // Every old address sends every Landsec login on: no joint agent page is
+  // kept back any more (14 November 2026).
+  for (const name of ['Home', 'LandsecDealsRoute', 'LandsecSchemeRoute']) assert.doesNotMatch(fn(APP, name), /landsecRestrictedRole\(/, name);
+  assert.doesNotMatch(fn(APP, 'Home'), /LandsecHome/);
 });
 
 test('the old Deals and scheme addresses redirect only in the Landsec view', () => {
   // BGP staff on All Teams or their own team follow /landsec/scheme/<key>
   // from the staff Brand CRM. Their property page has no Units and lettings
   // section and their Deals page no clock, so they keep the old pages.
-  assert.match(fn(APP, 'LandsecDealsRoute'), /if \(brand\.id !== "landsec" \|\| landsecRestrictedRole\(/);
+  assert.match(fn(APP, 'LandsecDealsRoute'), /if \(brand\.id !== "landsec"\) return <LandsecDeals \/>;/);
   const scheme = fn(APP, 'LandsecSchemeRoute');
-  assert.match(scheme, /const restricted = brand\.id !== "landsec" \|\| landsecRestrictedRole\(/);
+  assert.match(scheme, /const restricted = brand\.id !== "landsec";/);
   assert.match(scheme, /if \(restricted\) return <LandsecScheme \/>;/);
   // The property page section and the unit page breadcrumb use the same test.
   assert.match(source('client/src/components/property-detail.tsx'), /const landsecView = useIsLandsecView\(\);/);

@@ -128,7 +128,7 @@ import { countLabel } from "@/lib/utils";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { PropertyDetail } from "@/components/property-detail";
-import { isRestrictedLandsecRole, useIsLandsecView, useLandsecRestricted } from "@/components/landsec/deal-clock";
+import { useIsLandsecView, useLandsecRestricted } from "@/components/landsec/deal-clock";
 import {
   landsecTotalsLine, SchemeGroups, LandsecStagePills, LandsecAdminBlock, type LandsecHomeData,
 } from "@/components/landsec/scheme-cards";
@@ -5474,9 +5474,9 @@ function PropertiesBoardHeader({ items, landsec }: { items: CrmProperty[]; lands
         {isLandsec ? (landsec && (
           <LandsecStagePills
             tracker={landsec.tracker}
-            hrefFor={code => (landsecRestricted ? null : `/deals/list?status=${code}`)}
-            titleFor={label => (landsecRestricted ? `${label} across your schemes` : `Live lettings at ${label} on the schemes. Opens Deals at ${label}, which also lists other deal types and any deal outside the schemes`)}
-            stuck={landsec.stuck} stuckHref={landsecRestricted ? undefined : "/deals/list?clock=stuck"}
+            hrefFor={code => `/deals/list?status=${code}`}
+            titleFor={label => (landsecRestricted ? `Live lettings at ${label} on your schemes. Opens Deals at ${label}` : `Live lettings at ${label} on the schemes. Opens Deals at ${label}, which also lists other deal types and any deal outside the schemes`)}
+            stuck={landsec.stuck} stuckHref="/deals/list?clock=stuck"
             testId="properties-landsec-stages"
           />
         )) : (<>
@@ -6222,7 +6222,7 @@ function PropertiesList({
             {landsecHome.data && (landsecGroups.length > 0 ? (
               <SchemeGroups
                 groups={landsecGroups}
-                hrefFor={sc => (sc.propertyId && !isRestrictedLandsecRole(propsViewer?.landsecRole) ? `/properties/${sc.propertyId}` : null)}
+                hrefFor={sc => (sc.propertyId ? `/properties/${sc.propertyId}` : null)}
                 isStaff={landsecHome.data.outOfScope !== undefined}
               />
             ) : (

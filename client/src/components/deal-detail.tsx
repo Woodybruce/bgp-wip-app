@@ -93,7 +93,7 @@ import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { AIActivityCard, pickTouchDates } from "@/components/ai-activity-card";
 import { DealAmlStatusCard, useDealAmlStatus } from "@/components/deal-aml-status";
 import { JointAgencyNoteCard } from "@/components/joint-agency-aml";
-import { DealClockCard, useIsLandsecView, useLandsecClocks } from "@/components/landsec/deal-clock";
+import { DealClockCard, useIsLandsecView, useLandsecClocks, isRestrictedLandsecRole } from "@/components/landsec/deal-clock";
 
 // Collapsible card pattern reused across the deal page for heavy panels.
 function CollapsibleCard({
@@ -233,6 +233,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // A client LOGIN never deletes; staff keep Delete even while viewing as a
   // client (Woody, 2026-10-19: Lizzie had no Delete button).
   const isClientLogin = !ddUser || ddUser.role === "Client";
+  // A joint agent (Woody, 2026-11-14) reads the deals at its own schemes:
+  // the terms, the parties' names and the deal clock. No editing, brand
+  // profiles, files, comments or history here (BGP's records); its letting
+  // work is on its own tracker.
+  const jointAgent = isRestrictedLandsecRole(ddUser?.landsecRole);
   // Same query the AML card runs (shared cache). When it lists both
   // counterparties, the KYC panel drops its own party rows — the page was
   // listing each counterparty twice (Woody, 2026-09-27).
@@ -646,7 +651,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // sections unreachable on phones.
   const sidebarLinkPanels = (
     <>
-      <SidebarSection open={sidebarSections.files} onToggle={() => toggleSidebar("files")} icon={FileText} title="Files" testId="toggle-sidebar-files">
+      {!jointAgent && <SidebarSection open={sidebarSections.files} onToggle={() => toggleSidebar("files")} icon={FileText} title="Files" testId="toggle-sidebar-files">
         <div className="space-y-2" data-testid="deal-files-section">
           {/* The deal's files live in its property's folder — render the
               same unified Files panel (browse / upload / new folder /
@@ -666,7 +671,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             <p className="text-xs text-muted-foreground italic">Link this deal to a property to see its folders.</p>
           )}
         </div>
-      </SidebarSection>
+      </SidebarSection>}
 
       {linkedProperty && (
         <SidebarSection open={sidebarSections.property} onToggle={() => toggleSidebar("property")} icon={Building2} title="Linked Property" testId="toggle-sidebar-property">
@@ -706,7 +711,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     </>
   );
 
-  const sidebarActivityPanels = (
+  const sidebarActivityPanels = jointAgent ? null : (
     <>
       <SidebarSection open={sidebarSections.comments} onToggle={() => toggleSidebar("comments")} icon={MessageSquare} title="Comments" testId="toggle-sidebar-comments">
         <DealComments dealId={id} comments={deal.comments} />
@@ -916,12 +921,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           })()}
         </div>
         <div className="flex items-center gap-2 flex-wrap gap-y-1.5 w-full md:w-auto">
-          <Link className="flex-1 md:flex-none" href={`/image-studio?property=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&address=${encodeURIComponent(linkedProperty?.address ? (typeof linkedProperty.address === 'object' && linkedProperty.address !== null ? ((linkedProperty.address as any).formatted || (linkedProperty.address as any).line1 || linkedProperty.name) : String(linkedProperty.address || linkedProperty.name)) : ((deal as any).propertyName || deal.name || ""))}&propertyId=${encodeURIComponent(deal.propertyId || "")}`}>
+          {!jointAgent && <Link className="flex-1 md:flex-none" href={`/image-studio?property=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&address=${encodeURIComponent(linkedProperty?.address ? (typeof linkedProperty.address === 'object' && linkedProperty.address !== null ? ((linkedProperty.address as any).formatted || (linkedProperty.address as any).line1 || linkedProperty.name) : String(linkedProperty.address || linkedProperty.name)) : ((deal as any).propertyName || deal.name || ""))}&propertyId=${encodeURIComponent(deal.propertyId || "")}`}>
             <Button variant="outline" size="sm" className="w-full md:w-auto" data-testid="button-deal-image-studio">
               <ImageIcon className="w-4 h-4 mr-2" />
               Image Studio
             </Button>
-          </Link>
+          </Link>}
           {/* Document briefs are staff-only (the API 403s clients and the
               route guard bounces them home) — hide the entry point. */}
           {!isClientDeal && (
@@ -932,22 +937,24 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               </Button>
             </Link>
           )}
-          <Button variant="outline" size="sm" className="flex-1 md:flex-none" onClick={() => setEditOpen(true)} data-testid="button-edit-deal">
+          {!jointAgent && <Button variant="outline" size="sm" className="flex-1 md:flex-none" onClick={() => setEditOpen(true)} data-testid="button-edit-deal">
             <Pencil className="w-4 h-4 mr-2" />
             Edit
-          </Button>
+          </Button>}
         </div>
       </div>
 
       {/* One scrolling row — wrapping left "Files" alone on a second line (Woody, 2026-09-27). */}
       <div className="flex gap-1.5 overflow-x-auto -mx-4 px-4 pb-0.5 md:hidden [&>*]:shrink-0" data-testid="deal-phone-sections">
         <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="deal-section-overview">Overview</Pill>
-        <Pill active={phoneSection === "brand"} onClick={() => { setPhoneSection("brand"); setMainSections(prev => ({ ...prev, brands: true })); }} data-testid="deal-section-brand">Brand</Pill>
+        {!jointAgent && <Pill active={phoneSection === "brand"} onClick={() => { setPhoneSection("brand"); setMainSections(prev => ({ ...prev, brands: true })); }} data-testid="deal-section-brand">Brand</Pill>}
         {!isClientDeal && (
           <Pill active={phoneSection === "compliance"} onClick={() => { setPhoneSection("compliance"); setMainSections(prev => ({ ...prev, kyc: true })); }} data-testid="deal-section-compliance">KYC</Pill>
         )}
+        {!jointAgent && <>
         <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="deal-section-activity">Activity</Pill>
         <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="deal-section-files">Files</Pill>
+        </>}
       </div>
 
       <div className={`space-y-2.5 ${sec("overview")}`}>
@@ -1280,7 +1287,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </div>
       )}
 
-      {[
+      {!jointAgent && [
         { company: linkedTenant, role: "Tenant" },
         { company: linkedLandlord, role: "Landlord" },
       ]
@@ -1310,7 +1317,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       )}
       {/* No party linked: the Brand pill otherwise lands on a blank screen
           whose only content is the Delete Deal button. */}
-      {!linkedTenant && !linkedLandlord && (
+      {!jointAgent && !linkedTenant && !linkedLandlord && (
         <div className={`md:hidden border rounded-md p-4 ${phoneSection === "brand" ? "" : "hidden"}`} data-testid="deal-brand-empty">
           <p className="text-sm text-muted-foreground">
             No brand linked yet — link a tenant or landlord from the Parties panel under Overview.

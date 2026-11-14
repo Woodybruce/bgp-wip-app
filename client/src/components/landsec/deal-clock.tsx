@@ -18,7 +18,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { ArrowDownWideNarrow, Clock, ListChecks, Loader2, Pencil } from "lucide-react";
+import { ArrowDownWideNarrow, Clock, ListChecks, Loader2, Pencil, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Pill, PillCount } from "@/components/ui/pill";
@@ -62,10 +62,12 @@ export function useIsLandsecView(): boolean {
   return brand.id === "landsec";
 }
 
-// A joint agent login (Woody, 2026-11-12) has no deal page (it carries BGP's
-// fee) and no property record page. Every screen that draws these pieces
-// asks this, and gives a joint agent no link to either. An asset manager is
-// a full Landsec login (Woody, 2026-11-13) and has both.
+// A joint agent login. Since 14 November 2026 it opens the deal and property
+// pages at its own schemes (the server cuts them and leaves out BGP's own
+// fields), so the clock pieces link there for it too; this is still asked by
+// screens that must not request what the server refuses it (brands, the
+// staff tracker). An asset manager is a full Landsec login (Woody,
+// 2026-11-13).
 export const isRestrictedLandsecRole = (role: unknown): boolean => (RESTRICTED_LANDSEC_ROLES as string[]).includes(String(role || ""));
 export function useLandsecRestricted(): boolean {
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -652,25 +654,26 @@ export function WaitingOn({ clock, dealId, schemeDeals, onSave, saving, variant 
   const isSet = named && !clock?.derived;
 
   if (variant === "cell") {
+    // The whole cell opens the form, filled or empty (Woody, 2026-11-13:
+    // "can click empty spaces and add / edit").
+    const action = isSet ? "Change who this deal is waiting on" : "Set who this deal is waiting on";
     return (
-      <div className="flex items-start gap-1 min-w-0">
-        <span className="min-w-0 flex-1">{!named && !clock?.checklistItemId && empty !== undefined ? empty : <WaitingLine clock={clock} waitingDays={waitingDays} />}</span>
-        <Popover open={editing} onOpenChange={setEditing}>
-          <PopoverTrigger asChild>
-            <Button
-              variant="ghost" size="icon" className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
-              title={isSet ? "Change who this deal is waiting on" : "Set who this deal is waiting on"}
-              aria-label={isSet ? "Change who this deal is waiting on" : "Set who this deal is waiting on"}
-              data-testid={`${testId}-edit`}
-            >
-              <Pencil className="w-3 h-3" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-[26rem] max-w-[calc(100vw-2rem)] max-h-[80vh] overflow-y-auto p-3">
-            {editing && <WaitingForm clock={clock} dealId={dealId} schemeDeals={options()} onSave={save} onCancel={() => setEditing(false)} saving={saving} testId={testId} />}
-          </PopoverContent>
-        </Popover>
-      </div>
+      <Popover open={editing} onOpenChange={setEditing}>
+        <PopoverTrigger asChild>
+          <button
+            type="button" data-no-min-touch
+            className="flex w-full min-w-0 items-start gap-1 rounded px-1 py-0.5 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            title={action} aria-label={action}
+            data-testid={`${testId}-edit`}
+          >
+            <span className="min-w-0 flex-1">{!named && !clock?.checklistItemId && empty !== undefined ? empty : <WaitingLine clock={clock} waitingDays={waitingDays} />}</span>
+            <Pencil className="mt-0.5 w-3 h-3 shrink-0 text-muted-foreground" aria-hidden />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-[26rem] max-w-[calc(100vw-2rem)] max-h-[80vh] overflow-y-auto p-3">
+          {editing && <WaitingForm clock={clock} dealId={dealId} schemeDeals={options()} onSave={save} onCancel={() => setEditing(false)} saving={saving} testId={testId} />}
+        </PopoverContent>
+      </Popover>
     );
   }
 
@@ -719,6 +722,50 @@ export function WaitingCell({ deal, feed, onSave, saving }: {
   );
 }
 
+// The Deals table's Depends on cell: the deal it depends on, or "+ Set". Both
+// open the Waiting on form, where the deal is picked (the same save).
+export function DependsOnCell({ deal, feed, onSave, saving, linkDeals = true }: {
+  deal: ClockDeal; feed: ClockFeed | undefined; onSave: (dealId: string, patch: Record<string, any>) => void; saving: boolean; linkDeals?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const clock = deal.clock;
+  const set = !!(clock?.dependsOn || clock?.dependsOnHidden);
+  const testId = `deal-depends-${deal.id}`;
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      {set && <span className="min-w-0 truncate"><DependsOn clock={clock} linkDeals={linkDeals} /></span>}
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button" data-no-min-touch
+            className={cn("shrink-0 rounded text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", set ? "p-0.5" : "inline-flex items-center gap-0.5 px-1 py-0.5 text-[11px] hover:bg-accent")}
+            title={set ? "Change the deal this one depends on" : "Set a deal this one depends on"}
+            aria-label={set ? "Change the deal this one depends on" : "Set a deal this one depends on"}
+            data-testid={`${testId}-edit`}
+          >
+            {set ? <Pencil className="w-3 h-3" /> : <><Plus className="w-3 h-3" /> Set</>}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-[26rem] max-w-[calc(100vw-2rem)] max-h-[80vh] overflow-y-auto p-3">
+          {open && (
+            <WaitingForm
+              clock={clock} dealId={deal.id} schemeDeals={schemeDealsFor(feed, deal)}
+              onSave={patch => { onSave(deal.id, patch); setOpen(false); }} onCancel={() => setOpen(false)} saving={saving} testId={testId}
+            />
+          )}
+        </PopoverContent>
+      </Popover>
+    </span>
+  );
+}
+
+// A clock cell that has nothing to say for this deal: a faint dash, with the
+// reason in its title (a closed deal waits on no one; a deal off the schemes
+// has no clock).
+export function ClockDash({ title, testId }: { title: string; testId?: string }) {
+  return <span className="text-muted-foreground/60" title={title} data-testid={testId}>—</span>;
+}
+
 // The clock line as the unit page and the deal page show it: stage, who, days
 // at this stage, Net Effective Rent, the brief check, then who it is waiting
 // on. One component, so the two pages cannot drift.
@@ -758,7 +805,6 @@ export function DealClockCard({ dealId }: { dealId: string }) {
   const landsec = useIsLandsecView();
   const { byId, data } = useLandsecClocks(landsec);
   const save = useSaveDealClock();
-  const restricted = useLandsecRestricted();
   const d = byId.get(dealId);
   if (!landsec || !d) return null;
   const unitLabel = [d.scheme?.name, d.unit].filter(Boolean).join(" · ");
@@ -771,7 +817,7 @@ export function DealClockCard({ dealId }: { dealId: string }) {
       unit={unitLabel ? { href: d.unitId ? `/landsec/unit/${d.unitId}` : null, label: d.unitId ? `Unit page: ${unitLabel}` : unitLabel } : null}
       clock={d.clock} dealId={dealId} waitingDays={d.waitingDays} schemeDeals={schemeDealsFor(data, d)}
       onSave={patch => save.mutate({ dealId, patch })} saving={save.isPending}
-      linkDeals={!restricted}
+      linkDeals
     />
   );
 }

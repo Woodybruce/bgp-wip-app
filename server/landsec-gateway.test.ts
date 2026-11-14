@@ -218,10 +218,7 @@ const CLOSED: Row[] = [
   ["POST", "/api/crm/contacts", "deny"],
   // The email a contact was added from opens BGP's mail: staff only.
   ["GET", `/api/crm/contacts/${X}/source-email`, "deny"],
-  ["GET", "/api/crm/deals", "deny"],
-  ["GET", `/api/crm/deals/${X}`, "deny"],
   ["GET", `/api/crm/deals/${X}/fee-allocations`, "deny"],
-  ["GET", "/api/crm/properties", "deny"],
   ["GET", "/api/crm/requirements-leasing", "deny"],
   ["POST", `/api/crm/companies/${X}`, "deny"],
   ["GET", "/api/search", "deny"],
@@ -264,6 +261,49 @@ const CLOSED: Row[] = [
 // Chat for a joint agent (Woody, 2026-11-13: "yes go ahead"). Two rows that
 // sat in CLOSED until then moved here: POST /api/chatbgp/chat and
 // GET /api/chat/threads. Each address is opened by itself, by method.
+// The real Properties and Deals pages (Woody, 2026-11-14: "joint agent can
+// do anything other than see brands"): reads only, one record by its id, and
+// each handler cuts the answer to the joint agent's schemes.
+const REAL_PAGES: Row[] = [
+  ["GET", "/api/crm/properties", "allow"],
+  ["GET", `/api/crm/properties/${X}`, "allow"],
+  ["GET", "/api/crm/deals", "allow"],
+  ["GET", `/api/crm/deals/${X}`, "allow"],
+  ["GET", `/api/tenancy-schedule/property/${X}`, "allow"],
+  ["GET", `/api/tenancy-schedule/property/${X}/links`, "allow"],
+  ["GET", `/api/properties/${X}/plans`, "allow"],
+  ["GET", `/api/properties/${X}/brochures`, "allow"],
+  ["GET", `/api/properties/${X}/schemes`, "allow"],
+  // No writes, no other part of a record, and no record by anything but its id.
+  ["PUT", `/api/crm/properties/${X}`, "deny"],
+  ["PATCH", `/api/crm/properties/${X}`, "deny"],
+  ["POST", "/api/crm/properties", "deny"],
+  ["PUT", `/api/crm/deals/${X}`, "deny"],
+  ["POST", "/api/crm/deals", "deny"],
+  ["DELETE", `/api/crm/deals/${X}`, "deny"],
+  ["GET", `/api/crm/deals/${X}/audit`, "deny"],
+  ["GET", `/api/crm/deals/${X}/related-emails`, "deny"],
+  ["GET", "/api/crm/deals/wip-badges", "deny"],
+  ["GET", "/api/crm/deals/po-numbers", "deny"],
+  ["GET", "/api/crm/properties/by-name/bluewater", "deny"],
+  ["GET", `/api/crm/properties/${X}/contacts`, "deny"],
+  ["GET", "/api/crm/property-tenants", "deny"],
+  ["GET", "/api/crm/property-agents", "deny"],
+  ["GET", "/api/crm/companies", "deny"],
+  ["PUT", `/api/tenancy-schedule/unit/${X}`, "deny"],
+  ["GET", `/api/tenancy-schedule/property/${X}/export-excel`, "deny"],
+  ["GET", `/api/tenancy-schedule/property/${X}/sharepoint-candidates`, "deny"],
+  ["POST", `/api/properties/${X}/plans`, "deny"],
+  ["GET", `/api/properties/${X}/linked-contacts`, "deny"],
+  ["GET", `/api/properties/${X}/tasks`, "deny"],
+  ["GET", `/api/properties/${X}/ai-targets`, "deny"],
+  ["GET", `/api/properties/${X}/asset-brief`, "deny"],
+  ["GET", `/api/properties/${X}/news`, "deny"],
+  ["GET", `/api/properties/${X}/units`, "deny"],
+  ["GET", `/api/property/${X}/brand-gaps`, "deny"],
+  ["GET", "/api/activity-summary", "deny"],
+];
+
 const CHAT_OPENED: Row[] = [
   ["GET", "/api/landsec/chat/people", "allow"],
   ["GET", "/api/chat/threads", "allow"],
@@ -367,6 +407,7 @@ test("a joint agent reads its own task list and ticks a task, and nothing else o
 test("a joint agent has no brand pages or brand cases and does not make the Targeting Brief document", () => check(NEVER_FOR_A_JOINT_AGENT));
 test("everything else is refused", () => check(CLOSED));
 test("comments not yet logged: only the list, the count, confirm and dismiss", () => check(SUGGESTIONS_CLOSED));
+test("the real Properties and Deals pages: reads of its schemes' records, nothing else", () => check(REAL_PAGES));
 test("chat: a joint agent reaches its conversations and its own ChatBGP chat", () => check(CHAT_OPENED));
 test("chat: every other chat and ChatBGP address stays closed to a joint agent", () => check(CHAT_CLOSED));
 test("chat: the rule is asked for a joint agent only", () => {

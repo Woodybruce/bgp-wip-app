@@ -25,6 +25,11 @@ function fixture({ client = true, propertyId = 'own', initial = {}, estateUnit =
     estateUnitMessage: unit => `${unit.unitName} is a unit of ${unit.propertyName}`,
     resolveCompanyScope: async () => client ? 'portfolio' : null,
     isPropertyInScope: async (_company, id) => id === 'own',
+    // Not a joint agent: no scheme list (a joint agent's cut is tested in
+    // server/joint-agent-real-pages.test.ts).
+    schemeLimitedPropertyIdsOrNone: async () => null,
+    withoutJointAgentFields: row => row,
+    JOINT_AGENT_HIDDEN_PROPERTY_FIELDS: [],
     app: { post: capture('post'), put: capture('put'), get: capture('get') },
     storage: {
       createCrmProperty: async patch => { writes.push(patch); stored = { ...stored, ...patch }; return stored; },

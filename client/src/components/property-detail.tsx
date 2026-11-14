@@ -379,6 +379,12 @@ export function PropertyDetail({ id }: { id: string }) {
   // role === "Client" alone let mis-provisioned external users see the
   // full internal shell with every panel in a 403 error state.
   const isClientViewer = !pdViewer || pdViewer.role === "Client" || !!pdViewer.companyScopeId;
+  // A joint agent (Woody, 2026-11-14: "joint agent can do anything other than
+  // see brands") opens the property page of a scheme on its login, read only:
+  // the facts, the units and lettings, the tenancy schedule, plans,
+  // brochures and deals. Not BGP's commentary, tasks, contacts, files, news,
+  // brand gap, compliance or activity: the server refuses those to it.
+  const jointAgent = isRestrictedLandsecRole(pdViewer?.landsecRole);
   const schemeList = usePropertySchemeList(!isClientViewer ? id : null);
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
@@ -747,7 +753,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 </div>
               )}
               <div className="flex items-center gap-2 flex-wrap gap-y-1.5 ml-auto">
-                <Button
+                {!jointAgent && <Button
                   variant="outline"
                   size="sm"
                   className="h-7 text-xs gap-1.5"
@@ -758,7 +764,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   data-testid="button-ask-ai-property" title="Ask ChatBGP" aria-label="Ask ChatBGP"
                 >
                   <MessageSquare className="w-3.5 h-3.5" /><span className="hidden [@container(min-width:720px)]:inline">Ask ChatBGP</span>
-                </Button>
+                </Button>}
                 {planLayout && (
                   <Popover>
                     <PopoverTrigger asChild>
@@ -853,7 +859,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 Also known as {displayAliases(property.name, (property as any).aliases).join(" · ")}
               </p>
             )}
-            {!planLayout && <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="property-view-controls"
+            {!planLayout && !jointAgent && <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="property-view-controls"
               title={property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and tenancy information. Choose a layout to keep it fixed." : "No reliable layout suggestion yet — choose one."}>
               {/* Phones: the words go (the selects carry aria-labels) so Layout
                   and Positioning share one row. */}
@@ -902,10 +908,12 @@ export function PropertyDetail({ id }: { id: string }) {
                 <Pill active={phoneSection === "plans"} onClick={() => setPhoneSection("plans")} data-testid="property-section-plans">Plans</Pill>
               </> : <Pill active={phoneSection === "boards"} onClick={() => setPhoneSection("boards")} data-testid="property-section-boards">Boards</Pill>}
               <Pill active={phoneSection === "deals"} onClick={() => setPhoneSection("deals")} data-testid="property-section-deals">Deals &amp; units</Pill>
+              {jointAgent ? <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-section-files">Brochures</Pill> : <>
               <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-section-files">Files &amp; contacts</Pill>
               <Pill active={phoneSection === "kyc"} onClick={() => setPhoneSection("kyc")} data-testid="property-section-kyc">KYC</Pill>
               <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="property-section-activity">Activity</Pill>
-              {simpleLayout && <Pill active={phoneSection === "research"} onClick={() => setPhoneSection("research")} data-testid="property-section-research">Research</Pill>}
+              </>}
+              {simpleLayout && !jointAgent && <Pill active={phoneSection === "research"} onClick={() => setPhoneSection("research")} data-testid="property-section-research">Research</Pill>}
             </div>
             )}
 
@@ -1168,9 +1176,9 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Weekly Focus — same width as Asset Owner, natural height. */}
               {/* Clients see + edit the focus list on their own property —
                   board parity with the BGP view (Woody, 2026-08-03). */}
-              <ErrorBoundary compact name="Weekly focus">
+              {!jointAgent && <ErrorBoundary compact name="Weekly focus">
                 <WeeklyFocusCard propertyId={property.id} />
-              </ErrorBoundary>
+              </ErrorBoundary>}
               </div>
 
               {/* Right column stack: News + Risk Register. Risk
@@ -1183,10 +1191,10 @@ export function PropertyDetail({ id }: { id: string }) {
                 {/* PropertyNewsPanel renders its own card + "News Feed"
                     header — the old outer Card double-framed it. */}
                 {/* On the plan-led page News is a tab beside the unit list (plan-workspace.tsx) wherever that list is shown. */}
-                {!(planLayout && planTab && (planTab.plans > 0 || planTab.units > 1)) && <ErrorBoundary compact name="Property news (top-strip preview)">
+                {!jointAgent && !(planLayout && planTab && (planTab.plans > 0 || planTab.units > 1)) && <ErrorBoundary compact name="Property news (top-strip preview)">
                   <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
                 </ErrorBoundary>}
-                {!planLayout && <ErrorBoundary compact name="Risk register">
+                {!planLayout && !jointAgent && <ErrorBoundary compact name="Risk register">
                   <RiskRegisterCard propertyId={property.id} />
                 </ErrorBoundary>}
                 </>}
@@ -1207,7 +1215,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 testId="toggle-landsec-units"
               >
                 {landsecScheme.data
-                  ? <SchemeUnitsList data={landsecScheme.data} currentPropertyId={property.id} dealHref={isRestrictedLandsecRole(pdViewer?.landsecRole) ? undefined : dealId => `/deals/${dealId}`} maxHeight compact />
+                  ? <SchemeUnitsList data={landsecScheme.data} currentPropertyId={property.id} dealHref={dealId => `/deals/${dealId}`} maxHeight compact />
                   : <Skeleton className="h-40 rounded-lg" />}
               </CollapsibleCard>
             </ErrorBoundary>
@@ -1226,7 +1234,7 @@ export function PropertyDetail({ id }: { id: string }) {
             {/* No Notes card on any property — actions go into This week's
                 focus (Woody, 2026-09-28 for centres; 2026-10-05 for every
                 property, OneNote import included). */}
-            <PropertySection name={tab("boards", "research", "brandgap")} active={phoneSection} simple={tabbed}>
+            {!jointAgent && <PropertySection name={tab("boards", "research", "brandgap")} active={phoneSection} simple={tabbed}>
             {simpleLayout && <>
               <ErrorBoundary compact name="Property news"><PropertyNewsPanel propertyId={property.id} propertyName={property.name} /></ErrorBoundary>
               <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>
@@ -1247,7 +1255,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 <BrandGapPanel propertyId={property.id} />
               </CollapsibleCard>
             </ErrorBoundary>
-            </PropertySection>
+            </PropertySection>}
 
             {/* Pipeline & performance retired from the property page
                 (Woody, 2026-09-27: "not linked and a double up") — deal
@@ -1255,7 +1263,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 schedule, lease risks on the Risk register. */}
 
             <PropertySection name={tab("overview", "activity", "overview")} active={phoneSection} simple={tabbed}>
-            <BgpCommentaryWrapper propertyId={property.id} />
+            {!jointAgent && <BgpCommentaryWrapper propertyId={property.id} />}
             </PropertySection>
 
             <PropertySection name={tab("overview", "files", "overview")} active={phoneSection} simple={tabbed}>
@@ -1326,7 +1334,7 @@ export function PropertyDetail({ id }: { id: string }) {
             </ErrorBoundary>
             </div>
 
-            <PropertySection name={tab("boards", "research", "overview")} active={phoneSection} simple={tabbed}>
+            {!jointAgent && <PropertySection name={tab("boards", "research", "overview")} active={phoneSection} simple={tabbed}>
             {/* Pathway is for single buildings — not shopping centres (Woody,
                 2026-09-28: "Pathway can be removed too"). */}
             {!isClientViewer && propertyView !== "centre" && (
@@ -1368,7 +1376,7 @@ export function PropertyDetail({ id }: { id: string }) {
             {/* Linked Contacts moved into the right sidebar under
                 Client Board so the main column reads property → deals
                 → marketing rather than "client people" twice. */}
-            </PropertySection>
+            </PropertySection>}
           </div>
 
           {/* Right column = reference stack. Single-column on the right
@@ -1397,7 +1405,7 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Clients get the read-only jailed browser (their own
                   SharePoint area, no internal team names) instead of the
                   staff panel — restored per Woody, 2026-08-03. */}
-              <PropertySection name={"files"} active={phoneSection} simple={tabbed}>
+              {!jointAgent && <PropertySection name={"files"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Files"
                 icon={FolderOpen}
@@ -1418,9 +1426,9 @@ export function PropertyDetail({ id }: { id: string }) {
                   </>
                 )}
               </ReferenceSection>
-              </PropertySection>
+              </PropertySection>}
 
-              <PropertySection name={planLayout ? "people" : "files"} active={phoneSection} simple={tabbed}>
+              {!jointAgent && <PropertySection name={planLayout ? "people" : "files"} active={phoneSection} simple={tabbed}>
               {planLayout ? (
                 <PropertyPeopleBoard propertyId={property.id} propertyName={property.name} landlordId={property.landlordId} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} />
               ) : (
@@ -1441,11 +1449,11 @@ export function PropertyDetail({ id }: { id: string }) {
                 <LinkedContactsPanel propertyId={property.id} bare />
               </ReferenceSection>
               )}
-              </PropertySection>
+              </PropertySection>}
 
               {/* Visible to clients — same decision as the brand-profile
                   KYC panel (landlords need tenant AML/financial standing). */}
-              <PropertySection name={planLayout ? "overview" : "kyc"} active={phoneSection} simple={tabbed}>
+              {!jointAgent && <PropertySection name={planLayout ? "overview" : "kyc"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Compliance & KYC"
                 icon={ShieldCheck}
@@ -1457,9 +1465,9 @@ export function PropertyDetail({ id }: { id: string }) {
                   <PropertyComplianceBoardWrapper property={property} allCompanies={allCompanies} companiesLoaded={companiesLoaded} embedded />
                 </ErrorBoundary>
               </ReferenceSection>
-              </PropertySection>
+              </PropertySection>}
 
-              <PropertySection name={"activity"} active={phoneSection} simple={tabbed}>
+              {!jointAgent && <PropertySection name={"activity"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Activity"
                 icon={Activity}
@@ -1473,7 +1481,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <ActivitySummary propertyId={property.id} />
                 </ErrorBoundary>
               </ReferenceSection>
-              </PropertySection>
+              </PropertySection>}
 
               {/* BGP Contacts folded into Contacts (its BGP team row) — it listed the same people. */}
 
@@ -1490,13 +1498,14 @@ export function PropertyDetail({ id }: { id: string }) {
                 testId="toggle-deals-section"
               >
                 <LinkedDealsPanel propertyId={property.id} bare />
-                <TaggedConversationsPanel entityType="property" entityId={property.id} />
+                {!jointAgent && <TaggedConversationsPanel entityType="property" entityId={property.id} />}
               </ReferenceSection>
               </PropertySection>
               )}
 
-              {/* On the plan-led page the live lettings are in the Plan tab's list. */}
-              {!planLayout && (
+              {/* On the plan-led page the live lettings are in the Plan tab's list.
+                  A joint agent has them in Units and lettings. */}
+              {!planLayout && !jointAgent && (
               <PropertySection name={"deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Available units"

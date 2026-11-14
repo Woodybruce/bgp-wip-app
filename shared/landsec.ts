@@ -247,6 +247,10 @@ const JOINT_AGENT_CHAT_MESSAGE = new RegExp(`^/api/chat/threads/${UNIT_ID}/messa
 const JOINT_AGENT_CHAT_ACTIVE_RUN = new RegExp(`^/api/chatbgp/threads/${UNIT_ID}/active-run$`);
 const JOINT_AGENT_CHAT_CANCEL_RUN = new RegExp(`^/api/chatbgp/threads/${UNIT_ID}/cancel-run$`);
 const JOINT_AGENT_BRIEF_DRAFT = new RegExp(`^/api/available-units/${UNIT_ID}/brief/draft-ai$`);
+const JOINT_AGENT_PROPERTY = new RegExp(`^/api/crm/properties/${UNIT_ID}$`);
+const JOINT_AGENT_DEAL = new RegExp(`^/api/crm/deals/${UNIT_ID}$`);
+const JOINT_AGENT_SCHEDULE = new RegExp(`^/api/tenancy-schedule/property/${UNIT_ID}(/links)?$`);
+const JOINT_AGENT_PROPERTY_PARTS = new RegExp(`^/api/properties/${UNIT_ID}/(plans|brochures|schemes)$`);
 
 // The path a gate mounted on "/api" must judge: the one the router matches
 // the request on. Never cut it out of req.originalUrl. The router stops a
@@ -343,6 +347,19 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
     if (m === "POST" && p === "/api/chatbgp/chat") return "allow";
     if (m === "GET" && JOINT_AGENT_CHAT_ACTIVE_RUN.test(p)) return "allow";
     if (m === "POST" && JOINT_AGENT_CHAT_CANCEL_RUN.test(p)) return "allow";
+    // The real Properties and Deals pages (Woody, 2026-11-14: "joint agent
+    // can do anything other than see brands"), read only and at its own
+    // schemes: each handler cuts the list to the schemes, refuses a record
+    // off them and leaves out BGP's own fields
+    // (JOINT_AGENT_HIDDEN_PROPERTY_FIELDS / JOINT_AGENT_HIDDEN_DEAL_FIELDS).
+    // Never the brand list, contacts, a deal's or property's emails,
+    // activity, tasks, targets or brand gap, and no writes here.
+    if (m === "GET") {
+      if (p === "/api/crm/properties" || JOINT_AGENT_PROPERTY.test(p)) return "allow";
+      if (p === "/api/crm/deals" || JOINT_AGENT_DEAL.test(p)) return "allow";
+      if (JOINT_AGENT_SCHEDULE.test(p)) return "allow";
+      if (JOINT_AGENT_PROPERTY_PARTS.test(p)) return "allow";
+    }
   }
   // Their own task list (Woody, 2026-11-13: "we need each person to have
   // this update their own task list"): read it and tick a task. Nothing else
@@ -352,4 +369,43 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
   if (m === "GET" && p === "/api/tasks") return "allow";
   if (m === "PATCH" && /^\/api\/tasks\/[^/]+$/.test(p)) return "allow";
   return "deny";
+}
+
+// A joint agent on the real Properties and Deals pages (Woody, 2026-11-14:
+// "joint agent can do anything other than see brands", with BGP's own
+// records kept private). It opens the properties and deals at its own
+// schemes; these are the fields it is never sent on them: BGP's notes and
+// commentary, who at BGP covers it, BGP's contacts, the fee, invoicing and
+// Xero, and the compliance record. Fee and AML fields also go through the
+// client fee strip first. A new BGP-only column goes on the list.
+export const JOINT_AGENT_HIDDEN_PROPERTY_FIELDS = [
+  "notes", "bgp_engagement", "bgp_contact_crm", "bgp_contact_user_ids", "weekly_focus",
+  "bgp_commentary", "bgp_commentary_at", "strategic_principles", "competitor_agent",
+  "competitor_agent_id", "competitor_agent_instructed_at", "competitor_agent_status",
+  "proprietor_kyc_status", "proprietor_kyc_data", "billing_entity_id", "sharepoint_folder_url",
+  "sharepoint_team_folders", "folder_teams", "gap_commentary", "gap_commentary_at", "gap_live_intel",
+  "gap_live_intel_at", "monday_item_id", "asset_manager_id",
+] as const;
+export const JOINT_AGENT_HIDDEN_DEAL_FIELDS = [
+  "comments", "last_interaction", "last_contact_at", "last_contact_source", "fee_notes", "internal_agent", "internal_agent_ids", "team", "group_name",
+  "fee", "fee_percentage", "fee_agreement", "fee_agreement_url", "fee_currency",
+  "invoicing_email", "invoicing_notes", "po_number", "xero_contact_id", "xero_contact_name",
+  "xero_account_number", "xero_billing_address", "client_contact_id", "landlord_contact_id",
+  "tenant_contact_id", "vendor_contact_id", "purchaser_contact_id", "vendor_agent_contact_id",
+  "acquisition_agent_contact_id", "purchaser_agent_contact_id", "leasing_agent_contact_id",
+  "joint_agent_contact_id", "sharepoint_link", "monday_item_id", "deal_scope", "bgp_acting_for",
+  "kyc_approved", "kyc_approved_at", "kyc_approved_by", "aml_check_completed", "aml_checklist",
+  "mlr_scope", "mlr_scope_reason", "mlr_scope_assessed_at", "mlr_scope_assessed_by", "aml_mlro_report_url",
+  "aml_sof_analysis", "aml_ai_triage", "aml_market_data", "solicitor_notes",
+] as const;
+
+const snakeToCamel = (s: string) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+
+// The row without the listed fields, whether it carries them in snake_case
+// (raw SQL) or camelCase (Drizzle), and without any aml_ column.
+export function withoutJointAgentFields<T extends Record<string, any>>(row: T, fields: readonly string[]): T {
+  const out: Record<string, any> = { ...row };
+  for (const f of fields) { delete out[f]; delete out[snakeToCamel(f)]; }
+  for (const k of Object.keys(out)) if (/^aml(_|[A-Z])/.test(k)) delete out[k];
+  return out as T;
 }

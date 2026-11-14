@@ -148,14 +148,10 @@ Properties pill's link (`?status=` or `?clock=`) is the whole Deals filter
 (`dealListSeed` in `shared/landsec-menu.ts`): never read one filter from the
 address and the rest from the session. Where the clock strip shows on the
 deal page it carries the only Net Effective Rent.
-A joint agent has no deal page and no property record page (an asset
-manager has both, as a full Landsec login), so the shared pieces never hand
-a joint agent a link to either: the deal a deal
-depends on is plain text (`linkDeals`, from `useLandsecRestricted` /
-`isRestrictedLandsecRole` in the same file), a unit's deal is a link only
-where the page passes `dealHref`, and the stage pills are plain counts where
-`hrefFor` gives null (`LandsecStagePills`). A new screen that draws these
-pieces passes the role the same way.
+Since 14 November 2026 a joint agent opens the deal and property pages at
+its own schemes (below), so the clock pieces link there for every Landsec
+login. `linkDeals`, `dealHref` and `hrefFor` stay as switches for a screen
+that has no page to link to.
 
 **Days at stage and Last contact** (Woody, 2026-11-13: "they are there but
 make no sense", then "fix them"). The date a deal reached its stage has one
@@ -167,7 +163,8 @@ the status changes of 5 or more other deals (an import or bulk tidy-up) or
 there is no status change at all. `stageSinceFor` in `server/landsec-unit.ts`
 reads the facts in one pass; the clock feed, the unit page, the scheme unit
 list and `landsecCounts` all go through the rule. An unconfirmed figure is
-greyed with a question mark ("17d?") and still counts as stuck: never hide a
+greyed (no question mark: Woody, 2026-11-13, "remove question marks looks
+stupid"), its title says the date is not known, and it still counts as stuck: never hide a
 stuck deal because its date is unconfirmed. The hand-set date is
 `landsec_deal_clock.stage_since` (+ `stage_since_code`, `stage_since_by_name`;
 migration 0059), written only by `PUT /api/landsec/deal/:id/clock`
@@ -197,6 +194,19 @@ last edit, which is drawn as a quiet "No contact read yet" with the edit
 date in its title and sorts as no date. The list never writes a fallback
 into `lastInteraction` itself: the edit form saves that field back.
 
+**Every Deals table cell opens its editor, filled or empty** (Woody,
+2026-11-13: "can click empty spaces and add / edit"). An empty cell reads
+"+ Add …" or a faint dash and opens the same editor as a filled one, through
+the same save (the deal PUT, or the clock PUT); NER and "Not checked" open
+the lease terms, Brief check opens the unit's `UnitBriefDialog`, Depends on
+opens the Waiting on form. A closed deal shows its closing stage and date and
+dashes with the reason in the title: never a waiting-on or a stage date for
+it. A cell a login may not change is plain text: for a client login (Client,
+Team, BGP Contact, Instructed, Exchanged, Completed; no bin; no Completed or
+Invoiced status; party pickers create contacts and tenant brands only). A
+client's deal save never writes `poNumber` or `invoicedAt` (blanked for it by
+`stripDealFees`) and moves a deal only to a property in its scope.
+
 Properties carries what the Landsec home (Portfolio) had
 (`docs/landsec-menu-plan-2026-11-12.md`, part 3). For a Landsec viewer the
 Properties page opens on a "Schemes" view: the scheme cards, the stage pills
@@ -215,8 +225,8 @@ the screen again. BGP staff in the Landsec view whose session is not scoped
 to Landsec (no team of their own, or their own team is Landsec) are sent the
 whole BGP list, so `PropertiesList` cuts it to the scheme records the home
 feed names for staff. "The Landsec view" is one test on every screen,
-`useIsLandsecView()` (the brand), never `activeTeam === "Landsec"`. Joint
-agents still use the Landsec home and the scheme page.
+`useIsLandsecView()` (the brand), never `activeTeam === "Landsec"`. A joint
+agent gets the same page with its own schemes only (14 November 2026).
 
 **The Landsec menu (Woody, 2026-11-12) — docs/landsec-menu-plan-2026-11-12.md.**
 Woody's decisions of 12 November 2026, in his words where he gave them:
@@ -384,26 +394,54 @@ and an asset manager are the same for access. BGP's own records stay private
 to BGP whatever the role: its brand contacts, its notes on target brands, its
 email history, its fee and its internal split.
 
-**A joint agent, for now**, stays on its instructed schemes and on its own
-pages. Its first two menu entries read Properties (`/`, the scheme-limited
-Landsec home) and Deals (`/landsec/deals`, the scheme-limited deal clock),
-then Tracker, Viewings, Tasks and Brand CRM, as built on 12 November (the
-"menu Portfolio / Lettings / Tracker / Viewings / Tasks" wording further down
-this file now reads Properties / Deals / Tracker / Viewings / Tasks). It has
-no Ask and is not redirected (`/deals` is not on its route list, so a
-redirect would loop). Its route jail, the gateway
-(`restrictedLandsecApiRule`) and its pages were not touched by the asset
-manager change. **Chat for joint agents is built** (13 November 2026: the
-Chat rail, the Chat tab and `/landsec/chat`; the section "Chat for a joint
-agent" below has the rules). Moving joint agents onto the real
-Properties, Deals and Letting Tracker pages (plan steps 5 to 8 of
-`docs/landsec-menu-plan-2026-11-12.md`) is not built.
+**A joint agent on the real pages** (Woody, 2026-11-14: "joint agent can do
+anything other than see brands"; asked, he kept it to "its own schemes" and
+kept BGP's records private: the fee and internal split, email history, BGP's
+notes on target brands and the staff directory with emails). Its menu is
+Properties (`/deals/properties`) and Deals (`/deals`), the real pages cut to
+its schemes on the server, then Letting Tracker (its own,
+`/landsec/tracker`: the staff tracker reads firm-wide lists and BGP's notes
+on targets, so `/deals/letting` and `/available` send it there), Viewings,
+Tasks and Brand CRM; phone tabs Properties, Deals, Tracker, Viewings, Tasks,
+CRM, Chat (`JOINT_AGENT_MENU` in `shared/landsec-menu.ts`). No Brands.
+- **Pages**: its route jail stays `/`, `/home`, `/landsec`,
+  `/settings/profile`, plus `jointAgentRealPage` (Properties, Deals, the
+  Deals list, one deal by id, one property by id). `/`, `/landsec/deals` and
+  `/landsec/scheme/<key>` send it to the real pages as they do any Landsec
+  login; `landsec-home.tsx` is no longer mounted.
+- **Server**: the gateway opens, GET only, `/api/crm/properties` and one by
+  id, `/api/crm/deals` and one by id, `/api/tenancy-schedule/property/:id`
+  (and `/links`) and a property's plans, brochures and schemes list
+  (`restrictedLandsecApiRule`, tested in `server/landsec-gateway.test.ts`).
+  Each handler cuts to `schemeLimitedPropertyIdsOrNone` (a record off its
+  schemes is a 403; a deal counts only on a scheme property) and sends the
+  row through `withoutJointAgentFields` with
+  `JOINT_AGENT_HIDDEN_PROPERTY_FIELDS` / `JOINT_AGENT_HIDDEN_DEAL_FIELDS`
+  (`shared/landsec.ts`; tests `server/joint-agent-real-pages.test.ts`): no
+  BGP notes, commentary, who covers it, contacts, comments, last contact,
+  fee, invoicing, Xero or compliance. A new BGP-only column goes on the list.
+  Every other address stays refused: no writes on those pages, no company
+  list, contacts, property tasks, news, AI targets, brand gap, activity or
+  the unit feed.
+- **Screens**: read only. The property page (`jointAgent` in
+  `property-detail.tsx`) leaves out Ask ChatBGP, the layout controls,
+  weekly focus, news, risk register, brand gap, BGP commentary, research,
+  files, contacts, compliance, activity, tagged conversations and the
+  available units card. The deal page (`jointAgent` in `deal-detail.tsx`)
+  leaves out Image Studio, Edit, the Brand tab and profiles, files,
+  comments and history. Deals has no New Deal, and an inline change says
+  "read only" (`jointAgentDeals` in `deals.tsx`). Editing deals or the
+  schedule from these pages is not built.
+- Its chat is unchanged (the section "Chat for a joint agent" below), and its
+  ChatBGP keeps its 14 read tools.
 
 Decided (do not re-litigate): leasing managers and asset managers see all
 schemes and are the same for access; joint agents see their own schemes
 only; joint agents never see BGP's brand pages, brand contacts, email
-history or fees; a joint agent gets a separate front door of workspace
-routes rather than scheme checks retrofitted into the existing client view.
+history or fees. (A joint agent's "separate front door of workspace routes
+rather than scheme checks retrofitted into the existing client view" was
+superseded on 14 November 2026: it now reads the real Properties and Deals
+pages, cut on the server by the scheme checks above.)
 (Until 13 November 2026 this list read "asset managers and joint agents see
 their own schemes only" and "asset managers see brand pages and the brand
 case portfolio-wide but deals and figures only on their schemes", and the
@@ -434,14 +472,15 @@ letting action a BGP login does: the brief, targets and files, interest,
 viewings, offers and the negotiation log, Heads of Terms through to
 Solicitors, the deal checklist, the recommendation, Share with a brand, and
 adding or editing a unit. Their pages are `/landsec/tracker`,
-`/landsec/viewings` and `/landsec/tasks` (menu Portfolio / Lettings /
-Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
+`/landsec/viewings` and `/landsec/tasks`, and since 14 November 2026 the
+real Properties and Deals pages at their schemes; the staff tracker page is
+not opened to them.
 
 - **Stays closed to a joint agent**: brand pages and BGP's CRM (a brand's id
   and name in a picker is the limit); BGP's brand contacts; BGP's notes on
   target brands and the generated Targeting Brief document; BGP's email
   history, including a diary invitation's subject, body and guest list;
-  BGP's fee and internal split, the BGP deal page, the staff and client
+  BGP's fee and internal split, editing on the BGP deal page, the staff and client
   ChatBGP (it has its own locked-down one, below), search and the
   staff directory with emails; every scheme not on their login; deleting a
   unit, or a brief someone has signed; adding or removing BGP's own agents
@@ -1289,9 +1328,9 @@ untouched when it is off, and
 - **Still waiting on Woody** (the note lists them): unit links on comps and
   lease events, retiring the Layout choice, narrowing the schedule's Status
   box, the brochure card and the documents root, one store for target
-  brands, joint agents on the real pages (asset managers were on this list
-  until Woody answered on 13 November 2026: they are full Landsec logins
-  and use the real pages).
+  brands. (Joint agents on the real pages was on this list until Woody
+  answered on 14 November 2026: they read them at their own schemes; asset
+  managers were answered on 13 November.)
 
 ## Targeting Brief workspace (Woody, 2026-11-12)
 

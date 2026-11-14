@@ -2,7 +2,7 @@
 // and where the old scheme page sends a full login.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, LANDSEC_STAFF_TASKS, landsecMenuActive, landsecRestrictedRole, landsecSchemeRedirect, landsecTasksPath, openTaskCount, dealListSeed, type DealListSaved } from "../shared/landsec-menu";
+import { LANDSEC_MENU, JOINT_AGENT_MENU, jointAgentRealPage, LANDSEC_STAFF_TASKS, landsecMenuActive, landsecRestrictedRole, landsecSchemeRedirect, landsecTasksPath, openTaskCount, dealListSeed, type DealListSaved } from "../shared/landsec-menu";
 
 const FULL = [LANDSEC_MENU.properties, LANDSEC_MENU.deals, LANDSEC_MENU.tracker, LANDSEC_MENU.tasks, LANDSEC_MENU.brands, LANDSEC_MENU.chat];
 const lit = (location: string) => FULL.filter(url => landsecMenuActive(url, location));
@@ -39,7 +39,7 @@ test("Tasks: a Landsec login's entry is /landsec/tasks, staff viewing as Landsec
     for (const location of ["/", "/landsec/deals", "/landsec/tracker", "/landsec/unit/u-1", "/deals", "/tasksx", "/landsec/tasks-old"]) assert.equal(landsecMenuActive(url, location), false, `${url} at ${location}`);
   }
   // No other entry is lit on a task page, on the full menu or the restricted one.
-  for (const url of [LANDSEC_MENU.properties, LANDSEC_MENU.deals, LANDSEC_MENU.tracker, LANDSEC_MENU.brands, LANDSEC_MENU.chat, LANDSEC_RESTRICTED_MENU.properties, LANDSEC_RESTRICTED_MENU.deals]) {
+  for (const url of [LANDSEC_MENU.properties, LANDSEC_MENU.deals, LANDSEC_MENU.tracker, LANDSEC_MENU.brands, LANDSEC_MENU.chat, JOINT_AGENT_MENU.tracker]) {
     assert.equal(landsecMenuActive(url, "/landsec/tasks"), false, url);
   }
 });
@@ -70,18 +70,30 @@ test("an address that only looks alike lights nothing", () => {
   }
 });
 
-test("a joint agent's two entries keep their own addresses", () => {
-  assert.equal(landsecMenuActive(LANDSEC_RESTRICTED_MENU.properties, "/"), true);
-  assert.equal(landsecMenuActive(LANDSEC_RESTRICTED_MENU.properties, "/home"), true);
-  assert.equal(landsecMenuActive(LANDSEC_RESTRICTED_MENU.properties, "/landsec/deals"), false);
-  assert.equal(landsecMenuActive(LANDSEC_RESTRICTED_MENU.deals, "/landsec/deals"), true);
-  assert.equal(landsecMenuActive(LANDSEC_RESTRICTED_MENU.deals, "/"), false);
-  // Their other entries are left to the menu's ordinary rule. Tasks is this
-  // rule's own now, for every role.
-  for (const url of ["/landsec/tracker", "/landsec/viewings", "/landsec/brand-crm"]) {
+// Woody, 2026-11-14: "joint agent can do anything other than see brands".
+test("a joint agent uses the real Properties and Deals pages and its own Letting Tracker", () => {
+  assert.equal(JOINT_AGENT_MENU.properties, LANDSEC_MENU.properties);
+  assert.equal(JOINT_AGENT_MENU.deals, LANDSEC_MENU.deals);
+  assert.equal(JOINT_AGENT_MENU.tracker, "/landsec/tracker");
+  assert.equal(landsecMenuActive(JOINT_AGENT_MENU.tracker, "/landsec/tracker"), true);
+  assert.equal(landsecMenuActive(JOINT_AGENT_MENU.tracker, "/landsec/tracker?unit=u-1"), true);
+  assert.equal(landsecMenuActive(JOINT_AGENT_MENU.tracker, "/deals/letting"), false);
+  assert.equal(landsecMenuActive(LANDSEC_MENU.tracker, "/landsec/tracker"), false);
+  // Its Viewings and Brand CRM are left to the menu's ordinary rule.
+  for (const url of ["/landsec/viewings", "/landsec/brand-crm"]) {
     assert.equal(landsecMenuActive(url, url), null, url);
   }
   assert.equal(landsecMenuActive("/landsec/tasks", "/landsec/tasks"), true);
+});
+
+test("the real pages a joint agent may open: Properties, Deals, one deal, one property", () => {
+  const id = "11110000-0000-0000-0000-000000000302";
+  for (const ok of ["/deals", "/deals/", "/deals/properties", "/deals/list", "/deals/list?status=NEG", `/deals/${id}`, `/properties/${id}`, `/properties/${id}?section=units`]) {
+    assert.equal(jointAgentRealPage(ok), true, ok);
+  }
+  for (const no of ["/deals/letting", "/deals/wip", "/deals/board", "/properties", `/deals/${id}/edit`, "/deals/not-an-id", "/brands", "/companies/x", "/available", "/dealsx", `/properties/${id}/x`]) {
+    assert.equal(jointAgentRealPage(no), false, no);
+  }
 });
 
 test("only a joint agent is restricted: an asset manager has the full Landsec menu", () => {
