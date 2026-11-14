@@ -451,4 +451,42 @@ router.get("/api/properties/:propertyId/units/:unitId", requireAuth, async (req:
   }
 });
 
+// Find a property's website (Woody, 2026-11-14: "the look up function we can
+// use google when looking up brands and companies etc and websites"): the
+// same Google Places read the brand pages use (a text search, then each
+// place's own website), for the property's name and address. Nothing is
+// saved: the screen offers what Google gives and the person picks one. A few
+// pence a search, charged only when a person presses the button.
+router.get("/api/properties/:propertyId/website-lookup", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const propertyId = String(req.params.propertyId);
+    if (await propertyReadBlocked(req, propertyId)) return res.status(403).json({ error: "Not available for this account" });
+    const key = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
+    if (!key) return res.status(503).json({ error: "Google look-up is not set up on the server" });
+    const { rows } = await pool.query(`SELECT name, address FROM crm_properties WHERE id = $1`, [propertyId]);
+    if (!rows[0]) return res.status(404).json({ error: "Property not found" });
+    const address = rows[0].address;
+    const addressText = typeof address === "string" ? address
+      : [address?.formatted, address?.line1, address?.city, address?.postcode].filter(Boolean).join(", ");
+    const query = [rows[0].name, String(req.query.q || "").trim() || addressText].filter(Boolean).join(" ").slice(0, 200);
+    const search: any = await (await fetch(`https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&region=uk&key=${encodeURIComponent(key)}`,
+      { signal: AbortSignal.timeout(10_000) })).json();
+    const top = (search?.results || []).slice(0, 4);
+    const found = await Promise.all(top.map(async (place: any) => {
+      try {
+        const d: any = await (await fetch(`https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(place.place_id)}&fields=website&key=${encodeURIComponent(key)}`,
+          { signal: AbortSignal.timeout(10_000) })).json();
+        return d?.result?.website ? { name: place.name, address: place.formatted_address || null, website: String(d.result.website) } : null;
+      } catch { return null; }
+    }));
+    const seen = new Set<string>();
+    const results = found.filter((r): r is { name: string; address: string | null; website: string } => !!r)
+      .filter(r => { const k = r.website.replace(/^https?:\/\/(www\.)?/i, "").replace(/\/.*$/, "").toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+    res.json({ query, results });
+  } catch (error: any) {
+    console.error("[/api/properties/:id/website-lookup]", error?.message);
+    res.status(502).json({ error: "Google could not be reached" });
+  }
+});
+
 export default router;

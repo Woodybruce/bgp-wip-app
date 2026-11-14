@@ -128,6 +128,7 @@ import { countLabel } from "@/lib/utils";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { PropertyDetail } from "@/components/property-detail";
+import { CompanyLinkPicker } from "@/components/company-link-picker";
 import { useIsLandsecView, useLandsecRestricted } from "@/components/landsec/deal-clock";
 import {
   landsecTotalsLine, SchemeGroups, LandsecStagePills, LandsecAdminBlock, type LandsecHomeData,
@@ -876,32 +877,13 @@ export function InlineLandlord({
           Set landlord
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-64">
-        <div className="p-2">
-          <Input
-            placeholder="Search companies..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="h-7 text-xs"
-            data-testid={`search-landlord-${propertyId}`}
-          />
-        </div>
-        <div className="max-h-48 overflow-y-auto">
-          {filteredCompanies.length === 0 ? (
-            <DropdownMenuItem disabled>No companies found</DropdownMenuItem>
-          ) : (
-            filteredCompanies.map(company => (
-              <DropdownMenuItem
-                key={company.id}
-                onClick={() => { updateMutation.mutate(company.id); setSearchTerm(""); }}
-                data-testid={`assign-landlord-${company.id}`}
-              >
-                <Building2 className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
-                <span className="truncate">{company.name}</span>
-              </DropdownMenuItem>
-            ))
-          )}
-        </div>
+      <DropdownMenuContent align="start" className="w-auto p-0">
+        <CompanyLinkPicker
+          companyType="Landlord"
+          initial={landlordCompanies.map(c => ({ id: c.id, name: c.name, companyType: c.companyType ?? null }))}
+          placeholder="Search for the landlord…"
+          onPick={id => { queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] }); updateMutation.mutate(id); }}
+        />
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -934,13 +916,9 @@ export function InlineOwnerLink({
   chipLabel?: string;
 }) {
   const { toast } = useToast();
-  const [searchTerm, setSearchTerm] = useState("");
   // A dangling id (company deleted/merged) is treated as empty — it used to
   // fall through to the picker and read "Freeholder  + Freeholder".
   const company = companyId ? allCompanies.find(c => c.id === companyId) : null;
-  const filtered = searchTerm
-    ? allCompanies.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 20)
-    : allCompanies.slice(0, 20);
 
   const updateMutation = useMutation({
     mutationFn: async (val: string | null) => {
@@ -1001,30 +979,16 @@ export function InlineOwnerLink({
           {roleOnChip ? label : "Add"}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-64">
-        <div className="p-2">
-          <Input
-            placeholder="Search companies..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="h-7 text-xs"
-          />
-        </div>
-        <div className="max-h-48 overflow-y-auto">
-          {filtered.length === 0 ? (
-            <DropdownMenuItem disabled>No companies found</DropdownMenuItem>
-          ) : (
-            filtered.map(co => (
-              <DropdownMenuItem
-                key={co.id}
-                onClick={() => { updateMutation.mutate(co.id); setSearchTerm(""); }}
-              >
-                <Building2 className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
-                <span className="truncate">{co.name}</span>
-              </DropdownMenuItem>
-            ))
-          )}
-        </div>
+      <DropdownMenuContent align="start" className="w-auto p-0">
+        <CompanyLinkPicker
+          companyType={/lender/i.test(fieldName) ? "Lender" : fieldName === "assetManagerId" ? "Asset Manager" : "Landlord"}
+          // Before anything is typed: companies that could hold this role,
+          // never the brand list (tenants and agents are left out).
+          initial={allCompanies.filter(c => !/^(tenant|agent)/i.test(String((c as any).companyType || "")) && !!(c as any).companyType)
+            .map(c => ({ id: c.id, name: c.name, companyType: (c as any).companyType ?? null }))}
+          placeholder={`Search for the ${label.toLowerCase()}…`}
+          onPick={id => { queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] }); updateMutation.mutate(id); }}
+        />
       </DropdownMenuContent>
     </DropdownMenu>
   );

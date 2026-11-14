@@ -149,8 +149,10 @@ test('2. the unit routes check propertyReadBlocked before they load anything', (
   assert.match(blocked, /if \(await clientBlockedForProperty\(req, propertyId\)\) return true;/);
   assert.match(blocked, /const scope = await resolveCompanyScope\(req\);\s+if \(!scope\) return false;\s+if \(!\(await isPropertyInScope\(scope, propertyId\)\)\) return true;/);
   assert.match(blocked, /const schemeIds = await schemeLimitedPropertyIdsOrNone\(req, "property-units"\);\s+return !!schemeIds && !schemeIds\.includes\(propertyId\);/, 'a joint agent is held to its own schemes');
-  const expected = { '/api/properties/:propertyId/units': 'loadPropertyUnits(pool, propertyId)', '/api/properties/:propertyId/units/:unitId': 'loadPropertyUnitDetail(pool, propertyId,' };
-  assert.deepEqual(routes(UNITS).sort(), Object.keys(expected).map(p => `get "${p}"`).sort(), 'every route in the file is one of the two checked here');
+  const expected = { '/api/properties/:propertyId/units': 'loadPropertyUnits(pool, propertyId)', '/api/properties/:propertyId/units/:unitId': 'loadPropertyUnitDetail(pool, propertyId,',
+    // The website look-up (2026-11-14) reads only the property's name and address, after the same check.
+    '/api/properties/:propertyId/website-lookup': 'SELECT name, address FROM crm_properties WHERE id = $1' };
+  assert.deepEqual(routes(UNITS).sort(), Object.keys(expected).map(p => `get "${p}"`).sort(), 'every route in the file is one of those checked here');
   for (const [path, load] of Object.entries(expected)) {
     const route = routeNode(UNITS, 'get', path);
     assert.match(route.text, /requireAuth/);

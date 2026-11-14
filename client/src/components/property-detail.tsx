@@ -39,6 +39,7 @@ import {
   Plus,
   Layers,
   MoreHorizontal,
+  Search,
 } from "lucide-react";
 import { PropertySchemesPanel, usePropertySchemeList } from "@/components/property-schemes-panel";
 import { isSchemeEstate } from "@shared/property-schemes";
@@ -366,6 +367,57 @@ function SalesBoardLink({ property }: { property: any }) {
   return onBoard
     ? <Link href="/investment-tracker" className="text-[11px] text-emerald-700 hover:underline" data-testid="link-sales-board">On the Sales board</Link>
     : <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={() => add.mutate()} disabled={add.isPending} data-testid="button-add-sales-board">{add.isPending ? "Adding…" : "Add to Sales board"}</Button>;
+}
+
+// Finding a property's website (Woody, 2026-11-14: "add google search so can
+// find the website"): Google in a new tab, searched for the property's name
+// and town, so the team copies the site back into the Website box. The
+// app's own Google search was parked in August 2026 (Google refused the
+// account), so nothing is searched from the server and nothing is charged.
+function googleSiteSearch(name: string, address?: string | null): string {
+  const town = String(address || "").split(",").map(part => part.trim()).filter(Boolean).slice(-2, -1)[0] || "";
+  return `https://www.google.com/search?q=${encodeURIComponent([name, town, "official website"].filter(Boolean).join(" "))}`;
+}
+
+// Look up the website through Google (the brand pages' look-up: Places, then
+// each place's own website). Pick one to save it; "Search Google" opens the
+// ordinary search when Places has nothing.
+function WebsiteLookup({ propertyId, propertyName, address, hasWebsite, onPick }: { propertyId: string; propertyName: string; address?: string | null; hasWebsite: boolean; onPick: (url: string) => Promise<unknown> | void }) {
+  const [open, setOpen] = useState(false);
+  const lookup = useQuery<{ results: Array<{ name: string; address: string | null; website: string }> }>({
+    queryKey: ["/api/properties", propertyId, "website-lookup"],
+    enabled: open,
+    staleTime: 10 * 60_000,
+    retry: false,
+    queryFn: async () => {
+      const r = await fetch(`/api/properties/${encodeURIComponent(propertyId)}/website-lookup`, { credentials: "include", headers: getAuthHeaders() });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || "The look-up failed");
+      return body;
+    },
+  });
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button type="button" data-no-min-touch className="text-muted-foreground hover:text-foreground inline-flex items-center gap-0.5 text-[11px] shrink-0" title={`Look up ${propertyName}'s website`} data-testid="property-website-lookup">
+          <Search className="w-3 h-3" />{hasWebsite ? null : "Look up"}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 p-2 space-y-1">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-1">Found on Google</p>
+        {lookup.isLoading ? <p className="text-xs text-muted-foreground px-1 py-1 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Looking up…</p>
+          : lookup.isError ? <p className="text-xs text-muted-foreground px-1 py-1">{(lookup.error as Error)?.message}</p>
+          : !(lookup.data?.results || []).length ? <p className="text-xs text-muted-foreground px-1 py-1">No website found.</p>
+          : (lookup.data?.results || []).map(r => (
+            <button key={r.website} type="button" className="w-full text-left rounded px-1.5 py-1.5 hover:bg-muted text-xs" onClick={async () => { await onPick(r.website); setOpen(false); }} data-testid="property-website-pick">
+              <span className="block font-medium truncate">{r.website.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "")}</span>
+              <span className="block text-[11px] text-muted-foreground truncate">{[r.name, r.address].filter(Boolean).join(" · ")}</span>
+            </button>
+          ))}
+        <a href={googleSiteSearch(propertyName, address)} target="_blank" rel="noopener noreferrer" className="block border-t border-border mt-1 pt-1.5 px-1 text-xs text-primary hover:underline">Search Google instead</a>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export function PropertyDetail({ id }: { id: string }) {
@@ -931,7 +983,8 @@ export function PropertyDetail({ id }: { id: string }) {
                     : <button type="button" className={`${factPill} text-muted-foreground hover:text-foreground`} onClick={() => setAddingOwner(true)} data-testid="button-add-owner-role"><Plus className="w-3 h-3" />Owner or lender</button>)}
                   <span className={factPill} data-testid="property-field-area"><span className={factLabel}>Area</span><InlineNumber value={property.sqft} onSave={(val) => inlineUpdateAsync("sqft", val)} label="Area (sq ft)" suffix=" sq ft" className="font-mono tabular-nums" /></span>
                   <span className={factPill} data-testid="property-field-website"><span className={factLabel}>Website</span><InlineText value={property.website || ""} display={(property.website || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "")} onSave={(val) => inlineUpdateAsync("website", val)} label="Website" placeholder="Set website" className="truncate max-w-[14rem] block" />
-                    {property.website && <a href={/^https?:\/\//i.test(property.website) ? property.website : `https://${property.website}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground" title="Open website"><ExternalLink className="w-3 h-3" /></a>}</span>
+                    {property.website && <a href={/^https?:\/\//i.test(property.website) ? property.website : `https://${property.website}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground" title="Open website"><ExternalLink className="w-3 h-3" /></a>}
+                    <WebsiteLookup propertyId={property.id} propertyName={property.name} address={formatAddress(property.address)} hasWebsite={!!property.website} onPick={url => inlineUpdateAsync("website", url)} /></span>
                   <span className={factPill} data-testid="property-field-competitor"><span className={factLabel}>Competitor agent</span><InlineCompetitorAgent propertyId={id} competitorAgentId={(property as any).competitorAgentId} competitorAgent={property.competitorAgent} allCompanies={allCompanies} /></span>
                 </div>
               );
