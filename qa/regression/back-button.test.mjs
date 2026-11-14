@@ -64,7 +64,7 @@ test('a pill or tab change replaces the entry; a refused page is replaced, never
   const hub = read('client/src/pages/brands-hub.tsx');
   assert.doesNotMatch(hub, /<Link href="\/brands\?tab=[a-z]+">/, 'a tab link inside the hub replaces');
   const app = read('client/src/App.tsx');
-  const guard = app.slice(app.indexOf('function ClientRouteGuard()'), app.indexOf('function ClientRouteGuard()') + 1600);
+  const guard = app.slice(app.indexOf('function ClientRouteGuard()'), app.indexOf('function ClientRouteGuard()') + 2200);
   assert.match(guard, /const navigate = useCallback\(\(to: string\) => setLocation\(to, \{ replace: true \}\), \[setLocation\]\);/);
   assert.match(guard, /if \(!ok\) navigate\("\/"\);/);
 });

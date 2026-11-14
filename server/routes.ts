@@ -1902,9 +1902,12 @@ export async function registerRoutes(
   app.get("/api/team-events", requireAuth, async (req, res) => {
     try {
       const { pool } = await import("./db");
-      const days = parseInt(req.query.days as string) || 14;
+      const days = Math.min(Math.max(parseInt(req.query.days as string) || 14, 1), 366);
+      // ?pastDays= reaches back for a calendar (the Landsec calendar asks for 90).
+      const pastDays = Math.min(Math.max(parseInt(req.query.pastDays as string) || 0, 0), 366);
       const now = new Date();
-      const end = new Date(now);
+      now.setDate(now.getDate() - pastDays);
+      const end = new Date();
       end.setDate(end.getDate() + days);
       // Client logins (and staff in client view) only see their own
       // company's events — the client-events-sync rows plus any manual

@@ -341,6 +341,8 @@ function ClientRouteGuard() {
     if (!ok && restricted && (location === "/chatbgp" || location === "/messages")) ok = true;
     // Joint agents never see brand cases (BGP's brand work).
     if (ok && (user as any).landsecRole === "joint_agent" && location.startsWith("/landsec/brand-case")) ok = false;
+    // The Landsec calendar is the staff tracker's calendar: a joint agent's is its Viewings.
+    if (ok && (user as any).landsecRole === "joint_agent" && location.startsWith("/landsec/calendar")) { navigate("/landsec/viewings"); return; }
     if (!ok) navigate("/");
   }, [user, location, navigate]);
   return null;
@@ -418,6 +420,7 @@ function Router() {
           everyone else but BGP staff). */}
       <Route path="/landsec/tracker" component={LandsecTracker} />
       <Route path="/landsec/viewings" component={LandsecViewings} />
+      <Route path="/landsec/calendar" component={AvailableUnitsPage} />
       <Route path="/landsec/tasks" component={LandsecTasks} />
       <Route path="/landsec/chat" component={LandsecChat} />
       <Route path="/landsec/brand-cases" component={LandsecBrandCases} />
@@ -806,6 +809,7 @@ function AuthenticatedApp() {
               if (location.startsWith("/deals/letting")) return "Letting Tracker";
               if (location.startsWith("/landsec/tracker")) return "Tracker";
               if (location.startsWith("/landsec/viewings")) return "Viewings";
+              if (location.startsWith("/landsec/calendar")) return "Calendar";
               if (location.startsWith("/landsec/tasks")) return "Tasks";
               if (location.startsWith("/landsec/chat")) return "Chat";
               const seg = location.replace(/^\//, "").split("/");

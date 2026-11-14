@@ -1184,7 +1184,18 @@ activity up there for everyone. Everything is the same"). On the plan-led
 page `uiClient` / `uiJointAgent` are off: every tab, the Activity and
 conversation row, Folders, News & social, People, Brand gap, plan matching
 and the unit panel's letting buttons (to the login's own Letting Tracker)
-are there for every login. What a login may read or save is decided on the
+are there for every login. The intro row's left card is **BGP take** (the
+saved commentary, `BgpCommentaryWrapper`) with Activity behind it, and its
+right card the conversation with **People** behind it (Woody, 2026-11-14);
+People is no longer a main tab and the BGP take is no longer on Details.
+The **Landsec Calendar** (`/landsec/calendar`, on the Landsec menu after
+Letting Tracker) is the tracker's viewings calendar with Landsec's meetings
+on it (`meetings` on `LeasingViewings`, `landsecMeetings` reading
+`GET /api/team-events?pastDays=`), each a `MeetingRow` drawn in the secondary
+colour; the client-events sync now also sweeps `LANDSEC_MAILBOX` and counts
+an invitation to it as Landsec's, and keeps past meetings (it replaces only
+its own window). A joint agent's calendar stays its Viewings page.
+What a login may read or save is decided on the
 server, never by hiding a control. The only differences kept: a joint agent
 does not open brand pages (no brand links), the More menu's BGP pages
 (Image Studio, documents, evidence plan, folder set-up, delete) are BGP

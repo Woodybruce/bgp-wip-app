@@ -429,6 +429,9 @@ export function PropertyDetail({ id }: { id: string }) {
   // old page's switches, off on the plan-led page.
   const uiClient = isClientViewer && !planLayout;
   const uiJointAgent = jointAgent && !planLayout;
+  // The two cards above the plan: the BGP take or Activity; the conversation or People.
+  const [introLeft, setIntroLeft] = useState<"take" | "activity">("take");
+  const [introRight, setIntroRight] = useState<"chat" | "people">("chat");
   // What the Plan tab found, for the property it found it on: the tab is
   // called Units or Unit when that property has no plan.
   const [planTabOf, setPlanTab] = useState<{ propertyId: string; units: number; plans: number } | null>(null);
@@ -904,7 +907,6 @@ export function PropertyDetail({ id }: { id: string }) {
               <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-tab-tenancy">Tenancy schedule</Pill>
               {/* A joint agent has neither: brand gap is BGP's brand work, and the people are BGP's contacts. */}
               {!uiJointAgent && <Pill active={phoneSection === "brandgap"} onClick={() => setPhoneSection("brandgap")} data-testid="property-tab-brandgap">Brand gap</Pill>}
-              {!uiJointAgent && <Pill active={phoneSection === "people"} onClick={() => setPhoneSection("people")} data-testid="property-tab-people">People</Pill>}
               <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-tab-details">Details</Pill>
             </div>
             ) : (
@@ -935,16 +937,27 @@ export function PropertyDetail({ id }: { id: string }) {
                   its @ menu tags Letting Tracker units. */}
               {!uiClient && (
                 <div className="grid gap-3 md:grid-cols-2 items-stretch" data-testid="property-intro-row">
-                  <Card className="min-w-0 flex flex-col" data-testid="property-intro-activity">
-                    <div className="flex items-center gap-2 px-3 py-2.5">
-                      <Activity className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Activity</span>
+                  {/* Left: the BGP take (the snapshot) and Activity behind it;
+                      right: the conversation and People behind it (Woody,
+                      2026-11-14). */}
+                  <Card className="min-w-0 h-[372px] flex flex-col" data-testid="property-intro-activity">
+                    <div className="flex items-center gap-1.5 px-3 py-2.5" role="tablist" aria-label="Snapshot">
+                      <Pill active={introLeft === "take"} onClick={() => setIntroLeft("take")} data-testid="property-intro-take">BGP take</Pill>
+                      <Pill active={introLeft === "activity"} onClick={() => setIntroLeft("activity")} data-testid="property-intro-activity-tab">Activity</Pill>
                     </div>
-                    <div className="px-3 pb-3 max-h-[320px] overflow-y-auto">
-                      <ErrorBoundary compact name="Property activity"><ActivitySummary propertyId={property.id} /></ErrorBoundary>
+                    <div className="px-3 pb-3 min-h-0 flex-1 overflow-y-auto">
+                      {introLeft === "take"
+                        ? <ErrorBoundary compact name="BGP take"><BgpCommentaryWrapper propertyId={property.id} /></ErrorBoundary>
+                        : <ErrorBoundary compact name="Property activity"><ActivitySummary propertyId={property.id} /></ErrorBoundary>}
                     </div>
                   </Card>
-                  <div className="min-w-0 h-[372px] flex flex-col" data-testid="property-intro-chat">
+                  <div className="min-w-0 h-[372px] flex flex-col gap-1.5" data-testid="property-intro-chat">
+                    <div className="flex items-center gap-1.5" role="tablist" aria-label="Conversation and people">
+                      <Pill active={introRight === "chat"} onClick={() => setIntroRight("chat")} data-testid="property-intro-chat-tab">Conversation</Pill>
+                      <Pill active={introRight === "people"} onClick={() => setIntroRight("people")} data-testid="property-intro-people">People</Pill>
+                    </div>
+                    <div className="min-h-0 flex-1 flex flex-col">
+                    {introRight === "chat" ? (
                     <ErrorBoundary compact name="Property conversation">
                       <CompanyMiniChat companyId={property.id} companyName={property.name} linkedType="property" fill title="Property conversation"
                         starters={[
@@ -953,6 +966,14 @@ export function PropertyDetail({ id }: { id: string }) {
                           { label: "Vacant units", question: `Which units at ${property.name} are vacant, and which have no letting started?` },
                         ]} />
                     </ErrorBoundary>
+                    ) : (
+                    <div className="min-h-0 flex-1 overflow-y-auto">
+                      <ErrorBoundary compact name="People">
+                        <PropertyPeopleBoard propertyId={property.id} propertyName={property.name} landlordId={property.landlordId} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} />
+                      </ErrorBoundary>
+                    </div>
+                    )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -1270,7 +1291,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 stages are on Deals, vacancy / WAULT / rent on the tenancy
                 schedule, lease risks on the Risk register. */}
 
-            <PropertySection name={tab("overview", "activity", "overview")} active={phoneSection} simple={tabbed}>
+            <PropertySection name={tab("overview", "activity", "intro")} active={phoneSection} simple={tabbed}>
             {!uiJointAgent && <BgpCommentaryWrapper propertyId={property.id} />}
             </PropertySection>
 

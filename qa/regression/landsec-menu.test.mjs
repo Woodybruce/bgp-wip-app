@@ -16,7 +16,7 @@ const statement = (file, start) => find(file, node => ts.isVariableStatement(nod
 const fn = (file, name) => find(file, node => ts.isFunctionDeclaration(node) && node.name?.text === name);
 // Values made inside the evaluated source belong to another realm.
 const plain = value => JSON.parse(JSON.stringify(value));
-const ICONS = Object.fromEntries(['LayoutDashboard', 'Building2', 'BarChart3', 'Store', 'Handshake', 'Layers', 'Eye', 'ListTodo', 'Target', 'MessageCircle', 'CheckSquare'].map(name => [name, name]));
+const ICONS = Object.fromEntries(['Calendar', 'LayoutDashboard', 'Building2', 'BarChart3', 'Store', 'Handshake', 'Layers', 'Eye', 'ListTodo', 'Target', 'MessageCircle', 'CheckSquare'].map(name => [name, name]));
 const BINDINGS = { ...ICONS, LANDSEC_MENU, JOINT_AGENT_MENU, LANDSEC_STAFF_TASKS, landsecTasksPath };
 
 const sidebar = evaluate([
@@ -38,7 +38,7 @@ const tabs = evaluate([
 ].join('\n'), BINDINGS);
 const phone = which => plain(tabs[which]).map(i => [i.label, i.path]);
 
-const FULL_MENU = [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Letting Tracker', '/deals/letting'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands']];
+const FULL_MENU = [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Letting Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands']];
 const GONE = ['Portfolio', 'Scheme', 'Lettings', 'Ask'];
 
 test('a full Landsec login, a leasing manager and an asset manager have Properties, Deals, Letting Tracker, Tasks, Brands', () => {

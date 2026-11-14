@@ -133,6 +133,7 @@ export const LANDSEC_NAV = [
   { title: "Properties", url: LANDSEC_MENU.properties, icon: Building2 },
   { title: "Deals", url: LANDSEC_MENU.deals, icon: BarChart3 },
   { title: "Letting Tracker", url: LANDSEC_MENU.tracker, icon: Store },
+  { title: "Calendar", url: LANDSEC_MENU.calendar, icon: Calendar },
   { title: "Brands", url: LANDSEC_MENU.brands, icon: Handshake },
 ];
 

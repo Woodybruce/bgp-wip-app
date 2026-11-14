@@ -1,6 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { LeasingViewings, type LeasingViewing } from "@/components/leasing-viewings";
+import { landsecMeetings } from "@/components/landsec/landsec-meetings";
 import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { SourceEmailDialog, SourceEventDialog } from "@/components/tracker-source";
 import { Card, CardContent } from "@/components/ui/card";
@@ -566,6 +567,8 @@ export default function AvailableUnitsPage() {
   // were silently ignored before).
   const urlParam = (k: string) => { try { return new URLSearchParams(window.location.search).get(k) || "all"; } catch { return "all"; } };
   const [trackerWorkspace, setTrackerWorkspace] = useState<"units" | "viewings" | "reports">(() => {
+    // /landsec/calendar is this page opened on its calendar.
+    if (window.location.pathname.startsWith("/landsec/calendar")) return "viewings";
     const value = urlParam("workspace") !== "all" ? urlParam("workspace") : urlParam("tab");
     return value === "viewings" || value === "reports" ? value : "units";
   });
@@ -585,6 +588,16 @@ export default function AvailableUnitsPage() {
   // Stuck pill, from the deal clock feed (GET /api/landsec/deals) by deal id.
   // "STUCK" as the status filter is that pill, not a status.
   const trackerClockOn = useIsLandsecView();
+  // The Landsec calendar (Woody, 2026-11-14): the viewings and every meeting
+  // Landsec is invited to, on one calendar. The server gives a Landsec login
+  // its own company's meetings; BGP staff viewing as Landsec are cut to them here.
+  const { data: teamEventRows } = useQuery<any[]>({
+    queryKey: ["/api/team-events", "landsec-calendar"],
+    queryFn: async () => (await apiRequest("GET", "/api/team-events?pastDays=90&days=120")).json(),
+    enabled: trackerClockOn,
+    staleTime: 60_000,
+  });
+  const calendarMeetings = trackerClockOn ? landsecMeetings(teamEventRows) : undefined;
   const trackerClocks = useLandsecClocks(trackerClockOn);
   const clockForUnit = (u: { dealId?: string | null }) => (trackerClockOn && u.dealId ? trackerClocks.byId.get(u.dealId) : undefined);
   // Compact header (team feedback: the fixed header block was so tall the
@@ -2163,7 +2176,7 @@ export default function AvailableUnitsPage() {
           as the Deals pass 2 fix (Woody, 2026-09-27). */}
       <div className={`${isMobile ? "" : "sticky top-0 z-30 bg-background -mx-4 md:-mx-6 px-4 md:px-6 -mt-4 md:-mt-6 pt-4 md:pt-6 pb-3 border-b"} flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4`}>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Letting Tracker</h1>
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">{window.location.pathname.startsWith("/landsec/calendar") ? "Calendar" : "Letting Tracker"}</h1>
           <p className="text-sm text-muted-foreground">
             {/* Recount under active search/filters — the header disagreeing
                 with the chips/table was the same class as the deals-board
@@ -2267,6 +2280,7 @@ export default function AvailableUnitsPage() {
           initialBrandId={urlParam("brandId") === "all" ? undefined : urlParam("brandId")}
           focusedViewingId={focusedViewingId}
           onFocusHandled={() => setFocusedViewingId(null)}
+          meetings={calendarMeetings}
           onRecordOffer={(viewing: LeasingViewing) => {
             const unit = units.find(u => u.id === viewing.unitId);
             if (!unit) return;

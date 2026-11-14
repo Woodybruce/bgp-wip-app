@@ -78,6 +78,13 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
       .map(e => e.split("@")[1])
       .filter((d): d is string => !!d && !GENERIC_DOMAINS.has(d))
   );
+  // The Landsec workspace mailbox (Woody, 2026-11-14: meetings "where people
+  // from Landsec are invited and or landsec@chatbgp.app is invited"): an
+  // invitation to it counts as Landsec's, and its own diary is swept below.
+  // Added after the domains are worked out, so its domain is not Landsec's.
+  const { LANDSEC_MAILBOX } = await import("./shared-mailbox");
+  const landsecMailbox = /landsec/i.test(companyName) && LANDSEC_MAILBOX ? LANDSEC_MAILBOX.toLowerCase() : null;
+  if (landsecMailbox) contactEmails.add(landsecMailbox);
 
   const now = new Date();
   const start = new Date(now); start.setDate(start.getDate() - 1);
@@ -191,13 +198,28 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
     console.warn("[client-events-sync] invite-mailbox sweep failed:", err?.message);
   }
 
-  // Idempotent replace: clear this client's previously-synced events, reinsert.
+  if (landsecMailbox) {
+    try {
+      const { graphRequest } = await import("./shared-mailbox");
+      const data = await graphRequest(
+        `/users/${encodeURIComponent(landsecMailbox)}/calendarView?startDateTime=${start.toISOString()}&endDateTime=${end.toISOString()}&$top=100&$orderby=start/dateTime&${CAL_SELECT}`,
+        { headers: { Prefer: 'outlook.timezone="Europe/London"' } }
+      );
+      for (const e of data?.value || []) considerEvent(e, landsecMailbox);
+    } catch (err: any) {
+      console.warn("[client-events-sync] Landsec mailbox sweep failed:", err?.message);
+    }
+  }
+
+  // Idempotent replace of the window just read: this client's synced events
+  // from the window's start on are cleared and reinserted. Earlier ones stay,
+  // so a calendar can show past meetings.
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     await client.query(
-      `DELETE FROM team_events WHERE company_name = $1 AND event_type = 'client-sync'`,
-      [companyName]
+      `DELETE FROM team_events WHERE company_name = $1 AND event_type = 'client-sync' AND start_time >= $2`,
+      [companyName, start.toISOString()]
     );
     for (const ev of matchedEvents.values()) {
       if (!ev.start) continue;

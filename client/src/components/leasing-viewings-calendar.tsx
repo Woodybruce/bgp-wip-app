@@ -1,8 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, Ban, Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, ExternalLink, Mail, MapPin, Phone, UserX } from "lucide-react";
+import { AlertCircle, Ban, Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, ExternalLink, Mail, MapPin, Phone, Users, UserX } from "lucide-react";
 import { calendarDateValue } from "@shared/calendar-date";
-import { viewingMissingDetails, viewingNeedsOutcome, type ViewingOptions, type ViewingRecord, type ViewingStatus } from "@shared/viewing-workflow";
+import { viewingMissingDetails, viewingNeedsOutcome as needsOutcome, type ViewingOptions, type ViewingRecord, type ViewingStatus } from "@shared/viewing-workflow";
+
+// A meeting on the Landsec calendar (Woody, 2026-11-14: the viewings calendar
+// "joined with" the team calendar's meetings where Landsec is invited). It
+// rides in the viewings list as a record carrying `meeting`, and is drawn as a
+// meeting: its own colour, its own length, no details or outcome marks.
+export type CalendarMeeting = { id: string; title: string; date: string; time: string | null; endTime: string | null; location: string | null; propertyId: string | null; propertyName: string | null; attendees: string[] };
+export type MeetingRow = ViewingRecord & { meeting: CalendarMeeting };
+export const isMeetingRow = (v: ViewingRecord): v is MeetingRow => !!(v as MeetingRow).meeting;
+const viewingNeedsOutcome = (v: ViewingRecord, today: string) => !isMeetingRow(v) && needsOutcome(v, today);
 import { apiRequest } from "@/lib/queryClient";
 import { localBrandLogoUrl } from "@/lib/company-logos";
 import { cn } from "@/lib/utils";
@@ -75,7 +84,7 @@ function rangeLabel(anchor: string, view: CalendarView, today: string): string {
   return `${formatDay(first, { day: "numeric", month: "short", ...(first.slice(0, 4) !== last.slice(0, 4) ? { year: "numeric" as const } : {}) })} – ${end}`;
 }
 
-const viewingNeedsDetails = (v: ViewingRecord) => !["not_leasing", "cancelled", "no_show"].includes(v.status) && (viewingMissingDetails(v).length > 0 || v.issues.length > 0);
+const viewingNeedsDetails = (v: ViewingRecord) => !isMeetingRow(v) && !["not_leasing", "cancelled", "no_show"].includes(v.status) && (viewingMissingDetails(v).length > 0 || v.issues.length > 0);
 
 function viewingMinutes(v: Pick<ViewingRecord, "viewingTime">): number | null {
   const match = /^([01]?\d|2[0-3]):([0-5]\d)/.exec(v.viewingTime || "");
@@ -85,11 +94,12 @@ const timeText = (v: Pick<ViewingRecord, "viewingTime">) => { const minutes = vi
 const sortViewings = (a: ViewingRecord, b: ViewingRecord) => a.viewingDate.localeCompare(b.viewingDate) || (viewingMinutes(a) ?? -1) - (viewingMinutes(b) ?? -1) || a.id.localeCompare(b.id);
 const firstName = (name: string | null | undefined) => (name || "").trim().split(/\s+/)[0] || "";
 const initialsOf = (name: string | null | undefined) => { const parts = (name || "").trim().split(/\s+/).filter(Boolean); return ((parts[0]?.[0] || "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase(); };
-const brandText = (v: ViewingRecord) => v.companyName || "Brand to confirm";
-const placeText = (v: ViewingRecord) => [v.unitName, v.propertyName].filter(Boolean).join(" · ") || v.sourceDetails?.subject || "Unit to confirm";
-const peopleShort = (v: ViewingRecord) => [v.contactName ? firstName(v.contactName) : null, v.agentContactName ? `${firstName(v.agentContactName)} (agent)` : null, v.ownerName ? initialsOf(v.ownerName) : null].filter(Boolean).join(" · ");
+const brandText = (v: ViewingRecord) => isMeetingRow(v) ? v.meeting.title || "Meeting" : v.companyName || "Brand to confirm";
+const placeText = (v: ViewingRecord) => isMeetingRow(v) ? [v.meeting.propertyName, v.meeting.location].filter(Boolean).join(" · ") || "Meeting" : [v.unitName, v.propertyName].filter(Boolean).join(" · ") || v.sourceDetails?.subject || "Unit to confirm";
+const invitedText = (m: CalendarMeeting) => m.attendees.length ? `${m.attendees.length} invited` : "";
+const peopleShort = (v: ViewingRecord) => isMeetingRow(v) ? invitedText(v.meeting) : [v.contactName ? firstName(v.contactName) : null, v.agentContactName ? `${firstName(v.agentContactName)} (agent)` : null, v.ownerName ? initialsOf(v.ownerName) : null].filter(Boolean).join(" · ");
 // The viewing's agent is BGP's unless the calendar has marked them as a joint agent with their firm.
-const peopleLong = (v: ViewingRecord) => [v.contactName, v.agentContactName ? `${v.agentContactName} (agent)` : null, v.ownerName ? `${v.ownerName} (${v.ownerFirm || "BGP"})` : null].filter(Boolean).join(" · ");
+const peopleLong = (v: ViewingRecord) => isMeetingRow(v) ? invitedText(v.meeting) : [v.contactName, v.agentContactName ? `${v.agentContactName} (agent)` : null, v.ownerName ? `${v.ownerName} (${v.ownerFirm || "BGP"})` : null].filter(Boolean).join(" · ");
 
 // Status colours come from the theme tokens only: the primary accent for a
 // booked viewing, ink for one that happened, destructive for a no-show, and
@@ -97,10 +107,17 @@ const peopleLong = (v: ViewingRecord) => [v.contactName, v.agentContactName ? `$
 const statusTint: Record<ViewingStatus, string> = { scheduled: "bg-primary/10", completed: "bg-foreground/10", no_show: "bg-destructive/10", cancelled: "bg-muted", not_leasing: "bg-transparent" };
 const statusBar: Record<ViewingStatus, string> = { scheduled: "border-l-primary", completed: "border-l-foreground", no_show: "border-l-destructive", cancelled: "border-l-muted-foreground/40", not_leasing: "border border-dashed border-border" };
 const statusText: Record<ViewingStatus, string> = { scheduled: "text-foreground", completed: "text-foreground", no_show: "text-foreground", cancelled: "text-muted-foreground line-through", not_leasing: "text-muted-foreground" };
+// A meeting: the secondary tokens, so it never reads as a viewing.
+const MEETING_BAR = "border-l-secondary-foreground";
+const MEETING_TINT = "bg-secondary";
+const barOf = (v: ViewingRecord) => isMeetingRow(v) ? MEETING_BAR : statusBar[v.status];
+const tintOf = (v: ViewingRecord) => isMeetingRow(v) ? MEETING_TINT : statusTint[v.status];
+const textOf = (v: ViewingRecord) => isMeetingRow(v) ? "text-foreground" : statusText[v.status];
 
 // The status icon repeats what the block's colour says; where space is short
 // (month chips) only the two "needs attention" marks are drawn.
 function StatusMarks({ v, today, attentionOnly = false }: { v: ViewingRecord; today: string; attentionOnly?: boolean }) {
+  if (isMeetingRow(v)) return <span className="ml-auto flex shrink-0 items-center"><Users className="h-3 w-3 text-muted-foreground" aria-label="Meeting" /></span>;
   return <span className="ml-auto flex shrink-0 items-center gap-0.5">
     {!attentionOnly && v.status === "completed" && <Check className="h-3 w-3" aria-label="Attended" />}
     {!attentionOnly && v.status === "no_show" && <UserX className="h-3 w-3 text-destructive" aria-label="No-show" />}
@@ -110,7 +127,7 @@ function StatusMarks({ v, today, attentionOnly = false }: { v: ViewingRecord; to
   </span>;
 }
 
-const blockTitle = (v: ViewingRecord, today: string) => [timeText(v) || "No time set", brandText(v), placeText(v), peopleLong(v), statusLabels[v.status], viewingNeedsDetails(v) ? "Details missing" : null, viewingNeedsOutcome(v, today) ? "Outcome due" : null].filter(Boolean).join(" · ");
+const blockTitle = (v: ViewingRecord, today: string) => [timeText(v) || "No time set", brandText(v), placeText(v), peopleLong(v), isMeetingRow(v) ? "Meeting" : statusLabels[v.status], viewingNeedsDetails(v) ? "Details missing" : null, viewingNeedsOutcome(v, today) ? "Outcome due" : null].filter(Boolean).join(" · ");
 
 interface PlacedViewing { viewing: ViewingRecord; startMin: number; endMin: number; col: number; totalCols: number }
 
@@ -119,7 +136,9 @@ interface PlacedViewing { viewing: ViewingRecord; startMin: number; endMin: numb
 function computeViewingLayout(dayViewings: ViewingRecord[]): PlacedViewing[] {
   const timed = dayViewings.flatMap(viewing => {
     const startMin = viewingMinutes(viewing);
-    return startMin == null ? [] : [{ viewing, startMin, endMin: Math.min(startMin + DEFAULT_MINUTES, 24 * 60) }];
+    if (startMin == null) return [];
+    const endAt = isMeetingRow(viewing) ? viewingMinutes({ viewingTime: viewing.meeting.endTime }) : null;
+    return [{ viewing, startMin, endMin: Math.min(endAt != null && endAt > startMin ? endAt : startMin + DEFAULT_MINUTES, 24 * 60) }];
   }).sort((a, b) => a.startMin - b.startMin || a.viewing.id.localeCompare(b.viewing.id));
   const layout: PlacedViewing[] = [];
   let cluster: typeof timed = [];
@@ -156,16 +175,16 @@ function ViewingBlock({ item, startHour, hourHeight, today, selected, tight, onS
   const lines = Math.max(1, Math.floor((height - 6) / 13));
   const people = peopleShort(v);
   return <button type="button" onClick={() => onSelect(v)} title={blockTitle(v, today)} aria-label={blockTitle(v, today)} aria-pressed={selected} data-testid={`viewings-block-${v.id}`}
-    className={cn("absolute overflow-hidden rounded-[4px] border-l-[3px] bg-card px-1.5 py-[3px] text-left text-[11px] leading-[13px] transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", statusBar[v.status], selected && "z-10 shadow-md ring-2 ring-foreground")}
+    className={cn("absolute overflow-hidden rounded-[4px] border-l-[3px] bg-card px-1.5 py-[3px] text-left text-[11px] leading-[13px] transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", barOf(v), selected && "z-10 shadow-md ring-2 ring-foreground")}
     style={{ top: `${top}px`, height: `${height}px`, left: `${col * width}%`, width: `calc(${width}% - 4px)`, marginLeft: "2px" }}>
-    <span className={cn("pointer-events-none absolute inset-0", statusTint[v.status])} aria-hidden />
+    <span className={cn("pointer-events-none absolute inset-0", tintOf(v))} aria-hidden />
     <span className="relative block">
       <span className="flex items-center gap-1">
         <span className="shrink-0 font-mono tabular-nums text-muted-foreground">{timeText(v)}</span>
-        {!stacked && <span className={cn("min-w-0 truncate font-bold", statusText[v.status])}>{brandText(v)}</span>}
+        {!stacked && <span className={cn("min-w-0 truncate font-bold", textOf(v))}>{brandText(v)}</span>}
         <StatusMarks v={v} today={today} />
       </span>
-      {stacked && lines >= 2 && <span className={cn("block truncate font-bold", statusText[v.status])}>{brandText(v)}</span>}
+      {stacked && lines >= 2 && <span className={cn("block truncate font-bold", textOf(v))}>{brandText(v)}</span>}
       {lines >= (stacked ? 3 : 2) && <span className="block truncate text-muted-foreground">{placeText(v)}</span>}
       {lines >= (stacked ? 4 : 3) && people && <span className="block truncate text-foreground/80">{people}</span>}
     </span>
@@ -174,9 +193,9 @@ function ViewingBlock({ item, startHour, hourHeight, today, selected, tight, onS
 
 function ViewingChip({ v, today, selected, onSelect, testId, showTime, marks }: { v: ViewingRecord; today: string; selected: boolean; onSelect: (v: ViewingRecord) => void; testId: string; showTime: boolean; marks: boolean }) {
   return <button type="button" onClick={() => onSelect(v)} title={blockTitle(v, today)} aria-label={blockTitle(v, today)} aria-pressed={selected} data-testid={testId}
-    className={cn("relative flex w-full min-w-0 items-center gap-1 overflow-hidden rounded-[4px] border-l-[3px] bg-card px-1.5 py-[3px] text-left text-[11px] leading-[14px] hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", statusBar[v.status], selected && "ring-2 ring-foreground")}>
-    <span className={cn("pointer-events-none absolute inset-0", statusTint[v.status])} aria-hidden />
-    <span className={cn("relative min-w-0 flex-1 truncate font-bold", statusText[v.status])}>{brandText(v)}</span>
+    className={cn("relative flex w-full min-w-0 items-center gap-1 overflow-hidden rounded-[4px] border-l-[3px] bg-card px-1.5 py-[3px] text-left text-[11px] leading-[14px] hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", barOf(v), selected && "ring-2 ring-foreground")}>
+    <span className={cn("pointer-events-none absolute inset-0", tintOf(v))} aria-hidden />
+    <span className={cn("relative min-w-0 flex-1 truncate font-bold", textOf(v))}>{brandText(v)}</span>
     {showTime && timeText(v) && <span className="relative shrink-0 text-[10px] tabular-nums text-muted-foreground">{timeText(v)}</span>}
     {marks && <span className="relative flex shrink-0"><StatusMarks v={v} today={today} attentionOnly={showTime} /></span>}
   </button>;
@@ -221,12 +240,21 @@ const viewNames: Record<CalendarView, string> = { day: "Day", workWeek: "Work we
 // While a queue ("Needs details", "Outcomes due") is open its name is the
 // heading; stepping or picking a view goes back to the calendar. A phone
 // leaves out Work week: five columns read no better there than seven.
+// "3 viewings", "2 viewings · 1 meeting": what the shown range holds.
+function countWords(viewings: ViewingRecord[], anchor: string, view: CalendarView, list: { title: string; count: number } | null): ReactNode {
+  if (list) return <><span className="font-mono tabular-nums">{list.count}</span> {list.count === 1 ? "viewing" : "viewings"}</>;
+  const days = new Set(viewDates(anchor, view));
+  const inRange = viewings.filter(v => days.has(v.viewingDate));
+  const meetings = inRange.filter(isMeetingRow).length;
+  const viewingCount = inRange.length - meetings;
+  return <><span className="font-mono tabular-nums">{viewingCount}</span> {viewingCount === 1 ? "viewing" : "viewings"}{meetings > 0 && <> · <span className="font-mono tabular-nums">{meetings}</span> {meetings === 1 ? "meeting" : "meetings"}</>}</>;
+}
+
 export function ViewingsToolbar({ anchor, view, today, viewings, list, compact, onAnchor, onView, children }: {
   anchor: string; view: CalendarView; today: string; viewings: ViewingRecord[]; list: { title: string; count: number } | null; compact: boolean;
   onAnchor: (date: string) => void; onView: (view: CalendarView) => void; children?: ReactNode;
 }) {
   const dates = viewDates(anchor, view);
-  const count = list ? list.count : viewings.filter(v => v.viewingDate >= dates[0] && v.viewingDate <= dates[dates.length - 1]).length;
   const unit = view === "day" ? "day" : view === "month" ? "month" : "week";
   return <div className="flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="viewings-toolbar">
     <div className="flex items-center gap-1">
@@ -236,7 +264,7 @@ export function ViewingsToolbar({ anchor, view, today, viewings, list, compact, 
     </div>
     <div className="min-w-0 flex-1 basis-44">
       <h2 className="truncate text-sm font-semibold" data-testid="viewings-range">{list ? list.title : rangeLabel(anchor, view, today)}</h2>
-      <p className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{count}</span> {count === 1 ? "viewing" : "viewings"} · times are UK time</p>
+      <p className="text-[11px] text-muted-foreground">{countWords(viewings, anchor, view, list)} · times are UK time</p>
     </div>
     <div className="flex flex-wrap items-center gap-1.5" aria-label="Calendar view">
       {(["day", "workWeek", "week", "month"] as const).filter(mode => !compact || mode !== "workWeek" || view === "workWeek").map(mode => <Pill key={mode} active={!list && view === mode} aria-pressed={!list && view === mode} onClick={() => onView(mode)} data-testid={`viewings-view-${mode}`}>{viewNames[mode]}</Pill>)}
@@ -422,10 +450,11 @@ export function ViewingsComingUp({ viewings, today, selectedId, onSelect }: { vi
   </div>;
 }
 
-export function ViewingsLegend() {
+export function ViewingsLegend({ meetings = false }: { meetings?: boolean } = {}) {
   const swatch = (status: ViewingStatus) => <span className={cn("relative inline-block h-3 w-4 overflow-hidden rounded-[3px] border-l-[3px] bg-card align-middle", statusBar[status])}><span className={cn("absolute inset-0", statusTint[status])} /></span>;
   return <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground" data-testid="viewings-legend">
     {(["scheduled", "completed", "no_show", "cancelled", "not_leasing"] as const).map(status => <span key={status} className="inline-flex items-center gap-1.5">{swatch(status)}<span className={status === "cancelled" ? "line-through" : undefined}>{statusLabels[status]}</span></span>)}
+    {meetings && <span className="inline-flex items-center gap-1.5"><span className={cn("relative inline-block h-3 w-4 overflow-hidden rounded-[3px] border-l-[3px] bg-card align-middle", MEETING_BAR)}><span className={cn("absolute inset-0", MEETING_TINT)} /></span>Meeting</span>}
     <span className="inline-flex items-center gap-1"><AlertCircle className="h-3 w-3 text-primary" />Details missing</span>
     <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3 text-primary" />Outcome due</span>
   </div>;

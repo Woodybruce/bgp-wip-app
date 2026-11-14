@@ -15,6 +15,9 @@ export const LANDSEC_MENU = {
   properties: "/deals/properties",
   deals: "/deals",
   tracker: "/deals/letting",
+  // The Landsec calendar (Woody, 2026-11-14): viewings and every meeting
+  // Landsec is invited to, on one calendar (the tracker's own calendar).
+  calendar: "/landsec/calendar",
   tasks: "/landsec/tasks",
   brands: "/brands",
   chat: "/messages",
@@ -73,6 +76,8 @@ export function landsecMenuActive(url: string, location: string): boolean | null
       return at("/deals/properties") || at("/properties") || at("/landsec/unit");
     case LANDSEC_MENU.tracker:
       return at("/deals/letting") || at("/available");
+    case LANDSEC_MENU.calendar:
+      return at("/landsec/calendar");
     case JOINT_AGENT_MENU.tracker:
       return at("/landsec/tracker");
     case "/":

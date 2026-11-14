@@ -20,7 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { EntityCombobox, type EntityComboboxItem } from "@/components/entity-combobox";
 import { NoteFill } from "@/components/letting-note/note-fill";
 import type { LettingNoteReading } from "@shared/letting-note";
-import { ViewingSummary, ViewingsComingUp, ViewingsDayStrip, ViewingsFilterPill, ViewingsLegend, ViewingsMiniMonth, ViewingsMonthGrid, ViewingsTimeGrid, ViewingsToolbar, type CalendarView } from "@/components/leasing-viewings-calendar";
+import { ViewingSummary, ViewingsComingUp, ViewingsDayStrip, ViewingsFilterPill, ViewingsLegend, ViewingsMiniMonth, ViewingsMonthGrid, ViewingsTimeGrid, ViewingsToolbar, isMeetingRow, type CalendarMeeting, type CalendarView, type MeetingRow } from "@/components/leasing-viewings-calendar";
 
 export type LeasingViewing = ViewingRecord;
 // The queues that open as a compact list in place of the calendar.
@@ -193,7 +193,25 @@ function useWideScreen() {
   return wide;
 }
 
-export function LeasingViewings({ mode, units, isClient, jointAgent = false, currentUserId, initialPropertyId, initialBrandId, focusedViewingId, onFocusHandled, onRecordOffer }: {
+// An empty viewing record, the base of a new viewing and of a meeting row.
+function blankViewing(): ViewingRecord {
+  return { id: "", unitId: null, propertyId: null, propertyName: null, unitName: null, sqft: null, companyId: null, companyName: null, contactId: null, contactName: null, agentContactId: null, agentContactName: null, ownerUserId: null, ownerName: null, team: null, requirementId: null, requirementName: null, viewingDate: "", viewingTime: null, status: "scheduled", outcome: null, notes: null, attendees: null, nextAction: null, followUpDate: null, source: null, calendarEventId: null, bookingId: null, detailsConfirmedAt: null, outcomeRecordedAt: null, updatedAt: "", issues: [] };
+}
+
+// A meeting's card: when, where, the property, and who is invited.
+function MeetingSummary({ meeting: m }: { meeting: CalendarMeeting }) {
+  const person = (raw: string) => { const match = /^(.*?)\s*<([^>]+)>$/.exec(raw); return match ? { name: match[1] || match[2], email: match[2] } : { name: raw, email: raw.includes("@") ? raw : "" }; };
+  return <div className="space-y-4" data-testid="calendar-meeting">
+    <div><p className="text-sm font-semibold break-words">{m.title || "Meeting"}</p>
+      <p className="text-[11px] text-muted-foreground">{dateLabel(m.date, true)}{m.time ? ` · ${m.time}${m.endTime ? `–${m.endTime}` : ""}` : ""}</p></div>
+    {(m.location || m.propertyName) && <div className="space-y-1">{m.propertyName && (m.propertyId ? <a href={`/properties/${m.propertyId}`} className="block text-sm text-primary underline">{m.propertyName}</a> : <p className="text-sm">{m.propertyName}</p>)}{m.location && <p className="text-[11px] text-muted-foreground break-words">{m.location}</p>}</div>}
+    <div className="space-y-1.5"><p className={labelClass}>Invited <span className="font-mono tabular-nums">{m.attendees.length}</span></p>
+      {m.attendees.length === 0 ? <p className="text-[11px] text-muted-foreground">No guest list on this meeting.</p>
+        : <ul className="space-y-1">{m.attendees.map((a, i) => { const p = person(a); return <li key={`${a}-${i}`} className="text-sm min-w-0"><span className="break-words">{p.name}</span>{p.email && p.email !== p.name && <span className="block text-[11px] text-muted-foreground break-all">{p.email}</span>}</li>; })}</ul>}</div>
+  </div>;
+}
+
+export function LeasingViewings({ mode, units, isClient, jointAgent = false, currentUserId, initialPropertyId, initialBrandId, focusedViewingId, onFocusHandled, onRecordOffer, meetings }: {
   mode: "viewings" | "reports";
   units: AvailableUnit[];
   isClient: boolean;
@@ -207,6 +225,9 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
   focusedViewingId: string | null;
   onFocusHandled: () => void;
   onRecordOffer: (viewing: ViewingRecord) => void;
+  // Meetings to draw beside the viewings (the Landsec calendar). Undefined:
+  // a viewings calendar only.
+  meetings?: CalendarMeeting[];
 }) {
   const { toast } = useToast();
   const isMobile = useIsMobile();
@@ -231,6 +252,9 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
   const [tourUnitId, setTourUnitId] = useState("");
   const [tourOpen, setTourOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(!!(initialBrandId || initialPropertyId));
+  const withMeetings = meetings !== undefined;
+  const [kind, setKind] = useState<"all" | "viewings" | "meetings">("all");
+  const meetingRows = useMemo<MeetingRow[]>(() => (meetings || []).map(m => ({ ...blankViewing(), id: `meeting:${m.id}`, propertyId: m.propertyId, propertyName: m.propertyName, companyName: m.title, viewingDate: m.date, viewingTime: m.time, meeting: m })), [meetings]);
   const viewingQuery = useQuery<{ viewings: ViewingRecord[]; emailRemindersEnabled: boolean }>({ queryKey: ["/api/leasing-viewings"], staleTime: 5_000, refetchInterval: 30_000 });
   const optionsQuery = useQuery<ViewingOptions>({ queryKey: ["/api/leasing-viewings", "options"], queryFn: async () => (await apiRequest("GET", "/api/leasing-viewings/options")).json() });
   const options = optionsQuery.data || emptyOptions;
@@ -243,8 +267,8 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
   }, [viewingQuery.data, options.owners]);
   // The open viewing is read from the live list, so the panel shows what was
   // saved; a viewing not yet saved lives in `draft`.
-  const selected = draft || rows.find(v => v.id === selectedId) || null;
-  const openViewing = (v: ViewingRecord, next: PanelMode = "view") => { setDraft(null); setSelectedId(v.id); setForm(formFor(v, jointAgent)); setRequirementId(v.requirementId || ""); setTourUnitId(""); setTourOpen(false); setPanelMode(next); };
+  const selected = draft || rows.find(v => v.id === selectedId) || meetingRows.find(v => v.id === selectedId) || null;
+  const openViewing = (v: ViewingRecord, next: PanelMode = "view") => { if (isMeetingRow(v)) { setDraft(null); setSelectedId(v.id); setPanelMode("view"); return; } setDraft(null); setSelectedId(v.id); setForm(formFor(v, jointAgent)); setRequirementId(v.requirementId || ""); setTourUnitId(""); setTourOpen(false); setPanelMode(next); };
   const closePanel = () => { setSelectedId(null); setDraft(null); };
   useEffect(() => {
     if (!focusedViewingId || !viewingQuery.data) return;
@@ -344,9 +368,14 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
   // What the calendar, the mini month and "Coming up" all show.
   const shown = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return query ? baseRows.filter(v => [v.companyName, v.contactName, v.agentContactName, v.unitName, v.propertyName, v.ownerName, v.sourceDetails?.subject].some(s => s?.toLowerCase().includes(query))) : baseRows;
-  }, [baseRows, search]);
-  const listRows = !listFilter ? noViewings : shown.filter(v => listFilter === "details" ? needsDetails(v) : listFilter === "outcomes" ? viewingNeedsOutcome(v, today) : !validDay(v.viewingDate)).sort(byDateAndTime);
+    const viewings = kind === "meetings" ? noViewings : query ? baseRows.filter(v => [v.companyName, v.contactName, v.agentContactName, v.unitName, v.propertyName, v.ownerName, v.sourceDetails?.subject].some(s => s?.toLowerCase().includes(query))) : baseRows;
+    // A meeting has no brand or agent, so those two filters leave meetings out.
+    const shownMeetings = kind === "viewings" || brandFilter || ownerFilter ? [] : meetingRows.filter(m =>
+      (!propertyFilter || m.propertyId === propertyFilter)
+      && (!query || [m.meeting.title, m.meeting.location, m.meeting.propertyName, ...m.meeting.attendees].some(s => s?.toLowerCase().includes(query))));
+    return shownMeetings.length ? [...viewings, ...shownMeetings] : viewings;
+  }, [baseRows, search, kind, meetingRows, propertyFilter, brandFilter, ownerFilter]);
+  const listRows = !listFilter ? noViewings : shown.filter(v => !isMeetingRow(v)).filter(v => listFilter === "details" ? needsDetails(v) : listFilter === "outcomes" ? viewingNeedsOutcome(v, today) : !validDay(v.viewingDate)).sort(byDateAndTime);
   const filtersActive = !!(search.trim() || brandFilter || ownerFilter || propertyFilter);
   const clearFilters = () => { setSearch(""); setOwnerFilter(""); setPropertyFilter(""); setBrandFilter(""); };
   const toggleList = (value: ListFilter) => setListFilter(current => current === value ? null : value);
@@ -378,14 +407,14 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
   const trackerUnitIds = new Set(units.map(u => u.id));
   const createViewing = () => {
     const owner = options.owners.find(u => u.id === currentUserId);
-    const record: ViewingRecord = { id: "", unitId: null, propertyId: null, propertyName: null, unitName: null, sqft: null, companyId: null, companyName: null, contactId: null, contactName: null, agentContactId: null, agentContactName: null, ownerUserId: owner?.id || null, ownerName: owner?.name || null, team: owner?.team || null, requirementId: null, requirementName: null, viewingDate: view === "day" && !listFilter ? anchor : today, viewingTime: null, status: "scheduled", outcome: null, notes: null, attendees: null, nextAction: null, followUpDate: null, source: null, calendarEventId: null, bookingId: null, detailsConfirmedAt: null, outcomeRecordedAt: null, updatedAt: "", issues: [] };
+    const record: ViewingRecord = { ...blankViewing(), ownerUserId: owner?.id || null, ownerName: owner?.name || null, team: owner?.team || null, viewingDate: view === "day" && !listFilter ? anchor : today };
     setSelectedId(null); setDraft(record); setForm(formFor(record, jointAgent)); setRequirementId(""); setTourUnitId(""); setTourOpen(false); setPanelMode("edit");
   };
   const backToView = () => { if (!selected?.id) { closePanel(); return; } setForm(formFor(selected, jointAgent)); setPanelMode("view"); };
   const selectedBrandName = options.brands.find(b => b.id === selected?.companyId)?.name || selected?.companyName;
   const siblings = selected?.bookingId ? rows.filter(v => v.bookingId === selected.bookingId && v.id !== selected.id) : noViewings;
-  const panelTitle = !selected ? "" : !selected.id ? "New viewing" : panelMode === "view" ? "Viewing" : selected.companyName || "Review viewing";
-  const panelHint = !selected?.id ? (jointAgent ? "Choose the unit and the brand, and type who is coming." : "Choose the unit, the brand and who is coming.") : panelMode === "view" ? "Who is viewing, what they are seeing and what happens next." : "Complete details and record what happened.";
+  const panelTitle = !selected ? "" : isMeetingRow(selected) ? "Meeting" : !selected.id ? "New viewing" : panelMode === "view" ? "Viewing" : selected.companyName || "Review viewing";
+  const panelHint = selected && isMeetingRow(selected) ? "When and where, and who is invited." : !selected?.id ? (jointAgent ? "Choose the unit and the brand, and type who is coming." : "Choose the unit, the brand and who is coming.") : panelMode === "view" ? "Who is viewing, what they are seeing and what happens next." : "Complete details and record what happened.";
 
   const issuesNote = selectedIssues.length > 0 && <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm" role="status"><p className="font-semibold">{brandOnly ? "Brand typed by name" : "Check the viewing details"}</p><ul className="mt-1 list-disc pl-4 space-y-1">{selectedIssues.map(issue => <li key={issue}>{issue}</li>)}</ul><p className="mt-2 text-[11px] text-muted-foreground">{brandOnly ? "Until it is matched, the viewing is left out of the viewing reports and an offer cannot be recorded from it here." : "Save complete details to confirm the brand, contact and space being viewed."}</p></div>;
   const outcomeFields = selected && <>
@@ -407,7 +436,7 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
   </>;
   const tourBlock = selected && <div className="space-y-2"><h3 className="text-sm font-semibold">Another unit on the same visit</h3><EntityCombobox value={tourUnitId} items={options.units.filter(u => u.id !== selected.unitId).map(u => ({ id: u.id, label: u.name, subLabel: u.propertyName }))} onChange={setTourUnitId} ariaLabel="Another unit on this visit" placeholder="Choose another space viewed" disabled={pending || formDirty || !selected.unitId} testId="viewings-tour-unit" /><Button variant="outline" size="sm" disabled={pending || formDirty || !tourUnitId} onClick={() => addTourUnit.mutate()} data-testid="viewings-tour-add">Add unit to visit</Button></div>;
 
-  const panelBody = selected && (panelMode === "view" && selected.id ? <div className="space-y-4">
+  const panelBody = selected && (isMeetingRow(selected) ? <MeetingSummary meeting={selected.meeting} /> : panelMode === "view" && selected.id ? <div className="space-y-4">
     {needsDetails(selected) && issuesNote}
     <ViewingSummary viewing={selected} today={today} options={options} siblings={siblings} onSelect={openViewing} plain={jointAgent} />
     <div className="grid grid-cols-2 gap-2 border-t pt-4" data-testid="viewings-actions">
@@ -471,6 +500,9 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
     <ViewingsToolbar anchor={anchor} view={view} today={today} viewings={shown} list={listFilter ? { title: listTitles[listFilter], count: listRows.length } : null} compact={isMobile} onAnchor={day => { setAnchor(day); setListFilter(null); }} onView={next => { setView(next); setListFilter(null); }}>
       <Button size="sm" onClick={createViewing} data-testid="viewings-add"><Plus className="h-4 w-4 mr-1" />Add viewing</Button>
     </ViewingsToolbar>
+    {withMeetings && <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Show" data-testid="calendar-kind">
+      {(["all", "viewings", "meetings"] as const).map(k => <Pill key={k} active={kind === k} aria-pressed={kind === k} onClick={() => { setKind(k); setListFilter(null); }} data-testid={`calendar-kind-${k}`}>{k === "all" ? "Viewings and meetings" : k === "viewings" ? "Viewings" : "Meetings"}{k === "meetings" && <span className="font-mono tabular-nums">{meetingRows.length}</span>}</Pill>)}
+    </div>}
     <div className="flex flex-wrap items-center gap-1.5" data-testid="viewings-filters">
       <Pill active={listFilter === "details"} aria-pressed={listFilter === "details"} onClick={() => toggleList("details")} data-testid="viewings-filter-details">Needs details<span className="font-mono tabular-nums">{counts.details}</span></Pill>
       <Pill active={listFilter === "outcomes"} aria-pressed={listFilter === "outcomes"} onClick={() => toggleList("outcomes")} data-testid="viewings-filter-outcomes">Outcomes due<span className="font-mono tabular-nums">{counts.outcomes}</span></Pill>
@@ -508,7 +540,7 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
         </>}
       </div></aside>}
     </div>
-    <ViewingsLegend />
+    <ViewingsLegend meetings={withMeetings} />
     <p className="text-[11px] text-muted-foreground"><Clock3 className="inline h-3 w-3 mr-1" />{viewingQuery.data?.emailRemindersEnabled ? (jointAgent ? "Missing details and outstanding outcomes are included in the agent's reminder digest." : "Missing details and outstanding outcomes are included in the BGP owner's reminder digest.") : "Missing details and outstanding outcomes appear here. Automatic email reminders are not enabled."}</p>
     {isMobile ? <Drawer open={!!selected} onOpenChange={open => { if (!open) closePanel(); }}><DrawerContent className="max-h-[92dvh]"><DrawerHeader><DrawerTitle>{panelTitle || "Review viewing"}</DrawerTitle><DrawerDescription>{panelHint}</DrawerDescription></DrawerHeader><div key={panelKey} className="min-h-0 flex-1 overflow-y-auto px-4 pb-8">{panelBody}</div></DrawerContent></Drawer>
       : !sidePanel && <Dialog open={!!selected} onOpenChange={open => { if (!open) closePanel(); }}><DialogContent className="flex max-h-[90dvh] max-w-2xl flex-col"><DialogHeader><DialogTitle>{panelTitle || "Review viewing"}</DialogTitle><DialogDescription>{panelHint}</DialogDescription></DialogHeader><div key={panelKey} className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">{panelBody}</div></DialogContent></Dialog>}
