@@ -16,7 +16,7 @@ const statement = (file, start) => find(file, node => ts.isVariableStatement(nod
 const fn = (file, name) => find(file, node => ts.isFunctionDeclaration(node) && node.name?.text === name);
 // Values made inside the evaluated source belong to another realm.
 const plain = value => JSON.parse(JSON.stringify(value));
-const ICONS = Object.fromEntries(['Calendar', 'CalendarDays', 'LayoutDashboard', 'Building2', 'BarChart3', 'Store', 'Handshake', 'Layers', 'Eye', 'ListTodo', 'Target', 'MessageCircle', 'CheckSquare'].map(name => [name, name]));
+const ICONS = Object.fromEntries(['Users', 'Calendar', 'CalendarDays', 'LayoutDashboard', 'Building2', 'BarChart3', 'Store', 'Handshake', 'Layers', 'Eye', 'ListTodo', 'Target', 'MessageCircle', 'CheckSquare'].map(name => [name, name]));
 const BINDINGS = { ...ICONS, LANDSEC_MENU, JOINT_AGENT_MENU, LANDSEC_STAFF_TASKS, landsecTasksPath };
 
 const sidebar = evaluate([
@@ -38,7 +38,7 @@ const tabs = evaluate([
 ].join('\n'), BINDINGS);
 const phone = which => plain(tabs[which]).map(i => [i.label, i.path]);
 
-const FULL_MENU = [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Letting Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands']];
+const FULL_MENU = [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Letting Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['CRM', '/contacts']];
 const GONE = ['Portfolio', 'Scheme', 'Lettings', 'Ask'];
 
 test('a full Landsec login, a leasing manager and an asset manager have Properties, Deals, Letting Tracker, Tasks, Brands', () => {
@@ -233,14 +233,12 @@ test('Deals hides its own tab row in the Landsec view only', () => {
   assert.match(hub, /tabs\.length <= 1 \|\| menuHasTabs \? "hidden" : ""/);
 });
 
-test('Brand cases is one link on Brands, never for a joint agent', () => {
-  const hub = source('client/src/pages/brands-hub.tsx');
-  // The Landsec view, never a joint agent, and only once there is a case to
-  // open (2026-11-13: with none the button led to an empty page).
-  assert.match(hub, /const mayHaveBrandCases = !!hubUser && hubBrand\.id === "landsec" && hubUser\.landsecRole !== "joint_agent";/);
-  assert.match(hub, /queryKey: \["\/api\/landsec\/brand-cases"\], staleTime: 60 \* 1000, enabled: mayHaveBrandCases \}\);/);
-  assert.match(hub, /const showBrandCases = mayHaveBrandCases && \(hubBrandCases\?\.cases\?\.length \|\| 0\) > 0;/);
-  assert.match(hub, /\{showBrandCases && <Link href="\/landsec\/brand-cases">/);
+// Woody, 2026-11-14: "delete brand case from everything".
+test('no screen offers a brand case', () => {
+  for (const file of ['client/src/pages/brands-hub.tsx', 'client/src/components/brand-profile-panel.tsx', 'client/src/components/brand-crm/scheme-plan-card.tsx']) {
+    assert.doesNotMatch(source(file), /\/landsec\/brand-case/, file);
+  }
+  assert.match(source(APP), /<Route path="\/landsec\/brand-cases">\{\(\) => <Redirect to="\/brands" \/>\}<\/Route>/);
 });
 
 // A joint agent's chat screen calls only what the gateway opens to it and

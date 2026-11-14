@@ -5089,9 +5089,9 @@ app.use("/api/branding/assets", express.static(
       // visible-brand boundary as the record itself.
       const brandPreparation = resourcePath.match(/^\/api\/brand\/([^/]+)\/(preparation|identity)$/i);
       if (brandPreparation && ((req.method === "GET" && brandPreparation[2] === "preparation") || (req.method === "POST" && brandPreparation[2] === "identity"))) {
-        const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+        const { resolveCompanyScope, isClientVisibleBrand, isClientReadableCompanyPage } = await import("./company-scope");
         const scope = await resolveCompanyScope(req);
-        if (scope && (scope === brandPreparation[1] || await isClientVisibleBrand(brandPreparation[1], scope))) return next();
+        if (scope && (scope === brandPreparation[1] || await (req.method === "GET" ? isClientReadableCompanyPage : isClientVisibleBrand)(brandPreparation[1], scope))) return next();
         return res.status(403).json({ error: "Not available for this account" });
       }
       if (isWrite) {
@@ -5164,7 +5164,8 @@ app.use("/api/branding/assets", express.static(
         // hit the enrichment button — they need to be able to use the app
         // in the same way we can"). Both only refresh derived/public data
         // on the brand record; gated on the client's brand slice.
-        const enrichTarget = resourcePath.match(/^\/api\/(?:brand\/([^/]+)\/credit-check|companies-house\/auto-kyc\/([^/]+))$/i);
+        // Refresh stores too (the standard search; the handler keeps the full one for BGP).
+        const enrichTarget = resourcePath.match(/^\/api\/(?:brand\/([^/]+)\/(?:credit-check|research-stores)|companies-house\/auto-kyc\/([^/]+))$/i);
         if (req.method === "POST" && enrichTarget) {
           const { isClientVisibleBrand, resolveCompanyScope } = await import("./company-scope");
           const scope = await resolveCompanyScope(req);
@@ -5258,9 +5259,9 @@ app.use("/api/branding/assets", express.static(
       // suggested-units is BGP staff only.
       const brandRead = resourcePath.match(/^\/api\/brand\/([^/]+)\//i);
       if (brandRead) {
-        const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+        const { resolveCompanyScope, isClientVisibleBrand, isClientReadableCompanyPage } = await import("./company-scope");
         const scope = await resolveCompanyScope(req);
-        if (brandRead[1] === scope || (await isClientVisibleBrand(brandRead[1], scope))) return next();
+        if (brandRead[1] === scope || (await (req.method === "GET" ? isClientReadableCompanyPage : isClientVisibleBrand)(brandRead[1], scope))) return next();
       }
       // AI activity commentary (AIActivityCard) on the client's OWN company —
       // the dashboard BGP Relationship board mirrors the internal page

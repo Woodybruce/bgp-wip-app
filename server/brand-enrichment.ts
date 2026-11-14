@@ -550,9 +550,11 @@ export async function runAccountsRetryBatch(now: Date = new Date()) {
 }
 
 async function checkBrandScope(req: Request, companyId?: string): Promise<boolean> {
-  const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+  const { resolveCompanyScope, isClientVisibleBrand, isClientReadableCompanyPage } = await import("./company-scope");
   const scope = await resolveCompanyScope(req);
-  return !scope || !!companyId && (companyId === scope || await isClientVisibleBrand(companyId, scope));
+  // A read also opens an agent firm's page to a client; a write stays with the brands.
+  const may = req.method === "GET" ? isClientReadableCompanyPage : isClientVisibleBrand;
+  return !scope || !!companyId && (companyId === scope || await may(companyId, scope));
 }
 
 // Keep literal batch ahead of the parameter route; otherwise "batch" is treated as an ID.

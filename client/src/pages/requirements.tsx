@@ -1937,7 +1937,7 @@ function NewBrandDialog({ open, onOpenChange, isClientView }: { open: boolean; o
   const [category, setCategory] = useState("");
   const [website, setWebsite] = useState("");
   const [saving, setSaving] = useState(false);
-  const categories = isClientView ? CLIENT_CRM_CATEGORIES : TENANT_CATEGORIES;
+  const categories = TENANT_CATEGORIES;
 
   const submit = async () => {
     if (!name.trim() || !category || saving) return;

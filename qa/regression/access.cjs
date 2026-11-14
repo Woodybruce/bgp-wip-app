@@ -23,6 +23,7 @@ evaluate(policy + '\n' + gateSource, { routedApiPath, app: { use: (_, fn) => gat
     isClientRequestUser: async () => { if (scopeFailure) throw new Error('Synthetic scope outage'); return true; },
     resolveCompanyScope: async () => 'client-a',
     isClientVisibleBrand: async id => id === 'visible-brand' || id === 'BrandID',
+    isClientReadableCompanyPage: async id => id === 'visible-brand' || id === 'BrandID' || id === 'agent-firm',
     // No Landsec role row: a full client login, judged by the ordinary
     // client lists (the restricted roles' rules have their own test,
     // server/landsec-gateway.test.ts).
@@ -51,6 +52,7 @@ function makeHandler(method, url, staff = false) {
     app: { [method]: (_, ...handlers) => handler = handlers.at(-1) }, requireAuth() {},
     resolveCompanyScope: async () => staff ? null : 'client-a',
     isClientVisibleBrand: async id => id === 'visible-brand',
+    isClientReadableCompanyPage: async id => id === 'visible-brand' || id === 'agent-firm',
     isClientRequestUser: async () => !staff, ...statuses,
     pool: { query: async () => ({ rows: [{ email: 'client@example.test', is_admin: false }] }) },
     require: name => name.includes('deal-status') ? statuses : { checkCounterpartyAml: async () => ({ notReady: [], hasCounterparties: true }), SENIOR_APPROVER_EMAILS: new Set() },
@@ -185,6 +187,9 @@ function makeCompanyCreate(scope, hidden = null) {
   assert.equal(await requestGate('GET', '/api/covenant/SC123456'), 200);
   assert.equal(scopeLookups.at(-1), 'SC123456', 'keep resource identifiers case-sensitive');
   assert.equal(await requestGate('GET', '/api/brand/BrandID/profile'), 200);
+  // An agent firm's page opens to a client to read; a write there stays with the brands (2026-11-14).
+  assert.equal(await requestGate('GET', '/api/brand/agent-firm/profile'), 200);
+  assert.equal(await requestGate('POST', '/api/brand/agent-firm/identity'), 403);
   scopeFailure = true;
   assert.equal(await requestGate('PUT', '/api/crm/properties/owned-property'), 503);
   scopeFailure = false;

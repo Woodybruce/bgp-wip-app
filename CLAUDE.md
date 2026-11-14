@@ -1039,6 +1039,25 @@ Decided by Woody on 13 November 2026 (do not re-litigate):
   "phone Back leaves Deals in one press after a tab change"); it used to
   expect Back to reopen the WIP tab, the behaviour this rule replaced.
 
+## The contact page (Woody, 2026-11-14)
+
+Woody: the contact page "looks pretty shit". `ContactDetail` in
+`client/src/pages/contacts.tsx` is one header (photo, name, "job title at
+company" with the company's chip, email / phone / LinkedIn icons, Last
+contact for staff from `/api/interactions/summary`, Edit, and one More menu:
+Enrich, Log activity, Delete) and two cards of the property page's shape.
+Left: Overview (details, the company's website and office, BGP people who
+know them, Source), Activity (the AI read and the emails and meetings board,
+staff only: both feeds are staff-only), Notes. Right: Conversation (the
+person's thread, `CompanyMiniChat` with `linkedType="contact"`) and Records
+(properties, deals, requirements, investment items, each a link).
+Co-workers follow as compact rows, first 8, a search and Show all. The
+company's type is never shown as the person's label, and the separate
+Company card is gone. The AI activity card says a failed read quietly, never
+in red. An agent firm's page opens to a client login to READ
+(`isClientReadableCompanyPage` in `server/company-scope.ts`: a brand it may
+see, or an agent firm); writes there stay with `isClientVisibleBrand`.
+
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
 
 The brands' own CRM: which schemes BGP wants each brand in, whether there is

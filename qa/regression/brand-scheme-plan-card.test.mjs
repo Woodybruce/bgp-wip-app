@@ -106,8 +106,9 @@ test('a Landsec view is drawn no BGP control: no lead, On hold, + Scheme, note, 
 // scheme since 13 November 2026); the card still draws it if the server does.
 test('a plan cut to named schemes says how many other schemes the brand is at, and has no requirements page link', () => {
   const card = draw(true, { ...clientPlan, rows: [clientPlan.rows[0]], otherSchemeCount: 2 });
-  assert.match(card.text, /Also at 2 other schemes\. See the brand case/);
-  assert.ok(card.hrefs.includes('/landsec/brand-case/b'));
+  // Brand cases were taken out of the app (Woody, 2026-11-14: "delete brand case from everything").
+  assert.match(card.text, /Also at 2 other schemes\./);
+  assert.ok(!card.hrefs.some(href => href.startsWith('/landsec/brand-case')));
   assert.ok(!card.hrefs.some(href => href.startsWith('/requirements')));
   assert.doesNotMatch(draw(true, { ...clientPlan, otherSchemeCount: 0 }).text, /Also at/);
 });

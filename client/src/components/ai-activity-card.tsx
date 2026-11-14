@@ -232,7 +232,8 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, cachedO
           {loading && <p className="text-[11px] text-muted-foreground italic"><Loader2 className="w-3 h-3 inline animate-spin mr-1" />Loading…</p>}
 
           {!loading && error && (
-            <p className="text-[11px] text-destructive flex items-center gap-1"><AlertCircle className="w-3 h-3" />{error}</p>
+            // A failed read is not the viewer's problem: say so quietly, never in red (Woody, 2026-11-14).
+            <p className="text-[11px] text-muted-foreground italic">The activity read is not ready yet.</p>
           )}
 
           {!loading && !error && !hasContent && !curating && (

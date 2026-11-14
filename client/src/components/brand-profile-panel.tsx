@@ -1035,7 +1035,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // The Landsec brand case (docs/landsec-pitch-plan.md, item 5) is one
   // click from the brand profile for anyone in the Landsec view.
   const { brand: viewBrand } = useBrand();
-  const landsecBrandCaseLink = viewBrand.id === "landsec";
   // 'BGP portfolio — potential pitches' is parked as a WIP — removed from the
   // brand profile for now (the £0pa rows aren't ready). The data + code stay;
   // flip this to true (or move it to a dedicated admin page) when it's ready.
@@ -1752,11 +1751,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {landsecBrandCaseLink && (
-            <Link href={`/landsec/brand-case/${companyId}`}>
-              <Button variant="outline" size="sm" data-testid="button-brand-case">Brand case</Button>
-            </Link>
-          )}
           <Button
             variant="ghost"
             size="sm"
@@ -2748,7 +2742,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // other company kind's layout place the same pieces (each is drawn once).
   const storesBoardBlock = !isLandlord && (stores.length > 0 || !isClientViewer) && <BrandStoresBoard
     pattern={brandTop}
-    companyId={companyId} stores={stores} reportedTotal={c.store_count} canRefresh={!isClientViewer}
+    companyId={companyId} stores={stores} reportedTotal={c.store_count} canRefresh
     refreshing={researchStoresMutation.isPending} diagnostic={storesDiagnostic} velocity={rolloutVelocity?.net12m ?? null}
     onRefresh={() => researchStoresMutation.mutate({ scope: "uk" })}
     onMapAll={() => researchStoresMutation.mutate({ scope: "uk", depth: "full" })}
@@ -3127,11 +3121,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     {emailContact && <Button variant="outline" size="sm" asChild><a href={`mailto:${emailContact.email}`} data-testid="link-email"><Mail />Email</a></Button>}
     {c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
     <Button variant="outline" size="sm" onClick={() => window.open(`/api/brand/${companyId}/pack.pdf`, "_blank")} title="Download the brand pack PDF" data-testid="button-brand-pack"><Download />Brand pack</Button>
-    {landsecBrandCaseLink && (
-      <Link href={`/landsec/brand-case/${companyId}`}>
-        <Button variant="outline" size="sm" data-testid="button-brand-case">Brand case</Button>
-      </Link>
-    )}
     <BrandMoreMenu items={brandMoreItems} />
   </> : null;
   const brandHousekeepingDialog = brandTop ? (
@@ -5985,7 +5974,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
 // scrolls inside, with Expand for a longer read.
 // stacked (compact, on a page too narrow to put it beside the band): one row
 // with the message count, the input and Open, so it never pushes the page down.
-export function CompanyMiniChat({ companyId, companyName, fill, title, starters, landlord = false, compact = false, stacked = false, linkedType = "company" }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[]; landlord?: boolean; compact?: boolean; stacked?: boolean; linkedType?: "company" | "property" }) {
+export function CompanyMiniChat({ companyId, companyName, fill, title, starters, landlord = false, compact = false, stacked = false, linkedType = "company" }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[]; landlord?: boolean; compact?: boolean; stacked?: boolean; linkedType?: "company" | "property" | "contact" }) {
   const [threadSelection, setThreadSelection] = useState<{ companyId: string; id: string } | null>(null);
   // The same panel can be reused while navigating between company records.
   // Hide the old Landlord thread immediately, before effects or polling run.

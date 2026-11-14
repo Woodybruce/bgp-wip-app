@@ -213,15 +213,6 @@ export default function BrandsHub() {
   const { brand: hubBrand } = useBrand();
   const brandCrmStaff = !!hubUser && !isClientHub;
   const showBrandCrm = brandCrmStaff || (!!hubUser && hubBrand.id === "landsec");
-  // Brand cases used to be a strip on the Landsec home; they are one link
-  // here now (docs/landsec-menu-plan-2026-11-12.md, part 3). The Landsec view
-  // only, and never a joint agent, who has no brand cases.
-  const mayHaveBrandCases = !!hubUser && hubBrand.id === "landsec" && hubUser.landsecRole !== "joint_agent";
-  // Shown once there is a case to open: with none the button led to an empty
-  // page (Woody, 2026-11-13: "whats this?"). A case is started from a brand's
-  // own page, so nothing is lost by leaving the link out until then.
-  const { data: hubBrandCases } = useQuery<{ cases: unknown[] }>({ queryKey: ["/api/landsec/brand-cases"], staleTime: 60 * 1000, enabled: mayHaveBrandCases });
-  const showBrandCases = mayHaveBrandCases && (hubBrandCases?.cases?.length || 0) > 0;
   // The other boards (Overview/Turnover/Hunter) are still being built, so on
   // mobile we show only Brand Explorer and the Brand CRM. Desktop keeps the
   // full tab bar.
@@ -309,9 +300,6 @@ export default function BrandsHub() {
         </div>
         <div className="flex items-center gap-2">
           {isClientHub && <ClientAddBrandButton />}
-          {showBrandCases && <Link href="/landsec/brand-cases">
-            <Button variant="outline" size="sm" data-testid="link-brand-cases">Brand cases <ChevronRight className="w-3 h-3 ml-1" /></Button>
-          </Link>}
           {!isClientHub && <Link href="/brand-websites">
             <Button variant="outline" size="sm" data-testid="link-website-check">Websites to confirm <ChevronRight className="w-3 h-3 ml-1" /></Button>
           </Link>}

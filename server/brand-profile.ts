@@ -304,14 +304,14 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     // Opening a profile reads prepared data; provider work belongs to the durable queue.
     // Clients may only read their OWN company's profile here. (Landsec audit.)
-    const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+    const { resolveCompanyScope, isClientReadableCompanyPage } = await import("./company-scope");
     const bpScope = await resolveCompanyScope(req as any);
     if (bpScope && bpScope !== companyId) {
       // Clients get full Brand Intelligence on any brand they can see in
       // their CRM — the hospitality/leisure/fitness slice plus their own
       // added brands (same predicate as GET /api/crm/companies). Everything
       // else stays 403.
-      if (!(await isClientVisibleBrand(String(companyId), bpScope))) {
+      if (!(await isClientReadableCompanyPage(String(companyId), bpScope))) {
         return res.status(403).json({ error: "Not available for this account" });
       }
     }

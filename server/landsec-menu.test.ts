@@ -96,9 +96,10 @@ test("the real pages a joint agent may open: Properties, Deals, one deal, one pr
   }
 });
 
-test("only a joint agent is restricted: an asset manager has the full Landsec menu", () => {
-  assert.equal(landsecRestrictedRole("joint_agent"), true);
-  for (const role of ["asset_manager", "leasing_manager", "", null, undefined]) assert.equal(landsecRestrictedRole(role), false, String(role));
+// Since 14 November 2026 no role is restricted to its own pages: a joint agent
+// is a Landsec login at its schemes less the brand pages.
+test("no role is restricted to its own pages", () => {
+  for (const role of ["joint_agent", "asset_manager", "leasing_manager", "", null, undefined]) assert.equal(landsecRestrictedRole(role), false, String(role));
 });
 
 test("the old scheme page goes to the property's Units section, or to Properties", () => {

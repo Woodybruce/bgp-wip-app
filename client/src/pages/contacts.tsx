@@ -56,6 +56,9 @@ import { EntityPicker } from "@/components/entity-picker";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { useGoBack } from "@/lib/go-back";
 import { MemberAvatar } from "@/components/ClientTeamOrgChart";
+import { CompanyChip } from "@/components/company-chip";
+import { CompanyMiniChat } from "@/components/brand-profile-panel";
+import { lastContactShort } from "@shared/last-contact";
 
 function parseAlloc(val: string | string[] | null | undefined): string[] {
   if (!val) return [];
@@ -817,6 +820,10 @@ function ContactDetail({ id }: { id: string }) {
   const isMobile = useIsMobile();
   const [logActivityOpen, setLogActivityOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [leftTab, setLeftTab] = useState<"overview" | "activity" | "notes">("overview");
+  const [rightTab, setRightTab] = useState<"chat" | "records">("chat");
+  const [coworkerSearch, setCoworkerSearch] = useState("");
+  const [showAllCoworkers, setShowAllCoworkers] = useState(false);
 
   const { data: contact, isLoading } = useQuery<CrmContact>({
     queryKey: ["/api/crm/contacts", id],
@@ -873,6 +880,11 @@ function ContactDetail({ id }: { id: string }) {
 
   const { data: contactInvestmentItems } = useQuery<any[]>({
     queryKey: ["/api/crm/contacts", id, "investment-tracker"],
+  });
+
+  const { data: interactionSummary } = useQuery<{ lastInteractions: Record<string, { date: string; type: string }> }>({
+    queryKey: ["/api/interactions/summary"],
+    enabled: !!cdViewer && !cdIsClient,
   });
 
   const filteredCoworkers = useMemo(() => {
@@ -956,70 +968,102 @@ function ContactDetail({ id }: { id: string }) {
   }
 
   const companyAddress = company?.headOfficeAddress as { street?: string; city?: string; country?: string } | null;
+  const companyLabel = company?.name || contact.companyName || null;
+  const lastTouch = interactionSummary?.lastInteractions?.[contact.id] || null;
+  const lastTouchRaw = lastContactShort(lastTouch?.date);
+  const lastTouchText = !lastTouchRaw ? null : lastTouchRaw.startsWith("Next") || lastTouchRaw === "today" ? lastTouchRaw : `${lastTouchRaw} ago`;
+  const looksAgent = (company?.companyType || contact.contactType || "").toLowerCase().includes("agent") || (contact.groupName || "").toLowerCase() === "agents";
+  const editBlocked = cdIsClient && looksAgent;
+  const agentDeals = (contactDeals || []).filter((d: any) => d.linkSource === "agent");
+  const linkedDeals = (contactDeals || []).filter((d: any) => d.linkSource !== "agent");
+  const recordCount = (contactProperties?.length || 0) + (contactDeals?.length || 0) + (contactRequirements?.length || 0) + (contactInvestmentItems?.length || 0);
+  const coworkerQuery = coworkerSearch.trim().toLowerCase();
+  const coworkersShown = filteredCoworkers
+    .filter(cw => !coworkerQuery || [cw.name, cw.role, cw.email].some(v => String(v || "").toLowerCase().includes(coworkerQuery)));
+  const coworkersVisible = showAllCoworkers || coworkerQuery ? coworkersShown : coworkersShown.slice(0, 8);
+  const recordRow = (href: string, icon: React.ReactNode, title: string, sub: React.ReactNode, testId: string) => (
+    <Link key={testId} href={href}>
+      <div className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted cursor-pointer transition-colors min-w-0" data-testid={testId}>
+        <span className="text-muted-foreground shrink-0">{icon}</span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium truncate">{title}</p>
+          {sub && <p className="text-[11px] text-muted-foreground truncate">{sub}</p>}
+        </div>
+      </div>
+    </Link>
+  );
+  const recordGroup = (label: string, rows: React.ReactNode[]) => rows.length > 0 && (
+    <div className="space-y-0.5">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-2 pt-1">{label} <span className="font-normal">· {rows.length}</span></p>
+      {rows}
+    </div>
+  );
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="contact-detail">
+    <div className="p-4 sm:p-6 space-y-4" data-testid="contact-detail">
       <ContactFormDialog open={editOpen} onOpenChange={setEditOpen} contact={contact} companies={companies} />
       <LogActivityDialog open={logActivityOpen} onOpenChange={setLogActivityOpen} contactId={contact.id} companyId={contact.companyId || undefined} />
 
-      <div className="flex items-center gap-3 flex-wrap">
+      {/* One header (Woody, 2026-11-14: the contact page "looks pretty shit"):
+          photo, name, "title at company", how to reach them, last contact,
+          and one More menu. The company's type is not this person's label. */}
+      <div className="flex items-start gap-3" data-testid="contact-header">
         {/* The phone shell header already has a back arrow — one back
             control, not two (Woody, 2026-09-27). */}
         {!isMobile && (
-          <Button variant="ghost" size="sm" data-testid="button-back-contacts" onClick={goBack}>
+          <Button variant="ghost" size="sm" className="mt-2" data-testid="button-back-contacts" onClick={goBack}>
             <ArrowLeft className="w-4 h-4 mr-1" />
             Back
           </Button>
         )}
         {contact.avatarUrl ? (
-          <img src={contact.avatarUrl} alt={contact.name} className="w-14 h-14 rounded-full bg-muted border-2 border-border" data-testid="avatar-contact-detail" />
+          <img src={contact.avatarUrl} alt={contact.name} className="w-14 h-14 rounded-full bg-muted border border-border object-cover shrink-0" data-testid="avatar-contact-detail" />
         ) : (
-          <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center text-lg font-bold text-muted-foreground border-2 border-border" data-testid="avatar-initials-detail">
+          <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center text-lg font-bold text-muted-foreground border border-border shrink-0" data-testid="avatar-initials-detail">
             {contact.name?.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold break-words" data-testid="text-contact-detail-name">{contact.name}</h1>
-          <div className="flex items-center gap-2 mt-1 flex-wrap">
-            {contact.groupName && (
-              <Badge variant="outline" className={`border-transparent ${getGroupColor(contact.groupName)} text-white text-xs`}>
-                {contact.groupName}
-              </Badge>
+          <h1 className="text-xl font-bold break-words leading-tight" data-testid="text-contact-detail-name">{contact.name}</h1>
+          {(contact.role || companyLabel) && (
+            <div className="flex items-center gap-1.5 text-sm text-muted-foreground mt-0.5 min-w-0 flex-wrap" data-testid="text-contact-title-line">
+              {contact.role && <span className="text-foreground">{contact.role}</span>}
+              {contact.role && companyLabel && <span>at</span>}
+              {companyLabel && <CompanyChip id={contact.companyId} name={companyLabel} domain={company?.domainUrl || null} size={16} testId="link-contact-company" />}
+            </div>
+          )}
+          <div className="flex items-center gap-1 mt-1.5 flex-wrap text-xs text-muted-foreground">
+            {contact.email && (
+              <a href={`mailto:${contact.email}`} className="p-1.5 -ml-1.5 rounded hover:bg-muted hover:text-foreground" title={contact.email} aria-label={`Email ${contact.name}`} data-testid="link-contact-email-icon"><Mail className="w-4 h-4" /></a>
             )}
-            {(() => {
-              const derivedType = contact.companyId && company?.companyType ? company.companyType : contact.contactType;
-              if (!derivedType) return null;
-              const colorClass = CRM_OPTIONS.companyTypeColors[derivedType] || "bg-gray-500";
-              return <Badge className={`${colorClass} text-white text-xs`}>{derivedType}</Badge>;
-            })()}
-            {contact.agentSpecialty && (
-              <Badge variant="outline" className={`border-transparent ${CRM_OPTIONS.agentSpecialtyColors[contact.agentSpecialty] || "bg-gray-500"} text-white text-xs`}>{contact.agentSpecialty}</Badge>
+            {(contact.phoneMobile || contact.phone) && (
+              <a href={`tel:${String(contact.phoneMobile || contact.phone).replace(/[^\d+]/g, "")}`} className="p-1.5 rounded hover:bg-muted hover:text-foreground" title={contact.phoneMobile || contact.phone || ""} aria-label={`Call ${contact.name}`} data-testid="link-contact-phone-icon"><Phone className="w-4 h-4" /></a>
             )}
-            {contact.bgpClient && <Badge className="bg-black text-white dark:bg-white dark:text-black text-xs">BGP Client</Badge>}
-            {parseAlloc(contact.bgpAllocation).length > 0 && parseAlloc(contact.bgpAllocation).map(alloc => (
-              <Badge key={alloc} className={`${CRM_OPTIONS.bgpTeamColors[alloc] || "bg-gray-500"} text-white text-xs`}>
-                {alloc}
-              </Badge>
-            ))}
-            {contact.role && <Badge variant="outline" className="text-xs">{contact.role}</Badge>}
+            {contact.linkedinUrl && (
+              <a href={contact.linkedinUrl} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded hover:bg-muted hover:text-foreground" title="LinkedIn" aria-label="LinkedIn" data-testid="link-contact-linkedin-icon"><Linkedin className="w-4 h-4" /></a>
+            )}
+            {lastTouchText && <span className="ml-1" data-testid="text-contact-last-contact">Last contact {lastTouchText}</span>}
+            {contact.bgpClient && <Badge className="bg-black text-white dark:bg-white dark:text-black text-[10px] ml-1">BGP Client</Badge>}
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Phones: Edit stays a button, the rest go under ⋮ — four
-              buttons ran off a 390px screen ("De…") (Woody, 2026-09-27). */}
-          {!cdIsClient && isMobile && (
+        <div className="flex items-center gap-2 shrink-0">
+          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} disabled={editBlocked} title={editBlocked ? "Managed by BGP" : undefined} data-testid="button-edit-contact">
+            <Pencil className="w-4 h-4 sm:mr-1" />
+            <span className="hidden sm:inline">Edit</span>
+          </Button>
+          {!cdIsClient && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="order-last" aria-label="More actions" data-testid="button-contact-more">
+                <Button variant="outline" size="sm" aria-label="More actions" data-testid="button-contact-more">
                   <MoreHorizontal className="w-4 h-4" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => enrichMutation.mutate()} disabled={enrichMutation.isPending} data-testid="button-enrich-contact">
+                  {enrichMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}Enrich
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setLogActivityOpen(true)} data-testid="button-log-activity">
                   <Phone className="w-4 h-4 mr-2" />Log activity
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => enrichMutation.mutate()} disabled={enrichMutation.isPending} data-testid="button-enrich-contact">
-                  <Zap className="w-4 h-4 mr-2" />Enrich
                 </DropdownMenuItem>
                 <DropdownMenuItem className="text-destructive" onClick={() => { if (confirm("Delete this contact?")) deleteMutation.mutate(); }} data-testid="button-delete-contact">
                   <Trash2 className="w-4 h-4 mr-2" />Delete
@@ -1027,402 +1071,177 @@ function ContactDetail({ id }: { id: string }) {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {!cdIsClient && !isMobile && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => enrichMutation.mutate()}
-            disabled={enrichMutation.isPending}
-            data-testid="button-enrich-contact"
-          >
-            {enrichMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
-            Enrich
-          </Button>
-          )}
-          {!cdIsClient && !isMobile && (
-            <Button variant="outline" size="sm" onClick={() => setLogActivityOpen(true)} data-testid="button-log-activity">
-              <Phone className="w-4 h-4 mr-1" />
-              Log activity
-            </Button>
-          )}
-          {(() => {
-            // Clients can only write own-company + brand-slice contacts; agent
-            // contacts are readable but the PUT 403s, so don't offer Edit
-            // there (UX #33) — mirrors how Delete is already hidden.
-            const looksAgent = (company?.companyType || contact.contactType || "").toLowerCase().includes("agent") || (contact.groupName || "").toLowerCase() === "agents";
-            if (cdIsClient && looksAgent) {
-              return (
-                <Button variant="outline" size="sm" disabled title="Managed by BGP" data-testid="button-edit-contact">
-                  <Pencil className="w-4 h-4 mr-1" />
-                  Edit
-                </Button>
-              );
-            }
-            return (
-              <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-contact">
-                <Pencil className="w-4 h-4 mr-1" />
-                Edit
-              </Button>
-            );
-          })()}
-          {!cdIsClient && !isMobile && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              if (confirm("Delete this contact?")) deleteMutation.mutate();
-            }}
-            data-testid="button-delete-contact"
-          >
-            <Trash2 className="w-4 h-4 mr-1" />
-            Delete
-          </Button>
-          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <Card>
-            <CardContent className="p-4 space-y-3">
-              <h3 className="font-semibold text-sm">Contact Details</h3>
-              {/* One column on phones — long emails ran over the mobile
-                  number beside them (Woody, 2026-09-27). */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm [&>div]:min-w-0">
-                {contact.email && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Email</p>
-                    <a href={`mailto:${contact.email}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 break-all" data-testid="link-contact-email">
-                      <AtSign className="w-3 h-3 shrink-0" />{contact.email}
-                    </a>
+      {/* Two cards side by side, tabs inside each, as on the property page. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card className="min-w-0 lg:h-[460px] flex flex-col" data-testid="contact-left-card">
+          <div className="flex items-center gap-1.5 px-3 py-2.5" role="tablist" aria-label="Overview, activity, notes">
+            <Pill active={leftTab === "overview"} onClick={() => setLeftTab("overview")} data-testid="contact-tab-overview">Overview</Pill>
+            <Pill active={leftTab === "activity"} onClick={() => setLeftTab("activity")} data-testid="contact-tab-activity">Activity</Pill>
+            <Pill active={leftTab === "notes"} onClick={() => setLeftTab("notes")} data-testid="contact-tab-notes">Notes</Pill>
+          </div>
+          <div className="px-3 pb-3 min-h-0 flex-1 overflow-y-auto">
+            {leftTab === "overview" ? (
+              <div className="space-y-3 text-sm">
+                {/* One column on phones — long emails ran over the mobile
+                    number beside them (Woody, 2026-09-27). */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 [&>div]:min-w-0">
+                  {contact.email && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Email</p>
+                      <a href={`mailto:${contact.email}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 break-all" data-testid="link-contact-email">
+                        <AtSign className="w-3 h-3 shrink-0" />{contact.email}
+                      </a>
+                    </div>
+                  )}
+                  {contact.phoneMobile && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Mobile</p>
+                      <a href={`tel:${contact.phoneMobile}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1" data-testid="link-contact-mobile">
+                        <Phone className="w-3 h-3" />{contact.phoneMobile}
+                      </a>
+                    </div>
+                  )}
+                  {contact.phone && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Phone</p>
+                      <a href={`tel:${contact.phone}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1" data-testid="link-contact-phone">
+                        <Phone className="w-3 h-3" />{contact.phone}
+                      </a>
+                    </div>
+                  )}
+                  {!cdIsClient && !contact.phone && !contact.phoneMobile && contact.email && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Mobile</p>
+                      <p className="text-sm text-muted-foreground flex items-center gap-1" data-testid="text-contact-phone-status">
+                        {signatureLookup.isPending ? <><Loader2 className="w-3 h-3 animate-spin" />Reading their email signature…</> : "Not in their email signature — try Enrich"}
+                      </p>
+                    </div>
+                  )}
+                  {contact.linkedinUrl && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">LinkedIn</p>
+                      <a href={contact.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 break-all" data-testid="link-contact-linkedin">
+                        <Linkedin className="w-3 h-3 shrink-0" />{contact.linkedinUrl.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '').replace(/\/$/, '')}
+                      </a>
+                    </div>
+                  )}
+                  {company?.domainUrl && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Website</p>
+                      <a href={company.domainUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 break-all">
+                        <Globe className="w-3 h-3 shrink-0" />{company.domainUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                      </a>
+                    </div>
+                  )}
+                  {companyAddress && (companyAddress.street || companyAddress.city) && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Office</p>
+                      <p className="flex items-center gap-1"><MapPin className="w-3 h-3 shrink-0 text-muted-foreground" />{[companyAddress.street, companyAddress.city, companyAddress.country].filter(Boolean).join(", ")}</p>
+                    </div>
+                  )}
+                </div>
+                {(company?.bgpContactUserIds?.length || company?.bgpContactCrm) ? (
+                  <div className="pt-2 border-t">
+                    <p className="text-xs text-muted-foreground mb-1">BGP people who know them</p>
+                    <div className="flex flex-wrap gap-1">
+                      <BgpContactNames ids={company?.bgpContactUserIds || []} fallback={company?.bgpContactCrm || null} />
+                    </div>
                   </div>
-                )}
-                {contact.phoneMobile && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Mobile</p>
-                    <a href={`tel:${contact.phoneMobile}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1" data-testid="link-contact-mobile">
-                      <Phone className="w-3 h-3" />{contact.phoneMobile}
-                    </a>
-                  </div>
-                )}
-                {contact.phone && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Phone</p>
-                    <a href={`tel:${contact.phone}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1" data-testid="link-contact-phone">
-                      <Phone className="w-3 h-3" />{contact.phone}
-                    </a>
-                  </div>
-                )}
-                {!cdIsClient && !contact.phone && !contact.phoneMobile && contact.email && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Mobile</p>
-                    <p className="text-sm text-muted-foreground flex items-center gap-1" data-testid="text-contact-phone-status">
-                      {signatureLookup.isPending ? <><Loader2 className="w-3 h-3 animate-spin" />Reading their email signature…</> : "Not in their email signature — try Enrich"}
-                    </p>
-                  </div>
-                )}
-                {/* Company, website and office address live on the Company
-                    card alongside — they were shown twice (Woody, 2026-09-27). */}
-                {contact.linkedinUrl && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">LinkedIn</p>
-                    <a href={contact.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1" data-testid="link-contact-linkedin">
-                      <Linkedin className="w-3 h-3" />{contact.linkedinUrl.replace(/^https?:\/\/(www\.)?linkedin\.com\/in\//, '').replace(/\/$/, '')}
-                    </a>
-                  </div>
-                )}
+                ) : null}
+                {!cdIsClient && <ContactSourcePanel contact={contact} />}
               </div>
-              {contact.notes && (
-                <div className="pt-2 border-t">
-                  <p className="text-xs text-muted-foreground mb-1">Notes</p>
-                  <ContactNotesBlock notes={contact.notes} contactId={contact.id} staff={!cdIsClient && !!cdViewer} />
+            ) : leftTab === "activity" ? (
+              cdIsClient ? (
+                <p className="text-sm text-muted-foreground py-6 text-center">Emails and meetings with this person are kept by BGP.</p>
+              ) : (
+                <div className="space-y-4">
+                  {/* Both read staff-only mailbox feeds; a client never asks. */}
+                  <AIActivityCard subjectType="contact" subjectId={id} title="Activity" compact />
+                  <InteractionsBoard scope="contact" contextId={id} />
+                </div>
+              )
+            ) : (
+              contact.notes
+                ? <ContactNotesBlock notes={contact.notes} contactId={contact.id} staff={!cdIsClient && !!cdViewer} />
+                : <p className="text-sm text-muted-foreground py-6 text-center">No notes yet. {editBlocked ? "" : "Add them with Edit."}</p>
+            )}
+          </div>
+        </Card>
+
+        <Card className="min-w-0 h-[460px] flex flex-col" data-testid="contact-right-card">
+          <div className="flex items-center gap-1.5 px-3 py-2.5" role="tablist" aria-label="Conversation and records">
+            <Pill active={rightTab === "chat"} onClick={() => setRightTab("chat")} data-testid="contact-tab-chat">Conversation</Pill>
+            <Pill active={rightTab === "records"} onClick={() => setRightTab("records")} data-testid="contact-tab-records">Records{recordCount ? ` · ${recordCount}` : ""}</Pill>
+          </div>
+          <div className="px-3 pb-3 min-h-0 flex-1 flex flex-col">
+            {rightTab === "chat" ? (
+              <CompanyMiniChat companyId={contact.id} companyName={contact.name || "Contact"} linkedType="contact" fill title="Conversation"
+                starters={[
+                  { label: "Where are we?", question: `Where are we with ${contact.name}? Latest emails, meetings and what is next.` },
+                  { label: "Their deals", question: `Which deals and properties is ${contact.name} involved in, and in what role?` },
+                ]} />
+            ) : (
+              <div className="min-h-0 flex-1 overflow-y-auto space-y-3" data-testid="contact-records">
+                {recordCount === 0 && <p className="text-sm text-muted-foreground py-6 text-center">Not on any property, deal or requirement yet.</p>}
+                {recordGroup("Properties", (contactProperties || []).map(prop => recordRow(`/properties/${prop.id}`, <Building className="w-4 h-4" />, prop.name || "Property",
+                  [Array.isArray(prop.bgpEngagement) ? prop.bgpEngagement.join(", ") : prop.bgpEngagement, prop.assetClass].filter(Boolean).join(" · "), `link-property-${prop.id}`)))}
+                {recordGroup("Deals as agent", agentDeals.map((deal: any) => recordRow(`/deals/${deal.id}`, <Briefcase className="w-4 h-4" />, deal.name,
+                  [...(deal.agentRoles || []), deal.status, deal.dealType].filter(Boolean).join(" · "), `link-agent-deal-${deal.id}`)))}
+                {recordGroup("Deals", linkedDeals.map((deal: any) => recordRow(`/deals/${deal.id}`, <Handshake className="w-4 h-4" />, deal.name,
+                  [deal.status, deal.dealType].filter(Boolean).join(" · "), `link-deal-${deal.id}`)))}
+                {recordGroup("Requirements", (contactRequirements || []).map((req: any) => recordRow(`/requirements?highlight=${req.id}`, <ClipboardList className="w-4 h-4" />, req.name,
+                  [req.linkSource === "agent" ? "Tenant rep" : null, req.requirementType, req.use?.length ? req.use.join(", ") : null].filter(Boolean).join(" · "), `link-requirement-${req.id}`)))}
+                {recordGroup("Investment tracker", (contactInvestmentItems || []).map((item: any) => recordRow(`/investment-tracker?highlight=${item.id}`, <TrendingUp className="w-4 h-4" />, item.assetName,
+                  [...(item.agentRoles || []), item.status, item.guidePrice ? `£${Number(item.guidePrice).toLocaleString()}` : null].filter(Boolean).join(" · "), `link-investment-${item.id}`)))}
+              </div>
+            )}
+          </div>
+        </Card>
+      </div>
+
+      {filteredCoworkers.length > 0 && (
+        <Card data-testid="contact-coworkers">
+          <CardContent className="p-3 space-y-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="font-semibold text-sm flex items-center gap-2 min-w-0">
+                <Users className="w-4 h-4 shrink-0" />
+                <span className="truncate">Co-workers at {companyLabel || "Company"}</span>
+                <span className="text-xs text-muted-foreground font-normal">{filteredCoworkers.length}</span>
+              </h3>
+              {filteredCoworkers.length > 8 && (
+                <div className="relative ml-auto w-full sm:w-56">
+                  <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input value={coworkerSearch} onChange={e => setCoworkerSearch(e.target.value)} placeholder="Search co-workers" className="h-8 pl-7 text-sm" data-testid="input-coworker-search" />
                 </div>
               )}
-              {!cdIsClient && <ContactSourcePanel contact={contact} />}
-            </CardContent>
-          </Card>
-
-          {contactProperties && contactProperties.length > 0 && (
-            <Card>
-              <CardContent className="p-4 space-y-3">
-                <h3 className="font-semibold text-sm flex items-center gap-2">
-                  <Building className="w-4 h-4" />
-                  Linked Properties
-                  <Badge variant="secondary" className="text-[10px] ml-1">{contactProperties.length}</Badge>
-                </h3>
-                <div className="space-y-1">
-                  {contactProperties.map(prop => (
-                    <Link key={prop.id} href={`/properties/${prop.id}`}>
-                      <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid={`link-property-${prop.id}`}>
-                        <Building className="w-4 h-4 text-muted-foreground shrink-0" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium truncate">{prop.name}</p>
-                          <div className="flex items-center gap-2">
-                            {prop.bgpEngagement && (Array.isArray(prop.bgpEngagement) ? prop.bgpEngagement : [prop.bgpEngagement]).length > 0 && <span className="text-[10px] text-muted-foreground">{Array.isArray(prop.bgpEngagement) ? prop.bgpEngagement.join(", ") : prop.bgpEngagement}</span>}
-                            {prop.assetClass && <Badge variant="outline" className="text-[10px] px-1 py-0">{prop.assetClass}</Badge>}
-                          </div>
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {contactDeals && contactDeals.length > 0 && (() => {
-            const agentDeals = contactDeals.filter((d: any) => d.linkSource === "agent");
-            const linkedDeals = contactDeals.filter((d: any) => d.linkSource !== "agent");
-            return (
-              <>
-                {agentDeals.length > 0 && (
-                  <Card>
-                    <CardContent className="p-4 space-y-3">
-                      <h3 className="font-semibold text-sm flex items-center gap-2">
-                        <Briefcase className="w-4 h-4 text-muted-foreground" />
-                        Agent — Deals
-                        <Badge variant="secondary" className="text-[10px] ml-1">{agentDeals.length}</Badge>
-                      </h3>
-                      <p className="text-xs text-muted-foreground">Deals where this contact is an agent or key contact</p>
-                      <div className="space-y-1">
-                        {agentDeals.map((deal: any) => (
-                          <Link key={deal.id} href={`/deals/${deal.id}`}>
-                            <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid={`link-agent-deal-${deal.id}`}>
-                              <Handshake className="w-4 h-4 text-muted-foreground shrink-0" />
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium truncate">{deal.name}</p>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  {deal.agentRoles?.map((role: string) => (
-                                    <Badge key={role} variant="secondary" className="text-[9px] px-1 py-0">{role}</Badge>
-                                  ))}
-                                  {deal.status && <Badge variant="outline" className="text-[10px] px-1 py-0">{deal.status}</Badge>}
-                                  {deal.dealType && <Badge variant="outline" className="text-[10px] px-1 py-0">{deal.dealType}</Badge>}
-                                </div>
-                              </div>
-                            </div>
-                          </Link>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-                {linkedDeals.length > 0 && (
-                  <Card>
-                    <CardContent className="p-4 space-y-3">
-                      <h3 className="font-semibold text-sm flex items-center gap-2">
-                        <Handshake className="w-4 h-4" />
-                        Linked Deals
-                        <Badge variant="secondary" className="text-[10px] ml-1">{linkedDeals.length}</Badge>
-                      </h3>
-                      <div className="space-y-1">
-                        {linkedDeals.map((deal: any) => (
-                          <Link key={deal.id} href={`/deals/${deal.id}`}>
-                            <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid={`link-deal-${deal.id}`}>
-                              <Handshake className="w-4 h-4 text-muted-foreground shrink-0" />
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium truncate">{deal.name}</p>
-                                <div className="flex items-center gap-2">
-                                  {deal.status && <span className="text-[10px] text-muted-foreground">{deal.status}</span>}
-                                  {deal.dealType && <Badge variant="outline" className="text-[10px] px-1 py-0">{deal.dealType}</Badge>}
-                                </div>
-                              </div>
-                            </div>
-                          </Link>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-              </>
-            );
-          })()}
-
-          {contactInvestmentItems && contactInvestmentItems.length > 0 && (
-            <Card>
-              <CardContent className="p-4 space-y-3">
-                <h3 className="font-semibold text-sm flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-muted-foreground" />
-                  Investment Tracker
-                  <Badge variant="secondary" className="text-[10px] ml-1">{contactInvestmentItems.length}</Badge>
-                </h3>
-                <p className="text-xs text-muted-foreground">Properties on the investment tracker linked to this contact</p>
-                <div className="space-y-1">
-                  {contactInvestmentItems.map((item: any) => (
-                    <Link key={item.id} href={`/investment-tracker?highlight=${item.id}`}>
-                      <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid={`link-investment-${item.id}`}>
-                        <Building className="w-4 h-4 text-muted-foreground shrink-0" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium truncate">{item.assetName}</p>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {item.agentRoles?.map((role: string) => (
-                              <Badge key={role} variant="secondary" className="text-[9px] px-1 py-0">{role}</Badge>
-                            ))}
-                            {item.status && <Badge variant="outline" className="text-[10px] px-1 py-0">{item.status}</Badge>}
-                            {item.guidePrice && <span className="text-[10px] text-muted-foreground">£{Number(item.guidePrice).toLocaleString()}</span>}
-                          </div>
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {contactRequirements && contactRequirements.length > 0 && (() => {
-            const agentReqs = contactRequirements.filter((r: any) => r.linkSource === "agent");
-            const linkedReqs = contactRequirements.filter((r: any) => r.linkSource !== "agent");
-            return (
-              <>
-                {agentReqs.length > 0 && (
-                  <Card>
-                    <CardContent className="p-4 space-y-3">
-                      <h3 className="font-semibold text-sm flex items-center gap-2">
-                        <Handshake className="w-4 h-4 text-muted-foreground" />
-                        Tenant Rep — Client Requirements
-                        <Badge variant="secondary" className="text-[10px] ml-1">{agentReqs.length}</Badge>
-                      </h3>
-                      <p className="text-xs text-muted-foreground">Requirements where this contact is the tenant rep agent</p>
-                      <div className="space-y-1">
-                        {agentReqs.map((req: any) => (
-                          <Link key={req.id} href={`/requirements?highlight=${req.id}`}>
-                            <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid={`link-agent-requirement-${req.id}`}>
-                              <ClipboardList className="w-4 h-4 text-muted-foreground shrink-0" />
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium truncate">{req.name}</p>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <Badge variant="outline" className="text-[10px] px-1 py-0">{req.requirementType}</Badge>
-                                  {req.status && <Badge variant="outline" className="text-[10px] px-1 py-0">{req.status}</Badge>}
-                                  {req.use?.length > 0 && <span className="text-[10px] text-muted-foreground">{req.use.join(", ")}</span>}
-                                </div>
-                              </div>
-                            </div>
-                          </Link>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-                {linkedReqs.length > 0 && (
-                  <Card>
-                    <CardContent className="p-4 space-y-3">
-                      <h3 className="font-semibold text-sm flex items-center gap-2">
-                        <ClipboardList className="w-4 h-4" />
-                        Linked Requirements
-                        <Badge variant="secondary" className="text-[10px] ml-1">{linkedReqs.length}</Badge>
-                      </h3>
-                      <div className="space-y-1">
-                        {linkedReqs.map((req: any) => (
-                          <Link key={req.id} href={`/requirements?highlight=${req.id}`}>
-                            <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid={`link-requirement-${req.id}`}>
-                              <ClipboardList className="w-4 h-4 text-muted-foreground shrink-0" />
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium truncate">{req.name}</p>
-                                <div className="flex items-center gap-2">
-                                  {req.requirementType && <Badge variant="outline" className="text-[10px] px-1 py-0">{req.requirementType}</Badge>}
-                                </div>
-                              </div>
-                            </div>
-                          </Link>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-              </>
-            );
-          })()}
-
-          {/* AI-curated activity — emails + calendar invites involving this
-              contact, filtered by ChatBGP across all 31 mailboxes. Same
-              engine as the deal page, brand profile, and hunter rows. */}
-          {/* Both boards read staff-only M365-derived endpoints
-              (/api/activity/contact, /api/interactions/contact) — the gateway
-              403s them for clients, so don't fire them (and don't render a
-              false "no interactions" empty state) for client viewers. */}
-          {!cdIsClient && <AIActivityCard subjectType="contact" subjectId={id} title="Activity" />}
-
-          {!cdIsClient && <InteractionsBoard scope="contact" contextId={id} />}
-        </div>
-
-        <div className="space-y-6">
-          {filteredCoworkers.length > 0 && (
-            <Card>
-              <CardContent className="p-4 space-y-3">
-                <h3 className="font-semibold text-sm flex items-center gap-2">
-                  <Users className="w-4 h-4" />
-                  Co-workers at {company?.name || "Company"}
-                  <Badge variant="secondary" className="text-[10px] ml-1">{filteredCoworkers.length}</Badge>
-                </h3>
-                <div className="space-y-1 max-h-[400px] overflow-y-auto">
-                  {filteredCoworkers.map(cw => (
-                    <Link key={cw.id} href={`/contacts/${cw.id}`}>
-                      <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid={`link-coworker-${cw.id}`}>
-                        <UserCircle className="w-4 h-4 text-muted-foreground shrink-0" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium truncate">{cw.name}</p>
-                          <p className="text-xs text-muted-foreground truncate">{cw.role || cw.email || ""}</p>
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {(contact.companyId || contact.companyName) && (
-            <Card>
-              <CardContent className="p-4 space-y-3">
-                <h3 className="font-semibold text-sm flex items-center gap-2">
-                  <Building className="w-4 h-4" />
-                  Company
-                </h3>
-                {contact.companyId ? (
-                  <Link href={`/companies/${contact.companyId}`}>
-                    <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid="link-contact-company-card">
-                      <Building className="w-4 h-4 text-muted-foreground" />
-                      <div>
-                        <p className="text-sm font-medium">{company?.name || contact.companyName}</p>
-                        {company?.companyType && (
-                          <Badge variant="outline" className={`border-transparent ${CRM_OPTIONS.companyTypeColors[company.companyType] || "bg-gray-500"} text-white text-[10px] mt-0.5`}>
-                            {company.companyType}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                  </Link>
-                ) : (
-                  <p className="text-sm">{contact.companyName}</p>
-                )}
-                {company?.domainUrl && (
-                  <a href={company.domainUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 p-2 rounded-md hover:bg-muted text-sm text-blue-600 dark:text-blue-400 hover:underline transition-colors">
-                    <Globe className="w-4 h-4 shrink-0" />
-                    {company.domainUrl.replace(/^https?:\/\//, '')}
-                  </a>
-                )}
-                {companyAddress && (companyAddress.street || companyAddress.city) && (
-                  <div className="flex items-center gap-2 p-2 text-sm text-muted-foreground">
-                    <MapPin className="w-4 h-4 shrink-0" />
-                    {[companyAddress.street, companyAddress.city, companyAddress.country].filter(Boolean).join(", ")}
-                  </div>
-                )}
-                {(company?.bgpContactUserIds?.length || company?.bgpContactCrm) && (
-                  <div className="flex items-center gap-2 p-2 text-sm">
-                    <UserCircle className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <div>
-                      <p className="text-xs text-muted-foreground">BGP Contacts</p>
-                      <div className="flex flex-wrap gap-1 mt-0.5">
-                        <BgpContactNames ids={company?.bgpContactUserIds || []} fallback={company?.bgpContactCrm || null} />
-                      </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-1">
+              {coworkersVisible.map(cw => (
+                <Link key={cw.id} href={`/contacts/${cw.id}`}>
+                  <div className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted cursor-pointer transition-colors min-w-0" data-testid={`link-coworker-${cw.id}`}>
+                    {cw.avatarUrl
+                      ? <img src={cw.avatarUrl} alt="" className="w-7 h-7 rounded-full object-cover shrink-0" />
+                      : <span className="w-7 h-7 rounded-full bg-muted text-[10px] font-semibold text-muted-foreground flex items-center justify-center shrink-0">{String(cw.name || "").split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}</span>}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">{cw.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{cw.role || cw.email || ""}</p>
                     </div>
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </div>
+                </Link>
+              ))}
+              {coworkersVisible.length === 0 && <p className="text-sm text-muted-foreground px-2 py-1">No one matches.</p>}
+            </div>
+            {!coworkerQuery && coworkersShown.length > 8 && (
+              <button type="button" className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2" onClick={() => setShowAllCoworkers(v => !v)} data-testid="button-coworkers-show-all">
+                {showAllCoworkers ? "Show fewer" : `Show all ${coworkersShown.length}`}
+              </button>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

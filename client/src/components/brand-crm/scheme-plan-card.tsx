@@ -162,7 +162,6 @@ export function SchemePlanCard({ companyId, client = false }: { companyId: strin
   const restricted = plan?.otherSchemeCount !== undefined;
   const rows = plan?.rows || [];
   const stopped = plan?.notProceeding || [];
-  const brandCase = [...rows, ...stopped].find(row => row.links.brandCase)?.links.brandCase || null;
   const firstOfScheme = (i: number) => i === 0 || schemeId(rows[i]) !== schemeId(rows[i - 1]);
 
   // A Wanted line BGP wrote: its note, whether Landsec is shown it, and retiring it.
@@ -298,7 +297,7 @@ export function SchemePlanCard({ companyId, client = false }: { companyId: strin
 
         {restricted && (plan.otherSchemeCount || 0) > 0 && <p className="text-xs text-muted-foreground" data-testid="scheme-plan-other-schemes">
           Also at {plan.otherSchemeCount} other scheme{plan.otherSchemeCount === 1 ? "" : "s"}.
-          {brandCase && <> <Link href={brandCase} className="text-primary hover:underline">See the brand case</Link></>}
+
         </p>}
 
         {plan.warnings.map(warning => <p key={warning} role="status" className="text-xs text-muted-foreground">{warning}</p>)}

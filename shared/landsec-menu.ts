@@ -20,6 +20,8 @@ export const LANDSEC_MENU = {
   calendar: "/landsec/calendar",
   tasks: "/landsec/tasks",
   brands: "/brands",
+  // The CRM (Woody, 2026-11-14: "add CRM to the side bar for Landsec").
+  crm: "/contacts",
   chat: "/messages",
 } as const;
 
@@ -94,6 +96,8 @@ export function landsecMenuActive(url: string, location: string): boolean | null
       // Any Brands address, the Brand CRM tab included, and the brand cases
       // that are reached from Brands.
       return at("/brands") || loc.startsWith("/landsec/brand-case");
+    case LANDSEC_MENU.crm:
+      return at("/contacts");
     case LANDSEC_MENU.chat:
       return at("/messages") || at("/chatbgp");
     default:
