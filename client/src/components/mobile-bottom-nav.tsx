@@ -1,6 +1,6 @@
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake, Target, Layers, Building2 } from "lucide-react";
+import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake, Target, Layers, Building2, CalendarDays } from "lucide-react";
 import { useKeyboardOpen } from "@/hooks/use-mobile";
 import { useBrand } from "@/lib/brand-context";
 import { LANDSEC_MENU, JOINT_AGENT_MENU, LANDSEC_STAFF_TASKS, landsecMenuActive, openTaskCount } from "@shared/landsec-menu";
@@ -32,6 +32,7 @@ const LANDSEC_NAV_ITEMS = [
   { label: "Properties", icon: Building2, path: LANDSEC_MENU.properties },
   { label: "Deals", icon: BarChart3, path: LANDSEC_MENU.deals },
   { label: "Tracker", icon: Store, path: LANDSEC_MENU.tracker },
+  { label: "Calendar", icon: CalendarDays, path: LANDSEC_MENU.calendar },
   { label: "Tasks", icon: CheckSquare, path: LANDSEC_MENU.tasks },
   { label: "Brands", icon: Handshake, path: LANDSEC_MENU.brands },
   { label: "Chat", icon: MessageCircle, path: LANDSEC_MENU.chat },
@@ -54,6 +55,7 @@ const LANDSEC_JOINT_AGENT_NAV_ITEMS = [
   { label: "Properties", icon: Building2, path: JOINT_AGENT_MENU.properties },
   { label: "Deals", icon: BarChart3, path: JOINT_AGENT_MENU.deals },
   { label: "Tracker", icon: Layers, path: JOINT_AGENT_MENU.tracker },
+  { label: "Calendar", icon: CalendarDays, path: LANDSEC_MENU.calendar },
   { label: "Tasks", icon: CheckSquare, path: LANDSEC_MENU.tasks },
 ] as const;
 
@@ -156,4 +158,4 @@ export function MobileBottomNav() {
  * These should not show the standard mobile header back button behavior
  * and instead just display in the content area above the bottom nav.
  */
-export const BOTTOM_NAV_PATHS = ["/", "/home", "/messages", "/chatbgp", "/mail", "/deals", "/news", "/tasks", "/landsec/tracker", "/landsec/viewings", "/landsec/tasks", "/landsec/chat"];
+export const BOTTOM_NAV_PATHS = ["/", "/home", "/messages", "/chatbgp", "/mail", "/deals", "/news", "/tasks", "/landsec/tracker", "/landsec/calendar", "/landsec/viewings", "/landsec/tasks", "/landsec/chat"];

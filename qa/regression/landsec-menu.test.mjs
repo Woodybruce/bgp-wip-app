@@ -16,7 +16,7 @@ const statement = (file, start) => find(file, node => ts.isVariableStatement(nod
 const fn = (file, name) => find(file, node => ts.isFunctionDeclaration(node) && node.name?.text === name);
 // Values made inside the evaluated source belong to another realm.
 const plain = value => JSON.parse(JSON.stringify(value));
-const ICONS = Object.fromEntries(['Calendar', 'LayoutDashboard', 'Building2', 'BarChart3', 'Store', 'Handshake', 'Layers', 'Eye', 'ListTodo', 'Target', 'MessageCircle', 'CheckSquare'].map(name => [name, name]));
+const ICONS = Object.fromEntries(['Calendar', 'CalendarDays', 'LayoutDashboard', 'Building2', 'BarChart3', 'Store', 'Handshake', 'Layers', 'Eye', 'ListTodo', 'Target', 'MessageCircle', 'CheckSquare'].map(name => [name, name]));
 const BINDINGS = { ...ICONS, LANDSEC_MENU, JOINT_AGENT_MENU, LANDSEC_STAFF_TASKS, landsecTasksPath };
 
 const sidebar = evaluate([
@@ -125,17 +125,17 @@ test('a joint agent has no Brands entry on either menu', () => {
   assert.ok(!phone('jointAgent').some(([, path]) => path.startsWith('/brands')));
 });
 
-test('phone tabs: Properties, Deals, Tracker, Tasks, Brands, Chat for a Landsec login', () => {
-  assert.deepEqual(phone('full'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['Chat', '/messages']]);
+test('phone tabs: Properties, Deals, Tracker, Calendar, Tasks, Brands, Chat for a Landsec login', () => {
+  assert.deepEqual(phone('full'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['Chat', '/messages']]);
 });
 
 test('phone tabs: staff viewing as Landsec keep Home, the way out of the Landsec view, in place of Brands', () => {
-  assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Tasks', '/tasks'], ['Chat', '/messages']]);
+  assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/tasks'], ['Chat', '/messages']]);
 });
 
 // Woody, 2026-11-13, asked whether to build chat for joint agents: "yes go ahead".
 test('phone tabs: a joint agent has its own Chat tab, never Messages', () => {
-  assert.deepEqual(phone('jointAgent'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/landsec/tracker'], ['Tasks', '/landsec/tasks']]);
+  assert.deepEqual(phone('jointAgent'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/landsec/tracker'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks']]);
   // CRM and Chat are added where the tabs are chosen. Chat is the joint
   // agent's own page, not /messages (the staff and client chat).
   const tabsSource = source(TABS);
