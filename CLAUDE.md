@@ -1071,6 +1071,28 @@ not opened to them.
     and its own properties' (its own schemes', for a scheme-limited Landsec
     login). BGP staff are served any photo, as before, including while
     viewing as a client.
+  - **Call from the Tenant rep line** (15 November 2026; Woody: "fix the
+    phone issues"). A Tenant rep line with a named agent carries Call and
+    Email icon links beside the name, on the phone page
+    (`repContactLinks` in `mobile-brand-view.tsx`) and the desktop block
+    (`RepContactLinks`, `TenantRepsBlock`), when the reply holds a number or
+    an address. The brand profile sends `contact_email` and `contact_phone`
+    on `representedBy` and `requirementAgents`, the phone worded as the
+    client Agents list words it (mobile, else phone). A client login is sent
+    them for tenant reps only, the people its Agents list already shows it;
+    a joint agent has no brand page. Links only: no write. Test:
+    `qa/regression/phone-property-brand.test.mjs`.
+  - **Add photos on a brand's page** (15 November 2026; Woody: "fix the
+    phone issues"). `client/src/components/brand-page/brand-photos.tsx`:
+    `BrandAddPhotos` takes several images at once and files each against
+    the brand through the routes Images already used (`POST
+    /api/image-studio/upload`, then `POST /api/image-studio/:id/attach`
+    with the brand); no new route. `BrandPhotosCard` is the phone page's
+    **Photos** card under News & media (every saved image; a client login
+    sees the photos and no control), and the desktop Documents & gallery
+    card has the same link. BGP staff only, as the attach is: the server
+    still refuses a client login attaching to any company but its own.
+    Test: `qa/regression/brand-add-photos.test.mjs`.
   - Every deal sent to a client goes through `stripDealFees` in
     `server/crm.ts`, the replies to its own deal save and new deal included
     (those two sent the whole stored row until 2026-11-13): all fee fields
@@ -2223,6 +2245,19 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   comments, the Targeting Brief or heads of terms to it. The draft needs the
   Mail.ReadWrite application permission and has not been run against
   Microsoft; it falls back to the PDF and a mailto link.
+  **The brand's agent as the recipient** (15 November 2026; Woody: "fix the
+  phone issues"): for BGP staff the contact list for a picked brand also
+  offers the named contacts of the brand's CURRENT tenant-rep
+  representations, marked "Tenant rep" with their firm (`GET
+  /api/unit-share/:unitId/brand-agents?companyId=`, `tenantRepContacts`),
+  and the share stays logged against the brand. The send checks the contact
+  it is handed (`contactMayReceiveFor`): someone at the brand, or one of
+  those tenant rep contacts; any other `contactId` is refused, whatever the
+  screen offered. A joint agent's rules are unchanged: the new route refuses
+  it (it sits under the share prefix its gateway opens, so the handler says
+  no itself) and a `contactId` from it is still always refused. Test:
+  `qa/regression/unit-share-tenant-rep.test.mjs` (its SQL half needs
+  `UNIT_SHARE_DATABASE_URL`).
 - **Deal checklist** (`shared/deal-checklist.ts`, `server/deal-checklist.ts`,
   `components/deal-checklist/*`, migration 0052): one per unit and its
   current deal, items by stage, each with one responsible person from BGP,

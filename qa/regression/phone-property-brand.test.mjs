@@ -165,6 +165,27 @@ test('phone representations without record IDs render text and do not create bro
   assert.equal(app.find(app.render(), 'company-phone-represented-by'), undefined);
 });
 
+test('a named tenant rep on the phone brand page has Call and Email beside the name only when the reply carries them', () => {
+  const links = block => descendants(block).filter(node => node.type === 'a').map(node => [node.props.href, node.props['aria-label']]);
+  for (const user of [{ role: 'Client', companyScopeId: 'client' }, { role: 'Admin' }]) {
+    const app = phoneBrand(user);
+    assert.deepEqual(links(app.find(app.render(), 'company-phone-represented-by')), [], 'no number or address in the reply: no links');
+    app.input.profile.representedBy = [
+      { id: 'both', agent_type: 'tenant_rep', agent_name: 'Recorded Agency', agent_company_id: 'agency', contact_name: 'Agency person', primary_contact_id: 'agency-contact', contact_phone: '+44 (0)20 7946 0143', contact_email: 'person@agency.example' },
+      { id: 'phone-only', agent_type: 'tenant_rep', contact_name: 'Named agent', primary_contact_id: 'agent-contact', contact_phone: '020 7946 0000' },
+      { id: 'firm-only', agent_type: 'tenant_rep', agent_name: 'Firm alone', agent_company_id: 'firm', contact_phone: '020 7946 0001', contact_email: 'office@firm.example' },
+    ];
+    app.input.profile.requirementAgents = [{ contact_id: 'req-contact', contact_name: 'Requirement agent', contact_email: 'req@agency.example' }];
+    const block = app.find(app.render(), 'company-phone-represented-by');
+    assert.deepEqual(links(block), [
+      ['mailto:req@agency.example', 'Email Requirement agent'],
+      ['tel:+4402079460143', 'Call Agency person'], ['mailto:person@agency.example', 'Email Agency person'],
+      ['tel:02079460000', 'Call Named agent'],
+    ], 'a firm with no named contact gets no links');
+    assert.equal(descendants(block).some(node => node.props.onClick || node.type === 'button'), false, 'links only: no new write capability');
+  }
+});
+
 test('phone saved-profile retry and staff refresh remain explicit while client controls remain unchanged', () => {
   const failed = phoneBrand({ role: 'Admin' }, { failed: true });
   const tree = failed.render();

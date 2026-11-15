@@ -136,7 +136,7 @@ const PHASES = {
       if (String(made.name).trim() !== FIRM.name) throw new Error(`The CRM answered with ${made.name}, not a new ${FIRM.name}`);
       f = { id: made.id, name: made.name };
       step(true, `agent firm ${f.name} added to the CRM (${FIRM.headOfficeAddress.street}, ${FIRM.headOfficeAddress.city})`);
-    } else if (f.domain !== FIRM.domain || f.domain_url !== FIRM.domainUrl || JSON.stringify(f.head_office_address || {}) !== JSON.stringify(FIRM.headOfficeAddress)) {
+    } else if (f.domain !== FIRM.domain || f.domain_url !== FIRM.domainUrl || ["street", "city", "postcode"].some(k => (f.head_office_address || {})[k] !== FIRM.headOfficeAddress[k])) {
       await must(STAGER, "PUT", `/api/crm/companies/${f.id}`, { domain: FIRM.domain, domainUrl: FIRM.domainUrl, headOfficeAddress: FIRM.headOfficeAddress });
       step(true, `agent firm ${f.name}'s website and office put right`);
     } else step(false, `agent firm ${f.name} is in the CRM`);
@@ -220,7 +220,8 @@ async function leftByFilming() {
   const comments = await q(
     `SELECT m.id, m.thread_id FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id
       WHERE t.linked_type = 'property' AND t.linked_id = $1 AND m.content LIKE $2 AND m.content LIKE $3`,
-    [BLUEWATER, `%(tag:unit/${BK_UNIT})%`, `%${COMMENT}`]);
+    // Either spelling of the agent's name: the earlier cut typed it with one L.
+    [BLUEWATER, `%(tag:unit/${BK_UNIT})%`, `%${COMMENT.replace("Willcox", "Wil%cox")}`]);
   // Every photo a scene added: from the brand's page (filed against the
   // brand) or, in the earlier cut, from Images.
   const photos = (await q(`SELECT id, file_name FROM image_studio_images WHERE (company_id = $1 OR 'phone-upload' = ANY(COALESCE(tags, '{}'))) AND NOT ('trashed' = ANY(COALESCE(tags, '{}')))`, [BRAND.id]))
