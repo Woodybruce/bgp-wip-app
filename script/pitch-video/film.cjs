@@ -62,7 +62,7 @@ async function login(request, username) {
 }
 
 class Shot {
-  constructor(page, name) { this.page = page; this.name = name; this.x = W / 2; this.y = H / 2; this.t0 = Date.now(); this.trim = 0; this.bad = []; }
+  constructor(page, name) { this.page = page; this.name = name; const size = page.viewportSize() || { width: W, height: H }; this.x = size.width / 2; this.y = size.height / 2; this.t0 = Date.now(); this.trim = 0; this.bad = []; }
   async wait(ms) { await this.page.waitForTimeout(ms); }
   // The cut starts here: everything before it is loading.
   async start() { await this.moveTo(this.x, this.y, 1); this.trim = (Date.now() - this.t0) / 1000; }
@@ -334,6 +334,37 @@ const SCENES = {
     await s.wait(4500);
   },
 
+  // 1b. The phone: the same app in the hand (filmed at phone size).
+  async phone(s) {
+    await s.goto("/deals/properties", 3000);
+    await s.start();
+    await s.moveTo(195, 520, 600);
+    await s.wait(1200);
+    await s.scroll(520, 1800);
+    await s.wait(1200);
+    await s.click('[data-testid="bottom-nav-deals"]', { after: 3200, ms: 600 });
+    await s.click('[data-testid="bottom-nav-tasks"]', { after: 3200, ms: 600 });
+    await s.click('[data-testid="bottom-nav-tracker"]', { after: 3200, ms: 600 });
+  },
+
+  // 12. A joint agent's own login: his schemes only, the same tools.
+  async agent(s) {
+    await s.goto("/deals/properties", 3000);
+    await s.start();
+    await s.wait(1500);
+    await s.over('[data-testid="landsec-scheme-liverpool-one"]', 900);
+    await s.wait(1500);
+    await s.click('[data-testid="landsec-scheme-link-liverpool-one"]', { after: 4500 });
+    await s.click('input[placeholder^="Message about"], textarea[placeholder^="Message about"]', { after: 500 });
+    await s.write("Second viewing on P3R is confirmed for Friday. I'll log the outcome on the tracker.", 110);
+    await s.wait(600);
+    await s.click('button:has-text("Send")', { after: 2500 });
+    await s.wait(1500);
+    await s.goto("/landsec/tracker", 2500);
+    await s.moveTo(820, 430, 900);
+    await s.wait(3000);
+  },
+
   // 10b. The diary: viewings, meetings and the CRM plan in one calendar.
   async calendar(s) {
     await s.goto("/landsec/calendar", 3000);
@@ -345,6 +376,14 @@ const SCENES = {
   },
 };
 
+// Who a scene is filmed as, and at what size, when it is not the leasing
+// manager at a desk.
+const SCENE_SETUP = {
+  phone: { phone: true },
+  agent: { user: "david.bell@jointagent.demo" },
+};
+const PHONE = { width: 390, height: 844 };
+
 (async () => {
   const wanted = process.argv.slice(2);
   if (!wanted.length) { console.log("scenes:", Object.keys(SCENES).join(", ")); return; }
@@ -355,10 +394,16 @@ const SCENES = {
     if (!scene) { console.error("no scene", name); continue; }
     const dir = path.join(OUT, `.${name}`);
     fs.rmSync(dir, { recursive: true, force: true });
-    const ctx = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1, recordVideo: { dir, size: { width: W, height: H } } });
-    const token = await login(ctx.request, process.env.FILM_USER || LEASING);
+    const setup = SCENE_SETUP[name] || {};
+    const ctx = await browser.newContext(setup.phone
+      ? { viewport: PHONE, deviceScaleFactor: 2, isMobile: true, hasTouch: true,
+          userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+          recordVideo: { dir, size: { width: PHONE.width * 2, height: PHONE.height * 2 } } }
+      : { viewport: { width: W, height: H }, deviceScaleFactor: 1, recordVideo: { dir, size: { width: W, height: H } } });
+    const token = await login(ctx.request, setup.user || process.env.FILM_USER || LEASING);
     await ctx.addInitScript(t => { try { localStorage.setItem("bgp_auth_token", t); } catch {} }, token);
-    await ctx.addInitScript(POINTER);
+    // On a phone the pointer is a fingertip, not an arrow.
+    await ctx.addInitScript(setup.phone ? POINTER.replace(/<svg[\s\S]*?<\/svg>/, '<div style="width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;background:rgba(20,20,20,.28);border:2px solid rgba(255,255,255,.85)"></div>') : POINTER);
     await replayLogos(ctx);
     const page = await ctx.newPage();
     const shot = new Shot(page, name);

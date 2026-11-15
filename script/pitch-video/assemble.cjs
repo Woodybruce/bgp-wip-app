@@ -16,10 +16,11 @@ const FONT_BOLD = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr
 
 // The running order. `clip` is a filmed scene; `card` is a placeholder.
 const ORDER = [
-  { card: "1  Woody to camera", note: "To be filmed on a phone", secs: 9,
-    voice: "I'm Woody Bruce from Bruce Gillingham Pollard. You asked, why our agency. Part of the answer is something we've built for you, so let me show you rather than tell you. In fact, I'll get someone else to show you." },
+  { card: "1  Woody to camera", note: "To be filmed on a phone", secs: 7,
+    voice: "I'm Woody Bruce from Bruce Gillingham Pollard. You asked, why our agency. Part of the answer is something we've built for you." },
+  { clip: "phone", phone: true, speed: 1.4, voice: "This is ChatBGP. It lives on my phone, and it would live on yours: your schemes, your deals, and what each one is waiting on. It is easier to see on a big screen, so I'll get someone else to show you." },
   { card: "2  Woody becomes the character", note: "Character clip from the avatar service", secs: 5,
-    voice: "That's better. Mark, this is ChatBGP, and this is your login. One place for all fourteen schemes." },
+    voice: "That's better. Mark, this is your login. One place for all fourteen schemes." },
   { clip: "properties", voice: "Every unit, every vacancy and every live letting, counted the same way for your portfolio team, your asset teams, us and the other agents on the panel. Let's take Bluewater." },
   { clip: "unit", voice: "The plan and the tenancy schedule are one thing. Click a unit and everything about it is there. This is Burger King on the lower level: three thousand square feet, with the lease ending in December 2028. Line up what comes next now, and there is no downtime." },
   { clip: "gap", voice: "Differentiation starts with knowing what the competition has. The app tracks who trades at Lakeside, Stratford and Canary Wharf and not at Bluewater, and what those centres are doing each week." },
@@ -31,6 +32,8 @@ const ORDER = [
   { clip: "recommendation", mark: true, max: 31, voice: "The recommendation arrives in your own template, with Net Effective Rent worked out against ERV and the brief." },
   { clip: "calendar", speed: 1, voice: "Viewings, meetings and tasks sit in one place." },
   { clip: "conversation", speed: 1, voice: "So does the conversation on each property, for you and for every agent on the instruction." },
+  { clip: "tinker", speed: 1, voice: "You also asked how we work with the other agents on the panel. Here comes one now. This is David Bell. We call him Tinker Bell. And yes, we do like him." },
+  { clip: "agent", voice: "David gets his own login, with his schemes and nothing else. The same tracker, the same checklist, the same conversation. So you see one version of every deal, whoever did the work." },
   { card: "11  Woody closes", note: "To be filmed on a phone", secs: 6,
     voice: "That is one unit at one scheme. It runs the same way across all fourteen, so our time goes on brands and deals, not on chasing updates. We'd love to run it with you." },
 ];
@@ -79,7 +82,10 @@ for (const item of ORDER) {
   const raw = Math.min(item.max || 1e9, Math.max(4, t.length - t.trim - 0.6));
   const secs = raw / speed;
   const vf = [
-    `setpts=PTS/${speed}`, "scale=1920:1080:flags=lanczos", "fps=25",
+    `setpts=PTS/${speed}`,
+    // A phone clip is the top-left quarter of its recording, shown upright on a dark card.
+    ...(item.phone ? ["crop=390:844:0:0", "scale=-2:860:flags=lanczos", "pad=1920:1080:(ow-iw)/2:30:color=0x1c1917"] : ["scale=1920:1080:flags=lanczos"]),
+    "fps=25",
     ...(item.mark ? [`drawtext=fontfile=${FONT}:text='Illustration':fontcolor=white:fontsize=24:x=w-text_w-40:y=36:box=1:boxcolor=0xB8622F@0.9:boxborderw=10`] : []),
     ...captions(item.voice, secs),
   ].join(",");

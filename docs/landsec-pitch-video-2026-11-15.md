@@ -57,12 +57,13 @@ decided that day:
 
 ## Script
 
-Voice lines are what Woody reads. About 330 words.
+Voice lines are what Woody reads. About 420 words, roughly 3 minutes 20.
 
 | # | On screen | Voice |
 |---|-----------|-------|
-| 1 | Woody to camera, plain background. Name caption. | "I'm Woody Bruce from Bruce Gillingham Pollard. You asked, why our agency. Part of the answer is something we've built for you, so let me show you rather than tell you. In fact, I'll get someone else to show you." |
-| 2 | Woody turns into the character, who lands in the corner of the app. | "That's better. Mark, this is ChatBGP, and this is your login. One place for all fourteen schemes." |
+| 1 | Woody to camera, filmed on his phone. Name caption. | "I'm Woody Bruce from Bruce Gillingham Pollard. You asked, why our agency. Part of the answer is something we've built for you." |
+| 1b | The app on a phone: the scheme list, Deals, Tasks ("waiting on you"), the tracker. | "This is ChatBGP. It lives on my phone, and it would live on yours: your schemes, your deals, and what each one is waiting on. It is easier to see on a big screen, so I'll get someone else to show you." |
+| 2 | Woody turns into the character, who lands in the corner of the app. | "That's better. Mark, this is your login. One place for all fourteen schemes." |
 | 3 | Properties: the 14 scheme cards, the stage pills, the map. Open Bluewater. | "Every unit, every vacancy and every live letting, counted the same way for your portfolio team, your asset teams, us and the other agents on the panel. Let's take Bluewater." |
 | 4 | Bluewater: the plan and the tenancy schedule. Click the Burger King unit; the unit panel opens. | "The plan and the tenancy schedule are one thing. Click a unit and everything about it is there. This is Burger King on the lower level: three thousand square feet, with the lease ending in December 2028. Line up what comes next now, and there is no downtime." |
 | 5 | Brand gap: the four figures, Targets, Competing centres, the Lakeside box. | "Differentiation starts with knowing what the competition has. The app tracks who trades at Lakeside, Stratford and Canary Wharf and not at Bluewater, and what those centres are doing each week." |
@@ -73,7 +74,17 @@ Voice lines are what Woody reads. About 330 words.
 | 9b | The deal checklist with a name against each step, then Deals showing "waiting on". | "From Heads of Terms the asset team takes over, with a name against every step. At any moment you can see what the deal is waiting on, and who." |
 | 10a | The transaction recommendation in Landsec's template. Mark approves. | "The recommendation arrives in your own template, with Net Effective Rent worked out against ERV and the brief." |
 | 10b | The calendar; the property conversation; a phone shot. | "Viewings, meetings and tasks sit in one place. So does the conversation on each property, for you and for every agent on the instruction." |
-| 11 | Woody back on camera, or the character closes. End card. | "That is one unit at one scheme. It runs the same way across all fourteen, so our time goes on brands and deals, not on chasing updates. We'd love to run it with you." |
+| 12a | David Bell flies in on fairy wings to meet the character. They hug. | "You also asked how we work with the other agents on the panel. Here comes one now. This is David Bell. We call him Tinker Bell. And yes, we do like him." |
+| 12b | David Bell's own login: one scheme (Liverpool ONE), its property page, a message in the conversation, his tracker. | "David gets his own login, with his schemes and nothing else. The same tracker, the same checklist, the same conversation. So you see one version of every deal, whoever did the work." |
+| 13 | Woody back on camera, or the character closes. End card. | "That is one unit at one scheme. It runs the same way across all fourteen, so our time goes on brands and deals, not on chasing updates. We'd love to run it with you." |
+
+Woody asked for the phone screens, the joint agent, David Bell as "Tinker
+Bell" and the hug on 15 November. In the rough cut scene 12a is a plain
+placeholder animation (two simple figures, not likenesses); the real
+character art comes from the avatar service or an illustrator. David Bell is
+a joint agent at Liverpool ONE on BGP's team sheet; his firm is not recorded
+there, so the demo login carries no firm name. He should be asked before a
+film with his name and nickname goes to Landsec.
 
 ## What Woody needs to do
 
