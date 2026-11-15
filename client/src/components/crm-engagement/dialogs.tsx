@@ -11,6 +11,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { EVENT_LABELS, GUEST_LABELS, KIND_WORDS, londonDateTimeInput, londonInputToIso, type CompanySearch } from "./helpers";
+import { CrmNoteFill } from "./note-fill";
+import type { CrmNoteReading } from "@shared/crm-note";
+
+// A note read into a form: only the boxes the reading holds are changed, a
+// company already linked keeps what was typed for it, and a company the
+// reading found is told to the picker so its name shows.
+function withReadCompanies<T extends {companyId: string; reason: string}>(have: T[], reading: CrmNoteReading, make: (companyId: string, reason: string) => T, search?: CompanySearch): T[] {
+  for (const c of reading.companies) search?.onPick({id: c.id, name: c.name});
+  return [...have, ...reading.companies.filter(c => !have.some(h => h.companyId === c.id)).map(c => make(c.id, c.reason))];
+}
 
 const SELECT_CLASS = "flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 export function Choice({ value, onChange, children, label, required = false, disabled = false, testId }: {value: string; onChange: (value: string) => void; children: ReactNode; label: string; required?: boolean; disabled?: boolean; testId?: string}) {
@@ -64,6 +74,11 @@ export function StrategyEditor({ record, options, companyId, kind = "landlord", 
     if (form.startsOn && form.endsOn && form.endsOn < form.startsOn) throw new Error("The end date must be on or after the start date.");
     return onSave({...form, name: form.name.trim(), objective: form.objective.trim()}, record?.id);
   }}>
+    {!record && <CrmNoteFill form="strategy" kind={kind} saveWord="Create strategy" onRead={reading => setForm(f => ({...f,
+      name: reading.fields.title ?? f.name, objective: reading.fields.text ?? f.objective, ownerId: reading.fields.ownerId ?? f.ownerId,
+      team: reading.fields.team ?? f.team, startsOn: reading.fields.startsOn ?? f.startsOn, endsOn: reading.fields.endsOn ?? f.endsOn,
+      targets: withReadCompanies(f.targets, reading, (companyId, reason) => ({companyId, reason, contactIds: []}), search),
+    }))} />}
     <Field label="Strategy name"><Input required value={form.name} maxLength={200} onChange={e => setForm({...form, name: e.target.value})} placeholder="For example, shopping-centre food and beverage leasing" /></Field>
     <Field label="Objective"><Textarea required rows={3} maxLength={4000} value={form.objective} onChange={e => setForm({...form, objective: e.target.value})} placeholder="What do we want to achieve, and what would count as progress?" /></Field>
     <div className="grid sm:grid-cols-2 gap-3"><Owner required value={form.ownerId} onChange={ownerId => setForm({...form, ownerId})} options={options} /><Field label="Team"><Input value={form.team || ""} maxLength={100} onChange={e => setForm({...form, team: e.target.value || null})} placeholder="Team or cross-team programme" /></Field></div>
@@ -90,6 +105,13 @@ export function EventEditor({ record, options, strategies, companyId, kind = "la
     if (form.dateConfirmed && !startsAt) throw new Error("Add a start date before confirming it.");
     return onSave({...form, title: form.title.trim(), startsAt, endsAt}, record?.id);
   }}>
+    {!record && <CrmNoteFill form="event" kind={kind} saveWord="Create event" onRead={reading => {
+      if (reading.fields.startsAt) setStart(reading.fields.startsAt);
+      if (reading.fields.endsAt) setEnd(reading.fields.endsAt);
+      setForm(f => ({...f, title: reading.fields.title ?? f.title, description: reading.fields.text ?? f.description, kind: reading.fields.eventKind ?? f.kind,
+        ownerId: reading.fields.ownerId ?? f.ownerId, location: reading.fields.location ?? f.location, dateConfirmed: reading.fields.startsAt ? false : f.dateConfirmed,
+        companies: withReadCompanies(f.companies, reading, (companyId, reason) => ({companyId, reason}), search)}));
+    }} />}
     <Field label="Event name"><Input required value={form.title} maxLength={200} onChange={e => setForm({...form, title: e.target.value})} /></Field>
     <div className="grid sm:grid-cols-2 gap-3"><Choice label="Type" value={form.kind || "bgp"} onChange={kind => setForm({...form, kind})}><option value="bgp">BGP event / hospitality</option><option value="industry">Industry event</option><option value="speaking">Speaking opportunity</option><option value="pitch">Pitch</option><option value="press">Press activity</option></Choice><Choice label="Status" value={form.status} onChange={v => setForm({...form, status: v as EventInput["status"]})}>{Object.entries(EVENT_LABELS).map(([v, label]) => <option key={v} value={v}>{label}</option>)}</Choice></div>
     <div className="grid sm:grid-cols-2 gap-3"><Field label="Starts · London time"><Input type="datetime-local" value={start} onChange={e => {setStart(e.target.value); setForm({...form, dateConfirmed: false});}} /></Field><Field label="Ends · London time"><Input type="datetime-local" value={end} onChange={e => setEnd(e.target.value)} /></Field></div>
@@ -179,6 +201,13 @@ export function ActionEditor({ options, data, companyId, eventId, strategyId, in
       {sourceNote.excerpt && <p className="text-muted-foreground whitespace-pre-wrap">{sourceNote.excerpt}</p>}
       {sourceNote.sourceUrl && <Link className="inline-block text-xs underline" href={sourceNote.sourceUrl}>Read interview</Link>}
     </div>}
+    {!showSource && <CrmNoteFill form="action" kind={kind} saveWord="Create action" onRead={reading => {
+      if (reading.fields.dueAt) setDue(reading.fields.dueAt);
+      const company = reading.companies[0];
+      if (company) search?.onPick({id: company.id, name: company.name});
+      setForm(f => ({...f, title: (reading.fields.title ?? f.title).slice(0, 200), notes: reading.fields.text ?? f.notes, ownerId: reading.fields.ownerId ?? f.ownerId,
+        ...(company && company.id !== f.companyId && !companyId ? {companyId: company.id, strategyId: null, eventId: null} : {})}));
+    }} />}
     <Field label="Action"><Input required maxLength={200} value={form.title} onChange={e => setForm({...form, title: e.target.value})} placeholder="A clear next step" /></Field>
     <div className="space-y-1.5"><p className="text-sm font-medium">{kind === "brand" ? "Brand" : "Company"}</p><CrmEntityPicker value={form.companyId} options={companyChoices(options, search)} onSearchChange={search?.onSearch} searchPlaceholder={kind === "brand" ? "Search brands…" : undefined} disabled={!!form.sourceInterviewId && !!form.sourceQuestionId} className="border rounded-md px-3 py-2 min-h-9" emptyLabel={`Choose ${words.one}`} testIdPrefix="action-landlord" onSelect={c => {search?.onPick(c); if (c.id !== form.companyId) setForm({...form, companyId: c.id, strategyId: null, eventId: null, sourceInterviewId: null, sourceQuestionId: null});}} /></div>
     <div className="grid sm:grid-cols-2 gap-3"><Owner value={form.ownerId} required onChange={ownerId => setForm({...form, ownerId: ownerId || ""})} options={options} /><Field label="Due · London time"><Input required type="datetime-local" value={due} onChange={e => setDue(e.target.value)} /></Field></div>

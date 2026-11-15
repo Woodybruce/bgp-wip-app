@@ -1742,9 +1742,6 @@ function PeopleHub() {
         </div>
       </div>
       <ContactFormDialog open={hubAddContactOpen} onOpenChange={setHubAddContactOpen} />
-      {/* Below the title, collapsed to one line — it used to sit above the
-          page title and fill the first phone screen (Woody, 2026-09-27). */}
-      {tab !== "overview" && <ContactDataHealth />}
 
       {/* One sideways-scrolling row on the phone rather than wrapping. */}
       <div className="flex gap-1.5 flex-nowrap overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0 [&>*]:shrink-0">
@@ -1758,6 +1755,8 @@ function PeopleHub() {
             {t.label}
           </Pill>
         ))}
+        {/* The employer checks queue: a pill at the end of the row, beside CRM Meetings. */}
+        <ContactDataHealth pill />
       </div>
 
       {tab !== "overview" && isLoading ? (

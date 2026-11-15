@@ -664,6 +664,17 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
     if(!row)throw new EngagementError(403,"Only the owner or person who assigned this action can update it");
     return {ok:true,id:row.id};
   }));
+  // A plain note read into a strategy, action or event form
+  // (server/crm-note-reader.ts). BGP staff only: the check above lets a client
+  // login no further than its own actions. It fills the form; it saves nothing.
+  router.post("/read-note",handle(async req=>{
+    const input=z.object({form:z.enum(["strategy","action","event"]),text:z.string().min(1).max(8000)}).parse(req.body);
+    const staff=(await deps.pool.query(`SELECT id,name,email,role,is_active,client_view_mode FROM users WHERE is_active=true AND lower(trim(email)) LIKE '%'||$1 ORDER BY name`,[STAFF_DOMAIN])).rows
+      .filter(user=>isEngagementStaff(user,null)).map(user=>({id:user.id,name:user.name||user.id}));
+    const {readCrmNote,CrmNoteReaderError}=await import("./crm-note-reader");
+    try {return await readCrmNote(deps.pool,{...input,kind:saveKind(req),staff});}
+    catch(error:any){if(error instanceof CrmNoteReaderError)throw new EngagementError(error.status,error.message);throw error;}
+  }));
   return router;
 }
 

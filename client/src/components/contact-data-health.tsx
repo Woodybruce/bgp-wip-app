@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Pill, PillCount } from "@/components/ui/pill";
 
 interface Finding {
   id: number;
@@ -31,7 +32,10 @@ const PAGE_SIZE = 6;
 const EMPLOYER_COMPANIES_KEY = ["/api/crm/companies", "employer-picker"];
 const message = (error: Error) => error.message.replace(/^\d{3}:\s*/, "");
 
-export function ContactDataHealth() {
+// pill: the queue as one pill in the CRM page's pill row, beside CRM Meetings
+// (Woody, 2026-11-15: "change the review tab so it sits in a pill next to CRM
+// meetings"). It opens the same dialog; with nothing to review it is not drawn.
+export function ContactDataHealth({ pill = false }: { pill?: boolean } = {}) {
   const isMobile = useIsMobile();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -232,18 +236,24 @@ export function ContactDataHealth() {
   const description = review ? review.contact_name : "We may have the wrong company for these people. Check each one and save the right employer.";
   const contents = review ? editor : list;
 
+  if (pill && !open && (queue.isLoading || queue.isError)) return null;
   if (!open && queue.isLoading) return <Skeleton className="h-11 w-full rounded-lg" aria-label="Loading employer reviews" />;
   if (!open && queue.isError) return <Card><CardContent className="p-4 flex items-center justify-between gap-3"><p className="text-sm" role="alert">Employer reviews could not load.</p><Button variant="outline" onClick={() => void queue.refetch()}>Retry</Button></CardContent></Card>;
   if (!pending.length && !open) return null;
   // One line on the page, the queue opens in the dialog/sheet — the preview
   // cards filled the first phone screen above the CRM title (Woody, 2026-09-27).
   return <>
-    <Card data-testid="data-health-queue">
+    {pill ? (
+      <Pill ref={queueButton} onClick={() => show(null)} title={`${pending.length} employer ${pending.length === 1 ? "check" : "checks"} to review: people who may be filed under the wrong company`} data-testid="dh-show-all">
+        <span data-testid="data-health-queue">Review</span>
+        <span data-testid="dh-count"><PillCount n={pending.length} /></span>
+      </Pill>
+    ) : <Card data-testid="data-health-queue">
       <CardContent className="px-3 py-1.5 flex items-center justify-between gap-2">
         <p className="text-sm flex items-center gap-2 min-w-0"><AlertCircle className="w-4 h-4 shrink-0 text-primary" /><span><span className="font-mono tabular-nums" data-testid="dh-count">{pending.length}</span> employer {pending.length === 1 ? "check" : "checks"} to review</span></p>
         <Button ref={queueButton} variant="outline" size="sm" className="min-h-11 shrink-0" onClick={() => show(null)} data-testid="dh-show-all">Review</Button>
       </CardContent>
-    </Card>
+    </Card>}
     {isMobile ? <Sheet open={open} onOpenChange={close}><SheetContent side="bottom" className="flex flex-col max-h-[90dvh] rounded-t-2xl p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]" onCloseAutoFocus={focusBack}>
       <SheetHeader className="shrink-0 text-left pr-8"><SheetTitle>{title}</SheetTitle><SheetDescription>{description}</SheetDescription></SheetHeader><div className="min-h-0 overflow-y-auto">{contents}</div>{errorNotice}{actions}
     </SheetContent></Sheet> : <Dialog open={open} onOpenChange={close}><DialogContent className="flex flex-col max-w-2xl max-h-[85dvh]" onCloseAutoFocus={focusBack}>

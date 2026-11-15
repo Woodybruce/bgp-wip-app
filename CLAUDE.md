@@ -1137,6 +1137,50 @@ in red. An agent firm's page opens to a client login to READ
 (`isClientReadableCompanyPage` in `server/company-scope.ts`: a brand it may
 see, or an agent firm); writes there stay with `isClientVisibleBrand`.
 
+## The CRM page (Woody, 2026-11-15) — docs/crm-review-2026-11-15.md
+
+Woody on the side bar's CRM page (`client/src/pages/people.tsx`): it is "not
+uniform between brand, agent and landlords", "lacks connectivity and
+usability", and he wants "one engine ... join it all up for BGP and then
+Landsec can use that for theirs, just move lenders and landlords out ...
+they should all be linked to the calendar". The review, the proposal (one
+CRM page, one list design for landlords, brands, agents and lenders, one
+engine and diary for all four, a CRM layer on the team and Landsec
+calendars), the order of work and the four decisions waiting on him are in
+`docs/crm-review-2026-11-15.md`. **Read it before touching the CRM page.**
+Nothing in its proposal is built until he answers; note that its first
+decision reverses "the Brand CRM is separate from the Landlord CRM" below,
+which stands until he says so.
+
+Built on 15 November 2026:
+
+- **Review is a pill** (his words: "change the review tab so it sits in a
+  pill next to CRM meetings"): `ContactDataHealth` with `pill` is the last
+  pill of the CRM page's row, with its count, and opens the same employer
+  checks dialog. With nothing to review it is not drawn. The full-width
+  line is gone.
+- **A note fills a CRM form** ("add in the AI form filling feature we built
+  to this", on the New CRM strategy form). `CrmNoteFill`
+  (`client/src/components/crm-engagement/note-fill.tsx`) is the box
+  "Describe it in your own words" at the top of a NEW strategy, action or
+  event, in the landlord and the brand view. `POST
+  /api/crm/engagement/read-note?kind=` (`server/crm-note-reader.ts`) is BGP
+  staff only (the engagement router refuses every client login), Anthropic
+  only, called directly, one call a read, capped a day
+  (`CRM_NOTE_READER_DAILY_CAP`, default 300, 0 = off). It is sent the note,
+  the kind of form and today's date: no staff list and no company list. The
+  contract and every check are `shared/crm-note.ts` (`checkCrmAnswer`; tests
+  `server/crm-note.test.ts`, in `npm test`): the person's own text is a span
+  of the note (else the whole note is the objective); a title is kept only
+  when most of its words are the note's; an owner is one BGP person the
+  note names; a date needs words from the note that carry it; a company is
+  matched on the server to ONE record on that view's list, and a name with
+  no match or several is listed back, never guessed. It only fills the form
+  on the screen: the form's own Create is the only save. This is NOT the
+  letting note reader (`shared/letting-note.ts`), whose stricter rules (a
+  reading never fills a box by itself) stay as they are: do not merge the
+  two. It has not been run against Anthropic from a build machine.
+
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
 
 The brands' own CRM: which schemes BGP wants each brand in, whether there is
