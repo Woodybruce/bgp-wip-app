@@ -69,8 +69,13 @@ const unique = <T>(values: T[], key: (value: T) => string) => new Set(values.map
 // The Landlord CRM and the Brand CRM are two views of the same planning
 // records (Woody, 2026-11-12: brands have their own CRM, worded "Brand",
 // kept apart from the Landlord CRM). The form messages follow the view.
-const kindSchema = z.enum(["landlord", "brand"]).optional();
-function inputSchemasFor(kind: EngagementKind) {
+// "all" is the joined CRM (Woody, 2026-11-15: "one engine ... join it all up
+// for BGP"): landlords, brands, agents and lenders in one view, and a
+// strategy or event may link more than one kind.
+const kindSchema = z.enum(["landlord", "brand", "all"]).optional();
+const KIND_WORD: Record<EngagementKind, string> = { landlord: "landlord", brand: "brand", all: "company" };
+function inputSchemasFor(view: EngagementKind) {
+  const kind = KIND_WORD[view];
   const companyLink = z.object({ companyId: id, reason: z.string().trim().min(1, `Add a reason for linking this ${kind}`).max(2000) }).strict();
   const strategy = z.object({
     name: z.string().trim().min(1).max(200), objective: z.string().trim().min(1).max(4000),
@@ -97,7 +102,7 @@ function inputSchemasFor(kind: EngagementKind) {
   });
   return { strategy, event };
 }
-const INPUT_SCHEMAS = { landlord: inputSchemasFor("landlord"), brand: inputSchemasFor("brand") };
+const INPUT_SCHEMAS = { landlord: inputSchemasFor("landlord"), brand: inputSchemasFor("brand"), all: inputSchemasFor("all") };
 export const strategyInputSchema = INPUT_SCHEMAS.landlord.strategy;
 export const eventInputSchema = INPUT_SCHEMAS.landlord.event;
 
@@ -133,7 +138,15 @@ const day = (value: any): string | null => value ? (typeof value === "string" ? 
 // Brands joined the CRM plan on 2026-11-11 (Woody: "a CRM strategy for each
 // brand similar to the landlord CRM"): a plan company is a landlord account
 // or a tenant brand.
-export const PLAN_COMPANY_PREDICATE = `((${LANDLORD_CATALOGUE_PREDICATE}) OR (c.merged_into_id IS NULL AND c.archived_at IS NULL AND LOWER(COALESCE(c.company_type, '')) LIKE 'tenant%'))`;
+// Agent firms and lenders joined on 2026-11-15 (Woody: one engine for
+// landlords, brands, agents and lenders). The two tests are the CRM page's
+// own (client/src/pages/people.tsx: type "agent"; the lender type list).
+export const AGENT_COMPANY_SQL = (alias: string) => `(LOWER(TRIM(COALESCE(${alias}.company_type,''))) = 'agent')`;
+export const LENDER_COMPANY_SQL = (alias: string) => `(LOWER(COALESCE(${alias}.company_type,'')) ~ '(lender|clearing bank|investment bank|pension fund|debt fund|private credit|mezzanine|bridging|development finance|building society)')`;
+const AGENTS_AND_LENDERS = `(c.merged_into_id IS NULL AND c.archived_at IS NULL AND (${AGENT_COMPANY_SQL("c")} OR ${LENDER_COMPANY_SQL("c")}))`;
+export const PLAN_COMPANY_PREDICATE = `((${LANDLORD_CATALOGUE_PREDICATE}) OR (c.merged_into_id IS NULL AND c.archived_at IS NULL AND LOWER(COALESCE(c.company_type, '')) LIKE 'tenant%') OR ${AGENTS_AND_LENDERS})`;
+// What a plan company is, for the words on a form and the kind filter.
+export const companyNounSql = (alias: string) => `(CASE WHEN LOWER(COALESCE(${alias}.company_type,'')) LIKE 'tenant%' THEN 'brand' WHEN ${AGENT_COMPANY_SQL(alias)} THEN 'agent' WHEN ${LENDER_COMPANY_SQL(alias)} THEN 'lender' ELSE 'landlord' END)`;
 // A brand is a tenant company; everything else on a plan is on the landlord
 // side, so no record the Landlord CRM held before the split can disappear.
 const isBrandSql = (alias: string) => `(LOWER(COALESCE(${alias}.company_type,'')) LIKE 'tenant%')`;
@@ -143,16 +156,17 @@ const isBrandSql = (alias: string) => `(LOWER(COALESCE(${alias}.company_type,'')
 const linkedInKind = (table: "crm_strategy_targets" | "crm_event_companies", column: "strategy_id" | "event_id", record: string, brand: string) =>
   `(EXISTS(SELECT 1 FROM ${table} kl JOIN crm_companies kc ON kc.id=kl.company_id WHERE kl.${column}=${record} AND ${isBrandSql("kc")}=${brand})
     OR (NOT ${brand} AND NOT EXISTS(SELECT 1 FROM ${table} kl WHERE kl.${column}=${record})))`;
-const KIND_VIEW = { landlord: "Landlord CRM", brand: "Brand CRM" } as const;
+const KIND_VIEW = { landlord: "Landlord CRM", brand: "Brand CRM", all: "CRM" } as const;
 async function companyNoun(q: Queryable, companyId: string): Promise<EngagementKind> {
   return (await q.query(`SELECT 1 FROM crm_companies c WHERE c.id=$1 AND ${isBrandSql("c")}`, [companyId])).rows.length ? "brand" : "landlord";
 }
 async function assertCompanies(q: Queryable, ids: string[], kind?: EngagementKind) {
   if (!ids.length) return;
   const rows = (await q.query(`SELECT c.id,${isBrandSql("c")} AS is_brand FROM crm_companies c WHERE c.id=ANY($1::text[]) AND ${PLAN_COMPANY_PREDICATE}`, [ids])).rows;
-  if (rows.length !== new Set(ids).size) throw new EngagementError(400, kind === "brand" ? "Choose saved brands" : kind === "landlord" ? "Choose saved landlord accounts" : "Choose saved landlord accounts or brands");
-  // A strategy or event is all brands or all landlords, never both.
-  if (kind && rows.some(row => (row.is_brand === true) !== (kind === "brand")))
+  if (rows.length !== new Set(ids).size) throw new EngagementError(400, kind === "brand" ? "Choose saved brands" : kind === "landlord" ? "Choose saved landlord accounts" : "Choose companies that are on the CRM: a landlord, a brand, an agent firm or a lender");
+  // In the two older views a strategy or event is all brands or all
+  // landlords, never both. The joined CRM takes any mix.
+  if (kind && kind !== "all" && rows.some(row => (row.is_brand === true) !== (kind === "brand")))
     throw new EngagementError(400, kind === "brand" ? "A brand strategy or event links brands only. Plan landlords on the CRM page." : "A landlord strategy or event links landlords only. Plan brands in the Brand CRM.");
 }
 async function assertOwner(q: Queryable, ownerId: string | null) {
@@ -168,12 +182,14 @@ async function assertContacts(q: Queryable, ids: string[], companyIds: string[],
 async function assertStrategyIds(q: Queryable, ids: string[], kind: EngagementKind = "landlord") {
   if (!ids.length) return;
   if ((await q.query(`SELECT id FROM marketing_campaigns WHERE id=ANY($1::text[])`, [ids])).rows.length !== ids.length) throw new EngagementError(400, "A linked strategy no longer exists");
+  if (kind === "all") return;
   if ((await q.query(`SELECT s.id FROM marketing_campaigns s WHERE s.id=ANY($1::text[]) AND ${linkedInKind("crm_strategy_targets", "strategy_id", "s.id", "$2::boolean")}`, [ids, kind === "brand"])).rows.length !== ids.length)
     throw new EngagementError(400, `Choose strategies from the ${KIND_VIEW[kind]}`);
 }
 // An edit made from one view only ever touches a record that view shows.
 async function assertRecordInKind(q: Queryable, table: "crm_strategy_targets" | "crm_event_companies", column: "strategy_id" | "event_id", recordId: string, kind: EngagementKind) {
   const source = table === "crm_strategy_targets" ? "marketing_campaigns" : "marketing_events";
+  if (kind === "all") return;
   if (!(await q.query(`SELECT 1 FROM ${source} r WHERE r.id=$1 AND ${linkedInKind(table, column, "r.id", "$2::boolean")}`, [recordId, kind === "brand"])).rows.length)
     throw new EngagementError(404, `This record is not in the ${KIND_VIEW[kind]}`);
 }
@@ -269,7 +285,7 @@ async function assertEventVisible(q:Queryable,eventId:string,lock=false) {
 export async function getCrmEngagementData(companyId?: string, deps: { pool?: Queryable; viewerId?: string; sharePartners?: ActionPlanDeps["sharePartners"] } = {}, kind?: EngagementKind): Promise<EngagementData> {
   const q = deps.pool || (await import("./db")).pool;
   if (companyId) await assertCompanies(q, [companyId]);
-  const view = companyId ? null : kind || null;
+  const view = companyId || kind === "all" ? null : kind || null;
   const params = [companyId || null, view];
   const brand = "($2::text='brand')";
   const inView = (alias: string) => `($2::text IS NULL OR ${isBrandSql(alias)}=${brand})`;
@@ -342,12 +358,15 @@ export async function getCrmEngagementOptions(q: Queryable, companyId?: string |
         OR EXISTS (SELECT 1 FROM crm_strategy_targets t WHERE t.company_id = c.id)
         OR EXISTS (SELECT 1 FROM crm_event_companies e WHERE e.company_id = c.id)
         OR EXISTS (SELECT 1 FROM crm_engagement_actions a WHERE a.company_id = c.id)))`;
-  const companyPredicate = kind === "landlord" ? landlords : kind === "brand" ? brands : `(${landlords}
+  // The joined CRM lists every landlord, agent firm and lender, and the
+  // brands on a plan: any other brand is found by typing, as in the Brand CRM.
+  const companyPredicate = kind === "landlord" ? landlords : kind === "brand" ? brands : kind === "all" ? `(${landlords}
+    OR ${AGENTS_AND_LENDERS} OR ${brands})` : `(${landlords}
     OR ${brands})`;
   const params = kind === "landlord" ? [] : [companyId || null];
   const [staff, companies, contacts] = await Promise.all([
     q.query(`SELECT id,name,email,role,is_active,client_view_mode FROM users WHERE is_active=true AND lower(trim(email)) LIKE '%@brucegillinghampollard.com' ORDER BY name`),
-    q.query(`SELECT c.id,c.name FROM crm_companies c WHERE ${companyPredicate} ORDER BY c.name`, params),
+    q.query(`SELECT c.id,c.name,${companyNounSql("c")} AS noun FROM crm_companies c WHERE ${companyPredicate} ORDER BY c.name`, params),
     q.query(`SELECT p.id,p.name,p.company_id,p.role,p.email FROM crm_contacts p JOIN crm_companies c ON c.id=p.company_id WHERE ${companyPredicate} ORDER BY p.name`, params),
   ]);
   return { staff: staff.rows.filter(user => isEngagementStaff(user, null)).map(user => ({ id: user.id, name: user.name || user.id })),
@@ -414,7 +433,8 @@ export async function saveEngagementStrategy(db: TransactionPool, input: Strateg
     const values = [input.name, input.objective, input.team, input.ownerId, input.status, input.startsOn, input.endsOn];
     const saved = (await q.query(recordId ? `UPDATE marketing_campaigns SET name=$1,objective=$2,team=$3,lead_user_id=$4,status=$5,starts_on=$6,ends_on=$7,updated_at=now() WHERE id=$8 RETURNING id`
       : `INSERT INTO marketing_campaigns(name,objective,team,lead_user_id,status,starts_on,ends_on) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`, recordId ? [...values,recordId] : values)).rows[0];
-    await q.query(`DELETE FROM crm_strategy_targets t USING crm_companies c WHERE t.strategy_id=$1 AND c.id=t.company_id AND ${isBrandSql("c")}=$2::boolean`, [saved.id, kind === "brand"]);
+    // The joined CRM shows every company on the strategy, so it replaces them all; an older view replaces its own side.
+    await q.query(`DELETE FROM crm_strategy_targets t USING crm_companies c WHERE t.strategy_id=$1 AND c.id=t.company_id AND ($2::boolean IS NULL OR ${isBrandSql("c")}=$2::boolean)`, [saved.id, kind === "all" ? null : kind === "brand"]);
     for (const target of input.targets) await q.query("INSERT INTO crm_strategy_targets(strategy_id,company_id,reason,contact_ids) VALUES($1,$2,$3,$4)", [saved.id,target.companyId,target.reason,target.contactIds]);
     return { ok: true, id: saved.id };
   });
@@ -438,12 +458,14 @@ export async function saveEngagementEvent(db: TransactionPool, input: EventInput
     // CRM statuses are explicit. Legacy Marketing attendee IDs are preserved;
     // they do not imply acceptance or attendance and are not silently imported.
     // Only this view's companies, guests and strategy links are replaced.
-    const guestInKind=`${isBrandSql("c")}=$2::boolean`;
-    const formerGuests=(await q.query(`SELECT g.contact_id FROM crm_event_guests g JOIN crm_contacts p ON p.id=g.contact_id LEFT JOIN crm_companies c ON c.id=p.company_id WHERE g.event_id=$1 AND ${guestInKind}`,[saved.id,brand])).rows.map(row=>row.contact_id);
+    // The joined CRM (side = null) replaces every link; an older view its own side.
+    const side=kind==="all"?null:brand;
+    const guestInKind=`($2::boolean IS NULL OR ${isBrandSql("c")}=$2::boolean)`;
+    const formerGuests=(await q.query(`SELECT g.contact_id FROM crm_event_guests g JOIN crm_contacts p ON p.id=g.contact_id LEFT JOIN crm_companies c ON c.id=p.company_id WHERE g.event_id=$1 AND ${guestInKind}`,[saved.id,side])).rows.map(row=>row.contact_id);
     await q.query(`UPDATE marketing_events SET attendee_contact_ids=ARRAY(SELECT DISTINCT value FROM unnest(COALESCE(attendee_contact_ids,'{}')||$2::text[]) value WHERE NOT(value=ANY($3::text[])) OR value=ANY($2::text[])) WHERE id=$1`,[saved.id,input.guests.map(guest=>guest.contactId),formerGuests]);
-    await q.query(`DELETE FROM crm_event_strategies l USING marketing_campaigns s WHERE l.event_id=$1 AND s.id=l.strategy_id AND ${linkedInKind("crm_strategy_targets","strategy_id","s.id","$2::boolean")}`,[saved.id,brand]);
-    await q.query(`DELETE FROM crm_event_guests g USING crm_contacts p LEFT JOIN crm_companies c ON c.id=p.company_id WHERE g.event_id=$1 AND p.id=g.contact_id AND ${guestInKind}`,[saved.id,brand]);
-    await q.query(`DELETE FROM crm_event_companies l USING crm_companies c WHERE l.event_id=$1 AND c.id=l.company_id AND ${isBrandSql("c")}=$2::boolean`,[saved.id,brand]);
+    await q.query(`DELETE FROM crm_event_strategies l USING marketing_campaigns s WHERE l.event_id=$1 AND s.id=l.strategy_id AND ($2::boolean IS NULL OR ${linkedInKind("crm_strategy_targets","strategy_id","s.id","$2::boolean")})`,[saved.id,side]);
+    await q.query(`DELETE FROM crm_event_guests g USING crm_contacts p LEFT JOIN crm_companies c ON c.id=p.company_id WHERE g.event_id=$1 AND p.id=g.contact_id AND ${guestInKind}`,[saved.id,side]);
+    await q.query(`DELETE FROM crm_event_companies l USING crm_companies c WHERE l.event_id=$1 AND c.id=l.company_id AND ($2::boolean IS NULL OR ${isBrandSql("c")}=$2::boolean)`,[saved.id,side]);
     for(const company of input.companies)await q.query("INSERT INTO crm_event_companies(event_id,company_id,reason) VALUES($1,$2,$3)",[saved.id,company.companyId,company.reason]);
     for(const strategyId of input.strategyIds)await q.query("INSERT INTO crm_event_strategies(event_id,strategy_id) VALUES($1,$2)",[saved.id,strategyId]);
     for(const guest of input.guests)await q.query("INSERT INTO crm_event_guests(event_id,contact_id,status) VALUES($1,$2,$3)",[saved.id,guest.contactId,guest.status]);
@@ -615,7 +637,7 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
     // BGP planning a brand also gets who an action can be shown to and the
     // schemes it can sit at. The Landlord CRM's answer is what it was.
     const kind=kindOf(req);
-    if(deps.sharePartners&&(kind==="brand"||(!kind&&companyId&&await companyNoun(deps.pool,companyId)==="brand"))){
+    if(deps.sharePartners&&(kind==="brand"||kind==="all"||(!kind&&companyId&&await companyNoun(deps.pool,companyId)==="brand"))){
       try {
         options.sharePartners=(await deps.sharePartners()).map(partner=>({id:partner.id,name:partner.name,
           schemes:partner.schemes.filter(scheme=>!!scheme.propertyId).map(scheme=>({key:scheme.key,name:scheme.name,propertyId:scheme.propertyId!,propertyIds:scheme.propertyIds}))}));
@@ -663,6 +685,34 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
       WHERE t.id=$2 AND (t.user_id=$3 OR t.assigned_by_user_id=$3) AND EXISTS(SELECT 1 FROM crm_engagement_actions a WHERE a.task_id=t.id) RETURNING t.id`,[status,actionId,actor.id])).rows[0];
     if(!row)throw new EngagementError(403,"Only the owner or person who assigned this action can update it");
     return {ok:true,id:row.id};
+  }));
+  // A plain note read into a strategy, action or event form
+  // (server/crm-note-reader.ts). BGP staff only: the check above lets a client
+  // login no further than its own actions. It fills the form; it saves nothing.
+  router.post("/read-note",handle(async req=>{
+    const input=z.object({form:z.enum(["strategy","action","event"]),text:z.string().min(1).max(8000)}).parse(req.body);
+    const staff=(await deps.pool.query(`SELECT id,name,email,role,is_active,client_view_mode FROM users WHERE is_active=true AND lower(trim(email)) LIKE '%'||$1 ORDER BY name`,[STAFF_DOMAIN])).rows
+      .filter(user=>isEngagementStaff(user,null)).map(user=>({id:user.id,name:user.name||user.id}));
+    const {readCrmNote,CrmNoteReaderError}=await import("./crm-note-reader");
+    try {return await readCrmNote(deps.pool,{...input,kind:saveKind(req),staff});}
+    catch(error:any){if(error instanceof CrmNoteReaderError)throw new EngagementError(error.status,error.message);throw error;}
+  }));
+  // Turning a company on in the CRM (server/crm-kickoff.ts): a draft of the
+  // strategy with suggested people, events, places and first actions, then
+  // the save of what a person ticked. BGP staff only, as above.
+  // The watch list: every company on a running strategy, what is new on it
+  // and what is owed (server/crm-watch-list.ts).
+  router.get("/watch",handle(async()=>({rows:await (await import("./crm-watch-list")).watchList(deps.pool)})));
+  router.post("/kick-off",handle(async req=>{
+    const input=z.object({companyId:id}).strict().parse(req.body);
+    return (await import("./crm-kickoff")).buildKickoff(deps.pool,input.companyId);
+  }));
+  router.post("/kick-off/apply",handle(async(req,actor)=>{
+    const input=z.object({companyId:id,strategyId:id.nullable().optional(),
+      strategy:z.object({name:z.string().trim().min(1).max(200),objective:z.string().trim().min(1).max(4000),team:nullableText(100),startsOn:dateOnly,endsOn:dateOnly}).strict().nullable().optional(),
+      ownerId:id,reason:z.string().trim().max(2000),contactIds:z.array(id).max(100),eventIds:z.array(id).max(20),
+      actions:z.array(z.object({title:z.string().trim().min(1).max(250),dueAt:z.string().datetime({offset:true}),notes:nullableText(4000)}).strict()).max(12)}).strict().parse(req.body);
+    return (await import("./crm-kickoff")).applyKickoff(deps.pool,input as any,actor,deps);
   }));
   return router;
 }

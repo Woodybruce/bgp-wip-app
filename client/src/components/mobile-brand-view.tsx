@@ -776,9 +776,10 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
         {conversationOpen && <div className="h-96"><CompanyMiniChat companyId={companyId} companyName={c.name} fill starters={askTopics(c.name, isLandlord, isAgentFirm, isLender)} /></div>}
       </div>
       )}
-      {isLandlord && !isLender && !isClientViewer && String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
+      {/* Landlords, agent firms and lenders: the CRM plan, with Start strategy (15 November 2026). */}
+      {(isLandlord || isAgentFirm || isLender) && !isClientViewer && String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} companyName={c.name} interviews={isLandlord && !isLender} />}
       {/* Staff need a BGP address for the plan (the server refuses other staff logins); client logins get their own card. */}
-      {!isLandlord && !isAgentFirm && !isLender && (isClientViewer || String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com")) && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />}
+      {!isLandlord && !isAgentFirm && !isLender && (isClientViewer || String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com")) && <LandlordEngagementPanel companyId={companyId} kind="brand" companyName={c.name} client={isClientViewer} />}
       {/* A brand's own page: BGP's history with the brand (the desktop
           page's "Working with BGP") sits above the long Schemes and units
           card, which shows three lines and "Show all" (it pushed this card six

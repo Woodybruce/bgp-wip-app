@@ -13,10 +13,10 @@ import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { ActionEditor } from "@/components/crm-engagement/dialogs";
 import { invalidateEngagement } from "@/components/crm-engagement/overview";
 import { CRM_ENGAGEMENT_KEY, type CompanySearch } from "@/components/crm-engagement/helpers";
-import type { ActionInput, EngagementData, EngagementOptions } from "@shared/crm-engagement";
+import { ENGAGEMENT_NOUNS, NOUN_WORDS, type ActionInput, type EngagementData, type EngagementKind, type EngagementOptions } from "@shared/crm-engagement";
 import {
   DIARY_BUCKETS, DIARY_BUCKET_LABELS, DIARY_KINDS, DIARY_KIND_LABELS, diaryBucket,
-  type DiaryData, type DiaryItem, type DiaryKind,
+  type DiaryData, type DiaryItem, type DiaryKind, type DiaryNoun, type DiaryScope,
 } from "@shared/brand-diary";
 
 // The Diary view of the Brand CRM (docs/brand-crm-spec-2026-11-12.md, 2.3):
@@ -26,12 +26,15 @@ import {
 // filters what it was sent and adds nothing. An action the viewer owns or
 // raised is ticked off here through the CRM plan's own route; staff add a
 // brand action and a full Landsec login adds a request to BGP the same way.
+// scope="all" is the CRM page's Diary tab (Woody, 2026-11-15: "they should all
+// be linked to the calendar"): the same list for every kind of company, with
+// CRM events and strategy reviews, for BGP staff only.
 
 const STAFF_KEY = "/api/brand-crm/diary";
 const LANDSEC_KEY = "/api/landsec/diary";
 type GroupBy = "date" | "person" | "brand" | "scheme";
-const GROUPS: Array<{ key: GroupBy; label: string }> = [
-  { key: "date", label: "Date" }, { key: "person", label: "Person" }, { key: "brand", label: "Brand" }, { key: "scheme", label: "Scheme" },
+const groupsFor = (everyKind: boolean): Array<{ key: GroupBy; label: string }> => [
+  { key: "date", label: "Date" }, { key: "person", label: "Person" }, { key: "brand", label: everyKind ? "Company" : "Brand" }, { key: "scheme", label: "Scheme" },
 ];
 const EMPTY: EngagementData = { events: [], strategies: [], actions: [] };
 const EMPTY_OPTIONS: EngagementOptions = { staff: [], companies: [], contacts: [] };
@@ -54,7 +57,7 @@ function cleanError(error: unknown, fallback: string) {
 async function refreshDiary() {
   await Promise.all([
     invalidateEngagement(),
-    ...[STAFF_KEY, LANDSEC_KEY, "/api/brand-crm/plan", "/api/landsec/brand-crm/plan"].map(key => queryClient.invalidateQueries({ queryKey: [key] })),
+    ...[STAFF_KEY, LANDSEC_KEY, "/api/brand-crm/plan", "/api/landsec/brand-crm/plan", "/api/crm/hub"].map(key => queryClient.invalidateQueries({ queryKey: [key] })),
   ]);
 }
 
@@ -74,11 +77,11 @@ function detail(item: DiaryItem, staff: boolean): string {
 }
 
 interface Section { key: string; label: string; items: DiaryItem[] }
-function sections(items: DiaryItem[], groupBy: GroupBy, today: string): Section[] {
+function sections(items: DiaryItem[], groupBy: GroupBy, today: string, everyKind = false): Section[] {
   if (groupBy === "date") {
     return DIARY_BUCKETS.map(bucket => ({ key: bucket, label: DIARY_BUCKET_LABELS[bucket], items: items.filter(item => diaryBucket(item, today) === bucket) })).filter(s => s.items.length);
   }
-  const none = groupBy === "person" ? "No owner named" : groupBy === "brand" ? "No brand" : "No scheme";
+  const none = groupBy === "person" ? "No owner named" : groupBy === "brand" ? (everyKind ? "No company" : "No brand") : "No scheme";
   const nameOf = (item: DiaryItem) => (groupBy === "person" ? item.owner : groupBy === "brand" ? item.brand?.name : item.scheme?.name) || none;
   const byName = new Map<string, DiaryItem[]>();
   for (const item of items) byName.set(nameOf(item), [...(byName.get(nameOf(item)) || []), item]);
@@ -87,11 +90,13 @@ function sections(items: DiaryItem[], groupBy: GroupBy, today: string): Section[
     .map(([label, list]) => ({ key: label, label, items: list }));
 }
 
-export function Diary({ staff }: { staff: boolean }) {
+export function Diary({ staff, scope = "brand" }: { staff: boolean; scope?: DiaryScope }) {
   const isMobile = useIsMobile();
   const { toast } = useToast();
+  const everyKind = staff && scope === "all";
   const base = staff ? STAFF_KEY : LANDSEC_KEY;
-  const query = useQuery<DiaryData | null>({ queryKey: [base], queryFn: () => read<DiaryData>(base), staleTime: 60_000, retry: false, refetchInterval: false });
+  const query = useQuery<DiaryData | null>({ queryKey: everyKind ? [base, { scope: "all" }] : [base], queryFn: () => read<DiaryData>(everyKind ? `${base}?scope=all` : base), staleTime: 60_000, retry: false, refetchInterval: false });
+  const [noun, setNoun] = useState<DiaryNoun | "">("");
   const [groupBy, setGroupBy] = useState<GroupBy>("date");
   const [kind, setKind] = useState<DiaryKind | null>(null);
   const [waitingOnLandsec, setWaitingOnLandsec] = useState(false);
@@ -99,11 +104,12 @@ export function Diary({ staff }: { staff: boolean }) {
   const [ticking, setTicking] = useState("");
 
   const data = query.data;
-  const all = data?.items || [];
+  const sent = data?.items || [];
+  const all = useMemo(() => (everyKind && noun ? sent.filter(item => item.nouns?.includes(noun)) : sent), [sent, everyKind, noun]);
   const kindCounts = useMemo(() => DIARY_KINDS.map(k => ({ kind: k, count: all.filter(item => item.kind === k).length })).filter(k => k.count > 0), [all]);
   const landsecCount = all.filter(item => item.waitingOn?.side === "landsec").length;
   const shown = all.filter(item => (!kind || item.kind === kind) && (!waitingOnLandsec || item.waitingOn?.side === "landsec"));
-  const grouped = useMemo(() => sections(shown, groupBy, data?.today || ""), [shown, groupBy, data?.today]);
+  const grouped = useMemo(() => sections(shown, groupBy, data?.today || "", everyKind), [shown, groupBy, data?.today, everyKind]);
   // Brands a request can be raised on without searching: the ones already in the diary.
   const knownBrands = useMemo(() => {
     const byId = new Map<string, string>();
@@ -151,9 +157,13 @@ export function Diary({ staff }: { staff: boolean }) {
       {!data.canAddAction && data.canAddRequest && <Button type="button" size="sm" variant="outline" onClick={() => setAdding(true)} data-testid="brand-diary-add-request"><Plus className="h-3.5 w-3.5 mr-1" />Add request</Button>}
     </div>
 
+    {everyKind && <div className="flex gap-1.5 flex-nowrap overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0 [&>*]:shrink-0" data-testid="crm-diary-nouns">
+      <Pill active={!noun} onClick={() => setNoun("")} data-testid="crm-diary-noun-all">All</Pill>
+      {ENGAGEMENT_NOUNS.map(n => <Pill key={n} active={noun === n} onClick={() => setNoun(noun === n ? "" : n)} data-testid={`crm-diary-noun-${n}`}>{NOUN_WORDS[n].Many}</Pill>)}
+    </div>}
     <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0 [&>*]:shrink-0" data-testid="brand-diary-groups">
       <span className="text-xs text-muted-foreground">Group by</span>
-      {GROUPS.map(group => <Pill key={group.key} active={groupBy === group.key} aria-pressed={groupBy === group.key} onClick={() => setGroupBy(group.key)} data-testid={`brand-diary-group-${group.key}`}>{group.label}</Pill>)}
+      {groupsFor(everyKind).map(group => <Pill key={group.key} active={groupBy === group.key} aria-pressed={groupBy === group.key} onClick={() => setGroupBy(group.key)} data-testid={`brand-diary-group-${group.key}`}>{group.label}</Pill>)}
     </div>
     <div className="flex gap-1.5 flex-nowrap overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0 [&>*]:shrink-0" data-testid="brand-diary-kinds">
       <Pill active={!kind} onClick={() => setKind(null)} data-testid="brand-diary-kind-all">Everything<PillCount n={all.length} active={!kind} /></Pill>
@@ -164,7 +174,9 @@ export function Diary({ staff }: { staff: boolean }) {
     </div>
 
     {all.length === 0
-      ? <p className="text-sm text-muted-foreground" data-testid="brand-diary-empty">{staff
+      ? <p className="text-sm text-muted-foreground" data-testid="brand-diary-empty">{everyKind
+        ? `Nothing in the diary${noun ? ` for ${NOUN_WORDS[noun].many}` : ""}. CRM actions, events and strategy reviews for every company appear here, with viewings, deals waiting on someone, briefs to sign and brand cases.`
+        : staff
         ? "Nothing in the diary. Brand actions, booked viewings, viewing follow-ups, deals waiting on someone, briefs to sign and brand cases awaiting a reply appear here."
         : "Nothing in the diary for your schemes."}</p>
       : shown.length === 0
@@ -194,7 +206,7 @@ export function Diary({ staff }: { staff: boolean }) {
                 <thead>
                   <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
                     <th scope="col" className="w-8 py-1.5 pl-3"><span className="sr-only">Done</span></th>
-                    {["When", "What", "Brand", "Scheme and unit", "Owner", "Waiting on"].map(heading => <th key={heading} scope="col" className="py-1.5 pr-3 font-semibold">{heading}</th>)}
+                    {["When", "What", everyKind ? "Company" : "Brand", "Scheme and unit", "Owner", "Waiting on"].map(heading => <th key={heading} scope="col" className="py-1.5 pr-3 font-semibold">{heading}</th>)}
                     <th scope="col" className="py-1.5 pr-3 font-semibold"><span className="sr-only">Open</span></th>
                   </tr>
                 </thead>
@@ -219,7 +231,7 @@ export function Diary({ staff }: { staff: boolean }) {
 
     {data.warnings.map(warning => <p key={warning} role="status" className="text-xs text-muted-foreground">{warning}</p>)}
 
-    {adding && data.canAddAction && <StaffAction onClose={() => setAdding(false)} />}
+    {adding && data.canAddAction && <StaffAction kind={everyKind ? "all" : "brand"} onClose={() => setAdding(false)} />}
     {adding && !data.canAddAction && data.canAddRequest && <ClientRequest brands={knownBrands} onClose={() => setAdding(false)} />}
   </div>;
 }
@@ -245,35 +257,37 @@ function useBrandSearch() {
   };
 }
 
-// BGP staff: the Brand CRM's own action form, for any brand.
-function StaffAction({ onClose }: { onClose: () => void }) {
+// BGP staff: the CRM's own action form, for any brand, or in the diary for
+// every kind any landlord, agent or lender too (a brand is found by typing).
+function StaffAction({ kind, onClose }: { kind: EngagementKind; onClose: () => void }) {
   const { toast } = useToast();
   const options = useQuery<EngagementOptions>({
-    queryKey: [CRM_ENGAGEMENT_KEY, "options", "brand"], queryFn: async () => (await apiRequest("GET", `${CRM_ENGAGEMENT_KEY}/options?kind=brand`)).json(),
+    queryKey: [CRM_ENGAGEMENT_KEY, "options", kind], queryFn: async () => (await apiRequest("GET", `${CRM_ENGAGEMENT_KEY}/options?kind=${kind}`)).json(),
     staleTime: 5 * 60_000, refetchInterval: false, retry: 1,
   });
   // The strategies and events an action can be linked to.
   const plan = useQuery<EngagementData>({
-    queryKey: [CRM_ENGAGEMENT_KEY, { kind: "brand" }], queryFn: async () => (await apiRequest("GET", `${CRM_ENGAGEMENT_KEY}?kind=brand`)).json(),
+    queryKey: [CRM_ENGAGEMENT_KEY, { kind }], queryFn: async () => (await apiRequest("GET", `${CRM_ENGAGEMENT_KEY}?kind=${kind}`)).json(),
     staleTime: 60_000, refetchInterval: false, retry: 1,
   });
   const found = useBrandSearch();
   const [picked, setPicked] = useState<Array<{ id: string; name: string }>>([]);
   const listed = options.data || EMPTY_OPTIONS;
-  const merged = useMemo<EngagementOptions>(() => ({ ...listed, companies: [...listed.companies, ...picked.filter(c => !listed.companies.some(o => o.id === c.id))] }), [listed, picked]);
+  const merged = useMemo<EngagementOptions>(() => ({ ...listed, companies: [...listed.companies, ...picked.filter(c => !listed.companies.some(o => o.id === c.id)).map(c => ({ ...c, noun: "brand" as const }))] }), [listed, picked]);
   const search: CompanySearch = { ...found, onPick: brand => setPicked(previous => previous.some(c => c.id === brand.id) ? previous : [...previous, brand]) };
   if (options.isError) return <FormNotice onClose={onClose} text="The action form could not be loaded." retry={() => options.refetch()} />;
   if (!options.data) return <FormNotice onClose={onClose} text="Loading the action form…" />;
-  return <ActionEditor kind="brand" options={merged} data={plan.data || EMPTY} search={search} onClose={onClose}
+  return <ActionEditor kind={kind} options={merged} data={plan.data || EMPTY} search={search} onClose={onClose}
     onSave={async input => { await saveAction(input); toast({ title: "CRM action saved" }); }} />;
 }
 
 // A full Landsec login: a request to BGP on one brand from its own list. The
 // brand comes first, because the form's list of BGP owners is asked for per brand.
-function ClientRequest({ brands, onClose }: { brands: Array<{ id: string; name: string }>; onClose: () => void }) {
+// With `brand` given (the client's Brands list) the form opens on that brand.
+export function ClientRequest({ brands, brand: preset = null, onClose }: { brands: Array<{ id: string; name: string }>; brand?: { id: string; name: string } | null; onClose: () => void }) {
   const { toast } = useToast();
   const found = useBrandSearch();
-  const [brand, setBrand] = useState<{ id: string; name: string } | null>(null);
+  const [brand, setBrand] = useState<{ id: string; name: string } | null>(preset);
   const options = useQuery<EngagementOptions>({
     queryKey: [CRM_ENGAGEMENT_KEY, "options", brand?.id || ""],
     queryFn: async () => (await apiRequest("GET", `${CRM_ENGAGEMENT_KEY}/options?companyId=${encodeURIComponent(brand!.id)}`)).json(),

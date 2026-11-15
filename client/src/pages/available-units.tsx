@@ -2,7 +2,8 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { propertyUnitHref } from "@/lib/unit-links";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { LeasingViewings, type LeasingViewing } from "@/components/leasing-viewings";
-import { landsecMeetings } from "@/components/landsec/landsec-meetings";
+import { landsecCrmEntries, landsecMeetings } from "@/components/landsec/landsec-meetings";
+import type { DiaryData } from "@shared/brand-diary";
 import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { SourceEmailDialog, SourceEventDialog } from "@/components/tracker-source";
 import { Card, CardContent } from "@/components/ui/card";
@@ -600,7 +601,13 @@ export default function AvailableUnitsPage() {
     enabled: trackerClockOn,
     staleTime: 60_000,
   });
-  const calendarMeetings = trackerClockOn ? landsecMeetings(teamEventRows) : undefined;
+  // The CRM layer: the dated lines of the Landsec diary, as the server cut them for this login.
+  const { data: landsecDiary } = useQuery<DiaryData | null>({
+    queryKey: ["/api/landsec/diary"],
+    queryFn: async () => { try { return await (await apiRequest("GET", "/api/landsec/diary")).json(); } catch { return null; } },
+    enabled: trackerClockOn, staleTime: 60_000, retry: false,
+  });
+  const calendarMeetings = useMemo(() => (trackerClockOn ? [...landsecMeetings(teamEventRows), ...landsecCrmEntries(landsecDiary)] : undefined), [trackerClockOn, teamEventRows, landsecDiary]);
   const trackerClocks = useLandsecClocks(trackerClockOn);
   const clockForUnit = (u: { dealId?: string | null }) => (trackerClockOn && u.dealId ? trackerClocks.byId.get(u.dealId) : undefined);
   // Compact header (team feedback: the fixed header block was so tall the

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, Plus } from "lucide-react";
-import { Link } from "wouter";
+import { CalendarDays, Plus, Target } from "lucide-react";
+import { Link, useLocation } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { ActionEditor } from "@/components/crm-engagement/dialogs";
+import { StartStrategyDialog } from "@/components/crm-engagement/start-strategy";
 import { SharedMarker, actionPlanLine, invalidateEngagement } from "@/components/crm-engagement/overview";
 import { LandlordInterviewNotes } from "@/components/landlord-interview-notes";
 import { BandHeading } from "@/components/brand-page/brand-top";
@@ -24,8 +25,16 @@ type ActionDraft = { initial: Partial<ActionInput>; sourceNote?: { interviewee?:
 // BGP"); BGP's strategies, events and other actions are not sent to it, so
 // those columns are not drawn. BGP staff see a "Shared with" marker on an
 // action a client is shown.
-export function LandlordEngagementPanel({ companyId, kind = "landlord", client = false }: { companyId: string; kind?: "landlord" | "brand"; client?: boolean }) {
+// The same card is on agent firm and lender pages since 15 November 2026
+// (interviews={false}: the interview notes are landlord planning). With
+// companyName given, BGP staff get Start strategy on a company that is on
+// no running strategy: the kick-off that turns it on in the CRM.
+export function LandlordEngagementPanel({ companyId, kind = "landlord", client = false, interviews = kind === "landlord", companyName }: {
+  companyId: string; kind?: "landlord" | "brand"; client?: boolean; interviews?: boolean; companyName?: string;
+}) {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const [starting, setStarting] = useState(false);
   const onBrandPage = useBrandPagePattern();
   const PlanLink = ({ href, className, children }: { href: string; className?: string; children: React.ReactNode }) =>
     client ? <span className={className}>{children}</span> : <Link href={href} className={className}>{children}</Link>;
@@ -45,6 +54,11 @@ export function LandlordEngagementPanel({ companyId, kind = "landlord", client =
   const view = query.data ? landlordEngagementView(query.data, companyId) : null;
   const ownActions = view ? (client ? view.actions.filter(action => action.raisedBy !== "bgp") : view.actions) : [];
   const fromBgp = view && client ? view.actions.filter(action => action.raisedBy === "bgp") : [];
+  const canStart = !client && !!companyName && !!view && !view.strategies.length;
+  const startDialog = starting && companyName
+    ? <StartStrategyDialog company={{ id: companyId, name: companyName }} onClose={() => setStarting(false)}
+        onStarted={strategyId => navigate(`/contacts?tab=overview&strategy=${encodeURIComponent(strategyId)}`)} />
+    : null;
   function addAction(eventId?: string) { setDraft({ initial: { companyId, eventId: eventId || null, title: "" } }); }
   async function saveAction(input: ActionInput) {
     try { await apiRequest("POST", "/api/crm/engagement/actions", input); }
@@ -76,9 +90,11 @@ export function LandlordEngagementPanel({ companyId, kind = "landlord", client =
     return <div className="space-y-2 min-w-0 col-span-full order-last [&~*]:col-span-full" data-testid="landlord-engagement-panel">
       <BrandQuietLine testId="brand-plan-empty">
         {client ? "Nothing open with BGP on this brand" : "No CRM actions, events or strategies yet"} · <button type="button" className={brandCardAction} onClick={() => addAction()} data-testid="button-brand-plan-add">{client ? "Add a request for BGP" : "Add CRM action"}</button>
+        {canStart && <> · <button type="button" className={brandCardAction} onClick={() => setStarting(true)} data-testid="button-plan-start-strategy">Start strategy</button></>}
         {!client && <> · <PlanLink href={planLink()} className={brandCardAction}>Open full plan</PlanLink></>}
       </BrandQuietLine>
       {actionForm}
+      {startDialog}
     </div>;
   }
   const brandBlocks = view ? [ownActions.length, view.events.length, view.strategies.length].filter(count => count > 0).length : 0;
@@ -96,9 +112,11 @@ export function LandlordEngagementPanel({ companyId, kind = "landlord", client =
         : <h3 className="flex items-center gap-2 text-sm font-semibold"><CalendarDays className="h-4 w-4 text-primary" />CRM plan</h3>}
       {brand ? <div className="flex items-center flex-wrap gap-3">
         <button type="button" className={brandCardAction} disabled={!query.data} onClick={() => addAction()} data-testid="button-brand-plan-add">{client ? "Add a request for BGP" : "Add CRM action"}</button>
+        {canStart && <button type="button" className={brandCardAction} onClick={() => setStarting(true)} data-testid="button-plan-start-strategy">Start strategy</button>}
         {!client && <PlanLink href={planLink()} className={brandCardAction}>Open full plan</PlanLink>}
       </div> : <div className="flex items-center flex-wrap gap-3">
         {!client && <PlanLink href={planLink()} className="text-xs text-muted-foreground hover:underline">Open full plan</PlanLink>}
+        {canStart && <Button type="button" size="sm" variant="outline" onClick={() => setStarting(true)} data-testid="button-plan-start-strategy"><Target className="h-3.5 w-3.5 mr-1" />Start strategy</Button>}
         <Button type="button" size="sm" variant="outline" disabled={!query.data} onClick={() => addAction()}><Plus className="h-3.5 w-3.5 mr-1" />Add CRM action</Button>
       </div>}
     </div>
@@ -175,10 +193,11 @@ export function LandlordEngagementPanel({ companyId, kind = "landlord", client =
           {view.strategies.length > 2 && <PlanLink href={planLink()} className="block text-xs text-primary hover:underline">{viewAll(view.strategies.length, "strategies")}</PlanLink>}
         </div>}
       </div>}
-    {kind === "landlord" && !client && <LandlordInterviewNotes companyId={companyId} onCreateAction={query.data ? note => setDraft({
+    {kind === "landlord" && interviews && !client && <LandlordInterviewNotes companyId={companyId} onCreateAction={query.data ? note => setDraft({
       initial: { companyId, title: "", notes: [note.questionLabel, note.excerpt].filter(Boolean).join("\n\n"), sourceInterviewId: note.interviewId, sourceQuestionId: note.questionId },
       sourceNote: { interviewee: note.interviewee || note.team, excerpt: [note.questionLabel, note.excerpt].filter(Boolean).join("\n\n"), sourceUrl: note.sourceUrl },
     }) : undefined} />}
     {actionForm}
+    {startDialog}
   </section>;
 }

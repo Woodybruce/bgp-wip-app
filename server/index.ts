@@ -4298,6 +4298,7 @@ import activitySummaryRouter from "./activity-summary";
 import expansionIntelRouter from "./expansion-intel";
 import brandStoreCountRouter from "./brand-store-count";
 import brandPipelineRouter from "./brand-pipeline";
+import crmHubRouter from "./crm-hub";
 import turnoverRouter from "./turnover";
 import { serveStatic } from "./static";
 import { registerEmailProcessorRoutes, startEmailProcessor } from "./email-processor";
@@ -5539,6 +5540,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // planning and job-advert pipeline. Their tables are made here (additive).
   app.use(brandStoreCountRouter);
   app.use(brandPipelineRouter);
+  // The CRM page's lists: landlords, brands, agents and lenders in one design (BGP staff only).
+  app.use(crmHubRouter);
   import("./brand-store-count").then(m => m.ensureStoreCountTable()).catch(e => console.warn("[brand-store-count] table:", e?.message));
   import("./brand-pipeline").then(m => m.ensurePipelineTable()).catch(e => console.warn("[brand-pipeline] tables:", e?.message));
   app.use(turnoverRouter);

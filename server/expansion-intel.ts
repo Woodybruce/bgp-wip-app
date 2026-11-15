@@ -30,6 +30,7 @@ import { statusSpellingsFor } from "@shared/deal-status";
 import { closedStatusSqlList } from "@shared/letting-rules";
 import { requirementStateSql, requirementImportOnlySql } from "@shared/requirement-live";
 import { INTERACTIONS_90D_SQL, DOMAIN_THREADS_90D_SQL } from "./brand-profile-suggestions";
+import { onStrategySql } from "./crm-watch";
 import { parseStoryRead, checkStoryRead, statedText, signalSource, newsStoriesRead, type NewsStory } from "./requirement-news";
 
 const router = Router();
@@ -372,8 +373,8 @@ export async function nightlyNormalisePass(cap = 25): Promise<{ brands: number; 
         AND c.ai_generated_fields->'brand_identity'->>'status' = 'verified'
         AND c.ai_disabled IS DISTINCT FROM TRUE
         AND (s.source IS NULL OR s.source NOT LIKE 'bgp-deal:%')
-      GROUP BY brand_company_id
-      ORDER BY count(*) DESC
+      GROUP BY brand_company_id, c.id
+      ORDER BY ${onStrategySql("c")} DESC, count(*) DESC
       LIMIT $1`,
     [cap]
   );

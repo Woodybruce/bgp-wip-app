@@ -82,7 +82,25 @@ explicit permission.
   The two smoke suites run after it (`qa/smoke.mjs`,
   `qa/phone-session-smoke.mjs`; `bash qa/run-smoke.sh` runs the first
   locally): a change to where a login lands, to a menu, to a test id or to
-  what Back does needs their checks changed with it.
+  what Back does needs their checks changed with it. The phone suite failed
+  on every push from 13 to 15 November 2026 because its property scenario
+  still waited for the simple view after the plan-led page became the staff
+  default; it now follows the plan-led page first and reaches the older
+  page from More → Back to the current page. To run it locally: `bash
+  qa/start-postgres.sh`, restore `qa/smoke-fixture.sql.gz` into a database
+  named `bgpsmoke`, `npm run build`, start `node dist/index.cjs` on it, then
+  `SMOKE_CHROMIUM=/opt/pw-browsers/chromium SMOKE_BASE=http://localhost:<port>
+  PHONE_SMOKE_DATABASE_URL=postgresql://postgres:<password>@127.0.0.1:5432/bgpsmoke
+  node qa/phone-session-smoke.mjs`.
+- **A red workflow does not keep a push off the live site** (seen on
+  15 November 2026: two pushes reached chatbgp.app within about ten minutes
+  while the run was red and its `deploy` job was skipped, so Railway is
+  building the branch on each push by itself; its settings were not
+  inspected). The workflow's `deploy` job is the in-app deploy of the tested
+  commit (`server/auto-deploy.ts`). Treat a green run as the check that the
+  push was safe, not as what stops it: run `npm run qa:regression` and the
+  two smoke suites BEFORE pushing. Whether Railway should wait for the
+  workflow is Woody's call.
 
 ## Landsec client brand access (DECIDED — do not re-litigate in merges)
 
@@ -1140,6 +1158,209 @@ see, or an agent firm); writes there stay with `isClientVisibleBrand`.
 "no landsec should see another landlord page"): a Landsec login is refused
 Hammerson's record and its feeds, as it always was. Do not open it.
 
+## The CRM page (Woody, 2026-11-15) — docs/crm-review-2026-11-15.md
+
+Woody on the side bar's CRM page (`client/src/pages/people.tsx`): it is "not
+uniform between brand, agent and landlords", "lacks connectivity and
+usability", and he wants "one engine ... join it all up for BGP and then
+Landsec can use that for theirs, just move lenders and landlords out ...
+they should all be linked to the calendar". The review, the proposal (one
+CRM page, one list design for landlords, brands, agents and lenders, one
+engine and diary for all four, a CRM layer on the team and Landsec
+calendars), the order of work and the four decisions waiting on him are in
+`docs/crm-review-2026-11-15.md`. **Read it before touching the CRM page.**
+
+**Decided by Woody on 15 November 2026 (do not re-litigate):**
+
+- **Build the BGP version first**, "then we can just hide lenders and
+  landlord for Landsec". Both are built (the Landsec version later the
+  same day, when he said to finish the rest).
+- **One engine for every kind.** "I agree with your approach": landlords,
+  brands, agents and lenders in one Overview. This SUPERSEDES "the Brand
+  CRM is separate from the Landlord CRM" in the Brand CRM section below for
+  BGP's CRM page; the two older views (`kind=landlord`, `kind=brand`)
+  still exist for a landlord's and a brand's own page and the Brand CRM.
+- **Who is on the lists**: "all landlords will be included in the CRM and
+  all agents and lenders. But we won't have a strategy for any of them till
+  we turn them on." Brands are only the ones BGP is working ("otherwise
+  lose focus"; "the Brand CRM should just reflect the contact level of
+  Brand Intelligence ... Brand Intelligence is too big").
+- **Turning a company on** starts its strategy: "we can add people or
+  companies to the CRM strategy, goes for all types, and that is what then
+  starts the strategy. Could AI start it a bit? Help kick it off? ... we
+  choose who to make VIP and then the CRM engine starts suggesting
+  locations, events, people to meet etc and closely watches them more than
+  other CRMs."
+
+**Built on 15 November 2026 for BGP:**
+
+- **The joined view** is `kind=all` on `/api/crm/engagement`
+  (`EngagementKind` in `shared/crm-engagement.ts`). Agent firms (type
+  "agent") and lenders (the CRM page's lender type list) are plan companies
+  (`PLAN_COMPANY_PREDICATE`, `AGENT_COMPANY_SQL`, `LENDER_COMPANY_SQL`,
+  `companyNounSql` in `server/crm-engagement.ts`). In `all` a strategy or
+  event may link any mix of kinds and a save replaces every link; `landlord`
+  and `brand` still refuse a mix and replace only their own side. A save
+  with no kind is still a landlord save. The CRM page's Overview is
+  `CrmEngagementPanel kind="all"`: pills All / Landlords / Brands / Agents /
+  Lenders filter it (`options.companies[].noun`), its pickers list every
+  landlord, agent and lender and find a brand by typing, and the form words
+  follow each company's kind. The scheme, sharing and waiting-on fields on
+  an action still belong to a brand. Tests:
+  `qa/regression/crm-engagement-postgres.test.mjs` (needs
+  `CRM_ENGAGEMENT_DATABASE_URL`).
+- **Start strategy** (`client/src/components/crm-engagement/start-strategy.tsx`,
+  `server/crm-kickoff.ts`, contract and checks `shared/crm-kickoff.ts`,
+  tests `server/crm-kickoff.test.ts`). `POST /api/crm/engagement/kick-off`
+  reads what the app holds on the company (a fixed handful of queries, each
+  allowed to fail) and, when the reader is on, asks Anthropic directly for
+  a draft: a name, objective and reason; ONE running strategy it could
+  join; people to meet, events to invite them to, places (space BGP is
+  letting, for a brand; its own properties, for a landlord) and first
+  actions. The reader is sent facts and the lists it may choose from by id
+  (never an email address), and `checkKickoffAnswer` drops any id that was
+  not offered. Capped a day (`CRM_KICKOFF_DAILY_CAP`, default 100, 0 =
+  off); with the reader off the dialog still lists the people and events to
+  tick by hand. Nothing is saved by the draft. `POST …/kick-off/apply` saves
+  what the person ticked through the engine's own functions in the joined
+  view: a new strategy or a place on a running one, the people as its
+  contacts, the ticked events (the company linked, the people as SUGGESTED
+  guests; no invitation is sent) and the actions (each a My Tasks row for
+  the owner). BGP staff only: both routes are on the engagement router. It
+  has not been run against Anthropic from a build machine.
+- **One list for Landlords, Brands, Agents and Lenders**
+  (`client/src/components/crm-hub/company-list.tsx`, `company-row.tsx`;
+  feed `server/crm-hub.ts`, `GET /api/crm/hub/:kind` and
+  `…/hub/company/:id/people`; types and pure rules `shared/crm-hub.ts`;
+  tests `server/crm-hub.test.ts`). BGP staff only (`isEngagementStaff`).
+  Landlords, agents and lenders are every company of that kind, by the
+  rules the old tabs used (`companyIsKind`); **Brands is only the brands BGP
+  is working**: on a strategy that is not completed, with an open CRM
+  action, a live deal, a live or to-confirm requirement, or a Hunter pick
+  (`brandWhy`). Every row carries the BGP owner (`bgp_contact_user_ids`,
+  else the agents on its deals, greyed), last contact
+  (`shared/last-contact.ts`), the next action, its strategies and a
+  kind line; a card or row opens the company page and its arrow opens the
+  people in place. The filters are the same on all four tabs
+  (`CRM_HUB_FILTERS`). **Start strategy** on a row opens the kick-off
+  below; a strategy pill opens it on the Overview. Not carried over from
+  the old tabs, on purpose until asked for: delete, the agent specialty
+  pills and per-person deal and requirement lists, the lender stat tiles
+  and Add Lender. The three older tab designs (`LandlordsTab`, `AgentsTab`,
+  `LendersTab`) were deleted from `people.tsx` when the Landsec version was
+  built (below).
+- **The CRM plan on the team calendar** (`client/src/pages/calendar.tsx`,
+  `crmPlanToCalendarEvents`): a **CRM plan** pill beside CRM / Outlook /
+  Team draws confirmed CRM events and the due times of open CRM actions,
+  each with an "Open in the CRM" link. BGP staff only; remembered per
+  browser.
+- **The Diary for every kind** (the CRM page's **Diary** pill,
+  `/contacts?tab=diary`): `Diary` in `client/src/components/brand-crm/diary.tsx`
+  with `scope="all"`, fed by `GET /api/brand-crm/diary?scope=all`
+  (`loadDiary` in `server/brand-crm-diary.ts`, `DiaryOptions.scope`). It is
+  the Brand CRM diary plus CRM actions on landlords, agents and lenders,
+  confirmed CRM events from today (`crm_event`) and the end dates of
+  active strategies (`strategy_review`); each item carries `nouns`, the
+  kinds of company on it, for the All / Landlords / Brands / Agents /
+  Lenders pills. BGP staff only: it sits behind `staffDoor`, and
+  `loadDiary` gives any other viewer the brand diary whatever scope is
+  asked for. The Landsec diary and the Brand CRM diary are unchanged.
+- **The CRM layer on the Landsec calendar** (`/landsec/calendar`):
+  `landsecCrmEntries` in `client/src/components/landsec/landsec-meetings.ts`
+  turns the DATED lines of `GET /api/landsec/diary` (already cut for the
+  login) into calendar entries marked `crm` (`CalendarCrm` in
+  `leasing-viewings-calendar.tsx`): a muted bar with a target mark, a
+  **CRM** pill with its count, and a card with an Open link. A booked
+  viewing is left out (the calendar draws it as a viewing) and an undated
+  line stays in the diary. A joint agent's calendar is its Viewings page
+  and has no CRM layer.
+- **The Landsec version of the page** (Woody: "then we can just hide
+  lenders and landlord for Landsec"). BGP staff in the Landsec view
+  (`useIsLandsecView()`) get the same page without the Landlords and
+  Lenders pills (`LANDSEC_HIDDEN`). A client login gets `ClientCrmHub`:
+  pills **Brand Directory**, **Agents**, **Diary** (Landsec only: the
+  shared Landsec diary) and **<client> Contacts**. Brand Directory is
+  `client/src/components/crm-hub/client-brand-list.tsx`, the BGP list's
+  design (cards or table, the shared cells) drawn only from what a client
+  is already sent: `GET /api/client/brand-directory` and, for Landsec,
+  the diary's CRM actions as each brand's next action. BGP's owner, last
+  contact and strategies are never on a client's row; the pill keeps the
+  name Brand Directory because the Landsec side bar already has Brands.
+  A Landsec login adds a **Request to BGP** from a brand's row
+  (`ClientRequest` in `diary.tsx`, through the engine's client action
+  route). `CrmNoteFill` is not drawn for a client login (the reader is
+  BGP's). Guards: `qa/regression/crm-client-hub-guards.test.mjs`.
+- **The CRM plan on every company page**: `LandlordEngagementPanel` is
+  on agent firm and lender pages too (`staffPlan` in
+  `brand-profile-panel.tsx`, and the phone view), with
+  `interviews={false}`, and with `companyName` it offers **Start
+  strategy** to BGP staff on a company that is on no active strategy.
+- **Landlord, agent firm and lender pages in the brand page's shape**
+  (step 5 of the review; Woody, 2026-11-15: "Company pages yes", then
+  "Yes to all" on the design: the conversation as one line, Files as its
+  own pill on the landlord page, the Activity feed on agent and lender
+  pages). Desktop only; the phone view keeps its pills. The frame is
+  `client/src/components/company-page/company-kind-page.tsx`
+  (`CompanyKindPage`: one section at a time, kept in `?section=` with a
+  history replace, a section drawn the first time it is opened and then
+  kept; `CompanySummaryCard`; `CompanyWhereWeAre` and
+  `CompanyStartStrategy`, both reading the plan under the plan card's own
+  query key). `brand-profile-panel.tsx` builds the three pages from the
+  cards they already had (`kindPageTop`, `kindMoreItems`,
+  `kindHeaderActions`, and the three `if (... && flat)` branches):
+  landlord Overview / Properties & deals / People & checks / News & media
+  / Files; agent Overview / Brands & deals / People / News & media;
+  lender Overview / Loans & properties / People & checks / News & media.
+  The actions are portalled onto the company page's header line (Start
+  strategy, Email, Call, Edit and ONE More menu); the profile reports
+  `kindTop` through `pageHeader.onKindPage` and `companies.tsx` then
+  leaves its own Edit and Delete out (`kindHeader`). "Where we are" and
+  Start strategy are BGP staff only (`staffPlan`); a client login on an
+  agent firm gets no Overview and no dealings. `AgentRelationshipCard`
+  takes `part` (roles, dealings, viewings, teams) with the open list
+  shared through `AgentDealingsScope`; `LenderPanel` takes `only` and
+  `LenderGlance` is the lender's figures. Layout pins:
+  `qa/regression/landlord-profile-ui.test.mjs`. Every card those pages
+  had is still on them: move a card between pills there, never drop one.
+- **Closer watching** (`server/crm-watch.ts`): a company on a running
+  strategy goes first in the nightly store count, planning and jobs check,
+  accounts read and signal tidy, and is re-checked every 7 days, not 30
+  (`onStrategySql`, `WATCH_RECHECK_DAYS`). The Overview's first card is the
+  **Watch list** (`server/crm-watch-list.ts`, `GET
+  /api/crm/engagement/watch`, `watch-list.tsx`): every company on a running
+  strategy, what is new in 14 days (signals, planning applications, job
+  adverts, contact) and what is owed (overdue actions, no next step, no
+  contact for 30 days), the ones owing first.
+
+Built on 15 November 2026:
+
+- **Review is a pill** (his words: "change the review tab so it sits in a
+  pill next to CRM meetings"): `ContactDataHealth` with `pill` is the last
+  pill of the CRM page's row, with its count, and opens the same employer
+  checks dialog. With nothing to review it is not drawn. The full-width
+  line is gone.
+- **A note fills a CRM form** ("add in the AI form filling feature we built
+  to this", on the New CRM strategy form). `CrmNoteFill`
+  (`client/src/components/crm-engagement/note-fill.tsx`) is the box
+  "Describe it in your own words" at the top of a NEW strategy, action or
+  event, in the landlord and the brand view. `POST
+  /api/crm/engagement/read-note?kind=` (`server/crm-note-reader.ts`) is BGP
+  staff only (the engagement router refuses every client login), Anthropic
+  only, called directly, one call a read, capped a day
+  (`CRM_NOTE_READER_DAILY_CAP`, default 300, 0 = off). It is sent the note,
+  the kind of form and today's date: no staff list and no company list. The
+  contract and every check are `shared/crm-note.ts` (`checkCrmAnswer`; tests
+  `server/crm-note.test.ts`, in `npm test`): the person's own text is a span
+  of the note (else the whole note is the objective); a title is kept only
+  when most of its words are the note's; an owner is one BGP person the
+  note names; a date needs words from the note that carry it; a company is
+  matched on the server to ONE record on that view's list, and a name with
+  no match or several is listed back, never guessed. It only fills the form
+  on the screen: the form's own Create is the only save. This is NOT the
+  letting note reader (`shared/letting-note.ts`), whose stricter rules (a
+  reading never fills a box by itself) stay as they are: do not merge the
+  two. It has not been run against Anthropic from a build machine.
+
 ## The activity feed (Woody, 2026-11-15)
 
 Woody: "bring the design up to speed", "click on the activity brings up an
@@ -1609,6 +1830,16 @@ untouched when it is off, and
   on; `propertyIds` is still what it may tag, read and ask ChatBGP about).
   Not yet: comment buttons on the joint agent's tracker, company and deal
   conversations.
+  **When the property goes** (15 November 2026; `server/record-thread-links.ts`,
+  tests `qa/regression/record-thread-links.test.mjs`): deleting a property
+  deletes its shared conversation with it, messages and members included,
+  in the same transaction (`storage.deleteCrmProperty`); merging two
+  properties moves the duplicate's conversation to the keeper, or joins its
+  messages and people to the one the keeper has (`mergeSharedPropertyThreads`,
+  inside the merge); and `GET /api/chat/threads` leaves out a shared
+  conversation whose property no longer exists, for records removed some
+  other way. A person's own thread linked to the property is never touched.
+  Anything new that removes a property record must do one of these.
 - **Matching**: `shared/property-plan-match.ts`,
   `server/property-plan-match.ts` (`GET /api/plans/:id/match`, `POST
   …/match/accept`, `…/accept-suggested`, `…/dismiss`). A scan stays open and

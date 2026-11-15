@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Plus, RefreshCw, Target } from "lucide-react";
-import type { ActionInput, ActionPlanInput, ActionStatus, EngagementAction, EngagementData, EngagementEvent, EngagementKind, EngagementOptions, EngagementStrategy, EventInput, StrategyInput } from "@shared/crm-engagement";
+import type { ActionInput, ActionPlanInput, ActionStatus, EngagementAction, EngagementData, EngagementEvent, EngagementKind, EngagementOptions, EngagementStrategy, EventInput, StrategyInput, EngagementNoun } from "@shared/crm-engagement";
+import { ENGAGEMENT_NOUNS, NOUN_WORDS } from "@shared/crm-engagement";
+import { CrmWatchList } from "./watch-list";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -116,9 +118,9 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
   const brandMatches = useQuery<{brands?: Array<{id: string; name: string}>}>({
     queryKey: ["/api/brands/search", {q: brandText}],
     queryFn: async () => (await apiRequest("GET", `/api/brands/search?q=${encodeURIComponent(brandText)}`)).json(),
-    enabled: kind === "brand" && brandText.length >= 2, staleTime: 60_000, refetchInterval: false, retry: false,
+    enabled: kind !== "landlord" && brandText.length >= 2, staleTime: 60_000, refetchInterval: false, retry: false,
   });
-  const options = useMemo<EngagementOptions>(() => kind !== "brand" ? listed : {
+  const options = useMemo<EngagementOptions>(() => kind === "landlord" ? listed : {
     staff: listed.staff, sharePartners: listed.sharePartners,
     companies: [...listed.companies, ...picked.companies.filter(c => !listed.companies.some(o => o.id === c.id))],
     contacts: [...listed.contacts, ...picked.contacts.filter(c => !listed.contacts.some(o => o.id === c.id))],
@@ -131,11 +133,12 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
       const found: EngagementOptions = await (await apiRequest("GET", `${CRM_ENGAGEMENT_KEY}/options?kind=brand&companyId=${encodeURIComponent(brand.id)}`)).json();
       const company = found.companies.find(c => c.id === brand.id);
       if (!company) return;
-      setPicked(previous => ({staff: [], companies: [...previous.companies.filter(c => c.id !== brand.id), company],
+      setPicked(previous => ({staff: [], companies: [...previous.companies.filter(c => c.id !== brand.id), {...company, noun: "brand" as const}],
         contacts: [...previous.contacts.filter(c => c.companyId !== brand.id), ...found.contacts.filter(c => c.companyId === brand.id)]}));
     } catch { toast({title: "That brand's contacts could not be loaded", description: "The brand can still be linked. Reopen the form later to choose its contacts."}); }
   }
-  const companySearch: CompanySearch | undefined = kind === "brand" ? {
+  // The joined CRM lists every landlord, agent and lender; a brand not yet on a plan is found by typing.
+  const companySearch: CompanySearch | undefined = kind !== "landlord" ? {
     choices: (brandMatches.data?.brands || []).map(brand => ({id: brand.id, name: brand.name})),
     onSearch: text => { window.clearTimeout(searchTimer.current); searchTimer.current = window.setTimeout(() => setBrandText(text.trim()), 250); },
     onPick: pickBrand,
@@ -156,7 +159,11 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
   }, [dataQuery.data, search]);
   useEffect(() => { setCompanyFilter(companyId || new URLSearchParams(search).get("company") || ""); }, [search, companyId]);
   // A link from a brand's page may name a brand with nothing planned yet.
-  useEffect(() => { if (kind === "brand" && companyFilter && optionsQuery.data) pickBrand({id: companyFilter}); }, [kind, companyFilter, optionsQuery.data]);
+  useEffect(() => { if (kind !== "landlord" && companyFilter && optionsQuery.data) pickBrand({id: companyFilter}); }, [kind, companyFilter, optionsQuery.data]);
+  // The joined CRM's kind filter: Landlords, Brands, Agents or Lenders.
+  const [nounFilter, setNounFilter] = useState<EngagementNoun | "">("");
+  const nounOf = useMemo(() => new Map(options.companies.map(c => [c.id, c.noun || "landlord"])), [options.companies]);
+  const ofNoun = (companyIds: string[]) => !nounFilter || companyIds.some(id => nounOf.get(id) === nounFilter);
   function closeEditor() {
     setEditor(null);
     const url = new URL(window.location.href);
@@ -191,12 +198,12 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
     catch (error) { toast({title: "Could not update the CRM action", description: cleanError(error), variant: "destructive"}); }
     finally { setUpdatingAction(""); }
   }
-  const events = useMemo(() => data.events.filter(e => eventMatchesCompany(e, companyFilter)
-    && (!strategyFilter || e.strategyIds.includes(strategyFilter)) && (!ownerFilter || e.ownerId === ownerFilter)), [data.events, companyFilter, strategyFilter, ownerFilter]);
-  const strategies = useMemo(() => data.strategies.filter(s => (!companyFilter || s.targets.some(t => t.companyId === companyFilter))
-    && (!strategyFilter || s.id === strategyFilter) && (!ownerFilter || s.ownerId === ownerFilter) && (showClosed || s.status === "active")), [data.strategies, companyFilter, strategyFilter, ownerFilter, showClosed]);
-  const actions = useMemo(() => data.actions.filter(a => (!companyFilter || a.companyId === companyFilter) && (!strategyFilter || a.strategyId === strategyFilter)
-    && (!ownerFilter || a.ownerId === ownerFilter) && (showDone || a.status !== "done")).sort((a, b) => Number(a.status === "done") - Number(b.status === "done") || (a.dueAt || "9999").localeCompare(b.dueAt || "9999")), [data.actions, companyFilter, strategyFilter, ownerFilter, showDone]);
+  const events = useMemo(() => data.events.filter(e => eventMatchesCompany(e, companyFilter) && ofNoun(e.companies.map(c => c.companyId))
+    && (!strategyFilter || e.strategyIds.includes(strategyFilter)) && (!ownerFilter || e.ownerId === ownerFilter)), [data.events, companyFilter, strategyFilter, ownerFilter, nounFilter, nounOf]);
+  const strategies = useMemo(() => data.strategies.filter(s => (!companyFilter || s.targets.some(t => t.companyId === companyFilter)) && ofNoun(s.targets.map(t => t.companyId))
+    && (!strategyFilter || s.id === strategyFilter) && (!ownerFilter || s.ownerId === ownerFilter) && (showClosed || s.status === "active")), [data.strategies, companyFilter, strategyFilter, ownerFilter, showClosed, nounFilter, nounOf]);
+  const actions = useMemo(() => data.actions.filter(a => (!companyFilter || a.companyId === companyFilter) && ofNoun([a.companyId]) && (!strategyFilter || a.strategyId === strategyFilter)
+    && (!ownerFilter || a.ownerId === ownerFilter) && (showDone || a.status !== "done")).sort((a, b) => Number(a.status === "done") - Number(b.status === "done") || (a.dueAt || "9999").localeCompare(b.dueAt || "9999")), [data.actions, companyFilter, strategyFilter, ownerFilter, showDone, nounFilter, nounOf]);
   const days = monthDays(month);
   const confirmed = events.filter(e => e.dateConfirmed && e.status !== "cancelled" && e.startsAt);
   const monthEvents = confirmed.filter(e => days.filter(day => day.startsWith(month)).some(day => eventOccursOn(e, day))).sort((a, b) => (a.startsAt || "").localeCompare(b.startsAt || ""));
@@ -215,6 +222,11 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
       <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={!writable} onClick={() => setEditor({kind: "strategy"})}><Target className="h-4 w-4 mr-1.5" />New strategy</Button><Button variant="outline" size="sm" disabled={!writable} onClick={() => setEditor({kind: "action"})}>Add CRM action</Button><Button size="sm" disabled={!writable} onClick={() => setEditor({kind: "event"})}><Plus className="h-4 w-4 mr-1.5" />New event</Button></div>
     </div>
     {optionsQuery.isError && <p role="status" className="text-sm text-muted-foreground">The contact and owner lists could not be loaded. <button className="underline" onClick={() => optionsQuery.refetch()}>Try again</button></p>}
+    {kind === "all" && !companyId && !compact && <div className="flex gap-1.5 flex-nowrap overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0 [&>*]:shrink-0" data-testid="crm-kind-filter">
+      <Pill active={!nounFilter} onClick={() => {setNounFilter(""); setSelectedDay("");}}>All</Pill>
+      {ENGAGEMENT_NOUNS.map(noun => <Pill key={noun} active={nounFilter === noun} onClick={() => {setNounFilter(noun); setSelectedDay("");}} data-testid={`crm-kind-${noun}`}>{NOUN_WORDS[noun].Many}</Pill>)}
+    </div>}
+    {kind === "all" && !companyId && !compact && <CrmWatchList noun={nounFilter} onOpenStrategy={id => { const strategy = data.strategies.find(x => x.id === id); if (strategy) setEditor({kind: "strategy", record: strategy}); }} />}
     {!compact && <div className="grid sm:grid-cols-3 gap-3 rounded-lg border bg-card p-3">
       {!companyId && <div className="space-y-1.5"><p className="text-sm font-medium">{words.One}</p><CrmEntityPicker value={companyFilter} options={options.companies} onSelect={c => filterCompany(c.id)} onClear={() => filterCompany("")} emptyLabel={`All ${words.many}`} className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="crm-overview-company" /></div>}
       <Choice label="Strategy" value={strategyFilter} onChange={v => {setStrategyFilter(v); setSelectedDay("");}}><option value="">All strategies</option>{data.strategies.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Choice>
@@ -231,7 +243,7 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
         {(view === "list" || selectedDay) && <div className="max-h-[410px] overflow-y-auto divide-y pr-1">{selectedDay && <div className="flex justify-between pt-3"><p className="text-sm font-medium">{eventDate(`${selectedDay}T12:00:00Z`, false)}</p><button className="text-xs underline" onClick={() => setSelectedDay("")}>Clear day</button></div>}{visibleList.length ? visibleList.map(event => <EventRow key={event.id} event={event} companyId={companyFilter} actions={data.actions} writable={writable} onAddAction={addEventAction} onOpenAction={record => setEditor({kind: "action", record})} onOpen={() => setEditor({kind: "event", record: event})} />) : <Empty>No confirmed events {selectedDay ? "on this date" : "this month"}{companyFilter || strategyFilter || ownerFilter ? " for these filters" : ""}.</Empty>}</div>}
         {view === "month" && !selectedDay && !monthEvents.length && <p className="text-xs text-muted-foreground mt-3">No confirmed events this month{companyFilter || strategyFilter || ownerFilter ? " for these filters" : ""}.</p>}
         {!!undated.length && <details className="border-t mt-4 pt-3"><summary className="text-sm cursor-pointer font-medium">Dates to confirm <span className="font-mono tabular-nums text-muted-foreground">({undated.length})</span></summary><p className="text-xs text-muted-foreground mt-2">Check the date before placing these events in the calendar.</p><div className="max-h-72 overflow-y-auto divide-y">{undated.map(event => <EventRow key={event.id} event={event} companyId={companyFilter} actions={data.actions} writable={writable} onAddAction={addEventAction} onOpenAction={record => setEditor({kind: "action", record})} onOpen={() => setEditor({kind: "event", record: event})} />)}</div></details>}
-        <div className="flex items-center justify-between gap-2 border-t mt-4 pt-3 text-xs text-muted-foreground"><span>London time</span>{kind === "landlord" && <Link href="/contacts?tab=meetings" className="underline">CRM Meetings</Link>}</div>
+        <div className="flex items-center justify-between gap-2 border-t mt-4 pt-3 text-xs text-muted-foreground"><span>London time</span>{kind !== "brand" && <Link href="/contacts?tab=meetings" className="underline">CRM Meetings</Link>}</div>
       </Card>
       <Card className="p-4 min-w-0" data-testid="crm-active-strategies"><div className="flex items-center justify-between gap-2 mb-3"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><Target className="h-4 w-4" />Strategies</h3><label className="flex items-center gap-1.5 text-xs text-muted-foreground"><input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />Show all</label></div>
         <div className="max-h-[520px] overflow-y-auto space-y-3 pr-1">{strategies.length ? strategies.map(strategy => <div key={strategy.id} className="border rounded-lg p-3 space-y-2" data-testid={`crm-strategy-${strategy.id}`}><div className="flex items-start justify-between gap-2"><button type="button" disabled={!writable} className="text-sm font-semibold text-left hover:underline" onClick={() => setEditor({kind: "strategy", record: strategy})}>{strategy.name}</button>{statusPill(strategy.status)}</div><p className="text-sm leading-relaxed">{strategy.objective}</p><p className="text-xs text-muted-foreground">{strategy.ownerName || "Owner not set"}{strategy.team ? ` · ${strategy.team}` : ""}{strategy.endsOn ? ` · Review ${eventDate(`${strategy.endsOn.slice(0, 10)}T12:00:00Z`, false)}` : ""}</p>

@@ -1,6 +1,19 @@
 // Staff CRM planning. Events reuse Marketing; follow-ups reuse My Tasks.
 // The Landlord CRM and the Brand CRM are two views of the same records.
-export type EngagementKind = "landlord" | "brand";
+// "all" is the joined CRM (Woody, 2026-11-15: "one engine ... join it all up
+// for BGP"): every kind of company in one view, and a strategy or event may
+// link more than one kind. "landlord" and "brand" are the two older views,
+// still used on a landlord's and a brand's own page and in the Brand CRM.
+export type EngagementKind = "landlord" | "brand" | "all";
+// What a company on the plan is. Agents and lenders joined on 15 November 2026.
+export type EngagementNoun = "landlord" | "brand" | "agent" | "lender";
+export const ENGAGEMENT_NOUNS: EngagementNoun[] = ["landlord", "brand", "agent", "lender"];
+export const NOUN_WORDS: Record<EngagementNoun, { one: string; many: string; One: string; Many: string }> = {
+  landlord: { one: "landlord", many: "landlords", One: "Landlord", Many: "Landlords" },
+  brand: { one: "brand", many: "brands", One: "Brand", Many: "Brands" },
+  agent: { one: "agent", many: "agents", One: "Agent", Many: "Agents" },
+  lender: { one: "lender", many: "lenders", One: "Lender", Many: "Lenders" },
+};
 export type StrategyStatus = "active" | "paused" | "completed";
 export type EventStatus = "draft" | "planned" | "cancelled" | "completed";
 export type GuestStatus = "suggested" | "invited" | "accepted" | "declined" | "attended" | "no_show";
@@ -47,7 +60,7 @@ export interface EngagementSharePartner { id: string; name: string; schemes: Arr
 export interface EngagementData { events: EngagementEvent[]; strategies: EngagementStrategy[]; actions: EngagementAction[] }
 export interface EngagementOptions {
   staff: Array<{id: string; name: string}>;
-  companies: Array<{id: string; name: string}>;
+  companies: Array<{id: string; name: string; noun?: EngagementNoun}>;
   contacts: Array<{id: string; name: string; companyId: string; role: string | null}>;
   // BGP staff planning a brand only: who an action can be shown to.
   sharePartners?: EngagementSharePartner[];

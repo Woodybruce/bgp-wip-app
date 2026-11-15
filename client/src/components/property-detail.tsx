@@ -971,7 +971,7 @@ export function PropertyDetail({ id }: { id: string }) {
               const filledOwners = owners.filter(o => !!o.id);
               const emptyOwners = owners.filter(o => !o.id);
               return (
-                <div className="flex flex-wrap items-center gap-1.5" data-testid="property-facts">
+                <div className="flex flex-wrap items-center gap-1.5" data-testid="property-facts" data-compact-taps>
                   <span className={factPill} data-testid="property-field-status"><span className={factLabel}>Status</span><InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" /></span>
                   <span className={factPill} data-testid="property-field-asset-class"><span className={factLabel}>Asset class</span><InlineEngagement value={propertyAssetClasses(property.assetClass)} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(values) => inlineUpdate("assetClass", values.join(", ") || null)} placeholder="Set class" /></span>
                   <span className={factPill} data-testid="property-field-use-class"><span className={factLabel}>Use class</span><InlineLabelSelect value={(property as any).useClass} options={USE_CLASS_OPTIONS} labelMap={USE_CLASS_LABELS} onSave={(val) => inlineUpdate("useClass" as any, val)} placeholder="Set use class" /></span>

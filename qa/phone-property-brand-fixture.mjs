@@ -42,6 +42,10 @@ export async function createPhonePropertyBrandFixture(connectionString) {
       await db.query('DELETE FROM tenancy_schedule_units WHERE id=ANY($1::varchar[])', [[ids.currentTenancy, ids.archivedTenancy]]);
       await db.query('DELETE FROM brand_agent_representations WHERE id=ANY($1::varchar[])', [[ids.namedRepresentation, ids.agencyRepresentation]]);
       await db.query('DELETE FROM crm_contacts WHERE id=ANY($1::varchar[])', [[ids.namedContact, ids.agencyContact]]);
+      // The plan-led property page opens the property's shared conversation; it goes with the property.
+      await db.query("DELETE FROM chat_messages WHERE thread_id IN (SELECT id FROM chat_threads WHERE created_by='__record__' AND linked_type='property' AND linked_id=$1)", [ids.property]);
+      await db.query("DELETE FROM chat_thread_members WHERE thread_id IN (SELECT id FROM chat_threads WHERE created_by='__record__' AND linked_type='property' AND linked_id=$1)", [ids.property]);
+      await db.query("DELETE FROM chat_threads WHERE created_by='__record__' AND linked_type='property' AND linked_id=$1", [ids.property]);
       await db.query('DELETE FROM crm_properties WHERE id=$1', [ids.property]);
       await db.query('DELETE FROM crm_companies WHERE id=ANY($1::varchar[])', [[ids.brand, ids.agency]]);
       await db.query('COMMIT');

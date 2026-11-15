@@ -2,10 +2,14 @@
 // dated list across brands. The server builds the items and cuts them to
 // what the login may see (server/brand-crm-diary.ts); the screen only groups
 // and filters them.
-export type DiaryKind = "crm_action" | "viewing_booked" | "viewing_followup" | "deal_waiting" | "brief_signature" | "case_response";
-export const DIARY_KINDS: DiaryKind[] = ["crm_action", "viewing_booked", "viewing_followup", "deal_waiting", "brief_signature", "case_response"];
+// "crm_event" and "strategy_review" are only in the CRM page's diary for
+// every kind of company (Woody, 2026-11-15), which BGP staff alone read.
+export type DiaryKind = "crm_action" | "crm_event" | "strategy_review" | "viewing_booked" | "viewing_followup" | "deal_waiting" | "brief_signature" | "case_response";
+export const DIARY_KINDS: DiaryKind[] = ["crm_action", "crm_event", "strategy_review", "viewing_booked", "viewing_followup", "deal_waiting", "brief_signature", "case_response"];
 export const DIARY_KIND_LABELS: Record<DiaryKind, string> = {
   crm_action: "CRM actions",
+  crm_event: "CRM events",
+  strategy_review: "Strategy reviews",
   viewing_booked: "Viewings booked",
   viewing_followup: "Viewing follow-ups",
   deal_waiting: "Deals waiting",
@@ -13,6 +17,9 @@ export const DIARY_KIND_LABELS: Record<DiaryKind, string> = {
   case_response: "Brand cases",
 };
 
+// Which diary: the Brand CRM's (brands only), or the CRM page's for every kind of company.
+export type DiaryScope = "brand" | "all";
+export type DiaryNoun = "landlord" | "brand" | "agent" | "lender";
 export type DiarySide = "bgp" | "landsec" | "joint_agent" | "other";
 export interface DiaryItem {
   id: string;                                  // "<kind>:<record id>"
@@ -21,7 +28,8 @@ export interface DiaryItem {
   date: string | null;                         // yyyy-mm-dd; null = nothing dated
   daysWaiting: number | null;
   overdue: boolean;
-  brand: { id: string | null; name: string } | null;      // id null = no brand page for this login
+  brand: { id: string | null; name: string } | null;      // the company; id null = no page for this login
+  nouns?: DiaryNoun[];                         // the kinds of company on the item, in the diary for every kind
   scheme: { key: string | null; name: string } | null;    // key null = a property outside the Landsec schemes
   unitLabel: string | null;
   owner: string | null;                        // the BGP person who has it

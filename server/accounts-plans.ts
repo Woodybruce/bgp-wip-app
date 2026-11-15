@@ -10,6 +10,7 @@
 // daily cap, never when a page opens and never for a client's request.
 import { pool } from "./db";
 import { getFile } from "./file-storage";
+import { onStrategySql } from "./crm-watch";
 import { plansFromAnswer, PLAN_WORDS_RE, type AccountsPlans } from "@shared/accounts-plans";
 
 const USAGE_KEY = "accounts-plans-reader-usage";
@@ -151,7 +152,7 @@ export async function runAccountsPlansBatch(): Promise<{ due: number; read: numb
         AND (jsonb_typeof(${stored}) IS DISTINCT FROM 'object'
              OR COALESCE(${stored}->>'docId', '') IS DISTINCT FROM COALESCE(c.last_accounts_doc_id, '')
              OR (${stored}->>'failed' IN ('1', '2') AND ${stored}->>'readAt' < to_char(now() - interval '7 days', 'YYYY-MM-DD"T"HH24:MI:SS')))
-      ORDER BY s.hunter_score DESC NULLS LAST, c.id
+      ORDER BY ${onStrategySql("c")} DESC, s.hunter_score DESC NULLS LAST, c.id
       LIMIT $1`, [cap])).rows as Array<{ id: string; name: string }>;
   summary.due = rows.length;
   const { claimDailyRead } = await import("./requirement-feeds");
