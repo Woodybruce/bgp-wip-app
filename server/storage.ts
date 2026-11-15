@@ -50,6 +50,7 @@ import { companyListSelection } from "./company-list-columns";
 import { db, pool } from "./db";
 import { stripRequirementProvenance } from "@shared/requirement-live";
 import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull, arrayContains } from "drizzle-orm";
+import { RECORD_THREAD_CREATOR } from "./record-thread-links";
 import { CLOSED_STATUSES } from "@shared/deal-status";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1051,6 +1052,16 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(crmContactProperties).where(eq(crmContactProperties.propertyId, id));
       await tx.delete(crmCompanyProperties).where(eq(crmCompanyProperties.propertyId, id));
       await tx.delete(crmReqInvestProperties).where(eq(crmReqInvestProperties.propertyId, id));
+      // The property's shared conversation has no owner, so nobody could
+      // remove it afterwards: it goes with the property. A person's own
+      // thread linked to the property stays theirs.
+      const shared = (await tx.select({ id: chatThreads.id }).from(chatThreads)
+        .where(and(eq(chatThreads.createdBy, RECORD_THREAD_CREATOR), eq(chatThreads.linkedType, "property"), eq(chatThreads.linkedId, id)))).map(t => t.id);
+      if (shared.length) {
+        await tx.delete(chatMessages).where(inArray(chatMessages.threadId, shared));
+        await tx.delete(chatThreadMembers).where(inArray(chatThreadMembers.threadId, shared));
+        await tx.delete(chatThreads).where(inArray(chatThreads.id, shared));
+      }
       await tx.delete(crmProperties).where(eq(crmProperties.id, id));
     });
   }

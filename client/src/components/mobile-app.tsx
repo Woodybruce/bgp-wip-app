@@ -952,7 +952,8 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, onArchive,
               {thread.propertyName && (
                 <span className="text-[11px] text-[#78716C] flex items-center gap-1 bg-[#F5F5F4] rounded-full px-2 py-0.5"><Building2 className="w-3 h-3" />{thread.propertyName}</span>
               )}
-              {thread.linkedName && (
+              {/* A property's own conversation names the property in both fields: one tag. */}
+              {thread.linkedName && thread.linkedName !== thread.propertyName && (
                 <span className="text-[11px] text-[#78716C] flex items-center gap-1 bg-[#F5F5F4] rounded-full px-2 py-0.5">
                   <Building2 className="w-3 h-3" />
                   {thread.linkedName}

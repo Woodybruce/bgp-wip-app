@@ -875,10 +875,13 @@ a:not([class]):not(:has(button)):hover {
    rounded-full buttons are EXEMPT (Woody, 2026-08-23: every chip/pill built
    as a button was ballooning to 44px — "massive pills… full sweep").
    Capsule chips render at their natural slim size; genuine round icon
-   buttons keep their explicit w/h classes. */
+   buttons keep their explicit w/h classes. A row of pills whose editors
+   are plain buttons is marked data-compact-taps, so every pill in it is
+   one height (the property page's facts: Use class, Area, Website and
+   Joint agent stood twice as tall as Status and Teams). */
 @media (max-width: 767px) {
-  button:not([data-no-min-touch]):not(.inline-edit-btn):not([class*="rounded-full"]):not([class*="h-5"]):not([class*="h-4"]):not([class*="w-5"]):not([class*="w-4"]),
-  [role="button"]:not([data-no-min-touch]):not(.inline-edit-btn):not([class*="rounded-full"]) {
+  button:not([data-no-min-touch]):not(.inline-edit-btn):not([class*="rounded-full"]):not([class*="h-5"]):not([class*="h-4"]):not([class*="w-5"]):not([class*="w-4"]):not([data-compact-taps] *),
+  [role="button"]:not([data-no-min-touch]):not(.inline-edit-btn):not([class*="rounded-full"]):not([data-compact-taps] *) {
     min-height: 44px;
   }
 

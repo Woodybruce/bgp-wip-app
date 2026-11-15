@@ -1702,6 +1702,16 @@ untouched when it is off, and
   `qa/regression/record-conversation-guards.test.mjs`. Not yet: a joint
   agent (its gateway refuses the routes; parked by Woody on 2026-11-14), the
   joint agent's tracker, company and deal conversations.
+  **When the property goes** (15 November 2026; `server/record-thread-links.ts`,
+  tests `qa/regression/record-thread-links.test.mjs`): deleting a property
+  deletes its shared conversation with it, messages and members included,
+  in the same transaction (`storage.deleteCrmProperty`); merging two
+  properties moves the duplicate's conversation to the keeper, or joins its
+  messages and people to the one the keeper has (`mergeSharedPropertyThreads`,
+  inside the merge); and `GET /api/chat/threads` leaves out a shared
+  conversation whose property no longer exists, for records removed some
+  other way. A person's own thread linked to the property is never touched.
+  Anything new that removes a property record must do one of these.
 - **Matching**: `shared/property-plan-match.ts`,
   `server/property-plan-match.ts` (`GET /api/plans/:id/match`, `POST
   …/match/accept`, `…/accept-suggested`, `…/dismiss`). A scan stays open and

@@ -25,6 +25,7 @@ The standard run has no database, so these are skipped, each with its reason, un
 | `crm-engagement-postgres.test.mjs`, `crm-engagement-kind.test.mjs` (one test) | `CRM_ENGAGEMENT_DATABASE_URL` | The same. |
 | `landlord-contact-activity.test.mjs` (one test) | `LANDLORD_CONTACT_ACTIVITY_DATABASE_URL` | The same. |
 | `team-event-privacy.test.mjs` (one test) | `TEAM_EVENT_PRIVACY_DATABASE_URL` | The same. |
+| `record-thread-links.test.mjs` (one test) | `RECORD_THREAD_DATABASE_URL` | The same. |
 
 Locally, after `bash qa/start-postgres.sh`, the database is `postgresql://postgres:qa-local-pg@127.0.0.1:5432/postgres`. The workflow uses the spare `postgres` database of its service container, never `bgpsmoke`, and the server tools the runner image ships under `/usr/lib/postgresql/<version>/bin`.
 

@@ -6,6 +6,7 @@
 // ChatBGP merge_properties tool.
 
 import { pool } from "./db";
+import { mergeSharedPropertyThreads } from "./record-thread-links";
 
 const REF_COLUMNS = ["property_id", "crm_property_id", "linked_property_id", "related_property_id", "subject_property_id"];
 
@@ -117,6 +118,11 @@ export async function mergeProperties(keepId: string, mergeId: string): Promise<
     // 3b. Team links carry no unique key, so both copies survived a merge
     //     (Lucent showed each BGP agent twice) — keep one per person.
     await dedupePropertyAgents(keepId, q);
+
+    // 3c. The duplicate's shared conversation moves to the keeper, or joins
+    //     the one the keeper already has: nothing said is lost, and no
+    //     conversation is left pointing at a record that is gone.
+    await mergeSharedPropertyThreads(q, keepId, mergeId, String(keep.name || ""));
 
     // 4. Remove the duplicate.
     await q(`DELETE FROM crm_properties WHERE id = $1`, [mergeId]);

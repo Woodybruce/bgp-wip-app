@@ -2596,7 +2596,11 @@ export async function registerRoutes(
           SELECT DISTINCT t.*
           FROM chat_threads t
           LEFT JOIN chat_thread_members m ON m.thread_id = t.id
-          WHERE t.created_by = $1 OR m.user_id = $1
+          WHERE (t.created_by = $1 OR m.user_id = $1)
+            -- A property's shared conversation is not listed once its property is gone
+            -- (a delete or a merge removes or moves it; this covers records removed another way).
+            AND NOT (t.created_by = '__record__' AND t.linked_type = 'property'
+                     AND NOT EXISTS (SELECT 1 FROM crm_properties rp WHERE rp.id = t.linked_id))
         ),
         last_messages AS (
           SELECT DISTINCT ON (cm.thread_id)
