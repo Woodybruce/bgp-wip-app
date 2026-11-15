@@ -365,6 +365,34 @@ const SCENES = {
 
   // 13a. The phone in the hand after the meeting: Jersey Mike's page, its
   // agent under Tenant rep, and Call beside his name.
+  // 16. The phone opens on ChatBGP and is asked a question (needs an AI key
+  // on the demo server; the wait is for the real answer).
+  async phoneAsk(s) {
+    await openPhone(s, "/", 3500);
+    await s.page.locator('[data-testid="input-mobile-chat"]').first().waitFor({ state: "visible", timeout: 30000 });
+    try { await s.page.waitForFunction(() => !!document.documentElement.style.getPropertyValue("--sidebar"), null, { timeout: 45000 }); } catch {}
+    await s.wait(1000);
+    await s.start();
+    await s.wait(1800);
+    await s.click('[data-testid="input-mobile-chat"]', { after: 500, ms: 600 });
+    await s.write(process.env.PHONE_QUESTION || "What is the Burger King unit at Bluewater waiting on?", 120);
+    await s.wait(600);
+    await s.click('[data-testid="button-mobile-send"]', { after: 1500, ms: 500 });
+    // The answer takes a while: wait for "Composing response" to go, then
+    // for the text to stop changing.
+    const composing = () => s.page.evaluate(() => /Composing response/.test(document.body.innerText));
+    for (let i = 0; i < 80 && await composing(); i++) await s.wait(1500);
+    await s.wait(1200);
+    // The answer lands scrolled to its end: go back up to the question so
+    // the start of the answer is what is read.
+    await s.page.evaluate(q => {
+      const hit = [...document.querySelectorAll("p, div, span")].filter(e => e.children.length === 0 && (e.textContent || "").trim() === q).pop();
+      if (hit) hit.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, process.env.PHONE_QUESTION || "What is the Burger King unit at Bluewater waiting on?");
+    await s.wait(1500);
+    await s.wait(2500);
+  },
+
   async phoneCall(s) {
     await openPhone(s, `/companies/${JERSEY_MIKES}`, 3000);
     await s.start();
@@ -498,6 +526,7 @@ const SCENES = {
 const SCENE_SETUP = {
   phone: { phone: true },
   agent: { user: "david.bell@jointagent.demo" },
+  phoneAsk: { phone: true, user: "mark.warne@landsec.com" },
   phoneCall: { phone: true, user: "md" },
   phoneComment: { phone: true, user: "md" },
   phonePhotos: { phone: true, user: "md" },

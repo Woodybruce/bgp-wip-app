@@ -647,7 +647,10 @@ function AuthenticatedApp() {
   const landsecPhoneHome = (isMobile || isNativeMobile()) && (location === "/" || location === "/home")
     && (currentUser as any)?.role === "Client" && shellBrand.id === "landsec" && !landsecRestricted;
   useEffect(() => {
-    if (landsecPhoneHome) navigate(LANDSEC_MENU.chat, { replace: true });
+    // The ChatBGP page itself ("Good evening, Mark", with its starter
+    // questions), not the Messages list one tab over.
+    // "?ask=1" opens the chat; a bare /chatbgp on a phone shows the list.
+    if (landsecPhoneHome) navigate("/chatbgp?ask=1", { replace: true });
   }, [landsecPhoneHome]);
 
   // Mobile cold-open lands on ChatBGP (Woody, 2026-08-18 — supersedes the
