@@ -75,7 +75,8 @@ import { CompanyFactsSummary, CompanyFactsRows } from "@/components/brand-page/c
 import { isLandlordCompany } from "@/lib/company-kind";
 import { AccountDealsBoard } from "@/components/account-deals-board";
 import { AccountTeamViewsCard } from "@/components/account-team-views";
-import { AgentRelationshipCard } from "@/components/agent-relationship-card";
+import { AgentRelationshipCard, AgentDealingsScope, AgentGlance, type AgentTab } from "@/components/agent-relationship-card";
+import { CompanyKindPage, CompanySummaryCard, CompanyWhereWeAre, CompanyStartStrategy, companyPair, companyStack } from "@/components/company-page/company-kind-page";
 import { LandlordAccountGallery } from "@/components/account-media-gallery";
 import { AccountNextActionsCard, InvestmentRequirementsCard, AccountFolderTreeCard, useAccountWorkspace } from "@/components/account-workspace-cards";
 import { AccountEntitiesPanel } from "@/components/account-entities-panel";
@@ -926,7 +927,15 @@ export type BrandPageHeader = {
   onEditCompany?: () => void;
   onDeleteCompany?: () => void;
   onActive?: (active: boolean) => void;
+  // A landlord, agent firm or lender page: the profile puts its actions on
+  // this header line too (Start strategy, Edit, one More menu), so the page
+  // is told and leaves its own Edit and Delete out.
+  onKindPage?: (active: boolean) => void;
 };
+// A lender's boards, handed in one at a time: the lender page shows the terms
+// under Overview and the loans under Loans & properties, with the figures on
+// its summary card.
+export type LenderPageParts = { terms: React.ReactNode; loans: React.ReactNode; glance: (openLoans: () => void) => React.ReactNode };
 
 // A brand's page is six sections, one open at a time (Woody, 2026-11-12:
 // each pill answers one question). The keys are the older five plus "news";
@@ -956,7 +965,7 @@ export function brandSectionContent(data: BrandProfile, viewer: { client: boolea
 
 // dealsSlot: what the company page would draw under the panel (the linked
 // properties and leasing schedule); a brand's page draws it under Deals & space.
-export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat = false, topSlot, lenderSlot, pageHeader, dealsSlot }: { companyId: string; showPropertiesBoard?: boolean; flat?: boolean; topSlot?: React.ReactNode; lenderSlot?: React.ReactNode; pageHeader?: BrandPageHeader; dealsSlot?: React.ReactNode }) {
+export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat = false, topSlot, lenderSlot, lenderParts, pageHeader, dealsSlot }: { companyId: string; showPropertiesBoard?: boolean; flat?: boolean; topSlot?: React.ReactNode; lenderSlot?: React.ReactNode; lenderParts?: LenderPageParts; pageHeader?: BrandPageHeader; dealsSlot?: React.ReactNode }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const { setInput: setChatInput } = useChatBGPState();
@@ -1146,6 +1155,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const reportBrandTop = pageHeader?.onActive;
   const profileIn = !!data;
   useEffect(() => { if (profileIn) reportBrandTop?.(brandTop); }, [profileIn, brandTop, reportBrandTop]);
+  // A landlord, agent firm or lender on the company page takes the brand
+  // page's shape (Woody, 2026-11-15): its actions sit on the page's header
+  // line, so the page is told, as it is for a brand.
+  const kindTop = !!data && flat && !brandTop && (!!lenderSlot
+    || isLandlordCompany(data.company.company_type, (data as any).isLandlord)
+    || /^agent/i.test(data.company.company_type || "") || !!data.company.agent_type);
+  const reportKindTop = pageHeader?.onKindPage;
+  useEffect(() => { if (profileIn) reportKindTop?.(kindTop); }, [profileIn, kindTop, reportKindTop]);
   // Under 1360px of page the conversation drops under the summary band; it is
   // told, so there it is one row and not a box that pushes the pills down.
   // (It was 1000px: at a 1440 window the band was then 695px wide and its
@@ -1858,7 +1875,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 </div>
               );
             })()}
-            <div className="flex items-center gap-2 flex-wrap" data-testid="brand-overview-actions">
+            {/* A landlord, agent firm or lender page keeps these on its header line and in its More menu. */}
+            {kindTop ? (!isLandlord && c.linkedin_url ? <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs hover:text-primary hover:underline underline-offset-2" data-testid="link-linkedin"><Linkedin className="w-3 h-3" />LinkedIn</a> : null)
+            : <div className="flex items-center gap-2 flex-wrap" data-testid="brand-overview-actions">
               {!isLandlord && c.linkedin_url && <Button variant="outline" size="sm" asChild><a href={c.linkedin_url} target="_blank" rel="noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
               {!isLandlord && c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
               {!isLandlord && data.contacts.find(contact => contact.email) && <Button variant="outline" size="sm" asChild><a href={`mailto:${data.contacts.find(contact => contact.email)?.email}`}><Mail />Email</a></Button>}
@@ -1875,7 +1894,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to deal</Button>
                 {!isLandlord && !isAgentFirm && !isLender && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
               </>}
-            </div>
+            </div>}
     </>
   );
   const conversationBoard = (
@@ -1909,10 +1928,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     const threads = stats?.threads || 0;
     const active90 = stats ? stats.people_90d : data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length;
     const num = (v: number) => <span className="font-mono tabular-nums text-foreground">{v.toLocaleString("en-GB")}</span>;
+    // An agent firm's or a lender's page, staff: the lead and the last touch
+    // are read under "Where we are" on the summary card, not here again.
+    const inWhere = kindTop && staffPlan;
     const parts = [
-      c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
+      c.bgp_contact_crm && !inWhere ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
       // No touch on record = no "Last touch —" (Woody, 2026-09-28).
-      daysSince == null ? null : <span key="touch">Last touch <span className={`font-medium ${daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
+      daysSince == null || inWhere ? null : <span key="touch">Last touch <span className={`font-medium ${daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
       // Brand pages, staff: the deal, requirement and contact counts read
       // here, as on the landlord card, not as chips under About.
       ...(brandFactsFirst ? [
@@ -1977,7 +1999,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 <button type="button" onClick={() => setAboutOpen(open => !open)} className="text-xs text-primary hover:underline" data-testid="button-about-more">{aboutOpen ? "Show less" : "Read more"}</button>
               )}
             {keyFacts()}
-            {!(isLandlord && flat && !isLender) && relationshipSummary}
+            {/* A landlord, agent firm or lender page reads the relationship in its summary card's figures. */}
+            {!kindTop && relationshipSummary}
 
             </div>
   );
@@ -2545,10 +2568,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
           </div>
   );
   const aboutCard = <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 md:flex-1 md:min-w-0">{aboutBody}</div>;
-  const conversationSlot = wide
-    ? <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0"><div className="sticky top-3 h-full max-h-[max(26rem,calc(100vh-6rem))] flex flex-col" data-testid="brand-conversation-slot">{conversationBoard}</div></div></div>
-    : null;
-  const refreshStatus = !isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message)
+  const refreshStatus =!isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message)
     ? <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>
     : null;
   const viewerDialogs = <>
@@ -2556,210 +2576,264 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     {openMeeting && <MeetingViewerDialog eventId={openMeeting.eventId} mailboxEmail={openMeeting.mailboxEmail} onClose={() => setOpenMeeting(null)} />}
   </>;
 
-  // Landlord page: the profile card ran short beside the conversation — the
-  // About paragraph, then white space (Woody, 2026-10-28). Fill it with what
-  // the app already holds for the landlord: the portfolio we track, the
-  // listed-company facts from the website sync, and the relationship in
-  // numbers. Every block is optional so a thin record shows nothing odd.
-  const landlordGlance = isLandlord && flat && !isLender ? (() => {
+  // ── Landlord, agent firm and lender pages (Woody, 2026-11-15: "Company
+  // pages yes", then "Yes to all" on the design) ─ the brand page's shape.
+  // The actions sit on the page's header line (Start strategy, Email, Call,
+  // Edit and ONE More menu); a summary card reads About, the relationship in
+  // figures and, for BGP staff, where the account stands; the conversation is
+  // one line that opens; then pills show one section at a time, kept in the
+  // address. Every card that was on these pages is still on them.
+  const kindOwners = (data.coverers || []).map(person => person.name).filter(Boolean);
+  const kindLastTouch = latestPastContact([...data.contacts.map((ct: any) => ct.last_interaction_at), data.relationshipStats?.last_touch]);
+  const kindDays = daysSinceContact(kindLastTouch);
+  const kindLastContact = kindLastTouch ? `${ukDate(kindLastTouch)}${kindDays == null ? "" : kindDays === 0 ? " · today" : kindDays === 1 ? " · yesterday" : ` · ${kindDays} days ago`}` : null;
+  const kindEmail = isLandlord ? undefined : data.contacts.find(contact => contact.email);
+  const kindMoreItems: BrandMenuItem[] = !kindTop ? [] : [
+    ...(isClientViewer ? [] : [
+      ...(isLandlord ? [] : [
+        { key: "add-contact", label: "Add contact", onSelect: () => setAddContactOpen(true), testId: "button-add-contact-brand" },
+        { key: "find-people", label: contactsFinding ? "Finding people…" : "Find people (paid search)", onSelect: runContactDiscovery, disabled: contactsFinding, testId: "button-refresh-contacts" },
+        { key: "add-deal", label: "Add to deal", onSelect: () => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`), testId: "button-add-to-deal" },
+      ]),
+      { key: "edit-facts", label: editing ? "Stop editing profile facts" : "Edit profile facts", onSelect: editing ? () => setEditing(false) : startEdit, separatorBefore: !isLandlord, testId: "button-brand-edit" },
+      { key: "refresh", label: enrichMutation.isPending ? "Refreshing profile…" : "Refresh profile", onSelect: () => enrichMutation.mutate(), disabled: enrichMutation.isPending, testId: "button-brand-refresh" },
+    ]),
+    { key: "pack", label: "Download profile pack (PDF)", onSelect: () => { window.open(`/api/brand/${companyId}/pack.pdf`, "_blank"); }, separatorBefore: !isClientViewer, testId: "button-brand-pack" },
+    { key: "details", label: "Profile status and sources", onSelect: () => setHousekeeping("details"), testId: "button-brand-details" },
+    ...(!isClientViewer && pageHeader?.onDeleteCompany ? [{ key: "delete", label: "Delete company", onSelect: pageHeader.onDeleteCompany, destructive: true, separatorBefore: true, testId: "button-delete-company" }] : []),
+  ];
+  const kindHeaderBadges = kindTop && c.agent_type ? <Badge variant="secondary" className="text-xs" data-testid="company-agent-type-chip">{c.agent_type.replace(/_/g, " ")}</Badge> : null;
+  const kindHeaderActions = kindTop ? <>
+    {staffPlan && <CompanyStartStrategy companyId={companyId} companyName={c.name} />}
+    {kindEmail && <Button variant="outline" size="sm" asChild><a href={`mailto:${kindEmail.email}`} data-testid="link-email"><Mail />Email</a></Button>}
+    {!isLandlord && c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
+    {!isClientViewer && pageHeader?.onEditCompany && <Button variant="outline" size="sm" onClick={pageHeader.onEditCompany} data-testid="button-edit-company"><Pencil />Edit</Button>}
+    <BrandMoreMenu items={kindMoreItems} />
+  </> : null;
+  // The listed-company facts from the landlord's own website, under About.
+  const landlordCompanyFacts = isLandlord && !isLender ? (() => {
     const f = data.landlordWebsiteFindings;
-    const props = ownedProperties.filter((p) => p.name);
     const ticker = f?.share_ticker || c.stock_ticker;
     const board = (f?.board_members || []).filter((b) => b?.name).slice(0, 4);
     const ir = f?.ir_contact;
-    const contactsN = data.contacts.length;
-    const n = (v: number) => <span className="font-mono tabular-nums text-foreground">{v.toLocaleString("en-GB")}</span>;
-    const heading = (label: string, count?: number) => (
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
-        {label}{count != null && <span className="font-mono tabular-nums normal-case tracking-normal">{count}</span>}
-      </h3>
-    );
-    const hasCompany = !!(ticker || board.length || f?.annual_report_url || ir?.name || ir?.email);
-    const hasRelationship = !!(activeDealCount || completedDealCount || contactsN);
-    if (!props.length && !landRegistryTitles.length && !hasCompany && !hasRelationship) return null;
+    if (!(ticker || board.length || f?.annual_report_url || ir?.name || ir?.email)) return null;
     return (
-      <div className="mt-3 pt-3 border-t border-border space-y-3" data-testid="landlord-glance">
-        {(props.length > 0 || landRegistryTitles.length > 0) && (
-          <div>
-            {heading("Portfolio we track", props.length || undefined)}
-            {props.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {props.slice(0, 10).map((p) => (
-                  <Link key={p.id} href={`/properties/${p.id}`} className="inline-flex" data-testid={`landlord-glance-property-${p.id}`}>
-                    <Badge variant="outline" className="font-normal gap-1 hover:bg-muted">
-                      <span className="truncate max-w-[14rem]">{p.name}</span>
-                      {Number(p.unit_count) > 0 && <span className="font-mono tabular-nums text-muted-foreground">{p.unit_count}</span>}
-                    </Badge>
-                  </Link>
-                ))}
-                {props.length > 10 && <span className="self-center text-xs text-muted-foreground">+{props.length - 10} more in Properties below</span>}
-              </div>
-            )}
-            {landRegistryTitles.length > 0 && (
-              <p className="mt-1.5 text-xs text-muted-foreground">{n(landRegistryTitles.length)}{landRegistryTitles.length >= 200 ? "+" : ""} registered titles at Land Registry under this company.</p>
-            )}
-          </div>
-        )}
-        {hasCompany && (
-          <div>
-            {heading("Company")}
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-              {ticker && <span>Listed <span className="font-mono text-foreground">{ticker}</span></span>}
-              {f?.annual_report_url && <a href={f.annual_report_url} target="_blank" rel="noreferrer" className="underline decoration-dotted underline-offset-2 hover:text-foreground">Annual report</a>}
-              {(ir?.name || ir?.email) && <span>Investor relations <span className="text-foreground">{ir?.name || ir?.email}</span></span>}
-            </div>
-            {board.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Board: {board.map((b) => (b.role ? `${b.name} (${b.role})` : b.name)).join(", ")}</p>}
-          </div>
-        )}
-        {hasRelationship && (
-          <div>
-            {heading("Working with BGP")}
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-              <span>{n(activeDealCount)} live deal{activeDealCount === 1 ? "" : "s"}</span>
-              <span>{n(completedDealCount)} completed</span>
-              <span>{n(contactsN)} contact{contactsN === 1 ? "" : "s"} in the CRM</span>
-              {c.bgp_contact_crm && <span>Lead <span className="text-foreground">{c.bgp_contact_crm}</span></span>}
-            </div>
-          </div>
-        )}
+      <div className="text-xs text-muted-foreground space-y-1" data-testid="landlord-company-facts">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 empty:hidden">
+          {ticker && <span>Listed <span className="font-mono text-foreground">{ticker}</span></span>}
+          {f?.annual_report_url && <a href={f.annual_report_url} target="_blank" rel="noreferrer" className="underline decoration-dotted underline-offset-2 hover:text-foreground">Annual report</a>}
+          {(ir?.name || ir?.email) && <span>Investor relations <span className="text-foreground">{ir?.name || ir?.email}</span></span>}
+        </div>
+        {board.length > 0 && <p>Board: {board.map((b) => (b.role ? `${b.name} (${b.role})` : b.name)).join(", ")}</p>}
       </div>
     );
   })() : null;
+  const kindAbout = <>
+    {aboutBody}
+    {aboutLen === 0 && !isClientViewer && (
+      <BrandQuietLine testId="company-about-empty">
+        No description yet · <button type="button" className="disabled:opacity-50" disabled={enrichMutation.isPending} onClick={() => enrichMutation.mutate()}>{enrichMutation.isPending ? "Refreshing…" : "Refresh profile"}</button>
+      </BrandQuietLine>
+    )}
+    <div className="space-y-2 [&>*]:mb-0">{topInfo}</div>
+    {landlordCompanyFacts}
+    {data.parentGroup && (
+      <p className="text-xs flex items-center gap-1 text-muted-foreground">
+        <Building2 className="w-3 h-3" /> Part of <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">{data.parentGroup.name}</Link>
+      </p>
+    )}
+  </>;
+  // The top of the page: header line, summary card, conversation. `select`
+  // opens a section, so a figure can open the list it counts.
+  const kindPageTop = (select: (key: string) => void, figuresTitle: string, figures: React.ReactNode, figuresNote?: React.ReactNode) => <>
+    {pageHeader?.badgesEl && pageHeader?.actionsEl
+      ? <>{createPortal(kindHeaderBadges, pageHeader.badgesEl)}{createPortal(kindHeaderActions, pageHeader.actionsEl)}</>
+      : <div className="flex flex-wrap items-center gap-2">{kindHeaderBadges}<span className="flex-1" />{kindHeaderActions}</div>}
+    {editing
+      ? <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 min-w-0" data-testid="brand-profile-card">{editForm}</div>
+      : <CompanySummaryCard about={kindAbout} figuresTitle={figuresTitle} figures={figures} figuresNote={figuresNote}
+          where={staffPlan ? <CompanyWhereWeAre companyId={companyId} owners={kindOwners.length ? kindOwners : c.bgp_contact_crm ? [c.bgp_contact_crm] : []} lastContact={kindLastContact} onOpenPlan={() => select("overview")} /> : undefined} />}
+    {refreshStatus}
+    {/* One line that opens (Woody, 2026-11-15). A joint agent has no chat (the server refuses it), so no box. */}
+    {!landsecRestricted && <div className="min-w-0" data-testid="brand-conversation">
+      <CompanyMiniChat companyId={companyId} companyName={c.name} key={isLandlord ? companyId : undefined} landlord={isLandlord && !isBrand && !isLender} compact stacked
+        title={isLender ? "Lender conversation" : isLandlord ? "Landlord conversation" : "Agent conversation"} starters={askTopics(c.name, isLandlord, isAgentFirm, isLender)} />
+    </div>}
+  </>;
+  const kindPageFoot = <>
+    {viewerDialogs}
+    <Dialog open={housekeeping === "details"} onOpenChange={open => { if (!open) setHousekeeping(null); }}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="company-housekeeping-dialog">
+        <DialogTitle>Profile status and sources</DialogTitle>
+        <DialogDescription className="sr-only">How {c.name}’s profile was prepared.</DialogDescription>
+        <BrandPreparationStatus bodyOnly companyId={companyId} refreshedAt={c.last_enriched_at} />
+      </DialogContent>
+    </Dialog>
+    {!isClientViewer && !isLandlord && <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />}
+  </>;
+  const kindFigure = (v: number) => v.toLocaleString("en-GB");
+  // Every email, meeting and deal move with the company (the brand and
+  // landlord pages had it; agent firms and lenders gain it). BGP staff only
+  // on an agent firm or lender: the server gives a client login this feed
+  // for its own company or a brand it may open.
+  const kindActivity = (testId: string) => <BrandCard title="Activity" testId={testId}><ActivitySummary companyId={companyId} /></BrandCard>;
+  const kindNewsEmpty = (what: string) => !(data.news || []).length ? <p className="text-sm text-muted-foreground" data-testid="company-news-empty">No news for this {what} yet.</p> : null;
 
-  // Profile card beside the conversation — the top row of the landlord and
-  // agent layouts.
-  const profileTopRow = (
-        <div className={`${isLandlord && !isLender ? "flex flex-col-reverse gap-3 " : ""}[@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4`}>
-          <div className="min-w-0">
-            <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
-              {header}
-              {editing ? <div className="pt-3">{editForm}</div> : <>
-                <div className="space-y-2.5 pt-2.5">{topInfo}</div>
-                <div className="mt-3 pt-3 border-t border-border">{aboutBody}</div>
-                {landlordGlance}
-                {data.parentGroup && (
-                  <p className="mt-2 text-xs flex items-center gap-1 text-muted-foreground">
-                    <Building2 className="w-3 h-3" /> Part of <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">{data.parentGroup.name}</Link>
-                  </p>
-                )}
-              </>}
-            </div>
-          </div>
-          {conversationSlot || <div className={isLandlord && !isLender ? "min-w-0" : "pt-3"}>{conversationBoard}</div>}
-        </div>
-  );
-
-  // Landlord page — profile beside the conversation at the top, followed
-  // by the combined meeting/relationship/team brief and source-linked
-  // interview notes. This ordering is independent of the Brand layout.
+  // Landlord page: Overview (BGP's read of the relationship with the meeting
+  // and email summaries, the CRM plan with its interview notes, the activity
+  // feed), Properties & deals, People & checks, News & media, Files.
   if (isLandlord && flat && !isLender) {
-    const masonryCls = "space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense";
+    const tracked = ownedProperties.filter((p) => p.name).length;
     return (
-      <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="landlord-profile">
-        {profileTopRow}
-        {refreshStatus}
-        {/* BGP's own read of the relationship: a client opening its own page
-            was shown "Access denied" here (contacts review, 2026-11-14). */}
-        {!isClientViewer && <div data-testid="landlord-relationship-brief" className="[&_[data-testid=ai-commentary]]:text-sm [&_[data-testid=ai-commentary]]:leading-relaxed">
-          <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} landlord={!isClientViewer}
-            leading={!isClientViewer && <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-2 gap-3" data-testid="landlord-activity-pair">
-              <LandlordMeetingsSummary key={companyId} companyId={companyId} companyName={c.name} />
-              <LandlordEmailSummary key={`emails-${companyId}`} companyId={companyId} companyName={c.name} entities={commentaryEntities} />
+      <CompanyKindPage key={companyId} testId="landlord-profile">{select => ({
+        top: kindPageTop(select, "Working with BGP", <>
+          <BandFigure label={tracked === 1 ? "Property we track" : "Properties we track"} value={kindFigure(tracked)} onClick={() => select("portfolio")} title="Opens Properties & deals" testId="landlord-figure-properties" />
+          <BandFigure label={`Live deal${activeDealCount === 1 ? "" : "s"}`} value={kindFigure(activeDealCount)} onClick={() => select("portfolio")} title="Opens Properties & deals" testId="landlord-figure-live-deals" />
+          <BandFigure label="Completed" title={`${completedDealCount} completed deal${completedDealCount === 1 ? "" : "s"}`} value={kindFigure(completedDealCount)} testId="landlord-figure-completed-deals" />
+          <BandFigure label={`${isClientViewer ? "Contact" : "CRM contact"}${data.contacts.length === 1 ? "" : "s"}`} value={kindFigure(data.contacts.length)} onClick={() => select("people")} title="Opens People & checks" testId="landlord-figure-contacts" />
+        </>, landRegistryTitles.length > 0
+          ? <p className="text-[11px] text-muted-foreground" data-testid="landlord-figure-titles"><span className="font-mono tabular-nums text-foreground">{kindFigure(landRegistryTitles.length)}</span>{landRegistryTitles.length >= 200 ? "+" : ""} registered titles at Land Registry under this company</p>
+          : undefined),
+        sections: [
+          { key: "overview", label: "Overview", body: <>
+            {/* BGP's own read of the relationship: a client opening its own page
+                was shown "Access denied" here (contacts review, 2026-11-14). */}
+            {!isClientViewer && <div data-testid="landlord-relationship-brief" className="[&_[data-testid=ai-commentary]]:text-sm [&_[data-testid=ai-commentary]]:leading-relaxed">
+              <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} landlord={!isClientViewer}
+                leading={!isClientViewer && <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-2 gap-3" data-testid="landlord-activity-pair">
+                  <LandlordMeetingsSummary key={companyId} companyId={companyId} companyName={c.name} />
+                  <LandlordEmailSummary key={`emails-${companyId}`} companyId={companyId} companyName={c.name} entities={commentaryEntities} />
+                </div>}
+                />
             </div>}
-            />
-        </div>}
-        <BrandCard title="Activity" testId="landlord-activity-feed"><ActivitySummary companyId={companyId} /></BrandCard>
-        {staffPlan && <LandlordEngagementPanel companyId={companyId} companyName={c.name} />}
-        <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
-        <AccountDealsBoard companyId={companyId} />
-        {!isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
-        <div className="grid grid-cols-1 [@container(min-width:900px)]:grid-cols-2 gap-3 [@container(min-width:900px)]:gap-4 items-stretch" data-testid="landlord-contacts-checks">
-          <div className="grid min-w-0 [&>aside]:contents">
-            <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
-          </div>
-          <LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} />
-        </div>
-        <MasonryGrid className={masonryCls}>
-          {isClientViewer && <AccountNextActionsCard companyId={companyId} />}
-          {/* Staff see these rows in Team view → Investment already. */}
-          {isClientViewer && <InvestmentRequirementsCard companyId={companyId} />}
-          <BrandProfileSidebar data={data} companyId={companyId} only={["team"]} />
-          {c.stock_ticker && <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />}
-          {/* Signals are hidden on Landlord pages while the board is reviewed.
-              The underlying records and Brand presentation are retained. */}
-        </MasonryGrid>
-        <div className="min-w-0 w-full" data-testid="landlord-news-social-row">
-          <BrandProfileSidebar data={data} companyId={companyId} only={["news", "feed"]} />
-        </div>
-        <div className="grid grid-cols-1 [@container(min-width:900px)]:grid-cols-2 gap-3 [@container(min-width:900px)]:gap-4 items-start" data-testid="landlord-files-gallery">
-          <div className="flex flex-col gap-3 min-w-0">
-            <BrandProfileSidebar data={data} companyId={companyId} only={["files"]} />
-            <AccountFolderTreeCard companyId={companyId} />
-          </div>
-          <div className="min-w-0">
-            <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} />
-          </div>
-        </div>
-        {viewerDialogs}
-      </div>
+            {staffPlan && <LandlordEngagementPanel companyId={companyId} companyName={c.name} />}
+            {kindActivity("landlord-activity-feed")}
+            {isClientViewer && <AccountNextActionsCard companyId={companyId} />}
+          </> },
+          { key: "portfolio", label: "Properties & deals", count: tracked, body: <>
+            <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
+            <AccountDealsBoard companyId={companyId} />
+            {!isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
+            {/* Staff see these rows in Team view → Investment already. */}
+            {isClientViewer && <InvestmentRequirementsCard companyId={companyId} />}
+          </> },
+          { key: "people", label: "People & checks", count: isClientViewer ? null : data.contacts.length, body: <>
+            <div className="grid grid-cols-1 [@container(min-width:900px)]:grid-cols-2 gap-3 [@container(min-width:900px)]:gap-4 items-stretch" data-testid="landlord-contacts-checks">
+              <div className="grid min-w-0 [&>aside]:contents">
+                <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
+              </div>
+              <LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} />
+            </div>
+            {c.stock_ticker && <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />}
+            {/* Signals are hidden on Landlord pages while the board is reviewed.
+                The underlying records and Brand presentation are retained. */}
+          </> },
+          // No count: the board lists the landlord's own stories with the trade press.
+          { key: "news", label: "News & media", body: <>
+            <div className="min-w-0 w-full" data-testid="landlord-news-social-row">
+              <BrandProfileSidebar data={data} companyId={companyId} only={["news", "feed"]} />
+            </div>
+            <div className="min-w-0"><BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} /></div>
+          </> },
+          { key: "files", label: "Files", body: (
+            // The folder tree draws nothing until a folder is linked: the files card then takes the row.
+            <div className="flex flex-col gap-3 [@container(min-width:900px)]:flex-row [@container(min-width:900px)]:gap-4 items-start" data-testid="landlord-files">
+              <div className="min-w-0 w-full flex-1 empty:hidden"><BrandProfileSidebar data={data} companyId={companyId} only={["files"]} /></div>
+              {/* BGP's folder inventory: the server refuses it to a client login, so it is not asked for. */}
+              {!isClientViewer && <div className="min-w-0 w-full flex-1 empty:hidden"><AccountFolderTreeCard companyId={companyId} /></div>}
+            </div>
+          ) },
+        ],
+        foot: kindPageFoot,
+      })}</CompanyKindPage>
     );
   }
 
-  // Lender page — the landlord pattern: profile beside the conversation,
-  // then what they lend on and their terms, then people, KYC and news.
+  // Lender page: Overview (the lending terms, the CRM plan, the activity
+  // feed), Loans & properties, People & checks, News & media.
   if (isLender && flat) {
-    const masonryCls = "space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense";
     return (
-      <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="lender-profile">
-        {profileTopRow}
-        {refreshStatus}
-        {lenderSlot}
-        {/* The CRM plan: a lender can hold a strategy, events and actions (15 November 2026). */}
-        {staffPlan && <LandlordEngagementPanel companyId={companyId} companyName={c.name} interviews={false} />}
-        <MasonryGrid className={masonryCls}>
-          <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
-          <div className="flex flex-col gap-3">
-            <BrandProfileSidebar data={data} companyId={companyId} only={["compliance"]} />
-            {topSlot}
-          </div>
-          <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
-        </MasonryGrid>
-        {viewerDialogs}
-      </div>
+      <CompanyKindPage key={companyId} testId="lender-profile">{select => ({
+        top: kindPageTop(select, "Lending at a glance", lenderParts ? lenderParts.glance(() => select("loans")) : undefined),
+        sections: [
+          { key: "overview", label: "Overview", body: <>
+            {/* Without the parts (an older caller) both boards sit here, side by side. */}
+            {lenderParts ? lenderParts.terms : lenderSlot}
+            {/* The CRM plan: a lender can hold a strategy, events and actions (15 November 2026). */}
+            {staffPlan && <LandlordEngagementPanel companyId={companyId} companyName={c.name} interviews={false} />}
+            {!isClientViewer && kindActivity("lender-activity-feed")}
+          </> },
+          ...(lenderParts ? [{ key: "loans", label: "Loans & properties", body: lenderParts.loans }] : []),
+          { key: "people", label: "People & checks", count: isClientViewer ? null : data.contacts.length, body: <>
+            <div className={companyPair} data-testid="lender-contacts-checks">
+              <div className="grid min-w-0 [&>aside]:contents"><BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} /></div>
+              <div className={companyStack}>
+                <BrandProfileSidebar data={data} companyId={companyId} only={["compliance"]} />
+                {topSlot}
+              </div>
+            </div>
+            {!isClientViewer && <div className="empty:hidden"><CompanyInvoicingControls companyId={c.id} contactEmails={data.contacts.map(contact => contact.email)} /></div>}
+          </> },
+          { key: "news", label: "News & media", count: (data.news || []).length, body: <>
+            <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
+            {kindNewsEmpty("lender")}
+          </> },
+        ],
+        foot: kindPageFoot,
+      })}</CompanyKindPage>
     );
   }
 
-  // Agent page — its own layout (Woody, 2026-09-26: "there are different
-  // types of agents ... their different roles / relationships with the
-  // business"). Profile beside the conversation, then their relationship
-  // with BGP (roles from the evidence, with each strand listed), then who
-  // they represent, their people and news.
+  // Agent page (Woody, 2026-09-26: "there are different types of agents ...
+  // their different roles / relationships with the business"): Overview (the
+  // roles the firm plays with BGP, read from the evidence, the CRM plan, the
+  // activity feed), Brands & deals (who they represent, their dealings and
+  // viewings), People, News & media. A client login reads who they represent,
+  // their people and the news: the dealings are BGP's own record.
   if (isAgentFirm && flat) {
-    const masonryCls = "space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense";
+    const represents = (data.representing.length > 0 || addRep) ? <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-2" data-testid="agent-represents">{representsBlock}</div>
+      // An empty "Currently representing (0)" card is a slim Add link (Woody, 2026-09-28).
+      : !isClientViewer ? <Button size="sm" variant="ghost" className="justify-self-start h-7 px-2 text-xs text-muted-foreground" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand"><Plus className="w-3 h-3 mr-1" /> Add a brand they represent</Button> : null;
+    const hasMedia = (data.news || []).length > 0 || (data.images || []).length > 0;
     return (
-      <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="agent-profile">
-        {profileTopRow}
-        {refreshStatus}
-        {!isClientViewer && <AgentRelationshipCard companyId={companyId} />}
-        {/* The CRM plan: an agent firm can hold a strategy, events and actions (15 November 2026). */}
-        {staffPlan && <LandlordEngagementPanel companyId={companyId} companyName={c.name} interviews={false} />}
-        {/* No news → one column: two columns left a blank half beside Key
-            contacts (CBRE; Woody, 2026-09-28). That column is capped and
-            gapped (space-y missed the display:contents cards), and an empty
-            "Currently representing (0)" card becomes a slim Add link
-            (Woody, 2026-09-28). */}
-        {/* Full width, not max-w-3xl: the capped column stopped 200px short
-            of the relationship and gallery boards above and below it. */}
-        <MasonryGrid className={data.news?.length ? masonryCls : "flex flex-col gap-3 w-full"}>
-          {(data.representing.length > 0 || addRep) ? <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-2" data-testid="agent-represents">{representsBlock}</div>
-            : !isClientViewer && <Button size="sm" variant="ghost" className="self-start h-7 px-2 text-xs text-muted-foreground" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand"><Plus className="w-3 h-3 mr-1" /> Add a brand they represent</Button>}
-          <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
-          <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
-        </MasonryGrid>
-        {/* The agent page has no photo strip, so nothing is "shown above". */}
-        <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} heroStrip={false} />
-        {viewerDialogs}
-      </div>
+      <AgentDealingsScope key={companyId}>
+      <CompanyKindPage key={companyId} testId="agent-profile">{select => {
+        // A role chip or a figure opens the list it counts, under the pill that holds it.
+        const openList = (tab: AgentTab | "represents" | "contacts") => select(tab === "teams" || tab === "contacts" ? "people" : "brands");
+        return {
+        top: kindPageTop(select, "Working with BGP",
+          <AgentGlance companyId={companyId} representing={data.representing.length} contacts={data.contacts.length} staff={!isClientViewer} onOpen={openList} />),
+        sections: [
+          ...(isClientViewer ? [] : [{ key: "overview", label: "Overview", body: <>
+            <AgentRelationshipCard companyId={companyId} part="roles" onOpen={openList} />
+            {/* The CRM plan: an agent firm can hold a strategy, events and actions (15 November 2026). */}
+            {staffPlan && <LandlordEngagementPanel companyId={companyId} companyName={c.name} interviews={false} />}
+            {kindActivity("agent-activity-feed")}
+          </> }]),
+          ...(isClientViewer && !represents ? [] : [{ key: "brands", label: "Brands & deals", count: data.representing.length, body: <>
+            {represents}
+            {!isClientViewer && <div className={companyPair}>
+              <AgentRelationshipCard companyId={companyId} part="dealings" />
+              <AgentRelationshipCard companyId={companyId} part="viewings" />
+            </div>}
+            {dealsSlot && <div className="min-w-0 space-y-3 empty:hidden" data-testid="agent-linked-properties">{dealsSlot}</div>}
+          </> }]),
+          { key: "people", label: "People", count: isClientViewer ? null : data.contacts.length, body: <>
+            <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
+            {!isClientViewer && <AgentRelationshipCard companyId={companyId} part="teams" />}
+            {!isClientViewer && <div className="empty:hidden"><CompanyInvoicingControls companyId={c.id} contactEmails={data.contacts.map(contact => contact.email)} /></div>}
+          </> },
+          ...(isClientViewer && !hasMedia ? [] : [{ key: "news", label: "News & media", count: (data.news || []).length, body: <>
+            <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
+            {kindNewsEmpty("firm")}
+            {/* The agent page has no photo strip, so nothing is "shown above". */}
+            <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} heroStrip={false} />
+          </> }]),
+        ],
+        foot: kindPageFoot,
+        };
+      }}</CompanyKindPage>
+      </AgentDealingsScope>
     );
   }
 

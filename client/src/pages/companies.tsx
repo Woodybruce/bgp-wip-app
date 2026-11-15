@@ -64,7 +64,7 @@ import { MobileBrandView } from "@/components/mobile-brand-view";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useGoBack } from "@/lib/go-back";
 import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
-import { LenderPanel } from "@/components/lender-panel";
+import { LenderPanel, LenderGlance } from "@/components/lender-panel";
 import { isLandlordCompany } from "@/lib/company-kind";
 import { PropertiesSummary } from "@/components/properties-summary";
 
@@ -1039,7 +1039,10 @@ function CompanyDetail({ id }: { id: string }) {
   const [brandBadgesEl, setBrandBadgesEl] = useState<HTMLElement | null>(null);
   const [brandActionsEl, setBrandActionsEl] = useState<HTMLElement | null>(null);
   const [brandHeaderReported, setBrandHeaderReported] = useState<boolean | null>(null);
-  useEffect(() => { setBrandHeaderReported(null); }, [id]);
+  // A landlord, agent firm or lender page does the same with its actions
+  // (Start strategy, Edit, one More menu): Woody, 2026-11-15.
+  const [kindPageReported, setKindPageReported] = useState<boolean | null>(null);
+  useEffect(() => { setBrandHeaderReported(null); setKindPageReported(null); }, [id]);
   // Client logins get a read-only view — hide BGP staff editing controls.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientViewer = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
@@ -1078,6 +1081,10 @@ function CompanyDetail({ id }: { id: string }) {
   const usePropertiesBoard = isLenderCo || isLandlordCo;
   const brandByType = /^tenant/i.test(company?.companyType || "") && !isLenderCo && !isLandlordCo && !company?.agentType;
   const brandHeader = brandHeaderReported ?? brandByType;
+  const agentByType = !isLenderCo && !isLandlordCo && (/^agent/i.test(company?.companyType || "") || !!company?.agentType);
+  const kindHeader = !brandHeader && (kindPageReported ?? (isLenderCo || isLandlordCo || agentByType));
+  // An agent firm's linked properties sit under its Brands & deals pill.
+  const agentPage = kindHeader && agentByType;
 
   // The firm-wide lists are asked for only when a block that reads them can
   // be drawn (they were 3.5 MB on every brand page, where a brand's deals
@@ -1382,8 +1389,8 @@ function CompanyDetail({ id }: { id: string }) {
         <BotOff className="w-4 h-4 mr-1" />AI Off
       </Button>
       )}
-      {/* On a brand's page Edit and Delete sit in the profile's More menu. */}
-      {!brandHeader && <>
+      {/* On a brand's page Edit and Delete sit in the profile's More menu; a landlord, agent firm or lender page has Edit beside its own actions and Delete in its More menu. */}
+      {!brandHeader && !kindHeader && <>
       <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-company">
         <Pencil className="w-4 h-4 mr-1" />
         Edit
@@ -1407,7 +1414,7 @@ function CompanyDetail({ id }: { id: string }) {
   return (
     // A brand's page clips sideways overflow without becoming a scroll box of
     // its own, so the profile's pill row can stay in view as the page scrolls.
-    <div className={`p-4 sm:p-6 space-y-6 ${brandHeader ? "overflow-x-clip" : "overflow-x-hidden"}`} data-testid="company-detail">
+    <div className={`p-4 sm:p-6 space-y-6 ${brandHeader || kindHeader ? "overflow-x-clip" : "overflow-x-hidden"}`} data-testid="company-detail">
       <CompanyFormDialog open={editOpen} onOpenChange={setEditOpen} company={company} />
 
       {/* A brand's header is laid out by the width it actually has (the
@@ -1481,15 +1488,20 @@ function CompanyDetail({ id }: { id: string }) {
               showed a grid of "—" (boards pass 2026-09-28). The loans board
               lists every secured property, so no separate map board. */}
           <BrandProfilePanel companyId={id} showPropertiesBoard={usePropertiesBoard && !isLenderCo} flat
-            pageHeader={{ badgesEl: brandBadgesEl, actionsEl: brandActionsEl, onActive: setBrandHeaderReported,
+            pageHeader={{ badgesEl: brandBadgesEl, actionsEl: brandActionsEl, onActive: setBrandHeaderReported, onKindPage: setKindPageReported,
               onEditCompany: () => setEditOpen(true), onDeleteCompany: () => { if (confirm("Delete this company?")) deleteMutation.mutate(); } }}
             topSlot={<>{/* The server refuses Group entities to every client login: on a brand's page it is not asked for (two refused requests on each open). By the company's type too, because the profile reports "not a brand page" until it has loaded. */}{!((brandHeader || brandByType) && isClientViewer) && <AccountEntitiesPanel companyId={id} hideSingleEntity={/^tenant/i.test(company.companyType || "")} />}{brandHeader && isClientViewer && <SubCompaniesPanel parentId={id} parentName={company.name} />}</>}
-            dealsSlot={brandHeader ? linkedPropertiesBlock : undefined}
-            lenderSlot={isLenderCo ? <LenderPanel companyId={id} company={company} canEdit={!isClientViewer} /> : undefined} />
+            dealsSlot={brandHeader || agentPage ? linkedPropertiesBlock : undefined}
+            lenderSlot={isLenderCo ? <LenderPanel companyId={id} company={company} canEdit={!isClientViewer} /> : undefined}
+            lenderParts={isLenderCo ? {
+              terms: <LenderPanel companyId={id} company={company} canEdit={!isClientViewer} only="terms" />,
+              loans: <LenderPanel companyId={id} company={company} canEdit={!isClientViewer} only="loans" />,
+              glance: openLoans => <LenderGlance companyId={id} company={company} onOpenLoans={openLoans} />,
+            } : undefined} />
 
           {/* A brand's page shows these under Deals & space (handed to the
               profile above), not under whichever section is open. */}
-          {!brandHeader && linkedPropertiesBlock}
+          {!brandHeader && !agentPage && linkedPropertiesBlock}
 
         </div>
 

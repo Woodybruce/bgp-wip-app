@@ -1292,9 +1292,33 @@ calendars), the order of work and the four decisions waiting on him are in
   `brand-profile-panel.tsx`, and the phone view), with
   `interviews={false}`, and with `companyName` it offers **Start
   strategy** to BGP staff on a company that is on no active strategy.
-  NOT built: landlord, agent and lender pages re-laid in the brand page's
-  header, summary card and pills (step 5 of the review); they keep their
-  own layouts until Woody has seen a design.
+- **Landlord, agent firm and lender pages in the brand page's shape**
+  (step 5 of the review; Woody, 2026-11-15: "Company pages yes", then
+  "Yes to all" on the design: the conversation as one line, Files as its
+  own pill on the landlord page, the Activity feed on agent and lender
+  pages). Desktop only; the phone view keeps its pills. The frame is
+  `client/src/components/company-page/company-kind-page.tsx`
+  (`CompanyKindPage`: one section at a time, kept in `?section=` with a
+  history replace, a section drawn the first time it is opened and then
+  kept; `CompanySummaryCard`; `CompanyWhereWeAre` and
+  `CompanyStartStrategy`, both reading the plan under the plan card's own
+  query key). `brand-profile-panel.tsx` builds the three pages from the
+  cards they already had (`kindPageTop`, `kindMoreItems`,
+  `kindHeaderActions`, and the three `if (... && flat)` branches):
+  landlord Overview / Properties & deals / People & checks / News & media
+  / Files; agent Overview / Brands & deals / People / News & media;
+  lender Overview / Loans & properties / People & checks / News & media.
+  The actions are portalled onto the company page's header line (Start
+  strategy, Email, Call, Edit and ONE More menu); the profile reports
+  `kindTop` through `pageHeader.onKindPage` and `companies.tsx` then
+  leaves its own Edit and Delete out (`kindHeader`). "Where we are" and
+  Start strategy are BGP staff only (`staffPlan`); a client login on an
+  agent firm gets no Overview and no dealings. `AgentRelationshipCard`
+  takes `part` (roles, dealings, viewings, teams) with the open list
+  shared through `AgentDealingsScope`; `LenderPanel` takes `only` and
+  `LenderGlance` is the lender's figures. Layout pins:
+  `qa/regression/landlord-profile-ui.test.mjs`. Every card those pages
+  had is still on them: move a card between pills there, never drop one.
 - **Closer watching** (`server/crm-watch.ts`): a company on a running
   strategy goes first in the nightly store count, planning and jobs check,
   accounts read and signal tidy, and is re-checked every 7 days, not 30

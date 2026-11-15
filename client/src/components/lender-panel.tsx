@@ -18,6 +18,7 @@ import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { gbDate } from "@/lib/format";
 import { moneyM, debtEventLabel } from "@/components/account-team-views";
 import { useToast } from "@/hooks/use-toast";
+import { BandFigure } from "@/components/brand-page/brand-top";
 import type { CrmCompany } from "@shared/schema";
 
 const LENDER_TYPE_LABELS: Record<string, string> = {
@@ -115,8 +116,9 @@ const fmtDate = (d: string | null | undefined) => d ? gbDate(d, { day: "numeric"
 const rowPill = (active: boolean) => `${pillMetrics} ${active ? pillActive : pillInactive}`;
 const sectionLabel = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
 
-export function LenderPanel({ companyId, company, canEdit = true }: { companyId: string; company: CrmCompany; canEdit?: boolean }) {
-  const c = company as any;
+// The three lender lookups, under one set of keys: the boards and the
+// summary figures on the lender's page share one request each.
+function useLenderBook(companyId: string) {
   const { data: securedProperties = [] } = useQuery<SecuredProperty[]>({
     queryKey: ["/api/lenders/secured-properties", companyId],
     queryFn: () => fetchJson<SecuredProperty>(`/api/lenders/secured-properties?companyId=${companyId}`),
@@ -129,7 +131,34 @@ export function LenderPanel({ companyId, company, canEdit = true }: { companyId:
     queryKey: ["/api/lenders/lr-charges", companyId],
     queryFn: () => fetchJson<LrCharge>(`/api/lenders/lr-charges?companyId=${companyId}`),
   });
+  return { securedProperties, debtEvents, lrCharges };
+}
 
+// "Lending at a glance" on the lender page's summary card: only what has
+// been recorded. With nothing recorded it is one quiet line.
+export function LenderGlance({ companyId, company, onOpenLoans }: { companyId: string; company: CrmCompany; onOpenLoans?: () => void }) {
+  const c = company as any;
+  const { securedProperties, lrCharges } = useLenderBook(companyId);
+  const range = c.typicalLoanSizeMinM != null && c.typicalLoanSizeMaxM != null ? `£${c.typicalLoanSizeMinM}m to £${c.typicalLoanSizeMaxM}m`
+    : c.typicalLoanSizeMaxM != null ? `up to £${c.typicalLoanSizeMaxM}m` : c.typicalLoanSizeMinM != null ? `from £${c.typicalLoanSizeMinM}m` : null;
+  const figures = [
+    c.typicalLtvMax != null ? <BandFigure key="ltv" label="Max loan to value" value={`${c.typicalLtvMax}%`} testId="lender-figure-ltv" /> : null,
+    range ? <BandFigure key="range" label="Loan range" value={range} testId="lender-figure-range" /> : null,
+    securedProperties.length ? <BandFigure key="loans" label={`Loan${securedProperties.length === 1 ? "" : "s"} recorded`} value={securedProperties.length.toLocaleString("en-GB")} onClick={onOpenLoans} title="Opens Loans & properties" testId="lender-figure-loans" /> : null,
+    lrCharges.length ? <BandFigure key="charges" label={`Land Registry charge${lrCharges.length === 1 ? "" : "s"}`} value={lrCharges.length.toLocaleString("en-GB")} onClick={onOpenLoans} title="Opens Loans & properties" testId="lender-figure-charges" /> : null,
+  ].filter(Boolean);
+  if (!figures.length) return <p className="col-span-full text-[13px] leading-snug text-muted-foreground" data-testid="lender-glance-empty">No lending terms or loans recorded yet.</p>;
+  return <>{figures}</>;
+}
+
+// only: one board by itself (the lender page shows the terms under Overview
+// and the loans under Loans & properties). Without it, both side by side.
+export function LenderPanel({ companyId, company, canEdit = true, only }: { companyId: string; company: CrmCompany; canEdit?: boolean; only?: "loans" | "terms" }) {
+  const c = company as any;
+  const { securedProperties, debtEvents, lrCharges } = useLenderBook(companyId);
+
+  if (only === "loans") return <LoansBoard securedProperties={securedProperties} debtEvents={debtEvents} lrCharges={lrCharges} />;
+  if (only === "terms") return <LendingTermsBoard companyId={companyId} company={company} canEdit={canEdit} key={c.id} />;
   return (
     <div className="grid gap-3 [@container(min-width:900px)]:grid-cols-[3fr_2fr] items-start" data-testid="lender-panel">
       <LoansBoard securedProperties={securedProperties} debtEvents={debtEvents} lrCharges={lrCharges} />

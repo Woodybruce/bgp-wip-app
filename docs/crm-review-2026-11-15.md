@@ -184,10 +184,17 @@ Built for BGP (steps 1 and 2 of the order of work, and the start of 4):
 - **The CRM plan card on agent firm and lender pages**, and **Start
   strategy** on the plan card of every company page.
 
-Still to do: the landlord, agent and lender pages in the brand page's shape
-(step 5: one header with a More menu, a summary card and pills). Those pages
-each have a layout the team already uses, so this waits for Woody to see a
-design first.
+- **Landlord, agent and lender pages in the brand page's shape** (step 5;
+  Woody saw the design and said "Yes to all"). On a computer each page is
+  now: the actions on the header line (Start strategy, Edit and one More
+  menu), one summary card (About, the relationship in figures and, for BGP
+  staff, Where we are: owner, last contact, next action, strategy), the
+  conversation as one line, then pills showing one section at a time.
+  Landlord: Overview, Properties & deals, People & checks, News & media,
+  Files. Agent: Overview, Brands & deals, People, News & media. Lender:
+  Overview, Loans & properties, People & checks, News & media. Agent and
+  lender pages gain the Activity feed. Every card those pages had is still
+  there. The phone view is unchanged.
 
 ## Built earlier on 15 November 2026
 

@@ -74,13 +74,20 @@ test('only landlord starters gain the meetings question', () => {
   }
 });
 
-test('landlord profile and chat lead the page, with staff meeting/team brief and interview notes immediately below', () => {
+// Landlord, agent firm and lender pages took the brand page's shape on 15 November 2026 (Woody: "Company pages yes",
+// then "Yes to all" on the design): a summary card, the conversation as one line, then pills, one section at a time.
+function branchOf(expression) {
   const ast = ts.createSourceFile(panel, source(panel), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let branch;
-  function visit(node) { if (ts.isIfStatement(node) && node.expression.getText(ast) === 'isLandlord && flat && !isLender') branch = node; ts.forEachChild(node, visit); }
+  function visit(node) { if (ts.isIfStatement(node) && node.expression.getText(ast) === expression) branch = node; ts.forEachChild(node, visit); }
   visit(ast);
-  assert.ok(branch);
-  const code = branch.getText(ast);
+  assert.ok(branch, expression);
+  return branch.getText(ast);
+}
+const sectionKeys = code => [...code.matchAll(/\{ key: "(\w+)", label: "([^"]+)"/g)].map(match => `${match[1]}:${match[2]}`);
+
+test('landlord page opens on Overview: the staff brief with the meeting summaries, the CRM plan with its interview notes, then the activity feed', () => {
+  const code = branchOf('isLandlord && flat && !isLender');
   assert.match(code, /leading=\{!isClientViewer &&/);
   assert.match(code, /<LandlordMeetingsSummary/);
   // The interview notes moved into the CRM plan panel on 2026-10-28, so a note can become an action there:
@@ -94,39 +101,92 @@ test('landlord profile and chat lead the page, with staff meeting/team brief and
   // The BGP team is part of People (Woody, 2026-11-14), not a block under the take.
   assert.doesNotMatch(code, /LandlordRelationshipTeam|footer=/);
   assert.match(source(panel), /teamSlot=\{<CompanyBgpTeam [^\n]*staff=\{!sbIsClient\} \/>\}/);
-  assert.ok(code.indexOf('{profileTopRow}') < code.indexOf('landlord-relationship-brief'));
+  // The top (summary card and conversation) leads; Overview reads brief, plan, activity; the portfolio has its own pill.
+  assert.ok(code.indexOf('top: kindPageTop(select,') < code.indexOf('landlord-relationship-brief'));
   assert.ok(code.indexOf('landlord-relationship-brief') < code.indexOf('<LandlordEngagementPanel'));
-  assert.ok(code.indexOf('<LandlordEngagementPanel') < code.indexOf('<CompanyPropertiesBoard'));
-  assert.equal((code.match(/\{profileTopRow\}/g) || []).length, 1);
-  assert.ok(source(panel).includes('{!(isLandlord && flat && !isLender) && relationshipSummary}'));
+  assert.ok(code.indexOf('<LandlordEngagementPanel') < code.indexOf('kindActivity("landlord-activity-feed")'));
+  assert.ok(code.indexOf('kindActivity("landlord-activity-feed")') < code.indexOf('<CompanyPropertiesBoard'));
+  assert.deepEqual(sectionKeys(code), ['overview:Overview', 'portfolio:Properties & deals', 'people:People & checks', 'news:News & media', 'files:Files']);
+  // Every card the page had is still on it, once.
+  for (const card of ['<CompanyPropertiesBoard', '<AccountDealsBoard', '<AccountTeamViewsCard', '<LandlordCompanyChecksCard', '<StockSnapshotCard', '<AccountFolderTreeCard', '<AccountNextActionsCard', '<InvestmentRequirementsCard',
+    'only={["contacts"]}', 'only={["news", "feed"]}', 'only={["gallery"]}', 'only={["files"]}']) assert.equal(code.split(card).length - 1, 1, card);
+  // The relationship is read in the summary card's figures on these pages, not under About again.
+  assert.ok(source(panel).includes('{!kindTop && relationshipSummary}'));
 });
 
-test('only Landlord top row puts chat first on phones and retains profile-left desktop columns', () => {
-  const ast = ts.createSourceFile(panel, source(panel), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  let declaration;
-  function visit(node) { if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'profileTopRow') declaration = node; ts.forEachChild(node, visit); }
-  visit(ast);
-  const render = (isLandlord, isLender) => {
-    // The landlord glance (portfolio, listed-company facts, the relationship in numbers; 2026-10-28) sits in the profile card.
-    const sandbox = { exports: {}, require, isLandlord, isLender, editing: false, header: 'Profile', topInfo: 'Facts', aboutBody: 'About', data: {}, conversationSlot: null, conversationBoard: React.createElement('section', { 'data-testid': 'chat' }),
-      landlordGlance: isLandlord && !isLender ? React.createElement('div', { 'data-testid': 'glance' }) : null };
-    vm.runInNewContext(ts.transpileModule(`const ${declaration.getText(ast)}; exports.row = profileTopRow;`, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText, sandbox);
-    return sandbox.exports.row;
-  };
-  const landlord = render(true, false);
-  assert.match(landlord.props.className, /flex flex-col-reverse gap-3/);
-  assert.match(landlord.props.className, /\[@container\(min-width:900px\)\]:grid /);
-  assert.match(landlord.props.className, /\[@container\(min-width:900px\)\]:grid-cols-2/);
-  const columns = React.Children.toArray(landlord.props.children);
-  assert.ok(nodes(columns[0]).some(node => node.props['data-testid'] === 'brand-profile-card'));
-  assert.ok(nodes(columns[0]).some(node => node.props['data-testid'] === 'glance'), 'the glance is drawn inside the profile column');
-  assert.ok(nodes(columns[1]).some(node => node.props['data-testid'] === 'chat'));
-  assert.doesNotMatch(columns[1].props.className, /pt-3/);
-  for (const flags of [[false, false], [true, true]]) {
-    const other = render(...flags);
-    assert.doesNotMatch(other.props.className, /flex-col-reverse/);
-    assert.equal(React.Children.toArray(other.props.children)[1].props.className, 'pt-3');
+test('agent firm and lender pages use the same frame, each with its own pills, and gain the activity feed for staff', () => {
+  const agent = branchOf('isAgentFirm && flat'), lender = branchOf('isLender && flat');
+  assert.deepEqual(sectionKeys(agent), ['overview:Overview', 'brands:Brands & deals', 'people:People', 'news:News & media']);
+  assert.deepEqual(sectionKeys(lender), ['overview:Overview', 'loans:Loans & properties', 'people:People & checks', 'news:News & media']);
+  for (const code of [agent, lender]) {
+    assert.match(code, /<CompanyKindPage key=\{companyId\} testId="(agent|lender)-profile">/);
+    assert.match(code, /top: kindPageTop\(select,/);
+    assert.match(code, /foot: kindPageFoot/);
   }
+  assert.match(agent, /kindActivity\("agent-activity-feed"\)/);
+  assert.match(lender, /\{!isClientViewer && kindActivity\("lender-activity-feed"\)\}/);
+  // The dealings are BGP's own record: a client login is given no Overview and no dealings on an agent firm.
+  assert.match(agent, /\.\.\.\(isClientViewer \? \[\] : \[\{ key: "overview"/);
+  for (const part of ['roles', 'dealings', 'viewings', 'teams']) assert.equal(agent.split(`part="${part}"`).length - 1, 1, part);
+  assert.match(agent, /\{!isClientViewer && <div className=\{companyPair\}>\s*<AgentRelationshipCard companyId=\{companyId\} part="dealings" \/>/);
+  assert.match(agent, /\{!isClientViewer && <AgentRelationshipCard companyId=\{companyId\} part="teams" \/>\}/);
+  // The lender's terms sit under Overview and its loans under their own pill.
+  assert.match(lender, /\{lenderParts \? lenderParts\.terms : lenderSlot\}/);
+  assert.match(lender, /key: "loans", label: "Loans & properties", body: lenderParts\.loans/);
+});
+
+test('the top of a landlord, agent or lender page: one summary card, Where we are for BGP staff only, the conversation as one line', () => {
+  const ast = ts.createSourceFile(panel, source(panel), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const declared = name => { let found; (function visit(node) { if (ts.isVariableDeclaration(node) && node.name.getText(ast) === name) found = node; ts.forEachChild(node, visit); })(ast); assert.ok(found, name); return found.getText(ast); };
+  const top = declared('kindPageTop');
+  assert.match(top, /<CompanySummaryCard about=\{kindAbout\}/);
+  assert.match(top, /where=\{staffPlan \? <CompanyWhereWeAre /);
+  assert.match(top, /<CompanyMiniChat companyId=\{companyId\} companyName=\{c\.name\} key=\{isLandlord \? companyId : undefined\} landlord=\{isLandlord && !isBrand && !isLender\} compact stacked/);
+  assert.match(top, /\{!landsecRestricted && <div className="min-w-0" data-testid="brand-conversation">/);
+  // The actions sit on the page's header line, with the housekeeping in one More menu; a client login gets no editing, refresh or delete.
+  const menu = declared('kindMoreItems'), actions = declared('kindHeaderActions');
+  assert.match(menu, /^kindMoreItems: BrandMenuItem\[\] = !kindTop \? \[\] : \[\s*\.\.\.\(isClientViewer \? \[\] : \[/);
+  assert.match(menu, /\.\.\.\(!isClientViewer && pageHeader\?\.onDeleteCompany \? \[\{ key: "delete"/);
+  assert.match(actions, /\{staffPlan && <CompanyStartStrategy companyId=\{companyId\} companyName=\{c\.name\} \/>\}/);
+  assert.match(actions, /\{!isClientViewer && pageHeader\?\.onEditCompany && <Button /);
+  assert.match(actions, /<BrandMoreMenu items=\{kindMoreItems\} \/>/);
+  // The page hands Edit and Delete over once the profile says it is one of these pages.
+  const page = source('client/src/pages/companies.tsx');
+  assert.match(page, /onKindPage: setKindPageReported/);
+  assert.match(page, /\{!brandHeader && !kindHeader && <>/);
+});
+
+test('a company page shows one section at a time, keeps it in the address and draws a section only once it is opened', () => {
+  const file = 'client/src/components/company-page/company-kind-page.tsx';
+  const replaced = [];
+  const run = (search, opened = []) => {
+    let call = 0, select;
+    const page = component('CompanyKindPage', {
+      useState: initial => (++call === 1 ? [typeof initial === 'function' ? initial() : initial, () => {}] : [opened, () => {}]),
+      window: { location: { search, href: `https://app.test/companies/1${search}` }, history: { state: 'kept', replaceState: (...args) => replaced.push(args) } },
+      URLSearchParams, URL,
+    }, file);
+    const tree = page({ testId: 'landlord-profile', children: pick => { select = pick; return { top: 'TOP', foot: 'FOOT',
+      sections: [{ key: 'overview', label: 'Overview', body: 'A' }, { key: 'people', label: 'People', count: 3, body: 'B' }] }; } });
+    const drawn = nodes(tree).filter(node => node.props['data-company-section']);
+    const pills = nodes(tree).filter(node => node.type === 'Pill');
+    return { tree, select, drawn, pills };
+  };
+  const first = run('');
+  assert.equal(first.tree.props['data-testid'], 'landlord-profile');
+  assert.deepEqual(first.drawn.map(node => node.props['data-company-section']), ['overview']);
+  assert.deepEqual(first.pills.map(pill => pill.props.active), [true, false]);
+  // The address names the section; a name that is not a section falls back to the first.
+  assert.deepEqual(run('?section=people').drawn.map(node => node.props['data-company-section']), ['people']);
+  assert.deepEqual(run('?section=nonsense').drawn.map(node => node.props['data-company-section']), ['overview']);
+  // A section opened earlier stays drawn, hidden, so its lists keep their state.
+  const both = run('?section=people', ['overview']);
+  assert.deepEqual(both.drawn.map(node => [node.props['data-company-section'], node.props.className === 'hidden']), [['overview', true], ['people', false]]);
+  // Choosing a pill replaces the history entry: it is never a step for Back.
+  first.select('people');
+  assert.equal(replaced.length, 1);
+  assert.equal(replaced[0][0], 'kept');
+  assert.equal(new URL(String(replaced[0][2])).searchParams.get('section'), 'people');
 });
 
 test('landlord chat refreshes its brief only on changed human content, without polling loops or Brand invalidation', () => {

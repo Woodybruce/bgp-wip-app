@@ -2,7 +2,7 @@
 // 2026-09-26). The roles they play come from the evidence — who they act
 // for, deals by role, requirements sent, instructions they compete for,
 // sales, lease advisory as the other side, viewings. Staff only.
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
@@ -13,8 +13,11 @@ import { Pill, pillMetrics, pillInactive } from "@/components/ui/pill";
 import { Handshake, Loader2 } from "lucide-react";
 import { AGENT_ROLES, type AgentRole } from "@shared/agent-roles";
 import { contactDisplayName } from "@/components/company-contacts-board";
+import { BandFigure } from "@/components/brand-page/brand-top";
+import { BrandCard } from "@/components/brand-page/brand-card";
 
-type Tab = "teams" | "deals" | "requirements" | "instructions" | "sales" | "leaseAdvisory" | "viewings";
+export type AgentTab = "teams" | "deals" | "requirements" | "instructions" | "sales" | "leaseAdvisory" | "viewings";
+type Tab = AgentTab;
 
 const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep") : "";
 const money = (v: any) => { const n = Number(v); if (!n) return null; return n >= 1_000_000 ? `£${(n / 1_000_000).toFixed(1)}m` : `£${Math.round(n / 1000)}k`; };
@@ -47,8 +50,8 @@ function sideLabel(role: AgentRole, bgpActingFor: string | null) {
   return role === "investment_sell" ? "vendor's agent" : "purchaser's agent";
 }
 
-export function AgentRelationshipCard({ companyId }: { companyId: string }) {
-  const { data, isLoading } = useQuery<any>({
+function useAgentRelationship(companyId: string, enabled = true) {
+  return useQuery<any>({
     queryKey: ["/api/agents", companyId, "relationship"],
     queryFn: async () => {
       const r = await fetch(`/api/agents/${companyId}/relationship`, { credentials: "include", headers: getAuthHeaders() });
@@ -57,7 +60,43 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
       return r.json();
     },
     staleTime: 5 * 60_000,
+    enabled,
   });
+}
+
+// The agent page draws this card in parts, under different pills. The list
+// that is open is shared between them, so a role chip on Overview opens its
+// dealings under Brands & deals.
+const AgentTabContext = createContext<{ tab: Tab | null; setTab: (tab: Tab | null) => void } | null>(null);
+export function AgentDealingsScope({ children }: { children: React.ReactNode }) {
+  const [tab, setTab] = useState<Tab | null>(null);
+  return <AgentTabContext.Provider value={{ tab, setTab }}>{children}</AgentTabContext.Provider>;
+}
+
+// "Working with BGP" on the agent page's summary card. The dealings are
+// BGP's own record: a client login is given the brands and the people only.
+export function AgentGlance({ companyId, representing, contacts, staff, onOpen }: {
+  companyId: string; representing: number; contacts: number; staff: boolean; onOpen?: (tab: AgentTab | "represents" | "contacts") => void;
+}) {
+  const { data } = useAgentRelationship(companyId, staff);
+  const figure = (v: number) => v.toLocaleString("en-GB");
+  const viewings = data?.viewings?.length || 0;
+  const people = data?.people?.total ?? contacts;
+  return <>
+    <BandFigure label={`Brand${representing === 1 ? "" : "s"} represented`} value={figure(representing)} onClick={onOpen && representing ? () => onOpen("represents") : undefined} testId="agent-figure-brands" />
+    {data && <BandFigure label={`Live deal${data.openDeals === 1 ? "" : "s"} with us`} value={figure(data.openDeals || 0)} onClick={onOpen && data.deals?.length ? () => onOpen("deals") : undefined} testId="agent-figure-live-deals" />}
+    {data && <BandFigure label={`Viewing${viewings === 1 ? "" : "s"}`} value={figure(viewings)} onClick={onOpen && viewings ? () => onOpen("viewings") : undefined} testId="agent-figure-viewings" />}
+    <BandFigure label={people === 1 ? "Person" : "People"} value={figure(people)} onClick={onOpen ? () => onOpen("contacts") : undefined} testId="agent-figure-people" />
+  </>;
+}
+
+const DEALING_TABS: Tab[] = ["deals", "requirements", "instructions", "sales", "leaseAdvisory"];
+
+// part: one piece of the card by itself (the agent page): "roles" (the roles
+// the firm plays, on Overview), "dealings" and "viewings" (Brands & deals),
+// "teams" (People). Without it the whole card is drawn, as on the phone.
+export function AgentRelationshipCard({ companyId, part, onOpen }: { companyId: string; part?: "roles" | "dealings" | "viewings" | "teams"; onOpen?: (tab: AgentTab) => void }) {
+  const { data, isLoading } = useAgentRelationship(companyId);
   const counts: Record<Tab, number> = {
     teams: (data?.teams || []).filter((g: any) => g.team).length,
     deals: data?.deals?.length || 0,
@@ -70,8 +109,12 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
   // Who they act for is listed (with add / end) in the representation card
   // below, so it isn't repeated here.
   const TABS: Array<[Tab, string]> = [["teams", "Teams"], ["deals", "Deals"], ["requirements", "Requirements"], ["instructions", "Instructions"], ["sales", "Sales"], ["leaseAdvisory", "Lease advisory"], ["viewings", "Viewings"]];
-  const shown = TABS.filter(([t]) => counts[t] > 0);
-  const [tab, setTab] = useState<Tab | null>(null);
+  const partTabs: Tab[] | null = part === "dealings" ? DEALING_TABS : part === "viewings" ? ["viewings"] : part === "teams" ? ["teams"] : null;
+  const shown = TABS.filter(([t]) => counts[t] > 0 && (!partTabs || partTabs.includes(t)));
+  const shared = useContext(AgentTabContext);
+  const [ownTab, setOwnTab] = useState<Tab | null>(null);
+  const tab = shared ? shared.tab : ownTab;
+  const setTab = (next: Tab | null) => { if (shared) shared.setTab(next); else setOwnTab(next); };
   const { toast } = useToast();
   // Set a person's recorded team (agent specialty) to the team their work
   // points to — corrects the imported "Leasing" default over time.
@@ -88,7 +131,10 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Couldn't update the team", description: e?.message, variant: "destructive" }),
   });
   useEffect(() => { setTab(null); }, [companyId]);
-  const active = tab && counts[tab] > 0 ? tab : shown[0]?.[0] || null;
+  const active = tab && counts[tab] > 0 && (!partTabs || partTabs.includes(tab)) ? tab : shown[0]?.[0] || null;
+  // A role chip opens its list: here, or (on the agent page) under the pill
+  // that holds it.
+  const openTab = (target: Tab) => { setTab(target); onOpen?.(target); };
 
   // A role chip opens the tab that lists those dealings. With no evidence
   // at all the server's roles are the recorded specialties, not dealings —
@@ -102,40 +148,13 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
   const noEvidence = !!data && !(data.representing?.length) && (Object.keys(counts) as Tab[]).every(t => t === "teams" || counts[t] === 0);
 
   if (data === null) return null;
-  return (
-    <Card data-testid="agent-relationship">
-      <CardHeader className="p-3 pb-2 space-y-2">
-        <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <Handshake className="w-3.5 h-3.5" /> Relationship with BGP
-          {data && <span className="normal-case tracking-normal font-normal">{data.openDeals} live deal{data.openDeals === 1 ? "" : "s"} · {data.people.total} people</span>}
-        </CardTitle>
-        {data && (
-          <div className="flex flex-wrap gap-1.5" data-testid="agent-roles">
-            {data.roles.length
-              ? data.roles.map((r: any) => {
-                  const meta = AGENT_ROLES.find(x => x.role === r.role);
-                  // "Tenant rep 10" beside "Tenant rep team 9" read as two
-                  // counts of the same thing — this one is dealings, the team
-                  // header is people (Woody, 2026-09-27).
-                  const short = String(meta?.short || r.role).toLowerCase();
-                  if (noEvidence) return <RowPill key={r.role} muted title="From recorded specialties — no dealings on record yet">recorded as {short}</RowPill>;
-                  const target = tabForRole(r.role);
-                  const chip = <><span className="font-mono tabular-nums">{r.count}</span> {short.replace(/[\s_]+/g, "-")} dealing{r.count === 1 ? "" : "s"}</>;
-                  return target
-                    ? <Pill key={r.role} onClick={() => setTab(target)} title={meta?.description} data-testid={`agent-role-${r.role}`}>{chip}</Pill>
-                    : <RowPill key={r.role} title={meta?.description}>{chip}</RowPill>;
-                })
-              : <span className="text-xs text-muted-foreground italic">No recorded dealings yet — roles appear as deals, requirements, viewings and matters link to this firm or its people.</span>}
-          </div>
-        )}
-        {shown.length > 1 && (
-          <div className="flex flex-wrap gap-1.5">
-            {shown.map(([t, label]) => <Pill key={t} active={active === t} onClick={() => setTab(t)} data-testid={`agent-tab-${t}`}>{label} <span className="font-mono tabular-nums">{counts[t]}</span></Pill>)}
-          </div>
-        )}
-      </CardHeader>
-      <CardContent className="p-3 pt-0">
-        {isLoading && <p className="text-sm text-muted-foreground italic flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />Gathering their dealings with BGP…</p>}
+  const tabPills = shown.length > 1 && (
+    <div className="flex flex-wrap gap-1.5">
+      {shown.map(([t, label]) => <Pill key={t} active={active === t} onClick={() => setTab(t)} data-testid={`agent-tab-${t}`}>{label} <span className="font-mono tabular-nums">{counts[t]}</span></Pill>)}
+    </div>
+  );
+  const loading = isLoading && <p className="text-sm text-muted-foreground italic flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />Gathering their dealings with BGP…</p>;
+  const lists = <>
         {data && active === "teams" && (
           <div className="grid gap-3 md:grid-cols-2" data-testid="agent-teams">
             {(data.teams || []).map((g: any) => {
@@ -220,6 +239,60 @@ export function AgentRelationshipCard({ companyId }: { companyId: string }) {
             <Row key={v.id} title={`${v.brand_name || "Viewing"}${v.property_name ? ` · ${v.property_name}` : ""}`} sub={[v.unit_name, v.agent_name, v.outcome || v.status].filter(Boolean).join(" · ")} right={<span className="text-[11px] font-mono tabular-nums text-muted-foreground">{fmtDate(v.viewing_date)}</span>} />
           ))}</div>
         )}
+  </>;
+  const rolesChips = <>
+        {data && (
+          <div className="flex flex-wrap gap-1.5" data-testid="agent-roles">
+            {data.roles.length
+              ? data.roles.map((r: any) => {
+                  const meta = AGENT_ROLES.find(x => x.role === r.role);
+                  // "Tenant rep 10" beside "Tenant rep team 9" read as two
+                  // counts of the same thing — this one is dealings, the team
+                  // header is people (Woody, 2026-09-27).
+                  const short = String(meta?.short || r.role).toLowerCase();
+                  if (noEvidence) return <RowPill key={r.role} muted title="From recorded specialties — no dealings on record yet">recorded as {short}</RowPill>;
+                  const target = tabForRole(r.role);
+                  const chip = <><span className="font-mono tabular-nums">{r.count}</span> {short.replace(/[\s_]+/g, "-")} dealing{r.count === 1 ? "" : "s"}</>;
+                  return target
+                    ? <Pill key={r.role} onClick={() => openTab(target)} title={meta?.description} data-testid={`agent-role-${r.role}`}>{chip}</Pill>
+                    : <RowPill key={r.role} title={meta?.description}>{chip}</RowPill>;
+                })
+              : <span className="text-xs text-muted-foreground italic">No recorded dealings yet — roles appear as deals, requirements, viewings and matters link to this firm or its people.</span>}
+          </div>
+        )}
+  </>;
+  const title = <><Handshake className="w-3.5 h-3.5" /> Relationship with BGP</>;
+  const totals = data ? <><span className="font-mono tabular-nums">{data.openDeals}</span> live deal{data.openDeals === 1 ? "" : "s"} · <span className="font-mono tabular-nums">{data.people.total}</span> people</> : undefined;
+  if (part === "roles") return (
+    <BrandCard title={title} summary={totals} testId="agent-relationship">
+      <div className="space-y-2">{loading}{rolesChips}</div>
+    </BrandCard>
+  );
+  if (part === "dealings") {
+    const total = DEALING_TABS.reduce((sum, t) => sum + counts[t], 0);
+    // Nothing recorded: no card (the roles on Overview already say so).
+    if (data && !total) return null;
+    return (
+      <BrandCard title="Dealings" count={total || null} testId="agent-dealings">
+        <div className="space-y-2">{loading}{tabPills}{lists}</div>
+      </BrandCard>
+    );
+  }
+  if (part === "viewings") return counts.viewings ? <BrandCard title="Viewings" count={counts.viewings} testId="agent-viewings">{lists}</BrandCard> : null;
+  if (part === "teams") return counts.teams ? <BrandCard title="Teams" count={counts.teams} summary="The team each person's work points to" testId="agent-teams-card">{lists}</BrandCard> : null;
+  return (
+    <Card data-testid="agent-relationship">
+      <CardHeader className="p-3 pb-2 space-y-2">
+        <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <Handshake className="w-3.5 h-3.5" /> Relationship with BGP
+          {data && <span className="normal-case tracking-normal font-normal">{data.openDeals} live deal{data.openDeals === 1 ? "" : "s"} · {data.people.total} people</span>}
+        </CardTitle>
+        {rolesChips}
+        {tabPills}
+      </CardHeader>
+      <CardContent className="p-3 pt-0">
+        {loading}
+        {lists}
       </CardContent>
     </Card>
   );
