@@ -102,11 +102,23 @@ try {
       await phoneFit(staff, 'property cards', ['[data-testid="property-pagination-top"]', `a[href="/properties/${ids.property}"]`]);
       await snap(staff, 'staff-property-list-phone.png');
       await propertyCard.click();
-      await staff.getByTestId('property-simple-overview').waitFor({ state: 'visible', timeout: 25000 });
-      check('phone Building overview shows current income only', (await staff.getByTestId('property-simple-overview').textContent()).includes('£24,000') && !(await staff.getByTestId('property-simple-overview').textContent()).includes('£114,000'));
-      await phoneFit(staff, 'property overview', ['[data-testid="property-view-controls"]', '[data-testid="property-phone-sections"]', '[data-testid="property-simple-overview"]']);
+      // The plan-led page is the staff default, on a phone as on a computer
+      // (Woody, 2026-11-13: "start using the new property layout for
+      // everyone"). Until 15 November 2026 this scenario still waited for the
+      // older simple view, so it failed on every push. The default is checked
+      // first; the older page is then reached the way a person reaches it,
+      // from More → Back to the current page.
+      await staff.locator('[data-property-view="plan"]').waitFor({ state: 'visible', timeout: 25000 });
+      // A property with one unit and no plan shows that unit's panel on the first tab.
+      const unitPanel = staff.getByTestId('property-unit-panel');
+      await unitPanel.waitFor({ state: 'visible', timeout: 25000 });
+      check('phone property opens on the plan-led page', await staff.getByTestId('property-plan-tabs').isVisible() && await staff.getByTestId('property-simple-overview').count() === 0);
+      // £24,000 is the current tenancy; the archived one (£90,000) is history and is in no figure.
+      const unitText = await unitPanel.textContent();
+      check('phone unit panel shows current income only', unitText.includes('£24,000') && !unitText.includes('£90,000') && !unitText.includes('£114,000'));
+      await phoneFit(staff, 'property plan-led page', ['[data-testid="property-facts"]', '[data-testid="property-intro-row"]', '[data-testid="property-plan-tabs"]', '[data-testid="property-unit-panel"]']);
       await snap(staff, 'staff-property-overview-phone.png');
-      await staff.getByRole('button', { name: 'Open tenancy', exact: true }).click();
+      await staff.getByTestId('property-tab-tenancy').click();
       await staff.getByTestId(`tenancy-card-${ids.currentTenancy}`).waitFor({ state: 'visible', timeout: 25000 });
       check('phone tenancy retains editing and hides history by default', await staff.getByTestId(`tenancy-status-card-${ids.currentTenancy}`).isVisible() && await staff.getByTestId(`tenancy-card-${ids.archivedTenancy}`).count() === 0);
       await staff.getByTestId('tenancy-show-history').click();
@@ -114,11 +126,22 @@ try {
       check('phone history does not inflate current rent', (await staff.getByTestId('tenancy-stat-passing-rent').textContent()).includes('£24,000'));
       await phoneFit(staff, 'property tenancy', [`[data-testid="tenancy-card-${ids.currentTenancy}"]`, '[data-testid="tenancy-stat-passing-rent"]']);
       await snap(staff, 'staff-property-tenancy-phone.png');
-      await staff.getByTestId('property-section-overview').click();
+
+      // The older page, still one press away for staff.
+      await staff.getByTestId('button-property-more').click();
+      await staff.getByTestId('property-layout-classic').click();
+      await staff.getByTestId('property-simple-overview').waitFor({ state: 'visible', timeout: 25000 });
+      check('phone Building overview shows current income only', (await staff.getByTestId('property-simple-overview').textContent()).includes('£24,000') && !(await staff.getByTestId('property-simple-overview').textContent()).includes('£114,000'));
+      await phoneFit(staff, 'property overview', ['[data-testid="property-view-controls"]', '[data-testid="property-phone-sections"]', '[data-testid="property-simple-overview"]']);
+      await snap(staff, 'staff-property-classic-phone.png');
       await staff.getByTestId('property-toggle-full-page').click();
       check('phone can reach and return from the full property board', await staff.getByTestId('property-section-boards').isVisible());
       await staff.getByTestId('property-toggle-full-page').click();
       await staff.getByTestId('property-section-tenancy').waitFor({ state: 'visible' });
+      // And back: the choice is remembered in this browser, so it is put back.
+      await staff.getByTestId('property-layout-plan').click();
+      await staff.locator('[data-property-view="plan"]').waitFor({ state: 'visible', timeout: 25000 });
+      check('phone returns from the older page to the plan-led page', await staff.getByTestId('property-plan-tabs').isVisible());
 
       await staff.goto(`${BASE}/companies/${ids.brand}`, { waitUntil: 'domcontentloaded' });
       await staff.getByTestId('company-detail-mobile').waitFor({ state: 'visible', timeout: 25000 });
@@ -180,7 +203,13 @@ try {
     const message = await api(staff, 'POST', `/api/chat/threads/${canaryId}/messages`, { content: 'Synthetic private fixture content for account isolation' });
     if (message.status !== 200) throw new Error(`Could not populate the self-only fixture: HTTP ${message.status}`);
     await staff.goto(`${BASE}/messages`, { waitUntil: 'domcontentloaded' });
-    await staff.getByText(CANARY, { exact: true }).waitFor({ state: 'visible', timeout: 20000 });
+    // The thread was made through the API, not the app, so nothing tells the
+    // list to reload. A list read in the last 15 seconds is shown from the
+    // saved cache and next refreshed by the 30 second poll
+    // (client/src/lib/queryClient.ts), so allow for one full poll. The
+    // property and brand pages read the list (their conversation boxes), which
+    // is why 20 seconds stopped being enough once that scenario ran to its end.
+    await staff.getByText(CANARY, { exact: true }).waitFor({ state: 'visible', timeout: 45000 });
     check('staff private canary is rendered before account switch', true);
     await staff.waitForTimeout(2300);
     check('private canary reaches persisted query cache before expiry', await staff.evaluate(canary => (localStorage.getItem('bgp-query-cache') || '').includes(canary), CANARY));

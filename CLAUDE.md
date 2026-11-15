@@ -82,7 +82,25 @@ explicit permission.
   The two smoke suites run after it (`qa/smoke.mjs`,
   `qa/phone-session-smoke.mjs`; `bash qa/run-smoke.sh` runs the first
   locally): a change to where a login lands, to a menu, to a test id or to
-  what Back does needs their checks changed with it.
+  what Back does needs their checks changed with it. The phone suite failed
+  on every push from 13 to 15 November 2026 because its property scenario
+  still waited for the simple view after the plan-led page became the staff
+  default; it now follows the plan-led page first and reaches the older
+  page from More → Back to the current page. To run it locally: `bash
+  qa/start-postgres.sh`, restore `qa/smoke-fixture.sql.gz` into a database
+  named `bgpsmoke`, `npm run build`, start `node dist/index.cjs` on it, then
+  `SMOKE_CHROMIUM=/opt/pw-browsers/chromium SMOKE_BASE=http://localhost:<port>
+  PHONE_SMOKE_DATABASE_URL=postgresql://postgres:<password>@127.0.0.1:5432/bgpsmoke
+  node qa/phone-session-smoke.mjs`.
+- **A red workflow does not keep a push off the live site** (seen on
+  15 November 2026: two pushes reached chatbgp.app within about ten minutes
+  while the run was red and its `deploy` job was skipped, so Railway is
+  building the branch on each push by itself; its settings were not
+  inspected). The workflow's `deploy` job is the in-app deploy of the tested
+  commit (`server/auto-deploy.ts`). Treat a green run as the check that the
+  push was safe, not as what stops it: run `npm run qa:regression` and the
+  two smoke suites BEFORE pushing. Whether Railway should wait for the
+  workflow is Woody's call.
 
 ## Landsec client brand access (DECIDED — do not re-litigate in merges)
 
