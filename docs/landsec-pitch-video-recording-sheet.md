@@ -1,19 +1,23 @@
 # Landsec pitch video: recording sheet for Woody
 
-Three recordings. A quiet room, phone on a stand or propped up, not hand held.
+Three recordings. For everything except the walking clip: a quiet room, and
+the phone on a stand or propped up, not hand held.
 
-## Recording 1: you to camera (two short clips)
+## Recording 1: you on camera (two clips)
 
-Phone sideways (landscape), lens at eye level, a window in front of you, a
-plain wall behind. Look at the lens, not the screen. Do each clip two or
-three times and keep them all.
-
-**Clip A, the opening**
+**Clip A, the opening, to camera.** Phone sideways (landscape), lens at eye
+level, a window in front of you, a plain wall behind. Look at the lens, not
+the screen. Two or three takes; keep them all.
 
 > I'm Woody Bruce from Bruce Gillingham Pollard. You asked, why our agency.
-> Part of the answer is something we've built for you.
+> Part of the answer is something we've built for you, so let me show you
+> rather than tell you. In fact, I'll get someone else to show you.
 
-**Clip B, the close**
+**Clip B, the ending, walking with the phone.** Someone films you (sideways
+again) walking towards them with the app open in your hand. Scroll it for a
+few seconds as you walk, then look up and say the close. Somewhere quiet
+enough to hear you: a corridor or a street without traffic. Two or three
+takes.
 
 > That is one unit at one scheme. It runs the same way across all fourteen,
 > so our time goes on brands and deals, not on chasing updates. We'd love to
@@ -26,12 +30,8 @@ own take: say the number, pause, read the line, pause two seconds, move on.
 If you fluff one, just say the number again and re-read it. An easy,
 unhurried pace.
 
-**1.** This is ChatBGP. It lives on my phone, and it would live on yours:
-your schemes, your deals, and what each one is waiting on. It is easier to
-see on a big screen, so I'll get someone else to show you.
-
-**2.** That's better. Mark, this is your login. One place for all fourteen
-schemes.
+**2.** That's better. Mark, this is ChatBGP, and this is your login. One place
+for all fourteen schemes.
 
 **3.** Every unit, every vacancy and every live letting, counted the same way
 for your portfolio team, your asset teams, us and the other agents on the
@@ -78,6 +78,9 @@ like him.
 **15.** David gets his own login, with his schemes and nothing else. The same
 tracker, the same checklist, the same conversation. So you see one version of
 every deal, whoever did the work.
+
+**16.** And it all goes with you. Your schemes, your deals, and what each one
+is waiting on, on your phone.
 
 ## Recording 3: footage for the character
 
