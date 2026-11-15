@@ -1,6 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { AIActivityCard, EmailViewerDialog } from "@/components/ai-activity-card";
-import { InteractionsBoard } from "@/components/interactions-board";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -57,6 +56,7 @@ import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { useGoBack } from "@/lib/go-back";
 import { MemberAvatar } from "@/components/ClientTeamOrgChart";
 import { CompanyChip } from "@/components/company-chip";
+import { ActivitySummary } from "@/components/activity-summary";
 import { CompanyMiniChat } from "@/components/brand-profile-panel";
 import { lastContactShort } from "@shared/last-contact";
 
@@ -1154,15 +1154,11 @@ function ContactDetail({ id }: { id: string }) {
                 {!cdIsClient && <ContactSourcePanel contact={contact} />}
               </div>
             ) : leftTab === "activity" ? (
-              cdIsClient ? (
-                <p className="text-sm text-muted-foreground py-6 text-center">Emails and meetings with this person are kept by BGP.</p>
-              ) : (
-                <div className="space-y-4">
-                  {/* Both read staff-only mailbox feeds; a client never asks. */}
-                  <AIActivityCard subjectType="contact" subjectId={id} title="Activity" compact />
-                  <InteractionsBoard scope="contact" contextId={id} />
-                </div>
-              )
+              <div className="space-y-4">
+                {/* The AI read is a staff-only mailbox feed; the list is for everyone. */}
+                {!cdIsClient && <AIActivityCard subjectType="contact" subjectId={id} title="Activity" compact />}
+                <ActivitySummary contactId={id} />
+              </div>
             ) : (
               contact.notes
                 ? <ContactNotesBlock notes={contact.notes} contactId={contact.id} staff={!cdIsClient && !!cdViewer} />

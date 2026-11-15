@@ -61,6 +61,7 @@ function dayBucket(date: string): string {
   if (days <= 0) return "Today";
   if (days === 1) return "Yesterday";
   if (days < 7) return "This week";
+  if (days < 31) return "This month";
   return "Earlier";
 }
 
@@ -246,18 +247,24 @@ function ActivityDetail({ opened, onClose, propertyId, summaries, setSummaries }
   );
 }
 
-export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
+export function ActivitySummary({ propertyId, companyId, contactId, dealId, variant = "both" }: {
   propertyId?: string;
   companyId?: string;
+  // One person's or one deal's feed: the last 12 months.
+  contactId?: string;
+  dealId?: string;
   variant?: "both" | "upcoming" | "recent";
 }) {
   const params = new URLSearchParams();
   if (propertyId) params.set("propertyId", propertyId);
   if (companyId) params.set("companyId", companyId);
+  if (contactId) params.set("contactId", contactId);
+  if (dealId) params.set("dealId", dealId);
+  const longWindow = !!(contactId || dealId);
   const qs = params.toString() ? `?${params.toString()}` : "";
 
   const { data, isLoading } = useQuery<{ upcoming: UpcomingEvent[]; recent: RecentItem[] }>({
-    queryKey: ["/api/activity-summary", propertyId || null, companyId || null],
+    queryKey: ["/api/activity-summary", propertyId || null, companyId || null, contactId || null, dealId || null],
     queryFn: async () => {
       const r = await fetch(`/api/activity-summary${qs}`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return { upcoming: [], recent: [] };
@@ -283,8 +290,8 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
   // per data load keeps it from re-firing. Global (unscoped) feeds skip it.
   const autoRanFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!data || (!propertyId && !companyId)) return;
-    const scopeKey = `${propertyId || ""}:${companyId || ""}:${data.recent?.length || 0}`;
+    if (!data || (!propertyId && !companyId && !contactId && !dealId)) return;
+    const scopeKey = `${propertyId || ""}:${companyId || ""}:${contactId || ""}:${dealId || ""}:${data.recent?.length || 0}`;
     if (autoRanFor.current === scopeKey) return;
     autoRanFor.current = scopeKey;
     const targets = (data.recent || [])
@@ -299,7 +306,7 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
         } catch { /* quiet — the manual button still works */ }
       }
     })();
-  }, [data, propertyId, companyId]);
+  }, [data, propertyId, companyId, contactId, dealId]);
 
   if (isLoading) {
     return (
@@ -321,7 +328,7 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
       <div className="text-center py-4" data-testid="activity-summary">
         <Activity className="w-6 h-6 mx-auto mb-1 text-muted-foreground/30" />
         <p className="text-xs text-muted-foreground">
-          {variant === "upcoming" ? "No upcoming events." : variant === "recent" ? "No emails / calls / meetings logged in the last 14 days." : "Nothing in the diary and no activity logged in the last 14 days."}
+          {variant === "upcoming" ? "No upcoming events." : variant === "recent" ? `No emails, calls or meetings logged in the last ${longWindow ? "12 months" : "14 days"}.` : `Nothing in the diary and no activity logged in the last ${longWindow ? "12 months" : "14 days"}.`}
         </p>
       </div>
     );
