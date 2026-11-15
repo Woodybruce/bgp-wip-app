@@ -27,31 +27,42 @@ Everything about the deal itself (the viewing, the offer, the Heads of Terms,
 the recommendation) is made up for the film and is labelled "Illustration" on
 screen.
 
+## Script revised to Landsec's pitch pack (15 November 2026)
+
+Woody sent Landsec's pitch pack on 15 November. It is confidential, so
+neither the pack nor a summary of it is in the repo: Woody holds it. The
+script below was rewritten to fit it. What Woody decided: "lets have mark
+warn", so the film is shot in Mark Warne's login and he agrees the brief and
+the Heads of Terms. Gemma Casey stays as the Bluewater asset manager unless
+Woody says otherwise. The film is short (about 2 minutes 45), plays from a
+laptop file with no connection, and has to be finished a clear day before
+the pitch.
+
 ## Two versions
 
-- **Room cut**, about 3 minutes 30. Woody can pause it and talk.
+- **Room cut**, about 2 minutes 45. Woody can pause it and talk.
 - **Send-ahead cut**, the same film with captions burned in (most people watch
-  with the sound off), plus a 60 to 90 second short made from scenes 1, 3, 4,
-  7 and 11.
+  with the sound off).
 
 ## Script
 
-Voice lines are what Woody reads. About 500 words, 3 minutes 30 at an easy
-pace.
+Voice lines are what Woody reads. About 330 words.
 
-| # | Time | On screen | Voice |
-|---|------|-----------|-------|
-| 1 | 0:00 | Woody to camera, plain background. Name caption. | "I'm Woody Bruce, Managing Director of Bruce Gillingham Pollard. We've built something for Landsec that we think changes how leasing gets done. Rather than tell you about it, let me show you. In fact, I'll get someone else to show you." |
-| 2 | 0:20 | Woody turns into the character. Character lands in the corner of the app, which is open on the Landsec login page, then the Properties page. | "That's better. This is your side of the app. One login, and every scheme you own." |
-| 3 | 0:30 | Properties: the 14 scheme cards, the stage pills, the map. Open Bluewater. | "Fourteen schemes. Every unit, every vacancy, every live letting, counted the same way for you, for us and for your joint agents. Let's go to Bluewater." |
-| 4 | 0:45 | Bluewater page: the plan and the tenancy schedule side by side. Click the Burger King unit on the plan. The unit panel opens: size, rent, lease dates, people. | "The plan and the tenancy schedule are one thing. Click a unit and everything about it is there. This is Burger King on the lower level: three thousand square feet, lease running to December 2028. A good time to start thinking about what comes next." |
-| 5 | 1:05 | Brand gap tab. The four figures, then Targets, then Competing centres. Open the Lakeside box. | "The app knows who trades at Lakeside, Stratford and Canary Wharf, and who doesn't trade at Bluewater. It tracks what those centres are doing every week. So the question 'who are we missing' is answered before the meeting starts." |
-| 6 | 1:25 | Jersey Mike's brand page: Expansion score, store count, the stated UK target. | "And this is who we'd bring. Jersey Mike's: new to the UK, a strong covenant, and a stated plan for four hundred sites. The app scores every brand on real evidence of expansion, so we chase the ones that are actually growing." |
-| 7 | 1:45 | Back on the unit: the Targeting Brief. People tab with Landsec leasing, the asset manager and BGP. Each presses Agree. Jersey Mike's is on the target list. | "Before anyone picks up the phone, we agree the brief together. Rent, incentives, who we want. Your leasing manager, your asset manager and us, each signing off in their own login. No more discovering at Heads of Terms that the brief was never agreed." |
-| 8 | 2:05 | Letting Tracker. Log a viewing. Then type the offer as a plain note in the comments box: "Offered: 15 year lease. Rent £275k pax and 9% t/o. 6 MRF". The form fills itself. | "From there it runs on the Letting Tracker. A viewing goes in. An offer comes in, and we type it the way we'd say it. The app fills in the form and checks it against the brief." |
-| 9 | 2:25 | Heads of Terms on Bluewater's own form, sign-off, then Solicitors. The deal checklist with a name against each step. The Deals page showing "waiting on". | "Heads of Terms come out on your own Bluewater form. Everyone signs off. Then a checklist with a name against every step, so at any moment you can see what the deal is waiting on, and who." |
-| 10 | 2:50 | The transaction recommendation in Landsec's template, with the decision buttons. Then the calendar and the property conversation. A quick phone shot. | "When it's ready, the recommendation arrives in your own template, with the numbers worked out. And everything else sits in one place: the diary, the tasks, the conversation about the property. On your desk or on your phone." |
-| 11 | 3:15 | Character steps aside. Woody back on camera, or the character closes. End card: BGP and Landsec marks, "Hospitality and Leisure leasing, 14 schemes". | "That's one unit at one scheme. It works the same way across all fourteen. We'd love to run it with you." |
+| # | On screen | Voice |
+|---|-----------|-------|
+| 1 | Woody to camera, plain background. Name caption. | "I'm Woody Bruce from Bruce Gillingham Pollard. You asked, why our agency. Part of the answer is something we've built for you, so let me show you rather than tell you. In fact, I'll get someone else to show you." |
+| 2 | Woody turns into the character, who lands in the corner of the app. | "That's better. Mark, this is your login. One place for all fourteen schemes." |
+| 3 | Properties: the 14 scheme cards, the stage pills, the map. Open Bluewater. | "Every unit, every vacancy and every live letting, counted the same way for your portfolio team, your asset teams, us and the other agents on the panel. Let's take Bluewater." |
+| 4 | Bluewater: the plan and the tenancy schedule. Click the Burger King unit; the unit panel opens. | "The plan and the tenancy schedule are one thing. Click a unit and everything about it is there. This is Burger King on the lower level: three thousand square feet, with the lease ending in December 2028. Line up what comes next now, and there is no downtime." |
+| 5 | Brand gap: the four figures, Targets, Competing centres, the Lakeside box. | "Differentiation starts with knowing what the competition has. The app tracks who trades at Lakeside, Stratford and Canary Wharf and not at Bluewater, and what those centres are doing each week." |
+| 6 | Jersey Mike's brand page: Expansion score and the news behind it. | "And it tracks who is growing. Jersey Mike's: new to the UK, backed by Blackstone, with a stated plan for four hundred sites. A first to market for Bluewater, found on evidence." |
+| 7 | The Targeting Brief on the unit. People tab. Mark presses Agree brief. | "Before anyone picks up the phone, the brief is agreed. Rent, incentives, target brands. Portfolio leasing, the asset manager and us each sign off in our own login." |
+| 8 | Letting Tracker. The offer typed as a plain note: "Offered: 15 year lease. Rent £275k pax and 9% t/o. 6 MRF". The form fills itself. | "Then it runs on the Letting Tracker. An offer comes in and we type it the way we'd say it. The app fills in the form and measures it against the brief." |
+| 9a | Heads of Terms on Bluewater's own form. Mark signs off. | "Heads of Terms come out on Bluewater's own form, and everyone signs." |
+| 9b | The deal checklist with a name against each step, then Deals showing "waiting on". | "From Heads of Terms the asset team takes over, with a name against every step. At any moment you can see what the deal is waiting on, and who." |
+| 10a | The transaction recommendation in Landsec's template. Mark approves. | "The recommendation arrives in your own template, with Net Effective Rent worked out against ERV and the brief." |
+| 10b | The calendar; the property conversation; a phone shot. | "Viewings, meetings, tasks and the conversation on each property sit in one place, for you and for every agent on the instruction." |
+| 11 | Woody back on camera, or the character closes. End card. | "That is one unit at one scheme. It runs the same way across all fourteen, so our time goes on brands and deals, not on chasing updates. We'd love to run it with you." |
 
 ## What Woody needs to do
 
@@ -83,8 +94,8 @@ pace.
 ## Things to keep in mind
 
 - **Burger King is a sitting tenant.** The film says "what comes next" for a
-  lease ending in 2028; it never says Burger King is leaving. Keep the
-  send-ahead cut to Landsec people only.
+  lease ending in 2028; it never says Burger King is leaving. The send-ahead
+  cut goes only to Landsec's own contact for the pitch.
 - **Illustration label.** Scenes 8 to 10 carry a small "Illustration" mark.
 - **Filmed as a Landsec login**, so BGP's fees, notes and other landlords'
   records are never on screen.
@@ -93,7 +104,7 @@ pace.
 
 ## Rough cut (15 November 2026)
 
-A silent rough cut, 3 minutes 31, was made the same day: the app footage for
+A silent rough cut was made the same day (3 minutes 31 on the first script, about 3 minutes on the script above): the app footage for
 scenes 3 to 10 with the voice lines as captions, and plain cards where Woody
 and the character go. Scene 9 is two clips (Heads of Terms, then the
 checklist and Deals) and scene 10 is two (the recommendation, then the
