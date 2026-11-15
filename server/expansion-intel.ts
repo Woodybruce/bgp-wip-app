@@ -153,20 +153,30 @@ async function loadFacts(companyId: string, company: any): Promise<ExpansionFact
 
 export async function scoreBrandExpansion(companyId: string, opts: { skipStock?: boolean; domainThreads?: Map<string, number> } = {}) {
   const brandQ = await pool.query(
-    `SELECT id, name, industry, rollout_status, store_count, backers, instagram_handle,
+    `SELECT id, name, industry, rollout_status, rollout_status_at, store_count, backers, instagram_handle,
             tiktok_handle, dept_store_presence, franchise_activity, hunter_flag,
             concept_pitch, description, stock_ticker, domain, domain_url, website,
-            uk_entity_name, trading_entities, ai_generated_fields
+            uk_entity_name, trading_entities, ai_generated_fields,
+            last_accounts_made_up_to, companies_house_data->'latestAccountsPlans' AS accounts_plans
        FROM crm_companies WHERE id = $1`,
     [companyId]
   );
   const brand = brandQ.rows[0];
   if (!brand) return null;
-  const [facts, bgp, covenant] = await Promise.all([
+  // The store count and the planning and jobs pipeline are optional inputs:
+  // a brand not yet counted, or a failed read, scores on the rest.
+  const [facts, bgp, covenant, estate, pipeline] = await Promise.all([
     loadFacts(companyId, brand),
     gatherBgpEvidence(companyId, { domainThreads: opts.domainThreads }),
     covenantGradeFor(companyId),
+    import("./brand-store-count").then(m => m.storeCountEvidence(companyId)).catch(() => null),
+    import("./brand-pipeline").then(m => m.pipelineEvidence(companyId)).catch(() => null),
   ]);
+  const stated = brand.accounts_plans && typeof brand.accounts_plans === "object" && !brand.accounts_plans.none ? brand.accounts_plans : null;
+  const plans = stated ? {
+    period: stated.period || (brand.last_accounts_made_up_to ? String(brand.last_accounts_made_up_to).slice(0, 10) : null),
+    openings: stated.openings || null, closures: stated.closures || null, capex: stated.capex || null,
+  } : null;
   let stock: any = null;
   if (brand.stock_ticker && !opts.skipStock) {
     try {
@@ -175,7 +185,7 @@ export async function scoreBrandExpansion(companyId: string, opts: { skipStock?:
       stock = Array.from(map.values())[0] || null;
     } catch { /* stock is optional */ }
   }
-  return computeExpansionScoreV2({ brand, facts, stock, covenant, bgp });
+  return computeExpansionScoreV2({ brand, facts, stock, covenant, bgp, estate, pipeline, plans });
 }
 
 // ─── Fact normalisation — the single extraction pass ────────────────────

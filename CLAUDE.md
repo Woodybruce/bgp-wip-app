@@ -870,10 +870,78 @@ not opened to them.
     estate list. That rule only decides which list a story is drawn in.
     The score counts one story once (`dedupeFacts` in
     `server/hunter-score.ts`: the same headline or the same link) and a
-    headcount fall is its own line, "Headcount falling"; `SCORE_VERSION`
-    is 4. The review of what the score cannot see, and the data that would
-    fix it, is `docs/expansion-review-2026-11-14.md`: nothing in its
-    "Ideas" list is built, each waits on Woody.
+    headcount fall is its own line, "Headcount falling". The review of what
+    the score could not see is `docs/expansion-review-2026-11-14.md`; its
+    "Built on 15 November" section says which ideas are now built.
+  - **Expansion and Relationship are two figures** (Woody, 2026-11-15: "Yes
+    to all on expansion apart from 6 keep running 25 a night"; do not
+    re-litigate). `computeExpansionScoreV2` in `server/hunter-score.ts`:
+    **Expansion** is market evidence only, four parts of 25 (UK momentum,
+    Pipeline, Capacity, Intent), out of 100; **Relationship** is BGP's own
+    work with the brand (deals, offers, viewings, contact), out of 25, and
+    is NEVER added to Expansion. `score` / `expansionScore` and the saved
+    `brand_score_history.hunter_score` are the Expansion figure;
+    Relationship is `relationship` and `sub_scores.engagement`. A row saved
+    before the split holds the old sum, so every reader works both out from
+    the sub-scores (`splitSubScores`). Bands and alerts (Very hot 30, Hot
+    20, Watch 10; hot / cooling emails) are judged on Expansion.
+    `SCORE_VERSION` is 5. A client login is sent Expansion only
+    (`clientScoreView` drops the Relationship figure, part and lines). The
+    Hunter board shows Relationship beside each score for staff and has a
+    **No BGP relationship** filter (Expansion 10 or more, Relationship 0:
+    the prospecting list). Never add the two together again.
+  - **What feeds Expansion besides signals** (same decision):
+    - **The store count** (`server/brand-store-count.ts`, rules in
+      `shared/store-count.ts`): the brand's own website sitemap is read for
+      its page-per-store set (no AI), about once a month per brand, 90
+      brands a night (`brand-store-count` job, 02:30), kept as dated
+      snapshots in `brand_store_counts`; openings and closures are the
+      difference between two good snapshots of the same set. A count under
+      60% of the last is saved flagged and left out. It leads UK momentum
+      ("Net +N sites in M months, counted on its own website"; a net fall
+      in an estate of 50 or more is damped as churn) and then headlines
+      about openings count for less. It cannot count a store finder with no
+      page per store (Wingstop, Five Guys, Wagamama, Pizza Express) or a
+      site that refuses a plain request (Dishoom, McDonald's): those fall
+      back to the locations-page list or have no count.
+    - **Planning applications and job adverts** (`server/brand-pipeline.ts`,
+      rules in `shared/brand-pipeline.ts`, tables `brand_pipeline_items` /
+      `brand_pipeline_checks`, job `brand-pipeline` 03:45, 60 brands a
+      night): PlanIt is searched by brand name; a record counts only when
+      the description names the brand (not as a former, existing or
+      neighbouring occupier), is about works a new occupier applies for
+      (shopfront, signage, change of use, fit-out, extraction) and is under
+      12 months old. A name too common to search (Next, Boots, any single
+      word of four letters or fewer but Pret and Itsu) is skipped and says
+      so. Job adverts come from Adzuna and are OFF until `ADZUNA_APP_ID` and
+      `ADZUNA_APP_KEY` are set; that half has never been run against
+      Adzuna. Licensing registers are council by council and are not read.
+    - **Plans stated in the filed accounts** (`server/accounts-plans.ts`,
+      checks in `shared/accounts-plans.ts`): openings, closures and capital
+      spend planned after the year end, kept under
+      `companies_house_data.latestAccountsPlans`. Accounts with a text
+      layer are read as text and every plan must quote a sentence that is
+      in them; scanned accounts are read from page images and say so.
+      Anthropic only, one read per filing, nightly (`accounts-plans` job,
+      03:30) under `ACCOUNTS_PLANS_DAILY_CAP` (default 15, 0 = off), the
+      highest Expansion score first. A plan counts in full for 18 months
+      after the year end, half to 30 months, then nothing.
+    - **A sale of sites is a contraction** (`siteSale`): "agreed to sell a
+      24-pub package" takes points off UK momentum. A story where the brand
+      is the buyer does not.
+    - **The rollout badge lapses after six months** (`shared/rollout-badge.ts`,
+      `crm_companies.rollout_status_at`, stamped by a database trigger when
+      the badge changes and by the brand save when a person saves it
+      again). A lapsed badge scores nothing and is drawn greyed "· lapsed".
+      A badge set before 15 November 2026 has no date and counts from that
+      day. Brand Gap, the Brand Pack and the digest still read the raw
+      badge.
+    The nightly tidy (`normaliseBrandFacts`) stays at 25 brands a night:
+    Woody declined running it on every brand. On the page the two measured
+    cards, **Store count** and **Sites on the way**
+    (`client/src/components/brand-page/estate-pipeline.tsx`), lead the
+    evidence column above Signals; a client login reads them (public data)
+    and only BGP staff can ask for a fresh count or check.
   - **People & checks is a matched pair** (Woody, 2026-11-13: "same
     height"). On two columns Key contacts and Company checks are one height
     while both are at rest; a card marked `data-own-height` (opened with
@@ -1014,8 +1082,10 @@ Decided by Woody on 13 November 2026 (do not re-litigate):
   rules; anything else goes to Anthropic only, with a daily cap. Contacts
   already added from email with no title or phone are worked through by the
   same hourly job a small batch at a time, oldest first. This is the one
-  timed job allowed to read staff email text for contact details; reading
-  it for requirements is still not approved. It has not been run against
+  timed job allowed to read staff email text for contact details. (Reading
+  email for requirements was approved on 15 November 2026 and is its own
+  file, `server/requirement-email-feed.ts`: see the Requirements centre
+  section.) It has not been run against
   Microsoft from a build machine: check Settings → Email Intelligence →
   Sync Health after a deploy.
 - **The "Auto-added from email" note opens its email, for BGP staff only**
@@ -2152,9 +2222,10 @@ Two rules everything else follows (do not re-litigate):
   the `scope: "any"` senders such as Propel and Property Week) is read whole
   and handed to `newsStoriesRead` (`publisher: true`); an email from an agent
   or data firm in the shared inbox (`scope: "shared"`: Knight Frank, Savills,
-  CBRE, CoStar, Green Street) never reaches the requirements centre. This is
-  the ONLY email text read for requirements; Woody asked for Propel to drive
-  requirements but has not confirmed this path in so many words. After writing signals
+  CBRE, CoStar, Green Street) never reaches the requirements centre. Besides
+  this, the only email text read for requirements is the email feed below.
+  Woody asked for Propel to drive requirements but has not confirmed this
+  path in so many words. After writing signals
   the readers call `newsStoriesRead`: a strong story (`strongStory`: a brand
   already in the CRM with a stated number of UK sites, or a stated size or
   places) raises a press suggestion; a closure, CVA or administration story
@@ -2240,12 +2311,28 @@ Two rules everything else follows (do not re-litigate):
 - `GET /api/admin/requirements-health` (`server/requirements-health.ts`;
   on the page: Sync tools → Health report, admins) reports; nothing repairs
   at boot. Back-fills are admin Preview then Apply.
+- **Emails feed suggestions** (Woody, 2026-11-15: yes to reading BGP's own
+  emails for what brands say they want). `server/requirement-email-feed.ts`
+  is the ONE file that takes mail text into the centre. The hourly mailbox
+  sync hands it an email it has just filed against a contact, only when the
+  contact wrote it (never BGP's own outgoing mail), the writer's company is
+  a tenant brand or an agent firm, and the subject or opening lines read
+  like a requirement (a rule, no AI). The email is fetched, refused if it
+  is on the private side of the mail boundary, and only the writer's own
+  words are read (the thread quoted under them and the footer are cut off)
+  by `readStatedRequirements` under its own allowance
+  (`REQUIREMENT_EMAIL_READER_DAILY_CAP`, default 60, 0 = off; 8 a mailbox
+  a run). It only ever calls `suggest` (kind `email`, "From the email" in
+  the tray): a brand's own email is that brand's; an agent's email names
+  the brand, which may need picking. The email is not stored, only the
+  quote. "Add evidence → email" is still a line a person types. It has not
+  been run against Microsoft from a build machine. Guards:
+  `qa/regression/requirements-centre-guards.test.mjs`,
+  `server/requirement-email-feed.test.ts`.
 - **NOT built** (each waits on Woody; do not build without his answer):
-  - **The email reader.** Reading staff email text for requirements needs
-    his explicit yes. No code fetches or reads a staff email body for
-    requirements; "Add evidence → email" is a line a person types. The one
-    exception is the publisher newsletter path above (Propel and the like,
-    never an agent firm's mail), which he should confirm.
+  - **Reading private chat threads and ChatBGP conversations** for
+    requirements, and working back through emails already filed (the email
+    feed reads new mail only).
   - **The Landsec view.** Client logins were given nothing new; only leaks
     of BGP's hand-entered requirements were closed. Slice-limited listings
     and a share marker need his decision (review, Across the app 4).

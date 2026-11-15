@@ -685,18 +685,19 @@ describe("suggested units and the expansion score for a scheme-limited login", (
     assert.doesNotMatch(JSON.stringify([shown.lines, shown.expansionFlags]), /deal|offer|viewing|touchpoint|BGP unit/i);
   });
 
-  it("the score and sub-scores are left as they are", () => {
+  it("the score is left as it is; the Relationship part goes for every client login", () => {
     const shown = schemeLimitedScoreView(clientScoreView(result));
     assert.equal(shown.score, 61);
-    assert.deepEqual(shown.subScores, result.subScores);
+    assert.deepEqual(shown.subScores, { ukMomentum: 20, capacity: 10, intent: 11 });
   });
 
-  it("the plain client view and the staff result are not changed by it", () => {
+  it("a plain client view has no Relationship line; the staff result is not changed", () => {
     const client = clientScoreView(result);
-    assert.equal(client.lines.length, 10);
-    assert.ok(client.lines.some((l: any) => l.label === "2 deals at HoTs or beyond with BGP"));
+    assert.equal(client.lines.length, 4);
+    assert.ok(!client.lines.some((l: any) => l.bucket === "engagement"));
     assert.equal(client.expansionFlags.length, 6);
     assert.equal(result.lines.length, 11);
+    assert.equal((result.subScores as any).engagement, 20);
   });
 
   it("a flag about anything else is kept", () => {

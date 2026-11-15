@@ -68,6 +68,41 @@ Street, Popeyes, Five Guys, Loungers and Nando's (14 November 2026).
 - The saved research is headed "Recent press reports" when that is what it
   is, and opens to a short read.
 
+## Built on 15 November 2026
+
+Woody, 15 November 2026: "Yes to all on expansion apart from 6 keep running
+25 a night" (the eight items put to him; item 6 was running the nightly tidy
+on every brand, which stays at 25 a night).
+
+- **Two figures** (idea A). Expansion is market evidence only, in four parts
+  of 25: UK momentum, Pipeline, Capacity, Intent. Relationship is BGP's own
+  deals, offers, viewings and contact, out of 25, shown beside it and never
+  added in. Bands and the hot and cooling alerts are judged on Expansion.
+  On the live list that day 61 brands read 30 or more on market evidence
+  alone, against 97 on the old sum.
+- **The stores are counted** (idea B) from each brand's own website sitemap,
+  about once a month, with what opened and closed between counts. Tried on
+  live sites: Nando's 502, Greene King 744, Greggs 2,811, PureGym 499,
+  Wetherspoon 826, Premier Inn 1,119. It cannot count a store finder with
+  no page per store (Wingstop, Five Guys, Wagamama, Pizza Express, Gail's)
+  or a site that refuses a plain request (Dishoom, McDonald's).
+- **The accounts are read for stated plans** (idea D): openings, closures
+  and capital spend planned, each with the sentence it came from.
+- **Planning applications** naming the brand (idea F), through PlanIt. The
+  yield is thin: in a year, 2 for Gail's, 1 for Popeyes, 12 for Greggs and
+  none for Wingstop, because most applications do not name the operator.
+  Licensing registers are council by council and are not read.
+- **Job adverts by town** (idea G) are built for Adzuna and switched off
+  until its two keys are set. Not yet run against Adzuna.
+- **A sale of sites counts as contraction**, and **the rollout badge lapses
+  after six months** (idea I).
+- **Emails are read for what brands want** (idea J): a new email from a
+  brand's own person, or an agent, that reads like a requirement raises a
+  suggestion in the Requirements centre for a person to confirm.
+
+Not built: ideas C (declined), E (what they take) and H (registered leases),
+and the paid sources, which Woody is considering.
+
 ## What the section should answer
 
 1. Are they growing? Net sites in 12 months, and the pipeline.
@@ -78,7 +113,7 @@ Street, Popeyes, Five Guys, Loungers and Nando's (14 November 2026).
 5. Who decides? The property director and the retained agent.
 6. How close is BGP? Kept as its own figure, not added in.
 
-## Ideas (none built; each waits on Woody)
+## Ideas (as put to Woody on 14 November; see "Built on 15 November 2026")
 
 ### From what the app already holds, or free sources
 

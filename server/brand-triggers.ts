@@ -50,9 +50,17 @@ const CLAUDE_FONT = `ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI
 // Version 4 (2026-11-14): the same scale; one story is scored once (the same
 // headline from two feeds was counted twice) and a headcount fall has its own
 // line, capped at 8, in place of sitting inside "UK closures".
+// Version 5 (2026-11-15): two figures. The saved hunter_score is now the
+// Expansion figure alone (market evidence: momentum, pipeline, capacity,
+// intent); BGP's own deals and contact are the Relationship figure, kept in
+// sub_scores.engagement and never added in. Hot and cooling are judged on
+// Expansion. New inputs: the store count, planning applications and job
+// adverts, plans stated in the accounts, a sale of sites as contraction, and
+// a rollout badge that lapses after six months. A reader of an older row
+// works both figures out from its sub-scores (splitSubScores).
 const HOT_THRESHOLD = 30;
 const COOLING_THRESHOLD = 20;
-const SCORE_VERSION = 4;
+const SCORE_VERSION = 5;
 
 interface TriggerEvent {
   brandId: string;

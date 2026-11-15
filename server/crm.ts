@@ -47,7 +47,7 @@ import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthrop
 import { contentDispositionFor } from "./utils/http-headers";
 import { searchPipnetRequirements } from "./pipnet";
 import { bgpCreatedStamp, parseRequirementDate, stripRequirementProvenance, requirementClientCopy, requirementClientVisible, requirementOwnerColumns, requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "@shared/requirement-live";
-import { clientScoreLabel, schemeLimitedScoreLabel } from "./hunter-score";
+import { clientScoreLabel, schemeLimitedScoreLabel, splitSubScores } from "./hunter-score";
 import { xeroApi, refreshXeroToken, SALES_ACCOUNT_CODE, feeCurrencyOf, invoiceCurrencyFields } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
 import { getPlanningSummary } from "./planning-summary";
@@ -9397,11 +9397,16 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const v2 = new Map(v2Rows.rows.map((r: any) => [String(r.brand_company_id), r]));
         for (const b of scored as any[]) {
           const row: any = v2.get(String(b.id));
-          b.expansionScore = row ? Number(row.hunter_score) : 0;
+          // Expansion is market evidence only; BGP's own work is the
+          // Relationship figure. A row saved before the two were split holds
+          // their sum, so both are read from the sub-scores.
+          const split = splitSubScores(row?.sub_scores);
+          b.expansionScore = split ? split.expansion : row ? Number(row.hunter_score) : 0;
+          b.relationship = hunterClientScoped ? undefined : split ? split.relationship : null;
           // A client login's flags never mention BGP's own requirements or whether BGP has confirmed a listing.
           b.expansionFlags = row ? (hunterClientScoped ? (row.flags || []).map((f: string) => clientScoreLabel(f)).filter(Boolean) : (row.flags || [])) : [];
           if (hunterSchemeLimited) b.expansionFlags = b.expansionFlags.filter((f: string) => schemeLimitedScoreLabel(f));
-          b.subScores = row?.sub_scores || null;
+          b.subScores = row?.sub_scores ? (hunterClientScoped ? (({ engagement: _e, ...market }) => market)(row.sub_scores) : row.sub_scores) : null;
           b.scoredAt = row?.checked_at || null;
         }
       }

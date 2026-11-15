@@ -1,4 +1,6 @@
 import { formatSizeList } from "@/lib/format-size";
+import { rolloutBadge } from "@shared/rollout-badge";
+import { EstatePipelineCards, type StatedPlans } from "@/components/brand-page/estate-pipeline";
 import { aboutText } from "@/lib/about-text";
 import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs, isSocialNews, snippetPublisher, urlPublisher, isSignalNoise, signalKind, accountBoardContacts, propertyUnitText, trackerUnitLabel, displayStoreName, newsOutsideSignals, brandNewsLists, cleanUnitLabel, LandlordCompanyChecksCard } from "@/components/brand-profile-panel";
 import { BrandPatternScope, BrandQuietBlock, BrandQuietLine } from "@/components/brand-page/brand-card";
@@ -657,7 +659,9 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
         {c.company_type && !(brandPage && c.industry) && <Pill className="max-w-full"><span className="truncate">{c.industry ? String(c.company_type).split(/\s*-\s*/)[0] : String(c.company_type).replace(/\s*-\s*/g, " · ")}</span></Pill>}
         {c.industry && <Pill className="max-w-full"><span className="truncate">{c.industry}</span></Pill>}
         {/* At a glance, as in the desktop header (the Expansion card no longer carries it on a brand's page). */}
-        {brandPage && c.rollout_status && c.rollout_status !== "none" && <Pill>{String(c.rollout_status).replace(/_/g, " ")}</Pill>}
+        {brandPage && c.rollout_status && c.rollout_status !== "none" && (rolloutBadge(c.rollout_status, (c as any).rollout_status_at).live
+          ? <Pill>{String(c.rollout_status).replace(/_/g, " ")}</Pill>
+          : <Pill className="text-muted-foreground" title="Set more than six months ago: it no longer counts in the Expansion score. Save it again to renew it.">{String(c.rollout_status).replace(/_/g, " ")} · lapsed</Pill>)}
         {brandPage && !isAgentFirm && (c as any).companies_house_number && <CovenantBadge companyNumber={(c as any).companies_house_number} />}
         {brandPage && phoneKycChip && <Pill className={phoneKycChip.cls} onClick={() => setSection("contacts")} title="Open Company checks" data-testid="brand-kyc-chip">{phoneKycChip.label}</Pill>}
         {!isLandlord && !isAgentFirm && !isLender && c.store_count != null && <Pill><span className="font-mono tabular-nums">{c.store_count}</span> reported stores</Pill>}
@@ -984,20 +988,24 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
           </CardHeader>
           {hunter?.subScores && (
             <CardContent className="p-3 pt-0">
-              <div className={`grid gap-1 text-center ${isClientViewer ? "grid-cols-3" : "grid-cols-2"}`}>
-                {/* A client login is not shown BGP's own engagement with the brand. */}
-                {[["UK momentum", hunter.subScores.ukMomentum], ["Capacity", hunter.subScores.capacity], ["Intent", hunter.subScores.intent], ...(isClientViewer ? [] : [["BGP engagement", hunter.subScores.engagement]])].map(([label, v]: any) => (
+              {/* Expansion is market evidence in four parts. BGP's own work with the brand is its own figure, staff only. */}
+              <div className="grid grid-cols-4 gap-1 text-center">
+                {[["Momentum", hunter.subScores.ukMomentum], ["Pipeline", (hunter.subScores as any).pipeline ?? 0], ["Capacity", hunter.subScores.capacity], ["Intent", hunter.subScores.intent]].map(([label, v]: any) => (
                   <div key={label} className="rounded border border-border/60 px-1 py-1">
                     <div className="text-sm font-mono tabular-nums">{v ?? "—"}</div>
                     <div className="text-[11px] uppercase tracking-wider text-muted-foreground leading-tight">{label}</div>
                   </div>
                 ))}
               </div>
-              {isClientViewer && <p className="mt-1.5 text-[11px] text-muted-foreground" data-testid="brand-expansion-client-note">The score out of 100 also counts BGP’s own work with the brand, which is not shown here.</p>}
+              {!isClientViewer && (hunter.subScores as any).engagement != null && (
+                <p className="mt-1.5 text-xs text-muted-foreground" data-testid="brand-relationship-value">Relationship with BGP <span className="font-mono tabular-nums font-semibold text-foreground">{(hunter.subScores as any).engagement}</span><span className="font-mono tabular-nums">/25</span>, counted apart from the score</p>
+              )}
             </CardContent>
           )}
         </Card>
       )}
+      {/* The store count and the sites on the way, as on desktop. */}
+      {brandPage && !isLandlord && !isAgentFirm && !isLender && <EstatePipelineCards companyId={companyId} staff={!isClientViewer} plans={((c as any).companies_house_data?.latestAccountsPlans as StatedPlans | undefined) || null} />}
       {brandPage && !hasExpansionScore && !isClientViewer && <p className="text-xs text-muted-foreground px-1" data-testid="brand-expansion-score-empty">No expansion score yet.</p>}
       {brandPage && !hasExpansionScore && isClientViewer && signals.length === 0 && similarTenants.length + aiCompetitors.length === 0
         && !(c.backers || c.franchise_activity || c.dept_store_presence || c.stock_ticker)
@@ -1029,7 +1037,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
           <CardContent className="p-3 pt-0 space-y-2">
             {hunter?.subScores && (
               <div className="grid grid-cols-2 gap-1 text-center">
-                {[["UK momentum", hunter.subScores.ukMomentum], ["Capacity", hunter.subScores.capacity], ["Intent", hunter.subScores.intent], ["Engagement", hunter.subScores.engagement]].map(([label, v]: any) => (
+                {[["UK momentum", hunter.subScores.ukMomentum], ["Pipeline", (hunter.subScores as any).pipeline ?? 0], ["Capacity", hunter.subScores.capacity], ["Intent", hunter.subScores.intent]].map(([label, v]: any) => (
                   <div key={label} className="rounded border border-border/60 px-1 py-1">
                     <div className="text-sm font-mono tabular-nums">{v ?? "—"}</div>
                     <div className="text-[11px] uppercase tracking-wider text-muted-foreground leading-tight">{label}</div>

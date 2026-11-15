@@ -322,7 +322,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               linkedin_url, phone, industry, employee_count, annual_revenue, founded_year,
               kyc_status, kyc_expires_at, aml_risk_level, aml_pep_status,
               brand_group_id, parent_company_id,
-              concept_pitch, store_count, rollout_status, backers, instagram_handle,
+              concept_pitch, store_count, rollout_status, rollout_status_at, backers, instagram_handle,
               tiktok_handle, x_handle, dept_store_presence, franchise_activity, hunter_flag,
               stock_ticker, uk_entity_name, agent_type, concept_status,
               last_accounts_doc_id, last_accounts_made_up_to,
@@ -1539,6 +1539,8 @@ async function updateBrandRecord(companyId: string, body: any, actor: string | n
       if (identityChanged) await quarantineBrandIdentityDependents(client, company, actor);
     }
     if (!identityOnly) Object.assign(fields, Object.fromEntries(Object.entries(supplied).filter(([key]) => !["domain", "domain_url"].includes(key))));
+    // A person saving the rollout badge, changed or not, renews it for six months.
+    if (!identityOnly && "rollout_status" in supplied) fields.rollout_status_at = supplied.rollout_status ? new Date() : null;
     const metadata = { ...(fields.ai_generated_fields || company.ai_generated_fields || {}) };
     for (const key of Object.keys(supplied)) delete metadata[key];
     fields.ai_generated_fields = metadata;
