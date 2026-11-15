@@ -306,8 +306,16 @@ staff viewing as Landsec**:
   staff viewing as Landsec on a phone have Home in place of Brands and keep
   the tile home at `/`, because that is where the banner out of the Landsec
   view is. Do not redirect staff on a phone away from `/`.
-- `/` and `/home` go to Properties (`Home` in `App.tsx`; on a phone, real
-  Landsec client logins only). `/landsec/deals` goes to `/deals`, and
+- **The Landsec view opens on ChatBGP** (Woody, 2026-11-15: "the real phone
+  app should open on chat for Landsec logins", "also should open on desktop
+  instead of a dashboard"; it was Properties until then). `/` and `/home` go
+  to `LANDSEC_MENU.chat` (`Home` in `App.tsx`; on a phone, real Landsec
+  client logins only, through `landsecPhoneHome`); a joint agent is sent on
+  to its own chat. On a computer the ChatBGP page has no side bar, so in the
+  Landsec view its header carries the menu (`chatbgp-landsec-menu`) and its
+  Back arrow goes to Properties when there is no earlier screen, never to
+  `/` (which would loop back to chat). The smoke suite expects the landing
+  on `/chatbgp`. `/landsec/deals` goes to `/deals`, and
   `/landsec/scheme/:key` to the scheme's property page at `?section=units`
   (`LandsecDealsRoute`, `LandsecSchemeRoute`). Both redirect only in the
   Landsec view: BGP staff on All Teams or their own team keep the old scheme

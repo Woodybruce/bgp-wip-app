@@ -190,8 +190,11 @@ test('Properties, Deals, the property page and the landing page ask one question
   assert.doesNotMatch(properties, /activeTeam === "Landsec"/);
 });
 
-test('on a phone only a real Landsec login is sent from the home page to Properties', () => {
+test('on a phone only a real Landsec login is sent from the home page to ChatBGP', () => {
   const app = source(APP);
+  // Woody, 15 November 2026: the Landsec view opens on ChatBGP, phone and computer.
+  assert.match(app, /if \(landsecPhoneHome\) navigate\(LANDSEC_MENU\.chat, \{ replace: true \}\);/);
+  assert.match(app, /return <LandsecMoved to=\{LANDSEC_MENU\.chat\} \/>;\n\}\n\nfunction LandsecMoved/);
   const rule = app.slice(app.indexOf('const landsecPhoneHome ='), app.indexOf('useEffect', app.indexOf('const landsecPhoneHome =')));
   assert.match(rule, /role === "Client"/);
   assert.match(rule, /shellBrand\.id === "landsec"/);
