@@ -18,6 +18,7 @@ import { requireAuth, requireAdmin } from "./auth";
 import { pool } from "./db";
 import { UK_CENTRES, haversineKm, siteRadiusKm, type UkCentre } from "../shared/uk-centres";
 import { isClientCrmCategory } from "../shared/tenant-categories";
+import { isJunkBrand } from "../shared/junk-brand";
 
 const router = Router();
 const PRESENCE_KM = 0.7;
@@ -32,25 +33,26 @@ let columnsEnsured = false;
 async function ensureColumns() {
   if (columnsEnsured) return;
   await pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS benchmark_centre TEXT`).catch(() => {});
+  await pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS benchmark_shared BOOLEAN`).catch(() => {});
   await pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS centre_research JSONB`).catch(() => {});
   await pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS centre_research_at TIMESTAMPTZ`).catch(() => {});
   columnsEnsured = true;
 }
 
-type CentreRecord = { id: string; name: string; landlordName: string | null; stamped: boolean; hasSchedule: boolean; research: any; researchAt: string | null };
+type CentreRecord = { id: string; name: string; landlordName: string | null; stamped: boolean; shared: boolean; hasSchedule: boolean; research: any; researchAt: string | null };
 
 /** Each centre's property record, where there is one: the stamped record first, then a match by name and place. */
 export async function centreRecords(centres: UkCentre[]): Promise<Map<string, CentreRecord>> {
   await ensureColumns();
   const rows: any[] = await pool.query(
-    `SELECT p.id, p.name, p.latitude, p.longitude, p.benchmark_centre, p.centre_research, p.centre_research_at, l.name AS landlord_name,
+    `SELECT p.id, p.name, p.latitude, p.longitude, p.benchmark_centre, p.benchmark_shared, p.centre_research, p.centre_research_at, l.name AS landlord_name,
             EXISTS (SELECT 1 FROM tenancy_schedule_units t WHERE t.property_id = p.id) AS has_schedule
        FROM crm_properties p LEFT JOIN crm_companies l ON l.id = p.landlord_id
       WHERE p.benchmark_centre IS NOT NULL OR (COALESCE(p.latitude, '') <> '' AND COALESCE(p.longitude, '') <> '')`
   ).then(r => r.rows);
   const out = new Map<string, CentreRecord>();
   const record = (p: any, stamped: boolean): CentreRecord => ({
-    id: String(p.id), name: p.name, landlordName: p.landlord_name || null, stamped, hasSchedule: !!p.has_schedule,
+    id: String(p.id), name: p.name, landlordName: p.landlord_name || null, stamped, shared: p.benchmark_shared === true, hasSchedule: !!p.has_schedule,
     research: p.centre_research || null, researchAt: p.centre_research_at ? new Date(p.centre_research_at).toISOString() : null,
   });
   for (const c of centres) {
@@ -96,12 +98,17 @@ router.post("/api/admin/benchmark-centres/apply", requireAuth, requireAdmin, asy
         marked++;
       } else if (row.action === "create") {
         await client.query(
-          `INSERT INTO crm_properties (name, latitude, longitude, asset_class, tags, benchmark_centre)
-           VALUES ($1, $2, $3, 'Shopping Centre', 'Benchmark centre', $1)`, [c.name, String(c.lat), String(c.lng)]);
+          // A page made here holds nothing of BGP's, so it is shared: every
+          // login may open and amend it. A page BGP already held is only
+          // stamped above and stays as private as it was.
+          `INSERT INTO crm_properties (name, latitude, longitude, asset_class, tags, benchmark_centre, benchmark_shared)
+           VALUES ($1, $2, $3, 'Shopping Centre', 'Benchmark centre', $1, TRUE)`, [c.name, String(c.lat), String(c.lng)]);
         created++;
       }
     }
     await client.query("COMMIT");
+    const { forgetSharedBenchmarkProperties } = await import("./company-scope");
+    forgetSharedBenchmarkProperties();
     res.json({ created, marked, centres: await plan() });
   } catch (e: any) {
     await client.query("ROLLBACK").catch(() => {});
@@ -134,6 +141,7 @@ router.get("/api/benchmark-centres/:name", requireAuth, async (req: Request, res
         ORDER BY s.brand_company_id`, [centre.lat, centre.lng, radius]
     ).then(r => r.rows).catch(() => [] as any[]);
     const trading = stores
+      .filter(b => !isJunkBrand({ name: b.name, companyType: b.company_type }))
       .map(b => ({ id: jointAgent ? null : String(b.id), name: b.name as string, domain: b.domain || null, leisure: isClientCrmCategory(b.company_type), type: String(b.company_type || "").replace(/^tenant\s*-\s*/i, "") || null }))
       .sort((a, b) => Number(b.leisure) - Number(a.leisure) || a.name.localeCompare(b.name));
 
@@ -141,7 +149,8 @@ router.get("/api/benchmark-centres/:name", requireAuth, async (req: Request, res
     res.json({
       name: centre.name,
       owner: record?.landlordName || null,
-      propertyId: client ? null : record?.id || null,
+      // BGP staff open any centre's page; a client login only a shared one.
+      propertyId: record && (!client || record.shared) ? record.id : null,
       website: centre.feedPage || null,
       trading, tradingSource: "Store locations BGP holds, within the centre's footprint. Not a tenancy schedule.",
       research: research ? { summary: research.summary || null, items: Array.isArray(research.items) ? research.items.slice(0, 20) : [], citations: Array.isArray(research.citations) ? research.citations.slice(0, 10) : [] } : null,
@@ -150,6 +159,28 @@ router.get("/api/benchmark-centres/:name", requireAuth, async (req: Request, res
   } catch (e: any) {
     console.error("[benchmark-centre]", e?.message);
     res.status(500).json({ error: "The centre could not be loaded" });
+  }
+});
+
+// The research on the centre's own property page, for whoever may open it.
+router.get("/api/properties/:id/centre-research", requireAuth, async (req: Request, res: Response) => {
+  try {
+    await ensureColumns();
+    const id = String(req.params.id);
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req as any);
+    if (scope && !(await isPropertyInScope(scope, id))) return res.status(403).json({ error: "Not available for this account" });
+    const row = (await pool.query(`SELECT benchmark_centre, benchmark_shared, centre_research, centre_research_at FROM crm_properties WHERE id = $1`, [id])).rows[0];
+    if (!row?.benchmark_centre) return res.json({ centre: null });
+    const research = row.centre_research && typeof row.centre_research === "object" ? row.centre_research : null;
+    res.json({
+      centre: row.benchmark_centre, shared: row.benchmark_shared === true,
+      research: research ? { summary: research.summary || null, items: Array.isArray(research.items) ? research.items.slice(0, 30) : [], citations: [] } : null,
+      researchAt: row.centre_research_at ? new Date(row.centre_research_at).toISOString() : null,
+    });
+  } catch (e: any) {
+    console.error("[centre-research read]", e?.message);
+    res.status(500).json({ error: "The centre research could not be loaded" });
   }
 });
 

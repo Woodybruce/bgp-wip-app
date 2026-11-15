@@ -2682,7 +2682,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       }
       const jaIds = scopeCompanyId ? await schemeLimitedPropertyIdsOrNone(req, "crm-property") : null;
       if (jaIds) {
-        if (!jaIds.includes(String(req.params.id))) return res.status(403).json({ error: "Access denied" });
+        // A shared benchmark centre is open to a login held to schemes too.
+        const { sharedBenchmarkPropertyIds } = await import("./company-scope");
+        if (!jaIds.includes(String(req.params.id)) && !(await sharedBenchmarkPropertyIds()).has(String(req.params.id))) return res.status(403).json({ error: "Access denied" });
         return res.json(await isJointAgentLogin(req) ? withoutJointAgentFields(property as any, JOINT_AGENT_HIDDEN_PROPERTY_FIELDS) : property);
       }
       res.json(property);

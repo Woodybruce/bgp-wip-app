@@ -716,6 +716,57 @@ type CentreBox = {
 };
 const KIND_WORDS: Record<string, string> = { opening: "Opening", closure: "Closure", redevelopment: "Redevelopment", ownership: "Ownership", leasing: "Leasing", other: "News" };
 
+type CentreResearch = CentreBox["research"];
+const researchWhen = (d: string | null) => !d ? "" : new Date(d.length === 7 ? `${d}-01` : d).toLocaleDateString("en-GB", d.length === 7 ? { month: "short", year: "numeric" } : { day: "numeric", month: "short", year: "numeric" });
+
+// What a centre is doing: the weekly web research, one line per item.
+function CentreResearchBody({ research }: { research: CentreResearch }) {
+  if (!research) return <p className="text-sm text-muted-foreground">Not researched yet. Each top centre is read about once a week, once it has a BGP page.</p>;
+  return (
+    <>
+      {research.summary && <p className="text-sm mb-1.5">{research.summary}</p>}
+      {research.items.length > 0 && (
+        <ul className="divide-y divide-border/60">
+          {research.items.map((item, i) => (
+            <li key={`${item.headline}-${i}`} className="py-1.5 flex items-start gap-2 min-w-0">
+              <span className="shrink-0 w-24 text-[11px] text-muted-foreground"><span className="block font-semibold text-foreground">{KIND_WORDS[item.kind] || "News"}</span>{researchWhen(item.date)}</span>
+              <span className="min-w-0 text-xs">
+                {item.source_url
+                  ? <a href={item.source_url} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">{item.headline}<ExternalLink className="inline w-3 h-3 ml-1 text-muted-foreground" /></a>
+                  : <span className="font-medium">{item.headline}</span>}
+                {item.detail && <span className="block text-muted-foreground">{item.detail}</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!research.items.length && !research.summary && <p className="text-sm text-muted-foreground">Nothing sourced in the last 12 months.</p>}
+    </>
+  );
+}
+
+// The same research on the centre's own property page (News & social). Draws
+// nothing on a property that is not a benchmark centre.
+export function PropertyCentreResearch({ propertyId }: { propertyId: string }) {
+  const { data } = useQuery<{ centre: string | null; research: CentreResearch; researchAt: string | null }>({
+    queryKey: ["/api/properties", propertyId, "centre-research"],
+    queryFn: async () => {
+      const r = await fetch(`/api/properties/${propertyId}/centre-research`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return { centre: null, research: null, researchAt: null };
+      return r.json();
+    },
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+  });
+  if (!data?.centre) return null;
+  return (
+    <div className="rounded-md border border-border bg-muted/40 px-3 py-2" data-testid="property-centre-research">
+      <p className={`${SUB_LABEL} mb-1 flex items-center gap-1`}><Radar className="w-3 h-3" />What the centre is doing{data.researchAt ? <span className="font-normal normal-case tracking-normal"> · read {new Date(data.researchAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, web research: check before quoting</span> : null}</p>
+      <CentreResearchBody research={data.research} />
+    </div>
+  );
+}
+
 // A competing centre's box: who owns it, what it is doing and who trades
 // there. Public data only, the same for every login (Woody, 2026-11-15).
 function CentreDetail({ centre, onClose }: { centre: string | null; onClose: () => void }) {
@@ -733,7 +784,6 @@ function CentreDetail({ centre, onClose }: { centre: string | null; onClose: () 
   });
   const leisure = (data?.trading || []).filter(b => b.leisure);
   const brands = allBrands ? data?.trading || [] : leisure.length ? leisure : (data?.trading || []).slice(0, 40);
-  const when = (d: string | null) => !d ? "" : new Date(d.length === 7 ? `${d}-01` : d).toLocaleDateString("en-GB", d.length === 7 ? { month: "short", year: "numeric" } : { day: "numeric", month: "short", year: "numeric" });
   return (
     <Dialog open={!!centre} onOpenChange={open => { if (!open) { setAllBrands(false); onClose(); } }}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="gap-centre-detail">
@@ -751,24 +801,7 @@ function CentreDetail({ centre, onClose }: { centre: string | null; onClose: () 
             </div>
             <div className="rounded-md border border-border bg-muted/40 px-3 py-2" data-testid="gap-centre-research">
               <p className={`${SUB_LABEL} mb-1 flex items-center gap-1`}><Radar className="w-3 h-3" />What it is doing{data.researchAt ? <span className="font-normal normal-case tracking-normal"> · read {new Date(data.researchAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, web research: check before quoting</span> : null}</p>
-              {!data.research && <p className="text-muted-foreground">Not researched yet. Each top centre is read about once a week, once it has a BGP page.</p>}
-              {data.research?.summary && <p className="mb-1.5">{data.research.summary}</p>}
-              {data.research && data.research.items.length > 0 && (
-                <ul className="divide-y divide-border/60">
-                  {data.research.items.map((item, i) => (
-                    <li key={`${item.headline}-${i}`} className="py-1.5 flex items-start gap-2 min-w-0">
-                      <span className="shrink-0 w-24 text-[11px] text-muted-foreground"><span className="block font-semibold text-foreground">{KIND_WORDS[item.kind] || "News"}</span>{when(item.date)}</span>
-                      <span className="min-w-0 text-xs">
-                        {item.source_url
-                          ? <a href={item.source_url} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">{item.headline}<ExternalLink className="inline w-3 h-3 ml-1 text-muted-foreground" /></a>
-                          : <span className="font-medium">{item.headline}</span>}
-                        {item.detail && <span className="block text-muted-foreground">{item.detail}</span>}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {data.research && !data.research.items.length && !data.research.summary && <p className="text-muted-foreground">Nothing sourced in the last 12 months.</p>}
+              <CentreResearchBody research={data.research} />
             </div>
             <div>
               <p className={`${SUB_LABEL} mb-1`}>Trading there <span className="font-mono tabular-nums font-normal">{allBrands ? data.trading.length : brands.length}</span></p>
@@ -784,7 +817,7 @@ function CentreDetail({ centre, onClose }: { centre: string | null; onClose: () 
                 {leisure.length > 0 && data.trading.length > leisure.length && <> · <button type="button" data-no-min-touch className="underline hover:text-foreground" onClick={() => setAllBrands(v => !v)}>{allBrands ? "Food and leisure only" : `Show all ${data.trading.length}`}</button></>}
               </p>
             </div>
-            {data.propertyId && <Button size="sm" variant="outline" asChild><Link href={`/properties/${data.propertyId}`} onClick={onClose}><Store className="w-3.5 h-3.5 mr-1" />Open its BGP page</Link></Button>}
+            {data.propertyId && <Button size="sm" variant="outline" asChild><Link href={`/properties/${data.propertyId}`} onClick={onClose}><Store className="w-3.5 h-3.5 mr-1" />Open its page</Link></Button>}
           </div>
         )}
       </DialogContent>

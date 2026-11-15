@@ -54,7 +54,7 @@ import { PropertySimpleOverview, NextLeaseEvents } from "@/components/property-s
 import { PROPERTY_VIEW_LABELS, suggestPropertyView, propertyOverviewFacts, type PropertyOverviewUnit } from "@shared/property-view";
 import { POSITIONING_PROFILES, exactPositioningTag, withPositioningTag, type SchemePositioning } from "@shared/scheme-positioning";
 import { bgpTeamsOnly, displayAliases } from "@shared/property-labels";
-import { BrandGapPanel } from "@/components/brand-gap-panel";
+import { BrandGapPanel, PropertyCentreResearch } from "@/components/brand-gap-panel";
 import { TrackerSummary } from "@/components/tracker-summary";
 import { ActivitySummary } from "@/components/activity-summary";
 import { BrandComplianceCard, CompanyMiniChat } from "@/components/brand-profile-panel";
@@ -1023,7 +1023,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     <div className="px-3 pb-3 min-h-0 flex-1 flex flex-col">
                     {introRight === "news" ? (
                     <div className="min-h-0 flex-1 overflow-y-auto space-y-3" data-testid="property-intro-news-panel">
-                      <ErrorBoundary compact name="News & social"><PropertyInstagram propertyId={property.id} /><PropertyNewsPanel propertyId={property.id} propertyName={property.name || ""} /></ErrorBoundary>
+                      <ErrorBoundary compact name="News & social"><PropertyCentreResearch propertyId={property.id} /><PropertyInstagram propertyId={property.id} /><PropertyNewsPanel propertyId={property.id} propertyName={property.name || ""} /></ErrorBoundary>
                     </div>
                     ) : introRight === "chat" ? (
                     <ErrorBoundary compact name="Property conversation">

@@ -1231,10 +1231,36 @@ Asked the four questions, he answered "Yes to all".
   `centre_research` on the record (openings, closures, redevelopment,
   ownership, leasing; each with its date and source link). It has not been
   run against Perplexity from a build machine.
-- Not built: the research on the centre's own BGP property page (it shows in
-  the box only); cleaning operator names that are not brands (IHG, Street
-  Food Holdings, betting shops) out of the lists; narrowing "requirements
-  whose use fits a unit" (now under More) to the scheme's categories.
+- **Shared centre pages** (Woody, 2026-11-15, told Landsec would get the
+  box and not the page: "Let's them edit"). A page the set-up CREATED is
+  stamped `benchmark_shared` and is open to every login to read and amend,
+  joint agents and scheme-limited logins included
+  (`sharedBenchmarkPropertyIds` in `server/company-scope.ts`, answered
+  ahead of the scheme limit in `isPropertyInScope`, and in
+  `propertyReadBlocked`, `clientBlockedForProperty`, the property GET and
+  the tenancy schedule reads). It holds nothing of BGP's. **A centre page
+  BGP already held is only stamped `benchmark_centre` and stays as private
+  as it was** (it may hold another landlord's work: "no landsec should see
+  another landlord page"); never set `benchmark_shared` on an existing page.
+  The centre's box sends a client the page id of a shared centre only. A
+  shared page is not on any client's Properties list: it is reached from
+  the box. The research also shows on the centre's own page, under News &
+  social (`PropertyCentreResearch`, `GET /api/properties/:id/centre-research`).
+- **No junk in the gaps** (Woody, 2026-11-15: "hate junk").
+  `shared/junk-brand.ts` (`isJunkBrand`, tests `server/junk-brand.test.ts`):
+  an operating or holding company under its legal name (Ltd, plc, Holdings,
+  Group), a hotel group, a bookmaker or casino, a name that is only a
+  description ("Coffee House"). `pitchable` in the gap route leaves them out
+  of every gap list, the sector examples, the benchmark and competing-centre
+  chips and the targets, and the centre's box leaves them out of who trades
+  there. They still count as occupiers on the scheme. A real brand caught by
+  the rule goes on `KEEP` there, with a test.
+- A requirement fits a marketing unit on size AND use: the unit's use class
+  is one the requirement lists, or lines up by `USE_HINTS`; a side with no
+  use stated fits on size alone.
+- Not built: narrowing "requirements whose use fits a unit" (under More) to
+  the scheme's categories; the property conversation on a shared centre page
+  for a joint agent (its chat rules refuse it, as on its own schemes).
   Tests: `qa/regression/brand-gap-board.test.mjs`.
 
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md

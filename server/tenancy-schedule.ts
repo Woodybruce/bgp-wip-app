@@ -151,7 +151,7 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     // A joint agent reads the schedules at its own schemes only.
     const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
     const tsSchemeIds = tsScope ? await schemeLimitedPropertyIdsOrNone(req as any, "tenancy-schedule") : null;
-    if (tsSchemeIds && !tsSchemeIds.includes(String(propertyId))) {
+    if (tsSchemeIds && !tsSchemeIds.includes(String(propertyId)) && !(await (await import("./company-scope")).sharedBenchmarkPropertyIds()).has(String(propertyId))) {
       return res.status(403).json({ error: "Not available for this account" });
     }
 
@@ -1459,7 +1459,7 @@ router.get("/api/tenancy-schedule/property/:propertyId/links", requireAuth, asyn
     }
     const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
     const linkSchemeIds = linkScope ? await schemeLimitedPropertyIdsOrNone(req as any, "tenancy-schedule-links") : null;
-    if (linkSchemeIds && !linkSchemeIds.includes(String(propertyId))) {
+    if (linkSchemeIds && !linkSchemeIds.includes(String(propertyId)) && !(await (await import("./company-scope")).sharedBenchmarkPropertyIds()).has(String(propertyId))) {
       return res.status(403).json({ error: "Access denied" });
     }
 

@@ -279,6 +279,7 @@ export async function clientBlockedForProperty(req: Request, propertyId: string)
   const scope = await resolveCompanyScope(req);
   if (!scope || scope === NO_ACCESS_SCOPE) return true;
   if (!(await isPropertyInScope(scope, propertyId))) return true;
+  if ((await sharedBenchmarkPropertyIds()).has(propertyId)) return false;
   // A Landsec joint agent reaches its own schemes only
   // (the plan and brochure files a brief links to come through here).
   const { briefSchemePropertyIds } = await import("./unit-brief-workspace");
@@ -286,7 +287,23 @@ export async function clientBlockedForProperty(req: Request, propertyId: string)
   return !!schemeIds && !schemeIds.has(propertyId);
 }
 
+// Benchmark centre pages the set-up created (server/benchmark-centres.ts) are
+// open to every login to read and amend (Woody, 2026-11-15: "let them
+// edit"): competing centres nobody at BGP acts on, holding public data. A
+// centre page BGP already held is never one of these. Read once a minute; a
+// failed read, or a database without the column, shares nothing.
+let sharedCentres: { at: number; ids: Set<string> } | null = null;
+export async function sharedBenchmarkPropertyIds(): Promise<Set<string>> {
+  if (sharedCentres && Date.now() - sharedCentres.at < 60_000) return sharedCentres.ids;
+  const ids = await pool.query(`SELECT id FROM crm_properties WHERE benchmark_shared IS TRUE`)
+    .then(r => new Set<string>(r.rows.map((row: any) => String(row.id)))).catch(() => new Set<string>());
+  sharedCentres = { at: Date.now(), ids };
+  return ids;
+}
+export function forgetSharedBenchmarkProperties() { sharedCentres = null; }
+
 export async function isPropertyInScope(scopeCompanyId: string, propertyId: string): Promise<boolean> {
+  if ((await sharedBenchmarkPropertyIds()).has(propertyId)) return true;
   const limit = currentSchemeLimit();
   if (limit && !limit.has(propertyId)) return false;
   const result = await pool.query(

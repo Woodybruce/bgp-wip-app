@@ -20,7 +20,8 @@ import { suggestPropertyView } from "../shared/property-view";
 import { UK_CENTRES, haversineKm, siteRadiusKm, peerCentresFor, benchmarkCentresFor } from "../shared/uk-centres";
 import { propertyResearchContext, PROPERTY_RESEARCH_USE_PATTERN, PROPERTY_RESEARCH_CENTRE_PATTERN, type PropertyResearchContext } from "../shared/property-research";
 import { isArchivedTenancy } from "../shared/tenancy-schedule-display";
-import { parseReqSize } from "../shared/requirement-fit";
+import { parseReqSize, USE_HINTS } from "../shared/requirement-fit";
+import { isJunkBrand } from "../shared/junk-brand";
 import { isTrackerLiveStatus } from "../shared/letting-rules";
 import { BRAND_STAGE_LABELS, furthestStage, type BrandStage } from "../shared/brand-stage";
 import { brandTier, fitsPositioning, isHotelGroup, positioningBoost, positioningFromTags, positioningFromTenants, LUXURY_RETAIL_SECTORS, POSITIONING_PROFILES, type BrandTier, type PositioningSource } from "../shared/scheme-positioning";
@@ -461,6 +462,11 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     // retail and drops quick-service / mass-market chains and hotel groups;
     // a value board drops luxury brands.
     const eligible = allBrands.filter(b => fitsPositioning(positioning, { companyType: b.company_type, tier: b.tier, hotel: b.hotel }));
+    // Records that are not a brand a landlord would pitch (Woody,
+    // 2026-11-15: "hate junk"): an operating or holding company kept under
+    // its legal name, a hotel group, a bookmaker. They still count where
+    // they trade; they are never offered as a gap.
+    const pitchable = eligible.filter(b => !isJunkBrand({ name: b.brand_name, companyType: b.company_type, industry: b.industry }));
     const boost = (b: { tier: BrandTier }) => positioningBoost(positioning, b.tier);
 
     // The tenancy schedule is the on-scheme truth — store geocodes cluster
@@ -509,7 +515,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
 
     // Gap: peer brands with >= 3 stores but nearest is > widerRadiusKm from subject.
     // These are brands that have chosen similar UK locations but not this one.
-    const gap = eligible
+    const gap = pitchable
       .filter(b => b.nearest_distance_km > widerRadiusKm && b.total_stores >= 3)
       // Prioritise scaling brands + those with reasonable proximity somewhere (active in the region)
       .map(b => ({
@@ -577,7 +583,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       return { has_live_requirement: !gapScope && r?.state === "live", requirement_note: r?.reason || null, requirement_listing: r?.listing || null };
     };
     const reqWeight = (id: any) => reqByCompany.get(String(id))?.weight || 0;
-    const peerGaps = eligible
+    const peerGaps = pitchable
       .filter(b => topCount(b) > 0 && !isOnScheme(b))
       .map(b => ({
         ...b,
@@ -604,7 +610,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     const sisterSchemes = withDistance.filter(ps => sisterNames.has(ps.name)).sort((a, b) => a.distance_km - b.distance_km)
       .map(ps => ({ ...ps, property_id: propertyOfCentre.get(ps.name)?.id || null }));
     const competingNames = new Set(competingCentres.map(c => c.name));
-    const competitorGaps = eligible
+    const competitorGaps = pitchable
       .filter(b => !isOnScheme(b) && Array.from(b.peer_scheme_set).some(n => competingNames.has(n)))
       .map(b => ({
         ...b,
@@ -617,7 +623,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
 
     // ── Local market — trading in the surrounding town/city (0.5–5km)
     //    but not on scheme: the in-town operators a scheme could poach.
-    const localMarket = eligible
+    const localMarket = pitchable
       .filter(b => !isOnScheme(b) && b.nearest_distance_km <= 5)
       .map(b => ({ ...b, peer_schemes: Array.from(b.peer_scheme_set).sort(), ...reqFlags(b.brand_company_id) }))
       .sort((a, b) => boost(b) - boost(a) || a.nearest_distance_km - b.nearest_distance_km)
@@ -633,7 +639,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       const atCompeting = inSector.filter(b => Array.from(b.peer_scheme_set).some(n => competingNames.has(n)));
       const atPeers = inSector.filter(b => topCount(b) > 0);
       const examples = inSector
-        .filter(b => !isOnScheme(b) && topCount(b) > 0)
+        .filter(b => !isOnScheme(b) && topCount(b) > 0 && pitchable.includes(b))
         .sort((a, b) => topCount(b) - topCount(a))
         .slice(0, 4)
         .map(b => ({ id: b.brand_company_id, name: b.brand_name, peers: topCount(b), live_req: reqFlags(b.brand_company_id).has_live_requirement, req_note: reqFlags(b.brand_company_id).requirement_note }));
@@ -687,7 +693,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       here: { brands: hereBrands.length, sectors: sectorCount(hereBrands) },
       centres: topPeers.map(ps => {
         const there = eligible.filter(b => b.peer_scheme_set.has(ps.name));
-        const notHere = there.filter(b => !hereIds.has(String(b.brand_company_id)));
+        const notHere = there.filter(b => !hereIds.has(String(b.brand_company_id)) && pitchable.includes(b));
         return {
           name: ps.name,
           distance_km: Math.round(haversineKm(location.lat, location.lng, ps.lat, ps.lng)),
@@ -724,7 +730,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     // not, its owner and its page where BGP holds one.
     const competingCards = competingCentres.map(cc => {
       const there = eligible.filter(b => b.peer_scheme_set.has(cc.name));
-      const notHere = there.filter(b => !hereIds.has(String(b.brand_company_id)));
+      const notHere = there.filter(b => !hereIds.has(String(b.brand_company_id)) && pitchable.includes(b));
       const record = propertyOfCentre.get(cc.name);
       return {
         ...cc, brands: there.length, shared: there.length - notHere.length, not_here: notHere.length,
@@ -743,7 +749,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     //    in play at this scheme.
     const missingKeys = new Set(missingSectors.map(m => m.key));
     const sectorLabel = new Map(sectors.map(sec => [sec.key, sec.label]));
-    const candidates = sliced(eligible.filter(b => !isOnScheme(b)
+    const candidates = sliced(pitchable.filter(b => !isOnScheme(b)
       && (topCount(b) > 0 || Array.from(b.peer_scheme_set).some(n => competingNames.has(n)) || b.nearest_distance_km <= 5)));
     const candidateIds = candidates.map(b => String(b.brand_company_id));
     const scoreOf = new Map<string, number>();
@@ -757,12 +763,17 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     }
     // The marketing units here, for a requirement's size to be read against.
     const marketing: any[] = await pool.query(
-      `SELECT id, unit_name, sqft, marketing_status FROM available_units WHERE property_id = $1`, [propertyId]
+      `SELECT id, unit_name, sqft, marketing_status, use_class FROM available_units WHERE property_id = $1`, [propertyId]
     ).then(r => r.rows.filter((u: any) => isTrackerLiveStatus(u.marketing_status))).catch(() => [] as any[]);
     const fitUnits = (id: any) => {
-      const range = parseReqSize(reqByCompany.get(String(id))?.size ?? null);
+      const held = reqByCompany.get(String(id));
+      const range = parseReqSize(held?.size ?? null);
       if (!range) return [];
-      return marketing.filter(u => Number(u.sqft) >= range.min && Number(u.sqft) <= range.max).slice(0, 3)
+      // Size in range, and the use lines up where both sides state one.
+      const uses: string[] = Array.isArray(held?.use) ? held.use.map((u: any) => String(u)) : [];
+      const useFits = (u: any) => !uses.length || !u.use_class || uses.includes(String(u.use_class))
+        || USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(uses.join(" ")) && unitRe.test(`${u.use_class} ${u.unit_name || ""}`));
+      return marketing.filter(u => Number(u.sqft) >= range.min && Number(u.sqft) <= range.max && useFits(u)).slice(0, 3)
         .map(u => ({ id: String(u.id), name: String(u.unit_name || "Unit"), sqft: Number(u.sqft) || null }));
     };
     // Where each brand already stands at this scheme, by the Brand CRM's own

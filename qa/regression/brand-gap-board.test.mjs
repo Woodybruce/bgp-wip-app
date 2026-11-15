@@ -30,9 +30,28 @@ test('centre pages are set up only by an admin, never at boot, and the research 
   assert.doesNotMatch(index, /benchmark-centres\/apply|applyBenchmark/, 'nothing at boot applies the set-up');
 });
 
-test('a centre\'s box sends a client no property id and a joint agent no brand ids', () => {
+test('a centre\'s box sends a client the page of a shared centre only, and a joint agent no brand ids', () => {
   const centres = read('server/benchmark-centres.ts');
-  assert.match(centres, /propertyId: client \? null : record\?\.id \|\| null,/);
+  assert.match(centres, /propertyId: record && \(!client \|\| record\.shared\) \? record\.id : null,/);
   assert.match(centres, /id: jointAgent \? null : String\(b\.id\)/);
   assert.match(read('server/index.ts'), /"\/api\/benchmark-centres\/",/);
+});
+
+// Woody, 2026-11-15: "let them edit". Only a page the set-up made is shared; a
+// centre page BGP already held is stamped and stays as private as it was.
+test('only a centre page the set-up created is shared with client logins', () => {
+  const centres = read('server/benchmark-centres.ts');
+  assert.match(centres, /VALUES \(\$1, \$2, \$3, 'Shopping Centre', 'Benchmark centre', \$1, TRUE\)/);
+  assert.match(centres, /UPDATE crm_properties SET benchmark_centre = \$2 WHERE id = \$1 AND benchmark_centre IS NULL/);
+  assert.doesNotMatch(centres, /SET benchmark_shared/, 'an existing page is never made shared');
+  const scope = read('server/company-scope.ts');
+  assert.match(scope, /SELECT id FROM crm_properties WHERE benchmark_shared IS TRUE/);
+  assert.match(scope, /\.catch\(\(\) => new Set<string>\(\)\)/, 'a failed read shares nothing');
+  assert.match(scope, /export async function isPropertyInScope\([^)]*\): Promise<boolean> \{\n  if \(\(await sharedBenchmarkPropertyIds\(\)\)\.has\(propertyId\)\) return true;/);
+});
+
+test('junk records are never offered as a gap', () => {
+  const gap = read('server/property-gap-analysis.ts');
+  assert.match(gap, /const pitchable = eligible\.filter\(b => !isJunkBrand\(/);
+  for (const list of ['const gap = pitchable', 'const peerGaps = pitchable', 'const competitorGaps = pitchable', 'const localMarket = pitchable', 'const candidates = sliced(pitchable.filter']) assert.ok(gap.includes(list), list);
 });

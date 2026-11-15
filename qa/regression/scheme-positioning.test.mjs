@@ -9,7 +9,8 @@ const { UK_CENTRES, TOP_25_CENTRES, peerCentresFor, benchmarkCentresFor, centreA
 const { propertyResearchContext } = await import('../../shared/property-research.ts');
 const { isClientCrmCategory } = await import('../../shared/tenant-categories.ts');
 const requirementLive = await import('../../shared/requirement-live.ts');
-const { parseReqSize } = await import('../../shared/requirement-fit.ts');
+const { parseReqSize, USE_HINTS } = await import('../../shared/requirement-fit.ts');
+const { isJunkBrand } = await import('../../shared/junk-brand.ts');
 const { isTrackerLiveStatus } = await import('../../shared/letting-rules.ts');
 const { BRAND_STAGE_LABELS, furthestStage } = await import('../../shared/brand-stage.ts');
 const require = createRequire(import.meta.url);
@@ -137,7 +138,7 @@ function runGapRoute(positioning, requirements = {}) {
   let handler;
   const context = propertyResearchContext({ assetClass: 'Retail', propertyView: 'centre', positioning, positioningSource: 'tag' });
   const bindings = {
-    ...positioningModule, ...centres, isClientCrmCategory, ...requirementLive, parseReqSize, isTrackerLiveStatus, BRAND_STAGE_LABELS, furthestStage,
+    ...positioningModule, ...centres, isClientCrmCategory, ...requirementLive, parseReqSize, USE_HINTS, isJunkBrand, isTrackerLiveStatus, BRAND_STAGE_LABELS, furthestStage,
     router: { get: (_url, _auth, callback) => { handler = callback; } }, requireAuth() {},
     readPropertyResearchContext: async () => context, researchCacheMatches: async () => false,
     resolvePropertyLocation: async () => ({ ok: true, ...REX, postcode: 'EC3V 3LR', name: 'Royal Exchange' }),

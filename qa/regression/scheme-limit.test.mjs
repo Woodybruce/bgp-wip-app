@@ -40,6 +40,7 @@ test('the limit is set for every client request before the gateway, and fails cl
   assert.ok(at < index.indexOf('const landsecDecision = await restrictedLandsecApiDecision(req, resourcePath);'), 'set before the client gateway runs');
   assert.match(index, /try \{ ids = await schemeLimitedPropertyIds\(req\); \} catch \{ ids = \[\]; \}/, 'a failed read limits to nothing');
   const scope = readFileSync(new URL('../../server/company-scope.ts', import.meta.url), 'utf8');
-  assert.match(scope, /export async function isPropertyInScope\(scopeCompanyId: string, propertyId: string\): Promise<boolean> \{\n  const limit = currentSchemeLimit\(\);\n  if \(limit && !limit\.has\(propertyId\)\) return false;/);
+  // A shared benchmark centre (2026-11-15) is the one thing answered ahead of the limit.
+  assert.match(scope, /export async function isPropertyInScope\(scopeCompanyId: string, propertyId: string\): Promise<boolean> \{\n  if \(\(await sharedBenchmarkPropertyIds\(\)\)\.has\(propertyId\)\) return true;\n  const limit = currentSchemeLimit\(\);\n  if \(limit && !limit\.has\(propertyId\)\) return false;/);
   assert.match(scope, /export async function isDealInScope\([^)]*\): Promise<boolean> \{\n[^\n]*\n  const limit = currentSchemeLimit\(\);/);
 });
