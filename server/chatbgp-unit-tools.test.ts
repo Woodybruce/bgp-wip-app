@@ -142,15 +142,15 @@ test("a deal's clock: stage, days, who and since when, the checklist item, and n
   assert.equal(line.daysAtStage, 6);
   assert.equal(line.incomingTenant, "Jersey Mike's");
   assert.deepEqual(line.waitingOn, { person: "Mark Warne", party: "Landsec leasing manager", since: "2026-11-12", days: 3,
-    checklistItem: "Covenant and credit risk review of the tenant", note: null, source: "Set on the deal" });
-  assert.equal(line.checklist.stage, "Negotiating");
+    checklistItem: "Covenant and credit risk review of the tenant", source: "Set on the deal" });
+  assert.equal(line.checklist.stage, "Negotiating (covers Negotiating, HOTs)");
   assert.equal(line.checklist.openItemCount, 3);
   assert.deepEqual(line.checklist.nextOpenItems.map((i: any) => i.responsible), ["Mark Warne", "Rupert Bentley-Smith (responsible for the letting)", "Nobody yet"]);
   const text = JSON.stringify(line);
   assert.doesNotMatch(text, /fee|55555|ner|251000|someone@example\.com|canLink/);
 
   const derived: any = tools.waitingLine({ ...clockRow(), clock: { ...clockRow().clock, derived: true, dependsOnHidden: true } });
-  assert.match(derived.waitingOn.source, /Read from the deal checklist/);
+  assert.match(derived.waitingOn.source, /next open item on the deal checklist/);
   assert.equal(derived.dependsOn, "Another deal");
   const nobody: any = tools.waitingLine({ ...clockRow(), clock: null, waitingDays: null });
   assert.equal("waitingOn" in nobody, false);
@@ -194,7 +194,12 @@ test("waiting-on tool: 'the Burger King unit at Bluewater' finds the letting run
   assert.equal(data.deals[0].waitingOn.checklistItem, "Covenant and credit risk review of the tenant");
   assert.equal(data.deals[0].checklist.nextOpenItems.length, 3);
   assert.ok(d.calls.includes("options:deal-jm"));
-  assert.doesNotMatch(JSON.stringify(data), /fee|55555/);
+  // The unit beside the deal: who is in it now, its lease and the offers on it.
+  assert.equal(data.deals[0].unitNow.tenant, "Burger King");
+  assert.equal(data.deals[0].unitNow.leaseExpiry, "2028-12-24");
+  assert.equal(data.deals[0].unitNow.marketing.offers[0].company, "Jersey Mike's");
+  assert.equal("deal" in data.deals[0].unitNow, false);
+  assert.doesNotMatch(JSON.stringify(data), /fee|55555|No company on the lease|Brand Contact|co-jm/);
   // A unit with no live deal is said to be waiting on no one.
   const none = await tools.runUnitTool("get_deal_waiting_on", { property: "Bluewater", search: "Gourmet Burger Kitchen" }, {} as any, deps());
   assert.equal(none.data.found, false);

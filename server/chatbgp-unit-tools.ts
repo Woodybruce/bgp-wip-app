@@ -56,7 +56,7 @@ export const UNIT_TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "get_deal_waiting_on",
-      description: "What a live deal or letting is waiting on, from the deal clock the Deals page shows: its stage, the days at that stage, who it is waiting on (the person and the party), since when, the deal checklist item that points at, what it depends on, and the next open checklist items with who is responsible for each. Find the deal by dealRef or dealId, or by a property with a search word (the unit, the incoming tenant, or the brand in the unit now), or by a search word alone. With waitingOn it lists the deals waiting on that person or party; with nothing it lists every deal that is waiting on someone. Use for 'what is this deal waiting on', 'who is holding up X', 'what is next on the checklist', 'which deals are waiting on me'. The waiting-on is recorded: never say it is not, and never answer this from the leasing schedule.",
+      description: "What a live deal or letting is waiting on, from the deal clock the Deals page shows: its stage, the days at that stage, who it is waiting on (the person and the party), since when, the deal checklist item that points at, what it depends on, and the next open checklist items with who is responsible for each. Find the deal by dealRef or dealId, or by a property with a search word (the unit, the incoming tenant, or the brand in the unit now), or by a search word alone. With waitingOn it lists the deals waiting on that person or party; with nothing it lists every deal that is waiting on someone. Use for 'what is this deal waiting on', 'who is holding up X', 'what is next on the checklist', 'which deals are waiting on me'. For one or two deals it also gives the unit as the property page shows it (who is in it now, size, rent, lease dates, the offers on it). Asked about a unit, say who is in it now and until when, then the letting running on it and who that letting is with (the agreed offer names the incoming tenant when the deal does not yet), then who it is waiting on and for what. The waiting-on is recorded: never say it is not, and never answer this from the leasing schedule.",
       parameters: {
         type: "object",
         properties: {
@@ -181,7 +181,12 @@ const dayOf = (value: unknown): string | null => {
   const d = new Date(value as any);
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 };
-const checklistStageLabel = (key: string | null | undefined): string | null => CHECKLIST_STAGES.find(s => s.key === key)?.label || null;
+// A checklist stage covers more than one deal stage ("Negotiating" runs
+// through HOTs), so it is given with the deal stages it covers.
+const checklistStageLabel = (key: string | null | undefined): string | null => {
+  const stage = CHECKLIST_STAGES.find(s => s.key === key);
+  return stage ? `${stage.label} (covers ${stage.codes.map(c => stageLabel(c)).join(", ")})` : null;
+};
 
 /** A deal's clock as the model is given it, from one row of the clock feed
  *  (GET /api/landsec/deals). The feed row carries BGP's fee for staff: it is
@@ -198,12 +203,13 @@ export function waitingLine(deal: any, options?: WaitingOptions | null, openItem
       since: dayOf(clock.waitingSince), days: deal.waitingDays ?? null,
       checklistItem: clock.checklistItemLabel || null,
       note: clock.waitingNote && clock.waitingNote !== clock.checklistItemLabel ? clock.waitingNote : null,
-      source: clock.derived ? "Read from the deal checklist (nobody has set it by hand)" : "Set on the deal",
+      source: clock.derived ? "The next open item on the deal checklist" : "Set on the deal",
     } : null,
     dependsOn: clock?.dependsOnHidden ? "Another deal" : clock?.dependsOn ? [clock.dependsOn.ref != null ? `Ref ${clock.dependsOn.ref}` : null, clock.dependsOn.name, clock.dependsOn.unit].filter(Boolean).join(", ") : null,
     brief: deal.brief === "agreed" ? "Agreed" : deal.brief === "drafted" ? "Drafted, not agreed" : deal.brief === undefined ? null : "None",
   };
-  if (!named) out.waitingOnNote = "Nobody is named as who this deal is waiting on.";
+  if (named) { const w = out.waitingOn as Record<string, unknown>; for (const key of Object.keys(w)) if (w[key] == null) delete w[key]; }
+  else out.waitingOnNote = "Nobody is named as who this deal is waiting on.";
   if (options) out.checklist = checklistLines(options, openItems);
   for (const key of Object.keys(out)) if (out[key] == null) delete out[key];
   return out;
@@ -226,9 +232,9 @@ export function checklistLines(options: WaitingOptions, openItems = 5) {
 
 /** A deal the clock feed does not hold (a property outside the Landsec
  *  schemes): its stage and days from the unit feed, and no waiting-on clock. */
-export function unitDealAsClockRow(unit: PropertyUnit | null, deal: PropertyUnitDeal, propertyName: string) {
+export function unitDealAsClockRow(unit: PropertyUnit | null, deal: PropertyUnitDeal, propertyName: string, propertyId: string) {
   return {
-    id: deal.id, ref: deal.ref, name: deal.name, dealType: deal.type, tenant: deal.tenant, scheme: { name: propertyName },
+    id: deal.id, ref: deal.ref, name: deal.name, dealType: deal.type, tenant: deal.tenant, scheme: { name: propertyName }, propertyId,
     unit: unit?.label ?? null, trackerId: unit?.trackerId ?? null, code: deal.code, days: deal.days, stageConfirmed: deal.daysConfirmed,
     clock: null, waitingDays: null, brief: unit ? unit.brief : undefined,
   };
@@ -278,12 +284,19 @@ async function openProperties(req: Request, text: string, deps: UnitToolDeps): P
 
 // The unit feed for one property, cut for the caller exactly as the route
 // GET /api/properties/:id/units cuts it.
-async function unitsFeedFor(req: Request, propertyId: string, deps: UnitToolDeps): Promise<{ feed: PropertyUnitsFeed; viewer: { staff: boolean; jointAgent: boolean } } | null> {
+type UnitsRead = { feed: PropertyUnitsFeed; viewer: { staff: boolean; jointAgent: boolean } };
+async function unitsFeedFor(req: Request, propertyId: string, deps: UnitToolDeps): Promise<UnitsRead | null> {
   if (await deps.propertyReadBlocked(req, propertyId)) return null;
   const feed = await deps.loadPropertyUnits(deps.db, propertyId);
   if (!feed) return null;
   const viewer = await deps.unitViewerFor(req);
   return { feed: deps.unitsForViewer(feed, viewer), viewer };
+}
+
+// One unit as its panel on the property page shows it: the line and the detail.
+async function unitPicture(read: UnitsRead, unit: PropertyUnit, deps: UnitToolDeps): Promise<Record<string, unknown>> {
+  const detail = await deps.loadPropertyUnitDetail(deps.db, read.feed.property.id, unit.id, read.viewer).catch(() => null);
+  return { ...unitLine(unit), ...(detail ? unitDetailLines(detail) : {}) };
 }
 
 // The clock feed's rows for these deals, each with its open checklist items
@@ -310,17 +323,13 @@ async function runPropertyUnits(raw: any, req: Request, deps: UnitToolDeps) {
   for (const property of properties) {
     const read = await unitsFeedFor(req, property.id, deps);
     if (!read) continue;
-    const { feed, viewer } = read;
+    const { feed } = read;
     const matched = feed.units.filter(u => unitMatchesFilter(u, args.filter) && unitMatches(u, args.search));
     const shown = matched.slice(0, args.limit);
     const lines: Record<string, unknown>[] = [];
     for (const [index, unit] of shown.entries()) {
-      const line = unitLine(unit);
       // A handful of units: the unit panel's detail and the letting's clock too.
-      if (shown.length <= 3) {
-        const detail = await deps.loadPropertyUnitDetail(deps.db, property.id, unit.id, viewer).catch(() => null);
-        if (detail) Object.assign(line, unitDetailLines(detail));
-      }
+      const line = shown.length <= 3 ? await unitPicture(read, unit, deps) : unitLine(unit);
       if (unit.deal && index < 5 && shown.length <= 5) {
         const row = clock?.deals.find((d: any) => d.id === unit.deal!.id);
         if (row) line.dealWaitingOn = (await waitingFor(req, [row], deps))[0];
@@ -361,7 +370,7 @@ async function runDealWaitingOn(raw: any, req: Request, deps: UnitToolDeps) {
       const unit = read?.feed.units.find(u => u.deal?.id === deal.id) || null;
       const open = unit?.deal || read?.feed.unplacedDeals.find(d => d.id === deal.id) || null;
       if (!read || !open) return { found: false, message: "No live deal with that reference is open to this account." };
-      rows.set(open.id, unitDealAsClockRow(unit, open as PropertyUnitDeal, read.feed.property.name));
+      rows.set(open.id, unitDealAsClockRow(unit, open as PropertyUnitDeal, read.feed.property.name, read.feed.property.id));
       notes.push("This property has no waiting-on clock: the stage and the checklist are what is recorded.");
     }
   } else if (args.property) {
@@ -380,7 +389,7 @@ async function runDealWaitingOn(raw: any, req: Request, deps: UnitToolDeps) {
       for (const unit of read.feed.units) {
         if (args.search && !unitMatches(unit, args.search)) continue;
         if (!unit.deal) { if (args.search) noDeal.push(`${unit.label}${unit.tenant.name ? ` (${unit.tenant.name})` : ""}`); continue; }
-        if (!rows.has(unit.deal.id)) rows.set(unit.deal.id, clockDeals.find(d => d.id === unit.deal!.id) || unitDealAsClockRow(unit, unit.deal, read.feed.property.name));
+        if (!rows.has(unit.deal.id)) rows.set(unit.deal.id, clockDeals.find(d => d.id === unit.deal!.id) || unitDealAsClockRow(unit, unit.deal, read.feed.property.name, read.feed.property.id));
       }
     }
     if (noDeal.length) notes.push(`No live deal on: ${noDeal.slice(0, 8).join("; ")}. A unit with no live deal is waiting on no one.`);
@@ -397,7 +406,17 @@ async function runDealWaitingOn(raw: any, req: Request, deps: UnitToolDeps) {
   if (args.waitingOn) list = list.filter(d => textMatches(args.waitingOn, d.clock?.waitingOnName, d.clock?.waitingOnParty));
   if (list.length === 0) return { found: false, source, message: notes[0] || "No live deal open to this account matches that.", ...(notes.length > 1 ? { notes } : {}) };
   const shown = list.slice(0, args.limit);
-  return { found: true, source, matched: list.length, shown: shown.length, deals: await waitingFor(req, shown, deps, shown.length <= 5 ? 5 : 0), ...(notes.length ? { notes } : {}) };
+  const deals = await waitingFor(req, shown, deps, shown.length <= 5 ? 5 : 0);
+  // One or two deals: the unit each is on, as the property page shows it (who
+  // is in it now, its lease, the offers on it), by the unit feed's own check.
+  if (shown.length <= 2) {
+    for (const [index, row] of shown.entries()) {
+      const read = row.propertyId ? await unitsFeedFor(req, row.propertyId, deps).catch(() => null) : null;
+      const unit = read?.feed.units.find(u => u.deal?.id === row.id || (row.unitId && u.id === row.unitId) || (row.trackerId && u.trackerId === row.trackerId));
+      if (read && unit) { const { deal: _deal, ...picture } = await unitPicture(read, unit, deps); deals[index].unitNow = picture; }
+    }
+  }
+  return { found: true, source, matched: list.length, shown: shown.length, deals, ...(notes.length ? { notes } : {}) };
 }
 
 /** The one door from server/chatbgp.ts (executeCrmToolRaw, after its client

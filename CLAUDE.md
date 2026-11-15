@@ -2830,6 +2830,39 @@ lines there in the same commit**. Stale lines become confident wrong
 answers to the team (that's how this file came to exist — ChatBGP sent
 Woody to a Settings page the phone app can't reach, 2026-08-23).
 
+## ChatBGP reads units and waiting-on from the same feeds as the pages (15 November 2026)
+
+Woody: "do you need to fix some more stuff", after ChatBGP told a Landsec
+login that Burger King was not at Bluewater and that nothing recorded what
+its unit's letting was waiting on. It had read the older leasing schedule
+board (`query_leasing_schedule`). Two read tools now answer such questions,
+for BGP staff and client logins, in `server/chatbgp-unit-tools.ts`:
+
+- `get_property_units` (a property, and a unit, tenant or brand to narrow
+  it): the property page's unit feed, `loadPropertyUnits` /
+  `loadPropertyUnitDetail` behind `propertyReadBlocked`, cut by
+  `unitsForViewer` / `unitViewerFor`.
+- `get_deal_waiting_on` (a Ref, a property with a search word, a search word,
+  or who it waits on): the deal clock feed, `landsecDealsFeed` in
+  `server/landsec-unit.ts` (the body of `GET /api/landsec/deals`, lifted out
+  so the route and the tool call one function), and the open checklist items
+  from `waitingOptionsForDeal`. For one or two deals it adds the unit as the
+  property page shows it. A deal off the Landsec schemes has no clock: its
+  stage comes from the unit feed and it says so.
+
+**The rule: the same feeds as the pages.** The file has no query of its own
+over the schedule, the tracker, the clock or the checklist, so a login is
+told what its pages show it and a property outside its company or schemes is
+simply not found. What goes to the model is built field by field (`unitLine`,
+`unitDetailLines`, `waitingLine`): a new field reaches it only when named
+there, and a fee, BGP's notes on a target or an email never is. Neither tool
+is on `CLIENT_BLOCKED_TOOLS`; a joint agent is refused both by its own gate
+(do not add them to `JOINT_AGENT_TOOLS`). Both prompts send "who is in unit
+X", "when does X's lease end" and "what is this deal waiting on" to these
+tools first. Tests: `server/chatbgp-unit-tools.test.ts` (in `npm test`) and
+`qa/regression/chatbgp-unit-tools-guards.test.mjs`. The group chat's tool
+list (`GROUP_CHAT_TOOLS` in `server/routes.ts`) does not have them.
+
 ## Website team list = HR (Woody, 2026-10-13)
 
 The HR pages in the app are the one source of truth for people. The public

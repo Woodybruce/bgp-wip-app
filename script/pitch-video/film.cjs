@@ -378,19 +378,39 @@ const SCENES = {
     await s.write(process.env.PHONE_QUESTION || "What is the Burger King unit at Bluewater waiting on?", 120);
     await s.wait(600);
     await s.click('[data-testid="button-mobile-send"]', { after: 1500, ms: 500 });
-    // The answer takes a while: wait for "Composing response" to go, then
-    // for the text to stop changing.
-    const composing = () => s.page.evaluate(() => /Composing response/.test(document.body.innerText));
+    // The answer takes a while: wait while the chat shows it is still at work
+    // (its Stop button; the progress line changes as tools run), then for the
+    // text to stop changing.
+    const composing = () => s.page.evaluate(() => !!document.querySelector('[data-testid="button-mobile-stop-generating"]') || /Composing response/.test(document.body.innerText));
     for (let i = 0; i < 80 && await composing(); i++) await s.wait(1500);
     await s.wait(1200);
-    // The answer lands scrolled to its end: go back up to the question so
-    // the start of the answer is what is read.
+    // The text has stopped changing when the page's words hold still.
+    let last = -1, still = 0;
+    for (let i = 0; i < 40 && still < 3; i++) {
+      const size = await s.page.evaluate(() => document.body.innerText.length);
+      still = size === last ? still + 1 : 0;
+      last = size;
+      await s.wait(500);
+    }
+    // The answer lands scrolled to its end, and the chat pulls itself back to
+    // the end each time its messages are read again. Go up to the question
+    // in the chat's own scroll box and hold it there, so the clip ends on the
+    // question and the first screenful of the answer.
     await s.page.evaluate(q => {
-      const hit = [...document.querySelectorAll("p, div, span")].filter(e => e.children.length === 0 && (e.textContent || "").trim() === q).pop();
-      if (hit) hit.scrollIntoView({ block: "start", behavior: "smooth" });
+      // The bubble holds the words and the time side by side, so no element's
+      // text is the question alone: take the innermost one that starts with it.
+      const holds = e => (e.textContent || "").trim().startsWith(q);
+      const hit = [...document.querySelectorAll("p, div, span")].filter(e => holds(e) && ![...e.children].some(holds)).pop();
+      if (!hit) return;
+      let box = hit.parentElement;
+      while (box && !(/(auto|scroll)/.test(getComputedStyle(box).overflowY) && box.scrollHeight > box.clientHeight + 4)) box = box.parentElement;
+      if (!box) return;
+      const top = Math.max(0, box.scrollTop + hit.getBoundingClientRect().top - box.getBoundingClientRect().top - 20);
+      box.scrollTo({ top, behavior: "smooth" });
+      setTimeout(() => setInterval(() => { if (Math.abs(box.scrollTop - top) > 2) box.scrollTop = top; }, 50), 900);
     }, process.env.PHONE_QUESTION || "What is the Burger King unit at Bluewater waiting on?");
-    await s.wait(1500);
-    await s.wait(2500);
+    await s.wait(1000);
+    await s.wait(3200);
   },
 
   async phoneCall(s) {
