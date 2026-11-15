@@ -15,19 +15,21 @@ import { buildReading, cleanNote } from "./letting-note-parse";
 
 export const SUGGESTION_KINDS = ["offer", "viewing"] as const;
 export type SuggestionKind = (typeof SUGGESTION_KINDS)[number];
-export const SUGGESTION_SOURCES = ["target_comment", "viewing", "interest_note", "brief_comment"] as const;
+export const SUGGESTION_SOURCES = ["target_comment", "viewing", "interest_note", "brief_comment", "chat_comment"] as const;
 export type SuggestionSource = (typeof SUGGESTION_SOURCES)[number];
 export type SuggestionVisibility = "bgp" | "brief";
 export type SuggestionStatus = "open" | "confirmed" | "dismissed";
 
 // Where the words came from, as the list says it.
 export const SUGGESTION_SOURCE_LABELS: Record<SuggestionSource, string> = {
-  target_comment: "Target comment", viewing: "Viewing note", interest_note: "Interest note", brief_comment: "Brief comment",
+  target_comment: "Target comment", viewing: "Viewing note", interest_note: "Interest note", brief_comment: "Brief comment", chat_comment: "Tracker comment",
 };
-// A target's comment log is BGP's own notes. The other three are read by
-// everyone working the unit.
+// A target's comment log is BGP's own notes. Viewings, interest and brief
+// comments are read by everyone working the unit. A Tracker comment sits in
+// the property's conversation, which a joint agent does not open, so it is
+// listed for BGP staff only (Woody, 2026-11-15: team chat is read).
 export const SUGGESTION_VISIBILITY: Record<SuggestionSource, SuggestionVisibility> = {
-  target_comment: "bgp", viewing: "brief", interest_note: "brief", brief_comment: "brief",
+  target_comment: "bgp", viewing: "brief", interest_note: "brief", brief_comment: "brief", chat_comment: "bgp",
 };
 // An offer or a viewing for the same unit and brand within this many days
 // either side of the evidence means it is already logged.
@@ -63,7 +65,8 @@ export type SuggestionSourceRef =
   | { type: "target_comment"; targetId: string; at: string }
   | { type: "viewing"; viewingId: string }
   | { type: "interest_note"; interestId: string }
-  | { type: "brief_comment"; commentId: string };
+  | { type: "brief_comment"; commentId: string }
+  | { type: "chat_comment"; messageId: string };
 
 // One suggestion as the list sends it. `source` is enough to open the form:
 // a target comment is read by the server from its target id and timestamp;
@@ -96,6 +99,7 @@ export function sourceRefText(ref: SuggestionSourceRef): string {
   if (ref.type === "target_comment") return `${ref.targetId}|${ref.at}`;
   if (ref.type === "viewing") return ref.viewingId;
   if (ref.type === "interest_note") return ref.interestId;
+  if (ref.type === "chat_comment") return ref.messageId;
   return ref.commentId;
 }
 export function parseSourceRef(kind: string, ref: string): SuggestionSourceRef | null {
@@ -108,6 +112,7 @@ export function parseSourceRef(kind: string, ref: string): SuggestionSourceRef |
   if (kind === "viewing") return { type: "viewing", viewingId: text };
   if (kind === "interest_note") return { type: "interest_note", interestId: text };
   if (kind === "brief_comment") return { type: "brief_comment", commentId: text };
+  if (kind === "chat_comment") return { type: "chat_comment", messageId: text };
   return null;
 }
 
@@ -381,6 +386,21 @@ export interface TargetSource {
 export interface ViewingSource extends ViewingForDetection { id: string; companyId: string | null; companyName: string | null; saidBy: string | null; status: string | null }
 export interface InterestSource { id: string; companyId: string | null; companyName: string | null; notes: string | null; interestDate: string | null }
 export interface BriefCommentSource { id: string; body: string; userName: string | null; day: string | null }   // day = the London day it was written
+// A message in the property's conversation that tags this unit (a Letting
+// Tracker comment). `text` is the words without the tag tokens; `tagged` is
+// the brands the message tags.
+export interface ChatCommentSource { id: string; text: string; userName: string | null; day: string | null; tagged: readonly UnitBrand[] }
+const CHAT_TAG = /@\[([^\]]*)\]\(tag:([a-z_]+)\/([^)\s]*)\)/gi;
+/** A chat message as plain words: this unit's own tag goes, every other tag reads as its name. */
+export function plainChatComment(content: string, unitId: string): string {
+  return String(content || "").replace(CHAT_TAG, (_m, name, type, id) => (type === "unit" && id === unitId ? "" : String(name || ""))).replace(/[ \t]+/g, " ").trim();
+}
+/** The brands a chat message tags, as { id, name }. */
+export function chatCommentBrandTags(content: string): { id: string; name: string }[] {
+  const out: { id: string; name: string }[] = [];
+  for (const m of String(content || "").matchAll(CHAT_TAG)) if (m[2] === "company" && m[3] && !out.some(o => o.id === m[3])) out.push({ id: m[3], name: String(m[1] || "") });
+  return out;
+}
 export interface UnitSources {
   unitId: string;
   today: string;
@@ -391,6 +411,7 @@ export interface UnitSources {
   viewings: readonly ViewingSource[];
   interest: readonly InterestSource[];
   briefComments: readonly BriefCommentSource[];
+  chatComments?: readonly ChatCommentSource[];
   offersLogged: readonly LoggedRecord[];
   viewingsLogged: readonly LoggedRecord[];
 }
@@ -489,6 +510,20 @@ export function candidatesForUnit(src: UnitSources): SuggestionCandidate[] {
     if (!brand) continue;
     for (const found of detectInText({ ...base, text, writtenOn: pastDay(c.day, src.today), author: c.userName })) {
       add(found, "brief_comment", { type: "brief_comment", commentId: c.id }, { companyId: brand.companyId, brandName: brand.name }, c.userName, c.day);
+    }
+  }
+  // 5. A Letting Tracker comment (a message in the property's conversation
+  // that tags the unit). The brand is the one brand it tags, or the one brand
+  // on the unit its words name. Two tagged brands, or none found, raise nothing.
+  for (const c of src.chatComments || []) {
+    const text = String(c.text || "");
+    if (!text.trim()) continue;
+    let brand: BrandRef | null = null;
+    if (c.tagged.length === 1) brand = { companyId: c.tagged[0].companyId, brandName: c.tagged[0].name };
+    else if (c.tagged.length === 0) { const hit = brandNamedIn(text, named); if (hit) brand = { companyId: hit.companyId, brandName: hit.name }; }
+    if (!brand) continue;
+    for (const found of detectInText({ ...base, text, writtenOn: pastDay(c.day, src.today), author: c.userName })) {
+      add(found, "chat_comment", { type: "chat_comment", messageId: c.id }, brand, c.userName, c.day);
     }
   }
   return out;

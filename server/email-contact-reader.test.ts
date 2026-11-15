@@ -268,3 +268,28 @@ test("rulesOnly keeps a person's block away from the model, and onModel reports 
   assert.equal(calls, 1);
   assert.deepEqual(asked, [TOM.email]);
 });
+
+// ── The offer in a thread (the Letting Tracker's email pop-out) ────────────
+import { offerMessageWords } from "./email-contact-reader";
+
+test("the offer read from a thread is the newest outside message that reads as one, without the messages quoted under it", () => {
+  const isOffer = (subject: string, text: string) => /\boffer/i.test(subject) || /\bour offer\b|\boffer of\b/i.test(text);
+  const box = "agent@lettings.example";
+  const thread = [
+    { subject: "RE: Unit 7", bodyHtml: "", bodyText: "Thanks, we will put it to the landlord.", from: { name: "Our Agent", address: "agent@lettings.example" }, receivedDateTime: "2026-11-12T10:00:00Z" },
+    { subject: "RE: Unit 7", bodyHtml: "<p>Our offer is &pound;120,000 pa on a 15 year lease.</p><p>Regards<br>Sam</p><div>From: Our Agent<br>Sent: 10 November 2026 09:00<br>To: Sam<br>Subject: Unit 7</div><p>The quoting rent is £150,000 pa.</p>", bodyText: "",
+      from: { name: "Sam Tenant", address: "sam@brand.example" }, receivedDateTime: "2026-11-11T09:00:00Z" },
+    { subject: "Unit 7", bodyHtml: "", bodyText: "Can you send the plans?", from: { name: "Sam Tenant", address: "sam@brand.example" }, receivedDateTime: "2026-11-09T09:00:00Z" },
+  ];
+  const got = offerMessageWords(thread, box, isOffer, 4000);
+  assert.equal(got?.from, "Sam Tenant");
+  assert.equal(got?.received, "2026-11-11T09:00:00Z");
+  assert.match(got!.text, /Our offer is .120,000 pa on a 15 year lease\./);
+  assert.ok(!/quoting rent/.test(got!.text), "the message quoted under it is not part of the offer");
+  // No message reads as an offer: the newest from outside. Nothing from outside: the newest. No words: nothing.
+  assert.equal(offerMessageWords(thread.filter(m => m.receivedDateTime !== "2026-11-11T09:00:00Z"), box, isOffer, 4000)?.text, "Can you send the plans?");
+  assert.equal(offerMessageWords([thread[0]], box, isOffer, 4000)?.from, "Our Agent");
+  assert.equal(offerMessageWords([{ ...thread[0], bodyText: "  " }], box, isOffer, 4000), null);
+  // A long email is cut to the reader's length.
+  assert.equal(offerMessageWords([{ ...thread[2], bodyText: "x".repeat(9000) }], box, isOffer, 4000)?.text.length, 4000);
+});

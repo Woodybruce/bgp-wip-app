@@ -201,9 +201,18 @@ the same save (the deal PUT, or the clock PUT); NER and "Not checked" open
 the lease terms, Brief check opens the unit's `UnitBriefDialog`, Depends on
 opens the Waiting on form. A closed deal shows its closing stage and date and
 dashes with the reason in the title: never a waiting-on or a stage date for
-it. A cell a login may not change is plain text: for a client login (Client,
-Team, BGP Contact, Instructed, Exchanged, Completed; no bin; no Completed or
-Invoiced status; party pickers create contacts and tenant brands only). A
+it. A cell a login may not change is plain text: for a client login the
+Client only (no bin; no Completed or Invoiced status; party pickers create
+contacts and tenant brands only). **A client login and a joint agent change
+the Team, the BGP Contact and the Instructed, Exchanged and Completed dates**
+(Woody, 2026-11-15: "Landsec can change, as can joint agent"). Team and BGP
+Contact are off by default: turn them on from Columns. A client picks BGP's
+people from the names already on its deals (the fee split stays BGP's own,
+so its editor is never opened for a client), and the server takes from a
+client only a name already on the deal or an active BGP login
+(`PUT /api/crm/deals/:id`, 400 otherwise). A joint agent is sent a deal's
+team and BGP people (they came off `JOINT_AGENT_HIDDEN_DEAL_FIELDS`); the
+fee and everything else on that list stay hidden. A
 client's deal save never writes `poNumber` or `invoicedAt` (blanked for it by
 `stripDealFees`) and moves a deal only to a property in its scope.
 
@@ -1924,6 +1933,24 @@ what was read, fills the form, and saves through the form's own route.
   nothing. The separate "Paste a note" box stays only where there is no
   comments box (a joint agent editing an offer someone else logged) and for
   "Log as offer / Log as viewing", which read a stored comment.
+- **A note with more than one rent lists each to choose from** (Woody,
+  2026-11-15: "list both rent"). The rules still fill none (the offer and a
+  previous tenant's, a stepped rent, a rent that was turned down). The
+  shorthand reading carries `rentOptions` (each figure with the words that
+  lead up to it; never a net effective rent), and `guardReading` lists them
+  as `unsure` lines for `rentPa`, each with its own Use. The read-back then
+  has no "Left out: rent". A range ("£100k-£120k") is still left out.
+- **The email behind an offer is read by the same reader** (Woody,
+  2026-11-15: email bodies are read). The email pop-out on an offer the
+  inbox sweep found (`tracker-source.tsx`, `POST
+  /api/tracker/offer/:offerId/extract`, BGP staff only) reads the newest
+  outside message that states the offer, without the messages quoted under
+  it (`offerMessageWords` in `server/email-contact-reader.ts`), through
+  `readLettingNote`. Each value comes back with the words it came from and a
+  tick box; a box with two values (two rents) is left for the person to
+  choose; **Apply to offer** fills the edit form with the ticked lines and
+  saves nothing. It replaced a looser reader that converted rents per
+  square foot and checked no quote.
 - **Log as offer / Log as viewing** on a target's comments (staff Letting
   Tracker) is BGP staff only, because the comments are BGP's notes. The
   server fetches the comment by target id and timestamp
@@ -1933,8 +1960,11 @@ what was read, fills the form, and saves through the form's own route.
   changed.
 - **Never make the reader save**, and never route "drop a note in" through
   ChatBGP's `log_offer`, which saves at once with no form to check.
-- **NOT built, each waits on Woody** (do not build without his answer):
-  reading team chat; reading email bodies.
+- Woody said yes to reading team chat and email bodies on 15 November 2026.
+  Built: Letting Tracker comments as a source of comments not yet logged
+  (below), and the offer email read above. NOT built: reading private chat
+  threads or ChatBGP conversations, and raising a suggestion from an email
+  (the inbox sweep already makes an unconfirmed offer or interest row).
 - **Comments not yet logged** (Woody, 2026-11-13: "yes to table"). A comment
   that reads as an offer or a viewing, with none logged for that unit and
   brand, is a SUGGESTION in `letting_suggestions` (migration 0060, on
@@ -1951,12 +1981,16 @@ what was read, fills the form, and saves through the form's own route.
     (or two terms); a viewing needs words of a viewing with a date or an
     outcome. Words that only repeat the quoting rent, or that the reader
     refused, raise nothing. Change the rule there, with a test.
-  - **Four sources, nothing else**: a target's comment log (BGP's notes),
+  - **Five sources, nothing else**: a target's comment log (BGP's notes),
     a viewing whose outcome is Offer Expected or Offer Received or whose
     note reads as an offer, an interest note a person typed, a Targeting
-    Brief comment that names one brand on the unit. Never inbox-swept rows,
-    a diary invitation's subject, emails, chat, deal comments or CRM
-    interactions.
+    Brief comment that names one brand on the unit, and since 15 November
+    2026 a **Letting Tracker comment**: a person's message in the property's
+    shared conversation that tags the unit (`chat_comment`). Its brand is
+    the one brand the message tags, or the one brand on the unit its words
+    name; two tagged brands, or none found, raise nothing. Never a private
+    thread, ChatBGP's answers, inbox-swept rows, a diary invitation's
+    subject, emails, deal comments or CRM interactions.
   - **Already logged** = an offer (or viewing) for the same unit and brand
     within 14 days either side. A viewing that expects an offer looks
     forward: any offer from that brand since. The dedupe key is the source,
@@ -1964,12 +1998,15 @@ what was read, fills the form, and saves through the form's own route.
     never comes back and an edited comment is raised once more.
   - **It runs when a source is saved** (`queueSuggestionScan`, one fire and
     forget line in the handlers that write a target comment, a viewing, an
-    interest line and a brief comment; it never fails or slows the save)
+    interest line, a brief comment and a message in a property's
+    conversation that tags a unit, edited and deleted ones included; it
+    never fails or slows the save)
     and from the admin Preview then Apply
     (`/api/admin/letting-suggestions/preview|apply`; Settings → Letting
     integrity → Backfills). Never at boot, never on a timer.
-  - **Who sees what**: rows from target comments are `visibility = 'bgp'`,
-    BGP staff only (`isStaff && seesBgpNotes`). The rest are `'brief'`: BGP
+  - **Who sees what**: rows from target comments and from Tracker comments
+    (a joint agent does not open the property's conversation) are
+    `visibility = 'bgp'`, BGP staff only (`isStaff && seesBgpNotes`). The rest are `'brief'`: BGP
     staff and the scheme's joint agent. An asset manager, a Landsec leasing
     manager and every other client login are listed nothing, counted
     nothing and get the same 404 for any id. Every route goes through

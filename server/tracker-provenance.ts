@@ -15,6 +15,9 @@ import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { getAppToken } from "./shared-mailbox";
+import { offerMessageWords } from "./email-contact-reader";
+import { looksLikeOffer } from "./viewing-sync";
+import { NOTE_MAX } from "@shared/letting-note";
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const MODEL = "claude-haiku-4-5-20251001";
@@ -109,15 +112,15 @@ async function loadSourceEmail(sourceKey: string | null, noteTexts: Array<string
   }
 }
 
-function plainText(msgs: Array<{ subject: string; bodyHtml: string; bodyText: string; from: any; receivedDateTime: string | null }>): string {
-  return msgs
-    .map(m => {
-      const body = m.bodyText || String(m.bodyHtml || "").replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ");
-      return `From: ${m.from?.name || m.from?.address || "?"} (${m.receivedDateTime || ""})\nSubject: ${m.subject}\n${body.replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim()}`;
-    })
-    .join("\n\n---\n\n")
-    .slice(0, 12_000);
-}
+// The offer in a thread, as the words of one message: the newest message
+// from outside the mailbox's own firm that reads as an offer, else the newest
+// from outside, else the newest. Only what that person wrote: the earlier
+// messages quoted under it are left off, so an old position is not read as
+// this one. Cut to the note reader's length.
+// (offerMessageWords in server/email-contact-reader.ts, which loads no database, so it is tested there.)
+// The terms an offer form holds, in the order the pop-out lists them.
+const OFFER_EMAIL_FIELDS = ["rentPa", "termYears", "rentFreeMonths", "turnoverRentPct", "breakOption", "premium", "fittingOutContribution", "rentReview", "rentDeposit", "incentives"] as const;
+const londonDay = (at: Date): string => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
 
 export function setupTrackerProvenanceRoutes(app: Express): void {
   // ── The email behind an offer ─────────────────────────────────────────
@@ -223,40 +226,45 @@ export function setupTrackerProvenanceRoutes(app: Express): void {
   // these next to the fields for a human to accept.
   app.post("/api/tracker/offer/:offerId/extract", requireAuth, async (req: Request, res: Response) => {
     try {
-      const r = await pool.query(`SELECT email_conversation_id, comments, company_name FROM unit_offers WHERE id = $1`, [req.params.offerId]);
+      // The email is BGP's own: read for BGP staff only.
+      const { resolveCompanyScope } = await import("./company-scope");
+      if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Not available for client accounts" });
+      const r = await pool.query(
+        `SELECT o.email_conversation_id, o.comments, o.company_name, o.unit_id, u.unit_name, p.name AS property_name
+           FROM unit_offers o LEFT JOIN available_units u ON u.id = o.unit_id LEFT JOIN crm_properties p ON p.id = u.property_id
+          WHERE o.id = $1`, [req.params.offerId]);
       const row = r.rows[0];
       if (!row) return res.status(404).json({ message: "Offer not found" });
       const src = await loadSourceEmail(row.email_conversation_id, [row.comments]);
       if ((src as any).error || !(src as any).messages) return res.json({ error: (src as any).error || "No email to read." });
-      if (!process.env.ANTHROPIC_API_KEY) return res.json({ error: "AI key not configured on this environment." });
+      const email = offerMessageWords((src as any).messages, (src as any).mailbox, looksLikeOffer, NOTE_MAX);
+      if (!email) return res.json({ error: "That email has no words to read." });
 
-      const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const client = getAnthropicClient(true);
-      const { safeParseJSON } = await import("./utils/anthropic-client");
-      const msg = await client.messages.create({
-        model: MODEL,
-        max_tokens: 800,
-        messages: [{
-          role: "user",
-          content: `Read this property offer email thread and pull out the commercial terms offered.
-
-Return ONLY JSON:
-{"rentPa": number|null, "termYears": number|null, "rentFreeMonths": number|null, "breakOption": string|null, "premium": number|null, "fittingOutContribution": number|null, "incentives": string|null, "notes": string|null}
-
-Rules:
-- Rent is the annual rent in GBP (convert "£85k" to 85000, "£45 psf on 2,000 sq ft" to 90000 only if both numbers are explicit — otherwise null).
-- Use null for anything not clearly stated. Never guess a number.
-- breakOption / incentives: short phrases as written.
-- notes: one sentence on anything material that has no field (conditions, subject-to, deadlines). Null if nothing.
-
-EMAIL THREAD:
-${plainText((src as any).messages)}`,
-        }],
+      // The same reader as the letting forms (server/unit-note-reader.ts,
+      // Woody 2026-11-15: email bodies are read): every value is checked
+      // against the email's own words, only yearly figures are read, and a
+      // second rent is listed beside the first, never chosen for the person.
+      const { readLettingNote } = await import("./unit-note-reader");
+      const { brandsOnUnit } = await import("./unit-negotiation");
+      const onUnit = row.unit_id ? await brandsOnUnit(String(row.unit_id)) : [];
+      const staff: string[] = (await pool.query(`SELECT name FROM users WHERE role IS DISTINCT FROM 'Client' AND name IS NOT NULL AND is_active IS NOT FALSE`)).rows.map((u: any) => String(u.name || "")).filter(Boolean);
+      const received = email.received ? new Date(email.received) : null;
+      const today = londonDay(new Date());
+      const writtenOn = received && Number.isFinite(received.getTime()) && londonDay(received) <= today ? londonDay(received) : null;
+      const reading = await readLettingNote({
+        kind: "offer", text: email.text, today, writtenOn, unitName: row.unit_name || null, propertyName: row.property_name || null,
+        brandNames: onUnit.map((b: any) => b.name), pickableBrandNames: [], author: null, staffNames: staff,
+        userId: (req as any).session?.userId || (req as any).tokenUserId || null,
       });
-      const text = msg.content.filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
-      const parsed = safeParseJSON(text);
-      if (!parsed) return res.json({ error: "Couldn't read figures from that email." });
-      res.json({ suggested: parsed, mailbox: (src as any).mailbox });
+      const fields = reading.fields as Record<string, unknown>;
+      const values: { field: string; value: string | number; quote: string }[] = [];
+      for (const f of OFFER_EMAIL_FIELDS) {
+        const v = fields[f];
+        if (typeof v === "string" || typeof v === "number") values.push({ field: f, value: v, quote: String((reading.quotes as Record<string, string | undefined>)[f] || "") });
+        for (const u of reading.unsure || []) if (u.field === f && !values.some(x => x.field === f && x.value === u.value)) values.push({ field: f, value: u.value as string | number, quote: u.quote });
+      }
+      const left = reading.dropped.filter(d => (OFFER_EMAIL_FIELDS as readonly string[]).includes(d.field)).map(d => ({ field: d.field, reason: d.reason }));
+      res.json({ values, left, from: email.from, received: email.received, usedAi: !!reading.usedAi, cut: email.text.length >= NOTE_MAX, mailbox: (src as any).mailbox });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed" });
     }

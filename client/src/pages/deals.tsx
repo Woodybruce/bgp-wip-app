@@ -6370,6 +6370,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     queryKey: ["/api/users"],
   });
   const userColorMap2 = useMemo(() => buildUserColorMap(users as any), [users]);
+  // The BGP people a client login may put on a deal: those already named on its deals.
+  const clientAgentNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const d of deals) for (const n of (Array.isArray(d.internalAgent) ? d.internalAgent : d.internalAgent ? [d.internalAgent as unknown as string] : [])) if (n) names.add(String(n));
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [deals]);
   // AML lookup for the badge — built from the same companies list so we don't
   // re-fetch. Hoisted above the early returns below so the hook order stays
   // stable (was previously declared after `if (params?.id) return …`, a
@@ -7836,9 +7842,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.team && (
                         <TableCell className="px-1.5 py-1">
-                          {isClientDeals ? (
-                            <span className="text-xs text-muted-foreground" title="BGP's own team on the deal">{(Array.isArray(deal.team) ? deal.team : deal.team ? [deal.team] : []).map((t: string) => teamLabel(t)).join(", ") || "—"}</span>
-                          ) : (
+                          {/* A client login sets the team as BGP does (Woody, 2026-11-15: "Landsec can change, as can joint agent"). */}
                           <InlineMultiSelect
                             value={deal.team}
                             options={CRM_OPTIONS.dealTeam.map(t => ({ label: teamLabel(t), value: t }))}
@@ -7847,7 +7851,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             onSave={(v) => handleInlineSave(deal.id, "team", v.length > 0 ? v : null)}
                             testId={`inline-deal-team-${deal.id}`}
                           />
-                          )}
                         </TableCell>
                       )}
                       {/* Landsec deal clock. Every cell a login may change opens
@@ -7987,7 +7990,17 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               rather than a second picker. */}
                           {(() => {
                             const names: string[] = Array.isArray(deal.internalAgent) ? deal.internalAgent : deal.internalAgent ? [deal.internalAgent as string] : [];
-                            if (isClientDeals) return <span className="text-xs" title="BGP's contact on the deal">{names.length > 0 ? names.join(", ") : <span className="text-muted-foreground/60">—</span>}</span>;
+                            // A client login picks BGP's people on the deal from the BGP names on its
+                            // own deals (the fee split is BGP's alone, so it is not opened for it).
+                            if (isClientDeals) return (
+                              <InlineMultiSelect
+                                value={names}
+                                options={[...new Set([...clientAgentNames, ...names])].map(n => ({ label: n, value: n }))}
+                                placeholder="Add BGP contact"
+                                onSave={(v) => handleInlineSave(deal.id, "internalAgent", v.length > 0 ? v : null)}
+                                testId={`inline-deal-agent-${deal.id}`}
+                              />
+                            );
                             return (
                               <button
                                 type="button"
@@ -8266,7 +8279,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.instructedAt && (
                         <TableCell className="px-1.5 py-1">
-                          <DealDateCell deal={deal} field="instructedAt" readOnly={isClientDeals} onSave={(v) => handleInlineSave(deal.id, "instructedAt", v)} />
+                          <DealDateCell deal={deal} field="instructedAt" readOnly={false} onSave={(v) => handleInlineSave(deal.id, "instructedAt", v)} />
                         </TableCell>
                       )}
                       {effectiveColumns.targetDate && (
@@ -8280,12 +8293,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.exchangedAt && (
                         <TableCell className="px-1.5 py-1">
-                          <DealDateCell deal={deal} field="exchangedAt" readOnly={isClientDeals} onSave={(v) => handleInlineSave(deal.id, "exchangedAt", v)} />
+                          <DealDateCell deal={deal} field="exchangedAt" readOnly={false} onSave={(v) => handleInlineSave(deal.id, "exchangedAt", v)} />
                         </TableCell>
                       )}
                       {effectiveColumns.completedAt && (
                         <TableCell className="px-1.5 py-1">
-                          <DealDateCell deal={deal} field="completedAt" readOnly={isClientDeals} onSave={(v) => handleInlineSave(deal.id, "completedAt", v)} />
+                          <DealDateCell deal={deal} field="completedAt" readOnly={false} onSave={(v) => handleInlineSave(deal.id, "completedAt", v)} />
                         </TableCell>
                       )}
                       {effectiveColumns.invoicedAt && (

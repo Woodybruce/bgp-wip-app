@@ -13,6 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { getAuthHeaders, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, ExternalLink, Sparkles, CalendarDays, Mail, AlertCircle } from "lucide-react";
+import { NOTE_FIELD_LABELS, type LettingNoteField } from "@shared/letting-note";
+import { noteValueText } from "@/components/letting-note/note-fill";
 
 export type OfferFigures = {
   rentPa: number | null;
@@ -23,7 +25,14 @@ export type OfferFigures = {
   fittingOutContribution: number | null;
   incentives: string | null;
   notes: string | null;
+  turnoverRentPct?: number | null;
+  rentReview?: string | null;
+  rentDeposit?: string | null;
 };
+// What the note reader found in the email: each value with the words it came
+// from. A box the email gives two values for (two rents) has two lines.
+type EmailValue = { field: LettingNoteField; value: string | number; quote: string };
+type EmailRead = { values: EmailValue[]; left: { field: string; reason: string }[]; from: string | null; received: string | null; usedAi: boolean; cut: boolean };
 
 type SourceMessage = {
   id: string;
@@ -61,7 +70,9 @@ export function SourceEmailDialog({
   onClose: () => void;
 }) {
   const { toast } = useToast();
-  const [suggested, setSuggested] = useState<OfferFigures | null>(null);
+  const [suggested, setSuggested] = useState<EmailRead | null>(null);
+  // The lines ticked to go into the offer: one at most for each box.
+  const [picked, setPicked] = useState<ReadonlySet<number>>(new Set());
   const [extracting, setExtracting] = useState(false);
 
   const { data, isLoading } = useQuery<{ mailbox?: string; messages?: SourceMessage[]; error?: string }>({
@@ -78,7 +89,10 @@ export function SourceEmailDialog({
       const r = await apiRequest("POST", `/api/tracker/offer/${rowId}/extract`);
       const out = await r.json();
       if (out.error) { toast({ title: "Couldn't read the figures", description: out.error, variant: "destructive" }); return; }
-      setSuggested(out.suggested || null);
+      const values: EmailValue[] = Array.isArray(out.values) ? out.values : [];
+      setSuggested({ values, left: Array.isArray(out.left) ? out.left : [], from: out.from || null, received: out.received || null, usedAi: !!out.usedAi, cut: !!out.cut });
+      // A box with one value is ticked; a box with two (two rents) is left for the person to choose.
+      setPicked(new Set(values.map((v, i) => (values.filter(x => x.field === v.field).length === 1 ? i : -1)).filter(i => i >= 0)));
     } catch (e: any) {
       toast({ title: "Couldn't read the figures", description: e?.message, variant: "destructive" });
     } finally {
@@ -89,7 +103,7 @@ export function SourceEmailDialog({
   const messages = data?.messages || [];
 
   return (
-    <Dialog open={!!rowId} onOpenChange={v => { if (!v) { setSuggested(null); onClose(); } }}>
+    <Dialog open={!!rowId} onOpenChange={v => { if (!v) { setSuggested(null); setPicked(new Set()); onClose(); } }}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" data-testid="tracker-source-email">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -120,32 +134,68 @@ export function SourceEmailDialog({
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Figures in this email</p>
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={extract} disabled={extracting} data-testid="tracker-source-extract">
                 {extracting ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
-                {suggested ? "Read again" : "Read figures with AI"}
+                {suggested ? "Read again" : "Read the terms"}
               </Button>
             </div>
             {!suggested && !extracting && (
               <p className="text-xs text-muted-foreground">
-                AI reads the thread and suggests the terms — nothing is saved until you apply it.
+                Reads the terms out of the newest offer in the thread, each with the words it came from. Nothing is saved until you apply it.
               </p>
             )}
             {suggested && (
               <>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
-                  <div><span className="text-muted-foreground">Rent: </span>{gbp(suggested.rentPa)}{suggested.rentPa != null ? " p.a." : ""}</div>
-                  <div><span className="text-muted-foreground">Term: </span>{suggested.termYears != null ? `${suggested.termYears} years` : "—"}</div>
-                  <div><span className="text-muted-foreground">Rent free: </span>{suggested.rentFreeMonths != null ? `${suggested.rentFreeMonths} months` : "—"}</div>
-                  <div><span className="text-muted-foreground">Break: </span>{suggested.breakOption || "—"}</div>
-                  <div><span className="text-muted-foreground">Premium: </span>{gbp(suggested.premium)}</div>
-                  <div><span className="text-muted-foreground">Fit-out: </span>{gbp(suggested.fittingOutContribution)}</div>
-                </div>
-                {suggested.incentives && <p className="text-xs"><span className="text-muted-foreground">Incentives: </span>{suggested.incentives}</p>}
-                {suggested.notes && <p className="text-xs text-muted-foreground">{suggested.notes}</p>}
-                <div className="flex items-center gap-2 pt-1">
-                  <Button size="sm" className="h-7 text-xs" onClick={() => { onApplyFigures?.(suggested); toast({ title: "Figures copied into the offer", description: "Check them against the email, then Save." }); }} data-testid="tracker-source-apply">
-                    Apply to offer
-                  </Button>
-                  <span className="text-[11px] text-muted-foreground">Fills the edit form — you still confirm and save.</span>
-                </div>
+                {suggested.from && <p className="text-[11px] text-muted-foreground">Read from {suggested.from}'s message{suggested.received ? ` of ${fmtWhen(suggested.received)}` : ""}{suggested.cut ? ". The email is long: only its first part was read." : "."}</p>}
+                {suggested.values.length === 0 ? (
+                  <p className="text-xs text-muted-foreground" data-testid="tracker-source-none">No terms were found in that message. Read the email below and type them in.</p>
+                ) : (
+                  <ul className="divide-y divide-border/60" data-testid="tracker-source-values">
+                    {suggested.values.map((v, i) => {
+                      const rivals = suggested.values.filter(x => x.field === v.field).length > 1;
+                      return (
+                        <li key={`${v.field}-${i}`} className="py-1.5 first:pt-0 last:pb-0">
+                          <label className="grid cursor-pointer grid-cols-[1rem_9rem_minmax(0,1fr)] items-start gap-x-2 text-xs">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5"
+                              checked={picked.has(i)}
+                              onChange={e => setPicked(prev => {
+                                const next = new Set(prev);
+                                // One value for a box: ticking one unticks the other.
+                                suggested.values.forEach((x, k) => { if (x.field === v.field) next.delete(k); });
+                                if (e.target.checked) next.add(i);
+                                return next;
+                              })}
+                              data-testid={`tracker-source-pick-${i}`}
+                            />
+                            <span className="text-muted-foreground">{NOTE_FIELD_LABELS[v.field] || v.field}{rivals ? " (choose one)" : ""}</span>
+                            <span className="min-w-0">
+                              <span className="font-medium font-mono tabular-nums">{noteValueText(v.field, v.value)}</span>
+                              {v.quote && <span className="block break-words text-[11px] text-muted-foreground">from “{v.quote}”</span>}
+                            </span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                {suggested.left.length > 0 && (
+                  <p className="text-[11px] text-muted-foreground" data-testid="tracker-source-left">
+                    Left out: {suggested.left.map(d => `${(NOTE_FIELD_LABELS as Record<string, string>)[d.field] || d.field} (${d.reason})`).join("; ")}
+                  </p>
+                )}
+                {suggested.values.length > 0 && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button size="sm" className="h-7 text-xs" disabled={picked.size === 0} onClick={() => {
+                      const f: OfferFigures = { rentPa: null, termYears: null, rentFreeMonths: null, breakOption: null, premium: null, fittingOutContribution: null, incentives: null, notes: null };
+                      suggested.values.forEach((v, i) => { if (picked.has(i)) (f as Record<string, unknown>)[v.field] = v.value; });
+                      onApplyFigures?.(f);
+                      toast({ title: "Terms copied into the offer", description: "Check them against the email, then Save." });
+                    }} data-testid="tracker-source-apply">
+                      Apply to offer
+                    </Button>
+                    <span className="text-[11px] text-muted-foreground">Fills the edit form with the ticked lines. You still check and save.</span>
+                  </div>
+                )}
               </>
             )}
           </div>

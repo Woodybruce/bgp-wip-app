@@ -469,7 +469,10 @@ export const JOINT_AGENT_HIDDEN_PROPERTY_FIELDS = [
   "proprietor_kyc_status", "proprietor_kyc_data", "billing_entity_id", "monday_item_id",
 ] as const;
 export const JOINT_AGENT_HIDDEN_DEAL_FIELDS = [
-  "comments", "last_interaction", "last_contact_at", "last_contact_source", "fee_notes", "internal_agent", "internal_agent_ids", "team", "group_name",
+  // BGP's team and its people on the deal are NOT on this list since 15
+  // November 2026 (Woody: "Landsec can change, as can joint agent"): a joint
+  // agent reads and sets them as a Landsec login does.
+  "comments", "last_interaction", "last_contact_at", "last_contact_source", "fee_notes", "group_name",
   "fee", "fee_percentage", "fee_agreement", "fee_agreement_url", "fee_currency",
   "invoicing_email", "invoicing_notes", "po_number", "xero_contact_id", "xero_contact_name",
   "xero_account_number", "xero_billing_address", "client_contact_id", "landlord_contact_id",

@@ -286,7 +286,8 @@ export async function readLettingNote(input: ReadNoteInput, deps: NoteReaderDeps
   const guarded = (ai: ReturnType<typeof normaliseCandidate> | null, aiBrandPickable = false): LettingNoteReading => {
     const g = guardReading({ kind: input.kind, today: input.today, writtenOn: input.writtenOn ?? null, rules, short: shorthand, ai, unitBrands: input.brandNames,
       unitName: input.unitName, propertyName: input.propertyName, teamNames, aiBrandPickable });
-    const dropped = [...rules.dropped];
+    // A box whose values are listed to choose from is not also "left out".
+    const dropped = rules.dropped.filter(d => !(d.field === "rentPa" && g.unsure.some(u => u.field === "rentPa")));
     for (const d of [...(ai ? ai.dropped : []), ...g.dropped]) if (!dropped.some(x => x.field === d.field) && !(d.field in g.fields)) dropped.push(d);
     const unplaced = [...rules.unplaced];
     if (ai) for (const u of ai.unplaced) if (!unplaced.includes(u)) unplaced.push(u);

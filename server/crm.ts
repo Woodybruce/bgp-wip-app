@@ -3959,6 +3959,17 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         if (req.body.propertyId && req.body.propertyId !== oldDeal?.propertyId && !(await isPropertyInScope(editScope, String(req.body.propertyId)))) {
           return res.status(403).json({ error: "That property is not one of yours" });
         }
+        // A client login sets BGP's people on the deal (Woody, 2026-11-15:
+        // "Landsec can change, as can joint agent"), and only BGP's people:
+        // a name already on the deal, or an active BGP login.
+        if ("internalAgent" in req.body && req.body.internalAgent != null) {
+          const wanted = (Array.isArray(req.body.internalAgent) ? req.body.internalAgent : [req.body.internalAgent]).map((n: unknown) => String(n ?? "").trim()).filter(Boolean);
+          const had = new Set((Array.isArray(oldDeal?.internalAgent) ? oldDeal!.internalAgent : oldDeal?.internalAgent ? [oldDeal.internalAgent] : []).map((n: unknown) => String(n)));
+          const staff = new Set((await storage.getAllUsers()).filter((u: any) => u.isActive !== false && u.role !== "Client").map((u: any) => String(u.name || "")));
+          const unknown = wanted.filter((n: string) => !had.has(n) && !staff.has(n));
+          if (unknown.length) return res.status(400).json({ error: `${unknown.join(", ")} ${unknown.length === 1 ? "is" : "are"} not on BGP's team` });
+          req.body.internalAgent = wanted.length ? wanted : null;
+        }
       }
       // Populated when a best-effort cross-board mirror fails — returned on
       // the response so the client can surface a sync warning instead of
