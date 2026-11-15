@@ -52,7 +52,7 @@ function cleanError(error: unknown): string {
 }
 
 // A one-choice drop-down whose trigger is a pill (filled once a choice is made).
-function PillSelect({ label, any, value, options, onChange, testId }: {
+export function PillSelect({ label, any, value, options, onChange, testId }: {
   label: string; any: string; value: string; options: Array<{ value: string; label: string }>; onChange: (value: string) => void; testId: string;
 }) {
   const chosen = options.find(option => option.value === value);

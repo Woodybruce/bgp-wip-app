@@ -1,40 +1,28 @@
-import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
+import { lazy, Suspense, useState, useEffect } from "react";
 import { ContactDataHealth } from "@/components/contact-data-health";
 import { CrmCompanyList } from "@/components/crm-hub/company-list";
+import { ClientBrandList, CLIENT_BRAND_DIRECTORY_KEY, type ContactDialogTarget, type DirectoryBrand } from "@/components/crm-hub/client-brand-list";
 import { StartStrategyDialog } from "@/components/crm-engagement/start-strategy";
 import { ContactFormDialog } from "@/pages/contacts";
-import { useRoute, useLocation, useSearch, Link } from "wouter";
+import { useRoute, useLocation, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { useIsMobile } from "@/hooks/use-mobile";
-import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
-import { useTeam } from "@/lib/team-context";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { User } from "@shared/schema";
 import type { ClientAgentsOverview, ClientOwnContacts } from "@shared/client-agent-directory";
 import { ClientAgentsDirectory, CLIENT_AGENTS_OVERVIEW_KEY } from "@/components/client-agents/client-agents-directory";
 import { ClientOwnContactsTab, CLIENT_OWN_CONTACTS_KEY } from "@/components/client-agents/client-own-contacts";
-import {
-  Building2, Users, Crown, Search, Globe, MapPin,
-  ChevronRight, ChevronDown, Building, Briefcase,
-  Phone, Mail, X, TrendingUp, Trash2, Pencil, Plus, Target,
-  Handshake, ClipboardList, Landmark,
-} from "lucide-react";
-import { ViewToggle } from "@/components/mobile-card-view";
+import { ClipboardList, Plus } from "lucide-react";
 import { CrmMeetingsTab } from "@/components/crm-meetings-tab";
+import { Diary } from "@/components/brand-crm/diary";
 import { CrmEngagementPanel } from "@/components/crm-engagement/overview";
+import { useIsLandsecView } from "@/components/landsec/deal-clock";
 import { Pill } from "@/components/ui/pill";
-import { countLabel } from "@/lib/utils";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
-import type { CrmCompany, CrmContact, CrmDeal, CrmProperty, CrmRequirementsLeasing, CrmRequirementsInvestment, InvestmentTracker } from "@shared/schema";
 
 const CompanyDetailPage = lazy(() => import("@/pages/companies"));
 const ContactDetailPage = lazy(() => import("@/pages/contacts"));
@@ -52,1154 +40,35 @@ function PageLoader() {
   );
 }
 
-// Same source and retry as the /companies logo (CompanyLogoImg): the
-// domain is domainUrl → domain (a stored logoUrl is an image URL, not a
-// domain, and fetched the wrong logo), and a 404 — the server is preparing
-// the logo — retries twice before settling on initials. Landlord cards were
-// all initials while /companies showed logos (Woody, 2026-09-28).
-function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm" | "md" | "lg" }) {
-  const [failCount, setFailCount] = useState(0);
-  const [loaded, setLoaded] = useState(false);
-  const [retry, setRetry] = useState(0);
-  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const sizeClass = size === "sm" ? "w-8 h-8" : size === "lg" ? "w-14 h-14" : "w-10 h-10";
-  const textSize = size === "sm" ? "text-xs" : size === "lg" ? "text-lg" : "text-sm";
-
-  const domain = company.domainUrl || company.domain;
-  const guessed = guessDomain(company.name);
-
-  useEffect(() => {
-    setFailCount(0);
-    setRetry(0);
-    setLoaded(false);
-    return () => { if (retryTimer.current) clearTimeout(retryTimer.current); };
-  }, [company.name, domain]);
-
-  // Only source: /api/brand-logo/... — server redirects to logo.dev when no
-  // local image exists. Clearbit's DNS is dead (HubSpot killed it Mar 2025).
-  const logoSources: string[] = [];
-  const local = localBrandLogoUrl(company.name, domain ?? guessed ?? null);
-  if (local) logoSources.push(local);
-
-  // Letters only — "F(" for FPE (UK), "A&" for Alvarez & Marsal, and digits
-  // gave "F2" / "3R" / "4"; tokens with no letters are skipped, falling back
-  // to the name's first letter (Woody, 2026-09-27).
-  const letterTokens = (company.name || "").split(/\s+/).map(w => w.replace(/[^\p{L}]/gu, "")).filter(Boolean);
-  const initials = (letterTokens.map(w => w[0]).join("").slice(0, 2) || (company.name || "").replace(/[^\p{L}]/gu, "")[0] || "?").toUpperCase();
-  const initialsTile = (
-    <div className={`${sizeClass} rounded-lg bg-muted flex items-center justify-center ${textSize} font-semibold text-muted-foreground border shrink-0`}>
-      {initials}
-    </div>
-  );
-
-  if (failCount >= logoSources.length) return initialsTile;
-
-  const base = logoSources[failCount];
-  const src = retry > 0 ? `${base}${base.includes("?") ? "&" : "?"}logoRetry=${retry}` : base;
-
-  // Initials sit under the logo until it loads (and stay if it errors) — a
-  // lazy logo was a blank white square with nothing in it.
-  return (
-    <div className={`${sizeClass} relative shrink-0`}>
-      {!loaded && <div className="absolute inset-0">{initialsTile}</div>}
-      <img
-        src={src}
-        alt={company.name}
-        loading={retry > 0 ? "eager" : "lazy"}
-        decoding="async"
-        className={`${sizeClass} relative rounded-lg object-contain border shrink-0 ${loaded ? "bg-white" : "opacity-0"}`}
-        onLoad={(e) => {
-          // A favicon-sized, banner-shaped or photo-ish fallback read worse
-          // than initials (pixelated Aberdeen block, tiny Apex / Brydell) —
-          // under 32px wide or beyond 3:1 falls back to initials (Woody,
-          // 2026-09-28).
-          const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
-          if (w < 32 || h < 1 || Math.max(w / h, h / w) > 3) { setRetry(0); setFailCount(c => c + 1); }
-          else setLoaded(true);
-        }}
-        onError={() => {
-          setLoaded(false);
-          if (retry < 2) {
-            retryTimer.current = setTimeout(() => setRetry(r => r + 1), retry === 0 ? 6000 : 15000);
-          } else {
-            setRetry(0);
-            setFailCount(c => c + 1);
-          }
-        }}
-      />
-    </div>
-  );
-}
-
-// Some stored descriptions are the enrichment model's failure message, not a
-// description — don't print them on the list (Woody, 2026-09-27).
-// A stored "…" / "..." tail collapses to one ellipsis — "CH no. 00262958."
-// plus a truncation read as four dots (Woody, 2026-09-28).
-function shownDescription(d: string | null | undefined): string | null {
-  if (!d || /^\s*(unable to identify|i could not|i couldn['’]t|no information)/i.test(d)) return null;
-  const t = d.trim();
-  return /(\.{2,}|…)$/.test(t) ? `${t.replace(/[\s.…]+$/, "")}…` : t;
-}
-
-function StatCard({ label, value, active }: { label: string; value: number | string; active?: boolean }) {
-  return (
-    <div className={`bg-card border rounded-lg px-4 py-3 transition-shadow ${active ? "ring-2 ring-primary" : ""}`}>
-      <p className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className="text-xl font-bold font-mono tabular-nums mt-0.5">{value}</p>
-    </div>
-  );
-}
-
-// Brands don't live on this page — a zero-hit search that matches a company
-// name is usually someone hunting a brand (UX-NOTES #13; the hint moved here
-// from the old contacts list when /contacts became this page).
-function BrandSearchHint({ search, companies, resultCount }: { search: string; companies: CrmCompany[]; resultCount: number }) {
-  if (resultCount > 0 || search.trim().length < 2) return null;
-  const s = search.trim().toLowerCase();
-  const matchesCompany = companies.some((c) => (c.name || "").toLowerCase().includes(s));
-  if (!matchesCompany) return null;
-  return (
-    <p className="text-sm text-center text-muted-foreground py-4" data-testid="brand-search-hint">
-      <Link href="/brands" className="text-primary hover:underline">
-        Looking for a brand? Search Brand Intelligence →
-      </Link>
-    </p>
-  );
-}
-
-function LandlordsTab({
-  companies,
-  contacts,
-  properties,
-  deals,
-  onScopeLandlord,
-  onDeleteCompany,
-  viewMode = "card",
-  countsLoading = false,
-}: {
-  companies: CrmCompany[];
-  contacts: CrmContact[];
-  properties: CrmProperty[];
-  deals: CrmDeal[];
-  onScopeLandlord?: (id: string) => void;
-  onDeleteCompany?: (id: string, name: string) => void;
-  viewMode?: "table" | "card" | "board";
-  countsLoading?: boolean;
-}) {
-  const [, navigate] = useLocation();
-  const [search, setSearch] = useState("");
-  const [landlordFilter, setLandlordFilter] = useState<"all" | "clients" | "non-clients">("all");
-
-  const landlords = useMemo(() => {
-    return companies.filter((c) => {
-      const t = (c.companyType || "").toLowerCase().trim();
-      return t === "landlord" || t === "client" || t === "landlord / client" || c.isPortfolioAccount;
-    });
-  }, [companies]);
-
-  const clientLandlords = useMemo(() => landlords.filter((c) => {
-    const t = (c.companyType || "").toLowerCase();
-    return t === "client" || t === "landlord / client" || c.isPortfolioAccount;
-  }), [landlords]);
-
-  const nonClientLandlords = useMemo(() => landlords.filter((c) => !clientLandlords.find((cl) => cl.id === c.id)), [landlords, clientLandlords]);
-
-  const displayList = landlordFilter === "clients" ? clientLandlords : landlordFilter === "non-clients" ? nonClientLandlords : landlords;
-  // Phone renders 30 cards then "Show more" — every landlord at once made a
-  // ~41,000px page (Woody, 2026-09-27).
-  const isMobile = useIsMobile();
-  const PHONE_PAGE = 30;
-  const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
-  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [landlordFilter, search]);
-
-  const filtered = useMemo(() => {
-    if (!search.trim()) return displayList;
-    const s = search.toLowerCase();
-    return displayList.filter((c) =>
-      c.name.toLowerCase().includes(s) ||
-      (c.description || "").toLowerCase().includes(s) ||
-      (c.companyType || "").toLowerCase().includes(s)
-    );
-  }, [displayList, search]);
-
-  const contactsByCompany = useMemo(() => {
-    const map: Record<string, CrmContact[]> = {};
-    contacts.forEach((c) => {
-      if (c.companyId) {
-        if (!map[c.companyId]) map[c.companyId] = [];
-        map[c.companyId].push(c);
-      }
-    });
-    return map;
-  }, [contacts]);
-
-  // Landlord properties = landlord_id on the property OR a
-  // crm_company_properties link — the same set Landlord Intelligence counts,
-  // which disagreed with these cards (0 vs 2) (Woody, 2026-09-27).
-  const { data: companyPropertyLinks = [], isLoading: linksLoading } = useQuery<{ companyId: string; propertyId: string }[]>({
-    queryKey: ["/api/crm/company-property-links"],
-  });
-  // Property and deal counts are unknown until their queries land — every
-  // card read "0 properties" while loading (Woody, 2026-09-28).
-  const propsPending = countsLoading || linksLoading;
-  const propertiesByLandlord = useMemo(() => {
-    const byId = new Map(properties.map((p) => [p.id, p]));
-    const map: Record<string, CrmProperty[]> = {};
-    const seen = new Set<string>();
-    const add = (companyId: string, p: CrmProperty | undefined) => {
-      if (!p || seen.has(`${companyId}:${p.id}`)) return;
-      seen.add(`${companyId}:${p.id}`);
-      (map[companyId] ||= []).push(p);
-    };
-    properties.forEach((p) => { if (p.landlordId) add(p.landlordId, p); });
-    companyPropertyLinks.forEach((l) => add(l.companyId, byId.get(l.propertyId)));
-    return map;
-  }, [properties, companyPropertyLinks]);
-
-  const dealsByLandlord = useMemo(() => {
-    const map: Record<string, CrmDeal[]> = {};
-    deals.forEach((d) => {
-      if (d.landlordId) {
-        if (!map[d.landlordId]) map[d.landlordId] = [];
-        map[d.landlordId].push(d);
-      }
-    });
-    return map;
-  }, [deals]);
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-1.5">
-        {/* The landlord and contact totals are in the page subtitle — the
-            "All" pill, a lone Total Contacts tile and "N results" repeated
-            them (Woody, 2026-09-27). */}
-        <Pill active={landlordFilter === "all"} onClick={() => setLandlordFilter("all")} data-testid="stat-total-landlords">
-          All
-        </Pill>
-        <Pill active={landlordFilter === "clients"} onClick={() => setLandlordFilter(landlordFilter === "clients" ? "all" : "clients")} data-testid="stat-bgp-clients">
-          {/* "Label · N" like the agent specialty pills (Woody, 2026-09-28). */}
-          BGP Clients · <span className="font-mono tabular-nums">{clientLandlords.length}</span>
-        </Pill>
-        <Pill active={landlordFilter === "non-clients"} onClick={() => setLandlordFilter(landlordFilter === "non-clients" ? "all" : "non-clients")} data-testid="stat-non-clients">
-          Non-Clients · <span className="font-mono tabular-nums">{nonClientLandlords.length}</span>
-        </Pill>
-      </div>
-
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder="Search landlords..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 h-9"
-            data-testid="input-search-landlords"
-          />
-          {search && (
-            <button className="absolute right-3 top-1/2 -translate-y-1/2" onClick={() => setSearch("")}>
-              <X className="w-3.5 h-3.5 text-muted-foreground" />
-            </button>
-          )}
-        </div>
-        {search.trim() && <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "result")}</p>}
-      </div>
-
-      {/* A zero-hit search left a blank page under "0 results"
-          (Woody, 2026-09-27). */}
-      {filtered.length === 0 && (
-        <p className="py-8 text-center text-sm text-muted-foreground" data-testid="landlords-empty">
-          {search.trim() ? `No landlords match "${search.trim()}"` : "No landlords in this view"}
-        </p>
-      )}
-
-      <BrandSearchHint search={search} companies={companies} resultCount={filtered.length} />
-
-      {viewMode === "table" ? (
-        <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead className="text-center">Properties</TableHead>
-                  <TableHead className="text-center">Deals</TableHead>
-                  <TableHead className="text-center">Contacts</TableHead>
-                  <TableHead></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((company) => {
-                  const compContacts = contactsByCompany[company.id] || [];
-                  const compProps = propertiesByLandlord[company.id] || [];
-                  const compDeals = dealsByLandlord[company.id] || [];
-                  const isClient = clientLandlords.some((cl) => cl.id === company.id);
-                  return (
-                    <TableRow key={company.id} className="cursor-pointer hover:bg-muted/50 group" onClick={() => navigate(`/companies/${company.id}`)}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <CompanyLogo company={company} size="sm" />
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-medium text-sm truncate">{company.name}</span>
-                              {isClient && <Crown className="w-3 h-3 text-amber-500 shrink-0" />}
-                            </div>
-                            {shownDescription(company.description) && <p className="text-xs text-muted-foreground truncate max-w-[250px]">{shownDescription(company.description)}</p>}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{company.companyType || "Landlord"}</TableCell>
-                      <TableCell className="text-center text-sm font-mono tabular-nums">{propsPending ? <Skeleton className="h-3 w-4 mx-auto" /> : compProps.length}</TableCell>
-                      <TableCell className="text-center text-sm font-mono tabular-nums">{countsLoading ? <Skeleton className="h-3 w-4 mx-auto" /> : compDeals.length}</TableCell>
-                      <TableCell className="text-center text-sm">{compContacts.length}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center gap-1 justify-end">
-                          {onScopeLandlord && compContacts.length > 0 && (
-                            <button onClick={(e) => { e.stopPropagation(); onScopeLandlord(company.id); }} className="text-xs text-primary hover:text-primary/80 font-medium whitespace-nowrap">Open people</button>
-                          )}
-                          {onDeleteCompany && (
-                            <button onClick={(e) => { e.stopPropagation(); onDeleteCompany(company.id, company.name); }} className="p-1 rounded-full hidden md:block md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        </Card>
-      ) : (
-      <>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {(isMobile ? filtered.slice(0, phoneShown) : filtered).map((company) => {
-          const compContacts = contactsByCompany[company.id] || [];
-          const compProps = propertiesByLandlord[company.id] || [];
-          const compDeals = dealsByLandlord[company.id] || [];
-          const isClient = clientLandlords.some((cl) => cl.id === company.id);
-          return (
-            <Link key={company.id} href={`/companies/${company.id}`}>
-              <Card className="hover:shadow-md transition-shadow cursor-pointer h-full relative group" data-testid={`card-landlord-${company.id}`}>
-                {/* Desktop hover only — on phones the bin sat at 60% over the
-                    crown/title on every card; delete from the company page
-                    (Woody, 2026-09-27). */}
-                {onDeleteCompany && (
-                  <button
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
-                    className="absolute top-2 right-2 p-1 rounded-full hidden md:block md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
-                    title="Delete"
-                    data-testid={`button-delete-landlord-${company.id}`}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-                {/* Footer pinned to the card bottom so the stats line up across
-                    a row whether or not there's a description; "Open people"
-                    only when there are people (Woody, 2026-09-28). */}
-                <CardContent className="p-4 h-full flex flex-col">
-                  <div className="flex items-start gap-3 mb-3">
-                    <CompanyLogo company={company} size="lg" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-sm truncate">{company.name}</h3>
-                        {isClient && <Crown className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                        {company.companyType || "Landlord"}
-                      </p>
-                      {shownDescription(company.description) && (
-                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{shownDescription(company.description)}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-auto pt-3 border-t text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1 shrink-0">
-                      <Building className="w-3 h-3" />
-                      {propsPending ? <Skeleton className="h-3 w-16" /> : <>{compProps.length} {compProps.length === 1 ? "property" : "properties"}</>}
-                    </span>
-                    <span className="flex items-center gap-1 shrink-0">
-                      <Handshake className="w-3 h-3" />
-                      {countsLoading ? <Skeleton className="h-3 w-12" /> : <>{compDeals.length} {compDeals.length === 1 ? "deal" : "deals"}</>}
-                    </span>
-                    <span className="flex items-center gap-1 shrink-0">
-                      <Users className="w-3 h-3" />
-                      {compContacts.length} {compContacts.length === 1 ? "contact" : "contacts"}
-                    </span>
-                    {onScopeLandlord && compContacts.length > 0 && (
-                      <button
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onScopeLandlord(company.id); }}
-                        className="ml-auto flex items-center gap-1 text-primary hover:text-primary/80 font-medium shrink-0 whitespace-nowrap"
-                        data-testid={`button-scope-${company.id}`}
-                      >
-                        <Users className="w-3 h-3" />
-                        Open people
-                        <ChevronRight className="w-3 h-3" />
-                      </button>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          );
-        })}
-      </div>
-      {isMobile && filtered.length > phoneShown && (
-        <Button variant="outline" className="w-full" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="landlord-cards-show-more">
-          Show more ({(filtered.length - phoneShown).toLocaleString("en-GB")} left)
-        </Button>
-      )}
-      </>
-      )}
-    </div>
-  );
-}
-
-// Our own firm isn't an outside agent — keep BGP out of the agent-firm list
-// and counts (Woody, 2026-09-28).
-function isOwnFirm(c: CrmCompany): boolean {
-  if (/bruce\s+gillingham\s+pollard/i.test(c.name || "")) return true;
-  const d = `${(c as any).domain || ""} ${(c as any).domainUrl || ""}`.toLowerCase();
-  return d.includes("brucegillinghampollard.com");
-}
-
-function AgentsTab({
-  companies,
-  contacts,
-  defaultTenantRep,
-  onDeleteCompany,
-}: {
-  companies: CrmCompany[];
-  contacts: CrmContact[];
-  defaultTenantRep?: boolean;
-  onDeleteCompany?: (id: string, name: string) => void;
-}) {
-  const [, navigate] = useLocation();
-  const [search, setSearch] = useState("");
-  const [specialtyFilter, setSpecialtyFilter] = useState<string | null>(defaultTenantRep ? "Tenant Rep" : null);
-  const [locationFilter, setLocationFilter] = useState<string | null>(null);
-  const [expandedCompany, setExpandedCompany] = useState<string | null>(null);
-
-  const { data: leasingReqs = [] } = useQuery<CrmRequirementsLeasing[]>({
-    queryKey: ["/api/crm/requirements-leasing"],
-  });
-  const { data: investmentReqs = [] } = useQuery<CrmRequirementsInvestment[]>({
-    queryKey: ["/api/crm/requirements-investment"],
-  });
-
-  const { data: allDeals = [] } = useQuery<CrmDeal[]>({
-    queryKey: ["/api/crm/deals"],
-  });
-
-  const { data: investmentItems = [] } = useQuery<InvestmentTracker[]>({
-    queryKey: ["/api/investment-tracker"],
-  });
-
-  // The registered office town on each card. The company list no longer
-  // carries the saved Companies House record, so the town is asked for.
-  const { data: localityRows, isLoading: localitiesLoading } = useQuery<{ id: string; registeredLocality: string | null }[]>({
-    queryKey: ["/api/crm/companies", "registered-localities"],
-    queryFn: async () => (await apiRequest("GET", "/api/crm/companies?fields=id,registeredLocality")).json(),
-    staleTime: 5 * 60_000,
-    refetchInterval: false,
-  });
-  const localityByCompany = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const row of Array.isArray(localityRows) ? localityRows : []) if (row.registeredLocality) map.set(row.id, row.registeredLocality);
-    return map;
-  }, [localityRows]);
-
-  const agentReqCounts = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const r of leasingReqs) {
-      if (r.agentContactId) map[r.agentContactId] = (map[r.agentContactId] || 0) + 1;
-    }
-    for (const r of investmentReqs) {
-      if (r.agentContactId) map[r.agentContactId] = (map[r.agentContactId] || 0) + 1;
-    }
-    return map;
-  }, [leasingReqs, investmentReqs]);
-
-  const agentReqsByContact = useMemo(() => {
-    const map: Record<string, { id: string; name: string; type: string; status?: string | null; use?: string[]; size?: string[]; locations?: string[] }[]> = {};
-    for (const r of leasingReqs) {
-      if (r.agentContactId) {
-        if (!map[r.agentContactId]) map[r.agentContactId] = [];
-        map[r.agentContactId].push({ id: r.id, name: r.name, type: "leasing", status: r.status, use: r.use || [], size: r.size || [], locations: r.requirementLocations || [] });
-      }
-    }
-    for (const r of investmentReqs) {
-      if (r.agentContactId) {
-        if (!map[r.agentContactId]) map[r.agentContactId] = [];
-        map[r.agentContactId].push({ id: r.id, name: r.name, type: "investment", status: r.status, use: r.use || [], size: r.size || [], locations: r.requirementLocations || [] });
-      }
-    }
-    return map;
-  }, [leasingReqs, investmentReqs]);
-
-  const agentDealsByContact = useMemo(() => {
-    const map: Record<string, { id: string; name: string; roles: string[]; status?: string | null; dealType?: string | null }[]> = {};
-    for (const d of allDeals) {
-      const addFor = (contactId: string, role: string) => {
-        if (!map[contactId]) map[contactId] = [];
-        const existing = map[contactId].find(e => e.id === d.id);
-        if (existing) { existing.roles.push(role); }
-        else { map[contactId].push({ id: d.id, name: d.name, roles: [role], status: d.status, dealType: d.dealType }); }
-      };
-      // Keyed by the agent PERSON (*_agent_contact_id); the *_agent_id
-      // columns are firms, kept as a fallback for rows that stored a person.
-      const person = (contactId?: string | null, legacy?: string | null) => contactId || legacy;
-      const vendor = person((d as any).vendorAgentContactId, d.vendorAgentId);
-      const acquisition = person((d as any).acquisitionAgentContactId, d.acquisitionAgentId);
-      const purchaser = person((d as any).purchaserAgentContactId, d.purchaserAgentId);
-      const leasing = person((d as any).leasingAgentContactId, d.leasingAgentId);
-      if (vendor) addFor(vendor, "Sale side agent");
-      if (acquisition) addFor(acquisition, "Tenant rep");
-      if (purchaser) addFor(purchaser, "Buy side agent");
-      if (leasing) addFor(leasing, "Leasing agent");
-    }
-    return map;
-  }, [allDeals]);
-
-  const agentInvestmentByContact = useMemo(() => {
-    const map: Record<string, { id: string; name: string; role: string; status?: string | null; guidePrice?: number | null }[]> = {};
-    for (const item of investmentItems) {
-      if (item.vendorAgentId) {
-        if (!map[item.vendorAgentId]) map[item.vendorAgentId] = [];
-        map[item.vendorAgentId].push({ id: item.id, name: item.assetName, role: "Sale side agent", status: item.status, guidePrice: item.guidePrice });
-      }
-    }
-    return map;
-  }, [investmentItems]);
-
-  const agentCompanies = useMemo(() => {
-    return companies.filter((c) => (c.companyType || "").toLowerCase() === "agent" && !isOwnFirm(c));
-  }, [companies]);
-
-  const agentContacts = useMemo(() => {
-    const ownIds = new Set(companies.filter(isOwnFirm).map((c) => c.id));
-    return contacts.filter((c) => {
-      if (c.companyId && ownIds.has(c.companyId)) return false;
-      const t = (c.contactType || "").toLowerCase();
-      return t === "agent" || (c.companyId && agentCompanies.find((a) => a.id === c.companyId));
-    });
-  }, [contacts, companies, agentCompanies]);
-
-  const contactsByCompany = useMemo(() => {
-    const map: Record<string, CrmContact[]> = {};
-    agentContacts.forEach((c) => {
-      if (c.companyId) {
-        if (!map[c.companyId]) map[c.companyId] = [];
-        map[c.companyId].push(c);
-      }
-    });
-    return map;
-  }, [agentContacts]);
-
-  const locations = useMemo(() => {
-    const locs = new Set<string>();
-    agentCompanies.forEach((c) => {
-      const addr = c.headOfficeAddress as any;
-      if (addr?.city) locs.add(addr.city);
-    });
-    return Array.from(locs).sort();
-  }, [agentCompanies]);
-
-  const filtered = useMemo(() => {
-    let list = agentCompanies;
-
-    if (specialtyFilter) {
-      const filterLower = specialtyFilter.toLowerCase().trim();
-      const companiesWithSpecialty = new Set<string>();
-      if (filterLower === "tenant rep") {
-        agentContacts.forEach((c) => {
-          if (agentReqCounts[c.id] > 0 && c.companyId) {
-            companiesWithSpecialty.add(c.companyId);
-          }
-        });
-      } else {
-        agentContacts.forEach((c) => {
-          if ((c.agentSpecialty || "").toLowerCase().trim() === filterLower && c.companyId) {
-            companiesWithSpecialty.add(c.companyId);
-          }
-        });
-      }
-      list = list.filter((c) => companiesWithSpecialty.has(c.id));
-    }
-
-    if (locationFilter) {
-      list = list.filter((c) => {
-        const addr = c.headOfficeAddress as any;
-        return addr?.city === locationFilter;
-      });
-    }
-
-    if (search.trim()) {
-      const s = search.toLowerCase();
-      list = list.filter((c) =>
-        c.name.toLowerCase().includes(s) ||
-        (c.description || "").toLowerCase().includes(s) ||
-        (contactsByCompany[c.id] || []).some((ct) =>
-          (ct.name || "").toLowerCase().includes(s)
-        )
-      );
-    }
-
-    return list.sort((a, b) => {
-      const ca = (contactsByCompany[a.id] || []).length;
-      const cb = (contactsByCompany[b.id] || []).length;
-      return cb - ca;
-    });
-  }, [agentCompanies, agentContacts, contactsByCompany, agentReqCounts, search, specialtyFilter, locationFilter]);
-
-  return (
-    <div className="space-y-4">
-      {/* One reset chip (the list is always firms — "Individual Agents" was a
-          second always-active chip doing the same reset, now a plain count),
-          and zero-count specialty chips hidden unless selected. The old
-          All/Leasing/… segmented row repeated these chips and is gone
-          (Woody, 2026-09-27). */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Pill active={!specialtyFilter} onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-agent-firms">
-          Agent Firms · <span className="font-mono tabular-nums">{agentCompanies.length.toLocaleString("en-GB")}</span>
-        </Pill>
-        {([
-          ["Leasing", "stat-leasing", agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "leasing").length],
-          ["Investment", "stat-investment", agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "investment").length],
-          ["Tenant Rep", "stat-tenant-rep", agentContacts.filter(c => agentReqCounts[c.id] > 0).length],
-          ["Lease Advisory", "stat-lease-advisory", agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "lease advisory").length],
-        ] as const).filter(([label, , n]) => n > 0 || specialtyFilter === label).map(([label, testId, n]) => (
-          <Pill key={label} active={specialtyFilter === label} onClick={() => setSpecialtyFilter(specialtyFilter === label ? null : label)} data-testid={testId}>
-            {/* People counts, number last — "LEASING 171 AGENTS" put it
-                mid-label (Woody, 2026-09-28). "Leasing agents" says they're
-                people, not firms like the "Agent Firms" chip beside them
-                (Woody, 2026-09-28). */}
-            {label} agents · <span className="font-mono tabular-nums">{n.toLocaleString("en-GB")}</span>
-          </Pill>
-        ))}
-        <span className="text-xs text-muted-foreground ml-1" data-testid="stat-individual-agents">
-          <span className="font-mono tabular-nums">{agentContacts.length.toLocaleString("en-GB")}</span> individual agents
-        </span>
-      </div>
-
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder="Search agents…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 h-9"
-            data-testid="input-search-agents"
-          />
-          {search && (
-            <button className="absolute right-3 top-1/2 -translate-y-1/2" onClick={() => setSearch("")}>
-              <X className="w-3.5 h-3.5 text-muted-foreground" />
-            </button>
-          )}
-        </div>
-
-        {locations.length > 0 && (
-          <select
-            value={locationFilter || ""}
-            onChange={(e) => setLocationFilter(e.target.value || null)}
-            className="h-9 rounded-md border bg-background px-3 text-sm"
-            data-testid="select-location-filter"
-          >
-            <option value="">All Locations</option>
-            {locations.map((l) => (
-              <option key={l} value={l}>{l}</option>
-            ))}
-          </select>
-        )}
-
-        <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "firm")}</p>
-      </div>
-
-      {filtered.length === 0 && (
-        <p className="py-8 text-center text-sm text-muted-foreground" data-testid="agents-empty">
-          {search.trim() ? `No agents match "${search.trim()}"` : "No agents match these filters"}
-        </p>
-      )}
-
-      <BrandSearchHint search={search} companies={companies} resultCount={filtered.length} />
-
-      <div className="space-y-2">
-        {filtered.map((company) => {
-          const compContacts = contactsByCompany[company.id] || [];
-          const isExpanded = expandedCompany === company.id;
-
-          return (
-            <Card key={company.id} className="overflow-hidden group" data-testid={`card-agent-${company.id}`}>
-              <div
-                className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors relative"
-                onClick={() => setExpandedCompany(isExpanded ? null : company.id)}
-              >
-                {onDeleteCompany && (
-                  <button
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
-                    className="absolute top-2 right-2 p-1 rounded-full hidden md:block md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
-                    title="Delete"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-                <CompanyLogo company={company} size="md" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <Link href={`/companies/${company.id}`} onClick={(e: any) => e.stopPropagation()}>
-                      <h3 className="font-semibold text-sm hover:underline truncate">{company.name}</h3>
-                    </Link>
-                    {company.domainUrl && (
-                      <a
-                        href={company.domainUrl.startsWith("http") ? company.domainUrl : `https://${company.domainUrl}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="text-muted-foreground hover:text-foreground"
-                      >
-                        <Globe className="w-3 h-3" />
-                      </a>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    {(() => {
-                      // UK office first — global firms' head offices read
-                      // "Los Angeles" (CBRE) / "Toronto" (Colliers); the
-                      // Companies House registered office is the UK one, and
-                      // a non-UK head office alone shows nothing (Woody,
-                      // 2026-09-28).
-                      if (localitiesLoading) return null;
-                      const addr = company.headOfficeAddress as any;
-                      const ch = localityByCompany.get(company.id);
-                      const nonUk = !!addr?.country && !/^(uk|united kingdom|england|scotland|wales|northern ireland|gb|great britain)$/i.test(String(addr.country).trim());
-                      const city = ch ? ch.toLowerCase().replace(/\b[a-z]/g, (m) => m.toUpperCase()) : (!nonUk ? addr?.city : null);
-                      return city ? (
-                        <span className="text-xs text-muted-foreground flex items-center gap-0.5">
-                          <MapPin className="w-3 h-3" />
-                          {city}
-                        </span>
-                      ) : null;
-                    })()}
-                    {shownDescription(company.description) && (
-                      <span className="text-xs text-muted-foreground truncate flex-1">{shownDescription(company.description)}</span>
-                    )}
-                  </div>
-                </div>
-                <Badge variant="secondary" className="text-xs">
-                  <Users className="w-3 h-3 mr-1" />
-                  {compContacts.length}
-                </Badge>
-                <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`} />
-              </div>
-
-              {isExpanded && compContacts.length > 0 && (
-                <div className="border-t bg-muted/20">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-border">
-                    {compContacts.map((contact) => (
-                      <Link key={contact.id} href={`/contacts/${contact.id}`}>
-                        <div className="bg-background px-4 py-3 hover:bg-muted/30 transition-colors cursor-pointer">
-                          <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-medium">
-                              {(contact.name || "?").split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase()}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium truncate">{contact.name}</p>
-                              <p className="text-xs text-muted-foreground truncate">{contact.role || "Agent"}</p>
-                            </div>
-                            {contact.agentSpecialty && (
-                              <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                                {contact.agentSpecialty}
-                              </Badge>
-                            )}
-                            {agentReqCounts[contact.id] > 0 && (
-                              <Badge className="text-[10px] px-1.5 py-0 bg-purple-100 text-purple-700 hover:bg-purple-200" data-testid={`badge-agent-reqs-${contact.id}`}>
-                                <ClipboardList className="w-3 h-3 mr-0.5" />
-                                {agentReqCounts[contact.id]}
-                              </Badge>
-                            )}
-                            {(agentDealsByContact[contact.id] || []).length > 0 && (
-                              <Badge className="text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-700 hover:bg-emerald-200" data-testid={`badge-agent-deals-${contact.id}`}>
-                                <Handshake className="w-3 h-3 mr-0.5" />
-                                {(agentDealsByContact[contact.id] || []).length}
-                              </Badge>
-                            )}
-                            {(agentInvestmentByContact[contact.id] || []).length > 0 && (
-                              <Badge className="text-[10px] px-1.5 py-0 bg-blue-100 text-blue-700 hover:bg-blue-200" data-testid={`badge-agent-inv-${contact.id}`}>
-                                <TrendingUp className="w-3 h-3 mr-0.5" />
-                                {(agentInvestmentByContact[contact.id] || []).length}
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                            {contact.email && (
-                              <span className="flex items-center gap-1 truncate">
-                                <Mail className="w-3 h-3 flex-shrink-0" />
-                                <span className="truncate">{contact.email}</span>
-                              </span>
-                            )}
-                            {contact.phone && (
-                              <span className="flex items-center gap-1">
-                                <Phone className="w-3 h-3 flex-shrink-0" />
-                                <span className="truncate">{contact.phone}</span>
-                              </span>
-                            )}
-                          </div>
-                          {((agentReqsByContact[contact.id] || []).length > 0 || (agentDealsByContact[contact.id] || []).length > 0 || (agentInvestmentByContact[contact.id] || []).length > 0) && (
-                            <div className="mt-2 pt-2 border-t border-dashed space-y-2">
-                              {(agentReqsByContact[contact.id] || []).length > 0 && (
-                                <div className="space-y-1" data-testid={`agent-reqs-summary-${contact.id}`}>
-                                  <p className="text-[10px] font-medium text-purple-600 uppercase tracking-wide">Client Requirements</p>
-                                  {(agentReqsByContact[contact.id] || []).map((req) => (
-                                    <div key={req.id} className="flex items-center gap-1.5 text-[11px]">
-                                      <ClipboardList className="w-3 h-3 text-purple-400 shrink-0" />
-                                      <span className="truncate font-medium">{req.name}</span>
-                                      <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">{req.type}</Badge>
-                                      {req.status && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">{req.status}</Badge>}
-                                      {req.use && req.use.length > 0 && <span className="text-muted-foreground truncate">{req.use.join(", ")}</span>}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                              {(agentDealsByContact[contact.id] || []).length > 0 && (
-                                <div className="space-y-1" data-testid={`agent-deals-summary-${contact.id}`}>
-                                  <p className="text-[10px] font-medium text-emerald-600 uppercase tracking-wide">Deals</p>
-                                  {(agentDealsByContact[contact.id] || []).map((deal) => (
-                                    <div key={deal.id} className="flex items-center gap-1.5 text-[11px]">
-                                      <Handshake className="w-3 h-3 text-emerald-400 shrink-0" />
-                                      <span className="truncate font-medium">{deal.name}</span>
-                                      {deal.roles.map((r) => <Badge key={r} className="text-[9px] px-1 py-0 bg-emerald-100 text-emerald-700 shrink-0">{r}</Badge>)}
-                                      {deal.status && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">{deal.status}</Badge>}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                              {(agentInvestmentByContact[contact.id] || []).length > 0 && (
-                                <div className="space-y-1" data-testid={`agent-inv-summary-${contact.id}`}>
-                                  <p className="text-[10px] font-medium text-blue-600 uppercase tracking-wide">Investment Tracker</p>
-                                  {(agentInvestmentByContact[contact.id] || []).map((item) => (
-                                    <div key={item.id} className="flex items-center gap-1.5 text-[11px]">
-                                      <TrendingUp className="w-3 h-3 text-blue-400 shrink-0" />
-                                      <span className="truncate font-medium">{item.name}</span>
-                                      <Badge className="text-[9px] px-1 py-0 bg-blue-100 text-blue-700 shrink-0">{item.role}</Badge>
-                                      {item.status && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">{item.status}</Badge>}
-                                      {item.guidePrice && <span className="text-muted-foreground">£{Number(item.guidePrice).toLocaleString()}</span>}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {isExpanded && compContacts.length === 0 && (
-                <div className="border-t px-4 py-4 text-center text-sm text-muted-foreground">
-                  No contacts recorded for this firm
-                </div>
-              )}
-            </Card>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-const LENDER_TYPES = [
-  "lender", "clearing bank", "investment bank", "insurance lender",
-  "pension fund", "debt fund", "private credit", "mezzanine",
-  "bridging", "development finance", "building society",
-];
-
-function isLenderCompany(companyType: string | null | undefined): boolean {
-  const t = (companyType || "").toLowerCase().trim();
-  return LENDER_TYPES.some((lt) => t.includes(lt.replace(/ /g, " ")));
-}
-
-function lenderSubType(companyType: string | null | undefined): "Banks" | "Debt Funds" | "Insurance/Pension" | "Private/Bridge" | "Other" {
-  const t = (companyType || "").toLowerCase().trim();
-  if (t.includes("clearing bank") || t.includes("investment bank") || t.includes("building society")) return "Banks";
-  if (t.includes("debt fund")) return "Debt Funds";
-  if (t.includes("insurance") || t.includes("pension")) return "Insurance/Pension";
-  if (t.includes("private credit") || t.includes("mezzanine") || t.includes("bridging") || t.includes("development finance")) return "Private/Bridge";
-  return "Other";
-}
-
-type LenderSubFilter = "all" | "Banks" | "Debt Funds" | "Insurance/Pension" | "Private/Bridge";
-
-function LendersTab({
-  companies,
-  contacts,
-  properties,
-  onAddCompany,
-}: {
-  companies: CrmCompany[];
-  contacts: CrmContact[];
-  properties: CrmProperty[];
-  onAddCompany?: () => void;
-}) {
-  const [, navigate] = useLocation();
-  const [search, setSearch] = useState("");
-  const [subFilter, setSubFilter] = useState<LenderSubFilter>("all");
-
-  const lenders = useMemo(() => companies.filter((c) => isLenderCompany(c.companyType)), [companies]);
-
-  const activeCount = useMemo(() => lenders.filter((c) => (c as any).lendingActive === true).length, [lenders]);
-
-  const typeCounts = useMemo(() => {
-    const map: Record<string, number> = {};
-    lenders.forEach((c) => {
-      const t = (c.companyType || "Other");
-      map[t] = (map[t] || 0) + 1;
-    });
-    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 3);
-  }, [lenders]);
-
-  const contactsByCompany = useMemo(() => {
-    const map: Record<string, CrmContact[]> = {};
-    contacts.forEach((c) => {
-      if (c.companyId) {
-        if (!map[c.companyId]) map[c.companyId] = [];
-        map[c.companyId].push(c);
-      }
-    });
-    return map;
-  }, [contacts]);
-
-  const propertiesByLender = useMemo(() => {
-    const map: Record<string, number> = {};
-    properties.forEach((p) => {
-      const sid = (p as any).seniorLenderId;
-      const jid = (p as any).juniorLenderId;
-      if (sid) map[sid] = (map[sid] || 0) + 1;
-      if (jid && jid !== sid) map[jid] = (map[jid] || 0) + 1;
-    });
-    return map;
-  }, [properties]);
-
-  const filtered = useMemo(() => {
-    let list = lenders;
-    if (subFilter !== "all") {
-      list = list.filter((c) => lenderSubType(c.companyType) === subFilter);
-    }
-    if (search.trim()) {
-      const s = search.toLowerCase();
-      list = list.filter((c) =>
-        c.name.toLowerCase().includes(s) ||
-        (c.companyType || "").toLowerCase().includes(s) ||
-        (c.description || "").toLowerCase().includes(s)
-      );
-    }
-    return list;
-  }, [lenders, subFilter, search]);
-
-  const subFilterOptions: { key: LenderSubFilter; label: string }[] = [
-    { key: "all", label: "All" },
-    { key: "Banks", label: "Banks" },
-    { key: "Debt Funds", label: "Debt Funds" },
-    { key: "Insurance/Pension", label: "Insurance/Pension" },
-    { key: "Private/Bridge", label: "Private/Bridge" },
-  ];
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="Total Lenders" value={lenders.length} />
-        <StatCard label="Currently Active" value={activeCount} />
-        {typeCounts.map(([type, count]) => (
-          <StatCard key={type} label={type} value={count} />
-        ))}
-      </div>
-
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="inline-flex rounded-lg border bg-muted p-0.5">
-          {subFilterOptions.map((opt) => (
-            <button
-              key={opt.key}
-              onClick={() => setSubFilter(opt.key)}
-              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                subFilter === opt.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder="Search lenders..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 h-9"
-          />
-          {search && (
-            <button className="absolute right-3 top-1/2 -translate-y-1/2" onClick={() => setSearch("")}>
-              <X className="w-3.5 h-3.5 text-muted-foreground" />
-            </button>
-          )}
-        </div>
-        <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "result")}</p>
-        {onAddCompany && (
-          <Button size="sm" onClick={onAddCompany} className="ml-auto">
-            <Landmark className="w-4 h-4 mr-1.5" />
-            Add Lender
-          </Button>
-        )}
-      </div>
-
-      <Card className="overflow-hidden">
-        {/* Phone: one card per lender (§7) — the table never ships below md. */}
-        <div className="md:hidden divide-y divide-border">
-          {filtered.map((company) => {
-            const compContacts = contactsByCompany[company.id] || [];
-            const propCount = propertiesByLender[company.id] || 0;
-            const lendingActive = (company as any).lendingActive;
-            const typicalLtvMax = (company as any).typicalLtvMax;
-            const loanMin = (company as any).typicalLoanSizeMinM;
-            const loanMax = (company as any).typicalLoanSizeMaxM;
-            const loanRange = loanMin != null && loanMax != null
-              ? `£${loanMin}m – £${loanMax}m`
-              : loanMin != null
-              ? `£${loanMin}m+`
-              : loanMax != null
-              ? `up to £${loanMax}m`
-              : null;
-            return (
-              <div
-                key={company.id}
-                className="flex items-start gap-3 px-4 py-3 cursor-pointer active:bg-muted/50"
-                onClick={() => navigate(`/companies/${company.id}`)}
-                data-testid={`card-lender-${company.id}`}
-              >
-                <CompanyLogo company={company} size="sm" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="font-medium text-sm truncate">{company.name}</span>
-                    {typicalLtvMax != null && (
-                      <span className="text-sm font-mono tabular-nums shrink-0">{typicalLtvMax}% LTV</span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-muted-foreground truncate">
-                    {[company.companyType, loanRange].filter(Boolean).join(" · ") || "—"}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                    <Badge
-                      variant={lendingActive ? "default" : "secondary"}
-                      className={`whitespace-nowrap ${lendingActive ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : ""}`}
-                    >
-                      {lendingActive ? "Active" : "Paused"}
-                    </Badge>
-                    <span className="text-[11px] text-muted-foreground">
-                      {countLabel(propCount, "property", "properties")} · {countLabel(compContacts.length, "contact")}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          {filtered.length === 0 && (
-            <p className="py-8 text-center text-sm text-muted-foreground">No lenders found</p>
-          )}
-        </div>
-        <div className="hidden md:block overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Sub-type</TableHead>
-                <TableHead>Typical LTV</TableHead>
-                <TableHead>Loan Range</TableHead>
-                <TableHead>Appetite</TableHead>
-                <TableHead className="text-center">Properties</TableHead>
-                <TableHead className="text-center">Contacts</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((company) => {
-                const compContacts = contactsByCompany[company.id] || [];
-                const propCount = propertiesByLender[company.id] || 0;
-                const lendingActive = (company as any).lendingActive;
-                const typicalLtvMax = (company as any).typicalLtvMax;
-                const loanMin = (company as any).typicalLoanSizeMinM;
-                const loanMax = (company as any).typicalLoanSizeMaxM;
-                const loanRange = loanMin != null && loanMax != null
-                  ? `£${loanMin}m – £${loanMax}m`
-                  : loanMin != null
-                  ? `£${loanMin}m+`
-                  : loanMax != null
-                  ? `up to £${loanMax}m`
-                  : "—";
-                return (
-                  <TableRow
-                    key={company.id}
-                    className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => navigate(`/companies/${company.id}`)}
-                  >
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <CompanyLogo company={company} size="sm" />
-                        <div className="min-w-0">
-                          <span className="font-medium text-sm truncate block">{company.name}</span>
-                          {shownDescription(company.description) && (
-                            <span className="text-xs text-muted-foreground truncate block max-w-[200px]">{shownDescription(company.description)}</span>
-                          )}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{company.companyType || "—"}</TableCell>
-                    <TableCell className="text-sm">{typicalLtvMax != null ? `${typicalLtvMax}%` : "—"}</TableCell>
-                    <TableCell className="text-sm">{loanRange}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={lendingActive ? "default" : "secondary"}
-                        className={lendingActive ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : ""}
-                      >
-                        {lendingActive ? "Active" : "Paused"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-center text-sm">{propCount}</TableCell>
-                    <TableCell className="text-center text-sm">{compContacts.length}</TableCell>
-                  </TableRow>
-                );
-              })}
-              {filtered.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                    No lenders found
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-type PeopleTab = "overview" | "landlords" | "brands" | "agents" | "lenders" | "meetings";
-
-const ALL_TABS: { key: PeopleTab; label: string; icon: any }[] = [
-  { key: "overview", label: "Overview", icon: Target },
-  { key: "landlords", label: "Landlords", icon: Building2 },
+// One CRM page (Woody, 2026-11-15: "one engine ... join it all up for BGP and
+// then Landsec can use that for theirs, just move lenders and landlords out").
+// BGP staff: Overview, Landlords, Brands, Agents, Lenders, Diary and CRM
+// Meetings, the four lists in one design (components/crm-hub). In the Landsec
+// view staff get the same page without Landlords and Lenders. A client login
+// gets ClientCrmHub below: Brand Directory, Agents, Diary and its own contacts.
+type PeopleTab = "overview" | "landlords" | "brands" | "agents" | "lenders" | "diary" | "meetings";
+const ALL_TABS: { key: PeopleTab; label: string }[] = [
+  { key: "overview", label: "Overview" },
+  { key: "landlords", label: "Landlords" },
   // Brands BGP is working, at contact level: Brand Intelligence is the full directory.
-  { key: "brands", label: "Brands", icon: Target },
-  { key: "agents", label: "Agents", icon: Briefcase },
-  { key: "lenders", label: "Lenders", icon: Landmark },
-  { key: "meetings", label: "CRM Meetings", icon: ClipboardList },
+  { key: "brands", label: "Brands" },
+  { key: "agents", label: "Agents" },
+  { key: "lenders", label: "Lenders" },
+  // Everything dated, for every kind of company.
+  { key: "diary", label: "Diary" },
+  { key: "meetings", label: "CRM Meetings" },
 ];
-
-const LANDSEC_TABS: { key: PeopleTab; label: string; icon: any }[] = [
-  { key: "agents", label: "Agents", icon: Briefcase },
-];
+const LANDSEC_HIDDEN: PeopleTab[] = ["landlords", "lenders"];
+const LIST_KIND = { landlords: "landlord", brands: "brand", agents: "agent", lenders: "lender" } as const;
+const SUBTITLE: Record<PeopleTab, string> = {
+  overview: "Events, strategies and the next steps for our relationships.",
+  landlords: "Every landlord account: who owns it, when we last spoke and the next step.",
+  brands: "The brands we are working: on a strategy, with an action, a live deal or a requirement.",
+  agents: "Every agent firm: who owns it, when we last spoke and the next step.",
+  lenders: "Every lender: who owns it, when we last spoke and the next step.",
+  diary: "Everything dated across landlords, brands, agents and lenders.",
+  meetings: "This week's meetings and the head-of-team interviews.",
+};
 
 export default function PeoplePage() {
   const [, companyParams] = useRoute("/companies/:id");
@@ -1222,58 +91,37 @@ export default function PeoplePage() {
     );
   }
 
-  // Client logins (e.g. Landsec) get a purpose-built CRM: a brand-contact
-  // directory limited to the hospitality / food / café / fitness slice,
-  // the agents, and the people at their own company. The staff hub
-  // (landlords, agents, lenders) is BGP-internal.
+  // Client logins (e.g. Landsec) get the client's CRM: the brands on its
+  // list, the agents, the diary and the people at its own company. BGP's
+  // landlords, lenders, strategies and owners are BGP's own.
   if (userLoading) return <PageLoader />;
   if (user?.role === "Client" || !!(user as any)?.companyScopeId) return <ClientCrmHub />;
 
   return <PeopleHub />;
 }
 
-// ── Client CRM hub — brand directory, agents, the client's own people ────
-const CLIENT_BRAND_CATS: { key: string; label: string; re: RegExp | null }[] = [
-  { key: "all", label: "All", re: null },
-  { key: "food", label: "Food & Dining", re: /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie)/i },
-  { key: "cafe", label: "Cafés & Coffee", re: /(caf|coffee)/i },
-  { key: "bars", label: "Bars", re: /bar/i },
-  { key: "leisure", label: "Leisure", re: /(leisure|cinema|entertainment|hospitality|hotel)/i },
-  { key: "fitness", label: "Fitness", re: /(fitness|gym|yoga)/i },
-];
-
-interface DirectoryBrand {
-  id: string;
-  name: string;
-  companyType: string | null;
-  domain: string | null;
-  contacts: { id: string; name: string; role: string | null; email: string | null; phone: string | null }[];
-  isExistingTenant?: boolean;
-  targetedAt?: { propertyId: string; propertyName: string; unitName: string | null }[];
-}
-
-const CLIENT_REL_FILTERS = [
-  { key: "all", label: "All" },
-  { key: "tenant", label: "Existing tenants" },
-  { key: "targeted", label: "Being targeted" },
-  { key: "contact", label: "With contacts" },
-] as const;
+// ── A client login's CRM: Brand Directory, Agents, Diary, its own people ─────────────
+type ClientTab = "brands" | "agents" | "diary" | "contacts";
 
 function ClientCrmHub() {
-  const [tab, setTab] = useState<"brands" | "agents" | "contacts">("brands");
-  const [search, setSearch] = useState("");
-  const [cat, setCat] = useState("all");
-  const [rel, setRel] = useState<string>("all");
-  const [propFilter, setPropFilter] = useState<string>("all");
-  const [contactDialog, setContactDialog] = useState<{ companyId: string; companyName: string; contact?: any } | null>(null);
+  const landsec = useIsLandsecView();
+  const [tab, setTab] = useState<ClientTab>(() => {
+    const requested = new URLSearchParams(window.location.search).get("tab");
+    return requested === "agents" || requested === "contacts" || (requested === "diary" && landsec) ? requested : "brands";
+  });
+  const chooseTab = (next: ClientTab) => {
+    setTab(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", next);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+  };
+  const [contactDialog, setContactDialog] = useState<ContactDialogTarget | null>(null);
 
   const { data: hubUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const { data: brands = [], isLoading: brandsLoading } = useQuery<DirectoryBrand[]>({
-    queryKey: ["/api/client/brand-directory"],
-  });
+  const { data: brands = [] } = useQuery<DirectoryBrand[]>({ queryKey: CLIENT_BRAND_DIRECTORY_KEY });
   // The people at the client's own company only (Woody, 2026-11-12). The
   // wider contact list the login may read is not loaded here: brand
-  // contacts are on brand pages and agents on the Agents tab.
+  // contacts are on the Brand Directory tab and agents on the Agents tab.
   const { data: ownData, isLoading: ownLoading, isError: ownError } = useQuery<ClientOwnContacts>({ queryKey: CLIENT_OWN_CONTACTS_KEY });
   const clientName = hubUser?.companyScopeName || hubUser?.team || ownData?.companyName || "";
   const ownPeopleCount = ownData?.peopleCount || 0;
@@ -1282,205 +130,34 @@ function ClientCrmHub() {
   const namedAgentCount = (agentData?.bgp.length || 0)
     + (agentData?.jointAgents.reduce((n, firm) => n + firm.people.length, 0) || 0)
     + new Set((agentData?.tenantReps || []).flatMap(agent => agent.contacts.map(contact => contact.id))).size;
-
-  // Properties this client is actively targeting brands at — drives the
-  // "targeting at" dropdown without another fetch.
-  const targetProperties = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const b of brands) for (const t of b.targetedAt || []) m.set(t.propertyId, t.propertyName);
-    return [...m.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [brands]);
-
-  const filteredBrands = useMemo(() => {
-    const catRe = CLIENT_BRAND_CATS.find(c => c.key === cat)?.re || null;
-    const q = search.trim().toLowerCase();
-    return brands.filter(b => {
-      if (catRe && !catRe.test(b.companyType || "")) return false;
-      if (rel === "tenant" && !b.isExistingTenant) return false;
-      if (rel === "targeted" && !(b.targetedAt || []).length) return false;
-      if (rel === "contact" && b.contacts.length === 0) return false;
-      if (propFilter !== "all" && !(b.targetedAt || []).some(t => t.propertyId === propFilter)) return false;
-      if (!q) return true;
-      if (b.name.toLowerCase().includes(q)) return true;
-      return b.contacts.some(c => c.name?.toLowerCase().includes(q));
-    });
-  }, [brands, cat, rel, propFilter, search]);
-
-  const typeLabel = (t: string | null) => (t || "").replace(/^Tenant - /, "");
+  const tabs: Array<{ key: ClientTab; label: string }> = [
+    // "Brand Directory", not "Brands": a Landsec side bar already has Brands (Brand Intelligence).
+    { key: "brands", label: "Brand Directory" }, { key: "agents", label: "Agents" },
+    // The diary is the Landsec workspace's: other clients have none.
+    ...(landsec ? [{ key: "diary" as const, label: "Diary" }] : []),
+    { key: "contacts", label: `${clientName || "Your"} Contacts` },
+  ];
 
   return (
-    <div className="p-4 md:p-6 space-y-4" data-testid="client-crm-hub">
+    <div className="p-4 md:p-6 space-y-4 max-w-[1600px] mx-auto" data-testid="client-crm-hub">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">CRM</h1>
+        <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">CRM</h1>
         <p className="text-sm text-muted-foreground">
-          <span className="font-mono tabular-nums">{brands.length.toLocaleString()}</span> brands · {agentsLoading ? "Agents loading" : agentsError && !agentData ? "Agents unavailable" : <><span className="font-mono tabular-nums">{agentFirmCount.toLocaleString()}</span> agent {agentFirmCount === 1 ? "firm" : "firms"} · <span className="font-mono tabular-nums">{namedAgentCount.toLocaleString()}</span> named {namedAgentCount === 1 ? "agent" : "agents"}</>} · <span data-testid="client-crm-own-count">{ownLoading ? "People loading" : ownError && !ownData ? "Your people unavailable" : <><span className="font-mono tabular-nums">{ownPeopleCount.toLocaleString()}</span> {ownPeopleCount === 1 ? "person" : "people"} at {clientName || "your company"}</>}</span>
+          <span className="font-mono tabular-nums">{brands.length.toLocaleString("en-GB")}</span> brands · {agentsLoading ? "Agents loading" : agentsError && !agentData ? "Agents unavailable" : <><span className="font-mono tabular-nums">{agentFirmCount.toLocaleString("en-GB")}</span> agent {agentFirmCount === 1 ? "firm" : "firms"} · <span className="font-mono tabular-nums">{namedAgentCount.toLocaleString("en-GB")}</span> named {namedAgentCount === 1 ? "agent" : "agents"}</>} · <span data-testid="client-crm-own-count">{ownLoading ? "People loading" : ownError && !ownData ? "Your people unavailable" : <><span className="font-mono tabular-nums">{ownPeopleCount.toLocaleString("en-GB")}</span> {ownPeopleCount === 1 ? "person" : "people"} at {clientName || "your company"}</>}</span>
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
-        {([["brands", "Brand Directory"], ["agents", "Agents"], ["contacts", `${clientName || "Your"} Contacts`]] as const).map(([key, label]) => (
-          <Pill
-            key={key}
-            active={tab === key}
-            onClick={() => setTab(key)}
-            data-testid={`client-crm-tab-${key}`}
-          >
-            {label}
-          </Pill>
-        ))}
+      {/* One sideways-scrolling row on the phone rather than wrapping. */}
+      <div className="flex gap-1.5 flex-nowrap overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0 [&>*]:shrink-0">
+        {tabs.map(t => <Pill key={t.key} active={tab === t.key} onClick={() => chooseTab(t.key)} data-testid={`client-crm-tab-${t.key}`}>{t.label}</Pill>)}
       </div>
 
       {tab === "brands" ? (
-        <>
-          <div className="flex items-center gap-3 flex-wrap">
-            <Input
-              placeholder="Search brands or people…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="max-w-xs"
-              data-testid="client-brand-search"
-            />
-            <div className="flex gap-1.5 flex-wrap">
-              {CLIENT_BRAND_CATS.map(c => (
-                <button
-                  key={c.key}
-                  onClick={() => setCat(c.key)}
-                  className={`px-3 py-1 rounded-full text-xs border transition-colors ${
-                    cat === c.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"
-                  }`}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-            <span className="text-xs text-muted-foreground ml-auto">{filteredBrands.length} brands</span>
-          </div>
-
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex gap-1.5 flex-wrap">
-              {CLIENT_REL_FILTERS.map(f => (
-                <button
-                  key={f.key}
-                  onClick={() => setRel(f.key)}
-                  className={`px-3 py-1 rounded-full text-xs border transition-colors ${
-                    rel === f.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"
-                  }`}
-                  data-testid={`client-rel-${f.key}`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-            {targetProperties.length > 0 && (
-              <select
-                value={propFilter}
-                onChange={e => setPropFilter(e.target.value)}
-                className="h-7 rounded-full border bg-background px-2.5 text-xs text-muted-foreground"
-                data-testid="client-prop-filter"
-              >
-                <option value="all">Targeted at: any property</option>
-                {targetProperties.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          {brandsLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {[1, 2, 3, 4, 5, 6].map(i => <Skeleton key={i} className="h-28" />)}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {filteredBrands.map(b => (
-                <Card key={b.id} className="overflow-hidden" data-testid={`client-brand-${b.id}`}>
-                  <CardContent className="p-3 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <CompanyLogo company={{ id: b.id, name: b.name, domain: b.domain } as CrmCompany} size="sm" />
-                      <div className="min-w-0 flex-1">
-                        <Link href={`/companies/${b.id}`}>
-                          <p className="text-sm font-semibold truncate hover:underline cursor-pointer">{b.name}</p>
-                        </Link>
-                        {b.companyType && <Badge variant="secondary" className="text-[9px]">{typeLabel(b.companyType)}</Badge>}
-                      </div>
-                    </div>
-                    {(b.isExistingTenant || (b.targetedAt || []).length > 0) && (
-                      <div className="flex gap-1 flex-wrap">
-                        {b.isExistingTenant && (
-                          <Badge className="text-[9px] bg-emerald-100 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
-                            Existing tenant
-                          </Badge>
-                        )}
-                        {(b.targetedAt || []).map((t, i) => (
-                          <Badge
-                            key={`${t.propertyId}-${t.unitName || i}`}
-                            variant="outline"
-                            className="text-[9px] gap-1 max-w-full border-amber-400 text-amber-700 dark:text-amber-400"
-                            title={`${t.unitName ? `${t.unitName} · ` : ""}${t.propertyName}`}
-                          >
-                            <Target className="w-2.5 h-2.5 shrink-0" />
-                            <span className="truncate">{t.unitName ? `${t.unitName} · ` : ""}{t.propertyName}</span>
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                    {b.contacts.length > 0 ? (
-                      <div className="space-y-1 pt-1 border-t">
-                        {b.contacts.slice(0, 3).map(c => (
-                          <div key={c.id} className="text-xs flex items-baseline gap-2 min-w-0 group">
-                            <Link href={`/contacts/${c.id}`}>
-                              <span className="font-medium hover:underline cursor-pointer whitespace-nowrap">{c.name}</span>
-                            </Link>
-                            {c.role && <span className="text-muted-foreground truncate">{c.role}</span>}
-                            <span className="ml-auto shrink-0 flex items-center gap-2">
-                              {c.email && (
-                                <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline">email</a>
-                              )}
-                              <button
-                                onClick={() => setContactDialog({ companyId: b.id, companyName: b.name, contact: c })}
-                                className="opacity-60 md:opacity-0 md:group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
-                                title="Edit contact"
-                                data-testid={`client-edit-contact-${c.id}`}
-                              >
-                                <Pencil className="w-3 h-3" />
-                              </button>
-                            </span>
-                          </div>
-                        ))}
-                        {b.contacts.length > 3 && (
-                          <p className="text-[10px] text-muted-foreground">+{b.contacts.length - 3} more</p>
-                        )}
-                        <button
-                          onClick={() => setContactDialog({ companyId: b.id, companyName: b.name })}
-                          className="text-[11px] text-primary hover:underline flex items-center gap-0.5"
-                          data-testid={`client-add-contact-${b.id}`}
-                        >
-                          <Plus className="w-3 h-3" /> Add contact
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="pt-1 border-t flex items-center justify-between gap-2">
-                        <p className="text-[11px] text-muted-foreground">No contacts on file.</p>
-                        <button
-                          onClick={() => setContactDialog({ companyId: b.id, companyName: b.name })}
-                          className="text-[11px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
-                          data-testid={`client-add-contact-${b.id}`}
-                        >
-                          <Plus className="w-3 h-3" /> Add contact
-                        </button>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-              {filteredBrands.length === 0 && (
-                <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No brands match.</p>
-              )}
-            </div>
-          )}
-        </>
+        <ClientBrandList landsec={landsec} onContact={setContactDialog} />
       ) : tab === "agents" ? (
         <ClientAgentsDirectory />
+      ) : tab === "diary" && landsec ? (
+        <Diary staff={false} />
       ) : (
         <ClientOwnContactsTab
           clientName={clientName || "your company"}
@@ -1585,19 +262,19 @@ function ContactQuickDialog({ companyId, companyName, contact, onClose }: {
   );
 }
 
+// ── BGP's CRM page ──────────────────────────────────────────────────────────
 function PeopleHub() {
   const urlSearch = useSearch();
-  const { activeTeam } = useTeam();
   const [, navigate] = useLocation();
-  const { toast } = useToast();
-  const { data: user } = useQuery<User>({ queryKey: ["/api/auth/me"] });
-  const effectiveTeam = activeTeam && activeTeam !== "all" ? activeTeam : user?.team;
-  const isLandsec = effectiveTeam === "Landsec";
+  // In the Landsec view (the team picker on Landsec) the page is the same
+  // without Landlords and Lenders.
+  const landsec = useIsLandsecView();
+  const tabs = landsec ? ALL_TABS.filter(t => !LANDSEC_HIDDEN.includes(t.key)) : ALL_TABS;
+  const allowed = (value: string | null): value is PeopleTab => tabs.some(t => t.key === value);
 
   const [tab, setTab] = useState<PeopleTab>(() => {
-    if (isLandsec) return "agents";
     const requested = new URLSearchParams(window.location.search).get("tab");
-    return ALL_TABS.some(t => t.key === requested) ? requested as PeopleTab : "overview";
+    return allowed(requested) ? requested : "overview";
   });
   const chooseTab = (next: PeopleTab) => {
     setTab(next);
@@ -1608,141 +285,34 @@ function PeopleHub() {
   };
   useEffect(() => {
     const requested = new URLSearchParams(urlSearch).get("tab");
-    if (!isLandsec && ALL_TABS.some(t => t.key === requested)) setTab(requested as PeopleTab);
-  }, [urlSearch, isLandsec]);
-  // The Overview is the Landlord CRM. A link naming a brand (older links
-  // from a brand's page) belongs to the Brand CRM, so it is sent there.
-  const overviewCompanyId = tab === "overview" && !isLandsec ? new URLSearchParams(urlSearch).get("company") : null;
-  const { data: overviewCompany } = useQuery<{ companyType?: string | null }>({
-    queryKey: ["/api/crm/companies", overviewCompanyId],
-    enabled: !!overviewCompanyId, staleTime: 5 * 60_000, retry: false,
-  });
-  // (Until 15 November 2026 a brand link here was sent on to the Brand CRM.
-  // The Overview now holds every kind of company, so it stays.)
-  void overviewCompany;
+    if (allowed(requested)) setTab(requested);
+  }, [urlSearch, landsec]);
+  // A tab the Landsec view does not have falls back to the Overview.
+  useEffect(() => { if (!tabs.some(t => t.key === tab)) setTab("overview"); }, [landsec]);
   // Start strategy: turning a company on (the kick-off dialog), from any list.
   const [startFor, setStartFor] = useState<{ id: string; name: string } | null>(null);
   const openStrategy = (strategyId: string) => navigate(`/contacts?tab=overview&strategy=${encodeURIComponent(strategyId)}`);
-  const [viewMode, setViewMode] = useState<"table" | "card" | "board">("card");
   const [hubAddContactOpen, setHubAddContactOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<{ type: "company" | "contact"; id: string; name: string } | null>(null);
-
-  const deleteMutation = useMutation({
-    mutationFn: async ({ type, id }: { type: "company" | "contact"; id: string }) => {
-      await apiRequest("DELETE", `/api/crm/${type === "company" ? "companies" : "contacts"}/${id}`);
-    },
-    onSuccess: () => {
-      toast({ title: `${deleteTarget?.type === "company" ? "Company" : "Contact"} deleted` });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
-      setDeleteTarget(null);
-    },
-    onError: (err: Error) => {
-      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const onDeleteCompany = (id: string, name: string) => setDeleteTarget({ type: "company", id, name });
-  const landsecAppliedRef = useRef(false);
-  useEffect(() => {
-    if (isLandsec && !landsecAppliedRef.current && (tab === "landlords" || tab === "overview")) {
-      setTab("agents");
-      landsecAppliedRef.current = true;
-    }
-  }, [isLandsec]);
-
-  const { data: companies = [], isLoading: companiesLoading } = useQuery<CrmCompany[]>({
-    queryKey: ["/api/crm/companies"],
-    enabled: tab !== "overview",
-  });
-
-  const { data: contacts = [], isLoading: contactsLoading } = useQuery<CrmContact[]>({
-    queryKey: ["/api/crm/contacts"],
-    enabled: tab !== "overview",
-  });
-
-  const { data: properties = [], isLoading: propertiesLoading } = useQuery<CrmProperty[]>({
-    queryKey: ["/api/crm/properties"],
-    enabled: tab === "landlords",
-  });
-
-  const { data: deals = [], isLoading: dealsLoading } = useQuery<CrmDeal[]>({
-    queryKey: ["/api/crm/deals"],
-    enabled: tab === "landlords",
-  });
-
-  const isLoading = companiesLoading || contactsLoading;
-
-  const landlordCompanies = useMemo(() => {
-    return companies.filter((c) => {
-      const t = (c.companyType || "").toLowerCase().trim();
-      return t === "landlord" || t === "client" || t === "landlord / client" || c.isPortfolioAccount;
-    });
-  }, [companies]);
-
-  const agentCompaniesCount = useMemo(() => {
-    return companies.filter((c) => (c.companyType || "").toLowerCase().trim() === "agent" && !isOwnFirm(c)).length;
-  }, [companies]);
-
-  const lendersCompanies = useMemo(() => {
-    return companies.filter((c) => isLenderCompany(c.companyType));
-  }, [companies]);
-
-  // Contacts visible in this hub = those tied to a landlord or agent company.
-  // Excludes brand/tenant contacts (which live in Brands Hub).
-  const hubContactCount = useMemo(() => {
-    const hubCompanyIds = new Set<string>([
-      ...landlordCompanies.map((c) => c.id),
-      ...companies.filter((c) => (c.companyType || "").toLowerCase().trim() === "agent").map((c) => c.id),
-    ]);
-    return contacts.filter((c) => c.companyId && hubCompanyIds.has(c.companyId)).length;
-  }, [contacts, companies, landlordCompanies]);
-
-  const tabs = isLandsec ? LANDSEC_TABS : ALL_TABS;
-
-  // "View People" on a landlord card goes to the company profile, where its
-  // contacts actually live. (It used to flip to a "scoped" agents tab that
-  // was never filtered by the landlord and never showed its contacts.)
-  const handleScopeLandlord = (id: string) => {
-    navigate(`/companies/${id}`);
-  };
+  const listKind = tab in LIST_KIND ? LIST_KIND[tab as keyof typeof LIST_KIND] : null;
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-[1600px] mx-auto">
       {/* Wraps on phones — the subtitle squeezed into a one-word column and
-          pushed the view toggle off-screen (Woody, 2026-09-27). */}
+          pushed the buttons off-screen (Woody, 2026-09-27). */}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
-            CRM
-          </h1>
-          {/* "Landlord accounts" = companies typed Landlord / Client (or a
-              portfolio account). Landlord Intelligence counts more — every
-              non-tenant owner, investor, REIT, developer or fund, plus any
-              company that is landlord on a live deal or freeholder / long
-              leaseholder of a property — so "197 landlords" vs "426
-              Landlords" read as a mismatch (Woody, 2026-09-28). */}
-          <p className="text-sm text-muted-foreground" title="Landlord accounts: companies typed Landlord or Client. Landlord Intelligence also counts investors, developers, funds and owners linked through deals or properties.">
-            {/* toLocaleString — countLabel printed "1110 contacts" (Woody, 2026-09-27). */}
-            {/* Agents are counted as firms — "146 agents" beside chips counting
-                439 people read as a contradiction (Woody, 2026-09-28). */}
-            {tab === "overview" ? "Events, strategies and the next steps for our relationships." : [[landlordCompanies.length, "landlord account"], [agentCompaniesCount, "agent firm"], [hubContactCount, "contact"]].map(([n, w]) => `${(n as number).toLocaleString("en-GB")} ${w}${n === 1 ? "" : "s"}`).join(" · ")}
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">CRM</h1>
+          <p className="text-sm text-muted-foreground">{SUBTITLE[tab]}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/* Header shortcut to the meetings tab — the pill alone was too
               easy to miss (Carly, 2026-09-21: "it needs to be way clearer"). */}
-          {!isLandsec && (
-            <Button size="sm" variant="outline" onClick={() => chooseTab("meetings")} data-testid="button-crm-meetings">
-              <ClipboardList className="w-4 h-4 mr-1" /> CRM Meetings
-            </Button>
-          )}
+          <Button size="sm" variant="outline" onClick={() => chooseTab("meetings")} data-testid="button-crm-meetings">
+            <ClipboardList className="w-4 h-4 mr-1" /> CRM Meetings
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setHubAddContactOpen(true)} data-testid="button-hub-add-contact">
             <Plus className="w-4 h-4 mr-1" /> Add contact
           </Button>
-          {/* Only the Landlords tab has a table/cards choice, and below md
-              the toggle is a lone "Cards" — hide it otherwise (Woody, 2026-09-28). */}
-          {tab === "landlords" && isLandsec && <div className="hidden md:block"><ViewToggle view={viewMode} onToggle={setViewMode} /></div>}
         </div>
       </div>
       <ContactFormDialog open={hubAddContactOpen} onOpenChange={setHubAddContactOpen} />
@@ -1750,12 +320,7 @@ function PeopleHub() {
       {/* One sideways-scrolling row on the phone rather than wrapping. */}
       <div className="flex gap-1.5 flex-nowrap overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0 [&>*]:shrink-0">
         {tabs.map((t) => (
-          <Pill
-            key={t.key}
-            active={tab === t.key}
-            onClick={() => chooseTab(t.key)}
-            data-testid={`tab-${t.key}`}
-          >
+          <Pill key={t.key} active={tab === t.key} onClick={() => chooseTab(t.key)} data-testid={`tab-${t.key}`}>
             {t.label}
           </Pill>
         ))}
@@ -1763,61 +328,13 @@ function PeopleHub() {
         <ContactDataHealth pill />
       </div>
 
-      {/* One list design for every kind (Woody, 2026-11-15). The Landsec team
-          view keeps the older Agents tab until the Landsec version is built. */}
-      {!isLandsec && (["landlords", "brands", "agents", "lenders"] as const).includes(tab as any) ? (
-        <CrmCompanyList kind={tab === "landlords" ? "landlord" : tab === "brands" ? "brand" : tab === "agents" ? "agent" : "lender"}
-          onStartStrategy={row => setStartFor({ id: row.id, name: row.name })} onOpenStrategy={openStrategy} />
-      ) : tab !== "overview" && isLoading ? (
-        <PageLoader />
-      ) : (
-        <>
-          {tab === "overview" && <CrmEngagementPanel kind="all" />}
-          {tab === "landlords" && (
-            <>
-            <LandlordsTab
-              companies={companies}
-              contacts={contacts}
-              properties={properties}
-              deals={deals}
-              onScopeLandlord={handleScopeLandlord}
-              onDeleteCompany={onDeleteCompany}
-              viewMode={viewMode}
-              countsLoading={propertiesLoading || dealsLoading}
-            />
-            </>
-          )}
-          {tab === "agents" && (
-            <AgentsTab companies={companies} contacts={contacts} defaultTenantRep={isLandsec} onDeleteCompany={onDeleteCompany} />
-          )}
-          {tab === "lenders" && (
-            <LendersTab companies={lendersCompanies} contacts={contacts} properties={properties} />
-          )}
-          {tab === "meetings" && <CrmMeetingsTab />}
-        </>
-      )}
+      {/* One list design for every kind (Woody, 2026-11-15). */}
+      {listKind && <CrmCompanyList kind={listKind} onStartStrategy={row => setStartFor({ id: row.id, name: row.name })} onOpenStrategy={openStrategy} />}
+      {tab === "overview" && <CrmEngagementPanel kind="all" />}
+      {tab === "diary" && <Diary staff scope="all" />}
+      {tab === "meetings" && <CrmMeetingsTab />}
 
       {startFor && <StartStrategyDialog company={startFor} onClose={() => setStartFor(null)} onStarted={openStrategy} />}
-
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete {deleteTarget?.type === "company" ? "Company" : "Contact"}</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete "{deleteTarget?.name}"? This cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => deleteTarget && deleteMutation.mutate({ type: deleteTarget.type, id: deleteTarget.id })}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {deleteMutation.isPending ? "Deleting..." : "Delete"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

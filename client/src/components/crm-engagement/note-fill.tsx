@@ -4,6 +4,7 @@
 // form on the screen: the person reads it and saves with the form's own
 // button. BGP staff only (the server refuses the read to anyone else).
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { EngagementKind } from "@shared/crm-engagement";
 import type { CrmNoteForm, CrmNoteReading } from "@shared/crm-note";
 import { apiRequest } from "@/lib/queryClient";
@@ -38,6 +39,10 @@ export function CrmNoteFill({ form, kind, saveWord, onRead }: { form: CrmNoteFor
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [reading, setReading] = useState<CrmNoteReading | null>(null);
+  // A client login adds its requests through the same forms, and the reader
+  // is BGP's: it is never offered a box the server would refuse.
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const staff = !!me && me.role !== "Client" && !me.companyScopeId;
   const enough = text.trim().split(/\s+/).filter(Boolean).length >= 3;
   const read = async () => {
     setBusy(true); setError("");
@@ -48,6 +53,7 @@ export function CrmNoteFill({ form, kind, saveWord, onRead }: { form: CrmNoteFor
     } catch (e) { setError(errorText(e)); }
     finally { setBusy(false); }
   };
+  if (!staff) return null;
   return (
     <section className="rounded-lg border bg-muted/20 p-3 space-y-2" data-testid="crm-note-fill">
       <label className="block space-y-1.5 text-sm">

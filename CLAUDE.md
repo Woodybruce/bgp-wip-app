@@ -1152,7 +1152,8 @@ calendars), the order of work and the four decisions waiting on him are in
 **Decided by Woody on 15 November 2026 (do not re-litigate):**
 
 - **Build the BGP version first**, "then we can just hide lenders and
-  landlord for Landsec". The Landsec CRM page is unchanged until then.
+  landlord for Landsec". Both are built (the Landsec version later the
+  same day, when he said to finish the rest).
 - **One engine for every kind.** "I agree with your approach": landlords,
   brands, agents and lenders in one Overview. This SUPERSEDES "the Brand
   CRM is separate from the Landlord CRM" in the Brand CRM section below for
@@ -1224,15 +1225,58 @@ calendars), the order of work and the four decisions waiting on him are in
   below; a strategy pill opens it on the Overview. Not carried over from
   the old tabs, on purpose until asked for: delete, the agent specialty
   pills and per-person deal and requirement lists, the lender stat tiles
-  and Add Lender. `LandlordsTab`, `AgentsTab` and `LendersTab` in
-  `people.tsx` are now reached only from the Landsec team view (Agents);
-  remove them when the Landsec version is built.
+  and Add Lender. The three older tab designs (`LandlordsTab`, `AgentsTab`,
+  `LendersTab`) were deleted from `people.tsx` when the Landsec version was
+  built (below).
 - **The CRM plan on the team calendar** (`client/src/pages/calendar.tsx`,
   `crmPlanToCalendarEvents`): a **CRM plan** pill beside CRM / Outlook /
   Team draws confirmed CRM events and the due times of open CRM actions,
   each with an "Open in the CRM" link. BGP staff only; remembered per
-  browser. NOT built: the same layer on the Landsec calendar, and a diary
-  for every kind on the CRM page.
+  browser.
+- **The Diary for every kind** (the CRM page's **Diary** pill,
+  `/contacts?tab=diary`): `Diary` in `client/src/components/brand-crm/diary.tsx`
+  with `scope="all"`, fed by `GET /api/brand-crm/diary?scope=all`
+  (`loadDiary` in `server/brand-crm-diary.ts`, `DiaryOptions.scope`). It is
+  the Brand CRM diary plus CRM actions on landlords, agents and lenders,
+  confirmed CRM events from today (`crm_event`) and the end dates of
+  active strategies (`strategy_review`); each item carries `nouns`, the
+  kinds of company on it, for the All / Landlords / Brands / Agents /
+  Lenders pills. BGP staff only: it sits behind `staffDoor`, and
+  `loadDiary` gives any other viewer the brand diary whatever scope is
+  asked for. The Landsec diary and the Brand CRM diary are unchanged.
+- **The CRM layer on the Landsec calendar** (`/landsec/calendar`):
+  `landsecCrmEntries` in `client/src/components/landsec/landsec-meetings.ts`
+  turns the DATED lines of `GET /api/landsec/diary` (already cut for the
+  login) into calendar entries marked `crm` (`CalendarCrm` in
+  `leasing-viewings-calendar.tsx`): a muted bar with a target mark, a
+  **CRM** pill with its count, and a card with an Open link. A booked
+  viewing is left out (the calendar draws it as a viewing) and an undated
+  line stays in the diary. A joint agent's calendar is its Viewings page
+  and has no CRM layer.
+- **The Landsec version of the page** (Woody: "then we can just hide
+  lenders and landlord for Landsec"). BGP staff in the Landsec view
+  (`useIsLandsecView()`) get the same page without the Landlords and
+  Lenders pills (`LANDSEC_HIDDEN`). A client login gets `ClientCrmHub`:
+  pills **Brand Directory**, **Agents**, **Diary** (Landsec only: the
+  shared Landsec diary) and **<client> Contacts**. Brand Directory is
+  `client/src/components/crm-hub/client-brand-list.tsx`, the BGP list's
+  design (cards or table, the shared cells) drawn only from what a client
+  is already sent: `GET /api/client/brand-directory` and, for Landsec,
+  the diary's CRM actions as each brand's next action. BGP's owner, last
+  contact and strategies are never on a client's row; the pill keeps the
+  name Brand Directory because the Landsec side bar already has Brands.
+  A Landsec login adds a **Request to BGP** from a brand's row
+  (`ClientRequest` in `diary.tsx`, through the engine's client action
+  route). `CrmNoteFill` is not drawn for a client login (the reader is
+  BGP's). Guards: `qa/regression/crm-client-hub-guards.test.mjs`.
+- **The CRM plan on every company page**: `LandlordEngagementPanel` is
+  on agent firm and lender pages too (`staffPlan` in
+  `brand-profile-panel.tsx`, and the phone view), with
+  `interviews={false}`, and with `companyName` it offers **Start
+  strategy** to BGP staff on a company that is on no active strategy.
+  NOT built: landlord, agent and lender pages re-laid in the brand page's
+  header, summary card and pills (step 5 of the review); they keep their
+  own layouts until Woody has seen a design.
 - **Closer watching** (`server/crm-watch.ts`): a company on a running
   strategy goes first in the nightly store count, planning and jobs check,
   accounts read and signal tidy, and is re-checked every 7 days, not 30

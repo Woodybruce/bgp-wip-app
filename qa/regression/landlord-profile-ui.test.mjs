@@ -85,8 +85,12 @@ test('landlord profile and chat lead the page, with staff meeting/team brief and
   assert.match(code, /<LandlordMeetingsSummary/);
   // The interview notes moved into the CRM plan panel on 2026-10-28, so a note can become an action there:
   // the page draws the panel for BGP staff only, and the panel draws the notes for a landlord, never for a client.
-  assert.match(code, /\{!isClientViewer && [^\n]*<LandlordEngagementPanel companyId=\{companyId\} \/>\}/);
-  assert.match(source('client/src/components/landlord-engagement-panel.tsx'), /\{kind === "landlord" && !client && <LandlordInterviewNotes companyId=\{companyId\}/);
+  // (staffPlan is that staff test, shared with the agent and lender pages since 15 November 2026.)
+  assert.match(code, /\{staffPlan && <LandlordEngagementPanel companyId=\{companyId\} companyName=\{c\.name\} \/>\}/);
+  assert.match(source(panel), /const staffPlan = !isClientViewer && /);
+  assert.match(source('client/src/components/landlord-engagement-panel.tsx'), /\{kind === "landlord" && interviews && !client && <LandlordInterviewNotes companyId=\{companyId\}/);
+  // An agent firm's and a lender's page carry the plan with no interview notes, for the same staff only.
+  assert.equal((source(panel).match(/\{staffPlan && <LandlordEngagementPanel companyId=\{companyId\} companyName=\{c\.name\} interviews=\{false\} \/>\}/g) || []).length, 2);
   // The BGP team is part of People (Woody, 2026-11-14), not a block under the take.
   assert.doesNotMatch(code, /LandlordRelationshipTeam|footer=/);
   assert.match(source(panel), /teamSlot=\{<CompanyBgpTeam [^\n]*staff=\{!sbIsClient\} \/>\}/);

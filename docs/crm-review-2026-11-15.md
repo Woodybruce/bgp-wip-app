@@ -163,9 +163,31 @@ Built for BGP (steps 1 and 2 of the order of work, and the start of 4):
   running strategy.
 - A **CRM plan** layer on the team calendar.
 
-Still to do: the diary for every kind (step 3), the Landsec calendar layer,
-the Landsec version of the page (Brands and Agents only), and the landlord,
-agent and lender pages in the brand page's shape (step 5).
+## Built last on 15 November 2026 ("finish off building the rest")
+
+- **Diary** pill on the CRM page: everything dated for every kind of
+  company (CRM actions, CRM events, strategy reviews, viewings, deals
+  waiting, briefs to sign, brand cases), with the kind pills, group by
+  date, person, company or scheme, Add action and a tick to mark done.
+- **The CRM layer on the Landsec calendar**: the dated lines of the Landsec
+  diary (an action due, a viewing follow-up) on their day, in their own
+  colour, with a CRM pill and a card that opens the record. Landsec sees
+  only what it already sees in its diary.
+- **The Landsec version of the CRM page**: Brand Directory, Agents, Diary
+  and Landsec Contacts as pills. Brand Directory is now the same list
+  design as BGP's (cards or table), showing whether a brand is a tenant,
+  where it is being targeted, its next action, its contacts with add and
+  edit, and a Request to BGP button. BGP's owner, last contact and
+  strategies are not shown to a client. BGP staff in the Landsec view get
+  BGP's page without Landlords and Lenders. The three older tab designs
+  are deleted.
+- **The CRM plan card on agent firm and lender pages**, and **Start
+  strategy** on the plan card of every company page.
+
+Still to do: the landlord, agent and lender pages in the brand page's shape
+(step 5: one header with a More menu, a summary card and pills). Those pages
+each have a layout the team already uses, so this waits for Woody to see a
+design first.
 
 ## Built earlier on 15 November 2026
 

@@ -1714,6 +1714,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const isAgentFirm = !isLandlord && (/^agent/i.test(c.company_type || "") || isAgent);
   // Lenders arrive with their lending boards (companies.tsx decides the kind).
   const isLender = !!lenderSlot;
+  // The CRM plan card on landlord, agent and lender pages: BGP staff with a
+  // BGP address (the server refuses the plan to any other staff login).
+  const staffPlan = !isClientViewer && String(currentUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
   // A tenant brand's own page: its Overview holds the take, the CRM plan and
   // Menu highlights (showBrandPlan, above, says who gets the plan card).
   const brandOverview = isBrand && !isLandlord && !isAgentFirm && !isLender;
@@ -2666,7 +2669,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             />
         </div>}
         <BrandCard title="Activity" testId="landlord-activity-feed"><ActivitySummary companyId={companyId} /></BrandCard>
-        {!isClientViewer && String(currentUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
+        {staffPlan && <LandlordEngagementPanel companyId={companyId} companyName={c.name} />}
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
         <AccountDealsBoard companyId={companyId} />
         {!isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
@@ -2711,6 +2714,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         {profileTopRow}
         {refreshStatus}
         {lenderSlot}
+        {/* The CRM plan: a lender can hold a strategy, events and actions (15 November 2026). */}
+        {staffPlan && <LandlordEngagementPanel companyId={companyId} companyName={c.name} interviews={false} />}
         <MasonryGrid className={masonryCls}>
           <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
           <div className="flex flex-col gap-3">
@@ -2736,6 +2741,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         {profileTopRow}
         {refreshStatus}
         {!isClientViewer && <AgentRelationshipCard companyId={companyId} />}
+        {/* The CRM plan: an agent firm can hold a strategy, events and actions (15 November 2026). */}
+        {staffPlan && <LandlordEngagementPanel companyId={companyId} companyName={c.name} interviews={false} />}
         {/* No news → one column: two columns left a blank half beside Key
             contacts (CBRE; Woody, 2026-09-28). That column is capped and
             gapped (space-y missed the display:contents cards), and an empty
@@ -3819,7 +3826,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {brandOverview && (
                 <div className="grid grid-cols-1 gap-3 [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4 [&>*:only-child]:col-span-full items-start empty:hidden" data-testid="brand-overview-cards">
                   {showBrandPlan
-                    ? <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
+                    ? <LandlordEngagementPanel companyId={companyId} kind="brand" companyName={c.name} client={isClientViewer} />
                     : <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} hideWhenEmpty />}
                   <MenuIntelCard companyId={companyId} companyName={c.name} industry={c.industry} companyType={c.company_type} intel={c.menu_intel} refreshedAt={c.menu_intel_at} />
                 </div>
@@ -3941,7 +3948,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 "a CRM strategy for each brand similar to the BGP Landlord CRM";
                 Landsec sees it and adds actions). Tenant brands have it on
                 Overview; this mount is what other company kinds had before. */}
-            {!brandOverview && !isLandlord && !isAgentFirm && !isLender && <div className="mt-2 lg:mt-0 order-5 lg:order-none" data-masonry-full=""><LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} /></div>}
+            {!brandOverview && !isLandlord && !isAgentFirm && !isLender && <div className="mt-2 lg:mt-0 order-5 lg:order-none" data-masonry-full=""><LandlordEngagementPanel companyId={companyId} kind="brand" companyName={c.name} client={isClientViewer} /></div>}
             {/* On a brand's page this box is the section's only card, so it
                 takes the full width. A client login can have nothing in it
                 (staff always get the competitor line): then the box is not

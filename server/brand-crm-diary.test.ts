@@ -390,3 +390,62 @@ test("the gateway: a joint agent reaches the Landsec diary and never the staff o
   // Nothing in the diary writes to the database.
   assert.doesNotMatch(source, /\b(INSERT|UPDATE|DELETE)\b/);
 });
+
+// ── The CRM page's diary for every kind of company (Woody, 2026-11-15) ──────
+const EVERY: EngagementData = {
+  actions: [action({ id: "a-ll", title: "Lunch with the fund manager", companyId: "c-ll", companyName: "Grosvenor", dueAt: "2026-11-17T09:00:00.000Z" }),
+    action({ id: "a-agent", title: "Ask who else they act for", companyId: "c-ag", companyName: "Savills" })],
+  events: [
+    { id: "e-1", title: "Leisure lunch", kind: null, startsAt: "2026-12-03T13:00:00.000Z", endsAt: null, location: "The Ivy", description: null, ownerId: "u-bgp", ownerName: "Charlotte Roberts",
+      status: "planned", sourceUrl: null, dateConfirmed: true, outcome: null, updatedAt: "x", strategyIds: [], guests: [],
+      companies: [{ companyId: "c-ll", companyName: "Grosvenor", reason: "" }, { companyId: "b-jm", companyName: "Jersey Mike's", reason: "" }] },
+    { id: "e-past", title: "Last month's drinks", kind: null, startsAt: "2026-10-03T18:00:00.000Z", endsAt: null, location: null, description: null, ownerId: null, ownerName: null,
+      status: "planned", sourceUrl: null, dateConfirmed: true, outcome: null, updatedAt: "x", strategyIds: [], guests: [], companies: [] },
+    { id: "e-maybe", title: "Date not agreed", kind: null, startsAt: "2026-12-09T18:00:00.000Z", endsAt: null, location: null, description: null, ownerId: null, ownerName: null,
+      status: "draft", sourceUrl: null, dateConfirmed: false, outcome: null, updatedAt: "x", strategyIds: [], guests: [], companies: [] },
+    { id: "e-off", title: "Cancelled dinner", kind: null, startsAt: "2026-12-10T18:00:00.000Z", endsAt: null, location: null, description: null, ownerId: null, ownerName: null,
+      status: "cancelled", sourceUrl: null, dateConfirmed: true, outcome: null, updatedAt: "x", strategyIds: [], guests: [], companies: [] },
+  ],
+  strategies: [
+    { id: "s-1", name: "Lenders we know", objective: "x", team: null, ownerId: "u-bgp", ownerName: "Charlotte Roberts", status: "active", startsOn: null, endsOn: "2026-11-30", updatedAt: "x",
+      targets: [{ companyId: "c-len", companyName: "Aviva Investors", reason: "", contactIds: [] }] },
+    { id: "s-done", name: "Finished", objective: "x", team: null, ownerId: null, ownerName: null, status: "completed", startsOn: null, endsOn: "2026-11-30", updatedAt: "x", targets: [] },
+    { id: "s-open", name: "No review date", objective: "x", team: null, ownerId: null, ownerName: null, status: "active", startsOn: null, endsOn: null, updatedAt: "x", targets: [] },
+  ],
+};
+const NOUNS = new Map<string, any>([["c-ll", "landlord"], ["c-ag", "agent"], ["c-len", "lender"], ["b-jm", "brand"]]);
+
+test("the diary for every kind: actions on any company, CRM events from today, strategy reviews, each marked with its kind", async () => {
+  const db = fakeDb(BASE);
+  const diary = await api.loadDiary(db, STAFF, SCHEMES, { now: NOW, scope: "all", engagement: async () => EVERY, nouns: async () => NOUNS });
+  assert.deepEqual(byId(diary, "crm_action:a-ll").nouns, ["landlord"]);
+  assert.equal(byId(diary, "crm_action:a-ll").url, "/contacts?tab=overview&company=c-ll&action=a-ll");
+  assert.deepEqual(byId(diary, "crm_action:a-agent").nouns, ["agent"]);
+  const event = byId(diary, "crm_event:e-1");
+  assert.equal(event.date, "2026-12-03");
+  assert.deepEqual(event.brand, { id: "c-ll", name: "Grosvenor and 1 more" });
+  assert.deepEqual(event.nouns, ["landlord", "brand"]);
+  assert.equal(event.url, "/contacts?tab=overview&event=e-1");
+  for (const gone of ["crm_event:e-past", "crm_event:e-maybe", "crm_event:e-off", "strategy_review:s-done", "strategy_review:s-open"]) assert.equal(byId(diary, gone), undefined, gone);
+  const review = byId(diary, "strategy_review:s-1");
+  assert.equal(review.title, "Review: Lenders we know");
+  assert.equal(review.date, "2026-11-30");
+  assert.deepEqual(review.nouns, ["lender"]);
+  // The letting items stay, marked as a brand's.
+  assert.deepEqual(byId(diary, "viewing_booked:v-1").nouns, ["brand"]);
+  assert.deepEqual(byId(diary, "deal_waiting:d-1").nouns, ["brand"]);
+});
+
+test("the diary for every kind is BGP's alone: a client viewer asking for it is given its own brand diary, with no events or reviews", async () => {
+  const db = fakeDb(BASE);
+  const diary = await api.loadDiary(db, LANDSEC_FULL, SCHEMES, { now: NOW, scope: "all", engagement: async () => ({ ...EVERY, actions: ACTIONS }), nouns: async () => NOUNS,
+    brandSliceSql: SLICE, companyIdForClientTeam: teamCompany });
+  assert.equal(diary.items.some(i => i.kind === "crm_event" || i.kind === "strategy_review"), false);
+  assert.equal(diary.items.some(i => "nouns" in i && i.nouns !== undefined), false);
+  assert.equal(db.tags().includes("nouns"), false);
+});
+
+test("the brand diary is unchanged by the new scope: no events, no reviews, no kind marks", async () => {
+  const { diary } = await load(STAFF);
+  assert.equal(diary.items.some(i => i.kind === "crm_event" || i.kind === "strategy_review" || i.nouns !== undefined), false);
+});

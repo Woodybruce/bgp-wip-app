@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, Ban, Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, ExternalLink, Mail, MapPin, Phone, Users, UserX } from "lucide-react";
+import { AlertCircle, Ban, Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, ExternalLink, Mail, MapPin, Phone, Target, Users, UserX } from "lucide-react";
 import { calendarDateValue } from "@shared/calendar-date";
 import { viewingMissingDetails, viewingNeedsOutcome as needsOutcome, type ViewingOptions, type ViewingRecord, type ViewingStatus } from "@shared/viewing-workflow";
 
@@ -8,9 +8,13 @@ import { viewingMissingDetails, viewingNeedsOutcome as needsOutcome, type Viewin
 // "joined with" the team calendar's meetings where Landsec is invited). It
 // rides in the viewings list as a record carrying `meeting`, and is drawn as a
 // meeting: its own colour, its own length, no details or outcome marks.
-export type CalendarMeeting = { id: string; title: string; date: string; time: string | null; endTime: string | null; location: string | null; propertyId: string | null; propertyName: string | null; attendees: string[] };
+// `crm` marks an entry from the CRM diary (an action due, a viewing follow-up):
+// drawn on its day in its own colour, and it opens its record.
+export type CalendarCrm = { label: string; url: string | null; owner: string | null; companyId: string | null; company: string | null; place: string | null; detail: string | null };
+export type CalendarMeeting = { id: string; title: string; date: string; time: string | null; endTime: string | null; location: string | null; propertyId: string | null; propertyName: string | null; attendees: string[]; crm?: CalendarCrm };
 export type MeetingRow = ViewingRecord & { meeting: CalendarMeeting };
 export const isMeetingRow = (v: ViewingRecord): v is MeetingRow => !!(v as MeetingRow).meeting;
+export const isCrmRow = (v: ViewingRecord): v is MeetingRow => isMeetingRow(v) && !!v.meeting.crm;
 const viewingNeedsOutcome = (v: ViewingRecord, today: string) => !isMeetingRow(v) && needsOutcome(v, today);
 import { apiRequest } from "@/lib/queryClient";
 import { localBrandLogoUrl } from "@/lib/company-logos";
@@ -95,8 +99,8 @@ const sortViewings = (a: ViewingRecord, b: ViewingRecord) => a.viewingDate.local
 const firstName = (name: string | null | undefined) => (name || "").trim().split(/\s+/)[0] || "";
 const initialsOf = (name: string | null | undefined) => { const parts = (name || "").trim().split(/\s+/).filter(Boolean); return ((parts[0]?.[0] || "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase(); };
 const brandText = (v: ViewingRecord) => isMeetingRow(v) ? v.meeting.title || "Meeting" : v.companyName || "Brand to confirm";
-const placeText = (v: ViewingRecord) => isMeetingRow(v) ? [v.meeting.propertyName, v.meeting.location].filter(Boolean).join(" · ") || "Meeting" : [v.unitName, v.propertyName].filter(Boolean).join(" · ") || v.sourceDetails?.subject || "Unit to confirm";
-const invitedText = (m: CalendarMeeting) => m.attendees.length ? `${m.attendees.length} invited` : "";
+const placeText = (v: ViewingRecord) => isCrmRow(v) ? [v.meeting.crm!.company, v.meeting.crm!.place].filter(Boolean).join(" · ") || v.meeting.crm!.label : isMeetingRow(v) ? [v.meeting.propertyName, v.meeting.location].filter(Boolean).join(" · ") || "Meeting" : [v.unitName, v.propertyName].filter(Boolean).join(" · ") || v.sourceDetails?.subject || "Unit to confirm";
+const invitedText = (m: CalendarMeeting) => m.crm ? m.crm.owner || "" : m.attendees.length ? `${m.attendees.length} invited` : "";
 const peopleShort = (v: ViewingRecord) => isMeetingRow(v) ? invitedText(v.meeting) : [v.contactName ? firstName(v.contactName) : null, v.agentContactName ? `${firstName(v.agentContactName)} (agent)` : null, v.ownerName ? initialsOf(v.ownerName) : null].filter(Boolean).join(" · ");
 // The viewing's agent is BGP's unless the calendar has marked them as a joint agent with their firm.
 const peopleLong = (v: ViewingRecord) => isMeetingRow(v) ? invitedText(v.meeting) : [v.contactName, v.agentContactName ? `${v.agentContactName} (agent)` : null, v.ownerName ? `${v.ownerName} (${v.ownerFirm || "BGP"})` : null].filter(Boolean).join(" · ");
@@ -110,13 +114,17 @@ const statusText: Record<ViewingStatus, string> = { scheduled: "text-foreground"
 // A meeting: the secondary tokens, so it never reads as a viewing.
 const MEETING_BAR = "border-l-secondary-foreground";
 const MEETING_TINT = "bg-secondary";
-const barOf = (v: ViewingRecord) => isMeetingRow(v) ? MEETING_BAR : statusBar[v.status];
-const tintOf = (v: ViewingRecord) => isMeetingRow(v) ? MEETING_TINT : statusTint[v.status];
+// A CRM entry: a muted bar on the card colour, so it reads as neither.
+const CRM_BAR = "border-l-muted-foreground";
+const CRM_TINT = "bg-muted/60";
+const barOf = (v: ViewingRecord) => isCrmRow(v) ? CRM_BAR : isMeetingRow(v) ? MEETING_BAR : statusBar[v.status];
+const tintOf = (v: ViewingRecord) => isCrmRow(v) ? CRM_TINT : isMeetingRow(v) ? MEETING_TINT : statusTint[v.status];
 const textOf = (v: ViewingRecord) => isMeetingRow(v) ? "text-foreground" : statusText[v.status];
 
 // The status icon repeats what the block's colour says; where space is short
 // (month chips) only the two "needs attention" marks are drawn.
 function StatusMarks({ v, today, attentionOnly = false }: { v: ViewingRecord; today: string; attentionOnly?: boolean }) {
+  if (isCrmRow(v)) return <span className="ml-auto flex shrink-0 items-center"><Target className="h-3 w-3 text-muted-foreground" aria-label="CRM" /></span>;
   if (isMeetingRow(v)) return <span className="ml-auto flex shrink-0 items-center"><Users className="h-3 w-3 text-muted-foreground" aria-label="Meeting" /></span>;
   return <span className="ml-auto flex shrink-0 items-center gap-0.5">
     {!attentionOnly && v.status === "completed" && <Check className="h-3 w-3" aria-label="Attended" />}
@@ -127,7 +135,7 @@ function StatusMarks({ v, today, attentionOnly = false }: { v: ViewingRecord; to
   </span>;
 }
 
-const blockTitle = (v: ViewingRecord, today: string) => [timeText(v) || "No time set", brandText(v), placeText(v), peopleLong(v), isMeetingRow(v) ? "Meeting" : statusLabels[v.status], viewingNeedsDetails(v) ? "Details missing" : null, viewingNeedsOutcome(v, today) ? "Outcome due" : null].filter(Boolean).join(" · ");
+const blockTitle = (v: ViewingRecord, today: string) => [timeText(v) || "No time set", brandText(v), placeText(v), peopleLong(v), isCrmRow(v) ? v.meeting.crm!.label : isMeetingRow(v) ? "Meeting" : statusLabels[v.status], viewingNeedsDetails(v) ? "Details missing" : null, viewingNeedsOutcome(v, today) ? "Outcome due" : null].filter(Boolean).join(" · ");
 
 interface PlacedViewing { viewing: ViewingRecord; startMin: number; endMin: number; col: number; totalCols: number }
 
@@ -245,9 +253,10 @@ function countWords(viewings: ViewingRecord[], anchor: string, view: CalendarVie
   if (list) return <><span className="font-mono tabular-nums">{list.count}</span> {list.count === 1 ? "viewing" : "viewings"}</>;
   const days = new Set(viewDates(anchor, view));
   const inRange = viewings.filter(v => days.has(v.viewingDate));
-  const meetings = inRange.filter(isMeetingRow).length;
-  const viewingCount = inRange.length - meetings;
-  return <><span className="font-mono tabular-nums">{viewingCount}</span> {viewingCount === 1 ? "viewing" : "viewings"}{meetings > 0 && <> · <span className="font-mono tabular-nums">{meetings}</span> {meetings === 1 ? "meeting" : "meetings"}</>}</>;
+  const crm = inRange.filter(isCrmRow).length;
+  const meetings = inRange.filter(isMeetingRow).length - crm;
+  const viewingCount = inRange.length - meetings - crm;
+  return <><span className="font-mono tabular-nums">{viewingCount}</span> {viewingCount === 1 ? "viewing" : "viewings"}{meetings > 0 && <> · <span className="font-mono tabular-nums">{meetings}</span> {meetings === 1 ? "meeting" : "meetings"}</>}{crm > 0 && <> · <span className="font-mono tabular-nums">{crm}</span> CRM</>}</>;
 }
 
 export function ViewingsToolbar({ anchor, view, today, viewings, list, compact, onAnchor, onView, children }: {
@@ -450,11 +459,12 @@ export function ViewingsComingUp({ viewings, today, selectedId, onSelect }: { vi
   </div>;
 }
 
-export function ViewingsLegend({ meetings = false }: { meetings?: boolean } = {}) {
+export function ViewingsLegend({ meetings = false, crm = false }: { meetings?: boolean; crm?: boolean } = {}) {
   const swatch = (status: ViewingStatus) => <span className={cn("relative inline-block h-3 w-4 overflow-hidden rounded-[3px] border-l-[3px] bg-card align-middle", statusBar[status])}><span className={cn("absolute inset-0", statusTint[status])} /></span>;
   return <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground" data-testid="viewings-legend">
     {(["scheduled", "completed", "no_show", "cancelled", "not_leasing"] as const).map(status => <span key={status} className="inline-flex items-center gap-1.5">{swatch(status)}<span className={status === "cancelled" ? "line-through" : undefined}>{statusLabels[status]}</span></span>)}
     {meetings && <span className="inline-flex items-center gap-1.5"><span className={cn("relative inline-block h-3 w-4 overflow-hidden rounded-[3px] border-l-[3px] bg-card align-middle", MEETING_BAR)}><span className={cn("absolute inset-0", MEETING_TINT)} /></span>Meeting</span>}
+    {crm && <span className="inline-flex items-center gap-1.5"><span className={cn("relative inline-block h-3 w-4 overflow-hidden rounded-[3px] border-l-[3px] bg-card align-middle", CRM_BAR)}><span className={cn("absolute inset-0", CRM_TINT)} /></span>CRM</span>}
     <span className="inline-flex items-center gap-1"><AlertCircle className="h-3 w-3 text-primary" />Details missing</span>
     <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3 text-primary" />Outcome due</span>
   </div>;

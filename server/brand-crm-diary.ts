@@ -23,19 +23,25 @@ import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { clientBrandSliceSql, getCompanyIdForClientTeam } from "./company-scope";
 import { resolveLandsecPortfolio, landsecCompanyId } from "./landsec-schemes";
-import { clientPlanView, getCrmEngagementData, type ClientShare } from "./crm-engagement";
+import { clientPlanView, companyNounSql, getCrmEngagementData, type ClientShare } from "./crm-engagement";
 import { landsecPlanViewer, planSchemes, staffDoor, type PlanScheme, type PlanViewer, type Queryable } from "./brand-scheme-plan";
 import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
 import { briefStatus } from "@shared/landsec";
 import { daysSince } from "@shared/brand-stage";
 import { crmEngagementLink } from "@shared/landlord-engagement-view";
 import type { EngagementAction, EngagementData } from "@shared/crm-engagement";
-import { addDiaryDays, diaryCounts, diaryDay, londonDayOf, type DiaryData, type DiaryItem, type DiarySide } from "@shared/brand-diary";
+import { addDiaryDays, diaryCounts, diaryDay, londonDayOf, type DiaryData, type DiaryItem, type DiaryNoun, type DiaryScope, type DiarySide } from "@shared/brand-diary";
 import { waitingClockFor, waitingNamed, type WaitingChecklist } from "@shared/deal-waiting";
 
 export interface DiaryViewer extends PlanViewer { userId: string | null }
 export interface DiaryOptions {
   now?: Date;
+  // "all" is the CRM page's diary for every kind of company (Woody,
+  // 2026-11-15): actions on landlords, agents and lenders as well as brands,
+  // CRM events and strategy reviews. BGP staff only; any other viewer is
+  // given the brand diary whatever is asked for.
+  scope?: DiaryScope;
+  nouns?: (companyIds: string[]) => Promise<Map<string, DiaryNoun>>;    // what kind of company each id is
   brandSliceSql?: string | null;                                        // a client viewer's brand list, written against crm_companies
   companyIdForClientTeam?: (team: string) => Promise<string | null>;    // whose client company a login's team is
   engagement?: (viewerId: string | null) => Promise<EngagementData>;    // every brand action, as BGP staff see them
@@ -55,6 +61,7 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
   const now = options.now || new Date();
   const today = londonDayOf(now)!;
   const staff = viewer.kind === "staff";
+  const everyKind = staff && options.scope === "all";
   const jointAgent = viewer.kind === "joint_agent";
   const restricted = jointAgent;
   const warnings: string[] = [];
@@ -88,7 +95,7 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
   const trackerUrl = (propertyId: string, trackerId: string) => `/available?propertyId=${encodeURIComponent(propertyId)}&unitId=${encodeURIComponent(trackerId)}`;
 
   const followUpFrom = addDiaryDays(today, -FOLLOW_UP_LOOK_BACK_DAYS);
-  const loadEngagement = options.engagement || ((viewerId: string | null) => getCrmEngagementData(undefined, { pool: q, viewerId: viewerId || undefined }, "brand"));
+  const loadEngagement = options.engagement || ((viewerId: string | null) => getCrmEngagementData(undefined, { pool: q, viewerId: viewerId || undefined }, everyKind ? "all" : "brand"));
   const [engagement, viewingRows, clockRows, agreedBriefRows, targetingBriefRows, caseRows] = await Promise.all([
     guarded<EngagementData | null>("CRM actions", () => loadEngagement(viewer.userId), null),
     // Both date columns are free text: only rows that start with a date are read, and each is checked again below.
@@ -217,6 +224,22 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
     });
   };
 
+  // The diary for every kind says what each company is, so the screen can
+  // filter Landlords, Brands, Agents and Lenders. Unread, nothing is marked.
+  const liveEvents = everyKind ? (engagement?.events || []).filter(e => e.status !== "cancelled" && e.status !== "completed" && e.dateConfirmed && (londonDayOf(e.startsAt) || "") >= today) : [];
+  const liveStrategies = everyKind ? (engagement?.strategies || []).filter(s => s.status === "active" && diaryDay(s.endsOn)) : [];
+  let nounOf = new Map<string, DiaryNoun>();
+  if (everyKind) {
+    const ids = uniq([...actions.map(a => a.companyId), ...liveEvents.flatMap(e => e.companies.map(c => c.companyId)), ...liveStrategies.flatMap(s => s.targets.map(t => t.companyId))].filter(Boolean));
+    const read = options.nouns || (async (list: string[]) => new Map<string, DiaryNoun>((await q.query(
+      `/* brand-diary:nouns */ SELECT c.id, ${companyNounSql("c")} AS noun FROM crm_companies c WHERE c.id = ANY($1)`, [list])).rows.map((r: any) => [String(r.id), r.noun as DiaryNoun])));
+    if (ids.length) nounOf = await guarded("What kind of company each one is", () => read(ids), nounOf);
+  }
+  const nounsOf = (companyIds: Array<string | null | undefined>): DiaryNoun[] | undefined =>
+    everyKind ? uniq(companyIds.map(id => (id ? nounOf.get(id) : undefined)).filter((n): n is DiaryNoun => !!n)) : undefined;
+  const several = (links: Array<{ companyId: string; companyName: string }>): DiaryItem["brand"] =>
+    links.length ? { id: links[0].companyId, name: links.length > 1 ? `${links[0].companyName} and ${links.length - 1} more` : links[0].companyName } : null;
+
   for (const a of actions) {
     if (!brandSeen(a.companyId)) continue;
     const own = ownIds.has(a.id);
@@ -235,7 +258,22 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
       daysWaiting: staff && a.waitingOnParty ? daysSince(a.waitingSince, now) : null,
       raisedBy, status: a.status === "in_progress" ? "in_progress" : "todo",
       canComplete, actionId: canComplete ? a.id : null,
-      url: staff ? crmEngagementLink(a.companyId, { action: a.id }, "brand") : brandPage(a.companyId) || clientPlaceUrl(propertyId, null),
+      url: staff ? crmEngagementLink(a.companyId, { action: a.id }, everyKind ? "landlord" : "brand") : brandPage(a.companyId) || clientPlaceUrl(propertyId, null),
+      nouns: nounsOf([a.companyId]),
+    });
+  }
+
+  // ── CRM events and strategy reviews (the diary for every kind) ─────────
+  for (const e of liveEvents) {
+    item({
+      id: `crm_event:${e.id}`, kind: "crm_event", title: e.title, date: londonDayOf(e.startsAt), brand: several(e.companies), owner: e.ownerName || null,
+      url: `/contacts?${new URLSearchParams({ tab: "overview", event: e.id }).toString()}`, nouns: nounsOf(e.companies.map(c => c.companyId)),
+    });
+  }
+  for (const s of liveStrategies) {
+    item({
+      id: `strategy_review:${s.id}`, kind: "strategy_review", title: `Review: ${s.name}`, date: diaryDay(s.endsOn), brand: several(s.targets), owner: s.ownerName || null,
+      url: `/contacts?${new URLSearchParams({ tab: "overview", strategy: s.id }).toString()}`, nouns: nounsOf(s.targets.map(t => t.companyId)),
     });
   }
 
@@ -245,6 +283,7 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
     // A client login is shown a viewing only for a brand on its list; one with no linked brand cannot be checked.
     if (!staff && !brandSeen(v.company_id)) continue;
     const common = {
+      nouns: everyKind ? ["brand" as DiaryNoun] : undefined,
       brand: brandOf(v.company_id, v.brand_name), scheme: schemeFor(v.property_id, v.property_name), unitLabel: v.unit_label || null, owner: v.owner_name || null,
       url: staff ? (v.tracker_id && v.property_id ? trackerUrl(v.property_id, v.tracker_id) : null) : clientPlaceUrl(v.property_id, v.tenancy_unit_id),
     };
@@ -283,6 +322,7 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
       id: `deal_waiting:${k.deal_id}`, kind: "deal_waiting", title: `Deal waiting on ${who}`, daysWaiting: daysSince(clock.waitingSince, now),
       brand: brandOf(k.tenant_id, k.brand_name), scheme: schemeFor(k.property_id, k.property_name), unitLabel: k.unit_label || null, owner: k.owner_name || null,
       waitingOn: { side: party ? sideOf(party) : "other", name: party && person ? `${party} (${person})` : who },
+      nouns: everyKind ? ["brand"] : undefined,
       url: staff ? `/deals/${k.deal_id}` : clientPlaceUrl(k.property_id, k.tenancy_unit_id),
     });
   }
@@ -369,7 +409,8 @@ export function setupBrandCrmDiaryRoutes(app: Express) {
       if (!(await staffDoor(req, res))) return;
       const companyId = await landsecCompanyId();
       const schemes = companyId ? planSchemes(await resolveLandsecPortfolio(companyId)) : [];
-      res.json(await loadDiary(pool, { kind: "staff", clientCompanyId: null, schemes: null, userId: userIdOf(req) }, schemes));
+      // ?scope=all is the CRM page's diary for every kind of company.
+      res.json(await loadDiary(pool, { kind: "staff", clientCompanyId: null, schemes: null, userId: userIdOf(req) }, schemes, { scope: req.query.scope === "all" ? "all" : "brand" }));
     } catch (e: any) { res.status(500).json({ error: e?.message || "Failed to load the diary" }); }
   });
 
