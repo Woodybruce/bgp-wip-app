@@ -1136,6 +1136,9 @@ Company card is gone. The AI activity card says a failed read quietly, never
 in red. An agent firm's page opens to a client login to READ
 (`isClientReadableCompanyPage` in `server/company-scope.ts`: a brand it may
 see, or an agent firm); writes there stay with `isClientVisibleBrand`.
+**A client login never opens another landlord's page** (Woody, 2026-11-15:
+"no landsec should see another landlord page"): a Landsec login is refused
+Hammerson's record and its feeds, as it always was. Do not open it.
 
 ## The activity feed (Woody, 2026-11-15)
 
