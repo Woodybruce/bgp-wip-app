@@ -4283,6 +4283,7 @@ import cadRouter from "./cad";
 import propertyPlansRouter from "./property-plans";
 import propertyUnitsRouter from "./property-units";
 import recordConversationRouter from "./record-conversation";
+import benchmarkCentresRouter from "./benchmark-centres";
 import { propertyPeopleRouter } from "./property-people";
 import propertyPlanMatchRouter from "./property-plan-match";
 import unitInfoSheetRouter from "./unit-info-sheet";
@@ -4845,6 +4846,8 @@ app.use("/api/branding/assets", express.static(
     // BGP staff headshots (the website photos users.profile_pic_url points
     // at): the BGP team in People shows them to every login (2026-11-14).
     "/api/staff-photo/",
+    // A benchmark centre's box: public data only (who trades there, its news).
+    "/api/benchmark-centres/",
     "/api/available-units", "/api/leasing-viewings", "/api/tasks",
     // Unit search for the deal form / Add Unit — scoped to the client's own
     // properties in the handler, like /api/available-units.
@@ -5618,6 +5621,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(propertyPlansRouter);
   app.use(propertyUnitsRouter);
   app.use(recordConversationRouter);
+  app.use(benchmarkCentresRouter);
   app.use(propertyPeopleRouter);
   app.use(propertyPlanMatchRouter);
   app.use(unitInfoSheetRouter);
@@ -6765,6 +6769,12 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             { key: "gap-live-intel", due: dailyAt(5), run: () =>
               import("./property-gap-analysis").then(m => m.runNightlyGapLiveIntelSweep())
                 .then(r => console.log(`[gap-live-intel-cron] swept ${r.swept} propert${r.swept === 1 ? "y" : "ies"}, ${r.errors} error(s)`)) },
+            // Competing-centre research — 05:20, a few centres a night so each
+            // is read about once a week (live Perplexity spend;
+            // CENTRE_RESEARCH_NIGHTLY_CAP, default 6, 0 = off).
+            { key: "centre-research", due: dailyAt(5, 20), run: () =>
+              import("./benchmark-centres").then(m => m.runCentreResearch())
+                .then(r => { if (r.due) console.log(`[centre-research] ${r.due} due: ${r.read} read, ${r.errors} error(s)`); }) },
             // Weekly social scrape — Monday 05:00, Instagram + TikTok followers.
             { key: "social-scrape", due: weeklyAt(1, 5), run: () => runWeeklySocialScrape() },
             // Weekly landlord-website scrape — Sunday 05:00.

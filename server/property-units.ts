@@ -11,7 +11,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
-import { clientBlockedForProperty, isPropertyInScope, resolveCompanyScope } from "./company-scope";
+import { clientBlockedForProperty, isPropertyInScope, resolveCompanyScope, sharedBenchmarkPropertyIds } from "./company-scope";
 import { schemeLimitedPropertyIdsOrNone } from "./landsec-access";
 import { BRAND_KEYS_CTE, brandNameKeySql, normUnitSql } from "./tenant-brand-resolver";
 import { briefStateOf, daysSince, stageSinceFor } from "./landsec-unit";
@@ -38,6 +38,8 @@ export async function propertyReadBlocked(req: Request, propertyId: string): Pro
   const scope = await resolveCompanyScope(req);
   if (!scope) return false;
   if (!(await isPropertyInScope(scope, propertyId))) return true;
+  // A shared benchmark centre is open to every login, held to schemes or not.
+  if ((await sharedBenchmarkPropertyIds()).has(propertyId)) return false;
   // A joint agent reads its own schemes only (a failed read gives none).
   const schemeIds = await schemeLimitedPropertyIdsOrNone(req, "property-units");
   return !!schemeIds && !schemeIds.includes(propertyId);

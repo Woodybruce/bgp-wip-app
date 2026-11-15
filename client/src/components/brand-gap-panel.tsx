@@ -12,11 +12,17 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
-import { getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { CompanyChip } from "@/components/company-chip";
 import { renderAiCommentary } from "@/components/property-asset-brief";
 import {
   MapPin, TrendingUp, AlertCircle, FileText, Sparkles, RefreshCw,
-  Swords, Globe2, Store, ChevronRight, Loader2, Radar, ExternalLink,
+  Swords, Globe2, Store, ChevronRight, Loader2, Radar, ExternalLink, Plus, Search, Target,
 } from "lucide-react";
 
 type LiveIntelBrand = {
@@ -76,68 +82,6 @@ interface BrandGapResult {
   liveIntel?: { byBrand: Record<string, LiveIntelBrand>; generatedAt: string } | null;
 }
 
-// Two-line row: the brand NAME owns the first line (badges after it, name
-// never crushed to "W…"), the scheme evidence sits underneath (Woody,
-// 2026-08-04: "design issues on the brand names").
-function BrandRow({ b, context, intel }: { b: GapBrand; context?: string; intel?: LiveIntelBrand }) {
-  return (
-    <Link
-      href={`/companies/${b.brand_company_id}`}
-      className="block text-xs hover:bg-muted/50 rounded px-1 py-1 min-w-0"
-    >
-      <span className="flex items-center gap-1.5 min-w-0">
-        <span className="font-medium truncate min-w-0" title={b.brand_name}>{b.brand_name}</span>
-        {b.has_live_requirement ? (
-          <Badge className="text-[11px] bg-muted text-foreground border-border shrink-0" title={b.requirement_note ? `${b.requirement_note} · use matches an available unit` : undefined} data-testid={`badge-live-req-${b.brand_company_id}`}>live req</Badge>
-        ) : b.requirement_note ? (
-          <Badge variant="outline" className="text-[11px] text-muted-foreground shrink-0" title={`${b.requirement_note} · use matches an available unit`} data-testid={`badge-req-note-${b.brand_company_id}`}>{/listing/i.test(b.requirement_note) ? "listing" : "req to confirm"}</Badge>
-        ) : null}
-        {intel?.expanding && (
-          <Badge className="text-[11px] bg-muted text-foreground border-border shrink-0" title={intel.note}>
-            <Radar className="w-2 h-2 mr-0.5" />expanding
-          </Badge>
-        )}
-        {(b.rollout_status === "scaling" || b.rollout_status === "entering_uk") && (
-          <Badge className="text-[11px] bg-muted text-foreground border-border shrink-0">
-            <TrendingUp className="w-2 h-2 mr-0.5" />{b.rollout_status === "scaling" ? "scaling" : "entering UK"}
-          </Badge>
-        )}
-      </span>
-      {context && (
-        <span className="block text-[11px] text-muted-foreground truncate mt-0.5" title={context}>
-          {context}
-        </span>
-      )}
-    </Link>
-  );
-}
-
-function GapColumn({ icon: Icon, tint, title, sub, brands, contextFor, emptyText, intelByBrand }: {
-  icon: any; tint: string; title: string; sub?: string;
-  brands: GapBrand[]; contextFor: (b: GapBrand) => string; emptyText: string;
-  intelByBrand?: Record<string, LiveIntelBrand>;
-}) {
-  return (
-    <div className="rounded-lg border p-2.5 min-w-0">
-      <div className={`${SUB_LABEL} mb-0.5 flex items-center gap-1.5`}>
-        <Icon className={`w-3.5 h-3.5 ${tint}`} />
-        {title}
-        <span className="font-mono tabular-nums">{brands.length}</span>
-      </div>
-      {sub && <div className="text-[11px] text-muted-foreground mb-1.5">{sub}</div>}
-      {brands.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground italic py-2">{emptyText}</p>
-      ) : (
-        <div className="space-y-0.5 max-h-[300px] overflow-y-auto pr-1">
-          {brands.slice(0, 20).map(b => (
-            <BrandRow key={b.brand_company_id} b={b} context={contextFor(b)} intel={intelByBrand?.[b.brand_name.toLowerCase()]} />
-          ))}
-          {brands.length > 20 && <p className="text-[11px] text-muted-foreground pl-1">+{brands.length - 20} more</p>}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function GapCommentary({ propertyId }: { propertyId: string }) {
   const qc = useQueryClient();
@@ -376,20 +320,220 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
   );
 }
 
+type GapTarget = {
+  brand_company_id: string; brand_name: string; domain: string | null;
+  sector: string | null; sector_label: string | null; sector_missing: boolean;
+  competing_at: string[]; top_count: number; top_centres: string[]; local_km: number | null;
+  rollout_status: string | null; expanding: boolean; expanding_note: string | null; score: number | null;
+  has_live_requirement?: boolean; requirement_note?: string | null;
+  units: Array<{ id: string; name: string; sqft: number | null }>;
+  stage: string | null; stage_label: string | null; stage_unit: string | null; ruled_out: boolean;
+};
+type CompetingCard = {
+  name: string; distance_km: number; brands: number; shared: number; not_here: number;
+  not_here_top: Array<{ id: string; name: string }>; property_id: string | null; owner: string | null; from_schedule: boolean;
+};
+type GapExtras = {
+  targets?: GapTarget[]; competingCards?: CompetingCard[];
+  sisterSchemes?: Array<{ name: string; distance_km: number; property_id: string | null }>;
+  marketingUnits?: Array<{ id: string; name: string; sqft: number | null }>; canWant?: boolean;
+};
+
+// Why a brand is on the list, in one line.
+function targetWhy(t: GapTarget): string {
+  const parts: string[] = [];
+  if (t.competing_at.length) parts.push(`At ${t.competing_at.join(", ")}`);
+  if (t.top_count) parts.push(`${t.top_count} top centre${t.top_count === 1 ? "" : "s"}`);
+  if (t.local_km !== null) parts.push(`${t.local_km}km away`);
+  return parts.join(" · ") || "Trading elsewhere";
+}
+const stagePill = "inline-flex items-center rounded-full border border-border px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap";
+
+// One brand's details and the things to do with it (Woody, 2026-11-15: link
+// the gap to requirements, the Letting Tracker, the Brand CRM and brands).
+function TargetDetail({ target, onClose, propertyId, propertyName, units, canWant, noBrandPages }: {
+  target: GapTarget | null; onClose: () => void; propertyId: string; propertyName: string;
+  units: NonNullable<GapExtras["marketingUnits"]>; canWant: boolean; noBrandPages: boolean;
+}) {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [unitId, setUnitId] = useState("");
+  const refresh = () => qc.invalidateQueries({ queryKey: ["/api/property", propertyId, "brand-gaps"] });
+  const want = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/brand-crm/targets", { companyId: target!.brand_company_id, propertyId })).json(),
+    onSuccess: () => { toast({ title: "Wanted here", description: `${target!.brand_name} is on the Brand CRM for ${propertyName}.` }); refresh(); onClose(); },
+    onError: (e: any) => toast({ title: "Couldn't add it", description: e?.message, variant: "destructive" }),
+  });
+  const addTarget = useMutation({
+    mutationFn: async () => {
+      const brief = await (await apiRequest("POST", "/api/unit-briefs", { unitId })).json();
+      await apiRequest("POST", `/api/unit-briefs/${brief.id}/targets`, { operatorName: target!.brand_name, companyId: target!.brand_company_id, priority: "B" });
+    },
+    onSuccess: () => {
+      toast({ title: "Target added", description: `${target!.brand_name} is a target on ${units.find(u => u.id === unitId)?.name || "the unit"}.` });
+      qc.invalidateQueries({ queryKey: ["/api/unit-briefs"] }); refresh(); onClose();
+    },
+    onError: (e: any) => toast({ title: "Couldn't add the target", description: e?.message, variant: "destructive" }),
+  });
+  const t = target;
+  const offered = t ? [...t.units, ...units.filter(u => !t.units.some(f => f.id === u.id))] : [];
+  return (
+    <Dialog open={!!t} onOpenChange={open => { if (!open) { setUnitId(""); onClose(); } }}>
+      <DialogContent className="max-w-lg" data-testid="gap-target-detail">
+        {t && (<>
+          <DialogHeader>
+            <DialogDescription className="text-xs uppercase tracking-wider font-semibold">{t.sector_label || "Brand"}{t.sector_missing ? " · missing sector here" : ""}</DialogDescription>
+            <DialogTitle className="text-base leading-snug"><CompanyChip id={noBrandPages ? null : t.brand_company_id} name={t.brand_name} domain={t.domain} size={22} /></DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            {t.competing_at.length > 0 && <GapLine label="Competitors">Trading at {t.competing_at.join(", ")}, not here</GapLine>}
+            {t.top_count > 0 && <GapLine label="Top centres">At {t.top_count} of the top centres{t.top_centres.length ? ` (${t.top_centres.join(", ")}${t.top_count > t.competing_at.length + t.top_centres.length ? " and more" : ""})` : ""}</GapLine>}
+            {t.local_km !== null && <GapLine label="Nearest">{t.local_km}km from {propertyName}</GapLine>}
+            <GapLine label="Expansion">
+              {[t.score ? `Score ${t.score}` : null, t.rollout_status === "scaling" ? "Scaling" : t.rollout_status === "entering_uk" ? "Entering the UK" : null, t.expanding ? "Expanding (web research)" : null].filter(Boolean).join(" · ") || "No signal held"}
+              {t.expanding_note && <span className="block text-xs text-muted-foreground mt-0.5">{t.expanding_note}</span>}
+            </GapLine>
+            <GapLine label="Requirement">{t.requirement_note || "None held"}</GapLine>
+            <GapLine label="Fits here">{t.units.length ? t.units.map(u => `${u.name}${u.sqft ? ` (${u.sqft.toLocaleString()} sq ft)` : ""}`).join(", ") : t.requirement_note ? "No marketing unit in its size range" : "No size to compare"}</GapLine>
+            <GapLine label="At this scheme">{t.stage_label ? `${t.stage_label}${t.stage_unit ? ` · ${t.stage_unit}` : ""}` : t.ruled_out ? "Not proceeding" : "Not in play yet"}</GapLine>
+          </div>
+          {units.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap rounded-md border border-border bg-muted/40 px-3 py-2">
+              <select value={unitId} onChange={e => setUnitId(e.target.value)} className="h-8 flex-1 min-w-[160px] rounded-md border border-border bg-background px-2 text-sm" aria-label="Unit" data-testid="gap-target-unit">
+                <option value="">Choose a unit being marketed…</option>
+                {offered.map(u => <option key={u.id} value={u.id}>{u.name}{u.sqft ? ` · ${u.sqft.toLocaleString()} sq ft` : ""}{t.units.some(f => f.id === u.id) ? " · fits" : ""}</option>)}
+              </select>
+              <Button size="sm" onClick={() => addTarget.mutate()} disabled={!unitId || addTarget.isPending} data-testid="gap-target-add">
+                {addTarget.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1" />}Add as target
+              </Button>
+            </div>
+          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {canWant && !t.stage && (
+              <Button size="sm" variant="outline" onClick={() => want.mutate()} disabled={want.isPending} data-testid="gap-target-want">
+                {want.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Target className="w-3.5 h-3.5 mr-1" />}Want at this scheme
+              </Button>
+            )}
+            {!noBrandPages && <Button size="sm" variant="outline" asChild><Link href={`/requirements?type=leasing&companyId=${t.brand_company_id}${t.requirement_note ? "" : "&new=1"}`} onClick={onClose}><FileText className="w-3.5 h-3.5 mr-1" />{t.requirement_note ? "Its requirements" : "Add requirement"}</Link></Button>}
+            {!noBrandPages && <Button size="sm" variant="ghost" asChild><Link href={`/companies/${t.brand_company_id}`} onClick={onClose}><Store className="w-3.5 h-3.5 mr-1" />Brand page</Link></Button>}
+          </div>
+        </>)}
+      </DialogContent>
+    </Dialog>
+  );
+}
+function GapLine({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[96px_1fr] gap-2 min-w-0">
+      <span className="text-xs text-muted-foreground pt-0.5">{label}</span>
+      <span className="min-w-0 break-words">{children}</span>
+    </div>
+  );
+}
+
+type TargetFilter = "all" | "competitors" | "missing" | "requirement" | "fits" | "inplay";
+
+function TargetsTable({ targets, onOpen }: { targets: GapTarget[]; onOpen: (t: GapTarget) => void }) {
+  const [filter, setFilter] = useState<TargetFilter>("all");
+  const [q, setQ] = useState("");
+  const [all, setAll] = useState(false);
+  const tests: Record<TargetFilter, (t: GapTarget) => boolean> = {
+    all: () => true,
+    competitors: t => t.competing_at.length > 0,
+    missing: t => t.sector_missing,
+    requirement: t => !!t.requirement_note,
+    fits: t => t.units.length > 0,
+    inplay: t => !!t.stage,
+  };
+  const labels: Array<[TargetFilter, string]> = [["all", "All"], ["competitors", "At competitors"], ["missing", "Missing sectors"], ["requirement", "With a requirement"], ["fits", "Fits a unit"], ["inplay", "In play"]];
+  const needle = q.trim().toLowerCase();
+  const rows = targets.filter(tests[filter]).filter(t => !needle || `${t.brand_name} ${t.sector_label || ""} ${t.competing_at.join(" ")}`.toLowerCase().includes(needle));
+  const shown = all || needle ? rows : rows.slice(0, 15);
+  return (
+    <div className="space-y-2" data-testid="gap-targets">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {labels.map(([key, label]) => {
+          const n = targets.filter(tests[key]).length;
+          if (key !== "all" && !n) return null;
+          return <Pill key={key} active={filter === key} onClick={() => { setFilter(key); setAll(false); }} data-testid={`gap-filter-${key}`}>{label} <span className="font-mono tabular-nums">{n}</span></Pill>;
+        })}
+        <div className="relative ml-auto w-full sm:w-52">
+          <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Search brands" className="h-8 pl-7 text-sm" data-testid="gap-target-search" />
+        </div>
+      </div>
+      {rows.length === 0 && <p className="text-sm text-muted-foreground py-4 text-center">No brands on this list.</p>}
+      {rows.length > 0 && (
+        <div className="rounded-lg border divide-y">
+          <div className="hidden md:grid grid-cols-[minmax(160px,1.3fr)_minmax(180px,2fr)_minmax(110px,0.9fr)_minmax(130px,1.2fr)_minmax(110px,0.9fr)_20px] gap-3 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span>Brand</span><span>Why</span><span>Expansion</span><span>Requirement and fit</span><span>At this scheme</span><span />
+          </div>
+          {shown.map(t => (
+            <button key={t.brand_company_id} type="button" data-no-min-touch onClick={() => onOpen(t)}
+              className="w-full text-left grid grid-cols-1 md:grid-cols-[minmax(160px,1.3fr)_minmax(180px,2fr)_minmax(110px,0.9fr)_minmax(130px,1.2fr)_minmax(110px,0.9fr)_20px] gap-x-3 gap-y-0.5 px-3 py-2 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring items-center min-w-0"
+              data-testid={`gap-target-${t.brand_company_id}`}>
+              <span className="min-w-0">
+                <span className="flex items-center gap-1.5 min-w-0 text-sm font-medium"><CompanyChip name={t.brand_name} domain={t.domain} size={18} /></span>
+                <span className="block text-[11px] text-muted-foreground truncate">{t.sector_label || "Unsorted"}{t.sector_missing ? " · missing here" : ""}</span>
+              </span>
+              <span className="text-xs text-muted-foreground min-w-0 md:truncate" title={targetWhy(t)}>{targetWhy(t)}</span>
+              <span className="text-xs min-w-0 truncate">
+                {!!t.score && <span className="font-mono tabular-nums font-semibold">{t.score}</span>}
+                {(t.expanding || t.rollout_status === "scaling" || t.rollout_status === "entering_uk") && <span className="text-muted-foreground">{t.score ? " · " : ""}{t.rollout_status === "entering_uk" ? "entering UK" : t.rollout_status === "scaling" ? "scaling" : "expanding"}</span>}
+                {!t.score && !t.expanding && t.rollout_status !== "scaling" && t.rollout_status !== "entering_uk" && <span className="text-muted-foreground/60">—</span>}
+              </span>
+              <span className="text-xs min-w-0 truncate" title={t.requirement_note || undefined}>
+                {t.units.length > 0 ? <span className="font-medium">Fits {t.units.map(u => u.name).join(", ")}</span>
+                  : t.requirement_note ? <span className="text-muted-foreground">{t.requirement_note}</span>
+                  : <span className="text-muted-foreground/60">—</span>}
+              </span>
+              <span className="min-w-0">{t.stage_label ? <span className={stagePill}>{t.stage_label}</span> : t.ruled_out ? <span className="text-[11px] text-muted-foreground">Not proceeding</span> : <span className="text-xs text-muted-foreground/60">—</span>}</span>
+              <ChevronRight className="hidden md:block w-3.5 h-3.5 text-muted-foreground/50" />
+            </button>
+          ))}
+        </div>
+      )}
+      {!needle && rows.length > 15 && (
+        <button className="text-[11px] text-muted-foreground hover:text-foreground underline" onClick={() => setAll(v => !v)} data-testid="gap-targets-show-all">
+          {all ? "Show fewer" : `Show all ${rows.length}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function BrandGapBody({ data, sectors, missing, present, competing, propertyId }: {
-  data: BrandGapResult;
+  data: BrandGapResult & GapExtras;
   sectors: NonNullable<BrandGapResult["sectors"]>;
   missing: NonNullable<BrandGapResult["sectors"]>;
   present: NonNullable<BrandGapResult["sectors"]>;
   competing: NonNullable<BrandGapResult["competingCentres"]>;
   propertyId: string;
 }) {
-  // Minimise everything below the AI read (Woody, 2026-08-04: "create a
-  // minimise after the commentary so can reduce if need to").
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const centre = data.researchContext?.mode !== "local";
   const positioning = data.positioning;
   const peers = positioning?.peers || "the top UK centres";
+  const noBrandPages = useLandsecRestricted();
+  const targets = data.targets || [];
+  const cards = data.competingCards || [];
+  const [tab, setTab] = useState<"targets" | "sectors" | "centres" | "take" | "more">("targets");
+  const [opened, setOpened] = useState<GapTarget | null>(null);
+  const [centreOpen, setCentreOpen] = useState<string | null>(null);
+  const openById = (id: string) => { const t = targets.find(x => String(x.brand_company_id) === String(id)); if (t) setOpened(t); return !!t; };
+  const rank = data.benchmark ? data.benchmark.centres.filter(c => c.brands > data.benchmark!.here.brands).length + 1 : null;
+  const stats: Array<{ label: string; value: string; sub?: string; go: typeof tab }> = [
+    ...(centre && rank !== null ? [{ label: "Rank against the top centres", value: `${rank} of ${data.benchmark!.centres.length + 1}`, sub: `${data.benchmark!.here.brands} ${positioning?.brandsNoun || "F&B & leisure brands"} here`, go: "centres" as const }] : []),
+    ...(centre ? [{ label: "Missing sectors", value: String(missing.length), sub: missing.slice(0, 3).map(m => m.label).join(", ") || "None", go: "sectors" as const }] : []),
+    { label: "Targets with a requirement", value: String(targets.filter(t => t.requirement_note).length), sub: `${targets.filter(t => t.units.length).length} fit a unit being marketed`, go: "targets" as const },
+    { label: "Already in play here", value: String(targets.filter(t => t.stage).length), sub: `of ${targets.length} brands not on scheme`, go: "targets" as const },
+  ];
+  const brandChip = (b: { id: string; name: string }, title?: string) => {
+    const known = targets.some(x => String(x.brand_company_id) === String(b.id));
+    const cls = "text-[11px] cursor-pointer hover:bg-muted";
+    if (known) return <button key={b.id} type="button" data-no-min-touch onClick={() => openById(b.id)} title={title}><Badge variant="outline" className={cls}>{b.name}</Badge></button>;
+    if (noBrandPages) return <Badge key={b.id} variant="outline" className="text-[11px]" title={title}>{b.name}</Badge>;
+    return <Link key={b.id} href={`/companies/${b.id}`}><Badge variant="outline" className={cls} title={title}>{b.name}</Badge></Link>;
+  };
 
   return (
     <div className="space-y-3" data-testid="brand-gap-panel">
@@ -401,204 +545,331 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
             {" "}· {positioning.label} positioning
           </span>
         )}
-        {competing.length > 0 && <> · vs {competing.map(c => `${c.name} (${c.distance_km}km)`).join(" · ")}</>}
+        {competing.length > 0 && <> · competing with {competing.map(c => `${c.name} (${c.distance_km}km)`).join(" · ")}</>}
       </p>
-        {/* Local mode's reason only repeated the card's own heading. */}
-        {data.researchContext && !centre && data.researchContext.mode !== "local" && <p className="text-sm text-muted-foreground">{data.researchContext.reason}</p>}
-        {/* AI gap read */}
-        <GapCommentary propertyId={propertyId} />
 
-        {/* Live web sweep — who is actively taking sites right now */}
-        <LiveExpansionIntel propertyId={propertyId} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2" data-testid="gap-stats">
+        {stats.map(s => (
+          <button key={s.label} type="button" data-no-min-touch onClick={() => setTab(s.go)} className="rounded-lg border border-border bg-card px-3 py-2 text-left hover:bg-muted/60 min-w-0">
+            <span className={`${SUB_LABEL} block truncate`}>{s.label}</span>
+            <span className="block text-xl font-bold tabular-nums leading-tight">{s.value}</span>
+            {s.sub && <span className="block text-[11px] text-muted-foreground truncate">{s.sub}</span>}
+          </button>
+        ))}
+      </div>
 
-        {centre && data.benchmark && <CentreBenchmark benchmark={data.benchmark} name={data.property.name} peers={peers} brandsNoun={positioning?.brandsNoun || "F&B & leisure brands"} />}
-        {centre && <CentreOpenings propertyId={propertyId} />}
+      <div className="flex items-center gap-1.5 flex-wrap" role="tablist" aria-label="Brand gap views">
+        <Pill active={tab === "targets"} onClick={() => setTab("targets")} data-testid="gap-tab-targets">Targets <span className="font-mono tabular-nums">{targets.length}</span></Pill>
+        {centre && <Pill active={tab === "sectors"} onClick={() => setTab("sectors")} data-testid="gap-tab-sectors">Sectors{missing.length ? <span className="font-mono tabular-nums"> {missing.length} missing</span> : null}</Pill>}
+        {centre && <Pill active={tab === "centres"} onClick={() => setTab("centres")} data-testid="gap-tab-centres">Competing centres</Pill>}
+        <Pill active={tab === "take"} onClick={() => setTab("take")} data-testid="gap-tab-take">BGP take</Pill>
+        <Pill active={tab === "more"} onClick={() => setTab("more")} data-testid="gap-tab-more">More</Pill>
+      </div>
 
-        {/* Minimise everything below the read */}
-        <button
-          onClick={() => setDetailsOpen(o => !o)}
-          className="w-full flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground py-0.5"
-          data-testid="gap-details-toggle"
-        >
-          <ChevronRight className={`w-3 h-3 transition-transform ${detailsOpen ? "rotate-90" : ""}`} />
-          {detailsOpen ? "Minimise detail" : "Show detail — gaps, sectors, watchlist"}
-          <span className="flex-1 border-t border-border/60 ml-1" />
-        </button>
+      {tab === "targets" && (
+        targets.length
+          ? <TargetsTable targets={targets} onOpen={setOpened} />
+          : <p className="text-xs text-muted-foreground italic">No store data nearby yet. Populate stores for brands with "Find stores" on each brand page.</p>
+      )}
 
-        {detailsOpen && (<>
-        {/* Matching brand requirements — active leasing reqs that fit available units */}
-        {data.matchingRequirements && data.matchingRequirements.length > 0 && (
-          <div className="rounded-md border border-border bg-muted/40 p-2">
-            <div className="text-[11px] mb-1 flex items-center gap-1 font-medium">
-              <FileText className="w-3 h-3 text-primary" />
-              Matching brand requirements ({data.matchingRequirements.length}) — use-class fits an available unit
+      {tab === "sectors" && centre && (
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2" data-testid="gap-sectors">
+          {[...missing, ...present].map(s => (
+            <div key={s.key} className={`rounded-lg border p-2 min-w-0 ${s.missing ? "border-border bg-muted/40" : ""}`} data-testid={`sector-${s.key}`}>
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-xs font-semibold truncate">{s.label}</span>
+                {s.missing
+                  ? <Badge className="text-[11px] bg-foreground text-background border-transparent shrink-0">missing</Badge>
+                  : <span className="text-[11px] text-muted-foreground shrink-0">{s.on_scheme} here</span>}
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">
+                {s.missing
+                  ? `${s.at_peers} brand${s.at_peers === 1 ? "" : "s"} at ${peers}${s.at_competing ? ` · ${s.at_competing} at competitors` : ""}`
+                  : s.on_scheme_names.slice(0, 3).join(", ") + (s.on_scheme > 3 ? ` +${s.on_scheme - 3}` : "")}
+              </div>
+              {s.examples.length > 0 && <div className="flex flex-wrap gap-1 mt-1">{s.examples.slice(0, 3).map(e => brandChip(e, `At ${e.peers} of ${peers}${e.req_note ? ` · ${e.req_note}` : ""}`))}</div>}
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-0.5">
-              {data.matchingRequirements.slice(0, 12).map(r => (
-                <Link
-                  key={r.id}
-                  href={r.company_id ? `/companies/${r.company_id}` : `/requirements/${r.id}`}
-                  className="text-xs flex items-center gap-1.5 hover:bg-muted/60 rounded px-1 py-0.5 min-w-0 overflow-hidden"
-                  title={r.reason || undefined}
-                >
-                  <span className="font-medium truncate flex-1 min-w-0">
-                    {r.company_name || r.name || "Unnamed"}
-                    {r.reason && <span className="font-normal text-muted-foreground" data-testid={`text-matching-req-reason-${r.id}`}> · {r.reason}</span>}
-                  </span>
-                  {r.use && r.use.length > 0 && (
-                    <Badge variant="outline" className="text-[11px] shrink-0 bg-background">
-                      {[...new Set(r.use.slice(0, 2).map((u: string) => useClassLabel(u)))].join(", ")}{r.use.length > 2 ? "…" : ""}
-                    </Badge>
-                  )}
-                  {r.size && (
-                    <span className="text-[11px] text-muted-foreground truncate max-w-[150px]" title={r.size}>{formatSizeList(r.size)}</span>
-                  )}
-                </Link>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Three lenses — competing centres, national peers, local market */}
-        <div className={`grid grid-cols-1 ${centre ? "md:grid-cols-3" : ""} gap-3`}>
-          {centre && <><GapColumn
-            icon={Swords}
-            tint="text-muted-foreground"
-            title="At competing centres, not here"
-            sub={competing.length ? `Trading at ${competing.map(c => c.name).join(" / ")}` : undefined}
-            brands={data.competitorGaps || []}
-            contextFor={(b) => (b.competing_at || []).join(", ")}
-            emptyText="No competing-centre gaps found — or no competing centre within range."
-            intelByBrand={data.liveIntel?.byBrand}
-          />
-          <GapColumn
-            icon={AlertCircle}
-            tint="text-muted-foreground"
-            title={`At ${peers}, not here`}
-            sub={data.peerSchemesConsidered ? `Across the ${data.peerSchemesConsidered} benchmark centres` : undefined}
-            brands={data.peerGaps || []}
-            contextFor={(b) => {
-              const ps = b.peer_schemes || [];
-              return ps.slice(0, 2).join(", ") + (ps.length > 2 ? ` +${ps.length - 2}` : "");
-            }}
-            emptyText="No national peer-scheme gaps."
-            intelByBrand={data.liveIntel?.byBrand}
-          /></>}
-          <GapColumn
-            icon={MapPin}
-            tint="text-muted-foreground"
-            title={centre ? "In the local market, not on scheme" : "Nearby occupiers"}
-            sub={centre ? "Trading within 5km — potential operators to investigate" : "Trading within 5km — verify interest and fit for the actual available unit"}
-            brands={data.localMarket || []}
-            contextFor={(b) => `${b.nearest_distance_km.toFixed(1)}km away`}
-            emptyText="Nothing nearby that isn't already on scheme."
-            intelByBrand={data.liveIntel?.byBrand}
-          />
+          ))}
         </div>
+      )}
 
-        {/* Sector coverage — missing sectors first, loud */}
-        {centre && sectors.length > 0 && (
-          <div>
-            <div className={`${SUB_LABEL} mb-1.5 flex items-center gap-1.5`}>
-              <Store className="w-3.5 h-3.5 text-muted-foreground" />
-              Sector coverage
-              {missing.length > 0 && (
-                <Badge className="text-[11px] bg-muted text-foreground border-border">
-                  {missing.length} missing sector{missing.length === 1 ? "" : "s"}
-                </Badge>
-              )}
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2">
-              {[...missing, ...present].map(s => (
-                <div
-                  key={s.key}
-                  className={`rounded-lg border p-2 min-w-0 ${s.missing ? "border-border bg-muted/40" : ""}`}
-                  data-testid={`sector-${s.key}`}
-                >
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="text-[11px] font-semibold truncate">{s.label}</span>
-                    {s.missing
-                      ? <Badge className="text-[11px] bg-muted text-foreground border-border shrink-0">missing</Badge>
-                      : <span className="text-[11px] text-muted-foreground shrink-0">{s.on_scheme} here</span>}
-                  </div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">
-                    {s.missing
-                      ? `0 on scheme · ${s.at_peers} brand${s.at_peers === 1 ? "" : "s"} at ${peers}${s.at_competing ? ` · ${s.at_competing} at competitors` : ""}`
-                      : s.on_scheme_names.slice(0, 3).join(", ") + (s.on_scheme > 3 ? ` +${s.on_scheme - 3}` : "")}
-                  </div>
-                  {s.examples.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {s.examples.slice(0, 3).map(e => (
-                        <Link key={e.id} href={`/companies/${e.id}`}>
-                          <Badge
-                            variant="outline"
-                            className={`text-[11px] cursor-pointer hover:bg-muted ${e.live_req ? "border-border text-foreground" : ""}`}
-                            title={`At ${e.peers} of ${peers}${e.req_note ? ` · ${e.req_note}` : ""}`}
-                          >
-                            {e.name}
-                          </Badge>
-                        </Link>
-                      ))}
-                    </div>
-                  )}
+      {tab === "centres" && centre && (
+        <div className="space-y-3" data-testid="gap-centres">
+          {cards.length === 0 && <p className="text-sm text-muted-foreground">No competing centre within 60km.</p>}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {cards.map(c => (
+              <div key={c.name} className="rounded-lg border p-3 min-w-0 space-y-1.5" data-testid={`gap-centre-${c.name}`}>
+                <div className="flex items-baseline justify-between gap-2 min-w-0">
+                  <button type="button" data-no-min-touch onClick={() => setCentreOpen(c.name)} className="text-sm font-semibold truncate hover:underline text-left" data-testid={`gap-centre-open-${c.name}`}>{c.name}</button>
+                  <span className="text-[11px] text-muted-foreground shrink-0">{c.distance_km}km</span>
                 </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {[c.owner, `${c.brands} brands`, `${c.shared} shared`, `${c.not_here} not here`].filter(Boolean).join(" · ")}
+                  {c.from_schedule ? " · our data" : ""}
+                </p>
+                {c.not_here_top.length > 0 && <div className="flex flex-wrap gap-1">{c.not_here_top.map(b => brandChip(b))}</div>}
+                <CentreNews propertyId={propertyId} centre={c.name} />
+              </div>
+            ))}
+          </div>
+          {(data.sisterSchemes || []).length > 0 && (
+            <p className="text-[11px] text-muted-foreground" data-testid="gap-sisters">
+              Same owner, not counted as competitors:{" "}
+              {data.sisterSchemes!.map((s, i) => (
+                <span key={s.name}>{i > 0 && ", "}{s.property_id ? <Link href={`/properties/${s.property_id}`} className="underline hover:text-foreground">{s.name}</Link> : s.name}</span>
               ))}
+            </p>
+          )}
+          <CentrePagesSetup />
+          {data.benchmark && <CentreBenchmark benchmark={data.benchmark} name={data.property.name} peers={peers} brandsNoun={positioning?.brandsNoun || "F&B & leisure brands"} onCentre={setCentreOpen} noBrandPages={noBrandPages} />}
+          <CentreOpenings propertyId={propertyId} />
+        </div>
+      )}
+
+      {tab === "take" && (
+        <div className="space-y-3">
+          <GapCommentary propertyId={propertyId} />
+          <LiveExpansionIntel propertyId={propertyId} />
+        </div>
+      )}
+
+      {tab === "more" && (
+        <div className="space-y-3">
+          {data.matchingRequirements && data.matchingRequirements.length > 0 && (
+            <div className="rounded-md border border-border bg-muted/40 p-2">
+              <div className="text-[11px] mb-1 flex items-center gap-1 font-medium">
+                <FileText className="w-3 h-3 text-primary" />
+                Requirements whose use fits a unit here ({data.matchingRequirements.length})
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-0.5">
+                {data.matchingRequirements.slice(0, 12).map(r => (
+                  <Link key={r.id} href={r.company_id && !noBrandPages ? `/companies/${r.company_id}` : `/requirements`}
+                    className="text-xs flex items-center gap-1.5 hover:bg-muted/60 rounded px-1 py-0.5 min-w-0 overflow-hidden" title={r.reason || undefined}>
+                    <span className="font-medium truncate flex-1 min-w-0">
+                      {r.company_name || r.name || "Unnamed"}
+                      {r.reason && <span className="font-normal text-muted-foreground" data-testid={`text-matching-req-reason-${r.id}`}> · {r.reason}</span>}
+                    </span>
+                    {r.use && r.use.length > 0 && (
+                      <Badge variant="outline" className="text-[11px] shrink-0 bg-background">
+                        {[...new Set(r.use.slice(0, 2).map((u: string) => useClassLabel(u)))].join(", ")}{r.use.length > 2 ? "…" : ""}
+                      </Badge>
+                    )}
+                    {r.size && <span className="text-[11px] text-muted-foreground truncate max-w-[150px]" title={r.size}>{formatSizeList(r.size)}</span>}
+                  </Link>
+                ))}
+              </div>
             </div>
+          )}
+          {centre && <InternationalWatchlist propertyId={propertyId} />}
+          <div>
+            <p className={`${SUB_LABEL} mb-1`}>{centre ? "On scheme" : "Recorded tenants"} <span className="font-mono tabular-nums font-normal">{data.onScheme.length}</span></p>
+            <div className="flex flex-wrap gap-1">{data.onScheme.slice(0, 40).map(b => brandChip({ id: b.brand_company_id, name: b.brand_name }))}</div>
+          </div>
+          {data.wider.length > 0 && (
+            <div>
+              <p className={`${SUB_LABEL} mb-1`}>Within 2km <span className="font-mono tabular-nums font-normal">{data.wider.length}</span></p>
+              <div className="flex flex-wrap gap-1">{data.wider.slice(0, 40).map(b => brandChip({ id: b.brand_company_id, name: b.brand_name }, `${b.nearest_distance_km.toFixed(1)}km away`))}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <CentreDetail centre={centreOpen} onClose={() => setCentreOpen(null)} />
+      <TargetDetail target={opened} onClose={() => setOpened(null)} propertyId={propertyId} propertyName={data.property.name}
+        units={data.marketingUnits || []} canWant={!!data.canWant} noBrandPages={noBrandPages} />
+    </div>
+  );
+}
+
+// The latest opening news at one competing centre, from the feed the
+// openings card already reads.
+function CentreNews({ propertyId, centre }: { propertyId: string; centre: string }) {
+  const { data } = useQuery<{ peers: CentreOpening[] }>({
+    queryKey: ["/api/property", propertyId, "centre-openings"],
+    queryFn: async () => {
+      const r = await fetch(`/api/property/${propertyId}/centre-openings`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error(loadError(r.status));
+      return r.json();
+    },
+    staleTime: 30 * 60 * 1000,
+    retry: false,
+  });
+  const items = (data?.peers || []).filter(o => o.centre === centre).slice(0, 3);
+  if (!items.length) return null;
+  return (
+    <ul className="space-y-0.5 border-t border-border pt-1.5">
+      {items.map((o, i) => (
+        <li key={`${o.title}-${i}`} className="text-[11px] text-muted-foreground truncate">
+          {o.date && <span className="tabular-nums">{new Date(o.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} · </span>}
+          {o.url ? <a href={o.url} target="_blank" rel="noopener noreferrer" className="hover:underline hover:text-foreground">{o.title}</a> : o.title}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+type CentreBox = {
+  name: string; owner: string | null; propertyId: string | null; website: string | null;
+  trading: Array<{ id: string | null; name: string; domain: string | null; leisure: boolean; type: string | null }>; tradingSource: string;
+  research: { summary: string | null; items: Array<{ date: string | null; kind: string; headline: string; detail: string | null; brand: string | null; source_url: string | null }>; citations: string[] } | null;
+  researchAt: string | null;
+};
+const KIND_WORDS: Record<string, string> = { opening: "Opening", closure: "Closure", redevelopment: "Redevelopment", ownership: "Ownership", leasing: "Leasing", other: "News" };
+
+type CentreResearch = CentreBox["research"];
+const researchWhen = (d: string | null) => !d ? "" : new Date(d.length === 7 ? `${d}-01` : d).toLocaleDateString("en-GB", d.length === 7 ? { month: "short", year: "numeric" } : { day: "numeric", month: "short", year: "numeric" });
+
+// What a centre is doing: the weekly web research, one line per item.
+function CentreResearchBody({ research }: { research: CentreResearch }) {
+  if (!research) return <p className="text-sm text-muted-foreground">Not researched yet. Each top centre is read about once a week, once it has a BGP page.</p>;
+  return (
+    <>
+      {research.summary && <p className="text-sm mb-1.5">{research.summary}</p>}
+      {research.items.length > 0 && (
+        <ul className="divide-y divide-border/60">
+          {research.items.map((item, i) => (
+            <li key={`${item.headline}-${i}`} className="py-1.5 flex items-start gap-2 min-w-0">
+              <span className="shrink-0 w-24 text-[11px] text-muted-foreground"><span className="block font-semibold text-foreground">{KIND_WORDS[item.kind] || "News"}</span>{researchWhen(item.date)}</span>
+              <span className="min-w-0 text-xs">
+                {item.source_url
+                  ? <a href={item.source_url} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">{item.headline}<ExternalLink className="inline w-3 h-3 ml-1 text-muted-foreground" /></a>
+                  : <span className="font-medium">{item.headline}</span>}
+                {item.detail && <span className="block text-muted-foreground">{item.detail}</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!research.items.length && !research.summary && <p className="text-sm text-muted-foreground">Nothing sourced in the last 12 months.</p>}
+    </>
+  );
+}
+
+// The same research on the centre's own property page (News & social). Draws
+// nothing on a property that is not a benchmark centre.
+export function PropertyCentreResearch({ propertyId }: { propertyId: string }) {
+  const { data } = useQuery<{ centre: string | null; research: CentreResearch; researchAt: string | null }>({
+    queryKey: ["/api/properties", propertyId, "centre-research"],
+    queryFn: async () => {
+      const r = await fetch(`/api/properties/${propertyId}/centre-research`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return { centre: null, research: null, researchAt: null };
+      return r.json();
+    },
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+  });
+  if (!data?.centre) return null;
+  return (
+    <div className="rounded-md border border-border bg-muted/40 px-3 py-2" data-testid="property-centre-research">
+      <p className={`${SUB_LABEL} mb-1 flex items-center gap-1`}><Radar className="w-3 h-3" />What the centre is doing{data.researchAt ? <span className="font-normal normal-case tracking-normal"> · read {new Date(data.researchAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, web research: check before quoting</span> : null}</p>
+      <CentreResearchBody research={data.research} />
+    </div>
+  );
+}
+
+// A competing centre's box: who owns it, what it is doing and who trades
+// there. Public data only, the same for every login (Woody, 2026-11-15).
+function CentreDetail({ centre, onClose }: { centre: string | null; onClose: () => void }) {
+  const [allBrands, setAllBrands] = useState(false);
+  const { data, isLoading, error } = useQuery<CentreBox>({
+    queryKey: ["/api/benchmark-centres", centre],
+    queryFn: async () => {
+      const r = await fetch(`/api/benchmark-centres/${encodeURIComponent(centre!)}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || loadError(r.status));
+      return r.json();
+    },
+    enabled: !!centre,
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+  });
+  const leisure = (data?.trading || []).filter(b => b.leisure);
+  const brands = allBrands ? data?.trading || [] : leisure.length ? leisure : (data?.trading || []).slice(0, 40);
+  return (
+    <Dialog open={!!centre} onOpenChange={open => { if (!open) { setAllBrands(false); onClose(); } }}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="gap-centre-detail">
+        <DialogHeader>
+          <DialogDescription className="text-xs uppercase tracking-wider font-semibold">Competing centre</DialogDescription>
+          <DialogTitle className="text-base leading-snug">{centre}</DialogTitle>
+        </DialogHeader>
+        {isLoading && <p className="text-sm text-muted-foreground flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />Loading…</p>}
+        {error && <p className="text-sm text-muted-foreground">{(error as Error).message}</p>}
+        {data && (
+          <div className="space-y-3 text-sm">
+            <div className="space-y-1.5">
+              <GapLine label="Owner">{data.owner || "Not recorded"}</GapLine>
+              {data.website && <GapLine label="Its news page"><a href={data.website} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">{data.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}</a></GapLine>}
+            </div>
+            <div className="rounded-md border border-border bg-muted/40 px-3 py-2" data-testid="gap-centre-research">
+              <p className={`${SUB_LABEL} mb-1 flex items-center gap-1`}><Radar className="w-3 h-3" />What it is doing{data.researchAt ? <span className="font-normal normal-case tracking-normal"> · read {new Date(data.researchAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, web research: check before quoting</span> : null}</p>
+              <CentreResearchBody research={data.research} />
+            </div>
+            <div>
+              <p className={`${SUB_LABEL} mb-1`}>Trading there <span className="font-mono tabular-nums font-normal">{allBrands ? data.trading.length : brands.length}</span></p>
+              {data.trading.length === 0
+                ? <p className="text-muted-foreground">No store locations held for this centre yet.</p>
+                : <div className="flex flex-wrap gap-1">
+                    {brands.map(b => b.id
+                      ? <Link key={`${b.id}`} href={`/companies/${b.id}`} onClick={onClose}><Badge variant="outline" className="text-[11px] cursor-pointer hover:bg-muted" title={b.type || undefined}>{b.name}</Badge></Link>
+                      : <Badge key={b.name} variant="outline" className="text-[11px]" title={b.type || undefined}>{b.name}</Badge>)}
+                  </div>}
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {data.tradingSource}
+                {leisure.length > 0 && data.trading.length > leisure.length && <> · <button type="button" data-no-min-touch className="underline hover:text-foreground" onClick={() => setAllBrands(v => !v)}>{allBrands ? "Food and leisure only" : `Show all ${data.trading.length}`}</button></>}
+              </p>
+            </div>
+            {data.propertyId && <Button size="sm" variant="outline" asChild><Link href={`/properties/${data.propertyId}`} onClick={onClose}><Store className="w-3.5 h-3.5 mr-1" />Open its page</Link></Button>}
           </div>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
-        {/* International watchlist — larger-scheme play, collapsed by default */}
-        {centre && <InternationalWatchlist propertyId={propertyId} />}
-
-        {/* On-scheme / wider chips — reference detail, tucked away */}
-        <details className="group/os">
-          <summary className="text-[11px] text-muted-foreground cursor-pointer list-none flex items-center gap-1 hover:text-foreground">
-            <ChevronRight className="w-3 h-3 transition-transform group-open/os:rotate-90" />
-            {centre ? "On-scheme & nearby detail" : "Recorded tenants & nearby detail"} ({data.onScheme.length} {centre ? "on scheme" : "recorded tenants"} · {data.wider.length} within 2km)
-          </summary>
-          <div className="mt-2 space-y-2">
-            {data.onScheme.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {data.onScheme.slice(0, 30).map(b => (
-                  <Link key={b.brand_company_id} href={`/companies/${b.brand_company_id}`}>
-                    <Badge variant="outline" className="text-[11px] bg-muted hover:bg-muted/80 border-border cursor-pointer">
-                      {b.brand_name}
-                      <span className="ml-1 text-muted-foreground">
-                        {b.nearest_distance_km < 0.1 ? "here" : `${(b.nearest_distance_km * 1000).toFixed(0)}m`}
-                      </span>
-                    </Badge>
-                  </Link>
-                ))}
-              </div>
-            )}
-            {data.wider.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {data.wider.slice(0, 30).map(b => (
-                  <Link key={b.brand_company_id} href={`/companies/${b.brand_company_id}`}>
-                    <Badge variant="outline" className="text-[11px] bg-muted hover:bg-muted/80 border-border cursor-pointer">
-                      {b.brand_name}
-                      <span className="ml-1 text-muted-foreground">{b.nearest_distance_km.toFixed(1)}km</span>
-                    </Badge>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
-        </details>
-
-        {data.onScheme.length === 0 && (data.peerGaps || []).length === 0 && (data.localMarket || []).length === 0 && (
-          <p className="text-xs text-muted-foreground italic">
-            No hospitality store data nearby yet. Populate stores for brands via "Find stores" on each brand page.
-          </p>
-        )}
-        </>)}
+// Admins: set up a BGP property page for each top centre that has none.
+function CentrePagesSetup() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const admin = !!viewer?.isAdmin && viewer?.role !== "Client" && !viewer?.companyScopeId;
+  const { data } = useQuery<{ centres: Array<{ centre: string; action: "create" | "mark" | "none" }> }>({
+    queryKey: ["/api/admin/benchmark-centres"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/benchmark-centres", { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error(loadError(r.status));
+      return r.json();
+    },
+    enabled: admin,
+    retry: false,
+  });
+  const apply = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/admin/benchmark-centres/apply")).json(),
+    onSuccess: (r: any) => {
+      toast({ title: "Centre pages set up", description: `${r.created} created, ${r.marked} existing pages marked.` });
+      qc.invalidateQueries({ queryKey: ["/api/admin/benchmark-centres"] });
+      qc.invalidateQueries({ queryKey: ["/api/property"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't set the pages up", description: e?.message, variant: "destructive" }),
+  });
+  const create = (data?.centres || []).filter(c => c.action === "create");
+  const mark = (data?.centres || []).filter(c => c.action === "mark");
+  if (!admin || !data || (!create.length && !mark.length)) return null;
+  return (
+    <div className="rounded-md border border-border bg-muted/40 px-3 py-2 flex items-center gap-3 flex-wrap" data-testid="gap-centre-setup">
+      <p className="text-xs flex-1 min-w-[220px]">
+        {create.length > 0 && <><span className="font-semibold">{create.length} top centre{create.length === 1 ? " has" : "s have"} no BGP page:</span> {create.map(c => c.centre).join(", ")}. </>}
+        {mark.length > 0 && <>{mark.length} existing page{mark.length === 1 ? "" : "s"} will be marked as a benchmark centre. </>}
+        <span className="text-muted-foreground">Each page is then researched about once a week.</span>
+      </p>
+      <Button size="sm" onClick={() => { if (confirm(`Create ${create.length} property page${create.length === 1 ? "" : "s"} and mark ${mark.length}?`)) apply.mutate(); }} disabled={apply.isPending} data-testid="gap-centre-setup-apply">
+        {apply.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1" />}Set up the pages
+      </Button>
     </div>
   );
 }
 
 // This centre against each benchmark centre on the same hospitality /
 // leisure slice (Woody, 2026-09-27: "compare the top 25 shopping centres").
-function CentreBenchmark({ benchmark, name, peers, brandsNoun }: { benchmark: NonNullable<BrandGapResult["benchmark"]>; name: string; peers: string; brandsNoun: string }) {
+function CentreBenchmark({ benchmark, name, peers, brandsNoun, onCentre, noBrandPages }: { benchmark: NonNullable<BrandGapResult["benchmark"]>; name: string; peers: string; brandsNoun: string; onCentre?: (name: string) => void; noBrandPages?: boolean }) {
   const [all, setAll] = useState(false);
   const rows = benchmark.centres;
   if (!rows.length) return null;
@@ -630,7 +901,9 @@ function CentreBenchmark({ benchmark, name, peers, brandsNoun }: { benchmark: No
         {shown.map(r => (
           <div key={r.name} className="px-2 py-1.5 text-xs md:grid md:grid-cols-[minmax(0,1.7fr)_56px_56px_64px_minmax(0,2fr)] md:gap-2 md:items-center" data-testid={`benchmark-${r.name}`}>
             <div className="min-w-0 flex items-center gap-1.5">
-              <span className="font-medium truncate">{r.name}</span>
+              {onCentre
+                ? <button type="button" data-no-min-touch onClick={() => onCentre(r.name)} className="font-medium truncate hover:underline text-left">{r.name}</button>
+                : <span className="font-medium truncate">{r.name}</span>}
               <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums">{r.distance_km}km</span>
               {r.from_schedule && <span className="text-[11px] text-muted-foreground shrink-0" title="Counted from our own tenancy schedule">· our data</span>}
             </div>
@@ -640,7 +913,9 @@ function CentreBenchmark({ benchmark, name, peers, brandsNoun }: { benchmark: No
               <span className="md:text-right tabular-nums md:text-xs"><span className="md:hidden">Not here </span>{r.not_here}</span>
             </div>
             <div className="flex flex-wrap gap-1 mt-1 md:mt-0 min-w-0">
-              {(distinct.get(r.name) || []).map(b => (
+              {(distinct.get(r.name) || []).map(b => noBrandPages
+                ? <Badge key={b.id} variant="outline" className="text-[11px] font-medium text-foreground">{b.name}</Badge>
+                : (
                 <Link key={b.id} href={`/companies/${b.id}`}>
                   <Badge variant="outline" className="text-[11px] font-medium text-foreground cursor-pointer hover:bg-muted">{b.name}</Badge>
                 </Link>

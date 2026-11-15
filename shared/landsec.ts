@@ -385,6 +385,9 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
     // conversation is made, renaming and linking, search, the media drawer,
     // group pictures, drafts, files to ChatBGP and every other ChatBGP door.
     if ((m === "GET" || m === "POST") && p === "/api/chat/threads") return "allow";
+    // A property's one shared conversation: opening the box joins it. The
+    // handler checks the property (its own schemes, or a shared centre page).
+    if (m === "POST" && /^\/api\/chat\/threads\/record\/property\/[^/]+$/.test(p)) return "allow";
     if ((m === "GET" || m === "DELETE") && JOINT_AGENT_CHAT_THREAD.test(p)) return "allow";
     if (m === "POST" && JOINT_AGENT_CHAT_MESSAGES.test(p)) return "allow";
     if ((m === "PUT" || m === "DELETE") && JOINT_AGENT_CHAT_MESSAGE.test(p)) return "allow";

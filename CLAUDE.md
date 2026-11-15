@@ -1228,6 +1228,9 @@ Company card is gone. The AI activity card says a failed read quietly, never
 in red. An agent firm's page opens to a client login to READ
 (`isClientReadableCompanyPage` in `server/company-scope.ts`: a brand it may
 see, or an agent firm); writes there stay with `isClientVisibleBrand`.
+**A client login never opens another landlord's page** (Woody, 2026-11-15:
+"no landsec should see another landlord page"): a Landsec login is refused
+Hammerson's record and its feeds, as it always was. Do not open it.
 
 ## The CRM page (Woody, 2026-11-15) — docs/crm-review-2026-11-15.md
 
@@ -1466,6 +1469,97 @@ the scheme limit): never another landlord's deal. `?contactId=` follows the
 contact's company by the same rule and `?dealId=` is `isDealInScope`. A
 joint agent is refused the company and contact feeds (it has no brand or
 contact pages).
+
+## Brand gap board and benchmark centres (Woody, 2026-11-15)
+
+Woody: Brand gap "can be much improved to include connectivity with the rest
+of the app and be more user friendly than just a word dump", "link it to
+requirements (add or reflect), properties, CRM, letting tracker, Brands",
+"a bit more info about other competing centres, news about what they are
+doing", "we could almost just set up property pages for them all at BGP".
+Asked the four questions, he answered "Yes to all".
+
+- **The board** (`client/src/components/brand-gap-panel.tsx`, data from
+  `GET /api/property/:id/brand-gaps` in `server/property-gap-analysis.ts`):
+  four figures (rank against the top centres, missing sectors, targets with
+  a requirement, already in play), then pills: **Targets**, **Sectors**,
+  **Competing centres**, **BGP take**, **More**. The AI prose and the web
+  research are under BGP take, no longer the opening screen.
+- **Targets** is one row per brand not on scheme (`targets` in the reply):
+  why (the competing centres it trades at, how many top centres, how near),
+  its Expansion score, the requirement held and the marketing unit here its
+  size fits (`parseReqSize` against the live tracker units), and where it
+  already stands at this scheme. **That stage is the Brand CRM's own rule**
+  (`loadPlan` for this property; a Landsec login is read as its own plan
+  viewer, so an unticked Wanted line stays BGP's). Never work a stage out on
+  this screen. A row opens `TargetDetail`: **Add as target** on a marketing
+  unit (the unit's Targeting Brief, `POST /api/unit-briefs` then
+  `/targets`), **Want at this scheme** (BGP staff, `POST
+  /api/brand-crm/targets` with the property), **Add requirement** (the
+  Requirements page for that brand) and the brand page. A joint agent gets
+  names and no brand links.
+- **Competitors are the centres the landlord does not own.** A peer centre
+  whose BGP property record has this property's landlord is a sister scheme
+  (`sisterNames`): left out of the competing four, the benchmark table and
+  the top-centre counts, and listed on one line. Competing centres are the
+  nearest four non-sister centres within 60km (`competingCards`: owner,
+  brands, not here, latest openings).
+- **Benchmark centres** (`server/benchmark-centres.ts`): the `top25` list in
+  `shared/uk-centres.ts`. A centre's record is the property stamped
+  `crm_properties.benchmark_centre`, else a match by name and place. Missing
+  pages are created only by an admin from the Competing centres tab
+  (`GET /api/admin/benchmark-centres`, then `POST .../apply`: name,
+  coordinates, tag "Benchmark centre"; existing pages are only stamped).
+  Never at boot. They have no landlord, so no client login's property list
+  holds them.
+- **A centre's box** (`GET /api/benchmark-centres/:name`, `CentreDetail`):
+  owner, its own news page, the weekly research and who trades there (store
+  locations inside the centre's ring, labelled as not a tenancy schedule).
+  Public data only, open to every login (on the client gateway's allow
+  list); BGP staff are also sent the property id for "Open its BGP page", a
+  client never is, and a joint agent is sent brand names with no ids. A
+  client login still never opens the BGP property page or any landlord
+  page.
+- **Weekly research** (`runCentreResearch`, job `centre-research`, 05:20):
+  Perplexity, a few centres a night (`CENTRE_RESEARCH_NIGHTLY_CAP`, default
+  6, 0 = off), each about once a week, only centres with a page; saved as
+  `centre_research` on the record (openings, closures, redevelopment,
+  ownership, leasing; each with its date and source link). It has not been
+  run against Perplexity from a build machine.
+- **Shared centre pages** (Woody, 2026-11-15, told Landsec would get the
+  box and not the page: "Let's them edit"). A page the set-up CREATED is
+  stamped `benchmark_shared` and is open to every login to read and amend,
+  joint agents and scheme-limited logins included
+  (`sharedBenchmarkPropertyIds` in `server/company-scope.ts`, answered
+  ahead of the scheme limit in `isPropertyInScope`, and in
+  `propertyReadBlocked`, `clientBlockedForProperty`, the property GET and
+  the tenancy schedule reads). It holds nothing of BGP's. **A centre page
+  BGP already held is only stamped `benchmark_centre` and stays as private
+  as it was** (it may hold another landlord's work: "no landsec should see
+  another landlord page"); never set `benchmark_shared` on an existing page.
+  The centre's box sends a client the page id of a shared centre only. A
+  shared page is not on any client's Properties list: it is reached from
+  the box. The research also shows on the centre's own page, under News &
+  social (`PropertyCentreResearch`, `GET /api/properties/:id/centre-research`).
+- **No junk in the gaps** (Woody, 2026-11-15: "hate junk").
+  `shared/junk-brand.ts` (`isJunkBrand`, tests `server/junk-brand.test.ts`):
+  an operating or holding company under its legal name (Ltd, plc, Holdings,
+  Group), a hotel group, a bookmaker or casino, a name that is only a
+  description ("Coffee House"). `pitchable` in the gap route leaves them out
+  of every gap list, the sector examples, the benchmark and competing-centre
+  chips and the targets, and the centre's box leaves them out of who trades
+  there. They still count as occupiers on the scheme. A real brand caught by
+  the rule goes on `KEEP` there, with a test.
+- A requirement fits a marketing unit on size AND use: the unit's use class
+  is one the requirement lists, or lines up by `USE_HINTS`; a side with no
+  use stated fits on size alone.
+- "Requirements whose use fits a unit" (under More) lists only brands the
+  board would offer as a gap: a linked brand record, in the scheme's
+  categories (`fitsPositioning`), not junk. The property conversation works
+  for a joint agent on its own schemes and on a shared centre page.
+- The weekly research has never been run against Perplexity (no key on a
+  build machine): check a centre's box after the first night on live.
+  Tests: `qa/regression/brand-gap-board.test.mjs`.
 
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
 
@@ -1797,9 +1891,19 @@ untouched when it is off, and
   row of the staff tracker, desktop and phone; counts from `GET
   /api/chat/threads/record/unit-comments?propertyIds=`, read only for
   properties the caller may open): a message tagged with the unit. Guards:
-  `qa/regression/record-conversation-guards.test.mjs`. Not yet: a joint
-  agent (its gateway refuses the routes; parked by Woody on 2026-11-14), the
-  joint agent's tracker, company and deal conversations.
+  `qa/regression/record-conversation-guards.test.mjs`. **A joint agent
+  uses it too** (Woody, 2026-11-15: "Sort the list"): opening the box on a
+  property at its schemes, or on a shared centre page, joins the shared
+  conversation whatever has been written there already (its gateway opens
+  `POST /api/chat/threads/record/property/:id` and nothing else new; the
+  handler's property check is the door; `chatMemberDenial` and the member
+  insert in `storage.addChatThreadMember` waive "before the first message"
+  for that one thread only). It reads it as it reads any conversation:
+  redacted for that reader, tags only at its own schemes
+  (`linkPropertyIds` on `ChatJointAgent` is what it may HOLD a conversation
+  on; `propertyIds` is still what it may tag, read and ask ChatBGP about).
+  Not yet: comment buttons on the joint agent's tracker, company and deal
+  conversations.
   **When the property goes** (15 November 2026; `server/record-thread-links.ts`,
   tests `qa/regression/record-thread-links.test.mjs`): deleting a property
   deletes its shared conversation with it, messages and members included,
@@ -2415,7 +2519,7 @@ what was read, fills the form, and saves through the form's own route.
     (`/api/admin/letting-suggestions/preview|apply`; Settings → Letting
     integrity → Backfills). Never at boot, never on a timer.
   - **Who sees what**: rows from target comments and from Tracker comments
-    (a joint agent does not open the property's conversation) are
+    (BGP's own work list, though a joint agent now reads the conversation itself) are
     `visibility = 'bgp'`, BGP staff only (`isStaff && seesBgpNotes`). The rest are `'brief'`: BGP
     staff and the scheme's joint agent. An asset manager, a Landsec leasing
     manager and every other client login are listed nothing, counted

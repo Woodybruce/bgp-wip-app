@@ -17,7 +17,10 @@ import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
 import { isKnownLandsecRole, UNKNOWN_LANDSEC_ROLE_ERROR } from "@shared/landsec";
 import { redactChatText, previewFor, tagIdsIn, hasBrokenTag, jointAgentThreadKind, jointAgentLinkAllowed, type JointAgentTagAllow } from "@shared/chat-joint-agent";
 
-export interface ChatJointAgent { userId: string; firm: string | null; schemeKeys: string[]; propertyIds: string[] }
+// propertyIds: the properties at its schemes (what it may tag, read and ask
+// ChatBGP about). linkPropertyIds: those plus the shared benchmark centre
+// pages, which every login opens: the properties whose conversation it may hold.
+export interface ChatJointAgent { userId: string; firm: string | null; schemeKeys: string[]; propertyIds: string[]; linkPropertyIds: string[] }
 
 const STAFF_SQL = `u.is_active IS NOT FALSE AND lower(u.email) LIKE '%@brucegillinghampollard.com' AND COALESCE(u.role, '') <> 'Client'`;
 const CHAT_MEDIA_URL = /^\/api\/chat-media\/([^/?#]+)$/;
@@ -40,7 +43,9 @@ async function withProperties(userId: string, schemes: unknown, firm: unknown): 
   const propertyIds = companyId && schemeKeys.length
     ? (await resolveLandsecPortfolio(companyId)).schemes.filter(s => schemeKeys.includes(s.key)).flatMap(s => s.properties.map(p => p.id))
     : [];
-  return { userId, firm: firm ? String(firm) : null, schemeKeys, propertyIds };
+  const { sharedBenchmarkPropertyIds } = await import("./company-scope");
+  const linkPropertyIds = [...new Set([...propertyIds, ...(await sharedBenchmarkPropertyIds())])];
+  return { userId, firm: firm ? String(firm) : null, schemeKeys, propertyIds, linkPropertyIds };
 }
 
 // Is this login a joint agent? Null = it is not. Throws when it cannot say.
@@ -119,6 +124,10 @@ export async function chatPeopleFor(ja: ChatJointAgent, selfId: string): Promise
   return out;
 }
 
+// The creator of a property's shared conversation (RECORD_THREAD_CREATOR in
+// server/record-conversation.ts).
+const RECORD_THREAD_MARKER = "__record__";
+
 export interface ChatThreadFacts {
   createdBy: string | null;
   isAiChat: boolean | null;
@@ -144,9 +153,19 @@ export async function chatMemberDenial(input: { thread: ChatThreadFacts; existin
   if (agents.size === 0) return null;
   if (thread.isAiChat !== false) return "A ChatBGP chat cannot be shared with a joint agent";
   // Linked to nothing, or to a property at every joint agent's own schemes.
-  for (const ja of agents.values()) if (!jointAgentLinkAllowed(thread, ja.propertyIds)) return "A conversation with a joint agent can be linked only to a property at its schemes";
-  if (agents.has(targetUserId) && input.messageCount !== 0) return "A joint agent can only join a conversation before its first message. Start a new conversation.";
-  const others = everyone.filter(id => !agents.has(id));
+  for (const ja of agents.values()) if (!jointAgentLinkAllowed(thread, ja.linkPropertyIds)) return "A conversation with a joint agent can be linked only to a property at its schemes";
+  // A property's one shared conversation (server/record-conversation.ts) is
+  // read by everyone who can open the property, and its box says so: a joint
+  // agent who can open the property joins it whenever it opens the box
+  // (Woody, 2026-11-15: "Sort the list"). On a shared benchmark centre page,
+  // which every login opens, the property check is the whole rule.
+  const sharedRecord = thread.createdBy === RECORD_THREAD_MARKER && thread.isAiChat === false && thread.linkedType === "property" && !!thread.linkedId;
+  if (sharedRecord) {
+    const { sharedBenchmarkPropertyIds } = await import("./company-scope");
+    if ((await sharedBenchmarkPropertyIds()).has(String(thread.linkedId))) return null;
+  }
+  if (!sharedRecord && agents.has(targetUserId) && input.messageCount !== 0) return "A joint agent can only join a conversation before its first message. Start a new conversation.";
+  const others = everyone.filter(id => !agents.has(id) && id !== RECORD_THREAD_MARKER);
   if (others.length) {
     const staff = new Set((await pool.query(`SELECT u.id FROM users u WHERE u.id = ANY($1::text[]) AND ${STAFF_SQL}`, [others])).rows.map((r: any) => r.id));
     const notStaff = others.filter(id => !staff.has(id));
