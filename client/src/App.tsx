@@ -638,8 +638,19 @@ function AuthenticatedApp() {
   const { brand: shellBrand } = useBrand();
   const landsecPhoneHome = (isMobile || isNativeMobile()) && (location === "/" || location === "/home")
     && (currentUser as any)?.role === "Client" && shellBrand.id === "landsec" && !landsecRestricted;
+  // Opening the app on a phone lands that login on ChatBGP (Woody,
+  // 2026-11-15: "the phone can just open with this screen for landsec so
+  // it's like opening Claude"), once per session, as it does for BGP staff
+  // below (the same marker). After that "/" is Properties, as before.
   useEffect(() => {
-    if (landsecPhoneHome) navigate(LANDSEC_MENU.properties, { replace: true });
+    if (!landsecPhoneHome) return;
+    let opening = false;
+    try {
+      opening = !sessionStorage.getItem("bgp-chat-home-done");
+      if (opening) sessionStorage.setItem("bgp-chat-home-done", "1");
+    } catch {}
+    // ?ask=1 opens the new-chat screen itself: a bare /chatbgp is the Messages list.
+    navigate(opening ? "/chatbgp?ask=1" : LANDSEC_MENU.properties, { replace: true });
   }, [landsecPhoneHome]);
 
   // Mobile cold-open lands on ChatBGP (Woody, 2026-08-18 — supersedes the
@@ -712,7 +723,7 @@ function AuthenticatedApp() {
   // Nothing of the staff chat pages is mounted for that login, so none of
   // their calls are made; the effect above is sending it to its own chat.
   if (landsecNoChatPage) return null;
-  // The effect above is sending this login to Properties.
+  // The effect above is sending this login to ChatBGP (on opening) or Properties.
   if (landsecPhoneHome) return null;
 
   if ((isMobile || nativeMobile) && location === "/chatbgp") {

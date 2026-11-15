@@ -190,12 +190,17 @@ test('Properties, Deals, the property page and the landing page ask one question
   assert.doesNotMatch(properties, /activeTeam === "Landsec"/);
 });
 
-test('on a phone only a real Landsec login is sent from the home page to Properties', () => {
+test('on a phone only a real Landsec login is sent from the home page: to ChatBGP on opening the app, to Properties after that', () => {
   const app = source(APP);
   const rule = app.slice(app.indexOf('const landsecPhoneHome ='), app.indexOf('useEffect', app.indexOf('const landsecPhoneHome =')));
   assert.match(rule, /role === "Client"/);
   assert.match(rule, /shellBrand\.id === "landsec"/);
   assert.match(rule, /!landsecRestricted/);
+  // Woody, 2026-11-15: "the phone can just open with this screen for landsec so it's like opening Claude".
+  // Once per session (the marker BGP staff use), so "/" afterwards is Properties, as before.
+  const effect = app.slice(app.indexOf('if (!landsecPhoneHome) return;'), app.indexOf('}, [landsecPhoneHome]);'));
+  assert.match(effect, /opening = !sessionStorage\.getItem\("bgp-chat-home-done"\);/);
+  assert.match(effect, /navigate\(opening \? "\/chatbgp\?ask=1" : LANDSEC_MENU\.properties, \{ replace: true \}\);/);
 });
 
 test('a joint agent has its own chat on the rail, never the staff chat panel', () => {
