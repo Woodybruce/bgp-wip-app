@@ -370,7 +370,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const repsForBrandQ = pool.query(
       `SELECT r.id, r.agent_type, r.region, r.start_date, r.end_date, r.notes,
               r.agent_company_id, a.name AS agent_name, a.domain AS agent_domain,
-              r.primary_contact_id, ct.name AS contact_name, ct.email AS contact_email
+              r.primary_contact_id, ct.name AS contact_name, ct.email AS contact_email,
+              COALESCE(NULLIF(ct.phone_mobile, ''), ct.phone) AS contact_phone
          FROM brand_agent_representations r
          LEFT JOIN crm_companies a ON a.id = r.agent_company_id
          LEFT JOIN crm_contacts  ct ON ct.id = r.primary_contact_id
@@ -387,6 +388,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // requirements it may read: PIPnet listings, or its own company's.
     const reqAgentsQ = pool.query(
       `SELECT DISTINCT ON (ct.id) ct.id AS contact_id, ct.name AS contact_name,
+              ct.email AS contact_email,
+              COALESCE(NULLIF(ct.phone_mobile, ''), ct.phone) AS contact_phone,
               a.id AS agent_company_id, a.name AS agent_name
          FROM crm_requirements_leasing q
          JOIN crm_contacts ct ON ct.id = q.agent_contact_id

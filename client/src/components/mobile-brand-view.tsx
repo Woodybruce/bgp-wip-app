@@ -13,6 +13,7 @@ import { BrandViewingActivity, brandViewingRows } from "@/components/brand-viewi
 import { BrandFeedCard } from "@/components/brand-feed-card";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
 import { CompanyProfileImage, dedupeGalleryImages } from "@/components/company-profile-image";
+import { BrandPhotosCard } from "@/components/brand-page/brand-photos";
 import { useState, useEffect, useRef } from "react";
 import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton, useBrandCoreFactsReview } from "@/components/brand-profile-overview";
 import { Button } from "@/components/ui/button";
@@ -63,6 +64,16 @@ const phoneSectionFromAddress = (): PhoneSection | null => {
 
 // `embedded`: inside a deal's Brand tab, which has its own KYC tab — no
 // second Compliance pill there (Woody, 2026-09-28).
+// Call and Email beside a named agent on the Tenant rep lines, when the reply carries a number or an address.
+const repContactLinks = (key: string, name: string | null | undefined, email: string | null | undefined, phone: string | null | undefined, pushRight = false) => {
+  if (!name || (!email && !phone)) return null;
+  const link = "inline-flex h-10 w-10 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted";
+  return <span className={`flex items-center shrink-0 ${pushRight ? "ml-auto" : ""}`}>
+    {phone && <a href={`tel:${String(phone).replace(/[^\d+]/g, "")}`} className={link} aria-label={`Call ${name}`} title={String(phone)} data-testid={`tenant-rep-call-${key}`}><Phone className="w-4 h-4" /></a>}
+    {email && <a href={`mailto:${email}`} className={link} aria-label={`Email ${name}`} title={email} data-testid={`tenant-rep-email-${key}`}><Mail className="w-4 h-4" /></a>}
+  </span>;
+};
+
 export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { companyId: string; embedded?: boolean; lenderSlot?: React.ReactNode }) {
   const { data, isLoading, isError, refetch: reloadSavedProfile } = useQuery<any>({
     queryKey: ["/api/brand", companyId, "profile"],
@@ -909,6 +920,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
                   ? <Link href={`/companies/${r.agent_company_id}`} className="inline-flex min-h-10 items-center text-primary break-words hover:underline">{r.agent_name}</Link>
                   : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
                 <span className="ml-auto text-[11px] text-muted-foreground">on a requirement</span>
+                {repContactLinks(r.contact_id, r.contact_name, r.contact_email, r.contact_phone)}
               </div>
             ))}
             {(data.representedBy || []).map((representation: any) => (
@@ -922,6 +934,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
                   : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
                 {representation.agent_type && representation.agent_type !== "tenant_rep" && <span className="text-[11px] text-muted-foreground">{String(representation.agent_type).replace(/_/g, " ")}</span>}
                 {representation.region && <span className="ml-auto text-[11px] text-muted-foreground break-words">{String(representation.region).replace(/_/g, " ")}</span>}
+                {repContactLinks(representation.primary_contact_id || representation.id, representation.contact_name, representation.contact_email, representation.contact_phone, !representation.region)}
               </div>
             ))}
           </CardContent>
@@ -1119,6 +1132,9 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
           alone is the whole card; with neither, staff get one line that
           follows the channels). */}
       {brandPage && <BrandFeedCard board companyId={companyId} canSetUp={!isClientViewer} companyName={c.name} domain={c.domain || c.domain_url} instagramHandle={c.instagram_handle} newsSlot={newsCard || null} />}
+      {/* The brand's saved photos, and Add photos for BGP staff (several at
+          once, filed against this brand). */}
+      {brandPage && <BrandPhotosCard companyId={companyId} companyName={c.name} images={dedupeGalleryImages(data.images || [])} canAdd={!isClientViewer} />}
       {/* Instagram board — same card as desktop (posts + follower stats).
           The card returns null without a handle, which left this pill a
           blank screen on the phone (r379) — show why instead. */}

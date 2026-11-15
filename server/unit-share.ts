@@ -305,6 +305,32 @@ async function loadUnitBrands(unitId: string): Promise<UnitBrand[]> {
   return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 300);
 }
 
+// The named contacts of a brand's CURRENT tenant-rep representations, each
+// with their firm: the people BGP staff may address a share for that brand
+// to, besides the brand's own contacts. The picker's list and the send's
+// check are this one read.
+export interface TenantRepContact { id: string; name: string; email: string | null; role: string | null; firmName: string | null }
+export async function tenantRepContacts(brandId: string, db: Queryable = pool): Promise<TenantRepContact[]> {
+  const rows = (await db.query(
+    `SELECT DISTINCT ON (ct.id) ct.id, ct.name, ct.email, ct.role, a.name AS firm_name
+       FROM brand_agent_representations r
+       JOIN crm_contacts ct ON ct.id = r.primary_contact_id
+       LEFT JOIN crm_companies a ON a.id = r.agent_company_id AND a.merged_into_id IS NULL
+      WHERE r.brand_company_id = $1 AND r.agent_type = 'tenant_rep' AND r.end_date IS NULL
+      ORDER BY ct.id, r.start_date DESC NULLS LAST`, [brandId])).rows;
+  return rows
+    .filter((r: any) => String(r.name || "").trim())
+    .map((r: any) => ({ id: String(r.id), name: String(r.name).trim(), email: r.email || null, role: r.role || null, firmName: r.firm_name || null }))
+    .sort((x: TenantRepContact, y: TenantRepContact) => x.name.localeCompare(y.name));
+}
+
+// Whether a CRM contact may be the recipient of a share for a brand: someone
+// at the brand, or a named contact of one of its current tenant reps.
+export async function contactMayReceiveFor(brandId: string, contact: { id: string; company_id?: string | null }, db: Queryable = pool): Promise<boolean> {
+  if (contact.company_id && contact.company_id === brandId) return true;
+  return (await tenantRepContacts(brandId, db)).some(c => c.id === String(contact.id));
+}
+
 // What was shared before. BGP staff see every share on the unit. A joint
 // agent sees the ones they made themselves: the rest name BGP's brand
 // contacts and say which brands BGP is talking to.
@@ -398,8 +424,13 @@ async function parseSend(body: unknown, src: ShareSource, brands: UnitBrand[] | 
   let contact: SendRequest["contact"] = { id: null, name: typedName, email: typedEmail };
   if (!brands && r.contactId !== undefined && r.contactId !== null && r.contactId !== "") {
     if (typeof r.contactId !== "string" || r.contactId.length > 100) return bad("Pick the contact again.");
-    const row = (await pool.query(`SELECT id, name, email FROM crm_contacts WHERE id = $1`, [r.contactId])).rows[0];
+    const row = (await pool.query(`SELECT id, name, email, company_id FROM crm_contacts WHERE id = $1`, [r.contactId])).rows[0];
     if (!row) return bad("That contact is not in the CRM. Pick the contact again.");
+    // The share is logged against the brand, so its recipient is someone at
+    // the brand or the brand's current tenant rep, whatever the request names.
+    if (!company.id || !(await contactMayReceiveFor(company.id, row))) {
+      return bad(`${row.name || "That contact"} is not at ${company.name} and is not recorded as its current tenant rep. Pick the contact again.`);
+    }
     // The contact's own name and address; a typed address only fills a gap.
     const own = typeof row.email === "string" && EMAIL_SHAPE.test(row.email.trim()) ? row.email.trim() : null;
     contact = { id: row.id, name: row.name || typedName, email: own || typedEmail };
@@ -1159,6 +1190,21 @@ export function setupUnitShareRoutes(app: Express) {
     } catch (e: any) {
       console.error("[unit-share options]", e?.message);
       res.status(500).json({ message: e?.message || "Failed to load what can be shared" });
+    }
+  });
+
+  // The picked brand's current tenant rep contacts, for the recipient list.
+  // BGP staff only: a joint agent never reads BGP's CRM contacts from here.
+  app.get("/api/unit-share/:unitId/brand-agents", requireAuth, async (req, res) => {
+    try {
+      const gate = await staffGate(req, res, req.params.unitId);
+      if (!gate) return;
+      if (isJointAgent(gate.access)) return void res.status(403).json({ message: "Contacts are not picked from BGP's CRM on this login." });
+      const companyId = typeof req.query.companyId === "string" && req.query.companyId.length <= 100 ? req.query.companyId.trim() : "";
+      if (!companyId) return void res.status(400).json({ message: "Pick the brand this is for." });
+      res.json(await tenantRepContacts(companyId));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Failed to load the brand's agents" });
     }
   });
 

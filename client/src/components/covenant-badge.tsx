@@ -93,7 +93,8 @@ export function CovenantBadgeByCompany({ companyId, className = "", note }: { co
     },
     enabled: !!id,
     staleTime: 60 * 60 * 1000,
-    retry: 1,
+    // A refusal (a brand outside a client's list) or a bad request is not asked for twice.
+    retry: (failures, error) => failures < 1 && !/^4\d\d:/.test(String((error as Error)?.message || "")),
   });
   if (!data?.grade) return null;
   const reds = (data.flags || []).filter((f: any) => f.level === "red");

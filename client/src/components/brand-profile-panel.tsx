@@ -7,6 +7,7 @@ import { CLOSED_STATUSES, DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-
 import { BrandViewingActivity, brandViewingRows } from "@/components/brand-viewing-activity";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
 import { CompanyProfileImage, CompanyImageCoverChoice, dedupeGalleryImages, companyStripImages } from "@/components/company-profile-image";
+import { BrandAddPhotos } from "@/components/brand-page/brand-photos";
 import { selectCompanyHeroImage, isCompanyImageLogo } from "@shared/brand-image-selection";
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, createContext, useContext } from "react";
 import { createPortal } from "react-dom";
@@ -6867,6 +6868,16 @@ function LandlordSidebarBlock({
   );
 }
 
+// Email and Call beside a named agent on a Tenant rep line (the Key contacts icon links).
+function RepContactLinks({ id, name, email, phone }: { id: string; name?: string | null; email?: string | null; phone?: string | null }) {
+  if (!name || (!email && !phone)) return null;
+  const iconLink = "p-1.5 md:p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted shrink-0";
+  return <span className="flex items-center shrink-0">
+    {email && <a href={`mailto:${email}`} className={iconLink} aria-label={`Email ${name}`} title={email} data-testid={`tenant-rep-email-${id}`}><Mail className="w-4 h-4" /></a>}
+    {phone && <a href={`tel:${String(phone).replace(/[^\d+]/g, "")}`} className={iconLink} aria-label={`Call ${name}`} title={String(phone)} data-testid={`tenant-rep-call-${id}`}><Phone className="w-4 h-4" /></a>}
+  </span>;
+}
+
 // The agents acting for this brand — first thing in Key contacts.
 // compact (a brand's own page): shorter rows, so four agents do not take 200px.
 function TenantRepsBlock({ companyId, reps, reqAgents = [], compact = false }: { companyId: string; reps: any[]; reqAgents?: any[]; compact?: boolean }) {
@@ -6889,6 +6900,7 @@ function TenantRepsBlock({ companyId, reps, reqAgents = [], compact = false }: {
         ? <Link href={`/companies/${r.agent_company_id}`} className="font-medium hover:text-primary hover:underline">{r.agent_name}</Link>
         : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
       {r.contact_name && <Link href={`/contacts/${r.contact_id}`} className="text-muted-foreground hover:text-primary hover:underline">{r.contact_name}</Link>}
+      <RepContactLinks id={r.contact_id} name={r.contact_name} email={r.contact_email} phone={r.contact_phone} />
       <span className="text-[11px] text-muted-foreground">on a requirement</span>
     </div>
   ));
@@ -6910,6 +6922,7 @@ function TenantRepsBlock({ companyId, reps, reqAgents = [], compact = false }: {
               ? <Link href={`/companies/${r.agent_company_id}`} className="font-medium hover:text-primary hover:underline">{r.agent_name}</Link>
               : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
             {r.contact_name && <Link href={`/contacts/${r.primary_contact_id}`} className="text-muted-foreground hover:text-primary hover:underline">{r.contact_name}</Link>}
+            <RepContactLinks id={r.primary_contact_id || r.id} name={r.contact_name} email={r.contact_email} phone={r.contact_phone} />
             {r.region && <span className="text-[11px] text-muted-foreground">{r.region.replace(/_/g, " ")}</span>}
             {canAddAgent && <button type="button" onClick={() => { if (confirm(`End representation by ${r.agent_name || r.contact_name || "this agent"}?`)) end.mutate(r.id); }}
               className="ml-auto p-1 text-muted-foreground/60 hover:text-destructive" aria-label="End representation" title="End representation"><X className="w-3 h-3" /></button>}
@@ -6934,6 +6947,7 @@ function TenantRepsBlock({ companyId, reps, reqAgents = [], compact = false }: {
               ? <Link href={`/companies/${r.agent_company_id}`} className="text-primary hover:underline font-medium">{r.agent_name}</Link>
               : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
             {r.contact_name && <Link href={`/contacts/${r.primary_contact_id}`} className="text-primary hover:underline">{r.contact_name}</Link>}
+            <RepContactLinks id={r.primary_contact_id || r.id} name={r.contact_name} email={r.contact_email} phone={r.contact_phone} />
             {r.region && <span className="text-[11px] text-muted-foreground">{r.region.replace(/_/g, " ")}</span>}
             {canAddAgent && <button type="button" onClick={() => { if (confirm(`End representation by ${r.agent_name || r.contact_name || "this agent"}?`)) end.mutate(r.id); }}
               className={`ml-auto ${compact ? "p-1.5" : "p-2"} text-muted-foreground hover:text-destructive`} aria-label="End representation"><X className="w-3 h-3" /></button>}
@@ -7516,7 +7530,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
       {show("gallery") && brandPage && !sbIsClient && uniqueImages.length === 0 && (
         <BrandQuietBlock testId="brand-gallery-quiet">
           <BrandQuietLine testId="brand-gallery-empty">
-            No saved images yet · <BrandImageRefreshButton companyId={companyId} link /> · <button type="button" onClick={openSharePointFolder}>Open SharePoint folder</button> · <Link href={`/image-studio?brand=${encodeURIComponent(c.name)}`} data-testid="link-open-image-studio">Open in Image Studio</Link>
+            No saved images yet · <BrandAddPhotos companyId={companyId} companyName={c.name} /> · <BrandImageRefreshButton companyId={companyId} link /> · <button type="button" onClick={openSharePointFolder}>Open SharePoint folder</button> · <Link href={`/image-studio?brand=${encodeURIComponent(c.name)}`} data-testid="link-open-image-studio">Open in Image Studio</Link>
           </BrandQuietLine>
         </BrandQuietBlock>
       )}
@@ -7549,6 +7563,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
                   : <><span className="font-mono tabular-nums">{uniqueImages.length}</span> saved image{uniqueImages.length === 1 ? "" : "s"}</>}
               </div>
               )}
+              {!sbIsClient && !isLandlord && <BrandAddPhotos companyId={companyId} companyName={c.name} />}
               {!sbIsClient && <BrandImageRefreshButton companyId={companyId} />}
               {/* Image Studio is the full library + enhance / retag /
                   upload UI — deep-link with the brand name so it lands

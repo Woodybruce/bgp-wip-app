@@ -604,7 +604,12 @@ export function setupCovenantRoutes(app: Express) {
       const num = rows[0]?.companies_house_number;
       if (!num) return res.status(204).end();
       res.json(await getCovenantReport(num));
-    } catch (e: any) { res.status(400).json({ error: e?.message || "covenant check failed" }); }
+    } catch (e: any) {
+      // No Companies House key (a demo or test copy) and no stored report:
+      // nothing is held, the same quiet answer as a company with no number.
+      if (!process.env.COMPANIES_HOUSE_API_KEY) return res.status(204).end();
+      res.status(400).json({ error: e?.message || "covenant check failed" });
+    }
   });
 
   app.get("/api/covenant/:companyNumber", requireAuth, async (req: Request, res: Response) => {
