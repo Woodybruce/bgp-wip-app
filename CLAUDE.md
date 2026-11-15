@@ -321,7 +321,14 @@ staff viewing as Landsec**:
   opening Claude"): the `landsecPhoneHome` effect in `App.tsx` sends the
   first `/` of a session to `/chatbgp` (the marker `bgp-chat-home-done`,
   the one BGP staff's phone open uses) and any later `/` to Properties. A
-  joint agent still opens on Properties (its chat is its own page). `/landsec/deals` goes to `/deals`, and
+  joint agent still opens on Properties (its chat is its own page).
+  **The Landsec phone tabs leave out the tab of the open page** (Woody,
+  2026-11-15, the ChatBGP screen with its Chat tab circled: "remove the
+  button the page is on from the icons as they are a bit crowded"):
+  `shown` in `mobile-bottom-nav.tsx` drops the lit tab, so six show at a
+  time, for every Landsec login and for staff viewing as Landsec. Other
+  logins' tabs are unchanged. A phone test that presses a Landsec tab must
+  not be on that tab's page. `/landsec/deals` goes to `/deals`, and
   `/landsec/scheme/:key` to the scheme's property page at `?section=units`
   (`LandsecDealsRoute`, `LandsecSchemeRoute`). Both redirect only in the
   Landsec view: BGP staff on All Teams or their own team keep the old scheme

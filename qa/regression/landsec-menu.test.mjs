@@ -190,6 +190,16 @@ test('Properties, Deals, the property page and the landing page ask one question
   assert.doesNotMatch(properties, /activeTeam === "Landsec"/);
 });
 
+// Woody, 2026-11-15 (the ChatBGP screen with its Chat tab circled): "remove the button the page is on from
+// the icons as they are a bit crowded". Landsec tabs only; every other login's tabs are unchanged.
+test('on a phone the Landsec tabs leave out the tab of the page that is open', () => {
+  const tabsSource = source(TABS);
+  assert.match(tabsSource, /const shown = isLandsecNav \? items\.filter\(item => !isActive\(item\.path\)\) : items;/);
+  assert.match(tabsSource, /\{shown\.map\(\(item\) => \{/);
+  // The seven still share the width evenly, so the six that show are evenly spread too.
+  assert.match(tabsSource, /items\.length > 6 \? "flex-1 min-w-0 px-0"/);
+});
+
 test('on a phone only a real Landsec login is sent from the home page: to ChatBGP on opening the app, to Properties after that', () => {
   const app = source(APP);
   const rule = app.slice(app.indexOf('const landsecPhoneHome ='), app.indexOf('useEffect', app.indexOf('const landsecPhoneHome =')));
