@@ -79,8 +79,23 @@ like him.
 tracker, the same checklist, the same conversation. So you see one version of
 every deal, whoever did the work.
 
-**16.** And it all goes with you. Your schemes, your deals, and what each one
-is waiting on, on your phone.
+**16.** And it all goes with you. Open it, and ask it a question.
+
+**17.** Call the brand's agent from his page.
+
+**18.** Log the viewing before you're back at your desk.
+
+**19.** Add the photos from the opening.
+
+**20.** And send him a unit on another scheme, there and then.
+
+## Recording 2b: your iPhone screen (one screen recording)
+
+On your iPhone, start a screen recording, open the app so it lands on the
+ChatBGP page, and ask one question that works on the real data, for example
+"Which leases at Bluewater expire in the next twelve months?" Let the answer
+finish, then stop. Do not ask about the Jersey Mike's deal: it exists only on
+the demo copy.
 
 ## Recording 3: footage for the character
 
