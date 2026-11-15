@@ -3145,6 +3145,9 @@ export async function registerRoutes(
         // staff are pulled in by a tag.
         const { isSharedRecordThread, mayBeTaggedIntoRecordThread } = await import("./record-conversation");
         const sharedRecord = isSharedRecordThread(thread);
+        // A Letting Tracker comment (a message here that tags a unit) is read
+        // for an offer or a viewing not yet logged. After the save, never part of it.
+        if (sharedRecord && /\(tag:unit\//.test(content)) import("./letting-suggestions").then(m => m.queueSuggestionScan({ chatContent: content })).catch(() => {});
         let mentionedIds: string[] = [];
         // Tagging a colleague pulls them into the conversation (the WhatsApp
         // model) — and for a ChatBGP thread that's what makes it appear in
@@ -3328,6 +3331,8 @@ export async function registerRoutes(
       }
       const updated = await storage.updateChatMessage(messageId, content.trim());
       emitMessageUpdated(threadId, messageId, content.trim());
+      // A Tracker comment that was changed: its unit is read again (the old words' suggestion closes).
+      if (/\(tag:unit\//.test(`${msg.content || ""} ${content}`)) import("./letting-suggestions").then(m => m.queueSuggestionScan({ chatContent: `${msg.content || ""} ${content}` })).catch(() => {});
       res.json(updated);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to update message" });
@@ -3354,6 +3359,7 @@ export async function registerRoutes(
       }
       await storage.deleteChatMessage(messageId);
       emitMessageDeleted(threadId, messageId);
+      if (/\(tag:unit\//.test(String(msg.content || ""))) import("./letting-suggestions").then(m => m.queueSuggestionScan({ chatContent: String(msg.content || "") })).catch(() => {});
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete message" });

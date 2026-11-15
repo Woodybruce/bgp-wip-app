@@ -11,6 +11,7 @@ import { parseGraphDateTime } from "./viewing-matching";
 import { newAutoContactRun, resolveAutoContacts, type AutoContactRun } from "./email-auto-contacts";
 import { findContactSourceEmail } from "./contact-source-email";
 import { newContactDetailsRun, queueDetailRead, readQueuedMessages, runContactDetailsBacklog, contactDetailsProgress, type ContactDetailsRun, type QueuedRead } from "./email-contact-details";
+import { queueRequirementEmail, readQueuedRequirementEmails, type QueuedRequirementEmail } from "./requirement-email-feed";
 import { registerLandlordTeamRoutes } from "./landlord-relationship-team";
 import { captureLandlordDiary, recordLandlordDiaryFailure, registerLandlordMeetingRoutes } from "./landlord-meetings";
 
@@ -303,6 +304,7 @@ async function syncEmailsForUser(
     }
 
     const detailReads = new Map<string, QueuedRead>();
+    const requirementReads = new Map<string, QueuedRequirementEmail>();
     for (const msg of messages) {
       const msId = `email_${msg.id}`;
       const added = autoMatches.get(msg.id) || [];
@@ -370,6 +372,8 @@ async function syncEmailsForUser(
           count += r.rowCount || 0;
           // A newly filed email, for someone who is on it: worth reading once for their details.
           if (r.rowCount && match.method === "email" && options.contactDetails) queueDetailRead(options.contactDetails, detailReads, msg, match.contact.email);
+          // A newly filed email the contact wrote, that reads like a requirement: read once for a suggestion.
+          if (r.rowCount && match.method === "email" && !isBgpSender && options.captureSignals !== false) queueRequirementEmail(requirementReads, msg, match.contact);
         } catch (e: any) {
           if (!e.message?.includes("duplicate")) {
             console.error("Insert interaction error:", e.message);
@@ -384,6 +388,13 @@ async function syncEmailsForUser(
       } catch (e: any) {
         console.error(`[contact-details] ${userEmail}:`, e?.message);
       }
+    }
+
+    // Emails that read like a requirement, from a brand's own person or an
+    // agent: suggestions for the Requirements centre (server/requirement-email-feed.ts).
+    if (requirementReads.size) {
+      await readQueuedRequirementEmails((path, headers) => graphGet(token, `${GRAPH_BASE}${path}`, headers), userEmail, requirementReads,
+        { mailboxName: options.contactDetails?.staffNames.get(userEmail.toLowerCase()) || null });
     }
   } catch (e: any) {
     // Surface per-mailbox failures to the caller — swallowing them here made

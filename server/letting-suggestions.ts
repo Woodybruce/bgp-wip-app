@@ -17,12 +17,16 @@
 //
 // Detection is the shorthand rules only: no AI call, nothing sent anywhere.
 // It runs when a source row is saved (scanUnitForSuggestions, fire and forget
-// from the handlers that write a target comment, a viewing, an interest line
-// or a brief comment) and from the admin Preview then Apply. Never at boot,
-// never on a timer. It never reads inbox-swept rows, emails, chat, deal
-// comments or CRM interactions.
+// from the handlers that write a target comment, a viewing, an interest line,
+// a brief comment or a message in a property's conversation) and from the
+// admin Preview then Apply. Never at boot, never on a timer. Since 15
+// November 2026 (Woody: team chat is read) it reads the Letting Tracker's
+// comments: messages in the property's shared conversation that tag the unit.
+// It never reads a private thread, ChatBGP's answers, inbox-swept rows,
+// emails, deal comments or CRM interactions.
 //
 // Who sees what (suggestionVisibleTo): a target's comments are BGP's notes,
+// and a Tracker comment sits in a conversation a joint agent does not open,
 // so those rows ('bgp') are for BGP staff only. The rest ('brief') are for
 // BGP staff and the scheme's joint agent. An asset manager, a Landsec leasing
 // manager and every other client login are shown nothing, counted nothing and
@@ -35,7 +39,7 @@ import type { Express, NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import {
   CLOSED_ALREADY_LOGGED, CLOSED_SOURCE_CHANGED, DISMISS_REASON_MAX, SUGGESTION_KINDS, SUGGESTION_SOURCE_LABELS, SUGGESTION_SOURCES,
-  alreadyLogged, candidatesForUnit, describeSuggestion, parseSourceRef, suggestionVisibleTo,
+  alreadyLogged, candidatesForUnit, chatCommentBrandTags, describeSuggestion, parseSourceRef, plainChatComment, suggestionVisibleTo,
   type LettingSuggestion, type LoggedRecord, type SuggestionCandidate, type SuggestionDetails, type SuggestionKind, type SuggestionSource,
   type SuggestionStatus, type SuggestionViewer, type UnitBrand, type UnitSources,
 } from "@shared/letting-suggestions";
@@ -44,6 +48,9 @@ type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>
 
 const BGP_EMAIL_DOMAIN = "@brucegillinghampollard.com";
 const LIST_MAX = 500;
+// The creator of a property's shared conversation (RECORD_THREAD_CREATOR in
+// server/record-conversation.ts, which loads the database: keep in step).
+const RECORD_THREAD_CREATOR = "__record__";
 // The inbox and diary sweeps write these notes (server/viewing-sync.ts). They
 // are BGP's email history, never a person's own note.
 const SWEPT_INTEREST_NOTE = /^(Detected in [^\n]*'s inbox: |Synced from [^\n]*'s Outlook diary: |Backfilled from synced email: )/;
@@ -60,7 +67,7 @@ const textDay = (s: unknown): string | null => (typeof s === "string" && /^\d{4}
 // ── Reading one unit's sources ─────────────────────────────────────────────
 
 async function loadUnitSources(db: Db, unitId: string, staffNames: readonly string[], today: string): Promise<UnitSources | null> {
-  const unit = (await db.query(`SELECT id, asking_rent FROM available_units WHERE id = $1`, [unitId])).rows[0];
+  const unit = (await db.query(`SELECT id, asking_rent, property_id FROM available_units WHERE id = $1`, [unitId])).rows[0];
   if (!unit) return null;
   const brief = (await db.query(`SELECT id, commercials FROM unit_briefs WHERE unit_id = $1 ORDER BY created_at LIMIT 1`, [unitId])).rows[0] || null;
   const targets = brief ? (await db.query(
@@ -82,6 +89,17 @@ async function loadUnitSources(db: Db, unitId: string, staffNames: readonly stri
   const briefComments = brief ? (await db.query(
     `SELECT id, body, user_name, created_at FROM unit_brief_comments WHERE brief_id = $1 AND kind = 'comment' ORDER BY created_at, id`, [brief.id])).rows : [];
   const offers = (await db.query(`SELECT company_id, company_name, offer_date, viewing_id FROM unit_offers WHERE unit_id = $1`, [unitId])).rows;
+  // Letting Tracker comments: what people wrote in the property's shared
+  // conversation with this unit tagged (server/record-conversation.ts).
+  // Never a private thread, and never ChatBGP's own answers.
+  const chat = unit.property_id ? (await db.query(
+    `SELECT m.id, m.content, m.created_at, u.name AS sender
+       FROM chat_threads t JOIN chat_messages m ON m.thread_id = t.id AND m.role = 'user' LEFT JOIN users u ON u.id = m.user_id
+      WHERE t.created_by = $1 AND t.linked_type = 'property' AND t.linked_id = $2 AND position($3 in m.content) > 0
+      ORDER BY m.created_at, m.id`, [RECORD_THREAD_CREATOR, String(unit.property_id), `(tag:unit/${unitId})`])).rows : [];
+  const chatTagIds = [...new Set(chat.flatMap((m: any) => chatCommentBrandTags(String(m.content || "")).map(t => t.id)))];
+  const chatBrandNames = new Map<string, string>(chatTagIds.length ? (await db.query(
+    `SELECT id, name FROM crm_companies WHERE id = ANY($1::varchar[]) AND merged_into_id IS NULL`, [chatTagIds])).rows.map((r: any) => [String(r.id), String(r.name || "")]) : []);
 
   // The brands on the unit: the CRM brands its offers, viewings, interest and
   // targets link, and the targets named in words only.
@@ -106,6 +124,11 @@ async function loadUnitSources(db: Db, unitId: string, staffNames: readonly stri
     })),
     interest: interest.map((i: any) => ({ id: String(i.id), companyId: i.company_id || null, companyName: i.company_name || null, notes: i.notes || null, interestDate: textDay(i.interest_date) })),
     briefComments: briefComments.map((c: any) => ({ id: String(c.id), body: String(c.body || ""), userName: c.user_name || null, day: dayOf(c.created_at) })),
+    chatComments: chat.map((m: any) => ({
+      id: String(m.id), text: plainChatComment(String(m.content || ""), unitId), userName: m.sender || null, day: dayOf(m.created_at),
+      // A tagged brand counts when its record is still there: its name is the record's, never the tag's own text.
+      tagged: chatCommentBrandTags(String(m.content || "")).filter(t => chatBrandNames.has(t.id)).map(t => ({ companyId: t.id, name: chatBrandNames.get(t.id)! })),
+    })),
     offersLogged: offers.map((o: any): LoggedRecord => ({ companyId: o.company_id || null, brandName: o.company_name || null, date: textDay(o.offer_date), viewingId: o.viewing_id || null })),
     viewingsLogged: viewings.map((v: any): LoggedRecord => ({ companyId: v.company_id || null, brandName: v.company_name || null, date: textDay(v.viewing_date) })),
   };
@@ -238,7 +261,7 @@ async function scanSoon(unitId: string): Promise<void> {
  * the save and never as part of it. Returns at once and never throws; a scan
  * that fails only writes a log line.
  */
-export function queueSuggestionScan(ref: { unitId?: string | null; targetId?: string | null; briefId?: string | null; viewingId?: string | null } | null | undefined): void {
+export function queueSuggestionScan(ref: { unitId?: string | null; targetId?: string | null; briefId?: string | null; viewingId?: string | null; chatContent?: string | null } | null | undefined): void {
   void (async () => {
     try {
       if (!ref) return;
@@ -250,6 +273,8 @@ export function queueSuggestionScan(ref: { unitId?: string | null; targetId?: st
       if (!unitId && ref.briefId) unitId = (await pool.query(`SELECT unit_id FROM unit_briefs WHERE id = $1`, [String(ref.briefId)])).rows[0]?.unit_id || null;
       if (!unitId && ref.viewingId) unitId = (await pool.query(`SELECT unit_id FROM unit_viewings WHERE id = $1`, [String(ref.viewingId)])).rows[0]?.unit_id || null;
       if (unitId) await scanSoon(unitId);
+      // A message in a property's conversation: every unit it tags.
+      for (const m of String(ref.chatContent || "").matchAll(/\(tag:unit\/([^)\s]+)\)/g)) if (m[1] !== unitId) await scanSoon(m[1]);
     } catch (e: any) {
       console.warn("[letting-suggestions] scan skipped:", e?.message || e);
     }
@@ -265,6 +290,8 @@ const UNITS_WITH_SOURCES = `
     UNION SELECT unit_id FROM unit_viewings WHERE deleted_at IS NULL AND unit_id IS NOT NULL AND (outcome IN ('Offer Received', 'Offer Expected') OR COALESCE(notes, '') <> '')
     UNION SELECT unit_id FROM unit_interest WHERE source IS NULL AND email_conversation_id IS NULL AND COALESCE(notes, '') <> ''
     UNION SELECT b.unit_id FROM unit_brief_comments c JOIN unit_briefs b ON b.id = c.brief_id WHERE c.kind = 'comment'
+    UNION SELECT (regexp_matches(m.content, '\\(tag:unit/([^)\\s]+)\\)', 'g'))[1] FROM chat_threads t JOIN chat_messages m ON m.thread_id = t.id AND m.role = 'user'
+           WHERE t.created_by = '${RECORD_THREAD_CREATOR}' AND t.linked_type = 'property'
     UNION SELECT unit_id FROM letting_suggestions WHERE status = 'open'
   ) x JOIN available_units u ON u.id = x.unit_id`;
 
@@ -316,7 +343,7 @@ export async function runSuggestionBacklog(opts: { dryRun: boolean; db?: Db }): 
 
 // ── The list a caller may see ──────────────────────────────────────────────
 
-const SOURCE_ORDER = `CASE s.source_kind WHEN 'target_comment' THEN 0 WHEN 'viewing' THEN 1 WHEN 'interest_note' THEN 2 ELSE 3 END`;
+const SOURCE_ORDER = `CASE s.source_kind WHEN 'target_comment' THEN 0 WHEN 'viewing' THEN 1 WHEN 'interest_note' THEN 2 WHEN 'brief_comment' THEN 3 ELSE 4 END`;
 const SELECT_SUGGESTIONS = `
   SELECT s.id, s.unit_id, s.kind, s.company_id, s.brand_name, s.source_kind, s.source_ref, s.excerpt, s.details, s.said_by,
          to_char(s.evidence_date, 'YYYY-MM-DD') AS evidence_day, s.visibility, s.status, s.created_at,

@@ -22,7 +22,7 @@ const code = file => {
 };
 const imports = file => [...source(file).matchAll(/(?:from\s+|import\()\s*["']([^"']+)["']/g)].map(m => m[1]);
 
-test('the email reader is not built: no requirements-centre file reaches a mailbox', () => {
+test('email reaches the centre through one file, which only suggests; no other centre file reaches a mailbox', () => {
   const mailModules = /(^|\/)(interactions|archivist|shared-mailbox|private-mail-graph|viewing-sync|email-processor|insights-feed|graph|ms-graph|outlook)[^/]*$/i;
   for (const file of CENTRE_FILES) {
     for (const name of imports(file)) assert.doesNotMatch(name, mailModules, `${file} imports ${name}`);
@@ -33,6 +33,24 @@ test('the email reader is not built: no requirements-centre file reaches a mailb
   const addEvidence = find('server/requirement-intake-routes.ts', (n, ast) => ts.isCallExpression(n) &&
     n.expression.getText(ast) === 'app.post' && n.arguments[0]?.getText(ast) === '"/api/requirement-centre/requirements/:id/evidence"');
   assert.doesNotMatch(addEvidence, /messageId|emailId|graph|fetch\(/i);
+
+  // The email feed (Woody, 2026-11-15: yes to reading BGP's emails for what brands want).
+  const feedFile = 'server/requirement-email-feed.ts';
+  // The source without its comments (they describe what the code must not do).
+  const feed = source(feedFile).replace(/^\s*\/\/.*$/gm, '');
+  // Its one door into the centre is suggest: never a requirement, a confirmation or a write of its own.
+  assert.match(feed, /\bsuggest\(store,/);
+  assert.doesNotMatch(feed, /\bconfirm\(|stillLive\(|setOwner\(|INSERT INTO|UPDATE crm_|crm_requirements_leasing|requirement_evidence/i);
+  // The private side of the mail boundary is checked on the fetched email before its words are taken.
+  const privateCheck = feed.indexOf('isPrivateEmailRecord(message, mailbox)');
+  assert.ok(privateCheck > -1 && privateCheck < feed.indexOf('const text = ownWords(message)'));
+  // Anthropic through the capped reader, with its own daily allowance; never the provider switch.
+  for (const name of imports(feedFile)) assert.doesNotMatch(name, /ai-provider|openai|gemini|utils\/anthropic-client/i, `${feedFile} imports ${name}`);
+  assert.match(feed, /readStatedRequirements\(/);
+  assert.match(feed, /REQUIREMENT_EMAIL_READER_DAILY_CAP/);
+  // The sync hands it only a newly filed email the contact wrote: never BGP's own outgoing mail.
+  assert.match(source('server/interactions.ts'), /if \(r\.rowCount && match\.method === "email" && !isBgpSender && options\.captureSignals !== false\) queueRequirementEmail\(requirementReads, msg, match\.contact\);/);
+  assert.match(feed, /sender !== String\(contact\.email/);
 });
 
 test('detection reads go to Anthropic directly, are capped per day and are quiet with no key', () => {
@@ -133,7 +151,7 @@ test('the page keeps staff tools from client logins and has no Wipe & resync', (
 
 test("ChatBGP's app map describes the centre and how a phone user reaches it", () => {
   const map = source('server/chatbgp-app-map.ts');
-  for (const phrase of ['Requirements centre', '**To confirm**', '**Still live**', 'evidence drawer', '**Health report**', 'Suggestions to answer', '/requirements?list=to_confirm', 'take me to requirements', 'does not read email for requirements'])
+  for (const phrase of ['Requirements centre', '**To confirm**', '**Still live**', 'evidence drawer', '**Health report**', 'Suggestions to answer', '/requirements?list=to_confirm', 'take me to requirements', '**Emails** (since 15 November 2026)', 'never the private mailbox'])
     assert.ok(map.includes(phrase), `app map does not mention: ${phrase}`);
   assert.doesNotMatch(map, /no screen (yet )?for the Expanding list|not built yet: the To confirm/i);
 });

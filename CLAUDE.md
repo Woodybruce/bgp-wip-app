@@ -201,9 +201,18 @@ the same save (the deal PUT, or the clock PUT); NER and "Not checked" open
 the lease terms, Brief check opens the unit's `UnitBriefDialog`, Depends on
 opens the Waiting on form. A closed deal shows its closing stage and date and
 dashes with the reason in the title: never a waiting-on or a stage date for
-it. A cell a login may not change is plain text: for a client login (Client,
-Team, BGP Contact, Instructed, Exchanged, Completed; no bin; no Completed or
-Invoiced status; party pickers create contacts and tenant brands only). A
+it. A cell a login may not change is plain text: for a client login the
+Client only (no bin; no Completed or Invoiced status; party pickers create
+contacts and tenant brands only). **A client login and a joint agent change
+the Team, the BGP Contact and the Instructed, Exchanged and Completed dates**
+(Woody, 2026-11-15: "Landsec can change, as can joint agent"). Team and BGP
+Contact are off by default: turn them on from Columns. A client picks BGP's
+people from the names already on its deals (the fee split stays BGP's own,
+so its editor is never opened for a client), and the server takes from a
+client only a name already on the deal or an active BGP login
+(`PUT /api/crm/deals/:id`, 400 otherwise). A joint agent is sent a deal's
+team and BGP people (they came off `JOINT_AGENT_HIDDEN_DEAL_FIELDS`); the
+fee and everything else on that list stay hidden. A
 client's deal save never writes `poNumber` or `invoicedAt` (blanked for it by
 `stripDealFees`) and moves a deal only to a property in its scope.
 
@@ -848,6 +857,91 @@ not opened to them.
   (`brand-card.tsx`). Menu highlights / Best sellers is mounted once, under
   Stores & menu, with a teaser in the summary card. Keep the KEEP LIST in
   `docs/brands-review-2026-11-12.md` when changing the page.
+  - **Expansion** (Woody, 2026-11-14: "the display doesn't look great
+    between the 2 ... needs improvement and design tidy up"). The score
+    card is the figure with its band (`expansionBand`, the Hunter board's
+    bands), then the four parts one under the other, each with its bar and,
+    for staff, every why-line of that part (`SCORE_PARTS`; no separate "Why
+    this score"). The Signals card draws one line per signal in three
+    columns (kind, headline, date), with the estate list first
+    (`isEstateSignal`: every kind but plain news, plus a plain news story
+    whose headline is about sites, hiring, deals or money) and general
+    coverage folded under **Other news**; the Expansion pill counts the
+    estate list. That rule only decides which list a story is drawn in.
+    The score counts one story once (`dedupeFacts` in
+    `server/hunter-score.ts`: the same headline or the same link) and a
+    headcount fall is its own line, "Headcount falling". The review of what
+    the score could not see is `docs/expansion-review-2026-11-14.md`; its
+    "Built on 15 November" section says which ideas are now built.
+  - **Expansion and Relationship are two figures** (Woody, 2026-11-15: "Yes
+    to all on expansion apart from 6 keep running 25 a night"; do not
+    re-litigate). `computeExpansionScoreV2` in `server/hunter-score.ts`:
+    **Expansion** is market evidence only, four parts of 25 (UK momentum,
+    Pipeline, Capacity, Intent), out of 100; **Relationship** is BGP's own
+    work with the brand (deals, offers, viewings, contact), out of 25, and
+    is NEVER added to Expansion. `score` / `expansionScore` and the saved
+    `brand_score_history.hunter_score` are the Expansion figure;
+    Relationship is `relationship` and `sub_scores.engagement`. A row saved
+    before the split holds the old sum, so every reader works both out from
+    the sub-scores (`splitSubScores`). Bands and alerts (Very hot 30, Hot
+    20, Watch 10; hot / cooling emails) are judged on Expansion.
+    `SCORE_VERSION` is 5. A client login is sent Expansion only
+    (`clientScoreView` drops the Relationship figure, part and lines). The
+    Hunter board shows Relationship beside each score for staff and has a
+    **No BGP relationship** filter (Expansion 10 or more, Relationship 0:
+    the prospecting list). Never add the two together again.
+  - **What feeds Expansion besides signals** (same decision):
+    - **The store count** (`server/brand-store-count.ts`, rules in
+      `shared/store-count.ts`): the brand's own website sitemap is read for
+      its page-per-store set (no AI), about once a month per brand, 90
+      brands a night (`brand-store-count` job, 02:30), kept as dated
+      snapshots in `brand_store_counts`; openings and closures are the
+      difference between two good snapshots of the same set. A count under
+      60% of the last is saved flagged and left out. It leads UK momentum
+      ("Net +N sites in M months, counted on its own website"; a net fall
+      in an estate of 50 or more is damped as churn) and then headlines
+      about openings count for less. It cannot count a store finder with no
+      page per store (Wingstop, Five Guys, Wagamama, Pizza Express) or a
+      site that refuses a plain request (Dishoom, McDonald's): those fall
+      back to the locations-page list or have no count.
+    - **Planning applications and job adverts** (`server/brand-pipeline.ts`,
+      rules in `shared/brand-pipeline.ts`, tables `brand_pipeline_items` /
+      `brand_pipeline_checks`, job `brand-pipeline` 03:45, 60 brands a
+      night): PlanIt is searched by brand name; a record counts only when
+      the description names the brand (not as a former, existing or
+      neighbouring occupier), is about works a new occupier applies for
+      (shopfront, signage, change of use, fit-out, extraction) and is under
+      12 months old. A name too common to search (Next, Boots, any single
+      word of four letters or fewer but Pret and Itsu) is skipped and says
+      so. Job adverts come from Adzuna and are OFF until `ADZUNA_APP_ID` and
+      `ADZUNA_APP_KEY` are set; that half has never been run against
+      Adzuna. Licensing registers are council by council and are not read.
+    - **Plans stated in the filed accounts** (`server/accounts-plans.ts`,
+      checks in `shared/accounts-plans.ts`): openings, closures and capital
+      spend planned after the year end, kept under
+      `companies_house_data.latestAccountsPlans`. Accounts with a text
+      layer are read as text and every plan must quote a sentence that is
+      in them; scanned accounts are read from page images and say so.
+      Anthropic only, one read per filing, nightly (`accounts-plans` job,
+      03:30) under `ACCOUNTS_PLANS_DAILY_CAP` (default 15, 0 = off), the
+      highest Expansion score first. A plan counts in full for 18 months
+      after the year end, half to 30 months, then nothing.
+    - **A sale of sites is a contraction** (`siteSale`): "agreed to sell a
+      24-pub package" takes points off UK momentum. A story where the brand
+      is the buyer does not.
+    - **The rollout badge lapses after six months** (`shared/rollout-badge.ts`,
+      `crm_companies.rollout_status_at`, stamped by a database trigger when
+      the badge changes and by the brand save when a person saves it
+      again). A lapsed badge scores nothing and is drawn greyed "· lapsed".
+      A badge set before 15 November 2026 has no date and counts from that
+      day. Brand Gap, the Brand Pack and the digest still read the raw
+      badge.
+    The nightly tidy (`normaliseBrandFacts`) stays at 25 brands a night:
+    Woody declined running it on every brand. On the page the two measured
+    cards, **Store count** and **Sites on the way**
+    (`client/src/components/brand-page/estate-pipeline.tsx`), lead the
+    evidence column above Signals; a client login reads them (public data)
+    and only BGP staff can ask for a fresh count or check.
   - **People & checks is a matched pair** (Woody, 2026-11-13: "same
     height"). On two columns Key contacts and Company checks are one height
     while both are at rest; a card marked `data-own-height` (opened with
@@ -988,8 +1082,10 @@ Decided by Woody on 13 November 2026 (do not re-litigate):
   rules; anything else goes to Anthropic only, with a daily cap. Contacts
   already added from email with no title or phone are worked through by the
   same hourly job a small batch at a time, oldest first. This is the one
-  timed job allowed to read staff email text for contact details; reading
-  it for requirements is still not approved. It has not been run against
+  timed job allowed to read staff email text for contact details. (Reading
+  email for requirements was approved on 15 November 2026 and is its own
+  file, `server/requirement-email-feed.ts`: see the Requirements centre
+  section.) It has not been run against
   Microsoft from a build machine: check Settings → Email Intelligence →
   Sync Health after a deploy.
 - **The "Auto-added from email" note opens its email, for BGP staff only**
@@ -1942,6 +2038,24 @@ what was read, fills the form, and saves through the form's own route.
   nothing. The separate "Paste a note" box stays only where there is no
   comments box (a joint agent editing an offer someone else logged) and for
   "Log as offer / Log as viewing", which read a stored comment.
+- **A note with more than one rent lists each to choose from** (Woody,
+  2026-11-15: "list both rent"). The rules still fill none (the offer and a
+  previous tenant's, a stepped rent, a rent that was turned down). The
+  shorthand reading carries `rentOptions` (each figure with the words that
+  lead up to it; never a net effective rent), and `guardReading` lists them
+  as `unsure` lines for `rentPa`, each with its own Use. The read-back then
+  has no "Left out: rent". A range ("£100k-£120k") is still left out.
+- **The email behind an offer is read by the same reader** (Woody,
+  2026-11-15: email bodies are read). The email pop-out on an offer the
+  inbox sweep found (`tracker-source.tsx`, `POST
+  /api/tracker/offer/:offerId/extract`, BGP staff only) reads the newest
+  outside message that states the offer, without the messages quoted under
+  it (`offerMessageWords` in `server/email-contact-reader.ts`), through
+  `readLettingNote`. Each value comes back with the words it came from and a
+  tick box; a box with two values (two rents) is left for the person to
+  choose; **Apply to offer** fills the edit form with the ticked lines and
+  saves nothing. It replaced a looser reader that converted rents per
+  square foot and checked no quote.
 - **Log as offer / Log as viewing** on a target's comments (staff Letting
   Tracker) is BGP staff only, because the comments are BGP's notes. The
   server fetches the comment by target id and timestamp
@@ -1951,8 +2065,11 @@ what was read, fills the form, and saves through the form's own route.
   changed.
 - **Never make the reader save**, and never route "drop a note in" through
   ChatBGP's `log_offer`, which saves at once with no form to check.
-- **NOT built, each waits on Woody** (do not build without his answer):
-  reading team chat; reading email bodies.
+- Woody said yes to reading team chat and email bodies on 15 November 2026.
+  Built: Letting Tracker comments as a source of comments not yet logged
+  (below), and the offer email read above. NOT built: reading private chat
+  threads or ChatBGP conversations, and raising a suggestion from an email
+  (the inbox sweep already makes an unconfirmed offer or interest row).
 - **Comments not yet logged** (Woody, 2026-11-13: "yes to table"). A comment
   that reads as an offer or a viewing, with none logged for that unit and
   brand, is a SUGGESTION in `letting_suggestions` (migration 0060, on
@@ -1969,12 +2086,16 @@ what was read, fills the form, and saves through the form's own route.
     (or two terms); a viewing needs words of a viewing with a date or an
     outcome. Words that only repeat the quoting rent, or that the reader
     refused, raise nothing. Change the rule there, with a test.
-  - **Four sources, nothing else**: a target's comment log (BGP's notes),
+  - **Five sources, nothing else**: a target's comment log (BGP's notes),
     a viewing whose outcome is Offer Expected or Offer Received or whose
     note reads as an offer, an interest note a person typed, a Targeting
-    Brief comment that names one brand on the unit. Never inbox-swept rows,
-    a diary invitation's subject, emails, chat, deal comments or CRM
-    interactions.
+    Brief comment that names one brand on the unit, and since 15 November
+    2026 a **Letting Tracker comment**: a person's message in the property's
+    shared conversation that tags the unit (`chat_comment`). Its brand is
+    the one brand the message tags, or the one brand on the unit its words
+    name; two tagged brands, or none found, raise nothing. Never a private
+    thread, ChatBGP's answers, inbox-swept rows, a diary invitation's
+    subject, emails, deal comments or CRM interactions.
   - **Already logged** = an offer (or viewing) for the same unit and brand
     within 14 days either side. A viewing that expects an offer looks
     forward: any offer from that brand since. The dedupe key is the source,
@@ -1982,12 +2103,15 @@ what was read, fills the form, and saves through the form's own route.
     never comes back and an edited comment is raised once more.
   - **It runs when a source is saved** (`queueSuggestionScan`, one fire and
     forget line in the handlers that write a target comment, a viewing, an
-    interest line and a brief comment; it never fails or slows the save)
+    interest line, a brief comment and a message in a property's
+    conversation that tags a unit, edited and deleted ones included; it
+    never fails or slows the save)
     and from the admin Preview then Apply
     (`/api/admin/letting-suggestions/preview|apply`; Settings → Letting
     integrity → Backfills). Never at boot, never on a timer.
-  - **Who sees what**: rows from target comments are `visibility = 'bgp'`,
-    BGP staff only (`isStaff && seesBgpNotes`). The rest are `'brief'`: BGP
+  - **Who sees what**: rows from target comments and from Tracker comments
+    (a joint agent does not open the property's conversation) are
+    `visibility = 'bgp'`, BGP staff only (`isStaff && seesBgpNotes`). The rest are `'brief'`: BGP
     staff and the scheme's joint agent. An asset manager, a Landsec leasing
     manager and every other client login are listed nothing, counted
     nothing and get the same 404 for any id. Every route goes through
@@ -2133,9 +2257,10 @@ Two rules everything else follows (do not re-litigate):
   the `scope: "any"` senders such as Propel and Property Week) is read whole
   and handed to `newsStoriesRead` (`publisher: true`); an email from an agent
   or data firm in the shared inbox (`scope: "shared"`: Knight Frank, Savills,
-  CBRE, CoStar, Green Street) never reaches the requirements centre. This is
-  the ONLY email text read for requirements; Woody asked for Propel to drive
-  requirements but has not confirmed this path in so many words. After writing signals
+  CBRE, CoStar, Green Street) never reaches the requirements centre. Besides
+  this, the only email text read for requirements is the email feed below.
+  Woody asked for Propel to drive requirements but has not confirmed this
+  path in so many words. After writing signals
   the readers call `newsStoriesRead`: a strong story (`strongStory`: a brand
   already in the CRM with a stated number of UK sites, or a stated size or
   places) raises a press suggestion; a closure, CVA or administration story
@@ -2221,12 +2346,28 @@ Two rules everything else follows (do not re-litigate):
 - `GET /api/admin/requirements-health` (`server/requirements-health.ts`;
   on the page: Sync tools → Health report, admins) reports; nothing repairs
   at boot. Back-fills are admin Preview then Apply.
+- **Emails feed suggestions** (Woody, 2026-11-15: yes to reading BGP's own
+  emails for what brands say they want). `server/requirement-email-feed.ts`
+  is the ONE file that takes mail text into the centre. The hourly mailbox
+  sync hands it an email it has just filed against a contact, only when the
+  contact wrote it (never BGP's own outgoing mail), the writer's company is
+  a tenant brand or an agent firm, and the subject or opening lines read
+  like a requirement (a rule, no AI). The email is fetched, refused if it
+  is on the private side of the mail boundary, and only the writer's own
+  words are read (the thread quoted under them and the footer are cut off)
+  by `readStatedRequirements` under its own allowance
+  (`REQUIREMENT_EMAIL_READER_DAILY_CAP`, default 60, 0 = off; 8 a mailbox
+  a run). It only ever calls `suggest` (kind `email`, "From the email" in
+  the tray): a brand's own email is that brand's; an agent's email names
+  the brand, which may need picking. The email is not stored, only the
+  quote. "Add evidence → email" is still a line a person types. It has not
+  been run against Microsoft from a build machine. Guards:
+  `qa/regression/requirements-centre-guards.test.mjs`,
+  `server/requirement-email-feed.test.ts`.
 - **NOT built** (each waits on Woody; do not build without his answer):
-  - **The email reader.** Reading staff email text for requirements needs
-    his explicit yes. No code fetches or reads a staff email body for
-    requirements; "Add evidence → email" is a line a person types. The one
-    exception is the publisher newsletter path above (Propel and the like,
-    never an agent firm's mail), which he should confirm.
+  - **Reading private chat threads and ChatBGP conversations** for
+    requirements, and working back through emails already filed (the email
+    feed reads new mail only).
   - **The Landsec view.** Client logins were given nothing new; only leaks
     of BGP's hand-entered requirements were closed. Slice-limited listings
     and a share marker need his decision (review, Across the app 4).

@@ -21,7 +21,8 @@ test("BGP's fee, invoicing, contacts, comments and compliance are left off a dea
     fee: 1000, feePercentage: 10, invoicingNotes: "x", xeroContactName: "x", comments: "BGP comment", internalAgent: "Rob",
     clientContactId: "c", tenantContactId: "c", amlRiskLevel: "high", aml_pep_status: "x", kycApproved: true, mlrScope: "x", poNumber: "1",
   };
-  assert.deepEqual(withoutJointAgentFields(row, JOINT_AGENT_HIDDEN_DEAL_FIELDS), { id: "d1", name: "U124 letting", status: "SOL", propertyId: "p1", rentPa: 120000, tenantId: "t1" });
+  // BGP's team and its people on the deal stay: a joint agent reads and sets them (Woody, 2026-11-15).
+  assert.deepEqual(withoutJointAgentFields({ ...row, team: ["Landsec"] }, JOINT_AGENT_HIDDEN_DEAL_FIELDS), { id: "d1", name: "U124 letting", status: "SOL", propertyId: "p1", rentPa: 120000, tenantId: "t1", internalAgent: "Rob", team: ["Landsec"] });
 });
 
 test("the property and deal reads, the schedules and the plan parts cut the answer to the joint agent's schemes", () => {

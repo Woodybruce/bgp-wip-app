@@ -88,7 +88,7 @@ test('ChatBGP in a conversation with a joint agent: who asked decides, and only 
     assert.ok(!answer.includes(never), `answerAsJointAgents uses ${never}`);
   }
   assert.ok(answer.includes('if (!shared) return post(JOINT_AGENT_NO_SHARED_SCHEME);'));
-  const post = body(routes, 'app.post("/api/chat/threads/:id/messages"', 9000);
+  const post = body(routes, 'app.post("/api/chat/threads/:id/messages"', 9600);
   // A property's shared conversation answers only when ChatBGP is named (record-conversation-guards).
   assert.ok(post.includes('const askedByName = typeof content === "string" && AI_MENTION_REGEX.test(content);'));
   assert.ok(post.includes('} else if (!thread.hasAiMember && !thread.isAiChat && askedByName) {'));

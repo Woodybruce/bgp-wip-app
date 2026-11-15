@@ -80,6 +80,8 @@ import { LandlordAccountGallery } from "@/components/account-media-gallery";
 import { AccountNextActionsCard, InvestmentRequirementsCard, AccountFolderTreeCard, useAccountWorkspace } from "@/components/account-workspace-cards";
 import { AccountEntitiesPanel } from "@/components/account-entities-panel";
 import { daysSinceContact, latestPastContact } from "@shared/last-contact";
+import { rolloutBadge } from "@shared/rollout-badge";
+import { EstatePipelineCards, type StatedPlans } from "@/components/brand-page/estate-pipeline";
 
 interface BrandProfile {
   identity?: { status: "verified" | "review"; domain: string | null };
@@ -105,6 +107,7 @@ interface BrandProfile {
     concept_pitch: string | null;
     store_count: number | null;
     rollout_status: string | null;
+    rollout_status_at?: string | null;
     backers: string | null;
     instagram_handle: string | null;
     tiktok_handle: string | null;
@@ -346,8 +349,15 @@ const ROLLOUT_OPTIONS = [
   { value: "rumoured",     label: "Rumoured entry" },
 ];
 
-function RolloutBadge({ status }: { status: string | null }) {
+// The badge lapses six months after it was set (shared/rollout-badge.ts): a
+// lapsed one is drawn greyed and says how to renew it.
+function RolloutBadge({ status, setAt }: { status: string | null; setAt?: string | null }) {
   if (!status) return null;
+  const state = rolloutBadge(status, setAt);
+  if (!state.live) {
+    const label = (ROLLOUT_OPTIONS.find(o => o.value === status)?.label || status).split(" — ")[0];
+    return <Badge variant="outline" className="text-muted-foreground font-normal" title={`Set more than six months ago${state.lapsesOn ? ` (lapsed ${ukDate(state.lapsesOn, { day: "numeric", month: "short", year: "numeric" })})` : ""}: it no longer counts in the Expansion score. Save it again in Edit to renew it.`} data-testid="badge-rollout-lapsed">{label} · lapsed</Badge>;
+  }
   const map: Record<string, { label: string; cls: string; icon: any }> = {
     scaling:     { label: "Scaling",     cls: "bg-emerald-100 text-emerald-700 border-emerald-200", icon: TrendingUp },
     stable:      { label: "Stable",      cls: "bg-blue-100 text-blue-700 border-blue-200",          icon: Check },
@@ -743,6 +753,36 @@ export const accountBoardContacts = (ws: NonNullable<ReturnType<typeof useAccoun
 export { dedupeGalleryImages };
 // A "hiring" signal that reports headcount down 12% is contracting, not
 // hiring (Woody, 2026-09-28).
+// One tone per kind of signal, for every list that draws them.
+const SIGNAL_TYPE_CLS: Record<string, string> = {
+  opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
+  hiring:      "bg-teal-50 text-teal-700 border-teal-200",
+  headcount_down: "bg-amber-50 text-amber-700 border-amber-200",
+  requirement: "bg-orange-50 text-orange-700 border-orange-200",
+  closure:     "bg-red-50 text-red-700 border-red-200",
+  funding:     "bg-violet-50 text-violet-700 border-violet-200",
+  exec_change: "bg-blue-50 text-blue-700 border-blue-200",
+  sector_move: "bg-amber-50 text-amber-700 border-amber-200",
+  rumour:      "bg-zinc-50 text-zinc-600 border-zinc-200 italic",
+  news:        "bg-zinc-50 text-zinc-700 border-zinc-200",
+};
+// BGP's own work with a brand, out of 25 (the Relationship figure).
+export function relationshipBand(score: number): string {
+  return score >= 15 ? "Close" : score >= 8 ? "Active" : score >= 1 ? "Light" : "None";
+}
+// The Hunter board's bands (scoreBand in brand-hunter-board.tsx): keep in step.
+export function expansionBand(score: number): string {
+  return score >= 30 ? "Very hot" : score >= 20 ? "Hot" : score >= 10 ? "Watch" : "Warm";
+}
+// Is this signal about the brand's estate or its means to grow (the Signals
+// card's main list), or general coverage (folded under "Other news")? Every
+// kind but plain news is; a plain news story is when its headline talks of
+// sites, openings, closures, hiring, deals or money. It only decides which
+// list a story is drawn in: the kind and the score are not changed.
+const ESTATE_WORDS_RE = /\b(?:re-?open(?:s|ed|ing)?|open(?:s|ed|ing|ings)?|clos(?:e|es|ed|ing|ure|ures)|expan(?:d|ds|ded|ding|sion)|roll-?out|new (?:site|store|shop|restaurant|branch|pub|caf[eé]|bar|outlet|location|venue|flagship)s?|sites?|stores?|flagship|debut|recruit(?:s|ing|ment)?|hir(?:e|es|ing)|jobs|franchis\w*|acqui(?:re|res|red|sition)\w*|takeover|buys?|bought|sells?|sold|sale of|disposals?|lease|landlord|planning (?:permission|approval|application|consent)|licen[cs]e application|administration|cva|insolvenc\w*|restructur\w*|funding|investment|invests?|raises?|stake|refurb\w*|relocat\w*|sq\.? ?ft|signs?|signed|operators?)\b/i;
+export function isEstateSignal(s: { signal_type?: string | null; headline?: string | null }): boolean {
+  return signalKind(s) !== "news" || ESTATE_WORDS_RE.test(String(s.headline || ""));
+}
 export function signalKind(s: { signal_type?: string | null; headline?: string | null }): string {
   const type = String(s.signal_type || "news");
   return type === "hiring" && /\b(?:down|fell|fall(?:s|en|ing)?|cut|cuts|cutting|declin(?:e|es|ed|ing)|drop(?:s|ped)?|shr(?:ank|unk|inks?)|reduc(?:e|es|ed|ing|tion)|lay-?offs?|redundanc(?:y|ies))\b/i.test(String(s.headline || ""))
@@ -946,6 +986,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const [repForm, setRepForm] = useState<RepForm>(EMPTY_REP_FORM);
   const [repSearch, setRepSearch] = useState("");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
+  const [otherNewsOpen, setOtherNewsOpen] = useState(false);
+  const [researchAll, setResearchAll] = useState(false);
   const [openEmail, setOpenEmail] = useState<{ msgId: string; mailboxEmail: string } | null>(null);
   const [openMeeting, setOpenMeeting] = useState<{ eventId: string; mailboxEmail: string } | null>(null);
   const [addSignalOpen, setAddSignalOpen] = useState(false);
@@ -1555,8 +1597,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const { data: hunter, isLoading: hunterLoading } = useQuery<{
     expansionScore: number;
     expansionFlags: string[];
-    subScores?: { ukMomentum: number; capacity: number; intent: number; engagement: number };
+    relationship?: number;
+    subScores?: { ukMomentum: number; pipeline?: number; capacity: number; intent: number; engagement?: number };
     lines?: { points: number; label: string; bucket: string }[];
+    badge?: { status: string | null; live: boolean; setAt: string | null; lapsesOn: string | null };
   }>({
     queryKey: ["/api/brand", companyId, "hunter-score"],
     queryFn: async () => {
@@ -1719,7 +1763,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
           })()}
           {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[11px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
           {c.agent_type && <Badge variant="secondary" className="text-[11px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
-          {!isLandlord && !isAgentFirm && !isLender && c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
+          {!isLandlord && !isAgentFirm && !isLender && c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} setAt={c.rollout_status_at} />}
         </CardTitle>
         <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
         </div>
@@ -2314,18 +2358,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const signalRows = (rows: any[], gridClass = "grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1", pillTag = false) => (
                 <div className={gridClass}>
                   {rows.map((s: any) => {
-                    const typeCls: Record<string, string> = {
-                      opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
-                      hiring:      "bg-teal-50 text-teal-700 border-teal-200",
-                      headcount_down: "bg-amber-50 text-amber-700 border-amber-200",
-                      requirement: "bg-orange-50 text-orange-700 border-orange-200",
-                      closure:     "bg-red-50 text-red-700 border-red-200",
-                      funding:     "bg-violet-50 text-violet-700 border-violet-200",
-                      exec_change: "bg-blue-50 text-blue-700 border-blue-200",
-                      sector_move: "bg-amber-50 text-amber-700 border-amber-200",
-                      rumour:      "bg-zinc-50 text-zinc-600 border-zinc-200 italic",
-                      news:        "bg-zinc-50 text-zinc-700 border-zinc-200",
-                    };
+                    const typeCls = SIGNAL_TYPE_CLS;
                     const sentCls: Record<string, string> = {
                       positive: "border-l-emerald-400",
                       negative: "border-l-red-400",
@@ -2940,15 +2973,16 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             </>);
   const expansionScoresBlock = !isLandlord && hunter?.subScores && (
                   <div className={brandTop ? "space-y-2" : "rounded-md border p-2 space-y-1.5"} data-testid={brandTop ? "brand-expansion-bars" : undefined}>
-                    {/* A brand's page, client login: BGP's own engagement with the
-                        brand is not one of the bars. */}
-                    <div className={brandTop ? (isClientViewer ? "grid grid-cols-3 gap-x-4 gap-y-2" : "grid grid-cols-2 gap-x-4 gap-y-2 [@container(min-width:1200px)]:grid-cols-4") : "grid grid-cols-2 md:grid-cols-4 gap-2"}>
+                    {/* The four parts of the Expansion score (market evidence).
+                        BGP's own work with the brand is the Relationship
+                        figure: staff only, and not one of these. */}
+                    <div className={brandTop ? "grid grid-cols-2 gap-x-4 gap-y-2 [@container(min-width:1200px)]:grid-cols-4" : "grid grid-cols-2 md:grid-cols-4 gap-2"}>
                       {([
                         ["ukMomentum", "UK momentum"],
+                        ["pipeline", "Pipeline"],
                         ["capacity", "Capacity"],
                         ["intent", "Intent"],
-                        ["engagement", "BGP engagement"],
-                      ] as const).filter(([key]) => !(brandTop && isClientViewer && key === "engagement")).map(([key, label]) => {
+                      ] as const).map(([key, label]) => {
                         const v = (hunter.subScores as any)[key] ?? 0;
                         return (
                           <div key={key}>
@@ -2966,8 +3000,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                         );
                       })}
                     </div>
-                    {/* The total still counts the bar that is not drawn, so the card says so (three bars adding up to less than the score looked wrong). */}
-                    {brandTop && isClientViewer && <p className="text-[11px] text-muted-foreground" data-testid="brand-expansion-client-note">The score out of 100 also counts BGP’s own work with the brand, which is not shown here.</p>}
+                    {!isClientViewer && (hunter.subScores as any).engagement != null && (
+                      <p className="text-[11px] text-muted-foreground" data-testid="brand-relationship-value">Relationship with BGP <span className="font-semibold tabular-nums text-foreground">{(hunter.subScores as any).engagement}/25</span>, counted apart from the score</p>
+                    )}
                     {/* The why-lines count BGP's deals, offers and viewings across every
                         landlord: on a brand's page they are for staff only. */}
                     {(hunter.lines?.length ?? 0) > 0 && !(brandTop && isClientViewer) && (
@@ -3069,7 +3104,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const brandCategory = String(c.industry || "").trim() || String(c.company_type || "").replace(/\s*-\s*/g, " · ");
   const brandHeaderBadges = brandTop ? <>
     {brandCategory && <Badge variant="secondary" className="text-xs max-w-[16rem]" data-testid="brand-category-chip"><span className="truncate">{brandCategory}</span></Badge>}
-    {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
+    {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} setAt={c.rollout_status_at} />}
     {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[11px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
     {c.companies_house_number && <CovenantBadge companyNumber={c.companies_house_number} />}
     {kycChip && (
@@ -3282,7 +3317,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     <Pill active={panelSection === "relationship"} onClick={() => selectSection("relationship")} data-testid="brand-section-relationship">Deals &amp; space{pillCount(data.dealList?.total ?? activeDealCount + completedDealCount)}</Pill>
     {/* A client login with no mapped stores and no menu items has nothing under this pill. */}
     {(sectionContent?.stores || panelSection === "stores") && <Pill active={panelSection === "stores"} onClick={() => selectSection("stores")} data-testid="brand-section-stores">Stores &amp; menu{pillCount(stores.filter((st: any) => !st.country || st.country === "GB").length)}</Pill>}
-    <Pill active={panelSection === "intel"} onClick={() => selectSection("intel")} data-testid="brand-section-intel">Expansion{pillCount(dedupedSignals.length)}</Pill>
+    <Pill active={panelSection === "intel"} onClick={() => selectSection("intel")} data-testid="brand-section-intel">Expansion{pillCount(dedupedSignals.filter((sig: any) => isEstateSignal(sig)).length)}</Pill>
     <Pill active={panelSection === "more"} onClick={() => selectSection("more")} data-testid="brand-section-more">People &amp; checks{!isClientViewer && pillCount(data.contacts.length)}</Pill>
     <Pill active={panelSection === "news"} onClick={() => selectSection("news")} data-testid="brand-section-news">News &amp; media{pillCount(boardNewsCount)}</Pill>
   </> : null;
@@ -3355,28 +3390,69 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         {c.franchise_activity && <div><BrandBlockHeading><MapPin className="w-3.5 h-3.5" /> Franchise activity</BrandBlockHeading><p className="text-[13px] leading-snug break-words">{c.franchise_activity}</p></div>}
       </div>
     ) : null;
-    // The summary: the three reasons that count most, each in full. (It was
-    // the six legacy chips, which are cut to 34 characters each: "2
-    // requirements on BGP's books, c…".) The rest are under "Why this score".
-    const topReasons: string[] = !staff ? [] : (hunter?.lines?.length
-      ? [...hunter.lines].filter((l: any) => l.points > 0 && l.label).sort((a: any, b: any) => b.points - a.points).slice(0, 3).map((l: any) => String(l.label))
-      : (hunter?.expansionFlags || []).filter((flag: string) => !/…$/.test(flag)).slice(0, 3));
+    // Two figures (15 November 2026). Expansion is market evidence in four
+    // parts, one under the other: the bar, then (staff) every reason that
+    // counted in it. Relationship is BGP's own work with the brand: its own
+    // figure under a rule, staff only, never added to Expansion. A part with
+    // nothing in it says what was looked for.
+    const SCORE_PARTS = [
+      ["ukMomentum", "UK momentum", "What they are doing on the ground", "No change in the store count, openings, closures or hiring on record"],
+      ["pipeline", "Pipeline", "Sites on the way", "No coming-soon sites, planning applications, job adverts or stated plans on record"],
+      ["capacity", "Capacity", "Whether they can pay for a rollout", "No covenant grade, funding or share price on record"],
+      ["intent", "Intent", "What they are telling the market", "No requirement, tenant rep or unit enquiry on record"],
+    ] as const;
+    const RELATIONSHIP_PART = ["engagement", "Relationship", "BGP's own work with the brand, not part of the Expansion score", "No deals, offers, viewings or recent contact with BGP"] as const;
+    const relationship = staff && hunter?.subScores ? Number(hunter.relationship ?? hunter.subScores.engagement ?? 0) : null;
+    const scoreBody = hunter?.subScores ? (
+      <div className="space-y-3" data-testid="brand-expansion-bars">
+        {[...SCORE_PARTS, ...(staff ? [RELATIONSHIP_PART] : [])].map(([key, label, about, none]) => {
+          const v = Number((hunter.subScores as any)[key] ?? 0);
+          const reasons: any[] = staff ? (hunter.lines || []).filter((l: any) => l.bucket === key && l.label) : [];
+          return (
+            <div key={key} data-testid={`brand-expansion-part-${key}`} className={key === "engagement" ? "border-t pt-3" : undefined}>
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-[13px] font-medium">{label} <span className="text-[11px] font-normal text-muted-foreground">· {about}</span></span>
+                <span className="shrink-0 font-mono tabular-nums text-[13px] font-semibold">{v}<span className="text-[11px] font-normal text-muted-foreground">/25</span></span>
+              </div>
+              <div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                <div className={`h-full rounded-full ${v >= 15 ? "bg-emerald-500" : v >= 8 ? "bg-amber-500" : "bg-zinc-400"}`} style={{ width: `${(v / 25) * 100}%` }} />
+              </div>
+              {staff && (reasons.length > 0 ? (
+                <ul className="mt-1.5 space-y-0.5">
+                  {reasons.map((l: any, i: number) => (
+                    <li key={i} className="grid grid-cols-[2rem_minmax(0,1fr)] gap-x-2 text-xs leading-snug">
+                      <span className={`font-mono tabular-nums text-right font-semibold ${l.points >= 0 ? "text-emerald-700" : "text-red-700"}`}>{l.points >= 0 ? "+" : "−"}{Math.abs(l.points)}</span>
+                      <span className="min-w-0 break-words text-muted-foreground">{l.label}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="mt-1.5 pl-[2.5rem] text-xs text-muted-foreground">{none}</p>)}
+            </div>
+          );
+        })}
+      </div>
+    ) : null;
+    // The saved research: for most brands it is a run of press reports, so it
+    // says so, and it opens to a short read with the rest behind Show all.
+    const researchText = c.brand_analysis ? (isClientViewer
+      ? String(c.brand_analysis).split(/\*{0,2}Recommendation\b/i)[0].replace(/[\s*—:-]+$/, "")
+      : String(c.brand_analysis)) : "";
+    const researchIsPress = /^\s*\**\s*recent sourced reporting/i.test(researchText);
+    const researchLong = researchText.length > 900;
+    const researchBlock = researchText ? (
+      <details className="border-t pt-2" data-testid="brand-expansion-research">
+        <summary className="text-xs text-primary cursor-pointer hover:underline">{researchIsPress ? "Recent press reports" : "Previous expansion research"}{c.brand_analysis_at ? ` · ${ukDate(c.brand_analysis_at, { day: "numeric", month: "short", year: "numeric" })}` : ""}</summary>
+        <div className={`relative pt-2 ${researchLong && !researchAll ? "max-h-56 overflow-hidden" : ""}`}>
+          <AiCommentary entities={commentaryEntities} text={researchText} />
+          {researchLong && !researchAll && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-card to-transparent" />}
+        </div>
+        {researchLong && <button type="button" onClick={() => setResearchAll(v => !v)} aria-expanded={researchAll} className="mt-1.5 text-xs text-primary hover:underline" data-testid="button-brand-research-all">{researchAll ? "Show less" : "Show all"}</button>}
+      </details>
+    ) : null;
     const scoreCard = hasScoreCard ? (
       <BrandCard
         testId="brand-expansion-score"
-        title={<>
-          <Flame className="w-3.5 h-3.5" /> Expansion score
-          {(score ?? 0) > 0 && (
-            <Badge variant="outline" className={`text-[11px] normal-case tracking-normal font-mono tabular-nums ${
-              score! >= 30 ? "bg-orange-50 text-orange-700 border-orange-200" :
-              score! >= 20 ? "bg-amber-50 text-amber-700 border-amber-200" :
-              "bg-zinc-50 text-zinc-700 border-zinc-200"
-            }`} data-testid="brand-expansion-score-value">{score}/100</Badge>
-          )}
-        </>}
-        summary={(score ?? 0) > 0
-          ? (topReasons.length ? topReasons.join(" · ") : undefined)
-          : scoreLoading ? "Working out the score…" : "No score yet"}
+        title={<><Flame className="w-3.5 h-3.5" /> Expansion score</>}
         action={staff && (
           <span className="flex items-center gap-3">
             {refreshMenu("button-expansion-refresh")}
@@ -3384,23 +3460,82 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
           </span>
         )}
       >
-        {(expansionScoresBlock || expansionNotes || expansionResearchBlock) && (
-          <div className="space-y-2.5 [&>*:first-child]:border-t-0 [&>*:first-child]:pt-0">{expansionScoresBlock}{expansionNotes}{expansionResearchBlock}</div>
-        )}
+        <div className="space-y-3">
+          {(score ?? 0) > 0 ? (
+            <div className="flex items-baseline gap-2" data-testid="brand-expansion-score-value">
+              <span className="font-mono tabular-nums text-2xl font-semibold leading-none">{score}</span>
+              <span className="font-mono tabular-nums text-xs text-muted-foreground">/100</span>
+              <span className={`${pillMetrics} border ${score! >= 30 ? "bg-orange-50 text-orange-700 border-orange-200" : score! >= 20 ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-zinc-50 text-zinc-700 border-zinc-200"}`} title="Market evidence only: momentum, pipeline, capacity and intent. The Hunter board's bands: Very hot from 30, Hot from 20, Watch from 10">{expansionBand(score!)}</span>
+              {relationship != null && (
+                <span className="ml-auto text-xs text-muted-foreground" title="BGP's own deals, offers, viewings and contact with the brand. Its own figure: not added to the Expansion score." data-testid="brand-relationship-value">
+                  Relationship <span className="font-mono tabular-nums font-semibold text-foreground">{relationship}</span><span className="font-mono tabular-nums">/25</span> · {relationshipBand(relationship)}
+                </span>
+              )}
+            </div>
+          ) : <p className="text-[13px] text-muted-foreground">{scoreLoading ? "Working out the score…" : "No score yet"}</p>}
+          {scoreBody}
+          {expansionNotes}
+          {researchBlock}
+        </div>
       </BrandCard>
     ) : null;
-    const latestSignal = dedupedSignals.map((sig: any) => sig.signal_date || sig.created_at).filter(Boolean).sort().pop();
+    // Signals: what the brand is doing with its estate first (openings,
+    // closures, requirements, funding, hiring, people and deals), one line
+    // each with the kind, the headline and the date in their own columns.
+    // General news (awards, campaigns, social posts) is folded under it.
+    const estateSignals = dedupedSignals.filter((sig: any) => isEstateSignal(sig));
+    const otherNews = dedupedSignals.filter((sig: any) => !isEstateSignal(sig));
+    const latestSignal = (estateSignals.length ? estateSignals : dedupedSignals).map((sig: any) => sig.signal_date || sig.created_at).filter(Boolean).sort().pop();
+    const signalLines = (rows: any[]) => (
+      <ul className="divide-y divide-border/60">
+        {rows.map((sig: any) => {
+          const kind = signalKind(sig);
+          const link = sig.source && String(sig.source).startsWith("http") ? String(sig.source) : null;
+          const headline = sentenceCaseShouting(sig.headline);
+          return (
+            <li key={sig.id} className="group grid grid-cols-[8.25rem_minmax(0,1fr)_auto] items-start gap-x-2.5 py-1.5 first:pt-0 last:pb-0" data-testid={`brand-signal-${sig.id}`}>
+              <span className="min-w-0"><span className={`${pillMetrics} border ${SIGNAL_TYPE_CLS[kind] || "border-border text-muted-foreground"}`}>{kind.replace(/_/g, " ")}</span></span>
+              <span className="min-w-0 text-[13px] leading-snug">
+                {link
+                  ? <a href={link} target="_blank" rel="noopener noreferrer" className="line-clamp-2 break-words hover:underline" title={sig.headline}>{headline}</a>
+                  : <span className="line-clamp-2 break-words" title={sig.headline}>{headline}</span>}
+                {sig.magnitude === "large" && <span className="text-[11px] text-muted-foreground">Major</span>}
+              </span>
+              <span className="flex items-center gap-1.5 pt-0.5 text-[11px] text-muted-foreground font-mono tabular-nums whitespace-nowrap">
+                {sig.signal_date ? ukDate(sig.signal_date) : ""}
+                {staff && (
+                  <button type="button" onClick={() => deleteSignalMutation.mutate(sig.id)} className="opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-destructive" title="Remove signal" aria-label="Remove signal">
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    );
     const signalsCard = dedupedSignals.length > 0 || (staff && addSignalOpen) ? (
       <BrandCard
         testId="brand-signals"
         title={<><TrendingUp className="w-3.5 h-3.5" /> Signals</>}
-        count={dedupedSignals.length}
+        count={estateSignals.length || undefined}
         summary={latestSignal ? `Latest ${ukDate(latestSignal)}` : undefined}
         action={staff && <button type="button" onClick={() => setAddSignalOpen(v => !v)} className={brandCardAction} data-testid="button-log-intel">{addSignalOpen ? "Close" : "Log intel"}</button>}
       >
         {staff && addSignalOpen && signalAddForm}
-        {dedupedSignals.length > 0 && signalRows(signalsShowAll ? dedupedSignals : dedupedSignals.slice(0, 6), "grid grid-cols-1 gap-y-1.5", true)}
-        {dedupedSignals.length > 6 && <ShowAll total={dedupedSignals.length} open={signalsShowAll} onToggle={() => setSignalsShowAll(v => !v)} testId="button-brand-signals-all" />}
+        {estateSignals.length > 0
+          ? signalLines(signalsShowAll ? estateSignals : estateSignals.slice(0, 6))
+          : dedupedSignals.length > 0 && <p className="text-[13px] text-muted-foreground" data-testid="brand-signals-no-estate">Nothing reported about its sites, hiring or funding.</p>}
+        {estateSignals.length > 6 && <ShowAll total={estateSignals.length} open={signalsShowAll} onToggle={() => setSignalsShowAll(v => !v)} testId="button-brand-signals-all" />}
+        {otherNews.length > 0 && (
+          <div className="mt-2.5 border-t pt-2" data-testid="brand-signals-other-news">
+            <button type="button" onClick={() => setOtherNewsOpen(v => !v)} aria-expanded={otherNewsOpen} className="flex w-full items-center justify-between gap-2 text-xs text-muted-foreground hover:text-foreground" data-testid="button-brand-signals-other-news">
+              <span>Other news <span className="font-mono tabular-nums">{otherNews.length}</span> <span className="text-[11px]">· awards, menus, campaigns and general coverage</span></span>
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${otherNewsOpen ? "rotate-180" : ""}`} />
+            </button>
+            {otherNewsOpen && <div className="mt-2">{signalLines(otherNews)}</div>}
+          </div>
+        )}
       </BrandCard>
     ) : null;
     const hasCompetitors = competitors.length > 0 || (c.ai_competitors || []).length > 0;
@@ -3409,15 +3544,21 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         allCompaniesForPicker={allCompaniesForPicker} lookupReady={companyLookupReady} similarTenants={competitors.slice(0, 8)} pattern />
     );
     const evidenceCount = (signalsCard ? 1 : 0) + (hasCompetitors ? 1 : 0);
+    // The measured cards (the store count, and sites on the way) lead the
+    // evidence column, above what the press says. They draw nothing for a
+    // client login with nothing to show.
+    const measuredCards = <EstatePipelineCards companyId={companyId} staff={staff} plans={((c as any).companies_house_data?.latestAccountsPlans as StatedPlans | undefined) || null} />;
     const expansionCards = scoreCard && evidenceCount > 0 ? (
       <div className={pair} data-testid="brand-expansion-cards">
         {/* The competitor set sits under the score card, so the two columns end together (Signals is the long card). With no signals it is the right-hand card. */}
         <div className={stack}>{scoreCard}{signalsCard && hasCompetitors && competitorPanel}</div>
-        <div className={stack} data-testid="brand-expansion-evidence">{signalsCard}{!signalsCard && hasCompetitors && competitorPanel}</div>
+        <div className={stack} data-testid="brand-expansion-evidence">{measuredCards}{signalsCard}{!signalsCard && hasCompetitors && competitorPanel}</div>
       </div>
     ) : scoreCard || evidenceCount > 0 ? (
-      <div className={evidenceCount === 2 ? pair : stack} data-testid="brand-expansion-cards">{scoreCard}{signalsCard}{hasCompetitors && competitorPanel}</div>
+      <div className={evidenceCount === 2 ? pair : stack} data-testid="brand-expansion-cards">{scoreCard}{scoreCard && measuredCards}{signalsCard}{hasCompetitors && competitorPanel}</div>
     ) : null;
+    // With no score card the measured cards stand on their own, under the quiet lines.
+    const measuredAlone = !scoreCard ? <div className={stack} data-testid="brand-expansion-measured">{measuredCards}</div> : null;
     const expansionQuiet = staff && (!scoreCard || !signalsCard || !hasCompetitors) ? (
       <BrandQuietBlock testId="brand-expansion-quiet">
         {!scoreCard && <BrandQuietLine testId="brand-expansion-score-empty">No expansion score yet · {refreshMenu("button-expansion-tools")}</BrandQuietLine>}
@@ -3494,6 +3635,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       <div className={sec("intel")} data-brand-section="intel">
         {expansionCards}
         {expansionQuiet}
+        {measuredAlone}
         {!expansionCards && isClientViewer && <p className="text-sm text-muted-foreground" data-testid="brand-expansion-empty">No expansion intelligence yet.</p>}
       </div>
 

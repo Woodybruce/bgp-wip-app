@@ -3208,3 +3208,28 @@ test("review seven: the owner's example is still exact with no provider call", a
   assert.deepEqual(r.fields, { termYears: 15, rentPa: 120000, turnoverRentPct: 9, rentFreeMonths: 6, date: "2026-11-09" });
   assert.equal(r.saidBy, "Ben Sykes");
 });
+
+// Woody, 15 November 2026: "list both rent". A note with more than one rent
+// fills none, and lists each with its words for the person to choose.
+test("a note with two rents lists both to choose from, each with its own words, and leaves the box empty", async () => {
+  const { deps } = fake({ hasKey: () => false });
+  const two = "Spoke to the agent. They are offering £120k pax on a 15 year lease. The previous tenant was on a rent of £95k pax.";
+  const r = await readLettingNote(input(two), deps);
+  assert.equal(r.fields.rentPa, undefined);
+  const rents = (r.unsure || []).filter(u => u.field === "rentPa");
+  assert.deepEqual(rents.map(u => u.value), [120000, 95000]);
+  assert.match(rents[0].quote, /offering £120k pax$/);
+  assert.match(rents[1].quote, /previous tenant was on a rent of £95k pax/);
+  assert.ok(rents.every(u => two.includes(u.quote.replace(/\.$/, ""))), "the words are the note's own");
+  assert.ok(!r.dropped.some(d => d.field === "rentPa"), "a rent listed to choose from is not also left out");
+
+  const stepped = await readLettingNote(input("Offer: rent £80k pa in year 1 rising to £100k pa in year 2, 10 year lease"), deps);
+  assert.deepEqual((stepped.unsure || []).filter(u => u.field === "rentPa").map(u => [u.value, u.quote]), [[80000, "rent £80k pa"], [100000, "in year 1 rising to £100k pa"]]);
+
+  // A range is still not a choice of two rents, and one rent is listed once.
+  const range = await readLettingNote(input("Rent £100k-£120k pax depending on fit out"), deps);
+  assert.equal((range.unsure || []).filter(u => u.field === "rentPa").length, 0);
+  assert.ok(range.dropped.some(d => d.field === "rentPa"));
+  const one = await readLettingNote(input("Spoke to the agent, they will pay a rent of £120k pax on a new lease"), deps);
+  assert.equal((one.unsure || []).filter(u => u.field === "rentPa").length, 1);
+});

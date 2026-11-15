@@ -78,6 +78,8 @@ export interface PartialReading {
 export interface ShorthandReading extends PartialReading {
   /** Every figure in the note that could be the yearly rent: the ones written as a rent and the loose sums of rent size. */
   rentFigures: number[];
+  /** Those figures with the words round each, for a note that gives more than one: listed for the person to choose from, never filled. A net effective rent is not one of them. */
+  rentOptions: { value: number; quote: string }[];
   /** The sentences of the note that hold words no rule could place. Empty when the rules read all of it. */
   leftover: string[];
   /** The note as it was read: line ends tidied, long runs of white space closed up. */
@@ -1230,6 +1232,19 @@ export function readShorthand(raw: string, ctx: NoteContext): ShorthandReading {
   // as a rent, with no other beside it, is the rent. Two different figures, a
   // range or a stepped rent set nothing.
   const rentFigures: number[] = [];
+  const rentOptions: { value: number; quote: string }[] = [];
+  let lastRentEnd = 0;
+  // A figure with the words that lead up to it in its own clause: "previous tenant was on £95k pax".
+  const withLead = (start: number, end: number): string => {
+    const lead = text.slice(Math.max(0, start - 48), start);
+    const cut = Math.max(lead.lastIndexOf(". "), lead.lastIndexOf("; "), lead.lastIndexOf(", "), lead.lastIndexOf("\n"), lead.lastIndexOf(": "));
+    let from = start - lead.length + (cut >= 0 ? cut + 2 : 0);
+    if (cut < 0 && start - lead.length > 0) { const space = lead.indexOf(" "); if (space >= 0) from = start - lead.length + space + 1; }
+    // Never back into the figure before it: "…£80k pa in year 1 rising to £100k pa" is quoted from "in year 1".
+    if (from < lastRentEnd && lastRentEnd <= start) from = lastRentEnd;
+    lastRentEnd = Math.max(lastRentEnd, end);
+    return text.slice(from, end).replace(/^[\s,;]*(?:and|but|then)?\s*/i, "").trim();
+  };
   if (allowed.has("rentPa")) {
     const hits: { value: number; start: number; end: number }[] = [];
     const rivals: number[] = [];
@@ -1301,6 +1316,7 @@ export function readShorthand(raw: string, ctx: NoteContext): ShorthandReading {
         if (NOT_RENT_IN_CLAUSE.test(clause) || LOOSE_NOT_RENT_BEFORE.test(before)) return;
         if (isStep(money, money.end)) stepped = true;
         rivals.push(money.value);
+        rentOptions.push({ value: money.value, quote: withLead(money.start, money.end) });
         return;
       }
       if (!led && !word && !(year && RENT_ONLY_WORDS.test(year[0]))) {
@@ -1313,8 +1329,9 @@ export function readShorthand(raw: string, ctx: NoteContext): ShorthandReading {
       if (money.value > MONEY_MAX) { refusals.push(`"${quote}" is too large to be a year's rent. Type the annual rent.`); if (led) outOfBounds = true; return; }
       if (isStep(money, end)) stepped = true;
       // "They rejected £135k pax": not the rent, but it does show the note holds another rent figure.
-      if (turnedDown(start, end)) { rivals.push(money.value); refusals.push(turnedDownReason(quote, "annual rent")); return; }
+      if (turnedDown(start, end)) { rivals.push(money.value); rentOptions.push({ value: money.value, quote: withLead(start, end) }); refusals.push(turnedDownReason(quote, "annual rent")); return; }
       hits.push({ value: money.value, start, end });
+      rentOptions.push({ value: money.value, quote: withLead(start, end) });
     });
     const written = new Set(hits.map(h => h.value));
     const all = new Set([...written, ...rivals]);
@@ -1491,7 +1508,7 @@ export function readShorthand(raw: string, ctx: NoteContext): ShorthandReading {
 
   return {
     fields, quotes, dropped: dropped.filter(d => !has(d.field as LettingNoteField)), unplaced, saidBy: stamp?.name || null, saidByKnown: !!stamp?.known,
-    leftover: leftoverOf(text, claims, stamp ? stamp.end : 0), text, claimed: claims.all(), bodyFrom: stamp ? stamp.end : 0, rentFigures,
+    leftover: leftoverOf(text, claims, stamp ? stamp.end : 0), text, claimed: claims.all(), bodyFrom: stamp ? stamp.end : 0, rentFigures, rentOptions,
     at: Object.fromEntries(placed) as Partial<Record<LettingNoteField, Span>>, refDay: ref,
     teamNames: [...(ctx.staffNames || []), ...(ctx.author ? [ctx.author] : []), ...(stamp?.known && stamp.name ? [stamp.name] : [])],
   };
@@ -2348,6 +2365,13 @@ export function guardReading(g: GuardInput): { fields: LettingNoteFields; quotes
       if (rOk && (A[f] === undefined || (typeof a === "string" && sameName(a, String(r))))) fill(f, r, rq);
       else list();
     } else list();
+  }
+  // A note with more than one rent (the offer and a previous tenant's, a
+  // stepped rent): the rules fill none, and each is listed with its words for
+  // the person to choose (Woody, 2026-11-15: "list both rent").
+  if (fields.rentPa === undefined && !unsure.some(u => u.field === "rentPa")) {
+    const options = (g.short.rentOptions || []).filter((o, i, all) => all.findIndex(x => near(x.value, o.value)) === i);
+    if (options.length > 1) for (const o of options) unsure.push({ field: "rentPa", value: o.value, quote: o.quote });
   }
   return { fields: fields as LettingNoteFields, quotes, unsure, dropped };
 }

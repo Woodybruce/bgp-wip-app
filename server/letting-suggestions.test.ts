@@ -7,8 +7,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   CLOSED_ALREADY_LOGGED, LOGGED_WINDOW_DAYS, SUGGESTION_SOURCE_LABELS, SUGGESTION_VISIBILITY,
-  alreadyLogged, brandNamedIn, candidatesForUnit, describeSuggestion, detectFromViewing, detectInText, ownViewingNote, parseSourceRef,
-  sameBrand, sourceRefText, suggestionDedupeKey, suggestionVisibleTo,
+  alreadyLogged, brandNamedIn, candidatesForUnit, chatCommentBrandTags, describeSuggestion, detectFromViewing, detectInText, ownViewingNote, parseSourceRef,
+  plainChatComment, sameBrand, sourceRefText, suggestionDedupeKey, suggestionVisibleTo,
   type SuggestionViewer, type UnitSources,
 } from "../shared/letting-suggestions";
 
@@ -208,8 +208,8 @@ test("BGP's notes are for BGP staff; the rest for BGP staff and the scheme's joi
   // control, exactly as a full Landsec login is (oddLogin above): only BGP
   // staff and a joint agent are ever shown a 'brief' line.
   assert.equal(suggestionVisibleTo("brief", { ...assetManager, agentControl: true }), false);
-  assert.deepEqual(SUGGESTION_VISIBILITY, { target_comment: "bgp", viewing: "brief", interest_note: "brief", brief_comment: "brief" });
-  assert.deepEqual(SUGGESTION_SOURCE_LABELS, { target_comment: "Target comment", viewing: "Viewing note", interest_note: "Interest note", brief_comment: "Brief comment" });
+  assert.deepEqual(SUGGESTION_VISIBILITY, { target_comment: "bgp", viewing: "brief", interest_note: "brief", brief_comment: "brief", chat_comment: "bgp" });
+  assert.deepEqual(SUGGESTION_SOURCE_LABELS, { target_comment: "Target comment", viewing: "Viewing note", interest_note: "Interest note", brief_comment: "Brief comment", chat_comment: "Tracker comment" });
 });
 
 // ── A brand named in the words ─────────────────────────────────────────────
@@ -377,4 +377,49 @@ test("every route is behind a sign-in, the backlog behind an admin, and every an
   }
   assert.ok((serverCode.match(/suggestionVisibleTo\(/g) || []).length >= 2, "the list and the single-suggestion check both use the rule");
   assert.match(serverCode, /briefAccess\(req, /);
+});
+
+// ── Letting Tracker comments (team chat) ───────────────────────────────────
+// Woody, 15 November 2026: team chat is read. A message in the property's
+// conversation that tags the unit is a fifth source, for BGP staff only.
+
+test("a Tracker comment that tags one brand, or names one on the unit, becomes a suggestion for BGP only", () => {
+  const tagged = candidatesForUnit(unit({ chatComments: [{ id: "m1", text: OWNER, userName: "Ben Sykes", day: "2026-11-09", tagged: [{ companyId: "leon", name: "Leon" }] }] }));
+  assert.equal(tagged.length, 1);
+  assert.deepEqual({ kind: tagged[0].kind, companyId: tagged[0].companyId, brandName: tagged[0].brandName, sourceKind: tagged[0].sourceKind, sourceRef: tagged[0].sourceRef, visibility: tagged[0].visibility },
+    { kind: "offer", companyId: "leon", brandName: "Leon", sourceKind: "chat_comment", sourceRef: "m1", visibility: "bgp" });
+  assert.equal(tagged[0].evidenceDate, "2026-11-09");
+
+  const named = candidatesForUnit(unit({ chatComments: [{ id: "m2", text: "Sushidog offered £120k pax on a 15 year lease", userName: null, day: "2026-11-10", tagged: [] }] }));
+  assert.deepEqual(named.map(s => [s.companyId, s.kind, s.sourceRef]), [["sushi", "offer", "m2"]]);
+
+  // Two tagged brands, or no brand at all, raise nothing: the app never guesses whose offer it is.
+  assert.equal(candidatesForUnit(unit({ chatComments: [{ id: "m3", text: OWNER, userName: null, day: "2026-11-09", tagged: [{ companyId: "leon", name: "Leon" }, { companyId: "pho", name: "Pho" }] }] })).length, 0);
+  assert.equal(candidatesForUnit(unit({ chatComments: [{ id: "m4", text: OWNER, userName: null, day: "2026-11-09", tagged: [] }] })).length, 0);
+  // Chat that is not about an offer or a viewing raises nothing.
+  assert.equal(candidatesForUnit(unit({ chatComments: [{ id: "m5", text: "Sushidog are great, will call them next week", userName: null, day: "2026-11-09", tagged: [] }] })).length, 0);
+  // Already logged for that brand: found, but not raised.
+  const logged = candidatesForUnit(unit({ chatComments: [{ id: "m1", text: OWNER, userName: null, day: "2026-11-09", tagged: [{ companyId: "leon", name: "Leon" }] }], offersLogged: [{ companyId: "leon", brandName: "Leon", date: "2026-11-10" }] }));
+  assert.deepEqual(logged.map(s => s.logged), [true]);
+});
+
+test("a chat message is read as plain words: this unit's tag goes, a brand's tag reads as its name", () => {
+  const content = "@[KLG07](tag:unit/u1) @[Leon](tag:company/leon) offered £120k pax, 15 years. cc @[Ben Sykes](tag:user/b1) re @[Unit 9](tag:unit/u9)";
+  assert.equal(plainChatComment(content, "u1"), "Leon offered £120k pax, 15 years. cc Ben Sykes re Unit 9");
+  assert.deepEqual(chatCommentBrandTags(content), [{ id: "leon", name: "Leon" }]);
+  assert.deepEqual(chatCommentBrandTags("no tags here"), []);
+  assert.deepEqual(parseSourceRef("chat_comment", "m1"), { type: "chat_comment", messageId: "m1" });
+  assert.equal(sourceRefText({ type: "chat_comment", messageId: "m1" }), "m1");
+  assert.equal(SUGGESTION_VISIBILITY.chat_comment, "bgp");
+});
+
+test("the loader reads only a property's shared conversation, and only people's messages", () => {
+  const src = readFileSync("server/letting-suggestions.ts", "utf8");
+  const chat = src.slice(src.indexOf("// Letting Tracker comments"), src.indexOf("const chatTagIds"));
+  assert.match(chat, /t\.created_by = \$1 AND t\.linked_type = 'property' AND t\.linked_id = \$2/);
+  assert.match(chat, /m\.role = 'user'/);
+  assert.match(chat, /RECORD_THREAD_CREATOR, String\(unit\.property_id\), `\(tag:unit\/\$\{unitId\}\)`/);
+  const record = readFileSync("server/record-conversation.ts", "utf8");
+  assert.match(record, /export const RECORD_THREAD_CREATOR = "__record__";/);
+  assert.match(src, /const RECORD_THREAD_CREATOR = "__record__";/);
 });

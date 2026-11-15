@@ -496,6 +496,7 @@ export const crmCompanies = pgTable("crm_companies", {
   conceptPitch: text("concept_pitch"),
   storeCount: integer("store_count"),
   rolloutStatus: text("rollout_status"), // scaling | stable | contracting | entering_uk | rumoured
+  rolloutStatusAt: timestamp("rollout_status_at", { withTimezone: true }), // when the badge was set; it lapses six months on (shared/rollout-badge.ts)
   backers: text("backers"), // free-text: "Sequoia, Index Ventures" etc.
   instagramHandle: text("instagram_handle"),
   tiktokHandle: text("tiktok_handle"),

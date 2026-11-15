@@ -4173,7 +4173,8 @@ export default function AvailableUnitsPage() {
             incentives: f.incentives || o.incentives || "",
             premium: f.premium != null ? String(f.premium) : (o.premium != null ? String(o.premium) : ""),
             fittingOutContribution: f.fittingOutContribution != null ? String(f.fittingOutContribution) : (o.fittingOutContribution != null ? String(o.fittingOutContribution) : ""),
-            turnoverRentPct: o.turnoverRentPct != null ? String(o.turnoverRentPct) : "", rentReview: o.rentReview || "", rentDeposit: o.rentDeposit || "",
+            turnoverRentPct: f.turnoverRentPct != null ? String(f.turnoverRentPct) : (o.turnoverRentPct != null ? String(o.turnoverRentPct) : ""),
+            rentReview: f.rentReview || o.rentReview || "", rentDeposit: f.rentDeposit || o.rentDeposit || "",
             comments: [o.comments, f.notes].filter(Boolean).join(" — "),
           });
           setEditingOfferId(o.id);

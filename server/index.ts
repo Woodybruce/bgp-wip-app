@@ -1173,6 +1173,23 @@ const schemaStartup = (async () => {
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS concept_pitch TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS store_count INTEGER`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS rollout_status TEXT`,
+    // When the rollout badge was set: it lapses six months on (shared/rollout-badge.ts).
+    // The trigger stamps a change of badge from any writer; a person saving the
+    // same badge again is stamped by the brand save itself.
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS rollout_status_at TIMESTAMPTZ`,
+    `CREATE OR REPLACE FUNCTION bgp_stamp_rollout_status() RETURNS trigger AS $$
+     BEGIN
+       IF NEW.rollout_status IS NULL OR btrim(NEW.rollout_status) = '' THEN
+         NEW.rollout_status_at := NULL;
+       ELSIF TG_OP = 'INSERT' THEN
+         NEW.rollout_status_at := COALESCE(NEW.rollout_status_at, now());
+       ELSIF NEW.rollout_status IS DISTINCT FROM OLD.rollout_status AND NEW.rollout_status_at IS NOT DISTINCT FROM OLD.rollout_status_at THEN
+         NEW.rollout_status_at := now();
+       END IF;
+       RETURN NEW;
+     END $$ LANGUAGE plpgsql`,
+    `DROP TRIGGER IF EXISTS bgp_rollout_status_stamp ON crm_companies`,
+    `CREATE TRIGGER bgp_rollout_status_stamp BEFORE INSERT OR UPDATE OF rollout_status, rollout_status_at ON crm_companies FOR EACH ROW EXECUTE FUNCTION bgp_stamp_rollout_status()`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS backers TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS instagram_handle TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS tiktok_handle TEXT`,
@@ -4278,6 +4295,8 @@ import clientTeamsRouter from "./client-teams";
 import clientSharepointRouter from "./client-sharepoint";
 import activitySummaryRouter from "./activity-summary";
 import expansionIntelRouter from "./expansion-intel";
+import brandStoreCountRouter from "./brand-store-count";
+import brandPipelineRouter from "./brand-pipeline";
 import turnoverRouter from "./turnover";
 import { serveStatic } from "./static";
 import { registerEmailProcessorRoutes, startEmailProcessor } from "./email-processor";
@@ -5513,6 +5532,12 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(clientSharepointRouter);
   app.use(activitySummaryRouter);
   app.use(expansionIntelRouter);
+  // The measured inputs to the Expansion score: the store count, and the
+  // planning and job-advert pipeline. Their tables are made here (additive).
+  app.use(brandStoreCountRouter);
+  app.use(brandPipelineRouter);
+  import("./brand-store-count").then(m => m.ensureStoreCountTable()).catch(e => console.warn("[brand-store-count] table:", e?.message));
+  import("./brand-pipeline").then(m => m.ensurePipelineTable()).catch(e => console.warn("[brand-pipeline] tables:", e?.message));
   app.use(turnoverRouter);
   app.use(sanctionsRouter);
   app.use(kycClouseauRouter);
@@ -6709,6 +6734,19 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             { key: "trading-names", due: dailyAt(4, 30), run: () =>
               import("./trading-names").then(m => m.runNightlyTradingNames())
                 .then(r => console.log(`[trading-names-cron] ${r.properties} properties, ${r.filled} filled, ${r.review} to review`)) },
+            // Nightly store count — 02:30. Each brand's own website is counted
+            // about once a month, 90 brands a night; no AI.
+            { key: "brand-store-count", due: dailyAt(2, 30), run: () =>
+              import("./brand-store-count").then(m => m.nightlyStoreCountPass()) },
+            // Nightly planning and job-advert check — 03:45, 60 brands a night,
+            // each brand about once a month (PlanIt; Adzuna when its keys are set).
+            { key: "brand-pipeline", due: dailyAt(3, 45), run: () =>
+              import("./brand-pipeline").then(m => m.nightlyPipelinePass()) },
+            // Nightly read of filed accounts for stated plans — 03:30, capped
+            // (ACCOUNTS_PLANS_DAILY_CAP, default 15; 0 = off).
+            { key: "accounts-plans", due: dailyAt(3, 30), run: () =>
+              import("./accounts-plans").then(m => m.runAccountsPlansBatch())
+                .then(r => { if (r.due) console.log(`[accounts-plans] ${r.due} due: ${r.read} read, ${r.withPlans} state a plan, ${r.errors} errors`); }) },
             // Nightly expansion-fact normalisation — 05:00, between the
             // scraper (04:00) and the trigger scan (07:00).
             { key: "expansion-normalise", due: dailyAt(5), run: () =>

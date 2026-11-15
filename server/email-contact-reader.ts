@@ -199,6 +199,31 @@ export function splitThread(text: string, from: ReaderPerson | null): ThreadPart
   return parts;
 }
 
+/** The offer in a thread, as the words of one message (Woody, 2026-11-15:
+ *  email bodies are read into the offer form). The newest message from
+ *  outside the mailbox's own firm that reads as an offer, else the newest
+ *  from outside, else the newest. Only what that person wrote: the earlier
+ *  messages quoted under it are left off, so an old position is never read
+ *  as this one. `isOffer` and `max` are passed in (the offer test lives with
+ *  the inbox sweep, the length with the note reader). */
+export interface OfferThreadMessage { subject: string; bodyHtml: string; bodyText: string; from: { name?: string; address?: string } | null; receivedDateTime: string | null }
+export function offerMessageWords(messages: OfferThreadMessage[], mailbox: string, isOffer: (subject: string, text: string) => boolean, max: number): { text: string; from: string | null; received: string | null; subject: string } | null {
+  const firm = String(mailbox || "").split("@")[1]?.toLowerCase() || "";
+  const outside = (m: OfferThreadMessage) => !!m.from?.address && (!firm || !m.from.address.toLowerCase().endsWith(`@${firm}`));
+  const words = (m: OfferThreadMessage): string => {
+    // Money written as an entity ("&pound;120,000") is put back as its sign, or the rent would not be read.
+    const all = emailBodyText(m.bodyText || m.bodyHtml || "")
+      .replace(/&pound;|&#163;|&#xa3;/gi, "£").replace(/&euro;|&#8364;|&#x20ac;/gi, "€").replace(/&amp;/gi, "&");
+    const own = splitThread(all, m.from?.address ? { email: m.from.address, name: m.from.name || null } : null)[0];
+    return (own ? own.lines.join("\n") : all).replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  };
+  const newestFirst = [...(messages || [])].sort((a, b) => String(b.receivedDateTime || "").localeCompare(String(a.receivedDateTime || "")));
+  const read = newestFirst.map(m => ({ m, text: words(m) })).filter(x => x.text);
+  const pick = read.find(x => outside(x.m) && isOffer(x.m.subject, x.text)) || read.find(x => outside(x.m)) || read[0];
+  if (!pick) return null;
+  return { text: pick.text.slice(0, max), from: pick.m.from?.name || pick.m.from?.address || null, received: pick.m.receivedDateTime, subject: pick.m.subject };
+}
+
 /** The one person who wrote this part, or null when that is not certain. */
 export function writerOf(part: ThreadPart, people: ReaderPerson[]): ReaderPerson | null {
   if (part.senderEmail) return people.find(p => lower(p.email) === part.senderEmail) || null;

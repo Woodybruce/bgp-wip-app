@@ -8,6 +8,8 @@
 // deliberately broad so brands without one strong signal can still rank
 // high if multiple weaker signals pile up.
 // ─────────────────────────────────────────────────────────────────────────
+import { rolloutBadge, type RolloutBadge } from "@shared/rollout-badge";
+import { plansWeight, plansPeriodLabel } from "@shared/accounts-plans";
 
 const EUROPE_KEYWORDS = ["paris", "milan", "berlin", "amsterdam", "dubai", "new york", "nyc", "tokyo", "sydney", "los angeles"];
 const DTC_KEYWORDS = ["online only", "dtc", "direct to consumer", "direct-to-consumer", "e-commerce", "ecommerce", "no stores"];
@@ -145,12 +147,36 @@ export interface BgpEvidence {
   comingSoonElsewhere?: number;
 }
 
+// Two figures since 15 November 2026 (Woody: "Yes to all on expansion"; item
+// 2 of docs/expansion-review-2026-11-14.md). Expansion is market evidence
+// only, four parts of 25: UK momentum, Pipeline, Capacity, Intent.
+// Relationship is BGP's own work with the brand (deals, offers, viewings,
+// contact), out of 25, and is never added to Expansion. Five Guys read 27
+// (Hot) with 13 of those points from BGP's own deals; Blank Street, with 45
+// shops and 84 contacts in 90 days, read 17.
+export type ScoreBucket = "ukMomentum" | "pipeline" | "capacity" | "intent" | "engagement";
 export interface ExpansionScoreV2 {
-  score: number;
-  subScores: { ukMomentum: number; capacity: number; intent: number; engagement: number };
-  lines: { points: number; label: string; bucket: "ukMomentum" | "capacity" | "intent" | "engagement" }[];
-  expansionScore: number;       // legacy alias
-  expansionFlags: string[];     // legacy chips — top contributing lines
+  score: number;                // Expansion, 0 to 100
+  relationship: number;         // 0 to 25
+  subScores: { ukMomentum: number; pipeline: number; capacity: number; intent: number; engagement: number };
+  lines: { points: number; label: string; bucket: ScoreBucket }[];
+  expansionScore: number;       // the same Expansion figure, under its older name
+  expansionFlags: string[];     // chips: the top market lines
+  badge: RolloutBadge;          // the rollout badge and whether it still counts
+}
+
+// What the store count, the planning and jobs pipeline and the accounts
+// read hand the score. Each is optional: with none of them the score is the
+// signals and BGP's own records, as before.
+export interface EstateEvidence { count: number | null; opened: number; closed: number; net: number; months: number | null; comingSoon: number; uk: boolean | null }
+export interface PipelineEvidence { planning12m: number; planning90d: number; planningTowns: string[]; newOpeningJobs: number; propertyRoles: number; jobTowns: string[] }
+export interface PlansEvidence { period: string | null; openings: { summary: string; count: number | null } | null; closures: { summary: string; count: number | null } | null; capex: { summary: string } | null }
+
+/** Expansion and Relationship from a saved sub-score row of any version. */
+export function splitSubScores(sub: any): { expansion: number; relationship: number } | null {
+  if (!sub || typeof sub !== "object") return null;
+  const n = (key: string) => Math.max(0, Number(sub[key]) || 0);
+  return { expansion: n("ukMomentum") + n("pipeline") + n("capacity") + n("intent"), relationship: n("engagement") };
 }
 
 const HALF_LIFE_MONTHS = 6;
@@ -182,19 +208,78 @@ function factGeography(fact: ExpansionFact): "uk" | "europe" | "row" | "unknown"
   return "unknown";
 }
 
+// One story is one fact. The same headline arrives from two feeds (a news
+// search and a newsletter, or one article under two publishers' names), and
+// until 14 November 2026 each copy was scored: one opening counted two or
+// three times. The copy that carries a date is the one kept.
+const storyKey = (headline?: string | null) => String(headline || "")
+  .replace(/\s+[-–|]\s+[^-–|]{2,40}$/, "")           // " - Retail Times" at the end
+  .toLowerCase().replace(/[^a-z0-9£$ ]+/g, " ").replace(/\s+/g, " ").trim();
+export function dedupeFacts<T extends ExpansionFact>(facts: T[]): T[] {
+  const kept: { key: string; type: string; link: string; fact: T }[] = [];
+  for (const fact of facts) {
+    const key = storyKey(fact.headline);
+    const type = String(fact.signal_type || "");
+    const source = String((fact as any).source || "");
+    const link = /^https?:\/\//i.test(source) ? source : "";
+    const same = kept.find(k => k.type === type && (
+      (!!link && k.link === link)
+      || (!!key && (k.key === key || (key.length >= 30 && k.key.startsWith(key)) || (k.key.length >= 30 && key.startsWith(k.key))))
+    ));
+    if (!same) { kept.push({ key, type, link, fact }); continue; }
+    if (!same.fact.signal_date && fact.signal_date) same.fact = fact;
+  }
+  return kept.map(k => k.fact);
+}
+
+// A sale of sites is a contraction (Greene King: "agreed to sell a 24-pub
+// package" was filed as a sector move and scored nothing). The headline must
+// say the sale and the sites; a story that also says someone bought is only
+// counted when the brand's own name is what is selling.
+const SITE_NOUN = "(?:pubs?|sites?|stores?|shops?|restaurants?|outlets?|branch(?:es)?|units?|bars?|hotels?|caf[eé]s?|venues?|bakeries|gyms?|clubs?|cinemas?)";
+const SALE_VERB = "(?:sell(?:s|ing)?|sold|sale of|dispos\\w+|offload\\w*|divest\\w*)";
+// Only a few plain words may sit between the sale and the sites, so "sold 2
+// million sausage rolls in 300 shops" is not a sale of shops.
+const SALE_GAP = "(?:\\s+(?:a|an|the|its|their|off|of|up to|around|about|some|more than|nearly|another|a further|further|all|remaining|final|freehold|leasehold|managed|tenanted|leased|uk|non-core)){0,4}\\s+";
+const SITES_SOLD = `(?:(\\d[\\d,]*)[- ]?(?:\\w+[- ]){0,2}${SITE_NOUN}\\b|${SITE_NOUN}[- ](?:package|portfolio|estate)\\b|(?:package|portfolio|estate|tranche|number) of (?:(\\d[\\d,]*) )?(?:\\w+ ){0,2}${SITE_NOUN}\\b)`;
+const DISPOSAL_RE = new RegExp(`\\b${SALE_VERB}${SALE_GAP}${SITES_SOLD}|\\b(\\d[\\d,]*)[- ]?(?:\\w+[- ]){0,2}${SITE_NOUN}\\b[^.]{0,30}\\b(?:up for sale|on the market)\\b`, "i");
+const BUY_RE = /\b(acquir\w+|buys?|bought|snaps? up|snapped up|purchas\w+|takes? over|took over)\b/i;
+export function siteSale(headline: unknown, brandName?: string | null): { sites: number | null } | null {
+  const text = String(headline || "");
+  const hit = text.match(DISPOSAL_RE);
+  if (!hit) return null;
+  if (BUY_RE.test(text)) {
+    const name = String(brandName || "").trim().toLowerCase();
+    const before = text.slice(0, hit.index || 0).toLowerCase();
+    if (!name || !before.slice(-60).includes(name)) return null;
+  }
+  const n = Number(String(hit[1] || hit[2] || hit[3] || "").replace(/,/g, ""));
+  return { sites: Number.isFinite(n) && n > 0 ? n : null };
+}
+
+const townList = (towns: string[] | undefined, max = 3) => {
+  const names = [...new Set((towns || []).map(t => String(t || "").trim()).filter(Boolean))];
+  return names.length ? ` (${names.slice(0, max).join(", ")}${names.length > max ? ` and ${names.length - max} more` : ""})` : "";
+};
+
 export function computeExpansionScoreV2(input: {
-  brand: HunterScoreInput["brand"] & { rollout_status?: string | null };
+  brand: HunterScoreInput["brand"] & { rollout_status?: string | null; rollout_status_at?: string | Date | null };
   facts: ExpansionFact[];
   stock?: HunterScoreInput["stock"];
   covenant?: { grade?: string | null } | null;
   bgp?: Partial<BgpEvidence> | null;
+  estate?: EstateEvidence | null;
+  pipeline?: PipelineEvidence | null;
+  plans?: PlansEvidence | null;
+  now?: Date;
 }): ExpansionScoreV2 {
+  const now = input.now || new Date();
   const lines: ExpansionScoreV2["lines"] = [];
   const add = (bucket: ExpansionScoreV2["lines"][number]["bucket"], points: number, label: string) => {
     if (Math.abs(points) < 0.5) return;
     lines.push({ bucket, points: Math.round(points), label });
   };
-  const facts = input.facts || [];
+  const facts = dedupeFacts(input.facts || []);
   const b = input.brand;
   const bgp: BgpEvidence = {
     activeRequirements: 0, pipnetRequirements: 0, liveDeals: 0, committedDeals: 0, completedDeals24m: 0,
@@ -203,7 +288,10 @@ export function computeExpansionScoreV2(input: {
   };
 
   // ── UK momentum — what they're actually doing on the ground ──
-  let openUk = 0, closeUk = 0;
+  const estate = input.estate || null;
+  const measured = !!estate && estate.months != null && (estate.opened > 0 || estate.closed > 0 || estate.count != null);
+  let openUk = 0, closeUk = 0, headcountDown = 0, soldOff = 0;
+  let saleLabel = "";
   for (const f of facts) {
     const w = decayWeight(f) * confidenceWeight(f);
     const geo = factGeography(f);
@@ -216,16 +304,48 @@ export function computeExpansionScoreV2(input: {
       if (geo === "uk" || geo === "unknown") closeUk += 6 * w;
     } else if (f.signal_type === "hiring" && geo !== "row") {
       // Falling headcount is a contraction signal, not hiring.
-      if (isNegative(f)) closeUk += 2.5 * w;
+      if (isNegative(f)) headcountDown += 2.5 * w;
       else openUk += 2.5 * w;
+    } else if (f.signal_type !== "funding" && f.signal_type !== "requirement" && (geo === "uk" || geo === "unknown")) {
+      const sale = siteSale(f.headline, b.name);
+      if (sale) {
+        soldOff += Math.min(2 + (sale.sites || 0) / 4, 8) * w;
+        if (!saleLabel) saleLabel = String(f.headline || "").slice(0, 60);
+      }
     }
   }
-  if (openUk > 0) add("ukMomentum", Math.min(openUk, 22), "UK openings & hiring, time-decayed");
-  if (closeUk > 0) add("ukMomentum", -Math.min(closeUk, 20), "UK closures, time-decayed");
-  if (bgp.comingSoonUk) add("ukMomentum", Math.min(bgp.comingSoonUk * 6, 14), `${bgp.comingSoonUk} UK site${bgp.comingSoonUk === 1 ? "" : "s"} "coming soon" on its own website`);
-  if (bgp.comingSoonElsewhere) add("ukMomentum", Math.min(bgp.comingSoonElsewhere * 1.5, 4), `${bgp.comingSoonElsewhere} site${bgp.comingSoonElsewhere === 1 ? "" : "s"} coming soon abroad`);
-  if (b.rollout_status === "entering_uk") add("ukMomentum", 8, "Marked entering UK");
-  else if (b.rollout_status === "scaling") add("ukMomentum", 5, "Marked scaling");
+  // The estate as counted on the brand's own website leads; headlines about
+  // openings then count for less, because the count already holds them.
+  if (measured && estate!.net !== 0) {
+    const sure = estate!.uk === false ? 0.5 : 1;
+    const span = `${estate!.months} month${estate!.months === 1 ? "" : "s"}`;
+    const detail = estate!.opened && estate!.closed ? ` (${estate!.opened} opened, ${estate!.closed} closed)` : "";
+    // A net fall in a large estate is mostly churn: 6 pubs of 2,400 is not 6 of 40.
+    const churn = estate!.net < 0 && (estate!.count || 0) >= 50 ? Math.max(0.15, 50 / estate!.count!) : 1;
+    add("ukMomentum", Math.sign(estate!.net) * Math.min(Math.abs(estate!.net) * 4 * churn, 18) * sure,
+      `Net ${estate!.net > 0 ? "+" : "−"}${Math.abs(estate!.net)} site${Math.abs(estate!.net) === 1 ? "" : "s"} in ${span}, counted on its own website${detail}`);
+  }
+  if (openUk > 0) add("ukMomentum", Math.min(openUk, measured ? 10 : 22), "UK openings & hiring in the news, time-decayed");
+  if (closeUk > 0) add("ukMomentum", -Math.min(closeUk, measured ? 10 : 20), "UK closures in the news, time-decayed");
+  if (soldOff > 0) add("ukMomentum", -Math.min(soldOff, 12), `Sale of sites: ${saleLabel}`);
+  if (headcountDown > 0) add("ukMomentum", -Math.min(headcountDown, 8), "Headcount falling");
+  const badge = rolloutBadge(b.rollout_status, b.rollout_status_at, now);
+  if (badge.live && badge.status === "entering_uk") add("ukMomentum", 8, "Marked entering UK");
+  else if (badge.live && badge.status === "scaling") add("ukMomentum", 5, "Marked scaling");
+
+  // ── Pipeline — sites on the way, before the press has them ──
+  const soonUk = bgp.comingSoonUk || (estate && estate.uk !== false ? estate.comingSoon : 0) || 0;
+  const soonElsewhere = bgp.comingSoonElsewhere || (estate && estate.uk === false ? estate.comingSoon : 0) || 0;
+  if (soonUk) add("pipeline", Math.min(soonUk * 6, 14), `${soonUk} UK site${soonUk === 1 ? "" : "s"} "coming soon" on its own website`);
+  if (soonElsewhere) add("pipeline", Math.min(soonElsewhere * 1.5, 4), `${soonElsewhere} site${soonElsewhere === 1 ? "" : "s"} coming soon abroad`);
+  const pipe = input.pipeline || null;
+  if (pipe?.planning12m) add("pipeline", Math.min(pipe.planning12m * 4, 14), `${pipe.planning12m} planning application${pipe.planning12m === 1 ? "" : "s"} naming it in 12 months${townList(pipe.planningTowns)}`);
+  if (pipe?.newOpeningJobs) add("pipeline", Math.min(pipe.newOpeningJobs * 3, 9), `${pipe.newOpeningJobs} job advert${pipe.newOpeningJobs === 1 ? "" : "s"} for a new opening${townList(pipe.jobTowns)}`);
+  if (pipe?.propertyRoles) add("pipeline", 4, `Hiring for property: ${pipe.propertyRoles} advert${pipe.propertyRoles === 1 ? "" : "s"}`);
+  const plans = input.plans || null;
+  const plansW = plans ? plansWeight(plans.period, now) : 0;
+  if (plans?.openings && plansW) add("pipeline", Math.min(4 + (plans.openings.count || 0) / 3, 10) * plansW, `Accounts to ${plansPeriodLabel(plans.period)} state: ${plans.openings.summary.slice(0, 70)}`);
+  if (plans?.closures && plansW) add("ukMomentum", -Math.min(3 + (plans.closures.count || 0) / 4, 8) * plansW, `Accounts to ${plansPeriodLabel(plans.period)} state closures: ${plans.closures.summary.slice(0, 60)}`);
 
   // ── Capacity — can they fund a rollout ──
   for (const f of facts) {
@@ -239,7 +359,9 @@ export function computeExpansionScoreV2(input: {
   else if (["D", "E", "WEAK", "DISTRESS"].some(g => grade.startsWith(g))) add("capacity", -10, `Covenant grade ${grade}`);
   if (input.stock?.signals?.strongMomentum) add("capacity", 8, "Stock +40% YoY");
   else if (input.stock?.signals?.stockMomentum) add("capacity", 5, "Stock momentum");
-  if (openUk > closeUk && openUk > 2) add("capacity", 3, "Estate growing, not shrinking");
+  if (plans?.capex && plansW) add("capacity", 3 * plansW, `Accounts state capital spend: ${plans.capex.summary.slice(0, 60)}`);
+  const growing = measured ? estate!.net > 0 : openUk > closeUk + headcountDown + soldOff && openUk > 2;
+  if (growing) add("capacity", 3, "Estate growing, not shrinking");
 
   // ── Intent — are they telling the market they want space ──
   if (bgp.activeRequirements > 0) add("intent", Math.min(bgp.activeRequirements * 8, 14), `${bgp.activeRequirements} requirement${bgp.activeRequirements === 1 ? "" : "s"} on BGP's books, confirmed or logged by BGP in 12 months`);
@@ -253,7 +375,7 @@ export function computeExpansionScoreV2(input: {
   if (b.dept_store_presence) add("intent", 2, "Department-store concessions");
   if (b.franchise_activity) add("intent", 2, "Franchising abroad");
 
-  // ── BGP engagement — the ground truth: are they transacting with us ──
+  // ── Relationship — BGP's own work with the brand. Its own figure, never added to Expansion. ──
   if (bgp.committedDeals) add("engagement", Math.min(bgp.committedDeals * 10, 16), `${bgp.committedDeals} deal${bgp.committedDeals === 1 ? "" : "s"} at HoTs or beyond with BGP`);
   if (bgp.liveDeals > 0) add("engagement", Math.min(bgp.liveDeals * 6, 12), `${bgp.liveDeals} live deal${bgp.liveDeals === 1 ? "" : "s"} in negotiation with BGP`);
   if (bgp.completedDeals24m) add("engagement", Math.min(bgp.completedDeals24m * 3, 6), `${bgp.completedDeals24m} deal${bgp.completedDeals24m === 1 ? "" : "s"} completed with BGP in 2 years`);
@@ -266,18 +388,19 @@ export function computeExpansionScoreV2(input: {
   const bucketTotal = (bucket: string) => lines.filter(l => l.bucket === bucket).reduce((n, l) => n + l.points, 0);
   const subScores = {
     ukMomentum: clamp25(bucketTotal("ukMomentum")),
+    pipeline: clamp25(bucketTotal("pipeline")),
     capacity: clamp25(bucketTotal("capacity")),
     intent: clamp25(bucketTotal("intent")),
     engagement: clamp25(bucketTotal("engagement")),
   };
-  const score = subScores.ukMomentum + subScores.capacity + subScores.intent + subScores.engagement;
+  const score = subScores.ukMomentum + subScores.pipeline + subScores.capacity + subScores.intent;
   const flags = lines
-    .filter(l => l.points > 0)
+    .filter(l => l.points > 0 && l.bucket !== "engagement")
     .sort((a, b2) => b2.points - a.points)
     .slice(0, 6)
     .map(l => l.label.length > 34 ? `${l.label.slice(0, 32)}…` : l.label);
 
-  return { score, subScores, lines, expansionScore: score, expansionFlags: flags };
+  return { score, relationship: subScores.engagement, subScores, lines, expansionScore: score, expansionFlags: flags, badge };
 }
 
 // What a client login may read of a score's why-lines and flags: nothing
@@ -316,10 +439,19 @@ export function schemeLimitedScoreView<T extends Record<string, any>>(result: T)
   return out as T;
 }
 
+// A client login is sent the Expansion figure only: the Relationship figure,
+// its part and its why-lines are BGP's own work with the brand, counted
+// across every landlord.
 export function clientScoreView<T extends Record<string, any>>(result: T): T {
   const out: Record<string, any> = { ...result };
+  delete out.relationship;
+  if (result.subScores && typeof result.subScores === "object") {
+    const { engagement: _engagement, ...market } = result.subScores as Record<string, any>;
+    out.subScores = market;
+  }
   if (Array.isArray(result.lines)) {
-    out.lines = result.lines.map((l: any) => ({ ...l, label: clientScoreLabel(l?.label) })).filter((l: any) => l.label);
+    out.lines = result.lines.filter((l: any) => l?.bucket !== "engagement")
+      .map((l: any) => ({ ...l, label: clientScoreLabel(l?.label) })).filter((l: any) => l.label);
   }
   if (Array.isArray(result.expansionFlags)) {
     out.expansionFlags = result.expansionFlags.map((f: any) => clientScoreLabel(f)).filter(Boolean);

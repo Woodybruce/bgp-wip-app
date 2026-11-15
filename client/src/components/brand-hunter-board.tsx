@@ -43,7 +43,8 @@ interface HunterBrand {
   concept_pitch: string | null;
   brand_analysis: string | null;
   stock_ticker: string | null;
-  expansionScore: number;
+  expansionScore: number;       // market evidence only
+  relationship?: number | null; // BGP's own work with the brand, out of 25; staff only
   expansionFlags: string[];
   recentSignals: Array<{
     signal_type: string;
@@ -158,6 +159,8 @@ const ALL_FILTERS = [
   "New Leadership", "Stock Momentum",
 ] as const;
 
+const NO_RELATIONSHIP = "No BGP relationship";
+
 export default function BrandHunterBoard() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
@@ -189,7 +192,9 @@ export default function BrandHunterBoard() {
 
   const displayed = useMemo(() => {
     let list = brands;
-    if (filterFlag !== "All") list = list.filter(b => b.expansionFlags.includes(filterFlag));
+    // Expanding brands BGP is not yet working with: the prospecting list.
+    if (filterFlag === NO_RELATIONSHIP) list = list.filter(b => b.expansionScore >= 10 && !(Number(b.relationship) > 0));
+    else if (filterFlag !== "All") list = list.filter(b => b.expansionFlags.includes(filterFlag));
     if (search.trim()) list = list.filter(b => b.name.toLowerCase().includes(search.toLowerCase()));
     return list;
   }, [brands, filterFlag, search]);
@@ -243,8 +248,9 @@ export default function BrandHunterBoard() {
         </div>
         <div className="flex gap-1 flex-wrap">
           <Filter className="w-3.5 h-3.5 text-muted-foreground self-center shrink-0" />
-          {ALL_FILTERS.map(f => (
+          {[...ALL_FILTERS.slice(0, 1), ...(isClientViewer ? [] : [NO_RELATIONSHIP]), ...ALL_FILTERS.slice(1)].map(f => (
             <button
+              title={f === NO_RELATIONSHIP ? "Expansion score of 10 or more and no deals, offers, viewings or contact with BGP" : undefined}
               key={f}
               onClick={() => setFilterFlag(f)}
               className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
@@ -306,8 +312,14 @@ export default function BrandHunterBoard() {
                             <div className={`text-lg font-bold leading-none ${band.color}`}>
                               {brand.expansionScore}
                             </div>
-                            <div className={`text-[10px] font-medium ${band.color}`}>{band.label}</div>
+                            <div className={`text-[11px] font-medium ${band.color}`}>{band.label}</div>
                           </div>
+                          {!isClientViewer && brand.relationship != null && (
+                            <div className="text-right border-l pl-2" title="BGP's own deals, offers, viewings and contact with the brand. Its own figure: not part of the Expansion score." data-testid={`hunter-relationship-${brand.id}`}>
+                              <div className="text-sm font-semibold leading-none font-mono tabular-nums">{brand.relationship}<span className="text-[11px] font-normal text-muted-foreground">/25</span></div>
+                              <div className="text-[11px] text-muted-foreground">Relationship</div>
+                            </div>
+                          )}
 
                           {/* Hunter flag toggle */}
                           {!isClientViewer && (
