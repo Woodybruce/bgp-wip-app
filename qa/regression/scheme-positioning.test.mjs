@@ -132,7 +132,7 @@ function runGapRoute(positioning, requirements = {}) {
   const pool = { query: async (sql, params) => {
     if (/FROM brand_stores s/.test(sql)) return { rows: stores };
     if (/SELECT id, description FROM crm_companies/.test(sql)) return { rows: params[0].map(id => ({ id, description: descriptions[id] })) };
-    if (/FROM crm_requirements_leasing r/.test(sql)) return { rows: Object.entries(requirements).map(([company_id, row]) => ({ id: `req-${company_id}`, name: company_id, company_id, company_name: company_id, status: 'Active', ...row })) };
+    if (/FROM crm_requirements_leasing r/.test(sql)) return { rows: Object.entries(requirements).map(([company_id, row]) => { const b = BRANDS[company_id === 'gold' ? 'goldsmiths' : company_id] || {}; return { id: `req-${company_id}`, name: company_id, company_id, company_name: b.name || company_id, company_type: b.companyType, industry: b.industry, company_description: b.description, status: 'Active', ...row }; }) };
     return { rows: [] };
   } };
   let handler;

@@ -2642,7 +2642,7 @@ export async function registerRoutes(
         // record) and its own ChatBGP chats, each as named fields.
         const kept = threadsResult.rows
           .map(row => ({ row, members: (Array.isArray(row.members) ? row.members : []) as Array<{ id: string; name: string; seen: any }> }))
-          .map(x => ({ ...x, kind: jointAgentThreadKind({ createdBy: x.row.created_by, isAiChat: x.row.is_ai_chat, hasAiMember: x.row.has_ai_member, propertyId: x.row.property_id, linkedType: x.row.linked_type, linkedId: x.row.linked_id }, x.members.map(m => m.id), userId, listJointAgent.propertyIds) }))
+          .map(x => ({ ...x, kind: jointAgentThreadKind({ createdBy: x.row.created_by, isAiChat: x.row.is_ai_chat, hasAiMember: x.row.has_ai_member, propertyId: x.row.property_id, linkedType: x.row.linked_type, linkedId: x.row.linked_id }, x.members.map(m => m.id), userId, listJointAgent.linkPropertyIds) }))
           .filter((x): x is typeof x & { kind: "team" | "own_ai" } => !!x.kind);
         const out = [];
         for (const x of kept) {
@@ -2998,7 +2998,7 @@ export async function registerRoutes(
       if (!isMember) return res.status(403).json({ message: "You are not a member of this thread" });
       const readJointAgent = await jointAgentOrRefuse(req, res);
       if (readJointAgent === false) return;
-      const readKind = readJointAgent ? jointAgentThreadKind(thread, members.map(m => m.userId), userId, readJointAgent.propertyIds) : null;
+      const readKind = readJointAgent ? jointAgentThreadKind(thread, members.map(m => m.userId), userId, readJointAgent.linkPropertyIds) : null;
       if (readJointAgent && !readKind) return res.status(404).json({ message: "Thread not found" });
       const messages = await storage.getChatMessages(thread.id);
       const memberUsers = await Promise.all(members.map(async (m) => {
@@ -3108,7 +3108,7 @@ export async function registerRoutes(
       if (postJointAgent) {
         // A joint agent posts as itself, in one of its two kinds of
         // conversation, with tags and files it is allowed.
-        if (!jointAgentThreadKind(thread, threadMembers.map(m => m.userId), userId, postJointAgent.propertyIds)) return res.status(403).json({ message: "You are not a member of this thread" });
+        if (!jointAgentThreadKind(thread, threadMembers.map(m => m.userId), userId, postJointAgent.linkPropertyIds)) return res.status(403).json({ message: "You are not a member of this thread" });
         const checked = await postDenialForJointAgent(postJointAgent, [thread.createdBy, ...threadMembers.map(m => m.userId)], { content, attachments });
         if (checked.error) return res.status(400).json({ message: checked.error });
         requestedRole = "user";
@@ -3325,7 +3325,7 @@ export async function registerRoutes(
         // An edit is held to what a new message is.
         const editThread = await storage.getChatThread(threadId);
         const editMembers = (await storage.getChatThreadMembers(threadId)).map(m => m.userId);
-        if (!editThread || !jointAgentThreadKind(editThread, editMembers, userId, editJointAgent.propertyIds)) return res.status(403).json({ message: "You are not a member of this thread" });
+        if (!editThread || !jointAgentThreadKind(editThread, editMembers, userId, editJointAgent.linkPropertyIds)) return res.status(403).json({ message: "You are not a member of this thread" });
         const checked = await postDenialForJointAgent(editJointAgent, [editThread.createdBy, ...editMembers], { content });
         if (checked.error) return res.status(400).json({ message: checked.error });
       }
@@ -3355,7 +3355,7 @@ export async function registerRoutes(
       if (unsendJointAgent) {
         // Its own messages only, in a conversation it may hold.
         const memberIds = (await storage.getChatThreadMembers(threadId)).map(m => m.userId);
-        if (msg.userId !== userId || !thread || !jointAgentThreadKind(thread, memberIds, userId, unsendJointAgent.propertyIds)) return res.status(403).json({ message: "Can only delete your own messages" });
+        if (msg.userId !== userId || !thread || !jointAgentThreadKind(thread, memberIds, userId, unsendJointAgent.linkPropertyIds)) return res.status(403).json({ message: "Can only delete your own messages" });
       }
       await storage.deleteChatMessage(messageId);
       emitMessageDeleted(threadId, messageId);

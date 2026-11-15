@@ -547,7 +547,8 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     const reqToday = new Date();
     const matchingRequirements = await pool.query(
       `SELECT r.id, r.name, r.use, r.size, r.requirement_locations,
-              r.company_id, c.name AS company_name, c.domain, ${requirementLiveColumnsSql("r")}
+              r.company_id, c.name AS company_name, c.domain, c.company_type, c.industry, c.description AS company_description,
+              ${requirementLiveColumnsSql("r")}
          FROM crm_requirements_leasing r
          LEFT JOIN crm_companies c ON c.id = r.company_id
         WHERE ${requirementStateSql("r")} <> 'closed'${gapScope ? ` AND ${requirementClientVisibleSql("r")}` : ""}
@@ -557,9 +558,17 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
                AND (au.use_class = ANY(r.use) OR r.use IS NULL OR array_length(r.use, 1) IS NULL)
           )
         ORDER BY r.created_at DESC
-        LIMIT 200`,
+        LIMIT 600`,
       [propertyId]
-    ).then(r => r.rows.map((row: any) => {
+    ).then(r => r.rows.filter((row: any) => {
+      // The scheme's own categories and no junk (Woody, 2026-11-15: "Sort
+      // the list"): a requirement counts here only when its brand is one the
+      // board would offer as a gap. One with no brand record is left out.
+      if (!row.company_id) return false;
+      const facts = { name: row.company_name, companyType: row.company_type, industry: row.industry, description: row.company_description };
+      if (isJunkBrand(facts)) return false;
+      return fitsPositioning(positioning, { companyType: row.company_type, tier: brandTier(facts), hotel: isHotelGroup(facts) });
+    }).map((row: any) => {
       const why = requirementReason(row, reqToday);
       return {
         id: row.id, name: row.name, use: row.use, size: row.size, requirement_locations: row.requirement_locations,

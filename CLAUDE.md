@@ -1258,9 +1258,12 @@ Asked the four questions, he answered "Yes to all".
 - A requirement fits a marketing unit on size AND use: the unit's use class
   is one the requirement lists, or lines up by `USE_HINTS`; a side with no
   use stated fits on size alone.
-- Not built: narrowing "requirements whose use fits a unit" (under More) to
-  the scheme's categories; the property conversation on a shared centre page
-  for a joint agent (its chat rules refuse it, as on its own schemes).
+- "Requirements whose use fits a unit" (under More) lists only brands the
+  board would offer as a gap: a linked brand record, in the scheme's
+  categories (`fitsPositioning`), not junk. The property conversation works
+  for a joint agent on its own schemes and on a shared centre page.
+- The weekly research has never been run against Perplexity (no key on a
+  build machine): check a centre's box after the first night on live.
   Tests: `qa/regression/brand-gap-board.test.mjs`.
 
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
@@ -1593,9 +1596,19 @@ untouched when it is off, and
   row of the staff tracker, desktop and phone; counts from `GET
   /api/chat/threads/record/unit-comments?propertyIds=`, read only for
   properties the caller may open): a message tagged with the unit. Guards:
-  `qa/regression/record-conversation-guards.test.mjs`. Not yet: a joint
-  agent (its gateway refuses the routes; parked by Woody on 2026-11-14), the
-  joint agent's tracker, company and deal conversations.
+  `qa/regression/record-conversation-guards.test.mjs`. **A joint agent
+  uses it too** (Woody, 2026-11-15: "Sort the list"): opening the box on a
+  property at its schemes, or on a shared centre page, joins the shared
+  conversation whatever has been written there already (its gateway opens
+  `POST /api/chat/threads/record/property/:id` and nothing else new; the
+  handler's property check is the door; `chatMemberDenial` and the member
+  insert in `storage.addChatThreadMember` waive "before the first message"
+  for that one thread only). It reads it as it reads any conversation:
+  redacted for that reader, tags only at its own schemes
+  (`linkPropertyIds` on `ChatJointAgent` is what it may HOLD a conversation
+  on; `propertyIds` is still what it may tag, read and ask ChatBGP about).
+  Not yet: comment buttons on the joint agent's tracker, company and deal
+  conversations.
 - **Matching**: `shared/property-plan-match.ts`,
   `server/property-plan-match.ts` (`GET /api/plans/:id/match`, `POST
   …/match/accept`, `…/accept-suggested`, `…/dismiss`). A scan stays open and
@@ -2201,7 +2214,7 @@ what was read, fills the form, and saves through the form's own route.
     (`/api/admin/letting-suggestions/preview|apply`; Settings → Letting
     integrity → Backfills). Never at boot, never on a timer.
   - **Who sees what**: rows from target comments and from Tracker comments
-    (a joint agent does not open the property's conversation) are
+    (BGP's own work list, though a joint agent now reads the conversation itself) are
     `visibility = 'bgp'`, BGP staff only (`isStaff && seesBgpNotes`). The rest are `'brief'`: BGP
     staff and the scheme's joint agent. An asset manager, a Landsec leasing
     manager and every other client login are listed nothing, counted

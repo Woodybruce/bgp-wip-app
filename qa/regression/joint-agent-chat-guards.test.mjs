@@ -171,3 +171,28 @@ test('the gateway opens chat one address at a time, for a joint agent only', () 
   assert.ok(!common.includes('/api/chat'), 'chat is on the shared prefix list');
   assert.ok(chat.includes('p === "/api/chatbgp/chat"') && chat.includes('m === "POST"'));
 });
+
+// Woody, 15 November 2026 ("Sort the list"): a joint agent uses the
+// conversation box on a property it can open. Only the property's one shared
+// conversation is opened to it after the first message, and only where the
+// handler's property check lets it in.
+test("a joint agent joins a property's shared conversation, and nothing else after the first message", () => {
+  assert.ok(gateway.includes('if (m === "POST" && /^\\/api\\/chat\\/threads\\/record\\/property\\/[^/]+$/.test(p)) return "allow";'));
+  const record = read('server/record-conversation.ts');
+  const open = body(record, 'router.post("/api/chat/threads/record/property/:propertyId"', 900);
+  before(open, 'propertyReadBlocked(req, propertyId)', ['sharedPropertyThreadId(propertyId)', 'storage.addChatThreadMember('], 'the property is checked before the conversation is opened');
+  assert.ok(open.includes('storage.addChatThreadMember('));
+  const denial = body(messaging, 'export async function chatMemberDenial', 2600);
+  assert.ok(denial.includes('jointAgentLinkAllowed(thread, ja.linkPropertyIds)'));
+  assert.ok(denial.includes('const sharedRecord = thread.createdBy === RECORD_THREAD_MARKER && thread.isAiChat === false && thread.linkedType === "property" && !!thread.linkedId;'));
+  assert.ok(denial.includes('if (!sharedRecord && agents.has(targetUserId) && input.messageCount !== 0) return'));
+  assert.match(messaging, /const RECORD_THREAD_MARKER = "__record__";/);
+  assert.match(record, /export const RECORD_THREAD_CREATOR = "__record__";/);
+  const add = body(storage, 'async addChatThreadMember', 2600);
+  assert.ok(add.includes("OR EXISTS (SELECT 1 FROM chat_threads t WHERE t.id = $1::varchar AND t.created_by = '__record__'"));
+  assert.ok(add.includes("AND t.linked_type = 'property' AND t.is_ai_chat = false)"));
+  // What it may tag and ask ChatBGP about stays its own schemes.
+  assert.match(messaging, /const linkPropertyIds = \[\.\.\.new Set\(\[\.\.\.propertyIds, \.\.\.\(await sharedBenchmarkPropertyIds\(\)\)\]\)\];/);
+  assert.ok(routes.includes('createJointAgent.propertyIds.includes(propertyLink)'));
+  assert.ok(messaging.includes('AND property_id = ANY($2::text[])`, [[...units], ja.propertyIds]'));
+});

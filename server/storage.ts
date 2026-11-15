@@ -723,11 +723,15 @@ export class DatabaseStorage implements IStorage {
     if ((await jointAgentsAmong([member.userId])).size) {
       // A joint agent joins only a conversation with no messages: the test
       // is part of the insert, so a message landing in between is not handed
-      // over.
+      // over. A property's one shared conversation is the exception: it is
+      // read by everyone who can open the property (chatMemberDenial above
+      // has checked the property).
       const r = await pool.query(
         `INSERT INTO chat_thread_members (thread_id, user_id, added_by, seen)
          SELECT $1::varchar, $2::varchar, $3, $4
           WHERE NOT EXISTS (SELECT 1 FROM chat_messages WHERE thread_id = $1::varchar)
+             OR EXISTS (SELECT 1 FROM chat_threads t WHERE t.id = $1::varchar AND t.created_by = '__record__'
+                         AND t.linked_type = 'property' AND t.is_ai_chat = false)
          RETURNING id, thread_id AS "threadId", user_id AS "userId", added_by AS "addedBy", seen, added_at AS "addedAt"`,
         [member.threadId, member.userId, member.addedBy ?? null, member.seen ?? false]);
       if (!r.rows[0]) throw Object.assign(new Error("A joint agent can only join a conversation before its first message. Start a new conversation."), { code: "CHAT_MEMBER_REFUSED" });

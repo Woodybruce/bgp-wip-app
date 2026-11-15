@@ -562,7 +562,7 @@ export function sharedJointAgentScope(agents: ChatJointAgent[]): SharedJointAgen
   const same = (a: ChatJointAgent) => new Set(a.schemeKeys).size === schemeKeys.length && new Set(a.propertyIds).size === propertyIds.length;
   const exact = list.find(same);
   const readAs = exact || list[0];
-  return { readAs, scope: { userId: readAs.userId, firm: list.length === 1 ? readAs.firm : null, schemeKeys, propertyIds }, narrowed: !exact };
+  return { readAs, scope: { userId: readAs.userId, firm: list.length === 1 ? readAs.firm : null, schemeKeys, propertyIds, linkPropertyIds: propertyIds }, narrowed: !exact };
 }
 
 export const JOINT_AGENT_NO_SHARED_SCHEME = "I can't answer in this conversation: the joint agents in it don't share a scheme, and anything I say here is read by all of them. Ask me in your own ChatBGP chat instead.";

@@ -55,3 +55,12 @@ test('junk records are never offered as a gap', () => {
   assert.match(gap, /const pitchable = eligible\.filter\(b => !isJunkBrand\(/);
   for (const list of ['const gap = pitchable', 'const peerGaps = pitchable', 'const competitorGaps = pitchable', 'const localMarket = pitchable', 'const candidates = sliced(pitchable.filter']) assert.ok(gap.includes(list), list);
 });
+
+test('the requirements list under More is the scheme\'s categories, without junk', () => {
+  const gap = read('server/property-gap-analysis.ts');
+  const at = gap.indexOf('const matchingRequirements = await pool.query(');
+  const block = gap.slice(at, at + 2600);
+  assert.match(block, /if \(!row\.company_id\) return false;/);
+  assert.match(block, /if \(isJunkBrand\(facts\)\) return false;/);
+  assert.match(block, /return fitsPositioning\(positioning, \{ companyType: row\.company_type, tier: brandTier\(facts\), hotel: isHotelGroup\(facts\) \}\);/);
+});
