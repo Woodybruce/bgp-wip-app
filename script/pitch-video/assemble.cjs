@@ -69,8 +69,42 @@ const parts = [], tmp = path.join(OUT, ".parts");
 fs.rmSync(tmp, { recursive: true, force: true }); fs.mkdirSync(tmp, { recursive: true });
 const ff = args => execFileSync("ffmpeg", ["-v", "error", "-y", ...args], { stdio: "inherit" });
 let n = 0, missing = [];
+// READALONG_DIR: instead of the joined cut, one clip per voice line for Woody
+// to watch while he records: the footage on top, the whole line under it,
+// numbered as on the recording sheet (A and B are the two clips to camera),
+// and held on its last frame until there has been time to say the line.
+const READ = process.env.READALONG_DIR;
+if (READ) fs.mkdirSync(READ, { recursive: true });
+const readLabel = i => (i === 0 ? "A" : i === ORDER.length - 1 ? "B" : String(i + 1));
+const sayTime = voice => voice.split(/\s+/).length / 2.4 + 1.5;
+const readText = (label, voice) => [
+  `drawtext=fontfile=${FONT_BOLD}:text='${esc(/^[AB]$/.test(label) ? `Clip ${label}, to camera` : `Line ${label}`)}':fontcolor=0xE9B48F:fontsize=28:x=120:y=836`,
+  ...wrap(voice, 104).map((l, i) => `drawtext=fontfile=${FONT}:text='${esc(l)}':fontcolor=white:fontsize=30:x=120:y=${884 + i * 42}`),
+];
 for (const item of ORDER) {
+  const index = n;
   const file = path.join(tmp, `${String(n++).padStart(2, "0")}.mp4`);
+  if (READ) {
+    const label = readLabel(index), need = sayTime(item.voice);
+    const out = path.join(READ, `${/^[AB]$/.test(label) ? label : label.padStart(2, "0")}-${item.clip || (label === "A" ? "opening" : label === "B" ? "close" : "card")}.mp4`);
+    if (item.card) {
+      const secs = Math.max(item.secs, need);
+      const vf = [`drawtext=fontfile=${FONT_BOLD}:text='${esc(item.card.replace(/^\d+\s+/, ""))}':fontcolor=white:fontsize=54:x=(w-text_w)/2:y=330`,
+        `drawtext=fontfile=${FONT}:text='${esc(item.note.slice(0, 110))}':fontcolor=0xE9B48F:fontsize=26:x=(w-text_w)/2:y=420`, ...readText(label, item.voice)].join(",");
+      ff(["-f", "lavfi", "-i", `color=c=0x1c1917:s=1920x1080:r=25:d=${secs.toFixed(2)}`, "-vf", vf, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "21", out]);
+      continue;
+    }
+    if (item.phone && !process.env.READALONG_PHONE) continue;
+    const src = path.join(OUT, `${item.clip}.webm`), t = trimOf(item.clip);
+    if (!fs.existsSync(src) || !t) { missing.push(item.clip); continue; }
+    const speed = item.speed || Number(process.env.SPEED || 1.5);
+    const raw = Math.min(item.max || 1e9, Math.max(4, t.length - t.trim - 0.6)), secs = raw / speed;
+    const vf = [`setpts=PTS/${speed}`,
+      ...(item.phone ? ["crop=390:844:0:0", "scale=-2:800:flags=lanczos", "pad=1920:1080:(ow-iw)/2:16:color=0x1c1917"] : ["scale=1408:792:flags=lanczos", "pad=1920:1080:256:16:color=0x1c1917"]),
+      "fps=25", ...(need > secs ? [`tpad=stop_mode=clone:stop_duration=${(need - secs).toFixed(2)}`] : []), ...readText(label, item.voice)].join(",");
+    ff(["-ss", String(t.trim), "-t", String(raw), "-i", src, "-vf", vf, "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "21", out]);
+    continue;
+  }
   if (item.card) {
     const vf = [
       `drawtext=fontfile=${FONT_BOLD}:text='${esc(item.card)}':fontcolor=white:fontsize=58:x=(w-text_w)/2:y=400`,
@@ -97,6 +131,7 @@ for (const item of ORDER) {
   ff(["-ss", String(t.trim), "-t", String(raw), "-i", src, "-vf", vf, "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", file]);
   parts.push(file);
 }
+if (READ) { console.log(`wrote read-along clips to ${READ}${missing.length ? `, not filmed yet: ${missing.join(", ")}` : ""}`); process.exit(0); }
 const listFile = path.join(tmp, "list.txt");
 fs.writeFileSync(listFile, parts.map(p => `file '${p}'`).join("\n"));
 ff(["-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", target]);
