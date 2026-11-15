@@ -27,6 +27,22 @@ const BK_DEAL = "8f3b56ee-65dc-4d8e-87da-1ae9c5b02bfe";
 // Mark Warne as a person on the unit's Targeting Brief (the staging script makes it).
 const MARK_PERSON = process.env.MARK_PERSON || "6dc4bf3b-6ac3-43fe-ab7b-bd542bae5401";
 
+// The phone scenes (staged by stage-phone.cjs). The Liverpool ONE unit that is
+// shared on film, and the photos added on film: PHONE_PHOTOS is a comma
+// separated list of two or three jpg files, the first being the one that is
+// attached to the brand. They are kept outside the repo.
+const SHARE_UNIT = "134b127e-c128-444e-9ae1-d9189b3947da";
+const PHONE_COMMENT = "Met Richard Wilcox after the viewing. Jersey Mike's want the service charge budget and a second look at the frontage.";
+const PHONE_PHOTOS = (process.env.PHONE_PHOTOS || "").split(",").map(f => f.trim()).filter(Boolean);
+
+// A BGP staff login has no client colours to wait for (Shot.goto would wait
+// out its whole allowance for them), so the phone scenes open a page here.
+async function openPhone(s, p, settle = 2500) {
+  await s.page.goto(BASE + p, { waitUntil: "domcontentloaded", timeout: 120000 });
+  try { await s.page.waitForLoadState("networkidle", { timeout: 20000 }); } catch {}
+  await s.wait(settle);
+}
+
 const POINTER = `
 (() => {
   if (window.__pointer) return;
@@ -347,6 +363,119 @@ const SCENES = {
     await s.click('[data-testid="bottom-nav-tracker"]', { after: 3200, ms: 600 });
   },
 
+  // 13a. The phone in the hand after the meeting: Jersey Mike's page, its
+  // agent under Tenant rep, his contact page, and the call. (The brand page
+  // has no Call button for an agent: it is on the agent's own page.)
+  async phoneCall(s) {
+    await openPhone(s, `/companies/${JERSEY_MIKES}`, 3000);
+    await s.start();
+    await s.wait(900);
+    await s.click('[data-testid="company-section-contacts"]', { after: 1500, ms: 600 });
+    await s.over('[data-testid="company-phone-represented-by"] a[href^="/contacts/"]', 700);
+    await s.wait(900);
+    await s.click('[data-testid="company-phone-represented-by"] a[href^="/contacts/"]', { before: 100, after: 2200, ms: 100 });
+    await s.over('[data-testid="link-contact-phone"]', 700, { fx: 0.2 });
+    await s.wait(700);
+    // A tel: link opens the phone's dialler; in the filming browser nothing follows the tap.
+    await s.click('[data-testid="link-contact-phone"]', { before: 100, after: 2500, ms: 100, at: { fx: 0.2 } });
+  },
+
+  // 13b. A comment on the unit from the Letting Tracker; it lands in the
+  // property's one conversation.
+  async phoneComment(s) {
+    await openPhone(s, "/available", 3000);
+    await s.start();
+    await s.wait(400);
+    await s.click('[data-testid="input-search-units"]', { before: 200, after: 300, ms: 500 });
+    await s.type("L057", 90);
+    await s.wait(1000);
+    // The comment box takes the cursor as it opens.
+    await s.click(`[data-testid="unit-comments-${BK_UNIT}"]`, { before: 250, after: 1300, ms: 600 });
+    await s.page.locator(`[data-testid="unit-comment-input-${BK_UNIT}"]`).focus();
+    await s.write(PHONE_COMMENT, 95);
+    await s.wait(500);
+    await s.click('button[aria-label="Post comment"]', { before: 200, after: 1600, ms: 450 });
+    await s.over(s.page.locator(`[data-testid="unit-comments-list-${BK_UNIT}"] > div`).last(), 500);
+    await s.wait(1200);
+    await s.page.keyboard.press("Escape");
+    await s.wait(500);
+    await s.over(`[data-testid="unit-comments-${BK_UNIT}"]`, 500);
+    await s.wait(1300);
+  },
+
+  // 13c. Photos from the phone: added in Images, one attached to the brand,
+  // and it is the cover of Jersey Mike's page. (The brand page itself has no
+  // way to add a photo; the phone page shows the cover photo only.)
+  async phonePhotos(s) {
+    if (PHONE_PHOTOS.length < 2) throw new Error("PHONE_PHOTOS must name two or three jpg files");
+    const files = PHONE_PHOTOS.slice(0, 3).map((file, i) => ({ name: `jersey-mikes-argyll-street-${i + 1}.jpg`, mimeType: "image/jpeg", buffer: fs.readFileSync(file) }));
+    await openPhone(s, "/m/images", 2500);
+    await s.start();
+    await s.wait(800);
+    // The tap opens the phone's photo picker, which cannot be filmed: the
+    // files are handed to the page's own file input.
+    s.page.once("filechooser", chooser => { chooser.setFiles(files).catch(() => {}); });
+    await s.click('[data-testid="mobile-images-upload"]', { after: 400, ms: 600 });
+    if (!(await s.page.locator('button[data-drop-type="image"]').count())) {
+      await s.wait(1500);
+      if (!(await s.page.locator('button[data-drop-type="image"]').count())) await s.page.locator('[data-testid="mobile-images-upload-input"]').setInputFiles(files);
+    }
+    await s.page.locator('button[data-drop-type="image"]').first().waitFor({ state: "visible", timeout: 30000 });
+    await s.wait(1300);
+    // Press and hold the shopfront photo for its menu.
+    const named = s.page.locator('button[data-drop-type="image"]:has(img[alt*="argyll-street-1"])');
+    const tile = (await named.count()) ? named.first() : s.page.locator('button[data-drop-type="image"]').last();
+    await s.over(tile, 600);
+    await s.wait(150);
+    await s.page.mouse.down(); await s.wait(600); await s.page.mouse.up();
+    await s.wait(800);
+    await s.click('[data-testid="mobile-image-menu-attach"]', { before: 200, after: 800, ms: 500 });
+    await s.click('[data-testid="mobile-image-attach-tab-brand"]', { before: 150, after: 400, ms: 450 });
+    await s.click('[data-testid="mobile-image-attach-search"]', { before: 100, after: 200, ms: 350 });
+    await s.type("Jersey", 80);
+    await s.wait(600);
+    await s.click(`[data-testid="mobile-image-attach-pick-${JERSEY_MIKES}"]`, { before: 200, after: 1300, ms: 450 });
+    // To the brand's page, without a reload (as following a link does).
+    await s.page.evaluate(p => { history.pushState(null, "", p); window.dispatchEvent(new PopStateEvent("popstate")); }, `/companies/${JERSEY_MIKES}`);
+    await s.page.locator('[data-testid="brand-overview-image"]').waitFor({ state: "visible", timeout: 30000 }).catch(() => {});
+    await s.moveTo(195, 300, 600);
+    await s.wait(2000);
+  },
+
+  // 13d. Share with a brand: a Liverpool ONE unit, for the agent, as one PDF.
+  // (The contact list holds people at the company picked, so the agent is
+  // found under his own firm, not under Jersey Mike's.)
+  async phoneShare(s) {
+    await openPhone(s, "/available", 3000);
+    // The brand picker lists every company in the CRM, which takes some
+    // seconds the first time it is asked for: ask before the cut starts.
+    await s.page.evaluate(async () => {
+      const token = localStorage.getItem("bgp_auth_token");
+      await fetch("/api/crm/companies", { credentials: "include", headers: token ? { Authorization: `Bearer ${token}` } : {} }).catch(() => {});
+    });
+    // The unit is found before the cut: the cut opens on its card.
+    await s.page.locator('[data-testid="input-search-units"]').fill("P7");
+    await s.page.locator(`[data-testid="mobile-unit-${SHARE_UNIT}"]`).waitFor({ state: "visible", timeout: 20000 });
+    await s.page.locator('[data-testid="input-search-units"]').blur();
+    await s.wait(800);
+    await s.start();
+    await s.wait(600);
+    await s.click(`[data-testid="button-more-${SHARE_UNIT}"]`, { before: 250, after: 700, ms: 550 });
+    await s.click(`[data-testid="unit-share-${SHARE_UNIT}"]`, { before: 200, after: 1500, ms: 450 });
+    await s.click('[data-testid="unit-share-company"]', { before: 200, after: 500, ms: 550 });
+    await s.write("Etch Gr", 130);
+    await s.click(s.page.locator('[role="option"]').filter({ hasText: /^Etch Group$/ }).first(), { before: 250, after: 900, ms: 450 });
+    await s.click('[data-testid="unit-share-contact"]', { before: 150, after: 600, ms: 450 });
+    await s.click(s.page.locator('[role="option"]').filter({ hasText: /Richard Wilcox/ }).first(), { before: 250, after: 800, ms: 450 });
+    for (const tick of ["unit-share-tick-details", "unit-share-tick-commercial-serviceChargePa"]) {
+      await s.over(`[data-testid="${tick}"]`, 450).catch(() => {});
+      await s.wait(350);
+    }
+    await s.click('[data-testid="unit-share-send"]', { before: 250, after: 1800, ms: 550 });
+    await s.over('[data-testid^="unit-share-result-"]', 500).catch(() => {});
+    await s.wait(2200);
+  },
+
   // 12. A joint agent's own login: his schemes only, the same tools.
   async agent(s) {
     await s.goto("/deals/properties", 3000);
@@ -381,6 +510,10 @@ const SCENES = {
 const SCENE_SETUP = {
   phone: { phone: true },
   agent: { user: "david.bell@jointagent.demo" },
+  phoneCall: { phone: true, user: "md" },
+  phoneComment: { phone: true, user: "md" },
+  phonePhotos: { phone: true, user: "md" },
+  phoneShare: { phone: true, user: "md" },
 };
 const PHONE = { width: 390, height: 844 };
 

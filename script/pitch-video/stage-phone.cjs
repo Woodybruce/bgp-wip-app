@@ -16,7 +16,7 @@
 //   status   prints what is there (reads only)
 //   reset    takes back what FILMING the scenes leaves behind, so they can be
 //            filmed again from the same start: the comment typed on film, the
-//            photos added to Jersey Mike's and the shares made of the
+//            photos added from the phone and the shares made of the
 //            Liverpool ONE unit. The comment and the photos go through the
 //            app's API (delete message, move to the bin); the app has no route
 //            that removes a share from a unit's sharing history, so those rows
@@ -126,11 +126,11 @@ const PHASES = {
     const [have] = await q(`SELECT id, primary_contact_id FROM brand_agent_representations WHERE brand_company_id = $1 AND agent_company_id = $2 AND agent_type = 'tenant_rep' AND end_date IS NULL ORDER BY created_at LIMIT 1`, [BRAND.id, f.id]);
     if (!have) {
       await must(STAGER, "POST", "/api/brand/representations", { brandCompanyId: BRAND.id, agentCompanyId: f.id, primaryContactId: c.id, agentType: "tenant_rep" });
-      step(true, `${f.name} is ${BRAND.name}'s tenant rep, ${AGENT.name} the named contact`);
+      step(true, `${f.name} is the tenant rep for ${BRAND.name}, ${AGENT.name} the named contact`);
     } else if (have.primary_contact_id !== c.id) {
       await must(STAGER, "PATCH", `/api/brand/representations/${have.id}`, { primaryContactId: c.id });
       step(true, `${AGENT.name} named on the tenant rep line`);
-    } else step(false, `${f.name} is ${BRAND.name}'s tenant rep, ${AGENT.name} the named contact`);
+    } else step(false, `${f.name} is the tenant rep for ${BRAND.name}, ${AGENT.name} the named contact`);
   },
 
   async unit() {
@@ -189,7 +189,8 @@ async function leftByFilming() {
     `SELECT m.id, m.thread_id FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id
       WHERE t.linked_type = 'property' AND t.linked_id = $1 AND m.content LIKE $2 AND m.content LIKE $3`,
     [BLUEWATER, `%(tag:unit/${BK_UNIT})%`, `%${COMMENT}`]);
-  const photos = (await q(`SELECT id, file_name FROM image_studio_images WHERE company_id = $1 AND NOT ('trashed' = ANY(COALESCE(tags, '{}')))`, [BRAND.id]))
+  // Every photo the scene added, attached to the brand or not.
+  const photos = (await q(`SELECT id, file_name FROM image_studio_images WHERE 'phone-upload' = ANY(COALESCE(tags, '{}')) AND NOT ('trashed' = ANY(COALESCE(tags, '{}')))`))
     .filter(p => PHOTO_NAMES.test(String(p.file_name || "")));
   const shares = await q(`SELECT id::text AS id, pack_storage_key FROM unit_shares WHERE unit_id = $1`, [SHARE_UNIT]);
   return { comments, photos, shares };
