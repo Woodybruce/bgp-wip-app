@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest, getQueryFn, getAuthHeaders, queryClient } from "@/lib/queryClient";
+import type { EngagementData } from "@shared/crm-engagement";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -73,6 +74,8 @@ interface CalendarEvent {
   categories?: string[];
   _source?: "outlook" | "crm";
   _eventType?: string;
+  // An entry from the CRM plan (a CRM event or an action's due time): where it opens.
+  _planLink?: string;
   _propertyName?: string;
   _companyName?: string;
   _attendeeNames?: string[];
@@ -147,6 +150,31 @@ const TEAM_TYPE_ALIASES: Record<string, string> = {
 function teamEventType(te: TeamEvent): string {
   const stored = (te.event_type || "").toLowerCase();
   return GENERIC_TEAM_TYPES.has(stored) ? classifyOutlookEvent(te.title) : (TEAM_TYPE_ALIASES[stored] || stored);
+}
+
+// The CRM plan as a calendar layer (Woody, 2026-11-15: the CRM "should all be
+// linked to the calendar ... have it overlay the normal team ... calendar").
+// A confirmed CRM event is drawn as a marketing entry; an open action as a
+// deadline at its due time. Each opens its record on the CRM page.
+function crmPlanToCalendarEvents(plan: EngagementData | null | undefined): CalendarEvent[] {
+  if (!plan) return [];
+  const out: CalendarEvent[] = [];
+  for (const event of plan.events) {
+    if (!event.startsAt || !event.dateConfirmed || event.status === "cancelled") continue;
+    const end = event.endsAt || new Date(Date.parse(event.startsAt) + 60 * 60_000).toISOString();
+    out.push({ id: `plan-event-${event.id}`, subject: event.title, start: { dateTime: event.startsAt, timeZone: "Europe/London" }, end: { dateTime: end, timeZone: "Europe/London" },
+      location: event.location ? { displayName: event.location } : undefined, bodyPreview: event.description || undefined, isAllDay: false,
+      _source: "crm", _eventType: "marketing", _companyName: event.companies.map(c => c.companyName).join(", ") || undefined,
+      _attendeeNames: event.guests.map(g => g.name), _planLink: `/contacts?tab=overview&event=${encodeURIComponent(event.id)}` });
+  }
+  for (const action of plan.actions) {
+    if (!action.dueAt || action.status === "done") continue;
+    out.push({ id: `plan-action-${action.id}`, subject: `${action.title}${action.ownerName ? ` (${action.ownerName})` : ""}`,
+      start: { dateTime: action.dueAt, timeZone: "Europe/London" }, end: { dateTime: new Date(Date.parse(action.dueAt) + 30 * 60_000).toISOString(), timeZone: "Europe/London" },
+      bodyPreview: action.notes || undefined, isAllDay: false, _source: "crm", _eventType: "deadline", _companyName: action.companyName || undefined,
+      _planLink: `/contacts?tab=overview&action=${encodeURIComponent(action.id)}` });
+  }
+  return out;
 }
 
 function teamEventToCalendarEvent(te: TeamEvent): CalendarEvent {
@@ -1101,6 +1129,7 @@ function EventDetailPanel({ event, onClose, crmLinks }: { event: CalendarEvent; 
             <div className="flex items-center gap-1.5 mt-1"><Building2 className="w-3.5 h-3.5 text-muted-foreground" /><span className="text-sm text-muted-foreground">{event._propertyName}</span></div>
           )}
           {event._companyName && <p className="text-sm text-muted-foreground mt-0.5">{event._companyName}</p>}
+          {event._planLink && <Link href={event._planLink} className="inline-block mt-1 text-xs text-primary hover:underline" data-testid="link-open-crm-plan">Open in the CRM</Link>}
         </div>
 
         {crmLinks && <CrmLinkBadges links={crmLinks} />}
@@ -1381,6 +1410,8 @@ export default function Calendar() {
   const [showCrmEvents, setShowCrmEvents] = useState(true);
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [showOutlookEvents, setShowOutlookEvents] = useState(true);
+  const [showPlan, setShowPlanState] = useState(() => { try { return localStorage.getItem("bgp_calendar_crm_plan") !== "0"; } catch { return true; } });
+  const setShowPlan = (on: boolean) => { setShowPlanState(on); try { localStorage.setItem("bgp_calendar_crm_plan", on ? "1" : "0"); } catch {} };
   const [showTeam, setShowTeam] = useState(true);
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
   const [activeEventType, setActiveEventType] = useState<string | null>(null);
@@ -1462,8 +1493,15 @@ export default function Calendar() {
     staleTime: 10 * 60 * 1000,
   });
 
+  // The CRM plan layer: BGP staff only (the server refuses it to a client login, which then has no layer).
+  const { data: crmPlan } = useQuery<EngagementData | null>({
+    queryKey: ["/api/crm/engagement", { kind: "all" }],
+    queryFn: async () => { try { return await (await apiRequest("GET", "/api/crm/engagement?kind=all")).json(); } catch { return null; } },
+    enabled: showPlan && !isClientTeam, staleTime: 60_000, refetchInterval: false, retry: false,
+  });
   const mergedEvents = useMemo(() => {
     const events: CalendarEvent[] = [];
+    if (showPlan && !isClientTeam) events.push(...crmPlanToCalendarEvents(crmPlan));
     if (showOutlookEvents && outlookEvents) events.push(...outlookEvents
       // Organiser-cancelled meetings linger in Outlook as "Cancelled: …" until
       // each person removes them — dead entries that just clutter the board.
@@ -1501,7 +1539,7 @@ export default function Calendar() {
       return out.filter(e => e._eventType === activeEventType);
     }
     return out;
-  }, [outlookEvents, teamEventsRaw, showCrmEvents, showOutlookEvents, activeEventType, clientTeamFilter, crmContacts]);
+  }, [outlookEvents, teamEventsRaw, showCrmEvents, showOutlookEvents, activeEventType, clientTeamFilter, crmContacts, showPlan, crmPlan, isClientTeam]);
 
   const eventsLoading = teamEventsLoading || (status?.connected && outlookLoading);
 
@@ -1586,6 +1624,11 @@ export default function Calendar() {
             <Pill active={showCrmEvents} onClick={() => setShowCrmEvents(!showCrmEvents)} data-testid="toggle-crm-events">
               <Building2 className="w-3 h-3" />CRM
             </Pill>
+            {!isClientTeam && (
+              <Pill active={showPlan} onClick={() => setShowPlan(!showPlan)} title="CRM events and the due times of CRM actions, from the CRM page" data-testid="toggle-crm-plan">
+                <Target className="w-3 h-3" />CRM plan
+              </Pill>
+            )}
             {status?.connected && (
               <Pill active={showOutlookEvents} onClick={() => setShowOutlookEvents(!showOutlookEvents)} data-testid="toggle-outlook-events">
                 <Cloud className="w-3 h-3" />Outlook

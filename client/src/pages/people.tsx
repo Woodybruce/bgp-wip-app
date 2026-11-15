@@ -1,5 +1,7 @@
 import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
 import { ContactDataHealth } from "@/components/contact-data-health";
+import { CrmCompanyList } from "@/components/crm-hub/company-list";
+import { StartStrategyDialog } from "@/components/crm-engagement/start-strategy";
 import { ContactFormDialog } from "@/pages/contacts";
 import { useRoute, useLocation, useSearch, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -1183,11 +1185,13 @@ function LendersTab({
   );
 }
 
-type PeopleTab = "overview" | "landlords" | "agents" | "lenders" | "meetings";
+type PeopleTab = "overview" | "landlords" | "brands" | "agents" | "lenders" | "meetings";
 
 const ALL_TABS: { key: PeopleTab; label: string; icon: any }[] = [
   { key: "overview", label: "Overview", icon: Target },
   { key: "landlords", label: "Landlords", icon: Building2 },
+  // Brands BGP is working, at contact level: Brand Intelligence is the full directory.
+  { key: "brands", label: "Brands", icon: Target },
   { key: "agents", label: "Agents", icon: Briefcase },
   { key: "lenders", label: "Lenders", icon: Landmark },
   { key: "meetings", label: "CRM Meetings", icon: ClipboardList },
@@ -1613,12 +1617,12 @@ function PeopleHub() {
     queryKey: ["/api/crm/companies", overviewCompanyId],
     enabled: !!overviewCompanyId, staleTime: 5 * 60_000, retry: false,
   });
-  useEffect(() => {
-    if (!overviewCompanyId || !/^tenant/i.test(overviewCompany?.companyType || "")) return;
-    const params = new URLSearchParams(urlSearch);
-    params.set("tab", "crm"); params.set("view", "strategies");
-    navigate(`/brands?${params.toString()}`, { replace: true });
-  }, [overviewCompanyId, overviewCompany, urlSearch, navigate]);
+  // (Until 15 November 2026 a brand link here was sent on to the Brand CRM.
+  // The Overview now holds every kind of company, so it stays.)
+  void overviewCompany;
+  // Start strategy: turning a company on (the kick-off dialog), from any list.
+  const [startFor, setStartFor] = useState<{ id: string; name: string } | null>(null);
+  const openStrategy = (strategyId: string) => navigate(`/contacts?tab=overview&strategy=${encodeURIComponent(strategyId)}`);
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">("card");
   const [hubAddContactOpen, setHubAddContactOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ type: "company" | "contact"; id: string; name: string } | null>(null);
@@ -1738,7 +1742,7 @@ function PeopleHub() {
           </Button>
           {/* Only the Landlords tab has a table/cards choice, and below md
               the toggle is a lone "Cards" — hide it otherwise (Woody, 2026-09-28). */}
-          {tab === "landlords" && <div className="hidden md:block"><ViewToggle view={viewMode} onToggle={setViewMode} /></div>}
+          {tab === "landlords" && isLandsec && <div className="hidden md:block"><ViewToggle view={viewMode} onToggle={setViewMode} /></div>}
         </div>
       </div>
       <ContactFormDialog open={hubAddContactOpen} onOpenChange={setHubAddContactOpen} />
@@ -1759,7 +1763,12 @@ function PeopleHub() {
         <ContactDataHealth pill />
       </div>
 
-      {tab !== "overview" && isLoading ? (
+      {/* One list design for every kind (Woody, 2026-11-15). The Landsec team
+          view keeps the older Agents tab until the Landsec version is built. */}
+      {!isLandsec && (["landlords", "brands", "agents", "lenders"] as const).includes(tab as any) ? (
+        <CrmCompanyList kind={tab === "landlords" ? "landlord" : tab === "brands" ? "brand" : tab === "agents" ? "agent" : "lender"}
+          onStartStrategy={row => setStartFor({ id: row.id, name: row.name })} onOpenStrategy={openStrategy} />
+      ) : tab !== "overview" && isLoading ? (
         <PageLoader />
       ) : (
         <>
@@ -1787,6 +1796,8 @@ function PeopleHub() {
           {tab === "meetings" && <CrmMeetingsTab />}
         </>
       )}
+
+      {startFor && <StartStrategyDialog company={startFor} onClose={() => setStartFor(null)} onStarted={openStrategy} />}
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <AlertDialogContent>

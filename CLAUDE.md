@@ -1206,6 +1206,33 @@ calendars), the order of work and the four decisions waiting on him are in
   guests; no invitation is sent) and the actions (each a My Tasks row for
   the owner). BGP staff only: both routes are on the engagement router. It
   has not been run against Anthropic from a build machine.
+- **One list for Landlords, Brands, Agents and Lenders**
+  (`client/src/components/crm-hub/company-list.tsx`, `company-row.tsx`;
+  feed `server/crm-hub.ts`, `GET /api/crm/hub/:kind` and
+  `…/hub/company/:id/people`; types and pure rules `shared/crm-hub.ts`;
+  tests `server/crm-hub.test.ts`). BGP staff only (`isEngagementStaff`).
+  Landlords, agents and lenders are every company of that kind, by the
+  rules the old tabs used (`companyIsKind`); **Brands is only the brands BGP
+  is working**: on a strategy that is not completed, with an open CRM
+  action, a live deal, a live or to-confirm requirement, or a Hunter pick
+  (`brandWhy`). Every row carries the BGP owner (`bgp_contact_user_ids`,
+  else the agents on its deals, greyed), last contact
+  (`shared/last-contact.ts`), the next action, its strategies and a
+  kind line; a card or row opens the company page and its arrow opens the
+  people in place. The filters are the same on all four tabs
+  (`CRM_HUB_FILTERS`). **Start strategy** on a row opens the kick-off
+  below; a strategy pill opens it on the Overview. Not carried over from
+  the old tabs, on purpose until asked for: delete, the agent specialty
+  pills and per-person deal and requirement lists, the lender stat tiles
+  and Add Lender. `LandlordsTab`, `AgentsTab` and `LendersTab` in
+  `people.tsx` are now reached only from the Landsec team view (Agents);
+  remove them when the Landsec version is built.
+- **The CRM plan on the team calendar** (`client/src/pages/calendar.tsx`,
+  `crmPlanToCalendarEvents`): a **CRM plan** pill beside CRM / Outlook /
+  Team draws confirmed CRM events and the due times of open CRM actions,
+  each with an "Open in the CRM" link. BGP staff only; remembered per
+  browser. NOT built: the same layer on the Landsec calendar, and a diary
+  for every kind on the CRM page.
 - **Closer watching** (`server/crm-watch.ts`): a company on a running
   strategy goes first in the nightly store count, planning and jobs check,
   accounts read and signal tidy, and is re-checked every 7 days, not 30

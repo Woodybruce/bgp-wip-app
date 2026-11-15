@@ -141,7 +141,33 @@ its own sections.
 4. **Lenders**: there are 5 on the live list. Recommended: keep the tab but
    in the shared design, with no stat tiles.
 
-## Built on 15 November 2026
+## Decided and built later on 15 November 2026
+
+Woody: "let's build the BGP version first and then we can just hide lenders
+and landlord for Landsec"; "I agree with your approach, only brands we are
+working on, yes, otherwise lose focus"; "all landlords will be included in
+the CRM and all agents and lenders. But we won't have a strategy for any of
+them till we turn them on"; "could AI start it a bit? Help kick it off? ...
+we choose who to make VIP and then the CRM engine starts suggesting
+locations, events, people to meet etc and closely watches them".
+
+Built for BGP (steps 1 and 2 of the order of work, and the start of 4):
+
+- One engine: agents and lenders can hold a strategy, event or action; the
+  Overview shows every kind with a kind filter; a strategy can mix kinds.
+- One list design on Landlords, Brands, Agents and Lenders, with a new
+  Brands tab holding only the brands BGP is working.
+- **Start strategy** on any company: a draft to edit and tick, or a place on
+  a strategy already running.
+- The **Watch list** on the Overview, and weekly checks for companies on a
+  running strategy.
+- A **CRM plan** layer on the team calendar.
+
+Still to do: the diary for every kind (step 3), the Landsec calendar layer,
+the Landsec version of the page (Brands and Agents only), and the landlord,
+agent and lender pages in the brand page's shape (step 5).
+
+## Built earlier on 15 November 2026
 
 - The employer-checks **Review** is a pill at the end of the pill row, with
   its count, in place of the full-width line above it.
