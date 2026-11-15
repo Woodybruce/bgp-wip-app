@@ -112,15 +112,17 @@ describe("the per-unit counts", () => {
     assert.match(viewingList, /isNull\(unitViewings\.deletedAt\), sql`\$\{unitViewings\.unitId\} IS NOT NULL`, inArray\(unitViewings\.status, \["scheduled", "completed"\]\)/);
     const offerCounts = between('app.get("/api/available-units/all-offers-counts"', "app.get(");
     const offerList = between('app.get("/api/available-units/all-offers"', "app.get(");
+    // Since 14 November 2026 both are also cut to the schemes ticked on the login (schemeLimitSql), so the
+    // client's rule is bracketed and the scheme limit follows it. Until then this expected the bare rule.
     for (const block of [offerCounts, offerList]) {
-      assert.match(block, /WHERE p\.landlord_id = \$\{scope\} OR EXISTS \(SELECT 1 FROM crm_company_properties cp WHERE cp\.property_id = p\.id AND cp\.company_id = \$\{scope\}\)/);
+      assert.match(block, /WHERE \(p\.landlord_id = \$\{scope\} OR EXISTS \(SELECT 1 FROM crm_company_properties cp WHERE cp\.property_id = p\.id AND cp\.company_id = \$\{scope\}\)\)\$\{sql\.raw\(schemeLimitSql\("u\.property_id"\)\)\}/);
     }
     assert.match(offerCounts, /FROM unit_offers GROUP BY unit_id`/);
     assert.match(offerList, /db\.select\(\)\.from\(unitOffers\)\.orderBy\(unitOffers\.offerDate\)/);
     const interestCounts = between('app.get("/api/available-units/all-interest-counts"', "app.get(");
     const interestList = between('app.get("/api/available-units/all-interest"', "async function interestCaller");
     for (const block of [interestCounts, interestList]) {
-      assert.match(block, /LEFT JOIN crm_company_properties cp ON cp\.property_id = p\.id AND cp\.company_id = \$\{scope\}\s+WHERE p\.landlord_id = \$\{scope\} OR cp\.company_id IS NOT NULL/);
+      assert.match(block, /LEFT JOIN crm_company_properties cp ON cp\.property_id = p\.id AND cp\.company_id = \$\{scope\}\s+WHERE \(p\.landlord_id = \$\{scope\} OR cp\.company_id IS NOT NULL\)\$\{sql\.raw\(schemeLimitSql\("u\.property_id"\)\)\}/);
     }
     assert.match(interestCounts, /FROM unit_interest GROUP BY unit_id`/);
     assert.match(interestList, /db\.select\(\)\.from\(unitInterest\)\.orderBy\(unitInterest\.interestDate\)/);

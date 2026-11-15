@@ -92,6 +92,14 @@ explicit permission.
   `SMOKE_CHROMIUM=/opt/pw-browsers/chromium SMOKE_BASE=http://localhost:<port>
   PHONE_SMOKE_DATABASE_URL=postgresql://postgres:<password>@127.0.0.1:5432/bgpsmoke
   node qa/phone-session-smoke.mjs`.
+- **`npm test` is the wider unit suite and is not part of the deploy gate**,
+  so it can go stale unseen: on 15 November 2026 ten of its tests had been
+  failing since the joint agent and scheme-limit changes of 14 November
+  (their assertions still held the 13 November rules) and because two files
+  could not load without a database address. Run it with the regression
+  suite. A test whose imports reach `./db` starts with
+  `import "./test-database-url";` (nothing connects; a test that needs a
+  real database names its own variable and skips without it).
 - **A red workflow does not keep a push off the live site** (seen on
   15 November 2026: two pushes reached chatbgp.app within about ten minutes
   while the run was red and its `deploy` job was skipped, so Railway is
@@ -307,7 +315,13 @@ staff viewing as Landsec**:
   the tile home at `/`, because that is where the banner out of the Landsec
   view is. Do not redirect staff on a phone away from `/`.
 - `/` and `/home` go to Properties (`Home` in `App.tsx`; on a phone, real
-  Landsec client logins only). `/landsec/deals` goes to `/deals`, and
+  Landsec client logins only). **On a phone a full Landsec login opens on
+  ChatBGP** (Woody, 2026-11-15, with a screenshot of the new-chat screen:
+  "the phone can just open with this screen for landsec so it's like
+  opening Claude"): the `landsecPhoneHome` effect in `App.tsx` sends the
+  first `/` of a session to `/chatbgp` (the marker `bgp-chat-home-done`,
+  the one BGP staff's phone open uses) and any later `/` to Properties. A
+  joint agent still opens on Properties (its chat is its own page). `/landsec/deals` goes to `/deals`, and
   `/landsec/scheme/:key` to the scheme's property page at `?section=units`
   (`LandsecDealsRoute`, `LandsecSchemeRoute`). Both redirect only in the
   Landsec view: BGP staff on All Teams or their own team keep the old scheme
