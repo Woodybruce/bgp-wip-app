@@ -1175,6 +1175,68 @@ contact's company by the same rule and `?dealId=` is `isDealInScope`. A
 joint agent is refused the company and contact feeds (it has no brand or
 contact pages).
 
+## Brand gap board and benchmark centres (Woody, 2026-11-15)
+
+Woody: Brand gap "can be much improved to include connectivity with the rest
+of the app and be more user friendly than just a word dump", "link it to
+requirements (add or reflect), properties, CRM, letting tracker, Brands",
+"a bit more info about other competing centres, news about what they are
+doing", "we could almost just set up property pages for them all at BGP".
+Asked the four questions, he answered "Yes to all".
+
+- **The board** (`client/src/components/brand-gap-panel.tsx`, data from
+  `GET /api/property/:id/brand-gaps` in `server/property-gap-analysis.ts`):
+  four figures (rank against the top centres, missing sectors, targets with
+  a requirement, already in play), then pills: **Targets**, **Sectors**,
+  **Competing centres**, **BGP take**, **More**. The AI prose and the web
+  research are under BGP take, no longer the opening screen.
+- **Targets** is one row per brand not on scheme (`targets` in the reply):
+  why (the competing centres it trades at, how many top centres, how near),
+  its Expansion score, the requirement held and the marketing unit here its
+  size fits (`parseReqSize` against the live tracker units), and where it
+  already stands at this scheme. **That stage is the Brand CRM's own rule**
+  (`loadPlan` for this property; a Landsec login is read as its own plan
+  viewer, so an unticked Wanted line stays BGP's). Never work a stage out on
+  this screen. A row opens `TargetDetail`: **Add as target** on a marketing
+  unit (the unit's Targeting Brief, `POST /api/unit-briefs` then
+  `/targets`), **Want at this scheme** (BGP staff, `POST
+  /api/brand-crm/targets` with the property), **Add requirement** (the
+  Requirements page for that brand) and the brand page. A joint agent gets
+  names and no brand links.
+- **Competitors are the centres the landlord does not own.** A peer centre
+  whose BGP property record has this property's landlord is a sister scheme
+  (`sisterNames`): left out of the competing four, the benchmark table and
+  the top-centre counts, and listed on one line. Competing centres are the
+  nearest four non-sister centres within 60km (`competingCards`: owner,
+  brands, not here, latest openings).
+- **Benchmark centres** (`server/benchmark-centres.ts`): the `top25` list in
+  `shared/uk-centres.ts`. A centre's record is the property stamped
+  `crm_properties.benchmark_centre`, else a match by name and place. Missing
+  pages are created only by an admin from the Competing centres tab
+  (`GET /api/admin/benchmark-centres`, then `POST .../apply`: name,
+  coordinates, tag "Benchmark centre"; existing pages are only stamped).
+  Never at boot. They have no landlord, so no client login's property list
+  holds them.
+- **A centre's box** (`GET /api/benchmark-centres/:name`, `CentreDetail`):
+  owner, its own news page, the weekly research and who trades there (store
+  locations inside the centre's ring, labelled as not a tenancy schedule).
+  Public data only, open to every login (on the client gateway's allow
+  list); BGP staff are also sent the property id for "Open its BGP page", a
+  client never is, and a joint agent is sent brand names with no ids. A
+  client login still never opens the BGP property page or any landlord
+  page.
+- **Weekly research** (`runCentreResearch`, job `centre-research`, 05:20):
+  Perplexity, a few centres a night (`CENTRE_RESEARCH_NIGHTLY_CAP`, default
+  6, 0 = off), each about once a week, only centres with a page; saved as
+  `centre_research` on the record (openings, closures, redevelopment,
+  ownership, leasing; each with its date and source link). It has not been
+  run against Perplexity from a build machine.
+- Not built: the research on the centre's own BGP property page (it shows in
+  the box only); cleaning operator names that are not brands (IHG, Street
+  Food Holdings, betting shops) out of the lists; narrowing "requirements
+  whose use fits a unit" (now under More) to the scheme's categories.
+  Tests: `qa/regression/brand-gap-board.test.mjs`.
+
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
 
 The brands' own CRM: which schemes BGP wants each brand in, whether there is

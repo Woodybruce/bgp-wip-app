@@ -518,6 +518,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
   const cards = data.competingCards || [];
   const [tab, setTab] = useState<"targets" | "sectors" | "centres" | "take" | "more">("targets");
   const [opened, setOpened] = useState<GapTarget | null>(null);
+  const [centreOpen, setCentreOpen] = useState<string | null>(null);
   const openById = (id: string) => { const t = targets.find(x => String(x.brand_company_id) === String(id)); if (t) setOpened(t); return !!t; };
   const rank = data.benchmark ? data.benchmark.centres.filter(c => c.brands > data.benchmark!.here.brands).length + 1 : null;
   const stats: Array<{ label: string; value: string; sub?: string; go: typeof tab }> = [
@@ -599,9 +600,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
             {cards.map(c => (
               <div key={c.name} className="rounded-lg border p-3 min-w-0 space-y-1.5" data-testid={`gap-centre-${c.name}`}>
                 <div className="flex items-baseline justify-between gap-2 min-w-0">
-                  {c.property_id
-                    ? <Link href={`/properties/${c.property_id}`} className="text-sm font-semibold truncate hover:underline">{c.name}</Link>
-                    : <span className="text-sm font-semibold truncate">{c.name}</span>}
+                  <button type="button" data-no-min-touch onClick={() => setCentreOpen(c.name)} className="text-sm font-semibold truncate hover:underline text-left" data-testid={`gap-centre-open-${c.name}`}>{c.name}</button>
                   <span className="text-[11px] text-muted-foreground shrink-0">{c.distance_km}km</span>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
@@ -621,7 +620,8 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
               ))}
             </p>
           )}
-          {data.benchmark && <CentreBenchmark benchmark={data.benchmark} name={data.property.name} peers={peers} brandsNoun={positioning?.brandsNoun || "F&B & leisure brands"} />}
+          <CentrePagesSetup />
+          {data.benchmark && <CentreBenchmark benchmark={data.benchmark} name={data.property.name} peers={peers} brandsNoun={positioning?.brandsNoun || "F&B & leisure brands"} onCentre={setCentreOpen} noBrandPages={noBrandPages} />}
           <CentreOpenings propertyId={propertyId} />
         </div>
       )}
@@ -674,6 +674,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         </div>
       )}
 
+      <CentreDetail centre={centreOpen} onClose={() => setCentreOpen(null)} />
       <TargetDetail target={opened} onClose={() => setOpened(null)} propertyId={propertyId} propertyName={data.property.name}
         units={data.marketingUnits || []} canWant={!!data.canWant} noBrandPages={noBrandPages} />
     </div>
@@ -707,9 +708,135 @@ function CentreNews({ propertyId, centre }: { propertyId: string; centre: string
   );
 }
 
+type CentreBox = {
+  name: string; owner: string | null; propertyId: string | null; website: string | null;
+  trading: Array<{ id: string | null; name: string; domain: string | null; leisure: boolean; type: string | null }>; tradingSource: string;
+  research: { summary: string | null; items: Array<{ date: string | null; kind: string; headline: string; detail: string | null; brand: string | null; source_url: string | null }>; citations: string[] } | null;
+  researchAt: string | null;
+};
+const KIND_WORDS: Record<string, string> = { opening: "Opening", closure: "Closure", redevelopment: "Redevelopment", ownership: "Ownership", leasing: "Leasing", other: "News" };
+
+// A competing centre's box: who owns it, what it is doing and who trades
+// there. Public data only, the same for every login (Woody, 2026-11-15).
+function CentreDetail({ centre, onClose }: { centre: string | null; onClose: () => void }) {
+  const [allBrands, setAllBrands] = useState(false);
+  const { data, isLoading, error } = useQuery<CentreBox>({
+    queryKey: ["/api/benchmark-centres", centre],
+    queryFn: async () => {
+      const r = await fetch(`/api/benchmark-centres/${encodeURIComponent(centre!)}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || loadError(r.status));
+      return r.json();
+    },
+    enabled: !!centre,
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+  });
+  const leisure = (data?.trading || []).filter(b => b.leisure);
+  const brands = allBrands ? data?.trading || [] : leisure.length ? leisure : (data?.trading || []).slice(0, 40);
+  const when = (d: string | null) => !d ? "" : new Date(d.length === 7 ? `${d}-01` : d).toLocaleDateString("en-GB", d.length === 7 ? { month: "short", year: "numeric" } : { day: "numeric", month: "short", year: "numeric" });
+  return (
+    <Dialog open={!!centre} onOpenChange={open => { if (!open) { setAllBrands(false); onClose(); } }}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="gap-centre-detail">
+        <DialogHeader>
+          <DialogDescription className="text-xs uppercase tracking-wider font-semibold">Competing centre</DialogDescription>
+          <DialogTitle className="text-base leading-snug">{centre}</DialogTitle>
+        </DialogHeader>
+        {isLoading && <p className="text-sm text-muted-foreground flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />Loading…</p>}
+        {error && <p className="text-sm text-muted-foreground">{(error as Error).message}</p>}
+        {data && (
+          <div className="space-y-3 text-sm">
+            <div className="space-y-1.5">
+              <GapLine label="Owner">{data.owner || "Not recorded"}</GapLine>
+              {data.website && <GapLine label="Its news page"><a href={data.website} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">{data.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}</a></GapLine>}
+            </div>
+            <div className="rounded-md border border-border bg-muted/40 px-3 py-2" data-testid="gap-centre-research">
+              <p className={`${SUB_LABEL} mb-1 flex items-center gap-1`}><Radar className="w-3 h-3" />What it is doing{data.researchAt ? <span className="font-normal normal-case tracking-normal"> · read {new Date(data.researchAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, web research: check before quoting</span> : null}</p>
+              {!data.research && <p className="text-muted-foreground">Not researched yet. Each top centre is read about once a week, once it has a BGP page.</p>}
+              {data.research?.summary && <p className="mb-1.5">{data.research.summary}</p>}
+              {data.research && data.research.items.length > 0 && (
+                <ul className="divide-y divide-border/60">
+                  {data.research.items.map((item, i) => (
+                    <li key={`${item.headline}-${i}`} className="py-1.5 flex items-start gap-2 min-w-0">
+                      <span className="shrink-0 w-24 text-[11px] text-muted-foreground"><span className="block font-semibold text-foreground">{KIND_WORDS[item.kind] || "News"}</span>{when(item.date)}</span>
+                      <span className="min-w-0 text-xs">
+                        {item.source_url
+                          ? <a href={item.source_url} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">{item.headline}<ExternalLink className="inline w-3 h-3 ml-1 text-muted-foreground" /></a>
+                          : <span className="font-medium">{item.headline}</span>}
+                        {item.detail && <span className="block text-muted-foreground">{item.detail}</span>}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {data.research && !data.research.items.length && !data.research.summary && <p className="text-muted-foreground">Nothing sourced in the last 12 months.</p>}
+            </div>
+            <div>
+              <p className={`${SUB_LABEL} mb-1`}>Trading there <span className="font-mono tabular-nums font-normal">{allBrands ? data.trading.length : brands.length}</span></p>
+              {data.trading.length === 0
+                ? <p className="text-muted-foreground">No store locations held for this centre yet.</p>
+                : <div className="flex flex-wrap gap-1">
+                    {brands.map(b => b.id
+                      ? <Link key={`${b.id}`} href={`/companies/${b.id}`} onClick={onClose}><Badge variant="outline" className="text-[11px] cursor-pointer hover:bg-muted" title={b.type || undefined}>{b.name}</Badge></Link>
+                      : <Badge key={b.name} variant="outline" className="text-[11px]" title={b.type || undefined}>{b.name}</Badge>)}
+                  </div>}
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {data.tradingSource}
+                {leisure.length > 0 && data.trading.length > leisure.length && <> · <button type="button" data-no-min-touch className="underline hover:text-foreground" onClick={() => setAllBrands(v => !v)}>{allBrands ? "Food and leisure only" : `Show all ${data.trading.length}`}</button></>}
+              </p>
+            </div>
+            {data.propertyId && <Button size="sm" variant="outline" asChild><Link href={`/properties/${data.propertyId}`} onClick={onClose}><Store className="w-3.5 h-3.5 mr-1" />Open its BGP page</Link></Button>}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Admins: set up a BGP property page for each top centre that has none.
+function CentrePagesSetup() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const admin = !!viewer?.isAdmin && viewer?.role !== "Client" && !viewer?.companyScopeId;
+  const { data } = useQuery<{ centres: Array<{ centre: string; action: "create" | "mark" | "none" }> }>({
+    queryKey: ["/api/admin/benchmark-centres"],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/benchmark-centres", { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error(loadError(r.status));
+      return r.json();
+    },
+    enabled: admin,
+    retry: false,
+  });
+  const apply = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/admin/benchmark-centres/apply")).json(),
+    onSuccess: (r: any) => {
+      toast({ title: "Centre pages set up", description: `${r.created} created, ${r.marked} existing pages marked.` });
+      qc.invalidateQueries({ queryKey: ["/api/admin/benchmark-centres"] });
+      qc.invalidateQueries({ queryKey: ["/api/property"] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't set the pages up", description: e?.message, variant: "destructive" }),
+  });
+  const create = (data?.centres || []).filter(c => c.action === "create");
+  const mark = (data?.centres || []).filter(c => c.action === "mark");
+  if (!admin || !data || (!create.length && !mark.length)) return null;
+  return (
+    <div className="rounded-md border border-border bg-muted/40 px-3 py-2 flex items-center gap-3 flex-wrap" data-testid="gap-centre-setup">
+      <p className="text-xs flex-1 min-w-[220px]">
+        {create.length > 0 && <><span className="font-semibold">{create.length} top centre{create.length === 1 ? " has" : "s have"} no BGP page:</span> {create.map(c => c.centre).join(", ")}. </>}
+        {mark.length > 0 && <>{mark.length} existing page{mark.length === 1 ? "" : "s"} will be marked as a benchmark centre. </>}
+        <span className="text-muted-foreground">Each page is then researched about once a week.</span>
+      </p>
+      <Button size="sm" onClick={() => { if (confirm(`Create ${create.length} property page${create.length === 1 ? "" : "s"} and mark ${mark.length}?`)) apply.mutate(); }} disabled={apply.isPending} data-testid="gap-centre-setup-apply">
+        {apply.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1" />}Set up the pages
+      </Button>
+    </div>
+  );
+}
+
 // This centre against each benchmark centre on the same hospitality /
 // leisure slice (Woody, 2026-09-27: "compare the top 25 shopping centres").
-function CentreBenchmark({ benchmark, name, peers, brandsNoun }: { benchmark: NonNullable<BrandGapResult["benchmark"]>; name: string; peers: string; brandsNoun: string }) {
+function CentreBenchmark({ benchmark, name, peers, brandsNoun, onCentre, noBrandPages }: { benchmark: NonNullable<BrandGapResult["benchmark"]>; name: string; peers: string; brandsNoun: string; onCentre?: (name: string) => void; noBrandPages?: boolean }) {
   const [all, setAll] = useState(false);
   const rows = benchmark.centres;
   if (!rows.length) return null;
@@ -741,7 +868,9 @@ function CentreBenchmark({ benchmark, name, peers, brandsNoun }: { benchmark: No
         {shown.map(r => (
           <div key={r.name} className="px-2 py-1.5 text-xs md:grid md:grid-cols-[minmax(0,1.7fr)_56px_56px_64px_minmax(0,2fr)] md:gap-2 md:items-center" data-testid={`benchmark-${r.name}`}>
             <div className="min-w-0 flex items-center gap-1.5">
-              <span className="font-medium truncate">{r.name}</span>
+              {onCentre
+                ? <button type="button" data-no-min-touch onClick={() => onCentre(r.name)} className="font-medium truncate hover:underline text-left">{r.name}</button>
+                : <span className="font-medium truncate">{r.name}</span>}
               <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums">{r.distance_km}km</span>
               {r.from_schedule && <span className="text-[11px] text-muted-foreground shrink-0" title="Counted from our own tenancy schedule">· our data</span>}
             </div>
@@ -751,7 +880,9 @@ function CentreBenchmark({ benchmark, name, peers, brandsNoun }: { benchmark: No
               <span className="md:text-right tabular-nums md:text-xs"><span className="md:hidden">Not here </span>{r.not_here}</span>
             </div>
             <div className="flex flex-wrap gap-1 mt-1 md:mt-0 min-w-0">
-              {(distinct.get(r.name) || []).map(b => (
+              {(distinct.get(r.name) || []).map(b => noBrandPages
+                ? <Badge key={b.id} variant="outline" className="text-[11px] font-medium text-foreground">{b.name}</Badge>
+                : (
                 <Link key={b.id} href={`/companies/${b.id}`}>
                   <Badge variant="outline" className="text-[11px] font-medium text-foreground cursor-pointer hover:bg-muted">{b.name}</Badge>
                 </Link>

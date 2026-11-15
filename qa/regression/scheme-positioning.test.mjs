@@ -9,6 +9,9 @@ const { UK_CENTRES, TOP_25_CENTRES, peerCentresFor, benchmarkCentresFor, centreA
 const { propertyResearchContext } = await import('../../shared/property-research.ts');
 const { isClientCrmCategory } = await import('../../shared/tenant-categories.ts');
 const requirementLive = await import('../../shared/requirement-live.ts');
+const { parseReqSize } = await import('../../shared/requirement-fit.ts');
+const { isTrackerLiveStatus } = await import('../../shared/letting-rules.ts');
+const { BRAND_STAGE_LABELS, furthestStage } = await import('../../shared/brand-stage.ts');
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 
@@ -134,12 +137,17 @@ function runGapRoute(positioning, requirements = {}) {
   let handler;
   const context = propertyResearchContext({ assetClass: 'Retail', propertyView: 'centre', positioning, positioningSource: 'tag' });
   const bindings = {
-    ...positioningModule, ...centres, isClientCrmCategory, ...requirementLive,
+    ...positioningModule, ...centres, isClientCrmCategory, ...requirementLive, parseReqSize, isTrackerLiveStatus, BRAND_STAGE_LABELS, furthestStage,
     router: { get: (_url, _auth, callback) => { handler = callback; } }, requireAuth() {},
     readPropertyResearchContext: async () => context, researchCacheMatches: async () => false,
     resolvePropertyLocation: async () => ({ ok: true, ...REX, postcode: 'EC3V 3LR', name: 'Royal Exchange' }),
     ensureGapColumns: async () => {}, sweepSectorClassification() {}, pool,
-    require: name => { if (name === './company-scope') return { resolveCompanyScope: async () => null, isPropertyInScope: async () => true }; throw new Error(name); },
+    require: name => {
+      if (name === './company-scope') return { resolveCompanyScope: async () => null, isPropertyInScope: async () => true };
+      if (name === './hunter-score') return { splitSubScores: () => null };
+      if (name === './brand-scheme-plan') return { STAFF_VIEWER: { kind: 'staff' }, loadPlan: async () => ({ rowsByBrand: new Map() }) };
+      throw new Error(name);
+    },
   };
   const helpers = ['PEER_PRESENCE_KM', 'NAME_MATCH_KM', 'FNB_SECTORS', 'SECTOR_LABELS', 'brandKey', 'namesScheme', 'heuristicSector', 'retailSector'].map(decl).join('\n');
   evaluate(`${helpers}\n${routeSource};`, bindings);
