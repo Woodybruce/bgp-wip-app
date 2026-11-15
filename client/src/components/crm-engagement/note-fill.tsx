@@ -14,14 +14,17 @@ const EXAMPLES: Record<CrmNoteForm, Record<EngagementKind, string>> = {
   strategy: {
     landlord: "For example: Win more food and beverage leasing from Landsec and British Land. Charlotte to own. Start in January, review at the end of June. With Landsec we want the Bluewater leisure instruction.",
     brand: "For example: Get Jersey Mike's and Wingstop into our shopping centres this year. Emily to own, from January, review in June. Jersey Mike's want 1,500 sq ft units near cinemas.",
+    all: "For example: Get closer to Wingstop and the agent who acts for them, Savills. Emily to own, from January, review in June. With Wingstop we want their next five sites.",
   },
   action: {
     landlord: "For example: Rupert to call Landsec about the Bluewater leisure pitch on Tuesday at 3pm.",
     brand: "For example: Emily to send Wingstop the Trinity Leeds particulars by Friday.",
+    all: "For example: Rupert to call Savills about their Wingstop requirement on Tuesday at 3pm.",
   },
   event: {
     landlord: "For example: Lunch with the Landsec leasing team at The Ivy on 12 December at 1pm, Lucy hosting. To talk through next year's instructions.",
     brand: "For example: Dinner for Wingstop and Jersey Mike's at Bluewater on 20 January at 7pm, Emily hosting. To walk them round the new leisure units.",
+    all: "For example: Lunch with Landsec and Savills at The Ivy on 12 December at 1pm, Lucy hosting. To talk through next year's leisure lettings.",
   },
 };
 

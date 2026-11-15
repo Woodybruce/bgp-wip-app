@@ -1763,7 +1763,7 @@ function PeopleHub() {
         <PageLoader />
       ) : (
         <>
-          {tab === "overview" && <CrmEngagementPanel kind="landlord" />}
+          {tab === "overview" && <CrmEngagementPanel kind="all" />}
           {tab === "landlords" && (
             <>
             <LandlordsTab

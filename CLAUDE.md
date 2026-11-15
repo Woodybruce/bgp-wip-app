@@ -1148,9 +1148,73 @@ CRM page, one list design for landlords, brands, agents and lenders, one
 engine and diary for all four, a CRM layer on the team and Landsec
 calendars), the order of work and the four decisions waiting on him are in
 `docs/crm-review-2026-11-15.md`. **Read it before touching the CRM page.**
-Nothing in its proposal is built until he answers; note that its first
-decision reverses "the Brand CRM is separate from the Landlord CRM" below,
-which stands until he says so.
+
+**Decided by Woody on 15 November 2026 (do not re-litigate):**
+
+- **Build the BGP version first**, "then we can just hide lenders and
+  landlord for Landsec". The Landsec CRM page is unchanged until then.
+- **One engine for every kind.** "I agree with your approach": landlords,
+  brands, agents and lenders in one Overview. This SUPERSEDES "the Brand
+  CRM is separate from the Landlord CRM" in the Brand CRM section below for
+  BGP's CRM page; the two older views (`kind=landlord`, `kind=brand`)
+  still exist for a landlord's and a brand's own page and the Brand CRM.
+- **Who is on the lists**: "all landlords will be included in the CRM and
+  all agents and lenders. But we won't have a strategy for any of them till
+  we turn them on." Brands are only the ones BGP is working ("otherwise
+  lose focus"; "the Brand CRM should just reflect the contact level of
+  Brand Intelligence ... Brand Intelligence is too big").
+- **Turning a company on** starts its strategy: "we can add people or
+  companies to the CRM strategy, goes for all types, and that is what then
+  starts the strategy. Could AI start it a bit? Help kick it off? ... we
+  choose who to make VIP and then the CRM engine starts suggesting
+  locations, events, people to meet etc and closely watches them more than
+  other CRMs."
+
+**Built on 15 November 2026 for BGP:**
+
+- **The joined view** is `kind=all` on `/api/crm/engagement`
+  (`EngagementKind` in `shared/crm-engagement.ts`). Agent firms (type
+  "agent") and lenders (the CRM page's lender type list) are plan companies
+  (`PLAN_COMPANY_PREDICATE`, `AGENT_COMPANY_SQL`, `LENDER_COMPANY_SQL`,
+  `companyNounSql` in `server/crm-engagement.ts`). In `all` a strategy or
+  event may link any mix of kinds and a save replaces every link; `landlord`
+  and `brand` still refuse a mix and replace only their own side. A save
+  with no kind is still a landlord save. The CRM page's Overview is
+  `CrmEngagementPanel kind="all"`: pills All / Landlords / Brands / Agents /
+  Lenders filter it (`options.companies[].noun`), its pickers list every
+  landlord, agent and lender and find a brand by typing, and the form words
+  follow each company's kind. The scheme, sharing and waiting-on fields on
+  an action still belong to a brand. Tests:
+  `qa/regression/crm-engagement-postgres.test.mjs` (needs
+  `CRM_ENGAGEMENT_DATABASE_URL`).
+- **Start strategy** (`client/src/components/crm-engagement/start-strategy.tsx`,
+  `server/crm-kickoff.ts`, contract and checks `shared/crm-kickoff.ts`,
+  tests `server/crm-kickoff.test.ts`). `POST /api/crm/engagement/kick-off`
+  reads what the app holds on the company (a fixed handful of queries, each
+  allowed to fail) and, when the reader is on, asks Anthropic directly for
+  a draft: a name, objective and reason; ONE running strategy it could
+  join; people to meet, events to invite them to, places (space BGP is
+  letting, for a brand; its own properties, for a landlord) and first
+  actions. The reader is sent facts and the lists it may choose from by id
+  (never an email address), and `checkKickoffAnswer` drops any id that was
+  not offered. Capped a day (`CRM_KICKOFF_DAILY_CAP`, default 100, 0 =
+  off); with the reader off the dialog still lists the people and events to
+  tick by hand. Nothing is saved by the draft. `POST …/kick-off/apply` saves
+  what the person ticked through the engine's own functions in the joined
+  view: a new strategy or a place on a running one, the people as its
+  contacts, the ticked events (the company linked, the people as SUGGESTED
+  guests; no invitation is sent) and the actions (each a My Tasks row for
+  the owner). BGP staff only: both routes are on the engagement router. It
+  has not been run against Anthropic from a build machine.
+- **Closer watching** (`server/crm-watch.ts`): a company on a running
+  strategy goes first in the nightly store count, planning and jobs check,
+  accounts read and signal tidy, and is re-checked every 7 days, not 30
+  (`onStrategySql`, `WATCH_RECHECK_DAYS`). The Overview's first card is the
+  **Watch list** (`server/crm-watch-list.ts`, `GET
+  /api/crm/engagement/watch`, `watch-list.tsx`): every company on a running
+  strategy, what is new in 14 days (signals, planning applications, job
+  adverts, contact) and what is owed (overdue actions, no next step, no
+  contact for 30 days), the ones owing first.
 
 Built on 15 November 2026:
 

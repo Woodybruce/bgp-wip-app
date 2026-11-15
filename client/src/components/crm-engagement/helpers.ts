@@ -5,6 +5,7 @@ export const CRM_ENGAGEMENT_KEY = "/api/crm/engagement";
 export const KIND_WORDS: Record<EngagementKind, { one: string; many: string; One: string; Many: string }> = {
   landlord: { one: "landlord", many: "landlords", One: "Landlord", Many: "Landlords" },
   brand: { one: "brand", many: "brands", One: "Brand", Many: "Brands" },
+  all: { one: "company", many: "companies", One: "Company", Many: "Companies" },
 };
 // Brand pickers search the directory as the user types; landlord pickers
 // list every landlord account and need no search.

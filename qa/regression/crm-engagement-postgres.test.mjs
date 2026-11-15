@@ -98,7 +98,40 @@ test('CRM planning preserves Marketing and My Tasks records, scopes links and re
       assert.equal((await request('GET','?companyId=aew')).body.strategies.length,0);
       // Brands have had a plan of their own since 2026-11-11 (PLAN_COMPANY_PREDICATE); a landlord strategy is not on it.
       const brandPlan=await request('GET','?companyId=brand');assert.equal(brandPlan.status,200);assert.deepEqual(brandPlan.body.strategies,[]);
-      assert.equal((await request('GET','?companyId=agent')).status,400,'a company that is neither a landlord account nor a brand has no plan');
+      // Agent firms and lenders have had a plan since 2026-11-15 (one engine for every kind).
+      const agentPlan=await request('GET','?companyId=agent');assert.equal(agentPlan.status,200);assert.deepEqual(agentPlan.body.strategies,[]);
+      await pool.query("INSERT INTO crm_companies(id,name,company_type) VALUES ('supplier','Supplier','Supplier'),('bank','Lender Bank','Clearing Bank')");
+      assert.equal((await request('GET','?companyId=supplier')).status,400,'a company that is not a landlord, a brand, an agent firm or a lender has no plan');
+    });
+
+    await t.test('the joined CRM takes a strategy across a landlord, a brand, an agent and a lender; the older views still refuse a mix',async()=>{
+      const mixed={...strategy,name:'Wingstop rollout',targets:[
+        {companyId:'landsec',reason:'Their leisure space',contactIds:['jon']},{companyId:'brand',reason:'The occupier',contactIds:[]},
+        {companyId:'agent',reason:'Acts for the occupier',contactIds:[]},{companyId:'bank',reason:'Funds the rollout',contactIds:[]}]};
+      assert.equal((await request('POST','/strategies',mixed)).status,400,'a save with no kind is a landlord save');
+      assert.equal((await request('POST','/strategies?kind=brand',mixed)).status,400);
+      assert.equal((await request('POST','/strategies?kind=all',{...mixed,targets:[...mixed.targets,{companyId:'supplier',reason:'No',contactIds:[]}]})).status,400);
+      const saved=await request('POST','/strategies?kind=all',mixed);assert.equal(saved.status,200);
+      const find=async kind=>(await request('GET',`?kind=${kind}`)).body.strategies.find(s=>s.id===saved.body.id);
+      assert.deepEqual((await find('all')).targets.map(x=>x.companyId).sort(),['agent','bank','brand','landsec']);
+      assert.deepEqual((await find('landlord')).targets.map(x=>x.companyId).sort(),['agent','bank','landsec'],'the landlord view shows every company that is not a brand');
+      assert.deepEqual((await find('brand')).targets.map(x=>x.companyId),['brand']);
+      assert.ok((await request('GET','?companyId=agent')).body.strategies.some(s=>s.id===saved.body.id),"the agent's own plan holds it");
+      const options=(await request('GET','/options?kind=all')).body;
+      assert.deepEqual(Object.fromEntries(options.companies.filter(c=>['landsec','brand','agent','bank'].includes(c.id)).map(c=>[c.id,c.noun])),{landsec:'landlord',brand:'brand',agent:'agent',bank:'lender'});
+      assert.ok(!options.companies.some(c=>c.id==='supplier'));
+      // An edit in the joined view replaces every company on it.
+      const current=await find('all');
+      assert.equal((await request('PUT',`/strategies/${saved.body.id}?kind=all`,{...mixed,targets:[{companyId:'agent',reason:'Only the agent now',contactIds:[]}],expectedUpdatedAt:current.updatedAt})).status,200);
+      assert.deepEqual((await find('all')).targets.map(x=>x.companyId),['agent']);
+      assert.equal(await find('brand'),undefined,'with no brand left it is out of the brand view');
+      // An action for an agent is created like any other.
+      const action=await request('POST','/actions',{title:'Call the agent',notes:null,dueAt:'2026-12-01T09:00:00.000Z',status:'todo',ownerId:'owner',companyId:'agent',eventId:null,strategyId:saved.body.id,sourceInterviewId:null,sourceQuestionId:null});
+      assert.equal(action.status,200);
+      const taskIds=(await pool.query('DELETE FROM crm_engagement_actions WHERE company_id=$1 RETURNING task_id',['agent'])).rows.map(row=>row.task_id);
+      await pool.query('DELETE FROM user_tasks WHERE id=ANY($1::text[])',[taskIds]);
+      await pool.query('DELETE FROM crm_strategy_targets WHERE strategy_id=$1',[saved.body.id]);
+      await pool.query('DELETE FROM marketing_campaigns WHERE id=$1',[saved.body.id]);
     });
 
     await t.test('events retain shared Marketing records and never convert legacy or suggested guests into accepted invitations',async()=>{

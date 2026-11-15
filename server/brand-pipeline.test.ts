@@ -475,7 +475,7 @@ test("the nightly pass: tenant brands due a check, a pause between them, one fai
   const pick = db.queries.find((q) => /FROM crm_companies c/.test(q.text))!;
   assert.match(pick.text, /company_type ILIKE 'tenant%' AND c\.merged_into_id IS NULL AND c\.archived_at IS NULL/);
   assert.match(pick.text, /interval '30 days'/);
-  assert.match(pick.text, /ORDER BY k\.checked_at ASC NULLS FIRST/);
+  assert.match(pick.text, /ORDER BY EXISTS \(SELECT 1 FROM crm_strategy_targets[^)]*\) DESC, k\.checked_at ASC NULLS FIRST/);
   assert.deepEqual(pick.params, [60, false]);
 });
 
