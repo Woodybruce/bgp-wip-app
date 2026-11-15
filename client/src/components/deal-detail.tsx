@@ -1,6 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { usePropertyUnits } from "@/components/property-page/use-property-page";
 import { Card, CardContent } from "@/components/ui/card";
+import { ActivitySummary } from "@/components/activity-summary";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -1267,11 +1268,16 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       {/* AI-curated activity — primary comms feed (emails + meetings), shown
           above KYC. Raw sources live in "History & activity" in the rail.
           Hidden for clients: it surfaces BGP staff emails/meetings. */}
-      {!isClientDeal && (
-        <div className={sec("activity")}>
-          <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />
-        </div>
-      )}
+      <div className={`${sec("activity")} space-y-3`}>
+        {!isClientDeal && <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />}
+        {/* The same activity list as every other page (Woody, 2026-11-15). */}
+        <Card data-testid="deal-activity-feed">
+          <CardContent className="p-3 space-y-2">
+            <h3 className="text-sm font-semibold">Emails, calls and meetings</h3>
+            <ActivitySummary dealId={id} />
+          </CardContent>
+        </Card>
+      </div>
 
       {/* KYC/AML is BGP-internal compliance — never shown to clients. */}
       {!isClientDeal && (

@@ -115,5 +115,5 @@ test('every existing team-events content/count query uses the shared privacy rea
       ts.forEachChild(node,walk);
     };walk(ast);
   }
-  assert.equal(checked,12);assert.match(source('server/activity-summary.ts'),/const EVENT_NOISE = `\$\{teamEventPrivacySql\(\)\}/);
+  assert.equal(checked,13);assert.match(source('server/activity-summary.ts'),/const EVENT_NOISE = `\$\{teamEventPrivacySql\(\)\}/);
 });

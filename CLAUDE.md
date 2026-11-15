@@ -1272,6 +1272,41 @@ Built on 15 November 2026:
   reading never fills a box by itself) stay as they are: do not merge the
   two. It has not been run against Anthropic from a build machine.
 
+## The activity feed (Woody, 2026-11-15)
+
+Woody: "bring the design up to speed", "click on the activity brings up an
+explanation box", "is it linked properly to everything?".
+`client/src/components/activity-summary.tsx` (the property page's Activity
+tab, the dashboard boards, a brand's phone page) is one row shape
+(`FeedRow`: icon chip, what it was about, who and when) under Upcoming and
+day headings (Today / Yesterday / This week / Earlier). The whole row opens
+`ActivityDetail`: when, who at BGP, who with, the company, the deal and its
+property (each a link), "What it was about" (the saved AI read, asked for
+once on open when there is none) and the actions (follow-up task, book a
+follow-up, Open in Outlook, contact, deal, property). The hover-only icons
+are gone. `GET /api/activity-summary` sends the names and ids those links
+need (`contact_name`, `company_id`, `company_name`, `bgp_user`, `direction`,
+the deal's `property_id` / `property_name`, a deal move's `stage`); a joint
+agent is sent names and no contact or company id.
+
+The same feed is on every record page (Woody, 2026-11-15: "Yes"): the
+contact page's Activity tab (`contactId`, in place of `InteractionsBoard`),
+the deal page under the AI read (`dealId`), and an Activity card on the
+desktop brand page's Overview and on the landlord page (`companyId`). A
+contact's or a deal's feed covers 12 months, the others 14 days. The AI
+reads (`AIActivityCard`, the BGP take, the landlord's Meetings and Email
+threads summaries) stay above it, staff only as before.
+
+**The brand feed works for a client login** (Woody, 2026-11-15: "the brand
+feed needs to work for landsec"): `?companyId=` is allowed for its own
+company or a brand it may open (`isClientVisibleBrand`). On a brand it is
+sent BGP's touches with the brand's people, and deals, deal moves and diary
+events only at the client's own properties (`clientBrand`, `ownProps`, with
+the scheme limit): never another landlord's deal. `?contactId=` follows the
+contact's company by the same rule and `?dealId=` is `isDealInScope`. A
+joint agent is refused the company and contact feeds (it has no brand or
+contact pages).
+
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
 
 The brands' own CRM: which schemes BGP wants each brand in, whether there is

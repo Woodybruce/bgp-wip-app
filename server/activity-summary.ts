@@ -18,7 +18,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { teamEventPrivacySql } from "./team-event-privacy";
-import { resolveCompanyScope, isPropertyInScope, currentSchemeLimit } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isClientVisibleBrand, currentSchemeLimit, schemeLimitSql } from "./company-scope";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 
 const router = Router();
@@ -68,22 +68,40 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
     const scopeCompanyId = await resolveCompanyScope(req);
     let propertyId = req.query.propertyId ? String(req.query.propertyId) : null;
     let companyId = req.query.companyId ? String(req.query.companyId) : null;
+    // One person's or one deal's feed (the contact and deal pages, Woody,
+    // 2026-11-15): the last 12 months, not 14 days.
+    const contactId = !propertyId && !companyId && req.query.contactId ? String(req.query.contactId) : null;
+    const dealId = !propertyId && !companyId && !contactId && req.query.dealId ? String(req.query.dealId) : null;
+    // A client reading a brand's feed (Woody, 2026-11-15: "the brand feed
+    // needs to work for landsec"): BGP's touches with the brand, and the
+    // deals and diary only where they are at the client's own properties.
+    let clientBrand = false;
 
     if (scopeCompanyId) {
+      const { isJointAgentLogin } = await import("./landsec-access");
+      if ((companyId || contactId) && await isJointAgentLogin(req)) return res.status(403).json({ message: "Access denied" });
+      if (dealId && !(await isDealInScope(scopeCompanyId, dealId))) return res.status(403).json({ message: "Access denied" });
+      if (contactId) {
+        const owner = (await pool.query(`SELECT company_id FROM crm_contacts WHERE id = $1`, [contactId])).rows[0]?.company_id || null;
+        if (!owner || (owner !== scopeCompanyId && !(await isClientVisibleBrand(owner, scopeCompanyId)))) return res.status(403).json({ message: "Access denied" });
+      }
       // Client logins: a property must sit in their portfolio; a company
       // scope may only be their own; no scope defaults to their company.
       if (propertyId && !(await isPropertyInScope(scopeCompanyId, propertyId))) {
         return res.status(403).json({ message: "Access denied" });
       }
       if (companyId && companyId !== scopeCompanyId) {
-        return res.status(403).json({ message: "Access denied" });
+        if (!(await isClientVisibleBrand(companyId, scopeCompanyId))) return res.status(403).json({ message: "Access denied" });
+        clientBrand = true;
       }
-      if (!propertyId && !companyId) companyId = scopeCompanyId;
+      if (!propertyId && !companyId && !contactId && !dealId) companyId = scopeCompanyId;
       // A Landsec login held to its schemes (Woody, 2026-11-14) reads the
       // feed of a property at one of them. The whole-company feed holds
       // emails and meetings about every scheme, so it gets nothing.
-      if (currentSchemeLimit() && !propertyId) return res.json({ upcoming: [], recent: [] });
+      if (currentSchemeLimit() && companyId === scopeCompanyId) return res.json({ upcoming: [], recent: [] });
     }
+    const ownProps = `(SELECT id FROM crm_properties WHERE landlord_id = $2 UNION SELECT property_id FROM crm_company_properties WHERE company_id = $2)`;
+    const companyParams = clientBrand ? [companyId, scopeCompanyId] : [companyId];
 
     // ── Upcoming: future diary events in scope, deduped on cleaned title ──
     let upcomingQ;
@@ -109,11 +127,19 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
                  OR property_id IN (
                    SELECT id FROM crm_properties WHERE landlord_id = $1
                    UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+            ${clientBrand ? `AND property_id IN ${ownProps}${schemeLimitSql("property_id")}` : ""}
             AND ${EVENT_NOISE}
           ORDER BY lower(regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i')), start_time
           LIMIT 20`,
-        [companyId]
+        companyParams
       );
+    } else if (dealId) {
+      upcomingQ = pool.query(
+        `SELECT id, title, event_type, start_time, end_time, location, property_id, property_name, deal_id
+           FROM team_events WHERE start_time >= NOW() AND deal_id = $1 AND ${EVENT_NOISE}
+          ORDER BY start_time LIMIT 20`, [dealId]);
+    } else if (contactId) {
+      upcomingQ = Promise.resolve({ rows: [] as any[] });
     } else {
       upcomingQ = pool.query(
         `SELECT DISTINCT ON (lower(regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i')), start_time)
@@ -130,13 +156,15 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
               i.subject, i.ai_summary, i.microsoft_id,
               COALESCE(bu.name, i.bgp_user) AS bgp_user,
               c.name AS contact_name, c.id AS contact_id, c.email AS contact_email,
-              co.name AS company_name,
-              d.id AS deal_id, d.name AS deal_name
+              co.name AS company_name, co.id AS company_id, co.domain_url AS company_domain,
+              d.id AS deal_id, d.name AS deal_name,
+              dp.id AS deal_property_id, dp.name AS deal_property_name
          FROM crm_interactions i
          LEFT JOIN users bu ON lower(bu.email) = lower(i.bgp_user)
          LEFT JOIN crm_contacts c ON c.id = i.contact_id
          LEFT JOIN crm_companies co ON co.id = c.company_id
-         LEFT JOIN crm_deals d ON d.id = i.deal_id`;
+         LEFT JOIN crm_deals d ON d.id = i.deal_id
+         LEFT JOIN crm_properties dp ON dp.id = d.property_id`;
     let recentQ;
     if (propertyId) {
       // Owner-contact touches only count here when they're about THIS
@@ -203,9 +231,20 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
               SELECT id FROM crm_properties WHERE landlord_id = $1
               UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1)
           )
+          ${clientBrand ? `AND (d.id IS NULL OR (d.property_id IN ${ownProps}${schemeLimitSql("d.property_id")}))` : ""}
         ORDER BY i.interaction_date DESC
         LIMIT 30`,
-        [companyId]
+        companyParams
+      );
+    } else if (contactId || dealId) {
+      recentQ = pool.query(
+        `${recentSelect}
+        WHERE i.interaction_date > NOW() - INTERVAL '12 months' AND i.interaction_date <= NOW()
+          AND ${contactId ? "i.contact_id = $1" : "i.deal_id = $1"}
+          ${contactId && scopeCompanyId ? `AND (d.id IS NULL OR (d.property_id IN ${ownProps}${schemeLimitSql("d.property_id")}))` : ""}
+        ORDER BY i.interaction_date DESC
+        LIMIT 50`,
+        contactId && scopeCompanyId ? [contactId, scopeCompanyId] : [contactId || dealId]
       );
     } else {
       recentQ = pool.query(
@@ -223,17 +262,20 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
       ? `AND d.property_id = $1`
       : companyId
         ? `AND (d.landlord_id = $1 OR d.tenant_id = $1 OR p.landlord_id = $1
-             OR d.property_id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))`
+             OR d.property_id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+             ${clientBrand ? `AND d.property_id IN ${ownProps}${schemeLimitSql("d.property_id")}` : ""}`
+        : dealId ? `AND d.id = $1`
+        : contactId ? `AND false`
         : "";
     const movesQ = pool.query(
-      `SELECT d.id, d.name, d.status, COALESCE(d.updated_at, d.created_at) AS at, p.name AS property_name
+      `SELECT d.id, d.name, d.status, COALESCE(d.updated_at, d.created_at) AS at, p.name AS property_name, p.id AS property_id
          FROM crm_deals d
          LEFT JOIN crm_properties p ON p.id = d.property_id
         WHERE COALESCE(d.updated_at, d.created_at) > NOW() - INTERVAL '14 days'
           ${movesWhere}
         ORDER BY at DESC
         LIMIT 15`,
-      propertyId ? [propertyId] : companyId ? [companyId] : []
+      propertyId ? [propertyId] : companyId ? companyParams : dealId ? [dealId] : []
     );
 
     const [upcoming, recent, moves] = await Promise.all([upcomingQ, recentQ, movesQ]);
@@ -251,7 +293,16 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
         contact_id: null,
         deal_id: m.id,
         deal_name: m.name,
+        stage: DEAL_STATUS_LABELS[legacyToCode(m.status)!],
+        property_id: m.property_id || null,
+        property_name: m.property_name || null,
       }));
+    // What each row links to (Woody, 2026-11-15: "is it linked properly to
+    // everything?"): the person, their company, the deal and its property.
+    // A joint agent does not open contact or company pages, so it is sent
+    // their names and no ids.
+    const { isJointAgentLogin } = await import("./landsec-access");
+    const noRecordLinks = await isJointAgentLogin(req);
     res.json({
       upcoming: upcoming.rows
         .sort((a: any, b: any) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
@@ -276,14 +327,22 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
           subject: (a.subject || "").replace(/^((re|fw|fwd):\s*)+/i, "").trim() || null,
           ai_summary: a.ai_summary && a.ai_summary !== NO_SUMMARY ? a.ai_summary : null,
           summary_skipped: a.ai_summary === NO_SUMMARY,
-          contact_id: a.contact_id,
+          contact_id: noRecordLinks ? null : a.contact_id,
+          contact_name: a.contact_name || null,
+          company_id: noRecordLinks ? null : a.company_id || null,
+          company_name: a.company_name || null,
+          company_domain: a.company_domain || null,
+          bgp_user: a.bgp_user || null,
+          direction: a.direction || null,
+          property_id: a.deal_property_id || null,
+          property_name: a.deal_property_name || null,
           contact_email: a.contact_email || null,
           microsoft_id: a.microsoft_id || null,
           deal_id: a.deal_id,
           deal_name: a.deal_name,
         })),
         ...moveRows,
-      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 30),
+      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, contactId || dealId ? 50 : 30),
     });
   } catch (err: any) {
     console.error("[activity-summary]", err?.message);

@@ -36,6 +36,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ActivitySummary } from "@/components/activity-summary";
 import { Pill, pillMetrics, pillInactive } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -2664,6 +2665,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             </div>}
             />
         </div>}
+        <BrandCard title="Activity" testId="landlord-activity-feed"><ActivitySummary companyId={companyId} /></BrandCard>
         {!isClientViewer && String(currentUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
         <AccountDealsBoard companyId={companyId} />
@@ -3826,6 +3828,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {showSchemePlan && (brandTop
                 ? <SchemePlanSlot companyId={companyId} client={isClientViewer}><SchemePlanCard companyId={companyId} client={isClientViewer} /></SchemePlanSlot>
                 : <SchemePlanCard companyId={companyId} client={isClientViewer} />)}
+              {/* The same activity list as the property, contact and deal pages
+                  (Woody, 2026-11-15); a client gets it for a brand too. */}
+              {brandOverview && !landsecRestricted && (
+                <BrandCard title="Activity" testId="brand-activity-feed"><ActivitySummary companyId={companyId} /></BrandCard>
+              )}
 
             </div>
 
