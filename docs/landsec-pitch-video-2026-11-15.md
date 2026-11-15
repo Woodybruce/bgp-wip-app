@@ -82,9 +82,9 @@ Woody asked for the phone screens, the joint agent, David Bell as "Tinker
 Bell" and the hug on 15 November. In the rough cut scene 12a is a plain
 placeholder animation (two simple figures, not likenesses); the real
 character art comes from the avatar service or an illustrator. David Bell is
-a joint agent at Liverpool ONE on BGP's team sheet; his firm is not recorded
-there, so the demo login carries no firm name. He should be asked before a
-film with his name and nickname goes to Landsec.
+the joint agent at Liverpool ONE, at Starka (Woody, 15 November, who also
+said David is fine with being in the film). Woody records his intro, close
+and voice from `docs/landsec-pitch-video-recording-sheet.md`.
 
 ## What Woody needs to do
 
