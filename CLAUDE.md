@@ -1676,6 +1676,13 @@ Decided (do not re-litigate):
   letting stage only from the tracker row and its deal
   (`docs/unit-status-cleanup-plan.md`). One rule, `shared/property-units.ts`,
   with a test; never a second meaning of vacant or live on a screen.
+- **A letting moving on never empties an occupied unit** (found
+  15 November 2026). The status mirror (`writeTenancyStatus` in
+  `server/lease-status-mirror.ts`) writes "Vacant" to a schedule row only
+  when `unitOccupancy` does not read the row as occupied: a row worded
+  "Opportunity" or "Not Vacant" with a tenant still on it stays as it is
+  while its successor's letting runs. Never go back to a list of status
+  words there. Test: `qa/regression/lease-status-mirror-guards.test.mjs`.
 - **Documents live in the team's real folder** (`BGP - Share Drive /
   National / National / Landsec / <scheme>`), not the app's `BGP share drive`.
 
@@ -1812,7 +1819,9 @@ untouched when it is off, and
   a client joins by opening the property), and ChatBGP answers only when
   asked by name, never joining for good. Everyone who can open the property
   reads what is written there, ChatBGP's answers to BGP staff included: the
-  box says so. Earlier private threads stay private. Tracker comments are
+  box says so. Each message names who wrote it (from the thread's members;
+  until 15 November 2026 every message but your own read "Team"). Earlier
+  private threads stay private. Tracker comments are
   `client/src/components/unit-comments.tsx` (`UnitCommentButton` on each
   row of the staff tracker, desktop and phone; counts from `GET
   /api/chat/threads/record/unit-comments?propertyIds=`, read only for

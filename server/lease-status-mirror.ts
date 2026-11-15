@@ -23,6 +23,7 @@ import {
 } from "@shared/lease-status-mirror";
 import { CLOSED_STATUSES, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 import { HISTORIC_STATUSES } from "@shared/letting-rules";
+import { unitOccupancy } from "@shared/property-units";
 
 type Ctx = { pool: Pool; reason: string; actorUserId?: string | null };
 
@@ -124,6 +125,16 @@ async function writeTenancyStatus(tenancyUnitId: string | null | undefined, stat
   const occupiedGuard = !allowDowngrade && status === "Vacant"
     ? ` AND lower(coalesce(status, '')) NOT IN ('occupied','trading','holding over','taw','lease event','let')`
     : "";
+  // The same holds for a row the schedule words another way ("Opportunity",
+  // "Not Vacant") while a tenant is still on it: occupancy is read by the
+  // one rule (unitOccupancy), never from a list of status words here. A
+  // Burger King with two years to run read as vacant once its successor's
+  // letting reached Negotiating (found 15 November 2026).
+  if (!allowDowngrade && status === "Vacant") {
+    const row = (await pool.query(
+      `SELECT status, occupancy_status, tenant_name, trading_name, passing_rent_pa FROM tenancy_schedule_units WHERE id = $1`, [tenancyUnitId])).rows[0];
+    if (row && unitOccupancy(row) === "occupied") return;
+  }
   await pool.query(
     `UPDATE tenancy_schedule_units
         SET status = $1, updated_at = NOW()
