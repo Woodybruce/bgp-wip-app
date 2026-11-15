@@ -17,13 +17,15 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Mail, Phone, Users, Activity, CalendarDays, MapPin, Handshake, Sparkles, Plus, Loader2, UserRound } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Mail, Phone, Users, Activity, CalendarDays, MapPin, Handshake, Sparkles, Plus, Loader2, UserRound, Building, ChevronRight, ExternalLink } from "lucide-react";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { CompanyChip } from "@/components/company-chip";
+import { cn } from "@/lib/utils";
 
 type UpcomingEvent = {
   id: number; title: string; event_type: string | null;
@@ -32,11 +34,15 @@ type UpcomingEvent = {
 };
 type RecentItem = {
   id: string; kind: string; date: string; summary: string;
-  subject?: string | null; ai_summary?: string | null;
-  contact_id: string | null; contact_email?: string | null;
+  subject?: string | null; ai_summary?: string | null; summary_skipped?: boolean;
+  contact_id: string | null; contact_name?: string | null; contact_email?: string | null;
+  company_id?: string | null; company_name?: string | null; company_domain?: string | null;
+  bgp_user?: string | null; direction?: string | null;
+  property_id?: string | null; property_name?: string | null;
   microsoft_id?: string | null;
-  deal_id: string | null; deal_name: string | null;
+  deal_id: string | null; deal_name: string | null; stage?: string | null;
 };
+type Opened = { type: "recent"; item: RecentItem } | { type: "upcoming"; item: UpcomingEvent };
 
 function timeAgo(date: string): string {
   const ms = Date.now() - new Date(date).getTime();
@@ -47,154 +53,196 @@ function timeAgo(date: string): string {
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
 }
+const fullDate = (d: string) => `${new Date(d).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })} at ${new Date(d).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+// The day heading a recent row sits under.
+function dayBucket(date: string): string {
+  const days = Math.round((dayStart(new Date()) - dayStart(new Date(date))) / 86400000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return "This week";
+  return "Earlier";
+}
 
 const KIND_ICON: Record<string, typeof Mail> = { email: Mail, call: Phone, meeting: Users, deal: Handshake };
+const KIND_WORD: Record<string, string> = { email: "Email", call: "Call", meeting: "Meeting", deal: "Deal move" };
+const kindWord = (a: RecentItem) => a.kind === "email" ? (a.direction === "outbound" ? "Email sent" : a.direction === "inbound" ? "Email received" : "Email") : KIND_WORD[a.kind] || "Activity";
 
-// One feed row — the meeting/email REASON leads, the who-met-whom line
-// sits under it, and each interaction can be AI-summarised inline, jumped
-// to the contact, or turned into a follow-up task (Woody, 2026-08-04).
-function RecentRow({ a, propertyId, summaries, setSummaries }: {
-  a: RecentItem;
+// One row shape for the whole feed (Woody, 2026-11-15: "bring the design up
+// to speed"): an icon chip, what it was about, who and when under it, and
+// the whole row opens the details box.
+function FeedRow({ icon: Icon, title, sub, when, onOpen, testId }: {
+  icon: typeof Mail; title: string; sub: React.ReactNode; when: string; onOpen: () => void; testId: string;
+}) {
+  return (
+    <button type="button" data-no-min-touch onClick={onOpen}
+      className="w-full flex items-center gap-2.5 px-1.5 py-1.5 rounded-md text-left hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-w-0 group/row"
+      data-testid={testId}>
+      <span className="w-7 h-7 rounded-full bg-muted flex items-center justify-center shrink-0"><Icon className="w-3.5 h-3.5 text-muted-foreground" /></span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm leading-snug font-medium truncate">{title}</span>
+        <span className="block text-xs text-muted-foreground truncate">{sub}</span>
+      </span>
+      <span className="text-[11px] text-muted-foreground shrink-0 whitespace-nowrap">{when}</span>
+      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/50 shrink-0 group-hover/row:text-foreground" />
+    </button>
+  );
+}
+
+function DetailLine({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[88px_1fr] gap-2 text-sm min-w-0">
+      <span className="text-xs text-muted-foreground pt-0.5">{label}</span>
+      <span className="min-w-0 break-words">{children}</span>
+    </div>
+  );
+}
+const linkCls = "text-primary hover:underline";
+
+// The details box: what it was, who was on it, what it is linked to, a short
+// read of what it was about, and the next things to do with it.
+function ActivityDetail({ opened, onClose, propertyId, summaries, setSummaries }: {
+  opened: Opened | null;
+  onClose: () => void;
   propertyId?: string;
   summaries: Record<string, string>;
   setSummaries: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }) {
   const { toast } = useToast();
-  const Icon = KIND_ICON[a.kind] || Activity;
-  const isDealMove = a.kind === "deal";
-  const aiText = summaries[a.id] || a.ai_summary || null;
+  const a = opened?.type === "recent" ? opened.item : null;
+  const ev = opened?.type === "upcoming" ? opened.item : null;
+  const isDealMove = a?.kind === "deal";
+  const aiText = a ? summaries[a.id] || a.ai_summary || null : null;
+  const [nothingToRead, setNothingToRead] = useState<Record<string, boolean>>({});
 
   const summarise = useMutation({
-    mutationFn: async () => {
-      const r = await apiRequest("POST", `/api/interactions/${a.id}/summarise`);
-      return r.json();
+    mutationFn: async (id: string) => ({ id, body: await (await apiRequest("POST", `/api/interactions/${id}/summarise`)).json() }),
+    onSuccess: ({ id, body }: any) => {
+      if (body.summary) setSummaries(prev => ({ ...prev, [id]: body.summary }));
+      else setNothingToRead(prev => ({ ...prev, [id]: true }));
     },
-    onSuccess: (j: any) => {
-      if (j.summary) setSummaries(prev => ({ ...prev, [a.id]: j.summary }));
-      else if (j.skipped) toast({ title: "Nothing to summarise", description: j.reason || "No notes or transcript captured for this one." });
-    },
-    onError: (e: any) => toast({ title: "Couldn't summarise", description: e?.message, variant: "destructive" }),
+    onError: (_e: any, id: string) => setNothingToRead(prev => ({ ...prev, [id]: true })),
   });
+  // Opening an email, call or meeting reads it once if nobody has yet.
+  const askedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!a || isDealMove || aiText || a.summary_skipped || nothingToRead[a.id] || askedFor.current === a.id) return;
+    askedFor.current = a.id;
+    summarise.mutate(a.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [a?.id]);
+
   const addTask = useMutation({
     mutationFn: async () => {
+      const title = a ? `Follow up: ${a.subject || a.summary}` : `Prepare: ${ev!.title}`;
+      const linkedProperty = propertyId || a?.property_id || ev?.property_id || null;
       const r = await apiRequest("POST", "/api/tasks", {
-        title: `Follow up: ${a.subject || a.summary}`,
-        priority: "medium",
-        ...(propertyId ? { linkedPropertyId: propertyId } : {}),
-        ...(a.contact_id ? { linkedContactId: a.contact_id } : {}),
-        ...(a.deal_id ? { linkedDealId: a.deal_id } : {}),
+        title, priority: "medium",
+        ...(linkedProperty ? { linkedPropertyId: linkedProperty } : {}),
+        ...(a?.contact_id ? { linkedContactId: a.contact_id } : {}),
+        ...((a?.deal_id || ev?.deal_id) ? { linkedDealId: a?.deal_id || ev?.deal_id } : {}),
       });
       return r.json();
     },
-    onSuccess: () => toast({ title: "Task added", description: "It's on My Tasks and this property's weekly focus." }),
+    onSuccess: () => toast({ title: "Task added", description: "It is on your task list." }),
     onError: (e: any) => toast({ title: "Couldn't add task", description: e?.message, variant: "destructive" }),
   });
 
+  const Icon = a ? KIND_ICON[a.kind] || Activity : CalendarDays;
+  const title = a ? a.subject || a.summary : ev?.title || "";
+  const dealId = a?.deal_id || ev?.deal_id || null;
+  const propId = a?.property_id || ev?.property_id || null;
+  const propName = a?.property_name || ev?.property_name || null;
+  const reading = !!a && summarise.isPending && summarise.variables === a.id;
+
   return (
-    <div className="px-1.5 py-1 rounded hover:bg-muted/40 min-w-0 group/row" data-testid={`activity-recent-${a.id}`}>
-      <div className="flex items-start gap-2 min-w-0">
-        <Icon className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
-        {/* Radix tooltip, not the native title attr — the 30s live-refresh
-            re-renders these rows, which killed the native tooltip after its
-            first show (Woody, 2026-08-04). This one fires on every hover
-            and carries the full untruncated detail. */}
-        <Tooltip delayDuration={250}>
-          <TooltipTrigger asChild>
-            <div className="flex-1 min-w-0 cursor-default">
-              {a.subject ? (
-                <>
-                  <div className="text-xs leading-snug font-medium truncate">{a.subject}</div>
-                  <div className="text-[11px] text-muted-foreground truncate">{a.summary} · {timeAgo(a.date)}</div>
-                </>
-              ) : (
-                <>
-                  <div className="text-xs leading-snug">{a.summary}</div>
-                  <div className="text-[11px] text-muted-foreground">{timeAgo(a.date)}</div>
-                </>
+    <Dialog open={!!opened} onOpenChange={open => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-lg" data-testid="activity-detail">
+        {opened && (
+          <>
+            <DialogHeader>
+              <DialogDescription className="flex items-center gap-1.5 text-xs uppercase tracking-wider font-semibold">
+                <Icon className="w-3.5 h-3.5" />
+                {a ? kindWord(a) : ev?.event_type || "In the diary"}
+              </DialogDescription>
+              <DialogTitle className="text-base leading-snug break-words">{title}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-2">
+              <DetailLine label="When">
+                {a ? <>{fullDate(a.date)} <span className="text-muted-foreground">· {timeAgo(a.date)}</span></> : fullDate(ev!.start_time)}
+              </DetailLine>
+              {ev?.location && <DetailLine label="Where"><span className="inline-flex items-center gap-1"><MapPin className="w-3 h-3 text-muted-foreground" />{ev.location}</span></DetailLine>}
+              {a && !isDealMove && a.bgp_user && <DetailLine label="BGP">{a.bgp_user}</DetailLine>}
+              {a && !isDealMove && (a.contact_name || a.contact_email) && (
+                <DetailLine label="With">
+                  {a.contact_id
+                    ? <Link href={`/contacts/${a.contact_id}`} className={linkCls} onClick={onClose} data-testid="activity-detail-contact">{a.contact_name || a.contact_email}</Link>
+                    : a.contact_name || a.contact_email}
+                </DetailLine>
+              )}
+              {a?.company_name && (
+                <DetailLine label="Company">
+                  <span onClick={a.company_id ? onClose : undefined}><CompanyChip id={a.company_id} name={a.company_name} domain={a.company_domain || null} size={16} className={a.company_id ? "text-primary" : undefined} testId="activity-detail-company" /></span>
+                </DetailLine>
+              )}
+              {isDealMove && a?.stage && <DetailLine label="Stage">Now at {a.stage}</DetailLine>}
+              {dealId && (
+                <DetailLine label="Deal">
+                  <Link href={`/deals/${dealId}`} className={linkCls} onClick={onClose} data-testid="activity-detail-deal">{a?.deal_name || "Open the deal"}</Link>
+                </DetailLine>
+              )}
+              {propName && (
+                <DetailLine label="Property">
+                  {propId && propId !== propertyId
+                    ? <Link href={`/properties/${propId}`} className={linkCls} onClick={onClose} data-testid="activity-detail-property">{propName}</Link>
+                    : propName}
+                </DetailLine>
+              )}
+              {a && !isDealMove && !a.subject && <DetailLine label="What">{a.summary}</DetailLine>}
+            </div>
+            {a && !isDealMove && (
+              <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm leading-relaxed" data-testid="activity-detail-read">
+                <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground mb-1 flex items-center gap-1"><Sparkles className="w-3 h-3" />What it was about</p>
+                {aiText
+                  ? <p>{aiText}</p>
+                  : reading
+                    ? <p className="text-muted-foreground flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />Reading it…</p>
+                    : <p className="text-muted-foreground">No notes or transcript were captured for this one, so there is nothing more to read.</p>}
+              </div>
+            )}
+            <div className="flex items-center gap-2 flex-wrap pt-1">
+              <Button size="sm" variant="outline" onClick={() => addTask.mutate()} disabled={addTask.isPending} data-testid="activity-detail-task">
+                {addTask.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1" />}{a ? "Add follow-up task" : "Add task"}
+              </Button>
+              {a && !isDealMove && (
+                <Button size="sm" variant="outline" data-testid="activity-detail-book" onClick={() => {
+                  const subject = encodeURIComponent(`Follow-up: ${a.subject || a.summary}`);
+                  const body = encodeURIComponent(aiText || a.summary || "");
+                  const to = a.contact_email ? `&to=${encodeURIComponent(a.contact_email)}` : "";
+                  window.open(`https://outlook.office.com/calendar/0/deeplink/compose?subject=${subject}&body=${body}${to}`, "_blank", "noopener");
+                }}>
+                  <CalendarDays className="w-3.5 h-3.5 mr-1" />Book follow-up
+                </Button>
+              )}
+              {a?.kind === "email" && a.microsoft_id && (
+                <Button size="sm" variant="outline" data-testid="activity-detail-outlook" onClick={() => window.open(`https://outlook.office365.com/owa/?ItemID=${encodeURIComponent(a.microsoft_id!)}&exvsurl=1&viewmodel=ReadMessageItem`, "_blank", "noopener")}>
+                  <ExternalLink className="w-3.5 h-3.5 mr-1" />Open in Outlook
+                </Button>
+              )}
+              {a?.contact_id && (
+                <Button size="sm" variant="ghost" asChild><Link href={`/contacts/${a.contact_id}`} onClick={onClose}><UserRound className="w-3.5 h-3.5 mr-1" />Contact</Link></Button>
+              )}
+              {dealId && (
+                <Button size="sm" variant="ghost" asChild><Link href={`/deals/${dealId}`} onClick={onClose}><Handshake className="w-3.5 h-3.5 mr-1" />Deal</Link></Button>
+              )}
+              {propId && propId !== propertyId && (
+                <Button size="sm" variant="ghost" asChild><Link href={`/properties/${propId}`} onClick={onClose}><Building className="w-3.5 h-3.5 mr-1" />Property</Link></Button>
               )}
             </div>
-          </TooltipTrigger>
-          <TooltipContent side="top" align="start" className="max-w-[340px]">
-            <div className="space-y-1">
-              {a.subject && <p className="text-xs font-semibold leading-snug">{a.subject}</p>}
-              <p className="text-[11px] leading-snug">{a.summary}</p>
-              {aiText && <p className="text-[11px] leading-snug opacity-80">{aiText}</p>}
-              <p className="text-[11px] opacity-60">
-                {new Date(a.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
-                {" · "}
-                {new Date(a.date).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
-                {" · "}
-                {timeAgo(a.date)}
-              </p>
-            </div>
-          </TooltipContent>
-        </Tooltip>
-        {!isDealMove && (
-          <button
-            onClick={() => summarise.mutate()}
-            disabled={summarise.isPending}
-            className="shrink-0 p-0.5 rounded hover:bg-muted opacity-60 md:opacity-0 md:group-hover/row:opacity-100 transition-opacity"
-            title="AI summary — what was this about?"
-            data-testid={`activity-summarise-${a.id}`}
-          >
-            {summarise.isPending ? <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" /> : <Sparkles className="w-3 h-3 text-muted-foreground" />}
-          </button>
+          </>
         )}
-        {!isDealMove && (
-          <button
-            onClick={() => addTask.mutate()}
-            disabled={addTask.isPending}
-            className="shrink-0 p-0.5 rounded hover:bg-muted opacity-60 md:opacity-0 md:group-hover/row:opacity-100 transition-opacity"
-            title="Add a follow-up task for this"
-            data-testid={`activity-task-${a.id}`}
-          >
-            <Plus className="w-3 h-3 text-muted-foreground" />
-          </button>
-        )}
-        {a.kind === "email" && a.microsoft_id && (
-          <button
-            onClick={() => {
-              window.open(`https://outlook.office365.com/owa/?ItemID=${encodeURIComponent(a.microsoft_id!)}&exvsurl=1&viewmodel=ReadMessageItem`, "_blank", "noopener");
-            }}
-            className="shrink-0 p-0.5 rounded hover:bg-muted opacity-60 md:opacity-0 md:group-hover/row:opacity-100 transition-opacity"
-            title="Open this email in Outlook"
-            data-testid={`activity-open-email-${a.id}`}
-          >
-            <Mail className="w-3 h-3 text-muted-foreground" />
-          </button>
-        )}
-        {!isDealMove && (
-          <button
-            onClick={() => {
-              const subject = encodeURIComponent(`Follow-up: ${a.subject || a.summary}`);
-              const body = encodeURIComponent(aiText || a.summary || "");
-              const to = a.contact_email ? `&to=${encodeURIComponent(a.contact_email)}` : "";
-              window.open(`https://outlook.office.com/calendar/0/deeplink/compose?subject=${subject}&body=${body}${to}`, "_blank", "noopener");
-            }}
-            className="shrink-0 p-0.5 rounded hover:bg-muted opacity-60 md:opacity-0 md:group-hover/row:opacity-100 transition-opacity"
-            title={`Book a follow-up in Outlook${a.contact_email ? ` with ${a.contact_email}` : ""}`}
-            data-testid={`activity-book-${a.id}`}
-          >
-            <CalendarDays className="w-3 h-3 text-muted-foreground" />
-          </button>
-        )}
-        {a.deal_id && (
-          <Link href={`/deals/${a.deal_id}`}>
-            <span className="text-[11px] text-primary hover:underline shrink-0" title={a.deal_name || undefined}>Deal →</span>
-          </Link>
-        )}
-        {a.contact_id && (
-          <Link href={`/contacts/${a.contact_id}`} className="shrink-0 p-0.5 rounded hover:bg-muted opacity-60 md:opacity-0 md:group-hover/row:opacity-100 transition-opacity" title="Open the contact" aria-label="Open the contact">
-            <UserRound className="w-3 h-3 text-muted-foreground" />
-          </Link>
-        )}
-      </div>
-      {aiText && (
-        <div className="ml-5 mt-0.5 text-[11px] leading-snug rounded border border-border bg-muted/40 px-2 py-1">
-          <Sparkles className="w-2.5 h-2.5 inline mr-1 text-primary" />{aiText}
-        </div>
-      )}
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -226,6 +274,8 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
   // On-demand AI summaries fetched this session, keyed by interaction id
   // (server also caches, so re-visits render them without a click).
   const [summaries, setSummaries] = useState<Record<string, string>>({});
+  const [opened, setOpened] = useState<Opened | null>(null);
+  const sectionHead = cn("text-[11px] uppercase tracking-wider font-semibold mb-1 py-0.5 sticky top-0 z-[1] bg-card text-muted-foreground");
 
   // Auto-summarise the top of a SCOPED feed so it reads as briefing lines
   // without clicking (Woody, 2026-08-04, "go ahead"). Reuses the same
@@ -314,76 +364,47 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
       {upcoming.length > 0 && (
         <div>
           {variant === "both" && (
-            <div className="text-[11px] uppercase tracking-wider font-semibold mb-1 sticky top-0 bg-card text-muted-foreground">Upcoming <span className="font-mono tabular-nums font-normal">{upcoming.length}</span></div>
+            <div className={sectionHead}>Upcoming <span className="font-mono tabular-nums font-normal">{upcoming.length}</span></div>
           )}
           <div className="space-y-0.5">
-            {upcoming.map(ev => {
-              const inner = (
-                <>
-                  <CalendarDays className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs leading-snug truncate">{ev.title}</div>
-                    <div className="text-[11px] text-muted-foreground flex items-center gap-1 flex-wrap">
-                      {new Date(ev.start_time).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}
-                      {" · "}
-                      {new Date(ev.start_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
-                      {ev.location && <span className="inline-flex items-center gap-0.5 truncate"><MapPin className="w-2.5 h-2.5" />{ev.location}</span>}
-                    </div>
-                  </div>
-                  {ev.event_type && <Badge variant="outline" className="text-[11px] shrink-0">{ev.event_type}</Badge>}
-                  {ev.deal_id && (
-                    <Link href={`/deals/${ev.deal_id}`} onClick={e => e.stopPropagation()}>
-                      <span className="text-[11px] text-primary hover:underline shrink-0">Deal →</span>
-                    </Link>
-                  )}
-                  {ev.property_name && !propertyId && (
-                    ev.property_id
-                      ? <Badge variant="outline" className="text-[11px] shrink-0 max-w-[110px] truncate cursor-pointer hover:bg-muted">{ev.property_name} →</Badge>
-                      : <span className="text-[11px] text-muted-foreground shrink-0 max-w-[110px] truncate">{ev.property_name}</span>
-                  )}
-                </>
-              );
-              const cls = "flex items-start gap-2 px-1.5 py-1 rounded hover:bg-muted/40 min-w-0";
-              const tip = (
-                <div className="space-y-1">
-                  <p className="text-xs font-semibold leading-snug">{ev.title}</p>
-                  <p className="text-[11px] opacity-80">
-                    {new Date(ev.start_time).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
-                    {" · "}
-                    {new Date(ev.start_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
-                  </p>
-                  {ev.location && <p className="text-[11px] opacity-80">{ev.location}</p>}
-                  {ev.property_name && <p className="text-[11px] opacity-80">{ev.property_name}</p>}
-                </div>
-              );
-              const row = ev.property_id && !propertyId ? (
-                <Link href={`/properties/${ev.property_id}`} className={cls} data-testid={`activity-upcoming-${ev.id}`}>{inner}</Link>
-              ) : (
-                <div className={cls} data-testid={`activity-upcoming-${ev.id}`}>{inner}</div>
-              );
-              return (
-                <Tooltip key={ev.id} delayDuration={250}>
-                  <TooltipTrigger asChild>{row}</TooltipTrigger>
-                  <TooltipContent side="top" align="start" className="max-w-[340px]">{tip}</TooltipContent>
-                </Tooltip>
-              );
-            })}
-          </div>
-        </div>
-      )}
-      {recent.length > 0 && (
-        <div>
-          {variant === "both" && (
-            <div className="text-[11px] uppercase tracking-wider font-semibold mb-1 sticky top-0 bg-card text-muted-foreground">Recent <span className="font-mono tabular-nums font-normal">{recent.length}</span></div>
-          )}
-          <div className="space-y-0.5">
-            {recent.map(a => (
-              <RecentRow key={a.id} a={a} propertyId={propertyId} summaries={summaries} setSummaries={setSummaries} />
+            {upcoming.map(ev => (
+              <FeedRow key={ev.id} icon={CalendarDays} title={ev.title} testId={`activity-upcoming-${ev.id}`}
+                onOpen={() => setOpened({ type: "upcoming", item: ev })}
+                when={new Date(ev.start_time).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}
+                sub={[
+                  new Date(ev.start_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+                  ev.event_type, ev.location, !propertyId ? ev.property_name : null,
+                ].filter(Boolean).join(" · ")} />
             ))}
           </div>
         </div>
       )}
+      {recent.length > 0 && (() => {
+        const groups: { label: string; rows: RecentItem[] }[] = [];
+        for (const a of recent) {
+          const label = dayBucket(a.date);
+          const last = groups[groups.length - 1];
+          if (last && last.label === label) last.rows.push(a); else groups.push({ label, rows: [a] });
+        }
+        return groups.map(g => (
+          <div key={g.label}>
+            <div className={sectionHead}>{g.label} <span className="font-mono tabular-nums font-normal">{g.rows.length}</span></div>
+            <div className="space-y-0.5">
+              {g.rows.map(a => {
+                const read = summaries[a.id] || a.ai_summary || null;
+                return (
+                  <FeedRow key={a.id} icon={KIND_ICON[a.kind] || Activity} title={a.subject || a.summary} testId={`activity-recent-${a.id}`}
+                    onOpen={() => setOpened({ type: "recent", item: a })}
+                    when={timeAgo(a.date)}
+                    sub={a.subject ? (read ? `${a.summary} · ${read}` : a.summary) : read || kindWord(a)} />
+                );
+              })}
+            </div>
+          </div>
+        ));
+      })()}
       </div>
+      <ActivityDetail opened={opened} onClose={() => setOpened(null)} propertyId={propertyId} summaries={summaries} setSummaries={setSummaries} />
     </div>
   );
 }

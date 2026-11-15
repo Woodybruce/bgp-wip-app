@@ -130,13 +130,15 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
               i.subject, i.ai_summary, i.microsoft_id,
               COALESCE(bu.name, i.bgp_user) AS bgp_user,
               c.name AS contact_name, c.id AS contact_id, c.email AS contact_email,
-              co.name AS company_name,
-              d.id AS deal_id, d.name AS deal_name
+              co.name AS company_name, co.id AS company_id, co.domain_url AS company_domain,
+              d.id AS deal_id, d.name AS deal_name,
+              dp.id AS deal_property_id, dp.name AS deal_property_name
          FROM crm_interactions i
          LEFT JOIN users bu ON lower(bu.email) = lower(i.bgp_user)
          LEFT JOIN crm_contacts c ON c.id = i.contact_id
          LEFT JOIN crm_companies co ON co.id = c.company_id
-         LEFT JOIN crm_deals d ON d.id = i.deal_id`;
+         LEFT JOIN crm_deals d ON d.id = i.deal_id
+         LEFT JOIN crm_properties dp ON dp.id = d.property_id`;
     let recentQ;
     if (propertyId) {
       // Owner-contact touches only count here when they're about THIS
@@ -226,7 +228,7 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
              OR d.property_id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))`
         : "";
     const movesQ = pool.query(
-      `SELECT d.id, d.name, d.status, COALESCE(d.updated_at, d.created_at) AS at, p.name AS property_name
+      `SELECT d.id, d.name, d.status, COALESCE(d.updated_at, d.created_at) AS at, p.name AS property_name, p.id AS property_id
          FROM crm_deals d
          LEFT JOIN crm_properties p ON p.id = d.property_id
         WHERE COALESCE(d.updated_at, d.created_at) > NOW() - INTERVAL '14 days'
@@ -251,7 +253,16 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
         contact_id: null,
         deal_id: m.id,
         deal_name: m.name,
+        stage: DEAL_STATUS_LABELS[legacyToCode(m.status)!],
+        property_id: m.property_id || null,
+        property_name: m.property_name || null,
       }));
+    // What each row links to (Woody, 2026-11-15: "is it linked properly to
+    // everything?"): the person, their company, the deal and its property.
+    // A joint agent does not open contact or company pages, so it is sent
+    // their names and no ids.
+    const { isJointAgentLogin } = await import("./landsec-access");
+    const noRecordLinks = await isJointAgentLogin(req);
     res.json({
       upcoming: upcoming.rows
         .sort((a: any, b: any) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
@@ -276,7 +287,15 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
           subject: (a.subject || "").replace(/^((re|fw|fwd):\s*)+/i, "").trim() || null,
           ai_summary: a.ai_summary && a.ai_summary !== NO_SUMMARY ? a.ai_summary : null,
           summary_skipped: a.ai_summary === NO_SUMMARY,
-          contact_id: a.contact_id,
+          contact_id: noRecordLinks ? null : a.contact_id,
+          contact_name: a.contact_name || null,
+          company_id: noRecordLinks ? null : a.company_id || null,
+          company_name: a.company_name || null,
+          company_domain: a.company_domain || null,
+          bgp_user: a.bgp_user || null,
+          direction: a.direction || null,
+          property_id: a.deal_property_id || null,
+          property_name: a.deal_property_name || null,
           contact_email: a.contact_email || null,
           microsoft_id: a.microsoft_id || null,
           deal_id: a.deal_id,

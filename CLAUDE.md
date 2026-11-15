@@ -1041,6 +1041,26 @@ in red. An agent firm's page opens to a client login to READ
 (`isClientReadableCompanyPage` in `server/company-scope.ts`: a brand it may
 see, or an agent firm); writes there stay with `isClientVisibleBrand`.
 
+## The activity feed (Woody, 2026-11-15)
+
+Woody: "bring the design up to speed", "click on the activity brings up an
+explanation box", "is it linked properly to everything?".
+`client/src/components/activity-summary.tsx` (the property page's Activity
+tab, the dashboard boards, a brand's phone page) is one row shape
+(`FeedRow`: icon chip, what it was about, who and when) under Upcoming and
+day headings (Today / Yesterday / This week / Earlier). The whole row opens
+`ActivityDetail`: when, who at BGP, who with, the company, the deal and its
+property (each a link), "What it was about" (the saved AI read, asked for
+once on open when there is none) and the actions (follow-up task, book a
+follow-up, Open in Outlook, contact, deal, property). The hover-only icons
+are gone. `GET /api/activity-summary` sends the names and ids those links
+need (`contact_name`, `company_id`, `company_name`, `bgp_user`, `direction`,
+the deal's `property_id` / `property_name`, a deal move's `stage`); a joint
+agent is sent names and no contact or company id. The contact page, the deal
+page and the desktop brand and landlord pages still draw their own activity
+(`AIActivityCard`, `InteractionsBoard`, the meetings and email summaries):
+moving them onto this feed is not done.
+
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
 
 The brands' own CRM: which schemes BGP wants each brand in, whether there is
