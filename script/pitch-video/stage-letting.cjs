@@ -6,14 +6,14 @@
 //   node script/pitch-video/stage-letting.cjs <phase>
 //
 // Phases, in order (each is safe to run twice):
-//   logins          Mark Warne = leasing manager; Gemma Casey = asset manager (Bluewater)
+//   logins          Mark Warne = leasing manager; Rob Hardie = asset manager (Bluewater)
 //   brief           the Targeting Brief, its people and target; all agree but Mark
 //   viewing         one completed viewing by Jersey Mike's
 //   snapshot        saves the unit as it now stands, for `reset` (run it before filming)
 //   offer           the offer, a landlord counter, the tenant's reply, terms agreed
 //   hots            standard HOTs, generated from the agreed offer; all agree but Mark
 //   issue           Mark agrees, HOTs issued (unit to HOTs), deal checklist started
-//   recommendation  drafted and issued by Emily; the Landsec decision is left open
+//   recommendation  drafted and issued by Charlotte; the Landsec decision is left open
 //   solicitors      final HOTs uploaded, deal converted to Solicitors
 // Also:
 //   status          prints where the unit stands (reads only)
@@ -58,12 +58,13 @@ const SCHEME = "bluewater";
 
 const WHO = {
   admin: "victoria@brucegillinghampollard.com",
-  emily: "emily@brucegillinghampollard.com",
-  lucy: "lucyg@brucegillinghampollard.com",
+  emily: "charlotte@brucegillinghampollard.com",   // the lead BGP agent (Charlotte Roberts)
+  lucy: "millie@brucegillinghampollard.com",                        // Millie Wilson
+  ben: "ben@brucegillinghampollard.com",           // Ben Sykes, in support
   mark: "mark.warne@landsec.com",
-  gemma: "gemma.casey@landsec.com",
+  gemma: "rob.hardie@landsec.com",                 // the Bluewater asset manager (Rob Hardie)
 };
-const GEMMA_NAME = "Gemma Casey";
+const GEMMA_NAME = "Rob Hardie";
 
 // A viewing is confirmed only with a contact at the brand, and the demo holds
 // none for Jersey Mike's. This is a team, not an invented person.
@@ -97,7 +98,7 @@ const BRIEF = {
 const VIEWING = {
   time: "11:00", outcome: "Interested",
   notes: "Walked the unit and the lower mall with the Jersey Mike's property team. They liked the frontage and asked for the service charge budget.",
-  attendees: "Emily Dumbell (BGP), Jersey Mike's UK property team",
+  attendees: "Charlotte Roberts (BGP), Jersey Mike's UK property team",
 };
 
 // The note that is typed on film, and the terms it reads as.
@@ -283,7 +284,7 @@ async function phaseBrief() {
       && (!u.tenancy_unit_id || u.tenancy_unit_id === TENANCY);
     const started = await must("emily", "POST", "/api/unit-briefs/start", sameUnit ? { tenancyUnitId: TENANCY, title: BRIEF.title } : { trackerUnitId: UNIT, title: BRIEF.title });
     if (started.unit?.id !== UNIT) throw new Error(`Add brief answered with another unit (${started.unit?.id}). Stop and look at the tracker.`);
-    step(true, `brief started by Emily Dumbell${sameUnit ? ", unit picked from the tenancy schedule" : ""} (deal #${started.dealRef})`);
+    step(true, `brief started by Charlotte Roberts${sameUnit ? ", unit picked from the tenancy schedule" : ""} (deal #${started.dealRef})`);
     brief = await briefOf();
   } else step(false, "the unit has its brief");
 
@@ -291,7 +292,7 @@ async function phaseBrief() {
   step(!!saved.termsChanged, `terms and commercials (version ${saved.version})`);
 
   const people = [
-    { who: "emily", role: "bgp_agent" }, { who: "lucy", role: "bgp_agent" },
+    { who: "emily", role: "bgp_agent" }, { who: "lucy", role: "bgp_agent" }, { who: "ben", role: "bgp_agent" },
     { who: "mark", role: "client_leasing" }, { who: "gemma", role: "asset_manager" },
   ];
   let ws = await workspaceOf(brief.id);
@@ -311,7 +312,7 @@ async function phaseBrief() {
 
   // Everyone agrees as themselves, except Mark: that is pressed on film.
   ws = await workspaceOf(brief.id);
-  for (const who of ["emily", "lucy", "gemma"]) {
+  for (const who of ["emily", "lucy", "ben", "gemma"]) {
     const s = await login(who);
     const person = ws.people.find(x => x.userId === s.id);
     if (person.agreedAt && person.agreedVersion === ws.brief.version) { step(false, `${s.name} has agreed the brief`); continue; }
@@ -365,7 +366,7 @@ async function phaseOffer() {
       companyId: BRAND.id, companyName: BRAND.name, contactId: contact.id, contactName: BRAND_CONTACT.name,
       offerDate: addDays(today, -2), ...FIRST_OFFER, comments: OFFER_NOTE,
     });
-    step(true, `first offer logged by Emily Dumbell: £${FIRST_OFFER.rentPa} a year, ${FIRST_OFFER.turnoverRentPct}% turnover, ${FIRST_OFFER.rentFreeMonths} months rent free, ${FIRST_OFFER.termYears} years`);
+    step(true, `first offer logged by Charlotte Roberts: £${FIRST_OFFER.rentPa} a year, ${FIRST_OFFER.turnoverRentPct}% turnover, ${FIRST_OFFER.rentFreeMonths} months rent free, ${FIRST_OFFER.termYears} years`);
   } else step(false, `an offer from ${offer.companyName} is on the unit (${offer.status})`);
 
   let neg = await must("emily", "GET", `/api/unit-offers/${offer.id}/negotiation`);
@@ -414,7 +415,7 @@ async function phaseHots() {
       step(true, `generated from the agreed offer (version ${ws.version})`);
     } else step(false, `the draft is generated from the agreed offer (version ${ws.version})`);
     // Everyone on the brief agrees as themselves, except Mark.
-    for (const who of ["emily", "lucy", "gemma"]) {
+    for (const who of ["emily", "lucy", "ben", "gemma"]) {
       const s = await login(who);
       if (ws.signers.find(x => x.userId === s.id)?.agreedAt) { step(false, `${s.name} has agreed the Heads of Terms`); continue; }
       ws = await must(who, "POST", `/api/unit-hots/${UNIT}/agree`, { version: ws.version });
@@ -454,7 +455,7 @@ async function phaseIssue() {
   let list = (await must("emily", "GET", `/api/deal-checklists/unit/${UNIT}`)).checklist;
   if (!list.responsible) {
     list = await must("emily", "PUT", `/api/deal-checklists/${list.id}/responsible`, { personKey: `user:${await idOf("emily")}` });
-    step(true, "Emily Dumbell is responsible for the letting");
+    step(true, "Charlotte Roberts is responsible for the letting");
   } else step(false, `${list.responsible.name} is responsible for the letting`);
   for (let i = 0; i < CHECKLIST_PLAN.length; i++) {
     const plan = CHECKLIST_PLAN[i];

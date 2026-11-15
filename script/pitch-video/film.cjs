@@ -325,6 +325,15 @@ const SCENES = {
     await s.wait(1500);
   },
 
+  // 10c. The property's one conversation, with the team's comments on the unit.
+  async conversation(s) {
+    await s.goto(`/properties/${BLUEWATER}`, 3500);
+    await s.start();
+    await s.wait(800);
+    await s.moveTo(1180, 420, 1000);
+    await s.wait(4500);
+  },
+
   // 10b. The diary: viewings, meetings and the CRM plan in one calendar.
   async calendar(s) {
     await s.goto("/landsec/calendar", 3000);

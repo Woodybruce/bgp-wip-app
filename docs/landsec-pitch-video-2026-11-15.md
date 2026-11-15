@@ -29,14 +29,25 @@ screen.
 
 ## Script revised to Landsec's pitch pack (15 November 2026)
 
-Woody sent Landsec's pitch pack on 15 November. It is confidential, so
-neither the pack nor a summary of it is in the repo: Woody holds it. The
-script below was rewritten to fit it. What Woody decided: "lets have mark
-warn", so the film is shot in Mark Warne's login and he agrees the brief and
-the Heads of Terms. Gemma Casey stays as the Bluewater asset manager unless
-Woody says otherwise. The film is short (about 2 minutes 45), plays from a
-laptop file with no connection, and has to be finished a clear day before
-the pitch.
+Woody sent Landsec's pitch pack, the pitch invitation and BGP's draft deck
+("Landsec Dec 2026.pptx") on 15 November. The pack is confidential, so
+neither it nor a summary of it is in the repo: Woody holds it. What Woody
+decided that day:
+
+- **The pitch is Thursday 3 December 2026, 15:00 to 17:00**, in person. The
+  film has to be finished and sent with the presentation a clear day before,
+  so by the afternoon of Wednesday 2 December, and it must play from a laptop
+  file with no connection.
+- **The cast** ("lets have mark warn"; "rob runs bluewater hes AM and mark is
+  the leasing lead"; "charlotte and millie lead bluewater ben is the support
+  but will help"): Mark Warne is Landsec's leasing lead and the login the
+  film is shot in; Rob Hardie is Bluewater's asset manager; Charlotte Roberts
+  and Millie Wilson lead Bluewater for BGP with Ben Sykes in support. Pablo
+  Sueiras and Andrew Russell are not to be used. Ruth McFetridge and Charlie
+  Griffiths attend the pitch and have no part in the film.
+- **Where it sits in the deck**: under "why your agency", in place of the
+  long ChatBGP text slide. The deck names the platform ChatBGP, so the film
+  does too. About 2 minutes 45.
 
 ## Two versions
 
@@ -51,17 +62,17 @@ Voice lines are what Woody reads. About 330 words.
 | # | On screen | Voice |
 |---|-----------|-------|
 | 1 | Woody to camera, plain background. Name caption. | "I'm Woody Bruce from Bruce Gillingham Pollard. You asked, why our agency. Part of the answer is something we've built for you, so let me show you rather than tell you. In fact, I'll get someone else to show you." |
-| 2 | Woody turns into the character, who lands in the corner of the app. | "That's better. Mark, this is your login. One place for all fourteen schemes." |
+| 2 | Woody turns into the character, who lands in the corner of the app. | "That's better. Mark, this is ChatBGP, and this is your login. One place for all fourteen schemes." |
 | 3 | Properties: the 14 scheme cards, the stage pills, the map. Open Bluewater. | "Every unit, every vacancy and every live letting, counted the same way for your portfolio team, your asset teams, us and the other agents on the panel. Let's take Bluewater." |
 | 4 | Bluewater: the plan and the tenancy schedule. Click the Burger King unit; the unit panel opens. | "The plan and the tenancy schedule are one thing. Click a unit and everything about it is there. This is Burger King on the lower level: three thousand square feet, with the lease ending in December 2028. Line up what comes next now, and there is no downtime." |
 | 5 | Brand gap: the four figures, Targets, Competing centres, the Lakeside box. | "Differentiation starts with knowing what the competition has. The app tracks who trades at Lakeside, Stratford and Canary Wharf and not at Bluewater, and what those centres are doing each week." |
 | 6 | Jersey Mike's brand page: Expansion score and the news behind it. | "And it tracks who is growing. Jersey Mike's: new to the UK, backed by Blackstone, with a stated plan for four hundred sites. A first to market for Bluewater, found on evidence." |
-| 7 | The Targeting Brief on the unit. People tab. Mark presses Agree brief. | "Before anyone picks up the phone, the brief is agreed. Rent, incentives, target brands. Portfolio leasing, the asset manager and us each sign off in our own login." |
+| 7 | The Targeting Brief on the unit. People tab. Mark presses Agree brief. | "Before anyone picks up the phone, the brief is agreed. Rent, incentives, target brands. Mark for leasing, Rob as asset manager, and Charlotte, Millie and Ben for us, each in their own login." |
 | 8 | Letting Tracker. The offer typed as a plain note: "Offered: 15 year lease. Rent £275k pax and 9% t/o. 6 MRF". The form fills itself. | "Then it runs on the Letting Tracker. An offer comes in and we type it the way we'd say it. The app fills in the form and measures it against the brief." |
 | 9a | Heads of Terms on Bluewater's own form. Mark signs off. | "Heads of Terms come out on Bluewater's own form, and everyone signs." |
 | 9b | The deal checklist with a name against each step, then Deals showing "waiting on". | "From Heads of Terms the asset team takes over, with a name against every step. At any moment you can see what the deal is waiting on, and who." |
 | 10a | The transaction recommendation in Landsec's template. Mark approves. | "The recommendation arrives in your own template, with Net Effective Rent worked out against ERV and the brief." |
-| 10b | The calendar; the property conversation; a phone shot. | "Viewings, meetings, tasks and the conversation on each property sit in one place, for you and for every agent on the instruction." |
+| 10b | The calendar; the property conversation; a phone shot. | "Viewings, meetings and tasks sit in one place. So does the conversation on each property, for you and for every agent on the instruction." |
 | 11 | Woody back on camera, or the character closes. End card. | "That is one unit at one scheme. It runs the same way across all fourteen, so our time goes on brands and deals, not on chasing updates. We'd love to run it with you." |
 
 ## What Woody needs to do
@@ -138,10 +149,8 @@ What is real and what is not, in the rough cut:
 - Made up, and marked "Illustration": the brief's terms, the viewing, the
   offer and its rounds, the Heads of Terms, the checklist and the
   recommendation.
-- The people on the brief are real names from BGP's team sheet (Mark Warne
-  as leasing manager, Gemma Casey as asset manager, Emily Dumbell and Lucy
-  Gardiner for BGP). Whether to show real Landsec people agreeing made-up
-  terms is Woody's call; the names are one line each in the staging script.
+- The people are real, by Woody's choice (the cast above). The names are one
+  line each in the staging script.
 
 Known rough edges to fix before the final cut:
 

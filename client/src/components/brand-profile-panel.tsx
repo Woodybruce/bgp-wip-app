@@ -6674,7 +6674,10 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
                 {/* Every message carries its author — a shared brand chat is
                     useless if you can't tell who said what (Woody, 2026-08-04). */}
                 <span className="font-semibold text-[11px] block text-muted-foreground">
-                  {m.role === "assistant" ? "ChatBGP" : (isOwn ? "You" : (m.userName || "Team"))}
+                  {m.role === "assistant" ? "ChatBGP" : (isOwn ? "You" : (m.userName
+                    || (Array.isArray(thread?.members) ? thread.members : []).find((member: any) => member.id === (m.userId || m.user_id))?.name
+                    || (Array.isArray(mcUsers) ? mcUsers : []).find(user => user.id === (m.userId || m.user_id))?.name
+                    || "Team"))}
                   {(() => {
                     const ts = m.createdAt || m.created_at;
                     if (!ts) return null;
