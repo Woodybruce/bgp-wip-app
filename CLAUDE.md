@@ -1084,6 +1084,59 @@ not opened to them.
     take in full, live tenancies and rent at other landlords' schemes, the
     expansion score, Tracker updates).
 
+## Who owns a brand: the London Food Money Matrix (Woody, 2026-11-15)
+
+Woody on https://london-food-money-matrix.vercel.app/ (a public map of who
+owns London's restaurants, cafés, bakeries, bars and pubs: private equity,
+venture, a corporate parent or independent, each entry with its owner, the
+year and a source link): "This is good intel let's keep using this app for
+contacts and intel on brands". It is a standing source of brand intel,
+read once a week. Its author and terms of reuse are not stated on the page.
+
+- **Rules** are `shared/ownership-intel.ts` (`readOwnershipPage`,
+  `ownershipNameKey`, `ownershipKindFits`, `sameOwner`, `planOwnership`;
+  tests `server/ownership-intel.test.ts`, in `npm test`, and
+  `qa/regression/ownership-intel-guards.test.mjs`). A name is matched only
+  to exactly ONE visible tenant brand recorded as food and drink, or as
+  nothing in particular (a "Tenant - Retail" of the same name is listed for
+  a person: The Wolseley is not Wolseley). **A brand is never created from
+  the page.** A read that fails, has lost its list or looks cut short
+  (under 100 places, or under 60% of the last read) changes nothing.
+- **What is saved**: the page's reading under
+  `crm_companies.ai_generated_fields.ownership_intel` (owner, kind, since,
+  the page's one-line note, the source link, the date read, the owner it
+  gave before). It is on no client list (`CLIENT_PROFILE_AI_KEYS`), so no
+  client login is sent it. **Backers** is filled only for a private equity
+  or venture owner and only when blank (or still holding exactly what an
+  earlier read put there), marked as an automated fact like the profile's
+  other readers; a value a person or another reader set is never
+  overwritten, and a disagreement is listed. A corporate parent and an
+  independent's founders are not backers: they show on the owner line only.
+- **The read** is `server/ownership-intel.ts` (`runOwnershipRead`; no AI):
+  weekly job `ownership-intel`, Monday 03:00, and admin routes
+  `GET /api/admin/ownership-intel` (the last read's report, kept in
+  `system_settings.ownership_intel_report`) and `POST …/read`.
+  `OWNERSHIP_INTEL_URL` moves it (https only) and `off` stops it.
+- **Screens**: BGP staff see an **Owner** line among the facts on a brand's
+  summary card (`brand-ownership-line`: owner, kind, since, a source link;
+  the note and the read date in its title). Admins have **Ownership intel**
+  beside Tidy brands on Brand Explorer
+  (`client/src/components/ownership-intel.tsx`): owners that changed since
+  the read before, brands where our Backers names someone else, and the
+  backed operators not in the directory. The phone brand view has no owner
+  line yet.
+- A dry run against the live directory on 15 November 2026 (nothing
+  written): 591 places, 94 matched, 36 Backers to fill, 1 disagreement
+  (Flat Iron), 14 names left for a person, 164 backed operators and 319
+  independents not in the directory. It has not been run on the live
+  database from a build machine: the first read is Monday's, or an admin's
+  Read now.
+- Not built, each waiting on Woody: adding the missing operators as brands
+  (the directory is deliberately kept to brands BGP works); the owners (the
+  private equity houses) as companies or contacts in the CRM; an owner
+  change as a signal on the Expansion page or in the digest; the map's
+  pins and areas.
+
 ## Contacts from email, company checks and Back (Woody, 2026-11-13)
 
 Decided by Woody on 13 November 2026 (do not re-litigate):

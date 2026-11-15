@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { BrandTidyButton, HiddenBrands } from "@/components/brand-tidy";
+import { OwnershipIntelButton } from "@/components/ownership-intel";
 import { BrandCrmTab } from "@/components/brand-crm/brand-crm-tab";
 import { useBrand } from "@/lib/brand-context";
 import { getAuthHeaders } from "@/lib/queryClient";
@@ -1179,6 +1180,7 @@ function BrandExplorer() {
               ))}
             </div>
             {exUser?.isAdmin && <BrandTidyButton />}
+            {exUser?.isAdmin && <OwnershipIntelButton />}
             {targetProperties.length > 0 && (
               <select
                 value={propFilter}
