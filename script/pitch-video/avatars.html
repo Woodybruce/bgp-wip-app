@@ -55,7 +55,7 @@ function build(a) {
     const svg = document.createElementNS(NS, "svg"); svg.setAttribute("viewBox", `0 0 ${r.w} ${r.h}`); svg.style.left = `${pad * k}px`; svg.style.width = `${r.w * k}px`; svg.style.height = `${r.h * k}px`;
     svg.innerHTML = `<g class="mouth"></g><g class="lids"></g>`; inner.appendChild(svg);
   }
-  if (a.tag) { const tag = document.createElement("div"); tag.className = `tag${a.char === "mark" ? " landsec" : ""}`; tag.innerHTML = `${a.tag}${a.role ? `<small>${a.role}</small>` : ""}`; tag.style.fontSize = `${21 / a.scale}px`; el.appendChild(tag); }
+  if (a.tag) { const tag = document.createElement("div"); tag.className = `tag${a.char === "mark" ? " landsec" : ""}`; tag.innerHTML = `${a.tag}${a.role ? `<small>${a.role}</small>` : ""}`; tag.style.fontSize = `${(a.tagSize || 21) / a.scale}px`; el.appendChild(tag); }
   el._k = k; el._pad = pad; el._r = r;
   return el;
 }
