@@ -13,7 +13,7 @@
 // false starts and long pauses left out; it is not in the repo.
 //
 //   REC=<recording.mp4> CUT=<cutlist.json> OUT_DIR=<folder with the clips and film.log> \
-//     [HERO_VOICE=<wav>] [ONLY=properties,unit] node script/pitch-video/voice-cut.cjs [out.mp4]
+//     [HERO_VOICE=<wav>] [ONLY=properties,unit] [REDO=hots] node script/pitch-video/voice-cut.cjs [out.mp4]
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
@@ -23,6 +23,8 @@ for (const [name, file] of [["REC", REC], ["CUT", CUT], ["OUT_DIR", OUT]]) if (!
 const target = process.argv[2] || path.join(OUT, "voice-cut.mp4");
 const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(",")) : null;
 const items = JSON.parse(fs.readFileSync(CUT, "utf8")).filter(it => !ONLY || ONLY.has(it.clip || it.name));
+// REDO=hots,brief: make only those scenes again and reuse every other part from the last run.
+const REDO = process.env.REDO ? new Set(process.env.REDO.split(",")) : null;
 const CAPTIONS = process.env.CAPTIONS !== "0", AVATARS = process.env.AVATARS !== "0";
 const MAX_SPEED = Number(process.env.MAX_SPEED || 2.6), MAX_PHONE_SPEED = Number(process.env.MAX_PHONE_SPEED || 3.2), FPS = 25;
 const FONT = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"].find(f => fs.existsSync(f));
@@ -100,6 +102,10 @@ function mouthOf(file, secs) {
     const name = item.clip || item.name;
     const file = path.join(tmp, `${String(n++).padStart(2, "0")}-${name}.mp4`), wav = path.join(tmp, `${name}.wav`);
     const ranges = item.ranges, spoken = ranges.reduce((s, [a, b]) => s + (b - a), 0);
+    if (REDO && !REDO.has(name) && fs.existsSync(file)) {
+      if (item.kind === "camera" && fs.existsSync(path.join(tmp, `${name}-last.png`))) lastFrame = path.join(tmp, `${name}-last.png`);
+      parts.push(file); continue;
+    }
 
     if (item.kind === "camera") {
       // The recording itself. Each stretch is framed a little differently, so a cut reads as a cut;

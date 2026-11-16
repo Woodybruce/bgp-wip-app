@@ -137,14 +137,16 @@ function pose(el, a, t, scene) {
     const from = A.arm === side ? aim(A, side) : { a1: POSES.rest[0], a2: POSES.rest[1], hand: "fist" };
     const to = B.arm === side ? aim(B, side) : { a1: POSES.rest[0], a2: POSES.rest[1], hand: "fist" };
     let a1 = lerp(from.a1, to.a1, k), a2 = lerp(from.a2, to.a2, k);
-    const hand = k > 0.5 ? to.hand : from.hand;
+    let hand = k > 0.5 ? to.hand : from.hand;
+    // Dancing: both arms in the air, taking turns.
+    if (cur.pose === "dance") { const ph = side === "L" ? 0 : Math.PI; a1 = lerp(a1, 112 + Math.sin(t * 9 + ph) * 28, k); a2 = lerp(a2, 62 + Math.cos(t * 9 + ph) * 26, k); if (k > 0.5) hand = "open"; }
     if (B.arm === side && cur.pose === "wave") a2 += Math.sin(t * 11) * 20 * k;
     if (B.arm === side && cur.pose === "type") a2 += Math.sin(t * 22) * 5 * k;
     if (cur.pose === "fly" || (hero && cur.pose === "hero")) { a1 = cur.pose === "fly" ? lerp(from.a1, 152, k) : a1; }
     arm(el.querySelector(side === "L" ? ".armL" : ".armR"), side, c, a1 + Math.sin(t * 1.3 + (side === "L" ? 0 : 2)) * 1.2, a2, hand, hero);
   }
   const m = a.speak && scene.mouth ? (scene.mouth[Math.min(scene.mouth.length - 1, Math.round(t * scene.fps))] || 0) : 0;
-  mouth(el.querySelector(".mouth"), m, a.speak ? 0.4 : (cur.pose === "thumb" || cur.pose === "wave" ? 1 : 0.6));
+  mouth(el.querySelector(".mouth"), cur.pose === "dance" && !a.speak ? 0.35 * k : m, a.speak ? 0.4 : (cur.pose === "thumb" || cur.pose === "wave" || cur.pose === "dance" ? 1 : 0.6));
   // Look where the hand points; otherwise mostly at the viewer.
   const look = cur.target ? [clamp((cur.target[0] - a.x) / 600, -1, 1), clamp((cur.target[1] - 700) / 500, -1, 1)] : [Math.sin(t * 0.5 + a.x) * 0.25, 0];
   const gx = lerp(0, look[0] * 4.5, k), gy = lerp(0, look[1] * 2.5, k);
@@ -176,7 +178,8 @@ function pose(el, a, t, scene) {
   const inK = back((t - a.from) / 0.5), outK = a.to != null ? ease((t - a.to) / 0.4) : 0;
   const shown = t >= a.from ? inK * (1 - outK) : 0;
   el.style.left = `${a.x - 200}px`;
-  el.style.transform = `translateY(${((1 - shown) * 115).toFixed(2)}%) scale(${a.scale}) rotate(${(Math.sin(t * 0.8 + a.x) * 0.7).toFixed(2)}deg)`;
+  const dance = cur.pose === "dance" ? k : prev.pose === "dance" ? 1 - k : 0, beat = t * 9 + (a.x % 3);
+  el.style.transform = `translateY(${((1 - shown) * 115).toFixed(2)}%) translate(${(Math.sin(beat / 2) * 16 * dance).toFixed(1)}px, ${(-Math.abs(Math.sin(beat)) * 22 * dance).toFixed(1)}px) scale(${a.scale}) rotate(${(Math.sin(t * 0.8 + a.x) * 0.7 + Math.sin(beat / 2) * 7 * dance).toFixed(2)}deg)`;
   el.style.opacity = shown > 0.02 ? 1 : 0;
   const tag = el.querySelector(".tag");
   if (tag) tag.style.opacity = a.tag && t >= a.from + 0.3 && t <= a.from + (a.tagFor || 4.5) ? 1 : 0;
