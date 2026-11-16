@@ -1,9 +1,12 @@
 // The CRM week (Woody, 2026-11-16): the rules the calendar on the CRM
 // Overview and Monday's email to the directors share.
+import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { LandlordMeeting } from "../shared/landlord-meetings";
-import { groupWeekMeetings, londonDayOf, londonTimeOf, mondayOf, moveWeek, weekAheadHtml, weekAheadSubject, weekDaysFrom, weekLabel, type WeekAhead } from "../shared/crm-week-ahead";
+import { groupWeekMeetings, leasingSections, londonDayOf, londonTimeOf, mondayOf, moveWeek, weekAheadHtml, weekAheadSubject, weekDaysFrom, weekLabel, type WeekAhead } from "../shared/crm-week-ahead";
+import { weekAheadRecipients } from "./crm-week-ahead";
+import { createLandlordMatcher, LEASING_MATCHER, type LandlordCatalogueEntry } from "./landlord-meeting-matching";
 
 const person = (name: string, domain: string) => ({ name, email: `${name.toLowerCase().replace(/\s+/g, ".")}@${domain}` });
 function meeting(over: Partial<LandlordMeeting> & { companyId: string; companyName: string; uid: string }): LandlordMeeting {
@@ -46,6 +49,7 @@ test("a week runs Monday to Sunday", () => {
 });
 
 const week = (over: Partial<WeekAhead> = {}): WeekAhead => ({
+  edition: "directors",
   week: { start: "2026-11-16T00:00:00.000Z", end: "2026-11-23T00:00:00.000Z" },
   meetings: groupWeekMeetings([meeting({ companyId: "l", companyName: "Landsec", uid: "review" })]),
   events: [{ id: "e1", title: "Landlord dinner", startsAt: "2026-11-19T19:00:00.000Z", endsAt: null, location: "Soho", ownerName: "Alex Agent", companies: ["Landsec", "Hammerson"] }],
@@ -93,4 +97,70 @@ test("a long guest list is cut with a count", () => {
   const bgp = [person("Alex Agent", "agency.example")];
   const html = weekAheadHtml(week({ meetings: groupWeekMeetings([meeting({ companyId: "l", companyName: "Landsec", uid: "big", participants: [...bgp, ...many], bgpParticipants: bgp })]), events: [] }), "https://app.example");
   assert.match(html, /With: Guest 1, Guest 2, Guest 3, Guest 4, Guest 5, Guest 6 and 3 more/);
+});
+
+// ── The leasing email: brands and agents ─────────────────────────────────────
+const leasingWeek = (over: Partial<WeekAhead> = {}): WeekAhead => week({
+  edition: "leasing", events: [],
+  meetings: groupWeekMeetings([
+    meeting({ companyId: "jm", companyName: "Jersey Mike's", companyKind: "brand", uid: "pitch", start: "2026-11-17T09:00:00.000Z", subject: "Jersey Mike's: Bluewater" }),
+    meeting({ companyId: "sv", companyName: "Savills", companyKind: "agent", uid: "pitch", start: "2026-11-17T09:00:00.000Z", subject: "Jersey Mike's: Bluewater" }),
+    meeting({ companyId: "cb", companyName: "CBRE", companyKind: "agent", uid: "catchup", start: "2026-11-19T11:00:00.000Z", subject: "Requirements catch up" }),
+  ]),
+  ...over,
+});
+
+test("a meeting with a brand and its agent is one meeting under Brands; Agents holds the rest", () => {
+  const { brands, agents } = leasingSections(leasingWeek().meetings);
+  assert.deepEqual(brands.map(m => m.companies.map(c => c.name)), [["Jersey Mike's", "Savills"]]);
+  assert.deepEqual(agents.map(m => m.companies.map(c => c.name)), [["CBRE"]]);
+});
+
+test("the leasing email has its own subject, two lists and no CRM events", () => {
+  const data = leasingWeek();
+  assert.equal(weekAheadSubject(data), "Leasing week ahead: 1 brand meeting, 1 agent meeting (16 November to 22 November 2026)");
+  const html = weekAheadHtml(data, "https://app.example");
+  assert.match(html, />Leasing week ahead</);
+  assert.ok(html.indexOf(">Brands<") < html.indexOf(">Agents<"));
+  assert.ok(html.indexOf("Jersey Mike&#39;s") === -1 && html.includes("Jersey Mike's: Bluewater"));
+  assert.ok(html.indexOf("Requirements catch up") > html.indexOf(">Agents<"));
+  assert.doesNotMatch(html, /CRM event/);
+  assert.match(html, /A meeting with a brand and its agent is under Brands\./);
+  const empty = weekAheadHtml(leasingWeek({ meetings: [] }), "https://app.example");
+  assert.match(empty, /No meetings with brands or agents were found in BGP diaries for this week\./);
+});
+
+test("each email goes to its own address, a setting can move or stop it, and never outside BGP", () => {
+  const own = (edition: "directors" | "leasing", env: Record<string, string> = {}) => weekAheadRecipients(edition, env);
+  assert.equal(own("directors").length, 1);
+  assert.match(own("directors")[0], /^directors@/);
+  assert.match(own("leasing")[0], /^leasing@/);
+  const domain = own("directors")[0].split("@")[1];
+  assert.deepEqual(own("directors", { CRM_WEEK_AHEAD_TO: "off" }), []);
+  assert.deepEqual(own("leasing", { LEASING_WEEK_AHEAD_TO: "OFF" }), []);
+  assert.deepEqual(own("leasing", { LEASING_WEEK_AHEAD_TO: `a@${domain}, A@${domain}; b@${domain}` }), [`a@${domain}`, `b@${domain}`]);
+  // An outside address, or one that only looks like BGP's, is dropped.
+  assert.deepEqual(own("directors", { CRM_WEEK_AHEAD_TO: `someone@elsewhere.example, x@${domain}.evil.example, ok@${domain}` }), [`ok@${domain}`]);
+  // One edition's setting never moves the other.
+  assert.match(own("directors", { LEASING_WEEK_AHEAD_TO: "off" })[0], /^directors@/);
+});
+
+// ── Matching a diary entry to a brand or an agent ────────────────────────────
+const entry = (over: Partial<LandlordCatalogueEntry> & { id: string; name: string }): LandlordCatalogueEntry => ({ company_type: "Tenant - Restaurant", domain: null, domain_url: null, contacts: [], ...over });
+test("the leasing book trusts a name only when it is two words or more; a person or a domain always counts", () => {
+  const catalogue = [
+    entry({ id: "next", name: "Next", domain: "next.example", kind: "brand" }),
+    entry({ id: "office", name: "Office", kind: "brand", contacts: [{ id: "c1", name: "Olive Office", email: "olive@officeshoes.example" }] }),
+    entry({ id: "fg", name: "Five Guys", kind: "brand" }),
+    entry({ id: "kf", name: "Knight Frank", company_type: "Agent", domain: "knightfrank.example", kind: "agent" }),
+  ];
+  const match = createLandlordMatcher(catalogue, LEASING_MATCHER);
+  const bgp = { name: "Alex Agent", email: "alex@agency.example" };
+  assert.deepEqual(match("Next steps on the office move", [bgp]), []);
+  assert.deepEqual(match("Five Guys: Bluewater unit", [bgp]).map(m => m.company.id), ["fg"]);
+  assert.deepEqual(match("Catch up", [bgp, { name: "N", email: "buyer@next.example" }]).map(m => m.company.id), ["next"]);
+  assert.deepEqual(match("Catch up", [bgp, { name: "Olive Office", email: "olive@officeshoes.example" }]).map(m => m.company.id), ["office"]);
+  assert.deepEqual(match("Lunch", [bgp, { name: "K", email: "k@knightfrank.example" }]).map(m => m.company.id), ["kf"]);
+  // The landlord book is unchanged: it leaves tenant companies out altogether.
+  assert.deepEqual(createLandlordMatcher(catalogue)("Five Guys: Bluewater unit", [bgp]), []);
 });

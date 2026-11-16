@@ -2869,45 +2869,64 @@ Two rules everything else follows (do not re-litigate):
   pass, insights report leg): a new import in those functions needs the
   binding added to the test. Run that suite with `--import tsx`.
 
-## CRM week: meetings on the events calendar, and Monday's email (Woody, 2026-11-16)
+## CRM week: meetings on the events calendar, and Monday's two emails (Woody, 2026-11-16)
 
 Woody: "can you merge CRM meetings with the events calendar in CRM, the CRM
 meeting is great just need to overlay for the week. The directors then want
-a summary of those meetings emailed to them on a monday morning."
+a summary of those meetings emailed to them on a monday morning." Asked who
+and what, he answered: the directors' address; no look back at last week;
+and "just landlords at this stage but should also do for brands and agents
+separately and send to" the leasing address. Do not re-litigate.
 
-- **The meetings are the ones CRM Meetings already reads** from BGP diaries
-  (`server/landlord-meetings.ts`: landlords only, private entries never).
-  Nothing new is read. `GET /api/crm/landlords/meetings/calendar` is the
-  same digest not cut to the week (30 days back, 90 ahead), BGP staff only.
+- **Two books of meetings from the same diaries** (`server/landlord-meetings.ts`,
+  `DiaryBook`): `landlord`, the one CRM Meetings always read, and `leasing`,
+  agent firms and the brands BGP is working (`loadLeasingCatalogue`:
+  `workedBrandIds` in `server/crm-hub.ts`, the Brands list's own rule; never
+  the whole brand directory, never BGP's own record or people). Each has its
+  own store (`landlord_diary_v1:` / `leasing_diary_v1:`), so neither adds to
+  the other, and every privacy rule in that file applies to both (private
+  mailboxes and entries, absences, revocations). The hourly mailbox sync
+  and Check diaries fill both from one read, each failing on its own.
+- **Matching** (`server/landlord-meeting-matching.ts`): a person's email
+  address or their firm's domain matches in both books. The leasing book
+  (`LEASING_MATCHER`) trusts a name in the invitation only when it is two
+  words or more: "Next steps" is not Next. Do not loosen that.
+- **Feeds**, BGP staff only: `GET /api/crm/landlords/meetings/calendar` and
+  `GET /api/crm/leasing-meetings/calendar` (each the whole digest, 30 days
+  back and 90 ahead). A meeting carries `companyKind`.
 - **The calendar** (`client/src/components/crm-engagement/overview.tsx`,
   the Events calendar on the CRM Overview) opens on a **Week** view and
   draws those meetings over the CRM's confirmed events, in Week, Month and
   List: an event is a filled chip, a meeting an outlined one (`MeetingChip`,
   `MeetingRow`, `MeetingDetail`). The **Meetings** pill switches them off.
-  A meeting follows the landlord and BGP owner filters and steps aside
-  while a strategy, or Brands, Agents or Lenders, is picked. It is not a CRM
-  event and is never saved as one. Not on a brand's or a company page's
-  compact panel.
+  A meeting follows the company, kind (Landlords / Brands / Agents) and BGP
+  owner filters and steps aside while a strategy or Lenders is picked. It is
+  not a CRM event and is never saved as one. Not on a company page's compact
+  panel.
 - **One set of rules**, `shared/crm-week-ahead.ts` (tests
   `server/crm-week-ahead.test.ts`, in `npm test`): `groupWeekMeetings` (a
-  diary entry that names two landlords is ONE meeting with both names), the
-  London day and time, the Monday-to-Sunday week, and the email's subject
-  and body. The calendar and the email both use it: change a rule there.
-- **Monday's email** (`server/crm-week-ahead.ts`, job `crm-week-ahead`,
-  Monday 07:30): the week's landlord meetings and confirmed CRM events, day
-  by day, to the equity directors (`EQUITY_DIRECTOR_EMAILS` in
-  `server/auth.ts`, the Finance list: Woody, Jack, Rupert, Charlotte), and
-  only to addresses that are an active BGP login. `CRM_WEEK_AHEAD_TO` (a
-  comma list) moves it and `off` stops it. Every word from a diary is
-  escaped and the only links are to the app. **A request never names a
-  recipient**: admins have `GET /api/admin/crm-week-ahead` (this week's
-  email and who gets it) and `POST …/send-me` (a copy to the admin who
-  pressed it), reached from "See this week's email" on CRM Meetings. Guards:
-  `qa/regression/crm-week-ahead-guards.test.mjs`. It has not been sent
-  through Microsoft from a build machine.
-- Waiting on Woody: whether "the directors" is that list; meetings with
-  brands, agents and lenders (the diary read matches landlords only); a
-  look back at last week's meetings in the same email.
+  diary entry that names two companies is ONE meeting with both names),
+  `leasingSections` (a meeting with a brand and its agent is under Brands;
+  Agents holds the rest), the London day and time, the Monday-to-Sunday
+  week, and each email's subject and body. The calendar and the emails all
+  use it: change a rule there.
+- **Monday's emails** (`server/crm-week-ahead.ts`, job `crm-week-ahead`,
+  Monday 07:30, both editions, one failing never stops the other):
+  **directors** = the week's landlord meetings and the CRM's confirmed
+  events, to the directors' address; **leasing** = the week's meetings with
+  brands and with agents, no CRM events, to the leasing address. Week ahead
+  only. `CRM_WEEK_AHEAD_TO` / `LEASING_WEEK_AHEAD_TO` (a comma list) move
+  one and `off` stops it; an address outside BGP's own domain is dropped
+  whatever a setting holds. Every word from a diary is escaped and the only
+  links are to the app. **A request never names a recipient**: admins have
+  `GET /api/admin/crm-week-ahead` (both emails as they stand, and who gets
+  them) and `POST …/:edition/send-me` (a copy to the admin who pressed it),
+  from "See this week's emails" on CRM Meetings. Guards:
+  `qa/regression/crm-week-ahead-guards.test.mjs`. Neither has been sent
+  through Microsoft from a build machine, and the leasing book holds nothing
+  until the first hourly sync after it goes live.
+- Not built: lender meetings; a list of brand and agent meetings on the CRM
+  Meetings tab (they are on the calendar and in the email).
 
 ## Investment Tracker: the top folds away (Woody, 2026-11-16)
 

@@ -5,7 +5,7 @@ import { pool } from './db';
 import { getAppToken } from './shared-mailbox';
 import { isClientRequestUser, resolveCompanyScope } from './company-scope';
 import { parseGraphDateTime } from './viewing-matching';
-import { LANDLORD_CATALOGUE_PREDICATE, createLandlordMatcher, matchLandlordMeeting, londonWeek, type LandlordCatalogueEntry } from './landlord-meeting-matching';
+import { LANDLORD_CATALOGUE_PREDICATE, LEASING_MATCHER, createLandlordMatcher, matchLandlordMeeting, londonWeek, type LandlordCatalogueEntry, type LandlordMatcher } from './landlord-meeting-matching';
 import { registerLandlordMeetingSummaryRoutes } from './landlord-meeting-summary';
 import { isPrivateEmailRecord, isPrivateMailboxAddress } from './private-mail';
 
@@ -14,6 +14,21 @@ const PREFIX = 'landlord_diary_v1:';
 const MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const STAFF_DOMAIN = '@brucegillinghampollard.com';
 let refreshing = false;
+
+// Two books of meetings are kept from the same diaries, by the same rules
+// (Woody, 2026-11-16): landlords, for CRM Meetings and the directors' Monday
+// email, and leasing, the brands BGP is working and agent firms, for the
+// leasing team's. Each book has its own store, so neither can add to or take
+// from the other. Everything about privacy below applies to both.
+export type DiaryBook = 'landlord' | 'leasing';
+const BOOK_PREFIX: Record<DiaryBook, string> = { landlord: PREFIX, leasing: 'leasing_diary_v1:' };
+const leasingMatchers = new WeakMap<LandlordCatalogueEntry[], LandlordMatcher>();
+function bookMatcher(book: DiaryBook, catalogue: LandlordCatalogueEntry[]): LandlordMatcher {
+  if (book === 'landlord') return (subject, people) => matchLandlordMeeting(subject, people, catalogue);
+  let matcher = leasingMatchers.get(catalogue);
+  if (!matcher) { matcher = createLandlordMatcher(catalogue, LEASING_MATCHER); leasingMatchers.set(catalogue, matcher); }
+  return matcher;
+}
 
 interface DiaryEvent {
   id: string;
@@ -46,6 +61,34 @@ export async function loadLandlordCatalogue(q: Queryable = pool): Promise<Landlo
     FROM crm_companies c WHERE ${LANDLORD_CATALOGUE_PREDICATE}`);
   return rows;
 }
+
+// The leasing book: every agent firm, and the brands BGP is working (the CRM
+// page's Brands list, by its own rule). Never the whole brand directory: a
+// name out of thousands would match diary entries that are nothing to do
+// with it. BGP's own record and its own people are left out, or every
+// meeting would count as one with an agent.
+let leasingCatalogue: { at: number; rows: LandlordCatalogueEntry[] } | null = null;
+export async function loadLeasingCatalogue(q: Queryable = pool): Promise<LandlordCatalogueEntry[]> {
+  // One read serves a whole sync pass (every mailbox asks), and keeping the
+  // same list keeps its compiled matcher.
+  if (q === pool && leasingCatalogue && Date.now() - leasingCatalogue.at < 5 * 60 * 1000) return leasingCatalogue.rows;
+  const { workedBrandIds } = await import('./crm-hub');
+  const brandIds = await workedBrandIds(q);
+  const { rows } = await q.query(`SELECT c.id,c.name,c.company_type,c.domain,c.domain_url,
+    CASE WHEN lower(btrim(coalesce(c.company_type,''))) = 'agent' THEN 'agent' ELSE 'brand' END AS kind,
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('id',p.id,'name',p.name,'email',p.email))
+      FROM crm_contacts p WHERE p.company_id=c.id AND lower(coalesce(p.email,'')) NOT LIKE $2), '[]'::jsonb) AS contacts
+    FROM crm_companies c
+    WHERE c.merged_into_id IS NULL AND c.archived_at IS NULL
+      AND c.name !~* '^(bgp|bruce gillingham pollard)'
+      AND lower(coalesce(c.domain,'') || ' ' || coalesce(c.domain_url,'')) NOT LIKE $3
+      AND (lower(btrim(coalesce(c.company_type,''))) = 'agent'
+        OR (lower(coalesce(c.company_type,'')) LIKE 'tenant%' AND c.id = ANY($1::text[])))`,
+    [brandIds, `%${STAFF_DOMAIN}`, `%${STAFF_DOMAIN.slice(1)}%`]);
+  if (q === pool) leasingCatalogue = { at: Date.now(), rows };
+  return rows;
+}
+const loadBook = (book: DiaryBook, q: Queryable) => book === 'leasing' ? loadLeasingCatalogue(q) : loadLandlordCatalogue(q);
 
 async function staffMailboxes(q: Queryable = pool): Promise<Array<{ email: string; name: string }>> {
   const { rows } = await q.query(`SELECT lower(trim(email)) AS email,name FROM users
@@ -95,15 +138,18 @@ export function normaliseLandlordDiaryEvent(raw: any): DiaryEvent | null {
 // contact-only interaction table cannot hold. No dummy contacts are created.
 export async function captureLandlordDiary(
   rawEvents: any[], mailbox: string, window: { start: string; end: string },
-  options: { q?: Queryable; catalogue?: LandlordCatalogueEntry[]; now?: Date; scanStartedAt?: string } = {},
+  options: { q?: Queryable; catalogue?: LandlordCatalogueEntry[]; now?: Date; scanStartedAt?: string; book?: DiaryBook } = {},
 ): Promise<void> {
   const q = options.q || pool;
+  const book = options.book || 'landlord';
+  const storeKey = BOOK_PREFIX[book] + mailbox.toLowerCase();
   if (!(await staffMailboxes(q)).some(member => member.email === mailbox.toLowerCase())) return;
-  const catalogue = options.catalogue || await loadLandlordCatalogue(q);
+  const catalogue = options.catalogue || await loadBook(book, q);
+  const matches = bookMatcher(book, catalogue);
   const checkedAt = (options.now || new Date()).toISOString();
   const visibleEvents = rawEvents.map(normaliseLandlordDiaryEvent).filter((event): event is DiaryEvent => !!event)
-    .filter(event => !isLandlordDiaryAbsence(event.subject) && matchLandlordMeeting(event.subject, event.participants, catalogue).length > 0);
-  const previous = (await q.query('SELECT value FROM system_settings WHERE key=$1', [PREFIX + mailbox.toLowerCase()])).rows[0]?.value as DiarySnapshot | undefined;
+    .filter(event => !isLandlordDiaryAbsence(event.subject) && matches(event.subject, event.participants).length > 0);
+  const previous = (await q.query('SELECT value FROM system_settings WHERE key=$1', [storeKey])).rows[0]?.value as DiarySnapshot | undefined;
   const eventKey = (event: { id: string; uid: string }) => event.uid || event.id;
   const accountPrivateKeys = new Set([
     ...(previous?.revocations || []).filter(revocation => revocation.accountPrivate),
@@ -132,20 +178,20 @@ export async function captureLandlordDiary(
     revocations: [...new Map(revocations.map(revocation => [eventKey(revocation), revocation])).values()], issue: null };
   await q.query(`INSERT INTO system_settings(key,value,updated_at) VALUES($1,$2::jsonb,now())
     ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()
-    WHERE COALESCE(system_settings.value->>'scanStartedAt','') <= EXCLUDED.value->>'scanStartedAt'`, [PREFIX + snapshot.mailbox, JSON.stringify(snapshot)]);
+    WHERE COALESCE(system_settings.value->>'scanStartedAt','') <= EXCLUDED.value->>'scanStartedAt'`, [storeKey, JSON.stringify(snapshot)]);
 }
 
-export async function recordLandlordDiaryFailure(mailbox: string, issue: string, q: Queryable = pool): Promise<void> {
+export async function recordLandlordDiaryFailure(mailbox: string, issue: string, q: Queryable = pool, book: DiaryBook = 'landlord'): Promise<void> {
   if (isPrivateMailboxAddress(mailbox)) return;
   const patch = { mailbox: mailbox.toLowerCase(), attemptedAt: new Date().toISOString(), issue };
   await q.query(`INSERT INTO system_settings(key,value,updated_at) VALUES($1,$2::jsonb,now())
     ON CONFLICT(key) DO UPDATE SET value=COALESCE(system_settings.value,'{}'::jsonb)||EXCLUDED.value,updated_at=now()`,
-  [PREFIX + patch.mailbox, JSON.stringify(patch)]);
+  [BOOK_PREFIX[book] + patch.mailbox, JSON.stringify(patch)]);
 }
 
 export function buildLandlordMeetingDigest(
   snapshots: DiarySnapshot[], catalogue: LandlordCatalogueEntry[], staff: Array<{ email: string; name: string }>,
-  options: { companyId?: string; weekOnly?: boolean; now?: Date } = {},
+  options: { companyId?: string; weekOnly?: boolean; now?: Date; book?: DiaryBook } = {},
 ): LandlordMeetingDigest {
   const now = options.now || new Date();
   const week = londonWeek(now);
@@ -192,7 +238,7 @@ export function buildLandlordMeetingDigest(
       revokedByKey.set(key, [...(revokedByKey.get(key) || []), revocation]);
     }
   }
-  const matcher = createLandlordMatcher(catalogue);
+  const matcher = options.book === 'leasing' ? bookMatcher('leasing', catalogue) : createLandlordMatcher(catalogue);
   for (const [key, { event, snapshot }] of sources) {
     if (event.cancelled) continue;
     if (isLandlordDiaryAbsence(event.subject)) continue;
@@ -204,7 +250,7 @@ export function buildLandlordMeetingDigest(
     for (const { company, reasons } of matches) {
       if (options.companyId && company.id !== options.companyId) continue;
       const participants = event.participants.map(p => ({ ...p, name: staffNames.get(p.email) || p.name }));
-      meetings.push({ id: `${company.id}:${key}`, companyId: company.id, companyName: company.name,
+      meetings.push({ id: `${company.id}:${key}`, companyId: company.id, companyName: company.name, companyKind: company.kind || 'landlord',
         subject: event.subject, start: event.start, end: event.end, location: event.location, participants,
         bgpParticipants: participants.filter(p => staffNames.has(p.email)), source: 'calendar', sourceId: event.id,
         mailbox: snapshot.mailbox, webLink: event.webLink, matchReasons: reasons, checkedAt: snapshot.checkedAt!,
@@ -223,27 +269,30 @@ export function buildLandlordMeetingDigest(
 // each page then takes its own slice. One load, then Refresh — the pages
 // were re-polling every minute (Woody, 2 Nov 2026).
 const DIGEST_CACHE_MS = 5 * 60 * 1000;
-let digestCache: { at: number; q: Queryable; promise: Promise<LandlordMeetingDigest> } | null = null;
-export function invalidateLandlordMeetingDigest(): void { digestCache = null; }
+const digestCache = new Map<DiaryBook, { at: number; q: Queryable; promise: Promise<LandlordMeetingDigest> }>();
+export function invalidateLandlordMeetingDigest(): void { digestCache.clear(); }
 
 export async function getLandlordMeetingDigest(
-  options: { companyId?: string; weekOnly?: boolean; now?: Date } = {}, q: Queryable = pool,
+  options: { companyId?: string; weekOnly?: boolean; now?: Date; book?: DiaryBook } = {}, q: Queryable = pool,
 ): Promise<LandlordMeetingDigest> {
   const now = options.now || new Date();
+  const book = options.book || 'landlord';
+  const prefix = BOOK_PREFIX[book];
   const build = async () => {
     const [catalogue, staff, saved] = await Promise.all([
-      loadLandlordCatalogue(q), staffMailboxes(q),
-      q.query(`SELECT value FROM system_settings WHERE left(key,$1)=$2`, [PREFIX.length, PREFIX]),
+      loadBook(book, q), staffMailboxes(q),
+      q.query(`SELECT value FROM system_settings WHERE left(key,$1)=$2`, [prefix.length, prefix]),
     ]);
-    return buildLandlordMeetingDigest(saved.rows.map(row => row.value), catalogue, staff, { now });
+    return buildLandlordMeetingDigest(saved.rows.map(row => row.value), catalogue, staff, { now, book });
   };
   if (options.now || q !== pool) return scopeDigest(await build(), options, now);
-  if (!digestCache || digestCache.q !== q || Date.now() - digestCache.at > DIGEST_CACHE_MS) {
+  const cached = digestCache.get(book);
+  if (!cached || cached.q !== q || Date.now() - cached.at > DIGEST_CACHE_MS) {
     const promise = build();
-    digestCache = { at: Date.now(), q, promise };
-    promise.catch(() => { if (digestCache?.promise === promise) digestCache = null; });
+    digestCache.set(book, { at: Date.now(), q, promise });
+    promise.catch(() => { if (digestCache.get(book)?.promise === promise) digestCache.delete(book); });
   }
-  return scopeDigest(await digestCache.promise, options, now);
+  return scopeDigest(await digestCache.get(book)!.promise, options, now);
 }
 
 function scopeDigest(full: LandlordMeetingDigest, options: { companyId?: string; weekOnly?: boolean }, now: Date): LandlordMeetingDigest {
@@ -288,6 +337,9 @@ async function refreshLandlordDiaries(): Promise<void> {
   const now = new Date();
   const window = { start: new Date(now.getTime() - 30 * 86400000).toISOString(), end: new Date(now.getTime() + 90 * 86400000).toISOString() };
   const [staff, catalogue] = await Promise.all([staffMailboxes(), loadLandlordCatalogue()]);
+  // The leasing book is read from the same fetch. If its list cannot be put
+  // together the landlord book is still refreshed.
+  const leasing = await loadLeasingCatalogue().catch(() => null);
   let token: string;
   try { token = await getAppToken(); } catch {
     for (const member of staff) await recordLandlordDiaryFailure(member.email, 'Microsoft diary connection is unavailable');
@@ -297,8 +349,19 @@ async function refreshLandlordDiaries(): Promise<void> {
   // sync; small batches avoid turning a profile refresh into a mailbox flood.
   for (let offset = 0; offset < staff.length; offset += 3) {
     await Promise.all(staff.slice(offset, offset + 3).map(async member => {
-      try { await captureLandlordDiary(await fetchLandlordCalendar(token, member.email, window), member.email, window, { catalogue, scanStartedAt: now.toISOString() }); }
+      let rawEvents: any[];
+      try { rawEvents = await fetchLandlordCalendar(token, member.email, window); }
+      catch (error: any) {
+        await recordLandlordDiaryFailure(member.email, error?.message || 'Diary scan failed');
+        await recordLandlordDiaryFailure(member.email, error?.message || 'Diary scan failed', pool, 'leasing').catch(() => {});
+        return;
+      }
+      try { await captureLandlordDiary(rawEvents, member.email, window, { catalogue, scanStartedAt: now.toISOString() }); }
       catch (error: any) { await recordLandlordDiaryFailure(member.email, error?.message || 'Diary scan failed'); }
+      if (leasing) {
+        try { await captureLandlordDiary(rawEvents, member.email, window, { catalogue: leasing, scanStartedAt: now.toISOString(), book: 'leasing' }); }
+        catch (error: any) { await recordLandlordDiaryFailure(member.email, error?.message || 'Diary scan failed', pool, 'leasing').catch(() => {}); }
+      }
     }));
   }
 }
@@ -446,6 +509,12 @@ export function registerLandlordMeetingRoutes(app: Express): void {
   app.get('/api/crm/landlords/meetings/calendar', requireAuth, async (req,res) => {
     try { if (await staffOnly(req,res)) res.json(await getLandlordMeetingDigest({})); }
     catch { res.status(503).json({ error: 'Landlord diary summary is unavailable. No meetings have been removed.' }); }
+  });
+  // The same for the leasing book: meetings with brands BGP is working and
+  // with agent firms.
+  app.get('/api/crm/leasing-meetings/calendar', requireAuth, async (req,res) => {
+    try { if (await staffOnly(req,res)) res.json(await getLandlordMeetingDigest({ book: 'leasing' })); }
+    catch { res.status(503).json({ error: 'The diary summary is unavailable. No meetings have been removed.' }); }
   });
   app.get('/api/crm/landlords/:companyId/meetings', requireAuth, async (req,res) => {
     try {

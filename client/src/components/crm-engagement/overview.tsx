@@ -5,7 +5,7 @@ import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, P
 import type { ActionInput, ActionPlanInput, ActionStatus, EngagementAction, EngagementData, EngagementEvent, EngagementKind, EngagementOptions, EngagementStrategy, EventInput, StrategyInput, EngagementNoun } from "@shared/crm-engagement";
 import { ENGAGEMENT_NOUNS, NOUN_WORDS } from "@shared/crm-engagement";
 import type { LandlordMeetingDigest } from "@shared/landlord-meetings";
-import { groupWeekMeetings, londonDayOf, londonTimeOf, mondayOf, moveWeek, weekDaysFrom, weekLabel, type WeekMeeting } from "@shared/crm-week-ahead";
+import { groupWeekMeetings, londonDayOf, londonTimeOf, meetingHasKind, mondayOf, moveWeek, weekDaysFrom, weekLabel, type WeekMeeting } from "@shared/crm-week-ahead";
 import { CrmWatchList } from "./watch-list";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -38,8 +38,10 @@ function cleanError(error: unknown) {
   return message;
 }
 export const CRM_MEETINGS_CALENDAR_KEY = "/api/crm/landlords/meetings/calendar";
-// A landlord meeting read from a BGP diary, drawn on the events calendar. An
-// outline, where a CRM event is filled, so the two read apart at a glance.
+export const CRM_LEASING_MEETINGS_KEY = "/api/crm/leasing-meetings/calendar";
+// A meeting read from a BGP diary (with a landlord, a brand BGP is working or
+// an agent firm), drawn on the events calendar. An outline, where a CRM event
+// is filled, so the two read apart at a glance.
 function MeetingChip({meeting, full, onOpen}: {meeting: WeekMeeting; full?: boolean; onOpen: () => void}) {
   const who = meeting.companies.map(company => company.name).join(" and ");
   return <button type="button" onClick={onOpen} title={`${londonTimeOf(meeting.start)} ${who}: ${meeting.subject}`} data-testid={`crm-calendar-meeting-${meeting.key}`}
@@ -67,7 +69,7 @@ function MeetingDetail({meeting, onClose}: {meeting: WeekMeeting | null; onClose
         {!!meeting.others.length && <p className="break-words"><span className="text-muted-foreground">Also on the invitation: </span>{meeting.others.join(", ")}</p>}
         {meeting.location && <p className="break-words"><span className="text-muted-foreground">Where: </span>{meeting.location}</p>}
         {meeting.webLink && <a href={meeting.webLink} target="_blank" rel="noopener noreferrer" className="inline-block underline underline-offset-2">Open invitation</a>}
-        <p className="text-xs text-muted-foreground border-t pt-3">Read from a BGP diary because the invitation names this landlord or one of its people. It is not a CRM event: to plan around it, add an event or a CRM action.</p>
+        <p className="text-xs text-muted-foreground border-t pt-3">Read from a BGP diary because the invitation names this company or one of its people. It is not a CRM event: to plan around it, add an event or a CRM action.</p>
       </div>
     </>}</DialogContent>
   </Dialog>;
@@ -149,12 +151,17 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
     queryKey: [CRM_ENGAGEMENT_KEY, "options", kind], queryFn: async () => (await apiRequest("GET", `${CRM_ENGAGEMENT_KEY}/options?kind=${kind}`)).json(),
     staleTime: 5 * 60_000, refetchInterval: false, retry: 1,
   });
-  // Landlord meetings, as CRM Meetings reads them from BGP diaries. BGP staff
-  // only (the server refuses anyone else, and the calendar then shows none).
-  const meetingsOn = kind !== "brand" && !compact;
+  // Meetings read from BGP diaries: with landlords (as on CRM Meetings), and
+  // with the brands BGP is working and agent firms. BGP staff only (the server
+  // refuses anyone else, and the calendar then shows none).
+  const meetingsOn = !compact;
   const meetingsQuery = useQuery<LandlordMeetingDigest>({
     queryKey: [CRM_MEETINGS_CALENDAR_KEY], queryFn: async () => (await apiRequest("GET", CRM_MEETINGS_CALENDAR_KEY)).json(),
-    enabled: meetingsOn, staleTime: 10 * 60_000, refetchOnWindowFocus: false, refetchInterval: false, retry: false,
+    enabled: meetingsOn && kind !== "brand", staleTime: 10 * 60_000, refetchOnWindowFocus: false, refetchInterval: false, retry: false,
+  });
+  const leasingMeetingsQuery = useQuery<LandlordMeetingDigest>({
+    queryKey: [CRM_LEASING_MEETINGS_KEY], queryFn: async () => (await apiRequest("GET", CRM_LEASING_MEETINGS_KEY)).json(),
+    enabled: meetingsOn && kind !== "landlord", staleTime: 10 * 60_000, refetchOnWindowFocus: false, refetchInterval: false, retry: false,
   });
   const data = dataQuery.data || EMPTY;
   const listed = optionsQuery.data || EMPTY_OPTIONS;
@@ -253,14 +260,18 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
     && (!strategyFilter || s.id === strategyFilter) && (!ownerFilter || s.ownerId === ownerFilter) && (showClosed || s.status === "active")), [data.strategies, companyFilter, strategyFilter, ownerFilter, showClosed, nounFilter, nounOf]);
   const actions = useMemo(() => data.actions.filter(a => (!companyFilter || a.companyId === companyFilter) && ofNoun([a.companyId]) && (!strategyFilter || a.strategyId === strategyFilter)
     && (!ownerFilter || a.ownerId === ownerFilter) && (showDone || a.status !== "done")).sort((a, b) => Number(a.status === "done") - Number(b.status === "done") || (a.dueAt || "9999").localeCompare(b.dueAt || "9999")), [data.actions, companyFilter, strategyFilter, ownerFilter, showDone, nounFilter, nounOf]);
-  // A meeting belongs to a landlord and to nobody's strategy, so it follows the
-  // landlord, kind and BGP owner filters and steps aside for the others.
+  // A meeting belongs to its companies and to nobody's strategy, so it
+  // follows the company, kind and BGP owner filters and steps aside while a
+  // strategy is picked. No lender meetings are read.
   const ownerName = options.staff.find(person => person.id === ownerFilter)?.name || "";
   const meetings = useMemo(() => {
-    if (!meetingsOn || !showMeetings || strategyFilter || (nounFilter && nounFilter !== "landlord")) return [];
-    return groupWeekMeetings((meetingsQuery.data?.meetings || []).filter(meeting => !companyFilter || meeting.companyId === companyFilter))
+    if (!meetingsOn || !showMeetings || strategyFilter || nounFilter === "lender") return [];
+    const read = [...(kind !== "brand" ? meetingsQuery.data?.meetings || [] : []), ...(kind !== "landlord" ? leasingMeetingsQuery.data?.meetings || [] : [])];
+    return groupWeekMeetings(read)
+      .filter(meeting => !companyFilter || meeting.companies.some(company => company.id === companyFilter))
+      .filter(meeting => !nounFilter || meetingHasKind(meeting, nounFilter as "landlord" | "brand" | "agent"))
       .filter(meeting => !ownerFilter || (!!ownerName && meeting.bgp.includes(ownerName)));
-  }, [meetingsOn, showMeetings, strategyFilter, nounFilter, meetingsQuery.data, companyFilter, ownerFilter, ownerName]);
+  }, [meetingsOn, showMeetings, strategyFilter, nounFilter, kind, meetingsQuery.data, leasingMeetingsQuery.data, companyFilter, ownerFilter, ownerName]);
   const meetingsOnDay = (day: string) => meetings.filter(meeting => londonDayOf(meeting.start) === day);
   const weekDays = weekDaysFrom(weekStart);
   const days = monthDays(month);
@@ -271,7 +282,7 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
   const today = londonDay(new Date());
   const visibleList = selectedDay ? confirmed.filter(e => eventOccursOn(e, selectedDay)) : monthEvents;
   const visibleMeetings = selectedDay ? meetingsOnDay(selectedDay) : meetings.filter(meeting => londonDayOf(meeting.start).startsWith(month));
-  const coverage = meetingsQuery.data?.coverage;
+  const coverage = (kind === "brand" ? leasingMeetingsQuery.data : meetingsQuery.data)?.coverage;
   const writable = !!optionsQuery.data;
 
   if (dataQuery.isLoading) return <div className="space-y-4" aria-label="Loading CRM overview"><Skeleton className="h-10 w-full" /><div className="grid lg:grid-cols-[2fr_1fr] gap-4"><Skeleton className="h-96" /><Skeleton className="h-96" /></div></div>;
@@ -295,7 +306,7 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
     </div>}
     <div className={`grid gap-4 ${compact ? "" : "xl:grid-cols-[minmax(0,1.8fr)_minmax(300px,1fr)]"}`}>
       <Card className="p-4 min-w-0" data-testid="crm-events-calendar">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><CalendarDays className="h-4 w-4" />Events calendar</h3><div className="flex flex-wrap gap-1">{meetingsOn && <Pill active={showMeetings} onClick={() => setShowMeetings(on => !on)} title="Landlord meetings read from BGP diaries, as on CRM Meetings" aria-pressed={showMeetings} data-testid="crm-calendar-meetings-toggle"><Users className="h-3 w-3" />Meetings</Pill>}<Pill active={view === "week"} onClick={() => {setView("week"); setSelectedDay("");}} data-testid="crm-calendar-view-week">Week</Pill><Pill active={view === "month"} onClick={() => {setView("month"); setSelectedDay("");}} data-testid="crm-calendar-view-month">Month</Pill><Pill active={view === "list"} onClick={() => {setView("list"); setSelectedDay("");}} data-testid="crm-calendar-view-list">List</Pill></div></div>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><CalendarDays className="h-4 w-4" />Events calendar</h3><div className="flex flex-wrap gap-1">{meetingsOn && <Pill active={showMeetings} onClick={() => setShowMeetings(on => !on)} title="Meetings with landlords, brands and agents, read from BGP diaries" aria-pressed={showMeetings} data-testid="crm-calendar-meetings-toggle"><Users className="h-3 w-3" />Meetings</Pill>}<Pill active={view === "week"} onClick={() => {setView("week"); setSelectedDay("");}} data-testid="crm-calendar-view-week">Week</Pill><Pill active={view === "month"} onClick={() => {setView("month"); setSelectedDay("");}} data-testid="crm-calendar-view-month">Month</Pill><Pill active={view === "list"} onClick={() => {setView("list"); setSelectedDay("");}} data-testid="crm-calendar-view-list">List</Pill></div></div>
         <div className="flex items-center justify-between gap-2 mb-3"><div className="flex items-center gap-1"><Button variant="ghost" size="icon" className="h-8 w-8" aria-label={view === "week" ? "Previous week" : "Previous month"} onClick={() => {if (view === "week") setWeekStart(moveWeek(weekStart, -1)); else setMonth(moveMonth(month, -1)); setSelectedDay("");}}><ChevronLeft className="h-4 w-4" /></Button><h4 className="text-sm font-semibold min-w-32 text-center" data-testid="crm-calendar-period">{view === "week" ? weekLabel(weekStart) : monthLabel}</h4><Button variant="ghost" size="icon" className="h-8 w-8" aria-label={view === "week" ? "Next week" : "Next month"} onClick={() => {if (view === "week") setWeekStart(moveWeek(weekStart, 1)); else setMonth(moveMonth(month, 1)); setSelectedDay("");}}><ChevronRight className="h-4 w-4" /></Button></div><Button size="sm" variant="ghost" onClick={() => {setMonth(today.slice(0, 7)); setWeekStart(mondayOf(today)); setSelectedDay("");}}>{view === "week" ? "This week" : "Today"}</Button></div>
         {view === "week" && <div className="rounded-lg border overflow-hidden" data-testid="crm-calendar-week"><div className="grid grid-cols-1 sm:grid-cols-7">{weekDays.map(day => {const dayEvents = confirmed.filter(event => eventOccursOn(event, day)); const dayMeetings = meetingsOnDay(day); return <div key={day} className={`min-w-0 border-t first:border-t-0 sm:border-t-0 sm:border-r sm:last:border-r-0 p-1.5 sm:min-h-64 ${today === day ? "bg-primary/5" : ""}`} data-testid={`crm-week-day-${day}`}>
           <p className="text-[11px] font-semibold text-muted-foreground mb-1.5">{new Intl.DateTimeFormat("en-GB", {weekday: "short", timeZone: "UTC"}).format(new Date(`${day}T12:00:00Z`))} <span className={`font-mono tabular-nums ${today === day ? "text-foreground" : ""}`}>{Number(day.slice(-2))}</span></p>
