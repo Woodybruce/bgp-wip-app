@@ -1688,9 +1688,9 @@ Asked the four questions, he answered "Yes to all".
 The brands' own CRM: which schemes BGP wants each brand in, whether there is
 a unit for it there, how far it has got, and what happens next. Built from
 `docs/brand-crm-spec-2026-11-12.md`; **its "Decisions" section at the top
-overrides the spec body.** Staff: `/brands?tab=crm` (the Brand CRM pill in
-Brand Intelligence, and a sidebar link). Landsec logins: the same pill under
-Brands. A joint agent has no Brands entry, so it has `/landsec/brand-crm`.
+overrides the spec body.** Staff: `/brands?tab=crm` (the Brand CRM pill on
+Brands; its own side bar link was removed on 16 November 2026, see "The BGP
+side bar" below). Landsec logins: the same pill under Brands. A joint agent has no Brands entry, so it has `/landsec/brand-crm`.
 Three views: Targets (brands against the Landsec schemes), Diary, and
 Strategies and events (BGP staff only). The same plan is the **Schemes and
 units** card on every brand page.
@@ -3221,6 +3221,63 @@ re-exports it). The page lists by class, newest sale first.
   to the class. Logged in `investment_comp_migration_log` (batch
   `comp-cleanup-<time>`); Undo puts every row back. Terminated, withdrawn and
   blank-status comps are left for Jack.
+
+## The BGP side bar (Woody, 2026-11-16)
+
+Woody tidied the BGP staff side bar. His words, in order: "folder business
+card and Expenses / my card into each persons individual HR panel and call
+it my BGP", "not people and HR", "Website goes to admin", "brand CRM is
+already folded into Brand intelligence? can it be the same as Landsec and
+just be brands", "move investment requirements out of requirements and put
+into investment side panel", "hide lease advisory and investment from all
+leasing teams shopping centre london estates high street city and tenant
+rep". Do not re-litigate. Guards: `qa/regression/staff-menu.test.mjs`.
+
+- **Brands** is one entry (`/brands`), as on the Landsec menu; the Brand CRM
+  is its pill (`/brands?tab=crm`) and has no side bar link. The page's title
+  reads Brands. Brand CRM's three views stay as they are.
+- **My BGP** (`/my-bgp`, `MyBgpPage` in `client/src/pages/hr.tsx`) is the
+  person's own HR profile (`StaffProfile` with `myBgp`): Personal, My stuff,
+  Reviews, Career, **Card & expenses** (`MyCardAndExpenses embedded` from
+  `my-expenses.tsx`, then the year's analysis without its ledger link) and
+  **Business card** (`BusinessCardPanel embedded` from `business-card.tsx`),
+  then CV. The same two pills show on your own profile from People & HR.
+  People & HR stays the team directory. `/my-expenses` and `/business-card`
+  still open on their own (expense notifications, the public card's back
+  link and the phone link to them) and light My BGP (`MY_BGP_PATHS`). The
+  phone home's Boards gain My BGP and keep their one-tap Business card tile
+  (Woody, 2026-09-28), which is no longer on the menu list
+  (`BUSINESS_CARD_BOARD` in `mobile-home.tsx`). Staff only: not on
+  `CLIENT_ALLOWED_ROUTES`.
+- **Website** is in the Admin group (`adminNavBase`; admin only on the phone
+  list). Its routes are unchanged (`requireAuth`): the page still opens by
+  its address.
+- **Investment requirements live only under Investment**
+  (`/investment/requirements`, which honours `?requirementId=` and
+  `?team=`). The Requirements page is leasing only, with a line pointing to
+  Investment; an old `/requirements?type=investment` link is sent on by
+  `investmentRequirementsHref` with its requirement, team and "new". Links
+  the app writes (landlord pages, landlord chat receipts, the dashboard
+  widget, the agent relationship card) point straight at Investment.
+- **The leasing teams and Tenant Rep have no Lease Advisory or Investment**
+  on the side bar, the phone list or the Deals tabs: `leasingSideOnly` in
+  `shared/teams.ts` (every one of the login's BGP teams, `team` plus
+  `additionalTeams`, is Shopping Centre, London Estate, High Street, City or
+  Tenant Rep; "Landsec" on a login is the client view it may switch to and
+  does not count). Anyone also in Investment or Lease Advisory (Pete Wood) and
+  anyone with no team (the board, support, consultants) keeps both. Entries
+  only: the pages still open by their address.
+- Waiting on Woody: whether the Brand CRM's Diary and Strategies and events,
+  which the CRM page's Diary and Overview already hold for every kind of
+  company, should come off the Brand CRM, leaving Targets.
+
+**The People & HR staff list masks personal fields** (16 November 2026,
+found while building My BGP): `GET /api/hr/staff` sent every login each
+colleague's salary, emergency contact, holiday allowance and days, pension
+and contract / passport links (the screens hid them). It now masks exactly
+what `GET /api/hr/staff/:userId` masks, for anyone but an admin or the
+person. `qa/regression/hr-staff-masking.test.mjs` holds the two lists in
+step: a new personal field is masked on both.
 
 ## Document design preferences (the "house style" pattern)
 

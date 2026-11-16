@@ -2,11 +2,13 @@
  * Investment hub — the investment team's own sidebar entry (Woody,
  * 2026-09-28): Investment Tracker, investment Requirements and Investment
  * Comps under one pill row. The old URLs (/investment-tracker,
- * /requirements?type=investment, /investment-comps) keep working.
+ * /requirements?type=investment, /investment-comps) keep working. Since
+ * 2026-11-16 this is the only home of investment requirements: the
+ * Requirements page is leasing only and sends investment links here.
  */
 
 import { lazy, Suspense, useEffect, useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Pill } from "@/components/ui/pill";
@@ -43,6 +45,11 @@ function PageLoader() {
 export default function InvestmentHub() {
   const [location, navigate] = useLocation();
   const tab = tabFromLocation(location);
+  // A link to one investment requirement (?requirementId=, from a landlord's
+  // page, a chat answer or an old Requirements link) opens it; ?team= filters.
+  const params = new URLSearchParams(useSearch());
+  const requirementId = tab === "requirements" ? params.get("requirementId") : null;
+  const teamFilter = tab === "requirements" ? params.get("team") : null;
   const { data: user, isLoading: userLoading } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClient = user?.role === "Client" || !!user?.companyScopeId;
 
@@ -92,7 +99,7 @@ export default function InvestmentHub() {
           {tab === "tracker" && <InvestmentTracker />}
           {tab === "requirements" && (
             <div className="p-4 sm:p-6 max-w-[1600px] mx-auto w-full">
-              <InvestmentRequirements teamFilter={null} autoCreate={autoCreate} />
+              <InvestmentRequirements teamFilter={teamFilter} autoCreate={autoCreate} requirementId={requirementId} />
             </div>
           )}
           {tab === "comps" && (

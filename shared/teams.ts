@@ -14,6 +14,23 @@ export const RETIRED_TEAM_NAMES = ["Development", "London F&B", "London Retail",
   "London Leasing", "National", "London Leasing Retail", "London Leasing F&B and Leisure"] as const;
 
 export const isLeasingTeam = (t: string | null | undefined) => !!t && (LEASING_TEAMS as readonly string[]).includes(t);
+
+// The leasing side of the firm: the four leasing teams and Tenant Rep. A
+// login whose every team is one of these has no Lease Advisory or Investment
+// on its menus or Deals tabs (Woody, 2026-11-16: "hide lease advisory and
+// investment from all leasing teams shopping centre london estates high
+// street city and tenant rep"). People with no team (the board, support,
+// consultants) and anyone also in Investment or Lease Advisory keep both.
+// Only BGP teams count: "Landsec" on a login is the client view it may
+// switch to, not a team it works in. It hides entries only: the pages
+// still open by their address.
+export const LEASING_SIDE_TEAMS = [...LEASING_TEAMS, "Tenant Rep"] as const;
+export function leasingSideOnly(teams: ReadonlyArray<string | null | undefined>): boolean {
+  const own = teams.filter((t): t is string => isBgpTeam(t));
+  return own.length > 0 && own.every(t => (LEASING_SIDE_TEAMS as readonly string[]).includes(t));
+}
+// The menu entries a leasing-side login does not get.
+export const LEASING_SIDE_HIDDEN_URLS = ["/pla/matters", "/investment"];
 export const isBgpTeam = (t: string | null | undefined) => !!t && (BGP_TEAM_NAMES as readonly string[]).includes(t);
 
 // Chip colours, one per team (Tailwind classes, light + dark).

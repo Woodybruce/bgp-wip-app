@@ -110,6 +110,7 @@ const ExpensesAdmin = lazy(() => import("@/pages/expenses-admin"));
 const Portfolios = lazy(() => import("@/pages/portfolios"));
 const MyExpenses = lazy(() => import("@/pages/my-expenses"));
 const BusinessCardPage = lazy(() => import("@/pages/business-card"));
+const MyBgpPage = lazy(() => import("@/pages/hr").then((m) => ({ default: m.MyBgpPage })));
 const Kyc4uImport = lazy(() => import("@/pages/kyc4u-import"));
 const TeamExpenses = lazy(() => import("@/pages/team-expenses"));
 const MobileExpenses = lazy(() => import("@/pages/mobile-expenses"));
@@ -549,6 +550,7 @@ function Router() {
       <Route path="/m/images" component={MobileImages} />
       <Route path="/m/profile" component={MobileProfile} />
       <Route path="/hr" component={HRPage} />
+      <Route path="/my-bgp" component={MyBgpPage} />
       <Route path="/hr/:userId">{(params) => <HrPersonRedirect params={params as { userId: string }} />}</Route>
       <Route component={NotFound} />
     </Switch>
@@ -857,6 +859,7 @@ function AuthenticatedApp() {
                 contacts: "CRM", companies: "CRM", chatbgp: "ChatBGP",
                 "map-bgp": "Map", "westminster-restaurants": "London Restaurants",
                 "property-intelligence": "Property Intelligence",
+                "my-bgp": "My BGP", "my-expenses": "My Card & Expenses",
               };
               if (ROUTE_TITLES[root]) return ROUTE_TITLES[root];
               return root.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());

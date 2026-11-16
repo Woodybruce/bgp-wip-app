@@ -40,7 +40,7 @@ type Context = { companyId: string; threadId: string; messageId?: string; userId
 const statusName = (value: string | undefined) => ({ active: 'Active', fulfilled: 'Past', withdrawn: 'Archived', on_hold: 'On hold' }[value || ''] || value);
 const shortBrief = (args: any) => [args.notes, args.sizeMin ? `Minimum floor area: ${args.sizeMin}` : '', args.sizeMax ? `Maximum floor area: ${args.sizeMax}` : ''].filter(Boolean).join('\n');
 function receipt(row: any, operation: 'created' | 'updated', reused = false) {
-  const url = `/requirements?type=investment&requirementId=${encodeURIComponent(row.id)}`;
+  const url = `/investment/requirements?requirementId=${encodeURIComponent(row.id)}`;
   return { data: { success: true, action: operation, entity: 'requirement', category: 'Investment', id: row.id, companyId: row.company_id, name: row.name, record: row, url, reused },
     action: { success: true, type: `crm_${operation}`, entityType: 'requirement', category: 'Investment', id: row.id, companyId: row.company_id, url } };
 }

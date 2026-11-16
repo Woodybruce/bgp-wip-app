@@ -2684,6 +2684,10 @@ export default function Dashboard() {
           const isInvestmentTeam = reqTeam.toLowerCase().includes("investment");
           const reqType = isInvestmentTeam ? "investment" : "leasing";
           const reqLabel = isInvestmentTeam ? "Investment" : "Leasing";
+          // Investment requirements live under Investment (Woody, 2026-11-16).
+          const reqListHref = isInvestmentTeam
+            ? `/investment/requirements?team=${encodeURIComponent(reqTeam)}`
+            : `/requirements?type=leasing&team=${encodeURIComponent(reqTeam)}`;
           const filteredReqs = (dashIntel?.recentRequirements || []).filter(r => r.type === reqType);
           return (
           <Card key="new-requirements" data-testid="card-new-requirements" className="h-full flex flex-col">
@@ -2697,9 +2701,9 @@ export default function Dashboard() {
               </div>
               <div className="flex items-center gap-1">
                 {!isClientUser && (
-                  <Link href={`/requirements?type=${reqType}&team=${encodeURIComponent(reqTeam)}&new=1`}><Button variant="ghost" size="sm" className="text-xs h-7" data-testid="button-widget-add-requirement"><Plus className="w-3.5 h-3.5 mr-1" />Add</Button></Link>
+                  <Link href={`${reqListHref}&new=1`}><Button variant="ghost" size="sm" className="text-xs h-7" data-testid="button-widget-add-requirement"><Plus className="w-3.5 h-3.5 mr-1" />Add</Button></Link>
                 )}
-                <Link href={`/requirements?type=${reqType}&team=${encodeURIComponent(reqTeam)}`}><Button variant="ghost" size="sm" className="text-xs h-7">View all <ArrowRight className="w-3 h-3 ml-1" /></Button></Link>
+                <Link href={reqListHref}><Button variant="ghost" size="sm" className="text-xs h-7">View all <ArrowRight className="w-3 h-3 ml-1" /></Button></Link>
               </div>
             </CardHeader>
             <CardContent className="pt-0 flex-1 overflow-hidden flex flex-col">
@@ -2722,7 +2726,7 @@ export default function Dashboard() {
                   <ListPlus className="w-6 h-6 mx-auto mb-1.5 opacity-30" />
                   <p className="text-xs">No {reqLabel.toLowerCase()} requirements found</p>
                   {!isClientUser && (
-                    <Link href={`/requirements?type=${reqType}&team=${encodeURIComponent(reqTeam)}&new=1`}>
+                    <Link href={`${reqListHref}&new=1`}>
                       <Button variant="outline" size="sm" className="mt-2 text-xs h-7" data-testid="button-widget-add-requirement-empty">
                         <Plus className="w-3.5 h-3.5 mr-1" />
                         Add requirement

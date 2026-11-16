@@ -20,7 +20,14 @@ export function landlordConfirmedCrmAction(message: any, companyId: string) {
       const params = new URLSearchParams(path.slice(path.indexOf("?") + 1));
       if (params.get("requirementId") === action.id && ["investment", "leasing"].includes(params.get("type") || "")) requirementType ||= params.get("type");
     }
-    if (requirementType) href = `/requirements?type=${requirementType}&requirementId=${encodeURIComponent(action.id)}`;
+    if (typeof path === "string" && path.startsWith("/investment/requirements?")) {
+      const params = new URLSearchParams(path.slice(path.indexOf("?") + 1));
+      if (params.get("requirementId") === action.id) requirementType ||= "investment";
+    }
+    // Investment requirements live under Investment (Woody, 2026-11-16).
+    if (requirementType) href = requirementType === "investment"
+      ? `/investment/requirements?requirementId=${encodeURIComponent(action.id)}`
+      : `/requirements?type=${requirementType}&requirementId=${encodeURIComponent(action.id)}`;
   }
   return { type: action.type as "crm_created" | "crm_updated", entityType, id: action.id as string,
     requirementType: requirementType as "investment" | "leasing" | null, href,

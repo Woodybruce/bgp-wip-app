@@ -3,9 +3,12 @@ import { holidayYearBounds, inHolidayYear } from "@shared/holiday-year";
 import { PERKS_ENABLED } from "@shared/feature-flags";
 import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 
 const TasksPage = lazy(() => import("./tasks"));
+// My BGP's two folded-in pages (Woody, 2026-11-16).
+const MyCardAndExpenses = lazy(() => import("./my-expenses").then(m => ({ default: m.MyCardAndExpenses })));
+const BusinessCardPanel = lazy(() => import("./business-card").then(m => ({ default: m.BusinessCardPanel })));
 import {
   Users, User, TrendingUp, Calendar, FileText, CreditCard,
   Building2, GraduationCap, Phone, Mail, Linkedin,
@@ -2239,13 +2242,15 @@ function ActiveDealsCard({ userId }: { userId: string }) {
 
 // ── Staff profile detail view ─────────────────────────────────────────────────
 
-function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initialTab }: {
+function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initialTab, myBgp = false }: {
   person: StaffMember;
   allStaff: StaffMember[];
   isAdmin: boolean;
   currentUserId: string;
-  onBack: () => void;
+  onBack?: () => void;
   initialTab?: string;
+  // My BGP: the person's own page from the side bar, titled, with no Back.
+  myBgp?: boolean;
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const isOwn = person.id === currentUserId;
@@ -2277,9 +2282,16 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
     <div className="h-full overflow-y-auto">
       {/* Header */}
       <div className="flex items-center gap-2 p-4 border-b sticky top-0 bg-background z-10">
-        <Button variant="ghost" size="sm" onClick={onBack} className="h-8 px-2">
-          <ArrowLeft className="w-4 h-4 mr-1" /> Back
-        </Button>
+        {myBgp ? (
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-my-bgp-title">My BGP</h1>
+            <p className="text-sm text-muted-foreground">Your HR record, business card, and BGP card and expenses</p>
+          </div>
+        ) : onBack ? (
+          <Button variant="ghost" size="sm" onClick={onBack} className="h-8 px-2">
+            <ArrowLeft className="w-4 h-4 mr-1" /> Back
+          </Button>
+        ) : null}
         {isAdmin && (
           <Button variant="outline" size="sm" className="ml-auto" onClick={() => setEditOpen(true)}>
             <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit profile
@@ -2367,6 +2379,9 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             if (!t) return (isAdmin || isOwn) ? "personal" : "about";
             if (t === "overview") return "personal";
             if (["holiday", "pension", "kit", "files"].includes(t)) return "mystuff";
+            if (t === "card" && (isAdmin || isOwn)) return "expenses";
+            // The business card tab is only on your own page.
+            if (t === "business-card" && !isOwn) return (isAdmin || isOwn) ? "personal" : "about";
             return t;
           })()} className="mt-2">
           <TabsList className={pillTabsList}>
@@ -2376,7 +2391,8 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             {(isAdmin || isOwn) && <TabsTrigger value="mystuff" className={pillTabsTrigger}>My stuff</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="reviews" className={pillTabsTrigger}>Reviews</TabsTrigger>}
             {(isAdmin || isOwn) && !isSecretary(person.title) && <TabsTrigger value="career" className={pillTabsTrigger}>Career</TabsTrigger>}
-            {(isAdmin || isOwn) && <TabsTrigger value="expenses" className={pillTabsTrigger}>Expenses</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="expenses" className={pillTabsTrigger} data-testid="tab-profile-expenses">{isOwn ? "Card & expenses" : "Expenses"}</TabsTrigger>}
+            {isOwn && <TabsTrigger value="business-card" className={pillTabsTrigger} data-testid="tab-profile-business-card">Business card</TabsTrigger>}
             <TabsTrigger value="cv" className={pillTabsTrigger}>CV</TabsTrigger>
           </TabsList>
 
@@ -2538,9 +2554,26 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             </TabsContent>
           )}
 
+          {/* Your own page has the whole of My Card & Expenses here (Woody,
+              2026-11-16: folded into each person's own HR page), with the
+              analysis under it; an admin on someone else's page keeps the
+              analysis and the link to the Expenses console. */}
           {(isAdmin || isOwn) && (
             <TabsContent value="expenses" className="mt-4 space-y-4">
-              <ExpensesAnalysisCard userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
+              {isOwn && (
+                <Suspense fallback={<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}>
+                  <MyCardAndExpenses embedded />
+                </Suspense>
+              )}
+              <ExpensesAnalysisCard userId={person.id} isAdmin={isAdmin} isOwn={isOwn} ledgerAbove={isOwn} />
+            </TabsContent>
+          )}
+
+          {isOwn && (
+            <TabsContent value="business-card" className="mt-4">
+              <Suspense fallback={<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}>
+                <BusinessCardPanel embedded />
+              </Suspense>
             </TabsContent>
           )}
 
@@ -4729,7 +4762,7 @@ interface ExpensesSummary {
 
 const CATEGORY_COLORS = ["bg-sky-500", "bg-emerald-500", "bg-amber-500", "bg-pink-500", "bg-violet-500", "bg-orange-500", "bg-cyan-500", "bg-rose-500", "bg-indigo-500", "bg-lime-500", "bg-fuchsia-500", "bg-teal-500"];
 
-function ExpensesAnalysisCard({ userId, isAdmin, isOwn }: { userId: string; isAdmin: boolean; isOwn: boolean }) {
+function ExpensesAnalysisCard({ userId, isAdmin, isOwn, ledgerAbove = false }: { userId: string; isAdmin: boolean; isOwn: boolean; ledgerAbove?: boolean }) {
   const [, navigate] = useLocation();
   const { data, isLoading } = useQuery<ExpensesSummary>({
     queryKey: [`/api/hr/staff/${userId}/expenses-summary`],
@@ -4739,6 +4772,8 @@ function ExpensesAnalysisCard({ userId, isAdmin, isOwn }: { userId: string; isAd
   if (!isAdmin && !isOwn) return null;
   if (isLoading) return <Card><CardContent className="p-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground mx-auto" /></CardContent></Card>;
   if (!data || !data.hasCard) {
+    // With your own ledger above, its "No card issued" already says so.
+    if (ledgerAbove) return null;
     return (
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><CreditCard className="w-4 h-4 text-muted-foreground" /> Expenses</CardTitle></CardHeader>
@@ -4763,7 +4798,7 @@ function ExpensesAnalysisCard({ userId, isAdmin, isOwn }: { userId: string; isAd
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center justify-between">
           <span className="flex items-center gap-2"><CreditCard className="w-4 h-4 text-primary" /> Expenses analysis</span>
-          <button onClick={() => navigate(isOwn ? "/my-expenses" : `/expenses${data?.cardholderId ? `?cardholder=${data.cardholderId}` : ""}`)} className="text-[11px] text-primary hover:underline">Open full ledger →</button>
+          {!ledgerAbove && <button onClick={() => navigate(isOwn ? "/my-expenses" : `/expenses${data?.cardholderId ? `?cardholder=${data.cardholderId}` : ""}`)} className="text-[11px] text-primary hover:underline">Open full ledger →</button>}
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0 space-y-4">
@@ -4851,8 +4886,8 @@ function ExpensesAnalysisCard({ userId, isAdmin, isOwn }: { userId: string; isAd
           </div>
         )}
 
-        {/* Recent transactions */}
-        {data.recent.length > 0 && (
+        {/* Recent transactions (left out under your own ledger, which lists them all) */}
+        {data.recent.length > 0 && !ledgerAbove && (
           <div>
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Recent transactions</div>
             <div className="space-y-1">
@@ -6808,6 +6843,62 @@ export default function HRPage() {
       </div>
 
       {isAdmin && <AddStaffDialog allStaff={allStaff} open={addStaffOpen} onClose={() => setAddStaffOpen(false)} />}
+    </div>
+  );
+}
+
+// ── My BGP ────────────────────────────────────────────────────────────────────
+// Each person's own HR page as one side bar entry, with the business card and
+// the BGP card and expenses folded in as tabs (Woody, 2026-11-16: "folder
+// business card and Expenses / my card into each persons individual HR panel
+// and call it my BGP"). People & HR stays the team directory; opening your
+// own profile there shows the same page.
+export function MyBgpPage() {
+  const tab = new URLSearchParams(useSearch()).get("tab") || undefined;
+  const { data: currentUser, isLoading: userLoading } = useQuery<AuthUser | null>({
+    queryKey: ["/api/auth/me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+  });
+  const meId = currentUser?.id || null;
+  const { data: allStaff = [], isLoading: staffLoading } = useQuery<StaffMember[]>({
+    queryKey: ["/api/hr/staff"],
+    select: (rows) => rows.filter((r) => isHrPerson(r)),
+    enabled: !!meId,
+  });
+  const listed = meId ? allStaff.find(s => s.id === meId) : undefined;
+  const { data: fetched, isLoading: meLoading } = useQuery<StaffMember | null>({
+    queryKey: [`/api/hr/staff/${meId}`],
+    enabled: !!meId && !staffLoading && !listed,
+    queryFn: async () => {
+      const r = await fetch(`/api/hr/staff/${meId}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return null;
+      return r.json();
+    },
+  });
+  const me = listed || fetched || null;
+
+  if (userLoading || staffLoading || (!listed && meLoading)) {
+    return <div className="p-6"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  }
+  if (!me || !currentUser) {
+    return (
+      <div className="p-6 space-y-1" data-testid="my-bgp-missing">
+        <h1 className="text-2xl font-bold tracking-tight">My BGP</h1>
+        <p className="text-sm text-muted-foreground">There is no HR record for this login yet. Ask an admin to add you in People &amp; HR.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="h-full overflow-hidden" data-testid="page-my-bgp">
+      <StaffProfile
+        key={tab || "default"}
+        person={me}
+        allStaff={allStaff}
+        isAdmin={!!currentUser.isAdmin}
+        currentUserId={currentUser.id}
+        initialTab={tab}
+        myBgp
+      />
     </div>
   );
 }

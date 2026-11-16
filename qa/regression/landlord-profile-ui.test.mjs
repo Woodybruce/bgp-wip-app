@@ -220,7 +220,8 @@ const savedRequirement = {
 
 test('only a successful server mutation for this Landlord becomes a saved-record action', () => {
   const action = landlordConfirmedCrmAction(savedRequirement, 'aew');
-  assert.equal(action.href, '/requirements?type=investment&requirementId=req-123');
+  // A receipt saved before 16 November 2026 still names the old Requirements address; the link is Investment's.
+  assert.equal(action.href, '/investment/requirements?requirementId=req-123');
   assert.equal(action.requirementType, 'investment');
   const receipt = JSON.parse(savedRequirement.actionData);
   for (const changes of [
@@ -260,7 +261,7 @@ test('Landlord chat refreshes confirmed records once across polling and links th
   const first = render();
   const links = nodes(first).filter(node => node.props['data-testid'] === 'landlord-chat-record-link');
   assert.equal(links.length, 1);
-  assert.equal(links[0].props.href, '/requirements?type=investment&requirementId=req-123');
+  assert.equal(links[0].props.href, '/investment/requirements?requirementId=req-123');
   assert.equal(text(links[0]), 'Open  investment  requirement');
   const count = invalidations.length;
   assert.ok(count >= 5);

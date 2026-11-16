@@ -208,7 +208,7 @@ export function AgentRelationshipCard({ companyId, part, onOpen }: { companyId: 
                 right={<RowPill>{r.status || "Active"}</RowPill>} />
             ))}
             {data.investmentRequirements.map((r: any) => (
-              <Row key={`i-${r.id}`} href={r.client_id ? `/companies/${r.client_id}` : "/requirements?type=investment"} title={r.client_name || r.name}
+              <Row key={`i-${r.id}`} href={r.client_id ? `/companies/${r.client_id}` : "/investment/requirements"} title={r.client_name || r.name}
                 sub={["Investment", list(r.size_range), list(r.requirement_locations)].filter(Boolean).join(" · ")}
                 right={r.status && <RowPill>{r.status}</RowPill>} />
             ))}

@@ -1,4 +1,4 @@
-import { useLocation, useSearch, Link } from "wouter";
+import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useState, useRef, useEffect } from "react";
 import bgpLogoWhite from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
@@ -50,6 +50,7 @@ import {
   Globe,
   Target,
   Eye,
+  IdCard,
 } from "lucide-react";
 import {
   Sidebar,
@@ -81,11 +82,12 @@ import { useTeam, TEAMS } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import { isEquityUser } from "@/lib/utils";
+import { leasingSideOnly, LEASING_SIDE_HIDDEN_URLS } from "@shared/teams";
 import type { User } from "@shared/schema";
 import { LANDSEC_MENU, JOINT_AGENT_MENU, landsecMenuActive, landsecTasksPath, openTaskCount } from "@shared/landsec-menu";
 import { isRestrictedLandsecRole } from "@/components/landsec/deal-clock";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
-import { History, ClipboardCheck, QrCode, Film } from "lucide-react";
+import { History, ClipboardCheck, Film } from "lucide-react";
 import { dealDisplayTitle } from "@/lib/format";
 
 export { dealDisplayTitle };
@@ -101,17 +103,15 @@ const coreNavBase = [
   // Work-in-progress modules (AML, Tenant Rep, hunters, Landlord Intel,
   // Leasing Schedule, Lease Advisory, London Restaurants) moved to the
   // "Unfinished" group below so the everyday Core nav stays clean.
-  { title: "Brand Intelligence", url: "/brands", icon: Store },
-  // The Brand CRM is a board inside Brand Intelligence; staff also get a
-  // direct link (Landsec logins find it under Brands).
-  { title: "Brand CRM", url: "/brands?tab=crm", icon: Target },
-  // Public website content (bgp.uk.com team / case studies / news) — also
-  // editable through ChatBGP's manage_website_content tool.
-  { title: "Website", url: "/website", icon: Globe },
+  // One Brands entry, as on the Landsec menu (Woody, 2026-11-16): the brand
+  // directory, with the Brand CRM a pill inside it.
+  { title: "Brands", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
-  { title: "My Card", url: "/my-expenses", icon: CreditCard },
-  { title: "Business card", url: "/business-card", icon: QrCode },
+  // Your own HR page, with your business card and your BGP card and expenses
+  // folded in (Woody, 2026-11-16, "call it my BGP"). Their old addresses,
+  // /business-card and /my-expenses, still open and light this entry.
+  { title: "My BGP", url: "/my-bgp", icon: IdCard },
   // Lease Advisory is Pete's toolset (Woody, 2026-09-02): jobs, evidence
   // plans and leasing comps linked by pill row across the three pages.
   // Comps has no standalone entry for staff — it's reached through here
@@ -230,12 +230,19 @@ const unfinishedNav = [
 const adminNavBase = [
   { title: "Finance", url: "/finance", icon: Landmark },
   { title: "Expenses", url: "/expenses", icon: Receipt },
+  // Public website content (bgp.uk.com team / case studies / news), also
+  // editable through ChatBGP's manage_website_content tool. In Admin since
+  // Woody, 2026-11-16: "Website goes to admin".
+  { title: "Website", url: "/website", icon: Globe },
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
   { title: "News", url: "/news", icon: Newspaper, badge: "AI" },
   { title: "Subscriptions & APIs", url: "/subscriptions", icon: CreditCard },
   { title: "Office Add-ins", url: "/addins", icon: Puzzle },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
+
+// My BGP is lit on its own page and on the two pages folded into it.
+const MY_BGP_PATHS = ["/my-bgp", "/my-expenses", "/business-card"];
 
 function NavSection({
   label,
@@ -251,7 +258,6 @@ function NavSection({
   landsecMenu?: boolean;
 }) {
   const [location] = useLocation();
-  const search = useSearch();
   const isActive = (url: string) => {
     // The Landsec menu has its own rule: Deals is not lit on the Properties
     // and Letting Tracker addresses, and Brands is lit on any Brands address.
@@ -260,8 +266,7 @@ function NavSection({
     if (url === "/") return location === "/";
     if (url.startsWith("#")) return false;
     const path = url.split("?")[0];
-    // Brand Intelligence and the Brand CRM share /brands: the board decides.
-    if (path === "/brands") return location.startsWith("/brands") && url.includes("tab=crm") === (new URLSearchParams(search).get("tab") === "crm");
+    if (path === "/my-bgp") return MY_BGP_PATHS.some(p => location.startsWith(p));
     if (path === "/contacts") return location.startsWith("/contacts") || location.startsWith("/companies");
     if (path === "/properties") return location.startsWith("/properties") || location.startsWith("/map") || location.startsWith("/edozo");
     if (path === "/deals") return location.startsWith("/deals") || location.startsWith("/wip-report");
@@ -453,7 +458,7 @@ export function AppSidebar() {
   const coreWithTeamExpenses = isExpenseOverseer && !user?.isAdmin
     ? [...coreWithApprovals, { title: "Team Expenses", url: "/team-expenses", icon: Receipt }]
     : coreWithApprovals;
-  // Client logins (e.g. Landsec) get a trimmed nav: no People & HR, My Card,
+  // Client logins (e.g. Landsec) get a trimmed nav: no People & HR, My BGP,
   // Reporting or WIP — those are BGP-internal. Staff nav is unchanged.
   const isClientUser = user?.role === "Client" || !!(user as any)?.companyScopeId;
   // A REAL external client login vs a BGP staff member who has switched the
@@ -463,10 +468,10 @@ export function AppSidebar() {
   const isRealClientLogin = user?.role === "Client";
   const isViewingAsClient = !isRealClientLogin && !!(user as any)?.companyScopeId;
   const viewingAsName = (user as any)?.companyScopeName || activeTeam;
-  // Website (the bgp.uk.com content manager) and Business card (staff HR
-  // cards) are BGP-internal — the route jail already bounces clients back to
-  // the Dashboard, so for them the entries were dead links that looked broken.
-  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report", "/pla/matters", "/investment", "/investment-comps", "/evidence-plans", "/website", "/business-card", "/brands?tab=crm"];
+  // My BGP (staff HR, business card, BGP card) is BGP-internal — the route
+  // jail already bounces clients back to the Dashboard, so for them the entry
+  // would be a dead link that looked broken.
+  const CLIENT_HIDDEN_URLS = ["/hr", "/my-bgp", "/team-expenses", "/reporting", "/wip-report", "/pla/matters", "/investment", "/investment-comps", "/evidence-plans"];
   const coreNavStaff = isClientUser
     ? [
         ...coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url)),
@@ -481,9 +486,13 @@ export function AppSidebar() {
   // Equity directors who aren't admins still get Finance (Woody, 2026-08-22:
   // equity = Woody, Jack, Rupert, Charlotte). Admins already have it in the
   // admin section below.
+  // The leasing teams and Tenant Rep have no Lease Advisory or Investment
+  // entries (Woody, 2026-11-16; leasingSideOnly in shared/teams.ts).
+  const leasingOnly = !isClientUser && leasingSideOnly([user?.team, ...(Array.isArray((user as any)?.additionalTeams) ? (user as any).additionalTeams : [])]);
+  const coreNavTeam = leasingOnly ? coreNavStaff.filter(i => !LEASING_SIDE_HIDDEN_URLS.includes(i.url)) : coreNavStaff;
   const coreNav = !isClientUser && !user?.isAdmin && isEquityUser(user as any)
-    ? [...coreNavStaff, { title: "Finance", url: "/finance", icon: Landmark }]
-    : coreNavStaff;
+    ? [...coreNavTeam, { title: "Finance", url: "/finance", icon: Landmark }]
+    : coreNavTeam;
   const unfinishedNavCleaned = isClientUser
     ? unfinishedNav.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
     : unfinishedNav;
@@ -739,13 +748,10 @@ export const mobileOverlayItems = [
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
   { title: "Double Bill", url: "/leisure-platform", icon: Film, adminOnly: true },
-  { title: "Brand Intelligence", url: "/brands", icon: Store },
-  { title: "Brand CRM", url: "/brands?tab=crm", icon: Target },
-  { title: "Website", url: "/website", icon: Globe },
+  { title: "Brands", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
-  { title: "My Card", url: "/my-expenses", icon: CreditCard },
-  { title: "Business card", url: "/business-card", icon: QrCode },
+  { title: "My BGP", url: "/my-bgp", icon: IdCard },
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
   // Leasing Schedule retired (archived) — route stays live for old links.
   { title: "Comps", url: "/comps", icon: Scale },
@@ -766,6 +772,7 @@ export const mobileOverlayItems = [
   // Admin gating mirrors the desktop sidebar (Admin + Unfinished groups)
   // so non-admins don't get mobile links into pages whose APIs will 403.
   { title: "Board Report", url: "/board-report", icon: Presentation, adminOnly: true },
+  { title: "Website", url: "/website", icon: Globe, adminOnly: true },
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle, adminOnly: true },
   { title: "News", url: "/news", icon: Newspaper, adminOnly: true },
   { title: "Leads", url: "/leads", icon: UserPlus, adminOnly: true },
@@ -783,22 +790,22 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
 
   // Parity with desktop: Reporting hidden everywhere now, and client logins
-  // also lose the BGP-internal items (People & HR, My Card, WIP).
+  // also lose the BGP-internal items (People & HR, My BGP, WIP).
   const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
-  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure", "/investment", "/brands?tab=crm"];
+  const clientHidden = ["/hr", "/my-bgp", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure", "/investment"];
   const isOverlayClient = user?.role === "Client" || !!(user as any)?.companyScopeId;
+  const overlayLeasingOnly = !isOverlayClient && leasingSideOnly([user?.team, ...(Array.isArray(user?.additionalTeams) ? user.additionalTeams : [])]);
   const items = isOverlayClient && brand.id === "landsec"
     ? landsecNavFor((user as any)?.landsecRole, user?.role !== "Client")
     : isOverlayClient
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
-    : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);
+    : filteredByAdmin.filter(i => (i.url !== "/reporting" || isLandsec) && !(overlayLeasingOnly && LEASING_SIDE_HIDDEN_URLS.includes(i.url)));
 
-  const overlaySearch = useSearch();
   const isActive = (url: string) => {
     const landsecActive = isOverlayClient && brand.id === "landsec" ? landsecMenuActive(url, location) : null;
     if (landsecActive !== null) return landsecActive;
     if (url === "/") return location === "/";
-    if (url.split("?")[0] === "/brands") return location.startsWith("/brands") && url.includes("tab=crm") === (new URLSearchParams(overlaySearch).get("tab") === "crm");
+    if (url === "/my-bgp") return MY_BGP_PATHS.some(p => location.startsWith(p));
     return location.startsWith(url);
   };
 
@@ -834,7 +841,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
           {(() => {
             // Surface the field-relevant boards first; tuck tools/utilities
             // under a "Tools & more" divider so the phone menu isn't a wall.
-            const PRIMARY = new Set(["/today", "/tasks", "/requirements", "/contacts", "/brands", "/brands?tab=crm", "/comps", "/leads", "/calendar", "/mail", "/news", "/property-intelligence"]);
+            const PRIMARY = new Set(["/today", "/tasks", "/requirements", "/contacts", "/brands", "/comps", "/leads", "/calendar", "/mail", "/news", "/property-intelligence"]);
             const primary = items.filter((i: any) => PRIMARY.has(i.url));
             const more = items.filter((i: any) => !PRIMARY.has(i.url));
             const renderRow = (item: any) => {

@@ -3,7 +3,6 @@ import { calendarDateValue } from "@shared/calendar-date";
 import type { ViewingRecord } from "@shared/viewing-workflow";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
-import { useTeam } from "@/lib/team-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pill, pillMetrics, pillActive, pillInactive } from "@/components/ui/pill";
@@ -4835,36 +4834,36 @@ function InvestmentFormDialog({
 }
 
 export default function Requirements() {
-  const { activeTeam, userTeam } = useTeam();
   const urlParams = new URLSearchParams(useSearch());
   const typeParam = urlParams.get("type");
   const teamParam = urlParams.get("team");
   const companyIdParam = urlParams.get("companyId");
   const listParam = urlParams.get("list");
   const newParam = urlParams.get("new");
-  const requirementIdParam = typeParam === "investment" ? urlParams.get("requirementId") : null;
-  const effectiveTeam = activeTeam === "all" ? userTeam : activeTeam;
-  // Investment requirements are BGP's own acquisition mandates — not relevant
-  // to a landlord client, so the toggle is hidden and the view forced to
-  // Leasing for client logins (Woody, 2026-08).
+  // Leasing only: investment requirements live under Investment
+  // (/investment/requirements), not here (Woody, 2026-11-16: "move investment
+  // requirements out of requirements and put into investment"). Old links
+  // with ?type=investment, from emails, saved chat answers and bookmarks, go
+  // there with the requirement, team and "new" they carried. A client login
+  // never had the investment view, so it stays here on leasing.
   const { data: pageUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientView = pageUser?.role === "Client";
-  const defaultIsInvestment = effectiveTeam === "Investment";
-  const initialView = typeParam ? typeParam === "investment" : defaultIsInvestment;
-  const [isInvestmentView, setIsInvestmentView] = useState(initialView);
-  const showInvestment = isInvestmentView && !isClientView;
+  const [, navigate] = useLocation();
+  const toInvestment = typeParam === "investment" && !!pageUser && !isClientView ? investmentRequirementsHref(urlParams) : null;
   useEffect(() => {
-    if (requirementIdParam) setIsInvestmentView(true);
-  }, [requirementIdParam]);
-  // ?new=1 (dashboard widget "Add") opens the create dialog for the view we
-  // landed on; strip it from the URL so a refresh doesn't reopen the dialog.
-  const [autoCreateView] = useState(newParam ? (initialView ? "investment" : "leasing") : null);
+    if (toInvestment) navigate(toInvestment, { replace: true });
+  }, [toInvestment, navigate]);
+  // ?new=1 (dashboard widget "Add") opens the create dialog; strip it from
+  // the URL so a refresh doesn't reopen the dialog.
+  const [autoCreate] = useState(!!newParam && typeParam !== "investment");
   useEffect(() => {
-    if (!newParam) return;
+    if (!newParam || typeParam === "investment") return;
     const url = new URL(window.location.href);
     url.searchParams.delete("new");
     window.history.replaceState(null, "", url.pathname + url.search);
-  }, [newParam]);
+  }, [newParam, typeParam]);
+
+  if (typeParam === "investment" && (!pageUser || toInvestment)) return null;
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto" data-testid="requirements-page">
@@ -4872,24 +4871,31 @@ export default function Requirements() {
         <div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
           <p className="text-sm text-muted-foreground">
-            {showInvestment ? "Investment requirements" : "Leasing requirements"}
+            Leasing requirements
             {teamParam ? ` · Filtered by ${teamParam} team` : ""}
             {companyIdParam ? " · Filtered by company" : ""}
           </p>
         </div>
         {!isClientView && (
-        <div className="flex items-center gap-1.5 shrink-0" data-testid="view-toggle">
-          <Pill active={!isInvestmentView} onClick={() => setIsInvestmentView(false)} data-testid="button-leasing-view">
-            Leasing
-          </Pill>
-          <Pill active={isInvestmentView} onClick={() => setIsInvestmentView(true)} data-testid="button-investment-view">
-            Investment
-          </Pill>
-        </div>
+          <Link href="/investment/requirements" className="text-sm text-muted-foreground hover:text-foreground hover:underline shrink-0" data-testid="link-investment-requirements">
+            Investment requirements are under Investment →
+          </Link>
         )}
       </div>
 
-      {showInvestment ? <InvestmentTable teamFilter={teamParam} autoCreate={autoCreateView === "investment"} requirementId={requirementIdParam} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreateView === "leasing"} initialList={listParam} />}
+      <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreate} initialList={listParam} />
     </div>
   );
+}
+
+// Where an investment requirements link goes now: Investment → Requirements,
+// with the requirement to open, the team filter and "new" carried over.
+export function investmentRequirementsHref(params: URLSearchParams): string {
+  const next = new URLSearchParams();
+  for (const key of ["requirementId", "team", "new"]) {
+    const value = params.get(key);
+    if (value) next.set(key, value);
+  }
+  const query = next.toString();
+  return `/investment/requirements${query ? `?${query}` : ""}`;
 }
