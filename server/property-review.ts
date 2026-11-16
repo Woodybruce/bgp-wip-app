@@ -68,11 +68,12 @@ async function actorName(req: Request): Promise<string | null> {
 }
 
 export async function liveReviewItems(propertyId: string) {
-  // The scan outlines still waiting are the ones the Match board lists
+  // The scan outlines still waiting are the ones the match board lists
   // (server/property-plan-match.ts openPlanCandidates): not saved, not marked
-  // "not a unit", and with nothing since drawn over them. An outline kept as
-  // context there (status_override 'unlinked') is unlinked on purpose, so it
-  // is not asked about again.
+  // "not a unit", and with nothing since drawn over them. A finished scan
+  // saves its outlines by itself, so these are from a scan that finished
+  // before it did, or whose save failed. An outline a person unlinked
+  // (status_override 'unlinked') is unlinked on purpose and not asked about again.
   const { rows: latest } = await pool.query(`SELECT DISTINCT ON (p.id) p.id AS plan_id, p.floor, s.status, s.candidates
     FROM property_plans p JOIN property_plan_scans s ON s.plan_id = p.id AND s.image_key = p.storage_key
     WHERE p.property_id = $1 ORDER BY p.id, s.created_at DESC, s.id DESC`, [propertyId]);
@@ -80,7 +81,7 @@ export async function liveReviewItems(propertyId: string) {
     FROM property_plan_units u JOIN property_plans p ON p.id = u.plan_id WHERE p.property_id = $1`, [propertyId]);
   const scans = latest.map((s: any) => {
     const open = s.status === "ready" ? openPlanCandidates(s.candidates, drawn.filter((o: any) => o.plan_id === s.plan_id)) : [];
-    return { plan_id: s.plan_id, floor: s.floor, status: s.status, proposed: open.length, linked: open.filter(c => c.tenancy_unit_id).length };
+    return { plan_id: s.plan_id, floor: s.floor, status: s.status, proposed: open.length };
   });
   const loose = new Map<string, { plan_id: string; floor: string; unlinked: number }>();
   for (const o of drawn) {
@@ -91,12 +92,12 @@ export async function liveReviewItems(propertyId: string) {
   }
   const outlines = [...loose.values()];
   const ready = scans.filter(s => s.status === "ready" && s.proposed > 0);
-  const proposed = ready.reduce((n: number, s: any) => n + (s.proposed || 0), 0), matched = ready.reduce((n: number, s: any) => n + (s.linked || 0), 0);
+  const proposed = ready.reduce((n: number, s: any) => n + (s.proposed || 0), 0);
   return [
     // One item for all floors' scans — each floor is reviewed on the plan.
     ...(ready.length ? [{ id: `scans:${propertyId}`, kind: "plan_scan", live: true, planId: ready[0].plan_id,
-      title: ready.length === 1 ? `Review the unit scan · ${ready[0].floor}` : `Review the unit scans · ${ready.length} floors (${ready.map((s: any) => s.floor).join(", ")})`,
-      detail: `${proposed} proposed outline${proposed === 1 ? "" : "s"}${matched ? `, ${matched} already matched to a tenancy row` : ""}. On each floor open Review scan, tick the ones that follow the shop boundaries and add them — the rest are matched to the schedule automatically.` }] : []),
+      title: ready.length === 1 ? `Save the unit scan · ${ready[0].floor}` : `Save the unit scans · ${ready.length} floors (${ready.map((s: any) => s.floor).join(", ")})`,
+      detail: `${proposed} outline${proposed === 1 ? "" : "s"} found by the scan ${proposed === 1 ? "is" : "are"} not on the plan yet. On each floor press Save them: each is linked to the schedule unit its number or tenant names, the rest are saved unlinked to link or remove on the plan.` }] : []),
     ...outlines.filter((o: any) => o.unlinked > 0).map((o: any) => ({ id: `outlines:${o.plan_id}`, kind: "plan_links", live: true, planId: o.plan_id,
       title: `Link plan outlines · ${o.floor}`, detail: `${o.unlinked} outline${o.unlinked === 1 ? " isn't" : "s aren't"} linked to a tenancy row. "Match unlinked outlines to the schedule" links the certain ones; the rest need choosing.` })),
   ];

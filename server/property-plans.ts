@@ -13,6 +13,7 @@ import { clientBlockedForProperty } from "./company-scope";
 import { PropertyPlanInputError, validatePropertyPlanPolygon, validatePlanUnitLink,
   queryPickableUnits, queryPropertyPlanUnits, propertyPlanUnitStatus } from "./property-plan-links";
 import { createHash } from "crypto";
+import { setRemovedOutlineAside } from "./property-plan-match";
 import { readPlanCropRect, planCropPixels, planCropOutcome, planCropRefusal, planCropStorageKey, planCropOrigin,
   uncropPlanOutline, PLAN_CROP_MIN_PIXELS, type PlanPointPair } from "@shared/plan-crop";
 
@@ -465,6 +466,7 @@ router.delete("/api/plan-units/:id", requireAuth, async (req: Request, res: Resp
     await db.query("BEGIN");
     if (!await unitForRequest(req, res, db, authorisedOwner)) { await db.query("ROLLBACK"); return; }
     await db.query("DELETE FROM property_plan_units WHERE id = $1", [req.params.id]);
+    await setRemovedOutlineAside(db, authorisedOwner.plan_id, String(req.params.id));
     await db.query("COMMIT");
     res.json({ ok: true });
   } catch (err) { if (db) await db.query("ROLLBACK"); errorResponse(res, err, "Could not delete the unit outline."); }

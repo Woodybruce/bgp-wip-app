@@ -65,11 +65,13 @@ test('property scan worker loads property context without changing access or sav
   const require = createRequire(import.meta.url);
   const { find, evaluate, ts } = require('./source-harness.cjs');
   const worker = find('server/property-plan-scanning.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'runPropertyPlanScan');
-  const calls = [], updates = [];
+  const calls = [], updates = [], completions = [];
   const { run } = evaluate(worker + '\nexports.run = runPropertyPlanScan;', {
     setInterval, clearInterval, getFile: async () => ({ data: Buffer.from('image') }),
     queryPickableUnits: async (_db, propertyId) => { assert.equal(propertyId, 'own-property'); return [{ unit_name: 'Suite 1', permitted_use: 'Office' }]; },
     scanPropertyPlanImage: async (...args) => { calls.push(args); return { candidates: [], message: 'No proposals' }; },
+    // The scan is marked ready and its outlines saved in one transaction (server/property-plan-match.ts).
+    completePlanScan: async (...args) => { completions.push(args); return { linked: 0, unlinked: 0, setAside: 0 }; },
     pool: { query: async (sql, values) => {
       if (sql.startsWith('SELECT name, asset_class')) { assert.deepEqual(Array.from(values), ['own-property']); return { rows: [{ name: 'Market House', asset_class: 'Mixed use' }] }; }
       if (sql.startsWith('SELECT polygon')) return { rows: [{ polygon: { points: [[0, 0], [.2, 0], [.2, .2]] } }] };
@@ -80,7 +82,9 @@ test('property scan worker loads property context without changing access or sav
   assert.equal(calls.length, 1);
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0][5])), { propertyName: 'Market House', assetClass: 'Mixed use', floor: 'First' });
   assert.equal(calls[0][2].length, 1, 'saved outlines remain protected inputs');
-  assert.ok(updates.some(sql => sql.includes("status='ready'")));
+  assert.equal(completions.length, 1, 'the finished scan is completed, and its outlines saved, once');
+  assert.deepEqual(completions[0].slice(1).map(value => JSON.parse(JSON.stringify(value))), ['job', 'plan', [], 'No proposals']);
+  assert.ok(!updates.some(sql => sql.includes("status='failed'")), 'a scan that finished is not marked failed');
 });
 
 test('non-serialisable plan images stay out of the persistent query cache', () => {

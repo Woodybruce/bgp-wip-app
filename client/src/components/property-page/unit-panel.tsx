@@ -440,9 +440,10 @@ function LettingBlock({ propertyId, unit, detail, viewer, card }: {
   );
 }
 
-function PlanBlock({ unit, outlines, plans, viewer, card, onShowOnPlan, onFindOnPlan }: {
-  unit: PropertyUnit; outlines: PropertyUnitDetail["outlines"]; plans: PropertyUnitPlan[]; viewer: Viewer; card: boolean;
+function PlanBlock({ unit, outlines, plans, card, onShowOnPlan, onFindOnPlan, outlineActions }: {
+  unit: PropertyUnit; outlines: PropertyUnitDetail["outlines"]; plans: PropertyUnitPlan[]; card: boolean;
   onShowOnPlan?: (planId: string, outlineId: string) => void; onFindOnPlan?: (scheduleRowId: string) => void;
+  outlineActions?: (outline: { planId: string; outlineId: string }) => ReactNode;
 }) {
   if (!outlines.length && !plans.length) return null;
   const rowId = unit.scheduleRowId;
@@ -451,25 +452,29 @@ function PlanBlock({ unit, outlines, plans, viewer, card, onShowOnPlan, onFindOn
       {outlines.length > 0 ? (
         <ul className="space-y-1.5">
           {outlines.map(outline => (
-            <li key={outline.outlineId} className="flex items-center justify-between gap-2 text-sm">
-              <span className="min-w-0 break-words">Drawn on {outline.floor}</span>
-              {/* Only one of the property's plans can be shown: an outline on any other plan keeps its line, without the button. */}
-              {onShowOnPlan && plans.some(plan => plan.id === outline.planId) && (
-                <Button
-                  type="button" variant="outline" size="sm" className="shrink-0"
-                  onClick={() => onShowOnPlan(outline.planId, outline.outlineId)}
-                  data-testid="property-unit-show-on-plan"
-                >
-                  Show on plan
-                </Button>
-              )}
+            <li key={outline.outlineId} className="space-y-1.5 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 break-words">Drawn on {outline.floor}</span>
+                {/* Only one of the property's plans can be shown: an outline on any other plan keeps its line, without the button. */}
+                {onShowOnPlan && plans.some(plan => plan.id === outline.planId) && (
+                  <Button
+                    type="button" variant="outline" size="sm" className="shrink-0"
+                    onClick={() => onShowOnPlan(outline.planId, outline.outlineId)}
+                    data-testid="property-unit-show-on-plan"
+                  >
+                    Show on plan
+                  </Button>
+                )}
+              </div>
+              {/* Changing, unlinking or removing the outline, for the plan on screen (the host draws these). */}
+              {outlineActions?.(outline)}
             </li>
           ))}
         </ul>
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-muted-foreground">Not on the plan yet.</p>
-          {viewer.staff && rowId && onFindOnPlan && (
+          {rowId && onFindOnPlan && (
             <Button type="button" variant="outline" size="sm" onClick={() => onFindOnPlan(rowId)} data-testid="property-unit-find-on-plan">
               Find it on the plan
             </Button>
@@ -500,7 +505,7 @@ function NotesBlock({ schedule, card }: { schedule: Schedule; card: boolean }) {
   );
 }
 
-export function PropertyUnitPanel({ propertyId, propertyName, unit, plans, viewer, variant, onClose, onShowOnPlan, onFindOnPlan, onOpenSchedule }: {
+export function PropertyUnitPanel({ propertyId, propertyName, unit, plans, viewer, variant, onClose, onShowOnPlan, onFindOnPlan, outlineActions, onOpenSchedule }: {
   propertyId: string;
   propertyName?: string | null;       // dropped from the unit's name in the heading
   unit: PropertyUnit;
@@ -510,6 +515,7 @@ export function PropertyUnitPanel({ propertyId, propertyName, unit, plans, viewe
   onClose?: () => void;
   onShowOnPlan?: (planId: string, outlineId: string) => void;
   onFindOnPlan?: (scheduleRowId: string) => void;
+  outlineActions?: (outline: { planId: string; outlineId: string }) => ReactNode;
   onOpenSchedule?: (scheduleRowId: string) => void;
 }): JSX.Element {
   const side = variant === "side";
@@ -591,7 +597,7 @@ export function PropertyUnitPanel({ propertyId, propertyName, unit, plans, viewe
                 </ul>
               </Block>
             )}
-            <PlanBlock unit={unit} outlines={data.outlines} plans={plans} viewer={viewer} card={card} onShowOnPlan={onShowOnPlan} onFindOnPlan={onFindOnPlan} />
+            <PlanBlock unit={unit} outlines={data.outlines} plans={plans} card={card} onShowOnPlan={onShowOnPlan} onFindOnPlan={onFindOnPlan} outlineActions={outlineActions} />
             {data.schedule && <NotesBlock schedule={data.schedule} card={card} />}
           </div>
         ) : detail.isError ? (

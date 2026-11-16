@@ -136,18 +136,19 @@ How the Plan tab shapes itself:
 On the plan-led page the old Available units and Units and lettings cards are
 gone: what they showed is in the list, the pills and the unit panel. The Deals
 card stays, under Details, because it also lists deals that are closed or not
-tied to a unit. The older Plans card (upload, rename, delete, draw by hand)
-opens from the **Plans** button. "Edit on the tenancy schedule" in a unit's
-panel opens the Tenancy schedule tab; it does not yet jump to the unit's row.
+tied to a unit. "Edit on the tenancy schedule" in a unit's panel opens the
+Tenancy schedule tab; it does not yet jump to the unit's row.
 
-**Matching a plan to the schedule.** The Match screen sits beside the plan.
-The scan's proposals are dashed outlines. For each one the person accepts the
-suggested unit, chooses another, keeps it as context, or marks it "not a
-unit". "Accept suggested matches" takes every proposal whose unit number or
-tenant name points at exactly one schedule row with nothing that disagrees.
-"Find on plan" works the other way round: pick a schedule unit, click inside
-it on the plan, and the app takes the proposal under the click or traces the
-walls. The work is saved as it goes and can be done over several sittings.
+**Matching a plan to the schedule** (as rebuilt on 16 November 2026, see
+"Folded into the Plan tab" below). Loading, scanning and matching a plan are
+all on the Plan tab. A scan's outlines are saved as soon as it finishes:
+each one linked to the schedule unit its printed number (or tenant name)
+names, the rest grey and unlinked. Nothing waits to be checked. A person
+edits what is wrong: a grey outline opens a panel to link it or remove it, a
+unit's panel moves, unlinks or removes its outline, and "Find it on the plan"
+works the other way round: pick a schedule unit, click inside it on the
+plan, and the app takes the outline under the click or traces the walls (or
+the person draws its corners).
 
 How a row is suggested for an outline:
 - The unit number printed on the plan decides first, without the tenant, since
@@ -205,10 +206,13 @@ Bluewater`; it goes in through Plans, Upload plan.
 - "Edit on the tenancy schedule" opens the tab, not the unit's row.
 - The older one-shot scan review (Plans button) does not offer a proposal
   again after its saved outline is removed; the Match screen does.
+  (Superseded on 16 November 2026: a removed outline is never offered again,
+  and the Plans button, the Match screen and the review are gone.)
 - The Tenancy schedule tab is the existing compact schedule. Cutting its
   never-used columns and fixing the tenant cell are step 2 work.
 - A fresh scan cannot be started from the Match screen once a scan's queue
-  is empty; it is started from the Plans button.
+  is empty; it is started from the Plans button. (Superseded on 16 November
+  2026: Edit plan, Scan again, on the Plan tab.)
 - Two neighbouring outlines traced a hair over each other count as
   overlapping, so the second is refused. Outlines from one scan never do
   this; a hand-drawn one beside a scanned one can.
@@ -329,11 +333,15 @@ Do not build any of these either way without his answer.
   colours is `shared/property-units.ts`, with tests in
   `shared/property-units.test.ts`. Change a rule there, never on a screen.
 - **Matching.** `shared/property-plan-match.ts` and
-  `server/property-plan-match.ts`: `GET /api/plans/:id/match` (saved outlines,
-  open proposals, schedule rows), `POST …/match/accept`,
-  `…/match/accept-suggested`, `…/match/dismiss`. A scan stays open: an
-  accepted proposal is marked on the scan with the outline it became, and a
-  removed outline puts its proposal back. Nothing in that file writes to
+  `server/property-plan-match.ts`: `GET /api/plans/:id/match` (saved
+  outlines with what the scan read there and, for a grey one, the units it
+  could be; scan outlines not yet saved; schedule rows), `POST
+  …/match/accept` (one proposal, used by Find it on the plan) and
+  `…/match/accept-all` (Save them). The scan runner finishes through
+  `completePlanScan`, which marks the scan ready and saves every outline in
+  one transaction; each saved proposal is marked on the scan with the
+  outline it became, and a removed outline marks its proposal "not a unit"
+  (`setRemovedOutlineAside`). Nothing in that file writes to
   `tenancy_schedule_units`. One schedule row has at most one outline per
   floor, on these routes and on the older save routes in
   `server/property-plans.ts`.
@@ -344,7 +352,9 @@ Do not build any of these either way without his answer.
   BGP staff only.
 - **Client.** `client/src/components/property-page/`: `use-property-page.ts`
   (reads, actions, the opt-in switch), `unit-state.tsx`, `plan-canvas.tsx`,
-  `unit-list.tsx`, `unit-panel.tsx`, `match-panel.tsx`, `plan-workspace.tsx`.
+  `unit-list.tsx`, `unit-panel.tsx`, `match-panel.tsx` (the grey outline's
+  panel and the schedule-unit picker), `plan-workspace.tsx` (the Plan tab:
+  loading, the plan's Edit menu, the scan's progress, Find it on the plan).
   `property-detail.tsx` maps each existing card to a tab with `tab(full,
   simple, plan)`; `PropertySection` is unchanged.
 - **Tests.** `shared/property-units.test.ts`, `server/property-page.test.ts`
@@ -353,3 +363,63 @@ Do not build any of these either way without his answer.
 - **Old links** still work: `#tenancy-unit-<row id>`, `#plan-tenancy-<row id>`
   and `#plan-unit-<name>` open the unit on the Plan tab; `?section=units`
   opens the Plan tab.
+
+## Folded into the Plan tab, 16 November 2026
+
+Woody, with screenshots of Bluewater's Match screen, Plans window and Scan
+and review dialog: "lots of different processes here shall we just try and
+fold the whole matching units to tenancy schedule and upload scan process
+into the main plan page? the scans generally work so I think the base case
+should be that the scan and tenancy schedule matches dont need checking they
+are all done immediately and then there is the ability to edit should it be
+required."
+
+What was found. Bluewater's two floors held 258 scan outlines waiting, and
+the Match screen offered to accept 3 of the 129 on the upper floor. Most of
+the rest were held back only because a reading was "weaker": the plan's
+floors are titled "Lower Ground" and "Upper Ground" while the schedule says
+"Lower Level" and "Upper Level", so nearly every match read as a floor
+disagreement, and a plan older than the schedule prints tenants who have
+since left. Neither changes which unit an outline is: the unit number does.
+
+What was built.
+
+- **Saved, not checked.** When a scan finishes it is marked ready and every
+  outline it found is saved in the same transaction (`completePlanScan`):
+  linked to the free schedule row its printed number names (else the
+  tenant's name, else a floor tie-break), whatever tenant or floor the plan
+  prints, and saved grey where nothing points at exactly one row. Where two
+  outlines overlap, the surer reading stays and the other is left off.
+  Removing an outline marks its proposal "not a unit", so it does not come
+  back. A scan that finished before this change keeps its proposals until
+  someone presses **Save them** on the Plan tab (Bluewater: one press per
+  floor).
+- **One page.** The Plan tab has Upload plan (crop each page, then the scan),
+  Add from (BGP staff), and **Edit plan**: Scan again (BGP staff), Rename
+  this floor, Crop this plan, Restore the whole page, Original PDF, Delete.
+  The scan's progress shows above the plan and a note says what it did when
+  it finishes. A grey outline opens its own panel (the units it could be,
+  Choose a unit, Remove from plan, Next not linked); a unit's panel has Not
+  this unit, Unlink and Remove from plan under Plan; a unit not drawn has
+  Find it on the plan, which takes the outline under the click (even another
+  unit's, which Save moves), traces the walls, or lets the person draw the
+  corners. The Plans window, the Match screen and Scan and review are gone
+  from this page.
+- **For everyone.** The plan's editing is open to every login that may edit
+  the property, as the page already was. The two match saves were refused
+  for client logins at the gateway, so Landsec's Match screen never saved;
+  they are now on the gateway's plan list beside the older routes.
+
+Checked: the type check, `npm run qa:regression`, `npm test`, both smoke
+suites, this note's SQL tests (`server/property-page.test.ts`) and the plan
+integration script (`qa/regression/property-plan-integration-postgres.mjs`,
+which runs the real scan worker) against local copies of the smoke fixture.
+The Plan tab was driven in Chromium on a local copy, on a computer and a
+phone: upload and the crop step, an older scan's outlines saved with Save
+them (four linked by their unit numbers, three grey), a grey outline linked
+from its panel, Next not linked, a removed outline staying removed, a unit's
+panel showing what the plan prints with Not this unit, Unlink and Remove,
+Find it on the plan tracing a unit and saving it, and the Edit plan menu.
+Not run: a real scan end to end (no AI key on a build machine), anything
+against live data, and the team has not tried it. The classic page's Plans
+card is unchanged apart from its scan button.

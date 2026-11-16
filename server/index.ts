@@ -5128,10 +5128,12 @@ app.use("/api/branding/assets", express.static(
         if ((req.method === "PUT" && /^\/api\/crm\/properties\/[^/]+$/.test(p)) ||
             (req.method === "POST" && p === "/api/crm/properties/bulk-update")) return next();
         // Manual plan editing is property-scoped in the handlers. Paid scan
-        // starts remain staff-only; clients can review already scanned outlines.
+        // starts remain staff-only; clients can save already scanned outlines
+        // (the match routes check the property with propertyReadBlocked).
         if (((req.method === "PATCH" || req.method === "DELETE") && /^\/api\/plans\/[^/]+$/.test(p)) ||
             (req.method === "POST" && /^\/api\/plans\/[^/]+\/(units|trace-unit|crop|crop\/undo)$/.test(p)) ||
             (req.method === "POST" && /^\/api\/plans\/[^/]+\/scans\/[^/]+\/apply$/.test(p)) ||
+            (req.method === "POST" && /^\/api\/plans\/[^/]+\/match\/(accept|accept-all)$/.test(p)) ||
             ((req.method === "PATCH" || req.method === "DELETE") && /^\/api\/plan-units\/[^/]+$/.test(p))) return next();
         // Contact-graph link writes ride under the allowed /api/crm/contacts
         // prefix but have no scope check — a client could wire ANY contact

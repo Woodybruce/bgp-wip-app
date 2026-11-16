@@ -16,7 +16,7 @@ import { Map as MapIcon, Upload, Trash2, Pencil, FileText, Layers, ChevronRight,
 import { interiorPoint } from "@shared/plan-geometry";
 import { layoutPlanMarkers } from "@shared/plan-marker-layout";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { PropertyPlanScanReview } from "./property-plan-scan-review";
+import { PropertyPlanScanStatus } from "./property-plan-scan-status";
 import { BrochurePlansBanner, PlanSourcesMenu } from "./property-plan-sources";
 import { Pill } from "@/components/ui/pill";
 import { PropertyPlanPreview, usePropertyPlanImage } from "./property-plan-preview";
@@ -159,10 +159,10 @@ export function PropertyPlansPanel({ propertyId, bare = false }: { propertyId: s
         {/* Brochure pages and SharePoint plan files — the BGP team only. */}
         {canScan && <PlanSourcesMenu propertyId={propertyId} onImported={setActivePlanId} />}
         {activePlan && canEdit && <>
-          <PropertyPlanScanReview key={activePlan.id} plan={activePlan} canStart={canScan} />
-          {/* Scanning runs on upload and matching runs after each review, so
-              the hand tools live behind one Edit menu (Woody, 2026-09-27:
-              "do we need all that — as much automated as possible"). */}
+          <PropertyPlanScanStatus key={activePlan.id} plan={activePlan} canStart={canScan} />
+          {/* A scan runs on upload and saves its own outlines, so the hand
+              tools live behind one Edit menu (Woody, 2026-09-27: "do we need
+              all that — as much automated as possible"). */}
           {mode !== "select"
             ? <Button size="sm" variant="default" className="h-8 text-xs" onClick={() => changeMode(mode)} disabled={trace.isPending} data-testid="button-cancel-plan-edit">{trace.isPending ? "Tracing…" : mode === "trace" ? "Cancel trace" : "Cancel drawing"}</Button>
             : <PlanEditMenu plan={activePlan} onTrace={() => changeMode("trace")} onDraw={() => changeMode("draw")} onCrop={() => setCropPlan(activePlan)} onDeleted={() => setActivePlanId(null)} />}
@@ -338,8 +338,9 @@ function PlanCanvas({ plan, units, mode, busy, pendingPoints, setPendingPoints, 
 // Loading a plan is two steps (Woody, 2026-11-16: "ability to crop the page
 // when loading up"): the file goes up with no scan started, then each page is
 // shown to crop or to use whole, and the unit scan starts on whichever image
-// is kept. Closing the dialog part way uses the remaining pages whole.
-function UploadPlanButton({ propertyId, canScan = false, onUploaded }: { propertyId: string; canScan?: boolean; onUploaded: (plan: Plan) => void }) {
+// is kept. Closing the dialog part way uses the remaining pages whole. The
+// Plan tab of the plan-led property page uses this button too.
+export function UploadPlanButton({ propertyId, canScan = false, onUploaded, className }: { propertyId: string; canScan?: boolean; onUploaded: (plan: Plan) => void; className?: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -359,7 +360,9 @@ function UploadPlanButton({ propertyId, canScan = false, onUploaded }: { propert
   async function startScan(plan: Plan) {
     if (!canScan) return;
     try { await apiRequest("POST", `/api/plans/${plan.id}/scan`, {}); } catch { /* no reader, or a scan is already running */ }
+    // The plan's scan and its match board (the Plan tab) see the scan start.
     void queryClient.invalidateQueries({ queryKey: ["/api/plans", plan.id, "scan"] });
+    void queryClient.invalidateQueries({ queryKey: ["/api/plans", plan.id, "match"] });
   }
   function finish() { loaded.current = []; setQueue([]); setQueueTotal(0); setCropRect(WHOLE_PAGE); setOpen(false); setFile(null); setCompletedPages(0); setProgress(""); setError(null); }
   // Every page still waiting is used as it is.
@@ -464,7 +467,7 @@ function UploadPlanButton({ propertyId, canScan = false, onUploaded }: { propert
   const cropping = queue[0] || null;
   const pageNumber = queueTotal - queue.length + 1;
   return <>
-    <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setOpen(true)} data-testid="button-upload-plan"><Upload className="w-3.5 h-3.5 mr-1" />Upload plan</Button>
+    <Button size="sm" variant="outline" className={className || "h-8 text-xs"} onClick={() => setOpen(true)} data-testid="button-upload-plan"><Upload className="w-3.5 h-3.5 mr-1" />Upload plan</Button>
     <Dialog open={open} onOpenChange={value => {
       if (uploading || settling) return;
       // Closed part way: the pages already up are used as they are.
@@ -485,7 +488,7 @@ function UploadPlanButton({ propertyId, canScan = false, onUploaded }: { propert
       <div className="space-y-3">
         <label className="block text-sm">Floor / plan name <span className="text-xs text-muted-foreground">(PDF pages with a title use it)</span><input value={floor} disabled={uploading || completedPages > 0} onChange={event => setFloor(event.target.value)} className="mt-1 w-full text-sm border rounded px-2 py-2 bg-background" /></label>
         <label className="block text-sm">PDF, PNG, JPG or WebP · up to 25MB<input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" disabled={uploading} onChange={event => { setFile(event.target.files?.[0] || null); setCompletedPages(0); setError(null); setProgress(""); }} className="mt-2 block w-full text-sm" /></label>
-        <p className="text-xs text-muted-foreground">Images keep their original resolution. PDFs are rendered at print quality with the original kept, one plan per page, each named from its title where the page has one (e.g. "Lower Level"). Once it is up you can crop each page to the drawing, or use it whole{canScan ? "; the unit scan starts after that" : ""}.</p>
+        <p className="text-xs text-muted-foreground">Images keep their original resolution. PDFs are rendered at print quality with the original kept, one plan per page, each named from its title where the page has one (e.g. "Lower Level"). Once it is up you can crop each page to the drawing, or use it whole{canScan ? "; the unit scan then starts, and puts each unit it finds on the plan, linked to the tenancy schedule" : ""}.</p>
         {progress && <p role="status" className="text-sm">{progress}</p>}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       </div><DialogFooter><Button variant="outline" disabled={uploading} onClick={() => { if (loaded.current.length) void useRest(loaded.current.slice()); else setOpen(false); }}>Cancel</Button><Button onClick={submit} disabled={uploading || !file || !floor.trim()}>{uploading ? "Uploading…" : completedPages ? "Resume upload" : "Upload"}</Button></DialogFooter>
@@ -494,16 +497,20 @@ function UploadPlanButton({ propertyId, canScan = false, onUploaded }: { propert
   </>;
 }
 
+// The PDF a plan page was rendered from, in a new tab.
+export async function openOriginalPlanPdf(planId: string) {
+  const response = await fetch(`/api/plans/${planId}/original-pdf`, { credentials: "include", headers: getAuthHeaders() });
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "The original PDF could not be opened.");
+  const url = URL.createObjectURL(await response.blob());
+  window.open(url, "_blank", "noopener");
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 function OriginalPdfLink({ plan }: { plan: Plan }) {
   const { toast } = useToast();
   return <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="button-plan-original-pdf" onClick={async () => {
-    try {
-      const response = await fetch(`/api/plans/${plan.id}/original-pdf`, { credentials: "include", headers: getAuthHeaders() });
-      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "The original PDF could not be opened.");
-      const url = URL.createObjectURL(await response.blob());
-      window.open(url, "_blank", "noopener");
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (error: any) { toast({ title: "Could not open the PDF", description: error.message, variant: "destructive" }); }
+    try { await openOriginalPlanPdf(plan.id); }
+    catch (error: any) { toast({ title: "Could not open the PDF", description: error.message, variant: "destructive" }); }
   }}><FileText className="w-3 h-3 mr-1" />Original PDF</Button>;
 }
 

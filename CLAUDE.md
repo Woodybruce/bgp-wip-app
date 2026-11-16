@@ -1965,15 +1965,47 @@ untouched when it is off, and
   conversation whose property no longer exists, for records removed some
   other way. A person's own thread linked to the property is never touched.
   Anything new that removes a property record must do one of these.
-- **Matching**: `shared/property-plan-match.ts`,
+- **Matching: a scan's matches are saved, not checked** (Woody, 2026-11-16:
+  "fold the whole matching units to tenancy schedule and upload scan process
+  into the main plan page ... the base case should be that the scan and
+  tenancy schedule matches dont need checking they are all done immediately
+  and then there is the ability to edit should it be required"; do not
+  re-litigate). `shared/property-plan-match.ts`,
   `server/property-plan-match.ts` (`GET /api/plans/:id/match`, `POST
-  …/match/accept`, `…/accept-suggested`, `…/dismiss`). A scan stays open and
-  is worked through one outline at a time; the unit number printed on the
-  plan decides before the tenant's name; one schedule row has at most one
-  outline per floor (also enforced on the older save routes in
-  `server/property-plans.ts`). The older one-shot review
-  (`applyPropertyPlanScan`) and the Plans card still work and are reached
-  from the **Plans** button.
+  …/match/accept`, `…/accept-all`). A finished scan is marked ready and
+  every outline it found is saved in the same transaction, under the plan's
+  lock (`completePlanScan`, called by the scan runner): linked to the free
+  schedule row its printed unit number names (else its tenant's name, else
+  a floor tie-break), whatever tenant or floor the plan prints, and saved
+  unlinked (grey) where nothing points at exactly one row. Where two
+  overlap the surer reading stays and the other is set aside
+  (`planSaveOrder`). A failed save leaves the proposals open for **Save
+  them** on the Plan tab (`…/accept-all`), which is also how a scan from
+  before 16 November is saved. Removing an outline marks its proposal "not
+  a unit" (`setRemovedOutlineAside`, inside `DELETE /api/plan-units/:id`), so
+  nothing comes back by itself. The unit number printed on the plan decides
+  before the tenant's name; one schedule row has at most one outline per
+  floor (also enforced on the older save routes in
+  `server/property-plans.ts`); the plan never writes to the schedule. The
+  client gateway lets client logins reach `…/accept` and `…/accept-all`,
+  as it did the older apply route (the handlers check the property with
+  `propertyReadBlocked`): until then the Match screen's saves were refused
+  for every client login although the screen offered them.
+  - **The Plan tab is the one place for it** (`plan-workspace.tsx`): Upload
+    plan (each page cropped or used whole, then the scan), Add from (BGP
+    staff), **Edit plan** (Scan again for staff, Rename this floor, Crop,
+    Restore the whole page, Original PDF, Delete), the scan's progress, a
+    grey outline's panel (`OutlinePanel` in `match-panel.tsx`: the units it
+    could be, Choose a unit, Remove from plan, Next not linked), the unit
+    panel's plan block (Not this unit, Unlink, Remove from plan, for
+    everyone, not only BGP staff) and **Find it on the plan** (click inside
+    the unit: the outline under the click is taken, even another unit's,
+    else its walls are traced; or Draw its corners instead). The Plans
+    dialog, the Match screen and the one-shot Review scan are gone from the
+    plan-led page. The classic page's Plans card keeps its tools, with a scan
+    status (`property-plan-scan-status.tsx`: Scanning…, Scan again, Save N
+    scanned outlines) in place of Review scan; the older apply route
+    (`applyPropertyPlanScan`) is kept for cached clients.
 - **Cropping a plan** (Woody, 2026-11-16: "ability to crop the page when
   loading up"). Rules and tests: `shared/plan-crop.ts`,
   `shared/plan-crop.test.ts` (in `npm test`). `POST /api/plans/:planId/crop`

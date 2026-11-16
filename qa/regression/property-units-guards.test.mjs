@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule } from '../../shared/landsec.ts';
 import { LETTING_STATUS_LABELS, TRACKER_LIVE_STATUSES } from '../../shared/letting-rules.ts';
 import { unitStateLabel, UNIT_OCCUPANCY_LABELS } from '../../shared/property-units.ts';
-import { bulkAcceptable } from '../../shared/property-plan-match.ts';
+import { planSaveOrder } from '../../shared/property-plan-match.ts';
 import * as links from '../../server/property-plan-links.ts';
 import { PropertyPlanScanError, requirePropertyPlan, validPlanId } from '../../server/property-plan-scan-store.ts';
 import { planPoints } from '../../server/property-plan-scan.ts';
@@ -170,11 +170,11 @@ test('2. the match routes reach their work only through requirePropertyPlan with
   assert.match(source(MATCH), /const access = \(req: Request\): CanAccess => async propertyId => !\(await propertyReadBlocked\(req, propertyId\)\);/);
   assert.match(source(MATCH), /import \{ propertyReadBlocked \} from "\.\/property-units";/);
   assert.doesNotMatch(text, /\bpool\.(query|connect)\b/, 'no handler queries the pool around the access check');
-  assert.deepEqual(routes(MATCH).sort(), ['get "/api/plans/:planId/match"', 'post "/api/plans/:planId/match/accept"', 'post "/api/plans/:planId/match/accept-suggested"', 'post "/api/plans/:planId/match/dismiss"'].sort());
+  assert.deepEqual(routes(MATCH).sort(), ['get "/api/plans/:planId/match"', 'post "/api/plans/:planId/match/accept"', 'post "/api/plans/:planId/match/accept-all"'].sort());
   const board = tryStatements(routeNode(MATCH, 'get', '/api/plans/:planId/match'));
   assert.equal(board[0], 'const plan = await requirePropertyPlan(pool, String(req.params.planId), access(req));');
   assert.match(board.join('\n'), /loadPlanMatchBoard\(pool, plan,/);
-  for (const [path, work] of [['/api/plans/:planId/match/accept', 'acceptPlanProposal'], ['/api/plans/:planId/match/accept-suggested', 'acceptSuggestedPlanProposals'], ['/api/plans/:planId/match/dismiss', 'dismissPlanProposal']]) {
+  for (const [path, work] of [['/api/plans/:planId/match/accept', 'acceptPlanProposal'], ['/api/plans/:planId/match/accept-all', 'acceptAllPlanProposals']]) {
     const statements = tryStatements(routeNode(MATCH, 'post', path));
     assert.equal(statements.length, 1, path);
     assert.match(statements[0], new RegExp(`^res\\.json\\(await ${work}\\(pool, String\\(req\\.params\\.planId\\), .*access\\(req\\)\\)\\);$`), path);
@@ -289,7 +289,7 @@ test('5. a joint agent reads the unit feed and the match board, and writes none 
     ['GET', `/api/plans/${PLAN}/match`], ['GET', `/api/plans/${PLAN}/match/`],
   ];
   const writes = [
-    ['POST', `/api/plans/${PLAN}/match/accept`], ['POST', `/api/plans/${PLAN}/match/accept-suggested`], ['POST', `/api/plans/${PLAN}/match/dismiss`],
+    ['POST', `/api/plans/${PLAN}/match/accept`], ['POST', `/api/plans/${PLAN}/match/accept-all`], ['POST', `/api/plans/${PLAN}/match/dismiss`],
     ['POST', `/api/plans/${PLAN}/match/anything-new`], ['post', `/api/plans/${PLAN}/match/accept`],
     ['POST', `/api/properties/${P}/units`], ['GET', `/api/properties/${P}/people`],
   ];
@@ -385,19 +385,22 @@ test('8. the older save routes refuse a second outline for one schedule row on a
 
 // The match file's save functions, run with a scripted database.
 function matchFunctions(extra = {}) {
-  const names = ['lockScan', 'transaction', 'acceptPlanProposal', 'acceptSuggestedPlanProposals'];
+  const names = ['lockScan', 'transaction', 'acceptPlanProposal', 'saveOpenProposals', 'acceptAllPlanProposals', 'completePlanScan'];
   const script = [constant(MATCH, 'CANDIDATE_ID'), constant(MATCH, 'ALREADY_DRAWN'), constant(MATCH, 'saveCandidates'), constant(MATCH, 'ROWS_SQL'), constant(MATCH, 'matchRow'),
-    ...names.map(name => fn(MATCH, name)), `exports.acceptPlanProposal = acceptPlanProposal; exports.acceptSuggestedPlanProposals = acceptSuggestedPlanProposals;`].join('\n');
+    ...names.map(name => fn(MATCH, name)), `exports.acceptPlanProposal = acceptPlanProposal; exports.acceptAllPlanProposals = acceptAllPlanProposals; exports.completePlanScan = completePlanScan;`].join('\n');
   return evaluate(script, {
     requirePropertyPlan, validPlanId, PropertyPlanScanError, planPoints, isValidPolygon, planPolygonsOverlap,
-    validatePlanUnitLink: links.validatePlanUnitLink, bulkAcceptable, JSON,
+    validatePlanUnitLink: links.validatePlanUnitLink, planSaveOrder, JSON, console,
     openPlanCandidates: candidates => candidates, suggestPlanMatches: () => { throw new Error('not scripted'); }, ...extra,
   });
 }
-function scanDb({ candidates, outlines, rows = [], live = true }) {
+function scanDb({ candidates, outlines, rows = [], live = true, finishes = true, failInsert = false }) {
   const log = [];
   const answer = sql => {
     if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return [];
+    if (/^(SAVEPOINT|RELEASE SAVEPOINT|ROLLBACK TO SAVEPOINT) scan_outlines$/.test(sql)) return [];
+    if (/^UPDATE property_plan_scans SET status = 'ready'/.test(sql)) return finishes ? [{ id: SCAN_ID }] : [];
+    if (failInsert && /^INSERT INTO property_plan_units/.test(sql)) throw new Error('insert failed');
     if (/FROM property_plans WHERE id = \$1/.test(sql)) return [{ id: PLAN_ID, property_id: 'property', storage_key: 'plan.png', floor: 'Ground' }];
     if (/FROM property_plan_scans WHERE id = \$1 AND plan_id = \$2 FOR UPDATE/.test(sql)) return [{ id: SCAN_ID, plan_id: PLAN_ID, image_key: 'plan.png', status: 'ready', candidates }];
     if (/FROM property_plan_units WHERE plan_id = \$1 ORDER BY id FOR UPDATE/.test(sql)) return outlines;
@@ -432,19 +435,80 @@ test('8. acceptPlanProposal refuses a second outline for one schedule row on a p
 });
 
 // 9 ─────────────────────────────────────────────────────────────────────────
-test('9. bulk acceptance takes only what bulkAcceptable allows', async () => {
-  const body = fn(MATCH, 'acceptSuggestedPlanProposals');
-  assert.match(collapse(body), /const suggested = suggestPlanMatches\(.*\)\.filter\(bulkAcceptable\);/);
-  assert.match(body, /for \(const proposal of suggested\)/);
-  const proposal = (n, extra) => ({ id: `candidate-${n}`, label: `U${n}`, tenant: null, polygon: square(0.1 * n, 0.1, 0.05), suggestedRowId: `row-${n}`, method: 'code', possibleRowIds: [], tenantDiffers: false, floorDiffers: false, ...extra });
-  const proposals = [proposal(1), proposal(2, { method: 'tenant' }), proposal(3, { method: 'floor' }), proposal(4, { tenantDiffers: true }), proposal(5, { floorDiffers: true }), proposal(6, { suggestedRowId: null, method: null })];
-  assert.deepEqual(proposals.map(bulkAcceptable), [true, true, false, false, false, false]);
-  const { acceptSuggestedPlanProposals } = matchFunctions({ suggestPlanMatches: () => proposals });
+// A scan's outlines are all saved, with nothing left to check (Woody,
+// 2026-11-16: "the scan and tenancy schedule matches dont need checking they
+// are all done immediately and then there is the ability to edit").
+const savedProposal = (n, extra) => ({ id: `candidate-${n}`, label: `U${n}`, tenant: null, polygon: square(0.1 * n, 0.1, 0.05), suggestedRowId: `row-${n}`, method: 'code', possibleRowIds: [], tenantDiffers: false, floorDiffers: false, ...extra });
+const insertsOf = log => log.filter(sql => sql.startsWith('INSERT INTO property_plan_units'));
+
+test('9. saving a scan links every suggestion, a weaker reading too, and saves the rest unlinked', async () => {
+  const body = collapse(fn(MATCH, 'saveOpenProposals'));
+  assert.match(body, /suggestPlanMatches\(openPlanCandidates\(candidates, outlines\)/);
+  assert.match(body, /\.sort\(\(a, b\) => planSaveOrder\(a\) - planSaveOrder\(b\)\)/, 'the surest readings are saved first');
+  assert.doesNotMatch(body, /bulkAcceptable|tenantDiffers|floorDiffers/, 'a different tenant or floor on the plan does not hold a match back');
+  assert.match(collapse(fn(MATCH, 'acceptAllPlanProposals')), /return transaction\(database, planId, scanId, canAccess, async \(db, propertyId\) => saveOpenProposals\(db, scanId, await lockScan\(db, planId, scanId, propertyId\)\)\)/);
+  const proposals = [savedProposal(1), savedProposal(2, { method: 'tenant' }), savedProposal(3, { method: 'floor' }), savedProposal(4, { tenantDiffers: true }), savedProposal(5, { floorDiffers: true }),
+    savedProposal(6, { suggestedRowId: null, method: null, possibleRowIds: ['row-9'] }), savedProposal(7, { label: 'Unlabelled 7', suggestedRowId: null, method: null })];
+  assert.deepEqual(proposals.map(planSaveOrder), [0, 0, 1, 0, 0, 2, 2]);
+  const { acceptAllPlanProposals } = matchFunctions({ suggestPlanMatches: () => proposals });
   const run = scanDb({ candidates: proposals.map(p => ({ id: p.id, label: p.label, polygon: p.polygon })), outlines: [] });
-  const result = await acceptSuggestedPlanProposals(run.db, PLAN_ID, SCAN_ID, async () => true);
-  assert.equal(result.created, 2);
-  assert.equal(JSON.stringify(result.skipped), '[]');
-  assert.equal(run.log.filter(sql => sql.startsWith('INSERT INTO property_plan_units')).length, 2);
+  const result = await acceptAllPlanProposals(run.db, PLAN_ID, SCAN_ID, async () => true);
+  assert.equal(JSON.stringify(result), JSON.stringify({ linked: 5, unlinked: 2, setAside: 0 }));
+  assert.equal(insertsOf(run.log).length, 7, 'every outline the scan found is on the plan');
+  assert.equal(run.log.at(-1), 'COMMIT');
+  assert.ok(run.log.some(sql => sql.startsWith('UPDATE property_plan_scans SET candidates')), 'each proposal is marked with the outline it became');
+});
+
+test('9. where two outlines overlap the one with a unit stays; a row drawn already leaves the outline unlinked', async () => {
+  const proposals = [
+    savedProposal(1, { suggestedRowId: null, method: null }),                                   // grey, saved last
+    savedProposal(2, { polygon: square(0.1, 0.1, 0.05) }),                                       // linked, over the grey one: saved first
+    savedProposal(3, { suggestedRowId: 'row-taken' }),                                           // its row already has an outline here
+  ];
+  const { acceptAllPlanProposals } = matchFunctions({ suggestPlanMatches: () => proposals });
+  const run = scanDb({ candidates: proposals.map(p => ({ id: p.id, label: p.label, polygon: p.polygon })), outlines: [{ id: 'outline-a', label: 'X', polygon: square(0.8, 0.8), tenancy_unit_id: 'row-taken', unit_id: null }] });
+  const original = run.db.query;
+  const values = [];
+  run.db.query = async (sql, args) => { if (sql.includes('INSERT INTO property_plan_units')) values.push(args); return original(sql, args); };
+  run.db.connect = async () => ({ query: run.db.query, release() {} });
+  const result = await acceptAllPlanProposals(run.db, PLAN_ID, SCAN_ID, async () => true);
+  assert.equal(JSON.stringify(result), JSON.stringify({ linked: 1, unlinked: 1, setAside: 1 }));
+  assert.deepEqual(values.map(v => v[2]), ['row-2', null], 'the linked outline first; the one whose row is drawn already is saved unlinked');
+});
+
+test('9. a finished scan is marked ready and saved in one transaction; a failed save leaves its outlines waiting', async () => {
+  const proposals = [savedProposal(1)];
+  const { completePlanScan } = matchFunctions({ suggestPlanMatches: () => proposals });
+  const candidates = proposals.map(p => ({ id: p.id, label: p.label, polygon: p.polygon }));
+  const ok = scanDb({ candidates, outlines: [] });
+  assert.equal(JSON.stringify(await completePlanScan(ok.db, SCAN_ID, PLAN_ID, candidates, 'found')), JSON.stringify({ linked: 1, unlinked: 0, setAside: 0 }));
+  const ready = ok.log.findIndex(sql => sql.startsWith("UPDATE property_plan_scans SET status = 'ready'"));
+  assert.ok(ok.log.indexOf('BEGIN') < ready && ready < ok.log.indexOf('SAVEPOINT scan_outlines'), 'ready, then the outlines, in the same transaction');
+  assert.match(ok.log[ready], /image_key = \$5 AND status = 'running'/, 'only a running scan of the plan image as it is now');
+  assert.match(ok.log[ok.log.indexOf('BEGIN') + 1], /FROM property_plans WHERE id = \$1 FOR UPDATE/, "the plan's lock first, as every plan-unit write takes it");
+  assert.equal(insertsOf(ok.log).length, 1);
+  assert.deepEqual(ok.log.slice(-2), ['RELEASE SAVEPOINT scan_outlines', 'COMMIT']);
+  // The save fails: the scan stays ready, nothing is drawn, the proposals wait for "Save them".
+  const failed = scanDb({ candidates, outlines: [], failInsert: true });
+  const warn = console.warn; console.warn = () => {};
+  try { assert.equal(JSON.stringify(await completePlanScan(failed.db, SCAN_ID, PLAN_ID, candidates, 'found')), JSON.stringify({ linked: 0, unlinked: 0, setAside: 0 })); }
+  finally { console.warn = warn; }
+  assert.deepEqual(failed.log.slice(-2), ['ROLLBACK TO SAVEPOINT scan_outlines', 'COMMIT']);
+  // A scan that stopped, or a plan whose image changed, saves nothing.
+  const stopped = scanDb({ candidates, outlines: [], finishes: false });
+  assert.equal(await completePlanScan(stopped.db, SCAN_ID, PLAN_ID, candidates, 'found'), null);
+  assert.equal(stopped.log.at(-1), 'ROLLBACK');
+  assert.equal(insertsOf(stopped.log).length, 0);
+});
+
+test('9. the scan runner finishes through completePlanScan, removing an outline sets its proposal aside, and clients may save', () => {
+  const worker = collapse(fn('server/property-plan-scanning.ts', 'runPropertyPlanScan'));
+  assert.match(worker, /if \(!await completePlanScan\(pool, job\.id, plan\.id, result\.candidates, result\.message\)\) throw/);
+  assert.doesNotMatch(worker, /status='ready'/, 'the runner does not mark a scan ready by itself');
+  const remove = collapse(routeNode(PLANS, 'delete', '/api/plan-units/:id').text);
+  assert.match(remove, /DELETE FROM property_plan_units WHERE id = \$1.*await setRemovedOutlineAside\(db, authorisedOwner\.plan_id, String\(req\.params\.id\)\);.*COMMIT/, 'in the delete\'s own transaction');
+  assert.match(collapse(fn(MATCH, 'setRemovedOutlineAside')), /UPDATE property_plan_scans SET .*'\{"dismissed": true\}'::jsonb.*WHERE plan_id = \$1 AND candidates @> jsonb_build_array\(jsonb_build_object\('acceptedOutlineId', \$2::text\)\)/);
+  assert.match(source('server/index.ts'), /req\.method === "POST" && \/\^\\\/api\\\/plans\\\/\[\^\/\]\+\\\/match\\\/\(accept\|accept-all\)\$\/\.test\(p\)/);
 });
 
 // 10 ────────────────────────────────────────────────────────────────────────

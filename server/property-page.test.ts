@@ -12,7 +12,7 @@ import test, { before } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { bulkAcceptable, floorKey, floorsDisagree, planMatchCounts, sameFloor, type PlanMatchProposal } from "@shared/property-plan-match";
+import { floorKey, floorsDisagree, planMatchCounts, planSaveOrder, sameFloor, type PlanMatchOutline, type PlanMatchProposal } from "@shared/property-plan-match";
 import type { PropertyPlanPolygon } from "@shared/property-plan-scan";
 import type { PropertyUnit } from "@shared/property-units";
 
@@ -75,15 +75,15 @@ test("a code printed with a gap or a dash is still that unit", () => {
   for (const printed of ["WVL 22", "WVL-22"]) assert.deepEqual(on(printed), suggested("nandos", "code"), printed);
 });
 
-test("the number is the unit: a different tenant on the plan is reported, and that match is taken one at a time", () => {
+test("the number is the unit: a different tenant on the plan is reported, and the number still links it", () => {
   const moved = proposalFor("WVL22", "Zizzi");
   assert.deepEqual([moved.suggestedRowId, moved.method, moved.tenantDiffers, moved.floorDiffers, moved.possibleRowIds], ["nandos", "code", true, false, []]);
-  assert.equal(bulkAcceptable(moved), false);
+  assert.equal(planSaveOrder(moved), 0, "saved linked, with the surest readings");
   // The same tenant, as the plan would shorten it or the lease would spell it.
   for (const printed of ["Nando's", "NANDOS", "Nando's Chickenland Limited", "nandos chickenland ltd"]) {
     const same = proposalFor("WVL22", printed);
     assert.deepEqual([same.suggestedRowId, same.method, same.tenantDiffers], ["nandos", "code", false], printed);
-    assert.equal(bulkAcceptable(same), true, printed);
+    assert.equal(planSaveOrder(same), 0, printed);
   }
   assert.deepEqual(on("U036", "JD", SCHEDULE, UPPER), suggested("jd", "code"), "a short trading name leads the legal name");
   assert.deepEqual(on("U036", "JDX", SCHEDULE, UPPER), suggested("jd", "code", { tenantDiffers: true }));
@@ -93,7 +93,7 @@ test("a row with no tenant recorded cannot disagree with the plan, so its number
   for (const [printed, id] of [["L200", "empty"], ["L201", "void"]] as const) {
     const proposal = proposalFor(printed, "Pret A Manger");
     assert.deepEqual([proposal.suggestedRowId, proposal.method, proposal.tenantDiffers], [id, "code", false], printed);
-    assert.equal(bulkAcceptable(proposal), true, printed);
+    assert.equal(planSaveOrder(proposal), 0, printed);
   }
   // The plan says the shop is empty; the schedule names a tenant. The number still decides.
   assert.deepEqual(on("WVL22", "VACANT"), suggested("nandos", "code"));
@@ -105,7 +105,7 @@ test("a printed number that matches nothing is never overridden by a name", () =
   assert.deepEqual(on("WVL99", "Nando's Chickenland Limited"), { ...NO_MATCH, possible: ["nandos"] });
   const proposal = proposalFor("WVL99", "Nando's");
   assert.deepEqual([proposal.suggestedRowId, proposal.method, proposal.possibleRowIds], [null, null, ["nandos"]]);
-  assert.equal(bulkAcceptable(proposal), false);
+  assert.equal(planSaveOrder(proposal), 2, "saved unlinked, for a person to link");
 });
 
 test("nor by a name that two rows carry, even when only one of them is on this floor", () => {
@@ -122,7 +122,7 @@ test("a lettered unit is a printed reference too: \"Kiosk C\" is not Kiosk A bec
   assert.deepEqual(on("Kiosk A", "Costa", kiosks), suggested("kiosk-a", "code"));
   for (const printed of ["Kiosk C", "Unit C", "C"]) {
     assert.deepEqual(on(printed, "Costa", kiosks), { ...NO_MATCH, possible: ["kiosk-a"] }, printed);
-    assert.equal(bulkAcceptable(match.suggestPlanMatches([candidate(1, printed, "Costa")], kiosks, LOWER)[0]), false, printed);
+    assert.equal(planSaveOrder(match.suggestPlanMatches([candidate(1, printed, "Costa")], kiosks, LOWER)[0]), 2, printed);
   }
 });
 
@@ -131,7 +131,7 @@ test("a tenant's name alone suggests the one row that carries it, by trading nam
   for (const [label, tenant] of [["Nando's", "Nando's"], ["Unlabelled 3", "Nando's"], ["NANDOS", "NANDOS"], ["Unlabelled 3", "Nando's Chickenland Limited"], ["Unlabelled 3", "nandos chickenland ltd"]] as const) {
     const proposal = proposalFor(label, tenant);
     assert.deepEqual([proposal.suggestedRowId, proposal.method, proposal.tenantDiffers, proposal.floorDiffers, proposal.possibleRowIds], ["nandos", "tenant", false, false, []], `${label} / ${tenant}`);
-    assert.equal(bulkAcceptable(proposal), true, `${label} / ${tenant}`);
+    assert.equal(planSaveOrder(proposal), 0, `${label} / ${tenant}`);
   }
   assert.deepEqual(on("Costa", "Costa"), suggested("costa", "tenant"));
   assert.deepEqual(on("Unlabelled 9", "Costa Limited"), suggested("costa", "tenant"));
@@ -165,7 +165,7 @@ test("a name that two rows carry is a choice for a person, unless exactly one of
     assert.deepEqual(on(label, tenant, two, "upper mall"), suggested("costa-upper", "floor", { possible: ["costa", "costa-upper"] }), `${label} / ${tenant}, upper`);
     const lower = match.suggestPlanMatches([candidate(1, label, tenant)], two, LOWER)[0];
     assert.deepEqual([lower.suggestedRowId, lower.method, lower.possibleRowIds], ["costa", "floor", ["costa", "costa-upper"]], `${label} / ${tenant}, lower`);
-    assert.equal(bulkAcceptable(lower), false, "a floor tie-break is accepted one at a time");
+    assert.equal(planSaveOrder(lower), 1, "a floor tie-break is saved linked, after the number and name matches");
   }
   // Both on this floor: the floor settles nothing.
   const sameFloorRows = [...SCHEDULE, row("costa-2", "L300 Bluewater - Lower Level", { tenant_name: "Costa Limited", trading_name: "Costa" })];
@@ -179,18 +179,18 @@ test("a name on two rows stays a choice however the two rows are labelled", () =
     for (const [label, tenant] of [["Costa", "Costa"], ["Unlabelled 2", "Costa"]] as const) {
       const proposal = match.suggestPlanMatches([candidate(1, label, tenant)], rows, null)[0];
       assert.deepEqual([proposal.suggestedRowId, proposal.method, [...proposal.possibleRowIds].sort()], [null, null, ["costa", "costa-other"]], `${other}: ${label} / ${tenant}`);
-      assert.equal(bulkAcceptable(proposal), false, other);
+      assert.equal(planSaveOrder(proposal), 2, other);
     }
   }
 });
 
-test("the same number on two floors is settled by the plan's floor, and is still one for a person to accept", () => {
+test("the same number on two floors is settled by the plan's floor", () => {
   const rows = [row("lower-5", "Unit 5", { tenant_name: "Lush Retail Ltd", floor: LOWER }), row("upper-5", "Unit 5", { tenant_name: "Smiggle UK Limited", floor: UPPER })];
   assert.deepEqual(on("5", null, rows, null), { ...NO_MATCH, possible: ["lower-5", "upper-5"] });
   assert.deepEqual(on("Unit 5", null, rows, UPPER), suggested("upper-5", "floor", { possible: ["lower-5", "upper-5"] }));
   const proposal = match.suggestPlanMatches([candidate(1, "5", "Smiggle")], rows, LOWER)[0];
   assert.deepEqual([proposal.suggestedRowId, proposal.method, proposal.tenantDiffers], ["lower-5", "floor", true]);
-  assert.equal(bulkAcceptable(proposal), false);
+  assert.equal(planSaveOrder(proposal), 1);
 });
 
 test("placeholders are never a number or a name", () => {
@@ -211,7 +211,7 @@ test("two proposals that point at the same row are nobody's suggestion: both lis
     ["candidate-3", "costa", "code", [], false, true],
     ["candidate-4", null, null, [], false, false],
   ]);
-  assert.deepEqual(proposals.map(bulkAcceptable), [false, false, false, false]);
+  assert.deepEqual(proposals.map(planSaveOrder), [2, 2, 0, 2]);
   // What the scan read is passed on untouched.
   assert.deepEqual([proposals[0].label, proposals[0].tenant, proposals[0].polygon], ["WVL22", "Zizzi", candidate(1, "", null).polygon]);
   // A floor tie-break that lands on a row another proposal names is withdrawn too, and keeps its other possible rows.
@@ -223,14 +223,14 @@ test("two proposals that point at the same row are nobody's suggestion: both lis
 test("a row the schedule puts on another floor is still suggested by its number, and flagged", () => {
   const upstairs = proposalFor("U036", null, SCHEDULE, LOWER);
   assert.deepEqual([upstairs.suggestedRowId, upstairs.method, upstairs.floorDiffers], ["jd", "code", true]);
-  assert.equal(bulkAcceptable(upstairs), false);
+  assert.equal(planSaveOrder(upstairs), 0, "the number links it whatever floor the schedule gives");
   assert.equal(on("U036", null, SCHEDULE, "UPPER MALL").floorDiffers, false, "the same floor under another name");
   assert.equal(on("U036", null, SCHEDULE, null).floorDiffers, false, "the plan's floor is not known");
   assert.equal(on("U036", null, SCHEDULE, "  ").floorDiffers, false);
   const noFloor = [row("jd", "U036", { tenant_name: "JD Sports Fashion PLC", floor: null })];
   assert.equal(on("U036", null, noFloor, LOWER).floorDiffers, false, "the row's floor is not recorded");
   assert.deepEqual(on("JD Sports Fashion", "JD Sports Fashion", SCHEDULE, LOWER), suggested("jd", "tenant", { floorDiffers: true }));
-  assert.equal(bulkAcceptable(proposalFor("JD Sports Fashion", "JD Sports Fashion", SCHEDULE, LOWER)), false);
+  assert.equal(planSaveOrder(proposalFor("JD Sports Fashion", "JD Sports Fashion", SCHEDULE, LOWER)), 0);
 });
 
 test("storage, cash machines and car parks are not matched by the tenant's name, only by their own number", () => {
@@ -297,40 +297,26 @@ test("floors: one floor under its different names, and an unknown floor agrees a
   for (const [a, b] of [[null, "Lower Level"], ["Upper Level", null], ["", "Lower Level"], ["Upper Level", "  "], [null, null], ["Level", "Upper Level"]]) assert.equal(floorsDisagree(a, b), false, `${a} / ${b}`);
 });
 
-test("the bulk button takes a number or a name with nothing against it, and nothing else", () => {
-  const proposal = (over: Partial<PlanMatchProposal>) => ({ suggestedRowId: "row", method: "code" as const, tenantDiffers: false, floorDiffers: false, ...over });
-  assert.equal(bulkAcceptable(proposal({})), true);
-  assert.equal(bulkAcceptable(proposal({ method: "tenant" })), true);
-  assert.equal(bulkAcceptable(proposal({ method: "floor" })), false);
-  assert.equal(bulkAcceptable(proposal({ tenantDiffers: true })), false);
-  assert.equal(bulkAcceptable(proposal({ floorDiffers: true })), false);
-  assert.equal(bulkAcceptable(proposal({ method: "tenant", floorDiffers: true })), false);
-  assert.equal(bulkAcceptable(proposal({ suggestedRowId: null })), false);
-  assert.equal(bulkAcceptable(proposal({ suggestedRowId: null, method: null })), false);
-  assert.equal(bulkAcceptable(proposal({ method: null })), false);
+test("the save order: a number or a name first, a floor tie-break next, an outline with no unit last", () => {
+  const proposal = (over: Partial<PlanMatchProposal>) => ({ suggestedRowId: "row", method: "code" as const, ...over });
+  assert.equal(planSaveOrder(proposal({})), 0);
+  assert.equal(planSaveOrder(proposal({ method: "tenant" })), 0);
+  assert.equal(planSaveOrder(proposal({ method: "floor" })), 1);
+  assert.equal(planSaveOrder(proposal({ suggestedRowId: null })), 2);
+  assert.equal(planSaveOrder(proposal({ suggestedRowId: null, method: null })), 2);
 });
 
-test("the Match screen's counts", () => {
+test("the plan's counts: linked and not linked outlines, scan outlines not saved, schedule units not drawn", () => {
   const proposal = (id: string, over: Partial<PlanMatchProposal>): PlanMatchProposal =>
     ({ id, label: id, tenant: null, polygon: box(0.1, 0.1), suggestedRowId: null, method: null, possibleRowIds: [], tenantDiffers: false, floorDiffers: false, ...over });
+  const saved = (id: string, label: string, polygon: PropertyPlanPolygon, scheduleRowId: string | null): PlanMatchOutline => ({ id, label, polygon, scheduleRowId, printed: null, possibleRowIds: [] });
   const planRow = (id: string, outlinedHere: boolean, outlinedElsewhere: boolean) => ({ id, label: id, tenant: null, floor: null, use: null, outlinedHere, outlinedElsewhere });
   assert.deepEqual(planMatchCounts({
-    outlines: [
-      { id: "o1", label: "WVL22", polygon: box(0.1, 0.1), scheduleRowId: "r1" },
-      { id: "o2", label: "SVL02", polygon: box(0.3, 0.1), scheduleRowId: "r2" },
-      { id: "o3", label: "Mall", polygon: box(0.5, 0.1), scheduleRowId: null },
-    ],
-    proposals: [
-      proposal("p1", { suggestedRowId: "r3", method: "code" }),
-      proposal("p2", { suggestedRowId: "r4", method: "tenant" }),
-      proposal("p3", { suggestedRowId: "r5", method: "code", tenantDiffers: true }),
-      proposal("p4", { suggestedRowId: "r6", method: "floor", possibleRowIds: ["r6", "r7"] }),
-      proposal("p5", { possibleRowIds: ["r8"] }),
-      proposal("p6", {}),
-    ],
+    outlines: [saved("o1", "WVL22", box(0.1, 0.1), "r1"), saved("o2", "SVL02", box(0.3, 0.1), "r2"), saved("o3", "Mall", box(0.5, 0.1), null)],
+    proposals: [proposal("p1", { suggestedRowId: "r3", method: "code" }), proposal("p2", { possibleRowIds: ["r8"] })],
     rows: [planRow("r1", true, false), planRow("r2", true, true), planRow("r9", false, true), planRow("r3", false, false), planRow("r4", false, false)],
-  }), { matched: 2, context: 1, toCheck: 6, suggested: 2, rowsNotDrawn: 2 });
-  assert.deepEqual(planMatchCounts({ outlines: [], proposals: [], rows: [] }), { matched: 0, context: 0, toCheck: 0, suggested: 0, rowsNotDrawn: 0 });
+  }), { linked: 2, unlinked: 1, unsaved: 2, rowsNotDrawn: 2 });
+  assert.deepEqual(planMatchCounts({ outlines: [], proposals: [], rows: [] }), { linked: 0, unlinked: 0, unsaved: 0, rowsNotDrawn: 0 });
 });
 
 // ── Part 2: the real SQL, in a throwaway schema ──────────────────────────
@@ -703,14 +689,14 @@ test("the Match board from real rows: live rows only, what is outlined here and 
     await scan(insert, SCAN_A, PLAN_A, "key-a", [candidate(1, "L001", "Nando's", shape(1)), candidate(2, "L002", null, shape(2)), candidate(3, "L007", null, shape(3)), candidate(4, "Unlabelled 4", null, shape(4), { dismissed: true })]);
     const planA = (await db.query("SELECT * FROM property_plans WHERE id = $1", [PLAN_A])).rows[0];
     const b = await match.loadPlanMatchBoard(db, planA, { canScan: true });
-    assert.deepEqual([b.plan.id, b.plan.propertyId, b.plan.floor, b.scan?.id, b.scan?.status, b.dismissed, b.canScan], [PLAN_A, P, "Lower Level", SCAN_A, "ready", 1, true]);
-    assert.deepEqual(b.outlines.map(o => [o.id, o.scheduleRowId]), [[uuid(1), "ts-let"], [uuid(3), null]]);
+    assert.deepEqual([b.plan.id, b.plan.propertyId, b.plan.floor, b.scan?.id, b.scan?.status, b.canScan], [PLAN_A, P, "Lower Level", SCAN_A, "ready", true]);
+    assert.deepEqual(b.outlines.map(o => [o.id, o.scheduleRowId, o.printed]), [[uuid(1), "ts-let", null], [uuid(3), null, null]]);
     assert.ok(!b.rows.some(r => r.id.startsWith("ts-archived") || r.id === "ts-elsewhere"), "no archived row, no other property's row");
     const flags = Object.fromEntries(b.rows.map(r => [r.id, [r.outlinedHere, r.outlinedElsewhere]]));
     assert.deepEqual([flags["ts-let"], flags["ts-empty"], flags["ts-by-name"]], [[true, false], [false, true], [false, false]]);
     // L001 is already outlined here, so it is no one's suggestion; L002 is; the archived L007 matches nothing.
     assert.deepEqual(b.proposals.map(p => [p.id, p.suggestedRowId, p.method]), [["candidate-1", null, null], ["candidate-2", "ts-empty", "code"], ["candidate-3", null, null]]);
-    assert.deepEqual(planMatchCounts(b), { matched: 1, context: 1, toCheck: 3, suggested: 1, rowsNotDrawn: b.rows.length - 2 });
+    assert.deepEqual(planMatchCounts(b), { linked: 1, unlinked: 1, unsaved: 3, rowsNotDrawn: b.rows.length - 2 });
   });
 });
 
@@ -780,45 +766,67 @@ test("saving one proposal: linked, as context, asked twice, and every refusal", 
   });
 });
 
-test("Accept the suggested matches: only the clean ones, the rest skipped with a reason, never two outlines for one row", { skip }, async () => {
+test("saving a scan: every outline goes on the plan, linked where it names one free row, the rest grey, never two for one row", { skip }, async () => {
   await withSchema(async (db, insert) => {
     await seedProperty(insert, db);
     await plan(insert, PLAN_A, "Lower Level", "key-a");
     // A physical unit already drawn by hand on this plan, with no schedule row picked.
     await outline(insert, uuid(1), PLAN_A, shape(14), null, "pu-5");
     await scan(insert, SCAN_A, PLAN_A, "key-a", [
-      candidate(1, "L002", null, shape(1)),                       // clean: saved
-      candidate(2, "L001", "Costa", shape(2)),                    // the plan names another tenant: one at a time
-      candidate(3, "L004", null, shape(3)),                       // clean: saved
-      candidate(4, "L006", null, box(shape(3).points[0][0] + 0.05, shape(3).points[0][1] + 0.05)),   // overlaps candidate 3
-      candidate(5, "L005", null, shape(5)),                       // its physical unit is already drawn
-      candidate(6, "L008", null, shape(6)),                       // two proposals for one row
+      candidate(1, "L002", null, shape(1)),                       // linked
+      candidate(2, "L001", "Costa", shape(2)),                    // the plan names another tenant: still linked by its number
+      candidate(3, "L004", null, shape(3)),                       // linked
+      candidate(4, "L006", null, box(shape(3).points[0][0] + 0.05, shape(3).points[0][1] + 0.05)),   // overlaps candidate 3: left off
+      candidate(5, "L005", null, shape(5)),                       // its physical unit is already drawn: saved grey
+      candidate(6, "L008", null, shape(6)),                       // two proposals for one row: both grey
       candidate(7, "L008", null, shape(7)),
-      candidate(8, "L009", null, shape(8), { dismissed: true }),  // dismissed
-      candidate(9, "Unlabelled 9", null, shape(9)),               // nothing to go on
+      candidate(8, "L009", null, shape(8), { dismissed: true }),  // dismissed: not saved
+      candidate(9, "Unlabelled 9", null, shape(9)),               // nothing to go on: grey, with no label
     ]);
-    const run = () => match.acceptSuggestedPlanProposals(db, PLAN_A, SCAN_A, all);
-    const result = await run();
-    assert.equal(result.created, 2);
-    assert.deepEqual(result.skipped, [{ label: "L006", reason: "It overlaps another outline." }, { label: "L005", reason: "Its unit already has an outline on this floor." }]);
-    const rows = (await db.query("SELECT tenancy_unit_id, label FROM property_plan_units WHERE plan_id = $1 AND tenancy_unit_id IS NOT NULL ORDER BY label", [PLAN_A])).rows;
-    assert.deepEqual(rows, [{ tenancy_unit_id: "ts-empty", label: "L002" }, { tenancy_unit_id: "ts-by-row-link", label: "L004" }]);
+    const run = () => match.acceptAllPlanProposals(db, PLAN_A, SCAN_A, all);
+    assert.deepEqual(await run(), { linked: 3, unlinked: 4, setAside: 1 });
+    const saved = (await db.query("SELECT tenancy_unit_id, label FROM property_plan_units WHERE plan_id = $1 AND id <> $2 ORDER BY label NULLS LAST, tenancy_unit_id NULLS LAST", [PLAN_A, uuid(1)])).rows;
+    assert.deepEqual(saved, [
+      { tenancy_unit_id: "ts-let", label: "L001" }, { tenancy_unit_id: "ts-empty", label: "L002" }, { tenancy_unit_id: "ts-by-row-link", label: "L004" },
+      { tenancy_unit_id: null, label: "L005" }, { tenancy_unit_id: null, label: "L008" }, { tenancy_unit_id: null, label: "L008" }, { tenancy_unit_id: null, label: null },
+    ]);
     const stored = (await db.query("SELECT candidates FROM property_plan_scans WHERE id = $1", [SCAN_A])).rows[0].candidates;
-    assert.deepEqual(stored.filter((c: any) => c.acceptedOutlineId).map((c: any) => c.id), ["candidate-1", "candidate-3"]);
-    assert.equal(stored.find((c: any) => c.id === "candidate-8").dismissed, true);
+    assert.deepEqual(stored.filter((c: any) => c.acceptedOutlineId).map((c: any) => c.id), ["candidate-1", "candidate-2", "candidate-3", "candidate-5", "candidate-6", "candidate-7", "candidate-9"]);
+    assert.deepEqual(stored.filter((c: any) => c.dismissed).map((c: any) => c.id), ["candidate-4", "candidate-8"]);
     // Again: nothing new, and no row with two outlines.
-    const again = await run();
-    assert.equal(again.created, 0);
+    assert.deepEqual(await run(), { linked: 0, unlinked: 0, setAside: 0 });
     const per = (await db.query("SELECT tenancy_unit_id, count(*)::int AS n FROM property_plan_units WHERE plan_id = $1 AND tenancy_unit_id IS NOT NULL GROUP BY 1", [PLAN_A])).rows;
     assert.ok(per.every((r: any) => r.n === 1));
-    // The board and the feed agree on what is left; the one skipped for overlapping now sits under a saved outline.
+    // Nothing is left waiting, on the board or in the feed. A grey outline says what the plan prints there and which rows it could be.
     const planA = (await db.query("SELECT * FROM property_plans WHERE id = $1", [PLAN_A])).rows[0];
-    const left = (await match.loadPlanMatchBoard(db, planA, { canScan: false })).proposals.map(p => p.id);
-    assert.deepEqual(left, ["candidate-2", "candidate-5", "candidate-6", "candidate-7", "candidate-9"]);
-    assert.equal((await units.loadPropertyUnits(db, P, TODAY))!.plans[0].proposals, left.length);
-    // An applied scan or an older image is refused.
+    const board = await match.loadPlanMatchBoard(db, planA, { canScan: false });
+    assert.deepEqual(board.proposals, []);
+    assert.equal((await units.loadPropertyUnits(db, P, TODAY))!.plans[0].proposals, 0);
+    const twins = board.outlines.filter(o => o.label === "L008");
+    assert.deepEqual(twins.map(o => [o.scheduleRowId, o.printed?.label, o.possibleRowIds]), [[null, "L008", ["ts-two-deals"]], [null, "L008", ["ts-two-deals"]]]);
+    // An applied scan is refused.
     await scan(insert, uuid(92), PLAN_A, "key-a", [], { status: "applied" });
-    await failsWith(match.acceptSuggestedPlanProposals(db, PLAN_A, uuid(92), all), 409);
+    await failsWith(match.acceptAllPlanProposals(db, PLAN_A, uuid(92), all), 409);
+    await failsWith(match.acceptAllPlanProposals(db, PLAN_A, SCAN_A, async () => false), 403);
+  });
+});
+
+test("a finished scan is marked ready with its outlines saved, and only while it is the plan's running scan", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await seedProperty(insert, db);
+    await plan(insert, PLAN_A, "Lower Level", "key-a");
+    await scan(insert, SCAN_A, PLAN_A, "key-a", [], { status: "running", updated_at: new Date().toISOString(), created_at: new Date().toISOString() });
+    const found = [candidate(1, "L002", null, shape(1)), candidate(2, "Mall", null, shape(2))];
+    assert.deepEqual(await match.completePlanScan(db, SCAN_A, PLAN_A, found as any, "2 outlines found."), { linked: 1, unlinked: 1, setAside: 0 });
+    const job = (await db.query("SELECT status, message FROM property_plan_scans WHERE id = $1", [SCAN_A])).rows[0];
+    assert.deepEqual(job, { status: "ready", message: "2 outlines found." });
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM property_plan_units WHERE plan_id = $1", [PLAN_A])).rows[0].n, 2);
+    // Already finished, or the plan's image changed while it ran: nothing is marked or saved.
+    assert.equal(await match.completePlanScan(db, SCAN_A, PLAN_A, found as any, "again"), null);
+    await scan(insert, SCAN_B, PLAN_A, "key-old", [], { status: "running", updated_at: new Date().toISOString(), created_at: new Date().toISOString() });
+    assert.equal(await match.completePlanScan(db, SCAN_B, PLAN_A, found as any, "stale"), null);
+    assert.equal((await db.query("SELECT status FROM property_plan_scans WHERE id = $1", [SCAN_B])).rows[0].status, "running");
+    assert.equal((await db.query("SELECT count(*)::int AS n FROM property_plan_units WHERE plan_id = $1", [PLAN_A])).rows[0].n, 2);
   });
 });
 
@@ -828,33 +836,23 @@ test("two outlines of one height, one half over the other, overlap", async () =>
   assert.equal(planPolygonsOverlap(corners(box(0.3, 0.2)), corners(box(0.35, 0.2))), true);
 });
 
-test("Not a unit: dismiss, put one back, put all back, and never dismiss a saved outline", { skip }, async () => {
+test("a removed outline stays removed: its scan proposal is set aside, and others are left as they were", { skip }, async () => {
   await withSchema(async (db, insert) => {
     await seedProperty(insert, db);
     await plan(insert, PLAN_A, "Lower Level", "key-a");
-    await scan(insert, SCAN_A, PLAN_A, "key-a", [candidate(1, "Mall", null, shape(1)), candidate(2, "Void", null, shape(2)), candidate(3, "L002", null, shape(3)), candidate(4, "L004", null, shape(4))]);
-    const dismiss = (body: any) => match.dismissPlanProposal(db, PLAN_A, SCAN_A, body, all);
+    await scan(insert, SCAN_A, PLAN_A, "key-a", [candidate(1, "Mall", null, shape(1)), candidate(2, "L002", null, shape(2)), candidate(3, "L004", null, shape(3))]);
+    await match.acceptAllPlanProposals(db, PLAN_A, SCAN_A, all);
     const planA = (await db.query("SELECT * FROM property_plans WHERE id = $1", [PLAN_A])).rows[0];
-    const open = async () => (await match.loadPlanMatchBoard(db, planA, { canScan: false })).proposals.map(p => p.id);
-    assert.deepEqual(await dismiss({ candidateId: "candidate-1" }), { dismissed: 1 });
-    assert.deepEqual(await dismiss({ candidateId: "candidate-1" }), { dismissed: 1 }, "twice is still one");
-    assert.deepEqual(await open(), ["candidate-2", "candidate-3", "candidate-4"]);
-    assert.equal((await units.loadPropertyUnits(db, P, TODAY))!.plans[0].proposals, 3);
-    assert.deepEqual(await dismiss({ candidateId: "candidate-1", dismissed: false }), { dismissed: 0 });
-    assert.deepEqual(await dismiss({ candidateId: "candidate-2" }), { dismissed: 1 });
-    assert.deepEqual(await dismiss({ candidateId: "candidate-1" }), { dismissed: 2 });
-    assert.deepEqual(await dismiss({ restoreAll: true }), { dismissed: 0 });
-    assert.deepEqual(await open(), ["candidate-1", "candidate-2", "candidate-3", "candidate-4"]);
-    // A saved proposal cannot be dismissed; once its outline is removed it can.
-    const saved = await match.acceptPlanProposal(db, PLAN_A, SCAN_A, { candidateId: "candidate-3", scheduleRowId: "ts-empty" }, all);
-    await failsWith(dismiss({ candidateId: "candidate-3" }), 409, /has been saved/);
-    await db.query("DELETE FROM property_plan_units WHERE id = $1", [saved.outlineId]);
-    assert.deepEqual(await dismiss({ candidateId: "candidate-3" }), { dismissed: 1 });
-    await failsWith(dismiss({ candidateId: "candidate-99" }), 404);
-    await failsWith(dismiss({}), 400);
-    await failsWith(match.dismissPlanProposal(db, PLAN_A, SCAN_A, { candidateId: "candidate-1" }, async () => false), 403);
-    await scan(insert, uuid(92), PLAN_A, "key-a", [candidate(1, "Mall", null, shape(1))], { status: "applied" });
-    await failsWith(match.dismissPlanProposal(db, PLAN_A, uuid(92), { candidateId: "candidate-1" }, all), 409);
+    const mall = (await match.loadPlanMatchBoard(db, planA, { canScan: false })).outlines.find(o => o.label === "Mall")!;
+    await db.query("DELETE FROM property_plan_units WHERE id = $1", [mall.id]);
+    await match.setRemovedOutlineAside(db, PLAN_A, mall.id);
+    const stored = (await db.query("SELECT candidates FROM property_plan_scans WHERE id = $1", [SCAN_A])).rows[0].candidates;
+    assert.deepEqual(stored.map((c: any) => [c.id, !!c.dismissed]), [["candidate-1", true], ["candidate-2", false], ["candidate-3", false]], "in the scan's own order");
+    assert.deepEqual((await match.loadPlanMatchBoard(db, planA, { canScan: false })).proposals, [], "it is not offered again");
+    // An outline drawn by hand came from no scan: removing it touches no scan.
+    await outline(insert, uuid(5), PLAN_A, shape(20));
+    await match.setRemovedOutlineAside(db, PLAN_A, uuid(5));
+    assert.deepEqual((await db.query("SELECT candidates FROM property_plan_scans WHERE id = $1", [SCAN_A])).rows[0].candidates, stored);
   });
 });
 
