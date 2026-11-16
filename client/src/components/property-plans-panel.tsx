@@ -12,7 +12,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { formatCalendarDate } from "@shared/calendar-date";
-import { Map as MapIcon, Upload, Trash2, Pencil, FileText, Layers, ChevronRight, ScanLine, Hand, Undo2, Link2, Maximize2, Minimize2, Search, AlertTriangle } from "lucide-react";
+import { Map as MapIcon, Upload, Trash2, Pencil, FileText, Layers, ChevronRight, ScanLine, Hand, Undo2, Link2, Maximize2, Minimize2, Search, AlertTriangle, Crop } from "lucide-react";
 import { interiorPoint } from "@shared/plan-geometry";
 import { layoutPlanMarkers } from "@shared/plan-marker-layout";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -20,6 +20,8 @@ import { PropertyPlanScanReview } from "./property-plan-scan-review";
 import { BrochurePlansBanner, PlanSourcesMenu } from "./property-plan-sources";
 import { Pill } from "@/components/ui/pill";
 import { PropertyPlanPreview, usePropertyPlanImage } from "./property-plan-preview";
+import { PlanCropBox, PlanCropDialog, usePlanCrop, WHOLE_PAGE, isWholePage } from "./property-plan-crop";
+import type { PlanCropRect } from "@shared/plan-crop";
 import { planUnitChoiceKey, type PropertyPlan as Plan, type PropertyPlanUnit as PlanUnit, type PickablePlanUnit as PickableUnit, type PlanPolygon } from "./property-plan-types";
 
 const STATUS_COLOURS: Record<string, { stroke: string; label: string }> = {
@@ -58,6 +60,7 @@ export function PropertyPlansPanel({ propertyId, bare = false }: { propertyId: s
   const [fullScreen, setFullScreen] = useState(false);
   const [unitSearch, setUnitSearch] = useState("");
   const [focusUnitId, setFocusUnitId] = useState<string | null>(null);
+  const [cropPlan, setCropPlan] = useState<Plan | null>(null);
   useEffect(() => {
     if (!fullScreen) return;
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setFullScreen(false); };
@@ -152,7 +155,7 @@ export function PropertyPlansPanel({ propertyId, bare = false }: { propertyId: s
         ? <span className="text-xs font-normal text-muted-foreground">No plans yet — upload a plan image or PDF{canScan ? ", or add one from a brochure or SharePoint," : ""} to trace units against the tenancy schedule.</span>
         : <Badge variant="secondary" className="text-xs">{plans.length} {bare && !fullScreen ? `floor${plans.length === 1 ? "" : "s"}` : ""}</Badge>}</CardTitle>
       <div className="flex flex-wrap items-center gap-1.5">
-        {canEdit && <UploadPlanButton propertyId={propertyId} onUploaded={plan => setActivePlanId(plan.id)} />}
+        {canEdit && <UploadPlanButton propertyId={propertyId} canScan={canScan} onUploaded={plan => setActivePlanId(plan.id)} />}
         {/* Brochure pages and SharePoint plan files — the BGP team only. */}
         {canScan && <PlanSourcesMenu propertyId={propertyId} onImported={setActivePlanId} />}
         {activePlan && canEdit && <>
@@ -162,7 +165,7 @@ export function PropertyPlansPanel({ propertyId, bare = false }: { propertyId: s
               "do we need all that — as much automated as possible"). */}
           {mode !== "select"
             ? <Button size="sm" variant="default" className="h-8 text-xs" onClick={() => changeMode(mode)} disabled={trace.isPending} data-testid="button-cancel-plan-edit">{trace.isPending ? "Tracing…" : mode === "trace" ? "Cancel trace" : "Cancel drawing"}</Button>
-            : <PlanEditMenu plan={activePlan} onTrace={() => changeMode("trace")} onDraw={() => changeMode("draw")} onDeleted={() => setActivePlanId(null)} />}
+            : <PlanEditMenu plan={activePlan} onTrace={() => changeMode("trace")} onDraw={() => changeMode("draw")} onCrop={() => setCropPlan(activePlan)} onDeleted={() => setActivePlanId(null)} />}
         </>}
         {activePlan && <Button size="sm" variant="outline" className="h-8 px-2" onClick={() => setFullScreen(value => !value)} aria-label={fullScreen ? "Exit full screen" : "Full screen"} title={fullScreen ? "Exit full screen (Esc)" : "Full screen"} data-testid="button-plan-fullscreen">{fullScreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}</Button>}
       </div>
@@ -208,6 +211,9 @@ export function PropertyPlansPanel({ propertyId, bare = false }: { propertyId: s
           </div>
         </div>}
       </>}
+      {cropPlan && <PlanCropDialog key={cropPlan.id} plan={cropPlan} onClose={() => setCropPlan(null)} onCropped={result => toast({ title: `${result.plan.floor} plan cropped`,
+        description: [result.removed ? `${result.removed} loose outline${result.removed === 1 ? "" : "s"} outside the crop removed.` : null,
+          result.scanning ? "Scanning the cropped plan for units." : null, "Edit, Restore the whole page puts it back."].filter(Boolean).join(" ") })} />}
       {linkDialog && activePlan && <LinkPolygonDialog propertyId={propertyId} plan={activePlan} polygon={linkDialog.polygon} imageKey={linkDialog.imageKey} existingUnit={linkDialog.existingUnit} onClose={() => setLinkDialog(null)} onSaved={() => { setLinkDialog(null); refreshUnits(); }} />}
       {selectedUnit && activePlan && !linkDialog && <UnitDetailDrawer key={selectedUnit.id} unit={selectedUnit} propertyId={propertyId} onClose={() => setSelectedUnitId(null)} onUpdated={refreshUnits} onRelink={() => setLinkDialog({ polygon: selectedUnit.polygon, existingUnit: selectedUnit })} readOnly={!canEdit} />}
     </CardContent>
@@ -221,7 +227,7 @@ function PlanCanvas({ plan, units, mode, busy, pendingPoints, setPendingPoints, 
   highlightedLabel: string | null; highlightedTenancyId: string | null; multipleFloors: boolean;
   view?: PlanView; focusUnitId?: string | null;
 }) {
-  const image = usePropertyPlanImage(plan.id);
+  const image = usePropertyPlanImage(plan.id, plan.storage_key);
   const containerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const [naturalSize, setNaturalSize] = useState({ w: plan.width || 1600, h: plan.height || 1000 });
@@ -329,7 +335,11 @@ function PlanCanvas({ plan, units, mode, busy, pendingPoints, setPendingPoints, 
   </div>;
 }
 
-function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUploaded: (plan: Plan) => void }) {
+// Loading a plan is two steps (Woody, 2026-11-16: "ability to crop the page
+// when loading up"): the file goes up with no scan started, then each page is
+// shown to crop or to use whole, and the unit scan starts on whichever image
+// is kept. Closing the dialog part way uses the remaining pages whole.
+function UploadPlanButton({ propertyId, canScan = false, onUploaded }: { propertyId: string; canScan?: boolean; onUploaded: (plan: Plan) => void }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -339,10 +349,40 @@ function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUp
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [completedPages, setCompletedPages] = useState(0);
+  // Pages that are up but not yet settled (cropped, or kept whole and scanned).
+  const [queue, setQueue] = useState<Plan[]>([]);
+  const [queueTotal, setQueueTotal] = useState(0);
+  const [cropRect, setCropRect] = useState<PlanCropRect>(WHOLE_PAGE);
+  const [settling, setSettling] = useState(false);
+  const loaded = useRef<Plan[]>([]);
+  const planCrop = usePlanCrop(propertyId);
+  async function startScan(plan: Plan) {
+    if (!canScan) return;
+    try { await apiRequest("POST", `/api/plans/${plan.id}/scan`, {}); } catch { /* no reader, or a scan is already running */ }
+    void queryClient.invalidateQueries({ queryKey: ["/api/plans", plan.id, "scan"] });
+  }
+  function finish() { loaded.current = []; setQueue([]); setQueueTotal(0); setCropRect(WHOLE_PAGE); setOpen(false); setFile(null); setCompletedPages(0); setProgress(""); setError(null); }
+  // Every page still waiting is used as it is.
+  async function useRest(pages: Plan[]) {
+    setSettling(true);
+    try { for (const plan of pages) await startScan(plan); } finally { setSettling(false); finish(); }
+  }
+  async function settle(crop: boolean) {
+    const plan = queue[0];
+    if (!plan) return;
+    setSettling(true); setError(null);
+    try {
+      if (crop) await planCrop.crop(plan, cropRect, true); else await startScan(plan);
+      const rest = queue.slice(1);
+      loaded.current = rest;
+      if (rest.length) { setQueue(rest); setCropRect(WHOLE_PAGE); onUploaded(rest[0]); } else finish();
+    } catch (cause: any) { setError(cause?.message || "The page could not be cropped."); }
+    finally { setSettling(false); }
+  }
   async function uploadImage(image: File, floorLabel: string): Promise<Plan> {
     if (image.size > 25 * 1024 * 1024) throw new Error("This page is over the 25MB upload limit. Export this page as a smaller lossless PNG and upload it separately.");
     const form = new FormData();
-    form.append("file", image); form.append("floor", floorLabel); form.append("source", "leasing-plan");
+    form.append("file", image); form.append("floor", floorLabel); form.append("source", "leasing-plan"); form.append("autoScan", "false");
     const response = await fetch(`/api/properties/${propertyId}/plans`, { method: "POST", body: form, credentials: "include", headers: getAuthHeaders() });
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || `Upload failed (${response.status})`);
     return response.json();
@@ -362,16 +402,17 @@ function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUp
       if (isPdf && completedPages === 0) {
         setProgress("Rendering the PDF at print quality…");
         const form = new FormData();
-        form.append("file", file); form.append("floor", floor); form.append("source", "leasing-plan");
+        form.append("file", file); form.append("floor", floor); form.append("source", "leasing-plan"); form.append("autoScan", "false");
         const response = await fetch(`/api/properties/${propertyId}/plans`, { method: "POST", body: form, credentials: "include", headers: getAuthHeaders() });
         const body = await response.json().catch(() => ({}));
         if (response.ok) {
           serverRendered = true;
           const saved: Plan[] = body.plans || [];
+          loaded.current.push(...saved);
           if (saved[0]) onUploaded(saved[0]);
           toast({ title: `Uploaded ${saved.length} page${saved.length === 1 ? "" : "s"}`,
             description: [body.namedFromPdf ? `${body.namedFromPdf} floor name${body.namedFromPdf === 1 ? "" : "s"} read from the PDF.` : "Double-click a floor name to rename it.",
-              body.scanning ? "Scanning for units — Review scan when it's ready." : null, "The original PDF is kept."].filter(Boolean).join(" ") });
+              "The original PDF is kept."].filter(Boolean).join(" ") });
         } else if (response.status !== 503) throw new Error(body.error || `Upload failed (${response.status})`);
       }
       if (serverRendered) { /* done */ }
@@ -395,17 +436,21 @@ function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUp
             const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error("This PDF page could not be converted to an image.")), "image/png"));
             setProgress(`Uploading page ${pageNumber} of ${pdfDocument.numPages}…`);
             const plan = await uploadImage(new File([blob], file.name.replace(/\.pdf$/i, "") + `-p${pageNumber}.png`, { type: "image/png" }), pageNumber === 1 ? floor : `${floor} · page ${pageNumber}`);
-            uploaded = pageNumber; setCompletedPages(pageNumber); onUploaded(plan);
+            uploaded = pageNumber; setCompletedPages(pageNumber); loaded.current.push(plan); onUploaded(plan);
           } finally { canvas.width = 0; canvas.height = 0; page.cleanup(); }
         }
         toast({ title: `Uploaded ${pdfDocument.numPages} page${pdfDocument.numPages === 1 ? "" : "s"}`, description: "Each page has its own plan. Double-click its floor name to rename it." });
       } else {
         setProgress("Uploading original image…");
         const plan: any = await uploadImage(file, floor);
+        loaded.current.push(plan);
         onUploaded(plan);
-        toast({ title: "Plan uploaded", description: `The original image resolution has been kept.${plan.scanning ? " Scanning for units — Review scan when it's ready." : ""}` });
+        toast({ title: "Plan uploaded", description: "The original image resolution has been kept." });
       }
-      setOpen(false); setFile(null); setCompletedPages(0); setProgress("");
+      // Up: now each page is cropped or used whole.
+      const pages = loaded.current.slice();
+      setFile(null); setCompletedPages(0); setProgress("");
+      if (pages.length) { setQueue(pages); setQueueTotal(pages.length); setCropRect(WHOLE_PAGE); onUploaded(pages[0]); } else finish();
     } catch (cause: any) {
       const message = `${cause?.message || "Upload failed."}${uploaded ? ` ${uploaded} page${uploaded === 1 ? " has" : "s have"} already been saved. Retry resumes at the next page.` : ""}`;
       setError(message);
@@ -416,16 +461,35 @@ function UploadPlanButton({ propertyId, onUploaded }: { propertyId: string; onUp
       queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plans"] });
     }
   }
+  const cropping = queue[0] || null;
+  const pageNumber = queueTotal - queue.length + 1;
   return <>
     <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setOpen(true)} data-testid="button-upload-plan"><Upload className="w-3.5 h-3.5 mr-1" />Upload plan</Button>
-    <Dialog open={open} onOpenChange={value => { if (!uploading) setOpen(value); }}><DialogContent><DialogHeader><DialogTitle>Upload property plan</DialogTitle></DialogHeader>
+    <Dialog open={open} onOpenChange={value => {
+      if (uploading || settling) return;
+      // Closed part way: the pages already up are used as they are.
+      if (!value && loaded.current.length) { void useRest(loaded.current.slice()); return; }
+      setOpen(value);
+    }}><DialogContent className={cropping ? "max-w-4xl max-h-[92vh] overflow-y-auto" : undefined}>
+      {cropping ? <>
+        <DialogHeader><DialogTitle>{queueTotal > 1 ? `Crop page ${pageNumber} of ${queueTotal}: ${cropping.floor}` : `Crop the ${cropping.floor} plan`}</DialogTitle></DialogHeader>
+        <PlanCropBox key={cropping.id} plan={cropping} rect={cropRect} onChange={setCropRect} disabled={settling} />
+        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+        <DialogFooter className="gap-2">
+          {queue.length > 1 && <Button variant="ghost" disabled={settling} onClick={() => useRest(queue)} data-testid="button-plan-crop-skip-all">Use every page as it is</Button>}
+          <Button variant="outline" disabled={settling} onClick={() => settle(false)} data-testid="button-plan-crop-skip">Use the whole page</Button>
+          <Button disabled={settling || isWholePage(cropRect)} onClick={() => settle(true)} data-testid="button-plan-crop-apply">{settling ? "Working…" : "Crop to this area"}</Button>
+        </DialogFooter>
+      </> : <>
+      <DialogHeader><DialogTitle>Upload property plan</DialogTitle></DialogHeader>
       <div className="space-y-3">
         <label className="block text-sm">Floor / plan name <span className="text-xs text-muted-foreground">(PDF pages with a title use it)</span><input value={floor} disabled={uploading || completedPages > 0} onChange={event => setFloor(event.target.value)} className="mt-1 w-full text-sm border rounded px-2 py-2 bg-background" /></label>
         <label className="block text-sm">PDF, PNG, JPG or WebP · up to 25MB<input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" disabled={uploading} onChange={event => { setFile(event.target.files?.[0] || null); setCompletedPages(0); setError(null); setProgress(""); }} className="mt-2 block w-full text-sm" /></label>
-        <p className="text-xs text-muted-foreground">Images keep their original resolution. PDFs are rendered at print quality with the original kept, one plan per page, each named from its title where the page has one (e.g. "Lower Level"). The BGP team's uploads start a unit scan straight away.</p>
+        <p className="text-xs text-muted-foreground">Images keep their original resolution. PDFs are rendered at print quality with the original kept, one plan per page, each named from its title where the page has one (e.g. "Lower Level"). Once it is up you can crop each page to the drawing, or use it whole{canScan ? "; the unit scan starts after that" : ""}.</p>
         {progress && <p role="status" className="text-sm">{progress}</p>}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      </div><DialogFooter><Button variant="outline" disabled={uploading} onClick={() => setOpen(false)}>Cancel</Button><Button onClick={submit} disabled={uploading || !file || !floor.trim()}>{uploading ? "Uploading…" : completedPages ? "Resume upload" : "Upload"}</Button></DialogFooter>
+      </div><DialogFooter><Button variant="outline" disabled={uploading} onClick={() => { if (loaded.current.length) void useRest(loaded.current.slice()); else setOpen(false); }}>Cancel</Button><Button onClick={submit} disabled={uploading || !file || !floor.trim()}>{uploading ? "Uploading…" : completedPages ? "Resume upload" : "Upload"}</Button></DialogFooter>
+      </>}
     </DialogContent></Dialog>
   </>;
 }
@@ -443,9 +507,15 @@ function OriginalPdfLink({ plan }: { plan: Plan }) {
   }}><FileText className="w-3 h-3 mr-1" />Original PDF</Button>;
 }
 
-function PlanEditMenu({ plan, onTrace, onDraw, onDeleted }: { plan: Plan; onTrace: () => void; onDraw: () => void; onDeleted: () => void }) {
+function PlanEditMenu({ plan, onTrace, onDraw, onCrop, onDeleted }: { plan: Plan; onTrace: () => void; onDraw: () => void; onCrop: () => void; onDeleted: () => void }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const planCrop = usePlanCrop(plan.property_id);
+  const restore = useMutation({
+    mutationFn: () => planCrop.restore(plan),
+    onSuccess: result => toast({ title: "The whole page is back", description: result.scanning ? "Scanning it for units." : "The outlines moved with it." }),
+    onError: error => toast({ title: "Could not restore the page", description: error.message, variant: "destructive" }),
+  });
   const remove = useMutation({
     mutationFn: () => apiRequest("DELETE", `/api/plans/${plan.id}`),
     onSuccess: () => { onDeleted(); queryClient.invalidateQueries({ queryKey: ["/api/properties", plan.property_id, "plans"] }); toast({ title: "Plan deleted" }); },
@@ -456,6 +526,9 @@ function PlanEditMenu({ plan, onTrace, onDraw, onDeleted }: { plan: Plan; onTrac
     <DropdownMenuContent align="end">
       <DropdownMenuItem onSelect={onTrace} data-testid="button-trace-property-unit"><ScanLine className="w-3.5 h-3.5 mr-2" />Trace a unit (click inside it)</DropdownMenuItem>
       <DropdownMenuItem onSelect={onDraw} data-testid="button-toggle-draw-mode"><Pencil className="w-3.5 h-3.5 mr-2" />Draw a unit by its corners</DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={onCrop} data-testid="button-plan-crop"><Crop className="w-3.5 h-3.5 mr-2" />Crop this plan</DropdownMenuItem>
+      {plan.cropped && <DropdownMenuItem disabled={restore.isPending} onSelect={() => { if (confirm(`Bring back the whole ${plan.floor} page? The outlines move with it.`)) restore.mutate(); }} data-testid="button-plan-crop-undo"><Undo2 className="w-3.5 h-3.5 mr-2" />Restore the whole page</DropdownMenuItem>}
       <DropdownMenuSeparator />
       <DropdownMenuItem className="text-destructive" disabled={remove.isPending} onSelect={() => { if (confirm(`Delete the ${plan.floor} plan and its outlines? The linked tenancy records will be kept.`)) remove.mutate(); }}><Trash2 className="w-3.5 h-3.5 mr-2" />Delete the {plan.floor} plan</DropdownMenuItem>
     </DropdownMenuContent>

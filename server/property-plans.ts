@@ -12,6 +12,9 @@ import { saveFile, getFile } from "./file-storage";
 import { clientBlockedForProperty } from "./company-scope";
 import { PropertyPlanInputError, validatePropertyPlanPolygon, validatePlanUnitLink,
   queryPickableUnits, queryPropertyPlanUnits, propertyPlanUnitStatus } from "./property-plan-links";
+import { createHash } from "crypto";
+import { readPlanCropRect, planCropPixels, planCropOutcome, planCropRefusal, planCropStorageKey, planCropOrigin,
+  uncropPlanOutline, PLAN_CROP_MIN_PIXELS, type PlanPointPair } from "@shared/plan-crop";
 
 const router = Router();
 router.use(propertyPlanScanningRouter);
@@ -64,7 +67,7 @@ router.get("/api/properties/:propertyId/plans", requireAuth, async (req: Request
     if (await clientBlockedForProperty(req, String(req.params.propertyId))) return res.status(403).json({ error: "This property is outside your access." });
     const { rows } = await pool.query(`SELECT id, property_id, floor, display_order, storage_key, width, height, source, notes, (original_pdf_key IS NOT NULL) AS has_pdf, pdf_page, created_at, updated_at
       FROM property_plans WHERE property_id = $1 AND COALESCE(is_geo, false) = false ORDER BY display_order, floor`, [req.params.propertyId]);
-    res.json({ plans: rows });
+    res.json({ plans: rows.map(row => ({ ...row, cropped: !!planCropOrigin(row.storage_key) })) });
   } catch (err) { errorResponse(res, err, "Could not load plans."); }
 });
 
@@ -272,14 +275,109 @@ router.get("/api/plans/:planId/image", requireAuth, async (req: Request, res: Re
   try {
     const plan = await planForRequest(req, res);
     if (!plan) return;
+    // A crop gives the plan a new image at the same address, so the browser
+    // checks each time: the tag is the image's key, and an unchanged image
+    // answers 304 with nothing read from the store.
+    const etag = `"${createHash("sha1").update(String(plan.storage_key)).digest("hex").slice(0, 20)}"`;
+    res.setHeader("ETag", etag);
+    res.setHeader("Cache-Control", "private, no-cache");
+    if (req.headers["if-none-match"] === etag) return res.status(304).end();
     const file = await getFile(plan.storage_key);
     if (!file) return res.status(404).json({ error: "Plan image missing." });
     if (file.contentType && !/^image\/(png|jpeg|jpg|webp|gif)$/i.test(file.contentType)) return res.status(415).json({ error: "This stored file is not a supported plan image. Upload a PNG, JPEG or WebP image." });
     res.setHeader("Content-Type", file.contentType || "image/png");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("Cache-Control", "private, max-age=86400");
     res.end(file.data);
   } catch (err) { errorResponse(res, err, "Could not load the image."); }
+});
+
+// Crop a plan to the part of the page a person chose (Woody, 2026-11-16:
+// "ability to crop the page when loading up"). The rules are
+// shared/plan-crop.ts: outlines inside the crop are re-measured against it,
+// loose ones outside go, and a crop that would cut an outline or leave a
+// matched unit outside is refused. The page as loaded is kept in the store and
+// named in the new image's key, so Restore the whole page can undo it. A scan
+// read from the old image no longer fits (every scan check compares the
+// image key), so one in flight is stopped and, for the BGP team, started
+// again on the cropped image.
+const outlinePoints = (polygon: any): PlanPointPair[] => (Array.isArray(polygon?.points) ? polygon.points : [])
+  .filter((p: any) => Array.isArray(p) && p.length === 2).map((p: any) => [Number(p[0]), Number(p[1])] as PlanPointPair);
+
+async function changePlanImage(req: Request, res: Response, plan: any, next: { storageKey: string; width: number; height: number },
+  outlines: (rows: any[]) => { keep: Array<{ id: string; points: PlanPointPair[] }>; remove: string[]; refusal: string | null }) {
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    const locked = await planForRequest(req, res, db, true, plan.property_id);
+    if (!locked) { await db.query("ROLLBACK"); return null; }
+    if (locked.storage_key !== plan.storage_key) { await db.query("ROLLBACK"); res.status(409).json({ error: "The plan image changed while this was open. Reload and try again." }); return null; }
+    const rows = (await db.query("SELECT id, polygon, tenancy_unit_id, unit_id FROM property_plan_units WHERE plan_id = $1 ORDER BY id FOR UPDATE", [plan.id])).rows;
+    const result = outlines(rows);
+    if (result.refusal) { await db.query("ROLLBACK"); res.status(409).json({ error: result.refusal }); return null; }
+    for (const row of result.keep) await db.query("UPDATE property_plan_units SET polygon = $2::jsonb, updated_at = NOW() WHERE id = $1 AND plan_id = $3", [row.id, JSON.stringify({ points: row.points }), plan.id]);
+    if (result.remove.length) await db.query("DELETE FROM property_plan_units WHERE plan_id = $1 AND id = ANY($2::uuid[])", [plan.id, result.remove]);
+    // A scan of the old image: stop one in flight, and note whether proposals were waiting.
+    const stopped = await db.query(`UPDATE property_plan_scans SET status = 'failed', message = 'The plan image changed. Scan the plan again. Saved outlines are unchanged.', updated_at = now()
+      WHERE plan_id = $1 AND status = 'running' RETURNING id`, [plan.id]);
+    const waiting = await db.query(`SELECT 1 FROM property_plan_scans WHERE plan_id = $1 AND status = 'ready' AND image_key = $2 LIMIT 1`, [plan.id, plan.storage_key]);
+    const updated = (await db.query(`UPDATE property_plans SET storage_key = $2, width = $3, height = $4, updated_at = NOW() WHERE id = $1
+      RETURNING id, property_id, floor, display_order, storage_key, width, height, source, notes, (original_pdf_key IS NOT NULL) AS has_pdf, pdf_page, created_at, updated_at`,
+      [plan.id, next.storageKey, next.width, next.height])).rows[0];
+    await db.query("COMMIT");
+    const rescan = req.body?.scan === true || stopped.rows.length > 0 || waiting.rows.length > 0;
+    const scanning = rescan ? await autoScanPlans(req, [updated]) : 0;
+    return { plan: { ...updated, cropped: !!planCropOrigin(updated.storage_key) }, kept: result.keep.length, removed: result.remove.length, scanning };
+  } catch (error) { await db.query("ROLLBACK").catch(() => {}); throw error; }
+  finally { db.release(); }
+}
+
+router.post("/api/plans/:planId/crop", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const plan = await planForRequest(req, res);
+    if (!plan) return;
+    if (plan.is_geo) return res.status(400).json({ error: "Only an image plan can be cropped." });
+    if (req.body?.imageKey !== undefined && req.body.imageKey !== plan.storage_key) return res.status(409).json({ error: "The plan image changed while this was open. Reload and try again." });
+    const asked = readPlanCropRect(req.body);
+    if ("error" in asked) return res.status(400).json({ error: asked.error });
+    const file = await getFile(plan.storage_key);
+    if (!file) return res.status(404).json({ error: "Plan image missing." });
+    // Work on the image as the browser shows it (a phone photo can be stored turned).
+    let image = file.data as Buffer;
+    let meta = await sharp(image, { limitInputPixels: 100_000_000 }).metadata();
+    if (meta.orientation && meta.orientation !== 1) {
+      image = await sharp(image, { limitInputPixels: 100_000_000 }).rotate().png().toBuffer();
+      meta = await sharp(image, { limitInputPixels: 100_000_000 }).metadata();
+    }
+    if (!meta.width || !meta.height) return res.status(415).json({ error: "This plan image could not be read." });
+    const crop = planCropPixels(asked.rect, meta.width, meta.height);
+    if (crop.pixels.width < PLAN_CROP_MIN_PIXELS || crop.pixels.height < PLAN_CROP_MIN_PIXELS) return res.status(400).json({ error: "That crop is too small to use as a plan. Drag a bigger box." });
+    // Check the outlines before the image work, so a refused crop costs nothing.
+    const before = (await pool.query("SELECT id, polygon, tenancy_unit_id, unit_id FROM property_plan_units WHERE plan_id = $1", [plan.id])).rows;
+    const judge = (rows: any[]) => {
+      const outcome = planCropOutcome(rows.map(row => ({ id: row.id, points: outlinePoints(row.polygon), linked: !!(row.tenancy_unit_id || row.unit_id) })), crop.rect);
+      return { keep: outcome.keep, remove: outcome.remove, refusal: planCropRefusal(outcome) };
+    };
+    const early = judge(before).refusal;
+    if (early) return res.status(409).json({ error: early });
+    const cropped = await sharp(image, { limitInputPixels: 100_000_000 }).extract(crop.pixels).png().toBuffer();
+    const storageKey = planCropStorageKey(plan.storage_key, crop.pixels, meta.width, meta.height, Date.now().toString(36));
+    await saveFile(storageKey, cropped, "image/png", `${String(plan.floor || "plan").replace(/[^\w .-]/g, "")}-cropped.png`);
+    const result = await changePlanImage(req, res, plan, { storageKey, width: crop.pixels.width, height: crop.pixels.height }, judge);
+    if (result) res.json(result);
+  } catch (err) { if (!res.headersSent) errorResponse(res, err, "Could not crop the plan."); }
+});
+
+router.post("/api/plans/:planId/crop/undo", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const plan = await planForRequest(req, res);
+    if (!plan) return;
+    const origin = planCropOrigin(plan.storage_key);
+    if (!origin) return res.status(400).json({ error: "This plan has not been cropped." });
+    if (!await getFile(origin.pageKey)) return res.status(404).json({ error: "The whole page is no longer in the store. Load the plan again." });
+    const result = await changePlanImage(req, res, plan, { storageKey: origin.pageKey, width: origin.pageWidth, height: origin.pageHeight },
+      rows => ({ keep: rows.map(row => ({ id: row.id, points: uncropPlanOutline(outlinePoints(row.polygon), origin.rect) })), remove: [], refusal: null }));
+    if (result) res.json(result);
+  } catch (err) { if (!res.headersSent) errorResponse(res, err, "Could not restore the whole page."); }
 });
 
 router.get("/api/plans/:planId/units", requireAuth, async (req: Request, res: Response) => {

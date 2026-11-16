@@ -5130,7 +5130,7 @@ app.use("/api/branding/assets", express.static(
         // Manual plan editing is property-scoped in the handlers. Paid scan
         // starts remain staff-only; clients can review already scanned outlines.
         if (((req.method === "PATCH" || req.method === "DELETE") && /^\/api\/plans\/[^/]+$/.test(p)) ||
-            (req.method === "POST" && /^\/api\/plans\/[^/]+\/(units|trace-unit)$/.test(p)) ||
+            (req.method === "POST" && /^\/api\/plans\/[^/]+\/(units|trace-unit|crop|crop\/undo)$/.test(p)) ||
             (req.method === "POST" && /^\/api\/plans\/[^/]+\/scans\/[^/]+\/apply$/.test(p)) ||
             ((req.method === "PATCH" || req.method === "DELETE") && /^\/api\/plan-units\/[^/]+$/.test(p))) return next();
         // Contact-graph link writes ride under the allowed /api/crm/contacts

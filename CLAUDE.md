@@ -1974,6 +1974,32 @@ untouched when it is off, and
   `server/property-plans.ts`). The older one-shot review
   (`applyPropertyPlanScan`) and the Plans card still work and are reached
   from the **Plans** button.
+- **Cropping a plan** (Woody, 2026-11-16: "ability to crop the page when
+  loading up"). Rules and tests: `shared/plan-crop.ts`,
+  `shared/plan-crop.test.ts` (in `npm test`). `POST /api/plans/:planId/crop`
+  (a box as fractions of the page, in `server/property-plans.ts`) cuts the
+  image to a new PNG and, in one transaction, re-measures every outline
+  against it. An outline wholly outside the crop is removed only when it is
+  tied to no schedule row; **a crop that would cut through an outline, or
+  leave a matched unit outside, is refused** (409), so cropping never loses a
+  match. The page as loaded stays in the store and is named in the cropped
+  image's key (`<page key>.crop-<left>-<top>-<width>-<height>-of-<W>x<H>-<stamp>.png`,
+  `planCropOrigin`): `POST …/crop/undo` (**Restore the whole page**) puts it
+  back with the outlines; there is no column for it. A crop changes
+  `storage_key`, which every scan check already compares, so a scan of the
+  old image is stopped and, for BGP staff, started again on the new one.
+  The plan image route answers with an ETag of the key and `no-cache` (it
+  was a day's cache; a cropped plan at the same address would have shown the
+  old picture under moved outlines), and `usePropertyPlanImage` takes the
+  key where the caller has it. **Upload plan** sends `autoScan=false`, then
+  shows each page to crop or use whole (`UploadPlanButton` in
+  `property-plans-panel.tsx`, `PlanCropBox` in `property-plan-crop.tsx`) and
+  starts the scan after that step; closing part way uses the remaining pages
+  whole. **Crop this plan** and **Restore the whole page** are in the plan's
+  Edit menu. Open to every login that may edit the plan (the client gateway
+  lists both routes; the handler checks the property). Brochure and
+  SharePoint imports have no crop step: crop them from the Edit menu.
+  Guards: `qa/regression/plan-crop-guards.test.mjs`.
 - **Client**: `client/src/components/property-page/`. Tests:
   `shared/property-units.test.ts`, `server/property-page.test.ts` (its SQL
   half runs in a throwaway schema and needs `PROPERTY_PAGE_DATABASE_URL`

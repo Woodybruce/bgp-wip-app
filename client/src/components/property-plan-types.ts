@@ -9,6 +9,8 @@ export interface PropertyPlan {
   notes: string | null;
   has_pdf?: boolean;
   pdf_page?: number | null;
+  storage_key?: string;   // the image's key: it changes when the plan is cropped
+  cropped?: boolean;      // cut from a bigger page, which can be brought back
 }
 
 export interface PlanPolygon { points: [number, number][] }
