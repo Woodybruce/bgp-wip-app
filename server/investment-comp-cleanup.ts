@@ -50,8 +50,17 @@ const days = (a: unknown, b: unknown) => {
   const x = Date.parse(String(a)), y = Date.parse(String(b));
   return Number.isFinite(x) && Number.isFinite(y) ? Math.abs(x - y) / 86_400_000 : null;
 };
+const normName = (v: unknown) => String(v || "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim();
 function sameDeal(a: Row, b: Row): boolean {
-  if (!sameBuilding([a.property_name, a.address], [b.property_name, b.address])) return false;
+  const identical = normName(a.property_name) !== "" && normName(a.property_name) === normName(b.property_name);
+  // Two RCA records are two RCA deals unless they carry the same name (RCA
+  // files a portfolio and its buildings as separate deals), and a portfolio
+  // is matched only on its exact name: "GBR Retail Portfolio 2025" shares
+  // its words with every other portfolio that year.
+  const bothRca = a.source === "RCA" && b.source === "RCA";
+  const portfolio = /portfolio|acquires/i.test(`${a.property_name} ${b.property_name}`);
+  if ((bothRca || portfolio) && !identical) return false;
+  if (!identical && !sameBuilding([a.property_name, a.address], [b.property_name, b.address])) return false;
   const pa = Number(a.price), pb = Number(b.price);
   if (pa > 0 && pb > 0) {
     if (Math.abs(pa - pb) / Math.max(pa, pb) > 0.03) return false;
@@ -131,7 +140,7 @@ export async function runCompCleanup(opts: { apply: boolean; actorId?: string | 
     liveDeals: livePlan.map((p) => ({ ...label(p.comp), goes: p.kind === "restore" ? `back to its tracker row at ${p.status}` : p.kind === "fill" ? `already on the tracker as "${p.trackerName}": its blanks filled` : `new tracker row (Purchases) at ${p.status}` })),
     duplicates: dupes.map((d) => ({ keep: label(d.keeper), remove: d.others.map(label), filledFromOlder: d.filled })),
     classes: Object.entries(classTally).sort((a, b) => b[1] - a[1]).map(([change, count]) => ({ change, count })),
-    leftForYou: rest.filter(leftForJack).map(label),
+    leftForYou: finalRows.filter(leftForJack).map(label),
     after: { comps: finalRows.length },
   };
   if (!opts.apply) return report;
