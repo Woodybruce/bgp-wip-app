@@ -169,6 +169,13 @@ drawn over it, held up through the phone scenes); and two lines out of the
 voice, "So, we've upgraded a little" ("its covered with the next bit") and
 "Anyway, Mark," so the first app scene opens on "This is ChatBGP".
 
+"This is ChatBGP" at the head of the first app scene is a re-take (Woody
+said the wrong name on the Teams call and sent a four-second phone clip of
+the line): its sound is laid into a copy of the recording's audio at the same
+place, band-limited and levelled to sit with the call audio, with the length
+of the recording kept exactly so every later time in the cut list still
+holds. `REC` may be that audio file; only a camera scene needs the picture.
+
 ## Two versions
 
 - **Room cut**, about 2 minutes 45. Woody can pause it and talk.
