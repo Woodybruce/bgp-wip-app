@@ -1070,16 +1070,35 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
         // A landing page: take the first PDF it links to, or follow its own
         // "download / brochure" link one step further.
         let landed = "";
-        for (let hop = 0; hop < 2 && got && !isPdfFile(got) && got.type.includes("html"); hop++) {
+        let landedNote = "";
+        // Agents' mail tools (CBRE's cbreemail.com, Jack 2026-11-16) often
+        // land on a page that forwards on by itself — a meta refresh or a
+        // script setting the location — rather than a plain redirect, and
+        // put the file behind a document host's link with no ".pdf" in it.
+        const FILE_HOST = /box\.com|sharefile|dropbox|sharepoint\.com|onedrive|1drv\.ms|docsend|wetransfer|drive\.google|amazonaws\.com|blob\.core\.windows|azureedge|cloudfront/i;
+        for (let hop = 0; hop < 4 && got && !isPdfFile(got) && got.type.includes("html"); hop++) {
           const page = got.buffer.toString("utf8");
-          landed = (() => { try { return new URL(got!.url).hostname; } catch { return ""; } })();
+          landed = (() => { try { const u = new URL(got!.url); return `${u.hostname}${u.pathname.length > 1 ? u.pathname.slice(0, 60) : ""}`; } catch { return ""; } })();
+          const title = (page.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1]?.replace(/\s+/g, " ").trim().slice(0, 80) || "";
+          const forward = (page.match(/<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=["'][^"']*url=([^"'>\s]+)/i) || [])[1]
+            || (page.match(/(?:window\.|document\.)?location(?:\.href)?\s*=\s*["'](https?:[^"']+)["']/i) || [])[1]
+            || (page.match(/location\.(?:replace|assign)\(\s*["'](https?:[^"']+)["']/i) || [])[1];
+          const anchors = Array.from(page.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi))
+            .map((m) => ({ href: m[1], text: m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() }))
+            .filter((a) => !/^(mailto|javascript|tel):/i.test(a.href) && !/unsubscribe|preferences|privacy|cookie/i.test(`${a.text} ${a.href}`));
           const pdfHref = (page.match(/(?:href|src|data-url|data-href)=["']([^"']+\.pdf[^"']*)["']/i) || [])[1]
             || (page.match(/["'](https?:[^"'\s]+\.pdf[^"'\s]*)["']/i) || [])[1]
-            || (Array.from(page.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi))
-              .find((m) => /brochure|download/i.test(`${m[2].replace(/<[^>]+>/g, " ")} ${m[1]}`) && !/^(mailto|javascript):/i.test(m[1])) || [])[1];
+            || forward
+            || anchors.find((a) => /brochure|download|particulars|view document|open document/i.test(`${a.text} ${a.href}`))?.href
+            || anchors.find((a) => FILE_HOST.test(a.href))?.href;
+          landedNote = title ? ` ("${title}")` : "";
+          if (!pdfHref) {
+            const seen = anchors.slice(0, 3).map((a) => `${a.text || "link"} → ${(() => { try { return new URL(a.href, got!.url).hostname; } catch { return "?"; } })()}`).join("; ");
+            if (seen) landedNote += `; its links: ${seen}`;
+          }
           got = pdfHref ? await fetchPublic(new URL(decode(pdfHref), got.url).toString(), 30 * 1024 * 1024) : null;
         }
-        if (!isPdfFile(got)) { say(`The "${l.text || "brochure"}" link in ${email} led to ${landed ? `a page on ${landed}` : "a page"}, not a PDF — it may need a form or a login.`); continue; }
+        if (!isPdfFile(got)) { say(`The "${l.text || "brochure"}" link in ${email} led to ${landed ? `a page on ${landed}` : "a page"}${landedNote}, not a PDF — it may need a form or a login.`); continue; }
         got = got!;
         const fileName = `${names[0].replace(/[\/\\:*?"<>|]/g, "-")} - brochure.pdf`;
         const where = `the brochure behind the "${l.text || "download"}" link (${email})`;
