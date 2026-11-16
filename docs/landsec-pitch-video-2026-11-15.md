@@ -76,19 +76,36 @@ leasing lead for Landsec on Bluewater", and an ending where he flies off as a
 superhero past a bat-signal-style light carrying the BGP logo, with a deeper
 voice saying "Welcome to ChatBGP, your superhero app".
 
-- The presenters are drawn in `script/pitch-video/avatars.html` (Woody,
-  Charlotte, Mark and David Bell) and photographed frame by frame by
-  `avatar-render.cjs`. Their mouths follow the loudness of the voice; the cut
-  list says when each points at the screen, waves or gives a thumbs up, timed
-  to the words. They are cartoons with a name tag, not photographs: Charlotte
-  and Mark were drawn from the photos Woody sent, which are not in the repo.
-  Charlotte and Mark do not speak. **Each of them should see the film before
-  it goes to Landsec** (their likeness; Mark is the client).
+- **The look** (Woody, 16 November, on the first hand-drawn set: "these
+  avatars are shit ... look like South Park and unflattering. I should be
+  very handsome and Charlotte too"; "remove my glasses"; and, shown a flat
+  comic-style drawing against a film-style render, "this is better I
+  think"). The cast are clean comic illustrations made with the Gamma image
+  generator from a description of each person's appearance only: no names
+  and no photographs were sent to it. Charlotte is drawn polished and
+  glamorous; she is not drawn "sexy" (a real colleague in a client film:
+  her look is hers to choose).
+- **The rig**: `script/pitch-video/avatars.html` lays a small rig over each
+  drawing and `avatar-render.cjs` photographs it frame by frame. Woody's
+  mouth follows the loudness of his voice, eyes blink, bodies sway; he has
+  three forearms cut from his pose drawings (pointing, thumbs up, waving)
+  that swing from the elbow, so his face never changes between gestures. The
+  cut list says when each gesture happens, timed to his words. Charlotte and
+  Mark do not speak; they appear with a name tag where the film is about
+  them, and **dance when the Heads of Terms are signed** (Woody: "charlotte
+  and mark should do some dancing when the HOTs are agreed").
+- The drawings and their `rig.json` are kept outside the repo and passed as
+  `AVATAR_ART`. `avatar-key.py` takes a drawing off its white background and
+  `avatar-rig.py <folder>` builds the rig (the forearms, and where each
+  mouth and eye is, read off the drawings by hand: a new drawing needs its
+  figures put in that file).
+- **Charlotte, Mark and David should each see the film before it goes to
+  Landsec**: it is their likeness, and Mark is the client.
 - Woody turns into his avatar at the end of the intro (his last picture
   shrinks into the corner as the drawing pops up). David Bell's arrival is a
   drawn scene: he flies in on wings and they hug.
-- The ending is a caped hero in BGP colours with a BGP chest badge, and the
-  searchlight carries the BGP wordmark. It is deliberately not the Batman
+- The ending is an original caped hero flying up through a searchlight that
+  carries the BGP wordmark. It is deliberately not the Batman
   costume or emblem (another company's character, in a commercial pitch).
 - The ending's line is a stock voice pitched down, because Woody has not
   recorded it. When he does, pass his take as `HERO_VOICE` and it is used in

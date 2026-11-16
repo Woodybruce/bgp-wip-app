@@ -13,7 +13,7 @@
 // false starts and long pauses left out; it is not in the repo.
 //
 //   REC=<recording.mp4> CUT=<cutlist.json> OUT_DIR=<folder with the clips and film.log> \
-//     [HERO_VOICE=<wav>] [ONLY=properties,unit] [REDO=hots] node script/pitch-video/voice-cut.cjs [out.mp4]
+//     AVATAR_ART=<folder> [HERO_VOICE=<wav>] [ONLY=properties,unit] [REDO=hots] node script/pitch-video/voice-cut.cjs [out.mp4]
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
@@ -25,7 +25,10 @@ const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(",")) : null;
 const items = JSON.parse(fs.readFileSync(CUT, "utf8")).filter(it => !ONLY || ONLY.has(it.clip || it.name));
 // REDO=hots,brief: make only those scenes again and reuse every other part from the last run.
 const REDO = process.env.REDO ? new Set(process.env.REDO.split(",")) : null;
-const CAPTIONS = process.env.CAPTIONS !== "0", AVATARS = process.env.AVATARS !== "0";
+// AVATAR_ART: the folder with the character drawings and their rig.json (kept outside the repo).
+const ART = process.env.AVATAR_ART, RIG = ART && fs.existsSync(path.join(ART, "rig.json")) ? JSON.parse(fs.readFileSync(path.join(ART, "rig.json"), "utf8")) : null;
+const cast = { rig: RIG, art: ART ? "file://" + path.resolve(ART) + "/" : "" };
+const CAPTIONS = process.env.CAPTIONS !== "0", AVATARS = process.env.AVATARS !== "0" && !!RIG;
 const MAX_SPEED = Number(process.env.MAX_SPEED || 2.6), MAX_PHONE_SPEED = Number(process.env.MAX_PHONE_SPEED || 3.2), FPS = 25;
 const FONT = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"].find(f => fs.existsSync(f));
 const FONT_BOLD = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"].find(f => fs.existsSync(f)) || FONT;
@@ -130,7 +133,7 @@ function mouthOf(file, secs) {
       const secs = item.secs, pic = path.join(tmp, "hero.mp4"), heroVoice = process.env.HERO_VOICE;
       const logo = "data:image/png;base64," + fs.readFileSync(LOGO).toString("base64");
       const mouth = heroVoice && fs.existsSync(heroVoice) ? (() => { const padded = path.join(tmp, "hero-voice.wav"); ff(["-i", heroVoice, "-af", "adelay=1700|1700,apad", "-t", String(secs), "-ar", "48000", "-ac", "2", padded]); return mouthOf(padded, secs); })() : [];
-      if (stage) await stage.render({ mode: "hero", full: true, fps: FPS, secs, logo, mouth, flyAt: item.flyAt }, pic);
+      if (stage) await stage.render({ ...cast, mode: "hero", full: true, fps: FPS, secs, logo, mouth, flyAt: item.flyAt }, pic);
       else ff(["-f", "lavfi", "-i", `color=c=0x0b0d1e:s=1920x1080:r=${FPS}:d=${secs}`, ...OUTV, pic]);
       // A rush of air as he goes, made from filtered noise.
       const whoosh = `anoisesrc=d=1.6:c=pink:a=0.5,bandpass=f=900:w=700,afade=t=in:d=0.5,afade=t=out:st=0.7:d=0.9,adelay=${Math.round(item.flyAt * 1000 - 200)}|${Math.round(item.flyAt * 1000 - 200)},apad[w]`;
@@ -144,7 +147,7 @@ function mouthOf(file, secs) {
       // All drawing: the scene file says who is where; the voice opens the mouths.
       const secs = item.scene.secs, pic = path.join(tmp, `${name}-pic.mp4`);
       lineAudio(item, wav, secs, 0.15);
-      if (stage) await stage.render({ ...item.scene, fps: FPS, mouth: mouthOf(wav, secs) }, pic);
+      if (stage) await stage.render({ ...cast, ...item.scene, fps: FPS, mouth: mouthOf(wav, secs) }, pic);
       else ff(["-f", "lavfi", "-i", `color=c=0xEFEAE2:s=1920x1080:r=${FPS}:d=${secs}`, ...OUTV, pic]);
       ff(["-i", pic, "-i", wav, "-filter_complex", `[0:v]${captions(item.text, spoken, { delay: 0.15 }).join(",") || "null"}[v]`, "-map", "[v]", "-map", "1:a", "-t", secs.toFixed(2), ...OUTV, ...OUTA, file]);
       parts.push(file); console.log(`${name.padEnd(15)} drawn ${secs.toFixed(1)}s`); continue;
@@ -160,7 +163,7 @@ function mouthOf(file, secs) {
     let overlay = null, top = 0;
     if (actors) {
       overlay = path.join(tmp, `${name}-avatars.mov`);
-      ({ top } = await stage.render({ fps: FPS, secs, top: 380, mouth: mouthOf(wav, secs), actors, bursts: item.bursts }, overlay));
+      ({ top } = await stage.render({ ...cast, fps: FPS, secs, top: 300, mouth: mouthOf(wav, secs), actors, bursts: item.bursts }, overlay));
     }
     const base = [
       `setpts=PTS/${speed.toFixed(4)}`,
@@ -169,7 +172,7 @@ function mouthOf(file, secs) {
     ].join(",");
     const marks = [
       ...(item.mark ? [`drawtext=fontfile=${FONT}:text='Illustration':fontcolor=white:fontsize=24:x=w-text_w-40:y=36:box=1:boxcolor=0xB8622F@0.9:boxborderw=10`] : []),
-      ...captions(item.text, spoken, actors ? { centre: item.phone ? 760 : 1010, width: item.phone ? 70 : 58, delay: 0.15 } : { delay: 0.15 }),
+      ...captions(item.text, spoken, actors ? { centre: item.phone ? 700 : 1075, width: item.phone ? 62 : 50, delay: 0.15 } : { delay: 0.15 }),
     ];
     // Where he turns into the presenter: his last picture shrinks into the corner as the drawing pops up.
     const morph = item.morph && lastFrame && actors;
