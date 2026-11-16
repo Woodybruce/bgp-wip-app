@@ -146,6 +146,17 @@ way. Two of the first cuts there took a real word ("schemes", "help") in
 place of the "er" beside it, and the transcript check caught both: always
 transcribe a scene again after changing its cuts.
 
+Woody's phone clip from Nova arrived the same evening (480 by 360, a
+messaging copy: ask for the original file). His words: "Hi guys. I'm here to
+tell you about ChatBGP, but unfortunately I'm in Nova, doing one of Victoria's
+viewings for her. So maybe we allow my better, more prepared and aware self to
+do it for me instead." He said the app's name wrongly in it ("it should say
+chat BGP"), so one cut has the word replaced with his own "ChatBGP" from the
+Teams recording, over a little of the clip's own street noise, and one keeps
+the clip as he said it. Speech-to-text cannot tell the two words apart, so
+which to use is his ear's call; a retake is the clean fix. The avatar's
+opening is his short version (about 24 seconds), cut from the same recording.
+
 ## Two versions
 
 - **Room cut**, about 2 minutes 45. Woody can pause it and talk.
