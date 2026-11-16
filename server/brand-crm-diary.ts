@@ -258,7 +258,7 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
       daysWaiting: staff && a.waitingOnParty ? daysSince(a.waitingSince, now) : null,
       raisedBy, status: a.status === "in_progress" ? "in_progress" : "todo",
       canComplete, actionId: canComplete ? a.id : null,
-      url: staff ? crmEngagementLink(a.companyId, { action: a.id }, everyKind ? "landlord" : "brand") : brandPage(a.companyId) || clientPlaceUrl(propertyId, null),
+      url: staff ? crmEngagementLink(a.companyId, { action: a.id }) : brandPage(a.companyId) || clientPlaceUrl(propertyId, null),
       nouns: nounsOf([a.companyId]),
     });
   }

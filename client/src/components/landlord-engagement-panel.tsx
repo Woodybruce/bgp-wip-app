@@ -38,7 +38,7 @@ export function LandlordEngagementPanel({ companyId, kind = "landlord", client =
   const onBrandPage = useBrandPagePattern();
   const PlanLink = ({ href, className, children }: { href: string; className?: string; children: React.ReactNode }) =>
     client ? <span className={className}>{children}</span> : <Link href={href} className={className}>{children}</Link>;
-  const planLink = (record?: { event?: string; strategy?: string; action?: string }) => crmEngagementLink(companyId, record, kind);
+  const planLink = (record?: { event?: string; strategy?: string; action?: string }) => crmEngagementLink(companyId, record);
   const [draft, setDraft] = useState<ActionDraft | null>(null);
   useEffect(() => setDraft(null), [companyId]);
   const query = useQuery<EngagementData>({

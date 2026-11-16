@@ -1691,9 +1691,18 @@ a unit for it there, how far it has got, and what happens next. Built from
 overrides the spec body.** Staff: `/brands?tab=crm` (the Brand CRM pill on
 Brands; its own side bar link was removed on 16 November 2026, see "The BGP
 side bar" below). Landsec logins: the same pill under Brands. A joint agent has no Brands entry, so it has `/landsec/brand-crm`.
-Three views: Targets (brands against the Landsec schemes), Diary, and
-Strategies and events (BGP staff only). The same plan is the **Schemes and
-units** card on every brand page.
+Three views were built: Targets (brands against the Landsec schemes), Diary,
+and Strategies and events (BGP staff only). **Since 16 November 2026 BGP
+staff get Targets only** (Woody: "1 and 2 yes", on taking off the two views
+the CRM page already holds): the brands' diary is the CRM page's Diary
+(`/contacts?tab=diary`) and their strategies, events and actions its Overview
+(`/contacts?tab=overview`, kind `all`), where a brand action's detail now
+shows its scheme and sharing with Change scheme, sharing or waiting on.
+`crmEngagementLink` sends every company's plan there, a brand's included,
+and `brandCrmMovedHref` (`brand-crm-tab.tsx`) sends an old staff
+`?view=diary` or `?view=strategies` link on. Landsec logins keep Targets and
+Diary; the joint agent's `/landsec/brand-crm` is unchanged. The same plan is
+the **Schemes and units** card on every brand page.
 
 Decided (do not re-litigate):
 
@@ -2519,7 +2528,9 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   task list never fails because of it). The screens show one pill, "Deal is
   waiting on you" with the days, and list those tasks first
   (`client/src/components/deal-waiting-pill.tsx`: My Tasks, the phone home,
-  the Landsec Tasks page). A new task screen uses that file. **Waiting on
+  the Landsec Tasks page); My Tasks and the Landsec Tasks page put them in a
+  "Waiting on you" section of their own (16 November 2026). A new task
+  screen uses that file. **Waiting on
   follows the checklist** (Woody, 2026-11-13; the rules are
   `shared/deal-waiting.ts`, tested in `server/deal-waiting.test.ts`): a
   deal's waiting-on can point at one checklist item
@@ -3267,9 +3278,17 @@ rep". Do not re-litigate. Guards: `qa/regression/staff-menu.test.mjs`.
   does not count). Anyone also in Investment or Lease Advisory (Pete Wood) and
   anyone with no team (the board, support, consultants) keeps both. Entries
   only: the pages still open by their address.
-- Waiting on Woody: whether the Brand CRM's Diary and Strategies and events,
-  which the CRM page's Diary and Overview already hold for every kind of
-  company, should come off the Brand CRM, leaving Targets.
+- **Brand CRM is Targets only for BGP staff** (Woody, same day: "1 and 2
+  yes"): its Diary and Strategies and events were the CRM page's own views
+  narrowed to brands. See the Brand CRM section.
+- **My Tasks matches the Landsec Tasks page** (the "2" of the same answer):
+  a Waiting on you card first (the longest wait first, each task once, not
+  repeated in Overdue or the list), numbers on the status pills and the
+  summary, a checklist task's property and unit, Deal checklist, stage and
+  Required chips and Open the checklist, a tick shown at once and put back
+  if the save fails (then the checklist and deal clock are read again), a
+  40px tap area round the tick, and "could not be loaded" with Try again in
+  place of "All clear!". Everything My Tasks had stays.
 
 **The People & HR staff list masks personal fields** (16 November 2026,
 found while building My BGP): `GET /api/hr/staff` sent every login each

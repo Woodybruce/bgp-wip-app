@@ -16,9 +16,10 @@ import { crmEngagementLink } from '../../shared/landlord-engagement-view.ts';
 
 test('a landlord plan links to the CRM page and a brand plan to the Brand CRM; the client view is unchanged', () => {
   assert.equal(crmEngagementLink('landsec'), '/contacts?tab=overview&company=landsec');
-  assert.equal(crmEngagementLink('landsec', { action: 'a1' }, 'landlord'), '/contacts?tab=overview&company=landsec&action=a1');
-  assert.equal(crmEngagementLink('wingstop', undefined, 'brand'), '/brands?tab=crm&view=strategies&company=wingstop');
-  assert.equal(crmEngagementLink('wingstop', { event: 'x/y' }, 'brand'), '/brands?tab=crm&view=strategies&company=wingstop&event=x%2Fy');
+  assert.equal(crmEngagementLink('landsec', { action: 'a1' }), '/contacts?tab=overview&company=landsec&action=a1');
+  // A brand's plan opens on the CRM page too: the Brand CRM is Targets only for BGP staff (Woody, 2026-11-16).
+  assert.equal(crmEngagementLink('wingstop'), '/contacts?tab=overview&company=wingstop');
+  assert.equal(crmEngagementLink('wingstop', { event: 'x/y' }), '/contacts?tab=overview&company=wingstop&event=x%2Fy');
   const action = id => ({ id, title: id, notes: 'note', dueAt: null, status: 'todo', ownerId: 'owner', ownerName: 'Owner', companyId: 'wingstop', companyName: 'Wingstop', strategyId: 's', eventId: 'e', source: null });
   const view = clientPlanView({ strategies: [{ id: 's' }], events: [{ id: 'e' }], actions: [action('own'), action('bgp')] }, new Set(['own']));
   assert.deepEqual(view.strategies, []); assert.deepEqual(view.events, []);

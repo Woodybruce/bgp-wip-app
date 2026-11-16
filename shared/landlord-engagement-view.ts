@@ -37,8 +37,8 @@ export function landlordEventGuestSummary(event: EngagementEvent, companyId: str
   }).join(" · ");
 }
 
-// A landlord's plan opens on the CRM page; a brand's in the Brand CRM.
-export function crmEngagementLink(companyId: string, record?: { event?: string; strategy?: string; action?: string }, kind: "landlord" | "brand" = "landlord"): string {
-  if (kind === "brand") return `/brands?${new URLSearchParams({ tab: "crm", view: "strategies", company: companyId, ...record }).toString()}`;
+// Every company's plan opens on the CRM page's Overview, a brand's included:
+// the Brand CRM is Targets only for BGP staff (Woody, 2026-11-16).
+export function crmEngagementLink(companyId: string, record?: { event?: string; strategy?: string; action?: string }): string {
   return `/contacts?${new URLSearchParams({ tab: "overview", company: companyId, ...record }).toString()}`;
 }

@@ -166,7 +166,7 @@ test("BGP staff get everything: every action with its waiting-on, viewings, deal
   assert.deepEqual(shared.waitingOn, { side: "landsec", name: "Landsec asset manager" });
   assert.equal(shared.daysWaiting, 7);
   assert.equal(shared.overdue, true);
-  assert.equal(shared.url, "/brands?tab=crm&view=strategies&company=b-jm&action=a-shared-blue");
+  assert.equal(shared.url, "/contacts?tab=overview&company=b-jm&action=a-shared-blue");
   assert.equal(byId(diary, "crm_action:a-ls").raisedBy, "client");
   assert.deepEqual(byId(diary, "crm_action:a-bgp").waitingOn, { side: "other", name: "Tenant" });
 
