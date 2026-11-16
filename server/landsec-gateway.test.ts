@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import express from "express";
-import { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, routedApiPath, landsecBriefSignerOnly } from "../shared/landsec";
+import { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, routedApiPath, landsecBriefSignerOnly, jointAgentApiDenied } from "../shared/landsec";
 
 const U = "36c81e04-6f16-4951-8ea7-cbaf16b83741";
 const X = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
@@ -419,14 +419,40 @@ test("comments not yet logged: only the list, the count, confirm and dismiss", (
 test("the real Properties and Deals pages: reads of its schemes' records, nothing else", () => check(REAL_PAGES));
 test("chat: a joint agent reaches its conversations and its own ChatBGP chat", () => check(CHAT_OPENED));
 test("chat: every other chat and ChatBGP address stays closed to a joint agent", () => check(CHAT_CLOSED));
-test("chat: the rule is asked for a joint agent only", () => {
-  // An asset manager is not a restricted role, so the ordinary client
-  // gateway decides every chat address for it, as it did before.
-  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ["joint_agent"]);
+// Woody, 2026-11-14: "log in for people from landsec with access only to their
+// properties and the same for joint agents. The only difference is the lack of
+// access to the brands page". Since then NO role is a restricted role
+// (RESTRICTED_LANDSEC_ROLES is empty): a joint agent is a Landsec login at its
+// own schemes, and its difference is two lists in shared/landsec.ts. What
+// restrictedLandsecApiRule opens stays open (its own chat addresses among
+// them), jointAgentApiDenied refuses brand pages, BGP's records and every
+// other chat door, and everything else goes to the ordinary client checks.
+// (Until that day these two tests expected ["joint_agent"].)
+test("chat: the rule is asked for a joint agent only, and every chat door it does not open is shut", () => {
+  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, []);
+  for (const [method, path, jointAgent] of [...CHAT_OPENED, ...CHAT_CLOSED]) {
+    // The chat, ChatBGP and chat-media addresses: any other row on those lists (an image proxy) goes to the client checks.
+    if (jointAgent === "allow" || !/^\/api\/(chat|chatbgp|chat-media)(\/|$)/.test(path)) continue;
+    assert.equal(jointAgentApiDenied(method, path), true, `${method} ${path} is not open to a joint agent, so it must be refused`);
+  }
+  // An asset manager is never asked the rule: the ordinary client gateway decides every chat address for it.
 });
 
-test("only a joint agent is a restricted role: an asset manager is a full Landsec login", () => {
-  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ["joint_agent"]);
+test("no role is a restricted role: a joint agent's difference is the deny list, an asset manager is a full Landsec login", () => {
+  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, []);
+  // Brand pages and the hub, a company record, contacts, the CRM plan, landlord records, brand cases, the
+  // correspondence log, the generated Targeting Brief, a requirement from a viewing, deleting a unit.
+  for (const [method, path] of [["GET", "/api/brand/b1/profile"], ["GET", "/api/brands/hub"], ["GET", "/api/brand-crm/plan"], ["GET", "/api/brand-pack/b1"],
+    ["GET", "/api/covenant/by-crm/b1"], ["GET", "/api/crm/companies/b1"], ["PUT", "/api/crm/companies/b1"], ["GET", "/api/crm/contacts"], ["GET", "/api/crm/contacts/c1"],
+    ["GET", "/api/crm/engagement"], ["GET", "/api/crm/landlords/l1/team"], ["GET", "/api/interactions/company/b1"], ["GET", "/api/landsec/brand-case/b1"],
+    ["POST", "/api/unit-briefs/u1/generate-document"], ["POST", "/api/leasing-viewings/v1/requirement"], ["DELETE", "/api/available-units/u1"]] as const) {
+    assert.equal(jointAgentApiDenied(method, path), true, `${method} ${path}`);
+  }
+  // What it is not refused goes to the ordinary client checks, cut to its schemes. The company LIST is one of
+  // those on purpose: a brand picker reads it (qa/regression/client-gateway-path.test.mjs pins the 200).
+  for (const [method, path] of [["GET", "/api/crm/companies"], ["GET", "/api/crm/deals"], ["GET", "/api/crm/properties"], ["PATCH", "/api/available-units/u1"], ["GET", "/api/activity-summary"]] as const) {
+    assert.equal(jointAgentApiDenied(method, path), false, `${method} ${path}`);
+  }
   // The rule holds nothing for an asset manager. It is never asked for one
   // (restrictedLandsecApiDecision answers null first); if it ever were, it
   // gives the shared list and nothing of the brand pages it used to open.

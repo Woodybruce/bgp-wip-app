@@ -1,6 +1,7 @@
 // The lock on a Landsec joint agent's ChatBGP (server/chatbgp-joint-agent.ts).
 // No AI key and no database rows are needed: the tools take an injected
 // reader, and the run takes an injected model that records what it is sent.
+import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -336,7 +337,12 @@ test("a role row with a value nobody recognises is refused, never served as a fu
     assert.equal(isKnownLandsecRole(role), true);
     assert.equal((await getLandsecAccess(held(role)))?.role, role);
   }
-  assert.equal(await restrictedLandsecApiDecision(held("joint_agent"), "/api/crm/companies"), "deny");
+  // Since 14 November 2026 (Woody: joint agents get the Landsec app at their own schemes, less brand pages) a
+  // joint agent's company RECORD is refused and the company LIST goes to the ordinary client checks, because
+  // a brand picker reads it. Until then this line expected "deny" for the list.
+  assert.equal(await restrictedLandsecApiDecision(held("joint_agent"), "/api/crm/companies/b1"), "deny");
+  assert.equal(await restrictedLandsecApiDecision(held("joint_agent"), "/api/crm/companies"), null);
+  assert.equal(await restrictedLandsecApiDecision(held("joint_agent"), "/api/crm/contacts"), "deny");
   assert.equal(await restrictedLandsecApiDecision(held("asset_manager"), "/api/crm/companies"), null);
 });
 

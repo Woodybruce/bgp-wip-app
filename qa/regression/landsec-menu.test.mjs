@@ -190,15 +190,33 @@ test('Properties, Deals, the property page and the landing page ask one question
   assert.doesNotMatch(properties, /activeTeam === "Landsec"/);
 });
 
-test('on a phone only a real Landsec login is sent from the home page to ChatBGP', () => {
+// Woody, 2026-11-15 (the ChatBGP screen with its Chat tab circled): "remove the button the page is on from
+// the icons as they are a bit crowded". Landsec tabs only; every other login's tabs are unchanged.
+test('on a phone the Landsec tabs leave out the tab of the page that is open', () => {
+  const tabsSource = source(TABS);
+  assert.match(tabsSource, /const shown = isLandsecNav \? items\.filter\(item => !isActive\(item\.path\)\) : items;/);
+  assert.match(tabsSource, /\{shown\.map\(\(item\) => \{/);
+  // The seven still share the width evenly, so the six that show are evenly spread too.
+  assert.match(tabsSource, /items\.length > 6 \? "flex-1 min-w-0 px-0"/);
+});
+
+test('on a phone only a real Landsec login is sent from the home page: to ChatBGP on opening the app, to Properties after that', () => {
   const app = source(APP);
-  // Woody, 15 November 2026: the Landsec view opens on ChatBGP, phone and computer.
-  assert.match(app, /if \(landsecPhoneHome\) navigate\("\/chatbgp\?ask=1", \{ replace: true \}\);/);
-  assert.match(app, /return <LandsecMoved to=\{LANDSEC_MENU\.chat\} \/>;\n\}\n\nfunction LandsecMoved/);
+  // Woody, 15 November 2026: on a computer too ("also should open on desktop instead of a dashboard"),
+  // by the same once-a-session marker, decided once when the home page mounts.
+  const home = app.slice(app.indexOf('function Home() {'), app.indexOf('function LandsecMoved'));
+  assert.match(home, /const \[opening\] = useState\(\(\) => \{/);
+  assert.match(home, /first = !sessionStorage\.getItem\("bgp-chat-home-done"\);/);
+  assert.match(home, /<LandsecMoved to=\{opening && \(user as any\)\.landsecRole !== "joint_agent" \? LANDSEC_MENU\.chat : LANDSEC_MENU\.properties\} \/>/);
   const rule = app.slice(app.indexOf('const landsecPhoneHome ='), app.indexOf('useEffect', app.indexOf('const landsecPhoneHome =')));
   assert.match(rule, /role === "Client"/);
   assert.match(rule, /shellBrand\.id === "landsec"/);
   assert.match(rule, /!landsecRestricted/);
+  // Woody, 2026-11-15: "the phone can just open with this screen for landsec so it's like opening Claude".
+  // Once per session (the marker BGP staff use), so "/" afterwards is Properties, as before.
+  const effect = app.slice(app.indexOf('if (!landsecPhoneHome) return;'), app.indexOf('}, [landsecPhoneHome]);'));
+  assert.match(effect, /opening = !sessionStorage\.getItem\("bgp-chat-home-done"\);/);
+  assert.match(effect, /navigate\(opening \? "\/chatbgp\?ask=1" : LANDSEC_MENU\.properties, \{ replace: true \}\);/);
 });
 
 test('a joint agent has its own chat on the rail, never the staff chat panel', () => {

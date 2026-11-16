@@ -77,6 +77,7 @@ import { isLandlordCompany } from "@/lib/company-kind";
 import { AccountDealsBoard } from "@/components/account-deals-board";
 import { AccountTeamViewsCard } from "@/components/account-team-views";
 import { AgentRelationshipCard, AgentDealingsScope, AgentGlance, type AgentTab } from "@/components/agent-relationship-card";
+import { OWNERSHIP_INTEL_KEY, ownershipKindLine, type OwnershipIntel } from "@shared/ownership-intel";
 import { CompanyKindPage, CompanySummaryCard, CompanyWhereWeAre, CompanyStartStrategy, companyPair, companyStack } from "@/components/company-page/company-kind-page";
 import { LandlordAccountGallery } from "@/components/account-media-gallery";
 import { AccountNextActionsCard, InvestmentRequirementsCard, AccountFolderTreeCard, useAccountWorkspace } from "@/components/account-workspace-cards";
@@ -3275,6 +3276,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     const backerNames: string[] = Array.isArray(aiFields.backers_detail) ? aiFields.backers_detail.map((b: any) => b?.name).filter(Boolean) : [];
     const backedBy = backerNames.length ? `${backerNames.slice(0, 2).join(", ")}${backerNames.length > 2 ? ` +${backerNames.length - 2}` : ""}` : (c.backers || "").length <= 60 ? c.backers : null;
     const quietLink = "hover:text-primary hover:underline underline-offset-2";
+    // Who owns the brand, as the weekly ownership read found it (BGP staff
+    // only: the server sends this saved field to no client login). It is the
+    // source's reading, so it carries the source link and says where it came from.
+    const ownership: OwnershipIntel | null = !isClientViewer && aiFields[OWNERSHIP_INTEL_KEY]?.owner ? aiFields[OWNERSHIP_INTEL_KEY] : null;
     // Head office, headcount and revenue as the Details strip words them.
     const hq: any = c.head_office_address;
     const hqText = (x: any): string | null => !x ? null : typeof x === "string" ? x
@@ -3292,7 +3297,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     // that fill it are one quiet line at its foot. The category is in the
     // page header, so it is not a fact of this line.
     const hasFacts = c.store_count != null || !!companyDetails.hqShort || !!c.founded_year || !!companyDetails.empValue || !!companyDetails.revenue
-      || !!websiteDomain || !!websiteSuggestion || !!c.linkedin_url || !!c.instagram_handle || !!c.tiktok_handle || !!c.stock_ticker || !!backedBy || !!parentGroup;
+      || !!websiteDomain || !!websiteSuggestion || !!c.linkedin_url || !!c.instagram_handle || !!c.tiktok_handle || !!c.stock_ticker || !!backedBy || !!parentGroup || !!ownership;
     const thin = aboutLen === 0 && !hasFacts;
     // With "Show more" open the Backers block and the stock card print the
     // listing and the backers in full, so the line does not say them again.
@@ -3319,9 +3324,16 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
           {c.tiktok_handle && <a href={`https://tiktok.com/@${c.tiktok_handle.replace(/^@/, "")}`} target="_blank" rel="noreferrer" className={`inline-flex items-center gap-1 ${quietLink}`}><span className={label}>TikTok</span> {c.tiktok_handle}{tk?.followers != null && <span className="font-mono tabular-nums">{fmtFollowers(tk.followers)}</span>}</a>}
           {c.stock_ticker && !inFull && <span><span className={label}>Listed</span> <span className="font-mono">{displayTicker(c.stock_ticker)}</span></span>}
           {/* A backers note that is itself a listing ("Listed on Nasdaq (SBUX)") is printed as it stands: "Backed by Listed on..." read wrongly. */}
-          {backedBy && !inFull && (/^(listed|quoted|publicly)\b/i.test(backedBy)
+          {/* Backers filled from the ownership read is said once, on the owner line after it. */}
+          {backedBy && !inFull && !(ownership?.filledBackers && backedBy === ownership.owner) && (/^(listed|quoted|publicly)\b/i.test(backedBy)
             ? (c.stock_ticker ? null : <span>{backedBy}</span>)
             : <span><span className={label}>Backed by</span> {backedBy}</span>)}
+          {ownership && (
+            <span title={`${ownership.note ? `${ownership.note} ` : ""}From the ${ownership.via}, read ${ukDate(ownership.readAt)}.`} data-testid="brand-ownership-line">
+              <span className={label}>{ownership.kind === "ind" ? "Independent" : "Owner"}</span> {ownership.owner} <span className={label}>· {ownership.kind === "ind" ? (ownership.since ? `since ${ownership.since}` : "no outside owner found") : ownershipKindLine(ownership)}</span>
+              {ownership.source && <> <a href={ownership.source} target="_blank" rel="noreferrer" className="text-primary hover:underline" data-testid="link-ownership-source">source</a></>}
+            </span>
+          )}
           {parentGroup && <span><span className={label}>Part of</span> <Link href={`/companies/${parentGroup.id}`} className="text-primary hover:underline">{parentGroup.name}</Link>{siblingBrands.length > 0 && <> <button type="button" className="hover:underline underline-offset-2" onClick={() => jumpToCard("brand-group-siblings", "more")} data-testid="button-brand-sister-brands">(<span className="font-mono tabular-nums">{siblingBrands.length}</span> sister brand{siblingBrands.length === 1 ? "" : "s"})</button></>}</span>}
           {canExpand && <button type="button" onClick={() => setAboutOpen(open => !open)} className="text-primary hover:underline" aria-expanded={aboutOpen} data-testid="button-about-more">{aboutOpen ? "Show less" : "Show more"}</button>}
         </div>

@@ -4216,6 +4216,7 @@ import { setupBrandCrmDiaryRoutes } from "./brand-crm-diary";
 import { setupLandsecAccessRoutes } from "./landsec-access";
 import { setupJointAgentChatRoutes } from "./chat-joint-agent";
 import { setupBrandRelevanceRoutes } from "./brand-relevance";
+import { setupOwnershipIntelRoutes } from "./ownership-intel";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
 import { registerDemeterRoutes } from "./demeter";
@@ -5513,6 +5514,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupLandsecAccessRoutes(app);
   setupJointAgentChatRoutes(app);
   setupBrandRelevanceRoutes(app);
+  setupOwnershipIntelRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
   const { registerPortfolioRoutes } = await import("./portfolios");
@@ -6745,6 +6747,11 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             // about once a month, 90 brands a night; no AI.
             { key: "brand-store-count", due: dailyAt(2, 30), run: () =>
               import("./brand-store-count").then(m => m.nightlyStoreCountPass()) },
+            // Weekly read of who owns the brand (the London Food Money Matrix) —
+            // Monday 03:00. Saves the page's reading on matched brands and fills
+            // a blank Backers; no AI. OWNERSHIP_INTEL_URL=off stops it.
+            { key: "ownership-intel", due: weeklyAt(1, 3), run: () =>
+              import("./ownership-intel").then(m => m.weeklyOwnershipRead()) },
             // Nightly planning and job-advert check — 03:45, 60 brands a night,
             // each brand about once a month (PlanIt; Adzuna when its keys are set).
             { key: "brand-pipeline", due: dailyAt(3, 45), run: () =>

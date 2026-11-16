@@ -1,3 +1,4 @@
+import "./test-database-url";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { normaliseSaleDate, addressKey, evidenceStatusOf, fileSaleEvidence } from "./investment-sale-evidence";

@@ -103,6 +103,13 @@ export function MobileBottomNav() {
     return location.startsWith(path);
   };
 
+  // The Landsec tabs leave out the one for the page that is open (Woody,
+  // 2026-11-15, on the ChatBGP screen with its Chat tab circled: "remove the
+  // button the page is on from the icons as they are a bit crowded"). Seven
+  // share the bar otherwise. The page's own header says where you are, and
+  // Back leaves it. A page no tab is lit on keeps all of them.
+  const shown = isLandsecNav ? items.filter(item => !isActive(item.path)) : items;
+
   // Hide while the keyboard is up — a fixed tab bar otherwise rides the
   // iOS keyboard and floats mid-screen between the composer and the keys
   // (Woody, 2026-08-22). WhatsApp behaviour: typing = no tab bar.
@@ -117,7 +124,7 @@ export function MobileBottomNav() {
     >
       {/* Seven tabs (a joint agent) share the width evenly so none is clipped. */}
       <div className="flex items-center justify-around h-14">
-        {items.map((item) => {
+        {shown.map((item) => {
           const active = isActive(item.path);
           const Icon = item.icon;
           return (

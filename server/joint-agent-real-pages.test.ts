@@ -33,7 +33,9 @@ test("the property and deal reads, the schedules and the plan parts cut the answ
     assert.match(list(route), /withoutJointAgentFields\(/, route);
   }
   // A record off the schemes is refused, not cut.
-  assert.match(list("/api/crm/properties/:id"), /if \(!jaIds\.includes\(String\(req\.params\.id\)\)\) return res\.status\(403\)/);
+  // A record off its schemes is refused, with one exception since 15 November 2026 (Woody on the benchmark
+  // centre pages: "Let's them edit"): a centre page the set-up created holds nothing of BGP's and is open to every login.
+  assert.match(list("/api/crm/properties/:id"), /if \(!jaIds\.includes\(String\(req\.params\.id\)\) && !\(await sharedBenchmarkPropertyIds\(\)\)\.has\(String\(req\.params\.id\)\)\) return res\.status\(403\)/);
   assert.match(list("/api/crm/deals/:id"), /if \(!deal\.propertyId \|\| !jaIds\.includes\(deal\.propertyId\)\) return res\.status\(403\)/);
   // A deal on the list must sit on one of its schemes' properties.
   assert.match(list("/api/crm/deals"), /d\.propertyId && jaIds\.includes\(d\.propertyId\)/);
