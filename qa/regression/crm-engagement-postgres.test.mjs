@@ -76,7 +76,8 @@ test('CRM planning preserves Marketing and My Tasks records, scopes links and re
       assert.equal((await request('GET','',null,'owner','landsec')).status,403);
       const options=await request('GET','/options');assert.equal(options.status,200);
       assert.deepEqual(options.body.staff.map(x=>x.id).sort(),['colleague','other','owner']);
-      assert.deepEqual(options.body.companies.map(x=>x.id).sort(),['aew','landsec']);
+      // Agent firms and lenders are on every list but the Landlord CRM's (Woody, 2026-11-16: "cant seem to add brands or agents").
+      assert.deepEqual(options.body.companies.map(x=>x.id).sort(),['aew','agent','landsec']);
       assert.deepEqual(options.body.contacts.map(x=>x.id).sort(),['jon','manish']);
       assert.ok(!JSON.stringify(options.body).includes('@'),'options do not include email addresses');
       const notReady=await fetch(`http://127.0.0.1:${server.address().port}/crm-not-ready`,{headers:{'x-user':'owner'}});

@@ -360,9 +360,12 @@ export async function getCrmEngagementOptions(q: Queryable, companyId?: string |
         OR EXISTS (SELECT 1 FROM crm_engagement_actions a WHERE a.company_id = c.id)))`;
   // The joined CRM lists every landlord, agent firm and lender, and the
   // brands on a plan: any other brand is found by typing, as in the Brand CRM.
-  const companyPredicate = kind === "landlord" ? landlords : kind === "brand" ? brands : kind === "all" ? `(${landlords}
-    OR ${AGENTS_AND_LENDERS} OR ${brands})` : `(${landlords}
-    OR ${brands})`;
+  // With no kind (a company page's CRM card, the property People board) the
+  // list is the same: agent firms and lenders are plan companies too, and
+  // without them an agent's or a lender's own form could not list it (Woody,
+  // 2026-11-16: "cant seem to add brands or agents to the CRM forms just landlords?").
+  const companyPredicate = kind === "landlord" ? landlords : kind === "brand" ? brands : `(${landlords}
+    OR ${AGENTS_AND_LENDERS} OR ${brands})`;
   const params = kind === "landlord" ? [] : [companyId || null];
   const [staff, companies, contacts] = await Promise.all([
     q.query(`SELECT id,name,email,role,is_active,client_view_mode FROM users WHERE is_active=true AND lower(trim(email)) LIKE '%@brucegillinghampollard.com' ORDER BY name`),

@@ -82,6 +82,8 @@ interface CrmEntityPickerProps {
   panelWidth?: number;
   /** Limit how many options are shown in the dropdown. Default 12. */
   matchLimit?: number;
+  /** What the list shows before anything is typed (default: the first options). */
+  emptyOptions?: CrmEntityOption[];
   /** Disable opening the picker — read-only state. */
   disabled?: boolean;
   /**
@@ -128,6 +130,7 @@ export function CrmEntityPicker({
   testIdPrefix = "crm-entity-picker",
   panelWidth = 280,
   matchLimit = 12,
+  emptyOptions,
   disabled = false,
   onSearchChange,
   alwaysOpen = false,
@@ -136,6 +139,7 @@ export function CrmEntityPicker({
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const Icon = iconFor(kind);
 
   const selectedIds = useMemo<string[]>(() => {
@@ -162,11 +166,11 @@ export function CrmEntityPicker({
   const matches = useMemo(() => {
     const s = search.trim().toLowerCase();
     const remaining = options.filter(o => !selectedIds.includes(o.id));
-    if (!s) return remaining.slice(0, matchLimit);
+    if (!s) return (emptyOptions ? emptyOptions.filter(o => !selectedIds.includes(o.id)) : remaining).slice(0, matchLimit);
     return remaining
       .filter(o => haystackFor(o).includes(s))
       .slice(0, matchLimit);
-  }, [options, search, selectedIds, matchLimit]);
+  }, [options, search, selectedIds, matchLimit, emptyOptions]);
 
   const exactMatch = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -196,6 +200,15 @@ export function CrmEntityPicker({
       searchRef.current.select();
     }
   }, [open]);
+
+  // A picker at the foot of a dialog's scrolling form (the CRM forms' last
+  // field) opened its list below the fold, where it was cut off: bring the
+  // list into view when it opens and when its rows arrive (a server search).
+  // Only in a dialog, so an inline picker never moves the page.
+  useEffect(() => {
+    const panel = panelRef.current;
+    if ((open || alwaysOpen) && panel?.closest('[role="dialog"]')) panel.scrollIntoView?.({ block: "nearest" });
+  }, [open, alwaysOpen, matches.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -259,6 +272,7 @@ export function CrmEntityPicker({
         data-testid={`${testIdPrefix}-search`}
       />
       <div
+        ref={panelRef}
         className="absolute z-[60] mt-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl ring-1 ring-black/5 left-0 max-h-[280px] overflow-y-auto"
         style={{ width: panelWidth }}
       >
