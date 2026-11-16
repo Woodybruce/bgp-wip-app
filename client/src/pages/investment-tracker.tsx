@@ -2193,6 +2193,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                   <TableHead className="w-[160px]">Image</TableHead>
                   <SortableTableHead sortKey="property" sort={sort} className="w-[180px]">Property</SortableTableHead>
                   <SortableTableHead sortKey="ref" sort={sort} className="w-[50px]">Ref</SortableTableHead>
+                  <FilterHead label="Deal Status" value={statusFilter} options={STATUSES} onChange={setStatusFilter} colorMap={STATUS_LABEL_COLORS} className="w-[90px]" />
                   <FilterHead label="Asset Class" value={assetClassFilter} options={ASSET_CLASSES} onChange={setAssetClassFilter} className="w-[170px] min-w-[170px]" />
                   <FilterHead label="Tenure" value={tenureFilter} options={TENURES} onChange={setTenureFilter} className="w-[70px]" />
                   <SortableTableHead sortKey="guidePrice" sort={sort} className="w-[90px]" align="right">Guide Price</SortableTableHead>
@@ -2213,7 +2214,6 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                   )}
                   <SortableTableHead sortKey="completionDate" sort={sort} className="w-[100px]">Completion Date</SortableTableHead>
                   <SortableTableHead sortKey="fee" sort={sort} className="w-[70px]" align="right">Fee</SortableTableHead>
-                  <FilterHead label="Deal Status" value={statusFilter} options={STATUSES} onChange={setStatusFilter} colorMap={STATUS_LABEL_COLORS} className="w-[90px]" />
                   <FilterHead label="BGP Contact" value={agentFilter} options={bgpUsers.map(u => u.name)} onChange={setAgentFilter} className="w-[90px]" />
                   <TableHead className="w-[60px] text-center">Files</TableHead>
                   <TableHead className="w-[50px] text-center">Views</TableHead>
@@ -2312,6 +2312,29 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                           ? <a href={`/deals/${item.dealId}`} className="text-primary hover:underline" title="Open deal page" data-testid={`link-deal-ref-${item.id}`}>#{ref}</a>
                           : <Button variant="ghost" size="sm" className="h-6 px-1 text-[10px]" onClick={() => { setLinkDealOpen(item); setLinkDealId(""); }} title="Link an existing deal" data-testid={`button-link-deal-${item.id}`}><Link2 className="h-3 w-3 mr-0.5" />Link</Button>;
                       })()}
+                    </TableCell>
+                    <TableCell className="px-2 py-1.5">
+                      {(item as any).soldCompId ? (
+                        <button
+                          type="button"
+                          onClick={() => setSoldCompFor(item)}
+                          className="rounded-full bg-foreground px-2.5 py-0.5 text-[11px] font-medium text-background"
+                          title="On the Comps page — click to edit the sale details or put it back on the board"
+                          data-testid={`sold-comp-pill-${item.id}`}
+                        >
+                          Sold - Comp
+                        </button>
+                      ) : (
+                        <InlineLabelSelect
+                          value={legacyToCode(item.status) || "REP"}
+                          options={[...STATUSES, SOLD_COMP]}
+                          colorMap={{ ...STATUS_LABEL_COLORS, [SOLD_COMP]: "bg-foreground" }}
+                          labelMap={{ ...DEAL_STATUS_LABELS, UOX: "U/O", [SOLD_COMP]: "Sold - Comp" }}
+                          // Sold - Comp isn't a deal status: it asks for the
+                          // full pricing, then moves the asset to the Comps page.
+                          onSave={v => (v === SOLD_COMP ? setSoldCompFor(item) : inlineUpdate(item.id, "status", v))}
+                        />
+                      )}
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
                       {/* The column shows the same classes as the key and the
@@ -2577,29 +2600,6 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                         format={v => v.toLocaleString("en-GB")}
                         className="text-xs text-right"
                       />
-                    </TableCell>
-                    <TableCell className="px-2 py-1.5">
-                      {(item as any).soldCompId ? (
-                        <button
-                          type="button"
-                          onClick={() => setSoldCompFor(item)}
-                          className="rounded-full bg-foreground px-2.5 py-0.5 text-[11px] font-medium text-background"
-                          title="On the Comps page — click to edit the sale details or put it back on the board"
-                          data-testid={`sold-comp-pill-${item.id}`}
-                        >
-                          Sold - Comp
-                        </button>
-                      ) : (
-                        <InlineLabelSelect
-                          value={legacyToCode(item.status) || "REP"}
-                          options={[...STATUSES, SOLD_COMP]}
-                          colorMap={{ ...STATUS_LABEL_COLORS, [SOLD_COMP]: "bg-foreground" }}
-                          labelMap={{ ...DEAL_STATUS_LABELS, UOX: "U/O", [SOLD_COMP]: "Sold - Comp" }}
-                          // Sold - Comp isn't a deal status: it asks for the
-                          // full pricing, then moves the asset to the Comps page.
-                          onSave={v => (v === SOLD_COMP ? setSoldCompFor(item) : inlineUpdate(item.id, "status", v))}
-                        />
-                      )}
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
                       <InlineAgentMultiSelect
