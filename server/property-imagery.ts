@@ -990,7 +990,21 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
   const found: EmailBrochure[] = [];
   const tried = new Set<string>();
   let opened = 0;
-  const confirms = async (buffer: Buffer, where: string, lead: boolean): Promise<boolean> => {
+  // A numbered address the email itself gives ("41 Luke Street" in the
+  // subject or file name), kept only when it carries a word of the asset's
+  // own name: a tracker row called "Luke Street Barclays" with no number
+  // still matches the brochure that says "41 Luke Street" (Jack,
+  // 2026-11-16). The PDF must then print that same address.
+  const STREET_WORDS = "street|st|road|rd|square|sq|lane|place|avenue|row|gate|hill|walk|way|yard|court|gardens|terrace|crescent|close|mews|parade|embankment|circus";
+  const learnedAddresses = (t: string) => Array.from(heroNorm(t).matchAll(new RegExp(`\\b(\\d{1,4}[a-z]?(?: \\d{1,4}[a-z]?)? [a-z]+(?: [a-z]+)? (?:${STREET_WORDS}))\\b`, "g")))
+    .map((m) => m[1].replace(/ st$/, " street").replace(/ rd$/, " road").replace(/ sq$/, " square"))
+    .filter((ph) => headWords.some((w) => ph.split(" ").includes(w)));
+  const namesItBy = (t: string, learned: string[]) => {
+    if (namesIt(t)) return true;
+    const n = heroNorm(t);
+    return learned.some((ph) => n.includes(` ${ph} `));
+  };
+  const confirms = async (buffer: Buffer, where: string, lead: boolean, learned: string[] = []): Promise<boolean> => {
       // The brochure itself must name this asset and place it.
       // Many covers set the name as artwork, not text, so when the text
       // doesn't settle it the opening pages are shown to the vision model.
@@ -1007,7 +1021,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
         say(`Rejected ${where}: it's letting particulars for a unit, not a sale brochure.`);
         return false;
       }
-      if (!(readable && namesIt(text) && placesIt(text))) {
+      if (!(readable && namesItBy(text, learned) && placesIt(text))) {
         if (lead) say(`Opened ${where} on a loose match — checking its pages.`);
         let seen = false;
         for (const page of [1, 2]) {
@@ -1016,7 +1030,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
           // The model's yes is only taken with the words it read: they must
           // name the asset AND place it, by the same rules as readable text
           // (it once passed an Edinburgh House of Fraser for Guildford's).
-          if (v?.match && namesIt(v.evidence) && placesIt(v.evidence)) { seen = true; break; }
+          if (v?.match && namesItBy(v.evidence, learned) && placesIt(v.evidence)) { seen = true; break; }
         }
         if (!seen) {
           say(`Rejected ${where}: ${!readable ? "no readable text" : !namesIt(text) ? "its text doesn't name the asset" : "its text doesn't place it in the right town or postcode"}, and its first two pages don't clearly show it is this asset.`);
@@ -1172,7 +1186,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
         const raw: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}/attachments/${a.id}`);
         if (!raw?.contentBytes) continue;
         const buffer = Buffer.from(raw.contentBytes, "base64");
-        if (!(await confirms(buffer, where, lead))) continue;
+        if (!(await confirms(buffer, where, lead, learnedAddresses(`${fileName} ${h.subject}`)))) continue;
         say(`Confirmed ${where}.`);
         found.push({ buffer, fileName, from: h.from, date: h.date });
         if (found.length >= 3) return found;
