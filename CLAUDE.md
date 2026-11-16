@@ -1131,7 +1131,10 @@ not opened to them.
   - Sizes go through `shared/format-size.ts` (a size stored split at its
     thousands commas is rejoined); a suggested pitch's opening words come
     from `pitchFitWords` in `shared/requirement-fit.ts` (Fits / Size fits /
-    Close to). One stage pill across the page (`stageChipClass`).
+    Close to), and its six are spread across centres (`spreadAcrossCentres`
+    there: the best unit at each centre before a second at any; Woody,
+    2026-11-16, after Jersey Mike's showed six Gunwharf units and nothing
+    else). One stage pill across the page (`stageChipClass`).
   - Waiting on Woody: what a full Landsec login reads on a brand (the BGP
     take in full, live tenancies and rent at other landlords' schemes, the
     expansion score, Tracker updates).

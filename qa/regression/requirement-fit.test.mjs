@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseReqSize, pitchFitWords, requirementFitsUnit } from '../../shared/requirement-fit.ts';
+import { parseReqSize, pitchFitWords, requirementFitsUnit, spreadAcrossCentres } from '../../shared/requirement-fit.ts';
 
 test('requirement size text becomes a tolerance-widened range', () => {
   assert.deepEqual(parseReqSize(['1,500-3,000 sq ft']), { min: 1200, max: 3600 });
@@ -49,4 +49,23 @@ test('the suggested pitch sentence takes its opening words from that rule', () =
   assert.doesNotMatch(route, /reason: `Fits their/);
   // The place text is for the wording only: it is not sent with the row.
   assert.match(route, /delete row\.place_text;/);
+});
+
+test('suggested pitches take the best unit at each centre before a second unit at any', () => {
+  // Jersey Mike's (Woody, 2026-11-16): six Gunwharf units ranked first, so
+  // nothing elsewhere was shown.
+  const ranked = [
+    ...['g1', 'g2', 'g3', 'g4', 'g5', 'g6'].map(id => ({ id, centre: 'gunwharf' })),
+    { id: 't1', centre: 'trinity' }, { id: 'w1', centre: 'westgate' }, { id: 't2', centre: 'trinity' },
+  ];
+  assert.deepEqual(spreadAcrossCentres(ranked, r => r.centre).slice(0, 6).map(r => r.id), ['g1', 't1', 'w1', 'g2', 't2', 'g3']);
+  // Within a centre, and among the centres, the ranking's order is kept.
+  const one = [{ id: 'a', centre: 'x' }, { id: 'b', centre: 'x' }, { id: 'c', centre: 'x' }];
+  assert.deepEqual(spreadAcrossCentres(one, r => r.centre).map(r => r.id), ['a', 'b', 'c']);
+  assert.deepEqual(spreadAcrossCentres([], r => r.centre), []);
+  // The route spreads the ranked list before it takes six.
+  const crm = readFileSync(new URL('../../server/crm.ts', import.meta.url), 'utf8');
+  const route = crm.slice(crm.indexOf('app.get("/api/brands/:id/suggested-pitches"'), crm.indexOf('app.get("/api/available-units/:id/brand-suggestions"'));
+  assert.match(route, /spreadAcrossCentres\(suggestions, s => String\(s\.property_id\)\)\.slice\(0, 6\)/);
+  assert.doesNotMatch(route, /suggestions: suggestions\.slice\(0, 6\)/);
 });

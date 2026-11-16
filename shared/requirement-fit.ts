@@ -38,6 +38,24 @@ export function pitchFitWords(req: { size?: string[] | string | null; requiremen
   return !places.length || places.some(l => text.includes(l)) ? "Fits" : "Size fits";
 }
 
+// The order a brand's suggested pitches are shown in (Woody, 2026-11-16:
+// "Jersey mikes should be suggesting everywhere but its just all of the
+// available units at gunwharf"). The ranking puts every unit at a centre level
+// on size and use, and the centre with the most same-format brands already
+// trading wins every tie, so one centre took all six places. Taken in the
+// ranking's order: the best unit at each centre, then the next best at each.
+export function spreadAcrossCentres<T>(ranked: T[], centreOf: (row: T) => string): T[] {
+  const rounds: T[][] = [];
+  const taken = new Map<string, number>();
+  for (const row of ranked) {
+    const centre = centreOf(row);
+    const round = taken.get(centre) ?? 0;
+    taken.set(centre, round + 1);
+    (rounds[round] ||= []).push(row);
+  }
+  return rounds.flat();
+}
+
 export const USE_HINTS: Array<[RegExp, RegExp]> = [
   [/restaurant|a1 food|f&b|caf/i, /f&b|rest|kiosk|caf|coffee|food|dining/i],
   [/gym|wellness|fitness/i, /gym|fitness|studio|wellness|health/i],

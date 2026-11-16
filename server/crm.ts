@@ -1,5 +1,5 @@
 import { BGP_TEAM_NAMES } from "@shared/teams";
-import { parseReqSize, pitchFitWords, USE_HINTS } from "@shared/requirement-fit";
+import { parseReqSize, pitchFitWords, spreadAcrossCentres, USE_HINTS } from "@shared/requirement-fit";
 import { formatSizeList } from "@shared/format-size";
 import type { Express, Request } from "express";
 import multer from "./utils/upload";
@@ -5432,7 +5432,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
         }
       }
       suggestions.sort((a, b) => b.sizeFit - a.sizeFit || b.useFit - a.useFit || b.peers - a.peers);
-      res.json({ brandName, liveRequirement: !scope && liveReq?.reason.state === "live", suggestions: suggestions.slice(0, 6).map(({ sizeFit, useFit, peers, ...s }) => ({ ...s, strength: sizeFit === 2 ? 2 : 1 })) });
+      // The best unit at each centre before a second unit at any, so six
+      // units at one centre no longer fill the list.
+      res.json({ brandName, liveRequirement: !scope && liveReq?.reason.state === "live", suggestions: spreadAcrossCentres(suggestions, s => String(s.property_id)).slice(0, 6).map(({ sizeFit, useFit, peers, ...s }) => ({ ...s, strength: sizeFit === 2 ? 2 : 1 })) });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
