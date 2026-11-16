@@ -7153,19 +7153,20 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   };
   setTimeout(() => { backfillInvestmentTrackerDeals().catch(e => console.warn("[backfill] investment tracker boot run failed:", e?.message)); }, 30_000);
 
+  // Admin only (the /api/admin gate in server/index.ts). It has no preview:
+  // the answer says what happened to every letting row it looked at.
   app.post("/api/admin/backfill-tracker-deals", requireAuth, async (req, res) => {
     try {
-      const skipped = 0;
-
       // --- Letting Tracker ---
       const { backfillUnitBackingDeals } = await import("./unit-mirror");
       const letting = await backfillUnitBackingDeals(pool);
-      let created = letting.created + letting.linked;
 
       // --- Investment Tracker ---
-      created += await backfillInvestmentTrackerDeals();
+      const investment = await backfillInvestmentTrackerDeals();
 
-      res.json({ created, skipped, message: `Created ${created} deals for previously unlinked tracker rows` });
+      const created = letting.created + letting.linked + investment;
+      const message = `Letting Tracker: ${letting.scanned} without a deal, ${letting.created} given a new deal, ${letting.linked} linked to a deal already there, ${letting.skipped} left alone, ${letting.failed} failed. Investment Tracker: ${investment} given a deal.`;
+      res.json({ created, skipped: letting.skipped, letting, investment, message });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Backfill failed" });
     }
