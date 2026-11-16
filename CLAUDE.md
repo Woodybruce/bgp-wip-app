@@ -2915,11 +2915,32 @@ login only within the people on its account). Guard:
 `qa/regression/chatbgp-create-task-paths.test.mjs`. A tool added to one path
 is added to the other.
 
-Found and NOT built, waiting on Woody: there is no "VIP" field anywhere in
-the app, and ChatBGP has no tool that starts a CRM strategy, so a plan it
-"saves" for a company is not on the CRM page's Overview, Watch list or
-Diary. In the CRM, making a company VIP is **Start strategy**
-(`server/crm-kickoff.ts`).
+**ChatBGP starts a CRM strategy** (Woody, 2026-11-16, asked whether "make
+them VIP" should put a company on one: "yes chat should be able to"). There
+is no VIP field in the app: in the CRM a company is turned on by a strategy.
+`server/chatbgp-crm-strategy.ts`, two tools, BGP staff signed in as
+themselves only (both on `CLIENT_BLOCKED_TOOLS`, never a joint agent's):
+
+- `start_crm_strategy`: a new strategy (name and objective), or the running
+  one named, or with no name the one strategy the company is already on
+  (`chooseStrategy`); the company's people (only contacts filed under it);
+  and up to 8 first actions, each for a named BGP colleague, on that
+  colleague's My Tasks. Refused on an automated run: a strategy is a
+  person's decision. A name that means two records, an unknown colleague or
+  a new strategy with no objective is a question back and nothing is saved
+  (`pickByName`).
+- `get_crm_plan`: whether a company is on a strategy, its strategies, open
+  actions and events.
+- **It has no save of its own.** The strategy goes through `applyKickoff`
+  (the save behind the Start strategy button) and each action through
+  `createEngagementAction`, so what chat starts is what the page would have
+  started and it shows on the Overview, the Watch list and the Diary. It
+  sends nothing and books nothing. Tests:
+  `server/chatbgp-crm-strategy.test.ts` (in `npm test`) and
+  `qa/regression/chatbgp-crm-strategy-guards.test.mjs`.
+- Not built: ChatBGP adding a CRM event, changing or closing a strategy, or
+  ticking a CRM action. It has not been asked a real question against a
+  model from a build machine: the tool was run directly.
 
 ## CRM week: meetings on the events calendar, and Monday's two emails (Woody, 2026-11-16)
 

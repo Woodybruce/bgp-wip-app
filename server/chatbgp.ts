@@ -2358,6 +2358,10 @@ export const CLIENT_BLOCKED_TOOLS = new Set([
   // named BGP person's confirmation (server/chatbgp-requirements.ts); the
   // handler also refuses anyone who is not BGP staff signed in as themselves.
   "create_requirement", "update_requirement",
+  // 5. BGP's CRM plan: strategies, actions and events are BGP's own
+  // (server/chatbgp-crm-strategy.ts refuses anyone who is not BGP staff
+  // signed in as themselves).
+  "start_crm_strategy", "get_crm_plan",
 ]);
 
 export function isToolAllowedForClient(name: string): boolean {
@@ -4106,6 +4110,52 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           type: { type: "string", enum: ["meeting", "call", "viewing", "note", "task"], description: "Type of entry" },
         },
         required: ["title", "person", "day", "time"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "start_crm_strategy",
+      description: "Put a company on a CRM strategy: this is what making a landlord, brand, agent firm or lender 'VIP', a key account or a priority relationship MEANS in this app (there is no VIP field). Use ONLY when the user asks you to make a company VIP, add it to the CRM plan, start a strategy for it or save an engagement plan for it; a discussion alone is not an instruction to save. It starts a new strategy (strategyName + objective), or adds the company to one already running when strategyName is that strategy's name, or adds to the one strategy the company is already on when strategyName is left out. It names the company's people on it (contactNames, only contacts filed under that company) and sets first actions, each for a named BGP colleague (ownerName; default the strategy owner), which land on that colleague's My Tasks. Call get_crm_plan first if you do not know whether the company is already on a strategy. Do NOT also call create_task for the same actions. Do NOT record a plan as a company note, a star or a flag instead: only this tool puts it on the CRM page's Overview, Watch list and Diary. It sends nothing and books nothing. If the result has needsAnswer or candidates, nothing was saved: ask the user. Always relay the result's message.",
+      parameters: {
+        type: "object",
+        properties: {
+          companyName: { type: "string", description: "The company, as the user said it" },
+          companyId: { type: "string", description: "Its CRM company id from search_crm, when known. Never guess one." },
+          strategyName: { type: "string", description: "The strategy's name: a new one (e.g. 'Matta: leasing engagement'), or the exact name of a running strategy to add the company to. Leave out to add to the one strategy the company is already on." },
+          objective: { type: "string", description: "What BGP is trying to achieve, in a sentence or two. Needed for a new strategy." },
+          reason: { type: "string", description: "Why this company is on the strategy, in a sentence" },
+          ownerName: { type: "string", description: "The BGP colleague who owns the strategy and any action with no owner of its own. Default: the person asking." },
+          contactNames: { type: "array", items: { type: "string" }, description: "People at the company to name on the strategy, by name. Only contacts already filed under that company can be added." },
+          actions: {
+            type: "array", description: "First actions, up to 8",
+            items: { type: "object", properties: {
+              title: { type: "string", description: "The action, short and actionable" },
+              ownerName: { type: "string", description: "The BGP colleague it is for. Default: the strategy owner." },
+              dueDate: { type: "string", description: "Due date YYYY-MM-DD. Default: two weeks from today." },
+              notes: { type: "string", description: "Optional detail" },
+            }, required: ["title"] },
+          },
+        },
+        required: ["companyName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "get_crm_plan",
+      description: "What the CRM plan holds for one company: whether it is on a strategy (the app's meaning of VIP or key account), the strategies with their objective and owner, the open CRM actions with who has each and when it is due, and its CRM events. Use for 'is X a VIP / on a strategy', 'what is the plan for X', 'what are we doing with X', and before start_crm_strategy.",
+      parameters: {
+        type: "object",
+        properties: {
+          companyName: { type: "string", description: "The company, as the user said it" },
+          companyId: { type: "string", description: "Its CRM company id from search_crm, when known" },
+        },
+        required: ["companyName"],
       },
     },
   });
@@ -7806,6 +7856,11 @@ export async function executeCrmToolRaw(
   if (fnName === "get_property_units" || fnName === "get_deal_waiting_on") {
     const { runUnitTool } = await import("./chatbgp-unit-tools");
     return runUnitTool(fnName, fnArgs, req);
+  }
+
+  if (fnName === "start_crm_strategy" || fnName === "get_crm_plan") {
+    const { runCrmStrategyTool } = await import("./chatbgp-crm-strategy");
+    return runCrmStrategyTool(fnName, fnArgs, req);
   }
 
   if (fnName === "create_task") {
@@ -13361,6 +13416,12 @@ export async function handleCrmToolCall(
   if (fnName === "create_requirement" || fnName === "update_requirement") {
     const rawResult = await executeCrmToolRaw(fnName, fnArgs, req);
     return { handled: true, response: { reply: rawResult.data?.message || rawResult.data?.error || "The requirement was not saved.", action: rawResult.action } };
+  }
+  // The CRM plan tools answer in their own fixed words too: a question back
+  // to the user must never be summarised as "started".
+  if (fnName === "start_crm_strategy" || fnName === "get_crm_plan") {
+    const rawResult = await executeCrmToolRaw(fnName, fnArgs, req);
+    return { handled: true, response: { reply: rawResult.data?.message || rawResult.data?.error || "The CRM plan was not changed.", action: rawResult.action } };
   }
   if (RAW_EXECUTOR_TOOLS.has(fnName)) {
     const rawResult = await executeCrmToolRaw(fnName, fnArgs, req);
