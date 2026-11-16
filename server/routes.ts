@@ -7741,7 +7741,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       ).catch(() => ({ rows: [] as any[] }));
       const currentTenants = tenantsQ.rows.map((r: any) => String(r.n)).filter(Boolean);
       const { TENANT_CATEGORIES } = await import("@shared/tenant-categories");
-      const taxonomy: string[] = [...TENANT_CATEGORIES];
+      // A unit at one of Landsec's 14 schemes, let by Landsec, is briefed in
+      // the categories of Landsec's agency brief (Woody, 2026-11-16).
+      const { schemeForPropertyName } = await import("./landsec-schemes");
+      const { LANDSEC_BRIEF_CATEGORIES } = await import("@shared/landsec");
+      const landsecScheme = !!schemeForPropertyName(property?.name) && /land\s?sec/i.test(clientCompany || "");
+      const taxonomy: string[] = landsecScheme ? [...LANDSEC_BRIEF_CATEGORIES] : [...TENANT_CATEGORIES];
       const { draftBriefFromContext } = await import("./unit-brief-doc");
       const draft = await draftBriefFromContext({
         unitName: (unit as any).unitName,

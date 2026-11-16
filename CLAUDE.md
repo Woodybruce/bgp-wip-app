@@ -145,6 +145,77 @@ employee at a qualifying firm. Preserve people whose firm is unconfirmed;
 do not infer an employer or change stored company attachments. The shared
 brand slice (including self-added brands) still defines eligible brands.
 
+## Landsec's brief categories (Woody, 2026-11-16)
+
+Landsec's Hospitality & Leisure agency brief (October 2026, the pitch brief
+Woody sent) names the categories the instruction covers. Asked how the app
+should reflect them, Woody answered "go ahead with the catagories", "2 yes"
+(only the Landsec view uses the brief's groups; BGP's own Brands groups gain
+the new types) and "3 ignore" (the fee stays as it is: the brief pays 10% of
+NER sole and 7.5% joint, and nothing works a fee from NER). Do not
+re-litigate.
+
+- **The categories and the map** are `shared/landsec.ts`:
+  `LANDSEC_CATEGORIES` (key, label, group, the agreed brief's label), the
+  groups Hospitality, Leisure, Cinema & entertainment and London retail
+  (the agreed brief still says "Retail (London schemes)", so stored rows
+  read), `LANDSEC_CATEGORY_TYPES` (every company type, imported variants
+  included, by category) and `landsecCategoryOf(companyType)`: null for a
+  company that is not a tenant brand, "other" for a tenant type that names
+  no category (a bare "Tenant", "Tenant - Leisure"), words read for a type
+  the lists do not hold. A brand's category is READ from its type, never
+  stored. `LANDSEC_BRIEF_CATEGORIES` (the agreed brief's list) holds all
+  ten; the stored labels did not change, so old rows still read.
+- **New company types**: Food Hall, Competitive Socialising, Active Leisure,
+  Soft Play, Theme & Water Park, in `TENANT_CATEGORIES`,
+  `CLIENT_CRM_CATEGORIES` (they are hospitality and leisure, so every test
+  that reads "hospitality, leisure or fitness" takes them) and the type
+  picker (`client/src/lib/crm-options.ts`, with a colour each). The three
+  lists are held in step by `qa/regression/landsec-categories.test.mjs`.
+- **Where they show** (the Landsec view, `useIsLandsecView()`, unless said):
+  Brand Explorer's cards (`LANDSEC_BRAND_CATEGORIES` in `brands-hub.tsx`, a
+  group matched by `landsecCategoryOf` through `landsecKey`; BGP's
+  `BRAND_CATEGORIES` gained Food Halls, Competitive Socialising, Active
+  Leisure and Theme & Water Parks); the client Brand Directory's Category
+  filter (`client-brand-list.tsx`, Landsec only); Brand gap's Targets
+  (`brand-gap-panel.tsx`: the category under each brand and a Category
+  filter, read from `company_type`, which the target rows now carry: the
+  route itself gained no import, because `qa/regression/scheme-positioning.test.mjs`
+  runs it with a fixed module list); the Brand CRM Targets board, for every
+  viewer because it is Landsec's schemes (`category` on `BrandGridBrand`,
+  set in `brandGrid`); the Targeting Brief's Priority categories and its AI
+  draft at a Landsec scheme (property name matches a scheme AND Landsec is
+  the landlord, the Heads of Terms forms' test; `landsecScheme` on the
+  workspace's unit; a name with a comma is read whole, `splitCategories`).
+- **Trading units by brief category** on Properties → Schemes
+  (`CategoryMixTable` in `scheme-cards.tsx`): `categoryMix` on each scheme
+  of `GET /api/landsec/home`, from `categoryMixByProperty` in
+  `server/landsec-home.ts`: tenancy schedule rows read as occupied by
+  `unitOccupancy`, archived rows left out, the category of the row's brand
+  as the property page's unit feed gives it (the stored brand, else the one
+  brand its trading or lease name matches: the same `BRAND_KEYS_CTE` join as
+  `server/property-units.ts`, held in step by the test; the caption says how
+  many were found by name). A trading row with neither is "No brand". A
+  failed read leaves the table out.
+- **Sort categories** (admins, beside Ownership intel on Brand Explorer;
+  `client/src/components/brand-retype.tsx`, `server/brand-retype.ts`, rules
+  in `shared/brand-retype.ts`): for brands on a catch-all type
+  (`CATCH_ALL_TENANT_TYPES`: Tenant, Leisure, Experiential, Entertainment,
+  Gaming, Family Entertainment, Restaurant, F&B, Food & Drink; never retail,
+  never a type a person chose), a type suggested from the name, then the
+  description and industry, only where it moves the brand to another
+  category. Rules only, no AI, never at boot or on a timer. Apply changes a
+  ticked brand only while it still holds the type the preview read (one
+  UPDATE); the batch is kept in `system_settings.brand_retype_last`, and
+  Undo puts back a brand still on the type it was given, once. Tests:
+  `qa/regression/brand-retype.test.mjs`. It has not been run on the live
+  directory: the first preview is an admin's.
+- Not built: a category on a unit (joint agent logins cut by category, the
+  leisure consultant's cinema and immersive remit); fees from NER; counting
+  Landsec's in-house lettings for the fee forecast; the inclusive costs in
+  Landsec's NER definition; Landsec's new Portfolio Leasing / asset leasing
+  split on the deal clock.
+
 ## Landsec pitch build (Woody, 2026-11-11) — docs/landsec-pitch-plan.md
 
 Landsec is re-tendering its Hospitality & Leisure leasing instruction (14

@@ -25,6 +25,7 @@ import { key as nameKeySql } from "./brand-relevance";
 import { legacyToCode } from "@shared/deal-status";
 import { isLettingType } from "@shared/letting-rules";
 import { formatSizeList } from "@shared/format-size";
+import { landsecCategoryOf } from "@shared/landsec";
 import {
   BRAND_STAGE_LABELS, askedNoTarget, brandStageRank, daysSince, furthestStage, isAgreedOfferStatus, isOnHold, planHeadline,
   requirementChip, resolveStage,
@@ -813,7 +814,7 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
   const warnings = [...early, ...data.warnings];
   const ids = uniq([...data.rowsByBrand.keys(), ...strategyBrandIds]);
   const brands = ids.length === 0 ? [] : (await q.query(
-    `/* brand-plan:brands */ SELECT c.id, c.name, c.logo_url, c.concept_status, c.bgp_contact_user_ids FROM crm_companies c
+    `/* brand-plan:brands */ SELECT c.id, c.name, c.logo_url, c.concept_status, c.bgp_contact_user_ids, c.company_type FROM crm_companies c
       WHERE c.id = ANY($1) AND c.company_type ILIKE 'tenant%' AND c.archived_at IS NULL AND c.merged_into_id IS NULL
         ${brandFilterSql ? `AND ${brandFilterSql}` : ""}
       ORDER BY lower(c.name)`, [ids])).rows;
@@ -854,6 +855,8 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
       key: jointAgent ? token : b.id,
       id: jointAgent ? null : b.id,
       name: b.name, logoUrl: b.logo_url || null,
+      // The category of Landsec's agency brief, read from the brand's type (a label, never its id).
+      category: landsecCategoryOf(b.company_type),
       requirementHeld: data.requirements.has(b.id),
       furthest: furthestStage(liveStages.length ? liveStages : rows.map(r => r.stage)),
       wantedNoUnit: rows.filter(r => r.stage === "wanted").length,

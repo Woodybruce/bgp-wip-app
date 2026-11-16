@@ -40,12 +40,17 @@ export const TENANT_CATEGORIES = [
   "Tenant - Café",
   "Tenant - Bar",
   "Tenant - Bakery",
+  "Tenant - Food Hall",
   // ── Leisure ──
   "Tenant - Cinema",
   "Tenant - Experiential",
   "Tenant - Immersive Experience",
+  "Tenant - Competitive Socialising",
+  "Tenant - Active Leisure",
   "Tenant - Gaming",
   "Tenant - Family Entertainment",
+  "Tenant - Soft Play",
+  "Tenant - Theme & Water Park",
   "Tenant - Leisure",
   // ── Health & Fitness ──
   "Tenant - Gym",
@@ -61,9 +66,12 @@ export const CLIENT_CRM_CATEGORIES = [
   // Restaurants & cafés
   "Tenant - Fine Dining", "Tenant - Casual Dining", "Tenant - Restaurant",
   "Tenant - Quick Service", "Tenant - Café", "Tenant - Bar", "Tenant - Bakery",
+  "Tenant - Food Hall",
   // Leisure & entertainment
   "Tenant - Cinema", "Tenant - Experiential", "Tenant - Immersive Experience",
-  "Tenant - Gaming", "Tenant - Family Entertainment", "Tenant - Leisure",
+  "Tenant - Competitive Socialising", "Tenant - Active Leisure",
+  "Tenant - Gaming", "Tenant - Family Entertainment", "Tenant - Soft Play",
+  "Tenant - Theme & Water Park", "Tenant - Leisure",
   // Fitness & wellness
   "Tenant - Gym", "Tenant - Wellness", "Tenant - Yoga",
 ] as const;

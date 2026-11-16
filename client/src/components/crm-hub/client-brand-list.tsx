@@ -17,6 +17,7 @@ import { Mail, Pencil, Plus, Search, Target, Users, X } from "lucide-react";
 import type { CrmHubRow } from "@shared/crm-hub";
 import { nextActionOf } from "@shared/crm-hub";
 import type { DiaryData } from "@shared/brand-diary";
+import { LANDSEC_CATEGORIES, LANDSEC_OTHER_LABEL, landsecCategoryOf } from "@shared/landsec";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -47,6 +48,9 @@ const CATS: { key: string; label: string; re: RegExp | null }[] = [
   { key: "leisure", label: "Leisure", re: /(leisure|cinema|entertainment|hospitality|hotel)/i },
   { key: "fitness", label: "Fitness", re: /(fitness|gym|yoga)/i },
 ];
+// A Landsec login filters by the categories of Landsec's agency brief
+// (shared/landsec.ts; Woody, 2026-11-16), read from each brand's type.
+const LANDSEC_CATS = [...LANDSEC_CATEGORIES.map(c => ({ value: c.key as string, label: c.label })), { value: "other", label: LANDSEC_OTHER_LABEL }];
 type Rel = "all" | "tenant" | "targeted" | "contact" | "action";
 const RELS: Array<{ key: Rel; label: string }> = [
   { key: "all", label: "All" }, { key: "tenant", label: "Existing tenants" }, { key: "targeted", label: "Being targeted" },
@@ -235,11 +239,13 @@ export function ClientBrandList({ landsec, onContact }: { landsec: boolean; onCo
   // Everything but the relationship pills narrows first, so each pill's count is what pressing it would show.
   const narrowed = useMemo(() => {
     const type = CATS.find(c => c.key === cat)?.re || null;
+    const ofType = (companyType: string | null) => cat === "all" ? true
+      : landsec ? landsecCategoryOf(companyType) === cat : !type || type.test(companyType || "");
     const wanted = search.trim().toLowerCase();
-    return items.filter(({ brand }) => (!type || type.test(brand.companyType || ""))
+    return items.filter(({ brand }) => ofType(brand.companyType)
       && (!property || (brand.targetedAt || []).some(target => target.propertyId === property))
       && (!wanted || brand.name.toLowerCase().includes(wanted) || brand.contacts.some(person => person.name?.toLowerCase().includes(wanted))));
-  }, [items, cat, property, search]);
+  }, [items, cat, property, search, landsec]);
   const rels = RELS.filter(option => option.key !== "action" || withActions);
   const list = rel === "all" ? narrowed : narrowed.filter(item => matchesRel(item, rel));
   const filtered = !!search.trim() || cat !== "all" || rel !== "all" || !!property;
@@ -282,8 +288,10 @@ export function ClientBrandList({ landsec, onContact }: { landsec: boolean; onCo
           </Pill>
         ))}
         <span className="h-4 w-px bg-border" aria-hidden />
-        <PillSelect label="Type" any="Every type" value={cat === "all" ? "" : cat} onChange={value => setCat(value || "all")} testId="client-brand-type"
-          options={CATS.filter(c => c.key !== "all").map(c => ({ value: c.key, label: c.label }))} />
+        {landsec
+          ? <PillSelect label="Category" any="Every category" value={cat === "all" ? "" : cat} onChange={value => setCat(value || "all")} testId="client-brand-type" options={LANDSEC_CATS} />
+          : <PillSelect label="Type" any="Every type" value={cat === "all" ? "" : cat} onChange={value => setCat(value || "all")} testId="client-brand-type"
+              options={CATS.filter(c => c.key !== "all").map(c => ({ value: c.key, label: c.label }))} />}
         {properties.length > 0 && <PillSelect label="Targeted at" any="Any property" value={property} onChange={setProperty} testId="client-prop-filter" options={properties} />}
       </div>
 

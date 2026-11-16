@@ -22,7 +22,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { DEAL_STATUS_LABELS } from "@shared/deal-status";
-import { LANDSEC_STUCK_DAYS } from "@shared/landsec";
+import { LANDSEC_CATEGORIES, LANDSEC_STUCK_DAYS, type LandsecCategoryOrOther } from "@shared/landsec";
 import { LandsecAccessPanel } from "@/components/landsec-access-panel";
 import { rowPill } from "@/components/landsec/deal-clock";
 
@@ -35,11 +35,14 @@ export const LANDSEC_STAGE_LIST: { code: LandsecStage; label: string; short: str
 ];
 
 export interface LandsecSchemeRecord { id: string; name: string; units: number; deals: number; files: number }
+export interface LandsecCategoryMix { counts: Partial<Record<LandsecCategoryOrOther, number>>; trading: number; notLinked: number; byName?: number }
 export interface LandsecHomeScheme {
   key: string; name: string; town: string; group: string;
   propertyId: string | null; recordCount: number;
   units: number; vacant: number; passingRent: number; rentUnits: number;
   pipeline: { tracker: Record<LandsecStage, number>; liveLettings: number; liveDeals: number; stuck: number; oldestLiveDays: number | null };
+  // Trading units by the categories of Landsec's agency brief (null when it could not be read).
+  categoryMix?: LandsecCategoryMix | null;
   // BGP staff only.
   records?: LandsecSchemeRecord[];
   trackerCheck?: { differ: boolean; trackerRows: number; rowsWithoutLetting: number; lettingsWithoutRow: number };
@@ -238,6 +241,77 @@ export function SchemeGroups({ groups, hrefFor, isStaff, isAdmin, onMerge }: {
         </section>
       ))}
     </>
+  );
+}
+
+// The trading units at each scheme by the categories of Landsec's agency brief
+// (Woody, 2026-11-16), from GET /api/landsec/home: a table on a computer, a
+// card per scheme on a phone. A zero in one of the lead agency's six
+// categories is a gap the scheme does not have yet.
+const MIX_HEAD: Record<string, string> = {
+  restaurants_bars: "Restaurants & bars", cafe_qsr: "Café, grab & go, QSR", food_halls: "Food halls",
+  competitive_socialising: "Competitive socialising", active_leisure: "Active leisure", gyms_wellness_softplay: "Gyms, wellness, softplay",
+  cinema: "Cinema", immersive: "Immersive", major_leisure: "Major leisure", retail: "Retail",
+};
+const LEAD_SIX = LANDSEC_CATEGORIES.filter(c => c.group === "Hospitality" || c.group === "Leisure").map(c => c.key as string);
+
+export function CategoryMixTable({ groups }: { groups: LandsecHomeData["groups"] }) {
+  const schemes = groups.flatMap(g => g.schemes.map(s => ({ ...s, group: g.group }))).filter(s => s.categoryMix);
+  if (!schemes.length) return null;
+  const cell = (s: LandsecHomeScheme, key: string) => (s.categoryMix?.counts as Record<string, number> | undefined)?.[key] || 0;
+  const missing = (s: LandsecHomeScheme) => LANDSEC_CATEGORIES.filter(c => LEAD_SIX.includes(c.key) && !cell(s, c.key)).map(c => c.label);
+  const hasOther = schemes.some(s => cell(s, "other") > 0);
+  const byName = schemes.reduce((n, s) => n + (s.categoryMix?.byName || 0), 0);
+  return (
+    <section className="space-y-2" data-testid="landsec-category-mix">
+      <div>
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Trading units by brief category</h2>
+        <p className="text-xs text-muted-foreground" data-testid="landsec-category-mix-note">
+          Occupied units on each tenancy schedule, sorted by their brand's category in Landsec's agency brief. A unit's brand is the one its property page shows: the brand linked on the row, else the one brand its trading name matches{byName > 0 ? ` (${num(byName)} found by name)` : ""}. A unit with neither is under No brand.
+        </p>
+      </div>
+      <div className="hidden md:block overflow-x-auto rounded-lg border">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b bg-muted/40 text-[11px] font-semibold text-muted-foreground align-bottom">
+              <th className="px-3 py-1.5 text-left font-semibold">Scheme</th>
+              {LANDSEC_CATEGORIES.map(c => <th key={c.key} className="px-2 py-1.5 text-right font-semibold" title={c.label}>{MIX_HEAD[c.key]}</th>)}
+              {hasOther && <th className="px-2 py-1.5 text-right font-semibold" title="A brand whose type names no brief category">Other</th>}
+              <th className="px-2 py-1.5 text-right font-semibold">No brand</th>
+              <th className="px-3 py-1.5 text-right font-semibold">Trading</th>
+            </tr>
+          </thead>
+          <tbody>
+            {schemes.map((s, i) => (
+              <tr key={s.key} className={cn("border-b last:border-0", i > 0 && schemes[i - 1].group !== s.group && "border-t-2")} data-testid={`landsec-category-mix-${s.key}`}>
+                <td className="px-3 py-1.5 font-medium whitespace-nowrap">{s.name} <span className="text-muted-foreground font-normal">{s.group}</span></td>
+                {LANDSEC_CATEGORIES.map(c => {
+                  const n = cell(s, c.key);
+                  return <td key={c.key} className={cn("px-2 py-1.5 text-right font-mono tabular-nums", !n && "text-muted-foreground/60")}>{n}</td>;
+                })}
+                {hasOther && <td className={cn("px-2 py-1.5 text-right font-mono tabular-nums", !cell(s, "other") && "text-muted-foreground/60")}>{cell(s, "other")}</td>}
+                <td className={cn("px-2 py-1.5 text-right font-mono tabular-nums", !s.categoryMix!.notLinked && "text-muted-foreground/60")}>{s.categoryMix!.notLinked}</td>
+                <td className="px-3 py-1.5 text-right font-mono tabular-nums font-semibold">{s.categoryMix!.trading}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="md:hidden space-y-2">
+        {schemes.map(s => {
+          const present = LANDSEC_CATEGORIES.filter(c => cell(s, c.key) > 0);
+          const gaps = missing(s);
+          return (
+            <div key={s.key} className="rounded-lg border p-3 space-y-1" data-testid={`landsec-category-mix-card-${s.key}`}>
+              <p className="text-sm font-medium">{s.name} <span className="text-xs text-muted-foreground font-mono tabular-nums">{s.categoryMix!.trading} trading</span></p>
+              {present.length > 0 && <p className="text-xs text-muted-foreground">{present.map(c => `${c.label} ${cell(s, c.key)}`).join(" · ")}</p>}
+              {gaps.length > 0 && <p className="text-xs">None yet: {gaps.join(", ")}</p>}
+              {s.categoryMix!.notLinked > 0 && <p className="text-xs text-muted-foreground">{s.categoryMix!.notLinked} with no brand linked</p>}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

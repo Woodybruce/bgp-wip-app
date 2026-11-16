@@ -10,6 +10,7 @@ import { Pill, PillCount, pillActive, pillInactive, pillMetrics } from "@/compon
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { BRAND_STAGES, BRAND_STAGE_LABELS, BRAND_STAGE_MEANINGS, type BrandGrid, type BrandGridBrand, type BrandGridCell, type BrandPlan, type BrandStage, type PlanRow } from "@shared/brand-stage";
+import { LANDSEC_CATEGORIES, LANDSEC_OTHER_LABEL, landsecCategoryLabel } from "@shared/landsec";
 import { NextStepCell, RequirementCell, RowLinks, SchemeName, StageChip, UnitCell, showsRequirement, stageChipClass, stageLine } from "./scheme-plan-card";
 
 // The Targets view of the Brand CRM (docs/brand-crm-spec-2026-11-12.md, 2.3):
@@ -71,7 +72,11 @@ function PillMenu({ label, all, value, options, onChange, testId }: { label: str
   </Popover>;
 }
 
+// A brand's category of Landsec's agency brief; "other" when its type names none.
+const categoryKey = (brand: BrandGridBrand): string => brand.category || "other";
+
 const underName = (brand: BrandGridBrand, staff: boolean): string => [
+  brand.category && brand.category !== "other" ? landsecCategoryLabel(brand.category) : null,
   Object.keys(brand.cells).length ? plural(Object.keys(brand.cells).length, "scheme") : "No scheme yet",
   brand.requirementHeld ? "Requirement held" : staff ? "No requirement" : null,
   staff && brand.lead ? `Lead ${brand.lead.name}` : null,
@@ -87,12 +92,20 @@ export function PlanBoard({ staff }: { staff: boolean }) {
     staleTime: 60_000, retry: false, refetchInterval: false,
   });
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const [category, setCategory] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [opened, setOpened] = useState<{ brandKey: string; schemeKey: string | null } | null>(null);
   const set = (patch: Partial<Filters>) => setFilters(f => ({ ...f, ...patch }));
 
   const grid = query.data;
-  const brands = grid?.brands || [];
+  const allBrands = grid?.brands || [];
+  // The category of Landsec's agency brief narrows the board first, so every
+  // other filter counts within it.
+  const categoryOptions: MenuOption[] = [
+    ...LANDSEC_CATEGORIES.map(c => ({ value: c.key as string, label: c.label, group: c.group, count: allBrands.filter(b => categoryKey(b) === c.key).length })),
+    { value: "other", label: LANDSEC_OTHER_LABEL, count: allBrands.filter(b => categoryKey(b) === "other").length },
+  ].filter(o => o.count > 0);
+  const brands = category ? allBrands.filter(b => categoryKey(b) === category) : allBrands;
   const schemes = grid?.schemes || [];
   const groups = useMemo(() => {
     const names = Array.from(new Set(schemes.map(s => s.group)));
@@ -102,12 +115,11 @@ export function PlanBoard({ staff }: { staff: boolean }) {
   const columns = groups.flatMap(g => g.schemes);
   const groupStart = new Set(groups.map(g => g.schemes[0]?.key));
 
-  const stageCounts = useMemo(() => BRAND_STAGES.map(stage => ({ stage, count: brandsWith(brands, (_k, c) => c.stage === stage) })).filter(s => s.count > 0), [brands]);
+  const stageCounts = BRAND_STAGES.map(stage => ({ stage, count: brandsWith(brands, (_k, c) => c.stage === stage) })).filter(s => s.count > 0);
   const schemeOptions: MenuOption[] = columns.map(s => ({ value: s.key, label: s.name, group: s.group, count: brandsWith(brands, key => key === s.key) }));
-  const ownerOptions: MenuOption[] = useMemo(() => {
-    const names = Array.from(new Set(brands.flatMap(b => Object.values(b.cells).flatMap(c => c.owners || [])))).sort((a, b) => a.localeCompare(b));
-    return names.map(name => ({ value: name, label: name, count: brandsWith(brands, (_k, c) => (c.owners || []).includes(name)) }));
-  }, [brands]);
+  const ownerOptions: MenuOption[] = Array.from(new Set(brands.flatMap(b => Object.values(b.cells).flatMap(c => c.owners || []))))
+    .sort((a, b) => a.localeCompare(b))
+    .map(name => ({ value: name, label: name, count: brandsWith(brands, (_k, c) => (c.owners || []).includes(name)) }));
   const noNextStepCount = brandsWith(brands, (_k, c) => (c.noNextStep || 0) > 0);
   const wantedCount = brandsWith(brands, (_k, c) => c.wanted > 0);
 
@@ -116,7 +128,7 @@ export function PlanBoard({ staff }: { staff: boolean }) {
   const shown = brands.filter(b => (!needle || b.name.toLowerCase().includes(needle))
     && (!active || Object.entries(b.cells).some(([key, cell]) => cellPasses(key, cell, filters))));
   const dim = (schemeKey: string, cell: BrandGridCell) => active && !cellPasses(schemeKey, cell, filters);
-  const openedBrand = opened ? brands.find(b => b.key === opened.brandKey) || null : null;
+  const openedBrand = opened ? allBrands.find(b => b.key === opened.brandKey) || null : null;
 
   if (query.isLoading) return <p className="text-sm text-muted-foreground" data-testid="brand-plan-board-loading">Loading targets…</p>;
   if (query.isError) return <p role="status" className="text-sm text-muted-foreground">Targets could not be loaded. <button type="button" className="underline" onClick={() => query.refetch()}>Try again</button></p>;
@@ -127,7 +139,7 @@ export function PlanBoard({ staff }: { staff: boolean }) {
   return <div className="space-y-3" data-testid="brand-plan-board">
     <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
       <p className="text-sm text-muted-foreground" data-testid="brand-plan-board-summary">
-        {shown.length === brands.length ? plural(brands.length, "brand") : `${shown.length} of ${plural(brands.length, "brand")}`} across {plural(schemes.length, "scheme")}
+        {shown.length === allBrands.length ? plural(allBrands.length, "brand") : `${shown.length} of ${plural(allBrands.length, "brand")}`} across {plural(schemes.length, "scheme")}
         {staff && <>. Landsec schemes only: a brand's lines with other landlords are on its page.</>}
       </p>
       <div className="relative w-full md:w-64">
@@ -142,16 +154,17 @@ export function PlanBoard({ staff }: { staff: boolean }) {
         onClick={() => set({ stage: filters.stage === stage ? null : stage })}>{BRAND_STAGE_LABELS[stage]}<PillCount n={count} active={filters.stage === stage} /></Pill>)}
     </div>
     <div className="flex gap-1.5 flex-nowrap overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0 [&>*]:shrink-0" data-testid="brand-plan-more-filters">
+      {categoryOptions.length > 1 && <PillMenu label="Category" all="All categories" value={category} options={categoryOptions} onChange={setCategory} testId="brand-plan-category-filter" />}
       {columns.length > 1 && <PillMenu label="Scheme" all="All schemes" value={filters.scheme} options={schemeOptions} onChange={scheme => set({ scheme })} testId="brand-plan-scheme-filter" />}
       {staff && ownerOptions.length > 0 && <PillMenu label="Owner" all="All owners" value={filters.owner} options={ownerOptions} onChange={owner => set({ owner })} testId="brand-plan-owner-filter" />}
       {staff && <Pill active={filters.noNextStep} aria-pressed={filters.noNextStep} onClick={() => set({ noNextStep: !filters.noNextStep })} title="A line between Wanted and Solicitors with no next step" data-testid="brand-plan-filter-no-next-step">
         No next step<PillCount n={noNextStepCount} active={filters.noNextStep} /></Pill>}
       <Pill active={filters.wanted} aria-pressed={filters.wanted} onClick={() => set({ wanted: !filters.wanted })} title="Wanted at a scheme, with no unit picked yet" data-testid="brand-plan-filter-wanted">
         Wanted, no unit<PillCount n={wantedCount} active={filters.wanted} /></Pill>
-      {(active || needle) && <button type="button" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => { setFilters(NO_FILTERS); setText(""); }} data-testid="brand-plan-clear-filters">Clear</button>}
+      {(active || needle || category) && <button type="button" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => { setFilters(NO_FILTERS); setText(""); setCategory(null); }} data-testid="brand-plan-clear-filters">Clear</button>}
     </div>
 
-    {brands.length === 0
+    {allBrands.length === 0
       ? <p className="text-sm text-muted-foreground" data-testid="brand-plan-board-empty">{staff
         ? "No brand has a line at a Landsec scheme yet. Open a brand's page and add the schemes we want it in under Schemes and units."
         : "No brand has a line at your schemes yet."}</p>

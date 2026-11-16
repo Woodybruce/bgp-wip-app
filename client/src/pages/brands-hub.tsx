@@ -27,9 +27,12 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { BrandTidyButton, HiddenBrands } from "@/components/brand-tidy";
 import { OwnershipIntelButton } from "@/components/ownership-intel";
+import { BrandRetypeButton } from "@/components/brand-retype";
 import { BrandCrmTab } from "@/components/brand-crm/brand-crm-tab";
 import { useBrand } from "@/lib/brand-context";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { useIsLandsecView } from "@/components/landsec/deal-clock";
+import { LANDSEC_CATEGORIES, LANDSEC_CATEGORY_GROUPS, LANDSEC_CATEGORY_TYPES, LANDSEC_OTHER_LABEL, landsecCategoryOf, type LandsecCategoryOrOther } from "@shared/landsec";
 
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandHunterBoard = lazy(() => import("@/components/brand-hunter-board"));
@@ -270,7 +273,7 @@ export default function BrandsHub() {
   // Categories with at least one visible brand — the same tiles Brand
   // Explorer shows (the server's counts already leave out hidden and merged
   // brands, and are cut to the client slice for client logins).
-  const categoriesInUse = BRAND_CATEGORIES.filter(cat =>
+  const categoriesInUse = (hubBrand.id === "landsec" ? LANDSEC_BRAND_CATEGORIES : BRAND_CATEGORIES).filter(cat =>
     (data?.categoryCounts || []).some(r => (parseInt(r.count) || 0) > 0 && catMatch(r.company_type, cat))
   ).length;
 
@@ -642,7 +645,9 @@ export default function BrandsHub() {
 // Brand Explorer (moved from People Hub)
 // ─────────────────────────────────────────────────────────────────────────────
 
-type SubCat = { key: string; label: string; icon: any; match: string[] };
+// landsecKey: a group of the Landsec view, matched by the brand's Landsec
+// category (landsecCategoryOf) rather than by the exact types in `match`.
+type SubCat = { key: string; label: string; icon: any; match: string[]; landsecKey?: LandsecCategoryOrOther };
 type TopCat = { key: string; label: string; icon: any; color: string; gradient: string; subs: SubCat[] };
 
 const BRAND_CATEGORIES: TopCat[] = [
@@ -692,6 +697,7 @@ const BRAND_CATEGORIES: TopCat[] = [
       { key: "cafes", label: "Cafés & Coffee", icon: Coffee, match: ["Tenant - Café", "Tenant - Coffee", "Tenant - Café & Coffee", "Tenant - F&B"] },
       { key: "bars", label: "Bars & Pubs", icon: Wine, match: ["Tenant - Bar", "Tenant - Pub", "Tenant - Wine Bar"] },
       { key: "bakery", label: "Bakery & Patisserie", icon: CakeSlice, match: ["Tenant - Bakery", "Tenant - Patisserie"] },
+      { key: "food-halls", label: "Food Halls", icon: Store, match: ["Tenant - Food Hall", "Tenant - Market Hall"] },
     ],
   },
   {
@@ -700,8 +706,11 @@ const BRAND_CATEGORIES: TopCat[] = [
       { key: "cinema", label: "Cinema", icon: Tv, match: ["Tenant - Cinema", "Tenant - Cinema & Film"] },
       { key: "experiential", label: "Experiential", icon: PartyPopper, match: ["Tenant - Experiential", "Tenant - Activation", "Tenant - Entertainment"] },
       { key: "immersive", label: "Immersive Experience", icon: Zap, match: ["Tenant - Immersive Experience", "Tenant - Immersive"] },
+      { key: "competitive-socialising", label: "Competitive Socialising", icon: Target, match: ["Tenant - Competitive Socialising"] },
+      { key: "active-leisure", label: "Active Leisure", icon: Activity, match: ["Tenant - Active Leisure", "Tenant - Padel"] },
       { key: "gaming", label: "Gaming & Escape Rooms", icon: Gamepad2, match: ["Tenant - Gaming", "Tenant - Escape Room", "Tenant - Bowling", "Tenant - Arcade"] },
       { key: "family", label: "Family Entertainment", icon: Baby, match: ["Tenant - Family Entertainment", "Tenant - Family", "Tenant - Soft Play", "Tenant - Kids Entertainment"] },
+      { key: "theme-water-parks", label: "Theme & Water Parks", icon: PartyPopper, match: ["Tenant - Theme & Water Park", "Tenant - Theme Park", "Tenant - Water Park"] },
       { key: "leisure-other", label: "Other Leisure", icon: Clapperboard, match: ["Tenant - Leisure"] },
       { key: "arts", label: "Arts & Culture", icon: Palette, match: ["Tenant - Arts", "Tenant - Culture", "Tenant - Gallery"] },
     ],
@@ -719,13 +728,38 @@ const BRAND_CATEGORIES: TopCat[] = [
   // DIY, high street) live under Fashion & Retail above.
 ];
 
-function catMatch(companyType: string, cat: TopCat): boolean {
-  const t = (companyType || "").toLowerCase().trim();
-  return cat.subs.some(s => s.match.some(m => m.toLowerCase() === t));
-}
+// The Landsec view's groups: the categories of Landsec's H&L agency brief
+// (shared/landsec.ts; Woody, 2026-11-16). Only that view uses them; BGP's
+// groups above stay as they are.
+const LANDSEC_GROUP_LOOK: Record<string, { key: string; icon: any; color: string; gradient: string }> = {
+  "Hospitality": { key: "ls-hospitality", icon: Utensils, color: "bg-red-900", gradient: "from-red-900 to-rose-950" },
+  "Leisure": { key: "ls-leisure", icon: Target, color: "bg-violet-900", gradient: "from-violet-900 to-purple-950" },
+  "Cinema & entertainment": { key: "ls-cinema", icon: Clapperboard, color: "bg-orange-900", gradient: "from-orange-900 to-amber-950" },
+  "London retail": { key: "ls-retail", icon: Store, color: "bg-rose-800", gradient: "from-rose-800 to-rose-900" },
+};
+const LANDSEC_SUB_ICONS: Record<string, any> = {
+  restaurants_bars: Utensils, cafe_qsr: Coffee, food_halls: Store, competitive_socialising: Target, active_leisure: Activity,
+  gyms_wellness_softplay: Dumbbell, cinema: Tv, immersive: Zap, major_leisure: PartyPopper, retail: ShoppingBag,
+};
+const LANDSEC_BRAND_CATEGORIES: TopCat[] = [
+  ...LANDSEC_CATEGORY_GROUPS.map(group => ({
+    ...LANDSEC_GROUP_LOOK[group],
+    label: group,
+    subs: LANDSEC_CATEGORIES.filter(c => c.group === group).map(c => ({
+      key: `ls-${c.key}`, label: c.label, icon: LANDSEC_SUB_ICONS[c.key], match: [...LANDSEC_CATEGORY_TYPES[c.key]], landsecKey: c.key,
+    })),
+  })),
+  { key: "ls-other", label: LANDSEC_OTHER_LABEL, icon: LayoutGrid, color: "bg-slate-500", gradient: "from-slate-600 to-slate-700",
+    subs: [{ key: "ls-other-types", label: "Not in a brief category", icon: LayoutGrid, match: ["Tenant - Leisure", "Tenant"], landsecKey: "other" }] },
+];
+
 function subMatch(companyType: string, sub: SubCat): boolean {
+  if (sub.landsecKey) return landsecCategoryOf(companyType) === sub.landsecKey;
   const t = (companyType || "").toLowerCase().trim();
   return sub.match.some(m => m.toLowerCase() === t);
+}
+function catMatch(companyType: string, cat: TopCat): boolean {
+  return cat.subs.some(s => subMatch(companyType, s));
 }
 
 function BrandExplorer() {
@@ -761,20 +795,23 @@ function BrandExplorer() {
   // window check mirrors BrandsHub's initialTab — useIsMobile's first
   // render can't be trusted inside a useState initializer.
   const landsClean = typeof window !== "undefined" && window.innerWidth < 768;
+  // The Landsec view sorts by the categories of Landsec's agency brief.
+  const landsecView = useIsLandsecView();
+  const categories = landsecView ? LANDSEC_BRAND_CATEGORIES : BRAND_CATEGORIES;
   const [activeCat, setActiveCat] = useState<string | null>(() => {
     if (landsClean) return null;
     // Saved selections may reference a retired category (e.g. "national") —
     // fall back to All rather than silently applying no filter.
     try {
       const saved = localStorage.getItem("brand-explorer-cat") || null;
-      return saved && BRAND_CATEGORIES.some(c => c.key === saved) ? saved : null;
+      return saved && categories.some(c => c.key === saved) ? saved : null;
     } catch { return null; }
   });
   const [activeSub, setActiveSub] = useState<string | null>(() => {
     if (landsClean) return null;
     try {
       const saved = localStorage.getItem("brand-explorer-sub") || null;
-      return saved && BRAND_CATEGORIES.some(c => c.subs.some(s => s.key === saved)) ? saved : null;
+      return saved && categories.some(c => c.subs.some(s => s.key === saved)) ? saved : null;
     } catch { return null; }
   });
   const [search, setSearch] = useState(() => {
@@ -892,16 +929,16 @@ function BrandExplorer() {
 
   const catCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    BRAND_CATEGORIES.forEach(cat => {
+    categories.forEach(cat => {
       counts[cat.key] = companies.filter(c => catMatch(c.companyType, cat)).length;
       cat.subs.forEach(sub => {
         counts[sub.key] = companies.filter(c => subMatch(c.companyType, sub)).length;
       });
     });
     return counts;
-  }, [companies]);
+  }, [companies, categories]);
 
-  const activeCatObj = BRAND_CATEGORIES.find(c => c.key === activeCat);
+  const activeCatObj = categories.find(c => c.key === activeCat);
 
   const filtered = useMemo(() => {
     let list = companies;
@@ -1073,7 +1110,7 @@ function BrandExplorer() {
           <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{companies.length.toLocaleString("en-GB")}</div>
         </button>
         {/* Empty categories are hidden for everyone, not just clients (brand tidy, 2026-11-11). */}
-        {BRAND_CATEGORIES.filter(cat => (catCounts[cat.key] || 0) > 0).map(cat => {
+        {categories.filter(cat => (catCounts[cat.key] || 0) > 0).map(cat => {
           const isActive = activeCat === cat.key;
           return (
             <button
@@ -1181,6 +1218,7 @@ function BrandExplorer() {
             </div>
             {exUser?.isAdmin && <BrandTidyButton />}
             {exUser?.isAdmin && <OwnershipIntelButton />}
+            {exUser?.isAdmin && <BrandRetypeButton />}
             {targetProperties.length > 0 && (
               <select
                 value={propFilter}

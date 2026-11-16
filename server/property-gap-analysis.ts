@@ -821,6 +821,8 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
         + Math.min(score || 0, 60) / 4 + (b.sector && missingKeys.has(b.sector) ? 10 : 0) + boost(b);
       return {
         brand_company_id: b.brand_company_id, brand_name: b.brand_name, domain: b.domain,
+        // The Landsec view sorts targets by the agency brief's categories, read from this.
+        company_type: b.company_type ?? null,
         sector: b.sector, sector_label: (b.sector && sectorLabel.get(b.sector)) || null, sector_missing: !!b.sector && missingKeys.has(b.sector),
         competing_at: competingAt, top_count: top,
         top_centres: Array.from(b.peer_scheme_set).filter(n => topPeerNames.has(n) && !competingNames.has(n)).sort().slice(0, 4),
