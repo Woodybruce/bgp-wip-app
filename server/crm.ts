@@ -35,6 +35,7 @@ import {
   dealAuditLog,
   type CrmCompany, type CrmContact,
 } from "@shared/schema";
+import { compTrackerClass } from "@shared/tracker-class";
 import { isInvoicedStatus, isProvisionalFee, legacyToCode, WIP_STATUSES, deriveStageFromStatus, DEAL_STATUS_CODES, CLOSED_STATUSES, dealLeftTracker } from "@shared/deal-status";
 import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, wipDealStatus } from "@shared/letting-rules";
 import { createDeal, updateDeal, writeDealFeeAllocations, resolveTenancyTokenToUnitId, LettingRefusal, lettingSource } from "./letting-service";
@@ -8551,7 +8552,12 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         longitude: typeof r.Longitude === "number" ? r.Longitude : null,
         submarket: r.Submarket || null,
         source: "RCA",
-      }));
+      }))
+        // Comps are completed sales (Jack, 2026-11-16): a refinancing is not
+        // one, and a pending deal belongs on the tracker until it completes.
+        .filter((r: any) => !/^refinanc|pending/i.test(String(r.status || "")))
+        // Subtype is the tracker class, as on every other comp.
+        .map((r: any) => ({ ...r, subtype: compTrackerClass(r) }));
 
       const existingIds = new Set(
         (await db.select({ rcaDealId: investmentComps.rcaDealId }).from(investmentComps).where(eq(investmentComps.source, "RCA")))

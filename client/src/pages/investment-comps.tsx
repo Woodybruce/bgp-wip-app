@@ -33,7 +33,7 @@ import jsPDF from "jspdf";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
 import { Pill, pillMetrics } from "@/components/ui/pill";
 import { heroThumbUrl, type HeroResolution } from "@/components/tracker-hero-image";
-import { TRACKER_CLASSES, trackerClass, type TrackerClass } from "@/lib/tracker-class";
+import { TRACKER_CLASSES, compTrackerClass, type TrackerClass } from "@/lib/tracker-class";
 
 const STATUS_COLORS: Record<string, string> = {
   "Sale": "bg-green-600 text-white",
@@ -46,10 +46,13 @@ const STATUS_COLORS: Record<string, string> = {
   "Terminated": "bg-red-600 text-white",
 };
 
-const STATUS_OPTIONS = ["Sale", "Sale - Pending", "Under Offer", "Quoting", "Refinance", "Entity", "Terminated"];
+// Completed sales only (Jack, 2026-11-16): live deals live on the tracker,
+// refinancings and lettings are not comps.
+const STATUS_OPTIONS = ["Sale", "Entity", "Terminated"];
 const ASKING_STATUSES = new Set(["Under Offer", "Quoting"]);
 const isAsking = (c: InvestmentComp) => ASKING_STATUSES.has(c.status || "") || c.priceQualifier === "Quoting";
-const SUBTYPE_OPTIONS = ["Centers", "Shops"];
+// Subtype is the tracker class (Jack, 2026-11-16): Type is not used.
+const SUBTYPE_OPTIONS: string[] = [...TRACKER_CLASSES];
 const TYPE_OPTIONS = ["Retail", "Mixed", "Office", "Industrial", "Hotel", "Residential"];
 
 const TYPE_COLORS: Record<string, string> = {
@@ -89,19 +92,7 @@ const REGION_GROUPS = [
 // RCA / BGP comp is read into a class from its type, subtype, name and
 // location — client/src/lib/tracker-class.ts.
 function compClass(c: InvestmentComp): TrackerClass {
-  const exact = TRACKER_CLASSES.find(k => k === c.subtype);
-  if (exact) return exact;
-  const type = c.transactionType === "Mixed" ? "Mixed Use" : c.transactionType === "Hotel" ? "Leisure" : c.transactionType || "";
-  // RCA files shopping centres and retail parks together as "Centers".
-  const subtype = c.transactionType === "Retail" && c.subtype === "Centers"
-    ? (/retail park|shopping park/i.test(c.propertyName || "") ? "retail park" : "shopping centre")
-    : c.subtype;
-  return trackerClass({
-    assetType: [type, subtype].filter(Boolean).join(" ") || null,
-    assetName: c.propertyName,
-    address: [c.address, c.city, c.market, c.postalCode].filter(Boolean).join(" "),
-    notes: c.comments,
-  }).cls;
+  return compTrackerClass(c);
 }
 
 // The comp's photo (its property's pinned photo), or a quiet placeholder.
@@ -355,7 +346,6 @@ const ALL_COLUMNS = [
   { key: "market", label: "Market", default: true },
   { key: "region", label: "Region", default: false },
   { key: "status", label: "Status", default: true },
-  { key: "transactionType", label: "Type", default: true },
   { key: "subtype", label: "Subtype", default: true },
   { key: "transactionDate", label: "Date", default: true },
   { key: "price", label: "Price (£)", default: true },
@@ -665,7 +655,7 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
 
     if (filterStatus) items = items.filter(c => c.status === filterStatus);
     if (filterType) items = items.filter(c => c.transactionType === filterType);
-    if (filterSubtype) items = items.filter(c => c.subtype === filterSubtype);
+    if (filterSubtype) items = items.filter(c => compClass(c) === filterSubtype);
     if (filterCity) items = items.filter(c => c.city === filterCity);
     if (filterMarket) items = items.filter(c => c.market === filterMarket);
     if (filterProperty) items = items.filter(c => c.propertyName === filterProperty);
@@ -908,7 +898,7 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
       case "subtype":
         return (
           <InlineLabelSelect
-            value={val as string}
+            value={compClass(comp)}
             options={SUBTYPE_OPTIONS}
             colorMap={SUBTYPE_COLORS}
             onSave={(v) => handleUpdate(id, "subtype", v)}
@@ -1237,15 +1227,6 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
               {STATUS_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Select value={filterType || "all"} onValueChange={(v) => setFilterType(v === "all" ? "" : v)}>
-            <SelectTrigger className="h-8 w-36 text-xs" data-testid="select-toolbar-type">
-              <SelectValue placeholder="Type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Types</SelectItem>
-              {TYPE_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
-            </SelectContent>
-          </Select>
           <Select value={filterSubtype || "all"} onValueChange={(v) => setFilterSubtype(v === "all" ? "" : v)}>
             <SelectTrigger className="h-8 w-32 text-xs" data-testid="select-toolbar-subtype">
               <SelectValue placeholder="Subtype" />
@@ -1273,13 +1254,13 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
                 {REGION_GROUPS.map(region => <SelectItem key={region} value={region}>{region}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Select value={filterType || "all"} onValueChange={(v) => setFilterType(v === "all" ? "" : v)}>
+            <Select value={filterSubtype || "all"} onValueChange={(v) => setFilterSubtype(v === "all" ? "" : v)}>
               <SelectTrigger className="h-9 flex-1 text-sm" data-testid="select-use-filter">
-                <SelectValue placeholder="All Uses" />
+                <SelectValue placeholder="All classes" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Uses</SelectItem>
-                {TYPE_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                <SelectItem value="all">All classes</SelectItem>
+                {SUBTYPE_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -1500,17 +1481,7 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
               </Select>
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground">Transaction Type</label>
-              <Select value={newTxnType || "none"} onValueChange={v => setNewTxnType(v === "none" ? "" : v)}>
-                <SelectTrigger data-testid="select-new-type"><SelectValue placeholder="Select type" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">—</SelectItem>
-                  {TYPE_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Subtype</label>
+              <label className="text-xs font-medium text-muted-foreground">Class</label>
               <Select value={newSubtype || "none"} onValueChange={v => setNewSubtype(v === "none" ? "" : v)}>
                 <SelectTrigger data-testid="select-new-subtype"><SelectValue placeholder="Select subtype" /></SelectTrigger>
                 <SelectContent>
