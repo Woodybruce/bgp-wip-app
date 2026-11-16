@@ -159,9 +159,10 @@ export default function MobileProfilePage() {
         </p>
       </div>
 
-      {/* Business card — QR + share link + email signature */}
+      {/* Business card — QR + share link + email signature: the Business
+          card pill of My BGP (Woody, 2026-11-16: "Fold into my BGP"). */}
       <button
-        onClick={() => navigate("/business-card")}
+        onClick={() => navigate("/my-bgp?tab=business-card")}
         className="mx-4 mb-3 w-[calc(100%-2rem)] flex items-center gap-3 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] dark:border-border px-4 py-3 active:bg-muted"
         data-testid="button-profile-business-card"
       >

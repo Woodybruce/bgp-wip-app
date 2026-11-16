@@ -3255,11 +3255,11 @@ rep". Do not re-litigate. Guards: `qa/regression/staff-menu.test.mjs`.
   then CV. The same two pills show on your own profile from People & HR.
   People & HR stays the team directory. `/my-expenses` and `/business-card`
   still open on their own (expense notifications, the public card's back
-  link and the phone link to them) and light My BGP (`MY_BGP_PATHS`). The
-  phone home's Boards gain My BGP and keep their one-tap Business card tile
-  (Woody, 2026-09-28), which is no longer on the menu list
-  (`BUSINESS_CARD_BOARD` in `mobile-home.tsx`). Staff only: not on
-  `CLIENT_ALLOWED_ROUTES`.
+  link and old links) and light My BGP (`MY_BGP_PATHS`). The phone home's
+  Boards have My BGP and no Business card tile, and the Business card row
+  on the phone's My Profile opens `/my-bgp?tab=business-card` (Woody, same
+  day: "Fold into my BGP", superseding the one-tap tile of 2026-09-28).
+  Staff only: not on `CLIENT_ALLOWED_ROUTES`.
 - **Website** is in the Admin group (`adminNavBase`; admin only on the phone
   list). Its routes are unchanged (`requireAuth`): the page still opens by
   its address.

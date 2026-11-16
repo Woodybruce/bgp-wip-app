@@ -51,6 +51,11 @@ test('My BGP replaces My Card and Business card; People & HR stays', () => {
   // A client login is never let in.
   const allowed = find('client/src/App.tsx', node => ts.isVariableStatement(node) && node.getText().startsWith('const CLIENT_ALLOWED_ROUTES ='));
   assert.ok(!allowed.includes('"/my-bgp"'));
+  // The phone folds it in too (Woody, 2026-11-16: "Fold into my BGP"): no Business card tile.
+  const home = source('client/src/components/mobile-home.tsx');
+  assert.match(home, /const CORE_BOARD_URLS = new Set\(\["\/comps", "\/brands", "\/property-intelligence", "\/sharepoint", "\/hr", "\/my-bgp"\]\);/);
+  assert.ok(!home.includes('BUSINESS_CARD_BOARD'));
+  assert.match(source('client/src/pages/mobile-profile.tsx'), /navigate\("\/my-bgp\?tab=business-card"\)/);
   const hr = source('client/src/pages/hr.tsx');
   assert.match(hr, /export function MyBgpPage\(\)/);
   assert.match(hr, /\{isOwn && <TabsTrigger value="business-card"/);

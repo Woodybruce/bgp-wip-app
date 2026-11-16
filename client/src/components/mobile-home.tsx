@@ -9,7 +9,7 @@ import { PortfolioContactsBoard } from "@/components/portfolio-contacts-board";
 import {
   Sparkles, BarChart3, FileText, Handshake, Calendar as CalendarIcon,
   AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet, RefreshCw,
-  Receipt, Image as ImageIcon, Building2, Store, ClipboardList, Newspaper, Users, Mail, QrCode,
+  Receipt, Image as ImageIcon, Building2, Store, ClipboardList, Newspaper, Users, Mail,
 } from "lucide-react";
 import { legacyToCode } from "@shared/deal-status";
 import { isEquityUser } from "@/lib/utils";
@@ -156,12 +156,10 @@ type Commission = { billedPence: number; commissionEarned: number; commissionFor
 // hides behind "Show all" so the home screen stays focused on daily work.
 // People & HR added so reviews/1:1s can be updated on the move (Carly,
 // 2026-09-21) — staff only, stripped from client homes below.
-// Business card too — shown to people you meet, so one tap from Home
-// (Woody, 2026-09-28). The side bar folds it into My BGP (2026-11-16), so
-// it is no longer on the menu list: the phone home keeps its own tile,
-// after My BGP.
-const CORE_BOARD_URLS = new Set(["/comps", "/brands", "/property-intelligence", "/sharepoint", "/hr", "/my-bgp", "/business-card"]);
-const BUSINESS_CARD_BOARD = { title: "Business card", url: "/business-card", icon: QrCode };
+// My BGP (your own HR page, with the Business card and Card & expenses
+// pills) replaced the Business card tile (Woody, 2026-11-16: "Fold into my
+// BGP"), as it replaced the side bar's Business card and My Card entries.
+const CORE_BOARD_URLS = new Set(["/comps", "/brands", "/property-intelligence", "/sharepoint", "/hr", "/my-bgp"]);
 
 // Pence → compact £ (e.g. £1.2m, £340k, £980)
 function fmtMoney(pence: number | undefined | null): string {
@@ -292,15 +290,14 @@ export default function MobileHome() {
   // Default to the core daily boards; the rest (admin / WIP tools) sit behind
   // "Show all" so Home stays focused. Admins still get their extra tools.
   const visibleBoards = (mobileOverlayItems as any[])
-    .flatMap(b => (b.url === "/my-bgp" ? [b, BUSINESS_CARD_BOARD] : [b]))
     .filter(b => (user?.isAdmin || !b.adminOnly) && b.url !== "/mail");
   // Portfolio homes already have a Brands tile in the quick trio above, so
   // drop the Brand Intelligence board there to avoid showing /brands twice.
   const boards = visibleBoards.filter(b =>
     CORE_BOARD_URLS.has(b.url)
     && !(showPortfolioHome && b.url === "/brands")
-    // HR, My BGP and business cards are BGP-internal — never on a client (Landsec) home.
-    && !(isClientHome && (b.url === "/hr" || b.url === "/my-bgp" || b.url === "/business-card")));
+    // HR and My BGP are BGP-internal — never on a client (Landsec) home.
+    && !(isClientHome && (b.url === "/hr" || b.url === "/my-bgp")));
   // The tasks a deal is waiting on come first, so they are never cut off.
   const openTasks = waitedOnFirst((tasks || []).filter(t => t.status !== "done")).slice(0, 6);
   // Count-gated approvals link — mirrors the desktop sidebar entry so Wendy/
