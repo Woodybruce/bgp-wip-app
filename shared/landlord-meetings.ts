@@ -4,6 +4,8 @@ export interface LandlordMeeting {
   id: string;
   companyId: string;
   companyName: string;
+  // A landlord, or in the leasing book a brand or an agent firm.
+  companyKind?: "landlord" | "brand" | "agent";
   subject: string;
   start: string;
   end: string;

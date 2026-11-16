@@ -10,6 +10,8 @@ export const DEAL_STATUS_CODES = [
   "NEG",  // Negotiating
   "HOT",  // HOTs — heads of terms agreed, pre-solicitors (Alex, 2026-08-12)
   "SOL",  // Solicitors (replaces "Under Offer")
+  "UOX",  // Under Offer - Not BGP — someone else's deal under offer, kept on the
+          // Investment Tracker to keep tabs (Jack, 2026-11-16). No fee, no questions.
   "EXC",  // Exchanged
   "COM",  // Completed (also covers "Let" on the letting tracker)
   "WIT",  // Withdrawn (also covers Lost/Dead)
@@ -29,6 +31,7 @@ export const DEAL_STATUS_LABELS: Record<DealStatusCode, string> = {
   NEG: "Negotiating",
   HOT: "HOTs",
   SOL: "Solicitors",
+  UOX: "U/O - Not BGP",
   EXC: "Exchanged",
   COM: "Completed",
   WIT: "Withdrawn",
@@ -46,6 +49,7 @@ export const DEAL_STATUS_COLORS: Record<DealStatusCode, string> = {
   NEG: "bg-amber-100 text-amber-800",
   HOT: "bg-rose-100 text-rose-800",
   SOL: "bg-orange-100 text-orange-800",
+  UOX: "bg-yellow-100 text-yellow-800",
   EXC: "bg-violet-100 text-violet-800",
   COM: "bg-emerald-100 text-emerald-800",
   WIT: "bg-stone-100 text-stone-600",
@@ -64,6 +68,7 @@ export const DEAL_STATUS_DOT_COLORS: Record<DealStatusCode, string> = {
   NEG: "bg-amber-500",
   HOT: "bg-rose-500",
   SOL: "bg-orange-600",
+  UOX: "bg-yellow-500",
   EXC: "bg-violet-500",
   COM: "bg-emerald-500",
   WIT: "bg-stone-400",
@@ -76,7 +81,7 @@ export const DEAL_STATUS_DOT_COLORS: Record<DealStatusCode, string> = {
 // relevant") — existing REP rows still render via legacyToCode, they just
 // lose their chip. HOT sits between NEG and SOL per the same request.
 export const LETTING_STATUSES: DealStatusCode[]    = ["OPP", "AVA", "NEG", "HOT", "SOL", "EXC", "COM", "WIT", "INV"];
-export const INVESTMENT_STATUSES: DealStatusCode[] = ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"];
+export const INVESTMENT_STATUSES: DealStatusCode[] = ["REP", "SPEC", "LIVE", "AVA", "NEG", "UOX", "SOL", "EXC", "COM", "WIT", "INV"];
 // WIP report covers every fee-bearing stage including pre-deal pipeline.
 // AVA + NEG live on the Letting Tracker AND the Deals board (Woody,
 // 2026-10-26: a Marketing deal sits on the WIP and the Deals board from
@@ -86,8 +91,10 @@ export const INVESTMENT_STATUSES: DealStatusCode[] = ["REP", "SPEC", "LIVE", "AV
 // count as WIP.
 export const WIP_STATUSES: DealStatusCode[]        = ["AVA", "NEG", "HOT", "SOL", "EXC", "COM", "INV"];
 // Every code a person may pick on a deal — ARCH is system-set (see above)
-// and never offered.
-export const DEAL_PAGE_STATUSES: DealStatusCode[]  = DEAL_STATUS_CODES.filter((c) => c !== "ARCH");
+// and never offered. UOX is picked on the Investment Tracker only, so the
+// Deals and WIP pickers (lettings, Landsec) never offer it; a deal that
+// carries it still shows its label.
+export const DEAL_PAGE_STATUSES: DealStatusCode[]  = DEAL_STATUS_CODES.filter((c) => c !== "ARCH" && c !== "UOX");
 
 // INV is set automatically when a Xero invoice syncs onto the deal, ARCH by
 // the WIP import's soft-archive — UI should render them but disable manual
@@ -107,6 +114,10 @@ const LEGACY_MAP: Record<string, DealStatusCode> = {
   "hots": "HOT",
   "heads of terms": "HOT",
   "under offer": "SOL",
+  "under offer - not bgp": "UOX",
+  "under offer (not bgp)": "UOX",
+  "u/o - not bgp": "UOX",
+  "uox": "UOX",
   "sols": "SOL",
   "sol": "SOL",
   "solicitors": "SOL",
@@ -206,6 +217,28 @@ export function isInvestmentDeal(dealType: string | null | undefined, team: stri
 // SQL twin of isInvestmentDeal for a crm_deals alias (e.g. "d" or "crm_deals").
 export function investmentDealSql(alias: string): string {
   return `(${alias}.deal_type IN ('Purchase','Sale','Investment') OR 'Investment' = ANY(COALESCE(${alias}.team, ARRAY[]::text[])))`;
+}
+
+// Which deals leave the trackers for the rest of the app (the Deals board,
+// the Deal Report, a property's or company's deals). A letting shows from
+// Marketing onwards (Woody, 2026-10-26); an INVESTMENT deal stays on the
+// Investment Tracker until it reaches Solicitors (Jack, 2026-11-16: "It
+// should only move to other parts of the app once in solicitors"). NULL or
+// unknown statuses stay visible rather than silently vanishing. SQL for a
+// crm_deals alias; true = show it.
+const PRE_MARKETING: DealStatusCode[] = ["OPP", "REP", "SPEC", "LIVE"];
+const sqlList = (codes: DealStatusCode[]) => statusSpellingsFor(codes).map((s) => `'${s.replace(/'/g, "''")}'`).join(", ");
+export function dealLeftTrackerSql(alias: string): string {
+  const st = `lower(trim(coalesce(${alias}.status, '')))`;
+  return `(${alias}.status IS NULL OR (${st} NOT IN (${sqlList(PRE_MARKETING)})`
+    + ` AND NOT (${investmentDealSql(alias)} AND ${st} IN (${sqlList(INVESTMENT_PROVISIONAL_STATUSES)}))))`;
+}
+export function dealLeftTracker(deal: { status?: string | null; dealType?: string | null; team?: string[] | string | null }): boolean {
+  if (deal.status == null) return true;
+  const code = legacyToCode(deal.status);
+  if (!code) return true;
+  if (PRE_MARKETING.includes(code)) return false;
+  return !(isInvestmentDeal(deal.dealType, deal.team) && INVESTMENT_PROVISIONAL_STATUSES.includes(code));
 }
 
 // Pre-Solicitors investment fee — shown on the record, marked provisional,

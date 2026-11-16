@@ -1725,6 +1725,13 @@ appendix `docs/letting-cleanup-technical-appendix.md`):
 - **Marketing deals sit on the Deals board and the WIP from birth** with
   or without a fee (no fee = "fee needed" on Needs Attention, not "not
   WIP") — this is the leasing fee forecast.
+- **Investment deals stay on the Investment Tracker until Solicitors**
+  (Jack, 2026-11-16: "It should only move to other parts of the app once in
+  solicitors"). The Deals board, its stat cards, property summaries, the
+  Deal Report and a company's deals leave out an investment deal (deal type
+  Purchase / Sale / Investment, or the Investment team) before SOL; lettings
+  still show from Marketing. One rule, `dealLeftTrackerSql` /
+  `dealLeftTracker` in `shared/deal-status.ts`: never a second list.
 - **No unplaced letting deals:** a letting deal must have a property and a
   unit (an actual address); otherwise it is refused, never parked.
 - **Client-added units** (Landsec logins) create a BGP instruction (deal +
@@ -2926,6 +2933,121 @@ Two rules everything else follows (do not re-litigate):
   bindings (sql-tools, brand pack, Brand Gap, target engine, nightly brand
   pass, insights report leg): a new import in those functions needs the
   binding added to the test. Run that suite with `--import tsx`.
+
+## ChatBGP sets tasks for colleagues from either tool path (2026-11-16)
+
+Woody pasted a ChatBGP conversation (making the agent firm Matta "VIP"
+and planning how leasing engages with it) that ended "the task-assignment
+tool returned Unknown tool: create_task, so tasks have not landed on" the
+two colleagues' lists. ChatBGP has two tool paths in `server/chatbgp.ts`:
+`handleCrmToolCall` (one step) and `executeCrmToolRaw` (a multi-step
+answer). Only the first knew `create_task`. Both now call one rule,
+`createTaskFromChat` (the asker's own list or a named colleague's; a client
+login only within the people on its account). Guard:
+`qa/regression/chatbgp-create-task-paths.test.mjs`. A tool added to one path
+is added to the other.
+
+Found and NOT built, waiting on Woody: there is no "VIP" field anywhere in
+the app, and ChatBGP has no tool that starts a CRM strategy, so a plan it
+"saves" for a company is not on the CRM page's Overview, Watch list or
+Diary. In the CRM, making a company VIP is **Start strategy**
+(`server/crm-kickoff.ts`).
+
+## CRM week: meetings on the events calendar, and Monday's two emails (Woody, 2026-11-16)
+
+Woody: "can you merge CRM meetings with the events calendar in CRM, the CRM
+meeting is great just need to overlay for the week. The directors then want
+a summary of those meetings emailed to them on a monday morning." Asked who
+and what, he answered: the directors' address; no look back at last week;
+and "just landlords at this stage but should also do for brands and agents
+separately and send to" the leasing address. Do not re-litigate.
+
+- **Two books of meetings from the same diaries** (`server/landlord-meetings.ts`,
+  `DiaryBook`): `landlord`, the one CRM Meetings always read, and `leasing`,
+  agent firms and the brands BGP is working (`loadLeasingCatalogue`:
+  `workedBrandIds` in `server/crm-hub.ts`, the Brands list's own rule; never
+  the whole brand directory, never BGP's own record or people). Each has its
+  own store (`landlord_diary_v1:` / `leasing_diary_v1:`), so neither adds to
+  the other, and every privacy rule in that file applies to both (private
+  mailboxes and entries, absences, revocations). The hourly mailbox sync
+  and Check diaries fill both from one read, each failing on its own.
+- **Matching** (`server/landlord-meeting-matching.ts`): a person's email
+  address or their firm's domain matches in both books. The leasing book
+  (`LEASING_MATCHER`) trusts a name in the invitation only when it is two
+  words or more: "Next steps" is not Next. Do not loosen that.
+- **Feeds**, BGP staff only: `GET /api/crm/landlords/meetings/calendar` and
+  `GET /api/crm/leasing-meetings/calendar` (each the whole digest, 30 days
+  back and 90 ahead). A meeting carries `companyKind`.
+- **The calendar** (`client/src/components/crm-engagement/overview.tsx`,
+  the Events calendar on the CRM Overview) opens on a **Week** view and
+  draws those meetings over the CRM's confirmed events, in Week, Month and
+  List: an event is a filled chip, a meeting an outlined one (`MeetingChip`,
+  `MeetingRow`, `MeetingDetail`). The **Meetings** pill switches them off.
+  A meeting follows the company, kind (Landlords / Brands / Agents) and BGP
+  owner filters and steps aside while a strategy or Lenders is picked. It is
+  not a CRM event and is never saved as one. Not on a company page's compact
+  panel.
+- **One set of rules**, `shared/crm-week-ahead.ts` (tests
+  `server/crm-week-ahead.test.ts`, in `npm test`): `groupWeekMeetings` (a
+  diary entry that names two companies is ONE meeting with both names),
+  `leasingSections` (a meeting with a brand and its agent is under Brands;
+  Agents holds the rest), the London day and time, the Monday-to-Sunday
+  week, and each email's subject and body. The calendar and the emails all
+  use it: change a rule there.
+- **Monday's emails** (`server/crm-week-ahead.ts`, job `crm-week-ahead`,
+  Monday 07:30, both editions, one failing never stops the other):
+  **directors** = the week's landlord meetings and the CRM's confirmed
+  events, to the directors' address; **leasing** = the week's meetings with
+  brands and with agents, no CRM events, to the leasing address. Week ahead
+  only. `CRM_WEEK_AHEAD_TO` / `LEASING_WEEK_AHEAD_TO` (a comma list) move
+  one and `off` stops it; an address outside BGP's own domain is dropped
+  whatever a setting holds. Every word from a diary is escaped and the only
+  links are to the app. **A request never names a recipient**: admins have
+  `GET /api/admin/crm-week-ahead` (both emails as they stand, and who gets
+  them) and `POST …/:edition/send-me` (a copy to the admin who pressed it),
+  from "See this week's emails" on CRM Meetings. Guards:
+  `qa/regression/crm-week-ahead-guards.test.mjs`. Neither has been sent
+  through Microsoft from a build machine, and the leasing book holds nothing
+  until the first hourly sync after it goes live.
+- Not built: lender meetings; a list of brand and agent meetings on the CRM
+  Meetings tab (they are on the calendar and in the email).
+
+## Investment Tracker: the top folds away (Woody, 2026-11-16)
+
+Woody, presenting the tracker in a meeting: "everything stays at the top
+when scrolling can you think about how we solve that", then "ok go ahead".
+The title, search, status pills, class pills, two drop-downs and the charts
+line were all fixed above the table, which was left about a third of the
+screen. On a computer (`client/src/pages/investment-tracker.tsx`; a phone
+is unchanged, its whole page scrolls):
+
+- **The top is two lines.** The title line (Purchases / Sales, the count,
+  Activity charts, Present, Add Asset), then the search, the status pills on
+  ONE line (`PillLine`: an arrow at either end and the mouse wheel reach the
+  rest; never let them wrap again) and **Filters**: Class, Tenure and Agent
+  in one popover, with a count on the button and a chip per filter in use
+  (`filterChips`). Class and Tenure are also on their column headings.
+- **Scrolling the table folds the top to one line** (`folded`, drawn as
+  `foldedTop`; `data-folded` on `tracker-top`): title, board, search, the
+  chips, Filters, Show all, Add Asset. It folds past 48px and opens when the
+  table is scrolled back to its top, on a wheel-up at the top, or from Show
+  all. Folding makes the table taller, which can pull a short list back to
+  its top, so a return to the top within 400ms of folding is ignored
+  (`foldedAtRef`); a sideways scroll at the top is not a return to the top
+  (`lastTopRef`). Keep both or the top flickers.
+- **The Present window is the table alone** (Jack, 2026-11-16, built by
+  another session the same morning and kept as it was in the merge): the
+  title, Purchases / Sales, the count and a search box, no pills, filters,
+  charts or Add Asset, with the size buttons and Full screen floating bottom
+  right. Nothing there folds (`foldedTop` is never true when `present`). Its
+  board is pinned to the four edges of the window (`absolute inset-0` with
+  the zoom, in `investment-tracker-present.tsx`): the percentage height it
+  had left the board short of the bottom at every size but 100%.
+  `ScrollableTable` takes `fill` there: no measured cap, because one
+  measured in window pixels is the wrong size inside a zoom.
+- Guards: `qa/regression/investment-tracker-top.test.mjs`. The Letting
+  Tracker and the Deals table have the same fixed top and have NOT been
+  changed: waiting on Woody.
 
 ## Document design preferences (the "house style" pattern)
 

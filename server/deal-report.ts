@@ -17,8 +17,7 @@ import { pool } from "./db";
 import * as path from "path";
 import * as fs from "fs";
 import { callClaude, safeParseJSON } from "./utils/anthropic-client";
-import { statusSpellingsFor } from "@shared/deal-status";
-import { PRE_MARKETING_STATUSES } from "@shared/letting-rules";
+import { dealLeftTrackerSql } from "@shared/deal-status";
 
 const router = Router();
 const BGP_GREEN = "#6E0C25";      // v19 Bordeaux (constant names are legacy)
@@ -85,11 +84,9 @@ async function loadRecentDeals() {
        LEFT JOIN crm_companies vc ON vc.id = d.vendor_id
        LEFT JOIN crm_companies pc ON pc.id = d.purchaser_id
       WHERE d.created_at >= now() - interval '${REPORT_DAYS} days'
-        -- Same rule as the Deals list (storage.getCrmDeals excludeTrackerDeals):
-        -- the Deals board runs from Marketing onwards (Woody, 2026-10-26);
-        -- only the pre-marketing investment pipeline stays off it.
-        AND (d.status IS NULL OR lower(d.status) NOT IN (
-          ${statusSpellingsFor(PRE_MARKETING_STATUSES).map((s) => `'${s}'`).join(", ")}))
+        -- Same rule as the Deals list: lettings from Marketing on, an
+        -- investment deal only from Solicitors on (dealLeftTrackerSql).
+        AND ${dealLeftTrackerSql("d")}
       ORDER BY d.created_at DESC`
   );
   return rows;
