@@ -1,9 +1,11 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { CalendarDays, RefreshCw } from "lucide-react";
+import { CalendarDays, Mail, RefreshCw } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useToast } from "@/hooks/use-toast";
 import type { LandlordMeeting, LandlordMeetingDigest } from "@shared/landlord-meetings";
 
 export function splitLandlordWeekMeetings(meetings: LandlordMeeting[], now = Date.now()) {
@@ -20,6 +22,43 @@ export function splitLandlordWeekMeetings(meetings: LandlordMeeting[], now = Dat
   return { upcoming, earlier };
 }
 
+interface WeekAheadPreview { schedule: string; recipients: string[]; subject: string; html: string; meetings: number; events: number; last: { at: string; sent: number; failed: number } | null }
+
+// Monday's email to the directors (Woody, 2026-11-16). Everyone on CRM
+// Meetings is told it goes; an admin can read this week's and send
+// themselves a copy. Nobody chooses who it goes to from here.
+function WeekAheadEmail() {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const { data: me } = useQuery<{ isAdmin?: boolean }>({ queryKey: ["/api/auth/me"] });
+  const preview = useQuery<WeekAheadPreview>({
+    queryKey: ["/api/admin/crm-week-ahead"], queryFn: async () => (await apiRequest("GET", "/api/admin/crm-week-ahead")).json(),
+    enabled: open && !!me?.isAdmin, staleTime: 60_000, refetchOnWindowFocus: false, retry: false,
+  });
+  const sendMe = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/admin/crm-week-ahead/send-me")).json(),
+    onSuccess: (sent: { sentTo: string }) => toast({ title: "Copy sent", description: `Sent to ${sent.sentTo}.` }),
+    onError: () => toast({ title: "The copy could not be sent", variant: "destructive" }),
+  });
+  const people = (preview.data?.recipients || []).map(address => address.split("@")[0]).map(name => name.charAt(0).toUpperCase() + name.slice(1));
+  return <p className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1" data-testid="crm-week-ahead-line">
+    <Mail className="h-3.5 w-3.5" /> The directors are emailed the week's meetings and CRM events on Monday mornings.
+    {me?.isAdmin && <button type="button" className="underline underline-offset-2" onClick={() => setOpen(true)} data-testid="button-week-ahead-preview">See this week's email</button>}
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="crm-week-ahead-dialog">
+        <DialogHeader><DialogTitle>CRM week ahead</DialogTitle>
+          <DialogDescription>{preview.data ? `Sent on ${preview.data.schedule} to ${people.length ? people.join(", ") : "nobody: it is switched off"}.${preview.data.last ? ` Last sent ${new Date(preview.data.last.at).toLocaleDateString("en-GB", { timeZone: "Europe/London", weekday: "short", day: "numeric", month: "short" })} to ${preview.data.last.sent}.` : " It has not been sent yet."}` : "This week's email as it stands now."}</DialogDescription>
+        </DialogHeader>
+        {preview.isLoading ? <Skeleton className="h-64 w-full" /> : preview.isError || !preview.data ? <p className="text-sm">The email could not be put together. Nothing was sent.</p> : <>
+          <p className="text-sm font-medium break-words" data-testid="crm-week-ahead-subject">{preview.data.subject}</p>
+          <iframe title="This week's email" sandbox="" srcDoc={preview.data.html} className="w-full h-[420px] rounded-md border bg-white" data-testid="crm-week-ahead-frame" />
+          <div className="flex justify-end"><Button size="sm" variant="outline" disabled={sendMe.isPending} onClick={() => sendMe.mutate()} data-testid="button-week-ahead-send-me"><Mail className="h-4 w-4 mr-1.5" />{sendMe.isPending ? "Sending…" : "Send me a copy"}</Button></div>
+        </>}
+      </DialogContent>
+    </Dialog>
+  </p>;
+}
+
 export function LandlordWeeklyMeetings() {
   const [showAll, setShowAll] = useState(false);
   const { data, isLoading, isError, refetch } = useQuery<LandlordMeetingDigest>({
@@ -33,7 +72,7 @@ export function LandlordWeeklyMeetings() {
     mutationFn: async () => (await apiRequest("POST", "/api/crm/landlords/meetings/refresh")).json(),
     onSuccess: () => queryClient.invalidateQueries({ predicate: query =>
       (query.queryKey[0] === "/api/crm/landlords" && query.queryKey[2] === "meetings")
-      || query.queryKey[0] === "/api/crm/landlords/meetings/week" }),
+      || query.queryKey[0] === "/api/crm/landlords/meetings/week" || query.queryKey[0] === "/api/crm/landlords/meetings/calendar" }),
   });
   const date = (value: string) => new Date(value).toLocaleDateString("en-GB", { timeZone: "Europe/London", weekday: "short", day: "numeric", month: "short" });
   const time = (value: string) => new Date(value).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" });
@@ -64,6 +103,7 @@ export function LandlordWeeklyMeetings() {
         {refresh.isPending || data?.coverage.refreshing ? "Checking diaries…" : "Check diaries"}
       </Button>
     </div>
+    <WeekAheadEmail />
     {isLoading ? <Skeleton className="h-24 w-full" /> : isError ? <p className="text-sm text-destructive">The meeting list could not be loaded. <button className="underline" onClick={() => refetch()}>Try again</button></p> : <>
       {data?.coverage && <p className="text-xs text-muted-foreground" role="status">
         {data.coverage.status === "not_synced" ? "Diaries have not been checked yet." : `${data.coverage.mailboxesChecked} of ${data.coverage.mailboxesExpected} diaries checked${data.coverage.checkedAt ? ` · ${date(data.coverage.checkedAt)} ${time(data.coverage.checkedAt)}` : ""}.`}

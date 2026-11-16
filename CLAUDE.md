@@ -2869,6 +2869,46 @@ Two rules everything else follows (do not re-litigate):
   pass, insights report leg): a new import in those functions needs the
   binding added to the test. Run that suite with `--import tsx`.
 
+## CRM week: meetings on the events calendar, and Monday's email (Woody, 2026-11-16)
+
+Woody: "can you merge CRM meetings with the events calendar in CRM, the CRM
+meeting is great just need to overlay for the week. The directors then want
+a summary of those meetings emailed to them on a monday morning."
+
+- **The meetings are the ones CRM Meetings already reads** from BGP diaries
+  (`server/landlord-meetings.ts`: landlords only, private entries never).
+  Nothing new is read. `GET /api/crm/landlords/meetings/calendar` is the
+  same digest not cut to the week (30 days back, 90 ahead), BGP staff only.
+- **The calendar** (`client/src/components/crm-engagement/overview.tsx`,
+  the Events calendar on the CRM Overview) opens on a **Week** view and
+  draws those meetings over the CRM's confirmed events, in Week, Month and
+  List: an event is a filled chip, a meeting an outlined one (`MeetingChip`,
+  `MeetingRow`, `MeetingDetail`). The **Meetings** pill switches them off.
+  A meeting follows the landlord and BGP owner filters and steps aside
+  while a strategy, or Brands, Agents or Lenders, is picked. It is not a CRM
+  event and is never saved as one. Not on a brand's or a company page's
+  compact panel.
+- **One set of rules**, `shared/crm-week-ahead.ts` (tests
+  `server/crm-week-ahead.test.ts`, in `npm test`): `groupWeekMeetings` (a
+  diary entry that names two landlords is ONE meeting with both names), the
+  London day and time, the Monday-to-Sunday week, and the email's subject
+  and body. The calendar and the email both use it: change a rule there.
+- **Monday's email** (`server/crm-week-ahead.ts`, job `crm-week-ahead`,
+  Monday 07:30): the week's landlord meetings and confirmed CRM events, day
+  by day, to the equity directors (`EQUITY_DIRECTOR_EMAILS` in
+  `server/auth.ts`, the Finance list: Woody, Jack, Rupert, Charlotte), and
+  only to addresses that are an active BGP login. `CRM_WEEK_AHEAD_TO` (a
+  comma list) moves it and `off` stops it. Every word from a diary is
+  escaped and the only links are to the app. **A request never names a
+  recipient**: admins have `GET /api/admin/crm-week-ahead` (this week's
+  email and who gets it) and `POST …/send-me` (a copy to the admin who
+  pressed it), reached from "See this week's email" on CRM Meetings. Guards:
+  `qa/regression/crm-week-ahead-guards.test.mjs`. It has not been sent
+  through Microsoft from a build machine.
+- Waiting on Woody: whether "the directors" is that list; meetings with
+  brands, agents and lenders (the diary read matches landlords only); a
+  look back at last week's meetings in the same email.
+
 ## Investment Tracker: the top folds away (Woody, 2026-11-16)
 
 Woody, presenting the tracker in a meeting: "everything stays at the top

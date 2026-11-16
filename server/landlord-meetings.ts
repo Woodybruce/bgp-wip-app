@@ -441,6 +441,12 @@ export function registerLandlordMeetingRoutes(app: Express): void {
     try { if (await staffOnly(req,res)) res.json(await getLandlordMeetingDigest({ weekOnly: true })); }
     catch { res.status(503).json({ error: 'Landlord diary summary is unavailable. No meetings have been removed.' }); }
   });
+  // Every landlord meeting the diaries hold (30 days back, 90 ahead), for the
+  // calendar on the CRM Overview. The same list as the week's, not cut to it.
+  app.get('/api/crm/landlords/meetings/calendar', requireAuth, async (req,res) => {
+    try { if (await staffOnly(req,res)) res.json(await getLandlordMeetingDigest({})); }
+    catch { res.status(503).json({ error: 'Landlord diary summary is unavailable. No meetings have been removed.' }); }
+  });
   app.get('/api/crm/landlords/:companyId/meetings', requireAuth, async (req,res) => {
     try {
       if (!await staffOnly(req,res)) return;

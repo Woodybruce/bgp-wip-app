@@ -1016,6 +1016,10 @@ const EQUITY_EMAILS = new Set([
   "charlotte@brucegillinghampollard.com",
 ]);
 
+// The same list, for the things the directors are sent (Monday's CRM week
+// ahead). One list: add a director above and both follow.
+export const EQUITY_DIRECTOR_EMAILS: string[] = [...EQUITY_EMAILS];
+
 export async function requireEquityOrAdmin(req: Request, res: Response, next: NextFunction) {
   const userId = req.session.userId || req.tokenUserId;
   if (!userId) return res.status(401).json({ message: "Not authenticated" });

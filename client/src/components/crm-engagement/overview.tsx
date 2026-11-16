@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Plus, RefreshCw, Target } from "lucide-react";
+import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Plus, RefreshCw, Target, Users } from "lucide-react";
 import type { ActionInput, ActionPlanInput, ActionStatus, EngagementAction, EngagementData, EngagementEvent, EngagementKind, EngagementOptions, EngagementStrategy, EventInput, StrategyInput, EngagementNoun } from "@shared/crm-engagement";
 import { ENGAGEMENT_NOUNS, NOUN_WORDS } from "@shared/crm-engagement";
+import type { LandlordMeetingDigest } from "@shared/landlord-meetings";
+import { groupWeekMeetings, londonDayOf, londonTimeOf, mondayOf, moveWeek, weekDaysFrom, weekLabel, type WeekMeeting } from "@shared/crm-week-ahead";
 import { CrmWatchList } from "./watch-list";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -34,6 +36,41 @@ function cleanError(error: unknown) {
   const json = message.match(/\{.*\}$/s)?.[0];
   if (json) { try { return JSON.parse(json).error || message; } catch {} }
   return message;
+}
+export const CRM_MEETINGS_CALENDAR_KEY = "/api/crm/landlords/meetings/calendar";
+// A landlord meeting read from a BGP diary, drawn on the events calendar. An
+// outline, where a CRM event is filled, so the two read apart at a glance.
+function MeetingChip({meeting, full, onOpen}: {meeting: WeekMeeting; full?: boolean; onOpen: () => void}) {
+  const who = meeting.companies.map(company => company.name).join(" and ");
+  return <button type="button" onClick={onOpen} title={`${londonTimeOf(meeting.start)} ${who}: ${meeting.subject}`} data-testid={`crm-calendar-meeting-${meeting.key}`}
+    className={`block w-full text-left text-[11px] leading-tight rounded border border-border bg-background px-1 py-1 hover:bg-primary/10 ${full ? "" : "truncate"}`}>
+    <Users className="inline h-3 w-3 mr-1 align-[-2px] text-muted-foreground" /><span className="font-mono tabular-nums">{londonTimeOf(meeting.start)}</span> <span className="font-semibold">{who}</span>
+    {full && <span className="block mt-0.5 text-muted-foreground line-clamp-2 break-words">{meeting.subject}</span>}
+    {full && !!meeting.bgp.length && <span className="block mt-0.5 text-muted-foreground truncate">{meeting.bgp.map(name => name.split(" ")[0]).join(", ")}</span>}
+  </button>;
+}
+function MeetingRow({meeting, onOpen}: {meeting: WeekMeeting; onOpen: () => void}) {
+  return <div className="py-3 flex items-start justify-between gap-3" data-testid={`crm-meeting-row-${meeting.key}`}>
+    <div className="min-w-0"><button type="button" className="text-sm font-semibold text-left hover:underline" onClick={onOpen}><Users className="inline h-3.5 w-3.5 mr-1.5 align-[-2px] text-muted-foreground" />{meeting.companies.map(company => company.name).join(" and ")}</button>
+      <p className="text-sm break-words">{meeting.subject}</p>
+      <p className="text-xs text-muted-foreground mt-0.5">{eventDate(meeting.start)}{meeting.bgp.length ? ` · BGP: ${meeting.bgp.join(", ")}` : ""}</p></div>
+    {statusPill("Meeting")}
+  </div>;
+}
+function MeetingDetail({meeting, onClose}: {meeting: WeekMeeting | null; onClose: () => void}) {
+  return <Dialog open={!!meeting} onOpenChange={open => { if (!open) onClose(); }}>
+    <DialogContent className="max-w-lg" data-testid="crm-meeting-detail">{meeting && <>
+      <DialogHeader><DialogTitle>{meeting.subject || "Meeting"}</DialogTitle><DialogDescription>{eventDate(meeting.start)} to {londonTimeOf(meeting.end)} · London time</DialogDescription></DialogHeader>
+      <div className="space-y-3 text-sm">
+        <p><span className="text-muted-foreground">With </span>{meeting.companies.map((company, index) => <span key={company.id}>{index ? " and " : ""}<Link className="font-semibold underline underline-offset-2" href={`/companies/${company.id}`}>{company.name}</Link></span>)}</p>
+        {!!meeting.bgp.length && <p><span className="text-muted-foreground">BGP: </span>{meeting.bgp.join(", ")}</p>}
+        {!!meeting.others.length && <p className="break-words"><span className="text-muted-foreground">Also on the invitation: </span>{meeting.others.join(", ")}</p>}
+        {meeting.location && <p className="break-words"><span className="text-muted-foreground">Where: </span>{meeting.location}</p>}
+        {meeting.webLink && <a href={meeting.webLink} target="_blank" rel="noopener noreferrer" className="inline-block underline underline-offset-2">Open invitation</a>}
+        <p className="text-xs text-muted-foreground border-t pt-3">Read from a BGP diary because the invitation names this landlord or one of its people. It is not a CRM event: to plan around it, add an event or a CRM action.</p>
+      </div>
+    </>}</DialogContent>
+  </Dialog>;
 }
 function Empty({children}: {children: React.ReactNode}) { return <p className="text-sm text-muted-foreground py-5">{children}</p>; }
 // A brand action's place on the plan and who it waits on, for BGP staff.
@@ -91,7 +128,12 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
   const [strategyFilter, setStrategyFilter] = useState("");
   const [ownerFilter, setOwnerFilter] = useState("");
   const [month, setMonth] = useState(() => londonDay(new Date()).slice(0, 7));
-  const [view, setView] = useState<"month" | "list">(() => compact || window.innerWidth < 640 ? "list" : "month");
+  // The CRM page opens on the week: its events with the week's landlord
+  // meetings over them (Woody, 2026-11-16: "overlay for the week").
+  const [view, setView] = useState<"month" | "week" | "list">(() => compact || window.innerWidth < 640 ? "list" : kind === "brand" ? "month" : "week");
+  const [weekStart, setWeekStart] = useState(() => mondayOf(londonDay(new Date())));
+  const [showMeetings, setShowMeetings] = useState(true);
+  const [meetingOpen, setMeetingOpen] = useState<WeekMeeting | null>(null);
   const [selectedDay, setSelectedDay] = useState("");
   const [showClosed, setShowClosed] = useState(false);
   const [showDone, setShowDone] = useState(false);
@@ -106,6 +148,13 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
   const optionsQuery = useQuery<EngagementOptions>({
     queryKey: [CRM_ENGAGEMENT_KEY, "options", kind], queryFn: async () => (await apiRequest("GET", `${CRM_ENGAGEMENT_KEY}/options?kind=${kind}`)).json(),
     staleTime: 5 * 60_000, refetchInterval: false, retry: 1,
+  });
+  // Landlord meetings, as CRM Meetings reads them from BGP diaries. BGP staff
+  // only (the server refuses anyone else, and the calendar then shows none).
+  const meetingsOn = kind !== "brand" && !compact;
+  const meetingsQuery = useQuery<LandlordMeetingDigest>({
+    queryKey: [CRM_MEETINGS_CALENDAR_KEY], queryFn: async () => (await apiRequest("GET", CRM_MEETINGS_CALENDAR_KEY)).json(),
+    enabled: meetingsOn, staleTime: 10 * 60_000, refetchOnWindowFocus: false, refetchInterval: false, retry: false,
   });
   const data = dataQuery.data || EMPTY;
   const listed = optionsQuery.data || EMPTY_OPTIONS;
@@ -204,6 +253,16 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
     && (!strategyFilter || s.id === strategyFilter) && (!ownerFilter || s.ownerId === ownerFilter) && (showClosed || s.status === "active")), [data.strategies, companyFilter, strategyFilter, ownerFilter, showClosed, nounFilter, nounOf]);
   const actions = useMemo(() => data.actions.filter(a => (!companyFilter || a.companyId === companyFilter) && ofNoun([a.companyId]) && (!strategyFilter || a.strategyId === strategyFilter)
     && (!ownerFilter || a.ownerId === ownerFilter) && (showDone || a.status !== "done")).sort((a, b) => Number(a.status === "done") - Number(b.status === "done") || (a.dueAt || "9999").localeCompare(b.dueAt || "9999")), [data.actions, companyFilter, strategyFilter, ownerFilter, showDone, nounFilter, nounOf]);
+  // A meeting belongs to a landlord and to nobody's strategy, so it follows the
+  // landlord, kind and BGP owner filters and steps aside for the others.
+  const ownerName = options.staff.find(person => person.id === ownerFilter)?.name || "";
+  const meetings = useMemo(() => {
+    if (!meetingsOn || !showMeetings || strategyFilter || (nounFilter && nounFilter !== "landlord")) return [];
+    return groupWeekMeetings((meetingsQuery.data?.meetings || []).filter(meeting => !companyFilter || meeting.companyId === companyFilter))
+      .filter(meeting => !ownerFilter || (!!ownerName && meeting.bgp.includes(ownerName)));
+  }, [meetingsOn, showMeetings, strategyFilter, nounFilter, meetingsQuery.data, companyFilter, ownerFilter, ownerName]);
+  const meetingsOnDay = (day: string) => meetings.filter(meeting => londonDayOf(meeting.start) === day);
+  const weekDays = weekDaysFrom(weekStart);
   const days = monthDays(month);
   const confirmed = events.filter(e => e.dateConfirmed && e.status !== "cancelled" && e.startsAt);
   const monthEvents = confirmed.filter(e => days.filter(day => day.startsWith(month)).some(day => eventOccursOn(e, day))).sort((a, b) => (a.startsAt || "").localeCompare(b.startsAt || ""));
@@ -211,6 +270,8 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
   const monthLabel = new Intl.DateTimeFormat("en-GB", {month: "long", year: "numeric", timeZone: "UTC"}).format(new Date(`${month}-01T12:00:00Z`));
   const today = londonDay(new Date());
   const visibleList = selectedDay ? confirmed.filter(e => eventOccursOn(e, selectedDay)) : monthEvents;
+  const visibleMeetings = selectedDay ? meetingsOnDay(selectedDay) : meetings.filter(meeting => londonDayOf(meeting.start).startsWith(month));
+  const coverage = meetingsQuery.data?.coverage;
   const writable = !!optionsQuery.data;
 
   if (dataQuery.isLoading) return <div className="space-y-4" aria-label="Loading CRM overview"><Skeleton className="h-10 w-full" /><div className="grid lg:grid-cols-[2fr_1fr] gap-4"><Skeleton className="h-96" /><Skeleton className="h-96" /></div></div>;
@@ -234,16 +295,21 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
     </div>}
     <div className={`grid gap-4 ${compact ? "" : "xl:grid-cols-[minmax(0,1.8fr)_minmax(300px,1fr)]"}`}>
       <Card className="p-4 min-w-0" data-testid="crm-events-calendar">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><CalendarDays className="h-4 w-4" />Events calendar</h3><div className="flex gap-1"><Pill active={view === "month"} onClick={() => {setView("month"); setSelectedDay("");}}>Month</Pill><Pill active={view === "list"} onClick={() => {setView("list"); setSelectedDay("");}}>List</Pill></div></div>
-        <div className="flex items-center justify-between gap-2 mb-3"><div className="flex items-center gap-1"><Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Previous month" onClick={() => {setMonth(moveMonth(month, -1)); setSelectedDay("");}}><ChevronLeft className="h-4 w-4" /></Button><h4 className="text-sm font-semibold min-w-32 text-center">{monthLabel}</h4><Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Next month" onClick={() => {setMonth(moveMonth(month, 1)); setSelectedDay("");}}><ChevronRight className="h-4 w-4" /></Button></div><Button size="sm" variant="ghost" onClick={() => {setMonth(today.slice(0, 7)); setSelectedDay("");}}>Today</Button></div>
-        {view === "month" && <div className="rounded-lg border overflow-hidden"><div className="grid grid-cols-7 bg-muted/30">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(day => <div key={day} className="text-[11px] font-semibold text-center text-muted-foreground p-2">{day}</div>)}</div><div className="grid grid-cols-7">{days.map(day => {const dayEvents = confirmed.filter(event => eventOccursOn(event, day)); return <div key={day} className={`min-h-20 sm:min-h-24 border-t border-r last:border-r-0 p-1 sm:p-1.5 min-w-0 ${!day.startsWith(month) ? "bg-muted/20 text-muted-foreground" : ""} ${selectedDay === day ? "bg-primary/5" : ""}`}>
-          <button type="button" className={`text-xs font-mono tabular-nums h-6 w-6 rounded-full hover:bg-muted ${today === day ? "bg-primary text-primary-foreground font-semibold" : ""}`} aria-label={`Show events on ${eventDate(`${day}T12:00:00Z`, false)}`} onClick={() => setSelectedDay(selectedDay === day ? "" : day)}>{Number(day.slice(-2))}</button>
-          <div className="space-y-1 mt-1">{dayEvents.slice(0, 2).map(event => <button key={event.id} type="button" disabled={!writable} onClick={() => setEditor({kind: "event", record: event})} className="block w-full text-left text-[11px] leading-tight rounded bg-muted px-1 py-1 hover:bg-primary/10 truncate" title={event.title}>{event.title}</button>)}{dayEvents.length > 2 && <button className="text-[11px] text-primary" onClick={() => setSelectedDay(day)}>+{dayEvents.length - 2} more</button>}</div>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><CalendarDays className="h-4 w-4" />Events calendar</h3><div className="flex flex-wrap gap-1">{meetingsOn && <Pill active={showMeetings} onClick={() => setShowMeetings(on => !on)} title="Landlord meetings read from BGP diaries, as on CRM Meetings" aria-pressed={showMeetings} data-testid="crm-calendar-meetings-toggle"><Users className="h-3 w-3" />Meetings</Pill>}<Pill active={view === "week"} onClick={() => {setView("week"); setSelectedDay("");}} data-testid="crm-calendar-view-week">Week</Pill><Pill active={view === "month"} onClick={() => {setView("month"); setSelectedDay("");}} data-testid="crm-calendar-view-month">Month</Pill><Pill active={view === "list"} onClick={() => {setView("list"); setSelectedDay("");}} data-testid="crm-calendar-view-list">List</Pill></div></div>
+        <div className="flex items-center justify-between gap-2 mb-3"><div className="flex items-center gap-1"><Button variant="ghost" size="icon" className="h-8 w-8" aria-label={view === "week" ? "Previous week" : "Previous month"} onClick={() => {if (view === "week") setWeekStart(moveWeek(weekStart, -1)); else setMonth(moveMonth(month, -1)); setSelectedDay("");}}><ChevronLeft className="h-4 w-4" /></Button><h4 className="text-sm font-semibold min-w-32 text-center" data-testid="crm-calendar-period">{view === "week" ? weekLabel(weekStart) : monthLabel}</h4><Button variant="ghost" size="icon" className="h-8 w-8" aria-label={view === "week" ? "Next week" : "Next month"} onClick={() => {if (view === "week") setWeekStart(moveWeek(weekStart, 1)); else setMonth(moveMonth(month, 1)); setSelectedDay("");}}><ChevronRight className="h-4 w-4" /></Button></div><Button size="sm" variant="ghost" onClick={() => {setMonth(today.slice(0, 7)); setWeekStart(mondayOf(today)); setSelectedDay("");}}>{view === "week" ? "This week" : "Today"}</Button></div>
+        {view === "week" && <div className="rounded-lg border overflow-hidden" data-testid="crm-calendar-week"><div className="grid grid-cols-1 sm:grid-cols-7">{weekDays.map(day => {const dayEvents = confirmed.filter(event => eventOccursOn(event, day)); const dayMeetings = meetingsOnDay(day); return <div key={day} className={`min-w-0 border-t first:border-t-0 sm:border-t-0 sm:border-r sm:last:border-r-0 p-1.5 sm:min-h-64 ${today === day ? "bg-primary/5" : ""}`} data-testid={`crm-week-day-${day}`}>
+          <p className="text-[11px] font-semibold text-muted-foreground mb-1.5">{new Intl.DateTimeFormat("en-GB", {weekday: "short", timeZone: "UTC"}).format(new Date(`${day}T12:00:00Z`))} <span className={`font-mono tabular-nums ${today === day ? "text-foreground" : ""}`}>{Number(day.slice(-2))}</span></p>
+          <div className="space-y-1">{dayEvents.map(event => <button key={event.id} type="button" disabled={!writable} onClick={() => setEditor({kind: "event", record: event})} className="block w-full text-left text-[11px] leading-tight rounded bg-muted px-1 py-1 hover:bg-primary/10" title={event.title}><span className="font-mono tabular-nums">{londonTimeOf(event.startsAt || "")}</span> <span className="font-semibold break-words">{event.title}</span></button>)}{dayMeetings.map(meeting => <MeetingChip key={meeting.key} meeting={meeting} full onOpen={() => setMeetingOpen(meeting)} />)}{!dayEvents.length && !dayMeetings.length && <p className="text-[11px] text-muted-foreground/60" aria-label="Nothing planned">–</p>}</div>
         </div>; })}</div></div>}
-        {(view === "list" || selectedDay) && <div className="max-h-[410px] overflow-y-auto divide-y pr-1">{selectedDay && <div className="flex justify-between pt-3"><p className="text-sm font-medium">{eventDate(`${selectedDay}T12:00:00Z`, false)}</p><button className="text-xs underline" onClick={() => setSelectedDay("")}>Clear day</button></div>}{visibleList.length ? visibleList.map(event => <EventRow key={event.id} event={event} companyId={companyFilter} actions={data.actions} writable={writable} onAddAction={addEventAction} onOpenAction={record => setEditor({kind: "action", record})} onOpen={() => setEditor({kind: "event", record: event})} />) : <Empty>No confirmed events {selectedDay ? "on this date" : "this month"}{companyFilter || strategyFilter || ownerFilter ? " for these filters" : ""}.</Empty>}</div>}
-        {view === "month" && !selectedDay && !monthEvents.length && <p className="text-xs text-muted-foreground mt-3">No confirmed events this month{companyFilter || strategyFilter || ownerFilter ? " for these filters" : ""}.</p>}
+        {view === "month" && <div className="rounded-lg border overflow-hidden"><div className="grid grid-cols-7 bg-muted/30">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(day => <div key={day} className="text-[11px] font-semibold text-center text-muted-foreground p-2">{day}</div>)}</div><div className="grid grid-cols-7">{days.map(day => {const dayEvents = confirmed.filter(event => eventOccursOn(event, day)); const dayMeetings = meetingsOnDay(day); const shownEvents = dayEvents.slice(0, 2); const shownMeetings = dayMeetings.slice(0, 2 - shownEvents.length); const hidden = dayEvents.length + dayMeetings.length - shownEvents.length - shownMeetings.length; return <div key={day} className={`min-h-20 sm:min-h-24 border-t border-r last:border-r-0 p-1 sm:p-1.5 min-w-0 ${!day.startsWith(month) ? "bg-muted/20 text-muted-foreground" : ""} ${selectedDay === day ? "bg-primary/5" : ""}`}>
+          <button type="button" className={`text-xs font-mono tabular-nums h-6 w-6 rounded-full hover:bg-muted ${today === day ? "bg-primary text-primary-foreground font-semibold" : ""}`} aria-label={`Show events on ${eventDate(`${day}T12:00:00Z`, false)}`} onClick={() => setSelectedDay(selectedDay === day ? "" : day)}>{Number(day.slice(-2))}</button>
+          <div className="space-y-1 mt-1">{shownEvents.map(event => <button key={event.id} type="button" disabled={!writable} onClick={() => setEditor({kind: "event", record: event})} className="block w-full text-left text-[11px] leading-tight rounded bg-muted px-1 py-1 hover:bg-primary/10 truncate" title={event.title}>{event.title}</button>)}{shownMeetings.map(meeting => <MeetingChip key={meeting.key} meeting={meeting} onOpen={() => setMeetingOpen(meeting)} />)}{hidden > 0 && <button className="text-[11px] text-primary" onClick={() => setSelectedDay(day)}>+{hidden} more</button>}</div>
+        </div>; })}</div></div>}
+        {(view === "list" || (selectedDay && view === "month")) && <div className="max-h-[410px] overflow-y-auto divide-y pr-1">{selectedDay && <div className="flex justify-between pt-3"><p className="text-sm font-medium">{eventDate(`${selectedDay}T12:00:00Z`, false)}</p><button className="text-xs underline" onClick={() => setSelectedDay("")}>Clear day</button></div>}{visibleList.length ? visibleList.map(event => <EventRow key={event.id} event={event} companyId={companyFilter} actions={data.actions} writable={writable} onAddAction={addEventAction} onOpenAction={record => setEditor({kind: "action", record})} onOpen={() => setEditor({kind: "event", record: event})} />) : !visibleMeetings.length && <Empty>No confirmed events {selectedDay ? "on this date" : "this month"}{companyFilter || strategyFilter || ownerFilter ? " for these filters" : ""}.</Empty>}{visibleMeetings.map(meeting => <MeetingRow key={meeting.key} meeting={meeting} onOpen={() => setMeetingOpen(meeting)} />)}</div>}
+        {view === "month" && !selectedDay && !monthEvents.length && !visibleMeetings.length && <p className="text-xs text-muted-foreground mt-3">No confirmed events this month{companyFilter || strategyFilter || ownerFilter ? " for these filters" : ""}.</p>}
         {!!undated.length && <details className="border-t mt-4 pt-3"><summary className="text-sm cursor-pointer font-medium">Dates to confirm <span className="font-mono tabular-nums text-muted-foreground">({undated.length})</span></summary><p className="text-xs text-muted-foreground mt-2">Check the date before placing these events in the calendar.</p><div className="max-h-72 overflow-y-auto divide-y">{undated.map(event => <EventRow key={event.id} event={event} companyId={companyFilter} actions={data.actions} writable={writable} onAddAction={addEventAction} onOpenAction={record => setEditor({kind: "action", record})} onOpen={() => setEditor({kind: "event", record: event})} />)}</div></details>}
-        <div className="flex items-center justify-between gap-2 border-t mt-4 pt-3 text-xs text-muted-foreground"><span>London time</span>{kind !== "brand" && <Link href="/contacts?tab=meetings" className="underline">CRM Meetings</Link>}</div>
+        <div className="flex items-center justify-between gap-2 border-t mt-4 pt-3 text-xs text-muted-foreground"><span>London time{meetingsOn && showMeetings && coverage ? ` · Meetings read from ${coverage.mailboxesChecked} of ${coverage.mailboxesExpected} BGP diaries${coverage.status === "partial" ? ", so some may be missing" : ""}` : ""}</span>{kind !== "brand" && <Link href="/contacts?tab=meetings" className="underline">CRM Meetings</Link>}</div>
+        <MeetingDetail meeting={meetingOpen} onClose={() => setMeetingOpen(null)} />
       </Card>
       <Card className="p-4 min-w-0" data-testid="crm-active-strategies"><div className="flex items-center justify-between gap-2 mb-3"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><Target className="h-4 w-4" />Strategies</h3><label className="flex items-center gap-1.5 text-xs text-muted-foreground"><input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />Show all</label></div>
         <div className="max-h-[520px] overflow-y-auto space-y-3 pr-1">{strategies.length ? strategies.map(strategy => <div key={strategy.id} className="border rounded-lg p-3 space-y-2" data-testid={`crm-strategy-${strategy.id}`}><div className="flex items-start justify-between gap-2"><button type="button" disabled={!writable} className="text-sm font-semibold text-left hover:underline" onClick={() => setEditor({kind: "strategy", record: strategy})}>{strategy.name}</button>{statusPill(strategy.status)}</div><p className="text-sm leading-relaxed">{strategy.objective}</p><p className="text-xs text-muted-foreground">{strategy.ownerName || "Owner not set"}{strategy.team ? ` · ${strategy.team}` : ""}{strategy.endsOn ? ` · Review ${eventDate(`${strategy.endsOn.slice(0, 10)}T12:00:00Z`, false)}` : ""}</p>
