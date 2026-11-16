@@ -7,14 +7,16 @@ import { tracePlanUnit } from "./plan-unit-detection";
 import { queryPickableUnits } from "./property-plan-links";
 import { propertyPlanRaster, scanPropertyPlanImage } from "./property-plan-scan";
 import { applyPropertyPlanScan, expirePropertyPlanScans, PropertyPlanScanError, requirePropertyPlan, startPropertyPlanScan } from "./property-plan-scan-store";
+import { completePlanScan } from "./property-plan-match";
 
 const router = Router();
 const access = (req: Request) => async (propertyId: string) => !await clientBlockedForProperty(req, propertyId);
 function fail(res: Response, error: any) { res.status(error?.status || 500).json({ error: error?.message || "Plan operation failed" }); }
 function publicJob(job: any) {
   if (!job) return null;
-  // Proposals a person has already saved or marked "not a unit" on the Match
-  // screen (server/property-plan-match.ts) are no longer this review's to offer.
+  // Proposals already saved as outlines (a finished scan saves them all,
+  // server/property-plan-match.ts), or whose outline was removed since, are
+  // not waiting any more.
   return { id: job.id, status: job.status, total: job.total, completed: job.completed, message: job.message,
     candidates: (job.candidates || []).filter((c: any) => !c?.acceptedOutlineId && !c?.dismissed) };
 }
@@ -94,13 +96,13 @@ export async function runPropertyPlanScan(job: any, plan: any) {
     const existing = (await pool.query("SELECT polygon FROM property_plan_units WHERE plan_id=$1", [plan.id])).rows;
     const result = await scanPropertyPlanImage(file.data, options, existing, checkpoint, undefined,
       { propertyName: property?.name, assetClass: property?.asset_class, floor: plan.floor });
-    // No outline writes here. The apply transaction re-checks the current plan,
-    // links and overlaps, including drawings added while the scan was running.
+    // The scan is marked ready and its outlines saved in one transaction
+    // (completePlanScan, Woody 2026-11-16: "all done immediately"): linked where
+    // the plan's unit number or tenant name names one schedule row, unlinked
+    // otherwise. It re-checks the current plan, links and overlaps, including
+    // drawings added while the scan was running.
     if (inactive) throw new Error("This scan has stopped. Start a new scan.");
-    const saved = await pool.query(`UPDATE property_plan_scans s SET status='ready', candidates=$2::jsonb, message=$3, completed=total, updated_at=now()
-      WHERE s.id=$1 AND s.status='running' AND s.updated_at > now() - interval '3 minutes' AND s.created_at > now() - interval '30 minutes'
-      AND EXISTS (SELECT 1 FROM property_plans p WHERE p.id=s.plan_id AND p.storage_key=s.image_key) RETURNING s.id`, [job.id, JSON.stringify(result.candidates), result.message]);
-    if (!saved.rows.length) throw new Error("The plan changed or this scan expired. Start a new scan. Saved outlines are unchanged.");
+    if (!await completePlanScan(pool, job.id, plan.id, result.candidates, result.message)) throw new Error("The plan changed or this scan expired. Start a new scan. Saved outlines are unchanged.");
   } catch (error: any) {
     await pool.query("UPDATE property_plan_scans SET status='failed', message=$2, updated_at=now() WHERE id=$1 AND status='running'", [job.id, error?.message || "Scan failed. Saved outlines are unchanged."]).catch(() => {});
   } finally { clearInterval(heartbeat); }

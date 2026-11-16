@@ -1,9 +1,13 @@
 // Matching a plan to the tenancy schedule on the property page
 // (docs/property-page-rebuild-2026-11-13.md). The schedule row is the unit; an
-// outline on a plan is only ever a picture of one. So the plan never writes to
-// the schedule: a person links an outline to a row, keeps it as context (grey,
-// no row) or says it is not a unit. server/property-plan-match.ts reads and
-// writes this; the Match screen draws it.
+// outline on a plan is only ever a picture of one, so the plan never writes to
+// the schedule. Everything a scan finds is saved as soon as it finishes
+// (Woody, 2026-11-16: "the scan and tenancy schedule matches dont need
+// checking they are all done immediately and then there is the ability to
+// edit"): an outline is linked to the row its printed unit number or tenant
+// name points at, or saved unlinked (grey) for a person to link, change or
+// remove on the plan. server/property-plan-match.ts reads and writes this; the
+// Plan tab draws it.
 import type { PropertyPlanPolygon } from "./property-plan-scan";
 
 // How a row was suggested for a proposal: the unit code printed on the plan,
@@ -24,9 +28,16 @@ export interface PlanMatchOutline {
   id: string;
   label: string | null;       // what the plan prints
   polygon: PropertyPlanPolygon;
-  scheduleRowId: string | null; // null = context: drawn, but not a schedule unit
+  scheduleRowId: string | null; // null = not linked: drawn in grey, not a schedule unit
+  // What the scan read here, when the outline came from the plan's current scan.
+  printed: { label: string; tenant: string | null } | null;
+  // Not linked: the free schedule rows its printed number or name could be, likeliest first.
+  possibleRowIds: string[];
 }
 
+// A scan's outline not yet saved: a scan from before outlines were saved as
+// soon as it finished, one whose save failed, or one that was under an outline
+// since removed. The Plan tab offers to save them all.
 export interface PlanMatchProposal {
   id: string;                 // the scan's own id for this outline
   label: string;
@@ -46,16 +57,9 @@ export interface PlanMatchBoard {
   scan: null | { id: string; status: "running" | "ready" | "failed" | "applied"; message: string | null; completed: number; total: number };
   outlines: PlanMatchOutline[];
   proposals: PlanMatchProposal[];
-  dismissed: number;          // proposals a person marked "not a unit"
   rows: PlanMatchRow[];
   canScan: boolean;           // BGP staff, with the plan reader switched on
 }
-
-export const PLAN_MATCH_METHOD_LABELS: Record<PlanMatchMethod, string> = {
-  code: "Unit number matches",
-  tenant: "Tenant name matches",
-  floor: "Name matches, and it is the only one on this floor",
-};
 
 // "Upper Level", "upper mall" and "UPPER" are one floor; "Level 1" and
 // "Level 2" are not. Empty never matches anything.
@@ -73,21 +77,19 @@ export function floorsDisagree(a: unknown, b: unknown): boolean {
   return !!left && !!right && left !== right;
 }
 
-// What the bulk button may take: a suggestion made on the unit number or the
-// tenant's name alone, with nothing about it that disagrees with the schedule.
-// A floor tie-break, a different tenant or a different floor is a weaker
-// reading, so a person accepts those one at a time.
-export function bulkAcceptable(proposal: Pick<PlanMatchProposal, "suggestedRowId" | "method" | "tenantDiffers" | "floorDiffers">): boolean {
-  return !!proposal.suggestedRowId && (proposal.method === "code" || proposal.method === "tenant") && !proposal.tenantDiffers && !proposal.floorDiffers;
+// The order a scan's outlines are saved in: a unit number or a tenant name
+// first, then a floor tie-break, then the outlines with no unit. Where two
+// outlines overlap, the first saved stays and the other is left off.
+export function planSaveOrder(proposal: Pick<PlanMatchProposal, "suggestedRowId" | "method">): number {
+  return !proposal.suggestedRowId ? 2 : proposal.method === "floor" ? 1 : 0;
 }
 
 export function planMatchCounts(board: Pick<PlanMatchBoard, "outlines" | "proposals" | "rows">) {
-  const matched = board.outlines.filter(o => o.scheduleRowId).length;
+  const linked = board.outlines.filter(o => o.scheduleRowId).length;
   return {
-    matched,
-    context: board.outlines.length - matched,
-    toCheck: board.proposals.length,
-    suggested: board.proposals.filter(bulkAcceptable).length,
+    linked,
+    unlinked: board.outlines.length - linked,
+    unsaved: board.proposals.length,
     rowsNotDrawn: board.rows.filter(r => !r.outlinedHere && !r.outlinedElsewhere).length,
   };
 }

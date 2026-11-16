@@ -47,7 +47,7 @@ const typeLabel = (type: string) => type === "investment" ? "investment" : "leas
 const pending = (b: BrochurePages) => b.pages.filter(p => !p.imported);
 
 function scanNote(result: { scanning: number }) {
-  return result.scanning ? "Scanning for units — Review scan when it's ready." : "Double-click a floor name to rename it.";
+  return result.scanning ? "Scanning for units: each one it finds goes on the plan, linked to the tenancy schedule." : "Each page is a plan of its own: rename a floor if its title was not read.";
 }
 
 /** "3 plan pages found in the leasing brochure" above the board, until they

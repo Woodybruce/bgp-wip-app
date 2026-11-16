@@ -99,7 +99,7 @@ const Labels = memo(function Labels({ shapes, geometry, scale }: { shapes: Canva
   );
 });
 
-export function PlanCanvas({ planId, imageKey = null, floor, width, height, shapes, selectedId, hoverId = null, onSelect, onHover, focusId = null, focusKey = 0, onFocused, pick = null, preview = null, toolbar, className }: {
+export function PlanCanvas({ planId, imageKey = null, floor, width, height, shapes, selectedId, hoverId = null, onSelect, onHover, focusId = null, focusKey = 0, onFocused, pick = null, preview = null, corners = null, toolbar, className }: {
   planId: string;
   imageKey?: string | null;       // the image's key where known: a crop changes it
   floor: string;
@@ -115,6 +115,7 @@ export function PlanCanvas({ planId, imageKey = null, floor, width, height, shap
   onFocused?: () => void;         // the request has been carried out: the host can drop it
   pick?: { hint: string; busy?: boolean; onPick: (point: { x: number; y: number }) => void } | null;
   preview?: PropertyPlanPolygon | null;   // a traced outline waiting to be saved
+  corners?: [number, number][] | null;   // an outline being drawn corner by corner, normalised 0..1
   toolbar?: ReactNode;
   className?: string;
 }) {
@@ -366,6 +367,7 @@ export function PlanCanvas({ planId, imageKey = null, floor, width, height, shap
   const hoverShape = hovered && hovered !== selectedId ? shapes.find(s => s.id === hovered) : undefined;
   const selectedShape = selectedId ? shapes.find(s => s.id === selectedId) : undefined;
   const previewPoints = useMemo(() => (preview && W && H ? shapeGeometry(preview, W, H)?.points || null : null), [preview, W, H]);
+  const cornerPoints = useMemo(() => (corners?.length && W && H ? corners.map(([x, y]) => [x * W, y * H] as const) : null), [corners, W, H]);
 
   return (
     <div
@@ -402,6 +404,12 @@ export function PlanCanvas({ planId, imageKey = null, floor, width, height, shap
             <Labels shapes={shapes} geometry={geometry} scale={scale} />
             {previewPoints && (
               <polygon points={previewPoints} pointerEvents="none" fill={PROPOSAL_HEX} fillOpacity={0.3} stroke={PROPOSAL_HEX} strokeWidth={3 / scale} strokeDasharray={`${8 / scale} ${5 / scale}`} strokeLinejoin="round" className="animate-pulse" data-testid="plan-preview" />
+            )}
+            {cornerPoints && (
+              <g pointerEvents="none" data-testid="plan-corners">
+                <polyline points={cornerPoints.map(([x, y]) => `${x},${y}`).join(" ")} fill="none" stroke={PROPOSAL_HEX} strokeWidth={2.5 / scale} strokeLinejoin="round" />
+                {cornerPoints.map(([x, y], index) => <circle key={index} cx={x} cy={y} r={(index === 0 ? 6 : 4.5) / scale} fill={PROPOSAL_HEX} stroke="white" strokeWidth={1.5 / scale} />)}
+              </g>
             )}
           </svg>
         )}
