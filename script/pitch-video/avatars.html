@@ -1,0 +1,263 @@
+<!doctype html>
+<!-- The presenters for the Landsec pitch film: drawn characters that talk in
+     time with the voice, look and point at the screen, wave and give a thumbs
+     up. One page draws one overlay frame at a time, on a clear background, for
+     avatar-render.cjs to photograph. Nothing here moves by itself: every frame
+     is worked out from its time, so a render is the same every run. -->
+<html><head><meta charset="utf-8"><style>
+html,body{margin:0;background:transparent;overflow:hidden}
+#stage{position:relative;width:1920px;height:1080px;overflow:hidden;font-family:"DejaVu Sans",Arial,sans-serif}
+.actor{position:absolute;bottom:0;transform-origin:50% 100%;filter:drop-shadow(0 8px 16px rgba(0,0,0,.38))}
+.tag{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);white-space:nowrap;background:#6E0C25;color:#fff;border-radius:999px;padding:7px 18px 8px;font-size:21px;font-weight:700;box-shadow:0 3px 10px rgba(0,0,0,.35)}
+.tag small{display:block;font-weight:400;font-size:.72em;opacity:.92;text-align:center;margin-top:1px}
+.tag.landsec{background:#1f3a5f}
+.spark{position:absolute;width:0;height:0}
+</style></head><body><div id="stage"></div><script>
+const CHARS = {
+  woody: { skin: "#E7B592", skinDark: "#C9906C", hair: "#5b5049", hairLight: "#8d857e", shirt: "#1E2A45", shirtDark: "#141d31", sleeve: "short", glasses: true, eye: "#4b3a2c", style: "receding" },
+  charlotte: { skin: "#F2CBB0", skinDark: "#D9A688", hair: "#EBD79A", hairLight: "#F6EBC2", shirt: "#1d1d20", shirtDark: "#0f0f11", sleeve: "long", glasses: false, eye: "#4f8fc4", style: "long" },
+  david: { skin: "#EAC0A2", skinDark: "#CC9C7C", hair: "#7a5a3c", hairLight: "#9c7a56", shirt: "#2b3350", shirtDark: "#1d2439", sleeve: "long", glasses: false, eye: "#5a6e4a", style: "side" },
+  mark: { skin: "#E9BD9E", skinDark: "#CB9877", hair: "#3b2c25", hairLight: "#5a463c", shirt: "#BCD3EA", shirtDark: "#9db9d6", sleeve: "long", glasses: false, eye: "#5d4a3a", style: "spiky" },
+};
+const NS = "http://www.w3.org/2000/svg";
+const lerp = (a, b, k) => a + (b - a) * k;
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const ease = k => { k = clamp(k); return k * k * (3 - 2 * k); };
+const back = k => { k = clamp(k); const c = 1.7; return 1 + (c + 1) * Math.pow(k - 1, 3) + c * Math.pow(k - 1, 2); };
+
+function hairBack(c) {
+  if (c.style === "long") return `<path d="M112 176 Q104 74 200 72 Q296 74 288 176 L306 398 Q282 424 252 408 L262 246 L138 246 L148 408 Q118 424 94 398 Z" fill="${c.hair}"/>
+    <path d="M118 250 Q112 330 104 396" stroke="${c.hairLight}" stroke-width="5" fill="none" opacity=".7"/><path d="M284 250 Q290 330 296 396" stroke="${c.hairLight}" stroke-width="5" fill="none" opacity=".7"/>`;
+  return "";
+}
+function hairFront(c) {
+  if (c.style === "long") return `<path d="M200 90 Q150 92 134 150 Q124 196 128 262 L112 262 Q100 150 146 100 Q172 78 200 84 Z" fill="${c.hair}"/>
+    <path d="M200 90 Q250 92 266 150 Q276 196 272 262 L288 262 Q300 150 254 100 Q228 78 200 84 Z" fill="${c.hair}"/>
+    <path d="M200 86 Q200 100 200 108" stroke="${c.skinDark}" stroke-width="2" opacity=".5"/>
+    <path d="M150 108 Q130 150 126 210" stroke="${c.hairLight}" stroke-width="4" fill="none" opacity=".8"/><path d="M250 108 Q270 150 274 210" stroke="${c.hairLight}" stroke-width="4" fill="none" opacity=".8"/>`;
+  if (c.style === "spiky") return `<path d="M130 172 Q124 120 150 100 L152 82 L168 96 L176 74 L190 92 L204 70 L214 92 L230 76 L236 98 L254 86 L252 106 Q276 124 270 172 Q262 132 240 124 Q200 112 160 124 Q138 132 130 172 Z" fill="${c.hair}"/>
+    <path d="M176 82 L186 100 M204 78 L210 98 M230 84 L234 104" stroke="${c.hairLight}" stroke-width="3" opacity=".7"/>`;
+  if (c.style === "side") return `<path d="M128 178 Q118 96 196 90 Q282 92 272 178 Q268 140 244 128 Q200 132 164 116 Q138 132 128 178 Z" fill="${c.hair}"/>
+    <path d="M164 116 Q200 128 244 126" stroke="${c.hairLight}" stroke-width="3" fill="none" opacity=".7"/>`;
+  // Short, a little back from the forehead, grey at the temples.
+  return `<path d="M130 176 Q122 104 200 96 Q278 104 270 176 Q266 138 244 124 Q222 112 200 116 Q178 112 156 124 Q134 138 130 176 Z" fill="${c.hair}"/>
+    <path d="M131 176 Q130 150 142 134 Q134 152 137 178 Z" fill="${c.hairLight}"/><path d="M269 176 Q270 150 258 134 Q266 152 263 178 Z" fill="${c.hairLight}"/>`;
+}
+function clothes(c, id, hero) {
+  if (hero) return `<path d="M70 500 Q70 350 150 326 L172 312 Q200 334 228 312 L250 326 Q330 350 330 500 Z" fill="#17171c"/>
+    <path d="M150 326 L172 312 Q200 334 228 312 L250 326 Q200 372 150 326Z" fill="#6E0C25"/>
+    <ellipse cx="200" cy="420" rx="52" ry="30" fill="#FC9F8D"/><text x="200" y="431" text-anchor="middle" font-size="30" font-weight="800" font-family="DejaVu Sans, Arial" fill="#6E0C25">BGP</text>`;
+  const torso = `<path d="M70 500 Q70 350 150 326 L172 312 Q200 334 228 312 L250 326 Q330 350 330 500 Z" fill="${c.shirt}"/>`;
+  if (id === "woody") return `${torso}<path d="M166 316 L200 352 L186 372 L150 330 Z" fill="${c.shirtDark}"/><path d="M234 316 L200 352 L214 372 L250 330 Z" fill="${c.shirtDark}"/>
+    <path d="M200 352 L200 410" stroke="${c.shirtDark}" stroke-width="3"/><circle cx="200" cy="372" r="2.6" fill="#0c1220"/><circle cx="200" cy="392" r="2.6" fill="#0c1220"/>`;
+  if (id === "david") return `${torso}<path d="M172 312 L200 372 L228 312 Q200 334 172 312 Z" fill="#fff"/><path d="M166 314 L200 404 L176 420 L146 332 Z" fill="${c.shirtDark}"/><path d="M234 314 L200 404 L224 420 L254 332 Z" fill="${c.shirtDark}"/>
+    <path d="M196 350 L204 350 L208 398 L200 410 L192 398 Z" fill="#6E0C25"/>`;
+  if (id === "charlotte") return `${torso}<path d="M170 314 L200 400 L230 314 Q200 338 170 314 Z" fill="#E56C9D"/>
+    <path d="M168 314 Q160 350 178 380 Q186 400 198 412" stroke="#2f4a3c" stroke-width="13" fill="none" stroke-linecap="round" stroke-dasharray="3 9"/>
+    <path d="M232 314 Q240 350 222 380 Q214 400 202 412" stroke="#2f4a3c" stroke-width="13" fill="none" stroke-linecap="round" stroke-dasharray="3 9"/>
+    <path d="M176 322 Q200 350 224 322" stroke="#D9A441" stroke-width="3" fill="none"/>`;
+  return `${torso}<path d="M172 312 L200 366 L228 312 Q200 334 172 312 Z" fill="${c.skin}"/><path d="M164 314 L196 368 L176 384 L148 330 Z" fill="#d9e6f3"/><path d="M236 314 L204 368 L224 384 L252 330 Z" fill="#d9e6f3"/>
+    <path d="M200 372 L200 500" stroke="${c.shirtDark}" stroke-width="3"/><circle cx="200" cy="398" r="2.6" fill="#7f9bb8"/><circle cx="200" cy="430" r="2.6" fill="#7f9bb8"/>`;
+}
+function build(id, hero = false) {
+  const c = CHARS[id];
+  const eye = x => `<g class="eye" data-x="${x}"><ellipse cx="${x}" cy="190" rx="14.5" ry="12" fill="#fff"/><g class="iris"><circle cx="${x}" cy="190.5" r="7.6" fill="${c.eye}"/><circle cx="${x}" cy="190.5" r="3.6" fill="#16110e"/><circle cx="${x + 2.4}" cy="187.6" r="2" fill="#fff"/></g>
+    <path d="M${x - 15} 187 Q${x} 174 ${x + 15} 187" stroke="${hero ? "#17171c" : c.skinDark}" stroke-width="2.4" fill="none"/></g>`;
+  const mask = hero ? `<path d="M128 168 Q200 150 272 168 L272 206 Q236 214 214 200 Q200 192 186 200 Q164 214 128 206 Z" fill="#17171c"/>` : "";
+  const cape = hero ? `<path class="cape" d="M96 350 Q40 420 30 500 L370 500 Q360 420 304 350 Q200 400 96 350 Z" fill="#6E0C25"/>` : "";
+  const svg = `<svg xmlns="${NS}" width="400" height="500" viewBox="0 0 400 500" overflow="visible">
+    <g class="whole">${cape}<g class="wings"></g>
+      <g class="body">${clothes(c, id, hero)}</g>
+      <g class="armL"></g><g class="armR"></g>
+      <g class="headwrap">
+        ${hairBack(c)}
+        <rect x="172" y="250" width="56" height="74" rx="20" fill="${c.skin}"/><path d="M172 286 Q200 306 228 286 L228 270 Q200 292 172 270 Z" fill="${c.skinDark}" opacity=".55"/>
+        <g class="head">
+          <ellipse cx="128" cy="196" rx="12" ry="20" fill="${c.skin}"/><ellipse cx="272" cy="196" rx="12" ry="20" fill="${c.skin}"/>
+          ${id === "charlotte" ? `<circle cx="126" cy="226" r="10" fill="none" stroke="#D9A441" stroke-width="5"/><circle cx="274" cy="226" r="10" fill="none" stroke="#D9A441" stroke-width="5"/>` : ""}
+          <path d="M130 170 Q130 98 200 98 Q270 98 270 170 L270 206 Q270 262 200 278 Q130 262 130 206 Z" fill="${c.skin}"/>
+          <ellipse cx="156" cy="226" rx="15" ry="9" fill="#e9836f" opacity=".22"/><ellipse cx="244" cy="226" rx="15" ry="9" fill="#e9836f" opacity=".22"/>
+          ${mask}
+          ${eye(170)}${eye(230)}
+          <g class="brows"><path d="M153 170 Q170 161 187 169" stroke="${hero ? "#17171c" : c.hair === "#EBD79A" ? "#b79b55" : c.hair}" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M213 169 Q230 161 247 170" stroke="${hero ? "#17171c" : c.hair === "#EBD79A" ? "#b79b55" : c.hair}" stroke-width="5" fill="none" stroke-linecap="round"/></g>
+          ${c.glasses && !hero ? `<g fill="rgba(255,255,255,.14)" stroke="#1b1b1e" stroke-width="5"><rect x="146" y="172" width="48" height="36" rx="12"/><rect x="206" y="172" width="48" height="36" rx="12"/></g><path d="M194 186 Q200 181 206 186 M146 184 L130 180 M254 184 L270 180" stroke="#1b1b1e" stroke-width="4.5" fill="none"/>` : ""}
+          <path d="M198 204 Q192 222 200 227 Q207 228 209 223" stroke="${c.skinDark}" stroke-width="3" fill="none" stroke-linecap="round"/>
+          <g class="mouth"></g>
+          ${hairFront(c)}
+        </g>
+      </g>
+    </g></svg>`;
+  const el = document.createElement("div"); el.className = "actor"; el.innerHTML = svg; el.dataset.char = id;
+  return el;
+}
+
+// Arm poses: the upper arm's swing out from the body and the elbow's further bend, in degrees.
+const POSES = { rest: [6, 6, "fist"], present: [52, 68, "open"], thumb: [58, 108, "thumb"], wave: [98, 80, "open"], point: [50, 60, "point"], fly: [150, 10, "fist"], type: [24, 70, "fist"] };
+function arm(g, side, c, a1, a2, hand, hero) {
+  const sx = side === "L" ? 98 : 302, sy = 372, dir = side === "L" ? -1 : 1, L1 = 80, L2 = 76;
+  const r1 = a1 * Math.PI / 180, r2 = (a1 + a2) * Math.PI / 180;
+  const ex = sx + dir * Math.sin(r1) * L1, ey = sy + Math.cos(r1) * L1;
+  const hx = ex + dir * Math.sin(r2) * L2, hy = ey + Math.cos(r2) * L2;
+  const sleeve = hero ? "#17171c" : c.shirt, fore = c.sleeve === "short" && !hero ? c.skin : sleeve;
+  const ang = Math.atan2(hy - ey, hx - ex) * 180 / Math.PI;
+  const skin = hero ? "#6E0C25" : c.skin, dark = hero ? "#4d0819" : c.skinDark;
+  let fingers = "";
+  if (hand === "point") fingers = `<rect x="16" y="-6" width="34" height="12" rx="6" fill="${skin}"/><rect x="6" y="6" width="18" height="10" rx="5" fill="${dark}" opacity=".5"/>`;
+  else if (hand === "thumb") fingers = `<rect x="-7" y="-46" width="14" height="34" rx="7" fill="${skin}" transform="rotate(${-ang})"/>`;
+  else if (hand === "open") fingers = [-24, -9, 6, 21].map(d => `<rect x="14" y="-5.5" width="26" height="11" rx="5.5" fill="${skin}" transform="rotate(${d})"/>`).join("");
+  g.innerHTML = `<path d="M${sx} ${sy} L${ex.toFixed(1)} ${ey.toFixed(1)}" stroke="${sleeve}" stroke-width="46" stroke-linecap="round"/>
+    <path d="M${ex.toFixed(1)} ${ey.toFixed(1)} L${hx.toFixed(1)} ${hy.toFixed(1)}" stroke="${fore}" stroke-width="${fore === sleeve ? 42 : 34}" stroke-linecap="round"/>
+    <g transform="translate(${hx.toFixed(1)} ${hy.toFixed(1)}) rotate(${ang.toFixed(1)})"><circle r="22" fill="${skin}"/>${fingers}</g>`;
+}
+function mouth(g, open, smile) {
+  if (open < 0.1) { g.innerHTML = `<path d="M${178 - smile * 4} ${242 - smile * 2} Q200 ${252 + smile * 8} ${222 + smile * 4} ${242 - smile * 2}" stroke="#9c4a41" stroke-width="4.5" fill="none" stroke-linecap="round"/>`; return; }
+  const ry = 3 + open * 15, rx = 19 - open * 3;
+  g.innerHTML = `<ellipse cx="200" cy="246" rx="${rx}" ry="${ry}" fill="#5d1f22"/><path d="M${200 - rx + 3} ${246 - ry * 0.45} Q200 ${246 - ry * 1.05} ${200 + rx - 3} ${246 - ry * 0.45} Q200 ${246 - ry * 0.25} ${200 - rx + 3} ${246 - ry * 0.45}Z" fill="#fff"/>
+    <ellipse cx="200" cy="${246 + ry * 0.55}" rx="${rx * 0.6}" ry="${ry * 0.38}" fill="#d9716f"/>`;
+}
+
+// One actor at one moment. `a` is the actor from the scene file, `t` the time in seconds.
+function pose(el, a, t, scene) {
+  const c = CHARS[a.char], hero = !!a.hero;
+  const cues = a.cues || [];
+  let cur = { t: -1, pose: "rest" }, prev = { t: -9, pose: "rest" };
+  for (const q of cues) if (q.t <= t) { prev = cur; cur = q; }
+  const k = ease((t - cur.t) / 0.34);
+  const P = q => { const base = POSES[q.pose] || POSES.rest; return { a1: base[0], a2: base[1], hand: base[2], arm: q.arm || a.arm || (a.side === "left" ? "R" : "L"), target: q.target }; };
+  const A = P(prev), B = P(cur);
+  const aim = (p, side) => {
+    if (!p.target) return p;
+    // Aim the forearm at a place on the screen.
+    const sx = (side === "L" ? 98 : 302), stageX = a.x + (sx - 200) * a.scale, stageY = 1080 - (500 - 372) * a.scale;
+    const d = Math.atan2(p.target[0] - stageX, -(p.target[1] - stageY)) * 180 / Math.PI * (side === "L" ? -1 : 1);
+    const out = clamp(180 - Math.abs(d) > 0 ? Math.abs(d) : 0, 20, 160), swing = clamp(180 - out, 40, 150);
+    return { ...p, a1: swing * 0.62, a2: swing * 0.38 + 8 };
+  };
+  for (const side of ["L", "R"]) {
+    const from = A.arm === side ? aim(A, side) : { a1: POSES.rest[0], a2: POSES.rest[1], hand: "fist" };
+    const to = B.arm === side ? aim(B, side) : { a1: POSES.rest[0], a2: POSES.rest[1], hand: "fist" };
+    let a1 = lerp(from.a1, to.a1, k), a2 = lerp(from.a2, to.a2, k);
+    const hand = k > 0.5 ? to.hand : from.hand;
+    if (B.arm === side && cur.pose === "wave") a2 += Math.sin(t * 11) * 20 * k;
+    if (B.arm === side && cur.pose === "type") a2 += Math.sin(t * 22) * 5 * k;
+    if (cur.pose === "fly" || (hero && cur.pose === "hero")) { a1 = cur.pose === "fly" ? lerp(from.a1, 152, k) : a1; }
+    arm(el.querySelector(side === "L" ? ".armL" : ".armR"), side, c, a1 + Math.sin(t * 1.3 + (side === "L" ? 0 : 2)) * 1.2, a2, hand, hero);
+  }
+  const m = a.speak && scene.mouth ? (scene.mouth[Math.min(scene.mouth.length - 1, Math.round(t * scene.fps))] || 0) : 0;
+  mouth(el.querySelector(".mouth"), m, a.speak ? 0.4 : (cur.pose === "thumb" || cur.pose === "wave" ? 1 : 0.6));
+  // Look where the hand points; otherwise mostly at the viewer.
+  const look = cur.target ? [clamp((cur.target[0] - a.x) / 600, -1, 1), clamp((cur.target[1] - 700) / 500, -1, 1)] : [Math.sin(t * 0.5 + a.x) * 0.25, 0];
+  const gx = lerp(0, look[0] * 4.5, k), gy = lerp(0, look[1] * 2.5, k);
+  el.querySelectorAll(".iris").forEach(n => n.setAttribute("transform", `translate(${gx.toFixed(2)} ${gy.toFixed(2)})`));
+  // Blink about every four seconds, at a different moment for each character.
+  const bt = (t + (a.x % 7) * 0.61) % 4.1, blink = bt < 0.14 ? 1 - Math.abs(bt - 0.07) / 0.07 : 0;
+  el.querySelectorAll(".eye").forEach(n => { const x = n.dataset.x; n.setAttribute("transform", `translate(${x} 190) scale(1 ${(1 - blink * 0.9).toFixed(3)}) translate(${-x} -190)`); });
+  el.querySelector(".brows").setAttribute("transform", `translate(0 ${(-m * 5 - (cur.pose === "wave" ? 3 : 0)).toFixed(2)})`);
+  const tilt = Math.sin(t * 0.9 + a.x) * 2 + m * Math.sin(t * 6.3) * 2.2 + gx * 0.9;
+  const bob = Math.sin(t * 1.7 + a.x) * 1.6 - m * 2.5;
+  el.querySelector(".headwrap").setAttribute("transform", `translate(${(gx * 0.8).toFixed(2)} ${bob.toFixed(2)}) rotate(${tilt.toFixed(2)} 200 300) translate(200 300) scale(1.15) translate(-200 -300)`);
+  el.querySelector(".body").setAttribute("transform", `translate(0 ${(Math.sin(t * 1.7 + a.x) * 0.8).toFixed(2)})`);
+  const wings = el.querySelector(".wings");
+  if (a.wings) {
+    const flap = Math.sin(t * 20) * (a.path && parseFloat(el.style.bottom || "0") > 30 ? 24 : 6);
+    wings.innerHTML = [-1, 1].map(d => `<g transform="translate(${200 + d * 60} 350) rotate(${d * (38 + flap)}) scale(${d} 1)"><path d="M0 0 C70 -130 190 -150 200 -60 C205 -10 110 30 0 0Z" fill="#cfeaff" opacity=".78" stroke="#8cc7f2" stroke-width="3"/><path d="M0 0 C60 30 150 90 120 130 C90 150 30 80 0 0Z" fill="#e3f4ff" opacity=".7" stroke="#8cc7f2" stroke-width="3"/></g>`).join("");
+  } else if (wings.innerHTML) wings.innerHTML = "";
+  if (a.path) {
+    // A flight: places to be at given times (x across the screen, y up from the bottom edge).
+    const ks = a.path; let i = 0; while (i < ks.length - 2 && t > ks[i + 1].t) i++;
+    const A0 = ks[i], B0 = ks[Math.min(ks.length - 1, i + 1)], kk = ease((t - A0.t) / Math.max(0.001, B0.t - A0.t));
+    const px = lerp(A0.x, B0.x, kk), py = lerp(A0.y, B0.y, kk) + Math.sin(t * 5) * (lerp(A0.hover || 0, B0.hover || 0, kk)), sc = lerp(A0.scale ?? a.scale, B0.scale ?? a.scale, kk), rot = lerp(A0.rot || 0, B0.rot || 0, kk);
+    el.style.left = `${px - 200}px`; el.style.bottom = `${py}px`;
+    el.style.transform = `scale(${sc}) rotate(${rot.toFixed(2)}deg)`; el.style.opacity = t >= a.from ? 1 : 0;
+    const tag0 = el.querySelector(".tag"); if (tag0) tag0.style.opacity = a.tag && t >= (a.tagAt ?? a.from) ? 1 : 0;
+    return;
+  }
+  // Sliding in and out from below the frame.
+  const inK = back((t - a.from) / 0.5), outK = a.to != null ? ease((t - a.to) / 0.4) : 0;
+  const shown = t >= a.from ? inK * (1 - outK) : 0;
+  el.style.left = `${a.x - 200}px`;
+  el.style.transform = `translateY(${((1 - shown) * 115).toFixed(2)}%) scale(${a.scale}) rotate(${(Math.sin(t * 0.8 + a.x) * 0.7).toFixed(2)}deg)`;
+  el.style.opacity = shown > 0.02 ? 1 : 0;
+  const tag = el.querySelector(".tag");
+  if (tag) tag.style.opacity = a.tag && t >= a.from + 0.3 && t <= a.from + (a.tagFor || 4.5) ? 1 : 0;
+}
+
+// The closing scene: the BGP signal on the night sky, and the hero flying off through it.
+function heroScene(stage, scene, t) {
+  if (!stage.dataset.hero) {
+    stage.dataset.hero = "1";
+    let windows = "";
+    const blocks = [[0, 760, 150, 320], [140, 690, 120, 390], [250, 800, 170, 280], [410, 720, 110, 360], [520, 640, 150, 440], [660, 780, 130, 300], [1250, 770, 140, 310], [1380, 660, 150, 420], [1520, 740, 120, 340], [1630, 800, 160, 280], [1780, 700, 140, 380]];
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (const [x, y, w, h] of blocks) for (let wy = y + 22; wy < 1060; wy += 34) for (let wx = x + 14; wx < x + w - 16; wx += 26) if (rnd() > 0.55) windows += `<rect x="${wx}" y="${wy}" width="12" height="16" fill="#FDE9A8" opacity="${(0.35 + rnd() * 0.5).toFixed(2)}"/>`;
+    stage.innerHTML = `<svg xmlns="${NS}" width="1920" height="1080" viewBox="0 0 1920 1080" style="position:absolute;inset:0">
+      <defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#090b1c"/><stop offset=".7" stop-color="#1b1f44"/><stop offset="1" stop-color="#3a2a4e"/></linearGradient>
+      <radialGradient id="glow"><stop offset="0" stop-color="#fff7d6" stop-opacity=".95"/><stop offset=".72" stop-color="#ffe9a3" stop-opacity=".8"/><stop offset="1" stop-color="#ffe9a3" stop-opacity="0"/></radialGradient>
+      <linearGradient id="beam" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#fff3bf" stop-opacity=".55"/><stop offset="1" stop-color="#fff3bf" stop-opacity=".1"/></linearGradient></defs>
+      <rect width="1920" height="1080" fill="url(#sky)"/>
+      <g id="stars"></g>
+      <g id="clouds" fill="#2a2f5c" opacity=".8"><ellipse cx="760" cy="300" rx="330" ry="70"/><ellipse cx="1180" cy="250" rx="300" ry="60"/><ellipse cx="960" cy="380" rx="420" ry="60"/></g>
+      <polygon id="beamShape" points="930,930 990,930 1230,300 690,300" fill="url(#beam)"/>
+      <g id="signal"><ellipse cx="960" cy="290" rx="290" ry="200" fill="url(#glow)"/><image id="logo" href="${scene.logo}" x="760" y="150" width="400" height="280" preserveAspectRatio="xMidYMid meet"/></g>
+      <g fill="#0c0e1d">${blocks.map(([x, y, w, h]) => `<rect x="${x}" y="${y}" width="${w}" height="${h}"/>`).join("")}<rect x="800" y="930" width="320" height="150"/><rect x="930" y="900" width="60" height="34" rx="6"/></g>
+      ${windows}
+      <g id="title" opacity="0"><text x="960" y="640" text-anchor="middle" font-family="DejaVu Sans, Arial" font-weight="800" font-size="92" fill="#fff">ChatBGP</text>
+        <text x="960" y="712" text-anchor="middle" font-family="DejaVu Sans, Arial" font-size="40" fill="#FC9F8D">your superhero app</text></g>
+      <g id="trail"></g></svg>`;
+    let stars = ""; for (let i = 0; i < 90; i++) stars += `<circle cx="${(rnd() * 1920).toFixed(0)}" cy="${(rnd() * 600).toFixed(0)}" r="${(0.8 + rnd() * 1.6).toFixed(1)}" fill="#fff" data-p="${(rnd() * 6).toFixed(2)}"/>`;
+    stage.querySelector("#stars").innerHTML = stars;
+    const hero = build("woody", true); hero.id = "hero"; hero.style.filter = "drop-shadow(0 0 18px rgba(255,233,163,.35))"; stage.appendChild(hero);
+  }
+  stage.querySelectorAll("#stars circle").forEach(s => s.setAttribute("opacity", (0.45 + 0.5 * Math.sin(t * 2 + +s.dataset.p)).toFixed(2)));
+  // The light comes on, then the hero rises from the roof and flies up through it and away.
+  const on = ease((t - 0.3) / 0.8);
+  stage.querySelector("#beamShape").setAttribute("opacity", (on * (0.85 + 0.15 * Math.sin(t * 9))).toFixed(2));
+  stage.querySelector("#signal").setAttribute("opacity", on.toFixed(2));
+  const fly0 = scene.flyAt || 4.2, f = clamp((t - fly0) / 1.9), fe = f * f;
+  const hero = stage.querySelector("#hero"), rise = back((t - 0.9) / 0.7);
+  const x = lerp(960, 1700, fe), y = lerp(0, -1250, fe), sc = lerp(0.74, 0.3, f);
+  hero.style.left = `${x - 200}px`; hero.style.bottom = `${150 - (1 - rise) * 480 - y}px`;
+  hero.style.transform = `scale(${sc}) rotate(${(f * 34 + Math.sin(t * 1.2) * 0.8).toFixed(2)}deg)`;
+  hero.style.opacity = t > 0.9 ? 1 : 0;
+  pose(Object.assign(hero, {}), { char: "woody", hero: true, x, scale: sc, from: -9, speak: true, cues: [{ t: 1.4, pose: "thumb", arm: "L" }, { t: 3.0, pose: "rest" }, { t: fly0 - 0.25, pose: "fly", arm: "R" }] }, t, scene);
+  hero.style.left = `${x - 200}px`; hero.style.transform = `scale(${sc}) rotate(${(f * 34).toFixed(2)}deg)`; hero.style.opacity = t > 0.9 ? 1 : 0;
+  const cape = hero.querySelector(".cape");
+  if (cape) cape.setAttribute("d", `M96 350 Q${40 - f * 60 + Math.sin(t * 6) * 10} 420 ${30 - f * 120 + Math.sin(t * 5) * 14} ${500 + f * 120} L${370 + Math.sin(t * 7) * 12} ${500 + f * 160} Q360 420 304 350 Q200 400 96 350 Z`);
+  stage.querySelector("#trail").innerHTML = f > 0 && f < 1 ? Array.from({ length: 9 }, (_, i) => { const ff = Math.max(0, f - i * 0.03), e2 = ff * ff; return `<circle cx="${lerp(960, 1700, e2).toFixed(0)}" cy="${(930 - 180 - lerp(0, 1250, e2)).toFixed(0)}" r="${(10 - i).toFixed(0)}" fill="#FC9F8D" opacity="${(0.5 - i * 0.05).toFixed(2)}"/>`; }).join("") : "";
+  stage.querySelector("#title").setAttribute("opacity", ease((t - (fly0 + 0.9)) / 0.7).toFixed(2));
+}
+
+let SCENE = null, FX = null; const ELS = [];
+window.setup = scene => {
+  SCENE = scene; const stage = document.getElementById("stage"); stage.innerHTML = ""; delete stage.dataset.hero; ELS.length = 0;
+  if (scene.mode === "hero") return true;
+  for (const a of scene.actors || []) {
+    const el = build(a.char);
+    if (a.tag) { const tag = document.createElement("div"); tag.className = `tag${a.char === "mark" ? " landsec" : ""}`; tag.innerHTML = `${a.tag}${a.role ? `<small>${a.role}</small>` : ""}`; tag.style.fontSize = `${21 / a.scale}px`; tag.style.transition = "none"; el.appendChild(tag); }
+    stage.appendChild(el); ELS.push([el, a]);
+  }
+  stage.style.background = scene.bg || "transparent";
+  if (scene.title) { const h = document.createElement("div"); h.style.cssText = "position:absolute;left:0;right:0;top:120px;text-align:center;font-size:54px;font-weight:800;color:#6E0C25"; h.textContent = scene.title; stage.appendChild(h); }
+  const svg = document.createElementNS(NS, "svg"); svg.setAttribute("width", 1920); svg.setAttribute("height", 1080); svg.style.cssText = "position:absolute;inset:0;pointer-events:none";
+  FX = document.createElementNS(NS, "g"); svg.appendChild(FX); stage.appendChild(svg);
+  return true;
+};
+window.frame = i => {
+  const t = i / SCENE.fps, stage = document.getElementById("stage");
+  if (SCENE.mode === "hero") { heroScene(stage, SCENE, t); return true; }
+  for (const [el, a] of ELS) pose(el, a, t, SCENE);
+  // Little stars where a character pops in, and hearts where the scene asks for them.
+  let fx = "";
+  for (const b of SCENE.bursts || []) {
+    const k = (t - b.t) / (b.secs || 0.9); if (k < 0 || k > 1) continue;
+    for (let j = 0; j < (b.n || 9); j++) {
+      const ang = j * 2.399 + b.x, r = (40 + (j * 37 % 90)) * ease(k) * (b.spread || 1), x = b.x + Math.cos(ang) * r, y = b.y + Math.sin(ang) * r - (b.kind === "heart" ? k * 90 : 0), sz = (b.kind === "heart" ? 30 : 22) * (1 - k * 0.5);
+      fx += b.kind === "heart"
+        ? `<path transform="translate(${x.toFixed(0)} ${y.toFixed(0)}) scale(${(sz / 24).toFixed(2)})" d="M0 8 C-14 -6 -6 -16 0 -6 C6 -16 14 -6 0 8Z" fill="#E5536B" opacity="${(1 - k).toFixed(2)}"/>`
+        : `<path transform="translate(${x.toFixed(0)} ${y.toFixed(0)}) scale(${(sz / 20).toFixed(2)}) rotate(${(k * 90 + j * 40).toFixed(0)})" d="M0 -10 L3 -3 L10 0 L3 3 L0 10 L-3 3 L-10 0 L-3 -3Z" fill="#FFD76A" opacity="${(1 - k).toFixed(2)}"/>`;
+    }
+  }
+  FX.innerHTML = fx;
+  return true;
+};
+</script></body></html>

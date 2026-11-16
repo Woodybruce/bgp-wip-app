@@ -67,6 +67,35 @@ the table below is the earlier written version. He also rewrote the close:
 "We'd love to run it with you" was "too cheesy", and his close ends on
 joining up the deal process so everyone can follow and comment.
 
+## Presenters and the ending (Woody, 16 November 2026)
+
+Woody, on the first voice cut: the placeholder character was "way too
+basic"; he wants his avatar "more engaged and active on the screens", an
+avatar of Charlotte Roberts "as BGP leasing lead" and one of Mark Warne "as
+leasing lead for Landsec on Bluewater", and an ending where he flies off as a
+superhero past a bat-signal-style light carrying the BGP logo, with a deeper
+voice saying "Welcome to ChatBGP, your superhero app".
+
+- The presenters are drawn in `script/pitch-video/avatars.html` (Woody,
+  Charlotte, Mark and David Bell) and photographed frame by frame by
+  `avatar-render.cjs`. Their mouths follow the loudness of the voice; the cut
+  list says when each points at the screen, waves or gives a thumbs up, timed
+  to the words. They are cartoons with a name tag, not photographs: Charlotte
+  and Mark were drawn from the photos Woody sent, which are not in the repo.
+  Charlotte and Mark do not speak. **Each of them should see the film before
+  it goes to Landsec** (their likeness; Mark is the client).
+- Woody turns into his avatar at the end of the intro (his last picture
+  shrinks into the corner as the drawing pops up). David Bell's arrival is a
+  drawn scene: he flies in on wings and they hug.
+- The ending is a caped hero in BGP colours with a BGP chest badge, and the
+  searchlight carries the BGP wordmark. It is deliberately not the Batman
+  costume or emblem (another company's character, in a commercial pitch).
+- The ending's line is a stock voice pitched down, because Woody has not
+  recorded it. When he does, pass his take as `HERO_VOICE` and it is used in
+  its place.
+- Eye contact at the start: the opening fades up over the glance down. The
+  recording is read from the screen throughout, which a cut cannot change.
+
 ## Two versions
 
 - **Room cut**, about 2 minutes 45. Woody can pause it and talk.
