@@ -112,6 +112,17 @@ explicit permission.
 
 ## Landsec client brand access (DECIDED — do not re-litigate in merges)
 
+**Superseded on 14 November 2026** (Woody: "let clients full access to the
+brands regardless of anything"; commit 2e4cc81c, "Client logins see every
+brand, whatever its category"): `isClientVisibleBrand` and
+`clientBrandSliceSql` in `server/company-scope.ts` now pass any company whose
+type starts "Tenant", as well as the categories and self-adds below. A client
+login, Landsec included, sees retail brands too, which also covers the
+retail at the four London schemes in Landsec's H&L agency brief (October
+2026). Do not put the category slice back in a merge. A joint agent still
+has no brand pages (see the Landsec sections below). The rest of this
+section is the earlier rule, kept for its history.
+
 Client logins see the **hospitality / leisure / fitness category slice**
 (`CLIENT_CRM_CATEGORIES` in `shared/tenant-categories.ts`) **plus any brand
 they self-add** from the global directory (`crm_extra_brand_ids` on their
