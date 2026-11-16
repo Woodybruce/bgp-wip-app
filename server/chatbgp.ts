@@ -6967,6 +6967,58 @@ async function executeLeasingActivity(fnName: "log_viewing" | "log_offer", fnArg
       : "The offer is saved, but the brand still needs linking. Do not claim it is included in brand conversion reporting." };
 }
 
+// Put a task on someone's list: the asker's own, or a named colleague's. One
+// rule for both tool paths. Until 16 November 2026 only the single-step path
+// (handleCrmToolCall) knew create_task, so in a multi-step answer ChatBGP was
+// told "Unknown tool: create_task" and a task for a colleague never landed
+// (Woody's Matta plan: nothing reached Alex's or Lizzie's list).
+type ChatTask = { error: string } | { id: string; title: string; assigneeName: string | null; dueDate: string | null };
+async function createTaskFromChat(req: Request, fnArgs: Record<string, any>): Promise<ChatTask> {
+  const requesterId = req?.session?.userId || (req as any)?.tokenUserId || null;
+  if (!requesterId) return { error: "I couldn't work out who's asking, so I can't set the task." };
+  const title = String(fnArgs.title || "").trim();
+  if (!title) return { error: "The task needs a title." };
+  let ownerId = requesterId;
+  let assignedById: string | null = null;
+  let assignedByName: string | null = null;
+  let assigneeName: string | null = null;
+  if (fnArgs.assigneeName) {
+    // Resolve the named person; clients (Landsec) may only assign within
+    // the people working on their account — same rule as the HTTP route.
+    const { resolveCompanyScope, getClientVisibleUserIds } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req);
+    const allowedIds = scope ? await getClientVisibleUserIds(scope) : null;
+    const match = await pool.query(
+      `SELECT id, name FROM users WHERE is_active IS NOT FALSE AND name ILIKE $1 ORDER BY name LIMIT 5`,
+      [`%${String(fnArgs.assigneeName).trim()}%`]
+    );
+    const candidates = allowedIds ? match.rows.filter((r: any) => allowedIds.has(r.id) || r.id === requesterId) : match.rows;
+    if (!candidates.length) return { error: `I couldn't find "${fnArgs.assigneeName}" among the people you can assign tasks to.` };
+    if (candidates.length > 1) return { error: `Which ${fnArgs.assigneeName} — ${candidates.map((c: any) => c.name).join(", ")}?` };
+    if (candidates[0].id !== requesterId) {
+      ownerId = candidates[0].id;
+      assigneeName = candidates[0].name;
+      assignedById = requesterId;
+      const meQ = await pool.query(`SELECT name FROM users WHERE id = $1`, [requesterId]);
+      assignedByName = meQ.rows[0]?.name || null;
+    }
+  }
+  const ins = await pool.query(
+    `INSERT INTO user_tasks (user_id, title, description, due_date, priority, assigned_by_user_id, assigned_by_name)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, title`,
+    [ownerId, title, fnArgs.description || null, fnArgs.dueDate || null, fnArgs.priority || "medium", assignedById, assignedByName]
+  );
+  if (assignedById) {
+    try {
+      const { emitNotification } = await import("./websocket");
+      const { sendPushNotification } = await import("./push-notifications");
+      emitNotification(ownerId, { type: "task_assigned", threadId: "", senderName: assignedByName || "Someone", preview: ins.rows[0].title } as any);
+      sendPushNotification(ownerId, { title: `New task from ${assignedByName || "a colleague"}`, body: ins.rows[0].title.slice(0, 100), tag: `task-${ins.rows[0].id}`, url: "/tasks" }).catch(() => {});
+    } catch { /* notification is best-effort */ }
+  }
+  return { id: String(ins.rows[0].id), title: ins.rows[0].title, assigneeName, dueDate: fnArgs.dueDate || null };
+}
+
 export async function executeCrmToolRaw(
   fnName: string,
   fnArgs: any,
@@ -7754,6 +7806,14 @@ export async function executeCrmToolRaw(
   if (fnName === "get_property_units" || fnName === "get_deal_waiting_on") {
     const { runUnitTool } = await import("./chatbgp-unit-tools");
     return runUnitTool(fnName, fnArgs, req);
+  }
+
+  if (fnName === "create_task") {
+    const made = await createTaskFromChat(req, fnArgs);
+    if ("error" in made) return { data: { error: made.error } };
+    return { data: { success: true, action: "created", entity: "task", id: made.id, title: made.title, assignedTo: made.assigneeName || "you", dueDate: made.dueDate,
+      message: made.assigneeName ? `Task set for ${made.assigneeName}; they have been notified.` : "Task added to the asker's own list." },
+      action: { type: "navigate", url: "/tasks" } };
   }
 
   if (fnName === "create_diary_entry") {
@@ -13444,50 +13504,12 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "create_task") {
-    const requesterId = req?.session?.userId || (req as any)?.tokenUserId || null;
-    if (!requesterId) return { handled: true, response: { reply: "I couldn't work out who's asking, so I can't set the task." } };
-    let ownerId = requesterId;
-    let assignedById: string | null = null;
-    let assignedByName: string | null = null;
-    let assigneeName: string | null = null;
-    if (fnArgs.assigneeName) {
-      // Resolve the named person; clients (Landsec) may only assign within
-      // the people working on their account — same rule as the HTTP route.
-      const { resolveCompanyScope, getClientVisibleUserIds } = await import("./company-scope");
-      const scope = await resolveCompanyScope(req);
-      const allowedIds = scope ? await getClientVisibleUserIds(scope) : null;
-      const match = await pool.query(
-        `SELECT id, name FROM users WHERE is_active IS NOT FALSE AND name ILIKE $1 ORDER BY name LIMIT 5`,
-        [`%${String(fnArgs.assigneeName).trim()}%`]
-      );
-      const candidates = allowedIds ? match.rows.filter((r: any) => allowedIds.has(r.id) || r.id === requesterId) : match.rows;
-      if (!candidates.length) return { handled: true, response: { reply: `I couldn't find "${fnArgs.assigneeName}" among the people you can assign tasks to.` } };
-      if (candidates.length > 1) return { handled: true, response: { reply: `Which ${fnArgs.assigneeName} — ${candidates.map((c: any) => c.name).join(", ")}?` } };
-      if (candidates[0].id !== requesterId) {
-        ownerId = candidates[0].id;
-        assigneeName = candidates[0].name;
-        assignedById = requesterId;
-        const meQ = await pool.query(`SELECT name FROM users WHERE id = $1`, [requesterId]);
-        assignedByName = meQ.rows[0]?.name || null;
-      }
-    }
-    const ins = await pool.query(
-      `INSERT INTO user_tasks (user_id, title, description, due_date, priority, assigned_by_user_id, assigned_by_name)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, title`,
-      [ownerId, String(fnArgs.title).trim(), fnArgs.description || null, fnArgs.dueDate || null, fnArgs.priority || "medium", assignedById, assignedByName]
-    );
-    if (assignedById) {
-      try {
-        const { emitNotification } = await import("./websocket");
-        const { sendPushNotification } = await import("./push-notifications");
-        emitNotification(ownerId, { type: "task_assigned", threadId: "", senderName: assignedByName || "Someone", preview: ins.rows[0].title } as any);
-        sendPushNotification(ownerId, { title: `New task from ${assignedByName || "a colleague"}`, body: ins.rows[0].title.slice(0, 100), tag: `task-${ins.rows[0].id}`, url: "/tasks" }).catch(() => {});
-      } catch { /* notification is best-effort */ }
-    }
+    const made = await createTaskFromChat(req, fnArgs);
+    if ("error" in made) return { handled: true, response: { reply: made.error } };
     return { handled: true, response: {
-      reply: assigneeName
-        ? `Task set for ${assigneeName}: "${ins.rows[0].title}"${fnArgs.dueDate ? ` (due ${fnArgs.dueDate})` : ""} — they've been notified.`
-        : `Task added to your list: "${ins.rows[0].title}"${fnArgs.dueDate ? ` (due ${fnArgs.dueDate})` : ""}.`,
+      reply: made.assigneeName
+        ? `Task set for ${made.assigneeName}: "${made.title}"${made.dueDate ? ` (due ${made.dueDate})` : ""} — they've been notified.`
+        : `Task added to your list: "${made.title}"${made.dueDate ? ` (due ${made.dueDate})` : ""}.`,
       action: { type: "navigate", url: "/tasks" },
     } };
   }

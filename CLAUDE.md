@@ -2895,6 +2895,25 @@ Two rules everything else follows (do not re-litigate):
   pass, insights report leg): a new import in those functions needs the
   binding added to the test. Run that suite with `--import tsx`.
 
+## ChatBGP sets tasks for colleagues from either tool path (2026-11-16)
+
+Woody pasted a ChatBGP conversation (making the agent firm Matta "VIP"
+and planning how leasing engages with it) that ended "the task-assignment
+tool returned Unknown tool: create_task, so tasks have not landed on" the
+two colleagues' lists. ChatBGP has two tool paths in `server/chatbgp.ts`:
+`handleCrmToolCall` (one step) and `executeCrmToolRaw` (a multi-step
+answer). Only the first knew `create_task`. Both now call one rule,
+`createTaskFromChat` (the asker's own list or a named colleague's; a client
+login only within the people on its account). Guard:
+`qa/regression/chatbgp-create-task-paths.test.mjs`. A tool added to one path
+is added to the other.
+
+Found and NOT built, waiting on Woody: there is no "VIP" field anywhere in
+the app, and ChatBGP has no tool that starts a CRM strategy, so a plan it
+"saves" for a company is not on the CRM page's Overview, Watch list or
+Diary. In the CRM, making a company VIP is **Start strategy**
+(`server/crm-kickoff.ts`).
+
 ## CRM week: meetings on the events calendar, and Monday's two emails (Woody, 2026-11-16)
 
 Woody: "can you merge CRM meetings with the events calendar in CRM, the CRM
