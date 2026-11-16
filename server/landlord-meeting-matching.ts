@@ -8,7 +8,17 @@ export interface LandlordCatalogueEntry {
   domain: string | null;
   domain_url: string | null;
   contacts: Array<{ id: string; name: string; email: string | null }>;
+  // Set by the leasing book only (brands and agent firms); a landlord has none.
+  kind?: "brand" | "agent";
 }
+
+// How a catalogue is matched. The landlord book is the default. The leasing
+// book (brands BGP is working, and agent firms) also takes tenant companies
+// and trusts a name in the invitation only when it is two words or more:
+// "Next steps" is not Next and "Office move" is not Office. A person's email
+// address or their firm's domain matches in both.
+export interface MatcherOptions { tenants?: boolean; minNameWords?: number }
+export const LEASING_MATCHER: MatcherOptions = { tenants: true, minNameWords: 2 };
 
 export const LANDLORD_CATALOGUE_PREDICATE = `c.merged_into_id IS NULL
   AND LOWER(COALESCE(c.company_type, '')) NOT LIKE 'tenant%'
@@ -59,8 +69,9 @@ export function landlordNameMention(text: string, name: string): boolean {
 // be loaded", 504s on every other request while it ran).
 export type LandlordMatcher = (subject: string, people: LandlordMeetingPerson[]) => Array<{ company: LandlordCatalogueEntry; reasons: string[] }>;
 
-export function createLandlordMatcher(catalogue: LandlordCatalogueEntry[]): LandlordMatcher {
-  const companies = catalogue.filter(company => !String(company.company_type || '').trim().toLowerCase().startsWith('tenant'));
+export function createLandlordMatcher(catalogue: LandlordCatalogueEntry[], options: MatcherOptions = {}): LandlordMatcher {
+  const companies = options.tenants ? catalogue : catalogue.filter(company => !String(company.company_type || '').trim().toLowerCase().startsWith('tenant'));
+  const minNameWords = options.minNameWords || 1;
   const byEmail = new Map<string, LandlordCatalogueEntry[]>();
   const byDomain = new Map<string, LandlordCatalogueEntry[]>();
   const nameCount = new Map<string, number>();
@@ -80,7 +91,8 @@ export function createLandlordMatcher(catalogue: LandlordCatalogueEntry[]): Land
     const key = company.name.toLowerCase();
     nameCount.set(key, (nameCount.get(key) || 0) + 1);
   }
-  const named = companies.filter(company => nameCount.get(company.name.toLowerCase()) === 1)
+  const named = companies.filter(company => nameCount.get(company.name.toLowerCase()) === 1
+      && company.name.trim().split(/\s+/).length >= minNameWords)
     .map(company => ({ company, test: landlordNameTester(company.name) }))
     .filter((entry): entry is { company: LandlordCatalogueEntry; test: (text: string) => boolean } => !!entry.test);
   return (subject, people) => {

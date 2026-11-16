@@ -4216,6 +4216,7 @@ import { setupLandsecAccessRoutes } from "./landsec-access";
 import { setupJointAgentChatRoutes } from "./chat-joint-agent";
 import { setupBrandRelevanceRoutes } from "./brand-relevance";
 import { setupOwnershipIntelRoutes } from "./ownership-intel";
+import { setupCrmWeekAheadRoutes } from "./crm-week-ahead";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
 import { registerDemeterRoutes } from "./demeter";
@@ -5508,6 +5509,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupJointAgentChatRoutes(app);
   setupBrandRelevanceRoutes(app);
   setupOwnershipIntelRoutes(app);
+  setupCrmWeekAheadRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
   const { registerPortfolioRoutes } = await import("./portfolios");
@@ -6801,6 +6803,11 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             { key: "fortnightly-brand-digest", due: (now) =>
               now.day === 1 && now.epochWeek % 2 === 1 ? dailyAt(8)(now) : null,
               run: () => runFortnightlyBrandDigest() },
+            // CRM week ahead — Monday 07:30, to the equity directors (sends
+            // email): the week's landlord meetings from BGP diaries and the
+            // CRM's confirmed events. CRM_WEEK_AHEAD_TO moves it, "off" stops it.
+            { key: "crm-week-ahead", due: weeklyAt(1, 7, 30), run: () =>
+              import("./crm-week-ahead").then(m => m.mondayWeekAhead()).then(() => undefined) },
             // Weekly client report — Monday 09:00 (sends email).
             { key: "weekly-client-reports", due: weeklyAt(1, 9), run: () => runWeeklyClientReports() },
           );

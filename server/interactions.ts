@@ -454,6 +454,11 @@ async function syncCalendarForUser(
     // CRM contact. Keep the original contact/brand capture below unchanged.
     try { await captureLandlordDiary(events, userEmail, { start, end }, { scanStartedAt }); }
     catch { await recordLandlordDiaryFailure(userEmail, "The landlord diary snapshot could not be updated").catch(() => {}); }
+    // The leasing book (brands BGP is working, agent firms), from the same
+    // events and by the same privacy rules. A failure here never touches the
+    // landlord book or the rest of the sync.
+    try { await captureLandlordDiary(events, userEmail, { start, end }, { scanStartedAt, book: "leasing" }); }
+    catch { await recordLandlordDiaryFailure(userEmail, "The leasing diary snapshot could not be updated", undefined, "leasing").catch(() => {}); }
 
     // Diary → Letting Tracker viewings: events that look like a viewing and
     // anchor to a tracker unit become unit_viewings rows. Runs on every
@@ -561,6 +566,7 @@ async function syncCalendarForUser(
     }
   } catch (e: any) {
     await recordLandlordDiaryFailure(userEmail, "The latest diary scan failed; showing the last successful check").catch(() => {});
+    await recordLandlordDiaryFailure(userEmail, "The latest diary scan failed; showing the last successful check", undefined, "leasing").catch(() => {});
     throw new Error(`calendar: ${e.message}`);
   }
 
