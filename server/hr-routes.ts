@@ -5664,6 +5664,20 @@ Use the language and tone of BGP's review docs.`,
     }
   });
 
+  // Change a prize's emoji (the prize manager's emoji picker). Empty clears it: the wheel shows 🏅.
+  app.patch("/api/hr/brucey-prizes/:id", requireAuth, requireAdmin, async (req: any, res) => {
+    const raw = req.body?.emoji;
+    if (raw !== null && raw !== undefined && typeof raw !== "string") return res.status(400).json({ error: "emoji must be text" });
+    const emoji = typeof raw === "string" ? raw.trim().slice(0, 16) : "";
+    try {
+      const { rows } = await pool.query("UPDATE brucey_prizes SET emoji = $2 WHERE id = $1 RETURNING *", [req.params.id, emoji || null]);
+      if (!rows[0]) return res.status(404).json({ error: "Prize not found" });
+      res.json(rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.delete("/api/hr/brucey-prizes/:id", requireAuth, requireAdmin, async (req, res) => {
     try {
       await pool.query("UPDATE brucey_prizes SET is_active = false WHERE id = $1", [req.params.id]);
