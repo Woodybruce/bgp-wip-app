@@ -4273,7 +4273,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
                 postcode: { type: "string" },
                 propertyId: { type: "string", description: "CRM property id, when known" },
                 trackerId: { type: "string", description: "Investment Tracker row id when this evidence is already (wrongly) on the tracker — it is moved through Sold - Comp and leaves the live board" },
-                assetClass: { type: "string", enum: ["Retail - High Street", "Retail - Shopping Centre", "Retail - London", "Retail Parks", "Portfolios", "Office London", "Office National", "Industrial", "Mixed Use", "F&B - High Street", "Leisure Schemes", "Residential"], description: "The Investment Tracker class it files under" },
+                assetClass: { type: "string", enum: ["Retail - High Street", "Retail - Shopping Centre", "London Shopping Centre", "Retail - London", "Retail Parks", "Portfolios", "Office London", "Office National", "Industrial", "Mixed Use", "F&B - High Street", "Leisure Schemes", "Residential", "Educational/Social"], description: "The Investment Tracker class it files under" },
                 evidenceStatus: { type: "string", enum: ["sold", "exchanged", "under offer", "quoting"], description: "As the source states it. Under offer / quoting keep their figures as asking terms." },
                 price: { type: "number", description: "£ — achieved for sold/exchanged, asking for under offer/quoting" },
                 yieldPct: { type: "number", description: "NIY as a PERCENT, e.g. 4.01 for 4.01%" },

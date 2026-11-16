@@ -13,6 +13,7 @@
 export const TRACKER_CLASSES = [
   "Retail - High Street",
   "Retail - Shopping Centre",
+  "London Shopping Centre",
   "Retail - London",
   "Retail Parks",
   "Portfolios",
@@ -104,12 +105,16 @@ export function trackerClass(item: ClassSource): { cls: TrackerClass; estimated:
   if (family === "Retail") {
     // What the label itself says is taken as read…
     if (RETAIL_PARK_RE.test(labelLc)) return { cls: "Retail Parks", estimated: false };
-    if (SHOPPING_CENTRE_RE.test(labelLc)) return { cls: "Retail - Shopping Centre", estimated: false };
+    // A shopping centre in London is its own class (Jack, 2026-11-16).
+    if (SHOPPING_CENTRE_RE.test(labelLc)) {
+      if (/\blondon\b/.test(labelLc)) return { cls: "London Shopping Centre", estimated: false };
+      return isLondon(where) ? { cls: "London Shopping Centre", estimated: true } : { cls: "Retail - Shopping Centre", estimated: false };
+    }
     if (HIGH_STREET_RE.test(labelLc)) return { cls: "Retail - High Street", estimated: false };
     if (/\blondon\b/.test(labelLc)) return { cls: "Retail - London", estimated: false };
     // …otherwise the kind of retail is a best estimate from name + address.
     if (RETAIL_PARK_RE.test(whereLc)) return { cls: "Retail Parks", estimated: true };
-    if (SHOPPING_CENTRE_RE.test(whereLc)) return { cls: "Retail - Shopping Centre", estimated: true };
+    if (SHOPPING_CENTRE_RE.test(whereLc)) return { cls: isLondon(where) ? "London Shopping Centre" : "Retail - Shopping Centre", estimated: true };
     if (isLondon(where)) return { cls: "Retail - London", estimated: true };
     return { cls: "Retail - High Street", estimated: true };
   }
