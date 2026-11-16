@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -1105,7 +1105,7 @@ function FilterHead({ label, value, options, onChange, className = "", colorMap 
 // with its photo, and leaves the live board. The buyer can be skipped for
 // now (TBC) and a blank date stays blank (Jack, 2026-11-12). Server:
 // investment-tracker-sold-comp.ts.
-function SoldCompDialog({ item, onClose }: { item: InvestmentTracker; onClose: () => void }) {
+function SoldCompDialog({ item, onClose, progress }: { item: InvestmentTracker; onClose: () => void; progress?: string }) {
   const { toast } = useToast();
   const assetClass = trackerClass(item).cls;
   const needsCapitalValue = assetClass === "Retail - London" || assetClass === "Office London";
@@ -1163,7 +1163,7 @@ function SoldCompDialog({ item, onClose }: { item: InvestmentTracker; onClose: (
     <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Sold - Comp — {item.assetName}</DialogTitle>
+          <DialogTitle>Sold - Comp — {item.assetName}{progress ? <span className="ml-2 text-xs font-normal text-muted-foreground">{progress}</span> : null}</DialogTitle>
           <DialogDescription>
             Records the sale as comparable evidence under {assetClass}. The asset moves to the Comps page and leaves this board; no BGP fee is counted. Fields marked <span className="text-destructive">*</span> are required.
           </DialogDescription>
@@ -1460,6 +1460,11 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
   const soldCompItems = useMemo(() => allBoardItems.filter(u => (u as any).soldCompId), [allBoardItems]);
   const [showSoldComps, setShowSoldComps] = useState(false);
   const [soldCompFor, setSoldCompFor] = useState<InvestmentTracker | null>(null);
+  // Sold - Comp from the bulk "Change status" menu (Jack, 2026-11-16): each
+  // selected asset gets the same form in turn — price, yield, capital value
+  // for London retail / offices, buyer (or TBC), sale date — and moves only
+  // when its form is saved. Cancel skips to the next one.
+  const [soldCompQueue, setSoldCompQueue] = useState<{ items: InvestmentTracker[]; total: number }>({ items: [], total: 0 });
   const boardItems = useMemo(() => (showSoldComps ? soldCompItems : allBoardItems.filter(u => !(u as any).soldCompId)), [allBoardItems, soldCompItems, showSoldComps]);
 
   const filtered = useMemo(() => {
@@ -1641,6 +1646,12 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
     toast({ title: `Deleted ${ids.length} asset${ids.length === 1 ? "" : "s"}` });
   };
 
+  const startBulkSoldComp = () => {
+    const items = boardItems.filter(i => selectedIds.has(i.id) && !(i as any).soldCompId);
+    if (!items.length) { toast({ title: "Already on Sold - Comp", description: "The selected assets are already comps." }); return; }
+    setSoldCompQueue({ items, total: items.length });
+  };
+
   const bulkSetStatus = async (status: string) => {
     const ids = Array.from(selectedIds);
     await Promise.all(ids.map(id => apiRequest("PATCH", `/api/investment-tracker/${id}`, { status }).catch(() => null)));
@@ -1730,6 +1741,18 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
     <div className={`p-4 sm:p-6 space-y-4 flex flex-col ${present ? "h-full" : isMobile ? "" : "h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
       {brochureFor && <NewAssetBrochureFlow asset={brochureFor} onClose={() => setBrochureFor(null)} />}
       {soldCompFor && <SoldCompDialog item={soldCompFor} onClose={() => setSoldCompFor(null)} />}
+      {!soldCompFor && soldCompQueue.items[0] && (
+        <SoldCompDialog
+          key={soldCompQueue.items[0].id}
+          item={soldCompQueue.items[0]}
+          progress={soldCompQueue.total > 1 ? `${soldCompQueue.total - soldCompQueue.items.length + 1} of ${soldCompQueue.total}` : undefined}
+          onClose={() => setSoldCompQueue(q => {
+            const rest = q.items.slice(1);
+            if (!rest.length) setSelectedIds(new Set());
+            return { items: rest, total: rest.length ? q.total : 0 };
+          })}
+        />
+      )}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 shrink-0">
         <div>
           <div className="flex items-center gap-4">
@@ -2012,6 +2035,11 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                   {DEAL_STATUS_LABELS[s]}
                 </DropdownMenuItem>
               ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={startBulkSoldComp} data-testid="bulk-status-sold-comp">
+                <span className="inline-block w-2 h-2 rounded-full mr-2 bg-foreground" />
+                Sold - Comp…
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           <Button
