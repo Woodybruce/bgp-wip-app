@@ -3193,6 +3193,35 @@ is unchanged, its whole page scrolls):
   Tracker and the Deals table have the same fixed top and have NOT been
   changed: waiting on Woody.
 
+## Investment Comps (Jack, 2026-11-16)
+
+`/investment/comps` (`client/src/pages/investment-comps.tsx`, table
+`investment_comps`) holds **completed investment sales only**. Jack's rules:
+lettings are not comps; refinancings are deleted; a live deal (pending,
+under offer, quoting, on the market) belongs on the Investment Tracker until
+it sells. **Subtype is the tracker class** (Retail - London, Office London,
+Retail Parks ... `TRACKER_CLASSES`); Type is not used and has no column. The
+one class rule is `compTrackerClass` in `shared/tracker-class.ts` (the
+tracker's `trackerClass` moved there; `client/src/lib/tracker-class.ts`
+re-exports it). The page lists by class, newest sale first.
+- Sale evidence is written by ONE door, `fileSaleEvidence` in
+  `server/investment-sale-evidence.ts` (find-first, so RCA, the tracker and
+  ChatBGP do not duplicate a sale). A tracker row moves to Comps through
+  Sold - Comp (row or bulk Change status). Buyers come from Green Street and
+  public web sources, never Land Registry (each check costs money).
+- ChatBGP's `file_investment_comps` refuses under offer / quoting and sends
+  them to the tracker. The RCA import skips refinancings and pending deals
+  and sets Subtype to the class.
+- The clean-up of 16 November (`server/investment-comp-cleanup.ts`, admin
+  `POST /api/admin/investment-comp-cleanup/preview|apply|undo`): lettings and
+  refinancings deleted, live deals back to the tracker (a Sold - Comp row
+  restored, a building already on the tracker filled, else a new Purchases
+  row at U/O - Not BGP or Available), duplicates merged (same building and
+  deal; the newest record kept, blanks filled from the older), Subtype set
+  to the class. Logged in `investment_comp_migration_log` (batch
+  `comp-cleanup-<time>`); Undo puts every row back. Terminated, withdrawn and
+  blank-status comps are left for Jack.
+
 ## Document design preferences (the "house style" pattern)
 
 For Claude-driven document generation (Why Buy decks initially, Document

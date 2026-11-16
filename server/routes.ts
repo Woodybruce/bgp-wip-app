@@ -9503,6 +9503,29 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.status(500).json({ message: e?.message || "Undo failed" });
     }
   });
+  // Comps clean-up (Jack, 2026-11-16): lettings and refinancings off, live
+  // deals back to the tracker, duplicates merged, Subtype = tracker class.
+  // Preview → Apply → Undo; see server/investment-comp-cleanup.ts.
+  app.post("/api/admin/investment-comp-cleanup/preview", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { runCompCleanup } = await import("./investment-comp-cleanup");
+      res.json(await runCompCleanup({ apply: false }));
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Preview failed" }); }
+  });
+  app.post("/api/admin/investment-comp-cleanup/apply", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { runCompCleanup } = await import("./investment-comp-cleanup");
+      res.json(await runCompCleanup({ apply: true, actorId: (req as any).session?.userId || (req as any).tokenUserId || null }));
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Apply failed" }); }
+  });
+  app.post("/api/admin/investment-comp-cleanup/undo", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { undoCompCleanup } = await import("./investment-comp-cleanup");
+      const batch = String(req.body?.batch || "");
+      if (!batch) return res.status(400).json({ message: "batch required" });
+      res.json(await undoCompCleanup(batch));
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Undo failed" }); }
+  });
 
   // Move a brochure filed on the wrong property, with the images, tenancy
   // rows and notes blocks its ingest put there (feedback #78/#79).
