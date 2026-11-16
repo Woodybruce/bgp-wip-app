@@ -2938,9 +2938,40 @@ themselves only (both on `CLIENT_BLOCKED_TOOLS`, never a joint agent's):
   sends nothing and books nothing. Tests:
   `server/chatbgp-crm-strategy.test.ts` (in `npm test`) and
   `qa/regression/chatbgp-crm-strategy-guards.test.mjs`.
-- Not built: ChatBGP adding a CRM event, changing or closing a strategy, or
-  ticking a CRM action. It has not been asked a real question against a
-  model from a build machine: the tool was run directly.
+- **The rest of the plan** (Woody, 2026-11-16, on the three things listed
+  as not built: "build it"). Three more tools in the same file, by the same
+  rules (BGP staff as themselves, both on `CLIENT_BLOCKED_TOOLS`, no write
+  on an automated run, no save of their own):
+  - `add_crm_event`: an event for one or more companies (up to 6), through
+    `saveEngagementEvent` in the joined view after the form's own checks
+    (`eventInputSchema`). Date and time are London time (`londonIso`; a
+    date with no time goes in at 09:00 and the reply says so; the hour the
+    clocks skip is refused). No date = a draft under Dates to confirm.
+    Linked to the strategy named, else the ONE running strategy each
+    company is on. Guests are contacts filed under a company on the event,
+    saved as `suggested` only. The same title on the same day is a question,
+    never a second event. **It is a plan: no invitation, nothing in Outlook.**
+  - `update_crm_strategy`: rename, objective, owner, dates, and status
+    (paused, completed, active again), through `saveEngagementStrategy` with
+    every company and person on it kept (`planStrategyChange`) and the
+    version that was read (`expectedUpdatedAt`). The strategy is the one
+    named (a completed one can be named, to reopen it) or the one the
+    company is on (`findStrategy`). It does not add or remove a company.
+  - `update_crm_action`: the STATUS of a CRM action only (done, in progress,
+    to do), through `setEngagementActionStatus` in
+    `server/crm-engagement.ts`, the one door the CRM page's own save now
+    uses too (`PATCH /actions/:id`): the action's owner or the person who
+    set it, nobody else. The action is found by its id (`get_crm_plan`
+    sends each open action's id and `youCanTick`) or the words of its title
+    (`pickAction`).
+  - The five names are one list in each file (`CRM_PLAN_TOOL_NAMES` in
+    `server/chatbgp.ts`, `CRM_PLAN_TOOLS` in the tool file): a new CRM plan
+    tool goes on both, and both tool paths pick it up.
+- Not built: ChatBGP editing or cancelling an event, taking a company off a
+  strategy, or changing an action's title, owner or due date (the engine
+  has no door for the last). None of the five has been asked a real
+  question against a model from a build machine: each was run directly
+  against a local database.
 
 ## CRM week: meetings on the events calendar, and Monday's two emails (Woody, 2026-11-16)
 

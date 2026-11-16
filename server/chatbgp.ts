@@ -2324,6 +2324,9 @@ export async function clientChatGuard(req: any): Promise<{ isClient: boolean; co
 //     ANOTHER client's data or the app itself.
 //  3. BGP's money and internal memory — WIP, Xero, the firm knowledge base,
 //     saved learnings, other people's chat history.
+// The CRM plan tools (server/chatbgp-crm-strategy.ts): one list for both tool
+// paths below, so a tool added to one is in the other.
+const CRM_PLAN_TOOL_NAMES = new Set(["start_crm_strategy", "get_crm_plan", "add_crm_event", "update_crm_strategy", "update_crm_action"]);
 export const CLIENT_BLOCKED_TOOLS = new Set([
   // 1. BGP systems (the SharePoint carve-out)
   "browse_sharepoint_folder", "create_sharepoint_folder", "move_sharepoint_item",
@@ -2361,7 +2364,7 @@ export const CLIENT_BLOCKED_TOOLS = new Set([
   // 5. BGP's CRM plan: strategies, actions and events are BGP's own
   // (server/chatbgp-crm-strategy.ts refuses anyone who is not BGP staff
   // signed in as themselves).
-  "start_crm_strategy", "get_crm_plan",
+  "start_crm_strategy", "get_crm_plan", "add_crm_event", "update_crm_strategy", "update_crm_action",
 ]);
 
 export function isToolAllowedForClient(name: string): boolean {
@@ -4148,7 +4151,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "get_crm_plan",
-      description: "What the CRM plan holds for one company: whether it is on a strategy (the app's meaning of VIP or key account), the strategies with their objective and owner, the open CRM actions with who has each and when it is due, and its CRM events. Use for 'is X a VIP / on a strategy', 'what is the plan for X', 'what are we doing with X', and before start_crm_strategy.",
+      description: "What the CRM plan holds for one company: whether it is on a strategy (the app's meaning of VIP or key account), the strategies with their objective and owner, the open CRM actions with who has each and when it is due, and its CRM events. Use for 'is X a VIP / on a strategy', 'what is the plan for X', 'what are we doing with X', and before start_crm_strategy, update_crm_strategy or update_crm_action (its open actions carry the id to pass as actionId, and youCanTick says whether the person asking may change each).",
       parameters: {
         type: "object",
         properties: {
@@ -4156,6 +4159,77 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           companyId: { type: "string", description: "Its CRM company id from search_crm, when known" },
         },
         required: ["companyName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "add_crm_event",
+      description: "Add an event to the CRM plan: a dinner, lunch, breakfast, drinks, a pitch, an industry event or a speaking slot BGP plans with or for one or more landlords, brands, agent firms or lenders. Use ONLY when the user asks you to add, plan or put in a CRM event for a company; a discussion alone is not an instruction to save. It shows on CRM, Overview (the Events calendar) and in the CRM Diary, linked to the companies and to the strategy they are on. It is a PLAN: it sends no invitation, books nothing and puts nothing in anyone's Outlook diary, and you must say so. Give the date as YYYY-MM-DD and the time as 24-hour HH:MM, London time, working them out from today's date when the user says 'next Thursday'; set dateConfirmed false when the date is provisional or your own guess. Guests are named contacts already filed under a company on the event, saved as suggestions only. Not for a meeting that already happened (that is an interaction) and not a personal reminder (create_task). If the result has needsAnswer or candidates, nothing was saved: ask the user. Always relay the result's message.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "The event's name, e.g. 'Dinner with Matta'" },
+          companyNames: { type: "array", items: { type: "string" }, description: "The companies it is for, as the user said them (up to 6)" },
+          companyId: { type: "string", description: "A CRM company id from search_crm, when there is one company and its id is known. Never guess one." },
+          date: { type: "string", description: "The day, YYYY-MM-DD. Leave out when no date is set yet." },
+          time: { type: "string", description: "Start time, 24-hour HH:MM, London time. Leave out when no time was given." },
+          endTime: { type: "string", description: "End time on the same day, HH:MM" },
+          dateConfirmed: { type: "boolean", description: "False when the date is provisional. Default true when a date is given." },
+          location: { type: "string" },
+          eventType: { type: "string", enum: ["bgp", "industry", "speaking", "pitch", "press"], description: "bgp = a BGP event or hospitality (the default), industry = an industry event, speaking = a speaking slot, pitch, press" },
+          description: { type: "string", description: "What is planned and what the conversation should cover" },
+          reason: { type: "string", description: "Why these companies are on it, in a sentence" },
+          strategyName: { type: "string", description: "The running strategy it supports, by name. Leave out to link the one strategy each company is on." },
+          ownerName: { type: "string", description: "The BGP colleague who owns the event. Default: the person asking." },
+          guestNames: { type: "array", items: { type: "string" }, description: "People to suggest as guests, by name: only contacts filed under a company on the event" },
+          url: { type: "string", description: "A web page for the event, if there is one" },
+        },
+        required: ["title"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "update_crm_strategy",
+      description: "Change a CRM strategy that already exists: rename it (newName), re-word its objective, hand it to another BGP colleague (ownerName), set its start or end date, or change its status: 'paused', 'completed' (closing it: the company stops being VIP / a key account and comes off the Watch list) or 'active' (reopening it). Name the strategy (strategyName), or give the company and it changes the one strategy that company is on. Use ONLY when the user asks for the change. It keeps every company and person on the strategy; to ADD a company or people use start_crm_strategy, and taking a company off a strategy is done on the CRM page. If the result has needsAnswer, nothing was changed: ask the user. Always relay the result's message.",
+      parameters: {
+        type: "object",
+        properties: {
+          strategyName: { type: "string", description: "The strategy's current name" },
+          companyName: { type: "string", description: "A company on the strategy, when the user names the company and not the strategy" },
+          companyId: { type: "string", description: "Its CRM company id, when known" },
+          newName: { type: "string" },
+          objective: { type: "string", description: "The new objective, in full" },
+          status: { type: "string", enum: ["active", "paused", "completed"] },
+          ownerName: { type: "string", description: "The BGP colleague who takes it over" },
+          startDate: { type: "string", description: "YYYY-MM-DD, or an empty string to clear it" },
+          endDate: { type: "string", description: "YYYY-MM-DD, or an empty string to clear it" },
+        },
+        required: [],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "update_crm_action",
+      description: "Tick a CRM action as done, mark it in progress or reopen it. A CRM action is an action on a company's CRM plan (set from a strategy, an event or start_crm_strategy); it is also a row on its owner's My Tasks. Give the company and the words of the action's title, or the actionId from get_crm_plan. Only the action's owner or the person who set it can change it, as on the CRM page: for anyone else the result says whose it is. It changes the status only; the title, owner and due date are changed on the CRM page. For an ordinary task that is not a CRM action use the task tools. If the result has needsAnswer, nothing was changed: ask the user. Always relay the result's message.",
+      parameters: {
+        type: "object",
+        properties: {
+          companyName: { type: "string", description: "The company the action is for" },
+          companyId: { type: "string", description: "Its CRM company id, when known" },
+          title: { type: "string", description: "The action's title, or enough of its words to pick it out" },
+          actionId: { type: "string", description: "The action's id from get_crm_plan, when known. Never guess one." },
+          status: { type: "string", enum: ["done", "in_progress", "todo"], description: "Default done" },
+        },
+        required: [],
       },
     },
   });
@@ -7858,9 +7932,9 @@ export async function executeCrmToolRaw(
     return runUnitTool(fnName, fnArgs, req);
   }
 
-  if (fnName === "start_crm_strategy" || fnName === "get_crm_plan") {
+  if (CRM_PLAN_TOOL_NAMES.has(fnName)) {
     const { runCrmStrategyTool } = await import("./chatbgp-crm-strategy");
-    return runCrmStrategyTool(fnName, fnArgs, req);
+    return runCrmStrategyTool(fnName as any, fnArgs, req);
   }
 
   if (fnName === "create_task") {
@@ -13419,7 +13493,7 @@ export async function handleCrmToolCall(
   }
   // The CRM plan tools answer in their own fixed words too: a question back
   // to the user must never be summarised as "started".
-  if (fnName === "start_crm_strategy" || fnName === "get_crm_plan") {
+  if (CRM_PLAN_TOOL_NAMES.has(fnName)) {
     const rawResult = await executeCrmToolRaw(fnName, fnArgs, req);
     return { handled: true, response: { reply: rawResult.data?.message || rawResult.data?.error || "The CRM plan was not changed.", action: rawResult.action } };
   }
