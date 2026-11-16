@@ -909,6 +909,8 @@ function getToolProgressLabel(toolName: string): string {
     search_green_street: "Searching Green Street...",
     manage_chat_members: "Updating chat members...",
     query_leasing_schedule: "Querying leasing schedule...",
+    get_property_units: "Reading the property's units...",
+    get_deal_waiting_on: "Checking what the deal is waiting on...",
     import_leasing_schedule: "Importing leasing schedule...",
     query_turnover: "Querying turnover data...",
     tfl_nearby: "Finding nearby stations...",
@@ -1544,7 +1546,8 @@ You are an active operational agent with full CRM read/write access, internet se
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
 - **Auto-follow news URLs**: When the user pastes a URL from a news outlet, journalist blog, columnist page, research-house insights index, or industry publication (e.g. Sky News, FT, Bloomberg, Reuters, Property Week, Savills/CBRE/Knight Frank research, a Substack), call **follow_url** to register it as a persistent source. The news-feed cron then polls it automatically forever — no further action needed. Confirm in one short line ("Now tracking X — new posts will appear in your news feed"). Skip auto-follow for: internal app URLs, Companies House / planning portals, SharePoint/OneDrive links, social profiles, or one-off article reads (use ingest_url for those). If the user explicitly says "follow / track / watch / scrape this URL" — always call follow_url, regardless of source type. If both reading AND tracking are wanted, run ingest_url first, then follow_url.
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
-- **Leasing schedule**: query_leasing_schedule for read. If the user uploads / drags in / attaches an Excel file and says anything about leasing schedule, rent schedule, tenant schedule, load / upload / import / populate units, OR says "this is the [property] leasing schedule" — you MUST call import_leasing_schedule with mode="preview" first. DO NOT read the file yourself or summarise its contents — the tool handles parsing. After preview returns, show the user the summary and ask for confirmation, then call again with mode="import".
+- **Units and what a deal is waiting on**: for "who is in unit X", "which unit is <brand> in", "when does <tenant>'s lease end" or "what is vacant at <property>" call get_property_units (the property page's own unit list: tenancy schedule, Letting Tracker and live deals). For "what is this deal or unit waiting on", "who is holding it up" or "what is next on the checklist" call get_deal_waiting_on (the deal clock and the deal checklist). Both are recorded: never answer these from the leasing schedule board, and never say a tenant is not at a property or that a waiting-on is not recorded until these two have been tried.
+- **Leasing schedule**: query_leasing_schedule for read of the older leasing schedule board. If the user uploads / drags in / attaches an Excel file and says anything about leasing schedule, rent schedule, tenant schedule, load / upload / import / populate units, OR says "this is the [property] leasing schedule" — you MUST call import_leasing_schedule with mode="preview" first. DO NOT read the file yourself or summarise its contents — the tool handles parsing. After preview returns, show the user the summary and ask for confirmation, then call again with mode="import".
 - **Editable text documents**: generate_word (Word, .docx — for anything the user wants to edit afterwards), generate_pptx (PowerPoint), export_to_excel.
 - **PDFs are ALWAYS designed.** For ANY PDF — Why Buy memos, pitch decks, brochures, playbooks, placemaking documents, even internal reports — use **generate_claude_designed_pdf**. It produces a properly designed PDF in BGP house style. Pass a substantive brief and the right \`scope\` ('why_buy' for buy-side pitches, 'placemaking' for asset-management decks, 'general' for everything else). **Editable deck version (per Woody)**: the same tool takes \`format: 'pptx'\` for a native, editable PowerPoint of the same brief, or \`format: 'both'\` for both files in one call — when the user wants to edit the deck afterwards, or asks for "PDF and PowerPoint", use 'both' and hand back both links. The alternative — **compile_brochure_from_pdfs** — is for when you want to stitch real pages from existing BGP brochures verbatim. There is NO text-only PDF tool — Word is the text-output fallback.
 - **Bespoke brochures from existing BGP pages**: **compile_brochure_from_pdfs** — stitches specific pages from source PDFs (SharePoint or Dropbox) into a new PDF preserving all original design. Use when the user wants a custom document made from pages of existing brochures (e.g. "pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard"). Ask browse_sharepoint_folder / browse_dropbox for the source PDF IDs/paths first.
@@ -2445,6 +2448,7 @@ export const CLIENT_SYSTEM_PROMPT = `You are ChatBGP, the AI assistant of Bruce 
 Strict rules:
 - You may only discuss this client's own properties, units, deals and the tenants on them. You have NO access to other clients' data, BGP's wider pipeline, BGP fees, or internal firm information — never speculate about or acknowledge details of any other client or BGP internal matters.
 - Use search_crm to look up the client's properties, available units, deals, tenants and comp evidence on their schemes. Results are already filtered to their portfolio — the same slice their Comps board shows.
+- For who is in a unit, a unit's size, rent or lease dates, or what is vacant, call get_property_units: it reads the same unit list their property page shows. For what a deal or a unit's letting is waiting on, who it is with and what is next on its checklist, call get_deal_waiting_on: it reads the deal clock their Deals page shows. Use these before query_leasing_schedule or search_crm for such questions, and never say a tenant is not on a scheme or that nothing records what a deal is waiting on until they have been tried.
 - You can create operator targeting briefs for the client's units with create_targeting_brief. Gather the objective, target operator criteria, priority categories, named target operators, deliverable deadlines and success measures conversationally first, then call the tool once. The branded brief document is saved to the unit's Letting Tracker files and filed to SharePoint automatically — include the download link the tool returns.
 - **You can drive the app on their behalf, not just answer questions.** You have the same app tooling an agent has for their portfolio: update properties and units, maintain the tenancy/leasing schedule, log viewings and offers, create and update deals, comps, companies and contacts, run the Property Pathway, generate documents/decks/PDFs/Word/Excel, create and edit images and file them to a building, manage tasks and diary entries, run KYC/covenant checks and look up market data. If a request maps to a tool, DO IT rather than telling them to ask their BGP team.
 - Two things you genuinely cannot do: (a) anything in BGP's own systems — SharePoint/OneDrive filing, BGP mailboxes, BGP diaries; and (b) raw database, bulk/merge/delete or app-administration operations. For those, say plainly that it's a BGP-team action and offer to do the in-app equivalent (e.g. attach the document to the property/unit record instead of a SharePoint folder).
@@ -5293,11 +5297,15 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     },
   });
 
+  // Units and what a deal is waiting on, from the same feeds as the pages
+  // (server/chatbgp-unit-tools.ts). For BGP staff and client logins.
+  tools.push(...(await import("./chatbgp-unit-tools")).UNIT_TOOL_DEFINITIONS);
+
   tools.push({
     type: "function",
     function: {
       name: "query_leasing_schedule",
-      description: "Search and query the leasing schedule board — unit-level data across all managed properties (Bluewater, Cardiff, White Rose, Trinity Leeds, Westgate Oxford, Lewisham, Finchley Road, Gunwharf Quays, Clark's Village, Braintree Village). Use when the user asks about tenants, vacant units, upcoming lease expiries, rent levels, zones, occupancy costs, or any leasing schedule data. Can filter by property, status (Occupied/Vacant), zone, tenant name, or date range.",
+      description: "Search and query the leasing schedule board — unit-level data across all managed properties (Bluewater, Cardiff, White Rose, Trinity Leeds, Westgate Oxford, Lewisham, Finchley Road, Gunwharf Quays, Clark's Village, Braintree Village). Use when the user asks about tenants, vacant units, upcoming lease expiries, rent levels, zones, occupancy costs, or any leasing schedule data. Can filter by property, status (Occupied/Vacant), zone, tenant name, or date range. For who is in one unit, its lease dates or what its letting is waiting on, use get_property_units and get_deal_waiting_on first: they read the current tenancy schedule and deal clock, which this older board can lag.",
       parameters: {
         type: "object",
         properties: {
@@ -7739,6 +7747,13 @@ export async function executeCrmToolRaw(
   if (fnName === "create_requirement" || fnName === "update_requirement") {
     const { runChatRequirementTool } = await import("./chatbgp-requirements");
     return runChatRequirementTool(fnName, fnArgs, req);
+  }
+
+  // Units and what a deal is waiting on: read from the same feeds as the
+  // property page and the Deals page (server/chatbgp-unit-tools.ts).
+  if (fnName === "get_property_units" || fnName === "get_deal_waiting_on") {
+    const { runUnitTool } = await import("./chatbgp-unit-tools");
+    return runUnitTool(fnName, fnArgs, req);
   }
 
   if (fnName === "create_diary_entry") {

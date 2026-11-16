@@ -634,7 +634,7 @@ export function setupUnitHotsRoutes(app: Express) {
           `UPDATE available_units SET hots_content = $2, hots_updated_at = NOW(), hots_version = $3, hots_offer_id = $4, hots_agreed_at = NULL WHERE id = $1`,
           [unit.id, filled, version, offer.id]);
         await logEvent(unit.id, access, people, "generated",
-          `${hadDraft ? "replaced the draft with Heads of Terms generated" : "generated the Heads of Terms"} from ${offer.company_name || "the tenant"}'s agreed offer of ${shortDate(offer.offer_date)}${notPlaced}`.slice(0, 1900), version);
+          `${hadDraft ? "replaced the draft with Heads of Terms generated" : "generated the Heads of Terms"} from ${offer.company_name || "the tenant"}${/['\u2019]s$/i.test(String(offer.company_name || "the tenant")) ? "" : "'s"} agreed offer of ${shortDate(offer.offer_date)}${notPlaced}`.slice(0, 1900), version);
         res.json(await buildWorkspace(unit.id, access));
       });
     } catch (e: any) { fail(res, e, "Failed to generate the Heads of Terms"); }
@@ -895,7 +895,7 @@ export function setupUnitHotsRoutes(app: Express) {
           return void res.status(409).json({
             code: "OFFER_CHANGED",
             message: agreedNow
-              ? `These Heads of Terms were generated from ${from?.company_name || "another"}'s offer, but the terms now agreed are ${agreedNow.company_name || "another tenant"}'s. Reopen the Heads of Terms and refresh them from the agreed offer before converting.`
+              ? `These Heads of Terms were generated from ${from?.company_name || "another"}${/['\u2019]s$/i.test(String(from?.company_name || "another")) ? "" : "'s"} offer, but the terms now agreed are ${agreedNow.company_name || "another tenant"}'s. Reopen the Heads of Terms and refresh them from the agreed offer before converting.`
               : `The offer these Heads of Terms were generated from${from?.company_name ? ` (${from.company_name})` : ""} is no longer agreed. Agree the terms on an offer before converting.`,
           });
         }

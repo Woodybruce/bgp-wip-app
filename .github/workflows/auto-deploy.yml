@@ -85,6 +85,7 @@ jobs:
           LANDLORD_CONTACT_ACTIVITY_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
           RECORD_THREAD_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
           TEAM_EVENT_PRIVACY_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
+          UNIT_SHARE_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
         run: npm run qa:regression
 
       # Playwright is deliberately not in package.json (kept out of the app's

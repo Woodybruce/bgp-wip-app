@@ -172,6 +172,11 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
   const [savingContact, setSavingContact] = useState(false);
   const contactsKey = useMemo(() => [`/api/crm/contacts?companyId=${encodeURIComponent(companyId)}`], [companyId]);
   const { data: contactRows = [], isLoading: contactsLoading } = useQuery<ContactRow[]>({ queryKey: contactsKey, enabled: crmPicker && !!companyId });
+  // The brand's agents: the named contacts of its current tenant reps. The
+  // share stays logged against the brand.
+  const { data: repRows = [] } = useQuery<Array<{ id: string; name: string; email: string | null; role: string | null; firmName: string | null }>>({
+    queryKey: [`/api/unit-share/${unit.id}/brand-agents?companyId=${encodeURIComponent(companyId)}`], enabled: crmPicker && !!companyId,
+  });
 
   // What to include
   const [details, setDetails] = useState(true);
@@ -211,7 +216,12 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
     return [...companies, ...createdCompanies.filter(c => !known.has(c.id))].map(c => ({ id: c.id, label: c.name }));
   }, [companies, createdCompanies]);
   const companyName = companyItems.find(c => c.id === companyId)?.label || "";
-  const contacts = useMemo(() => contactRows.filter(c => c.companyId === companyId && (c.name || "").trim()), [contactRows, companyId]);
+  const contacts = useMemo(() => {
+    const own = contactRows.filter(c => c.companyId === companyId && (c.name || "").trim());
+    const seen = new Set(own.map(c => c.id));
+    const reps = repRows.filter(r => !seen.has(r.id)).map(r => ({ id: r.id, name: r.name, email: r.email, role: `Tenant rep${r.firmName ? `, ${r.firmName}` : ""}`, companyId: null }));
+    return [...own, ...reps];
+  }, [contactRows, repRows, companyId]);
   const contact = contacts.find(c => c.id === contactId) || null;
   const contactEmail = contact?.email && EMAIL_SHAPE.test(contact.email.trim()) ? contact.email.trim() : "";
   const recipientEmail = contactEmail || typedEmail.trim();
@@ -493,7 +503,7 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
                 items={contacts.map(c => ({ id: c.id, label: c.name, subLabel: [c.role, c.email].filter(Boolean).join(" · ") || "No email on record" }))}
                 value={contactId}
                 onChange={id => { setContactId(id); setTypedEmail(""); setResult(null); }}
-                placeholder={`Pick a contact at ${companyName}`}
+                placeholder={`Pick a contact at ${companyName}${repRows.length ? ", or its agent" : ""}`}
                 ariaLabel="Contact"
                 searchPlaceholder="Search contacts"
                 testId="unit-share-contact"

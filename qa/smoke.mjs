@@ -264,11 +264,18 @@ console.log('── client (Mark, Landsec) ──');
 
   if (page) {
     await settle(page, 6000);
+    // A Landsec login lands on ChatBGP since 15 November 2026 (Woody: "should open on chat for Landsec
+    // logins", "also should open on desktop instead of a dashboard"); it was Properties before that.
+    // Properties is still the first entry on the side bar: the Schemes view with its stage pills and
+    // scheme cards.
+    check('client landing: opens on ChatBGP', new URL(page.url()).pathname === '/chatbgp', page.url());
+    // The ChatBGP page has no side bar on a computer: its header carries the Landsec menu.
+    check('client landing: Landsec menu on the ChatBGP header', await page.locator('[data-testid="chatbgp-landsec-menu"]').count() > 0);
+    await page.screenshot({ path: `${SHOTS}/client-landing.png` }).catch(() => {});
+    await page.goto(`${BASE}/deals/properties`, { waitUntil: 'networkidle' }).catch(() => {});
+    await settle(page, 4000);
     await noCrash(page, 'client landing');
-    // A Landsec login lands on Properties since the menu of 12 November 2026 (Portfolio and Lettings were
-    // folded into Properties and Deals; the old client dashboard is gone for this login): the Schemes view
-    // with its stage pills and scheme cards, and the Landsec side bar.
-    check('client landing: opens on Properties', new URL(page.url()).pathname === '/deals/properties', page.url());
+    check('client Properties: opens', new URL(page.url()).pathname === '/deals/properties', page.url());
     check('client landing: Schemes view', await page.locator('[data-testid="properties-landsec-schemes"]').count() > 0);
     check('client landing: scheme card for the fixture scheme', await page.locator('[data-testid="landsec-scheme-bluewater"]').count() > 0);
     check('client landing: stage pills', await page.locator('[data-testid="properties-landsec-stages"]').count() > 0);
@@ -277,7 +284,7 @@ console.log('── client (Mark, Landsec) ──');
       if (await page.locator(`[data-testid="nav-${entry}"]`).count() === 0) landsecMenu.push(entry);
     }
     check('client landing: Properties, Deals, Letting Tracker and Brands on the side bar', landsecMenu.length === 0, `missing ${landsecMenu.join(', ')}`);
-    await page.screenshot({ path: `${SHOTS}/client-landing.png` }).catch(() => {});
+    await page.screenshot({ path: `${SHOTS}/client-properties.png` }).catch(() => {});
 
     // Client property page — boards render, no internal team names in Files.
     await page.goto(`${BASE}/properties/${BLUEWATER}`, { waitUntil: 'networkidle' }).catch(() => {});

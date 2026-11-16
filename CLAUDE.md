@@ -314,14 +314,23 @@ staff viewing as Landsec**:
   staff viewing as Landsec on a phone have Home in place of Brands and keep
   the tile home at `/`, because that is where the banner out of the Landsec
   view is. Do not redirect staff on a phone away from `/`.
-- `/` and `/home` go to Properties (`Home` in `App.tsx`; on a phone, real
-  Landsec client logins only). **On a phone a full Landsec login opens on
-  ChatBGP** (Woody, 2026-11-15, with a screenshot of the new-chat screen:
-  "the phone can just open with this screen for landsec so it's like
-  opening Claude"): the `landsecPhoneHome` effect in `App.tsx` sends the
-  first `/` of a session to `/chatbgp` (the marker `bgp-chat-home-done`,
-  the one BGP staff's phone open uses) and any later `/` to Properties. A
-  joint agent still opens on Properties (its chat is its own page).
+- **A full Landsec login opens on ChatBGP, on a phone and on a computer**
+  (Woody, 2026-11-15, with a screenshot of the new-chat screen: "the phone
+  can just open with this screen for landsec so it's like opening Claude";
+  and "also should open on desktop instead of a dashboard"). Once a
+  session, by the marker `bgp-chat-home-done` (the one BGP staff's phone
+  open uses): the first `/` or `/home` goes to ChatBGP and any later one to
+  Properties. On a phone it is the `landsecPhoneHome` effect in `App.tsx`
+  (real Landsec client logins only; it goes to `/chatbgp?ask=1`, the
+  new-chat screen, because a bare `/chatbgp` there is the Messages list);
+  on a computer it is `LandsecOpening` under `Home` (`LANDSEC_MENU.chat`;
+  the marker is read and set in an effect, never while rendering, because
+  a render thrown away while the page loads used the marker up and sent
+  the login to Properties). A joint agent still opens on Properties (its chat is its
+  own page). On a computer the ChatBGP page has no side bar, so in the
+  Landsec view its header carries the menu (`chatbgp-landsec-menu`) and its
+  Back arrow goes to Properties when there is no earlier screen. The smoke
+  suite expects a Landsec login to land on `/chatbgp`.
   **The Landsec phone tabs leave out the tab of the open page** (Woody,
   2026-11-15, the ChatBGP screen with its Chat tab circled: "remove the
   button the page is on from the icons as they are a bit crowded"):
@@ -1084,6 +1093,28 @@ not opened to them.
     and its own properties' (its own schemes', for a scheme-limited Landsec
     login). BGP staff are served any photo, as before, including while
     viewing as a client.
+  - **Call from the Tenant rep line** (15 November 2026; Woody: "fix the
+    phone issues"). A Tenant rep line with a named agent carries Call and
+    Email icon links beside the name, on the phone page
+    (`repContactLinks` in `mobile-brand-view.tsx`) and the desktop block
+    (`RepContactLinks`, `TenantRepsBlock`), when the reply holds a number or
+    an address. The brand profile sends `contact_email` and `contact_phone`
+    on `representedBy` and `requirementAgents`, the phone worded as the
+    client Agents list words it (mobile, else phone). A client login is sent
+    them for tenant reps only, the people its Agents list already shows it;
+    a joint agent has no brand page. Links only: no write. Test:
+    `qa/regression/phone-property-brand.test.mjs`.
+  - **Add photos on a brand's page** (15 November 2026; Woody: "fix the
+    phone issues"). `client/src/components/brand-page/brand-photos.tsx`:
+    `BrandAddPhotos` takes several images at once and files each against
+    the brand through the routes Images already used (`POST
+    /api/image-studio/upload`, then `POST /api/image-studio/:id/attach`
+    with the brand); no new route. `BrandPhotosCard` is the phone page's
+    **Photos** card under News & media (every saved image; a client login
+    sees the photos and no control), and the desktop Documents & gallery
+    card has the same link. BGP staff only, as the attach is: the server
+    still refuses a client login attaching to any company but its own.
+    Test: `qa/regression/brand-add-photos.test.mjs`.
   - Every deal sent to a client goes through `stripDealFees` in
     `server/crm.ts`, the replies to its own deal save and new deal included
     (those two sent the whole stored row until 2026-11-13): all fee fields
@@ -1761,6 +1792,13 @@ Decided (do not re-litigate):
   letting stage only from the tracker row and its deal
   (`docs/unit-status-cleanup-plan.md`). One rule, `shared/property-units.ts`,
   with a test; never a second meaning of vacant or live on a screen.
+- **A letting moving on never empties an occupied unit** (found
+  15 November 2026). The status mirror (`writeTenancyStatus` in
+  `server/lease-status-mirror.ts`) writes "Vacant" to a schedule row only
+  when `unitOccupancy` does not read the row as occupied: a row worded
+  "Opportunity" or "Not Vacant" with a tenant still on it stays as it is
+  while its successor's letting runs. Never go back to a list of status
+  words there. Test: `qa/regression/lease-status-mirror-guards.test.mjs`.
 - **Documents live in the team's real folder** (`BGP - Share Drive /
   National / National / Landsec / <scheme>`), not the app's `BGP share drive`.
 
@@ -1897,7 +1935,9 @@ untouched when it is off, and
   a client joins by opening the property), and ChatBGP answers only when
   asked by name, never joining for good. Everyone who can open the property
   reads what is written there, ChatBGP's answers to BGP staff included: the
-  box says so. Earlier private threads stay private. Tracker comments are
+  box says so. Each message names who wrote it (from the thread's members;
+  until 15 November 2026 every message but your own read "Team"). Earlier
+  private threads stay private. Tracker comments are
   `client/src/components/unit-comments.tsx` (`UnitCommentButton` on each
   row of the staff tracker, desktop and phone; counts from `GET
   /api/chat/threads/record/unit-comments?propertyIds=`, read only for
@@ -2291,6 +2331,19 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   comments, the Targeting Brief or heads of terms to it. The draft needs the
   Mail.ReadWrite application permission and has not been run against
   Microsoft; it falls back to the PDF and a mailto link.
+  **The brand's agent as the recipient** (15 November 2026; Woody: "fix the
+  phone issues"): for BGP staff the contact list for a picked brand also
+  offers the named contacts of the brand's CURRENT tenant-rep
+  representations, marked "Tenant rep" with their firm (`GET
+  /api/unit-share/:unitId/brand-agents?companyId=`, `tenantRepContacts`),
+  and the share stays logged against the brand. The send checks the contact
+  it is handed (`contactMayReceiveFor`): someone at the brand, or one of
+  those tenant rep contacts; any other `contactId` is refused, whatever the
+  screen offered. A joint agent's rules are unchanged: the new route refuses
+  it (it sits under the share prefix its gateway opens, so the handler says
+  no itself) and a `contactId` from it is still always refused. Test:
+  `qa/regression/unit-share-tenant-rep.test.mjs` (its SQL half needs
+  `UNIT_SHARE_DATABASE_URL`).
 - **Deal checklist** (`shared/deal-checklist.ts`, `server/deal-checklist.ts`,
   `components/deal-checklist/*`, migration 0052): one per unit and its
   current deal, items by stage, each with one responsible person from BGP,
@@ -2862,6 +2915,39 @@ navigation, add/remove a page, or move a control, update the relevant
 lines there in the same commit**. Stale lines become confident wrong
 answers to the team (that's how this file came to exist — ChatBGP sent
 Woody to a Settings page the phone app can't reach, 2026-08-23).
+
+## ChatBGP reads units and waiting-on from the same feeds as the pages (15 November 2026)
+
+Woody: "do you need to fix some more stuff", after ChatBGP told a Landsec
+login that Burger King was not at Bluewater and that nothing recorded what
+its unit's letting was waiting on. It had read the older leasing schedule
+board (`query_leasing_schedule`). Two read tools now answer such questions,
+for BGP staff and client logins, in `server/chatbgp-unit-tools.ts`:
+
+- `get_property_units` (a property, and a unit, tenant or brand to narrow
+  it): the property page's unit feed, `loadPropertyUnits` /
+  `loadPropertyUnitDetail` behind `propertyReadBlocked`, cut by
+  `unitsForViewer` / `unitViewerFor`.
+- `get_deal_waiting_on` (a Ref, a property with a search word, a search word,
+  or who it waits on): the deal clock feed, `landsecDealsFeed` in
+  `server/landsec-unit.ts` (the body of `GET /api/landsec/deals`, lifted out
+  so the route and the tool call one function), and the open checklist items
+  from `waitingOptionsForDeal`. For one or two deals it adds the unit as the
+  property page shows it. A deal off the Landsec schemes has no clock: its
+  stage comes from the unit feed and it says so.
+
+**The rule: the same feeds as the pages.** The file has no query of its own
+over the schedule, the tracker, the clock or the checklist, so a login is
+told what its pages show it and a property outside its company or schemes is
+simply not found. What goes to the model is built field by field (`unitLine`,
+`unitDetailLines`, `waitingLine`): a new field reaches it only when named
+there, and a fee, BGP's notes on a target or an email never is. Neither tool
+is on `CLIENT_BLOCKED_TOOLS`; a joint agent is refused both by its own gate
+(do not add them to `JOINT_AGENT_TOOLS`). Both prompts send "who is in unit
+X", "when does X's lease end" and "what is this deal waiting on" to these
+tools first. Tests: `server/chatbgp-unit-tools.test.ts` (in `npm test`) and
+`qa/regression/chatbgp-unit-tools-guards.test.mjs`. The group chat's tool
+list (`GROUP_CHAT_TOOLS` in `server/routes.ts`) does not have them.
 
 ## Website team list = HR (Woody, 2026-10-13)
 

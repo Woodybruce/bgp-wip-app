@@ -345,7 +345,28 @@ function Home() {
   const { data: user, isLoading } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   if (brand.id !== "landsec") return <Dashboard />;
   if (isLoading || !user) return <PageLoader />;
-  return <LandsecMoved to={LANDSEC_MENU.properties} />;
+  if ((user as any).landsecRole === "joint_agent") return <LandsecMoved to={LANDSEC_MENU.properties} />;
+  return <LandsecOpening />;
+}
+
+// The Landsec view opens on ChatBGP, on a computer as on a phone (Woody,
+// 2026-11-15: "also should open on desktop instead of a dashboard"), once
+// per session by the marker the phone uses; after that "/" is Properties,
+// so Back from the chat page never loops. The marker is read and set in an
+// effect, never while rendering: a render that is thrown away (the page
+// still loading) would use the marker up and send the login to Properties.
+// A joint agent opens on Properties: its chat is its own page.
+function LandsecOpening() {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    let opening = false;
+    try {
+      opening = !sessionStorage.getItem("bgp-chat-home-done");
+      if (opening) sessionStorage.setItem("bgp-chat-home-done", "1");
+    } catch {}
+    setLocation(opening ? LANDSEC_MENU.chat : LANDSEC_MENU.properties, { replace: true });
+  }, []);
+  return null;
 }
 
 function LandsecMoved({ to }: { to: string }) {
@@ -569,8 +590,12 @@ function AuthenticatedApp() {
     return () => window.removeEventListener("bgp:open-team-thread", onOpenTeamThread);
   }, [setChatOpen]);
   const [location, navigate] = useLocation();
-  const goBack = useGoBack();
   const isChatBGP = location === "/chatbgp";
+  // The Landsec view opens on ChatBGP, which has no side menu: with no
+  // earlier screen to go back to, Back goes to Properties, never to "/"
+  // (which would send a Landsec login straight back here).
+  const { brand: backBrand } = useBrand();
+  const goBack = useGoBack(isChatBGP && backBrand.id === "landsec" ? LANDSEC_MENU.properties : undefined);
   // A remembered pin reopens the panel on a desktop-width screen. Phones
   // open chat full screen from the header and have no pin.
   useEffect(() => {
@@ -631,9 +656,8 @@ function AuthenticatedApp() {
   useEffect(() => {
     if (landsecNoChatPage) navigate(`/landsec/chat${window.location.search || ""}`, { replace: true });
   }, [landsecNoChatPage]);
-  // A full Landsec login on a phone lands on Properties, as on a computer
-  // (docs/landsec-menu-plan-2026-11-12.md, part 2). Real Landsec logins only:
-  // BGP staff viewing as Landsec keep the tile home at "/", where the banner
+  // The phone home of a full Landsec login. Real Landsec logins only: BGP
+  // staff viewing as Landsec keep the tile home at "/", where the banner
   // that takes them out of the Landsec view is.
   const { brand: shellBrand } = useBrand();
   const landsecPhoneHome = (isMobile || isNativeMobile()) && (location === "/" || location === "/home")
@@ -884,6 +908,18 @@ function AuthenticatedApp() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {/* The Landsec view lands here, so its menu comes with it on a
+                computer (a phone has its tabs). */}
+            {backBrand.id === "landsec" && (
+              <nav className="hidden md:flex items-center gap-1 mr-2" data-testid="chatbgp-landsec-menu">
+                {([["Properties", LANDSEC_MENU.properties], ["Deals", LANDSEC_MENU.deals], ["Letting Tracker", LANDSEC_MENU.tracker], ["Calendar", LANDSEC_MENU.calendar],
+                  ["Tasks", currentUser?.role === "Client" ? LANDSEC_MENU.tasks : "/tasks"], ["Brands", LANDSEC_MENU.brands]] as const).map(([label, path]) => (
+                  <button key={label} type="button" onClick={() => navigate(path)} data-no-min-touch
+                    className="px-2.5 py-1 rounded-md text-xs font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
+                    data-testid={`chatbgp-menu-${label.toLowerCase().replace(/\s+/g, "-")}`}>{label}</button>
+                ))}
+              </nav>
+            )}
             <ColorSchemeSelector />
           </div>
         </header>

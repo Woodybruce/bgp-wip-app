@@ -1142,7 +1142,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
            VALUES ($1, $2, $3, 1, $4::jsonb, '[]'::jsonb, '{}'::jsonb, $5, $6, $6)
            ON CONFLICT (unit_id, COALESCE(deal_id, '')) DO NOTHING RETURNING id`,
           [unit.id, unit.deal_id || null, offer.id, JSON.stringify(terms), access.userId, access.name])).rows[0];
-        if (made) await logEvent(made.id, access, people, "started", `started the recommendation from ${offer.company_name || "the tenant"}'s agreed offer of ${shortDate(offer.offer_date)}`, 1);
+        if (made) await logEvent(made.id, access, people, "started", `started the recommendation from ${offer.company_name || "the tenant"}${/['\u2019]s$/i.test(String(offer.company_name || "the tenant")) ? "" : "'s"} agreed offer of ${shortDate(offer.offer_date)}`, 1);
         res.json(await buildWorkspace(unit.id, access));
       });
     } catch (e: any) { fail(res, e, "Failed to start the recommendation"); }
@@ -1198,7 +1198,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
         const terms: RecommendationTerms = { ...before.terms };
         // A joint agent's refresh leaves the website (BGP's brand record) as it is.
         for (const key of OFFER_TERM_KEYS) if (hasText(fresh[key]) && !(key === "tenantWebsite" && isJointAgent(access))) terms[key] = fresh[key];
-        const changed = await writeChange(rec, unit, { ...before, terms }, access, `refreshed the terms from ${offer.company_name || "the tenant"}'s agreed offer of ${shortDate(offer.offer_date)}`);
+        const changed = await writeChange(rec, unit, { ...before, terms }, access, `refreshed the terms from ${offer.company_name || "the tenant"}${/['\u2019]s$/i.test(String(offer.company_name || "the tenant")) ? "" : "'s"} agreed offer of ${shortDate(offer.offer_date)}`);
         if (rec.offer_id !== offer.id) await pool.query(`UPDATE unit_recommendations SET offer_id = $2 WHERE id = $1`, [rec.id, offer.id]);
         res.json({ ...(await buildWorkspace(unit.id, access)), refreshed: changed });
       });

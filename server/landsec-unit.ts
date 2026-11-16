@@ -209,6 +209,83 @@ export function briefStateOf(targeting: { id?: string | null; agreedAt?: any } |
   return agreed?.drafted ? "drafted" : null;
 }
 
+// Every live deal across the 14 schemes with its stage, days at stage,
+// who it is waiting on, what it depends on and its Net Effective Rent —
+// the portfolio view of where deals are stuck and with whom. This is the
+// clock feed: the Deals page, its board and the deal page join it by deal
+// id for a Landsec viewer (docs/landsec-menu-plan-2026-11-12.md, part 4),
+// and the older Lettings page lists it. A deal that is not on a scheme
+// property is not in it, so its clock cells are blank.
+// Null: the caller has no Landsec view. ChatBGP's waiting-on tool reads this
+// same function (server/chatbgp-unit-tools.ts), so it answers as the Deals
+// page does.
+export async function landsecDealsFeed(req: Request): Promise<{ deals: any[]; parties: Record<string, number>; canSetStage?: boolean } | null> {
+  const scope = await landsecScope(req);
+  if (!scope) return null;
+  const portfolio = await resolveLandsecPortfolio(scope.companyId);
+  const propToScheme = new Map<string, { key: string; name: string }>();
+  for (const s of portfolio.schemes) if (viewerCanSeeScheme(scope, s.key)) for (const p of s.properties) propToScheme.set(p.id, { key: s.key, name: s.name });
+  const ids = Array.from(propToScheme.keys());
+  if (ids.length === 0) return { deals: [], parties: {} };
+  // The unit and the brief are found through the deal's own unit link
+  // and, where a deal has none, through the Letting Tracker row that
+  // points at it (available_units.deal_id): every tracker unit's backing
+  // deal is linked that way. Only a unit on a property the viewer can
+  // see is named or linked.
+  const r = await pool.query(
+    `SELECT d.id, d.deal_ref, d.name, d.status, d.deal_type, d.property_id, d.tenancy_unit_id, d.stage_entered_at, d.created_at, d.updated_at,
+            d.rent_pa, d.rent_free, d.capital_contribution, d.lease_length, d.break_option, d.fee, d.joint_agent_id,
+            tc.name AS tenant_name, ja.name AS joint_agent_name,
+            COALESCE(t.premises, t.unit_number, au.unit_name) AS unit_name, t.id AS unit_id, au.id AS tracker_id,
+            ub.id AS targeting_brief_id, ub.agreed_at AS targeting_brief_agreed_at, ub.commercials AS targeting_brief_commercials,
+            lu.brief_ner_floor, lu.brief_signed_leasing_at, lu.brief_signed_am_at
+       FROM crm_deals d
+       LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
+       LEFT JOIN crm_companies ja ON ja.id = d.joint_agent_id
+       LEFT JOIN LATERAL (
+         SELECT a.id, a.unit_name, a.tenancy_unit_id FROM available_units a
+          WHERE a.property_id = ANY($1) AND (a.deal_id = d.id OR (d.tenancy_unit_id IS NOT NULL AND a.tenancy_unit_id = d.tenancy_unit_id))
+          ORDER BY (a.deal_id = d.id) DESC NULLS LAST, a.updated_at DESC NULLS LAST
+          LIMIT 1
+       ) au ON TRUE
+       LEFT JOIN tenancy_schedule_units t ON t.id = COALESCE(d.tenancy_unit_id, au.tenancy_unit_id) AND t.property_id = ANY($1)
+       LEFT JOIN landsec_units lu ON lu.tenancy_unit_id = t.id
+       LEFT JOIN LATERAL (
+         SELECT b.id, b.agreed_at, b.commercials FROM unit_briefs b WHERE b.unit_id = au.id ORDER BY b.created_at DESC LIMIT 1
+       ) ub ON TRUE
+      WHERE d.property_id = ANY($1) AND d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])
+      ORDER BY d.updated_at DESC NULLS LAST`,
+    [ids, CLOSED_STATUSES.map(c => c.toLowerCase())]
+  );
+  const live = r.rows.filter((d: any) => { const c = legacyToCode(d.status); return c && !CLOSED_STATUSES.includes(c); });
+  const dealIds = live.map((d: any) => d.id);
+  const [since, clocks, checklists] = await Promise.all([stageSinceFor(dealIds), clocksFor(dealIds, new Set(ids)), waitingChecklistsForDeals(dealIds)]);
+  const parties: Record<string, number> = {};
+  const deals = live.map((d: any) => {
+    // A deal nobody has set a waiting-on for shows the one read from its
+    // checklist, marked derived; it counts as named in every filter.
+    const clock = waitingClockFor(clocks.get(d.id) || null, checklists.get(d.id) || null, d.id);
+    if (clock?.waitingOnParty) parties[clock.waitingOnParty] = (parties[clock.waitingOnParty] || 0) + 1;
+    const ner = nerOfDeal(d);
+    const incentivesRecorded = landsecIncentivesRecorded(d.rent_free, d.capital_contribution);
+    return {
+      id: d.id, ref: d.deal_ref, name: d.name, dealType: d.deal_type, tenant: d.tenant_name, jointAgent: d.joint_agent_name,
+      scheme: propToScheme.get(d.property_id) || null, propertyId: d.property_id, unitId: d.unit_id, unit: d.unit_name, trackerId: d.tracker_id,
+      ...dealClock(d.status, since.get(d.id), d.stage_entered_at || d.created_at),
+      waitingDays: clock?.waitingSince ? daysSince(clock.waitingSince) : null,
+      clock,
+      ner, incentivesRecorded,
+      briefCheck: landsecBriefCheck(ner?.nerPa, nerFloorOf(d.targeting_brief_commercials, d.brief_ner_floor), incentivesRecorded),
+      brief: briefStateOf(
+        d.targeting_brief_id ? { id: d.targeting_brief_id, agreedAt: d.targeting_brief_agreed_at } : null,
+        { signedLeasingAt: d.brief_signed_leasing_at, signedAmAt: d.brief_signed_am_at, drafted: d.brief_ner_floor != null }),
+      fee: scope.isClient ? undefined : d.fee,
+    };
+  }).sort((a: any, b: any) => (b.days ?? -1) - (a.days ?? -1));
+  // canSetStage: whether this viewer may set the date a deal reached its stage.
+  return { deals, parties, canSetStage: canSetStageSince(scope) };
+}
+
 export function setupLandsecUnitRoutes(app: Express) {
   // The units of one scheme: tenancy rows with their live deal stage. The
   // scheme is named by its key, or found from one of its property records
@@ -618,79 +695,12 @@ export function setupLandsecUnitRoutes(app: Express) {
     }
   });
 
-  // Every live deal across the 14 schemes with its stage, days at stage,
-  // who it is waiting on, what it depends on and its Net Effective Rent —
-  // the portfolio view of where deals are stuck and with whom. This is the
-  // clock feed: the Deals page, its board and the deal page join it by deal
-  // id for a Landsec viewer (docs/landsec-menu-plan-2026-11-12.md, part 4),
-  // and the older Lettings page lists it. A deal that is not on a scheme
-  // property is not in it, so its clock cells are blank.
+  // The clock feed (landsecDealsFeed above).
   app.get("/api/landsec/deals", requireAuth, async (req, res) => {
     try {
-      const scope = await landsecScope(req);
-      if (!scope) return res.status(403).json({ error: "Not available for this account" });
-      const portfolio = await resolveLandsecPortfolio(scope.companyId);
-      const propToScheme = new Map<string, { key: string; name: string }>();
-      for (const s of portfolio.schemes) if (viewerCanSeeScheme(scope, s.key)) for (const p of s.properties) propToScheme.set(p.id, { key: s.key, name: s.name });
-      const ids = Array.from(propToScheme.keys());
-      if (ids.length === 0) return res.json({ deals: [], parties: {} });
-      // The unit and the brief are found through the deal's own unit link
-      // and, where a deal has none, through the Letting Tracker row that
-      // points at it (available_units.deal_id): every tracker unit's backing
-      // deal is linked that way. Only a unit on a property the viewer can
-      // see is named or linked.
-      const r = await pool.query(
-        `SELECT d.id, d.deal_ref, d.name, d.status, d.deal_type, d.property_id, d.tenancy_unit_id, d.stage_entered_at, d.created_at, d.updated_at,
-                d.rent_pa, d.rent_free, d.capital_contribution, d.lease_length, d.break_option, d.fee, d.joint_agent_id,
-                tc.name AS tenant_name, ja.name AS joint_agent_name,
-                COALESCE(t.premises, t.unit_number, au.unit_name) AS unit_name, t.id AS unit_id, au.id AS tracker_id,
-                ub.id AS targeting_brief_id, ub.agreed_at AS targeting_brief_agreed_at, ub.commercials AS targeting_brief_commercials,
-                lu.brief_ner_floor, lu.brief_signed_leasing_at, lu.brief_signed_am_at
-           FROM crm_deals d
-           LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
-           LEFT JOIN crm_companies ja ON ja.id = d.joint_agent_id
-           LEFT JOIN LATERAL (
-             SELECT a.id, a.unit_name, a.tenancy_unit_id FROM available_units a
-              WHERE a.property_id = ANY($1) AND (a.deal_id = d.id OR (d.tenancy_unit_id IS NOT NULL AND a.tenancy_unit_id = d.tenancy_unit_id))
-              ORDER BY (a.deal_id = d.id) DESC NULLS LAST, a.updated_at DESC NULLS LAST
-              LIMIT 1
-           ) au ON TRUE
-           LEFT JOIN tenancy_schedule_units t ON t.id = COALESCE(d.tenancy_unit_id, au.tenancy_unit_id) AND t.property_id = ANY($1)
-           LEFT JOIN landsec_units lu ON lu.tenancy_unit_id = t.id
-           LEFT JOIN LATERAL (
-             SELECT b.id, b.agreed_at, b.commercials FROM unit_briefs b WHERE b.unit_id = au.id ORDER BY b.created_at DESC LIMIT 1
-           ) ub ON TRUE
-          WHERE d.property_id = ANY($1) AND d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])
-          ORDER BY d.updated_at DESC NULLS LAST`,
-        [ids, CLOSED_STATUSES.map(c => c.toLowerCase())]
-      );
-      const live = r.rows.filter((d: any) => { const c = legacyToCode(d.status); return c && !CLOSED_STATUSES.includes(c); });
-      const dealIds = live.map((d: any) => d.id);
-      const [since, clocks, checklists] = await Promise.all([stageSinceFor(dealIds), clocksFor(dealIds, new Set(ids)), waitingChecklistsForDeals(dealIds)]);
-      const parties: Record<string, number> = {};
-      const deals = live.map((d: any) => {
-        // A deal nobody has set a waiting-on for shows the one read from its
-        // checklist, marked derived; it counts as named in every filter.
-        const clock = waitingClockFor(clocks.get(d.id) || null, checklists.get(d.id) || null, d.id);
-        if (clock?.waitingOnParty) parties[clock.waitingOnParty] = (parties[clock.waitingOnParty] || 0) + 1;
-        const ner = nerOfDeal(d);
-        const incentivesRecorded = landsecIncentivesRecorded(d.rent_free, d.capital_contribution);
-        return {
-          id: d.id, ref: d.deal_ref, name: d.name, dealType: d.deal_type, tenant: d.tenant_name, jointAgent: d.joint_agent_name,
-          scheme: propToScheme.get(d.property_id) || null, propertyId: d.property_id, unitId: d.unit_id, unit: d.unit_name, trackerId: d.tracker_id,
-          ...dealClock(d.status, since.get(d.id), d.stage_entered_at || d.created_at),
-          waitingDays: clock?.waitingSince ? daysSince(clock.waitingSince) : null,
-          clock,
-          ner, incentivesRecorded,
-          briefCheck: landsecBriefCheck(ner?.nerPa, nerFloorOf(d.targeting_brief_commercials, d.brief_ner_floor), incentivesRecorded),
-          brief: briefStateOf(
-            d.targeting_brief_id ? { id: d.targeting_brief_id, agreedAt: d.targeting_brief_agreed_at } : null,
-            { signedLeasingAt: d.brief_signed_leasing_at, signedAmAt: d.brief_signed_am_at, drafted: d.brief_ner_floor != null }),
-          fee: scope.isClient ? undefined : d.fee,
-        };
-      }).sort((a: any, b: any) => (b.days ?? -1) - (a.days ?? -1));
-      // canSetStage: whether this viewer may set the date a deal reached its stage.
-      res.json({ deals, parties, canSetStage: canSetStageSince(scope) });
+      const feed = await landsecDealsFeed(req);
+      if (!feed) return res.status(403).json({ error: "Not available for this account" });
+      res.json(feed);
     } catch (e: any) {
       console.error("[/api/landsec/deals]", e?.message);
       res.status(500).json({ error: e?.message || "Failed to load the deals" });
