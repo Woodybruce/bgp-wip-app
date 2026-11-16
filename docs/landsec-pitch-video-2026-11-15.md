@@ -49,6 +49,22 @@ decided that day:
   long ChatBGP text slide. The deck names the platform ChatBGP, so the film
   does too. About 2 minutes 45.
 
+## The film is about the upgrade (Woody, 16 November 2026)
+
+Woody, on the first cut to his voice: "they already have access to the app
+and we've upgraded it". Landsec use the app today, so the film does not
+introduce something new: it shows the upgraded version, with its Landsec
+lean. His recorded intro says so in his own words ("we've upgraded and built
+for you our app, which we use internally, and given it a Landsec lean ...
+for them to see the upgrades that we've made"), and it replaces the scripted
+opening below. Keep "we've upgraded" in any cut, and do not word a caption
+or a card as if Landsec were seeing the app for the first time.
+
+The cut to his voice is made by `script/pitch-video/voice-cut.cjs` from his
+recording and a cut list (which stretches of the recording belong to each
+scene, false starts and long pauses left out). His words are the script now;
+the table below is the earlier written version.
+
 ## Two versions
 
 - **Room cut**, about 2 minutes 45. Woody can pause it and talk.
