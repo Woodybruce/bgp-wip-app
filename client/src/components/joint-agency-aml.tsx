@@ -6,8 +6,11 @@
 // Flow on the form: switch it on → add the heads of terms and the five
 // facts fill themselves, or type them in → the deal can't be saved with any
 // of them blank → on save the note is recorded against the new deal.
+// On an existing deal without a note, the KYC card offers the same switch
+// with its own Save note button (Woody, 2026-11-16: "so we can add this
+// part at a later stage, not only when adding a new deal").
 import { useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -46,13 +49,15 @@ export const jointAgencyPayload = (s: JointAgencyState) => ({
   hotsFileName: s.hotsFileName || null,
 });
 
-export function JointAgencyWidget({ value, onChange, defaults, signedBy, showErrors }: {
+export function JointAgencyWidget({ value, onChange, defaults, signedBy, showErrors, mode = "create" }: {
   value: JointAgencyState;
   onChange: (next: JointAgencyState) => void;
   /** What the deal form already knows, to save typing. */
   defaults: { property?: string; client?: string; rentPa?: string; tenant?: string };
   signedBy?: string;
   showErrors?: boolean;
+  /** "create": recorded with the new deal. "existing": the deal page's card saves it with its own button. */
+  mode?: "create" | "existing";
 }) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -178,7 +183,7 @@ export function JointAgencyWidget({ value, onChange, defaults, signedBy, showErr
 
       {/* Step 3 — what gets recorded */}
       <div className="rounded-md border bg-background p-3">
-        <p className="text-xs font-semibold">3. Recorded when you create the deal</p>
+        <p className="text-xs font-semibold">{mode === "existing" ? "3. Recorded when you press Save note" : "3. Recorded when you create the deal"}</p>
         <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
           The file note is saved against this deal and added to the Joint agency AML register. It states that {value.coAgent.trim() || "the co-agent"} is
           HMRC-registered, introduced {value.tenant.trim() || "the tenant"} and managed all dealings with them, and that BGP only advised its client.
@@ -208,15 +213,61 @@ async function downloadNote(id: string, onError: (m: string) => void) {
   } catch (e: any) { onError(e?.message || "Download failed"); }
 }
 
-/** On a deal's page: the joint agency note, when the deal has one. */
-export function JointAgencyNoteCard({ dealId }: { dealId: string }) {
+/** On a deal's page: the joint agency note when the deal has one, else the
+ *  switch to add one now (staff only; the caller hides it from clients). */
+export function JointAgencyNoteCard({ dealId, defaults, signedBy, canAdd = false }: {
+  dealId: string;
+  defaults?: { property?: string; client?: string; rentPa?: string; tenant?: string };
+  signedBy?: string;
+  canAdd?: boolean;
+}) {
   const { toast } = useToast();
-  const { data: notes = [] } = useQuery<SavedNote[]>({ queryKey: ["/api/crm/deals", dealId, "joint-agency-note"], queryFn: async () => {
+  const queryClient = useQueryClient();
+  const { data: notes = [], isLoading } = useQuery<SavedNote[]>({ queryKey: ["/api/crm/deals", dealId, "joint-agency-note"], queryFn: async () => {
     const res = await fetch(`/api/crm/deals/${dealId}/joint-agency-note`, { credentials: "include", headers: getAuthHeaders() });
     return res.ok ? res.json() : [];
   } });
+  const [draft, setDraft] = useState<JointAgencyState>(EMPTY_JOINT_AGENCY);
+  const [showErrors, setShowErrors] = useState(false);
+  const [saving, setSaving] = useState(false);
   const note = notes[0];
-  if (!note) return null;
+  if (!note) {
+    if (!canAdd || isLoading) return null;
+    const missing = jointAgencyMissing(draft);
+    const save = async () => {
+      if (missing.length) { setShowErrors(true); toast({ title: "The note needs every detail", description: `Please fill in: ${missing.join(", ")}.`, variant: "destructive" }); return; }
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/crm/deals/${dealId}/joint-agency-note`, {
+          method: "POST", credentials: "include", headers: { "Content-Type": "application/json", ...getAuthHeaders() }, body: JSON.stringify(jointAgencyPayload(draft)),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json?.message || res.statusText);
+        toast({ title: "Joint agency AML note saved", description: "Recorded against this deal and added to the register." });
+        setDraft(EMPTY_JOINT_AGENCY);
+        setShowErrors(false);
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId, "joint-agency-note"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/joint-agency-notes"] });
+      } catch (e: any) {
+        toast({ title: "Couldn't save the note", description: e?.message || "Try again", variant: "destructive" });
+      } finally {
+        setSaving(false);
+      }
+    };
+    return (
+      <div className="space-y-2" data-testid="joint-agency-add">
+        <JointAgencyWidget value={draft} onChange={setDraft} defaults={defaults || {}} signedBy={signedBy} showErrors={showErrors} mode="existing" />
+        {draft.on && (
+          <div className="flex justify-end">
+            <Button type="button" size="sm" disabled={saving} onClick={() => void save()} data-testid="joint-agency-save">
+              {saving ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="mr-1 h-3.5 w-3.5" />}
+              {saving ? "Saving…" : "Save note"}
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="rounded-lg border bg-card p-4 space-y-2" data-testid="joint-agency-note-card">
       <div className="flex items-start justify-between gap-3">
