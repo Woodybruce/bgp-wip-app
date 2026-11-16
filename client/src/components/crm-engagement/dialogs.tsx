@@ -2,7 +2,7 @@ import { useId, useState, type ReactNode } from "react";
 import { Link } from "wouter";
 import { X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import type { ActionInput, ActionPlanInput, EngagementAction, EngagementData, EngagementEvent, EngagementKind, EngagementOptions, EngagementSharePartner, EngagementStrategy, EventInput, GuestStatus, StrategyInput } from "@shared/crm-engagement";
+import type { ActionInput, ActionPlanInput, EngagementAction, EngagementData, EngagementEvent, EngagementKind, EngagementNoun, EngagementOptions, EngagementSharePartner, EngagementStrategy, EventInput, GuestStatus, StrategyInput } from "@shared/crm-engagement";
 import { NOUN_WORDS } from "@shared/crm-engagement";
 import { LANDSEC_WAITING_PARTIES } from "@shared/landsec";
 import { apiRequest } from "@/lib/queryClient";
@@ -48,10 +48,19 @@ function Editor({ title, description, children, onClose, onSubmit, submitLabel =
 }
 
 // With `search` (the Brand CRM) the company picker lists the brands already
-// on a plan and finds any other brand as the user types.
-function companyChoices(options: EngagementOptions, search?: CompanySearch) {
-  return search ? [...options.companies, ...search.choices.filter(c => !options.companies.some(o => o.id === c.id))] : options.companies;
+// on a plan and finds any other brand as the user types. In the joined CRM
+// each company says what it is, and the list opens on a few of each kind
+// (Woody, 2026-11-16: "cant seem to add brands or agents to the CRM forms
+// just landlords?": it opened on the first twelve names, all landlords).
+const OPENING_KINDS: EngagementNoun[] = ["brand", "agent", "lender", "landlord"];
+function companyChoices(options: EngagementOptions, search?: CompanySearch, kind?: EngagementKind) {
+  const listed = search ? [...options.companies, ...search.choices.filter(c => !options.companies.some(o => o.id === c.id)).map(c => ({...c, noun: "brand" as const}))] : options.companies;
+  return kind === "all" ? listed.map(c => ({...c, meta: NOUN_WORDS[c.noun || "landlord"].One})) : listed;
 }
+function openingChoices<T extends {noun?: EngagementNoun}>(choices: T[], kind?: EngagementKind): T[] | undefined {
+  return kind === "all" ? OPENING_KINDS.flatMap(noun => choices.filter(c => (c.noun || "landlord") === noun).slice(0, 3)) : undefined;
+}
+const COMPANY_SEARCH_WORDS = "Type a landlord, agent, lender or brand…";
 function Targets({ targets, onChange, options, contacts = true, kind = "landlord", search }: {targets: StrategyInput["targets"]; onChange: (targets: StrategyInput["targets"]) => void; options: EngagementOptions; contacts?: boolean; kind?: EngagementKind; search?: CompanySearch}) {
   const words = KIND_WORDS[kind];
   return <section className="space-y-3">
@@ -59,9 +68,12 @@ function Targets({ targets, onChange, options, contacts = true, kind = "landlord
     {targets.map(target => <div key={target.companyId} className="rounded-lg border p-3 space-y-3">
       <div className="flex items-center justify-between gap-2"><Link className="text-sm font-semibold hover:underline" href={`/companies/${target.companyId}`}>{options.companies.find(c => c.id === target.companyId)?.name || `Linked ${words.one}`}</Link><Button variant="ghost" size="icon" type="button" className="h-7 w-7" aria-label={`Remove ${options.companies.find(c => c.id === target.companyId)?.name || words.one}`} onClick={() => onChange(targets.filter(t => t.companyId !== target.companyId))}><X className="h-4 w-4" /></Button></div>
       <Field label={`Why this ${NOUN_WORDS[options.companies.find(c => c.id === target.companyId)?.noun || (kind === "brand" ? "brand" : "landlord")]?.one || words.one}?`}><Textarea required rows={2} maxLength={2000} value={target.reason} onChange={e => onChange(targets.map(t => t.companyId === target.companyId ? {...t, reason: e.target.value} : t))} placeholder="The specific relationship or work this activity should support" /></Field>
-      {contacts && <div className="space-y-1.5"><p className="text-sm font-medium">Relevant contacts</p><CrmEntityPicker kind="contact" multi value={target.contactIds} options={options.contacts.filter(c => c.companyId === target.companyId).map(c => ({id: c.id, name: c.name, meta: c.role}))} emptyLabel="Choose contacts" className="border rounded-md px-3 py-2 min-h-9" testIdPrefix={`strategy-contacts-${target.companyId}`} onSelect={c => onChange(targets.map(t => t.companyId === target.companyId ? {...t, contactIds: t.contactIds.includes(c.id) ? t.contactIds.filter(id => id !== c.id) : [...t.contactIds, c.id]} : t))} /></div>}
+      {contacts && <div className="space-y-1.5"><p className="text-sm font-medium">Relevant contacts</p>{!options.contacts.some(c => c.companyId === target.companyId) ? <p className="text-xs text-muted-foreground" data-testid={`strategy-contacts-none-${target.companyId}`}>No contacts recorded at {options.companies.find(c => c.id === target.companyId)?.name || `this ${words.one}`} yet. Add people on its page; an agent firm can be added below as a company of its own.</p> : <CrmEntityPicker kind="contact" multi value={target.contactIds} options={options.contacts.filter(c => c.companyId === target.companyId).map(c => ({id: c.id, name: c.name, meta: c.role}))} emptyLabel="Choose contacts" className="border rounded-md px-3 py-2 min-h-9" testIdPrefix={`strategy-contacts-${target.companyId}`} onSelect={c => onChange(targets.map(t => t.companyId === target.companyId ? {...t, contactIds: t.contactIds.includes(c.id) ? t.contactIds.filter(id => id !== c.id) : [...t.contactIds, c.id]} : t))} />}</div>}
     </div>)}
-    <CrmEntityPicker value={null} options={companyChoices(options, search).filter(c => !targets.some(t => t.companyId === c.id))} onSelect={c => {search?.onPick(c); onChange([...targets, {companyId: c.id, reason: "", contactIds: []}]);}} onSearchChange={search?.onSearch} emptyLabel={`Add a ${words.one}`} searchPlaceholder={kind === "brand" ? "Search brands…" : kind === "all" ? "Search landlords, agents and lenders, or type a brand…" : "Search landlord accounts…"} className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="engagement-landlord" />
+    {(() => {
+      const choices = companyChoices(options, search, kind).filter(c => !targets.some(t => t.companyId === c.id));
+      return <CrmEntityPicker value={null} options={choices} emptyOptions={openingChoices(choices, kind)} onSelect={c => {search?.onPick(c); onChange([...targets, {companyId: c.id, reason: "", contactIds: []}]);}} onSearchChange={search?.onSearch} emptyLabel={`Add a ${words.one}`} searchPlaceholder={kind === "brand" ? "Search brands…" : kind === "all" ? COMPANY_SEARCH_WORDS : "Search landlord accounts…"} className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="engagement-landlord" />;
+    })()}
   </section>;
 }
 
@@ -211,7 +223,7 @@ export function ActionEditor({ options, data, companyId, eventId, strategyId, in
         ...(company && company.id !== f.companyId && !companyId ? {companyId: company.id, strategyId: null, eventId: null} : {})}));
     }} />}
     <Field label="Action"><Input required maxLength={200} value={form.title} onChange={e => setForm({...form, title: e.target.value})} placeholder="A clear next step" /></Field>
-    <div className="space-y-1.5"><p className="text-sm font-medium">{kind === "brand" ? "Brand" : "Company"}</p><CrmEntityPicker value={form.companyId} options={companyChoices(options, search)} onSearchChange={search?.onSearch} searchPlaceholder={kind === "brand" ? "Search brands…" : kind === "all" ? "Search landlords, agents and lenders, or type a brand…" : undefined} disabled={!!form.sourceInterviewId && !!form.sourceQuestionId} className="border rounded-md px-3 py-2 min-h-9" emptyLabel={`Choose ${words.one}`} testIdPrefix="action-landlord" onSelect={c => {search?.onPick(c); if (c.id !== form.companyId) setForm({...form, companyId: c.id, strategyId: null, eventId: null, sourceInterviewId: null, sourceQuestionId: null});}} /></div>
+    <div className="space-y-1.5"><p className="text-sm font-medium">{kind === "brand" ? "Brand" : "Company"}</p><CrmEntityPicker value={form.companyId} options={companyChoices(options, search, kind)} emptyOptions={openingChoices(companyChoices(options, search, kind), kind)} onSearchChange={search?.onSearch} searchPlaceholder={kind === "brand" ? "Search brands…" : kind === "all" ? COMPANY_SEARCH_WORDS : undefined} disabled={!!form.sourceInterviewId && !!form.sourceQuestionId} className="border rounded-md px-3 py-2 min-h-9" emptyLabel={`Choose ${words.one}`} testIdPrefix="action-landlord" onSelect={c => {search?.onPick(c); if (c.id !== form.companyId) setForm({...form, companyId: c.id, strategyId: null, eventId: null, sourceInterviewId: null, sourceQuestionId: null});}} /></div>
     <div className="grid sm:grid-cols-2 gap-3"><Owner value={form.ownerId} required onChange={ownerId => setForm({...form, ownerId: ownerId || ""})} options={options} /><Field label="Due · London time"><Input required type="datetime-local" value={due} onChange={e => setDue(e.target.value)} /></Field></div>
     <div className="grid sm:grid-cols-2 gap-3"><Choice label="Strategy (optional)" value={form.strategyId || ""} onChange={strategyId => setForm({...form, strategyId: strategyId || null})}><option value="">No strategy</option>{linkedStrategies.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Choice><Choice label="Event (optional)" value={form.eventId || ""} onChange={eventId => setForm({...form, eventId: eventId || null})}><option value="">No event</option>{linkedEvents.map(e => <option key={e.id} value={e.id}>{e.title}</option>)}</Choice></div>
     {!!partners?.length && <ActionPlanFields partners={partners} value={{...NO_PLAN, propertyId: form.propertyId, tenancyUnitId: form.tenancyUnitId, sharedWithCompanyId: form.sharedWithCompanyId, waitingOnParty: form.waitingOnParty}} onChange={plan => setForm({...form, ...plan})} />}

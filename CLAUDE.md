@@ -1310,8 +1310,14 @@ calendars), the order of work and the four decisions waiting on him are in
   `CrmEngagementPanel kind="all"`: pills All / Landlords / Brands / Agents /
   Lenders filter it (`options.companies[].noun`), its pickers list every
   landlord, agent and lender and find a brand by typing, and the form words
-  follow each company's kind. The scheme, sharing and waiting-on fields on
-  an action still belong to a brand. Tests:
+  follow each company's kind. Each company in those pickers says what it is,
+  the list opens on a few of each kind (not the first names alphabetically,
+  which were all landlords) and scrolls into view at the foot of the form,
+  and a company with no contacts says so (Woody, 2026-11-16: "cant seem to
+  add brands or agents to the CRM forms just landlords?"). A form opened
+  with no kind (a company page's CRM card, the property People board) lists
+  agent firms and lenders as well (`getCrmEngagementOptions`). The scheme,
+  sharing and waiting-on fields on an action still belong to a brand. Tests:
   `qa/regression/crm-engagement-postgres.test.mjs` (needs
   `CRM_ENGAGEMENT_DATABASE_URL`).
 - **Start strategy** (`client/src/components/crm-engagement/start-strategy.tsx`,
