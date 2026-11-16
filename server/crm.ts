@@ -7692,7 +7692,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       for (const deal of deals) {
         const code = legacyToCode(deal.status);
-        if (!code || !WIP_STATUSES.includes(code) || deal.fee == null) continue;
+        if (!code || !WIP_STATUSES.includes(code) || deal.fee == null || !dealLeftTracker(deal)) continue;
         const dealTeamArr = Array.isArray(deal.team) ? deal.team : (deal.team ? [deal.team] : []);
         const dealTeamsLower = dealTeamArr.map(t => (t || "").toLowerCase());
         // Wendy/Layla (fullView) see BGP-team rows too. fullView is folded
@@ -7779,7 +7779,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       for (const deal of deals) {
         // Skip archived rows: WIT (withdrawn/lost/dead) + legacy comps statuses still present pre-migration
         const code = legacyToCode(deal.status);
-        if (!code || !WIP_STATUSES.includes(code)) continue;
+        if (!code || !WIP_STATUSES.includes(code) || !dealLeftTracker(deal)) continue;
         const totalFee = deal.fee || 0;
         const isInvoiced = isInvoicedStatus(deal.status);
         const dealAllocs = allocsByDeal.get(deal.id);
@@ -7930,7 +7930,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       };
       const eligibleDeals = deals.filter(d => {
         const code = legacyToCode(d.status);
-        return code !== null && WIP_STATUSES.includes(code);
+        // An investment deal joins the WIP only at Solicitors (Jack,
+        // 2026-11-16): before that it lives on the Investment Tracker.
+        return code !== null && WIP_STATUSES.includes(code) && dealLeftTracker(d);
       });
       for (const deal of eligibleDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
@@ -10094,7 +10096,9 @@ Rules:
       const unmatchedDeals = deals.filter(d => {
         if (usedDealIds.has(d.id)) return false;
         const code = legacyToCode(d.status);
-        return code !== null && WIP_STATUSES.includes(code);
+        // An investment deal joins the WIP only at Solicitors (Jack,
+        // 2026-11-16): before that it lives on the Investment Tracker.
+        return code !== null && WIP_STATUSES.includes(code) && dealLeftTracker(d);
       });
       for (const deal of unmatchedDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
@@ -10807,7 +10811,7 @@ export async function computeWipHealth(): Promise<any> {
   `);
   const wipDeals = rows.filter((r: any) => {
     const c = legacyToCode(r.status);
-    return c !== null && WIP_STATUSES.includes(c);
+    return c !== null && WIP_STATUSES.includes(c) && dealLeftTracker(r);
   });
   const slim = (r: any) => ({
     dealId: r.id,
