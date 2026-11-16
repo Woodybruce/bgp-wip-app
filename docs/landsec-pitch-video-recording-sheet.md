@@ -5,13 +5,22 @@ the phone on a stand or propped up, not hand held.
 
 ## Recording 1: you on camera (two clips)
 
-**Clip A, the opening, to camera.** Phone sideways (landscape), lens at eye
-level, a window in front of you, a plain wall behind. Look at the lens, not
-the screen. Two or three takes; keep them all.
+**Clip A, the opening, on your phone at the viewing** (Woody, 16 November
+2026: a short opening on site, then he turns into the drawn presenter, who
+says the rest). Phone sideways (landscape), held at arm's length or by
+someone else, lens at eye level. Look at the lens, not the screen. Stand
+with your back to the traffic and the building behind you, out of the wind;
+hold still for a second before you speak and for two seconds after the last
+word (that last still picture is what folds up into the drawing). Two or
+three takes; send them all.
 
-> I'm Woody Bruce from Bruce Gillingham Pollard. You asked, why our agency.
-> Part of the answer is something we've built for you, so let me show you
-> rather than tell you. In fact, I'll get someone else to show you.
+> Hi guys. I'm here to tell you about ChatBGP, but I'm on a viewing at Nova
+> Victoria. So perhaps we should ask my better, more efficient self to do it.
+
+The drawn presenter's lines after that are, for now, cut from the Teams
+recording of 16 November with the hesitations taken out (about 50 seconds).
+A fresh voice memo of a shorter version, recorded somewhere quiet, would
+sound better and bring the film nearer its length.
 
 **Clip B, the ending, walking with the phone.** Someone films you (sideways
 again) walking towards them with the app open in your hand. Scroll it for a

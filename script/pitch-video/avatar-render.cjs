@@ -18,13 +18,14 @@ async function open() {
     async render(scene, out) {
       const frames = Math.round(scene.secs * scene.fps), full = !!scene.full, top = full ? 0 : (scene.top ?? 500);
       await page.evaluate(s => window.setup(s), scene);
-      const args = ["-v", "error", "-y", "-f", "image2pipe", "-framerate", String(scene.fps), "-c:v", "png", "-i", "-",
+      const args = ["-v", "error", "-y", "-f", "image2pipe", "-framerate", String(scene.fps), "-c:v", full ? "mjpeg" : "png", "-i", "-",
         ...(full ? ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18"] : ["-c:v", "qtrle", "-pix_fmt", "argb"]), out];
       const ff = spawn("ffmpeg", args, { stdio: ["pipe", "inherit", "inherit"] });
       const done = new Promise((resolve, reject) => ff.on("exit", code => code ? reject(new Error(`ffmpeg ${code}`)) : resolve()));
       for (let i = 0; i < frames; i++) {
         await page.evaluate(n => window.frame(n), i);
-        const png = await page.screenshot({ omitBackground: !full, clip: { x: 0, y: top, width: 1920, height: 1080 - top } });
+        // A whole scene has no clear parts, so its frames go as JPEG, which is several times quicker to make.
+        const png = await page.screenshot({ ...(full ? { type: "jpeg", quality: 95 } : { omitBackground: true }), clip: { x: 0, y: top, width: 1920, height: 1080 - top } });
         if (!ff.stdin.write(png)) await new Promise(r => ff.stdin.once("drain", r));
       }
       ff.stdin.end(); await done;

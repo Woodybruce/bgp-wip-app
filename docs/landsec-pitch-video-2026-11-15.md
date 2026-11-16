@@ -113,6 +113,31 @@ voice saying "Welcome to ChatBGP, your superhero app".
 - Eye contact at the start: the opening fades up over the glance down. The
   recording is read from the screen throughout, which a cut cannot change.
 
+### The opening and the sound (Woody, 16 November 2026)
+
+Woody: "its probably easier if I quickly transform into the avatar ...
+introducing Charlotte and Mark as examples but fixing the voice over. I could
+just do the initial intro ... I'm on a viewing at Nova Victoria so perhaps we
+should ask my better more efficient self to do it." So the film opens on his
+own phone clip (`INTRO=<clip>` to `voice-cut.cjs`, cut to where he speaks,
+his voice cleaned as the rest is; `INTRO_TEXT` is its caption), his last
+picture folds up into the drawn Woody (`photo` on a drawn scene), and the
+drawn Woody says the rest of the opening: the things he lists pop up as
+labels (`cards`) and tick when he reaches AI, Charlotte arrives as the agent
+and Mark as the client. Until the clip is in, "Hi, guys" from the Teams
+recording stands in.
+
+The sound, the same day ("consider the sound ... clean up some of the
+fails"): the hesitations in the opening are cut out of the voice (found by
+transcribing with the fillers kept, then placed against the loudness of the
+recording; the cut list holds the times); each sentence of a line is placed
+in its scene (`starts`), so a scene that outlasts its line has its quiet
+between sentences and not all at the end; captions follow the sentence being
+spoken (`caps`); and quiet made sounds (`sfx`: pop, chime, rush of air) mark
+the turn into the drawing, an arrival and the dance. Nobody has listened to
+the result on a build machine: each cut is checked by transcribing it again,
+which finds a clipped or stray word but not a rough join.
+
 ## Two versions
 
 - **Room cut**, about 2 minutes 45. Woody can pause it and talk.
