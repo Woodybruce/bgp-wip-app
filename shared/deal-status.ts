@@ -31,7 +31,7 @@ export const DEAL_STATUS_LABELS: Record<DealStatusCode, string> = {
   NEG: "Negotiating",
   HOT: "HOTs",
   SOL: "Solicitors",
-  UOX: "Under Offer - Not BGP",
+  UOX: "U/O - Not BGP",
   EXC: "Exchanged",
   COM: "Completed",
   WIT: "Withdrawn",
@@ -116,6 +116,7 @@ const LEGACY_MAP: Record<string, DealStatusCode> = {
   "under offer": "SOL",
   "under offer - not bgp": "UOX",
   "under offer (not bgp)": "UOX",
+  "u/o - not bgp": "UOX",
   "uox": "UOX",
   "sols": "SOL",
   "sol": "SOL",
@@ -216,6 +217,28 @@ export function isInvestmentDeal(dealType: string | null | undefined, team: stri
 // SQL twin of isInvestmentDeal for a crm_deals alias (e.g. "d" or "crm_deals").
 export function investmentDealSql(alias: string): string {
   return `(${alias}.deal_type IN ('Purchase','Sale','Investment') OR 'Investment' = ANY(COALESCE(${alias}.team, ARRAY[]::text[])))`;
+}
+
+// Which deals leave the trackers for the rest of the app (the Deals board,
+// the Deal Report, a property's or company's deals). A letting shows from
+// Marketing onwards (Woody, 2026-10-26); an INVESTMENT deal stays on the
+// Investment Tracker until it reaches Solicitors (Jack, 2026-11-16: "It
+// should only move to other parts of the app once in solicitors"). NULL or
+// unknown statuses stay visible rather than silently vanishing. SQL for a
+// crm_deals alias; true = show it.
+const PRE_MARKETING: DealStatusCode[] = ["OPP", "REP", "SPEC", "LIVE"];
+const sqlList = (codes: DealStatusCode[]) => statusSpellingsFor(codes).map((s) => `'${s.replace(/'/g, "''")}'`).join(", ");
+export function dealLeftTrackerSql(alias: string): string {
+  const st = `lower(trim(coalesce(${alias}.status, '')))`;
+  return `(${alias}.status IS NULL OR (${st} NOT IN (${sqlList(PRE_MARKETING)})`
+    + ` AND NOT (${investmentDealSql(alias)} AND ${st} IN (${sqlList(INVESTMENT_PROVISIONAL_STATUSES)}))))`;
+}
+export function dealLeftTracker(deal: { status?: string | null; dealType?: string | null; team?: string[] | string | null }): boolean {
+  if (deal.status == null) return true;
+  const code = legacyToCode(deal.status);
+  if (!code) return true;
+  if (PRE_MARKETING.includes(code)) return false;
+  return !(isInvestmentDeal(deal.dealType, deal.team) && INVESTMENT_PROVISIONAL_STATUSES.includes(code));
 }
 
 // Pre-Solicitors investment fee — shown on the record, marked provisional,

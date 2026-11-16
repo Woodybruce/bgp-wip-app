@@ -2747,7 +2747,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                           value={legacyToCode(item.status) || "REP"}
                           options={[...STATUSES, SOLD_COMP]}
                           colorMap={{ ...STATUS_LABEL_COLORS, [SOLD_COMP]: "bg-foreground" }}
-                          labelMap={{ ...DEAL_STATUS_LABELS, [SOLD_COMP]: "Sold - Comp" }}
+                          labelMap={{ ...DEAL_STATUS_LABELS, UOX: "U/O", [SOLD_COMP]: "Sold - Comp" }}
                           // Sold - Comp isn't a deal status: it asks for the
                           // full pricing, then moves the asset to the Comps page.
                           onSave={v => (v === SOLD_COMP ? setSoldCompFor(item) : inlineUpdate(item.id, "status", v))}
