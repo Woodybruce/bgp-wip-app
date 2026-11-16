@@ -36,7 +36,7 @@ const HEAD = 205;   // every head is drawn this tall at scale 1, so the cast mat
 let SCENE = null, RIG = null, ART = "", FX = null; const ELS = [], CARDS = [];
 
 // Which forearm a pose uses, and how far it is turned (degrees; 0 is as drawn).
-const ARM = { point: ["point", 0], present: ["point", 24], thumb: ["thumb", 0], wave: ["wave", 0] };
+const ARM = { point: ["point", 0], present: ["point", 24], thumb: ["thumb", 0], wave: ["wave", 0], phone: ["phone", 6] };   // phone: the open hand with a phone in it, held up
 
 function build(a) {
   const r = RIG[a.char], k = HEAD / (r.head.chin - r.head.top), pad = r.arms ? 560 : 0;   // room at the side for a raised arm

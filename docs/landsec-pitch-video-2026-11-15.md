@@ -157,6 +157,18 @@ the clip as he said it. Speech-to-text cannot tell the two words apart, so
 which to use is his ear's call; a retake is the clean fix. The avatar's
 opening is his short version (about 24 seconds), cut from the same recording.
 
+Later the same evening he sent a second clip with the name said correctly,
+which replaced the first (no patched word): "... Victoria has made me do one
+of her viewings down in Nova, I'm afraid. So perhaps I'll hand this over to my
+more able and capable self. Big Wood." The drawn presenter is called **Big
+Wood** (his name tag in the opening and the close). Woody also asked for: the
+drawn Woody's hair "a bit blonder" (the drawings are recoloured outside the
+repo: hair found by flood fill, the flying hero's too); a phone in his hand
+for "it all goes with you" (a `phone` forearm, the open hand with a phone
+drawn over it, held up through the phone scenes); and two lines out of the
+voice, "So, we've upgraded a little" ("its covered with the next bit") and
+"Anyway, Mark," so the first app scene opens on "This is ChatBGP".
+
 ## Two versions
 
 - **Room cut**, about 2 minutes 45. Woody can pause it and talk.
