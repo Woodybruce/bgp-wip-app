@@ -138,6 +138,14 @@ the turn into the drawing, an arrival and the dance. Nobody has listened to
 the result on a build machine: each cut is checked by transcribing it again,
 which finds a clipped or stray word but not a rough join.
 
+The close is drawn too (Woody, the same day: "can you do the end too so it's
+not me on camera?"): the drawn Woody says his close over labels (14 schemes,
+Brands, Deals, one joined-up deal process), Charlotte, Mark and David join him
+on "everyone", and the hero ending follows. Its hesitations are cut the same
+way. Two of the first cuts there took a real word ("schemes", "help") in
+place of the "er" beside it, and the transcript check caught both: always
+transcribe a scene again after changing its cuts.
+
 ## Two versions
 
 - **Room cut**, about 2 minutes 45. Woody can pause it and talk.
