@@ -203,11 +203,16 @@ test('on a phone the Landsec tabs leave out the tab of the page that is open', (
 test('on a phone only a real Landsec login is sent from the home page: to ChatBGP on opening the app, to Properties after that', () => {
   const app = source(APP);
   // Woody, 15 November 2026: on a computer too ("also should open on desktop instead of a dashboard"),
-  // by the same once-a-session marker, decided once when the home page mounts.
-  const home = app.slice(app.indexOf('function Home() {'), app.indexOf('function LandsecMoved'));
-  assert.match(home, /const \[opening\] = useState\(\(\) => \{/);
-  assert.match(home, /first = !sessionStorage\.getItem\("bgp-chat-home-done"\);/);
-  assert.match(home, /<LandsecMoved to=\{opening && \(user as any\)\.landsecRole !== "joint_agent" \? LANDSEC_MENU\.chat : LANDSEC_MENU\.properties\} \/>/);
+  // by the same once-a-session marker, read and set in an effect (never while rendering: a render
+  // thrown away while the page loads would use the marker up and land the login on Properties).
+  const home = app.slice(app.indexOf('function Home() {'), app.indexOf('function LandsecOpening'));
+  assert.doesNotMatch(home, /sessionStorage/);
+  assert.match(home, /landsecRole === "joint_agent"\) return <LandsecMoved to=\{LANDSEC_MENU\.properties\} \/>;/);
+  assert.match(home, /return <LandsecOpening \/>;/);
+  const openingFn = app.slice(app.indexOf('function LandsecOpening'), app.indexOf('function LandsecMoved'));
+  assert.match(openingFn, /useEffect\(\(\) => \{\s+let opening = false;/);
+  assert.match(openingFn, /opening = !sessionStorage\.getItem\("bgp-chat-home-done"\);/);
+  assert.match(openingFn, /setLocation\(opening \? LANDSEC_MENU\.chat : LANDSEC_MENU\.properties, \{ replace: true \}\);/);
   const rule = app.slice(app.indexOf('const landsecPhoneHome ='), app.indexOf('useEffect', app.indexOf('const landsecPhoneHome =')));
   assert.match(rule, /role === "Client"/);
   assert.match(rule, /shellBrand\.id === "landsec"/);

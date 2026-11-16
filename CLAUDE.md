@@ -323,8 +323,10 @@ staff viewing as Landsec**:
   Properties. On a phone it is the `landsecPhoneHome` effect in `App.tsx`
   (real Landsec client logins only; it goes to `/chatbgp?ask=1`, the
   new-chat screen, because a bare `/chatbgp` there is the Messages list);
-  on a computer it is `Home` (`LANDSEC_MENU.chat`, decided once when the
-  page mounts). A joint agent still opens on Properties (its chat is its
+  on a computer it is `LandsecOpening` under `Home` (`LANDSEC_MENU.chat`;
+  the marker is read and set in an effect, never while rendering, because
+  a render thrown away while the page loads used the marker up and sent
+  the login to Properties). A joint agent still opens on Properties (its chat is its
   own page). On a computer the ChatBGP page has no side bar, so in the
   Landsec view its header carries the menu (`chatbgp-landsec-menu`) and its
   Back arrow goes to Properties when there is no earlier screen. The smoke

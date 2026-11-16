@@ -343,22 +343,30 @@ function ClientRouteGuard() {
 function Home() {
   const { brand } = useBrand();
   const { data: user, isLoading } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
-  // The Landsec view opens on ChatBGP, on a computer as on a phone (Woody,
-  // 2026-11-15: "also should open on desktop instead of a dashboard"), once
-  // per session by the marker the phone uses; after that "/" is Properties,
-  // so Back from the chat page never loops. Decided once, when the page mounts.
-  // A joint agent opens on Properties: its chat is its own page.
-  const [opening] = useState(() => {
-    let first = false;
-    try {
-      first = !sessionStorage.getItem("bgp-chat-home-done");
-      if (first) sessionStorage.setItem("bgp-chat-home-done", "1");
-    } catch {}
-    return first;
-  });
   if (brand.id !== "landsec") return <Dashboard />;
   if (isLoading || !user) return <PageLoader />;
-  return <LandsecMoved to={opening && (user as any).landsecRole !== "joint_agent" ? LANDSEC_MENU.chat : LANDSEC_MENU.properties} />;
+  if ((user as any).landsecRole === "joint_agent") return <LandsecMoved to={LANDSEC_MENU.properties} />;
+  return <LandsecOpening />;
+}
+
+// The Landsec view opens on ChatBGP, on a computer as on a phone (Woody,
+// 2026-11-15: "also should open on desktop instead of a dashboard"), once
+// per session by the marker the phone uses; after that "/" is Properties,
+// so Back from the chat page never loops. The marker is read and set in an
+// effect, never while rendering: a render that is thrown away (the page
+// still loading) would use the marker up and send the login to Properties.
+// A joint agent opens on Properties: its chat is its own page.
+function LandsecOpening() {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    let opening = false;
+    try {
+      opening = !sessionStorage.getItem("bgp-chat-home-done");
+      if (opening) sessionStorage.setItem("bgp-chat-home-done", "1");
+    } catch {}
+    setLocation(opening ? LANDSEC_MENU.chat : LANDSEC_MENU.properties, { replace: true });
+  }, []);
+  return null;
 }
 
 function LandsecMoved({ to }: { to: string }) {
