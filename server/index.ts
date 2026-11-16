@@ -4159,7 +4159,6 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
 })();
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
 void schemaStartup.catch(() => finishCrmEngagementSchema(false));
-import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { routedApiPath } from "@shared/landsec";
 import { setupMicrosoftRoutes } from "./microsoft";
 import { setupWhatsAppRoutes } from "./whatsapp";
@@ -4791,21 +4790,15 @@ app.use("/api/branding/assets", express.static(
   // means a maintenance endpoint registered without its own requireAdmin
   // (merge-properties, purge-apollo-contacts, …) can no longer be driven
   // by an ordinary staff login. requireAdmin does its own auth check.
-  // One data-heal action is deliberately staff-wide (Settings → Data Health
-  // backfill) — an idempotent reconciliation sweep, not admin surgery. The
-  // firm-wide Re-sync (/resync-mirror-all) became admin-only on 2026-10-26;
-  // the tenancy schedule's Re-sync button now calls the per-property route.
-  const ADMIN_PATH_STAFF_EXCEPTIONS = new Set(["/backfill-tracker-deals"]);
-  app.use("/api/admin", (req, res, next) => {
-    // Settings → Data Health "Backfill Tracker Deals" runs the same sweep by
-    // hand (backfillUnitBackingDeals) — paused with the other repair tools
-    // while the lettings cleanup runs (shared/feature-flags.ts).
-    if (req.path === "/backfill-tracker-deals" && !LETTING_REPAIR_TOOLS_ENABLED) {
-      return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
-    }
-    if (ADMIN_PATH_STAFF_EXCEPTIONS.has(req.path)) return requireAuth(req, res, next);
-    return requireAdmin(req, res, next);
-  });
+  // Settings → Data Health "Backfill Tracker Deals" (backfillUnitBackingDeals)
+  // was open to all staff, then paused with the other repair tools on
+  // 2026-10-26. Woody asked for it back on 2026-11-16, to give the tracker
+  // units with no deal their deal and Ref #: it runs again, for an admin only
+  // like every other /api/admin route. The other repair tools stay paused
+  // (shared/feature-flags.ts). The firm-wide Re-sync (/resync-mirror-all)
+  // became admin-only on 2026-10-26; the tenancy schedule's Re-sync button
+  // calls the per-property route.
+  app.use("/api/admin", (req, res, next) => requireAdmin(req, res, next));
 
   // ── Client default-deny backstop ──────────────────────────────────────
   // Client logins (role='Client', e.g. Landsec) are external — they must

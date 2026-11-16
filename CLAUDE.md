@@ -1723,6 +1723,17 @@ appendix `docs/letting-cleanup-technical-appendix.md`):
   `server/letting-backfill.ts` (tracker rows for the off-tracker deals,
   stub + real pairs) and `server/letting-sweep-undo.ts` (the 26 Oct sweep).
   Do not add a boot-time sweep again — the 26 Oct one minted 178 stubs.
+- **Backfill Tracker Deals is back on, for admins only** (Woody, 2026-11-16:
+  "go", after the button answered "Paused during the lettings cleanup" and
+  about 21 Landsec units sat on the tracker with no deal). Settings → Data
+  Health → Backfill Tracker Deals (`POST /api/admin/backfill-tracker-deals`,
+  `backfillUnitBackingDeals` in `server/unit-mirror.ts`) gives every live
+  tracker row with no deal its deal, or links the live letting deal already
+  on that unit. It has no preview and he knows that; its answer counts the
+  rows given a new deal, linked, left alone and failed. It was staff-wide
+  before the pause and is admin only now. The other paused tools
+  (`LETTING_REPAIR_TOOLS_ENABLED`) stay paused, and it still never runs at
+  boot.
 - **Still parked for Woody:** the one-live-letting index (schema change)
   and wiring `actingForFromType` (Lease Disposal / Sub-Letting → tenant
   side) — both wait on his review of the integrity report's lists.
