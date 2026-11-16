@@ -264,15 +264,17 @@ console.log('── client (Mark, Landsec) ──');
 
   if (page) {
     await settle(page, 6000);
-    await noCrash(page, 'client landing');
     // A Landsec login lands on ChatBGP since 15 November 2026 (Woody: "should open on chat for Landsec
     // logins", "also should open on desktop instead of a dashboard"); it was Properties before that.
     // Properties is still the first entry on the side bar: the Schemes view with its stage pills and
     // scheme cards.
     check('client landing: opens on ChatBGP', new URL(page.url()).pathname === '/chatbgp', page.url());
+    // The ChatBGP page has no side bar on a computer: its header carries the Landsec menu.
+    check('client landing: Landsec menu on the ChatBGP header', await page.locator('[data-testid="chatbgp-landsec-menu"]').count() > 0);
     await page.screenshot({ path: `${SHOTS}/client-landing.png` }).catch(() => {});
     await page.goto(`${BASE}/deals/properties`, { waitUntil: 'networkidle' }).catch(() => {});
     await settle(page, 4000);
+    await noCrash(page, 'client landing');
     check('client Properties: opens', new URL(page.url()).pathname === '/deals/properties', page.url());
     check('client landing: Schemes view', await page.locator('[data-testid="properties-landsec-schemes"]').count() > 0);
     check('client landing: scheme card for the fixture scheme', await page.locator('[data-testid="landsec-scheme-bluewater"]').count() > 0);
