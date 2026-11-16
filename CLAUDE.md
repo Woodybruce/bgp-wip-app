@@ -2953,11 +2953,63 @@ login only within the people on its account). Guard:
 `qa/regression/chatbgp-create-task-paths.test.mjs`. A tool added to one path
 is added to the other.
 
-Found and NOT built, waiting on Woody: there is no "VIP" field anywhere in
-the app, and ChatBGP has no tool that starts a CRM strategy, so a plan it
-"saves" for a company is not on the CRM page's Overview, Watch list or
-Diary. In the CRM, making a company VIP is **Start strategy**
-(`server/crm-kickoff.ts`).
+**ChatBGP starts a CRM strategy** (Woody, 2026-11-16, asked whether "make
+them VIP" should put a company on one: "yes chat should be able to"). There
+is no VIP field in the app: in the CRM a company is turned on by a strategy.
+`server/chatbgp-crm-strategy.ts`, two tools, BGP staff signed in as
+themselves only (both on `CLIENT_BLOCKED_TOOLS`, never a joint agent's):
+
+- `start_crm_strategy`: a new strategy (name and objective), or the running
+  one named, or with no name the one strategy the company is already on
+  (`chooseStrategy`); the company's people (only contacts filed under it);
+  and up to 8 first actions, each for a named BGP colleague, on that
+  colleague's My Tasks. Refused on an automated run: a strategy is a
+  person's decision. A name that means two records, an unknown colleague or
+  a new strategy with no objective is a question back and nothing is saved
+  (`pickByName`).
+- `get_crm_plan`: whether a company is on a strategy, its strategies, open
+  actions and events.
+- **It has no save of its own.** The strategy goes through `applyKickoff`
+  (the save behind the Start strategy button) and each action through
+  `createEngagementAction`, so what chat starts is what the page would have
+  started and it shows on the Overview, the Watch list and the Diary. It
+  sends nothing and books nothing. Tests:
+  `server/chatbgp-crm-strategy.test.ts` (in `npm test`) and
+  `qa/regression/chatbgp-crm-strategy-guards.test.mjs`.
+- **The rest of the plan** (Woody, 2026-11-16, on the three things listed
+  as not built: "build it"). Three more tools in the same file, by the same
+  rules (BGP staff as themselves, both on `CLIENT_BLOCKED_TOOLS`, no write
+  on an automated run, no save of their own):
+  - `add_crm_event`: an event for one or more companies (up to 6), through
+    `saveEngagementEvent` in the joined view after the form's own checks
+    (`eventInputSchema`). Date and time are London time (`londonIso`; a
+    date with no time goes in at 09:00 and the reply says so; the hour the
+    clocks skip is refused). No date = a draft under Dates to confirm.
+    Linked to the strategy named, else the ONE running strategy each
+    company is on. Guests are contacts filed under a company on the event,
+    saved as `suggested` only. The same title on the same day is a question,
+    never a second event. **It is a plan: no invitation, nothing in Outlook.**
+  - `update_crm_strategy`: rename, objective, owner, dates, and status
+    (paused, completed, active again), through `saveEngagementStrategy` with
+    every company and person on it kept (`planStrategyChange`) and the
+    version that was read (`expectedUpdatedAt`). The strategy is the one
+    named (a completed one can be named, to reopen it) or the one the
+    company is on (`findStrategy`). It does not add or remove a company.
+  - `update_crm_action`: the STATUS of a CRM action only (done, in progress,
+    to do), through `setEngagementActionStatus` in
+    `server/crm-engagement.ts`, the one door the CRM page's own save now
+    uses too (`PATCH /actions/:id`): the action's owner or the person who
+    set it, nobody else. The action is found by its id (`get_crm_plan`
+    sends each open action's id and `youCanTick`) or the words of its title
+    (`pickAction`).
+  - The five names are one list in each file (`CRM_PLAN_TOOL_NAMES` in
+    `server/chatbgp.ts`, `CRM_PLAN_TOOLS` in the tool file): a new CRM plan
+    tool goes on both, and both tool paths pick it up.
+- Not built: ChatBGP editing or cancelling an event, taking a company off a
+  strategy, or changing an action's title, owner or due date (the engine
+  has no door for the last). None of the five has been asked a real
+  question against a model from a build machine: each was run directly
+  against a local database.
 
 ## CRM week: meetings on the events calendar, and Monday's two emails (Woody, 2026-11-16)
 

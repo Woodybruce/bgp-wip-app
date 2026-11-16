@@ -476,6 +476,22 @@ export async function saveEngagementEvent(db: TransactionPool, input: EventInput
   });
 }
 
+// An action's status is its owner's or its assigner's to change, whoever
+// asks: the CRM page's save and ChatBGP's (server/chatbgp-crm-strategy.ts)
+// both come through here.
+async function assertActionStatusEditable(q:Queryable,actionId:string,actor:Actor) {
+  const linked=(await q.query(`SELECT a.event_id FROM crm_engagement_actions a JOIN user_tasks t ON t.id=a.task_id WHERE t.id=$1 AND(t.user_id=$2 OR t.assigned_by_user_id=$2)`,[actionId,actor.id])).rows[0];
+  if(!linked)throw new EngagementError(403,"Only the owner or person who assigned this action can update it");
+  if(linked.event_id)await assertEventVisible(q,linked.event_id);
+}
+export async function setEngagementActionStatus(q:Queryable,actionId:string,status:"todo"|"in_progress"|"done",actor:Actor) {
+  await assertActionStatusEditable(q,actionId,actor);
+  const row=(await q.query(`UPDATE user_tasks t SET status=$1,completed_at=CASE WHEN $1='done' THEN now() ELSE NULL END
+    WHERE t.id=$2 AND (t.user_id=$3 OR t.assigned_by_user_id=$3) AND EXISTS(SELECT 1 FROM crm_engagement_actions a WHERE a.task_id=t.id) RETURNING t.id`,[status,actionId,actor.id])).rows[0];
+  if(!row)throw new EngagementError(403,"Only the owner or person who assigned this action can update it");
+  return {ok:true,id:row.id};
+}
+
 export async function createEngagementAction(db: TransactionPool,input: ActionInput,actor:Actor,planDeps:ActionPlanDeps={}) {
   return transaction(db,async q=>{
     await assertOwner(q,input.ownerId);await assertCompanies(q,[input.companyId]);
@@ -677,17 +693,10 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
   router.patch("/actions/:id",handle(async(req,actor)=>{
     const {status,...plan}=((req as any).res?.locals?.engagementClient?actionStatusSchema:actionPatchSchema).parse(req.body) as z.infer<typeof actionPatchSchema>;
     const actionId=id.parse(req.params.id);
-    if(status!==undefined){
-      const linked=(await deps.pool.query(`SELECT a.event_id FROM crm_engagement_actions a JOIN user_tasks t ON t.id=a.task_id WHERE t.id=$1 AND(t.user_id=$2 OR t.assigned_by_user_id=$2)`,[actionId,actor.id])).rows[0];
-      if(!linked)throw new EngagementError(403,"Only the owner or person who assigned this action can update it");
-      if(linked.event_id)await assertEventVisible(deps.pool,linked.event_id);
-    }
+    if(status!==undefined)await assertActionStatusEditable(deps.pool,actionId,actor);
     if(Object.values(plan).some(field=>field!==undefined))await saveEngagementActionPlan(deps.pool,actionId,plan,deps);
     if(status===undefined)return {ok:true,id:actionId};
-    const row=(await deps.pool.query(`UPDATE user_tasks t SET status=$1,completed_at=CASE WHEN $1='done' THEN now() ELSE NULL END
-      WHERE t.id=$2 AND (t.user_id=$3 OR t.assigned_by_user_id=$3) AND EXISTS(SELECT 1 FROM crm_engagement_actions a WHERE a.task_id=t.id) RETURNING t.id`,[status,actionId,actor.id])).rows[0];
-    if(!row)throw new EngagementError(403,"Only the owner or person who assigned this action can update it");
-    return {ok:true,id:row.id};
+    return setEngagementActionStatus(deps.pool,actionId,status,actor);
   }));
   // A plain note read into a strategy, action or event form
   // (server/crm-note-reader.ts). BGP staff only: the check above lets a client
