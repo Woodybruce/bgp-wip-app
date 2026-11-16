@@ -41,7 +41,7 @@ const ORDER = [
   { clip: "phonePhotos", phone: true, speed: 2.6, voice: "Add the photos from the opening." },
   { clip: "phoneShare", phone: true, speed: 2.8, voice: "And send him a unit on another scheme, there and then." },
   { card: "14  Woody closes, still walking", note: "To be filmed: he looks up from the phone", secs: 7,
-    voice: "That is one unit at one scheme. It runs the same way across all fourteen, so our time goes on brands and deals, not on chasing updates. We'd love to run it with you." },
+    voice: "That's it. It runs the same way across all fourteen schemes, so our time goes on brands and deals, not on chasing updates. We think this will help join up the deal process, and allow everyone to come along the journey, make comments and interact as we go through every element of the leasing process." },
 ];
 
 const log = fs.existsSync(path.join(OUT, "film.log")) ? fs.readFileSync(path.join(OUT, "film.log"), "utf8") : "";

@@ -19,9 +19,14 @@ few seconds as you walk, then look up and say the close. Somewhere quiet
 enough to hear you: a corridor or a street without traffic. Two or three
 takes.
 
-> That is one unit at one scheme. It runs the same way across all fourteen,
-> so our time goes on brands and deals, not on chasing updates. We'd love to
-> run it with you.
+> That's it. It runs the same way across all fourteen schemes, so our time
+> goes on brands and deals, not on chasing updates. We think this will help
+> join up the deal process, and allow everyone to come along the journey,
+> make comments and interact as we go through every element of the leasing
+> process.
+
+(Woody's own close, 16 November 2026: "We'd love to run it with you" was
+"too cheesy", so he changed it.)
 
 ## Recording 2: the voice (one voice memo)
 

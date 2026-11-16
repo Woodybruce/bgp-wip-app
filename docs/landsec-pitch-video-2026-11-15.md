@@ -63,7 +63,9 @@ or a card as if Landsec were seeing the app for the first time.
 The cut to his voice is made by `script/pitch-video/voice-cut.cjs` from his
 recording and a cut list (which stretches of the recording belong to each
 scene, false starts and long pauses left out). His words are the script now;
-the table below is the earlier written version.
+the table below is the earlier written version. He also rewrote the close:
+"We'd love to run it with you" was "too cheesy", and his close ends on
+joining up the deal process so everyone can follow and comment.
 
 ## Two versions
 
