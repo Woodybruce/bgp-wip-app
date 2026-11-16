@@ -25,7 +25,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
-  Search, Plus, Pencil, Trash2, Link2, Eye, FileText, Send, CalendarDays, HandCoins, Users, Mail, Phone, ChevronDown, ChevronUp, Filter, X, Paperclip, Download, Upload, Loader2, Check, ExternalLink, Presentation, ImageIcon,
+  Search, Plus, Pencil, Trash2, Link2, Eye, FileText, Send, CalendarDays, HandCoins, Users, Mail, Phone, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Filter, X, Paperclip, Download, Upload, Loader2, Check, ExternalLink, Presentation, ImageIcon,
 } from "lucide-react";
 import { Link } from "wouter";
 import { CardContent } from "@/components/ui/card";
@@ -1197,6 +1197,54 @@ function SoldCompDialog({ item, onClose, progress }: { item: InvestmentTracker; 
   );
 }
 
+// One line of pills that does not wrap. What does not fit is reached with the
+// arrow at either end, a sideways swipe, or the mouse wheel over the row.
+function PillLine({ children, testId }: { children: React.ReactNode; testId: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState({ left: false, right: false });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      const left = el.scrollLeft > 2;
+      const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+      setMore(was => (was.left === left && was.right === right ? was : { left, right }));
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => { el.removeEventListener("scroll", update); ro.disconnect(); };
+  }, []);
+  const move = (dir: 1 | -1) => {
+    const el = ref.current;
+    if (el) el.scrollBy({ left: dir * Math.max(160, el.clientWidth * 0.7), behavior: "smooth" });
+  };
+  const arrow = "absolute inset-y-0 z-10 flex w-9 items-center from-background from-60% to-transparent text-muted-foreground hover:text-foreground";
+  return (
+    <div className="relative flex min-w-0 flex-1 items-center">
+      {more.left && (
+        <button type="button" data-no-min-touch className={`${arrow} left-0 justify-start bg-gradient-to-r`} onClick={() => move(-1)} aria-label="Earlier statuses" data-testid={`${testId}-left`}>
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+      )}
+      <div
+        ref={ref}
+        className="flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0"
+        onWheel={e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY; }}
+        data-testid={testId}
+      >
+        {children}
+      </div>
+      {more.right && (
+        <button type="button" data-no-min-touch className={`${arrow} right-0 justify-end bg-gradient-to-l`} onClick={() => move(1)} aria-label="More statuses" data-testid={`${testId}-right`}>
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 // `present` is the pop-out presentation window (Present button): the same
 // editable board on its own, filling the window, without a Present button.
 export default function InvestmentTrackerPage({ present = false }: { present?: boolean } = {}) {
@@ -1228,6 +1276,43 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
   const [offersItem, setOffersItem] = useState<InvestmentTracker | null>(null);
   const [distItem, setDistItem] = useState<InvestmentTracker | null>(null);
   const [chartsExpanded, setChartsExpanded] = useState(false);
+  // The top of the page folds to one line once the table is scrolled, so the
+  // assets get the screen (Woody, 2026-11-16: "everything stays at the top
+  // when scrolling"). It opens again at the top of the table or from Show
+  // filters. The presentation window starts folded. Never on a phone, where
+  // the whole page scrolls.
+  const [folded, setFolded] = useState(present);
+  const [pageEl, setPageEl] = useState<HTMLDivElement | null>(null);
+  const foldedAtRef = useRef(0);
+  const lastTopRef = useRef(0);
+  useEffect(() => {
+    const page = pageEl;
+    if (!page || isMobile) return;
+    const tableOf = (t: EventTarget | null) => (t instanceof HTMLElement ? t.closest<HTMLElement>(".table-scroll-container") : null);
+    // Folding makes the table taller, which can pull a short list back to its
+    // top: that is not the person scrolling up, so it is ignored for a moment.
+    const settled = () => Date.now() - foldedAtRef.current > 400;
+    const onScroll = (e: Event) => {
+      const table = e.target instanceof HTMLElement && e.target.classList.contains("table-scroll-container") ? e.target : null;
+      if (!table) return;
+      // A sideways scroll at the top of the table is not a scroll to the top.
+      const cameUp = lastTopRef.current > 0;
+      lastTopRef.current = table.scrollTop;
+      if (table.scrollTop > 48) setFolded(was => { if (!was) foldedAtRef.current = Date.now(); return true; });
+      else if (table.scrollTop <= 0 && cameUp && settled()) setFolded(false);
+    };
+    const onWheel = (e: WheelEvent) => {
+      const table = tableOf(e.target);
+      if (table && e.deltaY < 0 && table.scrollTop <= 0 && settled()) setFolded(false);
+    };
+    page.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    page.addEventListener("wheel", onWheel, { passive: true });
+    return () => {
+      page.removeEventListener("scroll", onScroll, { capture: true });
+      page.removeEventListener("wheel", onWheel);
+    };
+  }, [pageEl, isMobile]);
+  const foldedTop = folded && !isMobile;
   const [filesItem, setFilesItem] = useState<InvestmentTracker | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -1734,11 +1819,109 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
     );
   }
 
+  const assetCountLine = `${filtered.length} asset${filtered.length !== 1 ? "s" : ""} — ${boardType}`;
+  const sum = (months: number[]) => months.reduce((a, b) => a + b, 0);
+  const activityTotals = { viewings: sum(viewingsMonthly), offers: sum(offersMonthly), introductions: sum(introductionsMonthly) };
+  const clearFilters = () => { setStatusFilter("all"); setAssetClassFilter("all"); setTenureFilter("all"); setAgentFilter("all"); };
+  const moreFilterCount = [assetClassFilter, tenureFilter, agentFilter].filter(v => v !== "all").length;
+  const searchBox = (
+    <div className={`relative ${isMobile ? "flex-1 min-w-[200px] max-w-sm" : foldedTop ? "min-w-[7rem] max-w-[13rem] flex-1" : "w-64 shrink-0"}`}>
+      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <Input
+        placeholder="Search assets..."
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        className={`pl-9 ${foldedTop ? "h-8" : ""}`}
+        data-testid="input-search-assets"
+      />
+    </div>
+  );
+  // A filter in use, as a chip that takes it off. The status is a chip only
+  // while the top is folded: unfolded, its own pill is lit.
+  const filterChips = (withStatus: boolean) => {
+    const chips: { key: string; label: string; clear: () => void }[] = [];
+    if (withStatus && statusFilter !== "all") chips.push({ key: "status", label: DEAL_STATUS_LABELS[statusFilter as DealStatusCode] || statusFilter, clear: () => setStatusFilter("all") });
+    if (withStatus && showSoldComps) chips.push({ key: "sold-comp", label: "Sold - Comp", clear: () => setShowSoldComps(false) });
+    if (assetClassFilter !== "all") chips.push({ key: "class", label: assetClassFilter, clear: () => setAssetClassFilter("all") });
+    if (tenureFilter !== "all") chips.push({ key: "tenure", label: tenureFilter, clear: () => setTenureFilter("all") });
+    if (agentFilter !== "all") chips.push({ key: "agent", label: agentFilter, clear: () => setAgentFilter("all") });
+    return chips.map(c => (
+      <Pill key={c.key} active onClick={c.clear} title={`Showing ${c.label} only. Press to show all.`} data-testid={`filter-chip-${c.key}`}>
+        {c.label} <X className="h-3 w-3" />
+      </Pill>
+    ));
+  };
+  // Class, Tenure and Agent sit behind one button: as rows of their own they
+  // took three lines off the table, and Class and Tenure are on the column
+  // headings too.
+  const filtersButton = (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="h-8 shrink-0 gap-1.5" data-testid="button-tracker-filters">
+          <Filter className="h-3.5 w-3.5" /> Filters
+          {moreFilterCount > 0 && <span className="rounded-full bg-foreground px-1.5 text-[10px] font-bold leading-4 text-background tabular-nums" data-testid="tracker-filters-count">{moreFilterCount}</span>}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[min(92vw,480px)] space-y-3" data-testid="tracker-filters-panel">
+        <div>
+          <p className="mb-1.5 text-xs font-medium text-muted-foreground">Class</p>
+          <div className="flex flex-wrap gap-1.5">
+            {ASSET_CLASSES.map(c => (
+              <Pill
+                key={c}
+                active={assetClassFilter === c}
+                onClick={() => setAssetClassFilter(assetClassFilter === c ? "all" : c)}
+                data-testid={`filter-class-${c.toLowerCase().replace(/\s/g, "-")}`}
+              >
+                {c}
+              </Pill>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Tenure</p>
+            <Select value={tenureFilter} onValueChange={setTenureFilter}>
+              <SelectTrigger className="w-full" data-testid="select-tenure-filter">
+                <SelectValue placeholder="All Tenures" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Tenures</SelectItem>
+                {TENURES.map(t => (
+                  <SelectItem key={t} value={t}>{t}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Agent</p>
+            <Select value={agentFilter} onValueChange={setAgentFilter}>
+              <SelectTrigger className="w-full" data-testid="select-agent-filter">
+                <SelectValue placeholder="All Agents" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Agents</SelectItem>
+                {bgpUsers.map(u => (
+                  <SelectItem key={u.id} value={u.name}>{u.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        {(statusFilter !== "all" || moreFilterCount > 0) && (
+          <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={clearFilters} data-testid="clear-all-filters">
+            <X className="h-3 w-3" /> Clear filters
+          </Button>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+
   return (
     // On a phone the page scrolls as one, so the title, buttons and search
     // move away and the cards get the whole screen — a fixed header there
     // left the list a window barely two cards tall.
-    <div className={`p-4 sm:p-6 space-y-4 flex flex-col ${present ? "h-full" : isMobile ? "" : "h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
+    <div ref={setPageEl} className={`${foldedTop ? "px-4 py-2 sm:px-6 space-y-2" : "p-4 sm:p-6 space-y-4"} flex flex-col ${present ? "h-full" : isMobile ? "" : "h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
       {brochureFor && <NewAssetBrochureFlow asset={brochureFor} onClose={() => setBrochureFor(null)} />}
       {soldCompFor && <SoldCompDialog item={soldCompFor} onClose={() => setSoldCompFor(null)} />}
       {!soldCompFor && soldCompQueue.items[0] && (
@@ -1753,10 +1936,10 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
           })}
         />
       )}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 shrink-0">
-        <div>
-          <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Investment Tracker</h1>
+      <div className={`flex flex-col sm:flex-row sm:items-center justify-between shrink-0 ${foldedTop ? "gap-2" : "gap-3 sm:gap-4"}`} data-testid="tracker-top" data-folded={foldedTop ? "true" : "false"}>
+        <div className={foldedTop ? "flex min-w-0 flex-1 items-center gap-3 overflow-hidden" : undefined}>
+          <div className={`flex shrink-0 items-center ${foldedTop ? "gap-3" : "gap-4"}`}>
+            <h1 className={`${foldedTop ? "text-lg" : "text-2xl"} whitespace-nowrap font-bold tracking-tight`} data-testid="text-page-title">Investment Tracker</h1>
             <div className="inline-flex items-center gap-1.5" data-testid="toggle-board-type">
               {BOARD_TYPES.map(bt => (
                 <Pill
@@ -1769,21 +1952,50 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                 </Pill>
               ))}
             </div>
+            {!isMobile && <span className="hidden whitespace-nowrap text-sm text-muted-foreground xl:inline" data-testid="text-asset-count">{foldedTop ? assetCountLine.split(" — ")[0] : assetCountLine}</span>}
           </div>
-          <p className="text-sm text-muted-foreground">
-            {filtered.length} asset{filtered.length !== 1 ? "s" : ""} — {boardType}
-          </p>
+          {!foldedTop && <p className={`text-sm text-muted-foreground ${isMobile ? "" : "xl:hidden"}`}>{assetCountLine}</p>}
+          {foldedTop && searchBox}
+          {foldedTop && <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">{filterChips(true)}</div>}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
+          {foldedTop && filtersButton}
+          {foldedTop && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1 text-xs text-muted-foreground hover:text-foreground"
+              title="Show the status pills and the activity charts"
+              onClick={() => setFolded(false)}
+              data-testid="button-show-tracker-top"
+            >
+              <ChevronDown className="h-3.5 w-3.5" /> <span className="hidden xl:inline">Show all</span>
+            </Button>
+          )}
+          {!isMobile && !foldedTop && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+              title={`${activityTotals.viewings} viewings, ${activityTotals.offers} offers, ${activityTotals.introductions} introductions this year`}
+              aria-expanded={chartsExpanded}
+              onClick={() => setChartsExpanded(!chartsExpanded)}
+              data-testid="button-toggle-activity-charts"
+            >
+              <span className="font-semibold">Activity charts</span>
+              {chartsExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            </Button>
+          )}
           {!present && <Button
             variant="outline"
+            size={foldedTop ? "sm" : "default"}
             title="Open the tracker table in its own window for presenting — resize it as you like"
             onClick={() => window.open(`/present/investment-tracker?board=${boardType}`, "bgp-tracker-present", "popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes")}
             data-testid="button-present-tracker"
           >
-            <Presentation className="h-4 w-4 mr-1" /> Present
+            <Presentation className={`h-4 w-4 ${foldedTop ? "xl:mr-1" : "mr-1"}`} /> <span className={foldedTop ? "hidden xl:inline" : undefined}>Present</span>
           </Button>}
-          <Button onClick={() => { setForm(makeEmptyForm(boardType)); setCreateOpen(true); }} data-testid="button-add-asset">
+          <Button size={foldedTop ? "sm" : "default"} onClick={() => { setForm(makeEmptyForm(boardType)); setCreateOpen(true); }} data-testid="button-add-asset">
             <Plus className="h-4 w-4 mr-1" /> Add Asset
           </Button>
         </div>
@@ -1818,100 +2030,41 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
         </div>
       )}
 
-      <div className="flex items-center gap-3 flex-wrap shrink-0">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search assets..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="pl-9"
-            data-testid="input-search-assets"
-          />
+      {!foldedTop && (
+        <div className={`flex items-center gap-3 shrink-0 ${isMobile ? "flex-wrap" : ""}`}>
+          {searchBox}
+          {!isMobile && (<>
+            {/* One line, as on a phone: wrapped, the pills took two or three
+                rows off the table. */}
+            <PillLine testId="tracker-status-pills">
+              {STATUSES.map(s => (
+                <Pill
+                  key={s}
+                  active={statusFilter === s}
+                  onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
+                  data-testid={`filter-status-${s.toLowerCase()}`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
+                  {DEAL_STATUS_LABELS[s]} <span className="font-mono normal-case opacity-60 tabular-nums">{statusSummary[s] || 0}</span>
+                </Pill>
+              ))}
+              <Pill
+                active={showSoldComps}
+                onClick={() => { setShowSoldComps(v => !v); setStatusFilter("all"); }}
+                title="Assets that sold in the market and now sit on the Comps page"
+                data-testid="filter-status-sold-comp"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-foreground" />
+                Sold - Comp <span className="font-mono normal-case opacity-60 tabular-nums">{soldCompItems.length}</span>
+              </Pill>
+            </PillLine>
+            <div className="flex shrink-0 items-center gap-1.5">{filterChips(false)}</div>
+            {filtersButton}
+          </>)}
         </div>
-        {!isMobile && (<>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {STATUSES.map(s => (
-            <Pill
-              key={s}
-              active={statusFilter === s}
-              onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-              data-testid={`filter-status-${s.toLowerCase()}`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
-              {DEAL_STATUS_LABELS[s]} <span className="font-mono normal-case opacity-60 tabular-nums">{statusSummary[s] || 0}</span>
-            </Pill>
-          ))}
-          <Pill
-            active={showSoldComps}
-            onClick={() => { setShowSoldComps(v => !v); setStatusFilter("all"); }}
-            title="Assets that sold in the market and now sit on the Comps page"
-            data-testid="filter-status-sold-comp"
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-foreground" />
-            Sold - Comp <span className="font-mono normal-case opacity-60 tabular-nums">{soldCompItems.length}</span>
-          </Pill>
-        </div>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs text-muted-foreground mr-0.5">Class:</span>
-          {ASSET_CLASSES.map(c => (
-            <Pill
-              key={c}
-              active={assetClassFilter === c}
-              onClick={() => setAssetClassFilter(assetClassFilter === c ? "all" : c)}
-              data-testid={`filter-class-${c.toLowerCase().replace(/\s/g, "-")}`}
-            >
-              {c}
-            </Pill>
-          ))}
-        </div>
-        <Select value={tenureFilter} onValueChange={setTenureFilter}>
-          <SelectTrigger className="w-[160px]" data-testid="select-tenure-filter">
-            <SelectValue placeholder="All Tenures" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Tenures</SelectItem>
-            {TENURES.map(t => (
-              <SelectItem key={t} value={t}>{t}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={agentFilter} onValueChange={setAgentFilter}>
-          <SelectTrigger className="w-[180px]" data-testid="select-agent-filter">
-            <SelectValue placeholder="All Agents" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Agents</SelectItem>
-            {bgpUsers.map(u => (
-              <SelectItem key={u.id} value={u.name}>{u.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {(statusFilter !== "all" || assetClassFilter !== "all" || tenureFilter !== "all" || agentFilter !== "all") && (
-          <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => { setStatusFilter("all"); setAssetClassFilter("all"); setTenureFilter("all"); setAgentFilter("all"); }} data-testid="clear-all-filters">
-            <X className="h-3 w-3" /> Clear filters
-          </Button>
-        )}
-        </>)}
-      </div>
+      )}
 
-      {/* Monthly Activity Charts — desktop only; not needed on a phone (Jack, 2026-11-11). */}
-      <div className={`items-center justify-between shrink-0 ${isMobile ? "hidden" : "flex"}`}>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-xs gap-1.5 h-7 text-muted-foreground hover:text-foreground"
-          onClick={() => setChartsExpanded(!chartsExpanded)}
-          data-testid="button-toggle-activity-charts"
-        >
-          {chartsExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          <span className="font-semibold">Activity Charts</span>
-          <span className="text-muted-foreground font-normal">
-            — {viewingsMonthly.reduce((a: number, b: number) => a + b, 0)} viewings, {offersMonthly.reduce((a: number, b: number) => a + b, 0)} offers, {introductionsMonthly.reduce((a: number, b: number) => a + b, 0)} introductions
-          </span>
-        </Button>
-      </div>
-      {chartsExpanded && !isMobile && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 shrink-0">
+      {chartsExpanded && !isMobile && !foldedTop && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 shrink-0">
         <Card data-testid="card-viewings-chart">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
@@ -2159,7 +2312,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
         </div>
       ) : (
       <Card className="flex-1 min-h-0 overflow-hidden flex flex-col">
-        <ScrollableTable minWidth={2196}>
+        <ScrollableTable minWidth={2196} fill={present}>
             <Table className="table-fixed">
               <TableHeader>
                 <TableRow>

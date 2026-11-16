@@ -124,10 +124,12 @@ function DesktopPresentation() {
         <Pill onClick={() => step(-1)} aria-label="Smaller" disabled={zoom === ZOOMS[0]} data-testid="present-zoom-out"><Minus className="h-3 w-3" /></Pill>
         <Pill onClick={() => step(1)} aria-label="Larger" disabled={zoom === ZOOMS[ZOOMS.length - 1]} data-testid="present-zoom-in"><Plus className="h-3 w-3" /></Pill>
       </div>
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {/* CSS zoom scales the layout, so the board is given the un-zoomed
-            share of the height to fill the window exactly. */}
-        <div style={{ zoom, height: `${100 / zoom}%` }}>
+      <div className="relative flex-1 min-h-0 overflow-hidden">
+        {/* Pinned to the four edges, the zoomed board fills the window at
+            every size. A percentage height did not: browsers disagree on
+            whether zoom scales it, and the board stopped short of the bottom
+            (at 130% it had lost a quarter of the window). */}
+        <div className="absolute inset-0" style={{ zoom }}>
           <InvestmentTrackerPage present />
         </div>
       </div>

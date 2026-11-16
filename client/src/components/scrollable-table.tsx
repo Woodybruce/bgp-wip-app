@@ -7,9 +7,13 @@ interface ScrollableTableProps {
   // vertical scrollbar, the table takes its natural height. Horizontal
   // scrolling and the sticky bottom scrollbar are kept.
   pageScroll?: boolean;
+  // The parent already has a fixed height and hands the table what is left:
+  // no measured cap. For a zoomed parent, where a cap measured in window
+  // pixels is the wrong size.
+  fill?: boolean;
 }
 
-export function ScrollableTable({ children, minWidth, pageScroll = false }: ScrollableTableProps) {
+export function ScrollableTable({ children, minWidth, pageScroll = false, fill = false }: ScrollableTableProps) {
   const bottomScrollRef = useRef<HTMLDivElement>(null);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -67,7 +71,7 @@ export function ScrollableTable({ children, minWidth, pageScroll = false }: Scro
   // the box overshot the viewport and its last rows (and the synced bottom
   // scrollbar) sat below the fold, unreachable. Measure instead of guess.
   useEffect(() => {
-    if (pageScroll) return;
+    if (pageScroll || fill) return;
     const el = tableScrollRef.current;
     if (!el) return;
     const update = () => {
@@ -87,14 +91,14 @@ export function ScrollableTable({ children, minWidth, pageScroll = false }: Scro
       window.removeEventListener("resize", update);
       ro.disconnect();
     };
-  }, [pageScroll]);
+  }, [pageScroll, fill]);
 
   return (
     <div className={pageScroll ? "flex flex-col" : "flex flex-col flex-1 min-h-0"}>
       <div
         ref={tableScrollRef}
         className={pageScroll ? "table-scroll-container" : "table-scroll-container flex-1 min-h-0"}
-        style={pageScroll ? { maxHeight: "none", overflowY: "visible" } : maxHeight ? { maxHeight } : undefined}
+        style={pageScroll ? { maxHeight: "none", overflowY: "visible" } : fill ? { maxHeight: "none" } : maxHeight ? { maxHeight } : undefined}
       >
         <div ref={innerRef} style={{ minWidth }}>
           {children}

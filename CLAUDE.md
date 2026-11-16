@@ -2869,6 +2869,39 @@ Two rules everything else follows (do not re-litigate):
   pass, insights report leg): a new import in those functions needs the
   binding added to the test. Run that suite with `--import tsx`.
 
+## Investment Tracker: the top folds away (Woody, 2026-11-16)
+
+Woody, presenting the tracker in a meeting: "everything stays at the top
+when scrolling can you think about how we solve that", then "ok go ahead".
+The title, search, status pills, class pills, two drop-downs and the charts
+line were all fixed above the table, which was left about a third of the
+screen. On a computer (`client/src/pages/investment-tracker.tsx`; a phone
+is unchanged, its whole page scrolls):
+
+- **The top is two lines.** The title line (Purchases / Sales, the count,
+  Activity charts, Present, Add Asset), then the search, the status pills on
+  ONE line (`PillLine`: an arrow at either end and the mouse wheel reach the
+  rest; never let them wrap again) and **Filters**: Class, Tenure and Agent
+  in one popover, with a count on the button and a chip per filter in use
+  (`filterChips`). Class and Tenure are also on their column headings.
+- **Scrolling the table folds the top to one line** (`folded`, drawn as
+  `foldedTop`; `data-folded` on `tracker-top`): title, board, search, the
+  chips, Filters, Show all, Add Asset. It folds past 48px and opens when the
+  table is scrolled back to its top, on a wheel-up at the top, or from Show
+  all. Folding makes the table taller, which can pull a short list back to
+  its top, so a return to the top within 400ms of folding is ignored
+  (`foldedAtRef`); a sideways scroll at the top is not a return to the top
+  (`lastTopRef`). Keep both or the top flickers.
+- **The Present window starts folded** and its board is pinned to the four
+  edges of the window (`absolute inset-0` with the zoom, in
+  `investment-tracker-present.tsx`). The percentage height it had left the
+  board short of the bottom at every size but 100% (at 150% the table had
+  no height at all). `ScrollableTable` takes `fill` there: no measured cap,
+  because one measured in window pixels is the wrong size inside a zoom.
+- Guards: `qa/regression/investment-tracker-top.test.mjs`. The Letting
+  Tracker and the Deals table have the same fixed top and have NOT been
+  changed: waiting on Woody.
+
 ## Document design preferences (the "house style" pattern)
 
 For Claude-driven document generation (Why Buy decks initially, Document
