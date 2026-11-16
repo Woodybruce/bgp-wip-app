@@ -1738,7 +1738,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
     // On a phone the page scrolls as one, so the title, buttons and search
     // move away and the cards get the whole screen — a fixed header there
     // left the list a window barely two cards tall.
-    <div className={`p-4 sm:p-6 space-y-4 flex flex-col ${present ? "h-full" : isMobile ? "" : "h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
+    <div className={`flex flex-col ${present ? "h-full p-3 space-y-2" : isMobile ? "p-4 sm:p-6 space-y-4" : "p-4 sm:p-6 space-y-4 h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
       {brochureFor && <NewAssetBrochureFlow asset={brochureFor} onClose={() => setBrochureFor(null)} />}
       {soldCompFor && <SoldCompDialog item={soldCompFor} onClose={() => setSoldCompFor(null)} />}
       {!soldCompFor && soldCompQueue.items[0] && (
@@ -1775,17 +1775,31 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {present && (
+            <div className="relative w-[260px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="Search assets..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9 h-8" data-testid="input-search-assets" />
+            </div>
+          )}
+          {/* Present opens a window the size of the whole screen; the
+              window itself has a Full screen button (Jack, 2026-11-16). */}
           {!present && <Button
             variant="outline"
-            title="Open the tracker table in its own window for presenting — resize it as you like"
-            onClick={() => window.open(`/present/investment-tracker?board=${boardType}`, "bgp-tracker-present", "popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes")}
+            title="Open the tracker table in its own full-screen window for presenting"
+            onClick={() => {
+              const w = window.screen?.availWidth || 1500;
+              const h = window.screen?.availHeight || 900;
+              const left = (window.screen as any)?.availLeft ?? 0;
+              const top = (window.screen as any)?.availTop ?? 0;
+              window.open(`/present/investment-tracker?board=${boardType}`, "bgp-tracker-present", `popup=yes,left=${left},top=${top},width=${w},height=${h},resizable=yes,scrollbars=yes`);
+            }}
             data-testid="button-present-tracker"
           >
             <Presentation className="h-4 w-4 mr-1" /> Present
           </Button>}
-          <Button onClick={() => { setForm(makeEmptyForm(boardType)); setCreateOpen(true); }} data-testid="button-add-asset">
+          {!present && <Button onClick={() => { setForm(makeEmptyForm(boardType)); setCreateOpen(true); }} data-testid="button-add-asset">
             <Plus className="h-4 w-4 mr-1" /> Add Asset
-          </Button>
+          </Button>}
         </div>
       </div>
 
@@ -1818,7 +1832,10 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
         </div>
       )}
 
-      <div className="flex items-center gap-3 flex-wrap shrink-0">
+      {/* Presentation mode is all about the table (Jack, 2026-11-16): no
+          stage pills, class pills, filters or charts — search sits in the
+          header line instead. */}
+      {!present && <div className="flex items-center gap-3 flex-wrap shrink-0">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
@@ -1893,10 +1910,10 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
           </Button>
         )}
         </>)}
-      </div>
+      </div>}
 
       {/* Monthly Activity Charts — desktop only; not needed on a phone (Jack, 2026-11-11). */}
-      <div className={`items-center justify-between shrink-0 ${isMobile ? "hidden" : "flex"}`}>
+      <div className={`items-center justify-between shrink-0 ${isMobile || present ? "hidden" : "flex"}`}>
         <Button
           variant="ghost"
           size="sm"
@@ -1911,7 +1928,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
           </span>
         </Button>
       </div>
-      {chartsExpanded && !isMobile && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 shrink-0">
+      {chartsExpanded && !isMobile && !present && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 shrink-0">
         <Card data-testid="card-viewings-chart">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">

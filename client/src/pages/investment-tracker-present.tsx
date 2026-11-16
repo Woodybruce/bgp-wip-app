@@ -2,7 +2,9 @@
 // from the Present button on the tracker as its own resizable window: the
 // board on its own, no app chrome, for showing the team on a screen. It is
 // the same board — every cell edits exactly as it does in the app — with
-// a zoom control so it reads from across a room. Listed by class with a
+// a zoom control so it reads from across a room. Since 2026-11-16 it opens
+// at the size of the screen with a Full screen button, and shows the table
+// alone: no stage, class or filter pills and no charts. Listed by class with a
 // section break per class, then upload date (client/src/lib/tracker-class.ts).
 // On a phone it is a simpler look-only list instead — PhonePresentation.
 import { useEffect, useMemo, useState } from "react";
@@ -10,7 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { InvestmentTracker } from "@shared/schema";
 import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 import { Pill } from "@/components/ui/pill";
-import { ImageIcon, Minus, Plus } from "lucide-react";
+import { ImageIcon, Maximize2, Minimize2, Minus, Plus } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useTrackerHeroes, heroThumbUrl } from "@/components/tracker-hero-image";
 import { TRACKER_CLASSES, trackerClass, compareByClassThenUpload } from "@/lib/tracker-class";
@@ -113,23 +115,40 @@ function DesktopPresentation() {
   const [zoom, setZoom] = useState(() => {
     try { const z = Number(localStorage.getItem("bgp_tracker_present_zoom")); return ZOOMS.includes(z) ? z : 1; } catch { return 1; }
   });
+  const [fullScreen, setFullScreen] = useState(() => typeof document !== "undefined" && !!document.fullscreenElement);
   useEffect(() => { try { localStorage.setItem("bgp_tracker_present_zoom", String(zoom)); } catch { /* private mode */ } }, [zoom]);
   useEffect(() => { document.title = "Investment Tracker — presentation"; }, []);
+  useEffect(() => {
+    const onChange = () => setFullScreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
   const step = (d: number) => setZoom(z => ZOOMS[Math.min(ZOOMS.length - 1, Math.max(0, ZOOMS.indexOf(z) + d))] ?? 1);
+  // A browser only goes full screen from a click inside this window, so
+  // the Present button opens it at the size of the screen and this button
+  // takes it the rest of the way (Esc comes back out).
+  const toggleFullScreen = () => {
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    else document.documentElement.requestFullscreen?.().catch(() => {});
+  };
 
   return (
-    <div className="h-screen overflow-hidden bg-background text-foreground flex flex-col" data-testid="tracker-present">
-      <div className="shrink-0 flex items-center justify-end gap-1.5 border-b px-3 py-1.5">
-        <span className="text-[11px] text-muted-foreground">Size {Math.round(zoom * 100)}%</span>
+    <div className="h-screen overflow-hidden bg-background text-foreground relative" data-testid="tracker-present">
+      {/* CSS zoom scales the layout, so the board is given the un-zoomed
+          share of the height to fill the window exactly. */}
+      <div style={{ zoom, height: `${100 / zoom}%` }}>
+        <InvestmentTrackerPage present />
+      </div>
+      {/* The window's own controls float in the corner so every row of the
+          screen goes to the table (Jack, 2026-11-16). */}
+      <div className="fixed bottom-3 right-3 z-50 flex items-center gap-1.5 rounded-full border bg-background/90 px-2 py-1 shadow-md backdrop-blur opacity-60 hover:opacity-100 transition-opacity" data-testid="present-controls">
+        <span className="text-[11px] text-muted-foreground pl-1">Size {Math.round(zoom * 100)}%</span>
         <Pill onClick={() => step(-1)} aria-label="Smaller" disabled={zoom === ZOOMS[0]} data-testid="present-zoom-out"><Minus className="h-3 w-3" /></Pill>
         <Pill onClick={() => step(1)} aria-label="Larger" disabled={zoom === ZOOMS[ZOOMS.length - 1]} data-testid="present-zoom-in"><Plus className="h-3 w-3" /></Pill>
-      </div>
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {/* CSS zoom scales the layout, so the board is given the un-zoomed
-            share of the height to fill the window exactly. */}
-        <div style={{ zoom, height: `${100 / zoom}%` }}>
-          <InvestmentTrackerPage present />
-        </div>
+        <Pill active={!fullScreen} onClick={toggleFullScreen} title={fullScreen ? "Leave full screen (Esc)" : "Fill the whole screen"} data-testid="present-full-screen">
+          {fullScreen ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+          {fullScreen ? "Exit full screen" : "Full screen"}
+        </Pill>
       </div>
     </div>
   );
