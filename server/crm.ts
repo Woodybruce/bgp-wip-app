@@ -35,7 +35,7 @@ import {
   dealAuditLog,
   type CrmCompany, type CrmContact,
 } from "@shared/schema";
-import { isInvoicedStatus, isProvisionalFee, legacyToCode, WIP_STATUSES, deriveStageFromStatus, DEAL_STATUS_CODES, CLOSED_STATUSES } from "@shared/deal-status";
+import { isInvoicedStatus, isProvisionalFee, legacyToCode, WIP_STATUSES, deriveStageFromStatus, DEAL_STATUS_CODES, CLOSED_STATUSES, dealLeftTracker } from "@shared/deal-status";
 import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, wipDealStatus } from "@shared/letting-rules";
 import { createDeal, updateDeal, writeDealFeeAllocations, resolveTenancyTokenToUnitId, LettingRefusal, lettingSource } from "./letting-service";
 import { isClientCrmCategory, clientBrandCompanyView, clientOwnCompanyView, clientCompanyListRow, CLIENT_NEW_BRAND_FIELDS } from "@shared/tenant-categories";
@@ -3282,7 +3282,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // cannot be read it gets none.
       const cdScope = await resolveCompanyScope(req);
       if (cdScope && cdScope !== req.params.id) return res.json([]);
-      const deals = await storage.getCompanyDeals(req.params.id);
+      // An investment deal stays on the Investment Tracker until Solicitors
+      // (Jack, 2026-11-16), so a company's deals leave it out before then.
+      const deals = (await storage.getCompanyDeals(req.params.id)).filter((d: any) => dealLeftTracker(d));
       // A Landsec login limited to its own schemes reads the deals at those
       // schemes only (a deal with no property is at none of them). Every deal
       // sent to a client goes through the one strip: all fee terms and BGP's
