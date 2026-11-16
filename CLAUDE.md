@@ -1748,7 +1748,8 @@ appendix `docs/letting-cleanup-technical-appendix.md`):
 - **Investment deals stay on the Investment Tracker until Solicitors**
   (Jack, 2026-11-16: "It should only move to other parts of the app once in
   solicitors"). The Deals board, its stat cards, property summaries, the
-  Deal Report and a company's deals leave out an investment deal (deal type
+  Deal Report, a company's deals and the WIP Report (its Deal Detail,
+  agent summary and drill-down, Needs attention and the Excel export) leave out an investment deal (deal type
   Purchase / Sale / Investment, or the Investment team) before SOL; lettings
   still show from Marketing. One rule, `dealLeftTrackerSql` /
   `dealLeftTracker` in `shared/deal-status.ts`: never a second list.

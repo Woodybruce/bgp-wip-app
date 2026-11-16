@@ -990,7 +990,21 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
   const found: EmailBrochure[] = [];
   const tried = new Set<string>();
   let opened = 0;
-  const confirms = async (buffer: Buffer, where: string, lead: boolean): Promise<boolean> => {
+  // A numbered address the email itself gives ("41 Luke Street" in the
+  // subject or file name), kept only when it carries a word of the asset's
+  // own name: a tracker row called "Luke Street Barclays" with no number
+  // still matches the brochure that says "41 Luke Street" (Jack,
+  // 2026-11-16). The PDF must then print that same address.
+  const STREET_WORDS = "street|st|road|rd|square|sq|lane|place|avenue|row|gate|hill|walk|way|yard|court|gardens|terrace|crescent|close|mews|parade|embankment|circus";
+  const learnedAddresses = (t: string) => Array.from(heroNorm(t).matchAll(new RegExp(`\\b(\\d{1,4}[a-z]?(?: \\d{1,4}[a-z]?)? [a-z]+(?: [a-z]+)? (?:${STREET_WORDS}))\\b`, "g")))
+    .map((m) => m[1].replace(/ st$/, " street").replace(/ rd$/, " road").replace(/ sq$/, " square"))
+    .filter((ph) => headWords.some((w) => ph.split(" ").includes(w)));
+  const namesItBy = (t: string, learned: string[]) => {
+    if (namesIt(t)) return true;
+    const n = heroNorm(t);
+    return learned.some((ph) => n.includes(` ${ph} `));
+  };
+  const confirms = async (buffer: Buffer, where: string, lead: boolean, learned: string[] = []): Promise<boolean> => {
       // The brochure itself must name this asset and place it.
       // Many covers set the name as artwork, not text, so when the text
       // doesn't settle it the opening pages are shown to the vision model.
@@ -1007,7 +1021,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
         say(`Rejected ${where}: it's letting particulars for a unit, not a sale brochure.`);
         return false;
       }
-      if (!(readable && namesIt(text) && placesIt(text))) {
+      if (!(readable && namesItBy(text, learned) && placesIt(text))) {
         if (lead) say(`Opened ${where} on a loose match — checking its pages.`);
         let seen = false;
         for (const page of [1, 2]) {
@@ -1016,7 +1030,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
           // The model's yes is only taken with the words it read: they must
           // name the asset AND place it, by the same rules as readable text
           // (it once passed an Edinburgh House of Fraser for Guildford's).
-          if (v?.match && namesIt(v.evidence) && placesIt(v.evidence)) { seen = true; break; }
+          if (v?.match && namesItBy(v.evidence, learned) && placesIt(v.evidence)) { seen = true; break; }
         }
         if (!seen) {
           say(`Rejected ${where}: ${!readable ? "no readable text" : !namesIt(text) ? "its text doesn't name the asset" : "its text doesn't place it in the right town or postcode"}, and its first two pages don't clearly show it is this asset.`);
@@ -1070,16 +1084,35 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
         // A landing page: take the first PDF it links to, or follow its own
         // "download / brochure" link one step further.
         let landed = "";
-        for (let hop = 0; hop < 2 && got && !isPdfFile(got) && got.type.includes("html"); hop++) {
+        let landedNote = "";
+        // Agents' mail tools (CBRE's cbreemail.com, Jack 2026-11-16) often
+        // land on a page that forwards on by itself — a meta refresh or a
+        // script setting the location — rather than a plain redirect, and
+        // put the file behind a document host's link with no ".pdf" in it.
+        const FILE_HOST = /box\.com|sharefile|dropbox|sharepoint\.com|onedrive|1drv\.ms|docsend|wetransfer|drive\.google|amazonaws\.com|blob\.core\.windows|azureedge|cloudfront/i;
+        for (let hop = 0; hop < 4 && got && !isPdfFile(got) && got.type.includes("html"); hop++) {
           const page = got.buffer.toString("utf8");
-          landed = (() => { try { return new URL(got!.url).hostname; } catch { return ""; } })();
+          landed = (() => { try { const u = new URL(got!.url); return `${u.hostname}${u.pathname.length > 1 ? u.pathname.slice(0, 60) : ""}`; } catch { return ""; } })();
+          const title = (page.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1]?.replace(/\s+/g, " ").trim().slice(0, 80) || "";
+          const forward = (page.match(/<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=["'][^"']*url=([^"'>\s]+)/i) || [])[1]
+            || (page.match(/(?:window\.|document\.)?location(?:\.href)?\s*=\s*["'](https?:[^"']+)["']/i) || [])[1]
+            || (page.match(/location\.(?:replace|assign)\(\s*["'](https?:[^"']+)["']/i) || [])[1];
+          const anchors = Array.from(page.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi))
+            .map((m) => ({ href: m[1], text: m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() }))
+            .filter((a) => !/^(mailto|javascript|tel):/i.test(a.href) && !/unsubscribe|preferences|privacy|cookie/i.test(`${a.text} ${a.href}`));
           const pdfHref = (page.match(/(?:href|src|data-url|data-href)=["']([^"']+\.pdf[^"']*)["']/i) || [])[1]
             || (page.match(/["'](https?:[^"'\s]+\.pdf[^"'\s]*)["']/i) || [])[1]
-            || (Array.from(page.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi))
-              .find((m) => /brochure|download/i.test(`${m[2].replace(/<[^>]+>/g, " ")} ${m[1]}`) && !/^(mailto|javascript):/i.test(m[1])) || [])[1];
+            || forward
+            || anchors.find((a) => /brochure|download|particulars|view document|open document/i.test(`${a.text} ${a.href}`))?.href
+            || anchors.find((a) => FILE_HOST.test(a.href))?.href;
+          landedNote = title ? ` ("${title}")` : "";
+          if (!pdfHref) {
+            const seen = anchors.slice(0, 3).map((a) => `${a.text || "link"} → ${(() => { try { return new URL(a.href, got!.url).hostname; } catch { return "?"; } })()}`).join("; ");
+            if (seen) landedNote += `; its links: ${seen}`;
+          }
           got = pdfHref ? await fetchPublic(new URL(decode(pdfHref), got.url).toString(), 30 * 1024 * 1024) : null;
         }
-        if (!isPdfFile(got)) { say(`The "${l.text || "brochure"}" link in ${email} led to ${landed ? `a page on ${landed}` : "a page"}, not a PDF — it may need a form or a login.`); continue; }
+        if (!isPdfFile(got)) { say(`The "${l.text || "brochure"}" link in ${email} led to ${landed ? `a page on ${landed}` : "a page"}${landedNote}, not a PDF — it may need a form or a login.`); continue; }
         got = got!;
         const fileName = `${names[0].replace(/[\/\\:*?"<>|]/g, "-")} - brochure.pdf`;
         const where = `the brochure behind the "${l.text || "download"}" link (${email})`;
@@ -1153,7 +1186,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
         const raw: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}/attachments/${a.id}`);
         if (!raw?.contentBytes) continue;
         const buffer = Buffer.from(raw.contentBytes, "base64");
-        if (!(await confirms(buffer, where, lead))) continue;
+        if (!(await confirms(buffer, where, lead, learnedAddresses(`${fileName} ${h.subject}`)))) continue;
         say(`Confirmed ${where}.`);
         found.push({ buffer, fileName, from: h.from, date: h.date });
         if (found.length >= 3) return found;
