@@ -3058,6 +3058,17 @@ it as `Authorization: Bearer $BGP_QA_TOKEN` for API calls, or set
 spread of brands after a UI change. It acts as Woody: stick to reading
 pages and don't trigger paid refreshes or send anything.
 
+**If chatbgp.app answers 401 to a token that should work** (found
+16 November 2026): look at the reply's headers. `X-Proxy-Error: upstream
+auth failed: connection "chatbgp.app"` means the cloud environment holds a
+stored credential for chatbgp.app (Network secrets / API credentials in the
+environment's settings) and the session's proxy sends THAT in place of
+whatever the request carries. When the stored one has expired or been
+revoked, every token fails, a fresh one included. The fix is Woody's: put a
+live token in that stored credential, or remove it. Until then the app's
+Railway address (`bgp-wip-app-production-efac.up.railway.app`, the same app
+and database) takes the request's own token.
+
 ## Key files
 
 | Area | Path |
