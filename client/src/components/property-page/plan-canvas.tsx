@@ -99,8 +99,9 @@ const Labels = memo(function Labels({ shapes, geometry, scale }: { shapes: Canva
   );
 });
 
-export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, hoverId = null, onSelect, onHover, focusId = null, focusKey = 0, onFocused, pick = null, preview = null, toolbar, className }: {
+export function PlanCanvas({ planId, imageKey = null, floor, width, height, shapes, selectedId, hoverId = null, onSelect, onHover, focusId = null, focusKey = 0, onFocused, pick = null, preview = null, toolbar, className }: {
   planId: string;
+  imageKey?: string | null;       // the image's key where known: a crop changes it
   floor: string;
   width: number | null;           // image pixel size when known (else read from the loaded image)
   height: number | null;
@@ -117,7 +118,7 @@ export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, h
   toolbar?: ReactNode;
   className?: string;
 }) {
-  const image = usePropertyPlanImage(planId);
+  const image = usePropertyPlanImage(planId, imageKey);
   const [natural, setNatural] = useState<{ planId: string; w: number; h: number } | null>(null);
   const W = (natural?.planId === planId ? natural.w : 0) || width || 0;
   const H = (natural?.planId === planId ? natural.h : 0) || height || 0;

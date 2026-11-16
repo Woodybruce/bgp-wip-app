@@ -1279,15 +1279,15 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
   // The top of the page folds to one line once the table is scrolled, so the
   // assets get the screen (Woody, 2026-11-16: "everything stays at the top
   // when scrolling"). It opens again at the top of the table or from Show
-  // filters. The presentation window starts folded. Never on a phone, where
-  // the whole page scrolls.
-  const [folded, setFolded] = useState(present);
+  // filters. Never on a phone, where the whole page scrolls, and never in the
+  // presentation window, which is the table alone.
+  const [folded, setFolded] = useState(false);
   const [pageEl, setPageEl] = useState<HTMLDivElement | null>(null);
   const foldedAtRef = useRef(0);
   const lastTopRef = useRef(0);
   useEffect(() => {
     const page = pageEl;
-    if (!page || isMobile) return;
+    if (!page || isMobile || present) return;
     const tableOf = (t: EventTarget | null) => (t instanceof HTMLElement ? t.closest<HTMLElement>(".table-scroll-container") : null);
     // Folding makes the table taller, which can pull a short list back to its
     // top: that is not the person scrolling up, so it is ignored for a moment.
@@ -1311,8 +1311,8 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
       page.removeEventListener("scroll", onScroll, { capture: true });
       page.removeEventListener("wheel", onWheel);
     };
-  }, [pageEl, isMobile]);
-  const foldedTop = folded && !isMobile;
+  }, [pageEl, isMobile, present]);
+  const foldedTop = folded && !isMobile && !present;
   const [filesItem, setFilesItem] = useState<InvestmentTracker | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -1921,7 +1921,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
     // On a phone the page scrolls as one, so the title, buttons and search
     // move away and the cards get the whole screen — a fixed header there
     // left the list a window barely two cards tall.
-    <div ref={setPageEl} className={`${foldedTop ? "px-4 py-2 sm:px-6 space-y-2" : "p-4 sm:p-6 space-y-4"} flex flex-col ${present ? "h-full" : isMobile ? "" : "h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
+    <div ref={setPageEl} className={`${present ? "p-3 space-y-2" : foldedTop ? "px-4 py-2 sm:px-6 space-y-2" : "p-4 sm:p-6 space-y-4"} flex flex-col ${present ? "h-full" : isMobile ? "" : "h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
       {brochureFor && <NewAssetBrochureFlow asset={brochureFor} onClose={() => setBrochureFor(null)} />}
       {soldCompFor && <SoldCompDialog item={soldCompFor} onClose={() => setSoldCompFor(null)} />}
       {!soldCompFor && soldCompQueue.items[0] && (
@@ -1972,7 +1972,16 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
               <ChevronDown className="h-3.5 w-3.5" /> <span className="hidden xl:inline">Show all</span>
             </Button>
           )}
-          {!isMobile && !foldedTop && (
+          {/* Presentation mode is all about the table (Jack, 2026-11-16): no
+              stage pills, class pills, filters or charts, and no Add Asset.
+              Search sits in the header line instead. */}
+          {present && (
+            <div className="relative w-[260px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="Search assets..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9 h-8" data-testid="input-search-assets" />
+            </div>
+          )}
+          {!isMobile && !foldedTop && !present && (
             <Button
               variant="ghost"
               size="sm"
@@ -1986,18 +1995,26 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
               {chartsExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
             </Button>
           )}
+          {/* Present opens a window the size of the whole screen; the
+              window itself has a Full screen button (Jack, 2026-11-16). */}
           {!present && <Button
             variant="outline"
             size={foldedTop ? "sm" : "default"}
-            title="Open the tracker table in its own window for presenting — resize it as you like"
-            onClick={() => window.open(`/present/investment-tracker?board=${boardType}`, "bgp-tracker-present", "popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes")}
+            title="Open the tracker table in its own full-screen window for presenting"
+            onClick={() => {
+              const w = window.screen?.availWidth || 1500;
+              const h = window.screen?.availHeight || 900;
+              const left = (window.screen as any)?.availLeft ?? 0;
+              const top = (window.screen as any)?.availTop ?? 0;
+              window.open(`/present/investment-tracker?board=${boardType}`, "bgp-tracker-present", `popup=yes,left=${left},top=${top},width=${w},height=${h},resizable=yes,scrollbars=yes`);
+            }}
             data-testid="button-present-tracker"
           >
             <Presentation className={`h-4 w-4 ${foldedTop ? "xl:mr-1" : "mr-1"}`} /> <span className={foldedTop ? "hidden xl:inline" : undefined}>Present</span>
           </Button>}
-          <Button size={foldedTop ? "sm" : "default"} onClick={() => { setForm(makeEmptyForm(boardType)); setCreateOpen(true); }} data-testid="button-add-asset">
+          {!present && <Button size={foldedTop ? "sm" : "default"} onClick={() => { setForm(makeEmptyForm(boardType)); setCreateOpen(true); }} data-testid="button-add-asset">
             <Plus className="h-4 w-4 mr-1" /> Add Asset
-          </Button>
+          </Button>}
         </div>
       </div>
 
@@ -2030,7 +2047,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
         </div>
       )}
 
-      {!foldedTop && (
+      {!foldedTop && !present && (
         <div className={`flex items-center gap-3 shrink-0 ${isMobile ? "flex-wrap" : ""}`}>
           {searchBox}
           {!isMobile && (<>
@@ -2064,7 +2081,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
         </div>
       )}
 
-      {chartsExpanded && !isMobile && !foldedTop && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 shrink-0">
+      {chartsExpanded && !isMobile && !foldedTop && !present && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 shrink-0">
         <Card data-testid="card-viewings-chart">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">

@@ -4,11 +4,15 @@ import { getAuthHeaders } from "@/lib/queryClient";
 import type { PlanPolygon, PropertyPlan } from "./property-plan-types";
 
 // Blob URLs let plans work with the app's bearer-token sessions as well as cookies.
-export function usePropertyPlanImage(planId: string) {
+// `imageKey` is the plan's image key where the caller has it: a crop changes
+// it, and the picture is then read again. The server tags the image with the
+// same key, so an unchanged picture is not downloaded twice ("v=2" keeps the
+// browser off copies it cached before the tag existed).
+export function usePropertyPlanImage(planId: string, imageKey?: string | null) {
   const query = useQuery({
-    queryKey: ["/api/plans", planId, "image"],
+    queryKey: imageKey ? ["/api/plans", planId, "image", imageKey] : ["/api/plans", planId, "image"],
     queryFn: async () => {
-      const response = await fetch(`/api/plans/${planId}/image`, { credentials: "include", headers: getAuthHeaders() });
+      const response = await fetch(`/api/plans/${planId}/image?v=2`, { credentials: "include", headers: getAuthHeaders() });
       if (!response.ok) throw new Error("The plan image could not be loaded. Please retry.");
       return response.blob();
     },
@@ -31,7 +35,7 @@ export function PropertyPlanPreview({ plan, outlines, onSelect }: {
   outlines: Array<{ id: string; polygon: PlanPolygon; selected?: boolean; accepted?: boolean }>;
   onSelect?: (id: string) => void;
 }) {
-  const image = usePropertyPlanImage(plan.id);
+  const image = usePropertyPlanImage(plan.id, plan.storage_key);
   const [size, setSize] = useState({ width: plan.width || 1, height: plan.height || 1 });
   const [zoom, setZoom] = useState(1);
   return <div className="space-y-2 min-w-0">

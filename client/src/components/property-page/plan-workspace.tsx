@@ -424,7 +424,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
           ) : (
             <PlanCanvas
               key={`${plan.id}:${mode}`}
-              planId={plan.id} floor={plan.floor} width={board.data?.plan.width ?? null} height={board.data?.plan.height ?? null}
+              planId={plan.id} imageKey={board.data?.plan.imageKey ?? null} floor={plan.floor} width={board.data?.plan.width ?? null} height={board.data?.plan.height ?? null}
               shapes={shapes} selectedId={selectedShapeId} hoverId={hoverShapeId}
               onSelect={selectShape} focusId={focus?.id || null} focusKey={focus?.key || 0} onFocused={clearFocus}
               pick={pick && (pick.step === "click" || pick.step === "tracing") ? { hint: `Click inside ${rowLabel(pick.rowId)} on the plan`, busy: pick.step === "tracing", onPick } : null}
