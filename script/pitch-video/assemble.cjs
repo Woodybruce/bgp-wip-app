@@ -31,7 +31,7 @@ const ORDER = [
   { clip: "recommendation", mark: true, max: 31, voice: "The recommendation arrives in your own template, with Net Effective Rent worked out against ERV and the brief." },
   { clip: "calendar", speed: 1, voice: "Viewings, meetings and tasks sit in one place." },
   { clip: "conversation", speed: 1, voice: "So does the conversation on each property, for you and for every agent on the instruction." },
-  { clip: "tinker", speed: 1, voice: "You also asked how we work with the other agents on the panel. Here comes one now. This is David Bell. We call him Tinker Bell. And yes, we do like him." },
+  { clip: "tinker", speed: 1, voice: "You also asked how we work with the other agents on the panel. Here comes one now. This is David Bell. And yes, we do like him." },
   { clip: "agent", voice: "David gets his own login, with his schemes and nothing else. The same tracker, the same checklist, the same conversation. So you see one version of every deal, whoever did the work." },
   { card: "13  Woody walking, phone in hand", note: "To be filmed", secs: 3,
     voice: "And it all goes with you." },

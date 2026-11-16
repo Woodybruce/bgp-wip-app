@@ -72,7 +72,7 @@ Rent worked out against ERV and the brief.
 agent on the instruction.
 
 **14.** You also asked how we work with the other agents on the panel. Here
-comes one now. This is David Bell. We call him Tinker Bell. And yes, we do
+comes one now. This is David Bell. And yes, we do
 like him.
 
 **15.** David gets his own login, with his schemes and nothing else. The same

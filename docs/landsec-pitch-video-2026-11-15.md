@@ -73,7 +73,7 @@ Voice lines are what Woody reads. About 420 words, roughly 3 minutes 20.
 | 9b | The deal checklist with a name against each step, then Deals showing "waiting on". | "From Heads of Terms the asset team takes over, with a name against every step. At any moment you can see what the deal is waiting on, and who." |
 | 10a | The transaction recommendation in Landsec's template. Mark approves. | "The recommendation arrives in your own template, with Net Effective Rent worked out against ERV and the brief." |
 | 10b | The calendar; the property conversation; a phone shot. | "Viewings, meetings and tasks sit in one place. So does the conversation on each property, for you and for every agent on the instruction." |
-| 12a | David Bell flies in on fairy wings to meet the character. They hug. | "You also asked how we work with the other agents on the panel. Here comes one now. This is David Bell. We call him Tinker Bell. And yes, we do like him." |
+| 12a | David Bell flies in on fairy wings to meet the character. They hug. | "You also asked how we work with the other agents on the panel. Here comes one now. This is David Bell. And yes, we do like him." |
 | 12b | David Bell's own login: one scheme (Liverpool ONE), its property page, a message in the conversation, his tracker. | "David gets his own login, with his schemes and nothing else. The same tracker, the same checklist, the same conversation. So you see one version of every deal, whoever did the work." |
 | 13 | Woody walking, phone in hand. His iPhone screen: the app opens on ChatBGP ("Good evening, Mark") and he asks it a question. Then quick cuts: calling Jersey Mike's agent (Richard Wilcox, Etch) from his page; a comment on the Burger King unit after the viewing; the Argyll Street opening photos added to Jersey Mike's; a Liverpool ONE unit sent to Richard. | "And it all goes with you. Open it, and ask it a question. Call the brand's agent from his page. Log the viewing before you're back at your desk. Add the photos from the opening. And send him a unit on another scheme, there and then." |
 | 14 | Woody, still walking, looks up from the phone. End card. | "That is one unit at one scheme. It runs the same way across all fourteen, so our time goes on brands and deals, not on chasing updates. We'd love to run it with you." |
@@ -82,8 +82,10 @@ The order (Woody, 15 November): start at the desk, and finish on Woody walking
 with the phone, with the phone screens cut quickly because by then the viewer
 knows the app.
 
-Woody asked for the phone screens, the joint agent, David Bell as "Tinker
-Bell" and the hug on 15 November. In the rough cut scene 12a is a plain
+Woody asked for the phone screens, the joint agent, David Bell flying in on
+fairy wings and the hug on 15 November. On 16 November he took the "Tinker
+Bell" name out of the voice: the wings are enough, and nothing on screen
+says it. In the rough cut scene 12a is a plain
 placeholder animation (two simple figures, not likenesses); the real
 character art comes from the avatar service or an illustrator. David Bell is
 the joint agent at Liverpool ONE, at Starka (Woody, 15 November, who also
