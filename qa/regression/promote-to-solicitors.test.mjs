@@ -1,23 +1,29 @@
-// The Promote to Solicitors box on the Letting Tracker (Woody, 2026-11-17):
-// "use the AI notes to fill in the form function we have for other forms",
-// "allow for add HOTs which should also then file and populate", and "if cant
-// find a billing entity for tenant then should be able to create one and
-// search companies house?". The note reader's route (the Heads of Terms
-// source), the billing entity route, the form's reading mapper and the Xero
-// list cache run for real with synthetic services; the screens are held by
-// source checks. Nothing here needs a database, Companies House or Xero.
+// One deal form for every way a letting reaches Solicitors (Woody,
+// 2026-11-17): "in each of these situations lets have one form its exactly the
+// same. use the new deal form as the basis but we need billing entity also
+// linked to the tenants with ability to create as per the last one. also the
+// type it and AI fills in ability in a new box at the top." New Deal, the
+// Letting Tracker's move to Solicitors and the Heads of Terms' Convert to
+// Solicitors open the New Deal form (DealFormDialog); a handover opens it on
+// the unit's own deal, set to Solicitors. The deal note route, the billing
+// entity route, the note mapping and the handover's starting form run for real
+// with synthetic services; the screens are held by source checks. Nothing here
+// needs a database, Companies House or Xero.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import * as lettingNote from '../../shared/letting-note.ts';
 import * as noteParse from '../../shared/letting-note-parse.ts';
 import * as calendarDate from '../../shared/calendar-date.ts';
-import { STANDARD_HOTS_TEMPLATE } from '../../shared/unit-hots.ts';
+import * as lettingRules from '../../shared/letting-rules.ts';
+import { dealNotePatch, noteTenant, addCommentLines } from '../../client/src/lib/deal-note.ts';
 const require = createRequire(import.meta.url);
 const { source, find, route, evaluate, ts } = require('./source-harness.cjs');
 const zod = require('zod');
 
-const PAGE = 'client/src/pages/available-units.tsx';
+const DEALS = 'client/src/pages/deals.tsx';
+const TRACKER = 'client/src/pages/available-units.tsx';
+const HOTS = 'client/src/components/unit-hots/hots-workspace.tsx';
 const quiet = { log() {}, warn() {}, error() {} };
 const plain = value => JSON.parse(JSON.stringify(value));
 const fn = (file, name) => find(file, node => ts.isFunctionDeclaration(node) && node.name?.text === name);
@@ -32,89 +38,83 @@ const load = (file, modules, extra = {}) => {
   });
 };
 
-// ── The note reader: the unit's final Heads of Terms as a source ─────────────
-
-const HOTS = STANDARD_HOTS_TEMPLATE
-  .replace(/\{UNIT\}/g, 'Unit 12').replace(/\{PROPERTY\}/g, 'Bluewater').replace('{DATE}', '12 November 2026')
-  .replace('{AREA}', '2,450 sq ft').replace('{LANDLORD}', 'Landsec Bluewater Limited').replace('{TENANT}', "Jersey Mike's UK Limited")
-  .replace('{TENANT_CONTACT}', 'Sam Smith').replace('{TERM}', '10 years').replace('{BREAK}', 'Tenant break at year 5 on 6 months notice')
-  .replace('{RENT}', '£120,000').replace('{TURNOVER_RENT}', 'None').replace('{RENT_DEPOSIT}', '3 months rent').replace('{CAPITAL_CONTRIBUTION}', '£50,000')
-  .replace('{RENT_FREE}', '6 months').replace('{RENT_REVIEW}', 'Upward only at year 5').replace('{SERVICE_CHARGE}', '£25,000')
-  .replace('{INSURANCE}', '£3,000').replace('{USE}', 'Restaurant');
+// ── The box at the top: POST /api/deal-notes/read ────────────────────────────
 
 const STAFF = { userId: 'u1', name: 'Woody Bruce', email: 'woody@brucegillinghampollard.com', isStaff: true, scope: null, scopeName: null, landsecRole: null, canEditTerms: true, agentControl: true, seesBgpNotes: true };
 const CLIENT = { ...STAFF, name: 'Landsec leasing', email: 'leasing@landsec.com', isStaff: false, scope: 'landsec', agentControl: false };
+const VIEWING_AS_CLIENT = { ...STAFF, scope: 'landsec' };
+const TIGHT = 'Terms: 10 year lease. Rent £120k pax. 6 MRF. TBO yr 5';
 
-async function readHots({ access = STAFF, file = '/uploads/marketing-files/final-hots.pdf', docText = HOTS, body = { kind: 'offer', source: { type: 'hots_final' } } } = {}) {
-  const queries = [], docReads = [];
+async function readDealNote({ access = STAFF, body = { text: TIGHT, propertyId: 'p1', trackerUnitId: null }, unit = true, property = true, onUnit = [{ id: 'b1', name: "Jersey Mike's" }] } = {}) {
+  const queries = [], accessFor = [];
   const pool = { async query(sql, params) {
     queries.push(sql);
-    if (/FROM available_units u LEFT JOIN crm_properties p/.test(sql)) return { rows: [{ id: 'u1', unit_name: 'Unit 12', property_id: 'p1', property_name: 'Bluewater' }] };
-    if (/JOIN unit_marketing_files f ON f\.id = u\.hots_final_file_id AND f\.unit_id = u\.id/.test(sql)) return { rows: file ? [{ file_path: file }] : [] };
+    if (/FROM available_units u LEFT JOIN crm_properties p/.test(sql)) return { rows: unit ? [{ id: 'u1', unit_name: 'Unit 12', property_id: 'p1', property_name: 'Bluewater' }] : [] };
+    if (/SELECT name FROM crm_properties WHERE id = \$1/.test(sql)) return { rows: property ? [{ name: 'Bluewater' }] : [] };
+    if (/FROM users WHERE lower\(email\) LIKE/.test(sql)) return { rows: [{ name: 'Woody Bruce' }] };
     return { rows: [] };
   } };
   const mod = load('server/unit-note-reader.ts', {
     zod, '@shared/letting-note': lettingNote, '@shared/letting-note-parse': noteParse, '@shared/calendar-date': calendarDate,
     './db': { pool },
-    './unit-brief-workspace': { briefAccess: async () => access },
-    './document-reader': { readDocumentForAI: async args => { docReads.push(args); return docText == null ? { ok: true, error: 'Extraction failed: no text layer' } : { ok: true, text: docText }; } },
-    './unit-negotiation': { brandsOnUnit: async () => [{ id: 'b1', name: "Jersey Mike's" }] },
+    './unit-brief-workspace': { briefAccess: async (_req, propertyId) => { accessFor.push(propertyId); return access; } },
+    './unit-negotiation': { brandsOnUnit: async () => onUnit },
   }, { process: { env: {} } });   // no provider key: the rules read it alone
   let handler;
-  mod.setupUnitNoteReaderRoutes({ post(url, ...handlers) { if (url === '/api/unit-offers/unit/:unitId/read-note') handler = handlers.at(-1); } });
+  mod.setupUnitNoteReaderRoutes({ post(url, ...handlers) { if (url === '/api/deal-notes/read') handler = handlers.at(-1); } });
+  assert.ok(handler, 'the deal note route is registered');
   const res = response();
-  await handler({ params: { unitId: 'u1' }, body }, res);
-  return { res, body: plain(res.body ?? null), queries, docReads, mod };
+  await handler({ body }, res);
+  return { res, body: plain(res.body ?? null), queries, accessFor };
 }
 
-test('the final Heads of Terms are read from the file on the unit, as a note written out in full: nothing fills but a brand on the unit', async () => {
-  const { res, body, docReads, mod } = await readHots();
+test('the box reads a tight note for a New Deal with only a property: the terms fill, read as an offer', async () => {
+  const { res, body, accessFor, queries } = await readDealNote();
   assert.equal(res.statusCode, 200, JSON.stringify(body));
-  assert.deepEqual(plain(docReads), [{ storageKey: 'marketing-files/final-hots.pdf', includePageImages: false, maxTextChars: 40000 }]);
-  // Prose: Claude's reading and the rules' never fill a term by themselves. The brand on the unit, found alone, may.
-  assert.deepEqual(body.fields, { brandName: "Jersey Mike's", brandId: 'b1' });
-  const unsure = field => (body.unsure || []).filter(u => u.field === field);
-  assert.ok(unsure('rentPa').some(u => u.value === 120000 && /120,000/.test(u.quote)), JSON.stringify(body.unsure));
-  assert.ok(unsure('termYears').some(u => u.value === 10), 'the lease length to check');
-  assert.ok(unsure('rentFreeMonths').some(u => u.value === 6 && /Rent free: 6 months/.test(u.quote)), 'the rent free to check, with its words');
-  assert.ok(unsure('breakOption').some(u => /year 5/.test(u.value)));
-  // The document is longer than the reader takes: cut, and the read-back says so.
-  assert.ok(body.text.length <= lettingNote.NOTE_MAX);
-  assert.equal(body.reason, `${mod.HOTS_READ_REASON} ${mod.HOTS_CUT_NOTE}`);
+  assert.deepEqual(accessFor, ['p1'], 'access is the property\'s');
+  assert.equal(body.kind, 'offer');
+  assert.deepEqual([body.fields.rentPa, body.fields.termYears, body.fields.rentFreeMonths], [120000, 10, 6]);
+  assert.match(body.fields.breakOption, /year 5/);
   assert.equal(body.usedAi, false);
+  assert.ok(!queries.some(sql => /available_units/.test(sql)), 'no tracker unit is looked up without one');
 });
 
-test('a short Heads of Terms is not said to be cut; a document with no text says so; none on the unit is a 404', async () => {
-  const short = await readHots({ docText: 'Heads of Terms. Tenant: Jersey Mike\'s. Term: 10 years. Rent: £120,000 per annum exclusive. Rent free: 6 months.' });
-  assert.equal(short.res.statusCode, 200);
-  assert.equal(short.body.reason, short.mod.HOTS_READ_REASON);
-  const blank = await readHots({ docText: null });
-  assert.equal(blank.res.statusCode, 422);
-  assert.match(blank.body.message, /No text could be read/);
-  const none = await readHots({ file: null });
-  assert.equal(none.res.statusCode, 404);
-  assert.match(none.body.message, /no final Heads of Terms on this unit/);
-  assert.equal(none.docReads.length, 0);
+test('with the tracker unit the brands on the unit are the brands, and its property decides access', async () => {
+  const { res, body, accessFor } = await readDealNote({ body: { text: `Jersey Mike's. ${TIGHT}`, trackerUnitId: 'u1' } });
+  assert.equal(res.statusCode, 200, JSON.stringify(body));
+  assert.deepEqual(accessFor, ['p1']);
+  assert.equal(body.fields.brandName, "Jersey Mike's");
+  assert.equal(body.fields.brandId, 'b1');
+  assert.equal(body.fields.rentPa, 120000);
 });
 
-test('only the agents who file the Heads of Terms may have them read: anyone else is refused before the file is looked up', async () => {
-  const { res, queries, docReads } = await readHots({ access: CLIENT });
-  assert.equal(res.statusCode, 403);
-  assert.equal(docReads.length, 0);
-  assert.ok(!queries.some(sql => /unit_marketing_files/.test(sql)));
-  // And a request may only name the source: never its words, never which file.
-  assert.equal((await readHots({ body: { kind: 'offer', source: { type: 'hots_final', fileId: 'other-unit-file' } } })).res.statusCode, 400);
-  assert.equal((await readHots({ body: { kind: 'offer', source: { type: 'hots_final', text: 'Rent £1 pax' } } })).res.statusCode, 400);
+test('only BGP staff signed in as themselves: a client login, or staff viewing as a client, is refused before anything is read', async () => {
+  for (const access of [CLIENT, VIEWING_AS_CLIENT, null]) {
+    const { res, queries } = await readDealNote({ access });
+    assert.equal(res.statusCode, 403, JSON.stringify(access));
+    assert.ok(!queries.some(sql => /FROM users/.test(sql)), 'the staff list is never read for them');
+  }
 });
 
-test('the route reads the Heads of Terms after the unit and the scheme checks, and the reader still saves nothing', () => {
+test('an unknown unit or property is a 404; the body takes the note and where the deal is, and nothing else', async () => {
+  assert.equal((await readDealNote({ body: { text: TIGHT, trackerUnitId: 'gone' }, unit: false })).res.statusCode, 404);
+  assert.equal((await readDealNote({ body: { text: TIGHT, propertyId: 'gone' }, property: false })).res.statusCode, 404);
+  assert.equal((await readDealNote({ body: { text: TIGHT, kind: 'offer' } })).res.statusCode, 400, 'a strict body');
+  assert.equal((await readDealNote({ body: { text: TIGHT, source: { type: 'target_comment', targetId: 't', at: 'x' } } })).res.statusCode, 400);
+  const long = await readDealNote({ body: { text: 'x'.repeat(lettingNote.NOTE_MAX + 1) } });
+  assert.equal(long.res.statusCode, 400);
+  assert.match(long.body.message, /too long/);
+  assert.equal((await readDealNote({ body: { text: '   ' } })).res.statusCode, 400);
+});
+
+test('the reader keeps one read of the users table and saves nothing; client logins never reach the route', () => {
   const reader = source('server/unit-note-reader.ts');
-  const at = needle => { const i = reader.indexOf(needle); assert.ok(i > 0, needle); return i; };
-  const order = [at('briefAccess(req, unit.property_id)'), at('readNoteBody.safeParse'), at('if (body.source?.type === "hots_final")'),
-    at('if (!access.agentControl) return res.status(403)'), at('JOIN unit_marketing_files f ON f.id = u.hots_final_file_id'), at('readDocumentForAI({'), at('readLettingNote({')];
-  assert.deepEqual([...order].sort((a, b) => a - b), order);
+  assert.equal(reader.split('FROM users').length - 1, 1);
   assert.doesNotMatch(reader, /\b(?:INSERT|UPDATE|DELETE)\b/);
-  assert.match(reader, /includePageImages: false/);
+  assert.doesNotMatch(reader, /hots_final|readDocumentForAI/, 'a Heads of Terms document is read by the deal form\'s HOTs parser, not this reader');
+  for (const list of ['CLIENT_ALLOWED_WRITES', 'CLIENT_ALLOWED_API']) {
+    assert.doesNotMatch(find('server/index.ts', (node, ast) => ts.isVariableDeclaration(node) && node.name.getText(ast) === list), /deal-notes/, list);
+  }
 });
 
 // ── Create billing entity ────────────────────────────────────────────────────
@@ -286,65 +286,113 @@ test('the billing entity route is registered, and the client gateway lets no cli
   }
 });
 
-// ── The form ─────────────────────────────────────────────────────────────────
+// ── The one form ─────────────────────────────────────────────────────────────
 
-function promoteMapper() {
-  const v = name => constant(PAGE, name);
-  const state = { form: { tenantId: 'old', tenantName: 'Old Brand', tenantEntityId: 'xero-old', tenantEntityName: 'OLD LIMITED', askingRent: '100000', leaseLength: '5', rentFree: '', targetDate: '2027-01-31', comments: 'Bluewater — Unit 12' }, hint: undefined };
-  const { applyPromoteNote } = evaluate([v('noteName'), v('noteDay'), v('noteNumber'), v('oneByName'), v('noteCompany'), v('addNoteLines'), v('noteAgentLine'), v('applyPromoteNote'),
-    'exports.applyPromoteNote = applyPromoteNote;'].join('\n'), {
-    wipUnit: { id: 'u1' },
-    offersByUnit: { u1: [{ companyId: 'b1' }] }, viewingsByUnit: { u1: [] }, interestByUnit: { u1: [{ companyId: 'b2' }] },
-    crmCompanies: [{ id: 'b1', name: "Jersey Mike's" }, { id: 'b2', name: 'Pho' }, { id: 'b3', name: 'Dishoom' }],
-    setWipForm: update => { state.form = typeof update === 'function' ? update(state.form) : update; },
-    setWipBrandHint: hint => { state.hint = hint; },
-    formatCalendarDate: calendarDate.formatCalendarDate,
-  });
-  const apply = fields => applyPromoteNote({ kind: 'offer', text: '', fields, quotes: {}, unplaced: [], dropped: [], saidBy: null, usedAi: false });
-  return { apply, state };
+const FORM = { tenantId: 'old', tenantEntityId: 'xero-old', tenantEntityName: 'OLD LIMITED', rentPa: '100000', leaseLength: '5', rentFree: '', breakOption: '', capitalContribution: '', comments: 'Finance: invoice the landlord' };
+const TENANTS = [{ id: 'b1', name: "Jersey Mike's" }, { id: 'b2', name: 'Pho' }, { id: 'b3', name: 'Pho' }];
+const reading = fields => ({ kind: 'offer', text: '', fields, quotes: {}, unplaced: [], dropped: [], saidBy: null, usedAi: false });
+
+test('a reading fills the rent, the lease terms and the capital contribution; anything with no box goes into Comments once', () => {
+  const { patch, brandHint } = dealNotePatch(FORM, reading({ rentPa: 120000, termYears: 10, rentFreeMonths: 6, breakOption: 'Tenant break at year 5', fittingOutContribution: 50000, turnoverRentPct: 9, premium: 25000, date: '2026-11-09' }), TENANTS);
+  assert.deepEqual([patch.rentPa, patch.leaseLength, patch.rentFree, patch.breakOption, patch.capitalContribution], ['120000', '10', '6', 'Tenant break at year 5', '50000']);
+  assert.equal(patch.comments, 'Finance: invoice the landlord\nTurnover rent: 9%\nPremium: £25,000\nDated 9 Nov 2026');
+  assert.equal(brandHint, undefined, 'no brand named');
+  assert.ok(!('tenantId' in patch));
+  // One value (Use): only that box changes; a line already there is not added twice.
+  assert.deepEqual(dealNotePatch(FORM, reading({ rentPa: 95000 }), TENANTS).patch, { rentPa: '95000' });
+  assert.equal(addCommentLines('Premium: £25,000', ['Premium: £25,000', 'Contact: Sam']), 'Premium: £25,000\nContact: Sam');
+});
+
+test('the tenant is taken only when the picker lists it, by id or one exact name; an offer\'s date is never the target date', () => {
+  const byId = dealNotePatch(FORM, reading({ brandName: "Jersey Mike's", brandId: 'b1' }), TENANTS);
+  assert.deepEqual(byId.patch, { tenantId: 'b1', tenantEntityId: '', tenantEntityName: '' });
+  assert.equal(byId.brandHint, null);
+  const unknown = dealNotePatch(FORM, reading({ brandName: 'Dishoom' }), TENANTS);
+  assert.ok(!('tenantId' in unknown.patch));
+  assert.equal(unknown.brandHint, 'Dishoom');
+  assert.equal(noteTenant(reading({ brandName: 'pho' }), TENANTS), null, 'two tenants by that name: neither');
+  assert.equal(dealNotePatch({ ...FORM, tenantId: 'b1' }, reading({ brandId: 'b1', brandName: "Jersey Mike's" }), TENANTS).patch.tenantId, undefined, 'the same tenant keeps its billing entity');
+  assert.ok(!('targetDate' in dealNotePatch(FORM, reading({ date: '2027-03-01' }), TENANTS).patch));
+});
+
+function handoverForm() {
+  const empty = { name: '', status: '', dealType: '', propertyId: '', unitId: '', landlordId: '', tenantId: '', tenantEntityId: '', tenantEntityName: '', fee: '', rentPa: '', totalAreaSqft: '', leaseLength: '', rentFree: '', breakOption: '', capitalContribution: '' };
+  return evaluate(fn(DEALS, 'handoverForm'), {
+    dealToForm: deal => ({ ...empty, ...deal }), emptyForm: empty,
+    LEGACY_LETTING_TYPES: lettingRules.LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE: lettingRules.DEFAULT_LETTING_TYPE,
+  }).handoverForm;
 }
 
-test('a reading fills the rent, the lease length and the rent free; a break goes into the Notes as a line; nothing else moves', () => {
-  const { apply, state } = promoteMapper();
-  apply({ rentPa: 120000, termYears: 10, rentFreeMonths: 6, breakOption: 'Tenant break at year 5' });
-  assert.deepEqual([state.form.askingRent, state.form.leaseLength, state.form.rentFree], ['120000', '10', '6']);
-  assert.equal(state.form.comments, 'Bluewater — Unit 12\nBreak: Tenant break at year 5');
-  assert.equal(state.form.tenantId, 'old');
-  assert.equal(state.form.targetDate, '2027-01-31');
-  // One value at a time (Use): only that box. The same line is never added twice.
-  apply({ rentPa: 95000 });
-  assert.deepEqual([state.form.askingRent, state.form.leaseLength], ['95000', '10']);
-  apply({ breakOption: 'Tenant break at year 5' });
-  assert.equal(state.form.comments, 'Bluewater — Unit 12\nBreak: Tenant break at year 5');
+test('a handover opens on the unit\'s own deal at Solicitors, with the unit\'s figures and the property\'s landlord where the deal has none', () => {
+  const start = handoverForm();
+  const unit = { id: 'row-1', unitName: 'Unit 12', propertyId: 'p1', propertyName: 'Bluewater', propertyUnitId: 'pu-1', dealId: 'd1', fee: 12000, askingRent: 150000, sqft: 2450 };
+  const f = plain(start({ name: 'Bluewater – Unit 12', status: 'NEG', dealType: 'Leasing', propertyId: 'p1', fee: '9000' }, { kind: 'promote', unit }, 'landlord-1'));
+  assert.equal(f.status, 'SOL');
+  assert.equal(f.dealType, lettingRules.DEFAULT_LETTING_TYPE, 'a legacy letting label reads as New Letting');
+  assert.deepEqual([f.fee, f.rentPa, f.totalAreaSqft, f.landlordId, f.unitId, f.name], ['9000', '150000', '2450', 'landlord-1', 'pu-1', 'Bluewater – Unit 12']);
+  // A tracker row with no deal yet: named after the place.
+  assert.equal(plain(start(null, { kind: 'promote', unit: { ...unit, dealId: null } }, null)).name, 'Bluewater – Unit 12');
 });
 
-test('the tenant brand is taken only when it is already on the unit; an offer\'s date is a line, never the target completion date', () => {
-  const { apply, state } = promoteMapper();
-  apply({ brandName: 'Dishoom' });
-  assert.equal(state.form.tenantId, 'old', 'a brand not on the unit is never picked');
-  assert.equal(state.hint, 'Dishoom');
-  apply({ brandName: "Jersey Mike's", brandId: 'b1' });
-  assert.deepEqual([state.form.tenantId, state.form.tenantName, state.form.tenantEntityId, state.form.tenantEntityName], ['b1', "Jersey Mike's", '', '']);
-  assert.equal(state.hint, null);
-  apply({ brandName: 'pho' });
-  assert.equal(state.form.tenantId, 'b2', 'one exact name among the unit\'s brands');
-  apply({ date: '2026-11-09', premium: 25000, fittingOutContribution: 50000, turnoverRentPct: 9 });
-  assert.equal(state.form.targetDate, '2027-01-31');
-  assert.match(state.form.comments, /\nDated 9 Nov 2026/);
-  assert.match(state.form.comments, /\nPremium: £25,000\nCapital contribution: £50,000/);
-  assert.match(state.form.comments, /\nTurnover rent: 9%/);
+test('a Heads of Terms convert starts from the agreed offer\'s tenant and terms; a new tenant drops the old billing entity', () => {
+  const start = handoverForm();
+  const unit = { id: 'row-1', unitName: 'Unit 12', propertyId: 'p1', dealId: 'd1' };
+  const defaults = { tenantCompanyId: 'b1', tenantName: "Jersey Mike's", rentPa: 120000, leaseLengthYears: 10, rentFreeMonths: 6, breakOption: 'Tenant break at year 5', capitalContribution: 50000 };
+  const f = plain(start({ tenantId: 'b9', tenantEntityId: 'xero-9', tenantEntityName: 'OLD', rentPa: '100000' }, { kind: 'hots', unit, defaults, onConverted() {} }, null));
+  assert.deepEqual([f.tenantId, f.tenantEntityId, f.tenantEntityName], ['b1', '', '']);
+  assert.deepEqual([f.rentPa, f.leaseLength, f.rentFree, f.breakOption, f.capitalContribution], ['120000', '10', '6', 'Tenant break at year 5', '50000']);
+  const same = plain(start({ tenantId: 'b1', tenantEntityId: 'xero-1', tenantEntityName: 'JERSEY MIKE\'S UK LIMITED' }, { kind: 'hots', unit, defaults, onConverted() {} }, null));
+  assert.equal(same.tenantEntityId, 'xero-1', 'the same tenant keeps its billing entity');
 });
 
-test('the Promote box reads its Notes with the shared box as an offer, new words only, and files Add HOTs through the HOTs flow before reading them', () => {
-  const page = source(PAGE);
-  assert.match(page, /<FillFromNotes key=\{`promote:\$\{wipUnit\?\.id \|\| ""\}`\} kind="offer" unitId=\{wipUnit\?\.id\} word="notes" newWordsOnly\s+text=\{wipForm\.comments\} keepText=\{v => setWipForm\(f => \(\{ \.\.\.f, comments: v \}\)\)\} onApply=\{applyPromoteNote\}>/);
-  assert.match(page, /hotsCall<HotsWorkspace>\("POST", `\/api\/unit-hots\/\$\{encodeURIComponent\(unit\.id\)\}\/final`, fd\)/);
-  assert.match(page, /<NoteFill key=\{reading\.key\} kind="offer" unitId=\{wipUnit\.id\} source=\{\{ type: "hots_final" \}\} autoRead autoApply onApply=\{applyPromoteNote\} \/>/);
-  assert.match(page, /accept="\.pdf,\.docx"[^\n]*data-testid="wip-hots-file"/);
-  // The tenant's billing picker offers Create billing entity under the tenant brand picked.
-  assert.match(page, /createFor=\{wipForm\.tenantId \? \{ id: wipForm\.tenantId, name: wipForm\.tenantName \|\| "the tenant brand" \} : null\}/);
-  // The compliance and AML parts of the box are untouched.
-  assert.match(page, /if \(wipForm\.amlChecked !== "YES" && wipForm\.amlChecked !== "N-A"\) softMissing\.push\("AML \/ KYC checked"\);/);
+test('the Letting Tracker\'s move to Solicitors opens the one form on the unit\'s deal; the old Promote box is gone', () => {
+  const page = source(TRACKER);
+  assert.match(page, /import \{ DealHandoverDialog \} from "@\/pages\/deals";/);
+  assert.match(page, /if \(field === "marketingStatus" && legacyToCode\(value\) === "SOL" && !isClientTracker\) \{[\s\S]{0,120}setPromoteUnit\(unit\);/);
+  assert.match(page, /<DealHandoverDialog\s+open=\{!!promoteUnit\}/);
+  assert.match(page, /kind: "promote",\s+unit: \{\s+id: promoteUnit\.id,/);
+  for (const gone of ['wipForm', 'wipDealMutation', 'applyPromoteNote', '/create-deal`']) assert.ok(!page.includes(gone), gone);
+});
+
+test('the Heads of Terms\' convert opens the one form for BGP staff; a joint agent keeps the short form with no CRM picking', () => {
+  const ws = source(HOTS);
+  assert.match(ws, /viewer\.canConvert && ws\.convertDefaults && viewer\.isStaff \? \(/);
+  assert.match(ws, /data-testid="hots-convert-start"/);
+  assert.match(ws, /<HotsConvertForm defaults=\{ws\.convertDefaults\} busy=\{busy === "convert"\} onConvert=\{convert\} crmPicker=\{false\} \/>/);
+  assert.match(ws, /kind: "hots",[\s\S]{0,400}onConverted: out => \{ setConverted\(out\); afterWrite\(true\); \},/);
+});
+
+test('a handover saves through the unit\'s own deal: Solicitors on the deal\'s save, or the Heads of Terms\' convert for the terms, never a new deal', () => {
+  const save = constant(DEALS, 'saveHandover');
+  assert.match(save, /payload\.status = "SOL";\s+if \(!dealId\) \{/);
+  assert.match(save, /`\/api\/available-units\/\$\{encodeURIComponent\(h\.unit\.id\)\}\/ensure-deal`/, 'a tracker row with no deal is given its deal by the tracker\'s own door first');
+  assert.match(save, /const res = await apiRequest\("PUT", `\/api\/crm\/deals\/\$\{dealId\}`, payload\);\s+const warned = res\.headers\.get\("X-AML-Warning"\);/);
+  assert.ok(!save.includes('/create-deal'), 'the old Promote route is not used');
+  assert.match(save, /for \(const key of \["tenantId", "rentPa", "leaseLength", "rentFree", "breakOption", "capitalContribution"\]\) delete payload\[key\];\s+if \(dealId\) await apiRequest\("PUT", `\/api\/crm\/deals\/\$\{dealId\}`, payload\);/);
+  assert.match(save, /hotsCall<HotsConversion>\("POST", `\/api\/unit-hots\/\$\{encodeURIComponent\(h\.unit\.id\)\}\/convert`, terms\)/);
+  assert.match(save, /delete payload\.internalAgent;/, 'BGP Contact follows the fee split\'s own save');
+  assert.ok(!save.includes('postDeal'), 'a handover never creates a deal');
+});
+
+test('the form: the box at the top, Create billing entity on the tenant, Add heads of terms files on the unit, the lease terms', () => {
+  const page = source(DEALS);
+  assert.match(page, /readUrl="\/api\/deal-notes\/read"\s+readExtra=\{\{ propertyId: form\.propertyId \|\| null, trackerUnitId: handover\?\.unit\.id \|\| null \}\}/);
+  assert.match(page, /\{!isEdit && !isClientCreate && form\.dealType !== "Consultant" && \(\s+<NoteFill/, 'staff only, never on the edit form');
+  assert.match(page, /createFor=\{hideFees \? null : \{ id: form\.tenantId, name: companies\.find\(c => c\.id === form\.tenantId\)\?\.name \|\| "the tenant brand" \}\}/);
+  assert.match(page, /await hotsCall\("POST", `\/api\/unit-hots\/\$\{encodeURIComponent\(hotsUnitId\)\}\/final`, filing\);/);
+  assert.match(page, /const patch: Record<string, any> = place \? \{\} : \{ status: "HOT" \};/, 'a handover stays at Solicitors when its HOTs are read');
+  assert.match(page, /data-testid="deal-lease-terms"/);
+  assert.match(page, /\{!isEdit && !isClientCreate && !handover && \(\s+<Button/, 'no Show all fields on a handover');
+  // The save keeps a worded break and a total area with no floor areas.
+  const toPayload = fn(DEALS, 'formToPayload');
+  assert.match(toPayload, /breakOption: form\.breakOption\.trim\(\) \|\| null,/);
+  assert.match(toPayload, /return t > 0 \? t : parseNum\(form\.totalAreaSqft\);/);
+});
+
+test('New Deal for a unit live on the tracker before Solicitors opens that unit\'s own deal in the form, never a second deal', () => {
+  const page = source(DEALS);
+  assert.match(page, /if \(row\.trackerRowId && code && \(\[\.\.\.PRE_MARKETING_STATUSES, "AVA", "NEG", "HOT"\] as string\[\]\)\.includes\(code\)\) \{\s+setMoveTo\(/);
+  assert.match(page, /\{!deal && !handover && \(\s+<DealHandoverDialog open=\{!!moveTo\}/);
 });
 
 test('the final Heads of Terms upload the box uses files the document as hots_final and moves no status', () => {
@@ -352,14 +400,6 @@ test('the final Heads of Terms upload the box uses files the document as hots_fi
   assert.match(upload, /if \(!access\.agentControl\) return res\.status\(403\)/);
   assert.match(upload, /VALUES \(\$1, \$2, \$3, 'hots_final', \$4, \$5, 'other'\)/);
   assert.doesNotMatch(upload, /moveUnitStatus|marketingStatus|marketing_status|updateDeal|crm_deals/);
-});
-
-test('the shared note box names a Heads of Terms source and, where asked, reads only the words typed after the ones a box opened with', () => {
-  const box = source('client/src/components/letting-note/note-fill.tsx');
-  assert.match(box, /const doc = source\?\.type === "hots_final";/);
-  assert.match(box, /\{reading\?\.text && !doc && /, 'a whole document is not printed in the box');
-  assert.match(box, /return newWordsOnly && opening\.current && now\.startsWith\(opening\.current\) \? now\.slice\(opening\.current\.length\)\.trim\(\) : now;/);
-  assert.match(box, /const said = toRead\(now\);\s+if \(!said\) return;/);
 });
 
 test('the Xero picker says plainly a company is not in Xero yet when the firm link answers, keeps the reconnect advice for a real problem, and creates only with a brand', () => {

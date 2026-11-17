@@ -1,7 +1,11 @@
 // "Drop a note in, fill the form" (Woody, 2026-11-13; shared/letting-note.ts).
-// One read-only route:
+// Two read-only routes:
 //
 //   POST /api/unit-offers/unit/:unitId/read-note   { kind, text | source, offerId? }
+//   POST /api/deal-notes/read                      { text, propertyId?, trackerUnitId? }
+//
+// The second is the one deal form's box at the top (2026-11-17): a note read
+// as an offer for a deal that may have no tracker unit yet, BGP staff only.
 //
 // It reads a plain note ("Offered: 15 year lease. Rent £120kpax and 9% t/o.
 // 6 MRF") into the fields of an offer, a negotiation round, a viewing, a
@@ -33,13 +37,6 @@
 // the same". So it reads a note as any Landsec login does.) A target's comment log is
 // BGP's own notes: only a BGP login reads it, and every other login gets the
 // same refusal whether or not the comment exists.
-//
-// The unit's final agreed Heads of Terms are a source too (`hots_final`,
-// Woody, 2026-11-17: "allow for add HOTs which should also then file and
-// populate", for the Promote to Solicitors box): the agents who file them
-// (agentControl) may have them read. The server takes the document's text from
-// the file on the unit, cuts it to NOTE_MAX and reads it as any note written
-// out in full: nothing but a sure date, time or brand on the unit fills.
 //
 // BGP's staff list stays closed to every other login: the reader of a login
 // that is not BGP staff is told only that login's own name, so no reply can
@@ -325,11 +322,7 @@ export async function readLettingNote(input: ReadNoteInput, deps: NoteReaderDeps
 export const readNoteBody = z.object({
   kind: z.enum(NOTE_KINDS),
   text: z.string().max(NOTE_MAX).optional(),
-  source: z.discriminatedUnion("type", [
-    z.object({ type: z.literal("target_comment"), targetId: z.string().min(1).max(200), at: z.string().min(1).max(100) }).strict(),
-    // The unit's final Heads of Terms: nothing but the type, the server finds the file.
-    z.object({ type: z.literal("hots_final") }).strict(),
-  ]).optional(),
+  source: z.object({ type: z.literal("target_comment"), targetId: z.string().min(1).max(200), at: z.string().min(1).max(100) }).strict().optional(),
   offerId: z.string().min(1).max(200).optional(),
 }).strict().refine(b => (b.text === undefined) !== (b.source === undefined), "Send a note to read, or name the comment to read, not both.");
 
@@ -405,16 +398,57 @@ async function resolveAgentFirm(db: Db, name: string): Promise<Brand | null> {
   return rows.length === 1 ? rows[0] : null;
 }
 
+// BGP's staff list is read for BGP staff only, and only logins still in use.
+// The one read of the users table, shared by both routes.
+async function staffNamesFor(pool: Db, access: Access): Promise<string[]> {
+  return access.isStaff
+    ? (await pool.query(`SELECT name FROM users WHERE lower(email) LIKE $1 AND name IS NOT NULL AND is_active IS NOT FALSE`, [`%${BGP_EMAIL_DOMAIN}`])).rows.map((r: any) => String(r.name || ""))
+    : [];
+}
+
+// The brands a pasted note names, made into brands this login may already
+// pick (resolveBrand). A name that opens the note and is exactly one such
+// brand is the brand, not who wrote it, on a tight note only (no `reason`):
+// otherwise the rules' guess is listed to check, never filled.
+async function placeNamedBrands(pool: Db, reading: LettingNoteReading, onUnit: Brand[], access: Access, teamNames: readonly string[], boxes: readonly LettingNoteField[]): Promise<void> {
+  const fields = reading.fields;
+  if (reading.saidBy && boxes.includes("brandName") && !fields.brandName && !teamNames.some(n => n.trim().toLowerCase() === reading.saidBy!.trim().toLowerCase())) {
+    const opener = reading.saidBy;
+    const brand = await resolveBrand(pool, opener, onUnit, access);
+    if (!reading.reason) openerAsBrand(reading, brand, teamNames);
+    else if (brand && reading.unsure && !reading.unsure.some(u => u.field === "brandName")) reading.unsure.push({ field: "brandName", value: brand.name, quote: opener });
+  }
+  if (fields.brandName) {
+    const brand = await resolveBrand(pool, fields.brandName, onUnit, access);
+    if (brand) { fields.brandName = brand.name; fields.brandId = brand.id; }
+  }
+  if (fields.moreBrands?.length) {
+    const more: { id?: string | null; name: string }[] = [];
+    for (const b of fields.moreBrands) {
+      const brand = await resolveBrand(pool, b.name, onUnit, access);
+      more.push(brand ? { id: brand.id, name: brand.name } : { name: b.name });
+    }
+    fields.moreBrands = more;
+  }
+}
+
+// The agent's firm from BGP's CRM: BGP staff only, and only on one exact match.
+async function placeAgentFirm(pool: Db, fields: LettingNoteFields, access: Access, boxes: readonly LettingNoteField[]): Promise<void> {
+  if (!access.isStaff || access.scope || !boxes.includes("agentCompanyId")) return;
+  const named = fields.agentCompanyName || fields.agentName;
+  const firm = named ? await resolveAgentFirm(pool, named) : null;
+  if (firm) { fields.agentCompanyName = firm.name; fields.agentCompanyId = firm.id; }
+}
+
+/** What the deal form's box sends: the note, and where the deal is (a tracker unit, a property, or neither yet). */
+export const dealNoteBody = z.object({
+  text: z.string().max(NOTE_MAX),
+  propertyId: z.string().min(1).max(200).nullish(),
+  trackerUnitId: z.string().min(1).max(200).nullish(),
+}).strict();
+
 const NOT_ON_THIS_LOGIN = "Reading that is not available on this login.";
 const COMMENT_GONE = "That comment is no longer there. Refresh the tracker and try again.";
-const HOTS_GONE = "There are no final Heads of Terms on this unit. Add them first.";
-const HOTS_NO_TEXT = "No text could be read from the Heads of Terms (a scanned PDF has none). Fill the form by hand.";
-// How much of a Heads of Terms document is taken from the file before it is cut to NOTE_MAX.
-const HOTS_TEXT_MAX = 40_000;
-/** Said when the final Heads of Terms were read: a document written out in full fills only a date, a time or a brand on the unit. */
-export const HOTS_READ_REASON = "The Heads of Terms are written out in full, so only a date, a time or a brand already on the unit was filled from them. What was read is listed below: check each one and press Use to put it in the form.";
-/** Added when the document was longer than the reader takes. */
-export const HOTS_CUT_NOTE = `Only the first ${NOTE_MAX.toLocaleString("en-GB")} characters of the document were read.`;
 
 export function setupUnitNoteReaderRoutes(app: Express) {
   const signedIn = (req: Request, res: Response, next: NextFunction) => {
@@ -446,26 +480,7 @@ export function setupUnitNoteReaderRoutes(app: Express) {
       let text = cleanNote(body.text || "");
       let author: string | null = null;
       let fromTarget: { brand: Brand | null; operatorName: string; day: string | null } | null = null;
-      let fromHots: { cut: boolean } | null = null;
-      if (body.source?.type === "hots_final") {
-        // The unit's final agreed Heads of Terms, filed by the HOTs flow
-        // (never public). Read for the agents running the letting, the logins
-        // that file them: BGP staff and the scheme's joint agent. A document is
-        // prose, so the reader fills only what guardReading allows and lists
-        // the rest to check, as for any note written out in full.
-        if (!access.agentControl) return res.status(403).json({ message: NOT_ON_THIS_LOGIN });
-        const file = (await pool.query(
-          `SELECT f.file_path FROM available_units u
-             JOIN unit_marketing_files f ON f.id = u.hots_final_file_id AND f.unit_id = u.id WHERE u.id = $1`, [unitId])).rows[0];
-        if (!file?.file_path) return res.status(404).json({ message: HOTS_GONE });
-        // The document reader ChatBGP reads brochures with (pdf-parse, mammoth); no page images.
-        const { readDocumentForAI } = await import("./document-reader");
-        const doc = await readDocumentForAI({ storageKey: String(file.file_path).replace(/^\/uploads\//, ""), includePageImages: false, maxTextChars: HOTS_TEXT_MAX });
-        const whole = doc.ok && !doc.error ? cleanNote(doc.text || "") : "";
-        if (!whole) return res.status(422).json({ message: HOTS_NO_TEXT });
-        text = whole.slice(0, NOTE_MAX);
-        fromHots = { cut: whole.length > NOTE_MAX || !!doc.textTruncated };
-      } else if (body.source?.type === "target_comment") {
+      if (body.source?.type === "target_comment") {
         const comment = body.source;
         // A target's comments are BGP's notes. Refused before anything is
         // looked up, so the answer is the same whether the comment exists or not.
@@ -493,10 +508,7 @@ export function setupUnitNoteReaderRoutes(app: Express) {
 
       const { brandsOnUnit } = await import("./unit-negotiation");
       const onUnit = await brandsOnUnit(unitId);
-      // BGP's staff list is read for BGP staff only, and only logins still in use.
-      const staff: string[] = access.isStaff
-        ? (await pool.query(`SELECT name FROM users WHERE lower(email) LIKE $1 AND name IS NOT NULL AND is_active IS NOT FALSE`, [`%${BGP_EMAIL_DOMAIN}`])).rows.map((r: any) => String(r.name || ""))
-        : [];
+      const staff: string[] = await staffNamesFor(pool, access);
       // A comment's "yesterday" and "12 Jan" are placed from the day it was written, not from today.
       const writtenOn = fromTarget?.day && calendarDateValue(fromTarget.day) === fromTarget.day && fromTarget.day <= today ? fromTarget.day : null;
 
@@ -523,38 +535,59 @@ export function setupUnitNoteReaderRoutes(app: Express) {
         const day = boxes.includes("date") ? commentDayFor(reading, fromTarget.day, today) : null;
         if (day) fields.date = day;
       } else {
-        // A name that opens the note and is exactly one brand this login may pick is the brand, not who wrote it.
-        // On a tight note only (no `reason`): otherwise the rules' guess is listed to check, never filled.
-        if (reading.saidBy && boxes.includes("brandName") && !fields.brandName && !teamNames.some(n => n.trim().toLowerCase() === reading.saidBy!.trim().toLowerCase())) {
-          const opener = reading.saidBy;
-          const brand = await resolveBrand(pool, opener, onUnit, access);
-          if (!reading.reason) openerAsBrand(reading, brand, teamNames);
-          else if (brand && reading.unsure && !reading.unsure.some(u => u.field === "brandName")) reading.unsure.push({ field: "brandName", value: brand.name, quote: opener });
-        }
-        if (fields.brandName) {
-          const brand = await resolveBrand(pool, fields.brandName, onUnit, access);
-          if (brand) { fields.brandName = brand.name; fields.brandId = brand.id; }
-        }
-        if (fields.moreBrands?.length) {
-          const more: { id?: string | null; name: string }[] = [];
-          for (const b of fields.moreBrands) {
-            const brand = await resolveBrand(pool, b.name, onUnit, access);
-            more.push(brand ? { id: brand.id, name: brand.name } : { name: b.name });
-          }
-          fields.moreBrands = more;
-        }
+        await placeNamedBrands(pool, reading, onUnit, access, teamNames, boxes);
       }
-      // The agent's firm from BGP's CRM: BGP staff only, and only on one exact match.
-      if (access.isStaff && !access.scope && boxes.includes("agentCompanyId")) {
-        const named = fields.agentCompanyName || fields.agentName;
-        const firm = named ? await resolveAgentFirm(pool, named) : null;
-        if (firm) { fields.agentCompanyName = firm.name; fields.agentCompanyId = firm.id; }
-      }
-      // The read-back says it read a document, and how much of it.
-      if (fromHots && reading.reason) reading.reason = fromHots.cut ? `${HOTS_READ_REASON} ${HOTS_CUT_NOTE}` : HOTS_READ_REASON;
+      await placeAgentFirm(pool, fields, access, boxes);
       res.json(reading);
     } catch (err: any) {
       console.error("[unit-note-reader] read failed:", err?.message || err);
+      res.status(500).json({ message: "The note could not be read. Fill the form in yourself, or try again in a moment." });
+    }
+  });
+
+  // The one deal form's box at the top (Woody, 2026-11-17: "the type it and
+  // AI fills in ability in a new box at the top"), on New Deal, Promote to
+  // Solicitors and the Heads of Terms' Convert to Solicitors. The same reader,
+  // read as an offer, for a deal that may have no tracker unit yet: the unit's
+  // brands when the form names one, else only the brands the login may pick.
+  // BGP staff signed in as themselves only, as the deal form's other readers.
+  app.post("/api/deal-notes/read", signedIn, async (req: Request, res: Response) => {
+    try {
+      const parsed = dealNoteBody.safeParse(req.body);
+      if (!parsed.success) {
+        const tooLong = parsed.error.issues.some(i => i.path[0] === "text" && i.code === "too_big");
+        return res.status(400).json({ message: tooLong ? `The note is too long. Keep it to ${NOTE_MAX} characters.` : "Type a note to read." });
+      }
+      const { pool } = await import("./db");
+      const body = parsed.data;
+      const unit = body.trackerUnitId ? (await pool.query(
+        `SELECT u.id, u.unit_name, u.property_id, p.name AS property_name
+           FROM available_units u LEFT JOIN crm_properties p ON p.id = u.property_id WHERE u.id = $1`, [body.trackerUnitId])).rows[0] : null;
+      if (body.trackerUnitId && !unit) return res.status(404).json({ message: "Unit not found" });
+      const propertyId: string | null = unit ? unit.property_id || null : body.propertyId || null;
+      const property = !unit && propertyId ? (await pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [propertyId])).rows[0] : null;
+      if (!unit && propertyId && !property) return res.status(404).json({ message: "Property not found" });
+      const { briefAccess } = await import("./unit-brief-workspace");
+      const access = await briefAccess(req, propertyId);
+      if (!access || !access.isStaff || access.scope) return res.status(403).json({ message: NOT_ON_THIS_LOGIN });
+      const text = cleanNote(body.text);
+      if (!text) return res.status(400).json({ message: "Type a note to read." });
+      const { brandsOnUnit } = await import("./unit-negotiation");
+      const onUnit: Brand[] = unit ? await brandsOnUnit(unit.id) : [];
+      const teamNames = teamNamesFor(access, await staffNamesFor(pool, access));
+      const boxes = NOTE_KIND_FIELDS.offer;
+      const reading = await readLettingNote({
+        kind: "offer", text, today: londonDay(), writtenOn: null,
+        unitName: unit?.unit_name || null, propertyName: unit?.property_name || property?.name || null,
+        brandNames: onUnit.map(b => b.name), pickableBrandNames: onUnit.map(b => b.name),
+        author: null, staffNames: teamNames, userId: access.userId,
+        pickBrand: name => resolveBrand(pool, name, onUnit, access),
+      });
+      await placeNamedBrands(pool, reading, onUnit, access, teamNames, boxes);
+      await placeAgentFirm(pool, reading.fields, access, boxes);
+      res.json(reading);
+    } catch (err: any) {
+      console.error("[unit-note-reader] deal note read failed:", err?.message || err);
       res.status(500).json({ message: "The note could not be read. Fill the form in yourself, or try again in a moment." });
     }
   });

@@ -21,6 +21,7 @@ import { HOTS_TOKENS, type HotsConversion, type HotsSigner, type HotsWorkspace }
 import { HotsError, MICRO_LABEL, TONE_GOOD, TONE_WARN, downloadWithAuth, fmtDate, fmtMoney, hotsCall, listNames } from "./hots-api";
 import { HotsHistory, HotsSignoff } from "./hots-signoff";
 import { HotsConversionResult, HotsConvertForm, type HotsConvertBody } from "./hots-convert";
+import { DealHandoverDialog } from "@/pages/deals";
 
 export interface HotsUnitRef { id: string; unitName: string; propertyId: string | null }
 
@@ -80,6 +81,11 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
   const [showTokens, setShowTokens] = useState(false);
   const [showSigned, setShowSigned] = useState(false);
   const [converted, setConverted] = useState<HotsConversion | null>(null);
+  // BGP staff convert in the one deal form (Woody, 2026-11-17: "in each of
+  // these situations lets have one form its exactly the same"), opened on the
+  // unit's deal with the agreed terms. A joint agent keeps the short form
+  // below: it has no CRM, BGP people or fee to fill.
+  const [convertOpen, setConvertOpen] = useState(false);
   const standardInput = useRef<HTMLInputElement>(null);
   const finalInput = useRef<HTMLInputElement>(null);
 
@@ -637,8 +643,17 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
             </div>
             {conversion ? (
               <HotsConversionResult conversion={conversion} isStaff={viewer.isStaff} />
+            ) : viewer.canConvert && ws.convertDefaults && viewer.isStaff ? (
+              <div className="space-y-2 rounded-lg border p-3" data-testid="hots-convert-open">
+                <h3 className="text-sm font-semibold">Convert to Solicitors</h3>
+                <p className="text-xs text-muted-foreground">
+                  Opens the deal form, the same one as New Deal and Promote to Solicitors, with the agreed offer's tenant and terms filled in.
+                  Saving puts them on the deal, moves the unit and the deal to Solicitors and starts AML.
+                </p>
+                <Button type="button" size="sm" disabled={!!busy} onClick={() => setConvertOpen(true)} data-testid="hots-convert-start">Convert to Solicitors</Button>
+              </div>
             ) : viewer.canConvert && ws.convertDefaults ? (
-              <HotsConvertForm defaults={ws.convertDefaults} busy={busy === "convert"} onConvert={convert} crmPicker={viewer.isStaff} />
+              <HotsConvertForm defaults={ws.convertDefaults} busy={busy === "convert"} onConvert={convert} crmPicker={false} />
             ) : (
               <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground" data-testid="hots-convert-wait">BGP or the joint agent converts the deal to Solicitors now that the final Heads of Terms are on file.</p>
             )}
@@ -658,6 +673,17 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
         </div>
       )}
       </div>
+      <DealHandoverDialog
+        open={convertOpen}
+        onOpenChange={setConvertOpen}
+        handover={convertOpen ? {
+          kind: "hots",
+          unit: { id: ws.unit.id, unitName: ws.unit.unitName, propertyId: ws.unit.propertyId, propertyName: ws.unit.propertyName, dealId: ws.unit.dealId },
+          defaults: ws.convertDefaults ?? null,
+          finalFileName: ws.finalFile?.fileName || null,
+          onConverted: out => { setConverted(out); afterWrite(true); },
+        } : null}
+      />
     </>
   );
 }

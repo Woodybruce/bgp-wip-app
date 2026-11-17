@@ -48,11 +48,7 @@ export type LettingNoteField = keyof LettingNoteFields;
 // fetches the text itself and checks the caller may read it: the client
 // never sends the words of a comment it wants read "as" a comment.
 export type NoteSource =
-  | { type: "target_comment"; targetId: string; at: string }    // an entry in a target's comment log, found by its timestamp
-  // The unit's final agreed Heads of Terms, the file the HOTs flow keeps on it
-  // (Woody, 2026-11-17: "allow for add HOTs which should also then file and
-  // populate"). The server reads the document's text from that file.
-  | { type: "hots_final" };
+  | { type: "target_comment"; targetId: string; at: string };   // an entry in a target's comment log, found by its timestamp
 
 export interface ReadNoteRequest {
   kind: NoteKind;

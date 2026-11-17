@@ -4,7 +4,6 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { LeasingViewings, type LeasingViewing } from "@/components/leasing-viewings";
 import { landsecCrmEntries, landsecMeetings } from "@/components/landsec/landsec-meetings";
 import type { DiaryData } from "@shared/brand-diary";
-import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { SourceEmailDialog, SourceEventDialog } from "@/components/tracker-source";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -36,8 +35,7 @@ import { TrackerInterestCell, TrackerOffersCell, TrackerViewingsCell, interestWh
 import { BriefProgressChip } from "@/components/tracker-success-cell";
 import { NegotiationPanel, NegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
 import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
-import { hotsCall, type HotsError } from "@/components/unit-hots/hots-api";
-import type { HotsWorkspace } from "@shared/unit-hots";
+import { DealHandoverDialog } from "@/pages/deals";
 import { UnitShareDialog } from "@/components/unit-share-dialog";
 import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
 import { type ChecklistChipSummary } from "@/components/deal-checklist/checklist-chip";
@@ -87,7 +85,6 @@ import { PropertyCombobox } from "@/components/property-combobox";
 import { MonthYearSelect } from "@/components/month-year-select";
 import PDFViewer from "@/components/pdf-viewer";
 import { EntityCombobox } from "@/components/entity-combobox";
-import { XeroContactPicker } from "@/components/xero-contact-picker";
 import { FeeAllocationEditor, BGP_HOUSE_PCT, type FeeAllocationRow } from "@/components/fee-allocation-editor";
 
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, WIP_STATUSES, legacyToCode, type DealStatusCode } from "@shared/deal-status";
@@ -825,47 +822,9 @@ export default function AvailableUnitsPage() {
   });
   const [companySearchOpen, setCompanySearchOpen] = useState<"viewing" | "offer" | null>(null);
   const [contactSearchOpen, setContactSearchOpen] = useState<"viewing" | "offer" | null>(null);
-  const [wipUnit, setWipUnit] = useState<AvailableUnit | null>(null);
-  const [wipForm, setWipForm] = useState({
-    dealType: DEFAULT_LETTING_TYPE,
-    team: [] as string[],
-    agent: "",
-    // Tenant brand (crm_companies.id) + cached display name. Replaces the
-    // old free-text tenantName so AML can fire on a real company link
-    // rather than a string lookup. Tenant Xero entity is the billing /
-    // legal entity for invoicing.
-    tenantId: "",
-    tenantName: "",
-    tenantEntityId: "",
-    tenantEntityName: "",
-    // Landlord Xero entity — landlord brand is derived from the
-    // property (crm_properties.landlord_id) and shown read-only.
-    landlordEntityId: "",
-    landlordEntityName: "",
-    fee: "",
-    feeAgreement: "",
-    askingRent: "",
-    totalAreaSqft: "",
-    leaseLength: "",
-    rentFree: "",
-    targetDate: "", // expected completion — mandatory so WIP report buckets correctly
-    comments: "",
-    amlChecked: "",      // YES | NO | N-A — soft-required at SOL
-    overrideCompliance: false, // user-acknowledged shipping despite incomplete AML/fee agreement
-  });
-  // Fee split is the same shape the deal form collects — BGP House 15% +
-  // agents on the remaining 85%. FeeAllocationEditor auto-injects BGP
-  // House if missing, so starting empty is safe.
-  const [wipFeeRows, setWipFeeRows] = useState<FeeAllocationRow[]>([]);
-  const [wipFeeAllocType, setWipFeeAllocType] = useState<"percentage" | "fixed">("percentage");
-  // The final Heads of Terms added on the Promote box (Woody, 2026-11-17:
-  // "allow for add HOTs which should also then file and populate"): filed on
-  // the unit through the HOTs flow's own upload, then read into the form.
-  const [wipHots, setWipHots] = useState<{ unitId: string; fileName: string; key: number } | null>(null);
-  const [wipHotsBusy, setWipHotsBusy] = useState(false);
-  const wipHotsInput = useRef<HTMLInputElement>(null);
-  // A brand a reading named that is not one of the unit's offers, viewings or interest: said under the tenant picker, never picked.
-  const [wipBrandHint, setWipBrandHint] = useState<string | null>(null);
+  // Moving a unit to Solicitors opens the one deal form on the unit's own deal
+  // (Woody, 2026-11-17: "in each of these situations lets have one form").
+  const [promoteUnit, setPromoteUnit] = useState<AvailableUnit | null>(null);
   const { toast } = useToast();
 
   // The units list polls faster than the app default (30s felt laggy in
@@ -1255,50 +1214,6 @@ export default function AvailableUnitsPage() {
       more: missing.length ? missing : undefined,
     };
     setNoteHints(h => ({ ...h, interest: hint.brand || hint.agent || hint.more ? hint : undefined }));
-  };
-
-  // The Promote to Solicitors box (Woody, 2026-11-17: "use the AI notes to
-  // fill in the form function we have for other forms"). A reading of its
-  // Notes, or of the Heads of Terms added there, read as an offer: the rent,
-  // the lease length and the rent free fill their boxes; the tenant brand only
-  // when it is a brand already on the unit (its offers, viewings or interest);
-  // a value with no box goes into the Notes as a labelled line, once. Only the
-  // keys a reading holds change the form. An offer's date is not the target
-  // completion date, so it is a line in the Notes, never that box.
-  const applyPromoteNote = (r: LettingNoteReading) => {
-    const f = r.fields || {};
-    const unitId = wipUnit?.id || "";
-    const onUnit = new Set<string>();
-    for (const row of [...(offersByUnit[unitId] || []), ...(viewingsByUnit[unitId] || []), ...(interestByUnit[unitId] || [])]) {
-      const id = (row as any)?.companyId;
-      if (id) onUnit.add(String(id));
-    }
-    const brandNamed = !!(f.brandId || String(f.brandName || "").trim());
-    const brand = brandNamed ? noteCompany(f.brandId, f.brandName, crmCompanies.filter(c => onUnit.has(String(c.id)))) : null;
-    const day = noteDay(f.date);
-    const money = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? `£${v.toLocaleString("en-GB")}` : null);
-    const premium = money(f.premium), contribution = money(f.fittingOutContribution);
-    setWipForm(prev => ({
-      ...prev,
-      ...(brand && String(brand.id) !== prev.tenantId ? { tenantId: String(brand.id), tenantName: brand.name, tenantEntityId: "", tenantEntityName: "" } : {}),
-      askingRent: noteNumber(f.rentPa) ?? prev.askingRent,
-      leaseLength: noteNumber(f.termYears) ?? prev.leaseLength,
-      rentFree: noteNumber(f.rentFreeMonths) ?? prev.rentFree,
-      comments: addNoteLines(prev.comments, [
-        f.breakOption ? `Break: ${String(f.breakOption).trim()}` : null,
-        typeof f.turnoverRentPct === "number" ? `Turnover rent: ${f.turnoverRentPct}%` : null,
-        premium ? `Premium: ${premium}` : null,
-        contribution ? `Capital contribution: ${contribution}` : null,
-        f.rentReview ? `Rent review: ${String(f.rentReview).trim()}` : null,
-        f.rentDeposit ? `Rent deposit: ${String(f.rentDeposit).trim()}` : null,
-        f.incentives ? `Incentives: ${String(f.incentives).trim()}` : null,
-        f.contactName ? `Contact: ${String(f.contactName).trim()}` : null,
-        noteAgentLine(f),
-        day ? `Dated ${formatCalendarDate(day) || day}` : null,
-        f.note, ...(r.unplaced || []),
-      ], "\n"),
-    }));
-    if (brandNamed) setWipBrandHint(brand ? null : String(f.brandName || "").trim() || null);
   };
 
   // "Log as offer" / "Log as viewing" on a target's comment: the unit's Add
@@ -1817,165 +1732,19 @@ export default function AvailableUnitsPage() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const wipDealMutation = useMutation({
-    mutationFn: async ({ unitId, data, feeRows, feeAllocType }: { unitId: string; data: any; feeRows: FeeAllocationRow[]; feeAllocType: "percentage" | "fixed" }) => {
-      const res = await apiRequest("POST", `/api/available-units/${unitId}/create-deal`, data);
-      const json = await res.json();
-      const dealId = json?.deal?.id;
-      // Persist fee allocations alongside the promote, same shape the
-      // deal-form mutation uses. Empty list = no split set yet (fall
-      // back to whatever was on the deal previously).
-      if (dealId && feeRows.length > 0) {
-        const allocations = feeRows
-          .filter(r => (r.isBgpHouse || r.agentName))
-          .map(r => ({
-            agentName: r.isBgpHouse ? (r.agentName || "BGP House") : r.agentName,
-            allocationType: feeAllocType,
-            percentage: feeAllocType === "percentage" ? r.percentage : null,
-            fixedAmount: feeAllocType === "fixed" ? r.fixedAmount : null,
-            isBgpHouse: !!r.isBgpHouse,
-          }));
-        if (allocations.length > 0) {
-          try {
-            await apiRequest("PUT", `/api/crm/deals/${dealId}/fee-allocations`, { allocations });
-          } catch (e: any) {
-            toast({
-              title: "Promoted, but fee split failed to save",
-              description: e?.message || "Open the deal to set the split there.",
-              variant: "destructive",
-            });
-          }
-        }
-      }
-      return json;
-    },
-    onSuccess: (json: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
-      invalidateDealCaches();
-      setWipUnit(null);
-      // Surface the server's AML warn-but-allow result. Promotion went
-      // through, but some counterparties are still missing KYC — flag it
-      // so Layla can chase before the deal reaches exchange.
-      if (json?.amlWarning?.message) {
-        toast({
-          title: "Promoted — AML follow-up needed",
-          description: json.amlWarning.message,
-          variant: "destructive",
-        });
-      } else {
-        toast({ title: "Promoted to Solicitors" });
-      }
-    },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-
-  // A final Heads of Terms already on the unit can be read here without adding
-  // it again (the same answer the Heads of Terms dialog reads).
-  const { data: wipHotsWorkspace } = useQuery<HotsWorkspace, HotsError>({
-    queryKey: ["/api/unit-hots", wipUnit?.id],
-    queryFn: () => hotsCall<HotsWorkspace>("GET", `/api/unit-hots/${encodeURIComponent(wipUnit?.id || "")}`),
-    enabled: !!wipUnit && !isClientTracker,
-    retry: false,
-  });
-  // "Add HOTs" files the document as the unit's final agreed Heads of Terms
-  // through the HOTs flow's own upload (file type hots_final, never public; it
-  // moves no status), then the box below reads it into the form.
-  const addWipHots = async (file: File) => {
-    const unit = wipUnit;
-    if (!unit || wipHotsBusy) return;
-    setWipHotsBusy(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const ws = await hotsCall<HotsWorkspace>("POST", `/api/unit-hots/${encodeURIComponent(unit.id)}/final`, fd);
-      queryClient.setQueryData(["/api/unit-hots", unit.id], ws);
-      queryClient.invalidateQueries({ queryKey: ["/api/available-units", unit.id, "files"] });
-      setWipHots({ unitId: unit.id, fileName: ws?.finalFile?.fileName || file.name, key: Date.now() });
-      toast({ title: "Heads of Terms filed", description: `${file.name} is on the unit as the final agreed Heads of Terms.` });
-    } catch (e: any) {
-      toast({ title: "The Heads of Terms were not added", description: e?.message, variant: "destructive" });
-    } finally {
-      setWipHotsBusy(false);
-    }
-  };
-
-  const openWipDialog = (unit: AvailableUnit) => {
-    const prop = propertyMap[unit.propertyId];
-    setWipHots(null);
-    setWipBrandHint(null);
-    // Pre-fill from the linked deal if there is one — that's the common path
-    // now that Add Unit auto-creates a deal at AVA. User just updates the
-    // fields that matter at the SOL handover.
-    const existingDeal = unit.dealId ? dealMap[unit.dealId] : null;
-    setWipForm({
-      // Map legacy letting labels (pre-fix "Letting" / "Leasing") → canonical
-      // "New Letting" so the dropdown shows a real value for older flipped deals.
-      dealType: ((LEGACY_LETTING_TYPES as readonly string[]).includes(existingDeal?.dealType || "") ? DEFAULT_LETTING_TYPE : existingDeal?.dealType) || DEFAULT_LETTING_TYPE,
-      team: Array.isArray(existingDeal?.team) ? existingDeal.team : (existingDeal?.team ? [existingDeal.team] : []),
-      agent: (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || "",
-      tenantId: existingDeal?.tenantId || "",
-      tenantName: crmCompanies.find(c => c.id === existingDeal?.tenantId)?.name || "",
-      tenantEntityId: (existingDeal as any)?.tenantEntityId || "",
-      tenantEntityName: (existingDeal as any)?.tenantEntityName || "",
-      landlordEntityId: (existingDeal as any)?.landlordEntityId || "",
-      landlordEntityName: (existingDeal as any)?.landlordEntityName || "",
-      fee: (existingDeal?.fee ?? unit.fee)?.toString() || "",
-      feeAgreement: existingDeal?.feeAgreement || "",
-      askingRent: (existingDeal?.rentPa ?? unit.askingRent)?.toString() || "",
-      totalAreaSqft: (existingDeal?.totalAreaSqft ?? unit.sqft)?.toString() || "",
-      leaseLength: existingDeal?.leaseLength?.toString() || "",
-      rentFree: existingDeal?.rentFree?.toString() || "",
-      targetDate: existingDeal?.targetDate
-        ? new Date(existingDeal.targetDate).toISOString().slice(0, 10)
-        : "",
-      comments: existingDeal?.comments || `${prop?.name || "Property"} — ${unit.unitName}${unit.floor ? ` (${unit.floor})` : ""}`,
-      amlChecked: existingDeal?.amlCheckCompleted || "",
-      overrideCompliance: false,
-    });
-    // Pre-populate the fee-split editor from the deal's existing
-    // allocations when present — otherwise the user gets the default
-    // 85% agent / 15% BGP House split on every reopen and has to
-    // re-type what they already saved. BGP House rows are dropped from
-    // the seed since the editor auto-injects that row itself.
-    const existingAllocs = existingDeal?.id ? allAllocations[existingDeal.id] : null;
-    if (existingAllocs && existingAllocs.length > 0) {
-      const agentRows = existingAllocs
-        .filter(a => !a.isBgpHouse)
-        .map(a => ({
-          agentName: a.agentName,
-          allocationType: (a.allocationType === "fixed" ? "fixed" : "percentage") as "fixed" | "percentage",
-          percentage: a.percentage || 0,
-          fixedAmount: a.fixedAmount || 0,
-        }));
-      setWipFeeRows(agentRows);
-      setWipFeeAllocType((existingAllocs.find(a => !a.isBgpHouse)?.allocationType === "fixed" ? "fixed" : "percentage"));
-    } else {
-      // No existing split — fall back to picked agent at 85%; FeeAllocationEditor
-      // auto-injects BGP House at 15% to make a complete 100%.
-      const initialAgent = (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || "";
-      setWipFeeRows(initialAgent ? [{
-        agentName: initialAgent,
-        allocationType: "percentage",
-        percentage: 85,
-        fixedAmount: 0,
-      }] : []);
-      setWipFeeAllocType("percentage");
-    }
-    setWipUnit(unit);
-  };
-
   const inlineUpdate = (id: string, field: string, value: any) => {
     if (typeof value === "number" && isNaN(value)) value = null;
-    // Status → SOL always fires the promotion modal so the user captures the
-    // SOL-handover fields (fee, fee agreement, tenant, lease length, rent free).
-    // Pre-fill comes from the linked deal if it already exists.
-    // Clients skip the WIP-capture dialog on the SOL flip — that's the BGP
-    // fee/compliance handover, which stays internal. Their status change
-    // just applies directly (the server strips fee fields anyway).
+    // Status → SOL opens the one deal form on the unit's own deal, set to
+    // Solicitors (the New Deal form: parties and billing entities, fee and
+    // split, lease terms, the box at the top, Add heads of terms). Its save
+    // moves the deal and, through the mirror, this row: never a second deal.
+    // Clients skip it on the SOL flip — that's the BGP fee/compliance
+    // handover, which stays internal. Their status change just applies
+    // directly (the server strips fee fields anyway).
     if (field === "marketingStatus" && legacyToCode(value) === "SOL" && !isClientTracker) {
       const unit = units.find(u => u.id === id);
       if (unit) {
-        openWipDialog(unit);
+        setPromoteUnit(unit);
         return;
       }
     }
@@ -3883,414 +3652,24 @@ export default function AvailableUnitsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!wipUnit} onOpenChange={v => { if (!v) setWipUnit(null); }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Promote to Solicitors</DialogTitle>
-            <DialogDescription>
-              {wipUnit ? `${propertyMap[wipUnit.propertyId]?.name || "Property"} — ${wipUnit.unitName}` : ""}
-              . Fill in the deal details below.
-            </DialogDescription>
-          </DialogHeader>
-          {wipUnit && (
-            <div className="pb-2">
-              <PropertyPlanningCard propertyId={wipUnit.propertyId} compact />
-            </div>
-          )}
-          <div className="space-y-3">
-            {/* Heads of Terms (Woody, 2026-11-17: "allow for add HOTs which should also then file and populate").
-                Filed through the HOTs flow, then read as a note written out in full: values to check, each with Use. */}
-            {wipUnit && (() => {
-              const onFile = wipHotsWorkspace && wipHotsWorkspace.unit?.id === wipUnit.id ? wipHotsWorkspace.finalFile : null;
-              const reading = wipHots?.unitId === wipUnit.id ? wipHots : null;
-              return (
-                <div className="border rounded-md p-3 space-y-2" data-testid="wip-hots">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Heads of Terms</div>
-                      <p className="text-xs text-muted-foreground break-words" data-testid="wip-hots-status">
-                        {reading ? `${reading.fileName} is filed on the unit as the final agreed Heads of Terms.`
-                          : onFile ? `On file: ${onFile.fileName}`
-                          : "Add the final agreed HOTs: they are filed on the unit and their terms are read into this form."}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {onFile && !reading && (
-                        <Button type="button" size="sm" variant="outline" className="h-8 text-xs" disabled={wipHotsBusy}
-                          onClick={() => setWipHots({ unitId: wipUnit.id, fileName: onFile.fileName, key: Date.now() })} data-testid="wip-hots-read">
-                          <Sparkles className="mr-1 h-3.5 w-3.5" /> Read them
-                        </Button>
-                      )}
-                      <Button type="button" size="sm" variant="outline" className="h-8 text-xs" disabled={wipHotsBusy} onClick={() => wipHotsInput.current?.click()} data-testid="wip-hots-add">
-                        {wipHotsBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1 h-3.5 w-3.5" />}
-                        {reading || onFile ? "Replace HOTs" : "Add HOTs"}
-                      </Button>
-                    </div>
-                    <input ref={wipHotsInput} type="file" accept=".pdf,.docx" className="hidden" data-testid="wip-hots-file"
-                      onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void addWipHots(file); }} />
-                  </div>
-                  {reading && (
-                    <NoteFill key={reading.key} kind="offer" unitId={wipUnit.id} source={{ type: "hots_final" }} autoRead autoApply onApply={applyPromoteNote} />
-                  )}
-                </div>
-              );
-            })()}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs mb-1">Deal Type</Label>
-                <Select value={wipForm.dealType} onValueChange={v => setWipForm(f => ({ ...f, dealType: v }))}>
-                  <SelectTrigger data-testid="wip-deal-type"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {(isClientTracker ? ["New Letting", "Lease Renewal", "Rent Review", "Regear", "Temp Lease", "Licence"] : ["New Letting", "Temp Lease", "Licence", "Lease Acquisition", "Sale", "Lease Renewal", "Rent Review", "Regear"]).map(t => (
-                      <SelectItem key={t} value={t}>{t}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs mb-1">Team</Label>
-                <Select value={wipForm.team[0] || ""} onValueChange={v => setWipForm(f => ({ ...f, team: v ? [v] : [] }))}>
-                  <SelectTrigger data-testid="wip-team"><SelectValue placeholder="Select team" /></SelectTrigger>
-                  <SelectContent>
-                    {CRM_OPTIONS.dealTeam.map(t => (
-                      <SelectItem key={t} value={t}>{t}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div>
-              <Label className="text-xs mb-1">Agent *</Label>
-              <Select
-                value={wipForm.agent}
-                onValueChange={v => setWipForm(f => {
-                  // Auto-grab the agent's team so the user doesn't have
-                  // to set both fields. Only fills when the team is
-                  // currently empty — keep an existing override intact.
-                  const picked = bgpUsers.find(u => u.name === v);
-                  const teamFromUser = picked?.team;
-                  return {
-                    ...f,
-                    agent: v,
-                    team: (f.team.length > 0 || !teamFromUser) ? f.team : [teamFromUser],
-                  };
-                })}
-              >
-                <SelectTrigger data-testid="wip-agent"><SelectValue placeholder="Select agent" /></SelectTrigger>
-                <SelectContent>
-                  {bgpUsers.map(u => (
-                    <SelectItem key={u.id} value={u.name}>{u.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Contracting entities — required at SOL so AML fires on
-                a real company link, not a name string. Landlord is
-                derived from the property (read-only); tenant is the
-                applicant the agent is contracting with. Both sides
-                also need a Xero billing entity for invoicing. */}
-            {wipUnit && (() => {
-              const prop = propertyMap[wipUnit.propertyId];
-              const landlordBrand = prop?.landlordId ? crmCompanies.find(c => c.id === prop.landlordId) : null;
-              const tenantOptions = crmCompanies.filter(c =>
-                (c.companyType?.startsWith("Tenant") || false) || c.id === wipForm.tenantId
-              );
-              const tenantItems = tenantOptions.map(c => ({
-                id: c.id,
-                label: c.name,
-                subLabel: (c as any).ukEntityName || c.companyType || undefined,
-                keywords: [c.companyType || "", c.domainUrl || ""].filter(Boolean),
-              }));
-              const createTenant = async (name: string) => {
-                const r = await apiRequest("POST", "/api/crm/companies", {
-                  name: name.trim(),
-                  companyType: "Tenant",
-                });
-                const created = await r.json();
-                queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-                toast({ title: "Tenant created", description: `${created.name} added to CRM.` });
-                return { id: String(created.id), label: created.name, subLabel: created.companyType };
-              };
-              return (
-                <div className="border rounded-md p-3 bg-muted/30 space-y-3">
-                  <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
-                    Contracting entities (required for AML)
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Landlord brand</Label>
-                      {landlordBrand ? (
-                        <div className="text-sm border rounded-md px-2.5 py-1.5 bg-background">
-                          {landlordBrand.name}
-                        </div>
-                      ) : (
-                        <div className="text-xs text-amber-700 border border-amber-300 rounded-md px-2.5 py-1.5 bg-amber-50">
-                          No landlord linked on {prop?.name || "property"}. Add one on the property page before promoting.
-                        </div>
-                      )}
-                      <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
-                      <XeroContactPicker
-                        testIdPrefix="wip-landlord-entity"
-                        value={wipForm.landlordEntityId || null}
-                        cachedName={wipForm.landlordEntityName}
-                        onChange={(c) => setWipForm(f => ({
-                          ...f,
-                          landlordEntityId: c?.ContactID || "",
-                          landlordEntityName: c?.Name || "",
-                        }))}
-                        compact
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Tenant brand *</Label>
-                      <EntityCombobox
-                        testId="wip-tenant"
-                        placeholder="Link tenant"
-                        searchPlaceholder="Search tenants…"
-                        value={wipForm.tenantId}
-                        items={tenantItems}
-                        onChange={(v) => {
-                          const picked = crmCompanies.find(c => c.id === v);
-                          setWipBrandHint(null);
-                          setWipForm(f => ({
-                            ...f,
-                            tenantId: v,
-                            tenantName: picked?.name || "",
-                            tenantEntityId: "",
-                            tenantEntityName: "",
-                          }));
-                        }}
-                        onCreate={createTenant}
-                        createLabel="tenant"
-                      />
-                      {wipBrandHint && (
-                        <p className="text-[11px] text-muted-foreground" data-testid="wip-note-brand">
-                          Brand read as <span className="font-medium text-foreground">{wipBrandHint}</span>. Pick it above if it is the tenant.
-                        </p>
-                      )}
-                      <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
-                      {/* No billing entity in Xero yet: Create billing entity finds the company at Companies House,
-                          saves it under this brand and adds it to the firm's Xero (Woody, 2026-11-17). */}
-                      <XeroContactPicker
-                        testIdPrefix="wip-tenant-entity"
-                        value={wipForm.tenantEntityId || null}
-                        cachedName={wipForm.tenantEntityName}
-                        onChange={(c) => setWipForm(f => ({
-                          ...f,
-                          tenantEntityId: c?.ContactID || "",
-                          tenantEntityName: c?.Name || "",
-                        }))}
-                        createFor={wipForm.tenantId ? { id: wipForm.tenantId, name: wipForm.tenantName || "the tenant brand" } : null}
-                        compact
-                      />
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs mb-1">Fee (£) *</Label>
-                <CurrencyInput
-                  value={wipForm.fee}
-                  onChange={v => setWipForm(f => ({ ...f, fee: v }))}
-                  placeholder="0"
-                  prefix="£"
-                  testId="wip-fee"
-                />
-              </div>
-              <div>
-                <Label className="text-xs mb-1">Fee Agreement signed</Label>
-                <Select value={wipForm.feeAgreement} onValueChange={v => setWipForm(f => ({ ...f, feeAgreement: v }))}>
-                  <SelectTrigger data-testid="wip-fee-agreement"><SelectValue placeholder="Select..." /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="YES">YES</SelectItem>
-                    <SelectItem value="NO">NO</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {/* Fee split — same shape as the deal form (BGP House 15%
-                locked + agents on the remaining 85%). The auto-created
-                AVA deal lands here with no split set, so this is where
-                Layla locks it in for SOL handover. PUT'd to
-                /api/crm/deals/:id/fee-allocations after the promote
-                mutation succeeds. */}
-            <div>
-              <Label className="text-xs mb-1">BGP fee split</Label>
-              <div className="border rounded-md p-2.5 bg-muted/30">
-                <FeeAllocationEditor
-                  rows={wipFeeRows}
-                  onChange={setWipFeeRows}
-                  allocType={wipFeeAllocType}
-                  onAllocTypeChange={setWipFeeAllocType}
-                  dealFee={parseFloat(wipForm.fee) || null}
-                  bgpAgents={bgpUsers.map(u => ({ id: String(u.id), name: u.name }))}
-                  hideHouseNote={isLandsecProperty(wipUnit?.propertyId)}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs mb-1">AML / KYC checked</Label>
-                <Select value={wipForm.amlChecked} onValueChange={v => setWipForm(f => ({ ...f, amlChecked: v }))}>
-                  <SelectTrigger data-testid="wip-aml"><SelectValue placeholder="Select..." /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="YES">YES</SelectItem>
-                    <SelectItem value="NO">NO</SelectItem>
-                    <SelectItem value="N-A">N/A</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs mb-1">Headline Rent (£ p.a.)</Label>
-                <CurrencyInput
-                  value={wipForm.askingRent}
-                  onChange={v => setWipForm(f => ({ ...f, askingRent: v }))}
-                  placeholder="0"
-                  prefix="£"
-                  testId="wip-rent"
-                />
-              </div>
-              <div>
-                <Label className="text-xs mb-1">Total Area (sq ft)</Label>
-                <CurrencyInput
-                  value={wipForm.totalAreaSqft}
-                  onChange={v => setWipForm(f => ({ ...f, totalAreaSqft: v }))}
-                  placeholder="0"
-                  testId="wip-sqft"
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs mb-1">Lease Length (years)</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  value={wipForm.leaseLength}
-                  onChange={e => setWipForm(f => ({ ...f, leaseLength: e.target.value }))}
-                  placeholder="0"
-                  data-testid="wip-lease-length"
-                />
-              </div>
-              <div>
-                <Label className="text-xs mb-1">Rent Free (months)</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  value={wipForm.rentFree}
-                  onChange={e => setWipForm(f => ({ ...f, rentFree: e.target.value }))}
-                  placeholder="0"
-                  data-testid="wip-rent-free"
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label className="text-xs mb-1">
-                Target Completion Date <span className="text-rose-600">*</span>
-              </Label>
-              <Input
-                type="date"
-                value={wipForm.targetDate}
-                onChange={e => setWipForm(f => ({ ...f, targetDate: e.target.value }))}
-                required
-                className={!wipForm.targetDate ? "border-rose-300" : ""}
-                data-testid="wip-target-date"
-              />
-              <p className="text-[10px] text-muted-foreground mt-0.5">
-                Drives the WIP report's month / fiscal-year bucket.
-              </p>
-            </div>
-
-            {/* Net Effective = Headline × (term − rent_free) / term.
-                Derived live — no extra DB column. Hidden when the
-                inputs aren't enough to make the number meaningful. */}
-            {(() => {
-              const headline = parseFloat(wipForm.askingRent) || 0;
-              const termYears = parseFloat(wipForm.leaseLength) || 0;
-              const freeMonths = parseFloat(wipForm.rentFree) || 0;
-              if (!headline || !termYears) return null;
-              const termMonths = termYears * 12;
-              if (freeMonths >= termMonths) return null;
-              const net = Math.round(headline * (termMonths - freeMonths) / termMonths);
-              return (
-                <div className="text-xs text-muted-foreground border rounded-md px-3 py-2 bg-muted/30 flex items-center justify-between">
-                  <span>Net Effective Rent (derived from headline, term, rent free)</span>
-                  <span className="font-medium text-foreground">£{net.toLocaleString()} p.a.</span>
-                </div>
-              );
-            })()}
-
-            {/* Terms typed in the Notes fill the boxes above (Woody, 2026-11-17: "use the AI notes to fill in the form function
-                we have for other forms"); the notes stay as typed and are saved on the deal. The words the box opened with
-                (the deal's earlier notes) are not read: only what is typed after them. */}
-            <FillFromNotes key={`promote:${wipUnit?.id || ""}`} kind="offer" unitId={wipUnit?.id} word="notes" newWordsOnly
-              text={wipForm.comments} keepText={v => setWipForm(f => ({ ...f, comments: v }))} onApply={applyPromoteNote}>
-              <Label className="text-xs mb-1">Notes</Label>
-              <Textarea
-                value={wipForm.comments}
-                onChange={e => setWipForm(f => ({ ...f, comments: e.target.value }))}
-                rows={2}
-                placeholder="e.g. Terms: 10 year lease. Rent £120k pax. 6 MRF. TBO yr 5"
-                data-testid="wip-comments"
-              />
-            </FillFromNotes>
-          </div>
-          {(() => {
-            const hardMissing: string[] = [];
-            if (!wipForm.tenantId) hardMissing.push("Tenant brand");
-            if (!wipForm.fee.trim()) hardMissing.push("Fee");
-            if (!wipForm.agent.trim()) hardMissing.push("Agent");
-            if (!wipForm.targetDate) hardMissing.push("Target date");
-            const softMissing: string[] = [];
-            if (wipForm.feeAgreement !== "YES") softMissing.push("Fee agreement signed");
-            if (wipForm.amlChecked !== "YES" && wipForm.amlChecked !== "N-A") softMissing.push("AML / KYC checked");
-            const canSubmit = hardMissing.length === 0 && (softMissing.length === 0 || wipForm.overrideCompliance);
-            return (
-              <>
-                {(hardMissing.length > 0 || softMissing.length > 0) && (
-                  <div className="rounded-md border p-2 bg-amber-50 dark:bg-amber-900/10 mt-2 space-y-1.5">
-                    {hardMissing.length > 0 && (
-                      <p className="text-xs text-rose-700 dark:text-rose-400">Required before saving: {hardMissing.join(", ")}</p>
-                    )}
-                    {hardMissing.length === 0 && softMissing.length > 0 && (
-                      <>
-                        <p className="text-xs text-amber-700 dark:text-amber-400">Missing compliance: {softMissing.join(", ")}</p>
-                        <label className="flex items-center gap-2 text-xs cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={wipForm.overrideCompliance}
-                            onChange={e => setWipForm(f => ({ ...f, overrideCompliance: e.target.checked }))}
-                            data-testid="wip-override"
-                          />
-                          <span>Promote anyway — I'll complete these before exchange</span>
-                        </label>
-                      </>
-                    )}
-                  </div>
-                )}
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setWipUnit(null)}>Cancel</Button>
-                  <Button
-                    onClick={() => wipUnit && wipDealMutation.mutate({ unitId: wipUnit.id, data: wipForm, feeRows: wipFeeRows, feeAllocType: wipFeeAllocType })}
-                    disabled={wipDealMutation.isPending || !canSubmit}
-                    data-testid="wip-submit"
-                  >
-                    {wipDealMutation.isPending ? "Saving..." : "Promote to Solicitors"}
-                  </Button>
-                </DialogFooter>
-              </>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
+      <DealHandoverDialog
+        open={!!promoteUnit}
+        onOpenChange={v => { if (!v) setPromoteUnit(null); }}
+        handover={promoteUnit ? {
+          kind: "promote",
+          unit: {
+            id: promoteUnit.id,
+            unitName: promoteUnit.unitName,
+            propertyId: promoteUnit.propertyId,
+            propertyName: propertyMap[promoteUnit.propertyId]?.name || null,
+            propertyUnitId: promoteUnit.unitId || null,
+            dealId: promoteUnit.dealId || null,
+            fee: promoteUnit.fee ?? null,
+            askingRent: promoteUnit.askingRent ?? null,
+            sqft: promoteUnit.sqft ?? null,
+          },
+        } : null}
+      />
 
       {/* Provenance pop-outs — the email behind an offer/interest row, and
           the diary event behind a viewing. Applying AI-read figures fills
