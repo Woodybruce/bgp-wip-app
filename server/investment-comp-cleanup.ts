@@ -120,7 +120,16 @@ export async function runCompCleanup(opts: { apply: boolean; actorId?: string | 
     const markerTracker = String(c.rca_deal_id || "").startsWith("tracker-") ? String(c.rca_deal_id).slice(8) : null;
     const restoreId = linked?.tracker_id || markerTracker;
     if (restoreId) return { comp: c, kind: "restore" as const, trackerId: restoreId, status: linked?.prior_status || LIVE_BY_ID[c.id]?.status || liveTrackerStatus(String(c.status || "")) };
-    const match = trackers.find((t: Row) => !soldTrackerIds.has(t.id) && sameBuilding([c.property_name, c.address], [t.asset_name, t.address]));
+    // The same building by name, not a loose word match ("Morgan Quarter,
+    // Cardiff" is not "M&S Cardiff"; "Stonegate Portfolio" is not "X Leisure
+    // Portfolio"): one name holds the other, or they agree on a street number.
+    const sameName = (t: Row) => {
+      const a = normName(c.property_name), b = normName(t.asset_name);
+      if (!a || !b) return false;
+      if (a === b || a.startsWith(b + " ") || b.startsWith(a + " ")) return true;
+      return /\d/.test(a) && /\d/.test(b) && sameBuilding([c.property_name, c.address], [t.asset_name, t.address]);
+    };
+    const match = trackers.find((t: Row) => !soldTrackerIds.has(t.id) && sameName(t));
     if (match) return { comp: c, kind: "fill" as const, trackerId: match.id, trackerName: match.asset_name, status: null };
     return { comp: c, kind: "new" as const, trackerId: null, status: LIVE_BY_ID[c.id]?.status || liveTrackerStatus(String(c.status || "")) };
   });
