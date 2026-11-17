@@ -5054,9 +5054,13 @@ app.use("/api/branding/assets", express.static(
   // untouched (MLR 2017 record keeping). IN_APP_AML_ENABLED=1 restores it.
   // Also kept: the client's own client checks page (/api/kyc-upload/<token>),
   // which only opens on a live token, and only the admin's test send makes
-  // one while the switch is off (server/aml-portal.ts).
+  // one while the switch is off (server/aml-portal.ts). And two Veriff
+  // addresses the test page's real identity check needs (Woody, 2026-11-17):
+  // Veriff's decision webhook (Veriff signs it; the handler checks the
+  // signature) and the admin-only diagnostic that reads Veriff's answer.
   const RETIRED_AML = [
-    /^\/api\/(aml|kyc-clouseau|veriff|sanctions|comply-advantage)(\/|$)/,
+    /^\/api\/(aml|kyc-clouseau|sanctions|comply-advantage)(\/|$)/,
+    /^\/api\/veriff(?!\/(webhook|diagnostic)$)(\/|$)/,
     /^\/api\/kyc\/(?!deal\/[^/]+\/status$)/,
     /^\/api\/accounts\/[^/]+\/entity-checks/,
     /^\/api\/entities\/[^/]+\/[^/]+\/kyc(\/|$)/,

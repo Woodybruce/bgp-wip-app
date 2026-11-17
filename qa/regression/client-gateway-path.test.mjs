@@ -241,4 +241,8 @@ test('the retired-AML switch reads every spelling of a retired address as that a
   assert.equal((await send('/api/kyc-upload/abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG')).status, 200);
   assert.equal((await send('/api/kyc4u/requests')).status, 200);
   assert.equal((await send('/api/crm/deals')).status, 200);
+  // Veriff stays retired but for its signed decision webhook and the admin
+  // diagnostic, which the test page's real identity check needs (2026-11-17).
+  for (const open of ['/api/veriff/webhook', '/api/Veriff/Webhook', '/api/veriff/diagnostic']) assert.equal((await send(open)).status, 200, open);
+  for (const shut of ['/api/veriff', '/api/veriff/sessions', '/api/Veriff/Sessions', '/api/veriff/webhook/x', '/api/veriff/diagnostics', '/api/veriff/sessions/s1/report']) assert.equal((await send(shut)).status, 410, shut);
 });

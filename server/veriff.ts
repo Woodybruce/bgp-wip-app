@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { Router, Request, Response } from "express";
-import { requireAuth } from "./auth";
+import { requireAuth, requireAdmin } from "./auth";
 import { pool } from "./db";
 import { kycIdCheckEmail, kycWhatsAppHref, kycWhatsAppText } from "@shared/kyc-request";
 
@@ -135,7 +135,9 @@ veriffRouter.get("/api/veriff/status", requireAuth, (_req: Request, res: Respons
 // Step 2 proves our webhook handler + HMAC verification works end-to-end.
 // If both pass, the only remaining variable is whether Veriff's dashboard
 // actually delivers webhooks to our URL — which is a dashboard-side toggle.
-veriffRouter.get("/api/veriff/diagnostic", requireAuth, async (req: Request, res: Response) => {
+// Admins only: it asks Veriff for a real session, and it stays open while
+// in-app AML is off so the test page's check can be diagnosed.
+veriffRouter.get("/api/veriff/diagnostic", requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const report: any = { createdSession: null, webhookLoopback: null, summary: "" };
   const { apiKey, secret } = getCreds();
 

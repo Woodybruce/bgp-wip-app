@@ -832,9 +832,11 @@ kycRequestRouter.post("/api/kyc-upload/:token/file", portalUpload, async (req: R
 });
 
 kycRequestRouter.post("/api/kyc-upload/:token/id-check", async (req: Request, res: Response) => {
+  let isTest = false;
   try {
     const row = await openRow(req, res);
     if (!row) return;
+    isTest = !!row.is_test;
     const request = row.request!;
     if (!request.needsIdCheck) return res.status(400).json({ message: "No identity check is needed on this request." });
     if (row.is_test && !veriffConfigured()) return res.json({ url: null, test: true });
@@ -849,7 +851,11 @@ kycRequestRouter.post("/api/kyc-upload/:token/id-check", async (req: Request, re
     res.json({ url: started.url });
   } catch (err: any) {
     console.error(`[kyc] identity check start failed: ${err?.message}`);
-    res.status(502).json({ message: "The identity check couldn't be started just now. Please try again in a few minutes." });
+    // A test page is BGP's own: it shows the tester what Veriff said, so a
+    // setting can be fixed. A client sees the plain message.
+    res.status(502).json({ message: isTest
+      ? `Test page: Veriff did not start the check (${String(err?.message || "no reason given").slice(0, 300)}).`
+      : "The identity check couldn't be started just now. Please try again in a few minutes." });
   }
 });
 

@@ -2827,7 +2827,15 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   its red flags (`requestIdChecks` in `server/kyc-red-flags.ts`), so a
   decline alerts the admin and is listed in the Finished note. A test page
   without Veriff set up still shows the step only. Uploads on a test are
-  still recorded by name only and not kept.
+  still recorded by name only and not kept. While in-app AML is off, the
+  retired switch in `server/index.ts` keeps two Veriff addresses open for it:
+  `/api/veriff/webhook` (Veriff's decisions; Veriff signs them and the
+  handler checks the signature) and `/api/veriff/diagnostic` (admins only:
+  it asks Veriff for a session and reports Veriff's answer). When Veriff does
+  not start a check, a test page shows the tester Veriff's own reason; a
+  client sees the plain "couldn't be started" line. First try on live, 17
+  November 2026: Veriff did not start the session (the reason was not yet
+  read); the Veriff keys were on the October rotation list.
 - **Schema** (additive, nullable, boot MIGRATIONS in `server/index.ts`, not
   in `shared/schema.ts`): `kyc_upload_tokens` gained `company_id`,
   `contact_id`, `request` (JSONB: `KycRequestDetails`), `completed_at`,

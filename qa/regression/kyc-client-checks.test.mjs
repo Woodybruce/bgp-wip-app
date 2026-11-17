@@ -54,7 +54,9 @@ test("a client's file is stored and filed on the KYC record, never only read and
 test("the client's page answers to its token, whether in-app AML is on or off, and whoever is signed in", () => {
   const retired = index.slice(index.indexOf("const RETIRED_AML = ["), index.indexOf("];", index.indexOf("const RETIRED_AML = [")));
   assert.doesNotMatch(retired, /kyc-upload/);
-  assert.match(retired, /aml\|kyc-clouseau\|veriff/, "the rest of in-app AML is still switched off");
+  assert.match(retired, /aml\|kyc-clouseau\|sanctions\|comply-advantage/, "the rest of in-app AML is still switched off");
+  // Veriff too, but for its signed webhook and the admin diagnostic (2026-11-17).
+  assert.match(retired, /\/\^\\\/api\\\/veriff\(\?!\\\/\(webhook\|diagnostic\)\$\)\(\\\/\|\$\)\//);
   assert.match(index, /if \(p\.startsWith\("\/api\/kyc-upload\/"\)\) return next\(\);/);
   assert.match(app, /<Route path="\/kyc-upload\/:token" component=\{KycUploadPage\} \/>/);
   assert.doesNotMatch(app, /This upload link is no longer in use/);
@@ -148,4 +150,9 @@ test("a test page runs a real Veriff check when Veriff is set up, capped as a cl
   const finish = portal.slice(portal.indexOf("async function finishRequest"), portal.indexOf("// ── Replies with documents"));
   assert.match(finish, /idChecks: await requestIdChecks\(request\.veriffSessionIds\) \}\)/);
   assert.match(read("client/src/pages/kyc-upload.tsx"), /view\.idCheck\?\.real \? " The identity check is a real one, run by Veriff\." : ""/);
+  // A tester sees what Veriff said when it does not start; a client the plain line.
+  assert.match(route, /message: isTest\s*\? `Test page: Veriff did not start the check/);
+  assert.match(route, /: "The identity check couldn't be started just now\. Please try again in a few minutes\." \}\);/);
+  // The diagnostic asks Veriff for a real session: admins only.
+  assert.match(veriff, /veriffRouter\.get\("\/api\/veriff\/diagnostic", requireAuth, requireAdmin,/);
 });
