@@ -6,6 +6,15 @@ import { cached } from "./utils/intel-cache";
 
 const LR_BASE = "https://landregistry.data.gov.uk/data";
 
+// Every outside call has its own time limit, inside the 45 second request
+// limit (server/index.ts), so a slow public source drops its own section and
+// the lookup still answers, instead of the whole request ending in a 504.
+// A postcode geocode is quick; Land Registry's price paid feed is slow even
+// on a good day.
+const GEOCODE_TIMEOUT_MS = 8000;
+const SOURCE_TIMEOUT_MS = 12000;
+const PRICE_PAID_TIMEOUT_MS = 25000;
+
 interface PropertyLookupResult {
   address: string;
   postcode: string;
@@ -36,16 +45,18 @@ function extractLabel(obj: any): string {
 
 async function lookupPricePaid(postcode: string, street?: string): Promise<any[]> {
   const cacheKey = `ppi:${postcode.toUpperCase().replace(/\s/g, "")}:${(street || "").toUpperCase()}`;
-  return cached(cacheKey, async () => {
-    try {
+  // A refusal or a timeout throws out of the fetcher, so it is not cached
+  // for 30 days as "no sales".
+  try {
+    return await cached(cacheKey, async () => {
       const params = new URLSearchParams();
       params.set("propertyAddress.postcode", postcode.toUpperCase());
       if (street) params.set("propertyAddress.street", street.toUpperCase());
       params.set("_pageSize", "20");
       params.set("_sort", "-transactionDate");
 
-      const resp = await fetch(`${LR_BASE}/ppi/transaction-record.json?${params}`);
-      if (!resp.ok) return [];
+      const resp = await fetch(`${LR_BASE}/ppi/transaction-record.json?${params}`, { signal: AbortSignal.timeout(PRICE_PAID_TIMEOUT_MS) });
+      if (!resp.ok) throw new Error(`Land Registry price paid answered ${resp.status}`);
       const data = await resp.json();
       const items = data.result?.items || [];
 
@@ -63,11 +74,11 @@ async function lookupPricePaid(postcode: string, street?: string): Promise<any[]
         estateType: extractLabel(item.estateType),
         newBuild: item.newBuild === true,
       }));
-    } catch (e) {
-      console.error("[property-lookup] Price paid error:", e);
-      return [];
-    }
-  });
+    });
+  } catch (e) {
+    console.error("[property-lookup] Price paid error:", e);
+    return [];
+  }
 }
 
 async function lookupVOA(postcode: string, street?: string): Promise<any[]> {
@@ -127,6 +138,7 @@ async function lookupEPC(postcode: string, address?: string): Promise<any[]> {
           Accept: "application/json",
           Authorization: `Basic ${token}`,
         },
+        signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS),
       }
     );
 
@@ -137,6 +149,7 @@ async function lookupEPC(postcode: string, address?: string): Promise<any[]> {
           Accept: "application/json",
           Authorization: `Basic ${token}`,
         },
+        signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS),
       }
     );
 
@@ -197,14 +210,16 @@ async function lookupEPC(postcode: string, address?: string): Promise<any[]> {
 async function lookupFloodRisk(lat: number, lng: number): Promise<any> {
   try {
     const resp = await fetch(
-      `https://environment.data.gov.uk/flood-monitoring/id/floods?lat=${lat}&long=${lng}&dist=1`
+      `https://environment.data.gov.uk/flood-monitoring/id/floods?lat=${lat}&long=${lng}&dist=1`,
+      { signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS) }
     );
     if (!resp.ok) return null;
     const data = await resp.json();
     const items = data.items || [];
 
     const warningsResp = await fetch(
-      `https://environment.data.gov.uk/flood-monitoring/id/floodAreas?lat=${lat}&long=${lng}&dist=1`
+      `https://environment.data.gov.uk/flood-monitoring/id/floodAreas?lat=${lat}&long=${lng}&dist=1`,
+      { signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS) }
     );
     let floodAreas: any[] = [];
     if (warningsResp.ok) {
@@ -235,7 +250,8 @@ async function lookupFloodRisk(lat: number, lng: number): Promise<any> {
 async function lookupFloodRiskByPostcode(postcode: string): Promise<any> {
   try {
     const geocodeResp = await fetch(
-      `https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}`
+      `https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}`,
+      { signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS) }
     );
     if (!geocodeResp.ok) return null;
     const geoData = await geocodeResp.json();
@@ -265,7 +281,8 @@ async function lookupFloodRiskByPostcode(postcode: string): Promise<any> {
 async function lookupListedBuildings(postcode: string): Promise<any[]> {
   try {
     const geocodeResp = await fetch(
-      `https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}`
+      `https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}`,
+      { signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS) }
     );
     if (!geocodeResp.ok) return [];
     const geoData = await geocodeResp.json();
@@ -276,7 +293,7 @@ async function lookupListedBuildings(postcode: string): Promise<any[]> {
     const radius = 200;
     const url = `https://services-eu1.arcgis.com/ZOdPfBS3aqqDYPUQ/ArcGIS/rest/services/National_Heritage_List_for_England_NHLE_v02_VIEW/FeatureServer/0/query?geometry=${lng},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&distance=${radius}&units=esriSRUnit_Meter&outFields=Name,Grade,ListDate,AmendDate,HyperLink,ListEntry&returnGeometry=false&f=json`;
 
-    const resp = await fetch(url);
+    const resp = await fetch(url, { signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS) });
     if (!resp.ok) return [];
     const data = await resp.json();
 
@@ -296,7 +313,8 @@ async function lookupListedBuildings(postcode: string): Promise<any[]> {
 async function lookupPlanningData(postcode: string): Promise<any> {
   try {
     const geocodeResp = await fetch(
-      `https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}`
+      `https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}`,
+      { signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS) }
     );
     if (!geocodeResp.ok) return null;
     const geoData = await geocodeResp.json();
@@ -405,7 +423,7 @@ async function lookupPlanningApplications(lat: number, lng: number): Promise<any
 
 async function lookupTflNearby(postcode: string): Promise<any> {
   try {
-    const geocodeResp = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}`);
+    const geocodeResp = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}`, { signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS) });
     if (!geocodeResp.ok) return null;
     const geoData = await geocodeResp.json();
     const lat = geoData.result?.latitude;

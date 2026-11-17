@@ -86,7 +86,14 @@ explicit permission.
   on every push from 13 to 15 November 2026 because its property scenario
   still waited for the simple view after the plan-led page became the staff
   default; it now follows the plan-led page first and reaches the older
-  page from More → Back to the current page. To run it locally: `bash
+  page from More → Back to the current page. The staff smoke check failed
+  on 16 and 17 November 2026 (runs 1988 and 2004) with a 504 from
+  `/api/property-lookup` (Bluewater, DA9 9ST): public sources called with no
+  time limit (Land Registry price paid, postcodes.io, flood, listed
+  buildings) ran past the 45 second request limit. Every outside call in
+  `server/property-lookup.ts` now has its own limit and a failed price paid
+  read is not cached; `qa/regression/property-lookup-timeouts.test.mjs`
+  fails on a new call without one. To run it locally: `bash
   qa/start-postgres.sh`, restore `qa/smoke-fixture.sql.gz` into a database
   named `bgpsmoke`, `npm run build`, start `node dist/index.cjs` on it, then
   `SMOKE_CHROMIUM=/opt/pw-browsers/chromium SMOKE_BASE=http://localhost:<port>
