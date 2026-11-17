@@ -2468,6 +2468,9 @@ same day, never live). Do not re-litigate. Tests:
   deal with no party closes as before. It cannot send the request by itself
   until KYC4U agrees to take requests some other way, or the in-app checks
   (`IN_APP_AML_ENABLED`, ComplyAdvantage and Veriff) are switched back on.
+  While in-app AML is on, each button is **Send client checks** instead
+  (`amlInApp`, read from `inAppAml` on `GET /api/kyc/deal/:id/status`); see
+  "Client checks" below.
 - **Create billing entity** (`server/billing-entity.ts`,
   `POST /api/billing-entities { brandId, companyNumber }`, `brandId` the
   landlord or brand, BGP staff signed in as themselves;
@@ -2685,6 +2688,136 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   the main table (`TrackerChecklistCell`), on the staff tracker and the
   joint agent's (Woody, 2026-11-13: "swap the check list and against the
   brief"). Do not swap them back.
+
+## Client checks: the in-app KYC request (Woody, 2026-11-17)
+
+Woody: the emails should "come from kyc@chatbgp.app", "copy the agent that
+has done the deal" and carry the "BGP logo"; "check the whole system because
+it was built ages ago and wasnt working properly"; "not that clear or user
+friendly"; then "check this all against HMRC guidance" and "FCA and bank of
+England Guidance". The in-app request an agent sends a party's contact, the
+client's own page, reminders, replies by email, and the admin's test send.
+It is part of in-app AML, so the agent's side shows only while
+`IN_APP_AML_ENABLED` is on; the client's page and the admin's test work
+either way. Server `server/aml-portal.ts`; every email's words and the
+page's rules `shared/kyc-request.ts`; client page
+`client/src/pages/kyc-upload.tsx` (public, `/kyc-upload/:token`); agent
+dialog and request rows `client/src/components/kyc-client-checks.tsx` (on
+the deal's KYC card per party, and the deal form's Kick off AML step);
+admin card `client/src/components/kyc-emails-admin.tsx` (My BGP → KYC4U
+pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
+`qa/regression/kyc-client-checks.test.mjs`.
+
+- **What was wrong, and the rule now** (do not undo): it sent from
+  `BGP_AML_MAILBOX`, never set, so nothing went (now `KYC_MAILBOX`, default
+  kyc@chatbgp.app, then the shared mailbox when Microsoft will not send as
+  it, through `sendKycEmail`, the one door); its link opened a "no longer in
+  use" page (the page is back); an upload was read by the AI and then
+  DELETED (every file is stored with `saveFile` and filed in `kyc_documents`
+  on the party, with the checklist items it evidences ticked for the MLRO to
+  confirm, the KYC pack's rule); the reminder and the reply reader never ran
+  (reminders daily 10:00, `kyc-client-reminders`; the KYC mailbox read every
+  15 minutes; both only while in-app AML is on); the agents were never
+  copied (the deal's agents, `internal_agent_ids` / names and the fee split,
+  never BGP House, BGP addresses only, plus the sender); the links pointed at
+  app.brucegillinghampollard.com (now `PUBLIC_APP_URL`, default chatbgp.app);
+  the orchestrator started a paid Veriff check for EVERY contact on a company
+  and sent nobody the link (removed: the identity check is asked for one
+  person, from the request); WhatsApp free text was sent from the server,
+  which WhatsApp refuses for a business's first message (removed: a wa.me
+  link opens the agent's own WhatsApp); Veriff's event webhook wrote a blank
+  status over a session (it now records started / submitted and never
+  overwrites a decision).
+- **One email, one page.** The request email has the logo inline (cid), a
+  numbered list of what is needed, one **Start your checks** button, the
+  agent's note, Why we ask, the agent's phone and email, and the reference
+  in the subject (`(ref 7K2Q9M)`, six letters and digits) so a reply finds
+  its request. The page: a card per step with an Upload button (PDF, photos
+  including HEIC, Word; 25MB; 40 files a request), the Veriff check (returns
+  to the page when done; a new session at most three times), the question,
+  progress, and **Finish**, which emails the deal's agents what came in and
+  what did not. Reminders three and seven days after sending while anything
+  is outstanding. A reply by email is filed only when it carries a request's
+  reference AND comes from the address the request went to; anything else is
+  marked in the mailbox for a person (`BGP-KYC-Unmatched`) and never filed.
+- **Checked against HMRC's guidance for supervised businesses** (AMLG2200
+  estate agency, AMLG2300 letting agency, AMLG11400 identification and
+  verification, AMLG11600 / 11630 / 11650 enhanced due diligence, source of
+  funds and PEPs, AMLG11700 records; read 17 November 2026). What it changed:
+  the identity documents HMRC lists (passport, photocard driving licence,
+  national identity card); without the online check, photo ID is a CERTIFIED
+  copy ("Certified to be a true copy of the original seen by me") or the
+  original shown to the agent, because HMRC wants originals where possible;
+  address documents are those HMRC names (utility bill, bank or building
+  society statement, mortgage statement); beneficial owners are "more than
+  25%" or control (MLR reg 5), never "25% or more"; a company's contact
+  confirms their authority to act (a director's email or letter, AMLG11400
+  14.7: "Obtain evidence that they have authority to act"); an overseas
+  company sends a register extract (14.8); source of funds is where the money
+  comes from, not only the bank (AMLG11630), and is asked of a tenant as well
+  as a buyer (AMLG2300 s21: "all customers making a payment"); the data
+  statement of MLR reg 41 ("only to prevent money laundering and terrorist
+  financing") and the privacy notice (brucegillinghampollard.com/privacy);
+  records "kept for five years after our work with you ends" (AMLG11700);
+  the agent's dialog says when HMRC expects each party's checks (landlord:
+  before terms of engagement and before marketing; tenant: once the landlord
+  accepts the offer, before any agreement, no deposit before; seller: before
+  marketing; buyer: before an offer is accepted, at the latest exchange) and
+  that a letting is in scope at £10,000 a month or more for any part of the
+  term, turnover rent included; the agents' email reminds them to compare the
+  owners with the PSC register, a difference being reportable to Companies
+  House.
+- **The question about public roles** (`KYC_PEP_QUESTION`): every request
+  since 17 November asks it ("Asking your customer" is one of HMRC's ways to
+  find a PEP; screening is the other). Its words are the legal definition
+  and no wider (MLR reg 35(12)-(14); the FCA's FG25/3, which replaced FG17/6,
+  found firms using definitions wider than the regulations): family is a
+  spouse or partner, a child and their spouse or partner, a parent (never a
+  sibling); 12 months after leaving office; middle-ranking and junior
+  officials excluded. A yes or not sure goes on the party's KYC trail
+  (`client_pep_declaration`), shows on the request and in the agents' email
+  as enhanced due diligence: senior management approval (a director or the
+  MLRO), source of wealth and of funds, closer monitoring; lighter for a UK
+  PEP with no other risk factor (FCA FG25/3). It never writes
+  `aml_pep_status` (the MLRO's field).
+- **FCA and Bank of England** (17 November 2026): BGP's AML supervisor is
+  HMRC; the FCA supervises financial firms and the Bank of England / PRA
+  supervises no one for AML, so neither's AML rulebook binds BGP. What does
+  apply: the FCA's PEP guidance as the reference for PEP treatment (above),
+  and sanctions: the app screens the FCDO's UK Sanctions List
+  (`server/sanctions-screening.ts`), the one list since OFSI's Consolidated
+  List closed on 28 January 2026; estate agents, and letting agents since
+  14 May 2025, are OFSI "relevant firms" and must report a designated person
+  or a breach to OFSI as soon as practicable, whatever the rent, even when
+  the business is declined. The dialog's scope line says so.
+- **Admin test** (`GET /api/admin/kyc-emails`, `POST
+  /api/admin/kyc-emails/test`, admins only): every email as the client sees
+  it, and **Send me a test** to the admin who pressed it, copied to nobody.
+  The test request's link opens the real page in test mode (a token with
+  `is_test`, two days, uploads recorded by name only and not kept, Finish
+  emails the same admin). A failed send still returns the test page's link.
+- **Schema** (additive, nullable, boot MIGRATIONS in `server/index.ts`, not
+  in `shared/schema.ts`): `kyc_upload_tokens` gained `company_id`,
+  `contact_id`, `request` (JSONB: `KycRequestDetails`), `completed_at`,
+  `reminders_sent`, `last_reminded_at`, `is_test`; `kyc_upload_files` gained
+  `doc_type`, `kyc_document_id`. Woody to approve with the push.
+- **The gates**: `/api/kyc-upload/*` is no longer on the retired-AML list and
+  passes the client gateway (the token is the only key, and no live token
+  exists while in-app AML is off except an admin's test). Every other client
+  checks route is under `/api/aml/` (retired while off) and is BGP staff
+  only (`contactViewer`).
+- **Not built, each waiting on Woody**: the kyc@chatbgp.app mailbox has to
+  exist in Microsoft 365 with the app allowed to send as it and read it (until
+  then the email goes from the shared mailbox and replies go there); whether
+  Veriff is on the UK DVS register (HMRC: a provider not on it "cannot
+  reliably be deemed suitable"; Veriff says it is certified, the register
+  listing was not confirmed); whether the privacy notice covers AML
+  processing (reg 41 / Article 13); HMRC says a contract cannot proceed
+  without CDD, while Woody's September rule only warns at Solicitors (a hold
+  at exchange or completion is his call); records are not deleted after the
+  five years; the app does not prompt an OFSI report on a sanctions match;
+  trusts, partnerships and charities have no request type of their own; the
+  principal place of business (if not the registered office) is not asked.
 
 ## Notes into forms (Woody, 2026-11-13)
 

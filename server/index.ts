@@ -2354,6 +2354,18 @@ const schemaStartup = (async () => {
       uploaded_at TIMESTAMP DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_kyc_upload_files_deal ON kyc_upload_files(deal_id)`,
+    // Client checks (17 November 2026): the party and person a request is
+    // for, what it asks for (server/aml-portal.ts KycRequestDetails), when
+    // the client finished, reminders, and the admin's test requests.
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS company_id VARCHAR`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS contact_id VARCHAR`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS request JSONB`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS reminders_sent INTEGER DEFAULT 0`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS last_reminded_at TIMESTAMP`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS is_test BOOLEAN DEFAULT false`,
+    `ALTER TABLE kyc_upload_files ADD COLUMN IF NOT EXISTS doc_type TEXT`,
+    `ALTER TABLE kyc_upload_files ADD COLUMN IF NOT EXISTS kyc_document_id VARCHAR`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_mlro_report_url TEXT`,
     // Promote the three other board members to admin alongside Woody +
     // Layla. Idempotent: re-runs are no-ops once is_admin is already true.
@@ -4232,6 +4244,7 @@ import amlCddFormRouter from "./aml-cdd-form";
 import websiteContentRouter from "./website-content";
 import wpListingsSyncRouter, { startWpListingsSync } from "./wp-listings-sync";
 import veriffRouter from "./veriff";
+import kycRequestRouter from "./aml-portal";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
 import brandDedupeRouter from "./brand-dedupe";
@@ -5039,8 +5052,11 @@ app.use("/api/branding/assets", express.static(
   // read (/api/kyc/deal/:id/status — KYC4U's mirrored verdict drives the
   // gate), Companies House lookups and covenant. Stored AML records are
   // untouched (MLR 2017 record keeping). IN_APP_AML_ENABLED=1 restores it.
+  // Also kept: the client's own client checks page (/api/kyc-upload/<token>),
+  // which only opens on a live token, and only the admin's test send makes
+  // one while the switch is off (server/aml-portal.ts).
   const RETIRED_AML = [
-    /^\/api\/(aml|kyc-clouseau|veriff|sanctions|kyc-upload|comply-advantage)(\/|$)/,
+    /^\/api\/(aml|kyc-clouseau|veriff|sanctions|comply-advantage)(\/|$)/,
     /^\/api\/kyc\/(?!deal\/[^/]+\/status$)/,
     /^\/api\/accounts\/[^/]+\/entity-checks/,
     /^\/api\/entities\/[^/]+\/[^/]+\/kyc(\/|$)/,
@@ -5083,6 +5099,10 @@ app.use("/api/branding/assets", express.static(
     const resourcePath = routedApiPath(req);
     const p = resourcePath.toLowerCase();
     if (p.startsWith("/api/auth/")) return next();
+    // The client checks page answers to its token alone and reads nothing
+    // of the session, so a client signed in to the app (a Landsec login
+    // asked for its own checks) opens it like anyone else.
+    if (p.startsWith("/api/kyc-upload/")) return next();
     try {
       const { isClientRequestUser } = await import("./company-scope");
       if (!(await isClientRequestUser(req))) return next(); // BGP staff: unaffected
@@ -5563,6 +5583,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(websiteContentRouter);
   app.use(wpListingsSyncRouter);
   app.use(veriffRouter);
+  app.use(kycRequestRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);
   app.use(brandDedupeRouter);
@@ -6701,6 +6722,14 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             console.error("[kyc-orch-boot] AML top-up failed:", err?.message)
           );
         }, 4 * 60 * 1000);
+        // Client checks: replies with documents to the KYC mailbox, read
+        // every 15 minutes while in-app AML is on (server/aml-portal.ts).
+        setInterval(() => {
+          if (!process.env.IN_APP_AML_ENABLED) return;
+          import("./aml-portal").then(m => m.pollKycMailbox()).then(r => {
+            if (r.filed || r.unmatched || r.warnings.length) console.log(`[kyc-mailbox] ${r.filed} filed, ${r.unmatched} left for a person${r.warnings.length ? `: ${r.warnings.slice(0, 3).join(" | ")}` : ""}`);
+          }).catch(err => console.error("[kyc-mailbox] read failed:", err?.message));
+        }, 15 * 60 * 1000).unref();
       }
 
       // Fixed-time jobs — one 5-minute tick with persisted once-per-slot
@@ -6821,6 +6850,11 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             // CRM's confirmed events. CRM_WEEK_AHEAD_TO moves it, "off" stops it.
             { key: "crm-week-ahead", due: weeklyAt(1, 7, 30), run: () =>
               import("./crm-week-ahead").then(m => m.mondayWeekAhead()).then(() => undefined) },
+            // Client checks reminders — daily 10:00: three and seven days
+            // after a request, while anything is outstanding. Does nothing
+            // while in-app AML is off (server/aml-portal.ts).
+            { key: "kyc-client-reminders", due: dailyAt(10), run: () =>
+              import("./aml-portal").then(m => m.sendKycReminders()).then(() => undefined) },
             // Weekly client report — Monday 09:00 (sends email).
             { key: "weekly-client-reports", due: weeklyAt(1, 9), run: () => runWeeklyClientReports() },
           );

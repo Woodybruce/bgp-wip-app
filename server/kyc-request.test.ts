@@ -1,0 +1,191 @@
+// Client checks (17 November 2026): the emails, the page's rules and the
+// reminder timing. The email words live in shared/kyc-request.ts.
+import "./test-database-url";
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  KYC_DATA_USE, KYC_DOCS, KYC_LETTING_SCOPE, KYC_LOGO_CID, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_TIMING, defaultKycDocs, isKycDocKey, isKycPepAnswer,
+  kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycRefFromSubject, kycReminderEmail, kycRequestEmail, kycSteps, kycUploadAllowed,
+  kycWhatsAppHref, kycWhatsAppText, type KycEmailContext,
+} from "../shared/kyc-request";
+import { reminderDue } from "./aml-portal";
+
+const ctx = (over: Partial<KycEmailContext> = {}): KycEmailContext => ({
+  recipientName: "Jane Smith", partyName: "Example Trading Ltd", kind: "company", dealName: "12 Example Street",
+  ref: "7K2Q9M", link: "https://chatbgp.app/kyc-upload/abc", expiresAt: new Date("2026-12-01T12:00:00Z"),
+  needsIdCheck: true, docs: ["ownership", "owner_ids", "authority"], note: null, askPep: true,
+  agents: [{ name: "Jack Agent", email: "jack@brucegillinghampollard.com", phone: "07700 900123" }],
+  sentFrom: "kyc@chatbgp.app", ...over,
+});
+
+test("the request carries the logo, one button to the client's own page and the reference in the subject", () => {
+  const { subject, html } = kycRequestEmail(ctx());
+  assert.match(subject, /12 Example Street \(ref 7K2Q9M\)$/);
+  assert.equal(kycRefFromSubject(`RE: ${subject}`), "7K2Q9M");
+  assert.ok(html.includes(`cid:${KYC_LOGO_CID}`), "the logo is the inline image");
+  assert.equal((html.match(/Start your checks/g) || []).length, 1);
+  assert.ok(html.includes('href="https://chatbgp.app/kyc-upload/abc"'));
+  assert.match(html, /Sent from kyc@chatbgp\.app/);
+  assert.match(html, /Jack Agent/);
+  assert.doesNotMatch(html, /\[Test\]|Test email/);
+});
+
+test("every name and note is escaped, and a link that is not https is never written", () => {
+  const { html } = kycRequestEmail(ctx({ recipientName: "<script>alert(1)</script>", partyName: "A & B <Ltd>", note: "Call me\n<b>now</b>", link: "javascript:alert(1)" }));
+  assert.doesNotMatch(html, /<script>|<b>now<\/b>|javascript:/);
+  assert.match(html, /A &amp; B &lt;Ltd&gt;/);
+  assert.match(html, /href="#"/);
+});
+
+test("a company is told Companies House is read by us; a person is not", () => {
+  assert.match(kycRequestEmail(ctx()).html, /Companies House/);
+  assert.doesNotMatch(kycRequestEmail(ctx({ kind: "individual", docs: ["proof_of_address"] })).html, /Companies House/);
+});
+
+test("the steps follow the request: the identity check, each document, then the question", () => {
+  assert.deepEqual(kycSteps({ needsIdCheck: true, docs: ["proof_of_address"], askPep: true, kind: "individual" }).map(s => s.title),
+    ["A quick identity check", KYC_DOCS.proof_of_address.title, KYC_PEP_QUESTION.title]);
+  assert.deepEqual(kycSteps({ needsIdCheck: false, docs: ["photo_id"] }).map(s => s.title), [KYC_DOCS.photo_id.title]);
+});
+
+test("what is asked for by default: photo ID only without the online check; ownership and authority for a company; the money from whoever pays", () => {
+  assert.deepEqual(defaultKycDocs("company", "tenant", true), ["ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(defaultKycDocs("company", "tenant", false), ["photo_id", "ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(defaultKycDocs("company", "landlord", true), ["ownership", "owner_ids", "authority"]);
+  assert.deepEqual(defaultKycDocs("individual", "purchaser", true), ["proof_of_address", "source_of_funds"]);
+  assert.ok(defaultKycDocs("individual", "landlord", false).includes("photo_id"));
+  assert.ok(isKycDocKey("owner_ids") && isKycDocKey("authority") && !isKycDocKey("passport"));
+});
+
+test("HMRC: the documents asked for are the ones its guidance names", () => {
+  assert.match(KYC_DOCS.photo_id.detail, /passport, photocard driving licence or national identity card/);
+  assert.match(KYC_DOCS.photo_id.detail, /Certified to be a true copy of the original seen by me/, "a copy, not the original, is certified (AMLG11400 14.4)");
+  assert.match(KYC_DOCS.proof_of_address.detail, /utility bill, bank or building society statement, or mortgage statement/);
+  assert.match(KYC_DOCS.ownership.detail, /more than 25%/);
+  assert.doesNotMatch(KYC_DOCS.ownership.detail, /25% or more/);
+  assert.match(KYC_DOCS.ownership.detail, /controls the company in another way/);
+  assert.match(KYC_DOCS.authority.detail, /director/);
+  assert.match(KYC_DOCS.company_documents.detail, /extract from its official company register/);
+  assert.match(KYC_DOCS.source_of_funds.detail, /not only which bank/);
+});
+
+test("HMRC: when each party's checks are due, and which lettings are in scope", () => {
+  assert.match(KYC_TIMING.landlord, /before you agree terms of engagement and before the unit is marketed/);
+  assert.match(KYC_TIMING.tenant, /landlord accepts their offer, and before any agreement or contract/);
+  assert.match(KYC_TIMING.tenant, /No deposit/);
+  assert.match(KYC_TIMING.purchaser, /before exchange/);
+  assert.match(KYC_TIMING.vendor, /before the property is marketed/);
+  assert.match(KYC_LETTING_SCOPE, /£10,000 a month/);
+  assert.match(KYC_LETTING_SCOPE, /turnover rent/);
+  assert.match(KYC_LETTING_SCOPE, /OFSI/);
+});
+
+test("regulation 41 and record keeping: what the client is told about their data", () => {
+  const { html } = kycRequestEmail(ctx());
+  assert.match(KYC_DATA_USE, /only to prevent money laundering and terrorist financing/);
+  assert.match(KYC_DATA_USE, /five years after our work with you ends/);
+  assert.ok(html.includes(KYC_DATA_USE));
+  assert.ok(html.includes(`href="${KYC_PRIVACY_URL}"`), "the privacy notice is linked");
+});
+
+test("FCA: the public-role question uses the legal definition, no wider", () => {
+  assert.match(KYC_PEP_QUESTION.company, /last 12 months/);
+  assert.match(KYC_PEP_QUESTION.company, /spouse or partner, child \(or child's spouse or partner\) or parent/);
+  assert.doesNotMatch(KYC_PEP_QUESTION.company + KYC_PEP_QUESTION.individual + KYC_PEP_QUESTION.examples, /brother|sister|sibling|councillor/i);
+  assert.match(KYC_PEP_QUESTION.examples, /Middle-ranking and junior officials are not included/);
+  const step = kycSteps({ needsIdCheck: false, docs: [], askPep: true, kind: "company" })[0].detail;
+  assert.doesNotMatch(step, /close family/, "the email's summary is no wider than the definition");
+  assert.match(step, /spouse, partner, child or parent/);
+  assert.ok(isKycPepAnswer("unsure") && !isKycPepAnswer("maybe"));
+});
+
+test("the reminder lists what is done and what is still needed", () => {
+  const { subject, html } = kycReminderEmail({ ...ctx(), progress: { idDone: true, docsDone: ["ownership"] } });
+  assert.match(subject, /^Reminder: /);
+  const done = html.indexOf("Done, thank you"), left = html.indexOf("Still needed");
+  assert.ok(done > 0 && left > done);
+  const id = html.indexOf("Identity check", done);
+  assert.ok(id > done && id < left);
+  assert.ok(html.indexOf(KYC_DOCS.owner_ids.title, done) > left);
+  assert.ok(html.indexOf(KYC_PEP_QUESTION.title, done) > left, "the unanswered question is still needed");
+});
+
+test("a test email says so in its subject and at the top", () => {
+  const { subject, html } = kycRequestEmail(ctx({ test: true }));
+  assert.match(subject, /^\[Test\] /);
+  assert.match(html, /Test email\./);
+});
+
+test("the note to the agents names the files and what was not sent", () => {
+  const { subject, html } = kycFinishedEmail({ recipientName: "Jane Smith", partyName: "Example Trading Ltd", dealName: "12 Example Street", ref: "7K2Q9M",
+    dealLink: "https://chatbgp.app/deals/d1", idState: "submitted", files: [{ name: "chart.pdf", docKey: "ownership" }, { name: "scan.jpg", docKey: null }], missing: ["ID for each of those owners"], sentFrom: "kyc@chatbgp.app" });
+  assert.match(subject, /Jane Smith has finished their identity checks for 12 Example Street/);
+  assert.match(html, /chart\.pdf/);
+  assert.match(html, /Sent by email/);
+  assert.match(html, /Not sent/);
+  assert.match(html, /waiting for Veriff/);
+  assert.doesNotMatch(html, /Enhanced due diligence|PSC register/, "no answer or kind given, nothing said");
+});
+
+test("a yes or not sure to the question tells the agents what enhanced due diligence needs; a company gets the PSC check", () => {
+  const base = { recipientName: "Jane Smith", partyName: "Example Trading Ltd", dealName: "12 Example Street", ref: "7K2Q9M",
+    dealLink: "https://chatbgp.app/deals/d1", idState: "approved" as const, files: [], missing: [], sentFrom: "kyc@chatbgp.app", kind: "company" as const };
+  const yes = kycFinishedEmail({ ...base, pep: "yes", pepDetail: "Father is an ambassador" }).html;
+  assert.match(yes, /Enhanced due diligence/);
+  assert.match(yes, /senior management approval/);
+  assert.match(yes, /source of wealth and source of funds/);
+  assert.match(yes, /A UK one starts as lower risk/);
+  assert.match(yes, /Father is an ambassador/);
+  assert.match(yes, /PSC register/);
+  const no = kycFinishedEmail({ ...base, pep: "no" }).html;
+  assert.doesNotMatch(no, /Enhanced due diligence/);
+  assert.match(no, /Public roles/);
+});
+
+test("the identity check email links straight to the check", () => {
+  const { html } = kycIdCheckEmail({ recipientName: "Jane Smith", partyName: "Jane Smith", kind: "individual", dealName: "", link: "https://magic.veriff.me/v/abc", agents: [], sentFrom: "kyc@chatbgp.app" });
+  assert.ok(html.includes('href="https://magic.veriff.me/v/abc"'));
+  assert.match(html, /reply to this email/);
+});
+
+test("Veriff's statuses read as the page's states", () => {
+  assert.equal(kycIdStateFor(null), "not_started");
+  assert.equal(kycIdStateFor("created"), "not_started");
+  assert.equal(kycIdStateFor("started"), "started");
+  assert.equal(kycIdStateFor("submitted"), "submitted");
+  assert.equal(kycIdStateFor("approved"), "approved");
+  assert.equal(kycIdStateFor("resubmission_requested"), "retry");
+  for (const s of ["declined", "expired", "abandoned"]) assert.equal(kycIdStateFor(s), "restart");
+});
+
+test("the page takes documents and photos, nothing that runs", () => {
+  assert.ok(kycUploadAllowed("passport.pdf", "application/pdf"));
+  assert.ok(kycUploadAllowed("IMG_0001.HEIC", ""));
+  assert.ok(kycUploadAllowed("photo.jpg", "image/jpeg"));
+  assert.ok(!kycUploadAllowed("invoice.exe", "application/octet-stream"));
+  assert.ok(!kycUploadAllowed("page.html", "text/html"));
+  assert.ok(!kycUploadAllowed("passport.pdf", "text/html"), "a document type that does not match is refused");
+});
+
+test("the WhatsApp link opens the agent's own WhatsApp with the message written out", () => {
+  const text = kycWhatsAppText({ recipientName: "Jane Smith", dealName: "12 Example Street", link: "https://chatbgp.app/kyc-upload/abc", expiresAt: "2026-12-01T12:00:00Z", senderName: "Jack Agent" });
+  assert.match(text, /^Hello Jane, it's Jack at Bruce Gillingham Pollard\./);
+  assert.ok(kycWhatsAppHref("07700 900123", text).startsWith("https://wa.me/447700900123?text="));
+  assert.ok(kycWhatsAppHref("+44 7700 900123", text).startsWith("https://wa.me/447700900123?"));
+  assert.ok(kycWhatsAppHref("0044 7700 900123", text).startsWith("https://wa.me/447700900123?"));
+});
+
+test("reminders: three days after sending, then seven; never for a finished, cancelled, expired, unsent or test request", () => {
+  const sentAt = "2026-11-10T10:00:00.000Z";
+  const base = { revoked_at: null, completed_at: null, expires_at: new Date("2026-11-24T10:00:00Z"), reminders_sent: 0, is_test: false, request: { sentAt } };
+  assert.equal(reminderDue(base, new Date("2026-11-12T10:00:00Z")), false, "two days on");
+  assert.equal(reminderDue(base, new Date("2026-11-13T10:00:00Z")), true, "three days on");
+  assert.equal(reminderDue({ ...base, reminders_sent: 1 }, new Date("2026-11-15T10:00:00Z")), false, "five days on, after the first");
+  assert.equal(reminderDue({ ...base, reminders_sent: 1 }, new Date("2026-11-17T10:00:00Z")), true, "seven days on");
+  assert.equal(reminderDue({ ...base, reminders_sent: 2 }, new Date("2026-11-20T10:00:00Z")), false, "no third");
+  assert.equal(reminderDue({ ...base, completed_at: new Date() }, new Date("2026-11-13T10:00:00Z")), false);
+  assert.equal(reminderDue({ ...base, revoked_at: new Date() }, new Date("2026-11-13T10:00:00Z")), false);
+  assert.equal(reminderDue({ ...base, is_test: true }, new Date("2026-11-13T10:00:00Z")), false);
+  assert.equal(reminderDue({ ...base, request: { sentAt: null } }, new Date("2026-11-13T10:00:00Z")), false);
+  assert.equal(reminderDue(base, new Date("2026-11-25T10:00:00Z")), false, "the link has run out");
+});

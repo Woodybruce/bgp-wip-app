@@ -235,8 +235,10 @@ test('the retired-AML switch reads every spelling of a retired address as that a
   for (const target of ['/api/aml/status', '/api/AML/status', '/api/Kyc-Clouseau/x', '/api//aml/status', '/api/aml/status#x', '/api/kyc-clouseau/x?y=1#z', '/api/kyc/run-all-checks', '/api/KYC/Run-All-Checks', '/api/sanctions']) {
     assert.equal((await send(target)).status, 410, target);
   }
-  // Kept: the deal's KYC status read, and everything that is not AML.
+  // Kept: the deal's KYC status read, the client's own client checks page
+  // (its token is the key; server/aml-portal.ts), and everything not AML.
   assert.equal((await send('/api/kyc/deal/d1/status')).status, 200);
+  assert.equal((await send('/api/kyc-upload/abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG')).status, 200);
   assert.equal((await send('/api/kyc4u/requests')).status, 200);
   assert.equal((await send('/api/crm/deals')).status, 200);
 });

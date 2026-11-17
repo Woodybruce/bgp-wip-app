@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { KycEmailsAdmin } from "@/components/kyc-emails-admin";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Loader2, ExternalLink, Bookmark, Upload } from "lucide-react";
@@ -130,6 +131,8 @@ export default function Kyc4uPanel() {
         </p>
         <a href={status.site} target="_blank" rel="noopener" className="text-xs text-primary inline-flex items-center gap-1 mt-1">KYC4U site <ExternalLink className="w-3 h-3" /></a>
       </section>
+
+      {isAdmin && <KycEmailsAdmin />}
 
       {isAdmin && (
         <section className="rounded-xl border bg-card p-4" data-testid="kyc4u-bookmark">

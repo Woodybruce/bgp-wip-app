@@ -147,6 +147,8 @@ import type { HotsConversion, HotsConvertDefaults } from "@shared/unit-hots";
 import { hotsCall } from "@/components/unit-hots/hots-api";
 import { dealNotePatch, noteTenant } from "@/lib/deal-note";
 import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
+import { SendClientChecksButton } from "@/components/kyc-client-checks";
+import { useDealAmlStatus } from "@/components/deal-aml-status";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
 import { JointAgencyWidget, JointAgencyRegisterDialog, jointAgencyMissing, jointAgencyPayload, EMPTY_JOINT_AGENCY, type JointAgencyState } from "@/components/joint-agency-aml";
 
@@ -3074,6 +3076,10 @@ export function DealFormDialog({
   type AmlParty = { role: "landlord" | "tenant" | "vendor" | "purchaser"; label: string; id: string; name: string };
   const [amlStep, setAmlStep] = useState<{ dealId: string; dealRef: string | number | null; parties: AmlParty[] } | null>(null);
   useEffect(() => { if (!open) setAmlStep(null); }, [open]);
+  // While in-app AML is on, Kick off AML sends the client checks (one email
+  // from the KYC mailbox, the deal's agents copied); otherwise KYC4U.
+  const { data: amlStepStatus } = useDealAmlStatus(amlStep?.dealId ?? "", !!amlStep);
+  const amlInApp = !!amlStepStatus?.inAppAml;
   // A handover's landlord, when the deal has none: the property's.
   const handoverLandlordId: string | null = handover
     ? ((properties.find(p => p.id === handover.unit.propertyId) as { landlordId?: string | null } | undefined)?.landlordId || null)
@@ -3536,7 +3542,7 @@ export function DealFormDialog({
         <DialogHeader>
           <DialogTitle>{amlStep ? "Kick off AML" : handover?.kind === "promote" ? "Promote to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Edit Deal" : "New Deal"}</DialogTitle>
           <DialogDescription>
-            {amlStep ? "Start the checks on each party with KYC4U." : handover
+            {amlStep ? (amlInApp ? "Send each party's contact the client checks: one email, and a page of their own to do them on." : "Start the checks on each party with KYC4U.") : handover
               ? `${[handover.unit.propertyName || properties.find(p => p.id === handover.unit.propertyId)?.name, handover.unit.unitName].filter(Boolean).join(" — ")}. Check the deal, then save: it moves to Solicitors.`
               : isEdit ? "Update deal details below." : "Fill in the details to create a new deal."}
           </DialogDescription>
@@ -3553,12 +3559,16 @@ export function DealFormDialog({
                     <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{p.label}</div>
                     <div className="text-sm font-medium break-words">{p.name}</div>
                   </div>
-                  <Kyc4uRequestButton dealId={amlStep.dealId} companyId={p.id} role={p.role} partyName={p.name} label="Kick off AML" />
+                  {amlInApp
+                    ? <SendClientChecksButton dealId={amlStep.dealId} companyId={p.id} partyName={p.name} label="Kick off AML" />
+                    : <Kyc4uRequestButton dealId={amlStep.dealId} companyId={p.id} role={p.role} partyName={p.name} label="Kick off AML" />}
                 </div>
               ))}
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Each button fills in KYC4U's request from the deal: check it and save. Then, on KYC4U's Raise New Service Request page, click your Send to ChatBGP bookmark and press Submit there. KYC4U's answer comes back to the deal after the next sync.
+              {amlInApp
+                ? "Each button opens the client checks: pick who to ask, choose what to ask for, see the email, send. It goes from the KYC mailbox with the deal's agents copied, and progress shows on the deal's AML card."
+                : "Each button fills in KYC4U's request from the deal: check it and save. Then, on KYC4U's Raise New Service Request page, click your Send to ChatBGP bookmark and press Submit there. KYC4U's answer comes back to the deal after the next sync."}
             </p>
             <DialogFooter className="flex items-center gap-2">
               <Button type="button" variant="outline" onClick={() => { const id = amlStep.dealId; onOpenChange(false); navigateTo(`/deals/${id}`); }} data-testid="deal-aml-open-deal">Open the deal</Button>

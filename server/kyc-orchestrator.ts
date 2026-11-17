@@ -25,7 +25,6 @@ import {
   logKycAudit,
 } from "./kyc-clouseau";
 import { discoverUltimateParent } from "./companies-house";
-import { createVeriffSession } from "./veriff";
 import { adverseMediaSearch, isPerplexityConfigured } from "./perplexity";
 import { screenNames as complyAdvantageScreen, isComplyAdvantageConfigured } from "./comply-advantage";
 import { findHistoricalKycMatches, hasFreshHistoricalPack, type HistoricalKycMatch } from "./aml-historical";
@@ -539,69 +538,13 @@ export async function runAllAmlChecks(
     warnings.push("ComplyAdvantage not configured — skipped PEP/sanctions screening");
   }
 
-  // 2. Veriff — fire one session per contact on the company, if configured
+  // 2. Identity checks are asked for one person at a time, from the deal's
+  // client checks (server/aml-portal.ts), with the link emailed to them.
+  // This sweep used to start a paid Veriff check for every contact filed
+  // under the company, whether or not they had anything to do with the
+  // deal, and sent nobody the link (17 November 2026).
   const veriffLaunched: Array<{ contactId: string; sessionId: string; url: string }> = [];
   const veriffSkipped: Array<{ contactId: string; reason: string }> = [];
-  const veriffConfigured =
-    !!(process.env.VERIFF_API_KEY ||
-      process.env.VERIFF_PUBLIC_KEY ||
-      process.env.VERIFF_KEY ||
-      process.env.VERIFF_INTEGRATION_ID);
-
-  if (veriffConfigured) {
-    const contactsQuery = await pool.query(
-      `SELECT id, name, email FROM crm_contacts WHERE company_id = $1`,
-      [companyId],
-    );
-    const existingQuery = await pool.query(
-      `SELECT contact_id, status FROM veriff_sessions
-        WHERE company_id = $1 AND contact_id IS NOT NULL`,
-      [companyId],
-    );
-    const retriable = new Set(["declined", "resubmission_requested", "expired", "abandoned"]);
-    const blocked = new Set(
-      existingQuery.rows
-        .filter((r) => !retriable.has(String(r.status || "").toLowerCase()))
-        .map((r) => r.contact_id),
-    );
-
-    for (const c of contactsQuery.rows) {
-      if (blocked.has(c.id)) {
-        veriffSkipped.push({ contactId: c.id, reason: "Active Veriff session already in flight" });
-        continue;
-      }
-      const parts = String(c.name || "").trim().split(/\s+/);
-      const firstName = parts[0] || "";
-      const lastName = parts.slice(1).join(" ") || firstName || "(unknown)";
-      if (!firstName) {
-        veriffSkipped.push({ contactId: c.id, reason: "Contact has no name" });
-        continue;
-      }
-      try {
-        const session = await createVeriffSession({
-          firstName,
-          lastName,
-          email: c.email || undefined,
-          companyId,
-          contactId: c.id,
-          dealId: dealId || undefined,
-          userId: userId || undefined,
-        });
-        await pool.query(
-          `INSERT INTO veriff_sessions
-             (session_id, company_id, contact_id, deal_id, first_name, last_name, email, status, verification_url, requested_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-           ON CONFLICT (session_id) DO NOTHING`,
-          [session.sessionId, companyId, c.id, dealId || null, firstName, lastName, c.email || null, session.status, session.verificationUrl, userId],
-        );
-        veriffLaunched.push({ contactId: c.id, sessionId: session.sessionId, url: session.verificationUrl });
-      } catch (e: any) {
-        veriffSkipped.push({ contactId: c.id, reason: `Veriff error: ${e?.message || "unknown"}` });
-      }
-    }
-  } else {
-    warnings.push("Veriff not configured — skipped identity checks");
-  }
 
   // 3. Adverse media via Perplexity — web-grounded, cited. ComplyAdvantage will
   // eventually replace this for proper sanctioned-PEP-list + curated feeds,

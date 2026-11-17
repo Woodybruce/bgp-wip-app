@@ -6,7 +6,7 @@ import { db } from "./db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
-const SHARED_MAILBOX = "chatbgp@brucegillinghampollard.com";
+export const SHARED_MAILBOX = "chatbgp@brucegillinghampollard.com";
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
 let appClient: ConfidentialClientApplication | null = null;
@@ -157,6 +157,9 @@ export interface EmailAttachment {
   name: string;
   contentType: string;
   contentBytes: string;
+  // An image the body shows (<img src="cid:...">), not a file to download.
+  isInline?: boolean;
+  contentId?: string;
 }
 
 export async function sendSharedMailboxEmail(opts: { to: string; subject: string; body: string; cc?: string; attachments?: EmailAttachment[] }): Promise<void> {
@@ -213,6 +216,7 @@ export async function sendFromSharedMailbox(
     name: a.name,
     contentType: a.contentType,
     contentBytes: a.contentBytes,
+    ...(a.isInline && a.contentId ? { isInline: true, contentId: a.contentId } : {}),
   }));
 
   await graphRequest(`/users/${encodeURIComponent(fromMailbox)}/sendMail`, {

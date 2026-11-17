@@ -143,13 +143,15 @@ const DocumentStudioV2 = lazy(() => import("@/pages/document-studio"));
 const HRPage = lazy(() => import("@/pages/hr"));
 const FinancePage = lazy(() => import("@/pages/finance"));
 const CashflowPage = lazy(() => import("@/pages/cashflow"));
+// The client checks page (public; the token is the key).
+const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
 
 function PublicKycUploadRoute() {
   return (
     <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Switch>
-          <Route path="/kyc-upload/:token">{() => <div className="min-h-screen flex items-center justify-center p-6 text-center text-sm text-muted-foreground">This upload link is no longer in use. Please send documents to your Bruce Gillingham Pollard contact.</div>}</Route>
+          <Route path="/kyc-upload/:token" component={KycUploadPage} />
         </Switch>
       </Suspense>
     </ErrorBoundary>

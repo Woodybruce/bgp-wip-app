@@ -5,6 +5,7 @@ import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Spark
 import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
 import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
+import { ClientChecksForParty, SendClientChecksButton } from "@/components/kyc-client-checks";
 import { legacyToCode } from "@shared/deal-status";
 import { getAuthHeaders, queryClient, apiRequest } from "@/lib/queryClient";
 import { useRef, useState } from "react";
@@ -32,6 +33,8 @@ export interface DealAmlStatus {
   allApproved: boolean;
   canInvoice: boolean;
   missing: string[];
+  // In-app AML is on: the deal offers client checks as well as KYC4U.
+  inAppAml?: boolean;
 }
 
 export function useDealAmlStatus(dealId: string, enabled = true) {
@@ -68,11 +71,19 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
           <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-md text-sm" data-testid="deal-aml-status-incomplete">
             <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
             <span>
-              {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — set the parties on the deal record, then raise each with KYC4U.
+              {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — set the parties on the deal record, then {data.inAppAml ? "send each one the client checks" : "raise each with KYC4U"}.
             </span>
           </div>
           {data.counterparties.map(cp => (
-            <Kyc4uRequestButton key={cp.id} dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
+            <div key={cp.id} className="space-y-2">
+              {data.inAppAml && (
+                <>
+                  <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={cp.name} />
+                  <ClientChecksForParty dealId={dealId} companyId={cp.id} />
+                </>
+              )}
+              <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
+            </div>
           ))}
         </CardContent>
       </Card>
@@ -134,7 +145,13 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                     )}
                   </div>
                 </div>
-                <div className="mt-2">
+                <div className="mt-2 space-y-2">
+                  {data.inAppAml && (
+                    <>
+                      <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={cp.name} className="w-full justify-center" />
+                      <ClientChecksForParty dealId={dealId} companyId={cp.id} />
+                    </>
+                  )}
                   <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
                 </div>
               </div>
@@ -150,7 +167,9 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
               <span className="font-medium">{dealStatus && ["INV", "COM"].includes(legacyToCode(dealStatus) || "") ? "AML sign-off still outstanding" : "AML approval needed"}</span> for {data.missing.join(", ")}.
-              KYC4U are BGP's MLRO — raise each party with Request KYC4U check above; their approval clears it here after the next sync.
+              {data.inAppAml
+                ? <>Send each party's contact the client checks above, and raise a difficult one with KYC4U. The MLRO's sign-off clears it here.</>
+                : <>KYC4U are BGP's MLRO — raise each party with Request KYC4U check above; their approval clears it here after the next sync.</>}
             </div>
           </div>
         )}
@@ -443,116 +462,8 @@ export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: str
         )}
       </div>
 
-      {/* Tokenised upload links — admin issues, customer uses, polled */}
-      <UploadLinksPanel dealId={dealId} dealName={dealName} />
-
       {/* MLRO Report PDF — download or save to SharePoint */}
       <MlroReportButtons dealId={dealId} />
-    </div>
-  );
-}
-
-function UploadLinksPanel({ dealId, dealName }: { dealId: string; dealName: string }) {
-  const { toast } = useToast();
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ contactEmail: "", contactName: "", customNote: "", sendEmail: true });
-
-  const { data: links = [] } = useQuery<any[]>({
-    queryKey: ["/api/aml/deal", dealId, "upload-links"],
-    queryFn: () => fetch(`/api/aml/deal/${dealId}/upload-links`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.ok ? r.json() : []),
-  });
-
-  const issue = useMutation({
-    mutationFn: async () => {
-      const r = await apiRequest("POST", `/api/aml/deal/${dealId}/upload-link`, form);
-      return r.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/aml/deal", dealId, "upload-links"] });
-      setOpen(false);
-      setForm({ contactEmail: "", contactName: "", customNote: "", sendEmail: true });
-      const note = data?.emailResult?.ok ? "Email sent." : data?.emailResult?.error ? `Email failed: ${data.emailResult.error}` : "Link created (no email sent).";
-      toast({ title: "KYC link issued", description: note });
-    },
-    onError: (e: any) => toast({ title: "Failed", description: e?.message?.slice(0, 200), variant: "destructive" }),
-  });
-
-  const revoke = useMutation({
-    mutationFn: async (token: string) => apiRequest("DELETE", `/api/aml/upload-link/${token}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/aml/deal", dealId, "upload-links"] }),
-  });
-
-  return (
-    <div className="rounded-md border p-2.5">
-      <div className="flex flex-wrap items-center justify-between gap-y-1.5 mb-1.5">
-        <div className="flex items-center gap-2">
-          <Send className="w-4 h-4 text-muted-foreground" />
-          <span className="text-xs font-semibold uppercase tracking-wide whitespace-nowrap">Client upload links</span>
-          <Badge variant="outline" className="text-[10px]">{links.length}</Badge>
-        </div>
-        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid="button-request-kyc">
-          <Mail className="w-3 h-3 mr-1" /> Request docs from client
-        </Button>
-      </div>
-      {links.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground italic">No links issued yet. Click above to email a customer a self-service upload page.</p>
-      ) : (
-        <div className="space-y-1">
-          {links.map((l) => {
-            const expired = new Date(l.expires_at) < new Date();
-            const status = l.revoked_at ? "revoked" : expired ? "expired" : l.last_used_at ? "used" : "pending";
-            return (
-              <div key={l.token} className="flex items-center gap-2 rounded border p-2 text-xs">
-                <Badge variant="outline" className={`text-[10px] capitalize ${status === "used" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : status === "expired" ? "bg-red-50 text-red-700 border-red-200" : status === "revoked" ? "bg-muted" : "bg-amber-50 text-amber-700 border-amber-200"}`}>{status}</Badge>
-                <span className="font-medium truncate max-w-[160px]">{l.contact_email || "—"}</span>
-                <span className="text-muted-foreground">expires {new Date(l.expires_at).toLocaleDateString("en-GB")}</span>
-                {l.use_count > 0 && <span className="text-muted-foreground">· {l.use_count} upload{l.use_count === 1 ? "" : "s"}</span>}
-                <div className="ml-auto flex items-center gap-1">
-                  <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => { navigator.clipboard.writeText(l.url); toast({ title: "Link copied" }); }} title="Copy link">
-                    <Copy className="w-3 h-3" />
-                  </Button>
-                  {!l.revoked_at && !expired && (
-                    <Button size="sm" variant="ghost" className="h-6 px-1.5 text-muted-foreground hover:text-destructive" onClick={() => revoke.mutate(l.token)} title="Revoke">
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Request KYC documents</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><Label>Contact name</Label><Input value={form.contactName} onChange={e => setForm(f => ({ ...f, contactName: e.target.value }))} placeholder="Jane Smith" /></div>
-              <div className="space-y-1.5"><Label>Contact email</Label><Input type="email" value={form.contactEmail} onChange={e => setForm(f => ({ ...f, contactEmail: e.target.value }))} placeholder="jane@example.com" /></div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Custom note (optional)</Label>
-              <Textarea rows={3} value={form.customNote} onChange={e => setForm(f => ({ ...f, customNote: e.target.value }))} placeholder="Any specific docs you want to call out…" />
-            </div>
-            <div className="flex items-center gap-2 text-sm">
-              <input id="send-email-cb" type="checkbox" checked={form.sendEmail} onChange={e => setForm(f => ({ ...f, sendEmail: e.target.checked }))} className="h-4 w-4" />
-              <Label htmlFor="send-email-cb" className="cursor-pointer">Email the link to {form.contactEmail || "the contact"} now</Label>
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              Email goes from the BGP AML mailbox with a 14-day link to the secure upload page.
-              Replies with attachments are auto-ingested and analysed.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={() => issue.mutate()} disabled={issue.isPending}>
-              {issue.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Send className="w-4 h-4 mr-1.5" />}
-              Issue & {form.sendEmail ? "send" : "copy link"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
