@@ -36,10 +36,12 @@ test('one Brands entry on the side bar and the phone menu, as on the Landsec men
   assert.match(source('client/src/pages/brands-hub.tsx'), /tracking-tight">Brands<\/h1>/);
 });
 
-test('My BGP replaces My Card and Business card; People & HR stays', () => {
+test('My BGP is People & HR renamed, with My Card and Business card folded in', () => {
+  // Woody, 2026-11-17: "remove the my BGP link from the side bar and rename People and HR to my BGP".
   for (const items of [core, phone]) {
-    assert.deepEqual(items.filter(i => i.title === 'My BGP').map(i => i.url), ['/my-bgp']);
-    assert.ok(titles(items).includes('People & HR'));
+    assert.deepEqual(items.filter(i => i.title === 'My BGP').map(i => i.url), ['/hr']);
+    assert.ok(!titles(items).includes('People & HR'));
+    assert.ok(!items.some(i => i.url === '/my-bgp'), 'no second My BGP entry');
     for (const gone of ['My Card', 'Business card']) assert.ok(!titles(items).includes(gone), gone);
     assert.ok(!items.some(i => i.url === '/my-expenses' || i.url === '/business-card'));
   }
@@ -53,11 +55,21 @@ test('My BGP replaces My Card and Business card; People & HR stays', () => {
   assert.ok(!allowed.includes('"/my-bgp"'));
   // The phone folds it in too (Woody, 2026-11-16: "Fold into my BGP"): no Business card tile.
   const home = source('client/src/components/mobile-home.tsx');
-  assert.match(home, /const CORE_BOARD_URLS = new Set\(\["\/comps", "\/brands", "\/property-intelligence", "\/sharepoint", "\/hr", "\/my-bgp"\]\);/);
+  assert.match(home, /const CORE_BOARD_URLS = new Set\(\["\/comps", "\/brands", "\/property-intelligence", "\/sharepoint", "\/hr"\]\);/);
   assert.ok(!home.includes('BUSINESS_CARD_BOARD'));
   assert.match(source('client/src/pages/mobile-profile.tsx'), /navigate\("\/my-bgp\?tab=business-card"\)/);
   const hr = source('client/src/pages/hr.tsx');
   assert.match(hr, /export function MyBgpPage\(\)/);
+  // The page is titled My BGP, and your own profile carries the heading from it too.
+  assert.match(hr, /data-testid="text-hr-title">\s*My BGP\s*<\/h1>/);
+  assert.match(hr, /\{\(myBgp \|\| isOwn\) && \(/);
+  // KYC4U is a pill there for admins, and off the menus (Woody, 2026-11-17).
+  assert.match(hr, /\.\.\.\(isAdmin \? \[\{ value: "kyc4u", label: "KYC4U" \}\] : \[\]\)/);
+  assert.match(hr, /<Kyc4uPanel \/>/);
+  for (const items of [core, phone]) assert.ok(!items.some(i => i.url === '/kyc-clouseau'), 'KYC4U off the menu');
+  const unfinished = find(SIDEBAR, node => ts.isVariableStatement(node) && node.getText().startsWith('const unfinishedNav ='));
+  assert.ok(!unfinished.includes('url: "/kyc-clouseau"'));
+  assert.match(source('client/src/App.tsx'), /<Route path="\/kyc-clouseau" component=\{KycHub\} \/>/);
   assert.match(hr, /\{isOwn && <TabsTrigger value="business-card"/);
   assert.match(hr, /\{isOwn \? "Card & expenses" : "Expenses"\}/);
   assert.match(hr, /<MyCardAndExpenses embedded \/>/);

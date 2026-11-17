@@ -852,7 +852,7 @@ function AuthenticatedApp() {
               // Clouseau", "Hr", "Sharepoint"; design review 2026-08-23).
               const ROUTE_TITLES: Record<string, string> = {
                 "wip-report": "WIP Report", pla: "PLA Matters",
-                "kyc-clouseau": "KYC4U", hr: "People & HR",
+                "kyc-clouseau": "KYC4U", hr: "My BGP",
                 sharepoint: "SharePoint", "aml-compliance": "KYC4U",
                 "aml-training": "KYC4U", "cad-measure": "Cann CAD",
                 edozo: "Properties", available: "Letting Tracker",

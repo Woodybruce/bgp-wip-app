@@ -44,7 +44,6 @@ import {
   ListTodo,
   Ruler,
   Sun,
-  ShieldCheck,
   GraduationCap,
   Store,
   Globe,
@@ -107,11 +106,12 @@ const coreNavBase = [
   // directory, with the Brand CRM a pill inside it.
   { title: "Brands", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Handshake },
-  { title: "People & HR", url: "/hr", icon: Users },
-  // Your own HR page, with your business card and your BGP card and expenses
-  // folded in (Woody, 2026-11-16, "call it my BGP"). Their old addresses,
-  // /business-card and /my-expenses, still open and light this entry.
-  { title: "My BGP", url: "/my-bgp", icon: IdCard },
+  // My BGP: the people page, renamed from People & HR, with your own page
+  // (business card, BGP card and expenses folded in) inside it (Woody,
+  // 2026-11-16 "call it my BGP"; 2026-11-17 "remove the my BGP link from
+  // the side bar and rename People and HR to my BGP"). /my-bgp,
+  // /business-card and /my-expenses still open and light this entry.
+  { title: "My BGP", url: "/hr", icon: IdCard },
   // Lease Advisory is Pete's toolset (Woody, 2026-09-02): jobs, evidence
   // plans and leasing comps linked by pill row across the three pages.
   // Comps has no standalone entry for staff — it's reached through here
@@ -203,7 +203,8 @@ const microsoftNav = [
 // matches the list Woody dictated (AML → Enrichment Hub).
 const unfinishedNav = [
   { title: "Portfolios", url: "/portfolios", icon: Layers },
-  { title: "KYC4U", url: "/kyc-clouseau", icon: ShieldCheck },
+  // KYC4U is a pill on My BGP for admins (Woody, 2026-11-17: "KYC4U put in
+  // the People and HR page"); /kyc-clouseau still opens it.
   { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target },
@@ -241,7 +242,7 @@ const adminNavBase = [
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 
-// My BGP is lit on its own page and on the two pages folded into it.
+// My BGP is lit on the people page, your own page and the two pages folded into it.
 const MY_BGP_PATHS = ["/my-bgp", "/my-expenses", "/business-card"];
 
 function NavSection({
@@ -266,7 +267,7 @@ function NavSection({
     if (url === "/") return location === "/";
     if (url.startsWith("#")) return false;
     const path = url.split("?")[0];
-    if (path === "/my-bgp") return MY_BGP_PATHS.some(p => location.startsWith(p));
+    if (path === "/hr") return location.startsWith("/hr") || MY_BGP_PATHS.some(p => location.startsWith(p));
     if (path === "/contacts") return location.startsWith("/contacts") || location.startsWith("/companies");
     if (path === "/properties") return location.startsWith("/properties") || location.startsWith("/map") || location.startsWith("/edozo");
     if (path === "/deals") return location.startsWith("/deals") || location.startsWith("/wip-report");
@@ -765,8 +766,7 @@ export const mobileOverlayItems = [
   { title: "Double Bill", url: "/leisure-platform", icon: Film, adminOnly: true },
   { title: "Brands", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Handshake },
-  { title: "People & HR", url: "/hr", icon: Users },
-  { title: "My BGP", url: "/my-bgp", icon: IdCard },
+  { title: "My BGP", url: "/hr", icon: IdCard },
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
   // Leasing Schedule retired (archived) — route stays live for old links.
   { title: "Comps", url: "/comps", icon: Scale },
@@ -793,7 +793,6 @@ export const mobileOverlayItems = [
   { title: "Leads", url: "/leads", icon: UserPlus, adminOnly: true },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
-  { title: "KYC4U", url: "/kyc-clouseau", icon: ShieldCheck, adminOnly: true },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, adminOnly: true },
   { title: "Office Add-ins", url: "/addins", icon: Puzzle, adminOnly: true },
   { title: "Settings", url: "/settings", icon: Settings, adminOnly: true },
@@ -820,7 +819,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
     const landsecActive = isOverlayClient && brand.id === "landsec" ? landsecMenuActive(url, location) : null;
     if (landsecActive !== null) return landsecActive;
     if (url === "/") return location === "/";
-    if (url === "/my-bgp") return MY_BGP_PATHS.some(p => location.startsWith(p));
+    if (url === "/hr") return location.startsWith("/hr") || MY_BGP_PATHS.some(p => location.startsWith(p));
     return location.startsWith(url);
   };
 

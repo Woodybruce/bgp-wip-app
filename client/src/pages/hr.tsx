@@ -6,7 +6,9 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
 
 const TasksPage = lazy(() => import("./tasks"));
-// My BGP's two folded-in pages (Woody, 2026-11-16).
+// My BGP's two folded-in pages (Woody, 2026-11-16), and KYC4U, a pill on the
+// people page for admins (Woody, 2026-11-17: "KYC4U put in the People and HR page").
+const Kyc4uPanel = lazy(() => import("@/components/kyc4u-panel"));
 const MyCardAndExpenses = lazy(() => import("./my-expenses").then(m => ({ default: m.MyCardAndExpenses })));
 const BusinessCardPanel = lazy(() => import("./business-card").then(m => ({ default: m.BusinessCardPanel })));
 import {
@@ -2282,16 +2284,20 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
     <div className="h-full overflow-y-auto">
       {/* Header */}
       <div className="flex items-center gap-2 p-4 border-b sticky top-0 bg-background z-10">
-        {myBgp ? (
+        {/* Your own page carries the My BGP heading, from the side bar's
+            people page as from /my-bgp (Woody, 2026-11-17: "put MY BGP above
+            this when coming via the people and HR page"). */}
+        {onBack && (
+          <Button variant="ghost" size="sm" onClick={onBack} className="h-8 px-2 shrink-0">
+            <ArrowLeft className="w-4 h-4 mr-1" /> Back
+          </Button>
+        )}
+        {(myBgp || isOwn) && (
           <div className="min-w-0">
             <h1 className="text-2xl font-bold tracking-tight" data-testid="text-my-bgp-title">My BGP</h1>
             <p className="text-sm text-muted-foreground">Your HR record, business card, and BGP card and expenses</p>
           </div>
-        ) : onBack ? (
-          <Button variant="ghost" size="sm" onClick={onBack} className="h-8 px-2">
-            <ArrowLeft className="w-4 h-4 mr-1" /> Back
-          </Button>
-        ) : null}
+        )}
         {isAdmin && (
           <Button variant="outline" size="sm" className="ml-auto" onClick={() => setEditOpen(true)}>
             <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit profile
@@ -6686,6 +6692,9 @@ export default function HRPage() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
   const isAdmin = !!currentUser?.isAdmin;
+  // ?section= opens one of the page's pills (a link to KYC4U names it).
+  const sectionParam = new URLSearchParams(window.location.search).get("section") || "";
+  const initialSection = ["overview", "policies", ...(isAdmin ? ["holidays", "xero-payroll", "kyc4u"] : [])].includes(sectionParam) ? sectionParam : "overview";
 
   const { data: allStaff = [], isLoading } = useQuery<StaffMember[]>({
     queryKey: ["/api/hr/staff"],
@@ -6761,10 +6770,11 @@ export default function HRPage() {
             sideways (Woody, 2026-09-28: "not set up for phone"). */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-2 mb-3">
           <div className="min-w-0">
-            <h1 className="text-2xl font-bold tracking-tight">
-              People & HR
+            {/* Renamed from People & HR (Woody, 2026-11-17). */}
+            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-hr-title">
+              My BGP
             </h1>
-            <p className="text-sm text-muted-foreground mt-0.5">Team directory, benefits, holidays and policies</p>
+            <p className="text-sm text-muted-foreground mt-0.5">Your page, the team directory, holidays and policies</p>
           </div>
           <Badge variant="secondary" className="sm:ml-2">{allStaff.length} staff</Badge>
           {isAdmin && (
@@ -6793,7 +6803,7 @@ export default function HRPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="overview" className="px-4">
+      <Tabs key={isAdmin ? "admin" : "staff"} defaultValue={initialSection} className="px-4">
         <TabsList className={`${pillTabsList} mt-3 mb-3`}>
           {[
             { value: "overview", label: "Overview" },
@@ -6806,6 +6816,7 @@ export default function HRPage() {
             ...(isAdmin ? [{ value: "holidays", label: "Holiday approvals" }] : []),
             { value: "policies", label: "Policies" },
             ...(isAdmin ? [{ value: "xero-payroll", label: "Xero Payroll" }] : []),
+            ...(isAdmin ? [{ value: "kyc4u", label: "KYC4U" }] : []),
           ].map(t => (
             <TabsTrigger
               key={t.value}
@@ -6837,6 +6848,16 @@ export default function HRPage() {
         {isAdmin && (
           <TabsContent value="xero-payroll">
             <div className="pb-6"><XeroPayrollPanel /></div>
+          </TabsContent>
+        )}
+
+        {isAdmin && (
+          <TabsContent value="kyc4u">
+            <div className="pb-6 -mx-4">
+              <Suspense fallback={<div className="p-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>}>
+                <Kyc4uPanel />
+              </Suspense>
+            </div>
           </TabsContent>
         )}
       </Tabs>

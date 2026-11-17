@@ -3260,6 +3260,21 @@ rep". Do not re-litigate. Guards: `qa/regression/staff-menu.test.mjs`.
   on the phone's My Profile opens `/my-bgp?tab=business-card` (Woody, same
   day: "Fold into my BGP", superseding the one-tap tile of 2026-09-28).
   Staff only: not on `CLIENT_ALLOWED_ROUTES`.
+- **People & HR is renamed My BGP, and is the one entry** (Woody,
+  2026-11-17: "put MY BGP above this when coming via the people and HR page
+  and remove the my BGP link from the side bar and rename People and HR to
+  my BGP"). The side bar and the phone list have one **My BGP** entry, to
+  `/hr` (the people page, now titled My BGP), lit on `/hr`, `/my-bgp`,
+  `/my-expenses` and `/business-card`; the separate `/my-bgp` entry and the
+  phone's People & HR tile are gone (`/my-bgp` still opens your own page,
+  for the phone's My Profile row and old links). Your own profile carries
+  the My BGP heading whether opened from the people page (with Back) or at
+  `/my-bgp` (`myBgp || isOwn` in `StaffProfile`).
+- **KYC4U is a pill on My BGP for admins** (Woody, same day: "KYC4U put in
+  the People and HR page"): `Kyc4uPanel` in the people page's tabs
+  (`?section=kyc4u` opens it), off the More group and the phone list.
+  `/kyc-clouseau` and its old aliases still open the KYC4U page, so the
+  bookmark install and old links work.
 - **Website** is in the Admin group (`adminNavBase`; admin only on the phone
   list). Its routes are unchanged (`requireAuth`): the page still opens by
   its address.

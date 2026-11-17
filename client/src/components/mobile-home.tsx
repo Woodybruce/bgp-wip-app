@@ -156,10 +156,10 @@ type Commission = { billedPence: number; commissionEarned: number; commissionFor
 // hides behind "Show all" so the home screen stays focused on daily work.
 // People & HR added so reviews/1:1s can be updated on the move (Carly,
 // 2026-09-21) — staff only, stripped from client homes below.
-// My BGP (your own HR page, with the Business card and Card & expenses
-// pills) replaced the Business card tile (Woody, 2026-11-16: "Fold into my
-// BGP"), as it replaced the side bar's Business card and My Card entries.
-const CORE_BOARD_URLS = new Set(["/comps", "/brands", "/property-intelligence", "/sharepoint", "/hr", "/my-bgp"]);
+// My BGP is the people page renamed (Woody, 2026-11-17), with your own page
+// and its Business card and Card & expenses pills inside it: one tile, in
+// place of People & HR, My BGP and the Business card tile of 2026-09-28.
+const CORE_BOARD_URLS = new Set(["/comps", "/brands", "/property-intelligence", "/sharepoint", "/hr"]);
 
 // Pence → compact £ (e.g. £1.2m, £340k, £980)
 function fmtMoney(pence: number | undefined | null): string {
