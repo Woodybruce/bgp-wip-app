@@ -25,13 +25,14 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { z } from "zod";
 import multer from "./utils/upload";
 import { pool } from "./db";
-import { graphRequest, sendFromSharedMailbox, SHARED_MAILBOX, type EmailAttachment } from "./shared-mailbox";
+import { graphRequest, sendFromFirstMailbox, senderOrder, type EmailAttachment } from "./shared-mailbox";
 import {
   KYC_DOCS, KYC_LOGO_CID, KYC_MAX_FILE_MB, KYC_MAX_FILES_PER_REQUEST, KYC_REF_ALPHABET,
   KYC_PEP_QUESTION, defaultKycDocs, isKycDocKey, isKycPepAnswer, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycPepWords,
-  kycRefFromSubject, kycReminderEmail, kycRequestEmail, kycUploadAllowed, kycWhatsAppHref, kycWhatsAppText,
+  kycRedFlagEmail, kycRefFromSubject, kycReminderEmail, kycRequestEmail, kycUploadAllowed, kycWhatsAppHref, kycWhatsAppText,
   type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycPartyKind, type KycPortalView, type KycProgress,
 } from "@shared/kyc-request";
+import type { KycRedFlag } from "@shared/kyc-red-flags";
 
 export const KYC_MAILBOX = (process.env.KYC_MAILBOX || process.env.BGP_AML_MAILBOX || "kyc@chatbgp.app").trim();
 const LINK_BASE = (process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
@@ -70,6 +71,9 @@ export interface KycRequestDetails {
   // Requests made before it was added do not ask it.
   askPep?: boolean;
   answers?: KycAnswers | null;
+  // The red flags already sent to the agents, so each goes once
+  // (server/kyc-red-flags.ts).
+  redFlagAlerts?: string[];
 }
 
 interface TokenRow {
@@ -114,7 +118,8 @@ const isEmail = (value: string) => /^[^\s@<>()",;]+@[^\s@<>()",;]+\.[^\s@<>()",;
 export interface KycSendResult { ok: boolean; from: string | null; fellBack: boolean; error: string | null }
 
 // One door for every client checks email: from the KYC mailbox, else the
-// shared mailbox (the footer names whichever sent it), with the logo inline.
+// app's address, else the shared mailbox (the footer names whichever sent
+// it), with the logo inline.
 export async function sendKycEmail(opts: {
   to: string[];
   cc?: string[];
@@ -127,23 +132,12 @@ export async function sendKycEmail(opts: {
   const attachments: EmailAttachment[] = logo
     ? [{ name: "bgp-logo.png", contentType: "image/png", contentBytes: logo, isInline: true, contentId: KYC_LOGO_CID }]
     : [];
-  const attempt = async (mailbox: string) => {
-    const { subject, html } = opts.build(mailbox);
-    await sendFromSharedMailbox(to, subject, html, cc.length ? cc : undefined, undefined, attachments, mailbox);
-  };
   try {
-    await attempt(KYC_MAILBOX);
-    return { ok: true, from: KYC_MAILBOX, fellBack: false, error: null };
+    const sent = await sendFromFirstMailbox({ mailboxes: [KYC_MAILBOX], to, cc: cc.length ? cc : undefined, attachments, build: opts.build });
+    const fellBack = cleanEmail(sent.from) !== cleanEmail(KYC_MAILBOX);
+    return { ok: true, from: sent.from, fellBack, error: fellBack ? (sent.refused[0]?.error || `${KYC_MAILBOX} was refused within the hour`) : null };
   } catch (e: any) {
-    const first = String(e?.message || e).slice(0, 300);
-    if (cleanEmail(KYC_MAILBOX) === cleanEmail(SHARED_MAILBOX)) return { ok: false, from: null, fellBack: false, error: first };
-    console.warn(`[kyc] could not send as ${KYC_MAILBOX} (${first}); sending from ${SHARED_MAILBOX}`);
-    try {
-      await attempt(SHARED_MAILBOX);
-      return { ok: true, from: SHARED_MAILBOX, fellBack: true, error: first };
-    } catch (e2: any) {
-      return { ok: false, from: null, fellBack: true, error: String(e2?.message || e2).slice(0, 300) };
-    }
+    return { ok: false, from: null, fellBack: false, error: String(e?.message || e).slice(0, 300) };
   }
 }
 
@@ -615,6 +609,11 @@ async function finishRequest(row: TokenRow): Promise<void> {
   ];
   // The agents hear it; on a test, the admin who sent it.
   const to = row.is_test ? [row.contact_email || ""] : request.cc;
+  const { loadDealRedFlags } = await import("./kyc-red-flags");
+  const { partyRedFlags } = await import("@shared/kyc-red-flags");
+  const redFlags = row.is_test || !row.company_id
+    ? partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null }], idChecks: [] })
+    : await loadDealRedFlags(row.deal_id, [row.company_id]).then(r => r.parties[row.company_id!] || []).catch(() => []);
   const sent = await sendKycEmail({
     to,
     build: sentFrom => kycFinishedEmail({
@@ -622,6 +621,7 @@ async function finishRequest(row: TokenRow): Promise<void> {
       dealLink: row.is_test ? LINK_BASE : dealLinkFor(row.deal_id), idState: progress.idState,
       files: progress.files.map(f => ({ name: f.name, docKey: f.docKey })), missing, sentFrom, test: !!row.is_test,
       kind: request.kind, ...(request.askPep ? { pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null } : {}),
+      redFlags,
     }),
   });
   if (!sent.ok) console.warn(`[kyc] the finished note for ${request.ref} was not sent: ${sent.error}`);
@@ -862,6 +862,12 @@ kycRequestRouter.post("/api/kyc-upload/:token/answers", async (req: Request, res
     const pepDetail = pep === "no" ? null : String(req.body?.pepDetail || "").trim().slice(0, 1000) || null;
     request.answers = { pep, pepDetail, answeredAt: new Date().toISOString() };
     await saveRequest(row.token, request);
+    // A yes or a not sure is a red flag: the agents hear at once, without
+    // the client's page waiting for the email.
+    if (pep !== "no") {
+      import("./kyc-red-flags").then(m => m.alertRedFlags(row.token))
+        .catch((e: any) => console.warn(`[kyc] red flag alert for ${request.ref} failed: ${e?.message}`));
+    }
     if (row.company_id && !row.is_test) {
       await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_pep_declaration', $2, $3)`,
         [row.company_id, row.contact_name || row.contact_email, `Asked about public roles (ref ${request.ref}): ${kycPepWords(pep)}${pepDetail ? `. ${pepDetail}` : ""}${pep === "no" ? "" : ". Enhanced due diligence: MLRO approval, source of wealth and funds."}`]).catch(() => {});
@@ -886,6 +892,9 @@ kycRequestRouter.post("/api/kyc-upload/:token/finish", async (req: Request, res:
 // ── Admin: see every email, and send each one to yourself ──────────────────
 
 const SAMPLE = { dealName: "12 Example Street (sample)", partyName: "Example Trading Ltd", recipientName: "Jane Smith" };
+const SAMPLE_RED_FLAGS: KycRedFlag[] = [
+  { kind: "client_pep", label: "Said yes to the question about public roles", detail: "My father is a serving member of a foreign parliament.", source: "Client checks, ref 7K2Q9M", at: null },
+];
 
 async function adminMe(req: Request) {
   const id = (req.session as any)?.userId || (req as any).tokenUserId;
@@ -904,12 +913,15 @@ export function kycPreviews(agent: KycAgent, now = new Date()) {
   const idCheck = kycIdCheckEmail({ recipientName: SAMPLE.recipientName, partyName: SAMPLE.partyName, kind: "company", dealName: SAMPLE.dealName, link: "https://example.veriff.me/v/sample", agents: [agent], sentFrom: KYC_MAILBOX });
   const finished = kycFinishedEmail({ recipientName: SAMPLE.recipientName, partyName: SAMPLE.partyName, dealName: SAMPLE.dealName, ref: "7K2Q9M", dealLink: LINK_BASE, idState: "approved",
     files: [{ name: "ownership-structure.pdf", docKey: "ownership" }, { name: "passport-john-smith.jpg", docKey: "owner_ids" }], missing: [], sentFrom: KYC_MAILBOX, kind: "company", pep: "no", pepDetail: null });
+  const redFlag = kycRedFlagEmail({ partyName: SAMPLE.partyName, recipientName: SAMPLE.recipientName, dealName: SAMPLE.dealName, ref: "7K2Q9M", dealLink: LINK_BASE,
+    flags: SAMPLE_RED_FLAGS, sentFrom: KYC_MAILBOX });
   return [
     { kind: "request_company", title: "Request to a company's contact", to: "The person dealing for the party", ...company },
     { kind: "request_individual", title: "Request to a private individual", to: "The person", ...individual },
     { kind: "reminder", title: "Reminder (3 and 7 days on)", to: "The person, while anything is outstanding", ...reminder },
     { kind: "finished", title: "To the agents when the client finishes", to: "The deal's agents and whoever sent it", ...finished },
     { kind: "id_check", title: "Identity check on its own", to: "One person, from a company's record", ...idCheck },
+    { kind: "red_flag", title: "Red flag: raise with KYC4U", to: "The deal's agents, the moment a client's answer or identity check raises one", ...redFlag },
   ];
 }
 
@@ -921,7 +933,8 @@ kycRequestRouter.get("/api/admin/kyc-emails", adminOnly, async (req: Request, re
     const withLogo = (html: string) => logo ? html.split(`cid:${KYC_LOGO_CID}`).join(`data:image/png;base64,${logo}`) : html;
     res.json({
       mailbox: KYC_MAILBOX,
-      fallback: SHARED_MAILBOX,
+      // The addresses after the KYC mailbox, in the order they are tried.
+      fallback: senderOrder([KYC_MAILBOX], Number.POSITIVE_INFINITY).slice(1).join(", then "),
       inAppAml: inAppAmlOn(),
       veriff: veriffConfigured(),
       previews: kycPreviews(agent).map(p => ({ ...p, html: withLogo(p.html) })),
@@ -938,7 +951,7 @@ kycRequestRouter.get("/api/admin/kyc-emails", adminOnly, async (req: Request, re
 kycRequestRouter.post("/api/admin/kyc-emails/test", adminOnly, async (req: Request, res: Response) => {
   try {
     const kind = String(req.body?.kind || "");
-    if (!["request", "reminder", "finished", "id_check"].includes(kind)) return res.status(400).json({ message: "Unknown email" });
+    if (!["request", "reminder", "finished", "id_check", "red_flag"].includes(kind)) return res.status(400).json({ message: "Unknown email" });
     const me = await adminMe(req);
     const email = cleanEmail(me?.email);
     if (!me || !isEmail(email)) return res.status(400).json({ message: "Your login has no email address to send to." });
@@ -981,6 +994,12 @@ kycRequestRouter.post("/api/admin/kyc-emails/test", adminOnly, async (req: Reque
         to: [email],
         build: sentFrom => kycFinishedEmail({ recipientName: SAMPLE.recipientName, partyName: SAMPLE.partyName, dealName: SAMPLE.dealName, ref: "7K2Q9M", dealLink: LINK_BASE, idState: "approved",
           files: [{ name: "ownership-structure.pdf", docKey: "ownership" }, { name: "passport.jpg", docKey: "owner_ids" }], missing: [], sentFrom, test: true, kind: "company", pep: "no", pepDetail: null }),
+      });
+    } else if (kind === "red_flag") {
+      sent = await sendKycEmail({
+        to: [email],
+        build: sentFrom => kycRedFlagEmail({ partyName: SAMPLE.partyName, recipientName: SAMPLE.recipientName, dealName: SAMPLE.dealName, ref: "7K2Q9M", dealLink: LINK_BASE,
+          flags: SAMPLE_RED_FLAGS, sentFrom, test: true }),
       });
     } else {
       sent = await sendKycEmail({

@@ -1,12 +1,13 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, TrendingUp, TrendingDown, FolderOpen } from "lucide-react";
+import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, TrendingUp, TrendingDown, FolderOpen, Flag } from "lucide-react";
 import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
 import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { ClientChecksForParty, SendClientChecksButton } from "@/components/kyc-client-checks";
 import { legacyToCode } from "@shared/deal-status";
+import type { KycRedFlag } from "@shared/kyc-red-flags";
 import { getAuthHeaders, queryClient, apiRequest } from "@/lib/queryClient";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,57 @@ export interface DealAmlStatus {
   missing: string[];
   // In-app AML is on: the deal offers client checks as well as KYC4U.
   inAppAml?: boolean;
+  // What sends a party to KYC4U (BGP staff only; null for anyone else).
+  redFlags?: { parties: Record<string, KycRedFlag[]>; deal: KycRedFlag[]; unchecked: string[] } | null;
+}
+
+// A red flag sends the party to KYC4U (Woody, 2026-11-17: "basically we do
+// the normal checks expected and if there is a red flag then we get KYC4U").
+function RedFlagList({ flags, title, step, testId }: { flags: KycRedFlag[]; title: string; step: string; testId: string }) {
+  if (!flags.length) return null;
+  return (
+    <div className="rounded-md border border-red-300 bg-red-50 p-2.5 text-xs text-red-900" data-testid={testId}>
+      <div className="flex items-center gap-1.5 text-sm font-semibold"><Flag className="w-3.5 h-3.5 shrink-0" />{title}</div>
+      <ul className="mt-1.5 list-disc space-y-1 pl-4">
+        {flags.map((f, i) => (
+          <li key={`${f.kind}-${i}`}>
+            {f.label}{f.detail ? `: ${f.detail}` : ""} <span className="text-red-800/70">({f.source})</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1.5">{step}</p>
+    </div>
+  );
+}
+
+function PartyRedFlags({ data, companyId }: { data: DealAmlStatus; companyId: string }) {
+  return (
+    <RedFlagList
+      flags={data.redFlags?.parties[companyId] || []}
+      title="Red flag: raise with KYC4U"
+      step="Press Request KYC4U check below: the red flags are already in its note."
+      testId={`kyc-red-flags-${companyId}`}
+    />
+  );
+}
+
+function DealRedFlags({ data }: { data: DealAmlStatus }) {
+  const unchecked = data.redFlags?.unchecked || [];
+  return (
+    <>
+      <RedFlagList
+        flags={data.redFlags?.deal || []}
+        title="Red flag on the deal record"
+        step="It is not tied to one party: Request KYC4U check on the party it concerns carries it in the note."
+        testId="kyc-red-flags-deal"
+      />
+      {unchecked.length > 0 && (
+        <p className="text-xs text-muted-foreground" data-testid="kyc-red-flags-unchecked">
+          Red flags could not be checked against: {unchecked.join(", ")}.
+        </p>
+      )}
+    </>
+  );
 }
 
 export function useDealAmlStatus(dealId: string, enabled = true) {
@@ -74,8 +126,10 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
               {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — set the parties on the deal record, then {data.inAppAml ? "send each one the client checks" : "raise each with KYC4U"}.
             </span>
           </div>
+          <DealRedFlags data={data} />
           {data.counterparties.map(cp => (
             <div key={cp.id} className="space-y-2">
+              <PartyRedFlags data={data} companyId={cp.id} />
               {data.inAppAml && (
                 <>
                   <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={cp.name} />
@@ -110,6 +164,8 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
             </Badge>
           )}
         </div>
+
+        <DealRedFlags data={data} />
 
         <div className="grid sm:grid-cols-2 gap-2">
           {data.counterparties.map(cp => {
@@ -146,6 +202,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                   </div>
                 </div>
                 <div className="mt-2 space-y-2">
+                  <PartyRedFlags data={data} companyId={cp.id} />
                   {data.inAppAml && (
                     <>
                       <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={cp.name} className="w-full justify-center" />

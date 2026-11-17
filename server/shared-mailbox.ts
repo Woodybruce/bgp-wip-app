@@ -5,8 +5,18 @@ import { contentDispositionFor } from "./utils/http-headers";
 import { db } from "./db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { SHARED_MAILBOX_ADDRESS } from "@shared/app-mailbox";
 
-export const SHARED_MAILBOX = "chatbgp@brucegillinghampollard.com";
+export const SHARED_MAILBOX = SHARED_MAILBOX_ADDRESS;
+
+// The address the app's own emails go from (Woody, 2026-11-17: "just use
+// chatbgp.app for all emails now"); APP_MAILBOX overrides it. Replies to it
+// go to the shared mailbox, which the app reads. It has to exist in BGP's
+// Microsoft 365 for the app to send as it (the chatbgp.app domain added and
+// verified, the mailbox made). Until then, or whenever Microsoft refuses, the
+// email still goes, from the next address in line, and the log says so. A
+// reply to an email in the shared mailbox stays in its thread, from there.
+export const APP_MAILBOX = (process.env.APP_MAILBOX || "chatbgp@chatbgp.app").trim();
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
 let appClient: ConfidentialClientApplication | null = null;
@@ -165,7 +175,90 @@ export interface EmailAttachment {
 export async function sendSharedMailboxEmail(opts: { to: string; subject: string; body: string; cc?: string; attachments?: EmailAttachment[] }): Promise<void> {
   const recipients = [opts.to];
   const ccRecipients = opts.cc ? [opts.cc] : undefined;
-  return sendFromSharedMailbox(recipients, opts.subject, opts.body, ccRecipients, undefined, opts.attachments);
+  await sendFromSharedMailbox(recipients, opts.subject, opts.body, ccRecipients, undefined, opts.attachments);
+}
+
+// ── Which address an email goes from ──────────────────────────────────────
+
+// An address Microsoft refused, while the next one in line took the same
+// email, is skipped for an hour rather than tried (and refused) every time.
+const REFUSED_FOR_MS = 60 * 60 * 1000;
+const refusedUntil = new Map<string, number>();
+const sameAddress = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+// The addresses to try in turn: any given first (a workspace's or the KYC
+// mailbox), then the app's address, then the shared mailbox, each once. One
+// refused within the hour is left out, unless it is the last.
+export function senderOrder(first: string[] = [], now = Date.now()): string[] {
+  const order: string[] = [];
+  for (const m of [...first, APP_MAILBOX, SHARED_MAILBOX]) {
+    const mailbox = String(m || "").trim();
+    if (mailbox && !order.some(o => sameAddress(o, mailbox))) order.push(mailbox);
+  }
+  return order.filter((m, i) => i === order.length - 1 || (refusedUntil.get(m.toLowerCase()) || 0) <= now);
+}
+
+export interface MailboxSendResult {
+  from: string;
+  // The addresses Microsoft refused before one took the email.
+  refused: Array<{ mailbox: string; error: string }>;
+}
+
+// Sends from the first address Microsoft takes. The email is built for the
+// address it goes from, so a footer can name it. From the app's address,
+// replies go to the shared mailbox.
+export async function sendFromFirstMailbox(opts: {
+  mailboxes?: string[];
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  attachments?: EmailAttachment[];
+  build: (from: string) => { subject: string; html: string };
+}): Promise<MailboxSendResult> {
+  const refused: MailboxSendResult["refused"] = [];
+  for (const mailbox of senderOrder(opts.mailboxes)) {
+    try {
+      const { subject, html } = opts.build(mailbox);
+      const replyTo = sameAddress(mailbox, APP_MAILBOX) && !sameAddress(APP_MAILBOX, SHARED_MAILBOX) ? SHARED_MAILBOX : undefined;
+      await postMail(mailbox, { to: opts.to, cc: opts.cc, bcc: opts.bcc, attachments: opts.attachments, subject, html, replyTo });
+      for (const r of refused) refusedUntil.set(r.mailbox.toLowerCase(), Date.now() + REFUSED_FOR_MS);
+      if (refused.length) {
+        console.warn(`[shared-mailbox] sent from ${mailbox}; Microsoft would not send as ${refused.map(r => `${r.mailbox} (${r.error.slice(0, 160)})`).join(", ")}, so they are skipped for an hour`);
+      }
+      return { from: mailbox, refused };
+    } catch (e: any) {
+      refused.push({ mailbox, error: String(e?.message || e).slice(0, 300) });
+    }
+  }
+  throw new Error(refused.map(r => `${r.mailbox}: ${r.error}`).join("; ") || "No mailbox to send from");
+}
+
+async function postMail(fromMailbox: string, m: {
+  to: string[]; cc?: string[]; bcc?: string[]; attachments?: EmailAttachment[]; subject: string; html: string; replyTo?: string;
+}): Promise<void> {
+  const address = (email: string) => ({ emailAddress: { address: email } });
+  const graphAttachments = m.attachments?.map(a => ({
+    "@odata.type": "#microsoft.graph.fileAttachment",
+    name: a.name,
+    contentType: a.contentType,
+    contentBytes: a.contentBytes,
+    ...(a.isInline && a.contentId ? { isInline: true, contentId: a.contentId } : {}),
+  }));
+  await graphRequest(`/users/${encodeURIComponent(fromMailbox)}/sendMail`, {
+    method: "POST",
+    body: JSON.stringify({
+      message: {
+        subject: m.subject,
+        body: { contentType: "HTML", content: m.html },
+        toRecipients: m.to.map(address),
+        ...(m.cc?.length && { ccRecipients: m.cc.map(address) }),
+        ...(m.bcc?.length && { bccRecipients: m.bcc.map(address) }),
+        ...(m.replyTo && { replyTo: [address(m.replyTo)] }),
+        ...(graphAttachments && graphAttachments.length > 0 && { attachments: graphAttachments }),
+      },
+      saveToSentItems: true,
+    }),
+  });
 }
 
 // The address Landsec work is sent from (Woody, 2026-11-12: "email is
@@ -178,20 +271,15 @@ export const LANDSEC_MAILBOX = (process.env.LANDSEC_MAILBOX || "landsec@chatbgp.
 export const isLandsecClient = (landlordName: string | null | undefined): boolean => /land\s?sec/i.test(String(landlordName || ""));
 
 // An email about a letting, from the client's own workspace address where
-// it has one (Landsec), otherwise from the shared mailbox.
+// it has one (Landsec), otherwise from the app's address.
 export async function sendWorkspaceEmail(opts: { to: string; subject: string; body: string; landlordName?: string | null }): Promise<{ from: string }> {
-  if (isLandsecClient(opts.landlordName) && LANDSEC_MAILBOX) {
-    try {
-      await sendFromSharedMailbox([opts.to], opts.subject, opts.body, undefined, undefined, undefined, LANDSEC_MAILBOX);
-      return { from: LANDSEC_MAILBOX };
-    } catch (e: any) {
-      console.warn(`[shared-mailbox] could not send as ${LANDSEC_MAILBOX} (${String(e?.message || e).slice(0, 200)}); sending from ${SHARED_MAILBOX}`);
-    }
-  }
-  await sendFromSharedMailbox([opts.to], opts.subject, opts.body);
-  return { from: SHARED_MAILBOX };
+  const first = isLandsecClient(opts.landlordName) && LANDSEC_MAILBOX ? [LANDSEC_MAILBOX] : [];
+  const sent = await sendFromFirstMailbox({ mailboxes: first, to: [opts.to], build: () => ({ subject: opts.subject, html: opts.body }) });
+  return { from: sent.from };
 }
 
+// The app's emails: from the app's address, else the shared mailbox. Given
+// a mailbox, from that one only.
 export async function sendFromSharedMailbox(
   recipients: string[],
   subject: string,
@@ -199,40 +287,13 @@ export async function sendFromSharedMailbox(
   ccRecipients?: string[],
   bccRecipients?: string[],
   attachments?: EmailAttachment[],
-  fromMailbox: string = SHARED_MAILBOX
-): Promise<void> {
-  const toArray = recipients.map((email) => ({
-    emailAddress: { address: email },
-  }));
-  const ccArray = ccRecipients?.map((email) => ({
-    emailAddress: { address: email },
-  }));
-  const bccArray = bccRecipients?.map((email) => ({
-    emailAddress: { address: email },
-  }));
-
-  const graphAttachments = attachments?.map(a => ({
-    "@odata.type": "#microsoft.graph.fileAttachment",
-    name: a.name,
-    contentType: a.contentType,
-    contentBytes: a.contentBytes,
-    ...(a.isInline && a.contentId ? { isInline: true, contentId: a.contentId } : {}),
-  }));
-
-  await graphRequest(`/users/${encodeURIComponent(fromMailbox)}/sendMail`, {
-    method: "POST",
-    body: JSON.stringify({
-      message: {
-        subject,
-        body: { contentType: "HTML", content: body },
-        toRecipients: toArray,
-        ...(ccArray && { ccRecipients: ccArray }),
-        ...(bccArray && { bccRecipients: bccArray }),
-        ...(graphAttachments && graphAttachments.length > 0 && { attachments: graphAttachments }),
-      },
-      saveToSentItems: true,
-    }),
-  });
+  fromMailbox?: string
+): Promise<MailboxSendResult> {
+  if (fromMailbox) {
+    await postMail(fromMailbox, { to: recipients, cc: ccRecipients, bcc: bccRecipients, attachments, subject, html: body });
+    return { from: fromMailbox, refused: [] };
+  }
+  return sendFromFirstMailbox({ to: recipients, cc: ccRecipients, bcc: bccRecipients, attachments, build: () => ({ subject, html: body }) });
 }
 
 export async function replyToSharedMailboxMessage(

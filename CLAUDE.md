@@ -2822,9 +2822,38 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   checks expected and if there is a red flag then we get KYC4U"): the
   client checks and screening in the app for the routine checks; a red flag
   goes to KYC4U (Request KYC4U check, beside Send client checks on each
-  party). Which findings count as a red flag, and an automatic hand-off, are
-  not built yet. AML Dealcheck (Compliance On Demand), offered the same day,
-  was not taken up (Woody: "looks rubbish").
+  party). AML Dealcheck (Compliance On Demand), offered the same day, was
+  not taken up (Woody: "looks rubbish").
+- **The red-flag hand-off** (Woody, same day: "yes build the red flag
+  handoff to KYC4U"). Rules: `shared/kyc-red-flags.ts` (`partyRedFlags`,
+  `dealRedFlags`, `redFlagNote`; tests `server/kyc-red-flags.test.ts`, in
+  `npm test`, and `qa/regression/kyc-red-flags.test.mjs`); reading and
+  alerting: `server/kyc-red-flags.ts`. Every flag is read from a record the
+  app already holds, and nothing decides: KYC4U does. A party's flags: the
+  client's yes or not sure to the question about public roles (any request
+  to it on the deal; a later no does not wipe it), a declined Veriff check,
+  `aml_pep_status` read as review_required, PEP or close associate (the KYC
+  form's own reading), the latest `kyc_investigations` row with a sanctions
+  match, `aml_risk_level` high or critical, and `aml_edd_required` (with its
+  reason: the landlord packs set it, as on Bulgaria Mall). The deal record's
+  own: its PEP status, risk, enhanced due diligence not yet completed, and a
+  source of funds document read as not matching what was declared. Not a
+  flag on purpose: the MLRO's rejection (it already blocks), a client who has
+  not replied (chase them), adverse media (the screening keeps no verdict).
+  Where they show: `redFlags` on `GET /api/kyc/deal/:id/status`, for BGP
+  staff signed in as themselves only (`contactViewer`), on the deal's KYC
+  card (a red box per party, the deal record's above, and a line naming any
+  record that could not be read: never a silent "no red flags"); in the
+  KYC4U request's note (`kyc4uPrefill`), so Request KYC4U check carries
+  them; in the agents' Finished email; and in Kick off AML, where a flagged
+  party gets the KYC4U request instead of the client checks. **The alert**:
+  the client's yes or not sure, and Veriff declining a check the client page
+  started, email the agents copied on the request at once ("Red flag on
+  <deal>: raise <party> with KYC4U", `kycRedFlagEmail`), once per flag per
+  request (`request.redFlagAlerts`, written only after a send), never the
+  client; a test request alerts the admin. The other flags show on the card
+  and in the note but send no email. Admins preview and test it with the
+  other client check emails.
 - **Veriff is on the UK DVS register** (checked 17 November 2026,
   access-dvs-register.service.gov.uk): provider "Veriff OÜ", service "Veriff
   UK Identity Verification Service", roles Identity and Component, trust
@@ -2835,9 +2864,10 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   source".
 - **Not built, each waiting on Woody**: the kyc@chatbgp.app mailbox has to
   exist in Microsoft 365 with the app allowed to send as it and read it (until
-  then the email goes from the shared mailbox and replies go there; it cannot
-  be made from the app or this connector: Microsoft 365 admin centre → Teams
-  & groups → Shared mailboxes); whether the privacy notice covers AML
+  then the email goes from chatbgp@chatbgp.app or the shared mailbox, see
+  "Emails come from chatbgp.app" below; it cannot be made from the app or
+  this connector: Microsoft 365 admin centre → Teams & groups → Shared
+  mailboxes); whether the privacy notice covers AML
   processing (reg 41 / Article 13: read on 17 November 2026, it does not:
   no controller company or number, no lawful basis, no AML or reg 41
   statement, no retention period, no right to complain to the ICO; an AML
@@ -2845,6 +2875,38 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   records are not deleted after the five years; the app does not prompt an OFSI report on a sanctions match;
   trusts, partnerships and charities have no request type of their own; the
   principal place of business (if not the registered office) is not asked.
+
+## Emails come from chatbgp.app (Woody, 2026-11-17)
+
+Woody: "just use chatbgp.app for all emails now". Every email the app sends
+goes through `sendFromFirstMailbox` in `server/shared-mailbox.ts` (the old
+`sendFromSharedMailbox`, `sendSharedMailboxEmail`, `sendWorkspaceEmail` and
+the KYC sender all call it): the first address Microsoft takes, in the order
+`senderOrder` gives: a workspace's own (landsec@chatbgp.app) or the KYC
+mailbox (kyc@chatbgp.app) where there is one, then `APP_MAILBOX`
+(chatbgp@chatbgp.app unless set), then the shared mailbox
+(chatbgp@brucegillinghampollard.com). An address refused while the next one
+took the same email is skipped for an hour. From the app's address, replies
+go to the shared mailbox (`replyTo`), which the app reads; the KYC and
+Landsec addresses take their own replies. Replies to an email in the shared
+mailbox stay in its thread, from there; staff sending as themselves
+(`/me/sendMail`) are unchanged. Tests: `server/app-mailbox.test.ts`.
+
+- **The app's own addresses are never a person or a firm**
+  (`isAppAddress` in `shared/app-mailbox.ts`; `INTERNAL_DOMAIN_RE` in
+  `server/tracker-correspondence.ts` now matches chatbgp.app): the hourly
+  contact auto-adding, the suggested contacts and the shared inbox reader
+  skip them. A new reader of staff mail must too.
+- **DNS** (set through Porkbun on 17 November 2026, checked live): MX
+  `0 chatbgp-app.mail.protection.outlook.com`, SPF
+  `v=spf1 include:spf.protection.outlook.com -all`, `autodiscover` CNAME to
+  `autodiscover.outlook.com`, DMARC `p=none`.
+- **Waiting on Woody, in Microsoft 365**: add the domain chatbgp.app and
+  verify it (the MS= TXT record it gives goes in at Porkbun), create the
+  shared mailboxes chatbgp@, kyc@ and landsec@chatbgp.app, then turn on DKIM
+  (two CNAMEs, also at Porkbun). Until the domain is verified, every email
+  still goes from the shared mailbox and mail TO chatbgp.app addresses
+  bounces. Nothing has been sent from chatbgp.app from a build machine.
 
 ## Notes into forms (Woody, 2026-11-13)
 

@@ -20,7 +20,9 @@ export const GENERIC_EMAIL_DOMAINS = new Set([
 ]);
 // BGP's own mailboxes, typo'd variants included (bucegillinghampollard.com,
 // brucegillinhampollard.com both sit in the synced participants).
-export const INTERNAL_DOMAIN_RE = /gill?ing?hampollard\.com$/i;
+// BGP's domains (typos included), and the app's own (chatbgp.app): since
+// 17 November 2026 the app's emails go from there, never an outside firm.
+export const INTERNAL_DOMAIN_RE = /(gill?ing?hampollard\.com|(^|\.)chatbgp\.app)$/i;
 // Firms that are never the principal on an investment deal: agents, lawyers,
 // news — and occupiers, whose threads on a building are its lettings (the
 // Royal Exchange's Mr Foggs letting out-mailed every bidder).

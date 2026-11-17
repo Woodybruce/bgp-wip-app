@@ -5,6 +5,8 @@
 // on, and every email and message that asks. Pure: the server sends these,
 // the client page and the admin preview read them, the tests run them.
 
+import type { KycRedFlag } from "./kyc-red-flags";
+
 export type KycDocKey = "photo_id" | "proof_of_address" | "source_of_funds" | "ownership" | "owner_ids" | "authority" | "company_documents" | "other";
 export type KycPartyKind = "individual" | "company";
 
@@ -254,9 +256,9 @@ function stepsList(steps: Array<{ title: string; detail: string }>): string {
 
 // One frame for every email: the logo, a bordeaux rule, the body, a quiet
 // footer that says where the email came from.
-function frame(title: string, inner: string, footer: string, test: boolean | undefined): string {
+function frame(title: string, inner: string, footer: string, test: boolean | undefined, whoReceives = "a client receives"): string {
   const banner = test
-    ? `<tr><td style="background:#fff4d6;padding:10px 32px;font-family:${FONT};font-size:13px;color:#6b4e00"><strong>Test email.</strong> This is what a client receives. Nothing has been sent to anyone else.</td></tr>`
+    ? `<tr><td style="background:#fff4d6;padding:10px 32px;font-family:${FONT};font-size:13px;color:#6b4e00"><strong>Test email.</strong> This is what ${escHtml(whoReceives)}. Nothing has been sent to anyone else.</td></tr>`
     : "";
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(title)}</title></head>
 <body style="margin:0;padding:0;background:${PAGE}">
@@ -399,6 +401,7 @@ export function kycFinishedEmail(ctx: {
   kind?: KycPartyKind;
   pep?: KycPepAnswer | null;
   pepDetail?: string | null;
+  redFlags?: KycRedFlag[];
 }): { subject: string; html: string } {
   const who = ctx.recipientName || ctx.partyName;
   const idLine = ctx.idState === null ? "" :
@@ -418,13 +421,52 @@ export function kycFinishedEmail(ctx: {
     ctx.pep === "yes" || ctx.pep === "unsure"
       ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>Enhanced due diligence.</strong> A politically exposed person, or a family member or close associate of one, needs senior management approval (a director or the MLRO) before the deal goes ahead, their source of wealth and source of funds established, and closer monitoring (MLR 2017 reg 35; HMRC AMLG11650). A UK one starts as lower risk, so the checks can be lighter and use public information unless something else raises the risk (FCA FG25/3). Screening must confirm whether the answer is right.</div>`
       : "",
+    ctx.redFlags?.length ? redFlagBox(ctx.redFlags) : "",
     ctx.kind === "company" ? p("Check the owners they list against the PSC register at Companies House. A difference must be reported to Companies House (HMRC, AMLG11400 14.8).", `font-size:13px;color:${BODY}`) : "",
     button("Open the deal's AML", ctx.dealLink),
     p("The files are on the client's KYC record. Review them and sign off in the app as usual.", `font-size:13px;color:${MUTED}`),
   ].join("\n");
   return {
     subject: `${ctx.test ? "[Test] " : ""}${who} has finished their identity checks for ${ctx.dealName} (ref ${ctx.ref})`,
-    html: frame("Checks finished", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test),
+    html: frame("Checks finished", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the deal's agents receive"),
+  };
+}
+
+// How BGP handles a red flag (Woody, 17 November 2026: "basically we do the
+// normal checks expected and if there is a red flag then we get KYC4U").
+export const KYC_RED_FLAG_RULE = "The routine checks are done in the app. A red flag goes to KYC4U, BGP's MLRO service, for enhanced checks before the deal goes ahead.";
+export const KYC_RED_FLAG_STEP = "Open the deal's AML card and press Request KYC4U check on this party: the red flags are already in the request's note.";
+
+function redFlagBox(flags: KycRedFlag[]): string {
+  const items = flags.map(f => `<li style="margin:0 0 6px">${escHtml(f.label)}${f.detail ? `: ${escHtml(f.detail)}` : ""} <span style="color:${MUTED}">(${escHtml(f.source)})</span></li>`).join("");
+  return `<div style="margin:16px 0;padding:12px 16px;border-left:3px solid #b91c1c;background:#fef2f2;font-size:14px;color:${INK}"><strong>Red flag: raise with KYC4U.</strong><ul style="margin:8px 0 8px 18px;padding:0">${items}</ul>${escHtml(KYC_RED_FLAG_STEP)}</div>`;
+}
+
+// The alert to the deal's agents the moment a client's answer or identity
+// check raises a red flag. Once per flag per request.
+export function kycRedFlagEmail(ctx: {
+  partyName: string;
+  recipientName: string | null;
+  dealName: string;
+  ref: string;
+  dealLink: string;
+  flags: KycRedFlag[];
+  sentFrom: string;
+  test?: boolean;
+}): { subject: string; html: string } {
+  const inner = [
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:#b91c1c">Red flag: raise ${escHtml(ctx.partyName)} with KYC4U</h1>`,
+    p(`For <strong>${escHtml(ctx.dealName)}</strong>${ctx.recipientName && ctx.recipientName !== ctx.partyName ? `, from the checks sent to <strong>${escHtml(ctx.recipientName)}</strong>` : ""}.`),
+    h2("What was found"),
+    `<ul style="margin:0 0 14px 18px;padding:0">${ctx.flags.map(f => `<li style="margin:0 0 6px">${escHtml(f.label)}${f.detail ? `: ${escHtml(f.detail)}` : ""} <span style="color:${MUTED}">(${escHtml(f.source)})</span></li>`).join("")}</ul>`,
+    h2("What to do"),
+    p(`${escHtml(KYC_RED_FLAG_RULE)} ${escHtml(KYC_RED_FLAG_STEP)}`),
+    button("Open the deal's AML", ctx.dealLink),
+    p("Nothing has been sent to the client or to KYC4U.", `font-size:13px;color:${MUTED}`),
+  ].join("\n");
+  return {
+    subject: `${ctx.test ? "[Test] " : ""}Red flag on ${ctx.dealName}: raise ${ctx.partyName} with KYC4U (ref ${ctx.ref})`,
+    html: frame("Red flag", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the deal's agents receive"),
   };
 }
 

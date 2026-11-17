@@ -3553,17 +3553,29 @@ export function DealFormDialog({
               {amlStep.dealRef != null ? <>Deal <span className="font-mono">#{amlStep.dealRef}</span> is saved.</> : <>The deal is saved.</>}
             </p>
             <div className="space-y-2">
-              {amlStep.parties.map(p => (
-                <div key={`${p.role}:${p.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2" data-testid={`deal-aml-party-${p.role}`}>
-                  <div className="min-w-0">
-                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{p.label}</div>
-                    <div className="text-sm font-medium break-words">{p.name}</div>
+              {amlStep.parties.map(p => {
+                // A party with a red flag already goes to KYC4U, not the
+                // routine client checks (Woody, 2026-11-17).
+                const flags = amlStepStatus?.redFlags?.parties[p.id] || [];
+                return (
+                  <div key={`${p.role}:${p.id}`} className="space-y-1.5 rounded-md border px-3 py-2" data-testid={`deal-aml-party-${p.role}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{p.label}</div>
+                        <div className="text-sm font-medium break-words">{p.name}</div>
+                      </div>
+                      {amlInApp && !flags.length
+                        ? <SendClientChecksButton dealId={amlStep.dealId} companyId={p.id} partyName={p.name} label="Kick off AML" />
+                        : <Kyc4uRequestButton dealId={amlStep.dealId} companyId={p.id} role={p.role} partyName={p.name} label="Kick off AML" />}
+                    </div>
+                    {flags.length > 0 && (
+                      <p className="text-xs text-red-800" data-testid={`deal-aml-party-flags-${p.role}`}>
+                        Red flag: {flags.map(f => f.label).join("; ")}. Raise it with KYC4U: the red flags go in the request's note.
+                      </p>
+                    )}
                   </div>
-                  {amlInApp
-                    ? <SendClientChecksButton dealId={amlStep.dealId} companyId={p.id} partyName={p.name} label="Kick off AML" />
-                    : <Kyc4uRequestButton dealId={amlStep.dealId} companyId={p.id} role={p.role} partyName={p.name} label="Kick off AML" />}
-                </div>
-              ))}
+                );
+              })}
             </div>
             <p className="text-[11px] text-muted-foreground">
               {amlInApp

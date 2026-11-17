@@ -1444,6 +1444,13 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
     const allApproved = counterparties.length >= 2 && counterparties.every(c => c.isApproved && !c.isExpired);
     const missing = counterparties.filter(c => !c.isApproved || c.isExpired).map(c => c.name);
 
+    // Red flags send a party to KYC4U (Woody, 2026-11-17). BGP staff signed
+    // in as themselves only: PEP and sanctions findings are BGP's.
+    const { contactViewer } = await import("./contact-viewer");
+    const redFlags = (await contactViewer(req)).staff
+      ? await (await import("./kyc-red-flags")).loadDealRedFlags(d.id, counterparties.map(c => c.id))
+      : null;
+
     res.json({
       dealId: d.id,
       dealName: d.name,
@@ -1454,6 +1461,7 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
       // Whether the deal's screens offer the in-app client checks, or only
       // KYC4U (IN_APP_AML_ENABLED, the one switch).
       inAppAml: !!process.env.IN_APP_AML_ENABLED,
+      redFlags,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

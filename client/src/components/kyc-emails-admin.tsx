@@ -15,7 +15,7 @@ interface KycEmails { mailbox: string; fallback: string; inAppAml: boolean; veri
 
 // The preview each test sends (the individual request is seen, not sent:
 // the company one tests the same page).
-const TEST_KIND: Record<string, string> = { request_company: "request", reminder: "reminder", finished: "finished", id_check: "id_check" };
+const TEST_KIND: Record<string, string> = { request_company: "request", reminder: "reminder", finished: "finished", id_check: "id_check", red_flag: "red_flag" };
 
 export function KycEmailsAdmin() {
   const { toast } = useToast();
@@ -32,7 +32,7 @@ export function KycEmailsAdmin() {
       }
       toast({
         title: "Test sent to you",
-        description: `To ${r.to}, from ${r.from}.${r.fellBack ? ` Microsoft wouldn't send from ${data?.mailbox}, so it came from the shared mailbox.` : ""}${r.link ? " Open the link in it to try the client's page." : ""}`,
+        description: `To ${r.to}, from ${r.from}.${r.fellBack ? ` Microsoft wouldn't send from ${data?.mailbox}, so it came from ${r.from}.` : ""}${r.link ? " Open the link in it to try the client's page." : ""}`,
       });
     },
     onError: (e: any) => toast({ title: "Test not sent", description: String(e?.message || e).replace(/^\d{3}:\s*/, ""), variant: "destructive" }),

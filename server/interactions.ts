@@ -9,6 +9,7 @@ import { pool } from "./db";
 import { users as usersTable } from "@shared/schema";
 import { parseGraphDateTime } from "./viewing-matching";
 import { newAutoContactRun, resolveAutoContacts, type AutoContactRun } from "./email-auto-contacts";
+import { isAppAddress } from "@shared/app-mailbox";
 import { findContactSourceEmail } from "./contact-source-email";
 import { newContactDetailsRun, queueDetailRead, readQueuedMessages, runContactDetailsBacklog, contactDetailsProgress, type ContactDetailsRun, type QueuedRead } from "./email-contact-details";
 import { queueRequirementEmail, readQueuedRequirementEmails, type QueuedRequirementEmail } from "./requirement-email-feed";
@@ -872,7 +873,7 @@ async function discoverContactsFromEmail(daysBack = 90): Promise<{
         }
 
         for (const addr of addresses) {
-          if (addr.email.endsWith("@brucegillinghampollard.com")) continue;
+          if (addr.email.endsWith("@brucegillinghampollard.com") || isAppAddress(addr.email)) continue;
           if (existingEmails.has(addr.email)) continue;
           if (addr.email.includes("noreply") || addr.email.includes("no-reply") || addr.email.includes("notifications@") || addr.email.includes("mailer-daemon")) continue;
 

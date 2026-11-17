@@ -18,10 +18,11 @@ const compliance = read("server/aml-compliance.ts");
 const app = read("client/src/App.tsx");
 const page = read("client/src/pages/kyc-upload.tsx");
 
-test("the emails go from the KYC mailbox (kyc@chatbgp.app unless set), falling back to the shared one", () => {
+test("the emails go from the KYC mailbox (kyc@chatbgp.app unless set), then the app's address, then the shared one", () => {
   assert.match(portal, /KYC_MAILBOX = \(process\.env\.KYC_MAILBOX \|\| process\.env\.BGP_AML_MAILBOX \|\| "kyc@chatbgp\.app"\)/);
-  assert.match(portal, /await attempt\(KYC_MAILBOX\)/);
-  assert.match(portal, /await attempt\(SHARED_MAILBOX\)/);
+  assert.match(portal, /sendFromFirstMailbox\(\{ mailboxes: \[KYC_MAILBOX\], to, cc:/);
+  const mailbox = readFileSync(new URL('../../server/shared-mailbox.ts', import.meta.url), 'utf8');
+  assert.match(mailbox, /for \(const m of \[\.\.\.first, APP_MAILBOX, SHARED_MAILBOX\]\)/);
   assert.doesNotMatch(portal, /return \{ ok: false, error: "BGP_AML_MAILBOX env not configured" \}/, "an unset variable no longer stops every email");
 });
 

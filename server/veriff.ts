@@ -367,6 +367,13 @@ veriffRouter.post("/api/veriff/webhook", async (req: Request, res: Response) => 
       [status || null, code || null, reason || null, verdictPerson, verdictDocument, sessionId]
     );
 
+    // A declined identity check is a red flag: the agents copied on the
+    // client checks that started it hear at once (server/kyc-red-flags.ts).
+    if (status === "declined") {
+      import("./kyc-red-flags").then(m => m.alertRedFlagsForSession(sessionId))
+        .catch((e: any) => console.warn(`[veriff] red flag alert for ${sessionId} failed: ${e?.message}`));
+    }
+
     // If approved, auto-attach a kyc_documents row pointing at the Veriff result
     if (status === "approved") {
       const row = await pool.query(`SELECT * FROM veriff_sessions WHERE session_id = $1`, [sessionId]);

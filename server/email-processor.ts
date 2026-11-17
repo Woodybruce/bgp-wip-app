@@ -4,6 +4,7 @@ import { db, pool } from "./db";
 import { chatbgpEmailLog, crmContacts, crmCompanies, crmInteractions, users } from "@shared/schema";
 import { eq, desc, sql, and } from "drizzle-orm";
 import { getSharedMailboxMessages, getSharedMailboxMessageById, sendFromSharedMailbox, replyToSharedMailboxMessage, markMessageRead, getAppToken, EmailAttachment, graphRequest, getSharedMailboxConversation } from "./shared-mailbox";
+import { isAppAddress } from "@shared/app-mailbox";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { generateAutonomousDocument, exportDocumentToPdf } from "./document-templates";
 import { ingestBytes } from "./universal-ingest";
@@ -1052,12 +1053,13 @@ async function trackCcCorrespondence(
     companyName: crmContacts.companyName,
   }).from(crmContacts);
 
+  // The app's own addresses (the shared mailbox, chatbgp.app) are neither.
   const allEmails = [...toRecipients, ...ccRecipients, from].filter(e =>
-    e && !e.toLowerCase().endsWith(BGP_DOMAIN) && e.toLowerCase() !== SHARED_MAILBOX.toLowerCase()
+    e && !e.toLowerCase().endsWith(BGP_DOMAIN) && !isAppAddress(e)
   );
 
   const bgpSenderEmails = [from, ...toRecipients, ...ccRecipients].filter(e =>
-    e && e.toLowerCase().endsWith(BGP_DOMAIN) && e.toLowerCase() !== SHARED_MAILBOX.toLowerCase()
+    e && e.toLowerCase().endsWith(BGP_DOMAIN) && !isAppAddress(e)
   );
 
   const isBgpOutbound = from.toLowerCase().endsWith(BGP_DOMAIN);
