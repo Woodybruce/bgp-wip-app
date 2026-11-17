@@ -9,13 +9,13 @@ import { APP_MAILBOX, SHARED_MAILBOX, senderOrder, sendFromFirstMailbox } from "
 import { INTERNAL_DOMAIN_RE } from "./tracker-correspondence";
 
 test("the app's emails go from chatbgp.app, then the shared mailbox", { skip: !!process.env.APP_MAILBOX }, () => {
-  assert.equal(APP_MAILBOX, "chatbgp@chatbgp.app");
+  assert.equal(APP_MAILBOX, "chatbgp1@chatbgp.app");
   assert.equal(SHARED_MAILBOX, "chatbgp@brucegillinghampollard.com");
-  assert.deepEqual(senderOrder(), ["chatbgp@chatbgp.app", "chatbgp@brucegillinghampollard.com"]);
-  assert.deepEqual(senderOrder(["kyc@chatbgp.app"]), ["kyc@chatbgp.app", "chatbgp@chatbgp.app", "chatbgp@brucegillinghampollard.com"]);
-  assert.deepEqual(senderOrder(["landsec@chatbgp.app", "", "  "]), ["landsec@chatbgp.app", "chatbgp@chatbgp.app", "chatbgp@brucegillinghampollard.com"]);
+  assert.deepEqual(senderOrder(), ["chatbgp1@chatbgp.app", "chatbgp@brucegillinghampollard.com"]);
+  assert.deepEqual(senderOrder(["kyc@chatbgp.app"]), ["kyc@chatbgp.app", "chatbgp1@chatbgp.app", "chatbgp@brucegillinghampollard.com"]);
+  assert.deepEqual(senderOrder(["landsec2@chatbgp.app", "", "  "]), ["landsec2@chatbgp.app", "chatbgp1@chatbgp.app", "chatbgp@brucegillinghampollard.com"]);
   // Each address once, whatever its case.
-  assert.deepEqual(senderOrder(["ChatBGP@ChatBGP.app"]), ["ChatBGP@ChatBGP.app", "chatbgp@brucegillinghampollard.com"]);
+  assert.deepEqual(senderOrder(["ChatBGP1@ChatBGP.app"]), ["ChatBGP1@ChatBGP.app", "chatbgp@brucegillinghampollard.com"]);
 });
 
 test("with Microsoft refusing every address, the send fails and names each one", async () => {

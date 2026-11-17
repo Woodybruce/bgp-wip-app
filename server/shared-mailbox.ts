@@ -16,7 +16,10 @@ export const SHARED_MAILBOX = SHARED_MAILBOX_ADDRESS;
 // verified, the mailbox made). Until then, or whenever Microsoft refuses, the
 // email still goes, from the next address in line, and the log says so. A
 // reply to an email in the shared mailbox stays in its thread, from there.
-export const APP_MAILBOX = (process.env.APP_MAILBOX || "chatbgp@chatbgp.app").trim();
+// The mailboxes Woody made on 17 November 2026 are chatbgp1@, kyc@ and
+// landsec2@chatbgp.app (Microsoft numbered the two whose names BGP's Microsoft
+// 365 already uses).
+export const APP_MAILBOX = (process.env.APP_MAILBOX || "chatbgp1@chatbgp.app").trim();
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
 let appClient: ConfidentialClientApplication | null = null;
@@ -262,12 +265,13 @@ async function postMail(fromMailbox: string, m: {
 }
 
 // The address Landsec work is sent from (Woody, 2026-11-12: "email is
-// landsec@chatbgp.app"), so Landsec's people and the joint agents get the
+// landsec@chatbgp.app"; the mailbox made on 17 November 2026 is
+// landsec2@chatbgp.app), so Landsec's people and the joint agents get the
 // workspace's emails from one address of its own. LANDSEC_MAILBOX overrides
 // it. The mailbox has to exist in BGP's Microsoft 365 for the app to send as
 // it; until it does (or if Microsoft refuses), the email still goes, from the
 // shared mailbox, and the log says so.
-export const LANDSEC_MAILBOX = (process.env.LANDSEC_MAILBOX || "landsec@chatbgp.app").trim();
+export const LANDSEC_MAILBOX = (process.env.LANDSEC_MAILBOX || "landsec2@chatbgp.app").trim();
 export const isLandsecClient = (landlordName: string | null | undefined): boolean => /land\s?sec/i.test(String(landlordName || ""));
 
 // An email about a letting, from the client's own workspace address where

@@ -2582,8 +2582,9 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   stop counting. A joint agent never receives the brand's CRM website. The measure (psf, net effective, less three months' fit-out,
   % of ERV and floor, occupational cost) is worked out on read, never stored.
   AI drafts are Anthropic only and are never saved by themselves.
-- **Landsec emails come from `landsec@chatbgp.app`** (Woody, 2026-11-12;
-  `LANDSEC_MAILBOX` overrides): `sendWorkspaceEmail` in
+- **Landsec emails come from the Landsec mailbox** (Woody, 2026-11-12:
+  landsec@chatbgp.app; the mailbox made on 17 November 2026 is
+  `landsec2@chatbgp.app`, the default; `LANDSEC_MAILBOX` overrides): `sendWorkspaceEmail` in
   `server/shared-mailbox.ts` sends checklist and recommendation emails about
   a Landsec property as that mailbox, and falls back to the shared mailbox,
   with a log line, if Microsoft will not send as it. Use it for any new
@@ -2862,12 +2863,11 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   and Right to Rent. HMRC (AMLG11400 14.5): a service "certified against the
   trust framework and on the DVS register" is "a reliable and independent
   source".
-- **Not built, each waiting on Woody**: the kyc@chatbgp.app mailbox has to
-  exist in Microsoft 365 with the app allowed to send as it and read it (until
-  then the email goes from chatbgp@chatbgp.app or the shared mailbox, see
-  "Emails come from chatbgp.app" below; it cannot be made from the app or
-  this connector: Microsoft 365 admin centre → Teams & groups → Shared
-  mailboxes); whether the privacy notice covers AML
+- **Not built, each waiting on Woody**: the kyc@chatbgp.app mailbox exists
+  since 17 November 2026 (see "Emails come from chatbgp.app" below), but
+  sending as it and reading it from the app have not been seen working from
+  a build machine: the admin's Send me a test says which address an email
+  came from; whether the privacy notice covers AML
   processing (reg 41 / Article 13: read on 17 November 2026, it does not:
   no controller company or number, no lawful basis, no AML or reg 41
   statement, no retention period, no right to complain to the ICO; an AML
@@ -2882,9 +2882,9 @@ Woody: "just use chatbgp.app for all emails now". Every email the app sends
 goes through `sendFromFirstMailbox` in `server/shared-mailbox.ts` (the old
 `sendFromSharedMailbox`, `sendSharedMailboxEmail`, `sendWorkspaceEmail` and
 the KYC sender all call it): the first address Microsoft takes, in the order
-`senderOrder` gives: a workspace's own (landsec@chatbgp.app) or the KYC
+`senderOrder` gives: a workspace's own (landsec2@chatbgp.app) or the KYC
 mailbox (kyc@chatbgp.app) where there is one, then `APP_MAILBOX`
-(chatbgp@chatbgp.app unless set), then the shared mailbox
+(chatbgp1@chatbgp.app unless set), then the shared mailbox
 (chatbgp@brucegillinghampollard.com). An address refused while the next one
 took the same email is skipped for an hour. From the app's address, replies
 go to the shared mailbox (`replyTo`), which the app reads; the KYC and
@@ -2901,12 +2901,22 @@ mailbox stay in its thread, from there; staff sending as themselves
   `0 chatbgp-app.mail.protection.outlook.com`, SPF
   `v=spf1 include:spf.protection.outlook.com -all`, `autodiscover` CNAME to
   `autodiscover.outlook.com`, DMARC `p=none`.
-- **Waiting on Woody, in Microsoft 365**: add the domain chatbgp.app and
-  verify it (the MS= TXT record it gives goes in at Porkbun), create the
-  shared mailboxes chatbgp@, kyc@ and landsec@chatbgp.app, then turn on DKIM
-  (two CNAMEs, also at Porkbun). Until the domain is verified, every email
-  still goes from the shared mailbox and mail TO chatbgp.app addresses
-  bounces. Nothing has been sent from chatbgp.app from a build machine.
+- **Microsoft 365, done by Woody on 17 November 2026**: chatbgp.app added
+  and verified (the TXT record `MS=ms36600512` was added at Porkbun through
+  its API; Microsoft found the MX, SPF and autodiscover records already in
+  place), and three shared mailboxes made: `chatbgp1@chatbgp.app`,
+  `kyc@chatbgp.app` and `landsec2@chatbgp.app`. Microsoft numbered the two
+  whose names BGP's Microsoft 365 already uses (the shared mailbox is
+  chatbgp@brucegillinghampollard.com), so the defaults in
+  `server/shared-mailbox.ts` are those three addresses. A display name can be
+  changed in the admin centre without touching the address or the app.
+- **DKIM is not set up** (Woody, 2026-11-17, at the Defender portal: "is
+  there another solution I have to set up a account and everything"): it is
+  optional at BGP's volumes, because SPF passes and aligns for mail sent
+  through Microsoft 365 from chatbgp.app. If emails start landing in spam,
+  turn it on in the Defender portal (security.microsoft.com → Email
+  authentication settings → DKIM → chatbgp.app) and add its two CNAMEs at
+  Porkbun. Nothing has been sent from chatbgp.app from a build machine.
 
 ## Notes into forms (Woody, 2026-11-13)
 
