@@ -1,4 +1,4 @@
-import { getAuthHeaders, startXeroConnect } from "@/lib/queryClient";
+import { getAuthHeaders, queryClient, startXeroConnect } from "@/lib/queryClient";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Receipt, X, Loader2, Plus } from "lucide-react";
 import { CreateBillingEntityDialog } from "@/components/billing-entity-create";
+import { leaseCompaniesKey } from "@/components/lease-company-picker";
 
 export interface XeroContact {
   ContactID: string;
@@ -25,11 +26,16 @@ interface Props {
   placeholder?: string;
   testIdPrefix?: string;
   compact?: boolean;
-  // The brand a new billing entity goes under. Given, a search Xero has no
-  // match for offers Create billing entity (Companies House, then the CRM and
-  // the firm's Xero; client/src/components/billing-entity-create.tsx).
+  // The landlord or brand the billing entity belongs to (Woody, 2026-11-17:
+  // "tenant and Landlord first then the billing entity comes up linked to that
+  // tenant or landlord"). Given, the box lists the companies filed under it
+  // first, picking one finds or makes its Xero contact, and Create billing
+  // entity files a new one under it (Companies House, then the CRM and the
+  // firm's Xero; client/src/components/billing-entity-create.tsx).
   createFor?: { id: string; name: string } | null;
 }
+
+type FiledCompany = { id: string; name: string; companiesHouseNumber: string | null; isDefault?: boolean };
 
 function formatAddress(addr: any): string {
   if (!addr) return "";
@@ -116,6 +122,50 @@ export function XeroContactPicker({
   const showSelected = !!value;
   const selectedAddress = cachedAddress ? formatAddress(cachedAddress) : "";
 
+  // The companies filed under the landlord or brand, listed first.
+  const partyId = createFor?.id || "";
+  const { data: filed = [] } = useQuery<FiledCompany[]>({
+    queryKey: leaseCompaniesKey(partyId),
+    queryFn: async () => {
+      const r = await fetch(`/api/crm/companies/${encodeURIComponent(partyId)}/trading-entities`, { credentials: "include", headers: getAuthHeaders() });
+      return r.ok ? r.json() : [];
+    },
+    enabled: open && !!partyId,
+    staleTime: 60_000,
+  });
+  const lower = trimmed.toLowerCase();
+  const filedShown = filed.filter(f => !lower || f.name.toLowerCase().includes(lower) || String(f.companiesHouseNumber || "").toLowerCase().includes(lower));
+  // Picking a filed company with a Companies House number goes through the
+  // billing entity route, which keeps it under the party and finds its Xero
+  // contact by name, or makes one. Without a number, its name is searched in Xero.
+  const [linking, setLinking] = useState<string | null>(null);
+  const [linkProblem, setLinkProblem] = useState<string | null>(null);
+  const pickFiled = async (f: FiledCompany) => {
+    setLinkProblem(null);
+    if (!f.companiesHouseNumber || !createFor?.id) { setSearch(f.name); return; }
+    setLinking(f.id);
+    try {
+      const r = await fetch("/api/billing-entities", {
+        method: "POST", credentials: "include",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ brandId: createFor.id, companyNumber: f.companiesHouseNumber }),
+      });
+      const body = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(body?.message || `The company could not be linked (${r.status})`);
+      if (body?.contact?.ContactID) {
+        onChange(body.contact);
+        setSearch("");
+        setOpen(false);
+      } else {
+        setLinkProblem(`${f.name}: ${body?.xeroError || "the Xero contact was not made."}`);
+      }
+    } catch (e: any) {
+      setLinkProblem(e?.message || "The company could not be linked");
+    } finally {
+      setLinking(null);
+    }
+  };
+
   if (showSelected && !open && creating === null) {
     return (
       <div className={`flex items-start gap-2 rounded-md border bg-background px-3 py-2 ${compact ? "" : "min-h-[44px]"}`} data-testid={`${testIdPrefix}-selected`}>
@@ -167,6 +217,31 @@ export function XeroContactPicker({
       />
       {open && (
         <div className="absolute z-50 mt-1 w-full bg-popover border rounded-md shadow-lg max-h-64 overflow-y-auto">
+          {createFor?.id && (filedShown.length > 0 ? (
+            <div className="border-b" data-testid={`${testIdPrefix}-filed`}>
+              <div className="px-3 pt-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Filed under {createFor.name}</div>
+              {filedShown.map(f => (
+                <button
+                  key={f.id}
+                  className="w-full text-left px-3 py-2 hover:bg-accent disabled:opacity-60"
+                  disabled={!!linking}
+                  onMouseDown={(e) => { e.preventDefault(); void pickFiled(f); }}
+                  data-testid={`${testIdPrefix}-filed-${f.id}`}
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {linking === f.id && <Loader2 className="w-3 h-3 animate-spin" />}
+                    <span className="text-sm font-medium">{f.name}</span>
+                    {f.companiesHouseNumber && <Badge variant="outline" className="text-[10px]">{f.companiesHouseNumber}</Badge>}
+                    {f.isDefault && <Badge variant="outline" className="text-[10px]">Default</Badge>}
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : !trimmed && (
+            <div className="px-3 py-2 text-[11px] text-muted-foreground border-b" data-testid={`${testIdPrefix}-filed-none`}>
+              No company filed under {createFor.name} yet. Search Xero, or add one below.
+            </div>
+          ))}
           {isFetching && (
             <div className="px-3 py-2 text-xs text-muted-foreground flex items-center gap-2">
               <Loader2 className="w-3 h-3 animate-spin" />
@@ -246,6 +321,15 @@ export function XeroContactPicker({
               </button>
             );
           })}
+          {createFor?.id && !notInXero && (
+            <button
+              className="w-full text-left px-3 py-2 text-xs font-medium hover:bg-accent border-t flex items-center gap-1.5"
+              onMouseDown={(e) => { e.preventDefault(); setCreating(trimmed); setOpen(false); }}
+              data-testid={`${testIdPrefix}-create-new`}
+            >
+              <Plus className="w-3.5 h-3.5" /> New billing entity for {createFor.name} (Companies House)
+            </button>
+          )}
           {!isFetching && !notConnected && !notInXero && !stillChecking && (
             <button
               className="w-full text-left px-3 py-2 text-xs text-muted-foreground hover:bg-accent border-t"
@@ -257,13 +341,14 @@ export function XeroContactPicker({
           )}
         </div>
       )}
+      {linkProblem && <p className="mt-1 text-[11px] text-destructive" data-testid={`${testIdPrefix}-link-problem`}>{linkProblem}</p>}
       {createFor?.id && creating !== null && (
         <CreateBillingEntityDialog
           open
           onOpenChange={(v) => { if (!v) setCreating(null); }}
           brand={createFor}
           initialQuery={creating}
-          onCreated={(c) => { onChange(c); setSearch(""); setCreating(null); }}
+          onCreated={(c) => { onChange(c); setSearch(""); setCreating(null); queryClient.invalidateQueries({ queryKey: leaseCompaniesKey(createFor.id) }); }}
           testIdPrefix={`${testIdPrefix}-billing-entity`}
         />
       )}

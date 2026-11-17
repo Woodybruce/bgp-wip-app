@@ -146,6 +146,7 @@ import type { LettingNoteReading } from "@shared/letting-note";
 import type { HotsConversion, HotsConvertDefaults } from "@shared/unit-hots";
 import { hotsCall } from "@/components/unit-hots/hots-api";
 import { dealNotePatch, noteTenant } from "@/lib/deal-note";
+import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
 import { JointAgencyWidget, JointAgencyRegisterDialog, jointAgencyMissing, jointAgencyPayload, EMPTY_JOINT_AGENCY, type JointAgencyState } from "@/components/joint-agency-aml";
 
@@ -2232,6 +2233,9 @@ function SimplifiedCreateBody({
     }
   };
 
+  // The landlord's or brand's name, for its billing entity box.
+  const partyName = (id: string, fallback: string) => companies.find(c => c.id === id)?.name || fallback;
+
   const toComboItems = (list: CrmCompany[]) => {
     // SubLabel = legal/contracting entity ("Land Securities Group Plc"
     // under "Landsec") rather than the companyType chip, which now
@@ -2525,9 +2529,9 @@ function SimplifiedCreateBody({
               onCreate={createLandlord}
               createLabel="landlord"
             />
-            {form.landlordId && (
+            {form.landlordId && !hideFees && (
               <div>
-                <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                <Label className="text-[10px] text-muted-foreground">Billing entity for {partyName(form.landlordId, "the landlord")} (Xero)</Label>
                 <XeroContactPicker
                   testIdPrefix="deal-landlord-entity"
                   value={form.landlordEntityId || null}
@@ -2539,6 +2543,7 @@ function SimplifiedCreateBody({
                       landlordEntityName: c?.Name || "",
                     }));
                   }}
+                  createFor={{ id: form.landlordId, name: partyName(form.landlordId, "the landlord") }}
                   compact
                 />
               </div>
@@ -2562,11 +2567,13 @@ function SimplifiedCreateBody({
                 Brand read as <span className="font-medium text-foreground">{tenantHint}</span>. Pick it above if it is the tenant.
               </p>
             )}
-            {form.tenantId && (
+            {form.tenantId && !hideFees && (
               <div>
-                <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
-                {/* No billing entity in Xero yet: Create billing entity finds the company at Companies House,
-                    saves it under this brand and adds it to the firm's Xero (Woody, 2026-11-17). BGP staff only. */}
+                <Label className="text-[10px] text-muted-foreground">Billing entity for {partyName(form.tenantId, "the tenant")} (Xero)</Label>
+                {/* Linked to the party (Woody, 2026-11-17: "tenant and Landlord first then the billing entity comes up
+                    linked to that tenant or landlord"): the companies filed under it first, and Create billing entity
+                    finds a new one at Companies House, files it under it and adds it to the firm's Xero. BGP staff only:
+                    Xero is BGP's, and a client login cannot reach it. */}
                 <XeroContactPicker
                   testIdPrefix="deal-tenant-entity"
                   value={form.tenantEntityId || null}
@@ -2578,7 +2585,7 @@ function SimplifiedCreateBody({
                       tenantEntityName: c?.Name || "",
                     }));
                   }}
-                  createFor={hideFees ? null : { id: form.tenantId, name: companies.find(c => c.id === form.tenantId)?.name || "the tenant brand" }}
+                  createFor={{ id: form.tenantId, name: partyName(form.tenantId, "the tenant") }}
                   compact
                 />
               </div>
@@ -2601,9 +2608,9 @@ function SimplifiedCreateBody({
               onCreate={createVendor}
               createLabel="vendor"
             />
-            {form.vendorId && (
+            {form.vendorId && !hideFees && (
               <div>
-                <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                <Label className="text-[10px] text-muted-foreground">Billing entity for {partyName(form.vendorId, "the vendor")} (Xero)</Label>
                 <XeroContactPicker
                   testIdPrefix="deal-vendor-entity"
                   value={form.vendorEntityId || null}
@@ -2615,6 +2622,7 @@ function SimplifiedCreateBody({
                       vendorEntityName: c?.Name || "",
                     }));
                   }}
+                  createFor={{ id: form.vendorId, name: partyName(form.vendorId, "the vendor") }}
                   compact
                 />
               </div>
@@ -2632,9 +2640,9 @@ function SimplifiedCreateBody({
               onCreate={createPurchaser}
               createLabel="purchaser"
             />
-            {form.purchaserId && (
+            {form.purchaserId && !hideFees && (
               <div>
-                <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                <Label className="text-[10px] text-muted-foreground">Billing entity for {partyName(form.purchaserId, "the purchaser")} (Xero)</Label>
                 <XeroContactPicker
                   testIdPrefix="deal-purchaser-entity"
                   value={form.purchaserEntityId || null}
@@ -2646,6 +2654,7 @@ function SimplifiedCreateBody({
                       purchaserEntityName: c?.Name || "",
                     }));
                   }}
+                  createFor={{ id: form.purchaserId, name: partyName(form.purchaserId, "the purchaser") }}
                   compact
                 />
               </div>
@@ -3059,6 +3068,12 @@ export function DealFormDialog({
   const [jointAgencyErrors, setJointAgencyErrors] = useState(false);
   // Said under the tenant picker when the box at the top read a brand the picker does not list.
   const [noteBrandHint, setNoteBrandHint] = useState<string | null>(null);
+  // After New Deal or a move to Solicitors saves (Woody, 2026-11-17: "on the
+  // form we need a button to allow us to Kick off the AML"): the form shows
+  // a Kick off AML button for each party, each the deal page's KYC4U request.
+  type AmlParty = { role: "landlord" | "tenant" | "vendor" | "purchaser"; label: string; id: string; name: string };
+  const [amlStep, setAmlStep] = useState<{ dealId: string; dealRef: string | number | null; parties: AmlParty[] } | null>(null);
+  useEffect(() => { if (!open) setAmlStep(null); }, [open]);
   // A handover's landlord, when the deal has none: the property's.
   const handoverLandlordId: string | null = handover
     ? ((properties.find(p => p.id === handover.unit.propertyId) as { landlordId?: string | null } | undefined)?.landlordId || null)
@@ -3286,6 +3301,21 @@ export function DealFormDialog({
     return { id: dealId, amlWarning, conversion };
   };
 
+  // The saved deal's parties, for the Kick off AML step: BGP staff only (the
+  // KYC4U request is BGP's). Shown when the deal has at least one party.
+  const showAmlStep = (dealId: string | null | undefined, dealRef: string | number | null | undefined): boolean => {
+    if (!dealId || isClientCreate) return false;
+    const sides: Array<[AmlParty["role"], string, string]> = [
+      ["landlord", "Landlord", form.landlordId], ["tenant", "Tenant", form.tenantId],
+      ["vendor", "Vendor", form.vendorId], ["purchaser", "Purchaser", form.purchaserId],
+    ];
+    const parties: AmlParty[] = sides.filter(([, , id]) => !!id)
+      .map(([role, label, id]) => ({ role, label, id, name: companies.find(c => c.id === id)?.name || label }));
+    if (!parties.length) return false;
+    setAmlStep({ dealId, dealRef: dealRef ?? null, parties });
+    return true;
+  };
+
   const mutation = useMutation({
     mutationFn: async () => {
       const finalForm = { ...form };
@@ -3328,7 +3358,7 @@ export function DealFormDialog({
           queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", data.id, "audit-log"] });
         }
         if (handover.kind === "hots" && data?.conversion) handover.onConverted(data.conversion);
-        onOpenChange(false);
+        if (!showAmlStep(data?.id, data?.conversion?.dealRef ?? deal?.dealRef ?? null)) onOpenChange(false);
         return;
       }
       toast({
@@ -3351,7 +3381,7 @@ export function DealFormDialog({
         queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", deal.id, "audit-log"] });
       }
       setChangeReason("");
-      onOpenChange(false);
+      if (isEdit || !showAmlStep(data?.id, data?.dealRef ?? null)) onOpenChange(false);
     },
     onError: (err: Error) => {
       // Letting-service refusals (409 LIVE_LETTING_EXISTS / UNIT_REQUIRED):
@@ -3504,13 +3534,39 @@ export function DealFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[700px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{handover?.kind === "promote" ? "Promote to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Edit Deal" : "New Deal"}</DialogTitle>
+          <DialogTitle>{amlStep ? "Kick off AML" : handover?.kind === "promote" ? "Promote to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Edit Deal" : "New Deal"}</DialogTitle>
           <DialogDescription>
-            {handover
+            {amlStep ? "Start the checks on each party with KYC4U." : handover
               ? `${[handover.unit.propertyName || properties.find(p => p.id === handover.unit.propertyId)?.name, handover.unit.unitName].filter(Boolean).join(" — ")}. Check the deal, then save: it moves to Solicitors.`
               : isEdit ? "Update deal details below." : "Fill in the details to create a new deal."}
           </DialogDescription>
         </DialogHeader>
+        {amlStep ? (
+          <div className="space-y-4" data-testid="deal-aml-step">
+            <p className="text-sm">
+              {amlStep.dealRef != null ? <>Deal <span className="font-mono">#{amlStep.dealRef}</span> is saved.</> : <>The deal is saved.</>}
+            </p>
+            <div className="space-y-2">
+              {amlStep.parties.map(p => (
+                <div key={`${p.role}:${p.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2" data-testid={`deal-aml-party-${p.role}`}>
+                  <div className="min-w-0">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{p.label}</div>
+                    <div className="text-sm font-medium break-words">{p.name}</div>
+                  </div>
+                  <Kyc4uRequestButton dealId={amlStep.dealId} companyId={p.id} role={p.role} partyName={p.name} label="Kick off AML" />
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Each button fills in KYC4U's request from the deal: check it and save. Then, on KYC4U's Raise New Service Request page, click your Send to ChatBGP bookmark and press Submit there. KYC4U's answer comes back to the deal after the next sync.
+            </p>
+            <DialogFooter className="flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => { const id = amlStep.dealId; onOpenChange(false); navigateTo(`/deals/${id}`); }} data-testid="deal-aml-open-deal">Open the deal</Button>
+              <Button type="button" onClick={() => onOpenChange(false)} data-testid="deal-aml-done">Done</Button>
+            </DialogFooter>
+          </div>
+        ) : (
+        <>
         {/* Type it and the form fills (Woody, 2026-11-17): the same note reader
             as the letting forms, read as an offer. BGP staff only; never on the
             edit form. Nothing is saved until the form is. */}
@@ -4176,6 +4232,8 @@ export function DealFormDialog({
             </Button>
           </DialogFooter>
         </form>
+        </>
+        )}
 
         {isEdit && deal && !isClientCreate && (
           <div className="px-6 pb-4">

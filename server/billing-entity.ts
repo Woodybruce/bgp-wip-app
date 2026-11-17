@@ -1,7 +1,9 @@
 // Create billing entity (Woody, 2026-11-17, on the Promote to Solicitors box:
 // "if cant find a billing entity for tenant then should be able to create one
 // and search companies house? Its saying not on xero but is connected to Xero
-// just new billing entity for the brand"). One route, BGP staff only:
+// just new billing entity for the brand"); since the one deal form, the
+// landlord's too ("the billing entity comes up linked to that tenant or
+// landlord"). brandId names the landlord or brand. One route, BGP staff only:
 //
 //   POST /api/billing-entities   { brandId, companyNumber }
 //
@@ -111,7 +113,7 @@ export async function saveBillingEntity(pool: Pool, brandId: string, name: strin
       await client.query(
         `INSERT INTO investment_comp_migration_log (batch, table_name, record_id, action, prior, note) VALUES ($1, $2, $3, $4, $5, $6)`,
         ["billing-entity", "crm_trading_entities", made.id, "entity_created", null,
-          `${actorName}: entity_created under ${brandId} as a billing entity (Companies House ${companyNumber}) from the Promote to Solicitors box`]);
+          `${actorName}: entity_created under ${brandId} as a billing entity (Companies House ${companyNumber}) from the deal form`]);
     }
     await client.query("COMMIT");
     return { id: made.id, name: String(row?.name || name), companiesHouseNumber: held || null, created: made.created };
@@ -135,12 +137,12 @@ export function setupBillingEntityRoutes(app: Express) {
       const { isClientRequestUser, resolveCompanyScope } = await import("./company-scope");
       if ((await isClientRequestUser(req)) || (await resolveCompanyScope(req))) return res.status(403).json({ message: BILLING_ENTITY_STAFF_ONLY });
       const input = billingEntityInput(req.body);
-      if (!input) return res.status(400).json({ message: "Pick the company from Companies House, and the brand first." });
+      if (!input) return res.status(400).json({ message: "Pick the company from Companies House, and the landlord or brand first." });
 
       const { pool } = await import("./db");
       const brand = (await pool.query(`SELECT id, name, merged_into_id FROM crm_companies WHERE id = $1`, [input.brandId])).rows[0];
-      if (!brand) return res.status(404).json({ message: "That brand was not found." });
-      if (brand.merged_into_id) return res.status(409).json({ message: "That brand was merged into another record. Pick the brand again." });
+      if (!brand) return res.status(404).json({ message: "That landlord or brand was not found." });
+      if (brand.merged_into_id) return res.status(409).json({ message: "That landlord or brand was merged into another record. Pick it again." });
 
       // The company as Companies House holds it.
       const { chFetch } = await import("./companies-house");
@@ -165,7 +167,7 @@ export function setupBillingEntityRoutes(app: Express) {
       const { insertTradingEntity } = await import("./tenancy-tenant");
       const entity = await saveBillingEntity(pool as unknown as Pool, brand.id, name, input.companyNumber, actorName, insertTradingEntity);
       if ("conflict" in entity) {
-        return res.status(409).json({ message: `${brand.name} already has a company called ${name}, with Companies House number ${entity.conflict}. Check which company is right on the brand page.` });
+        return res.status(409).json({ message: `${brand.name} already has a company called ${name}, with Companies House number ${entity.conflict}. Check which company is right on its page.` });
       }
 
       // The contact in the firm's Xero: the one already there by that name, or a new one.

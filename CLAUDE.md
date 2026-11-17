@@ -2446,14 +2446,37 @@ same day, never live). Do not re-litigate. Tests:
   type that is not a letting still get past the check, and the integrity
   report (`GET /api/admin/letting-integrity`) lists such pairs: a looser match
   is Woody's call.
+- **Billing entities linked to their party** (Woody, 2026-11-17: "tenant
+  and Landlord first then the billing entity comes up linked to that tenant
+  or landlord"). On the essentials body each party (landlord, tenant, vendor,
+  purchaser) gets its own **Billing entity for <name> (Xero)** box once the
+  party is picked, BGP staff only (`!hideFees`: Xero is BGP's and a client
+  login cannot reach it, so the box never worked for one). The picker's
+  `createFor` is that party: it lists the companies filed under it first
+  (`crm_trading_entities`, the `leaseCompaniesKey` cache shared with the lease
+  company picker); picking one with a Companies House number goes through
+  `POST /api/billing-entities`, which keeps it under the party and finds its
+  Xero contact by name or makes one; without a number its name is searched
+  in Xero. **New billing entity for <name>** is always offered at the foot.
+- **Kick off AML** (Woody, 2026-11-17: "on the form we need a button to allow
+  us to Kick off the AML"). When New Deal or a handover saves, BGP staff see
+  the form turn into a Kick off AML step (`showAmlStep`, `amlStep`): one
+  `Kyc4uRequestButton` (label "Kick off AML") per party on the saved deal,
+  the deal page's KYC4U request (prefilled from the deal; the person checks
+  and saves it, then clicks the Send to ChatBGP bookmark on KYC4U's page and
+  presses Submit there). The edit form and client logins never get it, and a
+  deal with no party closes as before. It cannot send the request by itself
+  until KYC4U agrees to take requests some other way, or the in-app checks
+  (`IN_APP_AML_ENABLED`, ComplyAdvantage and Veriff) are switched back on.
 - **Create billing entity** (`server/billing-entity.ts`,
-  `POST /api/billing-entities { brandId, companyNumber }`, BGP staff signed
-  in as themselves; `client/src/components/billing-entity-create.tsx`). The
+  `POST /api/billing-entities { brandId, companyNumber }`, `brandId` the
+  landlord or brand, BGP staff signed in as themselves;
+  `client/src/components/billing-entity-create.tsx`). The
   Xero picker (`xero-contact-picker.tsx`) says "not in Xero yet" when the
   firm's link answered with contacts and the search found none, and keeps the
-  reconnect line for a real connection problem; with `createFor` (only the
-  one deal form's tenant picker passes it, for BGP staff) it offers Create
-  billing entity. The company is read from Companies House on the server
+  reconnect line for a real connection problem; with `createFor` (the one
+  deal form's four party boxes, for BGP staff) it offers Create billing
+  entity. The company is read from Companies House on the server
   (never a name or address from the request; a closed company is refused),
   saved under the brand with `insertTradingEntity` (never a brand; a company
   of that name already there is reused unless its number differs) and logged

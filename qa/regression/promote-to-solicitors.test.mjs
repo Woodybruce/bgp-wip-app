@@ -378,7 +378,7 @@ test('the form: the box at the top, Create billing entity on the tenant, Add hea
   const page = source(DEALS);
   assert.match(page, /readUrl="\/api\/deal-notes\/read"\s+readExtra=\{\{ propertyId: form\.propertyId \|\| null, trackerUnitId: handover\?\.unit\.id \|\| null \}\}/);
   assert.match(page, /\{!isEdit && !isClientCreate && form\.dealType !== "Consultant" && \(\s+<NoteFill/, 'staff only, never on the edit form');
-  assert.match(page, /createFor=\{hideFees \? null : \{ id: form\.tenantId, name: companies\.find\(c => c\.id === form\.tenantId\)\?\.name \|\| "the tenant brand" \}\}/);
+  assert.match(page, /createFor=\{\{ id: form\.tenantId, name: partyName\(form\.tenantId, "the tenant"\) \}\}/);
   assert.match(page, /await hotsCall\("POST", `\/api\/unit-hots\/\$\{encodeURIComponent\(hotsUnitId\)\}\/final`, filing\);/);
   assert.match(page, /const patch: Record<string, any> = place \? \{\} : \{ status: "HOT" \};/, 'a handover stays at Solicitors when its HOTs are read');
   assert.match(page, /data-testid="deal-lease-terms"/);
@@ -414,4 +414,53 @@ test('the Xero picker says plainly a company is not in Xero yet when the firm li
   assert.match(dialog, /fetch\("\/api\/billing-entities"/);
   assert.match(dialog, /body: JSON\.stringify\(\{ brandId: brand\.id, companyNumber: hit\.companyNumber \}\)/, 'the name and address come from Companies House on the server');
   assert.match(dialog, /\/api\/companies-house\/search\?q=/);
+});
+
+// ── Billing entities linked to their party, and Kick off AML ─────────────────
+// Woody, 2026-11-17: "tenant and Landlord first then the billing entity comes up
+// linked to that tenant or landlord", then "on the form we need a button to
+// allow us to Kick off the AML".
+
+test('each party\'s billing box comes up once the party is picked, linked to it, with Create; never for a client login', () => {
+  const page = source(DEALS);
+  for (const [role, fallback] of [['landlord', 'the landlord'], ['tenant', 'the tenant'], ['vendor', 'the vendor'], ['purchaser', 'the purchaser']]) {
+    assert.match(page, new RegExp(`\\{form\\.${role}Id && !hideFees && \\(`), `${role}: after the party is picked, staff only`);
+    assert.match(page, new RegExp(`Billing entity for \\{partyName\\(form\\.${role}Id, "${fallback}"\\)\\} \\(Xero\\)`), `${role}: named for its party`);
+    assert.match(page, new RegExp(`createFor=\\{\\{ id: form\\.${role}Id, name: partyName\\(form\\.${role}Id, "${fallback}"\\) \\}\\}`), `${role}: linked to its party`);
+  }
+});
+
+test('the box lists the companies filed under the party first; picking one keeps it under the party and finds or makes its Xero contact', () => {
+  const picker = source('client/src/components/xero-contact-picker.tsx');
+  assert.match(picker, /queryKey: leaseCompaniesKey\(partyId\),/, 'one cache with the lease company picker');
+  assert.match(picker, /fetch\(`\/api\/crm\/companies\/\$\{encodeURIComponent\(partyId\)\}\/trading-entities`/);
+  assert.match(picker, /Filed under \{createFor\.name\}/);
+  // With a Companies House number: the billing entity route (the company stays under the party; Xero's contact is found by name or made).
+  assert.match(picker, /body: JSON\.stringify\(\{ brandId: createFor\.id, companyNumber: f\.companiesHouseNumber \}\)/);
+  // Without one: its name is searched in Xero.
+  assert.match(picker, /if \(!f\.companiesHouseNumber \|\| !createFor\?\.id\) \{ setSearch\(f\.name\); return; \}/);
+  // Create is always offered for the party, not only when Xero has no match.
+  assert.match(picker, /New billing entity for \{createFor\.name\} \(Companies House\)/);
+  assert.match(picker, /queryClient\.invalidateQueries\(\{ queryKey: leaseCompaniesKey\(createFor\.id\) \}\)/);
+});
+
+test('the billing entity route speaks of a landlord or a brand, and still takes no name or address from the request', () => {
+  const route = source('server/billing-entity.ts');
+  assert.match(route, /That landlord or brand was not found\./);
+  assert.match(route, /Check which company is right on its page\./);
+  assert.doesNotMatch(route, /That brand was not found/);
+});
+
+test('after New Deal or a move to Solicitors saves, the form offers Kick off AML on each party: BGP staff only, never on the edit form', () => {
+  const page = source(DEALS);
+  const step = constant(DEALS, 'showAmlStep');
+  assert.match(step, /if \(!dealId \|\| isClientCreate\) return false;/);
+  assert.match(step, /\["landlord", "Landlord", form\.landlordId\], \["tenant", "Tenant", form\.tenantId\],/);
+  assert.match(step, /if \(!parties\.length\) return false;/);
+  assert.match(page, /if \(isEdit \|\| !showAmlStep\(data\?\.id, data\?\.dealRef \?\? null\)\) onOpenChange\(false\);/);
+  assert.match(page, /if \(!showAmlStep\(data\?\.id, data\?\.conversion\?\.dealRef \?\? deal\?\.dealRef \?\? null\)\) onOpenChange\(false\);/);
+  assert.match(page, /<Kyc4uRequestButton dealId=\{amlStep\.dealId\} companyId=\{p\.id\} role=\{p\.role\} partyName=\{p\.name\} label="Kick off AML" \/>/);
+  assert.match(page, /useEffect\(\(\) => \{ if \(!open\) setAmlStep\(null\); \}, \[open\]\);/);
+  // The KYC4U button keeps its wording everywhere else.
+  assert.match(source('client/src/components/kyc4u-panel.tsx'), /label = "Request KYC4U check"/);
 });
