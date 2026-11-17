@@ -61,7 +61,7 @@ test("the client's page answers to its token, whether in-app AML is on or off, a
   assert.match(portal, /function closedReason/);
 });
 
-test("staff routes are staff only; the test send is admin only and goes to the admin alone", () => {
+test("staff routes are staff only; the test send is admin only and goes to the admin, or the request to one BGP colleague", () => {
   for (const route of ['"/api/aml/deal/:id/client-checks"', '"/api/aml/client-checks/:token/remind"', '"/api/aml/client-checks/:token"']) {
     const at = portal.indexOf(route);
     assert.ok(at > 0, route);
@@ -72,7 +72,23 @@ test("staff routes are staff only; the test send is admin only and goes to the a
   const body = testRoute.slice(0, testRoute.indexOf("export default"));
   const sends = (body.match(/sendKycEmail\(\{/g) || []).length;
   const toAdminOnly = (body.match(/sendKycEmail\(\{\s*to: \[email\],\s*build:/g) || []).length;
-  assert.ok(sends >= 3 && sends === toAdminOnly, "every test email goes to the admin who pressed it, copied to nobody");
+  const toRecipient = (body.match(/sendKycEmail\(\{\s*to: \[recipient\.email\],\s*cc,\s*build:/g) || []).length;
+  assert.ok(sends >= 4 && toRecipient === 1 && sends === toAdminOnly + toRecipient, "every test email goes to the admin who pressed it, except the request, which may go to a colleague");
+  // The colleague (Woody, 17 November 2026: a test for Jack): only the
+  // request, only an active login with a BGP address, copied to the admin.
+  assert.match(body, /if \(kind !== "request"\) return res\.status\(400\)/);
+  assert.match(body, /SELECT name, email FROM users WHERE id = \$1 AND is_active IS NOT FALSE/);
+  assert.match(body, /!address\.endsWith\(STAFF_DOMAIN\)\) return res\.status\(400\)/);
+  assert.match(portal, /const STAFF_DOMAIN = "@brucegillinghampollard\.com";/);
+  assert.match(body, /const recipient = colleague \|\| \{ name: me\.name, email \};/);
+  assert.match(body, /cc = colleague \? \[email\] : \[\];/);
+  assert.match(body, /VALUES \(\$1, 'test', \$2, \$3, \$4, \$5, \$6, true\)/, "it is still a test request");
+  // Its Finish note and any red-flag alert come back to the admin.
+  const finish = portal.slice(portal.indexOf("async function finishRequest"), portal.indexOf("// ── Replies with documents"));
+  assert.match(finish, /const to = kycReplyAddresses\(row, request\.cc\);/);
+  const admin = read("client/src/components/kyc-emails-admin.tsx");
+  assert.match(admin, /endsWith\(BGP_DOMAIN\)/);
+  assert.match(admin, /test\.mutate\(\{ kind: "request", toUserId: colleague\.id/);
 });
 
 test("replies are filed only from the address the request went to, with its reference", () => {

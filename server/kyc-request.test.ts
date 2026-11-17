@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   KYC_DATA_USE, KYC_DOCS, KYC_LETTING_SCOPE, KYC_LOGO_CID, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_TIMING, defaultKycDocs, isKycDocKey, isKycPepAnswer,
-  kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycRefFromSubject, kycReminderEmail, kycRequestEmail, kycSteps, kycUploadAllowed,
+  kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycSteps, kycUploadAllowed,
   kycWhatsAppHref, kycWhatsAppText, type KycEmailContext,
 } from "../shared/kyc-request";
 import { reminderDue } from "./aml-portal";
@@ -114,6 +114,34 @@ test("a test email says so in its subject and at the top", () => {
   const { subject, html } = kycRequestEmail(ctx({ test: true }));
   assert.match(subject, /^\[Test\] /);
   assert.match(html, /Test email\./);
+  assert.match(html, /Nothing has been sent to anyone else\./);
+});
+
+test("a test sent to a colleague names who sent it, and does not claim nobody else has it", () => {
+  // Woody, 17 November 2026: a test for Jack to do KYC for Bruce Gillingham
+  // Pollard Ltd, with Woody copied as the agent.
+  const { subject, html } = kycRequestEmail(ctx({ test: true, testBy: "Woody Bruce", recipientName: "Jack Smith", partyName: "Bruce Gillingham Pollard Ltd" }));
+  assert.match(subject, /^\[Test\] /);
+  assert.match(html, /Test email\.<\/strong> Woody Bruce sent this to try the client checks: it is what a client receives\. No client has been sent anything\./);
+  assert.doesNotMatch(html, /Nothing has been sent to anyone else/);
+  assert.match(html, /Bruce Gillingham Pollard Ltd/);
+  assert.match(html, /Jack/);
+  // A name is written as words, never as markup.
+  assert.match(kycRequestEmail(ctx({ test: true, testBy: "<b>x</b>" })).html, /&lt;b&gt;x&lt;\/b&gt; sent this/);
+  // Not a test: no banner, whatever testBy holds.
+  assert.doesNotMatch(kycRequestEmail(ctx({ testBy: "Woody Bruce" })).html, /Test email/);
+});
+
+test("who hears back: the copy list, never the client; a test sent to yourself comes back to you", () => {
+  const cc = ["agent@brucegillinghampollard.com", "sender@brucegillinghampollard.com"];
+  assert.deepEqual(kycReplyAddresses({ is_test: false, contact_email: "client@example.com" }, cc), cc);
+  assert.deepEqual(kycReplyAddresses({ is_test: false, contact_email: "client@example.com" }, []), [], "a real request never writes back to the client");
+  assert.deepEqual(kycReplyAddresses({ is_test: false, contact_email: "client@example.com" }, null), []);
+  assert.deepEqual(kycReplyAddresses({ is_test: true, contact_email: "admin@brucegillinghampollard.com" }, []), ["admin@brucegillinghampollard.com"]);
+  assert.deepEqual(kycReplyAddresses({ is_test: true, contact_email: "admin@brucegillinghampollard.com" }, undefined), ["admin@brucegillinghampollard.com"]);
+  // Sent to a colleague: the admin, copied, hears back; the colleague does not.
+  assert.deepEqual(kycReplyAddresses({ is_test: true, contact_email: "jack@brucegillinghampollard.com" }, ["woody@brucegillinghampollard.com"]), ["woody@brucegillinghampollard.com"]);
+  assert.deepEqual(kycReplyAddresses({ is_test: true, contact_email: "jack@brucegillinghampollard.com" }, [42, "woody@brucegillinghampollard.com"]), ["woody@brucegillinghampollard.com"]);
 });
 
 test("the note to the agents names the files and what was not sent", () => {

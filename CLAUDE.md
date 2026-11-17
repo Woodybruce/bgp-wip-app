@@ -2806,6 +2806,19 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   The test request's link opens the real page in test mode (a token with
   `is_test`, two days, uploads recorded by name only and not kept, Finish
   emails the same admin). A failed send still returns the test page's link.
+  **Try it with a colleague** (Woody, 2026-11-17: "send a test email to both
+  me and jack@... that he needs to do KYC for bruce Gillingham pollard ltd as
+  a test so we can see how it works"): the request only, to one ACTIVE login
+  with an address on brucegillinghampollard.com (`toUserId`; anything else is
+  a 400, so a test never reaches an outside address), naming the company or
+  person being checked (`partyName`, `partyKind`; words only), copied to the
+  admin, who is the agent on it. It is still an `is_test` token. Who hears
+  back from any request is one rule, `kycReplyAddresses` in
+  `shared/kyc-request.ts`: the copy list (the deal's agents and the sender),
+  never the client; a self-test has none and comes back to its own address.
+  So the colleague's Finish note and any red-flag alert go to the admin. The
+  banner names the admin (`testBy`) instead of "nothing sent to anyone
+  else".
 - **Schema** (additive, nullable, boot MIGRATIONS in `server/index.ts`, not
   in `shared/schema.ts`): `kyc_upload_tokens` gained `company_id`,
   `contact_id`, `request` (JSONB: `KycRequestDetails`), `completed_at`,

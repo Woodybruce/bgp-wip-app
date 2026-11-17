@@ -29,7 +29,7 @@ import { graphRequest, sendFromFirstMailbox, senderOrder, type EmailAttachment }
 import {
   KYC_DOCS, KYC_LOGO_CID, KYC_MAX_FILE_MB, KYC_MAX_FILES_PER_REQUEST, KYC_REF_ALPHABET,
   KYC_PEP_QUESTION, defaultKycDocs, isKycDocKey, isKycPepAnswer, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycPepWords,
-  kycRedFlagEmail, kycRefFromSubject, kycReminderEmail, kycRequestEmail, kycUploadAllowed, kycWhatsAppHref, kycWhatsAppText,
+  kycRedFlagEmail, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycUploadAllowed, kycWhatsAppHref, kycWhatsAppText,
   type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycPartyKind, type KycPortalView, type KycProgress,
 } from "@shared/kyc-request";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
@@ -608,7 +608,7 @@ async function finishRequest(row: TokenRow): Promise<void> {
     ...(progress.pepAnswered ? [] : [KYC_PEP_QUESTION.title]),
   ];
   // The agents hear it; on a test, the admin who sent it.
-  const to = row.is_test ? [row.contact_email || ""] : request.cc;
+  const to = kycReplyAddresses(row, request.cc);
   const { loadDealRedFlags } = await import("./kyc-red-flags");
   const { partyRedFlags } = await import("@shared/kyc-red-flags");
   const redFlags = row.is_test || !row.company_id
@@ -948,6 +948,12 @@ kycRequestRouter.get("/api/admin/kyc-emails", adminOnly, async (req: Request, re
 // and the reminder carry a real test link: the client page opens on it,
 // uploads are recorded by name only, and Finish sends the agents' note back
 // to the same admin. Works whether in-app AML is on or off.
+// The request can instead go to one colleague, to try the page as a client
+// would (Woody, 17 November 2026: a test for Jack to do KYC for Bruce
+// Gillingham Pollard Ltd): an active BGP login only, never an outside
+// address, copied to the admin as the agent, who gets the Finished note and
+// any red-flag alert. The party being checked can be named; it is only
+// words on the test.
 kycRequestRouter.post("/api/admin/kyc-emails/test", adminOnly, async (req: Request, res: Response) => {
   try {
     const kind = String(req.body?.kind || "");
@@ -957,29 +963,44 @@ kycRequestRouter.post("/api/admin/kyc-emails/test", adminOnly, async (req: Reque
     if (!me || !isEmail(email)) return res.status(400).json({ message: "Your login has no email address to send to." });
     const agent: KycAgent = { name: me.name || "BGP", email: me.email, phone: me.phone };
     const veriff = veriffConfigured();
+    const toUserId = typeof req.body?.toUserId === "string" ? req.body.toUserId.trim() : "";
+    let colleague: { name: string | null; email: string } | null = null;
+    if (toUserId && toUserId !== me.id) {
+      if (kind !== "request") return res.status(400).json({ message: "Only the request can be sent to a colleague." });
+      const found = (await pool.query(`SELECT name, email FROM users WHERE id = $1 AND is_active IS NOT FALSE`, [toUserId])).rows[0];
+      const address = cleanEmail(found?.email);
+      if (!found || !isEmail(address) || !address.endsWith(STAFF_DOMAIN)) return res.status(400).json({ message: "A test goes only to a colleague with an active BGP login." });
+      colleague = { name: found.name || null, email: address };
+    }
+    const recipient = colleague || { name: me.name, email };
     let link = "";
+    let cc: string[] = [];
     let sent: KycSendResult;
     if (kind === "request" || kind === "reminder") {
+      const partyKind: KycPartyKind = req.body?.partyKind === "individual" ? "individual" : "company";
+      const partyName = String(req.body?.partyName ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || SAMPLE.partyName;
+      cc = colleague ? [email] : [];
       const token = crypto.randomBytes(32).toString("base64url");
       const ref = await newRef();
       const expiresAt = new Date(Date.now() + 2 * 86400000);
       const request: KycRequestDetails = {
-        ref, kind: "company", role: "tenant", partyName: SAMPLE.partyName, dealName: SAMPLE.dealName,
-        needsIdCheck: true, docs: defaultKycDocs("company", "tenant", true), note: "This is a test request. Try the page as a client would.",
-        mobile: null, agents: [agent], cc: [], sentBy: { id: me.id, name: me.name }, sentFrom: null, sentAt: null, sendError: null,
+        ref, kind: partyKind, role: "tenant", partyName, dealName: SAMPLE.dealName,
+        needsIdCheck: true, docs: defaultKycDocs(partyKind, "tenant", true), note: "This is a test request. Try the page as a client would.",
+        mobile: null, agents: [agent], cc, sentBy: { id: me.id, name: me.name }, sentFrom: null, sentAt: null, sendError: null,
         openedAt: null, veriffSessionIds: [], idCheckNote: veriff ? null : "The identity check is not set up, so the test shows the step only.",
         askPep: true, answers: null,
       };
       await pool.query(
         `INSERT INTO kyc_upload_tokens (token, deal_id, contact_email, contact_name, created_by, expires_at, request, is_test)
          VALUES ($1, 'test', $2, $3, $4, $5, $6, true)`,
-        [token, email, me.name || "Test", me.id, expiresAt, JSON.stringify(request)],
+        [token, recipient.email, recipient.name || "Test", me.id, expiresAt, JSON.stringify(request)],
       );
       link = kycLinkFor(token);
-      const ctx = { recipientName: me.name, partyName: SAMPLE.partyName, kind: "company" as const, dealName: SAMPLE.dealName, ref, link, expiresAt,
-        needsIdCheck: true, docs: request.docs, note: request.note, agents: [agent], test: true, askPep: true };
+      const ctx = { recipientName: recipient.name, partyName, kind: partyKind, dealName: SAMPLE.dealName, ref, link, expiresAt,
+        needsIdCheck: true, docs: request.docs, note: request.note, agents: [agent], test: true, testBy: colleague ? (me.name || "A BGP admin") : null, askPep: true };
       sent = await sendKycEmail({
-        to: [email],
+        to: [recipient.email],
+        cc,
         build: sentFrom => kind === "request"
           ? kycRequestEmail({ ...ctx, sentFrom })
           : kycReminderEmail({ ...ctx, sentFrom, progress: { idDone: true, docsDone: [request.docs[0]], pepAnswered: true } }),
@@ -1009,7 +1030,7 @@ kycRequestRouter.post("/api/admin/kyc-emails/test", adminOnly, async (req: Reque
     }
     // A failed send still hands back the test page's link, so the page can
     // be tried while the mailbox is being set up.
-    res.json({ ok: sent.ok, error: sent.ok ? null : sent.error, to: email, from: sent.from, fellBack: sent.fellBack, firstError: sent.fellBack ? sent.error : null, link: link || null });
+    res.json({ ok: sent.ok, error: sent.ok ? null : sent.error, to: recipient.email, cc, from: sent.from, fellBack: sent.fellBack, firstError: sent.fellBack ? sent.error : null, link: link || null });
   } catch (err: any) {
     res.status(500).json({ message: err?.message || "Could not send the test" });
   }

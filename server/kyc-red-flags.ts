@@ -6,7 +6,7 @@
 
 import { pool } from "./db";
 import { dealRedFlags, partyRedFlags, redFlagAlertKey, type KycRedFlag, type KycRedFlagKind } from "@shared/kyc-red-flags";
-import { kycRedFlagEmail } from "@shared/kyc-request";
+import { kycRedFlagEmail, kycReplyAddresses } from "@shared/kyc-request";
 
 export interface DealRedFlags {
   parties: Record<string, KycRedFlag[]>;
@@ -82,7 +82,7 @@ export async function alertRedFlags(token: string): Promise<{ sent: number }> {
   const done: string[] = Array.isArray(request.redFlagAlerts) ? request.redFlagAlerts : [];
   const fresh = flags.filter(f => ALERTED.includes(f.kind) && !done.includes(redFlagAlertKey(f)));
   if (!fresh.length) return { sent: 0 };
-  const to: string[] = row.is_test ? [row.contact_email || ""] : (Array.isArray(request.cc) ? request.cc : []);
+  const to = kycReplyAddresses(row, request.cc);
   const { sendKycEmail } = await import("./aml-portal");
   const linkBase = (process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
   const sent = await sendKycEmail({

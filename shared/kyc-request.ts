@@ -170,9 +170,22 @@ export interface KycEmailContext {
   // The mailbox the email goes from, named in the footer.
   sentFrom: string;
   test?: boolean;
+  // A test an admin sent to a colleague: the admin's name, for the banner
+  // (it is copied to the admin, so "nothing sent to anyone else" is wrong).
+  testBy?: string | null;
   // The question about public roles (asked on every request since
   // 17 November 2026; absent on older rows, which did not ask it).
   askPep?: boolean;
+}
+
+// Who hears back from a request (the agents' Finished note, a red-flag
+// alert): its copy list, the deal's agents and whoever sent it, never the
+// client. A test an admin sent to themselves has no copy list and goes back
+// to its own address; one sent to a colleague is copied to the admin, who
+// hears back as the agent.
+export function kycReplyAddresses(row: { is_test: boolean | null; contact_email: string | null }, cc: unknown): string[] {
+  const copied = Array.isArray(cc) ? cc.filter((address): address is string => typeof address === "string") : [];
+  return row.is_test && !copied.length ? [row.contact_email || ""] : copied;
 }
 
 export const KYC_LOGO_CID = "bgp-logo";
@@ -256,9 +269,12 @@ function stepsList(steps: Array<{ title: string; detail: string }>): string {
 
 // One frame for every email: the logo, a bordeaux rule, the body, a quiet
 // footer that says where the email came from.
-function frame(title: string, inner: string, footer: string, test: boolean | undefined, whoReceives = "a client receives"): string {
+function frame(title: string, inner: string, footer: string, test: boolean | undefined, whoReceives = "a client receives", testBy?: string | null): string {
+  const said = testBy
+    ? `${escHtml(testBy)} sent this to try the client checks: it is what a client receives. No client has been sent anything.`
+    : `This is what ${escHtml(whoReceives)}. Nothing has been sent to anyone else.`;
   const banner = test
-    ? `<tr><td style="background:#fff4d6;padding:10px 32px;font-family:${FONT};font-size:13px;color:#6b4e00"><strong>Test email.</strong> This is what ${escHtml(whoReceives)}. Nothing has been sent to anyone else.</td></tr>`
+    ? `<tr><td style="background:#fff4d6;padding:10px 32px;font-family:${FONT};font-size:13px;color:#6b4e00"><strong>Test email.</strong> ${said}</td></tr>`
     : "";
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(title)}</title></head>
 <body style="margin:0;padding:0;background:${PAGE}">
@@ -329,7 +345,7 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
-  return { subject: subjectFor(ctx, "Please complete your identity checks for"), html: frame("Identity checks", inner, footerFor(ctx), ctx.test) };
+  return { subject: subjectFor(ctx, "Please complete your identity checks for"), html: frame("Identity checks", inner, footerFor(ctx), ctx.test, undefined, ctx.testBy) };
 }
 
 export interface KycProgress {

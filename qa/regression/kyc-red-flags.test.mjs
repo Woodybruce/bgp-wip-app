@@ -30,7 +30,7 @@ test("KYC4U's request note carries the red flags", () => {
 
 test('the alert goes to the agents on the request (the admin on a test), never the client, once per flag', () => {
   const fn = flagsServer.slice(flagsServer.indexOf('export async function alertRedFlags'), flagsServer.indexOf('export async function alertRedFlagsForSession'));
-  assert.match(fn, /const to: string\[\] = row\.is_test \? \[row\.contact_email \|\| ""\] : \(Array\.isArray\(request\.cc\) \? request\.cc : \[\]\);/);
+  assert.match(fn, /const to = kycReplyAddresses\(row, request\.cc\);/);
   assert.match(fn, /sendKycEmail\(\{\s*to,\s*build:/);
   assert.doesNotMatch(fn, /cc:/);
   assert.match(fn, /ALERTED\.includes\(f\.kind\) && !done\.includes\(redFlagAlertKey\(f\)\)/);
