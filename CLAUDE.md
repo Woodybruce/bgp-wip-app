@@ -2932,6 +2932,13 @@ mailbox stay in its thread, from there; staff sending as themselves
   turn it on in the Defender portal (security.microsoft.com → Email
   authentication settings → DKIM → chatbgp.app) and add its two CNAMEs at
   Porkbun. Nothing has been sent from chatbgp.app from a build machine.
+- **The live KYC sender is kyc@brucegillinghampollard.com** (read from the
+  live admin card on 17 November 2026, when the test request to Jack went
+  from it first time): a Railway variable (`KYC_MAILBOX` or the older
+  `BGP_AML_MAILBOX`) holds that address and wins over the code's default
+  kyc@chatbgp.app. The app's own address on live is chatbgp1@chatbgp.app and
+  the shared mailbox follows it, as in the code. To send client checks from
+  kyc@chatbgp.app, delete that variable on Railway (Woody's).
 
 ## Super Brands are BGP's VIP brands (Woody, 2026-11-17)
 
@@ -3937,6 +3944,23 @@ rep". Do not re-litigate. Guards: `qa/regression/staff-menu.test.mjs`.
   if the save fails (then the checklist and deal clock are read again), a
   40px tap area round the tick, and "could not be loaded" with Try again in
   place of "All clear!". Everything My Tasks had stays.
+- **Approvals is in Admin** (Woody, 2026-11-17: "move approvals into
+  admin"). For an admin the entry (`approvalsEntry`, shown only while
+  something waits for that person's approval) sits in the Admin group beside
+  Expenses, and its count shows beside the word Admin while the group is
+  closed (`closedBadge` on `NavSection`); Expenses is not lit beside it on
+  the approvals page. Every approver today (Wendy's Accounts login, Layla,
+  the directors) is on `ADMIN_EMAILS` and gets it there; an approver who is
+  not an admin has no Admin group, so theirs would stay in Core. The phone home's "N expenses to approve"
+  card is unchanged.
+- **The Investment team has no Brands** (Woody, 2026-11-17: "move brands
+  out of investment side panel"): `investmentSideOnly` in `shared/teams.ts`
+  (every one of the login's BGP teams is Investment: Jack Barratt, Nick
+  Halley, Jonny Palmer), `INVESTMENT_SIDE_HIDDEN_URLS`. On the side bar the
+  team on the switcher decides when it is a BGP team (viewing as Investment
+  hides Brands; an Investment login viewing a leasing team sees that team's
+  menu), else the login's own teams; the phone list reads the login's teams,
+  as the leasing rule does. Entries only: `/brands` still opens.
 
 **The People & HR staff list masks personal fields** (16 November 2026,
 found while building My BGP): `GET /api/hr/staff` sent every login each
@@ -4170,7 +4194,20 @@ it as `Authorization: Bearer $BGP_QA_TOKEN` for API calls, or set
 `localStorage.bgp_auth_token` in a Playwright page (Chromium at
 `/opt/pw-browsers/chromium`) to screenshot and measure pages across a
 spread of brands after a UI change. It acts as Woody: stick to reading
-pages and don't trigger paid refreshes or send anything.
+pages and don't trigger paid refreshes or send anything (unless Woody asks
+for that one thing, as he did on 17 November 2026 for the KYC test to Jack).
+
+**Use the Railway address, not chatbgp.app** (found 17 November 2026). The
+web session's proxy has a stored credential for chatbgp.app and writes it
+into the `Authorization` header of every request there, over any token sent;
+that stored credential is stale, so every call to chatbgp.app answers 401
+(`/mcp` with no header answering "Invalid API key" rather than "Missing
+Authorization header" is how this was proved). The same live app answers at
+`https://bgp-wip-app-production-efac.up.railway.app`, where nothing is
+injected and `BGP_QA_TOKEN` signs in as Woody. Use that address for API
+calls and Playwright checks. Replacing or removing the chatbgp.app entry in
+the environment's Network secrets would fix the main address; that is
+Woody's, in the environment settings.
 
 ## Key files
 

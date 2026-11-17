@@ -31,6 +31,16 @@ export function leasingSideOnly(teams: ReadonlyArray<string | null | undefined>)
 }
 // The menu entries a leasing-side login does not get.
 export const LEASING_SIDE_HIDDEN_URLS = ["/pla/matters", "/investment"];
+// The Investment team's menus have no Brands entry (Woody, 2026-11-17: "move
+// brands out of investment side panel"): a login whose every BGP team is
+// Investment. Anyone also in a leasing team, Tenant Rep or Lease Advisory
+// keeps it, and so does anyone with no team. It hides the entry only: the
+// page still opens by its address.
+export function investmentSideOnly(teams: ReadonlyArray<string | null | undefined>): boolean {
+  const own = teams.filter((t): t is string => isBgpTeam(t));
+  return own.length > 0 && own.every(t => t === "Investment");
+}
+export const INVESTMENT_SIDE_HIDDEN_URLS = ["/brands"];
 export const isBgpTeam = (t: string | null | undefined) => !!t && (BGP_TEAM_NAMES as readonly string[]).includes(t);
 
 // Chip colours, one per team (Tailwind classes, light + dark).

@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { leasingSideOnly, LEASING_SIDE_HIDDEN_URLS, TEAM_ROSTER_2026, NO_TEAM_ROSTER_2026 } from '../../shared/teams.ts';
+import { leasingSideOnly, LEASING_SIDE_HIDDEN_URLS, investmentSideOnly, INVESTMENT_SIDE_HIDDEN_URLS, TEAM_ROSTER_2026, NO_TEAM_ROSTER_2026 } from '../../shared/teams.ts';
 const require = createRequire(import.meta.url);
 const { source, find, evaluate, ts } = require('./source-harness.cjs');
 
@@ -153,4 +153,39 @@ test('Requirements is a pill in Brands for every login; Reporting and Board Repo
   const page = source('client/src/pages/requirements.tsx');
   assert.match(page, /export default function Requirements\(\{ embedded = false \}: \{ embedded\?: boolean \} = \{\}\)/);
   assert.match(page, /\{!embedded && <h1 /);
+});
+
+test('the Investment team has no Brands on its menus; everyone else keeps it', () => {
+  // Woody, 17 November 2026: "move brands out of investment side panel".
+  assert.deepEqual(INVESTMENT_SIDE_HIDDEN_URLS, ['/brands']);
+  for (const url of INVESTMENT_SIDE_HIDDEN_URLS) assert.ok(core.some(i => i.url === url) && phone.some(i => i.url === url), url);
+  assert.equal(investmentSideOnly(['Investment']), true);
+  assert.equal(investmentSideOnly(['Investment', 'Landsec']), true, 'a client view is not a team');
+  assert.equal(investmentSideOnly(['Investment', 'Lease Advisory']), false);
+  assert.equal(investmentSideOnly(['Investment', 'City']), false);
+  assert.equal(investmentSideOnly(['Shopping Centre']), false);
+  assert.equal(investmentSideOnly([]), false, 'no team: the board, support and consultants');
+  assert.equal(investmentSideOnly([null, undefined, 'all']), false);
+  const investmentOnly = TEAM_ROSTER_2026.filter(p => investmentSideOnly(p.teams)).map(p => p.name).sort();
+  assert.deepEqual(investmentOnly, TEAM_ROSTER_2026.filter(p => p.teams.length && p.teams.every(t => t === 'Investment')).map(p => p.name).sort());
+  assert.ok(investmentOnly.includes('Jack Barratt'));
+  const sidebar = source(SIDEBAR);
+  // The team on the switcher decides when it is a BGP team (so viewing as
+  // Investment hides Brands, and an Investment login viewing a leasing team
+  // sees that team's menu); else the login's own teams.
+  assert.match(sidebar, /const investmentOnly = !isClientUser && \(isBgpTeam\(activeTeam\) \? activeTeam === "Investment" : investmentSideOnly\(ownTeams\)\);/);
+  assert.match(sidebar, /const coreNavTeam = investmentOnly \? coreNavLeasing\.filter\(i => !INVESTMENT_SIDE_HIDDEN_URLS\.includes\(i\.url\)\) : coreNavLeasing;/);
+  assert.match(sidebar, /overlayInvestmentOnly && INVESTMENT_SIDE_HIDDEN_URLS\.includes\(i\.url\)/);
+});
+
+test('Approvals is in Admin for admins, its count on the closed group; a non-admin approver keeps it in Core', () => {
+  // Woody, 17 November 2026: "move approvals into admin". Every approver
+  // today is on the admin list; one who is not would have no Admin group.
+  const sidebar = source(SIDEBAR);
+  assert.ok(!core.some(i => i.url === '/expenses/approvals') && !admin.some(i => i.url === '/expenses/approvals'), 'added only when there is something to approve');
+  assert.match(sidebar, /const coreWithApprovals = approvalsEntry && !user\?\.isAdmin \? \[\.\.\.coreNavFiltered, approvalsEntry\] : coreNavFiltered;/);
+  assert.match(sidebar, /const adminNav = approvalsEntry \? adminNavBase\.flatMap\(i => i\.url === "\/expenses" \? \[i, approvalsEntry\] : \[i\]\) : adminNavBase;/);
+  assert.match(sidebar, /closedBadge=\{approvalsEntry \? \{ text: approvalsEntry\.badge,/);
+  assert.match(sidebar, /\{!open && closedBadge && \(/);
+  assert.ok(admin.some(i => i.url === '/expenses'), 'Approvals goes in beside Expenses');
 });

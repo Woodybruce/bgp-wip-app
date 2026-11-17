@@ -79,7 +79,7 @@ import { useTeam, TEAMS } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import { isEquityUser } from "@/lib/utils";
-import { leasingSideOnly, LEASING_SIDE_HIDDEN_URLS, isBgpTeam } from "@shared/teams";
+import { leasingSideOnly, LEASING_SIDE_HIDDEN_URLS, investmentSideOnly, INVESTMENT_SIDE_HIDDEN_URLS, isBgpTeam } from "@shared/teams";
 import type { User } from "@shared/schema";
 import { LANDSEC_MENU, JOINT_AGENT_MENU, landsecMenuActive, landsecTasksPath, openTaskCount } from "@shared/landsec-menu";
 import { isRestrictedLandsecRole } from "@/components/landsec/deal-clock";
@@ -251,12 +251,16 @@ function NavSection({
   defaultOpen = true,
   storageKey,
   landsecMenu = false,
+  closedBadge,
 }: {
   label: string;
   items: Array<{ title: string; url: string; icon: any; badge?: string }>;
   defaultOpen?: boolean;
   storageKey?: string;
   landsecMenu?: boolean;
+  // Shown beside the group's name while it is closed, so a count inside it
+  // is not hidden (the Admin group's approvals).
+  closedBadge?: { text: string; title: string } | null;
 }) {
   const [location] = useLocation();
   const isActive = (url: string) => {
@@ -271,6 +275,7 @@ function NavSection({
     if (path === "/contacts") return location.startsWith("/contacts") || location.startsWith("/companies");
     if (path === "/properties") return location.startsWith("/properties") || location.startsWith("/map") || location.startsWith("/edozo");
     if (path === "/deals") return location.startsWith("/deals") || location.startsWith("/wip-report");
+    if (path === "/expenses" && location.startsWith("/expenses/approvals") && items.some(i => i.url === "/expenses/approvals")) return false;
     if (path === "/investment") return location === "/investment" || location.startsWith("/investment/") || location.startsWith("/investment-tracker") || location.startsWith("/investment-comps");
     if (path === "/property-intelligence") return location.startsWith("/property-intelligence");
     if (path === "/kyc-clouseau") return location.startsWith("/kyc-clouseau") || location.startsWith("/aml-compliance") || location.startsWith("/compliance-board") || location.startsWith("/aml-training");
@@ -301,7 +306,12 @@ function NavSection({
         onClick={toggle}
         className="cursor-pointer select-none flex items-center justify-between hover:text-sidebar-foreground transition-colors"
       >
-        <span>{label}</span>
+        <span className="flex items-center gap-1.5">
+          {label}
+          {!open && closedBadge && (
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0" title={closedBadge.title} data-testid={`nav-section-badge-${storageKey || label.toLowerCase()}`}>{closedBadge.text}</Badge>
+          )}
+        </span>
         {open ? <ChevronDown className="w-3 h-3 opacity-60" /> : <ChevronRight className="w-3 h-3 opacity-60" />}
       </SidebarGroupLabel>
       {open && (
@@ -444,9 +454,15 @@ export function AppSidebar() {
     enabled: user?.role !== "Client",
   });
   const approvalCount = Array.isArray(pendingApprovals) ? pendingApprovals.length : 0;
-  const coreWithApprovals = approvalCount > 0
-    ? [...coreNavFiltered, { title: "Approvals", url: "/expenses/approvals", icon: ClipboardCheck, badge: String(approvalCount) }]
-    : coreNavFiltered;
+  const approvalsEntry = approvalCount > 0
+    ? { title: "Approvals", url: "/expenses/approvals", icon: ClipboardCheck, badge: String(approvalCount) }
+    : null;
+  // Approvals is in the Admin group for admins, beside Expenses, with its
+  // count on the group's name while it is closed (Woody, 2026-11-17: "move
+  // approvals into admin"). Every approver today is on the admin list
+  // (ADMIN_EMAILS, Wendy's Accounts login included); one who is not an admin
+  // has no Admin group, so theirs would stay here.
+  const coreWithApprovals = approvalsEntry && !user?.isAdmin ? [...coreNavFiltered, approvalsEntry] : coreNavFiltered;
   // Read-only "Team Expenses" for designated team overseers — non-admin team
   // leads (e.g. Victoria → Shopping Centre). Admins use the full Expenses
   // console instead, so this is only for non-admins. The overseer flag rides
@@ -488,22 +504,29 @@ export function AppSidebar() {
   // entries (Woody, 2026-11-16; leasingSideOnly in shared/teams.ts), and
   // nobody has them while the team switcher is on one of those teams, so
   // "view as London Estate" shows that team's menu (Woody, 2026-11-17).
-  const leasingSideLogin = !isClientUser && leasingSideOnly([user?.team, ...(Array.isArray((user as any)?.additionalTeams) ? (user as any).additionalTeams : [])]);
+  const ownTeams = [user?.team, ...(Array.isArray((user as any)?.additionalTeams) ? (user as any).additionalTeams : [])];
+  const leasingSideLogin = !isClientUser && leasingSideOnly(ownTeams);
   const leasingOnly = !isClientUser && (leasingSideLogin || leasingSideOnly([activeTeam]));
+  // The Investment team's menu has no Brands (Woody, 2026-11-17: "move brands
+  // out of investment side panel"; investmentSideOnly in shared/teams.ts).
+  // The team on the switcher decides when it is a BGP team, so Jack viewing
+  // a leasing team sees that team's menu; else the login's own teams.
+  const investmentOnly = !isClientUser && (isBgpTeam(activeTeam) ? activeTeam === "Investment" : investmentSideOnly(ownTeams));
   // Picking a team that is not your own shows you that team's menu (Woody,
   // 2026-11-17: "when I click on a team i should see what they see"): its
   // Core entries, and none of the admin groups, which come back under All
   // Teams or your own team.
   const viewingAsTeam = !isClientUser && isBgpTeam(activeTeam) && activeTeam !== user?.team
     && !(Array.isArray((user as any)?.additionalTeams) && (user as any).additionalTeams.includes(activeTeam));
-  const coreNavTeam = leasingOnly ? coreNavStaff.filter(i => !LEASING_SIDE_HIDDEN_URLS.includes(i.url)) : coreNavStaff;
+  const coreNavLeasing = leasingOnly ? coreNavStaff.filter(i => !LEASING_SIDE_HIDDEN_URLS.includes(i.url)) : coreNavStaff;
+  const coreNavTeam = investmentOnly ? coreNavLeasing.filter(i => !INVESTMENT_SIDE_HIDDEN_URLS.includes(i.url)) : coreNavLeasing;
   const coreNav = !isClientUser && !user?.isAdmin && isEquityUser(user as any)
     ? [...coreNavTeam, { title: "Finance", url: "/finance", icon: Landmark }]
     : coreNavTeam;
   const unfinishedNavCleaned = isClientUser
     ? unfinishedNav.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
     : unfinishedNav;
-  const adminNav = adminNavBase;
+  const adminNav = approvalsEntry ? adminNavBase.flatMap(i => i.url === "/expenses" ? [i, approvalsEntry] : [i]) : adminNavBase;
   // The Landsec menu (docs/landsec-menu-plan-2026-11-12.md, part 1):
   // Properties, Deals, Letting Tracker, Tasks and Brands. Applies to Landsec
   // logins and to staff viewing as Landsec; other client teams keep the
@@ -609,7 +632,8 @@ export function AppSidebar() {
               defaultOpen={false}
             />
             <SidebarSeparator />
-            <NavSection label="Admin" items={adminNav} storageKey="admin" defaultOpen={false} />
+            <NavSection label="Admin" items={adminNav} storageKey="admin" defaultOpen={false}
+              closedBadge={approvalsEntry ? { text: approvalsEntry.badge, title: `${approvalCount} expense${approvalCount === 1 ? "" : "s"} to approve` } : null} />
           </>
         )}
         </>
@@ -802,11 +826,12 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   const clientHidden = ["/hr", "/my-bgp", "/wip-report", "/today", "/mail", "/cad-measure", "/investment"];
   const isOverlayClient = user?.role === "Client" || !!(user as any)?.companyScopeId;
   const overlayLeasingOnly = !isOverlayClient && leasingSideOnly([user?.team, ...(Array.isArray(user?.additionalTeams) ? user.additionalTeams : [])]);
+  const overlayInvestmentOnly = !isOverlayClient && investmentSideOnly([user?.team, ...(Array.isArray(user?.additionalTeams) ? user.additionalTeams : [])]);
   const items = isOverlayClient && brand.id === "landsec"
     ? landsecNavFor((user as any)?.landsecRole, user?.role !== "Client")
     : isOverlayClient
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
-    : filteredByAdmin.filter(i => !(overlayLeasingOnly && LEASING_SIDE_HIDDEN_URLS.includes(i.url)));
+    : filteredByAdmin.filter(i => !(overlayLeasingOnly && LEASING_SIDE_HIDDEN_URLS.includes(i.url)) && !(overlayInvestmentOnly && INVESTMENT_SIDE_HIDDEN_URLS.includes(i.url)));
 
   const isActive = (url: string) => {
     const landsecActive = isOverlayClient && brand.id === "landsec" ? landsecMenuActive(url, location) : null;
