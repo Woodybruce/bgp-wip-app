@@ -2800,22 +2800,42 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   in `shared/schema.ts`): `kyc_upload_tokens` gained `company_id`,
   `contact_id`, `request` (JSONB: `KycRequestDetails`), `completed_at`,
   `reminders_sent`, `last_reminded_at`, `is_test`; `kyc_upload_files` gained
-  `doc_type`, `kyc_document_id`. Woody to approve with the push.
+  `doc_type`, `kyc_document_id`. Approved with the push (Woody,
+  2026-11-17: "push the work to date").
+- **The deal gate stays as it is** (Woody, 2026-11-17: "gating remain as
+  is", asked about HMRC's line that a contract cannot proceed without CDD):
+  a move to Solicitors with checks outstanding warns and does not stop; only
+  an MLRO rejection blocks. Do not add a hold at exchange or completion.
 - **The gates**: `/api/kyc-upload/*` is no longer on the retired-AML list and
   passes the client gateway (the token is the only key, and no live token
   exists while in-app AML is off except an admin's test). Every other client
   checks route is under `/api/aml/` (retired while off) and is BGP staff
   only (`contactViewer`).
+- **How BGP runs AML** (Woody, 2026-11-17: "basically we do the normal
+  checks expected and if there is a red flag then we get KYC4U"): the
+  client checks and screening in the app for the routine checks; a red flag
+  goes to KYC4U (Request KYC4U check, beside Send client checks on each
+  party). Which findings count as a red flag, and an automatic hand-off, are
+  not built yet. AML Dealcheck (Compliance On Demand), offered the same day,
+  was not taken up (Woody: "looks rubbish").
+- **Veriff is on the UK DVS register** (checked 17 November 2026,
+  access-dvs-register.service.gov.uk): provider "Veriff OÜ", service "Veriff
+  UK Identity Verification Service", roles Identity and Component, trust
+  framework 0.4 gamma, certified by Kantara, certificate 14 January 2026 to
+  14 January 2029, profiles L1B, M1A, M1B, supplementary codes Right to Work
+  and Right to Rent. HMRC (AMLG11400 14.5): a service "certified against the
+  trust framework and on the DVS register" is "a reliable and independent
+  source".
 - **Not built, each waiting on Woody**: the kyc@chatbgp.app mailbox has to
   exist in Microsoft 365 with the app allowed to send as it and read it (until
-  then the email goes from the shared mailbox and replies go there); whether
-  Veriff is on the UK DVS register (HMRC: a provider not on it "cannot
-  reliably be deemed suitable"; Veriff says it is certified, the register
-  listing was not confirmed); whether the privacy notice covers AML
-  processing (reg 41 / Article 13); HMRC says a contract cannot proceed
-  without CDD, while Woody's September rule only warns at Solicitors (a hold
-  at exchange or completion is his call); records are not deleted after the
-  five years; the app does not prompt an OFSI report on a sanctions match;
+  then the email goes from the shared mailbox and replies go there; it cannot
+  be made from the app or this connector: Microsoft 365 admin centre → Teams
+  & groups → Shared mailboxes); whether the privacy notice covers AML
+  processing (reg 41 / Article 13: read on 17 November 2026, it does not:
+  no controller company or number, no lawful basis, no AML or reg 41
+  statement, no retention period, no right to complain to the ICO; an AML
+  notice for these checks is Woody's and Rupert Bentley-Smith's to approve);
+  records are not deleted after the five years; the app does not prompt an OFSI report on a sanctions match;
   trusts, partnerships and charities have no request type of their own; the
   principal place of business (if not the registered office) is not asked.
 
