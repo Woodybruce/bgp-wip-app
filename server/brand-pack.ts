@@ -115,7 +115,11 @@ async function loadBrandPackData(companyId: string, forClient = false, viewer: {
   // The one live rule: BGP's pack lists requirements that are live or to
   // confirm, live first, each with its dated reason in place of the status.
   // A client login's pack lists only what its Requirements list shows it
-  // (PIPnet listings), by source and date.
+  // (PIPnet listings), by source and date, newest listing first: the
+  // live-first order and updated_at both move when BGP confirms a listing,
+  // so either would tell the client which ones BGP has confirmed (client
+  // rule, CLAUDE.md Requirements centre; the brand page keeps that order from
+  // a client too, server/brand-profile.ts).
   const requirementsQ = pool.query(
     `SELECT r.name, r.use, r.size, r.requirement_locations, ${requirementLiveColumnsSql("r")}
        FROM crm_requirements_leasing r
@@ -123,7 +127,9 @@ async function loadBrandPackData(companyId: string, forClient = false, viewer: {
         AND ${forClient
           ? `${requirementClientVisibleSql("r")} AND ${requirementStateSql("r")} <> 'closed'`
           : `${requirementStateSql("r")} IN ('live', 'to_confirm')`}
-      ORDER BY (${requirementStateSql("r")} = 'live') DESC, r.updated_at DESC NULLS LAST LIMIT 3`,
+      ORDER BY ${forClient
+          ? "coalesce(r.last_listed_at, r.created_at) DESC NULLS LAST"
+          : `(${requirementStateSql("r")} = 'live') DESC, r.updated_at DESC NULLS LAST`} LIMIT 3`,
     [companyId]
   ).then(q => ({ rows: q.rows.map((r: any) => {
     const why = requirementReason(r);

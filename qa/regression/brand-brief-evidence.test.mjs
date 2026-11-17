@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { getBrandIdentity } from '../../server/brand-identity.ts';
 import { BRAND_BRIEF_POLICY_VERSION, BRAND_BRIEF_EVIDENCE_RULES, brandActionEvidence, brandBriefWithoutEvidence, brandLegalEvidenceContext } from '../../server/brand-brief-evidence.ts';
 import { PRIVATE_MAIL_POLICY_VERSION } from '../../shared/private-mail.ts';
+import { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from '../../shared/requirement-live.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 const file = 'server/brand-ai-take.ts';
@@ -60,15 +61,20 @@ test('legal entity mismatch or pending legal review prevents treating a linked c
 
 test('actual brand slice queries only the chosen brand and supplies evidence instead of count-based trajectory inputs', async () => {
   const queries = [];
-  const { loadBrandSlice } = evaluate(fn('loadBrandSlice') + '\nexports.loadBrandSlice=loadBrandSlice;', {
+  // Client logins read the take, so its requirement input is market listings only (marketListings, 17 November 2026).
+  const { loadBrandSlice } = evaluate(fn('marketListings') + '\n' + fn('loadBrandSlice') + '\nexports.loadBrandSlice=loadBrandSlice;', {
     brandActionEvidence, bgpDealEvidence: deal => ({ property: deal.name }), relationshipEvidence: async company => ({ checked: company.id }),
+    requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql,
     pool: { query: async (sql, values) => { queries.push({ sql, values }); assert.equal(values[0], 'cook');
-      return { rows: sql.includes('FROM crm_companies') ? [cook()] : sql.includes('crm_requirements_leasing') ? [{ id: 'r1', name: 'Bristol requirement', status: 'Active', size: ['1000'], requirement_locations: ['Bristol'] }] : [] }; } },
+      return { rows: sql.includes('FROM crm_companies') ? [cook()] : sql.includes('crm_requirements_leasing') ? [{ id: 'r1', name: 'Bristol requirement', status: 'Active', size: ['1000'], requirement_locations: ['Bristol'],
+        sources: ['PIPnet'], origin: 'pipnet', last_listed_at: '2026-09-03T00:00:00Z' }] : [] }; } },
   });
   const data = await loadBrandSlice('cook');
-  assert.equal(data.active_requirements[0].name, 'Bristol requirement');
+  assert.equal(data.market_listings[0].name, 'Bristol requirement');
+  assert.match(data.market_listings[0].listing, /^PIPnet listing from Sep/);
+  assert.equal(data.active_requirements.length, 0);
   assert.doesNotMatch(JSON.stringify(data), /employee_count|brand_analysis|store_count/);
-  assert.match(queries.find(row => row.sql.includes('crm_requirements_leasing')).sql, /company_id = \$1 AND LOWER\(TRIM/);
+  assert.match(queries.find(row => row.sql.includes('crm_requirements_leasing')).sql, /r\.company_id = \$1 AND 'PIPnet' = ANY/);
   assert.match(queries.find(row => row.sql.includes('brand_signals')).sql, /brand_company_id = \$1/);
   assert.ok(queries.every(row => row.sql.trim().startsWith('SELECT')));
   // BGP's own deals and email relationship with the brand feed the one take (2026-09-23).
@@ -111,5 +117,5 @@ test('actual preparation replaces old-policy cached speculation with determinist
   });
   const result = await prepareBrandAiTake('cook');
   assert.equal(calls, 0); assert.equal(result.cached, false); assert.match(result.text, /strategy is unconfirmed/);
-  assert.equal(written[0].policyVersion, `${BRAND_BRIEF_POLICY_VERSION}:${PRIVATE_MAIL_POLICY_VERSION}`); assert.equal(written[0].text, result.text);
+  assert.equal(written[0].policyVersion, `${BRAND_BRIEF_POLICY_VERSION}:market-listings-1:${PRIVATE_MAIL_POLICY_VERSION}`); assert.equal(written[0].text, result.text);
 });
