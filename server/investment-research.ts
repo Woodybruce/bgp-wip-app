@@ -18,6 +18,7 @@ import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { saveFile, getFile, deleteFile } from "./file-storage";
 import { TRACKER_CLASSES } from "@shared/tracker-class";
+import { RESEARCH_AUTO, researchSectorFor } from "@shared/research-sector";
 
 export const RESEARCH_SOURCE = "investment-research";
 export const RESEARCH_SECTORS: string[] = ["General", ...TRACKER_CLASSES];
@@ -77,7 +78,10 @@ export function registerInvestmentResearchRoutes(app: Express) {
     if (!(await staffOnly(req, res))) return;
     const files = (req.files as Express.Multer.File[]) || [];
     if (!files.length) return res.status(400).json({ error: "Choose at least one file" });
-    const sector = sectorOf(req.body?.sector);
+    // "auto" (Choose for me, the default) files each document by its name and
+    // text (shared/research-sector.ts); a sector the person picked is kept.
+    const auto = !req.body?.sector || String(req.body.sector).toLowerCase() === RESEARCH_AUTO;
+    const picked = sectorOf(req.body?.sector);
     const note = String(req.body?.note || "").trim().slice(0, 2000) || null;
     const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
     const { rows: [u] } = userId ? await pool.query(`SELECT name FROM users WHERE id = $1`, [userId]) : { rows: [] as any[] };
@@ -86,6 +90,7 @@ export function registerInvestmentResearchRoutes(app: Express) {
       const key = `${RESEARCH_SOURCE}/${randomUUID()}-${f.originalname.replace(/[^\w.\- ]+/g, "_")}`;
       await saveFile(key, f.buffer, f.mimetype || "application/octet-stream", f.originalname);
       const content = await readText(f);
+      const sector = auto ? researchSectorFor(f.originalname, [note, content].filter(Boolean).join("\n")) : picked;
       const { rows: [r] } = await pool.query(
         `INSERT INTO knowledge_base (file_name, file_path, summary, content, category, ai_tags, size_bytes, last_modified, source)
          VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8)

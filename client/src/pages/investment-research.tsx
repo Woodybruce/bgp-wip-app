@@ -18,6 +18,7 @@ type ResearchFile = { id: string; fileName: string; sector: string; note: string
 type Feed = { sectors: string[]; files: ResearchFile[] };
 
 const KEY = ["/api/investment-research"];
+const AUTO = "auto";
 const fmtSize = (b: number | null) => b == null ? "" : b > 1_048_576 ? `${(b / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
 const fmtDate = (d: string) => { try { return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }); } catch { return ""; } };
 
@@ -122,7 +123,7 @@ export default function InvestmentResearch() {
         </div>
       )}
 
-      {uploadOpen && <UploadDialog sectors={sectors} initialSector={sector === "all" ? "General" : sector} onClose={() => setUploadOpen(false)} />}
+      {uploadOpen && <UploadDialog sectors={sectors} initialSector={sector === "all" ? AUTO : sector} onClose={() => setUploadOpen(false)} />}
     </div>
   );
 }
@@ -161,8 +162,13 @@ function UploadDialog({ sectors, initialSector, onClose }: { sectors: string[]; 
       if (note.trim()) fd.append("note", note.trim());
       const r = await fetch("/api/investment-research", { method: "POST", body: fd, headers: getAuthHeaders(), credentials: "include" });
       if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || `Upload failed (${r.status})`);
+      const saved: ResearchFile[] = (await r.json().catch(() => ({})))?.files || [];
       await queryClient.invalidateQueries({ queryKey: KEY });
-      toast({ title: `${picked.length} file${picked.length === 1 ? "" : "s"} filed under ${sector}` });
+      const where = Array.from(new Set(saved.map((f) => f.sector)));
+      toast({
+        title: `${picked.length} file${picked.length === 1 ? "" : "s"} filed under ${where.length === 1 ? where[0] : `${where.length} sectors`}`,
+        description: where.length > 1 ? saved.map((f) => `${f.fileName} → ${f.sector}`).join("\n") : undefined,
+      });
       onClose();
     } catch (e: any) {
       toast({ title: "Couldn't upload", description: e?.message, variant: "destructive" });
@@ -182,8 +188,16 @@ function UploadDialog({ sectors, initialSector, onClose }: { sectors: string[]; 
             <label className="text-xs font-medium text-muted-foreground">Sector</label>
             <Select value={sector} onValueChange={setSector}>
               <SelectTrigger data-testid="select-research-sector"><SelectValue /></SelectTrigger>
-              <SelectContent>{sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+              <SelectContent>
+                <SelectItem value={AUTO}>Choose for me</SelectItem>
+                {sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
             </Select>
+            {sector === AUTO && (
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Each file goes where its name and text clearly point (e.g. "London office" → Office London); anything mixed or unclear goes to General. You can move it after.
+              </p>
+            )}
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Note (optional)</label>
