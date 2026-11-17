@@ -10535,13 +10535,6 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const params: any[] = [];
       let paramIndex = 1;
 
-      const useArray = requirement.use;
-      if (useArray && useArray.length > 0) {
-        conditions.push(`au.use_class = ANY($${paramIndex})`);
-        params.push(useArray);
-        paramIndex++;
-      }
-
       if (Array.isArray(requirement.requirement_locations) && requirement.requirement_locations.length > 0) {
         const locClauses = requirement.requirement_locations.map((_: any, i: number) => {
           params.push(`%${requirement.requirement_locations[i]}%`);
@@ -10552,14 +10545,20 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
       const query = `
-        SELECT au.*, p.name as property_name, p.address as property_address 
-        FROM available_units au 
+        SELECT au.*, p.name as property_name, p.address as property_address
+        FROM available_units au
         LEFT JOIN crm_properties p ON au.property_id = p.id
         ${whereClause}
-        ORDER BY au.created_at DESC LIMIT 20
+        ORDER BY au.created_at DESC
       `;
       const matches = await pool.query(query, params);
-      res.json(matches.rows);
+      // Only units live on the Letting Tracker (Brand Gap's rule for the
+      // marketing units), and the unit's planning class (E(b), A3) read
+      // against the requirement's uses (Restaurant): compared as text in SQL,
+      // the dialog was empty for every requirement that names a use.
+      const { requirementUseFits } = await import("@shared/requirement-fit");
+      const { isTrackerLiveStatus } = await import("@shared/letting-rules");
+      res.json(matches.rows.filter((u: any) => isTrackerLiveStatus(u.marketing_status) && requirementUseFits(requirement.use, u)).slice(0, 20));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -10580,12 +10579,6 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const params: any[] = [];
       let paramIndex = 1;
 
-      if (unit.use_class) {
-        conditions.push(`$${paramIndex} = ANY(r.use)`);
-        params.push(unit.use_class);
-        paramIndex++;
-      }
-
       if (unit.location) {
         conditions.push(`r.requirement_locations IS NOT NULL AND array_length(r.requirement_locations, 1) > 0 AND EXISTS (SELECT 1 FROM unnest(r.requirement_locations) loc WHERE $${paramIndex} ILIKE '%' || loc || '%' OR loc ILIKE '%' || $${paramIndex} || '%')`);
         params.push(unit.location);
@@ -10602,14 +10595,22 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       conditions.push(`${requirementStateSql("r")} <> 'closed'`);
       if (matchScope) conditions.push(requirementClientVisibleSql("r"));
       const whereClause = `WHERE ${conditions.join(" AND ")}`;
+      const orderBy = `ORDER BY ${matchScope ? "" : `(CASE ${requirementStateSql("r")} WHEN 'live' THEN 0 WHEN 'to_confirm' THEN 1 ELSE 2 END), `}r.created_at DESC`;
+      // The unit's planning class (E(b), A3) read against each requirement's
+      // uses (Restaurant): compared as text in SQL, a unit with a use class
+      // matched only rows holding that raw text. The uses are read first, then
+      // the first 20 that fit are fetched whole, in the same order.
+      const { requirementUseFits } = await import("@shared/requirement-fit");
+      const candidates = await pool.query(`SELECT r.id, r.use FROM crm_requirements_leasing r ${whereClause} ${orderBy}`, params);
+      const ids: string[] = candidates.rows.filter((r: any) => requirementUseFits(r.use, unit)).slice(0, 20).map((r: any) => String(r.id));
       const query = `
         SELECT r.*, c.name as company_name, c.company_type as company_type
         FROM crm_requirements_leasing r
         LEFT JOIN crm_companies c ON r.company_id = c.id
-        ${whereClause}
-        ORDER BY ${matchScope ? "" : `(CASE ${requirementStateSql("r")} WHEN 'live' THEN 0 WHEN 'to_confirm' THEN 1 ELSE 2 END), `}r.created_at DESC LIMIT 20
+        WHERE r.id = ANY($1::text[])
       `;
-      const matches = await pool.query(query, params);
+      const fetched: any[] = ids.length ? (await pool.query(query, [ids])).rows : [];
+      const matches = { rows: ids.map(id => fetched.find((r: any) => String(r.id) === id)).filter(Boolean) };
       if (!matchScope) {
         return res.json(matches.rows.map((r: any) => { const live = requirementLive(r); return { ...r, state: live.state, state_label: live.stateLabel, date_label: live.dateLabel }; }));
       }

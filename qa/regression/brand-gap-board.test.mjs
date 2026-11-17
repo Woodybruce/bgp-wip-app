@@ -56,6 +56,16 @@ test('junk records are never offered as a gap', () => {
   for (const list of ['const gap = pitchable', 'const peerGaps = pitchable', 'const competitorGaps = pitchable', 'const localMarket = pitchable', 'const candidates = sliced(pitchable.filter']) assert.ok(gap.includes(list), list);
 });
 
+// Audit, 2026-11-17: a unit holds a planning class (E(b), A3) and a
+// requirement a use (Restaurant). Compared as text, every requirement that
+// named a use was dropped; the route-level case is in scheme-positioning.test.mjs.
+test('the requirement list and Fits here read a unit\'s class against the requirement\'s use through one rule', () => {
+  const gap = read('server/property-gap-analysis.ts');
+  assert.doesNotMatch(gap, /use_class = ANY\(r\.use\)/);
+  assert.match(gap, /open\.rows\.filter\(\(r: any\) => unitsHere\.some\(u => requirementUseFits\(r\.use, u\)\)\)/);
+  assert.match(gap, /requirementUseFits\(held\?\.use, u\)/);
+});
+
 test('the requirements list under More is the scheme\'s categories, without junk', () => {
   const gap = read('server/property-gap-analysis.ts');
   const at = gap.indexOf('const matchingRequirements = await pool.query(');

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseReqSize, pitchFitWords, requirementFitsUnit, spreadAcrossCentres } from '../../shared/requirement-fit.ts';
+import { parseReqSize, pitchFitWords, requirementFitsUnit, requirementUseFits, spreadAcrossCentres } from '../../shared/requirement-fit.ts';
 
 test('requirement size text becomes a tolerance-widened range', () => {
   assert.deepEqual(parseReqSize(['1,500-3,000 sq ft']), { min: 1200, max: 3600 });
@@ -15,6 +15,48 @@ test('a unit fits a live requirement on size plus use or location', () => {
   assert.equal(requirementFitsUnit(req, { sqft: 2500, unit_text: 'Unit 3', property_text: 'Trinity Leeds LS1' }), false, 'size alone is not enough');
   assert.equal(requirementFitsUnit(req, { sqft: null, unit_text: 'Kiosk food', property_text: 'Portsmouth' }), true, 'no size needs use and location');
   assert.equal(requirementFitsUnit({ ...req, requirement_locations: ['London'] }, { sqft: 2500, unit_text: 'Unit 3', property_text: 'One New Change London EC4' }), false, 'bare London is too broad');
+});
+
+// Audit, 2026-11-17: units hold planning classes, requirements hold uses.
+test('a unit\'s planning class is read as the uses a requirement names', () => {
+  const fits = (use, use_class, unit_name = 'Unit 12') => requirementUseFits(use, { use_class, unit_name });
+  // Food and drink: E(b) and the old A3, A4 and A5; A1 Food goes with cafés and shops.
+  for (const cls of ['E(b)', 'A3', 'e (b)', 'A4', 'A5', 'A1/A3']) assert.equal(fits(['Restaurant'], cls), true, cls);
+  assert.equal(fits(['Restaurant'], 'E(a)'), false);
+  assert.equal(fits(['A1 Food'], 'E(b)'), true);
+  assert.equal(fits(['A1 Food'], 'E(a)'), true);
+  // Shops: E(a) and A1, never a restaurant unit.
+  assert.equal(fits(['Retail'], 'E(a)'), true);
+  assert.equal(fits(['Retail'], 'A1'), true);
+  assert.equal(fits(['Retail'], 'E(b)'), false);
+  assert.equal(fits(['Retail'], 'E(b)', 'Coffee Shop'), false);
+  // Gyms and leisure: E(d) and D2; Sui Generis takes cinemas, pubs and takeaways.
+  assert.equal(fits(['Gym'], 'E(d)'), true);
+  assert.equal(fits(['Gym'], 'D2'), true);
+  assert.equal(fits(['Gym'], 'E(b)'), false);
+  assert.equal(fits(['Leisure'], 'Sui Generis'), true);
+  assert.equal(fits(['Leisure'], 'E(a)'), false);
+  assert.equal(fits(['Wellness'], 'E(e)'), true);
+  assert.equal(fits(['Other'], 'E(c)'), true);
+  assert.equal(fits(['Other'], 'E(g)(i)'), true);
+  assert.equal(fits(['Other'], 'E(a)'), false);
+  // Class E on its own takes every use; its parts are Class E.
+  assert.equal(fits(['Retail'], 'E'), true);
+  assert.equal(fits(['Gym'], 'Class E (Commercial, Business and Service)'), true);
+  assert.equal(fits(['E'], 'E(d)'), true);
+  assert.equal(fits(['Class E'], 'Sui Generis'), false);
+  // A requirement holding class text (an import's raw use class).
+  assert.equal(fits(['A3'], 'E(b)'), true);
+  assert.equal(fits(['E(b)'], 'A3'), true);
+  assert.equal(fits(['A3'], 'E(a)'), false);
+  // The words USE_HINTS knows, on the unit's name, and the same text either side.
+  assert.equal(fits(['Restaurant'], 'E(a)', 'Kiosk K3'), true);
+  assert.equal(fits(['restaurant'], 'Restaurant'), true);
+  // A side with no use stated fits (on size alone, where the caller checks size).
+  assert.equal(fits(null, 'E(b)'), true);
+  assert.equal(fits([], 'E(b)'), true);
+  assert.equal(fits(['Restaurant'], null), true);
+  assert.equal(fits(['Restaurant'], '  '), true);
 });
 
 test('a pitch says "Fits" only inside the stated range and at a place the requirement names', () => {

@@ -20,7 +20,7 @@ import { suggestPropertyView } from "../shared/property-view";
 import { UK_CENTRES, haversineKm, siteRadiusKm, peerCentresFor, benchmarkCentresFor } from "../shared/uk-centres";
 import { propertyResearchContext, PROPERTY_RESEARCH_USE_PATTERN, PROPERTY_RESEARCH_CENTRE_PATTERN, type PropertyResearchContext } from "../shared/property-research";
 import { isArchivedTenancy } from "../shared/tenancy-schedule-display";
-import { parseReqSize, USE_HINTS } from "../shared/requirement-fit";
+import { parseReqSize, requirementUseFits } from "../shared/requirement-fit";
 import { isJunkBrand } from "../shared/junk-brand";
 import { isTrackerLiveStatus } from "../shared/letting-rules";
 import { BRAND_STAGE_LABELS, furthestStage, type BrandStage } from "../shared/brand-stage";
@@ -544,23 +544,29 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     // the one live rule and a dated reason, best-evidenced first. A client
     // login gets the rows its Requirements list shows (PIPnet listings), by
     // source and date; `listing` is that shareable line for every viewer.
+    // A unit holds a planning class (E(b), A3) and a requirement a use
+    // (Restaurant), so the two are lined up by requirementUseFits on the open
+    // requirements' uses: compared as text in SQL, every requirement that
+    // named a use was dropped (audit, 2026-11-17).
     const reqToday = new Date();
+    const unitsHere: any[] = await pool.query(
+      `SELECT id, unit_name, sqft, marketing_status, use_class FROM available_units WHERE property_id = $1`, [propertyId]
+    ).then(r => r.rows).catch(() => [] as any[]);
     const matchingRequirements = await pool.query(
+      `SELECT r.id, r.use FROM crm_requirements_leasing r
+        WHERE ${requirementStateSql("r")} <> 'closed'${gapScope ? ` AND ${requirementClientVisibleSql("r")}` : ""}`
+    ).then(open => open.rows.filter((r: any) => unitsHere.some(u => requirementUseFits(r.use, u))).map((r: any) => String(r.id))
+    ).then(ids => ids.length ? pool.query(
       `SELECT r.id, r.name, r.use, r.size, r.requirement_locations,
               r.company_id, c.name AS company_name, c.domain, c.company_type, c.industry, c.description AS company_description,
               ${requirementLiveColumnsSql("r")}
          FROM crm_requirements_leasing r
          LEFT JOIN crm_companies c ON c.id = r.company_id
-        WHERE ${requirementStateSql("r")} <> 'closed'${gapScope ? ` AND ${requirementClientVisibleSql("r")}` : ""}
-          AND EXISTS (
-            SELECT 1 FROM available_units au
-             WHERE au.property_id = $1
-               AND (au.use_class = ANY(r.use) OR r.use IS NULL OR array_length(r.use, 1) IS NULL)
-          )
+        WHERE r.id = ANY($1::text[])
         ORDER BY r.created_at DESC
         LIMIT 600`,
-      [propertyId]
-    ).then(r => r.rows.filter((row: any) => {
+      [ids]
+    ) : { rows: [] as any[] }).then(r => r.rows.filter((row: any) => {
       // The scheme's own categories and no junk (Woody, 2026-11-15: "Sort
       // the list"): a requirement counts here only when its brand is one the
       // board would offer as a gap. One with no brand record is left out.
@@ -771,18 +777,15 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       for (const row of scored) scoreOf.set(String(row.brand_company_id), splitSubScores(row.sub_scores)?.expansion ?? (Number(row.hunter_score) || 0));
     }
     // The marketing units here, for a requirement's size to be read against.
-    const marketing: any[] = await pool.query(
-      `SELECT id, unit_name, sqft, marketing_status, use_class FROM available_units WHERE property_id = $1`, [propertyId]
-    ).then(r => r.rows.filter((u: any) => isTrackerLiveStatus(u.marketing_status))).catch(() => [] as any[]);
+    const marketing: any[] = unitsHere.filter((u: any) => isTrackerLiveStatus(u.marketing_status));
     const fitUnits = (id: any) => {
       const held = reqByCompany.get(String(id));
       const range = parseReqSize(held?.size ?? null);
       if (!range) return [];
-      // Size in range, and the use lines up where both sides state one.
-      const uses: string[] = Array.isArray(held?.use) ? held.use.map((u: any) => String(u)) : [];
-      const useFits = (u: any) => !uses.length || !u.use_class || uses.includes(String(u.use_class))
-        || USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(uses.join(" ")) && unitRe.test(`${u.use_class} ${u.unit_name || ""}`));
-      return marketing.filter(u => Number(u.sqft) >= range.min && Number(u.sqft) <= range.max && useFits(u)).slice(0, 3)
+      // Size in range, and the use lines up where both sides state one: the
+      // unit's planning class read as the requirement's uses, which the
+      // words in USE_HINTS alone never matched.
+      return marketing.filter(u => Number(u.sqft) >= range.min && Number(u.sqft) <= range.max && requirementUseFits(held?.use, u)).slice(0, 3)
         .map(u => ({ id: String(u.id), name: String(u.unit_name || "Unit"), sqft: Number(u.sqft) || null }));
     };
     // Where each brand already stands at this scheme, by the Brand CRM's own

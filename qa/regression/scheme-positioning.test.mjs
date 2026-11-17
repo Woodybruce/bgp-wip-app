@@ -9,7 +9,7 @@ const { UK_CENTRES, TOP_25_CENTRES, peerCentresFor, benchmarkCentresFor, centreA
 const { propertyResearchContext } = await import('../../shared/property-research.ts');
 const { isClientCrmCategory } = await import('../../shared/tenant-categories.ts');
 const requirementLive = await import('../../shared/requirement-live.ts');
-const { parseReqSize, USE_HINTS } = await import('../../shared/requirement-fit.ts');
+const { parseReqSize, requirementUseFits } = await import('../../shared/requirement-fit.ts');
 const { isJunkBrand } = await import('../../shared/junk-brand.ts');
 const { isTrackerLiveStatus } = await import('../../shared/letting-rules.ts');
 const { BRAND_STAGE_LABELS, furthestStage } = await import('../../shared/brand-stage.ts');
@@ -118,7 +118,10 @@ const store = (brand, at, extra = {}) => ({ brand_company_id: brand.id, store_na
   brand_name: brand.name, domain: null, rollout_status: null, company_type: brand.companyType, store_count: brand.storeCount || 10, brand_group_id: null, industry: brand.industry || null, fnb_sector: null });
 const withId = (key, id) => ({ ...BRANDS[key], id });
 
-function runGapRoute(positioning, requirements = {}) {
+// The tracker rows at the property: a requirement is read against their use classes.
+const DEFAULT_UNITS = [{ id: 'u-1', unit_name: 'Unit 1', sqft: null, marketing_status: 'AVA', use_class: null }];
+
+function runGapRoute(positioning, requirements = {}, units = DEFAULT_UNITS) {
   const brands = { kfc: withId('kfc', 'kfc'), fiveGuys: withId('fiveGuys', 'fg'), rolex: withId('rolex', 'rolex'), goldsmiths: withId('goldsmiths', 'gold'), gaucho: withId('gaucho', 'gaucho'), grind: withId('grind', 'grind'), ihg: withId('ihg', 'ihg'), next: withId('next', 'next') };
   const stores = [
     store(brands.grind, REX, { address: 'The Royal Exchange, Bank, London EC3V 3LR' }),
@@ -132,13 +135,17 @@ function runGapRoute(positioning, requirements = {}) {
   const pool = { query: async (sql, params) => {
     if (/FROM brand_stores s/.test(sql)) return { rows: stores };
     if (/SELECT id, description FROM crm_companies/.test(sql)) return { rows: params[0].map(id => ({ id, description: descriptions[id] })) };
-    if (/FROM crm_requirements_leasing r/.test(sql)) return { rows: Object.entries(requirements).map(([company_id, row]) => { const b = BRANDS[company_id === 'gold' ? 'goldsmiths' : company_id] || {}; return { id: `req-${company_id}`, name: company_id, company_id, company_name: b.name || company_id, company_type: b.companyType, industry: b.industry, company_description: b.description, status: 'Active', ...row }; }) };
+    if (/FROM crm_requirements_leasing r/.test(sql)) {
+      const rows = Object.entries(requirements).map(([company_id, row]) => { const b = BRANDS[company_id === 'gold' ? 'goldsmiths' : company_id] || {}; return { id: `req-${company_id}`, name: company_id, company_id, company_name: b.name || company_id, company_type: b.companyType, industry: b.industry, company_description: b.description, status: 'Active', ...row }; });
+      return { rows: /r\.id = ANY\(\$1/.test(sql) ? rows.filter(r => params[0].includes(r.id)) : rows };
+    }
+    if (/FROM available_units WHERE property_id = \$1/.test(sql)) return { rows: units };
     return { rows: [] };
   } };
   let handler;
   const context = propertyResearchContext({ assetClass: 'Retail', propertyView: 'centre', positioning, positioningSource: 'tag' });
   const bindings = {
-    ...positioningModule, ...centres, isClientCrmCategory, ...requirementLive, parseReqSize, USE_HINTS, isJunkBrand, isTrackerLiveStatus, BRAND_STAGE_LABELS, furthestStage,
+    ...positioningModule, ...centres, isClientCrmCategory, ...requirementLive, parseReqSize, requirementUseFits, isJunkBrand, isTrackerLiveStatus, BRAND_STAGE_LABELS, furthestStage,
     router: { get: (_url, _auth, callback) => { handler = callback; } }, requireAuth() {},
     readPropertyResearchContext: async () => context, researchCacheMatches: async () => false,
     resolvePropertyLocation: async () => ({ ok: true, ...REX, postcode: 'EC3V 3LR', name: 'Royal Exchange' }),
@@ -203,6 +210,29 @@ test('brand-gaps route: the same scheme read as mainstream keeps the hospitality
   assert.ok(!body.sectors.some(s => s.key === 'jewellery_watches'));
   // The Manchester store naming "Royal Exchange" and the KFC at Bank aren't on the arcade.
   assert.deepEqual(body.onScheme.map(b => b.brand_name), ['Grind']);
+});
+
+// Audit, 2026-11-17: units hold planning classes and requirements uses, and
+// the route compared the two as text, so every requirement naming a use was
+// dropped from the list, Targets' Requirement and Fits here.
+test('brand-gaps route: a Restaurant requirement fits the E(b) and A3 units, not a shop or a withdrawn unit', async () => {
+  const units = [
+    { id: 'u-eb', unit_name: 'Unit 2', sqft: 1500, marketing_status: 'AVA', use_class: 'E(b)' },
+    { id: 'u-a3', unit_name: 'Unit 7', sqft: 1800, marketing_status: 'NEG', use_class: 'A3' },
+    { id: 'u-shop', unit_name: 'Unit 3', sqft: 1500, marketing_status: 'AVA', use_class: 'E(a)' },
+    { id: 'u-gone', unit_name: 'Unit 9', sqft: 1500, marketing_status: 'WIT', use_class: 'E(b)' },
+  ];
+  const { code, body } = await runGapRoute('mainstream', {
+    kfc: { use: ['Restaurant'], size: ['1,000-2,000 sq ft'] },
+    fg: { use: ['Gym'], size: ['1,000-2,000 sq ft'], company_name: 'Five Guys', company_type: 'Tenant - Restaurant' },
+  }, units);
+  assert.equal(code, 200, JSON.stringify(body));
+  assert.deepEqual(body.matchingRequirements.map(r => r.company_id), ['kfc'], 'a Gym requirement fits no unit here');
+  const kfc = body.targets.find(t => t.brand_name === 'KFC');
+  assert.deepEqual(kfc.units.map(u => u.id), ['u-eb', 'u-a3']);
+  assert.match(kfc.requirement_note, /requirement/);
+  assert.equal(body.targets.find(t => t.brand_name === 'Five Guys').requirement_note, null);
+  assert.deepEqual(body.marketingUnits.map(u => u.id), ['u-eb', 'u-a3', 'u-shop'], 'only units live on the tracker');
 });
 
 test('target tenants: a luxury scheme never puts QSR, hotels or mainstream retail forward', async () => {

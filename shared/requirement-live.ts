@@ -266,9 +266,36 @@ export function requirementListingUpdates(existing: RequirementLiveRow & { exter
   return updates;
 }
 
-/** An import adds its label to a row's sources, except on BGP's own rows: clients are shown rows labelled PIPnet. */
-export function importMayLabel(existing: { origin?: string | null }): boolean {
-  return norm(existing.origin) !== REQUIREMENT_ORIGIN_BGP;
+/**
+ * The row a market listing folds into, from rows newest first: an open row
+ * (the live rule's state is not closed) carrying the listing's link, else an
+ * open row of the same brand. Folded into the first same-name row, closed
+ * ones included, a fresh listing for a brand whose old requirement was Past
+ * never came back under Market listings (audit, 2026-11-17). Null when no
+ * open row matches: the import makes its own row, as for a brand it has never
+ * seen. "closed" when the row this very listing became has been closed by a
+ * person: the import leaves it so, or every run would bring it back.
+ */
+export function listingTarget<T extends RequirementLiveRow & { externalRequirementId?: string | null }>(
+  rows: readonly T[], externalId: string, sameBrand: (row: T) => boolean,
+): T | "closed" | null {
+  const open = (row: T) => !(CLOSED_STATUSES as readonly string[]).includes(norm(row.status));
+  const row = rows.find(r => r.externalRequirementId === externalId && open(r)) || rows.find(r => sameBrand(r) && open(r));
+  if (row) return row;
+  return rows.some(r => r.externalRequirementId === externalId) ? "closed" : null;
+}
+
+/**
+ * An import adds its label to a row's sources only where it may: never on
+ * BGP's own rows (clients are shown rows labelled PIPnet), nor on a row made
+ * before `origin` existed, which may be hand-made, unless it already carries
+ * that import's label.
+ */
+export function importMayLabel(existing: { origin?: string | null; sources?: string[] | null }, source: MarketListing["source"]): boolean {
+  const origin = norm(existing.origin);
+  if (origin) return origin !== REQUIREMENT_ORIGIN_BGP;
+  const labels = source === "PIPnet" ? ["pipnet"] : ["trl", "the requirement list", "therequirementlist"];
+  return (existing.sources || []).some(l => labels.includes(norm(l)));
 }
 
 const sqlList = (items: readonly string[]) => items.map(s => `'${s.replace(/'/g, "''")}'`).join(", ");
