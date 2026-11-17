@@ -35,3 +35,24 @@ test("mixed or unclear goes to General", () => {
   assert.equal(researchSectorFor("Office market.pdf"), "General");
   assert.equal(researchSectorFor("notes.txt", "A portfolio of assets."), "General");
 });
+
+import { researchPublishedOn, pdfInfoDate } from "../shared/research-date";
+const today = new Date(Date.UTC(2026, 10, 17));
+const ym = (d: Date | null) => d ? `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}` : null;
+
+test("the publication date: name first, then the PDF's own date, then rough names, then the cover", () => {
+  assert.equal(ym(researchPublishedOn("London Office Nov 2026.pdf", null, null, today)), "2026-11");
+  assert.equal(ym(researchPublishedOn("report_2026-03-14.pdf", null, null, today)), "2026-03");
+  assert.equal(ym(researchPublishedOn("Retail Parks Q2 2026.pdf", null, null, today)), "2026-06");
+  assert.equal(ym(researchPublishedOn("Retail Parks Q2 2026.pdf", null, new Date(Date.UTC(2026, 6, 20)), today)), "2026-07");
+  assert.equal(ym(researchPublishedOn("Outlook H1-25.pdf", null, null, today)), "2025-06");
+  assert.equal(ym(researchPublishedOn("scan.pdf", "UK Investment\nSeptember 2025\nContents", null, today)), "2025-09");
+  assert.equal(ym(researchPublishedOn("Market 2024.pdf", null, null, today)), "2024-01");
+  assert.equal(researchPublishedOn("notes.pdf", "No dates here", null, today), null);
+  assert.equal(researchPublishedOn("Plan 2030.pdf", null, null, today), null);
+});
+
+test("pdfinfo's creation date is read", () => {
+  assert.equal(ym(pdfInfoDate("Title: x\nCreationDate:    Tue Nov  3 10:12:00 2026 GMT\nPages: 4")), "2026-11");
+  assert.equal(pdfInfoDate("Pages: 4"), null);
+});
