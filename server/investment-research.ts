@@ -24,7 +24,12 @@ export const RESEARCH_SOURCE = "investment-research";
 export const RESEARCH_SECTORS: string[] = ["General", ...TRACKER_CLASSES];
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 40 * 1024 * 1024, files: 20 } });
 
-const sectorOf = (v: unknown) => {
+// Jack added his first 59 files oldest-publication-last (10:39 to 10:58 UTC
+// on 17 November 2026), so that batch is listed in the order he added it,
+// flipped; everything added after it sits above, newest upload first.
+const FIRST_BATCH_END = "2026-11-17T10:59:00Z";
+
+const sectorOf =(v: unknown) => {
   const s = String(v || "").trim();
   return RESEARCH_SECTORS.find((k) => k.toLowerCase() === s.toLowerCase()) || "General";
 };
@@ -70,7 +75,10 @@ export function registerInvestmentResearchRoutes(app: Express) {
     if (!(await staffOnly(req, res))) return;
     const { rows } = await pool.query(
       `SELECT id, file_name, category, summary, size_bytes, indexed_at, ai_tags, (content IS NOT NULL AND content <> '') AS has_text
-         FROM knowledge_base WHERE source = $1 ORDER BY indexed_at DESC`, [RESEARCH_SOURCE]);
+         FROM knowledge_base WHERE source = $1
+        ORDER BY (indexed_at > $2) DESC,
+                 CASE WHEN indexed_at > $2 THEN indexed_at END DESC,
+                 indexed_at ASC`, [RESEARCH_SOURCE, FIRST_BATCH_END]);
     res.json({ sectors: RESEARCH_SECTORS, files: rows.map(row) });
   });
 
