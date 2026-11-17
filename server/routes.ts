@@ -854,6 +854,9 @@ export async function registerRoutes(
 
   registerLeasingViewingRoutes(app);
 
+  const { registerInvestmentResearchRoutes } = await import("./investment-research");
+  registerInvestmentResearchRoutes(app);
+
   const { registerImageStudioRoutes } = await import("./image-studio");
   registerImageStudioRoutes(app);
 

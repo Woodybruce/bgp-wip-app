@@ -15,6 +15,8 @@ export function isPublishableInsight(row: { source_kind?: string; evidence?: unk
   const evidence = parseInsightEvidence(row.evidence);
   if (evidence.some(item => isPrivateEmailRecord(item))) return false;
   if (row.source_kind === "portfolio") return true; // audience/company scope is enforced by the route
+  // A staff-only card from the investment team's own research library.
+  if (row.source_kind === "research") return evidence.length > 0 && evidence.every(item => item.type === "research-file" && typeof item.id === "string" && item.policyVersion === INSIGHTS_SOURCE_POLICY_VERSION);
   if (row.source_kind !== "news" && row.source_kind !== "market-report") return false;
   return evidence.length > 0 && evidence.every(item => item.policyVersion === INSIGHTS_SOURCE_POLICY_VERSION && (
     row.source_kind === "news" ? item.type === "article" && typeof item.id === "string" && !!newsArticleUrl(item.url)

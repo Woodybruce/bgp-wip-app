@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Lightbulb, Newspaper, FileText, Activity, RefreshCw, Loader2 } from "lucide-react";
+import { Lightbulb, Newspaper, FileText, Activity, RefreshCw, Loader2, BookOpen } from "lucide-react";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -17,7 +17,7 @@ type Insight = {
   headline: string;
   detail: string | null;
   category: string | null;
-  source_kind: "news" | "market-report" | "portfolio";
+  source_kind: "news" | "market-report" | "portfolio" | "research";
   evidence: any[] | null;
   created_at: string;
   theme_title: string | null;
@@ -29,6 +29,7 @@ const SOURCE_META: Record<string, { icon: any; label: string }> = {
   news: { icon: Newspaper, label: "Trade press" },
   "market-report": { icon: FileText, label: "Market report" },
   portfolio: { icon: Activity, label: "Your portfolio" },
+  research: { icon: BookOpen, label: "BGP research" },
 };
 
 const CATEGORY_TINT: Record<string, string> = {
@@ -121,7 +122,7 @@ export function InsightsFeed({ isStaff = false }: { isStaff?: boolean }) {
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {ins.evidence.filter((e: any) => e.url || e.title).slice(0, 3).map((e: any, i: number) => (
                           e.url ? (
-                            <a key={i} href={e.url} target="_blank" rel="noopener noreferrer"
+                            <a key={i} href={e.url} {...(String(e.url).startsWith("/") ? {} : { target: "_blank", rel: "noopener noreferrer" })}
                                className="text-[11px] text-primary hover:underline truncate max-w-[260px]">
                               {e.title || e.url}
                             </a>
