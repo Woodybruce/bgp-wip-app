@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { ChevronDown, ChevronRight, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, Search, Star } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -175,7 +175,7 @@ export function PlanBoard({ staff }: { staff: boolean }) {
             {shown.map((brand, i) => <div key={brand.key} className="rounded-2xl border border-border bg-card p-3 space-y-2 shadow-sm" data-testid={`brand-plan-card-${i}`}>
               <button type="button" className="flex w-full items-start justify-between gap-2 text-left" onClick={() => setOpened({ brandKey: brand.key, schemeKey: null })} data-testid={`brand-plan-card-open-${i}`}>
                 <span className="min-w-0">
-                  <span className="block truncate text-sm font-semibold">{brand.name}</span>
+                  <span className="flex items-center gap-1 truncate text-sm font-semibold">{staff && brand.superBrand && <Star className="w-3.5 h-3.5 shrink-0 fill-amber-400 text-amber-500" aria-label="Super Brand" />}<span className="truncate">{brand.name}</span></span>
                   <span className="block text-[11px] text-muted-foreground">{underName(brand, staff)}</span>
                 </span>
                 {staff && brand.onHold && <span className={`${pillMetrics} ${pillInactive} shrink-0`}>On hold</span>}
@@ -208,7 +208,7 @@ export function PlanBoard({ staff }: { staff: boolean }) {
                 {shown.map((brand, i) => <tr key={brand.key} className="group" data-testid={`brand-plan-row-${i}`}>
                   <th scope="row" className="sticky left-0 z-10 border-b border-border bg-card px-3 py-2 text-left align-top font-normal">
                     <button type="button" className="max-w-[260px] text-left" onClick={() => setOpened({ brandKey: brand.key, schemeKey: null })} data-testid={`brand-plan-brand-${i}`}>
-                      <span className="flex items-center gap-1.5"><span className="truncate text-sm font-semibold group-hover:underline">{brand.name}</span>{staff && brand.onHold && <span className={`${pillMetrics} ${pillInactive}`}>On hold</span>}</span>
+                      <span className="flex items-center gap-1.5">{staff && brand.superBrand && <Star className="w-3.5 h-3.5 shrink-0 fill-amber-400 text-amber-500" aria-label="Super Brand" data-testid={`brand-plan-super-${i}`} />}<span className="truncate text-sm font-semibold group-hover:underline">{brand.name}</span>{staff && brand.onHold && <span className={`${pillMetrics} ${pillInactive}`}>On hold</span>}</span>
                       <span className="block text-xs text-muted-foreground">{underName(brand, staff)}</span>
                     </button>
                   </th>

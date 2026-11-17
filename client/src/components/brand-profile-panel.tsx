@@ -79,6 +79,7 @@ import { AccountTeamViewsCard } from "@/components/account-team-views";
 import { AgentRelationshipCard, AgentDealingsScope, AgentGlance, type AgentTab } from "@/components/agent-relationship-card";
 import { OWNERSHIP_INTEL_KEY, ownershipKindLine, type OwnershipIntel } from "@shared/ownership-intel";
 import { CompanyKindPage, CompanySummaryCard, CompanyWhereWeAre, CompanyStartStrategy, companyPair, companyStack } from "@/components/company-page/company-kind-page";
+import { SuperBrandBadge, SuperBrandStar } from "@/components/brand-page/super-brand-star";
 import { LandlordAccountGallery } from "@/components/account-media-gallery";
 import { AccountNextActionsCard, InvestmentRequirementsCard, AccountFolderTreeCard, useAccountWorkspace } from "@/components/account-workspace-cards";
 import { AccountEntitiesPanel } from "@/components/account-entities-panel";
@@ -1783,7 +1784,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             if (isLandlord) return "Landlord Profile";
             return "Brand Profile";
           })()}
-          {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[11px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
+          {c.hunter_flag && <SuperBrandBadge />}
           {c.agent_type && <Badge variant="secondary" className="text-[11px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
           {!isLandlord && !isAgentFirm && !isLender && c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} setAt={c.rollout_status_at} />}
         </CardTitle>
@@ -2559,7 +2560,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 onChange={(e) => setForm({ ...form, hunter_flag: e.target.checked })}
                 className="rounded"
               />
-              <Label htmlFor="hunter_flag" className="text-xs cursor-pointer">Flag as Hunter Pick (manual watchlist)</Label>
+              <Label htmlFor="hunter_flag" className="text-xs cursor-pointer">Super Brand: one of BGP's chosen expansion targets (VIP in the CRM)</Label>
             </div>
             <div className="flex items-center gap-2 pt-2">
               <Button size="sm" onClick={() => patchMutation.mutate(form)} disabled={patchMutation.isPending}>
@@ -3003,8 +3004,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                       Score {hunter.expansionScore}/100
                     </Badge>
                   )}
-                  {/* A brand's page already carries the flag as "Hunter pick" in its header. */}
-                  {c.hunter_flag && !brandOverview && <Badge variant="outline" className="text-[11px] bg-amber-50 text-amber-700 border-amber-200">Watch</Badge>}
+                  {/* A brand's page already carries the star in its header. */}
+                  {c.hunter_flag && !brandOverview && <SuperBrandBadge />}
                   {!isClientViewer && (
                   <Link
                     href={`/hunter?companyId=${companyId}`}
@@ -3189,7 +3190,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const brandHeaderBadges = brandTop ? <>
     {brandCategory && <Badge variant="secondary" className="text-xs max-w-[16rem]" data-testid="brand-category-chip"><span className="truncate">{brandCategory}</span></Badge>}
     {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} setAt={c.rollout_status_at} />}
-    {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[11px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
+    {c.hunter_flag && !staffPlan && <SuperBrandBadge />}
     {c.companies_house_number && <CovenantBadge companyNumber={c.companies_house_number} />}
     {kycChip && (
       <button type="button" className="inline-flex" onClick={() => jumpToCard("brand-company-checks", "more")} title="Open Company checks" data-testid="brand-kyc-chip">
@@ -3218,6 +3219,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     ...(!isClientViewer && pageHeader?.onDeleteCompany ? [{ key: "delete", label: "Delete company", onSelect: pageHeader.onDeleteCompany, destructive: true, separatorBefore: true, testId: "button-delete-company" }] : []),
   ];
   const brandHeaderActions = brandTop ? <>
+    {/* The Super Brand star (Woody, 2026-11-17): BGP's own choice of expansion
+        targets, VIP in the CRM. A starred brand on no strategy is offered one. */}
+    {staffPlan && <SuperBrandStar companyId={companyId} companyName={c.name} on={!!c.hunter_flag} />}
+    {staffPlan && c.hunter_flag && <CompanyStartStrategy companyId={companyId} companyName={c.name} variant="outline" />}
     {currentUser?.role !== "Client" && <>
       <Button size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)} data-testid="button-pitch-property"><Building2 />Pitch property</Button>
       <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)} data-testid="button-add-to-deal"><Plus />Add to deal</Button>

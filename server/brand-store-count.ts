@@ -9,7 +9,7 @@
 // Routes:
 //   GET  /api/brand/:companyId/store-count           — summary (any login)
 //   POST /api/brand/:companyId/store-count/refresh   — count now (BGP staff)
-import { onStrategySql, WATCH_RECHECK_DAYS } from "./crm-watch";
+import { watchedSql, WATCH_RECHECK_DAYS } from "./crm-watch";
 import { Router, type Request, type Response } from "express";
 import { gunzipSync } from "node:zlib";
 import { requireAuth } from "./auth";
@@ -250,8 +250,8 @@ export async function nightlyStoreCountPass(cap = 90, deps: StoreCountDeps & { p
         WHERE c.company_type ILIKE 'tenant%' AND c.merged_into_id IS NULL AND c.archived_at IS NULL
           AND c.ai_generated_fields->'brand_identity'->>'status' = 'verified'
           AND (a.attempted_at IS NULL OR a.attempted_at < now() - interval '${RECOUNT_DAYS} days'
-            OR (${onStrategySql("c")} AND a.attempted_at < now() - interval '${WATCH_RECHECK_DAYS} days'))
-        ORDER BY ${onStrategySql("c")} DESC, a.attempted_at ASC NULLS FIRST, c.id
+            OR (${watchedSql("c")} AND a.attempted_at < now() - interval '${WATCH_RECHECK_DAYS} days'))
+        ORDER BY ${watchedSql("c")} DESC, a.attempted_at ASC NULLS FIRST, c.id
         LIMIT $1`, [cap])).rows;
   } catch (e: any) {
     console.error(`[store-count] nightly pass could not list brands: ${e?.message}`);

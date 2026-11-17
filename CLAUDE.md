@@ -1127,7 +1127,8 @@ not opened to them.
     and prospecting flags, every aml column, the saved AI fields, the saved
     analysis, On hold). The brand page has its own cut, described below,
     which keeps four things from that list on purpose: the PEP flag, the
-    Hunter pick, the analysis without its advice and two saved AI keys.
+    Super Brand star (`hunter_flag`, the Hunter pick until 17 November 2026),
+    the analysis without its advice and two saved AI keys.
     Every company row the CRM routes send a client goes
     through one of three cuts beside it: `clientBrandCompanyView` (another
     company's record, and the reply to a save or a create: also without
@@ -1442,8 +1443,9 @@ calendars), the order of work and the four decisions waiting on him are in
   Landlords, agents and lenders are every company of that kind, by the
   rules the old tabs used (`companyIsKind`); **Brands is only the brands BGP
   is working**: on a strategy that is not completed, with an open CRM
-  action, a live deal, a live or to-confirm requirement, or a Hunter pick
-  (`brandWhy`). Every row carries the BGP owner (`bgp_contact_user_ids`,
+  action, a live deal, a live or to-confirm requirement, or the Super Brand
+  star (`brandWhy`; it read "Hunter pick" until 17 November 2026, and Super
+  Brands now lead the list, see "Super Brands" below). Every row carries the BGP owner (`bgp_contact_user_ids`,
   else the agents on its deals, greyed), last contact
   (`shared/last-contact.ts`), the next action, its strategies and a
   kind line; a card or row opens the company page and its arrow opens the
@@ -2918,6 +2920,58 @@ mailbox stay in its thread, from there; staff sending as themselves
   authentication settings → DKIM → chatbgp.app) and add its two CNAMEs at
   Porkbun. Nothing has been sent from chatbgp.app from a build machine.
 
+## Super Brands are BGP's VIP brands (Woody, 2026-11-17)
+
+Woody, on the Brands overview's Super Brands card: "super brand lets have
+those as VIP CRM brands have we got a star or something for those? then we
+know they are prime targets for expansion via our choice ... they get the CRM
+VIP treatment and massive focus?", then "superbrands just has beaverbrooks
+which I know for sure isn't a super brand so its not doing anything". The
+card had listed every brand typed Luxury, Flagship Fashion or Luxury
+Accessories; nobody chose them.
+
+- **The star is the brand's `hunter_flag`**, the hand-set "Hunter pick"
+  until then (described in the schema as "manually flagged as a hot
+  expansion target"). Asked whether Super Brand should be that flag or a new
+  one, Woody sent no answer, so it is the one star (no database change);
+  today's Hunter picks became Super Brands. Splitting them later needs a new
+  column.
+- **Who sets it**: BGP staff signed in as themselves (`contactViewer`), with
+  `POST /api/brands/:id/super-brand { on }` (the state wanted, so a double
+  press holds) or the older toggle `POST /api/brands/:id/hunter-flag`, now
+  staff only too. A client login's brand save (`PATCH /api/brand/:companyId`)
+  has the flag taken out, as "On hold" is. A client login still sees the
+  badge on a brand's page (the brand page's cut kept the Hunter pick).
+- **Screens**: the brand page's header has **Make Super Brand** / **Super
+  Brand** (`SuperBrandStar` in
+  `client/src/components/brand-page/super-brand-star.tsx`, staff only;
+  everyone else `SuperBrandBadge`). Starring a brand on no running CRM
+  strategy opens Start strategy (the kick-off dialog, nothing saved until
+  ticked), and a starred brand with no strategy keeps a Start strategy button
+  beside the star. Brand Hunter's bookmark is the star (and its stat tile and
+  flag filter say Super Brand); Brand Explorer's filter pill is **Super
+  Brands** (`?rel=super` opens on it); the edit form's tick box names it.
+  The Overview's **Super Brands** card lists the starred brands
+  (`superRows` in `server/crm.ts`), each saying No strategy yet until one
+  starts.
+- **The CRM's VIP treatment**: the CRM page's Brands list puts Super Brands
+  first with a star (`superBrand` on `CrmHubRow`, reason "Super Brand"); the
+  Overview's **Watch list** holds every Super Brand, owing "No strategy yet"
+  with a Start strategy button until one starts (`server/crm-watch-list.ts`);
+  the Brand CRM Targets board lists them for BGP staff before they have a
+  line, first, starred (`brandGrid`); and the nightly store count, planning
+  and jobs check, accounts read and signal tidy take them first and
+  re-check them weekly (`watchedSql` in `server/crm-watch.ts`, a running
+  strategy or the star). The Monday brand digest tags them "★ Super Brand".
+- Brand Hunter's own ordering score still adds 25 for the flag (it did as
+  Hunter pick); the Expansion score is untouched.
+- Tests: `qa/regression/super-brand.test.mjs`, `server/super-brand.test.ts`
+  (in `npm test`), `server/crm-hub.test.ts`, `server/brand-scheme-plan.test.ts`
+  (not in `npm test`; its two stale assertions, from the scheme limit of
+  14 November and the category of 16 November, were brought up to date).
+- Not built: ChatBGP setting the star; a separate Super Brand flag beside
+  the Hunter pick.
+
 ## Notes into forms (Woody, 2026-11-13)
 
 Woody: "drop in the basic info and that populate the form". His example:
@@ -3554,8 +3608,10 @@ login only within the people on its account). Guard:
 is added to the other.
 
 **ChatBGP starts a CRM strategy** (Woody, 2026-11-16, asked whether "make
-them VIP" should put a company on one: "yes chat should be able to"). There
-is no VIP field in the app: in the CRM a company is turned on by a strategy.
+them VIP" should put a company on one: "yes chat should be able to"). In the
+CRM a company is turned on by a strategy. Since 17 November 2026 a brand can
+also carry the Super Brand star (below); ChatBGP's tools do not set it, and
+its tool description sends a user to the star on the brand's page.
 `server/chatbgp-crm-strategy.ts`, two tools, BGP staff signed in as
 themselves only (both on `CLIENT_BLOCKED_TOOLS`, never a joint agent's):
 

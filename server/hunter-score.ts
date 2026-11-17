@@ -46,7 +46,7 @@ export function computeHunterScore(input: HunterScoreInput): HunterScoreOutput {
   let score = 0;
   const flags: string[] = [];
 
-  if (b.hunter_flag) { score += 25; flags.push("Hunter Pick"); }
+  if (b.hunter_flag) { score += 25; flags.push("Super Brand"); }
 
   if (b.rollout_status === "entering_uk") { score += 30; flags.push("Entering UK"); }
   else if (b.rollout_status === "scaling") { score += 20; flags.push("Scaling"); }

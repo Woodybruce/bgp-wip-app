@@ -26,7 +26,7 @@ export { CRM_HUB_KEY } from "./company-row";
 
 const WORDS: Record<CrmHubKind, { one: string; many: string; empty: string }> = {
   landlord: { one: "landlord", many: "landlords", empty: "No landlord accounts yet." },
-  brand: { one: "brand", many: "brands", empty: "No brands are being worked yet. A brand joins this list when it is on a strategy, has an open action, a live deal or a requirement, or is a Hunter pick." },
+  brand: { one: "brand", many: "brands", empty: "No brands are being worked yet. A brand joins this list when it is on a strategy, has an open action, a live deal or a requirement, or is starred as a Super Brand." },
   agent: { one: "agent firm", many: "agent firms", empty: "No agent firms yet." },
   lender: { one: "lender", many: "lenders", empty: "No lenders yet." },
 };

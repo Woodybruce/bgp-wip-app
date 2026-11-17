@@ -229,13 +229,14 @@ test("requirement detail reaches a client for every requirement, and a joint age
 
 // An asset manager is a full Landsec login (Woody, 2026-11-13: "asset
 // managers and leasing landsec should be the same"): the Landsec door gives
-// it the "landsec" viewer with no scheme list, whatever schemes are stored
-// on the login. Only a joint agent is held to its own schemes.
+// it the "landsec" viewer. Since 14 November 2026 every Landsec login is held
+// to the schemes ticked on it, or sees all of them when none is ticked
+// (v.schemes is then null); a joint agent always has a list.
 test("an asset manager is the full Landsec viewer: every scheme, no count of 'other' schemes, and the tracker, deal and property links", async () => {
   const source = readFileSync(new URL("./brand-scheme-plan.ts", import.meta.url), "utf8");
   const door = source.slice(source.indexOf("export async function landsecPlanViewer"), source.indexOf("async function landsecSchemes"));
   assert.match(door, /const kind: PlanViewerKind = v\.role === "joint_agent" \? "joint_agent" : "landsec";/);
-  assert.match(door, /schemes: kind === "landsec" \? null : v\.schemes \|\| new Set<string>\(\)/);
+  assert.match(door, /schemes: kind === "landsec" \? v\.schemes : v\.schemes \|\| new Set<string>\(\)/);
   assert.ok(!source.includes('"asset_manager"'), "no asset manager kind is left in the plan");
 
   const db = fakeDb(baseAnswers({
@@ -356,7 +357,7 @@ test("the grid: one cell per scheme with the furthest stage; staff also see stra
     ],
     wishes: [{ id: "w-1", company_id: BRAND, property_id: "p-liv", tenancy_unit_id: null, unit_label: null, note: null, requirement_id: null, visible_to_client: false, ruled_out_at: null, ruled_out_reason: null, created_by: "u-lead", created_by_name: "Alex Todd", created_at: "2026-11-10T10:00:00Z" }],
     "strategy-brands": [{ company_id: "brand-new" }],
-    brands: [{ ...brandRow }, { id: "brand-new", name: "Yo Chi", logo_url: null, concept_status: null, bgp_contact_user_ids: null }],
+    brands: [{ ...brandRow }, { id: "brand-new", name: "Yo Chi", logo_url: null, concept_status: null, bgp_contact_user_ids: null, hunter_flag: true }],
     leads: [{ id: "u-lead", name: "Alex Todd" }],
     requirements: (values: any[]) => (values[0].includes("brand-new") ? [{ id: "r-9", company_id: "brand-new", size: null, use: null, requirement_locations: null, status: "Active", sources: null, deal_id: null, at: null }] : []),
     actions: [{ company_id: "brand-new", link: {}, id: "t-9", title: "First call", due_at: null, status: "todo", owner_name: "Alex Todd" }],
@@ -378,6 +379,10 @@ test("the grid: one cell per scheme with the furthest stage; staff also see stra
   assert.equal(jm.rows, undefined);
   const fresh = grid.brands.find(b => b.id === "brand-new")!;
   assert.deepEqual([fresh.furthest, fresh.cells, fresh.requirementHeld, fresh.openActions], [null, {}, true, 1]);
+  // A Super Brand (BGP's starred choice) joins the board before it has a line,
+  // and leads it for staff.
+  assert.match(db.calls.find(c => c.tag === "strategy-brands")!.sql, /c\.hunter_flag IS TRUE/);
+  assert.deepEqual(grid.brands.map(b => [b.id, b.superBrand === true]), [["brand-new", true], [BRAND, false]]);
   // The grid is read by property, never by scanning every brand.
   assert.deepEqual(db.calls.find(c => c.tag === "evidence")!.values, [null, ["p-blue", "p-blue-2", "p-liv"]]);
 
@@ -387,7 +392,8 @@ test("the grid: one cell per scheme with the furthest stage; staff also see stra
   assert.match(clientDb.calls.find(c => c.tag === "brands")!.sql, /AND \(c\.company_type ILIKE ANY\(ARRAY\['Tenant - Restaurants'\]\)\)/);
   assert.match(clientDb.calls.find(c => c.tag === "brands")!.sql, /c\.archived_at IS NULL/);
   assert.ok(!clientDb.tags().includes("strategy-brands"));
-  assert.deepEqual(Object.keys(client.brands[0]).sort(), ["cells", "furthest", "id", "key", "logoUrl", "name", "requirementHeld", "wantedNoUnit"]);
+  // The brief's category is for every viewer (16 November 2026); the star is BGP's.
+  assert.deepEqual(Object.keys(client.brands[0]).sort(), ["category", "cells", "furthest", "id", "key", "logoUrl", "name", "requirementHeld", "wantedNoUnit"]);
   assert.deepEqual(Object.keys(client.brands[0].cells.bluewater).sort(), ["count", "rowKeys", "stage", "wanted"]);
   assert.deepEqual(Object.keys(client.brands[0].cells), ["bluewater"]);                      // the hidden Wanted line at Liverpool ONE is not there
 });

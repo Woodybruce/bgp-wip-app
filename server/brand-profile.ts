@@ -1572,10 +1572,13 @@ router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Res
       const { resolveCompanyScope } = await import("./company-scope");
       if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Retained fact review is available in the staff view." });
     }
-    // "On hold" is BGP's own flag: a client login never sets it.
-    if (req.body && ("concept_status" in req.body || "conceptStatus" in req.body)) {
+    // "On hold" and the Super Brand star are BGP's own flags: a client login
+    // never sets either.
+    if (req.body && ["concept_status", "conceptStatus", "hunter_flag", "hunterFlag"].some(key => key in req.body)) {
       const { resolveCompanyScope, isClientRequestUser } = await import("./company-scope");
-      if ((await resolveCompanyScope(req)) || (await isClientRequestUser(req))) { delete req.body.concept_status; delete req.body.conceptStatus; }
+      if ((await resolveCompanyScope(req)) || (await isClientRequestUser(req))) {
+        delete req.body.concept_status; delete req.body.conceptStatus; delete req.body.hunter_flag; delete req.body.hunterFlag;
+      }
     }
     res.json(await updateBrandRecord(companyId, req.body || {}, (req.session as any)?.userId || (req as any).tokenUserId || (req as any).user?.id || null));
   } catch (err: any) { res.status(err.status || 400).json({ error: err.message }); }

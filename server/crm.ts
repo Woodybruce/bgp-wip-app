@@ -8940,7 +8940,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                   ) tg
                 ) AS "targetedAt",
                 EXISTS (SELECT 1 FROM crm_contacts ct WHERE ct.company_id = c.id) AS "hasContacts",
-                (COALESCE(c.hunter_flag, false) OR COALESCE(c.letting_hunter_flag, false) OR COALESCE(c.investment_hunter_flag, false)) AS "hunterFlag",
+                -- The Super Brand star alone (Woody, 2026-11-17): the landlord-side
+                -- letting and investment hunter flags are not a brand's star.
+                COALESCE(c.hunter_flag, false) AS "hunterFlag",
                 EXISTS (SELECT 1 FROM crm_requirements_leasing rl
                          WHERE rl.company_id = c.id AND ${requirementStateSql("rl")} IN ('live', 'to_confirm')) AS "liveRequirement"
            FROM crm_companies c
@@ -9097,14 +9099,19 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       `, hotDealParams).then(r => r.rows);
 
       // Super brands — Luxury + Flagship Fashion
-      const superRows = await pool.query(`
-        SELECT id, name, company_type, domain, description
-        FROM crm_companies
-        WHERE company_type IN ('Tenant - Luxury','Tenant - Flagship Fashion','Tenant - Luxury Accessories')
-          AND merged_into_id IS NULL AND archived_at IS NULL
-        ORDER BY name
-        LIMIT 60
-      `).then(r => r.rows);
+      // Super Brands are the brands BGP has starred, its own choice of prime
+      // expansion targets (Woody, 2026-11-17). Until then the card listed the
+      // Luxury and Flagship Fashion types, which put Beaverbrooks there and
+      // nothing BGP chose. Each says whether it is on a running strategy.
+      const { onStrategySql } = await import("./crm-watch");
+      const superRows = clientScoped ? [] : await pool.query(`
+        SELECT c.id, c.name, c.company_type, c.domain, c.description, ${onStrategySql("c")} AS on_strategy
+        FROM crm_companies c
+        WHERE c.hunter_flag IS TRUE AND c.company_type ILIKE 'tenant%'
+          AND c.merged_into_id IS NULL AND c.archived_at IS NULL
+        ORDER BY lower(c.name)
+        LIMIT 200
+      `).then(r => r.rows.map((row: any) => ({ ...row, on_strategy: row.on_strategy === true }))).catch(() => []);
 
       // Top turnover — join with turnover_data, most recent per brand
       const turnoverRows = await pool.query(`
@@ -9242,7 +9249,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const flags: string[] = [];
 
         // Manual signals (highest weight)
-        if (b.hunter_flag) { score += 25; flags.push("Hunter Pick"); }
+        if (b.hunter_flag) { score += 25; flags.push("Super Brand"); }
 
         // Rollout status (strongest structural signal)
         if (b.rollout_status === "entering_uk") { score += 30; flags.push("Entering UK"); }
@@ -9376,9 +9383,32 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
-  // ── Toggle hunter_flag on a brand ────────────────────────────────────────
+  // ── The Super Brand star (hunter_flag) ──────────────────────────────────
+  // BGP's own choice of prime expansion targets (Woody, 2026-11-17: "prime
+  // targets for expansion via our choice ... they get the CRM VIP
+  // treatment"), so only BGP staff signed in as themselves set it. The set
+  // route takes the state wanted, so a double press never undoes itself; the
+  // older toggle stays for a cached screen.
+  app.post("/api/brands/:id/super-brand", requireAuth, async (req, res) => {
+    try {
+      const { contactViewer } = await import("./contact-viewer");
+      if (!(await contactViewer(req)).staff) return res.status(403).json({ error: "Super Brands are set by BGP staff" });
+      if (typeof req.body?.on !== "boolean") return res.status(400).json({ error: "Say on or off" });
+      const result = await pool.query(
+        `UPDATE crm_companies SET hunter_flag = $2, updated_at = NOW()
+          WHERE id = $1 AND merged_into_id IS NULL RETURNING id, hunter_flag`,
+        [req.params.id, req.body.on]);
+      if (!result.rows[0]) return res.status(404).json({ error: "Not found" });
+      res.json({ id: result.rows[0].id, superBrand: result.rows[0].hunter_flag === true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/brands/:id/hunter-flag", requireAuth, async (req, res) => {
     try {
+      const { contactViewer } = await import("./contact-viewer");
+      if (!(await contactViewer(req)).staff) return res.status(403).json({ error: "Super Brands are set by BGP staff" });
       const { id } = req.params;
       const result = await pool.query(
         `UPDATE crm_companies SET hunter_flag = NOT COALESCE(hunter_flag, false), updated_at = NOW()

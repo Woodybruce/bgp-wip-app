@@ -1,9 +1,11 @@
 // ChatBGP and the CRM plan (Woody, 2026-11-16: asked whether "make them VIP"
 // should put a company on a CRM strategy, "yes chat should be able to").
 //
-// There is no VIP field in the app. In the CRM a company is turned on by
-// starting a strategy for it (Woody, 2026-11-15: "we choose who to make VIP
-// and then the CRM engine starts suggesting ... and closely watches them").
+// In the CRM a company is turned on by starting a strategy for it (Woody,
+// 2026-11-15: "we choose who to make VIP and then the CRM engine starts
+// suggesting ... and closely watches them"). Since 17 November 2026 a brand
+// can also carry the Super Brand star (hunter_flag), BGP staff's own choice
+// of expansion target, which the CRM treats as VIP; these tools do not set it.
 // Until now ChatBGP could not do that: a plan it "saved" for a company was
 // not on the CRM page's Overview, Watch list or Diary.
 //

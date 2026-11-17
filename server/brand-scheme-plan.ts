@@ -808,10 +808,12 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
   const shown = schemes.filter(s => !viewer.schemes || viewer.schemes.has(s.key));
   const early: string[] = [];
 
-  // Staff also see brands a strategy targets, before they have a line.
+  // Staff also see brands a strategy targets, and every Super Brand (BGP's
+  // own starred choice, Woody 2026-11-17), before they have a line.
   const strategyBrandIds: string[] = !staff ? [] : await q.query(
     `/* brand-plan:strategy-brands */ SELECT DISTINCT st.company_id FROM crm_strategy_targets st JOIN crm_companies c ON c.id = st.company_id
-      WHERE c.company_type ILIKE 'tenant%'`).then(r => r.rows.map((x: any) => x.company_id as string)).catch((e: any) => {
+      WHERE c.company_type ILIKE 'tenant%'
+     UNION SELECT c.id FROM crm_companies c WHERE c.hunter_flag IS TRUE AND c.company_type ILIKE 'tenant%'`).then(r => r.rows.map((x: any) => x.company_id as string)).catch((e: any) => {
     early.push("Brands on a strategy could not be read, so only brands with a line are listed.");
     console.warn(`[brand-plan] strategy brands: ${e?.message}`);
     return [];
@@ -820,7 +822,7 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
   const warnings = [...early, ...data.warnings];
   const ids = uniq([...data.rowsByBrand.keys(), ...strategyBrandIds]);
   const brands = ids.length === 0 ? [] : (await q.query(
-    `/* brand-plan:brands */ SELECT c.id, c.name, c.logo_url, c.concept_status, c.bgp_contact_user_ids, c.company_type FROM crm_companies c
+    `/* brand-plan:brands */ SELECT c.id, c.name, c.logo_url, c.concept_status, c.bgp_contact_user_ids, c.company_type, c.hunter_flag FROM crm_companies c
       WHERE c.id = ANY($1) AND c.company_type ILIKE 'tenant%' AND c.archived_at IS NULL AND c.merged_into_id IS NULL
         ${brandFilterSql ? `AND ${brandFilterSql}` : ""}
       ORDER BY lower(c.name)`, [ids])).rows;
@@ -876,9 +878,12 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
       entry.lead = leadId && leadNames.has(leadId) ? { id: leadId, name: leadNames.get(leadId)! } : null;
       entry.openActions = (data.actions.get(b.id) || []).length;
       entry.nextAction = nextActionOf(data.actions.get(b.id));
+      if (b.hunter_flag === true) entry.superBrand = true;
     }
     out.push(entry);
   });
+  // For BGP staff the Super Brands lead the board (name order within each part).
+  if (staff) out.sort((a, b) => Number(!!b.superBrand) - Number(!!a.superBrand));
 
   return { schemes: shown.map(s => ({ key: s.key, name: s.name, group: s.group })), brands: out, canEdit: staff, warnings };
 }

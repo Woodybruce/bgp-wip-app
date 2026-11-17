@@ -60,6 +60,8 @@ interface Brand {
   company_type: string | null;
   domain: string | null;
   description: string | null;
+  // Super Brands only: on a running CRM strategy.
+  on_strategy?: boolean;
 }
 
 interface HotBrand extends Brand {
@@ -461,10 +463,12 @@ export default function BrandsHub() {
           </CardContent>
         </Card>
 
-        {/* Super Brands — luxury/flagship intel, staff only (server sends
-            [] for clients, so the card would sit permanently empty).
-            Sized to its chips, not stretched to the row — two chips in a
-            full-height box read as empty (Woody, 2026-09-28). */}
+        {/* Super Brands: the brands BGP has starred, its own choice of prime
+            expansion targets, each VIP in the CRM (Woody, 2026-11-17). Until
+            then the card listed the Luxury and Flagship Fashion types, which
+            showed Beaverbrooks and nothing BGP chose. Staff only (the server
+            sends a client none). Sized to its chips, not stretched to the
+            row (Woody, 2026-09-28). */}
         {/* A client hub has no Super Brands card, which left the third column
             blank: the requirements radar sits there instead, as a list like
             its two neighbours (Woody, 2026-11-13). */}
@@ -511,28 +515,30 @@ export default function BrandsHub() {
         <Card className="self-start">
           <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
             <div className="flex items-center gap-2">
-              <Star className="w-4 h-4 text-muted-foreground" />
+              <Star className="w-4 h-4 fill-amber-400 text-amber-500" />
               <CardTitle className="text-sm font-semibold">Super Brands</CardTitle>
               <Badge variant="secondary" className="text-[10px]">{data?.superBrands?.length || 0}</Badge>
             </div>
-            <Link href="/brands?tab=explorer" replace>
+            <Link href="/brands?tab=explorer&rel=super" replace>
               <Button variant="ghost" size="sm" className="text-xs h-7" data-testid="link-super-brands-all">
                 Show all <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
             </Link>
           </CardHeader>
           <CardContent className="px-5 pb-4">
-            <div className="flex flex-wrap gap-1.5 max-h-[460px] overflow-y-auto pr-1">
+            <p className="text-xs text-muted-foreground mb-2">Our own chosen expansion targets. Each is VIP in the CRM: listed first, on the Watch list and checked weekly.</p>
+            <div className="flex flex-wrap gap-1.5 max-h-[460px] overflow-y-auto pr-1" data-testid="super-brands-list">
               {(data?.superBrands || []).map(b => (
                 <Link key={b.id} href={`/companies/${b.id}`}>
-                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border bg-card hover:bg-muted/60 transition-colors cursor-pointer" title={b.name}>
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border bg-card hover:bg-muted/60 transition-colors cursor-pointer" title={b.on_strategy ? `${b.name}: on a CRM strategy` : `${b.name}: no CRM strategy yet. Open it to start one`} data-testid={`super-brand-${b.id}`}>
                     <BrandLogo name={b.name} domain={b.domain} size={16} />
                     <span className="text-[11px] font-medium">{b.name}</span>
+                    {b.on_strategy === false && <span className="text-[10px] text-amber-700 dark:text-amber-300">No strategy yet</span>}
                   </div>
                 </Link>
               ))}
               {!data?.superBrands?.length && (
-                <p className="text-sm text-muted-foreground py-4">No luxury/flagship brands added yet</p>
+                <p className="text-sm text-muted-foreground py-2" data-testid="super-brands-empty">No Super Brands yet. Star a brand on its page or on Brand Hunter to make it one.</p>
               )}
             </div>
           </CardContent>
@@ -830,7 +836,10 @@ function BrandExplorer() {
     if (landsClean) return "";
     try { return localStorage.getItem("brand-explorer-search") || ""; } catch { return ""; }
   });
-  const [relFilter, setRelFilter] = useState<string>("all");
+  // ?rel=super (the Super Brands card's Show all) opens on the Super Brands.
+  const [relFilter, setRelFilter] = useState<string>(() => {
+    try { return new URLSearchParams(window.location.search).get("rel") === "super" ? "super" : "all"; } catch { return "all"; }
+  });
   const [propFilter, setPropFilter] = useState<string>("all");
   // Phone renders 30 cards then "Show more" — the full ~1,900-card grid made
   // the page ~117k px tall (Woody, 2026-09-27). Resets when filters change.
@@ -971,7 +980,7 @@ function BrandExplorer() {
         if (relFilter === "tenant") return f.isTenant;
         if (relFilter === "targeted") return (f.targetedAt || []).length > 0;
         if (relFilter === "contacts") return f.hasContacts;
-        if (relFilter === "hunter") return f.hunterFlag;
+        if (relFilter === "super") return f.hunterFlag;
         if (relFilter === "requirement") return f.liveRequirement;
         return true;
       });
@@ -1215,7 +1224,7 @@ function BrandExplorer() {
                 ["targeted", "Being targeted"],
                 ["contacts", "With contacts"],
                 ["requirement", "Live requirement"],
-                ["hunter", "Hunter-flagged"],
+                ["super", "Super Brands"],
                 ...(exUser?.isAdmin ? [["archived", "Hidden"]] as const : []),
               ] as const).map(([key, label]) => (
                 <Pill

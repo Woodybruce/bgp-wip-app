@@ -143,7 +143,7 @@ function renderDigestHtml(data: Awaited<ReturnType<typeof loadDigestData>>): str
   const brandBlocks = brands.map(b => {
     const url = `${baseUrl}/companies/${b.id}`;
     const rolloutTag = b.rollout_status ? `<span style="display:inline-block;padding:2px 7px;background:${CLAUDE_CREAM};color:${CLAUDE_CORAL};border-radius:4px;font-size:11px;font-weight:600;margin-left:6px">${ROLLOUT_LABELS[b.rollout_status] || b.rollout_status}</span>` : "";
-    const hunterTag = b.hunter_flag ? `<span style="display:inline-block;padding:2px 7px;background:#fef3c7;color:#92400e;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px">🔥 Hunter</span>` : "";
+    const hunterTag = b.hunter_flag ? `<span style="display:inline-block;padding:2px 7px;background:#fef3c7;color:#92400e;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px">★ Super Brand</span>` : "";
 
     const signalRows = b.signals.map((s: any) => {
       const emoji = SIGNAL_EMOJI[s.signal_type] || "•";

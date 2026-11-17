@@ -98,8 +98,8 @@ export function CompanySummaryCard({ about, figuresTitle, figures, figuresNote, 
 }
 
 // The CRM plan card asks for the same record under the same key, so the page
-// makes one request.
-function useEngagement(companyId: string) {
+// makes one request. The Super Brand star reads it too.
+export function useEngagement(companyId: string) {
   return useQuery<EngagementData>({
     queryKey: ["/api/crm/engagement", { companyId }],
     queryFn: async () => (await apiRequest("GET", `/api/crm/engagement?companyId=${encodeURIComponent(companyId)}`)).json(),
@@ -145,14 +145,14 @@ export function CompanyWhereWeAre({ companyId, owners, lastContact, onOpenPlan }
 
 // Start strategy on the page's header line: BGP staff, on a company that is
 // on no running strategy. The kick-off dialog is the CRM page's own.
-export function CompanyStartStrategy({ companyId, companyName }: { companyId: string; companyName: string }) {
+export function CompanyStartStrategy({ companyId, companyName, variant = "default" }: { companyId: string; companyName: string; variant?: "default" | "outline" }) {
   const [, navigate] = useLocation();
   const [starting, setStarting] = useState(false);
   const query = useEngagement(companyId);
   const view = query.data ? landlordEngagementView(query.data, companyId) : null;
   if (!view || view.strategies.length) return null;
   return <>
-    <Button size="sm" onClick={() => setStarting(true)} data-testid="button-header-start-strategy"><Target />Start strategy</Button>
+    <Button size="sm" variant={variant} onClick={() => setStarting(true)} data-testid="button-header-start-strategy"><Target />Start strategy</Button>
     {starting && <StartStrategyDialog company={{ id: companyId, name: companyName }} onClose={() => setStarting(false)}
       onStarted={strategyId => navigate(`/contacts?tab=overview&strategy=${encodeURIComponent(strategyId)}`)} />}
   </>;

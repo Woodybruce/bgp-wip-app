@@ -496,6 +496,8 @@ export interface BrandGridBrand {
   cells: Record<string, BrandGridCell>;
   // BGP only.
   onHold?: boolean; lead?: { id: string; name: string } | null; openActions?: number;
+  /** Starred as a Super Brand: BGP's own choice of expansion target. */
+  superBrand?: boolean;
   nextAction?: { id: string; title: string; dueAt: string | null; ownerName: string | null } | null;
   // Joint agents only: they hold no brand id to ask for one brand's plan, so the lines come with the grid.
   rows?: PlanRow[];

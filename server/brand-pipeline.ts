@@ -19,7 +19,7 @@
 //   GET  /api/brand/:companyId/pipeline           — the summary
 //   POST /api/brand/:companyId/pipeline/refresh   — BGP staff: read both sources now
 // ─────────────────────────────────────────────────────────────────────────
-import { onStrategySql, WATCH_RECHECK_DAYS } from "./crm-watch";
+import { watchedSql, WATCH_RECHECK_DAYS } from "./crm-watch";
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
@@ -375,10 +375,10 @@ export async function nightlyPipelinePass(cap = 60, deps: PipelineDeps = {}): Pr
         WHERE c.company_type ILIKE 'tenant%' AND c.merged_into_id IS NULL AND c.archived_at IS NULL
           AND (k.checked_at IS NULL
             OR k.checked_at < now() - interval '${RECHECK_DAYS} days'
-            OR (${onStrategySql("c")} AND k.checked_at < now() - interval '${WATCH_RECHECK_DAYS} days')
+            OR (${watchedSql("c")} AND k.checked_at < now() - interval '${WATCH_RECHECK_DAYS} days')
             OR ((k.planning_status LIKE 'failed%' OR k.jobs_status LIKE 'failed%') AND k.checked_at < now() - interval '3 days')
             OR ($2::boolean AND k.jobs_status = '${NOT_CONFIGURED}'))
-        ORDER BY ${onStrategySql("c")} DESC, k.checked_at ASC NULLS FIRST, c.id
+        ORDER BY ${watchedSql("c")} DESC, k.checked_at ASC NULLS FIRST, c.id
         LIMIT $1`,
       [limit, !!jobsKeys(deps.env ?? process.env)]);
     let pause = false;

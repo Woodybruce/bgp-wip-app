@@ -126,7 +126,7 @@ const publicPerson = (person: RankablePerson): CrmHubPerson => ({ id: person.id,
 
 // The ids of the brands BGP is working, by the Brands list's own reasons (a
 // strategy that is not completed, an open CRM action, a live deal, a live or
-// to-confirm requirement, a Hunter pick), for anything else that has to keep
+// to-confirm requirement, a Super Brand), for anything else that has to keep
 // to that list. Each reason is a side read: a missing one loses that reason.
 export async function workedBrandIds(q: Queryable): Promise<string[]> {
   const sides = await Promise.all([
@@ -135,7 +135,7 @@ export async function workedBrandIds(q: Queryable): Promise<string[]> {
     side(q, "brand live deals", `SELECT d.tenant_id AS company_id FROM crm_deals d WHERE d.tenant_id IS NOT NULL AND ${OPEN_DEAL} GROUP BY d.tenant_id`, []),
     side(q, "brand requirements", `SELECT x.company_id FROM (SELECT r.company_id, ${requirementStateSql("r")} AS st FROM crm_requirements_leasing r WHERE r.company_id IS NOT NULL) x
       WHERE x.st IN ('live', 'to_confirm') GROUP BY x.company_id`, []),
-    side(q, "hunter picks", `SELECT c.id AS company_id FROM crm_companies c WHERE ${ALL_BRANDS} AND c.hunter_flag IS TRUE`, []),
+    side(q, "super brands", `SELECT c.id AS company_id FROM crm_companies c WHERE ${ALL_BRANDS} AND c.hunter_flag IS TRUE`, []),
   ]);
   const [actions, ...rest] = sides;
   return Array.from(new Set([...actions.rows.filter(row => !isPrivateEmailRecord(row)), ...rest.flatMap(found => found.rows)].map(row => String(row.company_id || "")).filter(Boolean)));
@@ -273,8 +273,11 @@ export async function loadCrmHub(q: Queryable, kind: CrmHubKind, now: number = D
       people: rankPeople(everyone).slice(0, CRM_HUB_PEOPLE_SHOWN).map(publicPerson),
       counts, line,
       ...(why ? { why } : {}),
+      ...(kind === "brand" && company.hunter_flag === true ? { superBrand: true } : {}),
     });
   }
+  // Super Brands lead the Brands list (the sort keeps name order within each).
+  if (brand) rows.sort((a, b) => Number(!!b.superBrand) - Number(!!a.superBrand));
 
   const owners = Array.from(new Map(rows.flatMap(row => row.owners).map(owner => [owner.id, owner])).values()).sort(byName);
   const cities = Array.from(new Set(rows.map(row => row.city).filter((city): city is string => !!city))).sort((a, b) => a.localeCompare(b, "en-GB"));
