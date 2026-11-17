@@ -5510,6 +5510,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupUnitNoteReaderRoutes(app);
   setupLettingSuggestionRoutes(app);
   setupUnitHotsRoutes(app);
+  (await import("./billing-entity")).setupBillingEntityRoutes(app);
   setupUnitShareRoutes(app);
   setupDealChecklistRoutes(app);
   setupUnitRecommendationRoutes(app);

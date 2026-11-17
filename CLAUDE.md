@@ -2370,6 +2370,54 @@ MLRO's block answers a client login it says the deal is held and nothing
 else (`AML_HELD_FOR_CLIENT` in `server/deal-gates.ts`): never the party or
 the reason. Tests: `qa/regression/aml-gate-doors.test.mjs`.
 
+**The Promote box fills itself (Woody, 2026-11-17).** His words: "use the AI
+notes to fill in the form function we have for other forms", "allow for add
+HOTs which should also then file and populate", and "if cant find a billing
+entity for tenant then should be able to create one and search companies
+house? Its saying not on xero but is connected to Xero just new billing
+entity for the brand". The route, its staff-only rule, the AML gate and the
+sign-off handling are unchanged. Tests:
+`qa/regression/promote-to-solicitors.test.mjs`.
+
+- **Notes**: the box's Notes is `FillFromNotes` read as an `offer` (the
+  rules in "Notes into forms" below), with `newWordsOnly`: only words typed
+  after the ones the box opened with (the deal's earlier notes or the
+  "Property — Unit" line) are read. `applyPromoteNote` in
+  `available-units.tsx` maps a reading: rent to Headline Rent, term to Lease
+  Length, rent free to Rent Free; the tenant brand only when it is a brand on
+  the unit's offers, viewings or interest (otherwise a "Brand read as" line);
+  anything else, an offer's date included, is a labelled line in the Notes.
+  **The target completion date is never filled from a note**: an offer's date
+  is not it, and the reader refuses a future date and a completion date by
+  design. Total area is not read (the contract has no area).
+- **Add HOTs**: files the document through the HOTs flow's own upload
+  (`POST /api/unit-hots/:unitId/final`: `hots_final`, never public, moves no
+  status), then reads it through the note reader's new source
+  `{ type: "hots_final" }` (`shared/letting-note.ts`,
+  `server/unit-note-reader.ts`): agentControl only, the server takes the text
+  from the unit's own final file with `readDocumentForAI`
+  (`server/document-reader.ts`) and cuts it to `NOTE_MAX`, and the read-back
+  says so. A document is prose: nothing fills but a brand on the unit, and
+  each term is a Use line with its words. A final HOTs already on the unit
+  has **Read them**.
+- **Create billing entity** (`server/billing-entity.ts`,
+  `POST /api/billing-entities { brandId, companyNumber }`, BGP staff signed
+  in as themselves; `client/src/components/billing-entity-create.tsx`). The
+  Xero picker (`xero-contact-picker.tsx`) says "not in Xero yet" when the
+  firm's link answered with contacts and the search found none, and keeps the
+  reconnect line for a real connection problem; with `createFor` (only the
+  Promote box's tenant picker passes it) it offers Create billing entity. The
+  company is read from Companies House on the server (never a name or address
+  from the request; a closed company is refused), saved under the brand with
+  `insertTradingEntity` (never a brand; a company of that name already there
+  is reused unless its number differs) and logged (batch `billing-entity`),
+  then made a contact in the firm's Xero through `withSystemXero` after a
+  search by name (the invoice routes' POST /Contacts), and selected: the deal
+  stores its ContactID as the tenant's billing entity. `rememberXeroContact`
+  puts it on the picker's cached list. A Xero refusal leaves the company
+  saved and says why. It has not been run against Xero or Companies House
+  from a build machine.
+
 The run from a first offer to solicitors is three linked pieces on a unit.
 Migrations 0051 to 0053. All access goes through `briefAccess()`.
 

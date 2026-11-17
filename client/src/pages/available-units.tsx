@@ -36,6 +36,8 @@ import { TrackerInterestCell, TrackerOffersCell, TrackerViewingsCell, interestWh
 import { BriefProgressChip } from "@/components/tracker-success-cell";
 import { NegotiationPanel, NegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
 import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
+import { hotsCall, type HotsError } from "@/components/unit-hots/hots-api";
+import type { HotsWorkspace } from "@shared/unit-hots";
 import { UnitShareDialog } from "@/components/unit-share-dialog";
 import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
 import { type ChecklistChipSummary } from "@/components/deal-checklist/checklist-chip";
@@ -856,6 +858,14 @@ export default function AvailableUnitsPage() {
   // House if missing, so starting empty is safe.
   const [wipFeeRows, setWipFeeRows] = useState<FeeAllocationRow[]>([]);
   const [wipFeeAllocType, setWipFeeAllocType] = useState<"percentage" | "fixed">("percentage");
+  // The final Heads of Terms added on the Promote box (Woody, 2026-11-17:
+  // "allow for add HOTs which should also then file and populate"): filed on
+  // the unit through the HOTs flow's own upload, then read into the form.
+  const [wipHots, setWipHots] = useState<{ unitId: string; fileName: string; key: number } | null>(null);
+  const [wipHotsBusy, setWipHotsBusy] = useState(false);
+  const wipHotsInput = useRef<HTMLInputElement>(null);
+  // A brand a reading named that is not one of the unit's offers, viewings or interest: said under the tenant picker, never picked.
+  const [wipBrandHint, setWipBrandHint] = useState<string | null>(null);
   const { toast } = useToast();
 
   // The units list polls faster than the app default (30s felt laggy in
@@ -1245,6 +1255,50 @@ export default function AvailableUnitsPage() {
       more: missing.length ? missing : undefined,
     };
     setNoteHints(h => ({ ...h, interest: hint.brand || hint.agent || hint.more ? hint : undefined }));
+  };
+
+  // The Promote to Solicitors box (Woody, 2026-11-17: "use the AI notes to
+  // fill in the form function we have for other forms"). A reading of its
+  // Notes, or of the Heads of Terms added there, read as an offer: the rent,
+  // the lease length and the rent free fill their boxes; the tenant brand only
+  // when it is a brand already on the unit (its offers, viewings or interest);
+  // a value with no box goes into the Notes as a labelled line, once. Only the
+  // keys a reading holds change the form. An offer's date is not the target
+  // completion date, so it is a line in the Notes, never that box.
+  const applyPromoteNote = (r: LettingNoteReading) => {
+    const f = r.fields || {};
+    const unitId = wipUnit?.id || "";
+    const onUnit = new Set<string>();
+    for (const row of [...(offersByUnit[unitId] || []), ...(viewingsByUnit[unitId] || []), ...(interestByUnit[unitId] || [])]) {
+      const id = (row as any)?.companyId;
+      if (id) onUnit.add(String(id));
+    }
+    const brandNamed = !!(f.brandId || String(f.brandName || "").trim());
+    const brand = brandNamed ? noteCompany(f.brandId, f.brandName, crmCompanies.filter(c => onUnit.has(String(c.id)))) : null;
+    const day = noteDay(f.date);
+    const money = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? `£${v.toLocaleString("en-GB")}` : null);
+    const premium = money(f.premium), contribution = money(f.fittingOutContribution);
+    setWipForm(prev => ({
+      ...prev,
+      ...(brand && String(brand.id) !== prev.tenantId ? { tenantId: String(brand.id), tenantName: brand.name, tenantEntityId: "", tenantEntityName: "" } : {}),
+      askingRent: noteNumber(f.rentPa) ?? prev.askingRent,
+      leaseLength: noteNumber(f.termYears) ?? prev.leaseLength,
+      rentFree: noteNumber(f.rentFreeMonths) ?? prev.rentFree,
+      comments: addNoteLines(prev.comments, [
+        f.breakOption ? `Break: ${String(f.breakOption).trim()}` : null,
+        typeof f.turnoverRentPct === "number" ? `Turnover rent: ${f.turnoverRentPct}%` : null,
+        premium ? `Premium: ${premium}` : null,
+        contribution ? `Capital contribution: ${contribution}` : null,
+        f.rentReview ? `Rent review: ${String(f.rentReview).trim()}` : null,
+        f.rentDeposit ? `Rent deposit: ${String(f.rentDeposit).trim()}` : null,
+        f.incentives ? `Incentives: ${String(f.incentives).trim()}` : null,
+        f.contactName ? `Contact: ${String(f.contactName).trim()}` : null,
+        noteAgentLine(f),
+        day ? `Dated ${formatCalendarDate(day) || day}` : null,
+        f.note, ...(r.unplaced || []),
+      ], "\n"),
+    }));
+    if (brandNamed) setWipBrandHint(brand ? null : String(f.brandName || "").trim() || null);
   };
 
   // "Log as offer" / "Log as viewing" on a target's comment: the unit's Add
@@ -1815,8 +1869,40 @@ export default function AvailableUnitsPage() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  // A final Heads of Terms already on the unit can be read here without adding
+  // it again (the same answer the Heads of Terms dialog reads).
+  const { data: wipHotsWorkspace } = useQuery<HotsWorkspace, HotsError>({
+    queryKey: ["/api/unit-hots", wipUnit?.id],
+    queryFn: () => hotsCall<HotsWorkspace>("GET", `/api/unit-hots/${encodeURIComponent(wipUnit?.id || "")}`),
+    enabled: !!wipUnit && !isClientTracker,
+    retry: false,
+  });
+  // "Add HOTs" files the document as the unit's final agreed Heads of Terms
+  // through the HOTs flow's own upload (file type hots_final, never public; it
+  // moves no status), then the box below reads it into the form.
+  const addWipHots = async (file: File) => {
+    const unit = wipUnit;
+    if (!unit || wipHotsBusy) return;
+    setWipHotsBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const ws = await hotsCall<HotsWorkspace>("POST", `/api/unit-hots/${encodeURIComponent(unit.id)}/final`, fd);
+      queryClient.setQueryData(["/api/unit-hots", unit.id], ws);
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units", unit.id, "files"] });
+      setWipHots({ unitId: unit.id, fileName: ws?.finalFile?.fileName || file.name, key: Date.now() });
+      toast({ title: "Heads of Terms filed", description: `${file.name} is on the unit as the final agreed Heads of Terms.` });
+    } catch (e: any) {
+      toast({ title: "The Heads of Terms were not added", description: e?.message, variant: "destructive" });
+    } finally {
+      setWipHotsBusy(false);
+    }
+  };
+
   const openWipDialog = (unit: AvailableUnit) => {
     const prop = propertyMap[unit.propertyId];
+    setWipHots(null);
+    setWipBrandHint(null);
     // Pre-fill from the linked deal if there is one — that's the common path
     // now that Add Unit auto-creates a deal at AVA. User just updates the
     // fields that matter at the SOL handover.
@@ -3812,6 +3898,43 @@ export default function AvailableUnitsPage() {
             </div>
           )}
           <div className="space-y-3">
+            {/* Heads of Terms (Woody, 2026-11-17: "allow for add HOTs which should also then file and populate").
+                Filed through the HOTs flow, then read as a note written out in full: values to check, each with Use. */}
+            {wipUnit && (() => {
+              const onFile = wipHotsWorkspace && wipHotsWorkspace.unit?.id === wipUnit.id ? wipHotsWorkspace.finalFile : null;
+              const reading = wipHots?.unitId === wipUnit.id ? wipHots : null;
+              return (
+                <div className="border rounded-md p-3 space-y-2" data-testid="wip-hots">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Heads of Terms</div>
+                      <p className="text-xs text-muted-foreground break-words" data-testid="wip-hots-status">
+                        {reading ? `${reading.fileName} is filed on the unit as the final agreed Heads of Terms.`
+                          : onFile ? `On file: ${onFile.fileName}`
+                          : "Add the final agreed HOTs: they are filed on the unit and their terms are read into this form."}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {onFile && !reading && (
+                        <Button type="button" size="sm" variant="outline" className="h-8 text-xs" disabled={wipHotsBusy}
+                          onClick={() => setWipHots({ unitId: wipUnit.id, fileName: onFile.fileName, key: Date.now() })} data-testid="wip-hots-read">
+                          <Sparkles className="mr-1 h-3.5 w-3.5" /> Read them
+                        </Button>
+                      )}
+                      <Button type="button" size="sm" variant="outline" className="h-8 text-xs" disabled={wipHotsBusy} onClick={() => wipHotsInput.current?.click()} data-testid="wip-hots-add">
+                        {wipHotsBusy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1 h-3.5 w-3.5" />}
+                        {reading || onFile ? "Replace HOTs" : "Add HOTs"}
+                      </Button>
+                    </div>
+                    <input ref={wipHotsInput} type="file" accept=".pdf,.docx" className="hidden" data-testid="wip-hots-file"
+                      onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void addWipHots(file); }} />
+                  </div>
+                  {reading && (
+                    <NoteFill key={reading.key} kind="offer" unitId={wipUnit.id} source={{ type: "hots_final" }} autoRead autoApply onApply={applyPromoteNote} />
+                  )}
+                </div>
+              );
+            })()}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs mb-1">Deal Type</Label>
@@ -3929,6 +4052,7 @@ export default function AvailableUnitsPage() {
                         items={tenantItems}
                         onChange={(v) => {
                           const picked = crmCompanies.find(c => c.id === v);
+                          setWipBrandHint(null);
                           setWipForm(f => ({
                             ...f,
                             tenantId: v,
@@ -3940,7 +4064,14 @@ export default function AvailableUnitsPage() {
                         onCreate={createTenant}
                         createLabel="tenant"
                       />
+                      {wipBrandHint && (
+                        <p className="text-[11px] text-muted-foreground" data-testid="wip-note-brand">
+                          Brand read as <span className="font-medium text-foreground">{wipBrandHint}</span>. Pick it above if it is the tenant.
+                        </p>
+                      )}
                       <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                      {/* No billing entity in Xero yet: Create billing entity finds the company at Companies House,
+                          saves it under this brand and adds it to the firm's Xero (Woody, 2026-11-17). */}
                       <XeroContactPicker
                         testIdPrefix="wip-tenant-entity"
                         value={wipForm.tenantEntityId || null}
@@ -3950,6 +4081,7 @@ export default function AvailableUnitsPage() {
                           tenantEntityId: c?.ContactID || "",
                           tenantEntityName: c?.Name || "",
                         }))}
+                        createFor={wipForm.tenantId ? { id: wipForm.tenantId, name: wipForm.tenantName || "the tenant brand" } : null}
                         compact
                       />
                     </div>
@@ -4096,15 +4228,20 @@ export default function AvailableUnitsPage() {
               );
             })()}
 
-            <div>
+            {/* Terms typed in the Notes fill the boxes above (Woody, 2026-11-17: "use the AI notes to fill in the form function
+                we have for other forms"); the notes stay as typed and are saved on the deal. The words the box opened with
+                (the deal's earlier notes) are not read: only what is typed after them. */}
+            <FillFromNotes key={`promote:${wipUnit?.id || ""}`} kind="offer" unitId={wipUnit?.id} word="notes" newWordsOnly
+              text={wipForm.comments} keepText={v => setWipForm(f => ({ ...f, comments: v }))} onApply={applyPromoteNote}>
               <Label className="text-xs mb-1">Notes</Label>
               <Textarea
                 value={wipForm.comments}
                 onChange={e => setWipForm(f => ({ ...f, comments: e.target.value }))}
                 rows={2}
+                placeholder="e.g. Terms: 10 year lease. Rent £120k pax. 6 MRF. TBO yr 5"
                 data-testid="wip-comments"
               />
-            </div>
+            </FillFromNotes>
           </div>
           {(() => {
             const hardMissing: string[] = [];

@@ -84,7 +84,7 @@ const TRUSTED_HOSTS = ["bgp-wip-app-production-efac.up.railway.app", "chatbgp.ap
 // Xero contacts can carry multiple addresses (POBOX, STREET, DELIVERY).
 // For billing we want POBOX (the one used on invoices); fall back to
 // STREET, then the first non-empty entry.
-function pickBillingAddress(addresses: any[] | undefined | null): any | null {
+export function pickBillingAddress(addresses: any[] | undefined | null): any | null {
   if (!Array.isArray(addresses) || addresses.length === 0) return null;
   const hasContent = (a: any) =>
     a && (a.AddressLine1 || a.AddressLine2 || a.City || a.PostalCode || a.Country);
@@ -519,6 +519,21 @@ export async function xeroPayrollApi(session: any, path: string, opts: { binary?
   return opts.binary ? Buffer.from(await res.arrayBuffer()) : res.json();
 }
 
+// The Xero contact list the billing-entity picker searches, per organisation
+// ("firm" for the firm-wide session), read from Xero at most every 10 minutes
+// (loadContactList in setupXeroRoutes).
+const contactListCache = new Map<string, { at: number; list: any[] }>();
+
+/** A contact the app has just made in the firm's Xero (server/billing-entity.ts), put on the cached
+ *  lists of that organisation so the picker finds it before the next read from Xero. */
+export function rememberXeroContact(tenantId: string | null | undefined, contact: any): void {
+  if (!contact?.ContactID) return;
+  for (const key of new Set(["firm", tenantId || "firm"])) {
+    const hit = contactListCache.get(key);
+    if (hit && !hit.list.some((c: any) => c?.ContactID === contact.ContactID)) hit.list.push(contact);
+  }
+}
+
 export function setupXeroRoutes(app: Express) {
   app.get("/api/xero/status", requireAuth, async (req: Request, res: Response) => {
     const clientId = process.env.XERO_CLIENT_ID;
@@ -824,7 +839,6 @@ export function setupXeroRoutes(app: Express) {
   // typing searches that copy. Asking Xero on every keystroke ran into
   // Xero's 60-calls-a-minute limit (429) and the search came back empty
   // (Layla, 2026-10-13). A stale copy is used while Xero is refusing.
-  const contactListCache = new Map<string, { at: number; list: any[] }>();
   const loadContactList = async (key: string, call: (path: string) => Promise<any>) => {
     const hit = contactListCache.get(key);
     if (hit && Date.now() - hit.at < 10 * 60_000) return hit.list;

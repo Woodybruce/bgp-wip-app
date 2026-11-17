@@ -115,6 +115,10 @@ export function NoteFill(props: NoteFillProps) {
 
 function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, autoRead, autoApply, onApply, className }: NoteFillProps) {
   const [source, setSource] = useState<NoteSource | undefined>(sourceProp);
+  // The unit's final Heads of Terms (the Promote to Solicitors box): a whole
+  // document, so its words are not printed here; each value shows its own.
+  const doc = source?.type === "hots_final";
+  const sourceWord = doc ? "Heads of Terms" : "comment";
   const [open, setOpen] = useState(!!sourceProp || !!initialText || !!autoRead);
   const [text, setText] = useState(initialText || "");
   const [reading, setReading] = useState<LettingNoteReading | null>(null);
@@ -171,7 +175,7 @@ function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, a
           data-testid="note-fill-open"
         >
           <Sparkles className="h-3.5 w-3.5 shrink-0" />
-          Paste a note
+          {doc ? "Show what was read from the Heads of Terms" : "Paste a note"}
         </button>
       </div>
     );
@@ -182,7 +186,7 @@ function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, a
       <div className="flex items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-xs font-medium">
           <Sparkles className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          {source ? "Read from the comment" : "Paste a note"}
+          {source ? `Read from the ${sourceWord}` : "Paste a note"}
         </p>
         {!busy && (
           <button
@@ -199,23 +203,25 @@ function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, a
 
       {source ? (
         <div className="space-y-1.5">
-          {reading?.text && <p className="whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-xs text-muted-foreground" data-testid="note-fill-source-text">{reading.text}</p>}
-          {!busy && (
+          {reading?.text && !doc && <p className="whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-xs text-muted-foreground" data-testid="note-fill-source-text">{reading.text}</p>}
+          {!busy && (error || !reading || !doc) && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               {(error || !reading) && (
                 <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={() => read(source)} data-testid="note-fill-read">
-                  <Sparkles className="mr-1 h-3.5 w-3.5" /> Read the comment
+                  <Sparkles className="mr-1 h-3.5 w-3.5" /> Read the {sourceWord}
                 </Button>
               )}
-              <button
-                type="button"
-                data-no-min-touch
-                className="inline-flex min-h-8 items-center text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                onClick={() => { latest.current++; setSource(undefined); setReading(null); setError(null); setFilled(false); setUsed(new Set()); setText(""); }}
-                data-testid="note-fill-other"
-              >
-                Paste a different note
-              </button>
+              {!doc && (
+                <button
+                  type="button"
+                  data-no-min-touch
+                  className="inline-flex min-h-8 items-center text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  onClick={() => { latest.current++; setSource(undefined); setReading(null); setError(null); setFilled(false); setUsed(new Set()); setText(""); }}
+                  data-testid="note-fill-other"
+                >
+                  Paste a different note
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -245,7 +251,7 @@ function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, a
 
       {busy && source && (
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="note-fill-busy">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading the comment…
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading the {sourceWord}…
         </p>
       )}
 
@@ -256,7 +262,7 @@ function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, a
           reading={reading}
           filled={filled}
           used={used}
-          what={source ? "comment" : "note"}
+          what={source ? sourceWord : "note"}
           onFill={() => { onApply(readingToFill(reading)); setFilled(true); }}
           onUse={(one, i) => { if (used.has(i)) return; onApply(one); setUsed(prev => new Set(prev).add(i)); }}
         />
@@ -357,7 +363,7 @@ function ReadingView({ reading, filled, used, what, showUnplaced = true, bare = 
             {filled ? "Fill again" : "Fill the form"}
           </Button>
           <span className="text-[11px] text-muted-foreground" data-testid="note-fill-hint">
-            {filled ? `Form filled from ${what === "note" || what === "comment" ? `this ${what}` : `your ${what}`}. Check it, then save.` : "Fills the form. Check it, then save."}
+            {filled ? `Form filled from ${what === "note" || what === "comment" ? `this ${what}` : what === "Heads of Terms" ? "the Heads of Terms" : `your ${what}`}. Check it, then save.` : "Fills the form. Check it, then save."}
           </span>
         </div>
       )}
@@ -374,6 +380,10 @@ export interface FillFromNotesProps {
   onApply: (reading: LettingNoteReading) => void;
   word?: "comments" | "notes" | "note";
   disabled?: boolean;
+  // Read only the words typed after the ones the box opened with, while it
+  // still starts with them: for a box that opens holding a record's earlier
+  // notes or a label (the Promote to Solicitors box's Notes).
+  newWordsOnly?: boolean;
   children: ReactNode;                // the form's own box (label and text box)
   className?: string;
 }
@@ -392,7 +402,7 @@ export function FillFromNotes(props: FillFromNotesProps) {
   return <FillFromNotesBox {...props} unitId={props.unitId} />;
 }
 
-function FillFromNotesBox({ kind, unitId, offerId, text, keepText, onApply, word = "comments", children, className }: FillFromNotesProps & { unitId: string }) {
+function FillFromNotesBox({ kind, unitId, offerId, text, keepText, onApply, word = "comments", newWordsOnly, children, className }: FillFromNotesProps & { unitId: string }) {
   const [reading, setReading] = useState<LettingNoteReading | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -400,6 +410,12 @@ function FillFromNotesBox({ kind, unitId, offerId, text, keepText, onApply, word
   const [shown, setShown] = useState(true);
   const [used, setUsed] = useState<ReadonlySet<number>>(new Set());
   const lastRead = useRef(text.trim());          // words already in the box when the form opened are not read by themselves
+  const opening = useRef(text.trim());           // what the box opened with
+  // The words that are read: the whole box, or with newWordsOnly what follows the words it opened with.
+  const toRead = (all: string): string => {
+    const now = all.trim();
+    return newWordsOnly && opening.current && now.startsWith(opening.current) ? now.slice(opening.current.length).trim() : now;
+  };
   const latest = useRef(0);
   const textRef = useRef(text); textRef.current = text;
   const onApplyRef = useRef(onApply); onApplyRef.current = onApply;
@@ -417,13 +433,15 @@ function FillFromNotesBox({ kind, unitId, offerId, text, keepText, onApply, word
   };
 
   const words = text.trim();
-  const changed = !!words && words !== lastRead.current;
+  const changed = !!words && words !== lastRead.current && !!toRead(words);
 
   const read = async () => {
     const now = textRef.current.trim();
     if (!now || now === lastRead.current) return;
+    const said = toRead(now);
+    if (!said) return;
     lastRead.current = now;
-    const body: ReadNoteRequest = { kind, text: now.slice(0, NOTE_MAX), ...(offerId ? { offerId } : {}) };
+    const body: ReadNoteRequest = { kind, text: said.slice(0, NOTE_MAX), ...(offerId ? { offerId } : {}) };
     const turn = ++latest.current;
     setBusy(true); setError(null); setReading(null); setFilled(false); setUsed(new Set()); setShown(true);
     try {
@@ -448,7 +466,7 @@ function FillFromNotesBox({ kind, unitId, offerId, text, keepText, onApply, word
     const target = e.target as HTMLElement;
     if (!target?.matches?.("textarea, input")) return;
     if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget as Node)) return;
-    if (textRef.current.trim().split(/\s+/).filter(Boolean).length < 3) return;
+    if (toRead(textRef.current).split(/\s+/).filter(Boolean).length < 3) return;
     void read();
   };
 

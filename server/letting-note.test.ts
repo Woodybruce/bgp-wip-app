@@ -670,6 +670,11 @@ test("the request takes a note or a named comment, never both, never the words o
   assert.ok(!ok({ kind: "offer", text: "rent 120k", source: { type: "target_comment", targetId: "t1", at: "x" } }));
   assert.ok(!ok({ kind: "offer", source: { type: "target_comment", targetId: "t1", at: "x", text: "rent 120k" } }), "a comment's words cannot be sent in");
   assert.ok(!ok({ kind: "offer", source: { type: "brief_comment", targetId: "t1", at: "x" } }));
+  // The unit's final Heads of Terms (17 November 2026): named by type alone; the server finds the file and reads its words.
+  assert.ok(ok({ kind: "offer", source: { type: "hots_final" } }));
+  assert.ok(!ok({ kind: "offer", source: { type: "hots_final", text: "rent 120k" } }), "a document's words cannot be sent in");
+  assert.ok(!ok({ kind: "offer", source: { type: "hots_final", fileId: "f1" } }), "nor which file to read");
+  assert.ok(!ok({ kind: "offer", text: "rent 120k", source: { type: "hots_final" } }));
   assert.ok(!ok({ kind: "deal", text: "rent 120k" }));
   assert.ok(!ok({ kind: "offer", text: "x".repeat(4001) }));
   assert.ok(!ok({ kind: "offer", text: "rent 120k", save: true }));

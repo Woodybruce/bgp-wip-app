@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Receipt, X, Loader2 } from "lucide-react";
+import { Receipt, X, Loader2, Plus } from "lucide-react";
+import { CreateBillingEntityDialog } from "@/components/billing-entity-create";
 
 export interface XeroContact {
   ContactID: string;
@@ -24,6 +25,10 @@ interface Props {
   placeholder?: string;
   testIdPrefix?: string;
   compact?: boolean;
+  // The brand a new billing entity goes under. Given, a search Xero has no
+  // match for offers Create billing entity (Companies House, then the CRM and
+  // the firm's Xero; client/src/components/billing-entity-create.tsx).
+  createFor?: { id: string; name: string } | null;
 }
 
 function formatAddress(addr: any): string {
@@ -41,9 +46,11 @@ export function XeroContactPicker({
   placeholder = "Search Xero contacts…",
   testIdPrefix = "xero-contact",
   compact,
+  createFor,
 }: Props) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState<string | null>(null);   // the search the Create billing entity dialog opened with
   const inputRef = useRef<HTMLInputElement>(null);
   // Opening from a linked contact ("Change") swaps the card for the search
   // box — focus it so typing works straight away (Layla, 2026-10-13: a
@@ -84,7 +91,7 @@ export function XeroContactPicker({
   // Nothing at all came back — ask the server which Xero organisation it
   // searched, so the empty list says why (Layla, 2026-10-13).
   const emptyAnswer = open && !isFetching && !notConnected && !error && contacts.length === 0;
-  const { data: check } = useQuery<any>({
+  const { data: check, isFetching: checking } = useQuery<any>({
     queryKey: ["/api/xero/contacts-check"],
     queryFn: async () => {
       const r = await fetch("/api/xero/contacts-check", { credentials: "include", headers: getAuthHeaders() });
@@ -97,11 +104,19 @@ export function XeroContactPicker({
   const describe = (label: string, x: any) => !x?.connected ? `${label}: not signed in`
     : x.error ? `${label}: Xero said "${x.error}"`
     : `${label}: ${x.org || "unknown organisation"}, ${x.contacts} contacts${x.moved ? " (moved to the firm's organisation — search again)" : ""}${x.orgs?.length > 1 ? ` · your Xero login sees ${x.orgs.join(", ")}` : ""}`;
+  // The firm's Xero link answered with its contacts, so a search with no match
+  // means the company is not in Xero yet, not a connection problem (Woody,
+  // 2026-11-17: "Its saying not on xero but is connected to Xero just new
+  // billing entity for the brand"). The reconnect advice is kept for a real
+  // connection problem; the person's own sign-in does not matter here.
+  const firmAnswers = !!check?.firm?.connected && !check.firm.error && Number(check.firm.contacts) > 0;
+  const notInXero = emptyAnswer && !!trimmed && firmAnswers;
+  const stillChecking = emptyAnswer && !!trimmed && !check && checking;
 
   const showSelected = !!value;
   const selectedAddress = cachedAddress ? formatAddress(cachedAddress) : "";
 
-  if (showSelected && !open) {
+  if (showSelected && !open && creating === null) {
     return (
       <div className={`flex items-start gap-2 rounded-md border bg-background px-3 py-2 ${compact ? "" : "min-h-[44px]"}`} data-testid={`${testIdPrefix}-selected`}>
         <Receipt className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
@@ -176,10 +191,25 @@ export function XeroContactPicker({
               Xero search didn't work: {(error as Error).message.slice(0, 200)}
             </div>
           )}
-          {!isFetching && !notConnected && !error && contacts.length === 0 && (
+          {!isFetching && !notConnected && !error && contacts.length === 0 && (notInXero ? (
+            <div className="px-3 py-2 text-xs text-muted-foreground space-y-1.5" data-testid={`${testIdPrefix}-not-in-xero`}>
+              <p>“{trimmed}” is not in Xero yet.</p>
+              {createFor?.id && (
+                <Button
+                  size="sm"
+                  className="h-7 rounded-full"
+                  onMouseDown={(e) => { e.preventDefault(); setCreating(trimmed); setOpen(false); }}
+                  data-testid={`${testIdPrefix}-create`}
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1" />
+                  Create billing entity
+                </Button>
+              )}
+            </div>
+          ) : (
             <div className="px-3 py-2 text-xs text-muted-foreground">
               {trimmed
-                  ? "No Xero contacts found"
+                  ? stillChecking ? "No match in Xero. Checking the Xero link…" : "No Xero contacts found"
                   : "Type to search Xero contacts"}
               {check && (
                 <div className="mt-1 space-y-0.5 text-[11px]" data-testid={`${testIdPrefix}-check`}>
@@ -188,7 +218,7 @@ export function XeroContactPicker({
                 </div>
               )}
             </div>
-          )}
+          ))}
           {!isFetching && fromApp && contacts.length > 0 && (
             <div className="px-3 py-1.5 text-[11px] text-muted-foreground border-b">Xero is busy — these are Xero contacts already used on other deals.</div>
           )}
@@ -216,7 +246,7 @@ export function XeroContactPicker({
               </button>
             );
           })}
-          {!isFetching && !notConnected && (
+          {!isFetching && !notConnected && !notInXero && !stillChecking && (
             <button
               className="w-full text-left px-3 py-2 text-xs text-muted-foreground hover:bg-accent border-t"
               onMouseDown={(e) => { e.preventDefault(); void startXeroConnect({ returnTo: window.location.pathname + window.location.search }); }}
@@ -226,6 +256,16 @@ export function XeroContactPicker({
             </button>
           )}
         </div>
+      )}
+      {createFor?.id && creating !== null && (
+        <CreateBillingEntityDialog
+          open
+          onOpenChange={(v) => { if (!v) setCreating(null); }}
+          brand={createFor}
+          initialQuery={creating}
+          onCreated={(c) => { onChange(c); setSearch(""); setCreating(null); }}
+          testIdPrefix={`${testIdPrefix}-billing-entity`}
+        />
       )}
     </div>
   );

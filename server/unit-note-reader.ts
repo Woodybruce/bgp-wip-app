@@ -34,6 +34,13 @@
 // BGP's own notes: only a BGP login reads it, and every other login gets the
 // same refusal whether or not the comment exists.
 //
+// The unit's final agreed Heads of Terms are a source too (`hots_final`,
+// Woody, 2026-11-17: "allow for add HOTs which should also then file and
+// populate", for the Promote to Solicitors box): the agents who file them
+// (agentControl) may have them read. The server takes the document's text from
+// the file on the unit, cuts it to NOTE_MAX and reads it as any note written
+// out in full: nothing but a sure date, time or brand on the unit fills.
+//
 // BGP's staff list stays closed to every other login: the reader of a login
 // that is not BGP staff is told only that login's own name, so no reply can
 // confirm whether a typed name is one of BGP's people.
@@ -318,7 +325,11 @@ export async function readLettingNote(input: ReadNoteInput, deps: NoteReaderDeps
 export const readNoteBody = z.object({
   kind: z.enum(NOTE_KINDS),
   text: z.string().max(NOTE_MAX).optional(),
-  source: z.object({ type: z.literal("target_comment"), targetId: z.string().min(1).max(200), at: z.string().min(1).max(100) }).strict().optional(),
+  source: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("target_comment"), targetId: z.string().min(1).max(200), at: z.string().min(1).max(100) }).strict(),
+    // The unit's final Heads of Terms: nothing but the type, the server finds the file.
+    z.object({ type: z.literal("hots_final") }).strict(),
+  ]).optional(),
   offerId: z.string().min(1).max(200).optional(),
 }).strict().refine(b => (b.text === undefined) !== (b.source === undefined), "Send a note to read, or name the comment to read, not both.");
 
@@ -396,6 +407,14 @@ async function resolveAgentFirm(db: Db, name: string): Promise<Brand | null> {
 
 const NOT_ON_THIS_LOGIN = "Reading that is not available on this login.";
 const COMMENT_GONE = "That comment is no longer there. Refresh the tracker and try again.";
+const HOTS_GONE = "There are no final Heads of Terms on this unit. Add them first.";
+const HOTS_NO_TEXT = "No text could be read from the Heads of Terms (a scanned PDF has none). Fill the form by hand.";
+// How much of a Heads of Terms document is taken from the file before it is cut to NOTE_MAX.
+const HOTS_TEXT_MAX = 40_000;
+/** Said when the final Heads of Terms were read: a document written out in full fills only a date, a time or a brand on the unit. */
+export const HOTS_READ_REASON = "The Heads of Terms are written out in full, so only a date, a time or a brand already on the unit was filled from them. What was read is listed below: check each one and press Use to put it in the form.";
+/** Added when the document was longer than the reader takes. */
+export const HOTS_CUT_NOTE = `Only the first ${NOTE_MAX.toLocaleString("en-GB")} characters of the document were read.`;
 
 export function setupUnitNoteReaderRoutes(app: Express) {
   const signedIn = (req: Request, res: Response, next: NextFunction) => {
@@ -427,15 +446,35 @@ export function setupUnitNoteReaderRoutes(app: Express) {
       let text = cleanNote(body.text || "");
       let author: string | null = null;
       let fromTarget: { brand: Brand | null; operatorName: string; day: string | null } | null = null;
-      if (body.source) {
+      let fromHots: { cut: boolean } | null = null;
+      if (body.source?.type === "hots_final") {
+        // The unit's final agreed Heads of Terms, filed by the HOTs flow
+        // (never public). Read for the agents running the letting, the logins
+        // that file them: BGP staff and the scheme's joint agent. A document is
+        // prose, so the reader fills only what guardReading allows and lists
+        // the rest to check, as for any note written out in full.
+        if (!access.agentControl) return res.status(403).json({ message: NOT_ON_THIS_LOGIN });
+        const file = (await pool.query(
+          `SELECT f.file_path FROM available_units u
+             JOIN unit_marketing_files f ON f.id = u.hots_final_file_id AND f.unit_id = u.id WHERE u.id = $1`, [unitId])).rows[0];
+        if (!file?.file_path) return res.status(404).json({ message: HOTS_GONE });
+        // The document reader ChatBGP reads brochures with (pdf-parse, mammoth); no page images.
+        const { readDocumentForAI } = await import("./document-reader");
+        const doc = await readDocumentForAI({ storageKey: String(file.file_path).replace(/^\/uploads\//, ""), includePageImages: false, maxTextChars: HOTS_TEXT_MAX });
+        const whole = doc.ok && !doc.error ? cleanNote(doc.text || "") : "";
+        if (!whole) return res.status(422).json({ message: HOTS_NO_TEXT });
+        text = whole.slice(0, NOTE_MAX);
+        fromHots = { cut: whole.length > NOTE_MAX || !!doc.textTruncated };
+      } else if (body.source?.type === "target_comment") {
+        const comment = body.source;
         // A target's comments are BGP's notes. Refused before anything is
         // looked up, so the answer is the same whether the comment exists or not.
         if (!(access.seesBgpNotes && access.isStaff)) return res.status(403).json({ message: NOT_ON_THIS_LOGIN });
         const target = (await pool.query(
           `SELECT t.operator_name, t.company_id, t.comments FROM unit_target_operators t
-             JOIN unit_briefs b ON b.id = t.brief_id WHERE t.id = $1 AND b.unit_id = $2`, [body.source.targetId, unitId])).rows[0];
+             JOIN unit_briefs b ON b.id = t.brief_id WHERE t.id = $1 AND b.unit_id = $2`, [comment.targetId, unitId])).rows[0];
         const log: any[] = Array.isArray(target?.comments) ? target.comments : [];
-        const entry = log.find(c => c && typeof c === "object" && String(c.at) === body.source!.at);
+        const entry = log.find(c => c && typeof c === "object" && String(c.at) === comment.at);
         if (!target || !entry) return res.status(404).json({ message: COMMENT_GONE });
         text = cleanNote(String(entry.text || "").slice(0, NOTE_MAX));
         author = typeof entry.userName === "string" && entry.userName.trim() ? entry.userName.trim().slice(0, 200) : null;
@@ -511,6 +550,8 @@ export function setupUnitNoteReaderRoutes(app: Express) {
         const firm = named ? await resolveAgentFirm(pool, named) : null;
         if (firm) { fields.agentCompanyName = firm.name; fields.agentCompanyId = firm.id; }
       }
+      // The read-back says it read a document, and how much of it.
+      if (fromHots && reading.reason) reading.reason = fromHots.cut ? `${HOTS_READ_REASON} ${HOTS_CUT_NOTE}` : HOTS_READ_REASON;
       res.json(reading);
     } catch (err: any) {
       console.error("[unit-note-reader] read failed:", err?.message || err);
