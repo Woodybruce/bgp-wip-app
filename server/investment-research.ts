@@ -19,7 +19,6 @@ import { requireAuth } from "./auth";
 import { saveFile, getFile, deleteFile } from "./file-storage";
 import { TRACKER_CLASSES } from "@shared/tracker-class";
 import { RESEARCH_AUTO, researchSectorFor } from "@shared/research-sector";
-import { researchPublishedOn, pdfInfoDate } from "@shared/research-date";
 
 export const RESEARCH_SOURCE = "investment-research";
 export const RESEARCH_SECTORS: string[] = ["General", ...TRACKER_CLASSES];
@@ -36,7 +35,7 @@ async function staffOnly(req: Request, res: Response): Promise<boolean> {
   return true;
 }
 
-async function runOnPdf(buffer: Buffer, cmd: string, args: string[]): Promise<string> {
+async function pdfText(buffer: Buffer): Promise<string> {
   const fsp = await import("node:fs/promises");
   const os = await import("node:os");
   const path = await import("node:path");
@@ -46,43 +45,15 @@ async function runOnPdf(buffer: Buffer, cmd: string, args: string[]): Promise<st
     const file = path.join(dir, "f.pdf");
     await fsp.writeFile(file, buffer);
     return await new Promise<string>((resolve) => {
-      execFile(cmd, [...args, file, ...(cmd === "pdftotext" ? ["-"] : [])], { timeout: 60_000, maxBuffer: 16 * 1024 * 1024 }, (err, out) => resolve(err ? "" : String(out || "")));
+      execFile("pdftotext", ["-l", "60", file, "-"], { timeout: 60_000, maxBuffer: 16 * 1024 * 1024 }, (err, out) => resolve(err ? "" : String(out || "")));
     });
   } catch { return ""; } finally { await fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
-}
-const pdfText = (buffer: Buffer) => runOnPdf(buffer, "pdftotext", ["-l", "60"]);
-const isPdf = (name: string, type?: string | null) => type === "application/pdf" || /\.pdf$/i.test(name);
-
-// The date the report was published (shared/research-date.ts), kept in
-// last_modified; ai_tags[1] = "dated" marks a row whose date has been worked
-// out ("undated": nothing found, so the upload date stands).
-async function publishedOn(fileName: string, buffer: Buffer | null, type: string | null, text: string | null): Promise<Date | null> {
-  const pdfDate = buffer && isPdf(fileName, type) ? pdfInfoDate(await runOnPdf(buffer, "pdfinfo", [])) : null;
-  return researchPublishedOn(fileName, text, pdfDate);
-}
-const tagsFor = (addedBy: string | null, published: Date | null) => [addedBy || "", published ? "dated" : "undated"];
-
-let dating: Promise<void> | null = null;
-// Files saved before the date was read (the first batch of 17 November) are
-// dated once, on the first read of the list after this shipped.
-async function dateOlderFiles(): Promise<void> {
-  const { rows } = await pool.query(
-    `SELECT id, file_name, file_path, left(content, 1500) AS cover, ai_tags, indexed_at FROM knowledge_base
-      WHERE source = $1 AND NOT (coalesce(ai_tags, '{}') && ARRAY['dated','undated'])`, [RESEARCH_SOURCE]);
-  for (const r of rows) {
-    try {
-      const f = isPdf(r.file_name) ? await getFile(r.file_path) : null;
-      const published = await publishedOn(r.file_name, f?.data || null, f?.contentType || null, r.cover);
-      await pool.query(`UPDATE knowledge_base SET last_modified = $2, ai_tags = $3 WHERE id = $1`,
-        [r.id, published || r.indexed_at, tagsFor((r.ai_tags || [])[0] || null, published)]);
-    } catch (e: any) { console.warn("[investment-research] dating failed:", r.file_name, e?.message); }
-  }
 }
 
 async function readText(file: Express.Multer.File): Promise<string | null> {
   const name = file.originalname.toLowerCase();
   let text = "";
-  if (isPdf(name, file.mimetype)) text = await pdfText(file.buffer);
+  if (file.mimetype === "application/pdf" || name.endsWith(".pdf")) text = await pdfText(file.buffer);
   else if (/^text\//.test(file.mimetype) || /\.(txt|csv|md)$/.test(name)) text = file.buffer.toString("utf8");
   text = text.replace(/\u0000/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   return text ? text.slice(0, 400_000) : null;
@@ -91,18 +62,15 @@ async function readText(file: Express.Multer.File): Promise<string | null> {
 const row = (r: any) => ({
   id: r.id, fileName: r.file_name, sector: r.category || "General", note: r.summary || null,
   sizeBytes: r.size_bytes ?? null, addedAt: r.indexed_at, addedBy: (r.ai_tags || [])[0] || null,
-  publishedAt: (r.ai_tags || []).includes("dated") ? r.last_modified : null,
   readable: !!r.has_text,
 });
 
 export function registerInvestmentResearchRoutes(app: Express) {
   app.get("/api/investment-research", requireAuth, async (req, res) => {
     if (!(await staffOnly(req, res))) return;
-    if (!dating) dating = dateOlderFiles().catch((e) => { console.warn("[investment-research] dating:", e?.message); });
-    await dating;
     const { rows } = await pool.query(
-      `SELECT id, file_name, category, summary, size_bytes, indexed_at, last_modified, ai_tags, (content IS NOT NULL AND content <> '') AS has_text
-         FROM knowledge_base WHERE source = $1 ORDER BY last_modified DESC NULLS LAST, indexed_at DESC`, [RESEARCH_SOURCE]);
+      `SELECT id, file_name, category, summary, size_bytes, indexed_at, ai_tags, (content IS NOT NULL AND content <> '') AS has_text
+         FROM knowledge_base WHERE source = $1 ORDER BY indexed_at DESC`, [RESEARCH_SOURCE]);
     res.json({ sectors: RESEARCH_SECTORS, files: rows.map(row) });
   });
 
@@ -122,13 +90,12 @@ export function registerInvestmentResearchRoutes(app: Express) {
       const key = `${RESEARCH_SOURCE}/${randomUUID()}-${f.originalname.replace(/[^\w.\- ]+/g, "_")}`;
       await saveFile(key, f.buffer, f.mimetype || "application/octet-stream", f.originalname);
       const content = await readText(f);
-      const published = await publishedOn(f.originalname, f.buffer, f.mimetype, content);
       const sector = auto ? researchSectorFor(f.originalname, [note, content].filter(Boolean).join("\n")) : picked;
       const { rows: [r] } = await pool.query(
         `INSERT INTO knowledge_base (file_name, file_path, summary, content, category, ai_tags, size_bytes, last_modified, source)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, coalesce($9, now()), $8)
-         RETURNING id, file_name, category, summary, size_bytes, indexed_at, last_modified, ai_tags, (content IS NOT NULL AND content <> '') AS has_text`,
-        [f.originalname, key, note, content, sector, tagsFor(u?.name || null, published), f.size, RESEARCH_SOURCE, published]);
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8)
+         RETURNING id, file_name, category, summary, size_bytes, indexed_at, ai_tags, (content IS NOT NULL AND content <> '') AS has_text`,
+        [f.originalname, key, note, content, sector, u?.name ? [u.name] : null, f.size, RESEARCH_SOURCE]);
       saved.push(row(r));
     }
     res.json({ files: saved });
@@ -142,7 +109,7 @@ export function registerInvestmentResearchRoutes(app: Express) {
     if (!sets.length) return res.status(400).json({ error: "Nothing to change" });
     const { rows: [r] } = await pool.query(
       `UPDATE knowledge_base SET ${sets.join(", ")} WHERE id = $1 AND source = $2
-       RETURNING id, file_name, category, summary, size_bytes, indexed_at, last_modified, ai_tags, (content IS NOT NULL AND content <> '') AS has_text`, vals);
+       RETURNING id, file_name, category, summary, size_bytes, indexed_at, ai_tags, (content IS NOT NULL AND content <> '') AS has_text`, vals);
     if (!r) return res.status(404).json({ error: "Not found" });
     res.json(row(r));
   });

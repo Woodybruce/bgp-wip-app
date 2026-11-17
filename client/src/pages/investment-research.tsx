@@ -14,13 +14,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FileText, Search, Trash2, Upload } from "lucide-react";
 
-type ResearchFile = { id: string; fileName: string; sector: string; note: string | null; sizeBytes: number | null; addedAt: string; publishedAt: string | null; addedBy: string | null; readable: boolean };
+type ResearchFile = { id: string; fileName: string; sector: string; note: string | null; sizeBytes: number | null; addedAt: string; addedBy: string | null; readable: boolean };
 type Feed = { sectors: string[]; files: ResearchFile[] };
 
 const KEY = ["/api/investment-research"];
 const AUTO = "auto";
 const fmtSize = (b: number | null) => b == null ? "" : b > 1_048_576 ? `${(b / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
-const fmtMonth = (d: string) => { try { return new Date(d).toLocaleDateString("en-GB", { month: "short", year: "numeric", timeZone: "UTC" }); } catch { return ""; } };
 const fmtDate = (d: string) => { try { return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }); } catch { return ""; } };
 
 export default function InvestmentResearch() {
@@ -73,7 +72,7 @@ export default function InvestmentResearch() {
           <Input placeholder="Search research..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" data-testid="input-research-search" />
         </div>
         <p className="text-xs text-muted-foreground flex-1 min-w-[200px]">
-          Newest publication first. Saved here, a PDF or text file is also read by ChatBGP, so it can draw on it for market intel.
+          Saved here, a PDF or text file is also read by ChatBGP, so it can draw on it for market intel.
         </p>
         <Button onClick={() => setUploadOpen(true)} data-testid="button-research-upload">
           <Upload className="h-4 w-4 mr-1" /> Add files
@@ -108,7 +107,7 @@ export default function InvestmentResearch() {
                 </button>
                 <NoteLine file={f} onSave={(note) => update.mutate({ id: f.id, body: { note } })} />
                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                  {[f.publishedAt ? `Published ${fmtMonth(f.publishedAt)}` : "Publication date not found", `added ${fmtDate(f.addedAt)}`, f.addedBy, fmtSize(f.sizeBytes), f.readable ? "read by ChatBGP" : "filed by name only"].filter(Boolean).join(" · ")}
+                  {[fmtDate(f.addedAt), f.addedBy, fmtSize(f.sizeBytes), f.readable ? "read by ChatBGP" : "filed by name only"].filter(Boolean).join(" · ")}
                 </p>
               </div>
               <Select value={f.sector} onValueChange={(v) => update.mutate({ id: f.id, body: { sector: v } })}>
