@@ -124,7 +124,12 @@ test('Find matching requirements: twenty at most, and a client is sent its own c
   const { body } = await client.run();
   assert.deepEqual(body.map(r => r.id), ['r-rest', 'r-none', 'r-a3', 'r-food']);
   for (const row of body) for (const key of ['state', 'origin', 'last_listed_at', 'bgp_contact_user_ids', 'updated_at']) assert.ok(!(key in row), `${key} sent to a client`);
-  assert.match(client.sql.find(q => /SELECT r\.id, r\.use/.test(q.text)).text, /'PIPnet' = ANY\(coalesce\(r\.sources/);
+  // Every requirement is open to a client since 17 November 2026: no PIPnet
+  // cut, and newest first (an order the live state moves would tell it which
+  // ones BGP has confirmed).
+  const clientQuery = client.sql.find(q => /SELECT r\.id, r\.use/.test(q.text)).text;
+  assert.doesNotMatch(clientQuery, /PIPnet/);
+  assert.match(clientQuery, /<> 'closed' ORDER BY r\.created_at DESC/);
 });
 
 test('Find matching requirements: a unit outside the client\'s properties is refused before any requirement is read', async () => {

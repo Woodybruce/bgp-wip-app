@@ -80,9 +80,14 @@ const sameList = (a: string[], b: string[] | null | undefined) =>
 
 const ukDay = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" });
 
-// Client logins are shown requirement rows labelled PIPnet (server/crm.ts).
-// What a staff member tells ChatBGP is BGP's own knowledge, so it is never
-// copied onto such a row automatically.
+// A row labelled PIPnet: what a staff member tells ChatBGP is BGP's own
+// knowledge, so it is never copied onto such a row automatically (it is kept
+// as staff-only evidence). Written when client logins were shown only those
+// rows. Since 17 November 2026 every requirement is open to client logins
+// (Woody: "keep all requirements open for clients"), BGP's own included, so
+// the notes ChatBGP adds to the Comments of any other row are read by them
+// too. This carve-out was left as it was: whether ChatBGP should keep a
+// staff member's words off every row is Woody's call.
 const clientsCanSee = (r: RequirementRow) => Array.isArray(r.sources) && r.sources.includes("PIPnet");
 
 interface Brief {
@@ -427,12 +432,17 @@ export const OPEN_REQUIREMENTS_CONTEXT_SQL = `SELECT r.name, r.use, r.size, r.re
  WHERE r.deal_id IS NULL AND ${requirementStateSql("r")} IN ('live', 'to_confirm')
  ORDER BY ${STATE_RANK(requirementStateSql("r"))}, coalesce(r.last_confirmed_at, r.updated_at, r.created_at) DESC NULLS LAST LIMIT 25`;
 
-/** Requirements whose locations name a property, for a property chat thread. Never closed ones; a client login gets only rows it can already see. */
+/**
+ * Requirements whose locations name a property, for a property chat thread.
+ * Never closed ones. A client login reads every requirement since 17 November
+ * 2026, so it gets them all, newest first (the live-first order is BGP's) and
+ * with no state tag (the caller adds requirementContextTag for staff only).
+ */
 export const propertyRequirementsContextSql = (forClient: boolean) => `SELECT r.name, r.use, r.size, c.name as company_name, ${LIVE_COLUMNS}
   FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON r.company_id = c.id
  WHERE r.requirement_locations IS NOT NULL AND EXISTS (SELECT 1 FROM crm_properties p WHERE p.id = $1 AND (r.requirement_locations && ARRAY[p.name]))
-   AND ${requirementStateSql("r")} <> 'closed'${forClient ? ` AND 'PIPnet' = ANY(r.sources)` : ""}
- ORDER BY ${STATE_RANK(requirementStateSql("r"))} LIMIT 5`;
+   AND ${requirementStateSql("r")} <> 'closed'
+ ORDER BY ${forClient ? "r.created_at DESC NULLS LAST" : STATE_RANK(requirementStateSql("r"))} LIMIT 5`;
 
 /** " [Live: confirmed 12 Nov by Emily]" for a context line. Staff only. */
 export function requirementContextTag(row: Record<string, any>, now: Date = new Date()): string {

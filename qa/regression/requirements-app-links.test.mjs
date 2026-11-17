@@ -10,13 +10,18 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { source, find, ts } = require('./source-harness.cjs');
 
-test('the Requirements page opens a linked requirement and never offers a client the create form', () => {
+// Since 17 November 2026 a client login adds a requirement and amends any
+// (Woody: "keep all requirements open for clients and access to amend and
+// add"): the create form opens for it once the login is known, on the client
+// form (no BGP owner, a brand from its list).
+test('the Requirements page opens a linked requirement and offers a client the create form once its login is known', () => {
   const page = source('client/src/pages/requirements.tsx');
   const table = find('client/src/pages/requirements.tsx', n => ts.isFunctionDeclaration(n) && n.name?.text === 'LeasingTable');
   assert.match(table, /requirementId\?: string \| null \}\)/);
   assert.match(table, /const linked = items\.find\(item => item\.id === requirementId\);/);
   assert.match(table, /\} else if \(clientShape\) \{\s*setSearch\(linked\.name \|\| ""\);\s*\} else \{\s*setEditItem\(linked\);/);
-  assert.match(table, /\{createOpen && !clientShape && \(/);
+  assert.ok(!table.includes('createOpen && !clientShape'), 'the create form is no longer held back from a client login');
+  assert.match(table, /\{createOpen && !!reqUser && \(/);
   assert.match(page, /const requirementIdParam = urlParams\.get\("requirementId"\);/);
   assert.match(page, /initialList=\{listParam\} requirementId=\{requirementIdParam\} \/>/);
 });
@@ -33,8 +38,11 @@ test('links into the page carry what the page reads', () => {
   assert.ok(!/companyId=\$\{c\.id\}`\}[^>]*>Add a requirement/.test(panel + phone), 'no Add link without new=1');
   // The phone's suggestions alert keeps its list.
   assert.match(source('client/src/components/mobile-home.tsx'), /if \(a\.entityType === "requirement"\) return a\.href && a\.href\.startsWith\("\/requirements"\) \? a\.href : `\/requirements`;/);
-  // Brand Gap offers Add requirement to BGP staff only.
-  assert.match(source('client/src/components/brand-gap-panel.tsx'), /\{!noBrandPages && \(t\.requirement_note \|\| canWant\) && <Button/);
+  // Brand Gap offers Add requirement to every login with brand pages, a client
+  // login included (17 November 2026), never a joint agent.
+  const gap = source('client/src/components/brand-gap-panel.tsx');
+  assert.match(gap, /\{!noBrandPages && <Button size="sm" variant="outline" asChild><Link href=\{`\/requirements\?type=leasing&companyId=\$\{t\.brand_company_id\}\$\{t\.requirement_note \? "" : "&new=1"\}`\}/);
+  assert.ok(!gap.includes('(t.requirement_note || canWant) && <Button'), 'Add requirement is no longer held to BGP staff');
 });
 
 test('a client is never told a market listing is a BGP or live requirement', () => {
@@ -57,7 +65,9 @@ test('readers use the one live rule, never "status = Active"', () => {
   const profile = source('server/brand-profile.ts');
   assert.ok(!profile.includes("IN ('', 'active')"), 'tenant rep agents come from live requirements');
   assert.match(profile, /THEN \$\{requirementStateSql\("q"\)\} IN \('live', 'to_confirm'\)/);
-  assert.match(profile, /OR q\.company_id = \$2 OR \$\{requirementClientVisibleSql\("q"\)\}\)/);
+  // A client reads every open requirement's agent since 17 November 2026: no PIPnet cut.
+  assert.match(profile, /ELSE \$\{requirementStateSql\("q"\)\} <> 'closed' END\)\s+ORDER BY ct\.id/);
+  assert.ok(!profile.includes('requirementClientVisibleSql'));
 });
 
 test('ChatBGP sends investment requirements to Investment, not a view that is gone', () => {

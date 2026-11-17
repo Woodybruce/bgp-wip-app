@@ -25,7 +25,7 @@
 // No database import here: everything goes through an IntakeStore, so the
 // rules run the same against Postgres (`pgIntakeStore`) and the in-memory
 // store in the tests beside this file.
-import { requirementLive, requirementClientVisible, CONFIRMED_HOW, REQUIREMENT_ORIGIN_BGP, type ConfirmedHow, type RequirementLive } from "@shared/requirement-live";
+import { requirementLive, CONFIRMED_HOW, REQUIREMENT_ORIGIN_BGP, type ConfirmedHow, type RequirementLive } from "@shared/requirement-live";
 import { getBrandIdentity } from "./brand-identity";
 
 export const EVIDENCE_KINDS = ["call", "meeting", "email", "chat", "team_chat", "gossip", "whatsapp", "viewing", "offer", "deal", "listing", "press", "note"] as const;
@@ -323,8 +323,8 @@ function confirmationPatch(existing: RequirementRow, actor: Actor, how: Confirme
   };
   // A person confirming a draft makes it a real requirement.
   if (String(existing.status || "").trim().toLowerCase() === "draft") patch.status = "Active";
-  // Not on a row client logins are shown (a PIPnet listing): the date would tell them when BGP confirmed it.
-  if (!String(existing.requirement_date || "").trim() && !requirementClientVisible({ sources: existing.sources })) patch.requirement_date = now.toISOString().slice(0, 10);
+  // No requirement date is written: every row is shown to client logins
+  // since 17 November 2026, and the date would tell them when BGP confirmed it.
   // Nobody owns it yet: the person who confirms it does.
   if (!existing.bgp_contact_user_id && !(Array.isArray(existing.bgp_contact_user_ids) && existing.bgp_contact_user_ids.length)) {
     patch.bgp_contact_user_id = actor.id;
@@ -334,10 +334,11 @@ function confirmationPatch(existing: RequirementRow, actor: Actor, how: Confirme
 }
 
 // What was detected fills the brief's EMPTY size, use and places on the
-// requirement being confirmed; a saved value is never replaced. Not on a row
-// client logins are shown (a PIPnet listing): staff words stay off those.
+// requirement being confirmed; a saved value is never replaced. A person
+// checks the detected values before confirming. Until 17 November 2026 a row
+// client logins were shown (a PIPnet listing) was left alone; every row is
+// open to them now, and its size, use and places are the requirement itself.
 function emptyBriefFill(existing: RequirementRow, fields: RequirementFields | undefined, details: Record<string, any> | null | undefined): Record<string, any> {
-  if (requirementClientVisible({ sources: existing.sources })) return {};
   const f = fields || {}, d = details || {};
   const empty = (v: unknown) => !(Array.isArray(v) && v.length);
   const out: Record<string, any> = {};

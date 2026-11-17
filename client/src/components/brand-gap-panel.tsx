@@ -417,9 +417,10 @@ function TargetDetail({ target, onClose, propertyId, propertyName, units, canWan
                 {want.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Target className="w-3.5 h-3.5 mr-1" />}Want at this scheme
               </Button>
             )}
-            {/* Adding a requirement is BGP's (canWant is BGP staff): a client login only
-                opens the brand's requirements, and only when there is one. */}
-            {!noBrandPages && (t.requirement_note || canWant) && <Button size="sm" variant="outline" asChild><Link href={`/requirements?type=leasing&companyId=${t.brand_company_id}${t.requirement_note ? "" : "&new=1"}`} onClick={onClose}><FileText className="w-3.5 h-3.5 mr-1" />{t.requirement_note ? "Its requirements" : "Add requirement"}</Link></Button>}
+            {/* Every login with brand pages adds a requirement or opens the brand's
+                (Woody, 2026-11-17: "keep all requirements open for clients and access
+                to amend and add"); never a joint agent (noBrandPages). */}
+            {!noBrandPages && <Button size="sm" variant="outline" asChild><Link href={`/requirements?type=leasing&companyId=${t.brand_company_id}${t.requirement_note ? "" : "&new=1"}`} onClick={onClose}><FileText className="w-3.5 h-3.5 mr-1" />{t.requirement_note ? "Its requirements" : "Add requirement"}</Link></Button>}
             {!noBrandPages && <Button size="sm" variant="ghost" asChild><Link href={`/companies/${t.brand_company_id}`} onClick={onClose}><Store className="w-3.5 h-3.5 mr-1" />Brand page</Link></Button>}
           </div>
         </>)}

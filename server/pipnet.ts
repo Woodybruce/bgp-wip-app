@@ -1282,10 +1282,11 @@ async function promoteToCrmRequirement(
       else if (!existingReq.landlordPack && landlordPackJson) updates.landlordPack = landlordPackJson;
       if (!existingReq.requirementDate && requirementDateIso) updates.requirementDate = requirementDateIso;
       if ((!existingReq.comments || !existingReq.comments.trim()) && aiSummary) updates.comments = aiSummary;
-      // Append "PIPnet" to the sources array if not already there. Not on
-      // BGP's own rows, nor on an older unlabelled row that may be one:
-      // client logins are shown rows labelled PIPnet, so the label would
-      // hand them a requirement a person at BGP entered.
+      // Append "PIPnet" to the sources array if not already there. Not on a
+      // row a person made (BGP's own or a client's), nor on an older
+      // unlabelled row that may be one: the label says where a row came from
+      // (importMayLabel). A client's row is never folded into at all
+      // (listingTarget).
       const existingSources = existingReq.sources ?? [];
       if (importMayLabel(existingReq, "PIPnet") && !existingSources.includes("PIPnet")) {
         updates.sources = [...existingSources, "PIPnet"];

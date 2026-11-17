@@ -358,13 +358,16 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
   const [evidenceItem, setEvidenceItem] = useState<CrmRequirementsLeasing | null>(null);
   const { toast } = useToast();
   const [, navigate] = useLocation();
-  // Client logins (e.g. Landsec) get a read-only market view — no sync /
-  // inspect / add controls (the writes are gated server-side anyway).
+  // Client logins (e.g. Landsec) see every requirement and may add one and
+  // amend any through the form (Woody, 2026-11-17: "keep all requirements
+  // open for clients and access to amend and add"); no sync / inspect tools,
+  // no delete, and none of the centre's tools.
   const { data: reqUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientView = reqUser?.role === "Client";
   // A client login, and staff viewing as one, are sent no confirmation,
-  // origin or owner: they get the read-only list with no states.
-  // Until the login is known the page keeps to that reduced shape.
+  // origin or owner: they get the list with no states, Open and Closed, and
+  // the form without the BGP owner. Until the login is known the page keeps
+  // to that reduced shape.
   const clientShape = !reqUser || isClientView || !!reqUser.companyScopeId;
   // Still live, owners and In the news are BGP staff routes.
   const canUseCentre = !!reqUser && !clientShape && STAFF_EMAIL.test(String(reqUser.email || "").trim());
@@ -509,7 +512,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
   });
   // ?requirementId= (ChatBGP receipts, landlord chat, a contact's list) opens
   // that requirement: its form for BGP staff, a search for it for a client
-  // login, which has no form. One not in the list says so.
+  // login (its row has Edit). One not in the list says so.
   const openedRequirementId = useRef<string | null>(null);
   useEffect(() => {
     if (!requirementId) { openedRequirementId.current = null; return; }
@@ -703,6 +706,12 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
     companies.forEach((c) => map.set(c.id, c));
     return map;
   }, [companies]);
+  // The brands a client login's form offers: the tenant brands its company
+  // list holds, never its own company (the server refuses anything else).
+  const formCompanies = useMemo(
+    () => (clientShape ? companies.filter((c) => c.id !== reqUser?.companyScopeId && /^tenant/i.test(String(c.companyType || ""))) : companies),
+    [companies, clientShape, reqUser?.companyScopeId],
+  );
 
   const contactMap = useMemo(() => {
     const map = new Map<string, CrmContact>();
@@ -728,7 +737,9 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
       setCreateOpen(false);
-      toast({ title: "Requirement created" });
+      toast(clientShape
+        ? { title: "Requirement added", description: "It is on BGP's list to check with the brand." }
+        : { title: "Requirement created" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1141,12 +1152,14 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
           </DropdownMenuContent>
         </DropdownMenu>
         )}
-        {!isClientView && (
+        {/* Every login adds a requirement, a client login included (Woody,
+            2026-11-17: "keep all requirements open for clients and access to
+            amend and add"). A client's is saved as the client's, for BGP to
+            confirm. */}
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-leasing">
           <Plus className="w-4 h-4 mr-1" />
           Add requirement
         </Button>
-        )}
       </div>
 
       {/* Filters as pills: a number that filters the list is a pill, not a
@@ -1292,7 +1305,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
           emptyIcon={Users}
           emptyDescription={anyFilter
             ? undefined
-            : clientShape ? "No requirements for your portfolio yet — BGP logs these on your behalf" : LIST_NOTES[activeList]}
+            : clientShape ? "No requirements yet. Add one with Add requirement." : LIST_NOTES[activeList]}
           items={listItems.slice(0, phoneShown).map((item) => {
             const live = liveMap.get(item.id)!;
             const stale = requirementGoingStale(live);
@@ -1332,8 +1345,10 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
               { label: "Wants", value: [useText, sizeText].filter(Boolean).join(" · ") },
               { label: "Locations", value: locText },
             ],
-            // A client login cannot save an edit, so it is not offered one.
-            onEdit: clientShape ? undefined : () => setEditItem(item),
+            // Every login amends a requirement through the form, a client login
+            // included (it is offered no delete or centre tools); not until the
+            // login is known.
+            onEdit: reqUser ? () => setEditItem(item) : undefined,
             // Delete lives in the ⋮ menu in the footer — a red Delete on every
             // phone card was one mis-tap from losing a requirement
             // (Woody, 2026-09-27).
@@ -1450,6 +1465,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
         propertyMatchMap={propertyMatchMap}
         liveMap={liveMap}
         readOnly={clientShape}
+        canEdit={!!reqUser}
         staffTools={canUseCentre}
         ownerUsers={staffUsers}
         onStillLive={confirmRow}
@@ -1515,27 +1531,29 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
       )}
 
       {/* Mounted on open, so each new requirement starts from an empty form
-          with the person adding it as its owner. Never for a client login:
-          it cannot add one, so ?new=1 (an Add link it was handed) opens
-          nothing rather than a form whose save is refused. */}
-      {createOpen && !clientShape && (
+          with the person adding it as its owner. A client login adds one too
+          (Woody, 2026-11-17), on the client form: no BGP owner, a brand from
+          its own brand list. It waits for the login, so ?new=1 (an Add link)
+          never opens the wrong form. */}
+      {createOpen && !!reqUser && (
       <LeasingFormDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
         onSubmit={(data) => createMutation.mutate(data)}
         isPending={createMutation.isPending}
-        title="Create Leasing Requirement"
+        title={clientShape ? "Add a leasing requirement" : "Create Leasing Requirement"}
         groups={groups}
-        companies={companies}
+        companies={formCompanies}
         contacts={contacts}
         deals={deals}
         ownerOptions={staffUsers}
         defaultOwnerId={canUseCentre ? meId : null}
         presetCompanyId={autoCreate ? companyFilter : null}
+        clientForm={clientShape}
       />
       )}
 
-      {editItem && (
+      {editItem && !!reqUser && (
         <LeasingFormDialog
           open={!!editItem}
           onOpenChange={(open) => { if (!open) setEditItem(null); }}
@@ -1543,11 +1561,12 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
           isPending={updateMutation.isPending}
           title="Edit Leasing Requirement"
           defaultValues={editItem}
-          companies={companies}
+          companies={formCompanies}
           contacts={contacts}
           deals={deals}
           groups={groups}
           ownerOptions={staffUsers}
+          clientForm={clientShape}
         />
       )}
 
@@ -2803,6 +2822,7 @@ function LeasingSection({
   propertyMatchMap = new Map(),
   liveMap,
   readOnly,
+  canEdit,
   staffTools,
   ownerUsers,
   onStillLive,
@@ -2839,8 +2859,10 @@ function LeasingSection({
   propertyMatchMap?: Map<string, CrmProperty[]>;
   /** The state and honest date line of every row (shared/requirement-live.ts). */
   liveMap: Map<string, RequirementLive>;
-  /** A client login: no state, owner, edit or delete, and nothing to click that it cannot save. */
+  /** A client login: no state, owner, inline editing or delete, and nothing to click that it cannot save. */
   readOnly?: boolean;
+  /** The row's Edit (the form): every login once it is known, a client login included (Woody, 2026-11-17). */
+  canEdit?: boolean;
   /** BGP staff: Still live and the owner picker. */
   staffTools?: boolean;
   ownerUsers: BgpUser[];
@@ -3334,8 +3356,9 @@ function LeasingSection({
                             <Sparkles className="w-3.5 h-3.5" />
                           </Button>
                         )}
-                        {/* A client login cannot save an edit or a delete, so neither is offered. */}
-                        {!readOnly && (
+                        {/* Every login amends a requirement through the form, a
+                            client login included; only BGP staff delete one. */}
+                        {canEdit && (
                         <Button
                           variant="ghost"
                           size="icon"
@@ -3799,6 +3822,7 @@ function LeasingFormDialog({
   ownerOptions,
   defaultOwnerId,
   presetCompanyId,
+  clientForm = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -3815,6 +3839,12 @@ function LeasingFormDialog({
   /** The owner a new requirement starts with: the person adding it. */
   defaultOwnerId?: string | null;
   presetCompanyId?: string | null;   // opened from a brand's page (?companyId=&new=1): start with that brand chosen
+  /**
+   * A client login (or staff viewing as one), Woody 2026-11-17: no BGP owner
+   * (the owner is BGP's, and is never sent), and the brand is picked from its
+   * own brand list, never typed. The server takes only these fields.
+   */
+  clientForm?: boolean;
 }) {
   const [form, setForm] = useState({
     name: defaultValues?.name || "",
@@ -3844,8 +3874,9 @@ function LeasingFormDialog({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const { bgpContactUserIds, ...fields } = form;
     onSubmit({
-      ...form,
+      ...fields,
       companyId: form.companyId || null,
       principalContactId: form.principalContactId || null,
       agentContactId: form.agentContactId || null,
@@ -3856,8 +3887,11 @@ function LeasingFormDialog({
       requirementLocations: form.requirementLocations.length > 0 ? form.requirementLocations : null,
       locationData: form.locationData,
       // The owner list is the field the page reads; the single id follows it.
-      bgpContactUserIds: form.bgpContactUserIds.length > 0 ? form.bgpContactUserIds : null,
-      bgpContactUserId: form.bgpContactUserIds[0] || null,
+      // A client's form sends no owner at all.
+      ...(clientForm ? {} : {
+        bgpContactUserIds: bgpContactUserIds.length > 0 ? bgpContactUserIds : null,
+        bgpContactUserId: bgpContactUserIds[0] || null,
+      }),
     });
   };
   const ownerName = (id: string) => ownerOptions.find((u) => u.id === id)?.name || "Unknown";
@@ -3878,7 +3912,7 @@ function LeasingFormDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label>Name / Company</Label>
+            <Label>{clientForm ? "Brand" : "Name / Company"}</Label>
             <CompanySearchPicker
               companies={companies}
               selectedId={form.companyId}
@@ -3886,13 +3920,21 @@ function LeasingFormDialog({
               onSelect={(c) => setForm({ ...form, name: c.name, companyId: c.id, principalContactId: "" })}
               onClear={() => setForm({ ...form, name: "", companyId: "", principalContactId: "" })}
             />
-            {!form.companyId && (
+            {!form.companyId && !clientForm && (
               <Input
                 placeholder="Or type a name manually..."
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 data-testid="input-leasing-name"
               />
+            )}
+            {clientForm && !form.companyId && form.name && (
+              <p className="text-xs" data-testid="leasing-client-unlinked-name">{form.name} <span className="text-muted-foreground">(no brand linked)</span></p>
+            )}
+            {clientForm && (
+              <p className="text-[11px] text-muted-foreground" data-testid="leasing-client-brand-note">
+                Choose the brand from your brand list, or add it there by typing its name. BGP checks a requirement you add with the brand.
+              </p>
             )}
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -3923,6 +3965,7 @@ function LeasingFormDialog({
               </Select>
             </div>
           </div>
+          {!clientForm && (
           <div className="space-y-2">
             <Label>BGP owner</Label>
             <div className="flex flex-wrap items-center gap-1.5" data-testid="leasing-owner-picker">
@@ -3954,6 +3997,7 @@ function LeasingFormDialog({
             </div>
             <p className="text-[11px] text-muted-foreground">The BGP person who keeps this requirement up to date.</p>
           </div>
+          )}
           <div className="space-y-2">
             <Label>Principal Contact</Label>
             {form.companyId ? (
@@ -4110,7 +4154,8 @@ function LeasingFormDialog({
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={isPending || !form.name} data-testid="button-submit-leasing">
+            {/* A client's requirement names a brand from its list; a row that never had one can still be edited. */}
+            <Button type="submit" disabled={isPending || !form.name || (clientForm && !form.companyId && (!defaultValues || !!defaultValues.companyId))} data-testid="button-submit-leasing">
               {isPending ? "Saving..." : "Save"}
             </Button>
           </DialogFooter>

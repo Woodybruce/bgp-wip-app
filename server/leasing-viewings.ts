@@ -11,7 +11,7 @@ import { buildViewingReport } from "../shared/viewing-report";
 import { reconcileViewingFollowup } from "./viewing-followups";
 import { roundChanges, type OfferStatus } from "../shared/unit-negotiation";
 import { insertFirstRound, lockOffer, readOfferStatus, syncFirstRoundDate, syncNewestRoundToOffer, termsOfRow } from "./unit-negotiation";
-import { requirementLive, requirementClientVisibleSql, requirementStateSql } from "../shared/requirement-live";
+import { requirementLive, requirementStateSql } from "../shared/requirement-live";
 import { IntakeError, confirm as confirmRequirement, suggest as suggestRequirement, pgIntakeStore, type Actor, type EvidenceInput } from "./requirement-intake";
 import { isLandsecCompany, landsecCompanyId, resolveLandsecPortfolio } from "./landsec-schemes";
 
@@ -47,14 +47,14 @@ const scopeSql = `(($1::text IS NULL OR p.landlord_id = $1 OR EXISTS (SELECT 1 F
 // agent on the viewing form. The options and the save check in validateLinks
 // share it, so the form offers only what a save accepts. `scopeParam` holds
 // the client company, NULL for BGP staff. Staff go by the one live rule (live
-// or to confirm). A client login goes only by rows its own Requirements list
-// shows (a PIPnet listing, or its own company's) that are not closed: never
-// BGP's hand-entered rows, and never cut by the live state, which would tell
-// it which listings BGP has confirmed (client rule, CLAUDE.md Requirements
-// centre; as server/client-agent-directory.ts).
+// or to confirm). A client login goes by every requirement that is not closed
+// (all are open to it since 17 November 2026, as on its Requirements list),
+// never cut by the live state, which would tell it which ones BGP has
+// confirmed. A Landsec joint agent is offered no CRM contact or requirement
+// and links none (jointAgentViewingFields).
 const agentRequirementSql = (scopeParam: string) => `(CASE WHEN ${scopeParam}::varchar IS NULL
   THEN ${requirementStateSql("r")} IN ('live', 'to_confirm')
-  ELSE (${requirementClientVisibleSql("r")} OR r.company_id = ${scopeParam}::varchar) AND ${requirementStateSql("r")} <> 'closed' END)`;
+  ELSE ${requirementStateSql("r")} <> 'closed' END)`;
 
 // Who is asking. A Landsec joint agent login is scoped to
 // the whole Landsec company, so the company alone is never enough: their
@@ -80,7 +80,7 @@ export async function viewingCallerIsJointAgent(req: Request): Promise<boolean> 
 const selectViewings = `SELECT v.*, au.property_id, p.name AS property_name, au.unit_name, au.sqft,
   COALESCE(au.unit_id, au.tenancy_unit_id, au.id) AS physical_unit_id,
   co.name AS brand_name, ct.name AS brand_contact_name, ac.name AS agent_contact_name,
-  u.name AS owner_name, u.team, r.name AS requirement_name, (r.id IS NOT NULL AND ${requirementClientVisibleSql("r")}) AS requirement_client_visible
+  u.name AS owner_name, u.team, r.name AS requirement_name
   FROM unit_viewings v LEFT JOIN available_units au ON au.id=v.unit_id
   LEFT JOIN crm_properties p ON p.id=au.property_id
   LEFT JOIN crm_companies co ON co.id=v.company_id
@@ -147,11 +147,9 @@ export function projectViewing(row: any, scoped = false, jointAgent = false): Vi
     v.issues = [...new Set([...v.issues, ...sourceIssues, "Confirm the viewing details"] )];
   }
   delete v.brandName; delete v.brandContactName;
-  // A client login is told the name of a linked requirement only when its own
-  // list shows that row (a PIPnet listing). The id stays, so a client's save
-  // does not unlink a requirement BGP attached.
-  if (scoped && !v.requirementClientVisible) v.requirementName = null;
-  delete v.requirementClientVisible;
+  // A client login is told the name of a linked requirement: its list shows
+  // every one since 17 November 2026. A joint agent is not (the serializer
+  // below takes the requirement off its copy).
   return serializeViewingForScope(v, scoped, jointAgent);
 }
 
@@ -261,10 +259,10 @@ async function validateLinks(db: PoolClient, value: any, scopeIn: ScopeInput, ex
     }
   }
   if (value.requirementId) {
-    const req = (await db.query(`SELECT r.company_id, (${requirementClientVisibleSql("r")} OR r.company_id = $2) AS client_visible FROM crm_requirements_leasing r WHERE r.id=$1`, [value.requirementId, scope])).rows[0];
-    // A client login may link only a requirement its own list shows; one it cannot see is refused in the same words as a wrong brand.
-    const hiddenFromClient = !!scope && value.requirementId !== existing?.requirementId && !req?.client_visible;
-    if (!req || !value.companyId || req.company_id !== value.companyId || hiddenFromClient) throw new ViewingError(400, "The requirement must belong to the viewing brand");
+    // Any requirement of the viewing brand: a client login's list shows every
+    // one since 17 November 2026. A joint agent links none (jointAgentViewingFields).
+    const req = (await db.query(`SELECT r.company_id FROM crm_requirements_leasing r WHERE r.id=$1`, [value.requirementId])).rows[0];
+    if (!req || !value.companyId || req.company_id !== value.companyId) throw new ViewingError(400, "The requirement must belong to the viewing brand");
   }
   return { brand, contact };
 }
@@ -718,11 +716,11 @@ export function registerLeasingViewingRoutes(app: Express) {
     // another client's login does not.
     const jointAgents = !scope || await isLandsecCompany(scope) ? await jointAgentPeople() : [];
     const owners = [...bgpAgents, ...jointAgents];
-    // A client login is offered only the requirements it can already see on
-    // the Requirements page (its own, and PIPnet listings): never BGP's own.
-    // Nobody is offered a closed one (past, archived, satisfied: the one live rule).
+    // Every requirement of the brands offered, as the Requirements page shows
+    // them to a client login too since 17 November 2026. Nobody is offered a
+    // closed one (past, archived, satisfied: the one live rule).
     const requirements = (await pool.query(`SELECT r.id,r.name,r.company_id FROM crm_requirements_leasing r WHERE r.company_id=ANY($1::varchar[])
-      AND ($2::text IS NULL OR r.company_id=$2 OR ${requirementClientVisibleSql("r")}) AND ${requirementStateSql("r")} <> 'closed' ORDER BY r.name`, [brandIds,scope])).rows.map(toCamel);
+      AND ${requirementStateSql("r")} <> 'closed' ORDER BY r.name`, [brandIds])).rows.map(toCamel);
     return { units, brands, contacts, owners, requirements };
   }));
 

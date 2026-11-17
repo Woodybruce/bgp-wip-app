@@ -1198,8 +1198,9 @@ export class DatabaseStorage implements IStorage {
 
   async createCrmRequirementLeasing(req: InsertCrmRequirementsLeasing): Promise<CrmRequirementsLeasing> {
     // Requirements centre: a row made here is BGP's own unless the caller
-    // says it came from an import, and a confirmation with no named person
-    // behind it is not kept. The imports and the intake stamp their own.
+    // says it came from an import or a client login (origin 'client'), and a
+    // confirmation with no named person behind it is not kept. The imports,
+    // the intake and the client's Add requirement stamp their own.
     const confirmed = !!req.lastConfirmedAt && !!(req.lastConfirmedBy || req.lastConfirmedByName);
     const values = { ...req, origin: req.origin ?? "bgp", ...(confirmed ? {} : { lastConfirmedAt: null, lastConfirmedBy: null, lastConfirmedByName: null, confirmedHow: null }) };
     const [r] = await db.insert(crmRequirementsLeasing).values(values).returning();

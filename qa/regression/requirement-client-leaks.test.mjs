@@ -1,11 +1,11 @@
-// Three places that handed client logins BGP's own leasing requirements, or
-// let them work out which PIPnet listings BGP has confirmed (audit, 17
-// November 2026). The rule is CLAUDE.md "Requirements centre": a client is
-// only ever given rows labelled PIPnet (and, on a few screens, its own
-// company's), by source and month; never BGP's hand-entered rows, who
-// confirmed one, or the state. Each test runs the real function cut out of
-// its source. The fake database checks the SQL it is sent for the rule, then
-// answers by the same rule in JS (requirementClientVisible, requirementLive).
+// What client logins are sent of BGP's leasing requirements. Since 17
+// November 2026 every requirement is open to a client login, to read, add and
+// amend (Woody: "keep all requirements open for clients and access to amend
+// and add"; CLAUDE.md "Requirements centre"). What stays BGP's own is the
+// state, who confirmed a requirement and when, and any order a confirmation
+// moves. Each test runs the real function cut out of its source. The fake
+// database checks the SQL it is sent, then answers by the same rule in JS
+// (requirementLive).
 //   node --import tsx --test qa/regression/requirement-client-leaks.test.mjs
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -18,7 +18,7 @@ import { isBrandSignalRelevant } from '../../server/brand-news-relevance.ts';
 import { rankCompanyHeroImages } from '../../shared/brand-image-selection.ts';
 import { publishableBrandImage } from '../../server/brand-publishing.ts';
 import { clientBrandAnalysis } from '../../shared/tenant-categories.ts';
-import { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql, requirementClientVisible, requirementLive } from '../../shared/requirement-live.ts';
+import { requirementReason, requirementStateSql, requirementLiveColumnsSql, requirementLive } from '../../shared/requirement-live.ts';
 const require = createRequire(import.meta.url);
 const { find, route, evaluate, ts } = require('./source-harness.cjs');
 
@@ -27,7 +27,7 @@ const PACK = 'server/brand-pack.ts';
 const VIEWINGS = 'server/leasing-viewings.ts';
 const fn = (file, name) => find(file, node => ts.isFunctionDeclaration(node) && node.name?.text === name);
 const constant = (file, name) => find(file, (node, ast) => ts.isVariableStatement(node) && node.declarationList.declarations.some(d => d.name.getText(ast) === name));
-const requirementBindings = { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql };
+const requirementBindings = { requirementReason, requirementStateSql, requirementLiveColumnsSql };
 const squash = s => s.replace(/\s+/g, ' ');
 const ago = days => new Date(Date.now() - days * 86400000).toISOString();
 
@@ -36,7 +36,7 @@ const cook = () => ({ id: 'cook', name: 'COOK', company_type: 'Tenant - Food', d
 
 // The brand's requirement rows as the database holds them.
 const REQUIREMENTS = [
-  // BGP's own, hand-entered, confirmed this week by a named person: never a client's.
+  // BGP's own, hand-entered, confirmed this week by a named person.
   { id: 'bgp-own', company_id: 'cook', name: 'Bristol requirement', status: 'Active', origin: 'bgp', sources: ['Manual'], use: ['Retail'], size: ['2,000 sq ft'],
     requirement_locations: ['Bristol'], agent_contact_id: 'agent-bgp', requirement_date: '2026-11-01', created_at: ago(30), updated_at: ago(4),
     last_confirmed_at: ago(4), last_confirmed_by: 'u-emily', last_confirmed_by_name: 'Emily Hart', confirmed_how: 'call' },
@@ -55,73 +55,74 @@ const REQUIREMENTS = [
 ];
 const byId = id => REQUIREMENTS.find(r => r.id === id);
 const listedAt = r => Date.parse(r.last_listed_at || r.created_at);
-// Words only BGP's own records hold: the hand-entered requirement, who confirmed what, and the state.
-const BGP_ONLY = /Bristol|Emily|Harry|still_live|last_confirmed|confirmed_how|Active in CRM|record_updated_at|"state"/;
+const STATE_RANK = { live: 0, to_confirm: 1, background: 2, closed: 3 };
+// Who confirmed one, and the state, are BGP's own wherever a requirement goes.
+const WHO_OR_STATE = /Emily|Harry|still_live|last_confirmed|confirmed_how|Active in CRM|record_updated_at|"state"/;
 
 // ── 1. The BGP take: one saved text, read by client logins too ────────────
 
-// What marketListings' SELECT returns, once its SQL holds the client rule and the listing-date order.
-function marketListingRows(sql, values) {
-  assert.ok(sql.includes(`WHERE r.company_id = $1 AND ${requirementClientVisibleSql('r')} AND ${requirementStateSql('r')} <> 'closed'`), 'PIPnet listings that are not closed, only');
-  assert.doesNotMatch(sql, /'active'/i, 'never "any Active row"');
-  assert.equal(squash(sql.slice(sql.lastIndexOf('ORDER BY'))), 'ORDER BY coalesce(r.last_listed_at, r.created_at) DESC NULLS LAST, r.id LIMIT $2', 'never an order a confirmation moves');
-  return REQUIREMENTS.filter(r => r.company_id === values[0] && requirementClientVisible(r) && requirementLive(r).state !== 'closed')
-    .sort((a, b) => listedAt(b) - listedAt(a)).slice(0, values[1]);
+// What openRequirements' SELECT returns: every open requirement, live first.
+function openRequirementRows(sql, values) {
+  assert.ok(sql.includes(`WHERE r.company_id = $1 AND ${requirementStateSql('r')} <> 'closed'`), 'every requirement that is not closed');
+  assert.doesNotMatch(sql, /'active'|PIPnet/i, 'never "any Active row", never the old PIPnet cut');
+  return REQUIREMENTS.filter(r => r.company_id === values[0] && requirementLive(r).state !== 'closed')
+    .sort((a, b) => STATE_RANK[requirementLive(a).state] - STATE_RANK[requirementLive(b).state]).slice(0, values[1]);
 }
 
-test('the BGP take (brand tab) is given market listings only, worded by source and month, and its prompt says so', async () => {
-  const { loadBrandSlice } = evaluate(`${fn(TAKE, 'marketListings')}\n${fn(TAKE, 'loadBrandSlice')}\nexports.loadBrandSlice = loadBrandSlice;`, {
+test('the BGP take (brand tab) is given every open requirement, each worded by the live rule, and never who confirmed it', async () => {
+  const { loadBrandSlice } = evaluate(`${fn(TAKE, 'openRequirements')}\n${fn(TAKE, 'loadBrandSlice')}\nexports.loadBrandSlice = loadBrandSlice;`, {
     ...requirementBindings, brandActionEvidence, bgpDealEvidence: deal => ({ property: deal.name }), relationshipEvidence: async () => null,
     pool: { query: async (sql, values) => {
-      if (sql.includes('FROM crm_requirements_leasing')) return { rows: marketListingRows(sql, values) };
+      if (sql.includes('FROM crm_requirements_leasing')) return { rows: openRequirementRows(sql, values) };
       if (sql.includes('FROM crm_companies')) return { rows: [cook()] };
       return { rows: [] };
     } },
   });
   const slice = await loadBrandSlice('cook');
-  // Newest listing first: under the old order the listing BGP confirmed yesterday came first.
-  assert.deepEqual(Array.from(slice.market_listings, l => l.name), ['York listing', 'Leeds listing']);
-  assert.deepEqual(Array.from(slice.market_listings, l => l.listing), [requirementReason(byId('pipnet-listed')).clientText, requirementReason(byId('pipnet-confirmed')).clientText]);
-  assert.match(slice.market_listings[0].listing, /^PIPnet listing from Oct/);
+  // BGP's own requirement is there now, live first; the closed listing is not.
+  assert.deepEqual(Array.from(slice.requirements, l => l.name), ['Bristol requirement', 'Leeds listing', 'York listing']);
+  assert.deepEqual(Array.from(slice.requirements, l => l.requirement), ['bgp-own', 'pipnet-confirmed', 'pipnet-listed'].map(id => requirementReason(byId(id)).text));
+  assert.match(slice.requirements[0].requirement, /^requirement confirmed /);
+  assert.match(slice.requirements[2].requirement, /^PIPnet listing from Oct, not confirmed$/);
   assert.equal(slice.active_requirements.length, 0, 'brandActionEvidence is given no requirement rows');
-  assert.doesNotMatch(JSON.stringify(slice), BGP_ONLY);
+  assert.equal('market_listings' in slice, false);
+  assert.doesNotMatch(JSON.stringify(slice), WHO_OR_STATE);
   assert.doesNotMatch(JSON.stringify(slice), /Hull/);
 
   const { brandPrompt } = evaluate(`${fn(TAKE, 'brandPrompt')}\nexports.brandPrompt = brandPrompt;`, { BRAND_BRIEF_EVIDENCE_RULES });
   const prompt = brandPrompt(slice);
-  assert.match(prompt, /"listing": "PIPnet listing from Oct/);
-  assert.match(prompt, /call it a listing with its source and month, never a BGP requirement or a confirmed one/);
-  assert.match(prompt, /never say whether BGP holds a requirement for this brand/);
-  assert.match(prompt, /such as "PIPnet listing from Sep"/);
-  assert.doesNotMatch(prompt, /CRM requirement dated|recorded active requirement|grounded in the recorded requirements/);
-  assert.doesNotMatch(prompt, BGP_ONLY);
+  assert.match(prompt, /"requirement": "requirement confirmed /);
+  assert.match(prompt, /call it confirmed only when its line says confirmed, never call one live/);
+  assert.match(prompt, /Never say who at BGP confirmed or logged a requirement/);
+  assert.doesNotMatch(prompt, /BGP's own requirement records are not supplied|never say whether BGP holds a requirement/);
+  assert.doesNotMatch(prompt, WHO_OR_STATE);
 });
 
-test('the BGP take (activity tab) is given market listings only, and its prompt words them as listings', async () => {
-  const { loadActivitySlice } = evaluate(`${fn(TAKE, 'marketListings')}\n${fn(TAKE, 'loadActivitySlice')}\nexports.loadActivitySlice = loadActivitySlice;`, {
+test('the BGP take (activity tab) is given every open requirement, and its prompt words them by their lines', async () => {
+  const { loadActivitySlice } = evaluate(`${fn(TAKE, 'openRequirements')}\n${fn(TAKE, 'loadActivitySlice')}\nexports.loadActivitySlice = loadActivitySlice;`, {
     ...requirementBindings,
     pool: { query: async (sql, values) => {
-      if (sql.includes('FROM crm_requirements_leasing')) return { rows: marketListingRows(sql, values) };
+      if (sql.includes('FROM crm_requirements_leasing')) return { rows: openRequirementRows(sql, values) };
       if (sql.includes('FROM crm_interactions')) return { rows: [{ total: 0, last_at: null, last_90d: 0 }] };
       if (sql.includes('FROM crm_companies WHERE id')) return { rows: [{ name: 'COOK', company_type: 'Tenant - Food', domain: null, domain_url: null }] };
       return { rows: [] };
     } },
   });
   const slice = await loadActivitySlice('cook');
-  assert.deepEqual(Array.from(slice.market_listings, l => l.name), ['York listing', 'Leeds listing']);
+  assert.deepEqual(Array.from(slice.requirements, l => l.name), ['Bristol requirement', 'Leeds listing', 'York listing']);
   assert.equal('active_requirements' in slice, false);
-  assert.doesNotMatch(JSON.stringify(slice), BGP_ONLY);
+  assert.equal('market_listings' in slice, false);
+  assert.doesNotMatch(JSON.stringify(slice), WHO_OR_STATE);
 
   const { activityPrompt } = evaluate(`${fn(TAKE, 'activityPrompt')}\nexports.activityPrompt = activityPrompt;`, { BRAND_BRIEF_EVIDENCE_RULES });
   const prompt = activityPrompt(slice);
-  assert.match(prompt, /market_listings — space they listed on PIPnet and when\) as a listing with its source and month, never as a BGP requirement or a confirmed one/);
-  assert.match(prompt, /never say whether BGP holds one/);
-  assert.doesNotMatch(prompt, BGP_ONLY);
+  assert.match(prompt, /requirements — each with what it is and its date in "requirement"\), attributed with that line: call one confirmed only when its line says confirmed, never live, and never say who at BGP confirmed or logged one/);
+  assert.doesNotMatch(prompt, WHO_OR_STATE);
 });
 
-test('a take saved before the change is not served again on the brand and activity tabs; the uk and intel takes stay', async () => {
+test('a take saved before the morning of 17 November is not served again on the brand and activity tabs; the uk and intel takes stay', async () => {
   const company = cook();
-  // Every take was saved under this version until 17 November 2026; brand and activity takes then held BGP's own requirements.
+  // Every take was saved under this version until 17 November 2026; the version kept since names fewer requirements, never more.
   const before = `${BRAND_BRIEF_POLICY_VERSION}:${PRIVATE_MAIL_POLICY_VERSION}`;
   let saved;
   const { readPreparedBrandAiTake } = evaluate(`${fn(TAKE, 'preparedTakePolicyVersion')}\n${fn(TAKE, 'readPreparedBrandAiTake')}\nexports.readPreparedBrandAiTake = readPreparedBrandAiTake;`, {
@@ -139,7 +140,7 @@ test('a take saved before the change is not served again on the brand and activi
   }
 });
 
-test('a brand with only a market listing still gets a model take; with no evidence at all it gets the plain unknown', async () => {
+test('a brand with only an open requirement still gets a model take; with no evidence at all it gets the plain unknown', async () => {
   const company = { ...cook(), brief_revision: 'revision' };
   const run = async slice => {
     let calls = 0; const written = [];
@@ -147,7 +148,7 @@ test('a brand with only a market listing still gets a model take; with no eviden
       getBrandIdentity, currentOfficialProfileEvidence, BRAND_BRIEF_POLICY_VERSION, PRIVATE_MAIL_POLICY_VERSION, CACHE_TTL_MS: 86400000,
       brandBriefWithoutEvidence, landlordBriefFromRecords, takeKey: () => 'brand-prepared-take:cook:brand', dataHash: () => 'hash',
       loadBrandSlice: async () => slice, brandPrompt: () => 'prompt',
-      callClaude: async () => { calls++; return 'Model take on the PIPnet listing'; },
+      callClaude: async () => { calls++; return 'Model take on the requirement'; },
       pool: { query: async sql => ({ rows: sql.includes('crm_companies') ? [company] : [] }),
         connect: async () => ({ query: async (sql, values) => {
           if (sql.startsWith('SELECT')) return { rows: [company] };
@@ -158,30 +159,32 @@ test('a brand with only a market listing still gets a model take; with no eviden
     return { result: await prepareBrandAiTake('cook', 'brand'), calls, written };
   };
   const evidence = brandActionEvidence(company, [], []);
-  const listed = await run({ ...evidence, market_listings: [{ listing: 'PIPnet listing from Oct', name: 'York listing', uses: [], sizes: [], locations: ['York'] }] });
-  assert.equal(listed.calls, 1);
-  assert.equal(listed.result.text, 'Model take on the PIPnet listing');
-  assert.equal(listed.written[0].policyVersion, `${BRAND_BRIEF_POLICY_VERSION}:market-listings-1:${PRIVATE_MAIL_POLICY_VERSION}`);
-  const none = await run({ ...evidence, market_listings: [] });
+  const held = await run({ ...evidence, requirements: [{ requirement: 'BGP requirement dated 4 Aug, not confirmed', name: 'York', uses: [], sizes: [], locations: ['York'] }] });
+  assert.equal(held.calls, 1);
+  assert.equal(held.result.text, 'Model take on the requirement');
+  // The cache policy version is kept as it was (17 November 2026).
+  assert.equal(held.written[0].policyVersion, `${BRAND_BRIEF_POLICY_VERSION}:market-listings-1:${PRIVATE_MAIL_POLICY_VERSION}`);
+  const none = await run({ ...evidence, requirements: [] });
   assert.equal(none.calls, 0);
   assert.match(none.result.text, /strategy is unconfirmed/);
 });
 
-// ── 2. The Brand Pack: a client's listings in an order that says nothing ──
+// ── 2. The Brand Pack: a client's requirements in an order that says nothing ──
 
 const CLIENT_ORDER = 'ORDER BY coalesce(r.last_listed_at, r.created_at) DESC NULLS LAST LIMIT 3';
 const STAFF_ORDER = `ORDER BY (${requirementStateSql('r')} = 'live') DESC, r.updated_at DESC NULLS LAST LIMIT 3`;
 function packRows(sql) {
   const order = sql.slice(sql.lastIndexOf('ORDER BY'));
-  const clientWhere = sql.includes(`AND ${requirementClientVisibleSql('r')} AND ${requirementStateSql('r')} <> 'closed'`);
-  const rows = REQUIREMENTS.filter(r => clientWhere ? requirementClientVisible(r) && requirementLive(r).state !== 'closed' : ['live', 'to_confirm'].includes(requirementLive(r).state));
+  assert.doesNotMatch(sql, /PIPnet/, 'the old client cut is gone');
+  const clientWhere = sql.includes(`AND ${requirementStateSql('r')} <> 'closed'`);
+  const rows = REQUIREMENTS.filter(r => clientWhere ? requirementLive(r).state !== 'closed' : ['live', 'to_confirm'].includes(requirementLive(r).state));
   if (order === CLIENT_ORDER) rows.sort((a, b) => listedAt(b) - listedAt(a));
   else if (order === STAFF_ORDER) rows.sort((a, b) => (requirementLive(b).state === 'live') - (requirementLive(a).state === 'live') || Date.parse(b.updated_at) - Date.parse(a.updated_at));
   else assert.fail(`unexpected order: ${order}`);
   return rows.slice(0, 3);
 }
 
-test('a client\'s Brand Pack lists its PIPnet listings by listing date, never live first; staff keep live first', async () => {
+test('a client\'s Brand Pack lists every open requirement by listing or added date, never live first; staff keep live first', async () => {
   const queries = [];
   const { loadBrandPackData } = evaluate(`${fn(PACK, 'loadBrandPackData')}\nexports.loadBrandPackData = loadBrandPackData;`, {
     isBrandSignalRelevant, rankCompanyHeroImages, publishableBrandImage, clientBrandAnalysis, ...requirementBindings,
@@ -197,8 +200,10 @@ test('a client\'s Brand Pack lists its PIPnet listings by listing date, never li
 
   const client = await loadBrandPackData('cook', true, null, 'landlord-1', true);
   assert.equal(requirementSql().slice(requirementSql().lastIndexOf('ORDER BY')), CLIENT_ORDER);
-  assert.deepEqual(Array.from(client.requirements, r => r.name), ['York listing', 'Leeds listing'], 'the listing BGP confirmed yesterday is not put first');
-  assert.ok(client.requirements.every(r => /^PIPnet listing from (Oct|Sep)/.test(r.reason)));
+  // BGP's hand-entered requirement is a client's now; the listing BGP confirmed yesterday is not put first.
+  assert.deepEqual(Array.from(client.requirements, r => r.name), ['Bristol requirement', 'York listing', 'Leeds listing']);
+  assert.deepEqual(Array.from(client.requirements, r => r.reason), ['requirement dated 1 Nov', 'PIPnet listing from Oct', 'PIPnet listing from Sep']);
+  assert.doesNotMatch(JSON.stringify(client.requirements), /confirm/i, 'a client is never told whether, or when, BGP confirmed one');
 
   queries.length = 0;
   const staff = await loadBrandPackData('cook');
@@ -209,12 +214,12 @@ test('a client\'s Brand Pack lists its PIPnet listings by listing date, never li
 // ── 3. The viewing form: agents, the save check and the requirement picker ─
 
 // What agentRequirementSql must say: the one live rule for BGP staff (scope
-// NULL); for a client, only rows its own list shows, open ones, never cut by
-// the live state.
-const AGENT_SQL = p => `(CASE WHEN ${p}::varchar IS NULL THEN ${requirementStateSql('r')} IN ('live', 'to_confirm') ELSE (${requirementClientVisibleSql('r')} OR r.company_id = ${p}::varchar) AND ${requirementStateSql('r')} <> 'closed' END)`;
+// NULL); for a client, every requirement that is not closed, never cut by the
+// live state (which would tell it which ones BGP has confirmed).
+const AGENT_SQL = p => `(CASE WHEN ${p}::varchar IS NULL THEN ${requirementStateSql('r')} IN ('live', 'to_confirm') ELSE ${requirementStateSql('r')} <> 'closed' END)`;
 const agentRequirement = (r, scope) => scope == null
   ? ['live', 'to_confirm'].includes(requirementLive(r).state)
-  : (requirementClientVisible(r) || r.company_id === scope) && requirementLive(r).state !== 'closed';
+  : requirementLive(r).state !== 'closed';
 const CONTACTS = [
   { id: 'brand-person', name: 'Brand Person', email: null, company_id: 'cook' },
   { id: 'agent-bgp', name: 'Agent on BGP\'s own requirement', email: null, company_id: 'agency' },
@@ -246,10 +251,10 @@ function viewingDb() {
         ...REQUIREMENTS.filter(r => brandIds.includes(r.company_id) && agentRequirement(r, scope)).map(r => ({ contact_id: r.agent_contact_id, brand_id: r.company_id }))] };
     }
     if (sql.includes('SELECT r.id,r.name,r.company_id FROM crm_requirements_leasing r')) {
-      assert.ok(sql.includes(`($2::text IS NULL OR r.company_id=$2 OR ${requirementClientVisibleSql('r')}) AND ${requirementStateSql('r')} <> 'closed'`), 'no closed requirement is offered');
-      const [brandIds, scope] = params;
-      return { rows: REQUIREMENTS.filter(r => brandIds.includes(r.company_id) && (scope == null || r.company_id === scope || requirementClientVisible(r))
-        && requirementLive(r).state !== 'closed').map(r => ({ id: r.id, name: r.name, company_id: r.company_id })) };
+      assert.ok(sql.includes(`AND ${requirementStateSql('r')} <> 'closed'`), 'no closed requirement is offered');
+      assert.doesNotMatch(sql, /PIPnet|\$2/, 'every open requirement of the brands, for staff and clients alike');
+      const [brandIds] = params;
+      return { rows: REQUIREMENTS.filter(r => brandIds.includes(r.company_id) && requirementLive(r).state !== 'closed').map(r => ({ id: r.id, name: r.name, company_id: r.company_id })) };
     }
     return { rows: [] };
   } };
@@ -262,23 +267,28 @@ async function viewingOptions(viewer) {
     app: { get: (path, ...callbacks) => { handler = callbacks.at(-1); } }, requireAuth: () => {}, handle: body => body,
     viewingScope: async () => viewer, pool: db, scopeSql: 'TRUE', scopeParams: () => [],
     clientBrandSliceSql: async () => 'TRUE', getClientVisibleUserIds: async () => new Set(), jointAgentPeople: async () => [], isLandsecCompany: async () => true,
-    requirementStateSql, requirementClientVisibleSql,
+    requirementStateSql,
   });
   const options = await handler({});
   return { options, db, represents: Object.fromEntries(options.contacts.map(c => [c.id, Array.from(c.representedBrandIds)])) };
 }
 
-test('a client login\'s viewing form offers agents only through requirements its own list shows, open ones, whatever BGP has confirmed', async () => {
+test('a client login\'s viewing form offers agents through every open requirement, whatever BGP has confirmed', async () => {
   const { options, db, represents } = await viewingOptions({ companyId: 'landlord-1', propertyIds: null, jointAgent: false });
-  assert.equal('agent-bgp' in represents, false, 'an agent known only from BGP\'s hand-entered requirement is not offered');
-  assert.equal('agent-closed' in represents, false, 'nor one known only from a closed listing');
+  assert.deepEqual(represents['agent-bgp'], ['cook'], 'BGP\'s own requirement names its agent to a client too');
+  assert.equal('agent-closed' in represents, false, 'never one known only from a closed listing');
   assert.deepEqual(represents['agent-listed'], ['cook'], 'an unconfirmed listing still names its agent: the offer never turns on the live state');
   assert.deepEqual(represents['agent-confirmed'], ['cook']);
   assert.deepEqual(represents['agent-rep'], ['cook']);
   assert.ok('brand-person' in represents);
   assert.equal('stranger' in represents, false);
   assert.equal(db.seen.find(q => q.sql.includes('FROM crm_contacts ct')).params[2], 'landlord-1');
-  assert.deepEqual(Array.from(options.requirements, r => r.id).sort(), ['pipnet-confirmed', 'pipnet-listed']);
+  assert.deepEqual(Array.from(options.requirements, r => r.id).sort(), ['bgp-own', 'pipnet-confirmed', 'pipnet-listed']);
+});
+
+test('a joint agent\'s viewing form offers no CRM contact or requirement', async () => {
+  const { options } = await viewingOptions({ companyId: 'landsec', propertyIds: new Set(['p1']), jointAgent: true });
+  assert.deepEqual([Array.from(options.contacts), Array.from(options.requirements)], [[], []]);
 });
 
 test('BGP staff keep every contact; the brands an agent represents and the requirement picker follow the one live rule', async () => {
@@ -295,7 +305,7 @@ test('BGP staff keep every contact; the brands an agent represents and the requi
 test('a client\'s save accepts exactly the agents its form offers', async () => {
   class ViewingError extends Error { constructor(status, message) { super(message); this.status = status; } }
   const { validateLinks } = evaluate(`${agentSqlSource}\n${fn(VIEWINGS, 'validateLinks')}\nexports.validateLinks = validateLinks;`, {
-    requirementStateSql, requirementClientVisibleSql, ViewingError,
+    requirementStateSql, ViewingError,
     scopeOf: s => s && typeof s === 'object' ? s : { companyId: s || null, propertyIds: null, jointAgent: false },
     assertViewingUnit: async () => null, isClientVisibleBrand: async () => true, getClientVisibleUserIds: async () => new Set(), jointAgentPeople: async () => [],
   });
@@ -310,9 +320,27 @@ test('a client\'s save accepts exactly the agents its form offers', async () => 
         || REQUIREMENTS.some(r => r.company_id === brand && r.agent_contact_id === agent && agentRequirement(r, scope));
       return { rows: eligible ? [{ eligible: 1 }] : [] };
     }
+    if (sql.includes('FROM crm_requirements_leasing r WHERE r.id=$1')) {
+      assert.doesNotMatch(sql, /PIPnet|client_visible/);
+      return { rows: REQUIREMENTS.filter(r => r.id === params[0]).map(r => ({ company_id: r.company_id })) };
+    }
     return { rows: [] };
   } };
-  const save = agentContactId => validateLinks(db, { unitId: 'unit-1', companyId: 'cook', agentContactId }, { companyId: 'landlord-1', propertyIds: null, jointAgent: false });
-  for (const agent of ['agent-listed', 'agent-confirmed', 'agent-rep']) await save(agent);
-  for (const agent of ['agent-bgp', 'agent-closed']) await assert.rejects(save(agent), e => e.status === 403 && /Choose an agent linked to this brand/.test(e.message));
+  const viewer = { companyId: 'landlord-1', propertyIds: null, jointAgent: false };
+  const save = agentContactId => validateLinks(db, { unitId: 'unit-1', companyId: 'cook', agentContactId }, viewer);
+  for (const agent of ['agent-listed', 'agent-confirmed', 'agent-rep', 'agent-bgp']) await save(agent);
+  await assert.rejects(save('agent-closed'), e => e.status === 403 && /Choose an agent linked to this brand/.test(e.message));
+  // A client may link any requirement of the viewing brand, BGP's own included.
+  await validateLinks(db, { unitId: 'unit-1', companyId: 'cook', requirementId: 'bgp-own' }, viewer);
+  await assert.rejects(validateLinks(db, { unitId: 'unit-1', companyId: 'other', requirementId: 'bgp-own' }, viewer), e => e.status === 400);
+});
+
+test('a viewing tells a client the linked requirement\'s name, never a joint agent', () => {
+  const { projectViewing } = evaluate(`${fn(VIEWINGS, 'serializeViewingForScope')}\n${fn(VIEWINGS, 'projectViewing')}\nexports.projectViewing = projectViewing;`, {
+    toCamel: row => ({ ...row }), viewingTypedContact: () => false, viewingMissingDetails: () => [], createHash: require('node:crypto').createHash,
+  });
+  const row = { id: 'v1', requirementId: 'bgp-own', requirementName: 'Bristol requirement', detailsConfirmedAt: '2026-11-01' };
+  assert.equal(projectViewing(row, true, false).requirementName, 'Bristol requirement');
+  assert.equal(projectViewing(row, true, true).requirementName, null);
+  assert.equal(projectViewing(row, true, true).requirementId, null);
 });

@@ -4929,6 +4929,12 @@ app.use("/api/branding/assets", express.static(
     // Client pulls brands into their own CRM from the global directory
     // (crm_extra_brand_ids on their company) — scope-checked per handler.
     "/api/client/crm/",
+    // Clients add a leasing requirement and amend any (Woody, 2026-11-17:
+    // "keep all requirements open for clients and access to amend and add").
+    // The CRM write guard in server/crm.ts lets through only the create and
+    // the save; the handlers take the form's fields and check the brand.
+    // Delete, the landlord pack and the agent sweep stay BGP's.
+    "/api/crm/requirements-leasing",
     // Clients may create + edit deals on their OWN portfolio (Woody, 2026-07:
     // "client needs to be able to do as much as the agent"). The handler
     // forces the deal onto the client's own company and strips every fee

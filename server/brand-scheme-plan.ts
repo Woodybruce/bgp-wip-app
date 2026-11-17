@@ -258,11 +258,12 @@ const isStaff = (v: PlanViewer) => v.kind === "staff";
 const isRestricted = (v: PlanViewer) => v.kind === "joint_agent";
 
 // Requirement detail follows the Requirements page rule for client logins
-// (server/crm.ts): PIPnet listings and the client's own.
-export function requirementDetailHidden(req: any, viewer: PlanViewer): boolean {
+// (server/crm.ts): every requirement since 17 November 2026 (Woody: "keep all
+// requirements open for clients"). A joint agent, another agency with no
+// Brands, reads "Requirement held" and no detail.
+export function requirementDetailHidden(_req: any, viewer: PlanViewer): boolean {
   if (isStaff(viewer)) return false;
-  if (viewer.kind === "joint_agent") return true;
-  return !(req.company_id === viewer.clientCompanyId || (Array.isArray(req.sources) && req.sources.includes("PIPnet")));
+  return viewer.kind === "joint_agent";
 }
 
 function requirementSummary(req: any): string {
@@ -561,7 +562,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
       // never "status = Active": a stale import is not the brand's
       // requirement, and a Draft waiting to be confirmed still is one.
       `/* brand-plan:requirements */ SELECT r.id, r.company_id, r.name, r.size, r.use, r.requirement_locations, r.status, r.sources, r.deal_id,
-              ${iso("COALESCE(r.updated_at, r.created_at)")} AS at
+              ${iso("COALESCE(r.updated_at, r.created_at)")} AS at, ${iso("r.created_at")} AS added_at
          FROM crm_requirements_leasing r WHERE r.company_id = ANY($1) AND ${requirementStateSql("r")} IN ('live', 'to_confirm')
         ORDER BY COALESCE(r.updated_at, r.created_at) DESC NULLS LAST`, [requirementBrandIds])).rows, [] as any[]),
     // The scheme, unit and share columns are read through to_jsonb so the
@@ -769,7 +770,8 @@ export async function brandPlan(q: Queryable, companyId: string, viewer: PlanVie
     requirements: reqs.map((r: any, i: number) => {
       const hidden = requirementDetailHidden(r, viewer);
       return {
-        id: hidden ? `held-${i + 1}` : r.id, summary: hidden ? "Requirement held" : requirementSummary(r), ageDays: hidden ? null : daysSince(r.at, now),
+        // A client's age is from the day the row was added: the last edit moves when BGP confirms one.
+        id: hidden ? `held-${i + 1}` : r.id, summary: hidden ? "Requirement held" : requirementSummary(r), ageDays: hidden ? null : daysSince(staff ? r.at : r.added_at, now),
         source: hidden ? null : (Array.isArray(r.sources) && r.sources.length ? r.sources.join(", ") : null), detailHidden: hidden,
       };
     }),

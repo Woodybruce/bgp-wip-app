@@ -15,7 +15,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { isClientCrmCategory } from "../shared/tenant-categories";
-import { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "../shared/requirement-live";
+import { requirementReason, requirementStateSql, requirementJointAgentVisibleSql, requirementLiveColumnsSql } from "../shared/requirement-live";
 import { suggestPropertyView } from "../shared/property-view";
 import { UK_CENTRES, haversineKm, siteRadiusKm, peerCentresFor, benchmarkCentresFor } from "../shared/uk-centres";
 import { propertyResearchContext, PROPERTY_RESEARCH_USE_PATTERN, PROPERTY_RESEARCH_CENTRE_PATTERN, type PropertyResearchContext } from "../shared/property-research";
@@ -542,13 +542,18 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     // have an open leasing requirement compatible with this
     // property's available units (use class match), each with its state by
     // the one live rule and a dated reason, best-evidenced first. A client
-    // login gets the rows its Requirements list shows (PIPnet listings), by
-    // source and date; `listing` is that shareable line for every viewer.
+    // login reads every requirement (Woody, 2026-11-17: "keep all
+    // requirements open for clients"), by what it is and its own date
+    // (clientText), never the state. A Landsec joint agent, another agency,
+    // keeps the old rule: PIPnet listings only, by source and month.
+    // `listing` is the line every viewer may read, a joint agent included
+    // (a PIPnet listing, listingText): the cached commentary below quotes it.
     // A unit holds a planning class (E(b), A3) and a requirement a use
     // (Restaurant), so the two are lined up by requirementUseFits on the open
     // requirements' uses: compared as text in SQL, every requirement that
     // named a use was dropped (audit, 2026-11-17).
     const reqToday = new Date();
+    const reqViewer = gapScope ? await (await import("./landsec-access")).requirementViewer(req) : "staff";
     const unitsHere: any[] = await pool.query(
       `SELECT id, unit_name, sqft, marketing_status, use_class FROM available_units WHERE property_id = $1`, [propertyId]
     ).then(r => r.rows).catch(() => [] as any[]);
@@ -561,7 +566,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     };
     const matchingRequirements = await pool.query(
       `SELECT r.id, r.use FROM crm_requirements_leasing r
-        WHERE ${requirementStateSql("r")} <> 'closed'${gapScope ? ` AND ${requirementClientVisibleSql("r")}` : ""}`
+        WHERE ${requirementStateSql("r")} <> 'closed'${reqViewer === "joint_agent" ? ` AND ${requirementJointAgentVisibleSql("r")}` : ""}`
     ).then(open => open.rows.filter((r: any) => useFitsHere(r.use)).map((r: any) => String(r.id))
     ).then(ids => ids.length ? pool.query(
       `SELECT r.id, r.name, r.use, r.size, r.requirement_locations,
@@ -586,7 +591,9 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       return {
         id: row.id, name: row.name, use: row.use, size: row.size, requirement_locations: row.requirement_locations,
         company_id: row.company_id, company_name: row.company_name, domain: row.domain,
-        ...(gapScope ? {} : { state: why.state }), reason: gapScope ? why.clientText : why.text, listing: why.clientText, weight: why.weight,
+        ...(gapScope ? {} : { state: why.state }),
+        reason: reqViewer === "staff" ? why.text : reqViewer === "client" ? why.clientText : why.listingText,
+        listing: why.listingText, weight: why.weight,
       };
     }).sort((a: any, b: any) => b.weight - a.weight).slice(0, 30)).catch(() => [] as any[]);
 
@@ -933,10 +940,12 @@ router.get("/api/property/:propertyId/brand-gaps/commentary", requireAuth, async
     }
     const g: any = await gapsRes.json();
 
-    // This commentary is cached once per property and read by staff and the
-    // landlord's logins alike, so it carries only the requirement lines a
-    // client may read: a PIPnet listing by source and date, on a use match.
-    // BGP's own requirements and who confirmed what never go into it.
+    // This commentary is cached once per property and read by staff, the
+    // landlord's logins and a Landsec joint agent at its schemes alike. Every
+    // requirement is open to a client since 17 November 2026, but a joint
+    // agent is another agency and is told of PIPnet listings only, so the
+    // commentary carries only those (`listing`, listingText): a PIPnet listing
+    // by source and date, on a use match. Who confirmed what never goes in.
     const fmtList = (arr: any[], n = 8) => arr.slice(0, n).map((b: any) =>
       `${b.brand_name}${b.requirement_listing ? ` (${b.requirement_listing}, same use as an available unit)` : ""}${b.competing_at?.length ? ` — at ${b.competing_at.join(", ")}` : b.peer_schemes?.length ? ` — at ${b.peer_schemes.slice(0, 3).join(", ")}` : ""}`
     ).join("\n") || "(none)";

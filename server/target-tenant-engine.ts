@@ -20,12 +20,15 @@
 // Landlord clients see the brand movement (BGP conversations, new
 // relationships, BGP clients, BGP deals on their own schemes); counts and
 // other landlords' deals stay BGP-only. Their Brand Gap is sliced by the gap
-// route. Requirements: a client viewer is given PIPnet listings only (the
-// rows its own Requirements list shows), by source and date; BGP's own
-// requirements and who confirmed what are BGP-internal evidence.
+// route. Requirements: every requirement is shareable evidence, worded by
+// what it is and its own date (clientText: "PIPnet listing from Sep",
+// "requirement dated 4 Aug"), since every requirement is open to a client
+// login (Woody, 2026-11-17); its state and whether BGP confirmed it are
+// BGP-internal evidence. A Landsec joint agent, another agency, is given
+// PIPnet listings only.
 import type { Request } from "express";
 import { requirementFitsUnit, parseReqSize } from "@shared/requirement-fit";
-import { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql, type RequirementReason } from "@shared/requirement-live";
+import { requirementReason, requirementStateSql, requirementJointAgentVisibleSql, requirementLiveColumnsSql, type RequirementReason, type RequirementViewer } from "@shared/requirement-live";
 import { isClientCrmCategory } from "@shared/tenant-categories";
 import { brandTier, isHotelGroup, POSITIONING_PROFILES, type BrandTier, type SchemePositioning } from "@shared/scheme-positioning";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
@@ -75,7 +78,10 @@ const month = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { month: "
 export async function centreEvidence(pool: any, req: Request, propertyId: string): Promise<CentreEvidence> {
   const { isClientRequestUser } = await import("./company-scope");
   const client = await isClientRequestUser(req as any);
-  const cacheKey = `${propertyId}:${client ? "client" : "staff"}`;
+  // A joint agent reads requirements by its own rule, so it never shares a
+  // client's cached evidence.
+  const reqViewer: RequirementViewer = client ? await (await import("./landsec-access")).requirementViewer(req) : "staff";
+  const cacheKey = `${propertyId}:${client ? (reqViewer === "joint_agent" ? "joint_agent" : "client") : "staff"}`;
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.value;
 
@@ -115,11 +121,11 @@ export async function centreEvidence(pool: any, req: Request, propertyId: string
 
   // Leasing requirements that are not closed — sizes are matched per unit
   // later, and each counts by its state (the one live rule). A client viewer
-  // gets PIPnet listings only: BGP's hand-entered requirements are hidden on
-  // its Requirements list, so they are not loaded here either.
+  // reads every one, as its Requirements list shows them since 17 November
+  // 2026; a joint agent only the PIPnet listings.
   const reqs = await rows(pool, `SELECT r.company_id, COALESCE(c.name, r.name) AS brand_name, r.size, r.use, r.requirement_locations, ${requirementLiveColumnsSql("r")}
       FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON c.id = r.company_id AND c.merged_into_id IS NULL
-     WHERE ${requirementStateSql("r")} <> 'closed'${client ? ` AND ${requirementClientVisibleSql("r")}` : ""}`);
+     WHERE ${requirementStateSql("r")} <> 'closed'${reqViewer === "joint_agent" ? ` AND ${requirementJointAgentVisibleSql("r")}` : ""}`);
   const today = new Date();
   for (const r of reqs) {
     const b = brandFor(r.company_id, r.brand_name);
@@ -242,20 +248,18 @@ export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Se
     const internal = b.signals.filter(s => s.internal).map(s => s.text);
     let score = b.signals.reduce((sum, s) => sum + s.weight, 0);
     // A requirement is named by what it is and its date, never as "live":
-    // "requirement confirmed 3 Nov", "PIPnet listing from Sep". A PIPnet
-    // listing is shareable by source and date; BGP's own requirements, and
-    // whether anyone confirmed a listing, are BGP-only. The score follows
-    // the state: 35 confirmed within 90 days, 18 to confirm, 7 background.
+    // "requirement dated 4 Aug", "PIPnet listing from Sep". Every requirement
+    // is open to the landlord's logins since 17 November 2026, so that line is
+    // shareable evidence; its state and whether anyone confirmed it are
+    // BGP-only. The score follows the state: 35 confirmed within 90 days, 18
+    // to confirm, 7 background.
     let fitsRequirement = false;
     for (const r of b.requirements) {
       if (requirementFitsUnit(r, { sqft, unit_text: unitText || "f&b", property_text: propertyText })) {
         const size = Array.isArray(r.size) ? r.size.join(", ") : r.size;
         const fits = `fits this unit${size ? ` (${size})` : ""}`;
-        if (r.reason.clientText) {
-          evidence.unshift(`${r.reason.clientText}, ${fits}`);
-          if (!ev.client) internal.unshift(`that listing: ${r.reason.text}`);
-        } else if (!ev.client) internal.unshift(`${r.reason.text}, ${fits}`);
-        else continue;
+        evidence.unshift(`${r.reason.clientText}, ${fits}`);
+        if (!ev.client) internal.unshift(`that ${r.reason.importOnly ? "listing" : "requirement"}: ${r.reason.text}`);
         score += Math.round(35 * r.reason.weight);
         fitsRequirement = true;
         break;
@@ -265,8 +269,7 @@ export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Se
       const r = b.requirements[0];
       const range = parseReqSize(r.size ?? null);
       if (range && sqft && (sqft < range.min || sqft > range.max)) continue;
-      if (r.reason.clientText) evidence.push(`${r.reason.clientText} for UK space`);
-      else if (!ev.client) internal.push(`${r.reason.text}, for UK space`);
+      evidence.push(`${r.reason.clientText} for UK space`);
       score += Math.round(6 * r.reason.weight);
     }
     if (!evidence.length && !internal.length) continue;

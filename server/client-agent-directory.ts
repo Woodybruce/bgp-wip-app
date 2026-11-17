@@ -59,9 +59,12 @@ export function buildClientAgentDirectoryQuery(
         LEFT JOIN crm_companies a ON a.id = ct.company_id
           AND a.merged_into_id IS NULL AND a.id <> b.id
           AND a.company_type ILIKE 'Agent%'
+       -- Every leasing requirement is open to a client login since 17
+       -- November 2026 (Woody: "keep all requirements open for clients"), so
+       -- an agent named on any current one qualifies. A login tied to no
+       -- company has no brands at all (slice_brands).
        WHERE lower(trim(COALESCE(q.status, ''))) IN ('', 'active')
-         AND ($1::varchar IS NULL OR q.company_id = $1
-           OR ($1 <> $2::varchar AND 'PIPnet' = ANY(COALESCE(q.sources, '{}'::text[]))))
+         AND ($1::varchar IS NULL OR $1 <> $2::varchar)
     )
     SELECT * FROM links
      WHERE "firmId" IS NOT NULL OR "contactId" IS NOT NULL`,

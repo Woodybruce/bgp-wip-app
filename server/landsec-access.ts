@@ -15,6 +15,7 @@ import { requireAuth, requireAdmin, hashPassword } from "./auth";
 import { resolveCompanyScope, isClientRequestUser, clearCompanyScopeCache } from "./company-scope";
 import { landsecCompanyId, isLandsecCompany, resolveLandsecPortfolio, LANDSEC_SCHEMES } from "./landsec-schemes";
 import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, landsecLoginSchemes, jointAgentApiDenied, restrictedLandsecApiRule, jointAgentPropertyRef, type JointAgentPropertyRef, isKnownLandsecRole, UNKNOWN_LANDSEC_ROLE_ERROR, type LandsecRole } from "@shared/landsec";
+import type { RequirementViewer } from "@shared/requirement-live";
 
 export interface LandsecAccessRow { role: LandsecRole; schemes: string[] | null; firm: string | null }
 
@@ -82,6 +83,19 @@ export async function landsecViewer(req: Request): Promise<LandsecViewer | null>
 // read, like every read of the role.
 export async function isJointAgentLogin(req: Request): Promise<boolean> {
   return (await getLandsecAccess(req))?.role === "joint_agent";
+}
+
+// Who is reading leasing requirements (Woody, 2026-11-17: "keep all
+// requirements open for clients and access to amend and add"): BGP staff, a
+// client login (BGP staff viewing as a client included), or a Landsec joint
+// agent, another agency held to market listings only. A role that cannot be
+// read counts as a joint agent: it fails closed.
+export async function requirementViewer(req: Request): Promise<RequirementViewer> {
+  if (!(await resolveCompanyScope(req))) return "staff";
+  if (await isClientRequestUser(req)) {
+    try { if (await isJointAgentLogin(req)) return "joint_agent"; } catch { return "joint_agent"; }
+  }
+  return "client";
 }
 
 export function viewerCanSeeScheme(v: LandsecViewer, schemeKey: string | null | undefined): boolean {

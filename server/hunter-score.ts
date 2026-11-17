@@ -403,11 +403,16 @@ export function computeExpansionScoreV2(input: {
   return { score, relationship: subScores.engagement, subScores, lines, expansionScore: score, expansionFlags: flags, badge };
 }
 
-// What a client login may read of a score's why-lines and flags: nothing
-// about BGP's own requirements, and a market listing as a listing only,
-// never whether BGP has confirmed it. The score itself is unchanged.
+// What a client login may read of a score's why-lines and flags. Every
+// requirement is open to it since 17 November 2026 (Woody: "keep all
+// requirements open for clients"), so it reads how many requirements BGP holds
+// and how many market listings there are; never whether, or when, BGP
+// confirmed one ("confirmed or logged by BGP in 12 months", "not confirmed by
+// BGP" and "active" come off). The score itself is unchanged.
 export function clientScoreLabel(label: string): string | null {
   const s = String(label || "");
+  const held = s.match(/^(\d+) (?:active )?requirement(s?) (?:on BGP.s books|with BGP)/i);
+  if (held) return `${held[1]} requirement${held[2]} on BGP's books`;
   if (/requirements? on BGP.s books|active requirements? with BGP/i.test(s)) return null;
   const listing = s.match(/^(\d+) market listing(s?)/i);
   if (listing) return `${listing[1]} market listing${listing[2]}`;

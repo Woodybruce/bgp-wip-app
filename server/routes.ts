@@ -45,7 +45,7 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, asc, inArray, isNull } from "drizzle-orm";
 import { newsArticles, BRIEF_TARGET_STATUSES } from "@shared/schema";
-import { requirementListingUpdates, parseRequirementDate, requirementLive, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql, requirementClientCopy } from "@shared/requirement-live";
+import { requirementListingUpdates, parseRequirementDate, requirementLive, requirementStateSql, requirementLiveColumnsSql, requirementClientCopy } from "@shared/requirement-live";
 import { legacyToCode, statusSpellingsFor, CLOSED_STATUSES, TERMINAL_STATUSES, DEAL_STATUS_CODES, INVESTMENT_PROVISIONAL_STATUSES, investmentDealSql } from "@shared/deal-status";
 import { codeToLeasingStatus } from "@shared/lease-status-mirror";
 import { DEFAULT_LETTING_TYPE, LETTING_DEAL_TYPES, effectiveStatus, isHistoricStatus, isLettingType, isTrackerDeal, publicUnitFileSql, publicUnitPhotoSql } from "@shared/letting-rules";
@@ -10587,13 +10587,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       // The one live rule: closed requirements are not matches, and the
       // best-evidenced come first. Staff get each row's state and dated line.
-      // A client login gets only rows its Requirements list shows (PIPnet
-      // listings) for brands in its slice, with no state and none of the
-      // "who confirmed" columns: it used to receive BGP's hand-entered rows.
+      // A client login gets every requirement for brands in its slice (all
+      // are open to it since 17 November 2026), newest first, with no state
+      // and none of the "who confirmed" columns (requirementClientCopy). A
+      // Landsec joint agent is refused this route at the gateway.
       const { resolveCompanyScope, getClientExtraBrandIds } = await import("./company-scope");
       const matchScope = await resolveCompanyScope(req);
       conditions.push(`${requirementStateSql("r")} <> 'closed'`);
-      if (matchScope) conditions.push(requirementClientVisibleSql("r"));
       const whereClause = `WHERE ${conditions.join(" AND ")}`;
       const orderBy = `ORDER BY ${matchScope ? "" : `(CASE ${requirementStateSql("r")} WHEN 'live' THEN 0 WHEN 'to_confirm' THEN 1 ELSE 2 END), `}r.created_at DESC`;
       // The unit's planning class (E(b), A3) read against each requirement's
@@ -10746,7 +10746,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             WHERE au.property_id = $1 
             AND (au.use_class = ANY(r.use) OR r.use IS NULL OR array_length(r.use, 1) IS NULL)
           )
-          AND ${requirementStateSql("r")} <> 'closed'${(await (await import("./company-scope")).resolveCompanyScope(req)) ? ` AND ${requirementClientVisibleSql("r")}` : ""}
+          AND ${requirementStateSql("r")} <> 'closed'
           ORDER BY (CASE ${requirementStateSql("r")} WHEN 'live' THEN 0 WHEN 'to_confirm' THEN 1 ELSE 2 END), r.created_at DESC LIMIT 10
         `, [propertyId]),
       ]);

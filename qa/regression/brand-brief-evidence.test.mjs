@@ -61,8 +61,10 @@ test('legal entity mismatch or pending legal review prevents treating a linked c
 
 test('actual brand slice queries only the chosen brand and supplies evidence instead of count-based trajectory inputs', async () => {
   const queries = [];
-  // Client logins read the take, so its requirement input is market listings only (marketListings, 17 November 2026).
-  const { loadBrandSlice } = evaluate(fn('marketListings') + '\n' + fn('loadBrandSlice') + '\nexports.loadBrandSlice=loadBrandSlice;', {
+  // Client logins read the take, and every requirement is open to them since
+  // 17 November 2026: its requirement input is every open requirement, each
+  // worded by the live rule (openRequirements).
+  const { loadBrandSlice } = evaluate(fn('openRequirements') + '\n' + fn('loadBrandSlice') + '\nexports.loadBrandSlice=loadBrandSlice;', {
     brandActionEvidence, bgpDealEvidence: deal => ({ property: deal.name }), relationshipEvidence: async company => ({ checked: company.id }),
     requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql,
     pool: { query: async (sql, values) => { queries.push({ sql, values }); assert.equal(values[0], 'cook');
@@ -70,11 +72,12 @@ test('actual brand slice queries only the chosen brand and supplies evidence ins
         sources: ['PIPnet'], origin: 'pipnet', last_listed_at: '2026-09-03T00:00:00Z' }] : [] }; } },
   });
   const data = await loadBrandSlice('cook');
-  assert.equal(data.market_listings[0].name, 'Bristol requirement');
-  assert.match(data.market_listings[0].listing, /^PIPnet listing from Sep/);
+  assert.equal(data.requirements[0].name, 'Bristol requirement');
+  assert.match(data.requirements[0].requirement, /^PIPnet listing from Sep.*not confirmed$/);
   assert.equal(data.active_requirements.length, 0);
   assert.doesNotMatch(JSON.stringify(data), /employee_count|brand_analysis|store_count/);
-  assert.match(queries.find(row => row.sql.includes('crm_requirements_leasing')).sql, /r\.company_id = \$1 AND 'PIPnet' = ANY/);
+  assert.match(queries.find(row => row.sql.includes('crm_requirements_leasing')).sql, /r\.company_id = \$1 AND .*<> 'closed'/s);
+  assert.doesNotMatch(queries.find(row => row.sql.includes('crm_requirements_leasing')).sql, /PIPnet/);
   assert.match(queries.find(row => row.sql.includes('brand_signals')).sql, /brand_company_id = \$1/);
   assert.ok(queries.every(row => row.sql.trim().startsWith('SELECT')));
   // BGP's own deals and email relationship with the brand feed the one take (2026-09-23).

@@ -321,9 +321,23 @@ export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = [];
 // brand cases, the correspondence log, the generated Targeting Brief (BGP's notes on targets) and making a CRM
 // requirement from a viewing. The company LIST stays open: it is what a
 // brand picker reads (a name to pick, never a page).
+// Since 17 November 2026 every leasing requirement is open to a client login,
+// to read, add and amend (Woody: "keep all requirements open for clients and
+// access to amend and add"). A joint agent is another agency and has no
+// Brands, so it is refused every route that hands out requirements or the
+// brand and agent contacts on them: the requirements list and one by id, their
+// writes and fits, a requirement's units, a unit's matching requirements and
+// suggested brands (which carry each requirement's agent), the client CRM's
+// agent directory (the agents named on requirements, with their email and
+// phone), and the centre.
 export function jointAgentApiDenied(method: string, path: string): boolean {
   const p = String(path || "").toLowerCase().split("?")[0];
   if (/^\/api\/(brand|brands|brand-crm|brand-pack|covenant\/by-crm)(\/|$)/.test(p)) return true;
+  if (/^\/api\/crm\/requirements-leasing(\/|$)/.test(p)) return true;
+  if (/^\/api\/(requirements|requirement-suggestions|requirement-centre)(\/|$)/.test(p)) return true;
+  if (/^\/api\/available-units\/matches(\/|$)/.test(p)) return true;
+  if (/^\/api\/available-units\/[^/]+\/brand-suggestions$/.test(p)) return true;
+  if (/^\/api\/client\/(agent-directory|agents-overview)$/.test(p)) return true;
   // Its chat stays its own (server/chat-joint-agent.ts): the addresses that
   // chat uses are opened one by one by restrictedLandsecApiRule, every other
   // chat or ChatBGP door is shut.
