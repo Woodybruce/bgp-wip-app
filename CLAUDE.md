@@ -2834,8 +2834,14 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   it asks Veriff for a session and reports Veriff's answer). When Veriff does
   not start a check, a test page shows the tester Veriff's own reason; a
   client sees the plain "couldn't be started" line. First try on live, 17
-  November 2026: Veriff did not start the session (the reason was not yet
-  read); the Veriff keys were on the October rotation list.
+  November 2026: Veriff answered 401, code 1804, "Integration with the API
+  key ... is not active" (read with the diagnostic): the integration whose
+  key is on Railway is switched off at Veriff (the Veriff keys were on the
+  October rotation list). Woody's to fix in Veriff Station: activate it, or
+  put an active integration's API key and shared secret on Railway
+  (`VERIFF_API_KEY` / `VERIFF_SECRET`, or the other names `getCreds` reads)
+  with its decision and event webhook URL https://chatbgp.app/api/veriff/webhook.
+  The diagnostic's signed webhook loopback passed the same day.
 - **Schema** (additive, nullable, boot MIGRATIONS in `server/index.ts`, not
   in `shared/schema.ts`): `kyc_upload_tokens` gained `company_id`,
   `contact_id`, `request` (JSONB: `KycRequestDetails`), `completed_at`,
