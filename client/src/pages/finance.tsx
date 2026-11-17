@@ -1,15 +1,22 @@
 // Company Finance — the firm's actual financial position pulled live from
-// Xero (admin-only): FY-to-date P&L, cash at bank, balance sheet headline,
-// aged debtors. Data comes from /api/xero/financials (system Xero session,
-// cached 15 min server-side).
+// Xero (equity directors and admins): FY-to-date P&L, cash at bank, balance
+// sheet headline, aged debtors. Data comes from /api/xero/financials (system
+// Xero session, cached 15 min server-side).
+//
+// One section at a time, in pills (Woody, 2026-11-17: "fold reporting and
+// board report in to finance ... make it sync and to the point there is so
+// much going on its overwhelming"): Overview, Fees & pipeline (what Reporting
+// and Board Report held, money only), Cash flow, Commission, History, Spend.
+// Every pipeline figure follows shared/finance-pipeline.ts.
 import { useQuery } from "@tanstack/react-query";
 import { CashflowBoardSection } from "@/components/cashflow-board";
 import { CompanyOutlookSection, DisclosureRow } from "@/components/company-outlook";
-import { cashflowFetch } from "@/lib/cashflow-model";
+import { FinanceBoardSection } from "@/components/finance-board";
 import { HistoricalBillingsSection } from "@/components/historical-billings";
 import { PartnerRemunerationSection } from "@/components/partner-remuneration";
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "wouter";
+import { Pill } from "@/components/ui/pill";
+import { useEffect, useState } from "react";
+import { Link, useSearch } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,7 +26,7 @@ import { formatDate } from "@/lib/format";
 import { RefreshCw, AlertTriangle, ExternalLink } from "lucide-react";
 
 interface WipForecast {
-  pipeline: Record<"NEG" | "SOL" | "EXC", { total: number; count: number }>;
+  pipeline: Record<"NEG" | "HOT" | "SOL" | "EXC", { total: number; count: number }>;
   weights: Record<string, number>;
   weightedPipeline: number;
   unweightedPipeline: number;
@@ -58,7 +65,6 @@ interface Financials {
     invoiceCount: number;
   };
   wip?: WipForecast | null;
-  projection?: { actuals: number; toInvoice: number; weightedPipeline: number; total: number; projectedFyCosts?: number; projectedNet?: number };
   costs?: {
     fytdExpenses: number;
     runRate: number;
@@ -331,8 +337,31 @@ function AppCostsSection() {
 // Xero, so AP was always £0, and cash due in duplicated the Debtors
 // dropdown). The Debtors headline stat is the one receivables view.)
 
+const FINANCE_TABS = [
+  { key: "overview", label: "Overview" },
+  { key: "pipeline", label: "Fees & pipeline" },
+  { key: "cashflow", label: "Cash flow" },
+  { key: "commission", label: "Commission" },
+  { key: "history", label: "History" },
+  { key: "spend", label: "Spend" },
+] as const;
+type FinanceTab = typeof FINANCE_TABS[number]["key"];
+const isFinanceTab = (v: string | null): v is FinanceTab => !!v && FINANCE_TABS.some(t => t.key === v);
+
 export default function FinancePage() {
   const { toast } = useToast();
+  const search = useSearch();
+  const tabParam = new URLSearchParams(search).get("tab");
+  const [tab, setTab] = useState<FinanceTab>(isFinanceTab(tabParam) ? tabParam : "overview");
+  useEffect(() => { setTab(isFinanceTab(tabParam) ? tabParam : "overview"); }, [tabParam]);
+  // A pill change replaces the address, so Back leaves the page in one press
+  // (client/src/lib/go-back.ts) and a shared link opens the same pill.
+  const chooseTab = (next: FinanceTab) => {
+    setTab(next);
+    const url = new URL(window.location.href);
+    if (next === "overview") url.searchParams.delete("tab"); else url.searchParams.set("tab", next);
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}`);
+  };
   const { data, isLoading, isFetching, refetch, error } = useQuery<Financials>({
     queryKey: ["/api/xero/financials"],
     staleTime: 5 * 60 * 1000,
@@ -386,10 +415,34 @@ export default function FinancePage() {
     );
   }
 
-  if (data.notConnected || data.needsReconnect) {
-    return (
-      <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Company Finance</h1>
+  // The pipeline, commission and cash flow halves come from the CRM and the
+  // app's own tables, so they work whatever state Xero is in; the headline
+  // figures and spend need Xero.
+  const xeroDown = !!(data.notConnected || data.needsReconnect);
+  const h = data.headline || { income: null, grossProfit: null, operatingExpenses: null, netProfit: null };
+  const d = data.debtors;
+
+  return (
+    <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Company Finance
+          </h1>
+          {!xeroDown && (
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {data.orgName} · financial year from {formatDate(data.fyStart)} · as at {formatDate(data.asAt)} · live from Xero
+            </p>
+          )}
+        </div>
+        {!xeroDown && (
+          <Button variant="outline" size="sm" onClick={hardRefresh} disabled={isFetching} data-testid="button-finance-refresh">
+            <RefreshCw className={`w-4 h-4 mr-1 ${isFetching ? "animate-spin" : ""}`} /> Refresh
+          </Button>
+        )}
+      </div>
+
+      {xeroDown && (
         <Card>
           <CardContent className="p-6 space-y-3">
             <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
@@ -403,221 +456,199 @@ export default function FinancePage() {
             </Button>
           </CardContent>
         </Card>
-        {/* The pipeline, commission and cashflow-forecast halves come from
-            the CRM / local DB, so they work regardless of the Xero
-            connection state. */}
-        <CompanyOutlookSection />
-        <CashflowBoardSection />
-        <HistoricalBillingsSection />
-        <PartnerRemunerationSection />
-        {data.commissions && data.commissions.statements.length > 0 && (
-          <CommissionSection commissions={data.commissions} />
-        )}
-      </div>
-    );
-  }
+      )}
 
-  const h = data.headline || { income: null, grossProfit: null, operatingExpenses: null, netProfit: null };
-  const d = data.debtors;
-
-  return (
-    <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Company Finance
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {data.orgName} · financial year from {formatDate(data.fyStart)} · as at {formatDate(data.asAt)} · live from Xero
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={hardRefresh} disabled={isFetching} data-testid="button-finance-refresh">
-          <RefreshCw className={`w-4 h-4 mr-1 ${isFetching ? "animate-spin" : ""}`} /> Refresh
-        </Button>
+      <div className="flex gap-1.5 flex-wrap" data-testid="finance-tabs">
+        {FINANCE_TABS.map(t => (
+          <Pill key={t.key} active={tab === t.key} onClick={() => chooseTab(t.key)} data-testid={`finance-tab-${t.key}`}>
+            {t.label}
+          </Pill>
+        ))}
       </div>
 
-      {/* Headline stats — tap a row to see what's behind the number */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
-        <ExpandableStat label="Income FYTD" value={money(h.income)} sub="Tap for the invoices">
-          {data.paid && data.paid.count > 0 ? (
-            <div className="space-y-0.5">
-              <p className="text-[10px] uppercase tracking-widest text-muted-foreground pb-1">Paid this year · {data.paid.count} invoice(s) · {money(data.paid.totalPaid)}</p>
-              {data.paid.recent.map((p, i) => {
-                const row = (
-                  <div className={`flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded ${p.dealId ? "hover:bg-muted cursor-pointer" : ""}`}>
-                    <span className="truncate pr-3">
-                      {p.label}
-                      <span className="text-muted-foreground text-xs">{p.number ? ` · ${p.number}` : ""}{p.paidOn ? ` · paid ${formatDate(p.paidOn)}` : ""}</span>
-                    </span>
-                    <span className="font-mono shrink-0">{money(p.amount)}</span>
-                  </div>
-                );
-                return p.dealId ? <Link key={i} href={`/deals/${p.dealId}`}>{row}</Link> : <div key={i}>{row}</div>;
-              })}
-              <p className="text-[11px] text-muted-foreground pt-2">
-                The rest of the FYTD income is invoiced but unpaid — it's in Debtors outstanding.
-                {data.paid.unmatchedCount > 0 ? ` ${data.paid.unmatchedCount} paid invoice(s) aren't linked to a deal in the app (raised directly in Xero).` : ""}
-              </p>
-            </div>
-          ) : <p className="text-xs text-muted-foreground">No fully paid invoices this financial year yet.</p>}
-        </ExpandableStat>
-        <ExpandableStat
-          label="Net profit FYTD"
-          value={money(h.netProfit)}
-          negative={(h.netProfit ?? 0) < 0}
-          sub={h.operatingExpenses != null ? `Expenses ${money(h.operatingExpenses)}` : "Tap for the P&L"}
-        >
-          <div className="space-y-3">
-            {(data.pnlSections || []).filter(s => s.rows.length > 0).map((sec, i) => (
-              <div key={i}>
-                {sec.title && <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">{sec.title}</p>}
-                <div className="space-y-0.5">
-                  {sec.rows.map((r, j) => (
-                    <div key={j} className={`flex items-center justify-between text-sm py-0.5 ${r.isTotal ? "font-semibold border-t mt-1 pt-1" : ""}`}>
-                      <span className="truncate pr-3">{r.label}</span>
-                      <span className="font-mono shrink-0">{money(r.values[0])}</span>
+      {tab === "overview" && (<>
+        {/* Headline stats — tap a row to see what's behind the number */}
+        {!xeroDown && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
+          <ExpandableStat label="Income FYTD" value={money(h.income)} sub="Fees billed in Xero — tap for the invoices">
+            {data.paid && data.paid.count > 0 ? (
+              <div className="space-y-0.5">
+                <p className="text-[10px] uppercase tracking-widest text-muted-foreground pb-1">Paid this year · {data.paid.count} invoice(s) · {money(data.paid.totalPaid)}</p>
+                {data.paid.recent.map((p, i) => {
+                  const row = (
+                    <div className={`flex items-center justify-between text-sm py-1 px-1 -mx-1 rounded ${p.dealId ? "hover:bg-muted cursor-pointer" : ""}`}>
+                      <span className="truncate pr-3">
+                        {p.label}
+                        <span className="text-muted-foreground text-xs">{p.number ? ` · ${p.number}` : ""}{p.paidOn ? ` · paid ${formatDate(p.paidOn)}` : ""}</span>
+                      </span>
+                      <span className="font-mono shrink-0">{money(p.amount)}</span>
                     </div>
-                  ))}
-                </div>
+                  );
+                  return p.dealId ? <Link key={i} href={`/deals/${p.dealId}`}>{row}</Link> : <div key={i}>{row}</div>;
+                })}
+                <p className="text-[11px] text-muted-foreground pt-2">
+                  The rest of the FYTD income is invoiced but unpaid — it's in Debtors outstanding.
+                  {data.paid.unmatchedCount > 0 ? ` ${data.paid.unmatchedCount} paid invoice(s) aren't linked to a deal in the app (raised directly in Xero).` : ""}
+                </p>
               </div>
-            ))}
-            {(data.pnlSections || []).length === 0 && <p className="text-xs text-muted-foreground">P&L lines unavailable right now.</p>}
-          </div>
-        </ExpandableStat>
-        <ExpandableStat label="Cash at bank" value={money(data.cashTotal)} sub={`${data.bankAccounts?.length || 0} account(s) — tap to list`}>
-          <div className="space-y-1">
-            {(data.bankAccounts || []).map((a, i) => (
-              <div key={i} className="py-0.5">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="truncate pr-3">{a.name}{a.source === "revolut" && <span className="text-xs text-muted-foreground"> · live from Revolut</span>}</span>
-                  <span className="font-mono shrink-0">{money(a.balance)}</span>
-                </div>
-                {a.source === "revolut" && a.xeroBalance != null && Math.abs(a.xeroBalance - a.balance) >= 1 && (
-                  <div className="flex items-center justify-between text-xs text-muted-foreground" data-testid="revolut-xero-balance">
-                    <span className="truncate pr-3">Xero shows (until the feed is reconciled)</span>
-                    <span className="font-mono shrink-0">{money(a.xeroBalance)}</span>
-                  </div>
-                )}
-              </div>
-            ))}
-            <div className="flex items-center justify-between text-sm font-semibold border-t mt-1 pt-1.5">
-              <span>Total cash</span>
-              <span className="font-mono">{money(data.cashTotal)}</span>
-            </div>
-            {data.balanceSheet?.netAssets != null && (
-              <p className="text-xs text-muted-foreground pt-2">
-                Net assets {money(data.balanceSheet.netAssets)}
-                {data.balanceSheet.totalAssets != null ? ` · total assets ${money(data.balanceSheet.totalAssets)}` : ""}
-              </p>
-            )}
-          </div>
-        </ExpandableStat>
-        <ExpandableStat
-          label="Debtors outstanding"
-          value={money(d?.outstanding ?? 0)}
-          negative={(d?.overdue ?? 0) > 0}
-          sub={`${money(d?.overdue ?? 0)} overdue`}
-        >
-          {d ? (
+            ) : <p className="text-xs text-muted-foreground">No fully paid invoices this financial year yet.</p>}
+          </ExpandableStat>
+          <ExpandableStat
+            label="Net profit FYTD"
+            value={money(h.netProfit)}
+            negative={(h.netProfit ?? 0) < 0}
+            sub={h.operatingExpenses != null ? `Expenses ${money(h.operatingExpenses)}` : "Tap for the P&L"}
+          >
             <div className="space-y-3">
-              <div className="grid grid-cols-4 gap-2 text-center">
-                {[
-                  { label: "Current", v: d.buckets.current },
-                  { label: "1–30d", v: d.buckets.d1to30 },
-                  { label: "31–60d", v: d.buckets.d31to60 },
-                  { label: "60d+", v: d.buckets.d60plus },
-                ].map((b, i) => (
-                  <div key={i} className="rounded-md border p-2">
-                    <p className="text-[10px] text-muted-foreground">{b.label}</p>
-                    <p className={`text-sm font-semibold font-mono ${i >= 2 && b.v > 0 ? "text-red-600 dark:text-red-400" : ""}`}>{money(b.v)}</p>
-                  </div>
-                ))}
-              </div>
-              {d.top.length > 0 && (
-                <div>
-                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Largest overdue</p>
+              {(data.pnlSections || []).filter(s => s.rows.length > 0).map((sec, i) => (
+                <div key={i}>
+                  {sec.title && <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">{sec.title}</p>}
                   <div className="space-y-0.5">
-                    {d.top.map((inv, i) => (
-                      <div key={i} className="flex items-center justify-between text-sm py-0.5">
-                        <span className="truncate pr-3">{inv.contact} <span className="text-muted-foreground text-xs">{inv.number}{inv.due ? ` · due ${formatDate(inv.due)}` : ""}</span></span>
-                        <span className="font-mono shrink-0">{money(inv.amount)}</span>
+                    {sec.rows.map((r, j) => (
+                      <div key={j} className={`flex items-center justify-between text-sm py-0.5 ${r.isTotal ? "font-semibold border-t mt-1 pt-1" : ""}`}>
+                        <span className="truncate pr-3">{r.label}</span>
+                        <span className="font-mono shrink-0">{money(r.values[0])}</span>
                       </div>
                     ))}
                   </div>
                 </div>
+              ))}
+              {(data.pnlSections || []).length === 0 && <p className="text-xs text-muted-foreground">P&L lines unavailable right now.</p>}
+            </div>
+          </ExpandableStat>
+          <ExpandableStat label="Cash at bank" value={money(data.cashTotal)} sub={`${data.bankAccounts?.length || 0} account(s) — tap to list`}>
+            <div className="space-y-1">
+              {(data.bankAccounts || []).map((a, i) => (
+                <div key={i} className="py-0.5">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="truncate pr-3">{a.name}{a.source === "revolut" && <span className="text-xs text-muted-foreground"> · live from Revolut</span>}</span>
+                    <span className="font-mono shrink-0">{money(a.balance)}</span>
+                  </div>
+                  {a.source === "revolut" && a.xeroBalance != null && Math.abs(a.xeroBalance - a.balance) >= 1 && (
+                    <div className="flex items-center justify-between text-xs text-muted-foreground" data-testid="revolut-xero-balance">
+                      <span className="truncate pr-3">Xero shows (until the feed is reconciled)</span>
+                      <span className="font-mono shrink-0">{money(a.xeroBalance)}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+              <div className="flex items-center justify-between text-sm font-semibold border-t mt-1 pt-1.5">
+                <span>Total cash</span>
+                <span className="font-mono">{money(data.cashTotal)}</span>
+              </div>
+              {data.balanceSheet?.netAssets != null && (
+                <p className="text-xs text-muted-foreground pt-2">
+                  Net assets {money(data.balanceSheet.netAssets)}
+                  {data.balanceSheet.totalAssets != null ? ` · total assets ${money(data.balanceSheet.totalAssets)}` : ""}
+                </p>
               )}
             </div>
-          ) : <p className="text-xs text-muted-foreground">No open invoices.</p>}
-        </ExpandableStat>
-      </div>
+          </ExpandableStat>
+          <ExpandableStat
+            label="Debtors outstanding"
+            value={money(d?.outstanding ?? 0)}
+            negative={(d?.overdue ?? 0) > 0}
+            sub={`${money(d?.overdue ?? 0)} overdue`}
+          >
+            {d ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-4 gap-2 text-center">
+                  {[
+                    { label: "Current", v: d.buckets.current },
+                    { label: "1–30d", v: d.buckets.d1to30 },
+                    { label: "31–60d", v: d.buckets.d31to60 },
+                    { label: "60d+", v: d.buckets.d60plus },
+                  ].map((b, i) => (
+                    <div key={i} className="rounded-md border p-2">
+                      <p className="text-[10px] text-muted-foreground">{b.label}</p>
+                      <p className={`text-sm font-semibold font-mono ${i >= 2 && b.v > 0 ? "text-red-600 dark:text-red-400" : ""}`}>{money(b.v)}</p>
+                    </div>
+                  ))}
+                </div>
+                {d.top.length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Largest overdue</p>
+                    <div className="space-y-0.5">
+                      {d.top.map((inv, i) => (
+                        <div key={i} className="flex items-center justify-between text-sm py-0.5">
+                          <span className="truncate pr-3">{inv.contact} <span className="text-muted-foreground text-xs">{inv.number}{inv.due ? ` · due ${formatDate(inv.due)}` : ""}</span></span>
+                          <span className="font-mono shrink-0">{money(inv.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : <p className="text-xs text-muted-foreground">No open invoices.</p>}
+          </ExpandableStat>
+        </div>
+        )}
 
-      {/* Company outlook — front and centre (Woody, 2026-08-28): income
-          forecast + actuals, cost base, computed commissions, prior years,
-          breakeven and the per-partner picture. Fed the page's own Xero
-          numbers as a fallback so it can never disagree with the headline
-          cards when the cashflow snapshot hiccups. */}
-      <CompanyOutlookSection
-        xeroFallback={{
-          cashTotal: data.cashTotal ?? null,
-          fytdIncome: h.income ?? null,
-          fytdExpenses: h.operatingExpenses ?? null,
-          monthly: data.monthly || [],
-          bankAccounts: data.bankAccounts || [],
-        }}
-      />
+        {/* Company outlook (Woody, 2026-08-28): income forecast + actuals,
+            cost base, computed commissions, prior years and breakeven. Fed
+            the page's own Xero numbers as a fallback so it can never
+            disagree with the headline cards when the cashflow snapshot
+            hiccups. Its deal book opens on Fees & pipeline. */}
+        <CompanyOutlookSection
+          onOpenPipeline={() => chooseTab("pipeline")}
+          xeroFallback={xeroDown ? undefined : {
+            cashTotal: data.cashTotal ?? null,
+            fytdIncome: h.income ?? null,
+            fytdExpenses: h.operatingExpenses ?? null,
+            monthly: data.monthly || [],
+            bankAccounts: data.bankAccounts || [],
+          }}
+        />
+      </>)}
+
+      {tab === "pipeline" && <FinanceBoardSection />}
 
       {/* Cashflow forecast — the app + Xero drive receipts, the typed
-          lines below are Wendy's costs plan (Woody, 2026-08-27). */}
-      <CashflowBoardSection />
-      <HistoricalBillingsSection />
-      <PartnerRemunerationSection />
+          lines are Wendy's costs plan (Woody, 2026-08-27). */}
+      {tab === "cashflow" && <CashflowBoardSection />}
 
-      {/* (Data-health card removed — Woody, 2026-08-23: a weekly fix-list
-          email to equity@ replaced it; see runWipHealthEmail. The live list
-          stays on WIP report → Needs Attention.) */}
+      {tab === "commission" && (<>
+        {/* Commission statements — Woody's tiered scheme */}
+        {data.commissions && data.commissions.statements.length > 0
+          ? <CommissionSection commissions={data.commissions} />
+          : <Card><CardContent className="p-6 text-sm text-muted-foreground">No commission statements this financial year yet.</CardContent></Card>}
+        <PartnerRemunerationSection />
+      </>)}
 
-      {/* (The "Paid this year" card moved into the Income FYTD dropdown,
-          2026-08-29.) */}
+      {tab === "history" && <HistoricalBillingsSection />}
 
-      {/* Commission statements — Woody's tiered scheme */}
-      {data.commissions && data.commissions.statements.length > 0 && (
-        <CommissionSection commissions={data.commissions} />
-      )}
-
-      {/* Company card spend — the Expenses workflow's headline numbers,
-          with jump-offs into the queues. */}
-      {data.spend && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <StatCard label="Card spend this month" value={money(data.spend.monthSpend)} sub="Business spend, ex personal" />
-          <StatCard label="Card spend FYTD" value={money(data.spend.fytdSpend)} />
-          <Link href="/expenses">
-            <div className="cursor-pointer h-full">
-              <StatCard
-                label="Receipts missing"
-                value={String(data.spend.pendingReceipts.count)}
-                sub={`${money(data.spend.pendingReceipts.total)} unreceipted → Expenses`}
-                negative={data.spend.pendingReceipts.count > 0}
-              />
-            </div>
-          </Link>
-          <Link href="/expenses/approvals">
-            <div className="cursor-pointer h-full">
-              <StatCard
-                label="Awaiting approval"
-                value={String(data.spend.pendingApprovals.count)}
-                sub={`${money(data.spend.pendingApprovals.total)} queued → Approvals`}
-                negative={data.spend.pendingApprovals.count > 0}
-              />
-            </div>
-          </Link>
-        </div>
-      )}
-
-      {/* (The bottom P&L / Cash position / Aged debtors grid moved into
-          the headline stat dropdowns, 2026-08-29.) */}
-
-      {/* What the app itself costs to run (AI + data APIs) */}
-      <AppCostsSection />
+      {tab === "spend" && (<>
+        {/* Company card spend — the Expenses workflow's headline numbers,
+            with jump-offs into the queues. */}
+        {data.spend && (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatCard label="Card spend this month" value={money(data.spend.monthSpend)} sub="Business spend, ex personal" />
+            <StatCard label="Card spend FYTD" value={money(data.spend.fytdSpend)} />
+            <Link href="/expenses">
+              <div className="cursor-pointer h-full">
+                <StatCard
+                  label="Receipts missing"
+                  value={String(data.spend.pendingReceipts.count)}
+                  sub={`${money(data.spend.pendingReceipts.total)} unreceipted → Expenses`}
+                  negative={data.spend.pendingReceipts.count > 0}
+                />
+              </div>
+            </Link>
+            <Link href="/expenses/approvals">
+              <div className="cursor-pointer h-full">
+                <StatCard
+                  label="Awaiting approval"
+                  value={String(data.spend.pendingApprovals.count)}
+                  sub={`${money(data.spend.pendingApprovals.total)} queued → Approvals`}
+                  negative={data.spend.pendingApprovals.count > 0}
+                />
+              </div>
+            </Link>
+          </div>
+        )}
+        {/* What the app itself costs to run (AI + data APIs) */}
+        <AppCostsSection />
+      </>)}
 
       {data.fetchedAt && (
         <p className="text-[11px] text-muted-foreground">Snapshot fetched {new Date(data.fetchedAt).toLocaleTimeString("en-GB")} · cached 15 min · Refresh forces a live pull.</p>

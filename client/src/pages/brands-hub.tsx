@@ -36,6 +36,10 @@ import { LANDSEC_CATEGORIES, LANDSEC_CATEGORY_GROUPS, LANDSEC_CATEGORY_TYPES, LA
 
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandHunterBoard = lazy(() => import("@/components/brand-hunter-board"));
+// Requirements is a pill here for every login (Woody, 2026-11-17: "put
+// requirements in the brands section for everyone"); /requirements forwards
+// to it. The page decides what a client login sees.
+const RequirementsPage = lazy(() => import("@/pages/requirements"));
 
 interface HubData {
   stats: {
@@ -181,8 +185,8 @@ function confidenceColour(c: string) {
   return "bg-slate-400";
 }
 
-type HubTab = "overview" | "explorer" | "turnover" | "hunter" | "crm";
-const HUB_TABS: HubTab[] = ["overview", "explorer", "turnover", "hunter", "crm"];
+type HubTab = "overview" | "explorer" | "requirements" | "turnover" | "hunter" | "crm";
+const HUB_TABS: HubTab[] = ["overview", "explorer", "requirements", "turnover", "hunter", "crm"];
 
 export default function BrandsHub() {
   const { toast } = useToast();
@@ -223,12 +227,13 @@ export default function BrandsHub() {
   const VISIBLE_HUB_TABS = ([
     { key: "overview", label: "Overview", icon: BarChart3 },
     { key: "explorer", label: "Brand Explorer", icon: LayoutGrid },
+    { key: "requirements", label: "Requirements", icon: ClipboardList },
     { key: "turnover", label: "Turnover Board", icon: TrendingUp },
     { key: "hunter",  label: "Brand Hunter",   icon: Crosshair },
     { key: "crm",     label: "Brand CRM",      icon: Target },
   ] as { key: HubTab; label: string; icon: any }[])
     .filter(t => t.key !== "crm" || showBrandCrm)
-    .filter(t => !isMobile || t.key === "explorer" || t.key === "crm");
+    .filter(t => !isMobile || t.key === "explorer" || t.key === "requirements" || t.key === "crm");
   const [search, setSearch] = useState("");
   const [researchingId, setResearchingId] = useState<string | null>(null);
 
@@ -620,6 +625,12 @@ export default function BrandsHub() {
 
       {activeTab === "explorer" && (
         <BrandExplorer />
+      )}
+
+      {activeTab === "requirements" && (
+        <Suspense fallback={<Skeleton className="h-64 w-full" />}>
+          <RequirementsPage embedded />
+        </Suspense>
       )}
 
       {activeTab === "turnover" && (

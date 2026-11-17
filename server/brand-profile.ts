@@ -397,9 +397,12 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
           AND a.merged_into_id IS NULL AND a.id <> q.company_id
           AND a.company_type ILIKE 'Agent%'
         WHERE q.company_id = $1
-          AND lower(trim(COALESCE(q.status, ''))) IN ('', 'active')
-          AND ($2::varchar IS NULL OR q.company_id = $2
-               OR 'PIPnet' = ANY(COALESCE(q.sources, '{}'::text[])))
+          -- The one live rule, as the requirements list on this page reads it:
+          -- live or to confirm for BGP staff, open for a client (whose market
+          -- listings are mostly unconfirmed), never "status = active".
+          AND (CASE WHEN $2::varchar IS NULL THEN ${requirementStateSql("q")} IN ('live', 'to_confirm')
+                    ELSE ${requirementStateSql("q")} <> 'closed' END)
+          AND ($2::varchar IS NULL OR q.company_id = $2 OR ${requirementClientVisibleSql("q")})
         ORDER BY ct.id`,
       [companyId, bpScope || null]
     );

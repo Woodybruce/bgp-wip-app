@@ -3081,14 +3081,15 @@ async function markRound(page, cross) {
     if (loc !== '/deals/list') throw new Error(`expected rewrite to /deals/list, still at ${loc}`);
   });
 
-  // Firm-wide reporting (the board report + reporting summary — whole-book
-  // revenue, pipeline, agent performance) is BGP-internal; a client login
-  // must be refused.
+  // Firm-wide reporting (Finance → Fees & pipeline, which replaced the board
+  // report on 17 November 2026, + the reporting summary — whole-book revenue,
+  // pipeline, agent performance) is BGP-internal; a client login must be
+  // refused.
   await step(page, p, 'client-firm-reporting-guard', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
-      return { board: await g('/api/board-report'), reporting: await g('/api/reporting/summary') };
+      return { board: await g('/api/finance/board'), reporting: await g('/api/reporting/summary') };
     });
     if (r.board !== 403) throw new Error(`client reached the board report (expected 403, got ${r.board})`);
     if (r.reporting !== 403) throw new Error(`client reached the reporting summary (expected 403, got ${r.reporting})`);
@@ -3123,7 +3124,7 @@ async function markRound(page, cross) {
         chSearch: await g('/api/companies-house/search?q=tesco'),
         compliance: await g('/api/deal-compliance-audit'),
         investmentComps: await g('/api/investment-comps'),
-        boardExport: await g('/api/board-report/export-excel'),
+        boardExport: await g('/api/finance/board.xlsx'),
       };
     });
     if (r.hrLeave !== 403) throw new Error(`client reached the HR parental-leave register (expected 403, got ${r.hrLeave})`);
@@ -6108,7 +6109,7 @@ async function woodyRound(page, cross) {
     '/portfolios', '/kyc-clouseau?tab=board', '/tenant-rep',
     '/hunters/letting', '/hunters/investment', '/landlords', '/pla/matters',
     '/westminster-restaurants', '/models', '/document-studio',
-    '/document-briefs', '/reporting', '/board-report', '/leads', '/enrichment',
+    '/document-briefs', '/finance?tab=pipeline', '/leads', '/enrichment',
   ]) {
     await visit(page, p, path);
   }

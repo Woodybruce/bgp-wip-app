@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore, lazy, Suspense } from "react";
-import { Switch, Route, useLocation, Redirect } from "wouter";
+import { Switch, Route, useLocation, useSearch, Redirect } from "wouter";
 import { queryClient, getQueryFn, apiRequest, refreshSession, sessionIdentity, subscribeSessionVerification, getSessionVerificationSnapshot } from "./lib/queryClient";
 import { isEquityUser } from "./lib/utils";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
@@ -60,7 +60,6 @@ const JointAgentChat = lazy(() => import("@/components/landsec/joint-agent-chat"
 const LandsecBrandCrm = lazy(() => import("@/pages/landsec-brand-crm"));
 const PropertiesHub = lazy(() => import("@/pages/properties-hub"));
 const DealsHub = lazy(() => import("@/pages/deals-hub"));
-const Requirements = lazy(() => import("@/pages/requirements"));
 const News = lazy(() => import("@/pages/news"));
 const PeoplePage = lazy(() => import("@/pages/people"));
 // A company page opened by its address: its two page chunks (the People page,
@@ -94,7 +93,6 @@ const Subscriptions = lazy(() => import("@/pages/subscriptions"));
 const ChatBGP = lazy(() => import("@/pages/chatbgp"));
 const Instructions = lazy(() => import("@/pages/instructions"));
 const Enrichment = lazy(() => import("@/pages/enrichment"));
-const BoardReport = lazy(() => import("@/pages/board-report"));
 const LeasingSchedule = lazy(() => import("@/pages/leasing-schedule"));
 const TenancyScheduleFull = lazy(() => import("@/pages/tenancy-schedule-full"));
 const UploadPage = lazy(() => import("@/pages/upload"));
@@ -130,7 +128,6 @@ const LeaseEvents = lazy(() => import("@/pages/lease-events"));
 const KycHub = lazy(() => import("@/pages/kyc-hub"));
 const PropertyIntelligence = lazy(() => import("@/pages/property-intelligence"));
 const MapBgp = lazy(() => import("@/pages/map-bgp"));
-const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
 const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
 const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
@@ -288,6 +285,14 @@ function StudioRoute({ children }: { children: React.ReactNode }) {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   if (!user) return <PageLoader />;
   return <>{children}</>;
+}
+
+// /requirements → the Requirements pill on Brands, with every parameter the
+// link carried (companyId, list, new, team, type, requirementId).
+function RequirementsToBrands() {
+  const params = new URLSearchParams(useSearch());
+  params.set("tab", "requirements");
+  return <Redirect to={`/brands?${params.toString()}`} replace />;
 }
 
 // Prefixes a client login (role='Client', e.g. Landsec) is allowed to open.
@@ -448,7 +453,8 @@ function Router() {
       <Route path="/map">{() => <PropertyIntelligenceTabRedirect tab="map" />}</Route>
       <Route path="/deals" component={DealsHub} />
       <Route path="/deals/:rest*" component={DealsHub} />
-      <Route path="/requirements" component={Requirements} />
+      {/* Requirements is a pill on Brands for every login (Woody, 2026-11-17); old links keep what they carried. */}
+      <Route path="/requirements">{() => <RequirementsToBrands />}</Route>
       <Route path="/tenant-rep" component={TenantRep} />
       <Route path="/evidence-plans" component={EvidencePlans} />
       <Route path="/evidence-plans/:id" component={EvidencePlans} />
@@ -492,8 +498,9 @@ function Router() {
       <Route path="/chatbgp" component={ChatBGP} />
       <Route path="/enrichment" component={Enrichment} />
       <Route path="/admin/dedupe" component={AdminDedupe} />
-      <Route path="/board-report" component={BoardReport} />
-      <Route path="/reporting" component={Reporting} />
+      {/* Reporting and Board Report are Finance → Fees & pipeline now (Woody, 2026-11-17). */}
+      <Route path="/board-report">{() => <Redirect to="/finance?tab=pipeline" />}</Route>
+      <Route path="/reporting">{() => <Redirect to="/finance?tab=pipeline" />}</Route>
       <Route path="/leasing-schedule" component={LeasingSchedule} />
       <Route path="/leasing-schedule/:propertyId" component={LeasingSchedule} />
       <Route path="/tenancy-schedule" component={TenancyScheduleRedirect} />

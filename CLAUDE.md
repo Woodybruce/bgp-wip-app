@@ -2768,6 +2768,10 @@ what was read, fills the form, and saves through the form's own route.
 
 ## Requirements centre (Woody, 2026-11-12) — docs/requirements-review-2026-11-12.md
 
+(Since 17 November 2026 the page is the **Requirements** pill on Brands,
+`/brands?tab=requirements`, for every login; `/requirements` forwards there
+with its parameters. See "The BGP side bar".)
+
 Woody: "the requirements page is just picking up historic requirements
 dragged from a couple of data bases. We need it to be the live requirements
 centre for brands that are expanding to include and pick up on all chats and
@@ -3036,6 +3040,26 @@ Two rules everything else follows (do not re-litigate):
   bindings (sql-tools, brand pack, Brand Gap, target engine, nightly brand
   pass, insights report leg): a new import in those functions needs the
   binding added to the test. Run that suite with `--import tsx`.
+- **Checked across the app (17 November 2026**; Woody: "check that the
+  requirments function speaks properly to the whole app and it works
+  properly"). An audit of every link in and every reader. Fixed:
+  - The leasing page now reads `?requirementId=` (BGP staff get its form, a
+    client login a search for it); ChatBGP receipts, landlord chat and a
+    contact's Requirements list link with it (the contact page used
+    `?highlight=`, which nothing read, and sent investment requirements to
+    the leasing page). "Add a requirement" on the brand pages carries
+    `&new=1`, so the form opens with the brand chosen. A client login is
+    never shown the create form (`createOpen && !clientShape`), and Brand
+    Gap offers "Add requirement" to BGP staff only. The phone's suggestions
+    alert keeps its `?list=`.
+  - Off the live rule, now on it: the brand plan's requirements (the
+    Schemes and units card, Requirement held), Start strategy's
+    "Requirement on file" (with its state), and the brand page's Tenant rep
+    agents. A client is never told a market listing is a "BGP" or "Live"
+    requirement (brand page headings; the phone list shows the rule's state
+    label to staff only). ChatBGP's investment directions point at
+    Investment → Requirements.
+  - Guards: `qa/regression/requirements-app-links.test.mjs`.
 
 ## ChatBGP sets tasks for colleagues from either tool path (2026-11-16)
 
@@ -3278,6 +3302,18 @@ rep". Do not re-litigate. Guards: `qa/regression/staff-menu.test.mjs`.
 - **Website** is in the Admin group (`adminNavBase`; admin only on the phone
   list). Its routes are unchanged (`requireAuth`): the page still opens by
   its address.
+- **Requirements is a pill on Brands for every login** (Woody, 2026-11-17:
+  "put requirements in the brands section for everyone"):
+  `/brands?tab=requirements`, after Brand Explorer, on a computer and on a
+  phone, for BGP staff, Landsec and every other client login (the page still
+  decides what a client sees: its read-only Open / Closed list). It is off
+  the staff side bar and the phone list. `/requirements` forwards there with
+  every parameter it carried (`RequirementsToBrands` in `App.tsx`), so the
+  links the app writes keep working; the page draws `embedded` there, under
+  the Brands title. A joint agent has no Brands, as before.
+- **Reporting and Board Report are Finance → Fees & pipeline** (see "Finance:
+  one money page" below): off the More group and the phone list;
+  `/reporting` and `/board-report` open `/finance?tab=pipeline`.
 - **Investment requirements live only under Investment**
   (`/investment/requirements`, which honours `?requirementId=` and
   `?team=`). The Requirements page is leasing only, with a line pointing to
@@ -3330,6 +3366,69 @@ and contract / passport links (the screens hid them). It now masks exactly
 what `GET /api/hr/staff/:userId` masks, for anyone but an admin or the
 person. `qa/regression/hr-staff-masking.test.mjs` holds the two lists in
 step: a new personal field is masked on both.
+
+## Finance: one money page (Woody, 2026-11-17)
+
+Woody: "can you fold reporting and board report in to finance trya nd make
+it sync and to the point there is so much going on its overhwelming and it
+defo double counts". Asked, he chose "Neg & HOTs 50%, SOL+ 100%" for every
+pipeline figure, "Xero invoices, May–April" for fees billed and "Keep money
+only". Do not re-litigate. Guards: `qa/regression/finance-one-rule.test.mjs`.
+
+- **One pipeline rule**, `shared/finance-pipeline.ts` (`PIPELINE_WEIGHTS`,
+  `pipelineStage`): Negotiating and HOTs 50%; Solicitors, Exchanged and
+  Completed-not-yet-invoiced 100%; an invoiced deal (a Xero invoice raised
+  against it at any stage, or INV) is Xero income only, never the book;
+  withdrawn, archived,
+  Marketing and earlier never count; an investment deal counts from
+  Solicitors (`isProvisionalFee`). Before this there were four sets of
+  weights (the outlook NEG 50/SOL+ 100, the dashboard's projection NEG 50 /
+  SOL 75 / EXC 90, forward commission NEG 50 / SOL 75, Reporting and Board
+  Report every deal's full fee by calendar year) and HOTs dropped out of all
+  of them. The cash flow projection (`buildDealProjection`), the Xero WIP
+  forecast (`buildWipForecast`), forward commission (`FORWARD_WEIGHTS` from
+  `FORWARD_COMMISSION_STAGES`: NEG, HOT, SOL; EXC, COM and INV are in the
+  statements), the outlook's stage list and Fees & pipeline all read it.
+  Never write a weight anywhere else.
+- **One book**: `loadBookDeals` in `server/finance-board.ts` is the query
+  behind both the cash flow projection and Fees & pipeline.
+- **The page is six pills** (`FINANCE_TABS` in `client/src/pages/finance.tsx`,
+  `?tab=`, a pill change replaces the address): **Overview** (the four Xero
+  headline stats and the Company outlook, whose deal book is now one line
+  with a Fees & pipeline link), **Fees & pipeline**
+  (`client/src/components/finance-board.tsx`, `GET /api/finance/board`):
+  the deal book weighted and at full fee, expected this year (with no date
+  and after 30 April named, so the parts add up), invoiced this year, the
+  stage rows with their deals, by team (a deal on several teams is shared
+  equally, `teamShares`, so the teams add up to the book), by deal type, the
+  ten largest deals, fees by agent (invoiced this year and the weighted
+  book, each shared by the deal's fee split; BGP House's slice is its own
+  line, never an agent; invoices with no deal or no split are named) and
+  **Download Excel** (`GET /api/finance/board.xlsx`, the board pack: Summary,
+  By stage, By team, By deal type, Deals, Fees by agent, Invoiced by month);
+  **Cash flow**; **Commission** (statements and Equity partners);
+  **History** (Historical billings); **Spend** (card spend, app costs). Both
+  routes are `requireEquityOrAdmin`, like the rest of Finance.
+- **Fees billed** = Xero sales invoices (AUTHORISED or PAID) dated in the
+  financial year, ex VAT: `fyInvoices` from `buildFinancials`, kept on the
+  server (`forReply` strips it from `/api/xero/financials` and the saved
+  last-good copy). Deals never add to fees billed.
+- **Dropped on purpose** (Woody: "keep money only"): record counts
+  (contacts, properties, deals), the leasing activity trend, conversion
+  rate, average deal size, time-to-close charts and the news panel. The old
+  `/api/board-report` and its Excel export (all deals, any status, a deal
+  counted once per team) are deleted; `client/src/pages/reporting.tsx` and
+  `board-report.tsx` too.
+- **The dashboard and phone match Finance**: the Equity Finance widget and
+  the phone's Company tile take the deal book and the projected year from
+  the Company outlook itself (`useCompanyOutlook` in
+  `client/src/lib/use-company-outlook.ts`: the same queries, builder and Xero
+  fallback as the page). The server's old `projection` (income + weighted
+  book − a Xero cost run rate) is retired: it disagreed with the outlook.
+  The widget's "Cost run rate" tile went with it.
+- Not changed: the WIP report and `/api/wip/agent-summary` (the WIP
+  schedule's own view, every WIP status at full fee), and the commission
+  statements' billings (fee due at exchange or completion, Woody's scheme).
 
 ## Document design preferences (the "house style" pattern)
 

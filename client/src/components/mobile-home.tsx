@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useCompanyOutlook } from "@/lib/use-company-outlook";
 import { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders, startXeroConnect } from "@/lib/queryClient";
@@ -147,7 +148,7 @@ function AiDailyBriefing() {
   );
 }
 
-type Alert = { type: string; severity: "critical" | "warning" | "info"; title: string; detail?: string; entityId?: string; entityType?: string };
+type Alert = { type: string; severity: "critical" | "warning" | "info"; title: string; detail?: string; entityId?: string; entityType?: string; href?: string };
 type Task = { id: string; title: string; status: string; priority: string; deal_name?: string | null; property_name?: string | null; contact_name?: string | null; waitingOnDeal?: boolean; waitingDays?: number | null };
 type DealSummary = { id: string; name: string; status: string; property_name?: string | null };
 type Commission = { billedPence: number; commissionEarned: number; commissionForecast: number; schemeYear: string; wipByStage?: { neg: number; sol: number; exc: number; com: number } };
@@ -199,7 +200,9 @@ const SEV: Record<string, { cls: string; icon: any }> = {
 function alertHref(a: Alert): string {
   if (a.entityType === "deal" && a.entityId) return `/deals/${a.entityId}`;
   if (a.entityType === "contact" && a.entityId) return `/contacts/${a.entityId}`;
-  if (a.entityType === "requirement") return `/requirements`;
+  // The alert's own link where it carries one ("/requirements?list=to_confirm"
+  // for the suggestions digest), so the phone opens the same list the desktop does.
+  if (a.entityType === "requirement") return a.href && a.href.startsWith("/requirements") ? a.href : `/requirements`;
   return "/today";
 }
 
@@ -218,6 +221,9 @@ export default function MobileHome() {
     enabled: isEquity,
     staleTime: 5 * 60 * 1000,
   });
+  // The projected year as Finance's Company outlook works it out — never a
+  // second calculation (Woody, 2026-11-17: "make it sync").
+  const equityOutlook = useCompanyOutlook(isEquity);
   // Personal (my billing) vs Company (equity finance) tab on the combined
   // finance tile — Company is the default (Woody, 2026-08-22), an explicit
   // switch to Personal sticks per device.
@@ -531,12 +537,12 @@ export default function MobileHome() {
                     <p className="text-base font-bold tabular-nums leading-tight">£{Math.round(equityFin.cashTotal || 0).toLocaleString("en-GB")}</p>
                     <p className="text-[10px] opacity-70">Cash at bank</p>
                   </div>
-                  {equityFin.projection?.projectedNet != null && (
+                  {equityOutlook && (
                     <div>
-                      <p className={`text-base font-bold tabular-nums leading-tight ${equityFin.projection.projectedNet < 0 ? "text-red-400" : "text-emerald-400"}`}>
-                        £{Math.round(equityFin.projection.projectedNet).toLocaleString("en-GB")}
+                      <p className={`text-base font-bold tabular-nums leading-tight ${equityOutlook.profit.projectedFy < 0 ? "text-red-400" : "text-emerald-400"}`}>
+                        {equityOutlook.profit.projectedFy < 0 ? "-" : ""}£{Math.abs(Math.round(equityOutlook.profit.projectedFy)).toLocaleString("en-GB")}
                       </p>
-                      <p className="text-[10px] opacity-70">Projected FY net</p>
+                      <p className="text-[10px] opacity-70">Projected FY profit</p>
                     </div>
                   )}
                   <div>

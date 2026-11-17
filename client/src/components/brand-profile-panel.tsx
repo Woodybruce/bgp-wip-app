@@ -3119,12 +3119,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               <div data-testid="brand-bgp-requirements">
                 {brandTop ? (
                   <BrandBlockHeading count={liveRequirementCount} action={<Link href={`/requirements?companyId=${c.id}`} className={brandCardAction}>Manage</Link>}>
-                    <FileText className="w-3.5 h-3.5" /> BGP requirements
+                    {/* A client is sent market listings and its own requirements, never BGP's (client rule). */}
+                    <FileText className="w-3.5 h-3.5" /> {isClientViewer ? "Requirements" : "BGP requirements"}
                   </BrandBlockHeading>
                 ) : (
                 <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1">
-                    <FileText className="w-3 h-3" /> BGP requirements ({liveRequirements.length})
+                    <FileText className="w-3 h-3" /> {isClientViewer ? "Requirements" : "BGP requirements"} ({liveRequirements.length})
                   </span>
                   <Link
                     href={`/requirements?companyId=${c.id}`}
@@ -3442,7 +3443,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       <div className={card} data-testid="brand-requirements-card"><div className="space-y-2.5">{bgpRequirementsBlock}{pipnetRequirementsBlock}</div></div>
     ) : null;
     const requirementsQuiet = !hasRequirements && !isClientViewer ? <>
-      <BrandQuietLine testId="brand-requirements-empty">No BGP requirement recorded · <Link href={`/requirements?companyId=${c.id}`} className={brandQuietLink}>Add a requirement</Link></BrandQuietLine>
+      <BrandQuietLine testId="brand-requirements-empty">No BGP requirement recorded · <Link href={`/requirements?companyId=${c.id}&new=1`} className={brandQuietLink}>Add a requirement</Link></BrandQuietLine>
       {pipnetRequirementsBlock}
     </> : null;
     // The viewings card loads its own rows: a card when there is activity,

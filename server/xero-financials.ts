@@ -20,6 +20,7 @@ import { xeroApi } from "./xero";
 import { withSystemXero } from "./xero-system-session";
 import { pool } from "./db";
 import { legacyToCode, isProvisionalFee, type DealStatusCode } from "../shared/deal-status";
+import { PIPELINE_WEIGHTS, pipelineStage } from "../shared/finance-pipeline";
 import { buildCommissionStatements } from "./commission-engine";
 
 const CACHE_TTL_MS = 15 * 60_000;
@@ -38,6 +39,13 @@ let bareCache: { at: number; payload: any | null } | null = null;
 // Last good full payload, persisted so a rate-limited or failed pull after
 // a deploy restart serves yesterday's numbers (marked stale) instead of a
 // blank Finance page.
+// This year's invoice list stays on the server (Finance → Fees & pipeline
+// reads it through buildFinancialsShared); the page is never sent it.
+function forReply(payload: any): any {
+  if (!payload || !("fyInvoices" in payload)) return payload;
+  const { fyInvoices: _list, ...rest } = payload;
+  return rest;
+}
 const LAST_GOOD_KEY = "xero:financials:last_good";
 function saveLastGoodFinancials(payload: any): void {
   pool.query(
@@ -336,6 +344,24 @@ export async function buildFinancials(session: any): Promise<any> {
     .filter(p => p.paidOn && p.paidOn.getTime() >= fyStartMs)
     .sort((a, b) => (b.paidOn!.getTime() - a.paidOn!.getTime()));
 
+  // ---- Invoiced this FY (Finance → Fees & pipeline) ----
+  // Sales invoices raised this financial year, unpaid or paid, by invoice
+  // date and ex VAT — what "fees billed" means on Finance. Kept on the server
+  // (the route strips it from the reply); drafts, voids and credit notes are
+  // not invoices raised.
+  const seenInvoice = new Set<string>();
+  const fyInvoices = ([...(invoices as any[]), ...(paidAll as any[])])
+    .map((inv: any) => ({
+      xeroInvoiceId: String(inv.InvoiceID || ""),
+      number: inv.InvoiceNumber || "",
+      contact: inv.Contact?.Name || "—",
+      date: parseXeroDate(inv.DateString || inv.Date),
+      subTotal: toNum(inv.SubTotal),
+    }))
+    .filter(i => i.xeroInvoiceId && i.date && i.date.getTime() >= fyStartMs && i.date.getTime() <= today.getTime()
+      && !seenInvoice.has(i.xeroInvoiceId) && seenInvoice.add(i.xeroInvoiceId))
+    .map(i => ({ ...i, date: iso(i.date!) }));
+
   // ---- Creditors (outstanding ACCPAY bills) + cash-out schedule ----
   // Bills are accrual entries: an AUTHORISED bill is already inside the P&L
   // expense figures. This view is about WHEN the cash leaves, not extra cost.
@@ -472,6 +498,7 @@ export async function buildFinancials(session: any): Promise<any> {
 
   return {
     paidInvoices: paidInvoices.map(p => ({ ...p, paidOn: p.paidOn ? iso(p.paidOn) : null })),
+    fyInvoices,
     costs,
     recurring,
     creditors: {
@@ -501,14 +528,14 @@ export async function buildFinancials(session: any): Promise<any> {
 // ── WIP pipeline + invoice cross-reference ──────────────────────────────
 // Joins crm_deals (fee + canonical status) to xero_invoices (by deal_id)
 // so the dashboard can forecast the year and surface reconciliation gaps:
-//   - NEG / SOL / EXC fees = the live pipeline, weighted for projection.
-//     Investment deals before Solicitors are provisional (isProvisionalFee,
-//     shared/deal-status) and sit in earlyPipeline only (2026-11-09).
+//   - NEG / HOT / SOL / EXC fees = the live pipeline, weighted by the one
+//     pipeline rule (shared/finance-pipeline.ts: NEG and HOT 50%, SOL and
+//     EXC 100%). Investment deals before Solicitors are provisional
+//     (isProvisionalFee) and sit in earlyPipeline only.
 //   - COM deals with NO Xero invoice = "completed, not yet invoiced" —
-//     fees earned but unbilled (the money-left-on-table list)
+//     fees earned but unbilled (the money-left-on-table list), at 100%
 //   - INV / invoiced amounts deliberately NOT added to the projection:
 //     they're already inside Xero's actual income figures
-const STAGE_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75, EXC: 0.9 };
 
 async function buildWipForecast(): Promise<any> {
   const { rows } = await pool.query(`
@@ -530,8 +557,9 @@ async function buildWipForecast(): Promise<any> {
      WHERE d.fee IS NOT NULL AND d.fee > 0
   `);
 
-  const pipeline: Record<string, { total: number; count: number }> = {
+  const pipeline: Record<"NEG" | "HOT" | "SOL" | "EXC", { total: number; count: number }> = {
     NEG: { total: 0, count: 0 },
+    HOT: { total: 0, count: 0 },
     SOL: { total: 0, count: 0 },
     EXC: { total: 0, count: 0 },
   };
@@ -550,9 +578,10 @@ async function buildWipForecast(): Promise<any> {
       early.count++;
       continue;
     }
-    if (code === "NEG" || code === "SOL" || code === "EXC") {
-      pipeline[code].total += fee;
-      pipeline[code].count++;
+    const stage = pipelineStage({ status: d.status, fee, dealType: d.dealType, team: d.team, invoiceCount: d.invoiceCount });
+    if (stage === "NEG" || stage === "HOT" || stage === "SOL" || stage === "EXC") {
+      pipeline[stage].total += fee;
+      pipeline[stage].count++;
       continue;
     }
     if (code === "REP" || code === "SPEC" || code === "LIVE" || code === "AVA") {
@@ -599,16 +628,14 @@ async function buildWipForecast(): Promise<any> {
   }
 
   toInvoiceDeals.sort((a, b) => new Date(b.completedAt || 0).getTime() - new Date(a.completedAt || 0).getTime());
-  const weightedPipeline =
-    pipeline.NEG.total * STAGE_WEIGHTS.NEG +
-    pipeline.SOL.total * STAGE_WEIGHTS.SOL +
-    pipeline.EXC.total * STAGE_WEIGHTS.EXC;
+  const stages = ["NEG", "HOT", "SOL", "EXC"] as const;
+  const weightedPipeline = stages.reduce((s, k) => s + pipeline[k].total * PIPELINE_WEIGHTS[k], 0);
 
   return {
     pipeline,
-    weights: STAGE_WEIGHTS,
+    weights: PIPELINE_WEIGHTS,
     weightedPipeline: Math.round(weightedPipeline),
-    unweightedPipeline: Math.round(pipeline.NEG.total + pipeline.SOL.total + pipeline.EXC.total),
+    unweightedPipeline: Math.round(stages.reduce((s, k) => s + pipeline[k].total, 0)),
     toInvoice: { total: Math.round(toInvoiceTotal), count: toInvoiceDeals.length, deals: toInvoiceDeals.slice(0, 12) },
     invoicedAwaitingPayment: Math.round(invoicedAwaitingPayment),
     earlyPipeline: { total: Math.round(early.total), count: early.count },
@@ -692,7 +719,7 @@ export function registerXeroFinancialRoutes(app: Express): void {
   app.get("/api/xero/financials", requireEquityOrAdmin, async (req: Request, res: Response) => {
     try {
       if (cache && Date.now() - cache.at < CACHE_TTL_MS && req.query.refresh !== "1") {
-        return res.json(cache.payload);
+        return res.json(forReply(cache.payload));
       }
       // WIP forecast + commission statements are local-DB only — compute
       // them first so those halves of the dashboard work even when Xero
@@ -750,24 +777,13 @@ export function registerXeroFinancialRoutes(app: Express): void {
         return null;
       });
       delete payload.paidInvoices; // raw list folded into the paid panel
-      if (wip) {
-        const actuals = Number(payload.headline?.income) || 0;
-        payload.projection = {
-          actuals,
-          toInvoice: wip.toInvoice.total,
-          weightedPipeline: wip.weightedPipeline,
-          total: Math.round(actuals + wip.toInvoice.total + wip.weightedPipeline),
-        };
-        // Projected FY net = projected income (above) − projected FY costs
-        // (actual opex to date + run-rate for the remaining months).
-        if (payload.costs?.projectedFyCosts != null) {
-          payload.projection.projectedFyCosts = payload.costs.projectedFyCosts;
-          payload.projection.projectedNet = Math.round(payload.projection.total - payload.costs.projectedFyCosts);
-        }
-      }
+      // (The old "projection" — actual income + weighted book − a cost run
+      // rate — was retired on 17 November 2026: it disagreed with the
+      // Company outlook. The dashboard and phone tiles read the outlook, the
+      // one projected year, through useCompanyOutlook.)
       cache = { at: Date.now(), payload };
-      saveLastGoodFinancials(payload);
-      res.json(payload);
+      saveLastGoodFinancials(forReply(payload));
+      res.json(forReply(payload));
     } catch (e: any) {
       const msg = String(e?.message || "");
       console.error("[xero-financials] error:", msg);

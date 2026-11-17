@@ -22,6 +22,7 @@
 import {
   type CashflowData, type CashflowModel, buildCashflowModel, xeroLabelToMonth,
 } from "@/lib/cashflow-model";
+import { PIPELINE_STAGES, PIPELINE_STAGE_LABELS, pipelineWeightPct } from "@shared/finance-pipeline";
 
 export interface HistoricalWip {
   fys: number[];
@@ -54,7 +55,10 @@ export interface CompanyOutlook {
     // Deals with no expected date — counted in projectedFy but in no month
     // ("Unscheduled / TBC").
     unscheduled: { weighted: number; count: number };
-    // Same stage buckets and weights as the WIP report.
+    // Deals expected after 30 April: in the deal book, not in this year.
+    afterYearEnd: { weighted: number; count: number };
+    // The deal book by stage, weighted by the one pipeline rule
+    // (shared/finance-pipeline.ts).
     byStage: Array<{ code: string; label: string; weightPct: number; weighted: number; unweighted: number; count: number; deals: Array<{ id: string; name: string; fee: number; weighted: number }> }>;
   };
   costs: {
@@ -235,6 +239,14 @@ export function buildCompanyOutlook(data: CashflowData | undefined, hist: Histor
   const forwardDeals = out.reduce((s, m) => s + m.incomeDeals, 0);
   const legacy = out.reduce((s, m) => s + m.incomeLegacy, 0);
   const unscheduled = { weighted: Math.round(data.deals?.undated?.weighted || 0), count: data.deals?.undated?.count || 0 };
+  // The stage rows hold the whole book; a deal expected after the year end
+  // is in them but not in this year's income, so it is named, never lost.
+  const lastFyMonth = months[months.length - 1];
+  const afterYearEnd = Object.entries(data.deals?.byMonth || {}).reduce(
+    (acc, [k, v]) => (k > lastFyMonth ? { weighted: acc.weighted + (v.weighted || 0), count: acc.count + (v.count || 0) } : acc),
+    { weighted: 0, count: 0 },
+  );
+  afterYearEnd.weighted = Math.round(afterYearEnd.weighted);
   const projectedFyIncome = out.reduce((s, m) => s + m.income, 0) + unscheduled.weighted;
   const projectedFyCosts = out.reduce((s, m) => s + m.cost, 0);
   const projectedFyProfit = projectedFyIncome - projectedFyCosts;
@@ -267,14 +279,13 @@ export function buildCompanyOutlook(data: CashflowData | undefined, hist: Histor
       legacy: Math.round(legacy),
       projectedFy: Math.round(projectedFyIncome),
       unscheduled,
-      byStage: (["NEG", "SOL", "EXC", "COM"] as const)
+      byStage: PIPELINE_STAGES
         .map(code => {
           const s = data.deals?.byStage?.[code];
-          const labels: Record<string, string> = { NEG: "Negotiating", SOL: "At solicitors", EXC: "Exchanged", COM: "Completed, to invoice" };
-          const weights: Record<string, number> = { NEG: 50, SOL: 100, EXC: 100, COM: 100 };
-          return s ? { code, label: labels[code], weightPct: weights[code], weighted: s.weighted, unweighted: s.unweighted, count: s.count, deals: s.deals || [] } : null;
+          return s ? { code, label: PIPELINE_STAGE_LABELS[code], weightPct: pipelineWeightPct(code), weighted: s.weighted, unweighted: s.unweighted, count: s.count, deals: s.deals || [] } : null;
         })
         .filter((s): s is NonNullable<typeof s> => !!s),
+      afterYearEnd,
     },
     costs: {
       basicAvg: Math.round(basicAvg),

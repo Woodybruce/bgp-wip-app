@@ -334,7 +334,7 @@ function MapLocationsCell({
   );
 }
 
-function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { teamFilter?: string | null; companyFilter?: string | null; autoCreate?: boolean; initialList?: string | null }) {
+function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requirementId }: { teamFilter?: string | null; companyFilter?: string | null; autoCreate?: boolean; initialList?: string | null; requirementId?: string | null }) {
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
@@ -507,6 +507,23 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
   const { data: items = [], isLoading, error } = useQuery<CrmRequirementsLeasing[]>({
     queryKey: ["/api/crm/requirements-leasing"],
   });
+  // ?requirementId= (ChatBGP receipts, landlord chat, a contact's list) opens
+  // that requirement: its form for BGP staff, a search for it for a client
+  // login, which has no form. One not in the list says so.
+  const openedRequirementId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!requirementId) { openedRequirementId.current = null; return; }
+    if (!reqUser || isLoading || error || openedRequirementId.current === requirementId) return;
+    openedRequirementId.current = requirementId;
+    const linked = items.find(item => item.id === requirementId);
+    if (!linked) {
+      toast({ title: "Requirement unavailable", description: "This requirement was removed or is not available to your account.", variant: "destructive" });
+    } else if (clientShape) {
+      setSearch(linked.name || "");
+    } else {
+      setEditItem(linked);
+    }
+  }, [requirementId, items, isLoading, error, reqUser, clientShape, toast]);
   // The one live rule, worked out as the rows are read (shared/requirement-live.ts).
   const liveMap = useMemo(() => {
     const today = new Date();
@@ -1498,8 +1515,10 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
       )}
 
       {/* Mounted on open, so each new requirement starts from an empty form
-          with the person adding it as its owner. */}
-      {createOpen && (
+          with the person adding it as its owner. Never for a client login:
+          it cannot add one, so ?new=1 (an Add link it was handed) opens
+          nothing rather than a form whose save is refused. */}
+      {createOpen && !clientShape && (
       <LeasingFormDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
@@ -4833,13 +4852,18 @@ function InvestmentFormDialog({
   );
 }
 
-export default function Requirements() {
+// The Requirements pill on Brands (Woody, 2026-11-17: "put requirements in
+// the brands section for everyone"): /brands?tab=requirements draws this with
+// `embedded`, under the Brands title and pills; /requirements forwards there
+// with its address parameters.
+export default function Requirements({ embedded = false }: { embedded?: boolean } = {}) {
   const urlParams = new URLSearchParams(useSearch());
   const typeParam = urlParams.get("type");
   const teamParam = urlParams.get("team");
   const companyIdParam = urlParams.get("companyId");
   const listParam = urlParams.get("list");
   const newParam = urlParams.get("new");
+  const requirementIdParam = urlParams.get("requirementId");
   // Leasing only: investment requirements live under Investment
   // (/investment/requirements), not here (Woody, 2026-11-16: "move investment
   // requirements out of requirements and put into investment"). Old links
@@ -4866,10 +4890,10 @@ export default function Requirements() {
   if (typeParam === "investment" && (!pageUser || toInvestment)) return null;
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto" data-testid="requirements-page">
+    <div className={embedded ? "space-y-6" : "p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto"} data-testid="requirements-page">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
+          {!embedded && <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>}
           <p className="text-sm text-muted-foreground">
             Leasing requirements
             {teamParam ? ` · Filtered by ${teamParam} team` : ""}
@@ -4883,7 +4907,7 @@ export default function Requirements() {
         )}
       </div>
 
-      <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreate} initialList={listParam} />
+      <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreate} initialList={listParam} requirementId={requirementIdParam} />
     </div>
   );
 }

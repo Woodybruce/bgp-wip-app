@@ -15,7 +15,6 @@ import {
   Handshake,
   X,
 
-  FileText,
   Settings,
   LogOut,
   Cloud,
@@ -37,7 +36,6 @@ import {
   Check,
   MapPin,
   Receipt,
-  Presentation,
   TrendingUp,
   Palette,
   ImageIcon,
@@ -98,7 +96,9 @@ const coreNavBase = [
   // Tracker / Investment / WIP Report), so the standalone sidebar entry
   // was dropped — it duplicated the Deals view.
   { title: "Deals", url: "/deals", icon: BarChart3 },
-  { title: "Requirements", url: "/requirements", icon: FileText },
+  // Requirements is a pill inside Brands for every login (Woody, 2026-11-17:
+  // "put requirements in the brands section for everyone"); /requirements
+  // forwards there.
   // Work-in-progress modules (AML, Tenant Rep, hunters, Landlord Intel,
   // Leasing Schedule, Lease Advisory, London Restaurants) moved to the
   // "Unfinished" group below so the everyday Core nav stays clean.
@@ -222,8 +222,8 @@ const unfinishedNav = [
   // "New document → AI briefs" also links into it.
   { title: "Document Studio", url: "/document-studio", icon: FileTextIcon },
   { title: "Document Briefs", url: "/document-briefs", icon: FileTextIcon, badge: "AI" },
-  { title: "Reporting", url: "/reporting", icon: TrendingUp },
-  { title: "Board Report", url: "/board-report", icon: Presentation },
+  // Reporting and Board Report are Finance → Fees & pipeline (Woody,
+  // 2026-11-17: "fold reporting and board report in to finance").
   { title: "Leads", url: "/leads", icon: UserPlus },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, badge: "AI" },
 ];
@@ -431,9 +431,6 @@ export function AppSidebar() {
 
   // Core hides anything still admin-gated for non-admins (none at present —
   // Team now lives in the Admin group).
-  // Reporting is surfaced inside Core for Landsec tenants — for everyone else
-  // it lives in the Unfinished group along with the other modules being
-  // polished.
   const coreNavFiltered = coreNavBase.filter((i: any) => !i.adminOnly || user?.isAdmin);
   // Surface an "Approvals" entry (with a count badge) for anyone who actually
   // has expenses assigned to them to approve — Wendy/Layla (Stage 1) and the
@@ -472,7 +469,7 @@ export function AppSidebar() {
   // My BGP (staff HR, business card, BGP card) is BGP-internal — the route
   // jail already bounces clients back to the Dashboard, so for them the entry
   // would be a dead link that looked broken.
-  const CLIENT_HIDDEN_URLS = ["/hr", "/my-bgp", "/team-expenses", "/reporting", "/wip-report", "/pla/matters", "/investment", "/investment-comps", "/evidence-plans"];
+  const CLIENT_HIDDEN_URLS = ["/hr", "/my-bgp", "/team-expenses", "/wip-report", "/pla/matters", "/investment", "/investment-comps", "/evidence-plans"];
   const coreNavStaff = isClientUser
     ? [
         ...coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url)),
@@ -759,7 +756,6 @@ export function AppSidebar() {
 export const mobileOverlayItems = [
   { title: "Today", url: "/today", icon: Sun },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
-  { title: "Requirements", url: "/requirements", icon: FileText },
   { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
@@ -783,10 +779,8 @@ export const mobileOverlayItems = [
   { title: "SharePoint", url: "/sharepoint", icon: Cloud },
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "Mail", url: "/mail", icon: Mail },
-  { title: "Reporting", url: "/reporting", icon: TrendingUp },
   // Admin gating mirrors the desktop sidebar (Admin + Unfinished groups)
   // so non-admins don't get mobile links into pages whose APIs will 403.
-  { title: "Board Report", url: "/board-report", icon: Presentation, adminOnly: true },
   { title: "Website", url: "/website", icon: Globe, adminOnly: true },
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle, adminOnly: true },
   { title: "News", url: "/news", icon: Newspaper, adminOnly: true },
@@ -800,20 +794,19 @@ export const mobileOverlayItems = [
 
 export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [location] = useLocation();
-  const { brand, isLandsec } = useBrand();
+  const { brand } = useBrand();
   const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
 
-  // Parity with desktop: Reporting hidden everywhere now, and client logins
-  // also lose the BGP-internal items (People & HR, My BGP, WIP).
+  // Client logins lose the BGP-internal items (My BGP, WIP).
   const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
-  const clientHidden = ["/hr", "/my-bgp", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure", "/investment"];
+  const clientHidden = ["/hr", "/my-bgp", "/wip-report", "/today", "/mail", "/cad-measure", "/investment"];
   const isOverlayClient = user?.role === "Client" || !!(user as any)?.companyScopeId;
   const overlayLeasingOnly = !isOverlayClient && leasingSideOnly([user?.team, ...(Array.isArray(user?.additionalTeams) ? user.additionalTeams : [])]);
   const items = isOverlayClient && brand.id === "landsec"
     ? landsecNavFor((user as any)?.landsecRole, user?.role !== "Client")
     : isOverlayClient
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
-    : filteredByAdmin.filter(i => (i.url !== "/reporting" || isLandsec) && !(overlayLeasingOnly && LEASING_SIDE_HIDDEN_URLS.includes(i.url)));
+    : filteredByAdmin.filter(i => !(overlayLeasingOnly && LEASING_SIDE_HIDDEN_URLS.includes(i.url)));
 
   const isActive = (url: string) => {
     const landsecActive = isOverlayClient && brand.id === "landsec" ? landsecMenuActive(url, location) : null;
@@ -855,7 +848,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
           {(() => {
             // Surface the field-relevant boards first; tuck tools/utilities
             // under a "Tools & more" divider so the phone menu isn't a wall.
-            const PRIMARY = new Set(["/today", "/tasks", "/requirements", "/contacts", "/brands", "/comps", "/leads", "/calendar", "/mail", "/news", "/property-intelligence"]);
+            const PRIMARY = new Set(["/today", "/tasks", "/contacts", "/brands", "/comps", "/leads", "/calendar", "/mail", "/news", "/property-intelligence"]);
             const primary = items.filter((i: any) => PRIMARY.has(i.url));
             const more = items.filter((i: any) => !PRIMARY.has(i.url));
             const renderRow = (item: any) => {

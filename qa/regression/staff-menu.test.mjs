@@ -130,3 +130,27 @@ test('Requirements is leasing only; investment links go to Investment with what 
   const hub = source('client/src/pages/investment-hub.tsx');
   assert.match(hub, /<InvestmentRequirements teamFilter=\{teamFilter\} autoCreate=\{autoCreate\} requirementId=\{requirementId\} \/>/);
 });
+
+test('Requirements is a pill in Brands for every login; Reporting and Board Report are off the menus', () => {
+  // Woody, 2026-11-17: "put requirements in the brands section for everyone" and
+  // "fold reporting and board report in to finance".
+  for (const items of [core, phone]) {
+    for (const url of ['/requirements', '/reporting', '/board-report']) assert.ok(!items.some(i => i.url === url), url);
+  }
+  const unfinished = find(SIDEBAR, node => ts.isVariableStatement(node) && node.getText().startsWith('const unfinishedNav ='));
+  assert.ok(!unfinished.includes('url: "/reporting"') && !unfinished.includes('url: "/board-report"'));
+  const hub = source('client/src/pages/brands-hub.tsx');
+  assert.match(hub, /const HUB_TABS: HubTab\[\] = \["overview", "explorer", "requirements", "turnover", "hunter", "crm"\];/);
+  assert.match(hub, /\{ key: "requirements", label: "Requirements", icon: ClipboardList \}/);
+  // Only the Brand CRM is cut by login; Requirements shows for staff, Landsec and every client, and on a phone.
+  assert.match(hub, /\.filter\(t => t\.key !== "crm" \|\| showBrandCrm\)\n\s*\.filter\(t => !isMobile \|\| t\.key === "explorer" \|\| t\.key === "requirements" \|\| t\.key === "crm"\);/);
+  assert.match(hub, /\{activeTab === "requirements" && \(\s*<Suspense fallback=\{<Skeleton className="h-64 w-full" \/>\}>\s*<RequirementsPage embedded \/>/);
+  const app = source('client/src/App.tsx');
+  assert.match(app, /function RequirementsToBrands\(\) \{\s*const params = new URLSearchParams\(useSearch\(\)\);\s*params\.set\("tab", "requirements"\);\s*return <Redirect to=\{`\/brands\?\$\{params\.toString\(\)\}`\} replace \/>;/);
+  assert.match(app, /<Route path="\/requirements">\{\(\) => <RequirementsToBrands \/>\}<\/Route>/);
+  const allowed = find('client/src/App.tsx', node => ts.isVariableStatement(node) && node.getText().startsWith('const CLIENT_ALLOWED_ROUTES ='));
+  assert.ok(allowed.includes('"/brands"') && allowed.includes('"/requirements"'), 'a client login can still open both addresses');
+  const page = source('client/src/pages/requirements.tsx');
+  assert.match(page, /export default function Requirements\(\{ embedded = false \}: \{ embedded\?: boolean \} = \{\}\)/);
+  assert.match(page, /\{!embedded && <h1 /);
+});

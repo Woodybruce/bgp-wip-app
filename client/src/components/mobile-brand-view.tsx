@@ -631,7 +631,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
             )}
           </div>
         ) : !isClientViewer ? (
-          <BrandQuietLine>No BGP requirement recorded · <Link href={`/requirements?companyId=${c.id}`}>Add a requirement</Link></BrandQuietLine>
+          <BrandQuietLine>No BGP requirement recorded · <Link href={`/requirements?companyId=${c.id}&new=1`}>Add a requirement</Link></BrandQuietLine>
         ) : null}
         <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} pattern />
       </CardContent>
@@ -648,7 +648,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
   // The KYC state as the desktop header shows it; it opens People & checks.
   const phoneKycChip = brandPage ? brandKycChip(c, isClientViewer) : null;
   const requirementsQuiet = !requirementsCard && !isClientViewer ? <>
-    <BrandQuietLine testId="company-phone-requirements-empty">No BGP requirement recorded · <Link href={`/requirements?companyId=${c.id}`}>Add a requirement</Link></BrandQuietLine>
+    <BrandQuietLine testId="company-phone-requirements-empty">No BGP requirement recorded · <Link href={`/requirements?companyId=${c.id}&new=1`}>Add a requirement</Link></BrandQuietLine>
     <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} pattern />
   </> : null;
 
@@ -1061,11 +1061,13 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
             )}
             {(data.requirements || []).length > 0 ? (
               <div className="space-y-1.5">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Live requirements</div>
+                {/* The one live rule's label (shared/requirement-live.ts), never the raw
+                    status; a client is sent no state, so it sees none. */}
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Requirements</div>
                 {(data.requirements || []).slice(0, 5).map((r: any) => (
-                  <div key={r.id} className={`text-xs border-l-2 pl-2 ${String(r.status || "").toLowerCase() === "active" ? "border-l-emerald-400" : "border-l-muted"}`}>
+                  <div key={r.id} className={`text-xs border-l-2 pl-2 ${r.state === "live" ? "border-l-emerald-400" : "border-l-muted"}`}>
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      {r.status && <Badge variant="outline" className="text-[11px]">{r.status}</Badge>}
+                      {!isClientViewer && r.state_label && <Badge variant="outline" className="text-[11px]">{r.state_label}</Badge>}
                       {(r.size || []).length > 0 && <span className="font-mono tabular-nums text-[11px]">{formatSizeList(r.size)}</span>}
                     </div>
                     {(r.requirement_locations || []).length > 0 && (

@@ -4171,6 +4171,7 @@ import { setupCanvaRoutes } from "./canva";
 import { setupXeroRoutes } from "./xero";
 import { registerXeroFinancialRoutes } from "./xero-financials";
 import { registerCashflowRoutes } from "./cashflow-board";
+import { registerFinanceBoardRoutes } from "./finance-board";
 import { registerPartnerRemunerationRoutes } from "./partner-remuneration";
 import { registerHistoricalWipRoutes } from "./historical-wip";
 import { registerApiUsageRoutes } from "./api-usage";
@@ -5434,6 +5435,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupXeroRoutes(app);
   registerXeroFinancialRoutes(app);
   registerCashflowRoutes(app);
+  registerFinanceBoardRoutes(app);
   registerHistoricalWipRoutes(app);
   registerPartnerRemunerationRoutes(app);
   registerApiUsageRoutes(app);

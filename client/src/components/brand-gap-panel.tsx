@@ -417,7 +417,9 @@ function TargetDetail({ target, onClose, propertyId, propertyName, units, canWan
                 {want.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Target className="w-3.5 h-3.5 mr-1" />}Want at this scheme
               </Button>
             )}
-            {!noBrandPages && <Button size="sm" variant="outline" asChild><Link href={`/requirements?type=leasing&companyId=${t.brand_company_id}${t.requirement_note ? "" : "&new=1"}`} onClick={onClose}><FileText className="w-3.5 h-3.5 mr-1" />{t.requirement_note ? "Its requirements" : "Add requirement"}</Link></Button>}
+            {/* Adding a requirement is BGP's (canWant is BGP staff): a client login only
+                opens the brand's requirements, and only when there is one. */}
+            {!noBrandPages && (t.requirement_note || canWant) && <Button size="sm" variant="outline" asChild><Link href={`/requirements?type=leasing&companyId=${t.brand_company_id}${t.requirement_note ? "" : "&new=1"}`} onClick={onClose}><FileText className="w-3.5 h-3.5 mr-1" />{t.requirement_note ? "Its requirements" : "Add requirement"}</Link></Button>}
             {!noBrandPages && <Button size="sm" variant="ghost" asChild><Link href={`/companies/${t.brand_company_id}`} onClick={onClose}><Store className="w-3.5 h-3.5 mr-1" />Brand page</Link></Button>}
           </div>
         </>)}

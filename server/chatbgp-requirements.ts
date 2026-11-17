@@ -25,7 +25,7 @@ import {
   type Actor, type IntakeStore, type RequirementRow, type EvidenceInput, type EvidenceKind, type Queryable,
 } from "./requirement-intake";
 
-const INVESTMENT_REFUSAL = "Investment (buyer) requirements are not logged with this tool. Nothing was saved. Add it on the Requirements page (Investment view), or ask in that landlord's own chat thread, where it is saved to their Investment Requirements board.";
+const INVESTMENT_REFUSAL = "Investment (buyer) requirements are not logged with this tool. Nothing was saved. Add it under Investment → Requirements (/investment/requirements), or ask in that landlord's own chat thread, where it is saved to their Investment Requirements board.";
 // How the user knows, as they told ChatBGP. "press" keeps the requirement press-reported until someone records speaking to the brand.
 const CHAT_HOW: Record<string, EvidenceKind> = { chat: "chat", call: "call", meeting: "meeting", email: "email", viewing: "viewing", press: "press" };
 const STATUS_WORDS: Record<string, string> = { active: "Active", fulfilled: "Past", past: "Past", withdrawn: "Archived", archived: "Archived", on_hold: "Archived", "on hold": "Archived" };
@@ -283,7 +283,7 @@ export async function updateRequirementFromChat(store: IntakeStore, raw: any, ac
   if (!id) return fail("Which requirement? Search for it first to get its id. Nothing was changed.");
   const existing = await store.requirementById(id);
   if (!existing) {
-    return fail(`No leasing requirement has the id "${id}". Search for it first (search_crm, requirements). Investment (buyer) requirements are not changed with this tool: edit those on the Requirements page (Investment view) or in that landlord's own chat thread. Nothing was changed.`);
+    return fail(`No leasing requirement has the id "${id}". Search for it first (search_crm, requirements). Investment (buyer) requirements are not changed with this tool: edit those under Investment → Requirements (/investment/requirements) or in that landlord's own chat thread. Nothing was changed.`);
   }
   const b = readBrief({ ...a, companyName: null });
   const patch: Record<string, any> = {};

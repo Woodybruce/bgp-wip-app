@@ -59,38 +59,24 @@ async function xeroSnapshot(): Promise<any | null> {
 }
 
 // App-linked projection (Woody, 2026-08-27: "link the forecasting to the
-// app — deals, invoices, costs"). Deal fees come from the CRM book with the
-// same stage weights as the WIP forecast, bucketed by the deal's expected
-// month (completed → exchanged → target date); COM deals that still have no
-// Xero invoice count at full weight. Everything is read-only reference —
-// the board's typed budget stays the plan of record.
-// Investment deals before Solicitors are provisional and skipped
-// (isProvisionalFee, shared/deal-status.ts, 2026-11-09). Deals with no date
-// go to `undated` ("Unscheduled / TBC"), never given an invented month.
-// Solicitors onwards count at the full fee in the cash flow (2026-11-09:
-// a £100k deal at Solicitors forecasts £100k against its completion date);
-// only a lettings NEG deal is still weighted.
-const PROJ_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 1, EXC: 1, COM: 1 };
+// app — deals, invoices, costs"). Deal fees come from the CRM book by the one
+// pipeline rule (shared/finance-pipeline.ts: Negotiating and HOTs at 50%,
+// Solicitors onwards at 100%, a completed deal only until its Xero invoice),
+// bucketed by the deal's expected month (completed → exchanged → target
+// date). Everything is read-only reference — the board's typed budget stays
+// the plan of record. Deals with no date go to `undated` ("Unscheduled /
+// TBC"), never given an invented month.
 let _projLogged = false; // one composition log per boot — enough to audit the pipeline from deploy logs
-async function buildDealProjection(): Promise<{
+export async function buildDealProjection(): Promise<{
   byMonth: Record<string, { weighted: number; unweighted: number; count: number }>;
   undated: { weighted: number; unweighted: number; count: number };
   byStage: Record<string, { weighted: number; unweighted: number; count: number; deals: Array<{ id: string; name: string; fee: number; weighted: number }> }>;
 }> {
-  const { legacyToCode, isProvisionalFee } = await import("../shared/deal-status");
-  const { rows } = await pool.query(`
-    SELECT d.id, d.name, d.status, d.fee::float AS fee, d.deal_type, d.team,
-           COALESCE(d.completed_at, d.exchanged_at, d.target_date) AS dt,
-           d.updated_at AS ua,
-           inv.invoice_count AS ic
-      FROM crm_deals d
-      LEFT JOIN LATERAL (
-        SELECT COUNT(*)::int AS invoice_count
-          FROM xero_invoices xi
-         WHERE xi.deal_id = d.id AND COALESCE(xi.status, '') <> 'ERROR'
-      ) inv ON TRUE
-     WHERE d.fee IS NOT NULL AND d.fee > 0
-  `);
+  const { pipelineStage, pipelineWeighted } = await import("../shared/finance-pipeline");
+  // The same deals as Finance → Fees & pipeline (loadBookDeals), so the two
+  // books are one book.
+  const { loadBookDeals } = await import("./finance-board");
+  const rows = await loadBookDeals();
   const byMonth: Record<string, { weighted: number; unweighted: number; count: number }> = {};
   const undated = { weighted: 0, unweighted: 0, count: 0 };
   // Same stage buckets as the WIP report, so the Company outlook's forward
@@ -103,11 +89,11 @@ async function buildDealProjection(): Promise<{
   // — no staleness cut. Past-dated deals land in the current month.
   const included: Array<{ name: string; code: string; weighted: number }> = [];
   for (const d of rows) {
-    const code = legacyToCode(d.status);
-    if (!code || !(code in PROJ_WEIGHTS)) continue;
-    if (isProvisionalFee(d.status, { dealType: d.deal_type, team: d.team })) continue;
-    if (code === "COM" && d.ic > 0) continue; // invoiced — already in Xero AR/actuals
-    const weighted = (Number(d.fee) || 0) * PROJ_WEIGHTS[code];
+    // Invoiced deals (a completed deal with its Xero invoice) are already in
+    // Xero's income and AR, so the rule leaves them out.
+    const code = pipelineStage({ status: d.status, fee: d.fee, dealType: d.dealType, team: d.team, invoiceCount: d.invoiceCount });
+    if (!code) continue;
+    const weighted = pipelineWeighted(Number(d.fee) || 0, code);
     (byStage[code] ||= { weighted: 0, unweighted: 0, count: 0, deals: [] });
     byStage[code].weighted += weighted;
     byStage[code].unweighted += Number(d.fee) || 0;

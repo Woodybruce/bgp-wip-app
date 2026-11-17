@@ -2,8 +2,11 @@
 // dashboard, for the equity directors only (Woody, Jack, Rupert, Charlotte —
 // Woody, 2026-08-22). Same data as the Finance page (/api/xero/financials,
 // server-gated by requireEquityOrAdmin); this is the at-a-glance version with
-// a jump-off to the full page.
+// a jump-off to the full page. Every tile is a figure Finance shows, worked
+// out the same way (Woody, 2026-11-17: "make it sync"): the deal book and the
+// projected year come from the Company outlook itself (useCompanyOutlook).
 import { useQuery } from "@tanstack/react-query";
+import { useCompanyOutlook, outlookBookWeighted } from "@/lib/use-company-outlook";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "wouter";
 import { Landmark, ArrowRight } from "lucide-react";
@@ -19,6 +22,7 @@ export function EquityFinanceWidget() {
     queryKey: ["/api/xero/financials"],
     staleTime: 5 * 60 * 1000,
   });
+  const outlook = useCompanyOutlook();
 
   if (isLoading) {
     return (
@@ -64,22 +68,19 @@ export function EquityFinanceWidget() {
       sub: data.debtors ? `${money(data.debtors.overdue)} overdue` : undefined,
     },
   ];
-  if (data.costs) {
-    stats.push({ label: "Cost run rate", value: `${money(data.costs.runRate)}/mo`, sub: `${money(data.costs.projectedFyCosts)} projected FY` });
-  }
-  if (data.wip) {
+  const book = outlookBookWeighted(outlook);
+  if (outlook && book != null) {
+    const bookFee = outlook.income.byStage.reduce((s, st) => s + st.unweighted, 0);
     stats.push({
-      label: "Fee pipeline",
-      value: money(data.wip.unweightedPipeline),
-      sub: `${money(data.wip.weightedPipeline)} weighted · ${money(data.wip.toInvoice?.total)} to invoice`,
+      label: "Deal book",
+      value: money(book),
+      sub: `weighted · ${money(bookFee)} at full fee`,
     });
-  }
-  if (data.projection?.projectedNet != null) {
     stats.push({
-      label: "Projected FY net",
-      value: money(data.projection.projectedNet),
-      negative: data.projection.projectedNet < 0,
-      sub: `Income ${money(data.projection.total)} − costs`,
+      label: "Projected FY profit",
+      value: money(outlook.profit.projectedFy),
+      negative: outlook.profit.projectedFy < 0,
+      sub: `Income ${money(outlook.income.projectedFy)} − costs ${money(outlook.costs.projectedFy)}`,
     });
   }
 
@@ -106,7 +107,7 @@ export function EquityFinanceWidget() {
           ))}
         </div>
         <p className="text-[11px] text-muted-foreground mt-3">
-          Live from Xero · equity directors only · projections = weighted deal pipeline vs cost run rate ·{" "}
+          Live from Xero · equity directors only · deal book and projection as on Finance (Negotiating and HOTs at 50%, Solicitors on at 100%) ·{" "}
           <Link href="/wip-report"><span className="text-primary cursor-pointer" data-testid="link-equity-wip-report">WIP report</span></Link>
         </p>
       </CardContent>

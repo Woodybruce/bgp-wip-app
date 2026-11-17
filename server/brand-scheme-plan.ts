@@ -26,6 +26,7 @@ import { legacyToCode } from "@shared/deal-status";
 import { isLettingType } from "@shared/letting-rules";
 import { formatSizeList } from "@shared/format-size";
 import { landsecCategoryOf } from "@shared/landsec";
+import { requirementStateSql } from "@shared/requirement-live";
 import {
   BRAND_STAGE_LABELS, askedNoTarget, brandStageRank, daysSince, furthestStage, isAgreedOfferStatus, isOnHold, planHeadline,
   requirementChip, resolveStage,
@@ -556,10 +557,13 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
       `/* brand-plan:clocks */ SELECT deal_id, waiting_on_party, waiting_on_name, ${iso("waiting_since")} AS waiting_since FROM landsec_deal_clock
         WHERE deal_id = ANY($1) AND waiting_on_party IS NOT NULL`, [dealIds])).rows, [] as any[]),
     requirementBrandIds.length === 0 ? [] : guarded("Requirements", async () => (await q.query(
-      `/* brand-plan:requirements */ SELECT id, company_id, name, size, use, requirement_locations, status, sources, deal_id,
-              ${iso("COALESCE(updated_at, created_at)")} AS at
-         FROM crm_requirements_leasing WHERE company_id = ANY($1) AND (status IS NULL OR status = 'Active')
-        ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST`, [requirementBrandIds])).rows, [] as any[]),
+      // Live or to confirm by the one live rule (shared/requirement-live.ts),
+      // never "status = Active": a stale import is not the brand's
+      // requirement, and a Draft waiting to be confirmed still is one.
+      `/* brand-plan:requirements */ SELECT r.id, r.company_id, r.name, r.size, r.use, r.requirement_locations, r.status, r.sources, r.deal_id,
+              ${iso("COALESCE(r.updated_at, r.created_at)")} AS at
+         FROM crm_requirements_leasing r WHERE r.company_id = ANY($1) AND ${requirementStateSql("r")} IN ('live', 'to_confirm')
+        ORDER BY COALESCE(r.updated_at, r.created_at) DESC NULLS LAST`, [requirementBrandIds])).rows, [] as any[]),
     // The scheme, unit and share columns are read through to_jsonb so the
     // query holds before they exist.
     requirementBrandIds.length === 0 ? [] : guarded("CRM actions", async () => (await q.query(
