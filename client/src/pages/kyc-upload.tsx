@@ -314,7 +314,7 @@ export default function KycUploadPage() {
     <Shell>
       {view.test && (
         <div className="mb-5 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="kyc-test-banner">
-          <strong>Test page.</strong> This is what a client sees. Files you upload here are not kept, and nothing is sent to a client.
+          <strong>Test page.</strong> This is what a client sees. Files you upload here are not kept, and nothing is sent to a client.{view.idCheck?.real ? " The identity check is a real one, run by Veriff." : ""}
         </div>
       )}
 

@@ -281,10 +281,14 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
   let idCheck: KycPortalView["idCheck"] = null;
   if (request.needsIdCheck) {
     const state = progress.idState || "not_started";
-    const canStart = row.is_test ? true
+    // A test page runs a real Veriff check when Veriff is set up (Woody,
+    // 2026-11-17: "can you do the test page a real identity check with
+    // veriff"), under the same three-session cap as a client's.
+    const real = !row.is_test || veriffConfigured();
+    const canStart = !real ? true
       : state === "restart" ? request.veriffSessionIds.length < MAX_ID_SESSIONS
       : state !== "approved" && state !== "submitted";
-    idCheck = { state, canStart };
+    idCheck = { state, canStart, real };
   }
   const requested = new Set(request.docs);
   return {
@@ -609,10 +613,10 @@ async function finishRequest(row: TokenRow): Promise<void> {
   ];
   // The agents hear it; on a test, the admin who sent it.
   const to = kycReplyAddresses(row, request.cc);
-  const { loadDealRedFlags } = await import("./kyc-red-flags");
+  const { loadDealRedFlags, requestIdChecks } = await import("./kyc-red-flags");
   const { partyRedFlags } = await import("@shared/kyc-red-flags");
   const redFlags = row.is_test || !row.company_id
-    ? partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null }], idChecks: [] })
+    ? partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null }], idChecks: await requestIdChecks(request.veriffSessionIds) })
     : await loadDealRedFlags(row.deal_id, [row.company_id]).then(r => r.parties[row.company_id!] || []).catch(() => []);
   const sent = await sendKycEmail({
     to,
@@ -833,7 +837,7 @@ kycRequestRouter.post("/api/kyc-upload/:token/id-check", async (req: Request, re
     if (!row) return;
     const request = row.request!;
     if (!request.needsIdCheck) return res.status(400).json({ message: "No identity check is needed on this request." });
-    if (row.is_test) return res.json({ url: null, test: true });
+    if (row.is_test && !veriffConfigured()) return res.json({ url: null, test: true });
     const session = await latestSession(request);
     const state = kycIdStateFor(session?.status);
     if (session?.verification_url && (state === "not_started" || state === "started" || state === "retry")) return res.json({ url: session.verification_url });
@@ -985,7 +989,7 @@ kycRequestRouter.post("/api/admin/kyc-emails/test", adminOnly, async (req: Reque
       const expiresAt = new Date(Date.now() + 2 * 86400000);
       const request: KycRequestDetails = {
         ref, kind: partyKind, role: "tenant", partyName, dealName: SAMPLE.dealName,
-        needsIdCheck: true, docs: defaultKycDocs(partyKind, "tenant", true), note: "This is a test request. Try the page as a client would.",
+        needsIdCheck: true, docs: defaultKycDocs(partyKind, "tenant", true), note: veriff ? "This is a test request. Try the page as a client would: the identity check is a real one, run by Veriff." : "This is a test request. Try the page as a client would.",
         mobile: null, agents: [agent], cc, sentBy: { id: me.id, name: me.name }, sentFrom: null, sentAt: null, sendError: null,
         openedAt: null, veriffSessionIds: [], idCheckNote: veriff ? null : "The identity check is not set up, so the test shows the step only.",
         askPep: true, answers: null,

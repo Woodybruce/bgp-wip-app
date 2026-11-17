@@ -5,7 +5,7 @@
 // then we get KYC4U".
 
 import { pool } from "./db";
-import { dealRedFlags, partyRedFlags, redFlagAlertKey, type KycRedFlag, type KycRedFlagKind } from "@shared/kyc-red-flags";
+import { dealRedFlags, partyRedFlags, redFlagAlertKey, type KycRedFlag, type KycRedFlagKind, type PartyRedFlagFacts } from "@shared/kyc-red-flags";
 import { kycRedFlagEmail, kycReplyAddresses } from "@shared/kyc-request";
 
 export interface DealRedFlags {
@@ -61,6 +61,21 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[]): Pr
   return { parties, deal: dealRedFlags(deal), unchecked };
 }
 
+// A request's own identity checks, for a request with no party record (a
+// test, which runs a real Veriff check since 17 November 2026, or one not
+// tied to a company): a check Veriff declined there is a red flag as it is
+// on a party.
+export async function requestIdChecks(sessionIds: unknown): Promise<PartyRedFlagFacts["idChecks"]> {
+  const ids = Array.isArray(sessionIds) ? sessionIds.filter((id): id is string => typeof id === "string") : [];
+  if (!ids.length) return [];
+  const { rows } = await pool.query(
+    `SELECT status, decision_reason, received_at, first_name, last_name FROM veriff_sessions WHERE session_id = ANY($1::text[])`, [ids]);
+  return rows.map((s: any) => ({
+    status: s.status, decision_reason: s.decision_reason, received_at: s.received_at,
+    name: [s.first_name, s.last_name].filter(Boolean).join(" ") || null,
+  }));
+}
+
 // The flags the client checks themselves raise: an alert goes for these the
 // moment they happen. The rest come from screening and the MLRO's records,
 // which the deal's AML card shows.
@@ -75,7 +90,7 @@ export async function alertRedFlags(token: string): Promise<{ sent: number }> {
   if (!row || !request?.ref) return { sent: 0 };
   let flags: KycRedFlag[];
   if (row.is_test || !row.company_id) {
-    flags = partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null }], idChecks: [] });
+    flags = partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null }], idChecks: await requestIdChecks(request.veriffSessionIds) });
   } else {
     flags = (await loadDealRedFlags(row.deal_id, [row.company_id])).parties[row.company_id] || [];
   }

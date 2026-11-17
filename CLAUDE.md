@@ -2818,7 +2818,16 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   never the client; a self-test has none and comes back to its own address.
   So the colleague's Finish note and any red-flag alert go to the admin. The
   banner names the admin (`testBy`) instead of "nothing sent to anyone
-  else".
+  else". **A test page runs a real Veriff identity check** when Veriff is set
+  up (Woody, 2026-11-17: "can you do the test page a real identity check
+  with veriff"; `real` on the page's `idCheck`), charged like any check and
+  under the same three-session cap. Its session has no company or contact
+  (deal `test`), so an approval files nothing on any party (the decision
+  handler files a document only for one or the other); its own sessions feed
+  its red flags (`requestIdChecks` in `server/kyc-red-flags.ts`), so a
+  decline alerts the admin and is listed in the Finished note. A test page
+  without Veriff set up still shows the step only. Uploads on a test are
+  still recorded by name only and not kept.
 - **Schema** (additive, nullable, boot MIGRATIONS in `server/index.ts`, not
   in `shared/schema.ts`): `kyc_upload_tokens` gained `company_id`,
   `contact_id`, `request` (JSONB: `KycRequestDetails`), `completed_at`,

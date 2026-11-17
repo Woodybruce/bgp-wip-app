@@ -125,3 +125,27 @@ test("the client is asked the question about public roles, and its answer reache
   assert.match(page, /QuestionCard/);
   assert.match(page, /KYC_PRIVACY_URL/);
 });
+
+test("a test page runs a real Veriff check when Veriff is set up, capped as a client's, and writes nothing to any party", () => {
+  // Woody, 17 November 2026: "can you do the test page a real identity check with veriff".
+  const start = portal.slice(portal.indexOf('"/api/kyc-upload/:token/id-check"'));
+  const route = start.slice(0, start.indexOf("kycRequestRouter.post(", 10));
+  assert.match(route, /if \(row\.is_test && !veriffConfigured\(\)\) return res\.json\(\{ url: null, test: true \}\);/);
+  assert.match(route, /request\.veriffSessionIds\.length >= MAX_ID_SESSIONS/, "the same three-session cap");
+  const view = portal.slice(portal.indexOf("export async function portalView"), portal.indexOf("const requested = new Set(request.docs);"));
+  assert.match(view, /const real = !row\.is_test \|\| veriffConfigured\(\);/);
+  assert.match(view, /const canStart = !real \? true/);
+  assert.match(view, /idCheck = \{ state, canStart, real \};/);
+  // A test request has no company or contact, so an approval writes no party
+  // record: the decision handler files a document only for one or the other.
+  const veriff = read("server/veriff.ts");
+  assert.match(veriff, /if \(s && \(s\.company_id \|\| s\.contact_id\)\) \{/);
+  // Its own checks feed its red flags: a decline alerts the admin who sent it
+  // and is listed in the Finished note.
+  const flags = read("server/kyc-red-flags.ts");
+  assert.match(flags, /export async function requestIdChecks\(sessionIds: unknown\)/);
+  assert.match(flags, /idChecks: await requestIdChecks\(request\.veriffSessionIds\) \}\);/);
+  const finish = portal.slice(portal.indexOf("async function finishRequest"), portal.indexOf("// ── Replies with documents"));
+  assert.match(finish, /idChecks: await requestIdChecks\(request\.veriffSessionIds\) \}\)/);
+  assert.match(read("client/src/pages/kyc-upload.tsx"), /view\.idCheck\?\.real \? " The identity check is a real one, run by Veriff\." : ""/);
+});

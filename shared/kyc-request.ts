@@ -514,7 +514,9 @@ export interface KycPortalView {
   kind: KycPartyKind;
   dealName: string;
   expiresAt: string;
-  idCheck: { state: KycIdState; canStart: boolean } | null;
+  // real: a Veriff check runs (always on a client's request; on a test page
+  // when Veriff is set up, since 17 November 2026).
+  idCheck: { state: KycIdState; canStart: boolean; real: boolean } | null;
   question: { pep: KycPepAnswer | null; pepDetail: string | null } | null;
   docs: Array<{ key: KycDocKey; title: string; detail: string; files: Array<{ name: string; uploadedAt: string }> }>;
   otherFiles: Array<{ name: string; uploadedAt: string }>;
