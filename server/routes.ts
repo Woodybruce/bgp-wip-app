@@ -10616,7 +10616,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const { isClientCrmCategory } = await import("@shared/tenant-categories");
       const matchExtras = await getClientExtraBrandIds(matchScope);
-      res.json(matches.rows.filter((r: any) => isClientCrmCategory(r.company_type) || matchExtras.has(r.company_id)).map((r: any) => requirementClientCopy(r)));
+      // The client brand slice as isClientVisibleBrand reads it since 14 November
+      // 2026 (any type starting "Tenant", the categories, self-adds), not the
+      // older category slice alone.
+      res.json(matches.rows.filter((r: any) => /^tenant/i.test(String(r.company_type || "")) || isClientCrmCategory(r.company_type) || matchExtras.has(r.company_id)).map((r: any) => requirementClientCopy(r)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

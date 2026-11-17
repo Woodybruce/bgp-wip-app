@@ -3059,7 +3059,42 @@ Two rules everything else follows (do not re-litigate):
     requirement (brand page headings; the phone list shows the rule's state
     label to staff only). ChatBGP's investment directions point at
     Investment → Requirements.
-  - Guards: `qa/regression/requirements-app-links.test.mjs`.
+  - **Client leaks closed.** The BGP take is one cached text that staff
+    and clients read, so it now cites shareable market listings only
+    ("PIPnet listing from Sep", `marketListings` in `server/brand-ai-take.ts`),
+    never BGP's own requirements; takes saved before this stopped being
+    served (cache policy `:market-listings-1`) until the weekly brief or
+    Refresh. The viewing form's agents, represented brands and save check
+    share one rule (`agentRequirementSql` in `server/leasing-viewings.ts`:
+    live or to confirm for staff; a market listing or the client's own,
+    not closed, for a client). The Brand Pack orders a client's listings
+    by listing date, not live-first.
+  - **Matching by use.** Units hold planning classes (E(b), A3) and
+    requirements hold categories (Restaurant), so Brand Gap, the Match
+    dialog and the tracker's Find matching requirements came back empty for
+    any requirement with a use. They read `requirementUseFits` in
+    `shared/requirement-fit.ts` (the class-to-use map PIPnet's import
+    uses; bare Class E fits every use; a side with no use fits on size
+    alone). The Match dialog offers only units live on the tracker. The
+    Fits column, account space fits and the target engine still match use
+    by words (OR a place): part of the single fit rule, Woody's call.
+  - **Imports fold into open rows only** (`listingTarget` in
+    `shared/requirement-live.ts`): by the listing's own link first, then
+    the brand, newest first, never a closed row. A listing whose own row a
+    person closed stays closed. `importMayLabel` never labels BGP's rows,
+    nor a row made before `origin` existed unless it already carries that
+    import's label. PIPnet rows imported before 12 November and since
+    closed may come back once as Market listings.
+  - Guards: `qa/regression/requirements-app-links.test.mjs`,
+    `requirement-client-leaks.test.mjs`, `requirement-match-dialogs.test.mjs`,
+    `requirement-import-matching.test.mjs`.
+  - Left for Woody: the single fit rule; what a full Landsec login reads on
+    a brand (the take still carries BGP's deal history, and the activity
+    take BGP's investment requirements and board lots); ChatBGP's
+    `sql_write` can still insert a requirement row with any sources (a
+    PIPnet label makes it client-visible); the Brand CRM's "Requirement
+    held" for Landsec logins and joint agents is still read from all of
+    BGP's rows (decision 11).
 
 ## ChatBGP sets tasks for colleagues from either tool path (2026-11-16)
 
