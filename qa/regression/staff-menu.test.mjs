@@ -92,6 +92,16 @@ test('the leasing teams and Tenant Rep have no Lease Advisory or Investment; eve
   assert.ok(NO_TEAM_ROSTER_2026.length > 0);
   const sidebar = source(SIDEBAR);
   assert.match(sidebar, /leasingOnly \? coreNavStaff\.filter\(i => !LEASING_SIDE_HIDDEN_URLS\.includes\(i\.url\)\)/);
+  // Also while the team switcher is on a leasing team (Woody, 2026-11-17), and a
+  // leasing-side login's switcher offers neither team.
+  assert.match(sidebar, /const leasingOnly = !isClientUser && \(leasingSideLogin \|\| leasingSideOnly\(\[activeTeam\]\)\);/);
+  assert.match(sidebar, /TEAMS\.filter\(\(team\) => !\(leasingSideLogin && \(team === "Investment" \|\| team === "Lease Advisory"\)\)\)/);
+  for (const team of ['Shopping Centre', 'London Estate', 'High Street', 'City', 'Tenant Rep']) assert.equal(leasingSideOnly([team]), true, team);
+  for (const team of ['all', 'Investment', 'Lease Advisory', 'Landsec', null]) assert.equal(leasingSideOnly([team]), false, String(team));
+  // Viewing as a team that is not your own: no admin groups, and a line saying where they are.
+  assert.match(sidebar, /const viewingAsTeam = !isClientUser && isBgpTeam\(activeTeam\) && activeTeam !== user\?\.team/);
+  assert.match(sidebar, /\{user\?\.isAdmin && !viewingAsTeam && \(/);
+  assert.match(sidebar, /data-testid="nav-viewing-as-team"/);
   assert.match(sidebar, /overlayLeasingOnly && LEASING_SIDE_HIDDEN_URLS\.includes\(i\.url\)/);
   assert.match(source('client/src/pages/deals-hub.tsx'), /if \(leasingOnly \|\| \(activeTeam && activeTeam !== "all"\)\) return allTabs\.filter\(t => t\.key !== "investment"\);/);
 });

@@ -82,7 +82,7 @@ import { useTeam, TEAMS } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import { isEquityUser } from "@/lib/utils";
-import { leasingSideOnly, LEASING_SIDE_HIDDEN_URLS } from "@shared/teams";
+import { leasingSideOnly, LEASING_SIDE_HIDDEN_URLS, isBgpTeam } from "@shared/teams";
 import type { User } from "@shared/schema";
 import { LANDSEC_MENU, JOINT_AGENT_MENU, landsecMenuActive, landsecTasksPath, openTaskCount } from "@shared/landsec-menu";
 import { isRestrictedLandsecRole } from "@/components/landsec/deal-clock";
@@ -487,8 +487,17 @@ export function AppSidebar() {
   // equity = Woody, Jack, Rupert, Charlotte). Admins already have it in the
   // admin section below.
   // The leasing teams and Tenant Rep have no Lease Advisory or Investment
-  // entries (Woody, 2026-11-16; leasingSideOnly in shared/teams.ts).
-  const leasingOnly = !isClientUser && leasingSideOnly([user?.team, ...(Array.isArray((user as any)?.additionalTeams) ? (user as any).additionalTeams : [])]);
+  // entries (Woody, 2026-11-16; leasingSideOnly in shared/teams.ts), and
+  // nobody has them while the team switcher is on one of those teams, so
+  // "view as London Estate" shows that team's menu (Woody, 2026-11-17).
+  const leasingSideLogin = !isClientUser && leasingSideOnly([user?.team, ...(Array.isArray((user as any)?.additionalTeams) ? (user as any).additionalTeams : [])]);
+  const leasingOnly = !isClientUser && (leasingSideLogin || leasingSideOnly([activeTeam]));
+  // Picking a team that is not your own shows you that team's menu (Woody,
+  // 2026-11-17: "when I click on a team i should see what they see"): its
+  // Core entries, and none of the admin groups, which come back under All
+  // Teams or your own team.
+  const viewingAsTeam = !isClientUser && isBgpTeam(activeTeam) && activeTeam !== user?.team
+    && !(Array.isArray((user as any)?.additionalTeams) && (user as any).additionalTeams.includes(activeTeam));
   const coreNavTeam = leasingOnly ? coreNavStaff.filter(i => !LEASING_SIDE_HIDDEN_URLS.includes(i.url)) : coreNavStaff;
   const coreNav = !isClientUser && !user?.isAdmin && isEquityUser(user as any)
     ? [...coreNavTeam, { title: "Finance", url: "/finance", icon: Landmark }]
@@ -585,7 +594,12 @@ export function AppSidebar() {
           defaultOpen={false}
         />
         <SidebarSeparator />
-        {user?.isAdmin && (
+        {user?.isAdmin && viewingAsTeam && (
+          <p className="px-4 py-2 text-[11px] text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden" data-testid="nav-viewing-as-team">
+            More and Admin are under All Teams.
+          </p>
+        )}
+        {user?.isAdmin && !viewingAsTeam && (
           <>
             {/* Shown as "More" — "Unfinished" read as broken to anyone
                 glancing at the nav (Woody, 2026-09-27). storageKey kept so
@@ -695,7 +709,8 @@ export function AppSidebar() {
               {activeTeam === "all" && <Check className="w-3.5 h-3.5 ml-2" />}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            {TEAMS.map((team) => (
+            {/* A leasing-side login is not offered Investment or Lease Advisory. */}
+            {TEAMS.filter((team) => !(leasingSideLogin && (team === "Investment" || team === "Lease Advisory"))).map((team) => (
               <DropdownMenuItem
                 key={team}
                 onClick={() => setActiveTeam(team)}

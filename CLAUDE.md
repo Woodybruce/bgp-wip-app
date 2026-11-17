@@ -3278,6 +3278,24 @@ rep". Do not re-litigate. Guards: `qa/regression/staff-menu.test.mjs`.
   does not count). Anyone also in Investment or Lease Advisory (Pete Wood) and
   anyone with no team (the board, support, consultants) keeps both. Entries
   only: the pages still open by their address.
+- **Picking a team shows that team's view** (Woody, 2026-11-17: "its my
+  view when I click on a team i should see what they see but I dont"). In
+  `app-sidebar.tsx`: the two entries are also hidden while the team switcher
+  is on a leasing-side team (`leasingSideOnly([activeTeam])`); while it is on
+  a BGP team that is not one of the login's own (`viewingAsTeam`), an
+  admin's More and Admin groups step aside for one line, "More and Admin are
+  under All Teams"; and a leasing-side login's switcher does not list
+  Investment or Lease Advisory. Pages are not cut by the switcher beyond what
+  they already filter by team (an admin still sees admin buttons on a page,
+  such as Add staff on People & HR).
+- **People & HR overview: both columns end level** (Woody, same day: "fix
+  this so they line up at the bottom"). `hr-overview.tsx`: the Brucey Bonus
+  and Hunger Games boards are `lg:flex-auto` (their own height, sharing only
+  spare height; `lg:flex-1` made them equal, so Hunger Games stretched to
+  the long Brucey Bonus board and the column ran past the Teams card), and
+  the Teams card is `lg:flex-1` in a flex column, so it reaches the foot of
+  the row when the left side is taller. Guard:
+  `qa/regression/hr-overview-columns.test.mjs`.
 - **Brand CRM is Targets only for BGP staff** (Woody, same day: "1 and 2
   yes"): its Diary and Strategies and events were the CRM page's own views
   narrowed to brands. See the Brand CRM section.

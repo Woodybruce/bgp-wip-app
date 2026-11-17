@@ -419,7 +419,7 @@ function TeamCard({ team, allStaff, aiSummary, onSelectPerson }: { team: TeamSum
   );
 }
 
-function OrganigramSection({ allStaff, isAdmin, onSelectPerson }: { allStaff: StaffMember[]; isAdmin: boolean; onSelectPerson?: (id: string) => void }) {
+function OrganigramSection({ allStaff, isAdmin, onSelectPerson, className = "" }: { allStaff: StaffMember[]; isAdmin: boolean; onSelectPerson?: (id: string) => void; className?: string }) {
   const { toast } = useToast();
   const { data, isLoading } = useQuery<{ teams: TeamSummary[] }>({ queryKey: ["/api/hr/team-summary"] });
   const { data: aiSummaries = [] } = useQuery<TeamAiSummary[]>({ queryKey: ["/api/hr/team-ai-summaries"] });
@@ -440,7 +440,7 @@ function OrganigramSection({ allStaff, isAdmin, onSelectPerson }: { allStaff: St
   if (!data?.teams?.length) return null;
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center justify-between">
           <span className="flex items-center gap-2"><GitBranch className="w-4 h-4 text-primary" /> Teams</span>
@@ -1684,16 +1684,21 @@ export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: s
   return (
     <div className="space-y-4 pb-6">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* The two boards share the column's spare height so the column
-            ends level with the org chart (Woody, 2026-10-28: "always end
-            level with the main HR board so looks ordered"). */}
+        {/* Both columns end level (Woody, 2026-10-28: "always end level with
+            the main HR board so looks ordered"; again 2026-11-17: "fix this
+            so they line up at the bottom"). Each board keeps its own height
+            and only shares spare height when the Teams card is the taller
+            side (flex-auto: flex-1 made the two boards equal, so Hunger
+            Games was stretched to the Brucey Bonus board's height and the
+            column ran far past the Teams card). When this column is the
+            taller side, the Teams card stretches to its foot. */}
         <div className="lg:col-span-1 flex flex-col gap-4">
           {currentUser && <YouPanel user={currentUser} onSelectPerson={onSelectPerson} showTasks={false} />}
-          {PERKS_ENABLED && <BruceBonusBoard isAdmin={isAdmin} allStaff={allStaff} selfId={currentUser?.id} onSelectPerson={onSelectPerson} className="lg:flex-1" />}
-          <HungerGamesStrip onSelectPerson={onSelectPerson} className="lg:flex-1" />
+          {PERKS_ENABLED && <BruceBonusBoard isAdmin={isAdmin} allStaff={allStaff} selfId={currentUser?.id} onSelectPerson={onSelectPerson} className="lg:flex-auto" />}
+          <HungerGamesStrip onSelectPerson={onSelectPerson} className="lg:flex-auto" />
         </div>
-        <div className="lg:col-span-2 space-y-4">
-          <OrganigramSection allStaff={allStaff} isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
+        <div className="lg:col-span-2 flex flex-col gap-4">
+          <OrganigramSection allStaff={allStaff} isAdmin={isAdmin} onSelectPerson={onSelectPerson} className="lg:flex-1" />
         </div>
       </div>
     </div>
