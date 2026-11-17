@@ -3292,6 +3292,37 @@ re-exports it). The page lists by class, newest sale first.
   `comp-cleanup-<time>`); Undo puts every row back. Terminated, withdrawn and
   blank-status comps are left for Jack.
 
+## Investment Research (Jack, 2026-11-17)
+
+`/investment/research` (`client/src/pages/investment-research.tsx`,
+`server/investment-research.ts`): the investment team's research library,
+filed by sector (General or a tracker class). Files are `knowledge_base` rows
+(source `investment-research`, category = sector), so ChatBGP's knowledge
+search reads their text (PDF, Word, PowerPoint, Excel, text; OCR for a
+scanned PDF where set up). BGP staff only on every route.
+- **Choose for me** (the upload default) files each document by its name,
+  then its text (`shared/research-sector.ts`, rules only); mixed or unclear
+  goes to General.
+- **Order**: the first batch (added before 10:59 UTC on 17 November 2026)
+  is listed flipped, as Jack added it in reverse; files added since sit on
+  top, newest upload first. Jack asked for exactly this: not by
+  publication date.
+- **Key points** (`server/investment-research-intel.ts`, checks
+  `shared/research-read.ts`, tests `server/research-read.test.ts`): each
+  paper is read once by Anthropic (called directly, cap
+  `RESEARCH_READER_DAILY_CAP`, default 100, 0 = off) on upload, or in the
+  background when the tab is opened (never on a timer): publisher, month,
+  headline, summary, outlook and up to 12 figures, each kept only when its
+  quote is in the paper and the figure in the quote. A scanned PDF with no
+  text is read from its pages and the words read become its text. Kept in
+  `investment_research_reads` (made by the module if missing). Read again
+  per row.
+- **ChatBGP** `get_market_research` (on `CLIENT_BLOCKED_TOOLS`, both tool
+  paths): the read papers by sector or word, newest publication first.
+- **Insights feed**: a paper published in the last 12 months (or a new
+  upload with no date) is posted once as a staff-only card (audience
+  `staff`, source_kind `research`, "BGP research"); clients never see it.
+
 ## The BGP side bar (Woody, 2026-11-16)
 
 Woody tidied the BGP staff side bar. His words, in order: "folder business

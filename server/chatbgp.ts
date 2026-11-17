@@ -910,6 +910,7 @@ function getToolProgressLabel(toolName: string): string {
     manage_chat_members: "Updating chat members...",
     query_leasing_schedule: "Querying leasing schedule...",
     get_property_units: "Reading the property's units...",
+    get_market_research: "Reading the team's research...",
     get_deal_waiting_on: "Checking what the deal is waiting on...",
     import_leasing_schedule: "Importing leasing schedule...",
     query_turnover: "Querying turnover data...",
@@ -1600,6 +1601,7 @@ You CAN add BGP colleagues to the current chat thread — never claim you can't.
 ## Memory Systems
 1. **Auto-memories** (per-user): Extracted automatically after conversations. Loaded in future chats.
 2. **Business learnings** (save_learning): Shared across all users. Save client intel, market knowledge, BGP processes, property insights, team preferences. Save when users teach you facts, correct you, or you discover important info via tools. Don't save greetings or CRM data that's already in the database.
+3a. **The team's research** (get_market_research): the investment team's saved market research papers, read for their key points (yields, rents, take-up, volumes, outlook) by sector, newest publication first. For market conditions, pricing or a sector's outlook call it FIRST, lead with the most recent paper, and say which paper and month each figure comes from.
 3. **Knowledge bank** (search_knowledge_base): Full-text search over archived SharePoint files, team emails, Dropbox docs, and AI-indexed notes — tens of thousands of items with summaries, tags, and extracted content. This is your PRIMARY long-term memory. Use it whenever the user asks about a document, email, memo, report, attachment, or "what we said last week/month". Search FIRST, answer SECOND.
 4. **Chat history** (search_chat_history): Full-text search of past ChatBGP conversations. Use when the user refers to earlier threads or says things like "what did we discuss about X".
 
@@ -2328,6 +2330,8 @@ export async function clientChatGuard(req: any): Promise<{ isClient: boolean; co
 // paths below, so a tool added to one is in the other.
 const CRM_PLAN_TOOL_NAMES = new Set(["start_crm_strategy", "get_crm_plan", "add_crm_event", "update_crm_strategy", "update_crm_action"]);
 export const CLIENT_BLOCKED_TOOLS = new Set([
+  // 0. The investment team's own research library (server/investment-research-intel.ts)
+  "get_market_research",
   // 1. BGP systems (the SharePoint carve-out)
   "browse_sharepoint_folder", "create_sharepoint_folder", "move_sharepoint_item",
   "read_sharepoint_file", "upload_to_sharepoint", "copy_dropbox_to_sharepoint",
@@ -5425,6 +5429,10 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
   // (server/chatbgp-unit-tools.ts). For BGP staff and client logins.
   tools.push(...(await import("./chatbgp-unit-tools")).UNIT_TOOL_DEFINITIONS);
 
+  // The investment team's research papers, newest publication first
+  // (server/investment-research-intel.ts). BGP staff only.
+  tools.push((await import("./investment-research-intel")).MARKET_RESEARCH_TOOL);
+
   tools.push({
     type: "function",
     function: {
@@ -7930,6 +7938,11 @@ export async function executeCrmToolRaw(
   if (fnName === "get_property_units" || fnName === "get_deal_waiting_on") {
     const { runUnitTool } = await import("./chatbgp-unit-tools");
     return runUnitTool(fnName, fnArgs, req);
+  }
+
+  if (fnName === "get_market_research") {
+    const { runMarketResearchTool } = await import("./investment-research-intel");
+    return runMarketResearchTool(fnArgs, req);
   }
 
   if (CRM_PLAN_TOOL_NAMES.has(fnName)) {
@@ -13481,6 +13494,7 @@ export async function handleCrmToolCall(
   // client scope, mirrors and audit run once). The second copy that lived
   // here was deleted in the letting cleanup, Phase 1 (2026-10-26).
   const RAW_EXECUTOR_TOOLS = new Set([
+    "get_market_research",
     "create_deal", "update_deal", "create_contact", "update_contact", "create_company", "update_company",
     "update_investment_tracker", "search_crm", "create_investment_tracker", "set_investment_tracker_image", "create_available_unit",
     "update_available_unit", "log_viewing", "log_offer", "file_investment_comps", "create_investment_comp", "create_comp", "reassign_brochure",

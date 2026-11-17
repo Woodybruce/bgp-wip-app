@@ -1,9 +1,11 @@
 // Investment Research (Jack, 2026-11-17): a simple filing place for the
 // reports and documents the investment team saves down, filed by sector (the
 // tracker's classes, plus General). What is saved here is also read by
-// ChatBGP's knowledge search, so it feeds the app's market intel.
-// Server: server/investment-research.ts.
-import { useMemo, useRef, useState } from "react";
+// ChatBGP's knowledge search, and each paper's key points are read once
+// (server/investment-research-intel.ts): shown here under "Key points", used by
+// ChatBGP's get_market_research, and a recent paper is posted to the Insights
+// feed. Server: server/investment-research.ts.
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -12,24 +14,39 @@ import { Pill } from "@/components/ui/pill";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { FileText, Search, Trash2, Upload } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Loader2, Search, Trash2, Upload } from "lucide-react";
 
-type ResearchFile = { id: string; fileName: string; sector: string; note: string | null; sizeBytes: number | null; addedAt: string; addedBy: string | null; readable: boolean };
+type Fact = { topic: string; figure: string; place: string | null; period: string | null; quote: string };
+type KeyPoints = { status: "read" | "failed" | "skipped"; published: string | null; publisher: string | null; headline: string | null; summary: string | null; outlook: string | null; facts: Fact[]; error: string | null };
+type ResearchFile = { id: string; fileName: string; sector: string; note: string | null; sizeBytes: number | null; addedAt: string; addedBy: string | null; readable: boolean; keyPoints: KeyPoints | null };
 type Feed = { sectors: string[]; files: ResearchFile[] };
 
 const KEY = ["/api/investment-research"];
 const AUTO = "auto";
 const fmtSize = (b: number | null) => b == null ? "" : b > 1_048_576 ? `${(b / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const fmtMonth = (ym: string | null) => { if (!ym) return null; const [y, m] = ym.split("-").map(Number); return MONTHS[m - 1] ? `${MONTHS[m - 1]} ${y}` : null; };
 const fmtDate = (d: string) => { try { return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }); } catch { return ""; } };
 
 export default function InvestmentResearch() {
   const { toast } = useToast();
-  const { data, isLoading } = useQuery<Feed>({ queryKey: KEY });
+  // While any paper is still waiting to be read, look again every 20 seconds.
+  const { data, isLoading } = useQuery<Feed>({
+    queryKey: KEY,
+    refetchInterval: (q) => ((q.state.data as Feed | undefined)?.files || []).some((f) => !f.keyPoints) ? 20_000 : false,
+  });
   const sectors = data?.sectors || ["General"];
   const files = data?.files || [];
   const [sector, setSector] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
+  // ?file=<id> (a link from the Insights feed or ChatBGP) opens that paper.
+  const [focus] = useState(() => { try { return new URLSearchParams(window.location.search).get("file"); } catch { return null; } });
+  useEffect(() => {
+    if (!focus || !data) return;
+    const el = document.querySelector(`[data-testid="research-row-${CSS.escape(focus)}"]`);
+    el?.scrollIntoView({ block: "center" });
+  }, [focus, !!data]);
 
   const counts = useMemo(() => {
     const m: Record<string, number> = {};
@@ -39,13 +56,18 @@ export default function InvestmentResearch() {
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
     return files.filter((f) => (sector === "all" || f.sector === sector)
-      && (!q || `${f.fileName} ${f.note || ""} ${f.addedBy || ""}`.toLowerCase().includes(q)));
+      && (!q || `${f.fileName} ${f.note || ""} ${f.addedBy || ""} ${f.keyPoints?.publisher || ""} ${f.keyPoints?.headline || ""} ${f.keyPoints?.summary || ""}`.toLowerCase().includes(q)));
   }, [files, sector, search]);
 
   const update = useMutation({
     mutationFn: async ({ id, body }: { id: string; body: Record<string, unknown> }) => (await apiRequest("PATCH", `/api/investment-research/${id}`, body)).json(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: KEY }),
     onError: (e: any) => toast({ title: "Couldn't save", description: e?.message, variant: "destructive" }),
+  });
+  const reread = useMutation({
+    mutationFn: async (id: string) => (await apiRequest("POST", `/api/investment-research/${id}/read`)).json(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: KEY }),
+    onError: (e: any) => toast({ title: "Couldn't read it", description: e?.message, variant: "destructive" }),
   });
   const remove = useMutation({
     mutationFn: async (id: string) => (await apiRequest("DELETE", `/api/investment-research/${id}`)).json(),
@@ -72,7 +94,7 @@ export default function InvestmentResearch() {
           <Input placeholder="Search research..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" data-testid="input-research-search" />
         </div>
         <p className="text-xs text-muted-foreground flex-1 min-w-[200px]">
-          Saved here, a PDF or text file is also read by ChatBGP, so it can draw on it for market intel.
+          Each paper is read for its key points: ChatBGP draws on them, newest first, and a recent paper goes into the Insights feed.
         </p>
         <Button onClick={() => setUploadOpen(true)} data-testid="button-research-upload">
           <Upload className="h-4 w-4 mr-1" /> Add files
@@ -99,7 +121,7 @@ export default function InvestmentResearch() {
       ) : (
         <div className="rounded-md border divide-y" data-testid="research-list">
           {shown.map((f) => (
-            <div key={f.id} className="flex items-start gap-3 px-3 py-2.5" data-testid={`research-row-${f.id}`}>
+            <div key={f.id} className={`flex items-start gap-3 px-3 py-2.5 ${focus === f.id ? "bg-muted/60" : ""}`} data-testid={`research-row-${f.id}`}>
               <FileText className="h-4 w-4 mt-1 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
                 <button type="button" onClick={() => open(f)} className="text-sm font-medium text-left hover:underline break-words" data-testid={`research-open-${f.id}`}>
@@ -107,8 +129,10 @@ export default function InvestmentResearch() {
                 </button>
                 <NoteLine file={f} onSave={(note) => update.mutate({ id: f.id, body: { note } })} />
                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                  {[fmtDate(f.addedAt), f.addedBy, fmtSize(f.sizeBytes), f.readable ? "read by ChatBGP" : "filed by name only"].filter(Boolean).join(" · ")}
+                  {[f.keyPoints?.publisher, fmtMonth(f.keyPoints?.published || null) ? `published ${fmtMonth(f.keyPoints?.published || null)}` : null,
+                    `added ${fmtDate(f.addedAt)}`, f.addedBy, fmtSize(f.sizeBytes)].filter(Boolean).join(" · ")}
                 </p>
+                <KeyPointsLine file={f} startOpen={focus === f.id} reading={reread.isPending && reread.variables === f.id} onReread={() => reread.mutate(f.id)} />
               </div>
               <Select value={f.sector} onValueChange={(v) => update.mutate({ id: f.id, body: { sector: v } })}>
                 <SelectTrigger className="h-8 w-[190px] text-xs shrink-0" data-testid={`research-sector-select-${f.id}`}><SelectValue /></SelectTrigger>
@@ -124,6 +148,47 @@ export default function InvestmentResearch() {
       )}
 
       {uploadOpen && <UploadDialog sectors={sectors} initialSector={sector === "all" ? AUTO : sector} onClose={() => setUploadOpen(false)} />}
+    </div>
+  );
+}
+
+function KeyPointsLine({ file, startOpen, reading, onReread }: { file: ResearchFile; startOpen: boolean; reading: boolean; onReread: () => void }) {
+  const [open, setOpen] = useState(startOpen);
+  const k = file.keyPoints;
+  if (!k || reading) {
+    return <p className="text-[11px] text-muted-foreground mt-1 inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Reading the key points…</p>;
+  }
+  if (k.status !== "read") {
+    return (
+      <p className="text-[11px] text-muted-foreground mt-1">
+        Key points not read{k.error ? `: ${k.error}` : ""}.{" "}
+        {k.status === "failed" && <button type="button" onClick={onReread} className="underline hover:text-foreground" data-testid={`research-reread-${file.id}`}>Read again</button>}
+      </p>
+    );
+  }
+  return (
+    <div className="mt-1" data-testid={`research-key-points-${file.id}`}>
+      <button type="button" onClick={() => setOpen(!open)} className="text-xs text-left inline-flex items-start gap-1 hover:underline">
+        {open ? <ChevronDown className="h-3.5 w-3.5 mt-px shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 mt-px shrink-0" />}
+        <span><span className="font-medium">Key points:</span> {k.headline}</span>
+      </button>
+      {open && (
+        <div className="ml-4 mt-1 space-y-1.5 text-xs">
+          {k.summary && <p className="text-muted-foreground">{k.summary}</p>}
+          {k.facts.length > 0 && (
+            <ul className="space-y-0.5">
+              {k.facts.map((f, i) => (
+                <li key={i} title={f.quote}>
+                  <span className="text-muted-foreground">{f.topic}{f.place ? `, ${f.place}` : ""}{f.period ? ` (${f.period})` : ""}:</span>{" "}
+                  <span className="font-medium tabular-nums">{f.figure}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {k.outlook && <p><span className="text-muted-foreground">Outlook:</span> {k.outlook}</p>}
+          <button type="button" onClick={onReread} className="text-[11px] text-muted-foreground underline hover:text-foreground">Read again</button>
+        </div>
+      )}
     </div>
   );
 }

@@ -97,7 +97,7 @@ async function ensureTables(): Promise<void> {
       category TEXT,
       audience TEXT NOT NULL DEFAULT 'all',   -- all | staff | client
       company_id VARCHAR,                     -- set for client-specific rows
-      source_kind TEXT NOT NULL,              -- news | market-report | portfolio
+      source_kind TEXT NOT NULL,              -- news | market-report | portfolio | research
       evidence JSONB,
       created_at TIMESTAMP DEFAULT now()
     )`);
@@ -433,6 +433,17 @@ export function startInsightsLoop(): void {
     await runReportLeg().catch(e => console.warn("[insights] report leg failed:", e?.message));
     await runPortfolioLeg().catch(e => console.warn("[insights] portfolio leg failed:", e?.message));
   }
+}
+
+// A paper read from the investment team's Research tab
+// (server/investment-research-intel.ts). Staff only: audience 'staff' is never
+// in a client's slice of GET /api/insights, nor in the briefing emails.
+export async function addResearchInsight(input: { researchId: string; fileName: string; headline: string; detail: string; category: string }): Promise<void> {
+  await ensureTables();
+  const evidence = [{ type: "research-file", id: input.researchId, title: input.fileName, url: `/investment/research?file=${encodeURIComponent(input.researchId)}`, policyVersion: INSIGHTS_SOURCE_POLICY_VERSION }];
+  await pool.query(
+    `INSERT INTO insights (headline, detail, category, audience, source_kind, evidence) VALUES ($1, $2, $3, 'staff', 'research', $4)`,
+    [input.headline.slice(0, 200), input.detail.slice(0, 1200), INSIGHT_CATEGORIES.includes(input.category as any) ? input.category : "investment", JSON.stringify(evidence)]);
 }
 
 // For the daily briefing / digest emails — the same stream, last 24h.
