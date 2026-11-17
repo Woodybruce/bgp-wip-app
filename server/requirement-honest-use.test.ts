@@ -4,7 +4,7 @@
 //   node --import tsx --test server/requirement-honest-use.test.ts
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { requirementReason, requirementClientVisible, REQUIREMENT_STATE_WEIGHT } from "@shared/requirement-live";
+import { requirementReason, requirementClientVisible, requirementJointAgentVisible, REQUIREMENT_STATE_WEIGHT } from "@shared/requirement-live";
 import { unitCandidates, type CentreEvidence } from "./target-tenant-engine";
 import { groupOverlaps, reconfirmLine, overlapReportText, overlapSource } from "./requirement-overlaps";
 import { clientScoreLabel, clientScoreView } from "./hunter-score";
@@ -17,7 +17,7 @@ const pipnet = (extra: Record<string, any> = {}) => ({ status: "Active", origin:
 describe("the dated reason other screens show", () => {
   it("names a requirement by what it is and its date, never as live", () => {
     const live = requirementReason(confirmed(9), TODAY);
-    assert.deepEqual([live.state, live.weight, live.text, live.short, live.clientText], ["live", 1, "requirement confirmed 3 Nov", "confirmed 3 Nov", null]);
+    assert.deepEqual([live.state, live.weight, live.text, live.short, live.clientText], ["live", 1, "requirement confirmed 3 Nov", "confirmed 3 Nov", "requirement"]);
     const lapsed = requirementReason(confirmed(150), TODAY);
     assert.deepEqual([lapsed.state, lapsed.weight, lapsed.text], ["to_confirm", 0.5, "requirement last confirmed 15 Jun"]);
     const listing = requirementReason(pipnet(), TODAY);
@@ -38,17 +38,30 @@ describe("the dated reason other screens show", () => {
     }
   });
 
-  it("gives a client login the source and month of a PIPnet listing and nothing else", () => {
+  // Every requirement is open to a client login since 17 November 2026
+  // (Woody: "keep all requirements open for clients and access to amend and
+  // add"): it reads what each one is and its own date, never its state or
+  // whether, when or by whom BGP confirmed it. A joint agent keeps the old
+  // rule: a PIPnet listing by source and month, and nothing else.
+  it("gives a client login what each requirement is and its own date, and a joint agent PIPnet listings only", () => {
     // A PIPnet listing a BGP person has confirmed: staff read the confirmation, a client reads the listing.
     const both = requirementReason(confirmed(9, { origin: "pipnet", sources: ["PIPnet"], lastListedAt: new Date("2026-09-03T00:00:00Z") }), TODAY);
-    assert.deepEqual([both.state, both.text, both.clientText], ["live", "requirement confirmed 3 Nov", "PIPnet listing from Sep"]);
+    assert.deepEqual([both.state, both.text, both.clientText, both.listingText], ["live", "requirement confirmed 3 Nov", "PIPnet listing from Sep", "PIPnet listing from Sep"]);
     assert.equal(requirementReason({ status: "Active", sources: ["PIPnet"] }, TODAY).clientText, "PIPnet listing");
     assert.equal(requirementReason({ status: "Active", sources: ["PIPnet"], requirementDate: "03/09/2026" }, TODAY).clientText, "PIPnet listing from Sep");
-    // BGP's hand-entered rows, Requirement List rows and chat-logged rows are not a client's to see.
+    // BGP's hand-entered rows, Requirement List rows and chat-logged rows are a client's to see now, by their own date.
+    assert.equal(requirementReason(confirmed(9, { requirementDate: "2026-10-30" }), TODAY).clientText, "requirement dated 30 Oct");
+    assert.equal(requirementReason({ status: "Active", origin: "bgp", sources: ["ChatBGP"], createdAt: daysAgo(4) }, TODAY).clientText, "requirement added 8 Nov");
+    assert.equal(requirementReason({ status: "Active", origin: "trl", sources: ["TRL"] }, TODAY).clientText, "The Requirement List listing");
     for (const row of [confirmed(9), { status: "Active", origin: "trl", sources: ["TRL"] }, { status: "Active", origin: "bgp", sources: ["ChatBGP"] }]) {
-      assert.equal(requirementClientVisible(row), false);
-      assert.equal(requirementReason(row, TODAY).clientText, null);
+      assert.equal(requirementClientVisible(row), true);
+      assert.equal(requirementJointAgentVisible(row), false);
+      assert.equal(requirementReason(row, TODAY).listingText, null);
+      assert.doesNotMatch(requirementReason(row, TODAY).clientText, /confirm|live|emily/i);
     }
+    // A requirement a client login added is the client's, and BGP reads it as one nobody at BGP has confirmed.
+    const added = requirementReason({ status: "Active", origin: "client", sources: ["Landsec"], requirementDate: "2026-11-10" }, TODAY);
+    assert.deepEqual([added.state, added.text, added.clientText], ["to_confirm", "client requirement dated 10 Nov, not confirmed", "requirement dated 10 Nov"]);
     assert.deepEqual(REQUIREMENT_STATE_WEIGHT, { live: 1, to_confirm: 0.5, background: 0.2, closed: 0 });
   });
 });

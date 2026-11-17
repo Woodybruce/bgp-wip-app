@@ -64,7 +64,7 @@ const WHO_OR_STATE = /Emily|Harry|still_live|last_confirmed|confirmed_how|Active
 // What openRequirements' SELECT returns: every open requirement, live first.
 function openRequirementRows(sql, values) {
   assert.ok(sql.includes(`WHERE r.company_id = $1 AND ${requirementStateSql('r')} <> 'closed'`), 'every requirement that is not closed');
-  assert.doesNotMatch(sql, /'active'|PIPnet/i, 'never "any Active row", never the old PIPnet cut');
+  assert.doesNotMatch(sql, /= 'active'|'PIPnet' = ANY/i, 'never "any Active row", never the old PIPnet cut');
   return REQUIREMENTS.filter(r => r.company_id === values[0] && requirementLive(r).state !== 'closed')
     .sort((a, b) => STATE_RANK[requirementLive(a).state] - STATE_RANK[requirementLive(b).state]).slice(0, values[1]);
 }
