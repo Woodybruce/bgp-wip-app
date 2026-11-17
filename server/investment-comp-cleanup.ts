@@ -29,7 +29,23 @@ const isLetting = (c: Row) => /^com$/i.test(String(c.status || "").trim())
   || /tenant acquisition|lease acquisition|letting/i.test(`${c.transaction_type || ""} ${c.subtype || ""}`);
 const isRefinance = (c: Row) => /^refinanc/i.test(String(c.status || "").trim());
 const isLive = (c: Row) => /pending|under offer|quoting|on market|unconfirmed/i.test(String(c.status || ""));
-const leftForJack = (c: Row) => !c.status || /terminated|withdrawn/i.test(String(c.status));
+const fellThrough = (c: Row) => /terminated|withdrawn/i.test(String(c.status || ""));
+const leftForJack = (c: Row) => !c.status;
+
+// Jack's answers on the comps left for him (16 November 2026): terminated
+// and withdrawn deals deleted (Borough Yards is back on the tracker anyway);
+// Morgan Quarter, Cardiff is under offer, not BGP; the Stonegate Portfolio
+// goes back on the tracker under Portfolios; Oxford Castle Quarter sold to
+// the county council; David Lloyd Bury St Edmunds sold, details unknown, so
+// it stays. The Meridian Building, Exeter is left as it is.
+const LIVE_BY_ID: Record<string, { status: string; assetType?: string }> = {
+  "e2531c42-55c4-4e9c-b6f5-8b018face6d5": { status: "UOX" },
+  "975f66a4-520a-4ab8-ae2b-253faf0cc085": { status: "REP", assetType: "Portfolios" },
+};
+const SET_BY_ID: Record<string, Row> = {
+  "c582cdf7-f68e-40a8-ae4a-4353f5b85e58": { status: "Sale", buyer: "Oxford County Council" },
+  "a0b20d06-c2cc-458a-aefe-eec63d9fa59b": { status: "Sale" },
+};
 
 const liveTrackerStatus = (status: string) => /quoting|on market/i.test(status) ? "AVA" : /unconfirmed/i.test(status) ? "REP" : "UOX";
 
@@ -93,8 +109,9 @@ export async function runCompCleanup(opts: { apply: boolean; actorId?: string | 
 
   const lettings = comps.filter(isLetting);
   const refis = comps.filter((c: Row) => !isLetting(c) && isRefinance(c));
-  const live = comps.filter((c: Row) => !isLetting(c) && !isRefinance(c) && isLive(c));
-  const gone = new Set([...lettings, ...refis, ...live].map((c: Row) => c.id));
+  const live = comps.filter((c: Row) => !isLetting(c) && !isRefinance(c) && (isLive(c) || !!LIVE_BY_ID[c.id]));
+  const lapsed = comps.filter((c: Row) => !isLetting(c) && !isRefinance(c) && !live.includes(c) && fellThrough(c));
+  const gone = new Set([...lettings, ...refis, ...live, ...lapsed].map((c: Row) => c.id));
   const rest = comps.filter((c: Row) => !gone.has(c.id));
 
   // Live deals: where each goes.
@@ -102,10 +119,10 @@ export async function runCompCleanup(opts: { apply: boolean; actorId?: string | 
     const linked = linkByComp.get(c.id);
     const markerTracker = String(c.rca_deal_id || "").startsWith("tracker-") ? String(c.rca_deal_id).slice(8) : null;
     const restoreId = linked?.tracker_id || markerTracker;
-    if (restoreId) return { comp: c, kind: "restore" as const, trackerId: restoreId, status: linked?.prior_status || liveTrackerStatus(c.status) };
+    if (restoreId) return { comp: c, kind: "restore" as const, trackerId: restoreId, status: linked?.prior_status || LIVE_BY_ID[c.id]?.status || liveTrackerStatus(String(c.status || "")) };
     const match = trackers.find((t: Row) => !soldTrackerIds.has(t.id) && sameBuilding([c.property_name, c.address], [t.asset_name, t.address]));
     if (match) return { comp: c, kind: "fill" as const, trackerId: match.id, trackerName: match.asset_name, status: null };
-    return { comp: c, kind: "new" as const, trackerId: null, status: liveTrackerStatus(c.status) };
+    return { comp: c, kind: "new" as const, trackerId: null, status: LIVE_BY_ID[c.id]?.status || liveTrackerStatus(String(c.status || "")) };
   });
 
   // Duplicates among what stays: groups, newest first.
@@ -128,7 +145,10 @@ export async function runCompCleanup(opts: { apply: boolean; actorId?: string | 
   const mergedAway = new Set(dupes.flatMap((d) => d.others.map((o: Row) => o.id)));
 
   // Classes for every comp that stays.
-  const finalRows = rest.filter((c: Row) => !mergedAway.has(c.id)).map((c: Row) => dupes.find((d) => d.keeper.id === c.id)?.merged || c);
+  const finalRows = rest.filter((c: Row) => !mergedAway.has(c.id))
+    .map((c: Row) => dupes.find((d) => d.keeper.id === c.id)?.merged || c)
+    .map((c: Row) => SET_BY_ID[c.id] ? { ...c, ...SET_BY_ID[c.id] } : c);
+  const sets = rest.filter((c: Row) => SET_BY_ID[c.id] && !mergedAway.has(c.id));
   const classChanges = finalRows.map((c: Row) => ({ c, to: compTrackerClass(camel(c)) })).filter((x) => x.c.subtype !== x.to);
   const classTally: Record<string, number> = {};
   for (const x of classChanges) { const k = `${x.c.subtype || "(blank)"} → ${x.to}`; classTally[k] = (classTally[k] || 0) + 1; }
@@ -137,6 +157,8 @@ export async function runCompCleanup(opts: { apply: boolean; actorId?: string | 
     apply: opts.apply, batch: opts.apply ? batch : null,
     lettings: lettings.map(label),
     refinancings: refis.map(label),
+    fellThrough: lapsed.map(label),
+    setByJack: sets.map((c: Row) => ({ ...label(c), set: SET_BY_ID[c.id] })),
     liveDeals: livePlan.map((p) => ({ ...label(p.comp), goes: p.kind === "restore" ? `back to its tracker row at ${p.status}` : p.kind === "fill" ? `already on the tracker as "${p.trackerName}": its blanks filled` : `new tracker row (Purchases) at ${p.status}` })),
     duplicates: dupes.map((d) => ({ keep: label(d.keeper), remove: d.others.map(label), filledFromOlder: d.filled })),
     classes: Object.entries(classTally).sort((a, b) => b[1] - a[1]).map(([change, count]) => ({ change, count })),
@@ -153,6 +175,13 @@ export async function runCompCleanup(opts: { apply: boolean; actorId?: string | 
   };
   for (const c of lettings) await del(c, "letting");
   for (const c of refis) await del(c, "refinancing");
+  for (const c of lapsed) await del(c, "terminated or withdrawn");
+  for (const c of sets) {
+    const set = SET_BY_ID[c.id];
+    const cols = Object.keys(set);
+    await log(batch, "investment_comps", c.id, "updated", Object.fromEntries(cols.map((k) => [k, c[k] ?? null])), null, "Jack's answer");
+    await pool.query(`UPDATE investment_comps SET ${cols.map((k, i) => `${k} = $${i + 2}`).join(", ")} WHERE id = $1`, [c.id, ...cols.map((k) => set[k])]);
+  }
 
   const { createTrackerAsset } = await import("./investment-tracker-service");
   const pct = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? (n < 1 ? Math.round(n * 10000) / 100 : n) : null; };
@@ -186,7 +215,7 @@ export async function runCompCleanup(opts: { apply: boolean; actorId?: string | 
       const row: Row = await createTrackerAsset({
         assetName: c.property_name || "Untitled",
         address: [c.address, c.city, c.postal_code].filter(Boolean).join(", ") || null,
-        assetType: compTrackerClass(camel(c)),
+        assetType: LIVE_BY_ID[c.id]?.assetType || compTrackerClass(camel(c)),
         guidePrice: c.price != null ? Number(c.price) : null,
         niy: pct(c.cap_rate),
         sqft: c.area_sqft != null ? Number(c.area_sqft) : null,
