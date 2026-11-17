@@ -259,7 +259,7 @@ export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Se
         const size = Array.isArray(r.size) ? r.size.join(", ") : r.size;
         const fits = `fits this unit${size ? ` (${size})` : ""}`;
         evidence.unshift(`${r.reason.clientText}, ${fits}`);
-        if (!ev.client) internal.unshift(`that ${r.reason.importOnly ? "listing" : "requirement"}: ${r.reason.text}`);
+        if (!ev.client) internal.unshift(`that ${r.reason.importOnly ? "listing" : "requirement"}: ${r.reason.short}`);
         score += Math.round(35 * r.reason.weight);
         fitsRequirement = true;
         break;

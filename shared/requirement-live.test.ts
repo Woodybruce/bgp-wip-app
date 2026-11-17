@@ -11,7 +11,7 @@ import {
   REQUIREMENT_LIVE_DAYS, REQUIREMENT_TO_CONFIRM_DAYS,
   requirementListingUpdates, importMayLabel, bgpCreatedStamp, stripRequirementProvenance,
   requirementGoingStale, requirementDaysLeft, requirementListKey, requirementSourceLabels, REQUIREMENT_GOING_STALE_DAYS, requirementOwnerColumns,
-  requirementClientCopy, requirementReason,
+  requirementClientCopy, requirementReason, clientCreatedStamp, requirementIsClientMade, listingTarget,
 } from "./requirement-live";
 
 const TODAY = new Date("2026-11-12T12:00:00Z");
@@ -188,13 +188,37 @@ describe("imports and hand-made rows", () => {
     for (const k of ["origin", "lastConfirmedAt", "lastConfirmedBy", "lastConfirmedByName", "confirmedHow"]) assert.ok(!(k in u), k);
   });
 
-  it("does not label BGP's own row, or an older row without that label, with an import's name", () => {
+  it("does not label BGP's own row, a client's, or an older row without that label, with an import's name", () => {
     assert.equal(importMayLabel({ origin: "bgp" }, "PIPnet"), false);
+    assert.equal(importMayLabel({ origin: "client", sources: ["Landsec"] }, "PIPnet"), false);
+    assert.equal(importMayLabel({ origin: "client" }, "TRL"), false);
     assert.equal(importMayLabel({ origin: null }, "PIPnet"), false);
     assert.equal(importMayLabel({ origin: null, sources: ["TRL"] }, "PIPnet"), false);
     assert.equal(importMayLabel({ origin: null, sources: ["PIPnet"] }, "PIPnet"), true);
     assert.equal(importMayLabel({ origin: null, sources: ["The Requirement List"] }, "TRL"), true);
     assert.equal(importMayLabel({ origin: "trl" }, "PIPnet"), true);
+  });
+
+  // Woody, 2026-11-17: "keep all requirements open for clients and access to amend and add".
+  it("a client login's requirement is the client's, never confirmed, with no owner, and reads To confirm", () => {
+    const stamp = clientCreatedStamp("Landsec");
+    assert.deepEqual(stamp, { origin: "client", sources: ["Landsec"], lastConfirmedAt: null, lastConfirmedBy: null, lastConfirmedByName: null, confirmedHow: null, bgpContactUserId: null, bgpContactUserIds: null });
+    assert.deepEqual(clientCreatedStamp(null).sources, ["Client"]);
+    const row = { status: "Active", requirementDate: "2026-11-10", ...stamp };
+    const r = requirementLive(row, TODAY);
+    assert.deepEqual([r.state, r.confirmed, r.clientMade, r.importOnly, r.dateLabel], ["to_confirm", false, true, false, "dated 10 Nov"]);
+    assert.equal(requirementListKey(r), "to_confirm");
+    assert.deepEqual(requirementSourceLabels(row), ["Client", "Landsec"]);
+    assert.equal(requirementIsClientMade(row), true);
+    // The SQL reads it the same way: it falls to "to confirm" as BGP's own unconfirmed row does.
+    assert.ok(!requirementStateSql("r").includes("client"), "no separate branch: a client's row is never import-only");
+  });
+
+  it("an import never folds a listing into a client's requirement", () => {
+    const client = { id: "c", name: "Pret", status: "Active", origin: "client", externalRequirementId: null };
+    const listing = { id: "p", name: "Pret", status: "Active", origin: "pipnet", externalRequirementId: null };
+    assert.equal(listingTarget([client], "e1", r => r.name === "Pret"), null);
+    assert.equal(listingTarget([client, listing], "e1", r => r.name === "Pret"), listing);
   });
 
   it("a hand-made row is BGP's own, confirmed by its creator, and live", () => {

@@ -16,7 +16,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pg from "pg";
-import { requirementLive, requirementReason, requirementStateSql, requirementClientVisibleSql, requirementImportOnlySql, requirementLiveColumnsSql, requirementIsImportOnly } from "@shared/requirement-live";
+import { requirementLive, requirementReason, requirementStateSql, requirementClientVisibleSql, requirementJointAgentVisibleSql, requirementImportOnlySql, requirementLiveColumnsSql, requirementIsImportOnly } from "@shared/requirement-live";
 import { requirementNewsOverlaps, requirementsToReconfirm } from "./requirement-overlaps";
 
 const days = (n: number) => new Date(Date.now() + n * 86400000);
@@ -83,11 +83,17 @@ test("the honest-use reads run on real PostgreSQL", { skip: process.env.RUN_DISP
       "r-past": "closed", "r-pip": "background", "r-press": "live", "r-stale": "to_confirm", "r-trl": "background",
     });
 
-    // ── What a client viewer's read loads (the target engine, tracker targets, brand gap): PIPnet listings only ──
+    // ── What a client viewer's read loads (the target engine, tracker targets, brand gap): every open
+    //    requirement since 17 November 2026 ("keep all requirements open for clients"), each worded by what
+    //    it is and its own date, never its state or a confirmation. A joint agent: PIPnet listings only. ──
     const clientRows = (await pool.query(`SELECT r.id, ${requirementLiveColumnsSql("r")} FROM crm_requirements_leasing r
       WHERE ${requirementStateSql("r")} <> 'closed' AND ${requirementClientVisibleSql("r")} ORDER BY r.id`)).rows;
-    assert.deepEqual(clientRows.map((r: any) => r.id), ["r-both", "r-pip"]);
-    for (const r of clientRows) assert.match(requirementReason(r).clientText || "", /^PIPnet listing from [A-Z][a-z]{2}( \d{4})?$/);
+    assert.deepEqual(clientRows.map((r: any) => r.id), ["r-both", "r-draft", "r-live", "r-nolink", "r-old", "r-own", "r-pip", "r-press", "r-stale", "r-trl"]);
+    for (const r of clientRows) assert.doesNotMatch(requirementReason(r).clientText, /confirm|live|emily/i, r.id);
+    const jointAgentRows = (await pool.query(`SELECT r.id, ${requirementLiveColumnsSql("r")} FROM crm_requirements_leasing r
+      WHERE ${requirementStateSql("r")} <> 'closed' AND ${requirementJointAgentVisibleSql("r")} ORDER BY r.id`)).rows;
+    assert.deepEqual(jointAgentRows.map((r: any) => r.id), ["r-both", "r-pip"]);
+    for (const r of jointAgentRows) assert.match(requirementReason(r).listingText || "", /^PIPnet listing from [A-Z][a-z]{2}( \d{4})?$/);
 
     // ── Brand Explorer's "Live requirement" flag: live or to confirm, never an unconfirmed import ──
     const flags = (await pool.query(`SELECT c.id, EXISTS (SELECT 1 FROM crm_requirements_leasing rl
@@ -97,7 +103,7 @@ test("the honest-use reads run on real PostgreSQL", { skip: process.env.RUN_DISP
     // ── The Brands hub list and tile, in the shape server/crm.ts builds them (GROUP BY with the rule in ORDER BY) ──
     const hub = (clientScoped: boolean) => {
       const filter = (alias: string) => clientScoped
-        ? `${requirementClientVisibleSql(alias)} AND ${requirementStateSql(alias)} <> 'closed'`
+        ? `${requirementStateSql(alias)} <> 'closed'`
         : `${requirementStateSql(alias)} IN ('live', 'to_confirm')`;
       return pool!.query(`
         SELECT rl.id, rl.company_id, c.name AS company_name, c.company_type, c.domain,
@@ -115,7 +121,7 @@ test("the honest-use reads run on real PostgreSQL", { skip: process.env.RUN_DISP
     assert.deepEqual(staffHub.map((r: any) => r.id).slice(0, 3).sort(), ["r-both", "r-live", "r-press"], "live first");
     assert.deepEqual(staffHub.map((r: any) => r.id).sort(), ["r-both", "r-draft", "r-live", "r-own", "r-press", "r-stale"]);
     assert.equal(Number(staffHub[0].brands), 6);
-    assert.deepEqual((await hub(true)).rows.map((r: any) => r.id).sort(), ["r-both", "r-pip"]);
+    assert.deepEqual((await hub(true)).rows.map((r: any) => r.id).sort(), ["r-both", "r-draft", "r-live", "r-old", "r-own", "r-pip", "r-press", "r-stale", "r-trl"]);
 
     // ── News joined to requirements by brand, and the reconfirm count ──
     await pool.query(`INSERT INTO brand_signals (brand_company_id, signal_type, headline, source, signal_date, ai_relevant) VALUES

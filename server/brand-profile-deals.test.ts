@@ -680,7 +680,9 @@ describe("suggested units and the expansion score for a scheme-limited login", (
 
   it("a scheme-limited view has no line or flag that counts deals, offers, viewings or enquiries", () => {
     const shown = schemeLimitedScoreView(clientScoreView(result));
-    assert.deepEqual(shown.lines.map((l: any) => l.label), ["2 market listings", "4 UK openings in 12 months", "Covenant grade A"]);
+    // Requirements are open to a client since 17 November 2026: the count of
+    // BGP's stays, with no word of whether or when BGP confirmed them.
+    assert.deepEqual(shown.lines.map((l: any) => l.label), ["2 market listings", "1 requirement on BGP's books", "4 UK openings in 12 months", "Covenant grade A"]);
     assert.deepEqual(shown.expansionFlags, ["4 UK openings in 12 months", "Covenant grade A"]);
     assert.doesNotMatch(JSON.stringify([shown.lines, shown.expansionFlags]), /deal|offer|viewing|touchpoint|BGP unit/i);
   });
@@ -693,8 +695,9 @@ describe("suggested units and the expansion score for a scheme-limited login", (
 
   it("a plain client view has no Relationship line; the staff result is not changed", () => {
     const client = clientScoreView(result);
-    assert.equal(client.lines.length, 4);
+    assert.equal(client.lines.length, 5);
     assert.ok(!client.lines.some((l: any) => l.bucket === "engagement"));
+    assert.ok(!client.lines.some((l: any) => /confirm/i.test(l.label)), "never whether BGP confirmed one");
     assert.equal(client.expansionFlags.length, 6);
     assert.equal(result.lines.length, 11);
     assert.equal((result.subScores as any).engagement, 20);

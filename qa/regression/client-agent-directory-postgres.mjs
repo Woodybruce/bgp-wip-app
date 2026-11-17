@@ -118,7 +118,8 @@ try {
   }
   check('principal contacts do not become acquiring agents', () => assert.ok(entries.every(e => e.contacts.every(c => c.id !== 'principal'))));
   check('missing contact IDs do not create empty persons', () => assert.equal(byId('contact:missing-id'), undefined));
-  check('private staff requirements remain outside the client directory', () => assert.equal(byId('private-agency'), undefined));
+  // Every leasing requirement is open to a client since 17 November 2026 (Woody: "keep all requirements open for clients"): BGP's own requirement qualifies its agent too.
+  check('an agent on BGP\'s own requirement qualifies for the client directory', () => assert.ok(byId('private-agency')));
   check('every displayed brand belongs to the same client Brand CRM', () => assert.ok(entries.every(e => e.represents.every(b => ['coffee','gym'].includes(b.brandId)))));
   await client.query('UPDATE crm_companies SET crm_extra_brand_ids=$1 WHERE id=$2', [[extra],scope]);
   entries = await directory();

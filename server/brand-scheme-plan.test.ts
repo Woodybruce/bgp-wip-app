@@ -144,7 +144,7 @@ test("a Landsec login sees its schemes only and nothing of BGP's own, and its st
     ],
     "case-units": [{ company_id: BRAND, case_status: "draft", at: "2026-11-11T10:00:00Z", pu: { id: "c1", schemeKey: "liverpool-one", tenancyUnitId: null, unitLabel: "The Byron unit", status: "Proposed" } }],
     requirements: [
-      { id: "req-private", company_id: BRAND, name: "Jersey Mike's", size: ["1,500-3,000 sq ft"], use: ["Restaurant"], requirement_locations: ["South East", "North West"], status: "Active", sources: ["BGP"], deal_id: null, at: "2026-10-01T00:00:00Z" },
+      { id: "req-private", company_id: BRAND, name: "Jersey Mike's", size: ["1,500-3,000 sq ft"], use: ["Restaurant"], requirement_locations: ["South East", "North West"], status: "Active", sources: ["BGP"], deal_id: null, at: "2026-11-10T00:00:00Z", added_at: "2026-10-01T00:00:00Z" },
     ],
     actions: [{ company_id: BRAND, link: { company_id: BRAND }, id: "t-1", title: "Call their agent about the fee", due_at: "2026-11-20T00:00:00Z", status: "todo", owner_name: "Alex Todd" }],
     "name-keys": [{ k: "jerseymikes" }],
@@ -176,10 +176,17 @@ test("a Landsec login sees its schemes only and nothing of BGP's own, and its st
   // The viewing's typed next action is BGP's note; the follow-up date and the agent stay.
   assert.deepEqual(unitRow.nextStep, { kind: "viewing_followup", title: "Follow up the viewing", dueAt: "2026-11-25", daysWaiting: null, who: "Charlotte Roberts", refId: "v-1" });
   assert.deepEqual(unitRow.owner, { id: "u-agent", name: "Charlotte Roberts", source: "viewing" });
-  // The chip is sent; the requirement behind it is not one this client may read.
-  assert.deepEqual(unitRow.requirement, { chip: "linked", requirementId: null, unitSqft: 2000, range: null });
-  assert.deepEqual(plan.requirements, [{ id: "held-1", summary: "Requirement held", ageDays: null, source: null, detailHidden: true }]);
-  assert.deepEqual(plan.askedNoTarget, []);
+  // Every requirement is open to a client since 17 November 2026 (Woody: "keep
+  // all requirements open for clients"): the chip carries the requirement, and
+  // its age runs from the day it was added, never the last edit a
+  // confirmation moves.
+  assert.deepEqual(unitRow.requirement, { chip: "linked", requirementId: "req-private", unitSqft: 2000, range: { min: 1200, max: 3600 } });
+  assert.deepEqual(plan.requirements, [{ id: "req-private", summary: "1,500–3,000 sq ft · Restaurant · South East, North West", ageDays: 42, source: "BGP", detailHidden: false }]);
+  assert.equal(staff.requirements[0].ageDays, 2, "staff read the last edit");
+  assert.deepEqual(plan.askedNoTarget, [
+    { place: "South East", schemes: [{ key: "gunwharf-quays", name: "Gunwharf Quays" }] },
+    { place: "North West", schemes: [{ key: "liverpool-one", name: "Liverpool ONE" }] },
+  ]);
   // A Wanted line BGP ticked is shown, without BGP's note.
   assert.deepEqual(plan.rows[1].wish, { id: "w-shown", note: null, visibleToClient: true, ruledOut: false, createdByName: "Alex Todd", requirementId: null });
   assert.equal(plan.rows[1].links.brandCase, null);                                          // the case is a draft
@@ -188,28 +195,36 @@ test("a Landsec login sees its schemes only and nothing of BGP's own, and its st
   assert.equal("otherSchemeCount" in plan, false);
 });
 
-test("requirement detail reaches a client only for a PIPnet listing or its own requirement", async () => {
+test("requirement detail reaches a client for every requirement, and a joint agent for none", async () => {
   const db = fakeDb(baseAnswers({
     evidence: [ev({ ...unit("ts-1", "Unit L104"), src: "target_list" })],
     requirements: [
-      { id: "req-pip", company_id: BRAND, name: "JM", size: ["1,500-3,000 sq ft"], use: ["Restaurant"], requirement_locations: ["South East", "North West"], status: null, sources: ["PIPnet"], deal_id: null, at: "2026-11-02T12:00:00Z" },
-      { id: "req-bgp", company_id: BRAND, name: "JM", size: ["900"], use: null, requirement_locations: ["Scotland"], status: "Active", sources: null, deal_id: null, at: "2026-10-01T00:00:00Z" },
+      { id: "req-pip", company_id: BRAND, name: "JM", size: ["1,500-3,000 sq ft"], use: ["Restaurant"], requirement_locations: ["South East", "North West"], status: null, sources: ["PIPnet"], deal_id: null, at: "2026-11-02T12:00:00Z", added_at: "2026-11-02T12:00:00Z" },
+      { id: "req-bgp", company_id: BRAND, name: "JM", size: ["900"], use: null, requirement_locations: ["Scotland"], status: "Active", sources: null, deal_id: null, at: "2026-11-11T00:00:00Z", added_at: "2026-10-01T00:00:00Z" },
     ],
   }));
   const plan = (await api.brandPlan(db, BRAND, LANDSEC_FULL, SCHEMES, NOW))!;
   assert.deepEqual(plan.requirements, [
     { id: "req-pip", summary: "1,500–3,000 sq ft · Restaurant · South East, North West", ageDays: 10, source: "PIPnet", detailHidden: false },
-    { id: "held-2", summary: "Requirement held", ageDays: null, source: null, detailHidden: true },   // not even its id
+    // BGP's own requirement too (17 November 2026), aged from the day it was added.
+    { id: "req-bgp", summary: "900 · Scotland", ageDays: 42, source: null, detailHidden: false },
   ]);
   assert.deepEqual(plan.rows[0].requirement, { chip: "fits", requirementId: "req-pip", unitSqft: 2000, range: { min: 1200, max: 3600 } });
-  // Asked for, no target yet: from the PIPnet places only, and only schemes with no line.
+  // Asked for, no target yet: from the places of every requirement it reads, and only schemes with no line.
   assert.deepEqual(plan.askedNoTarget, [
     { place: "South East", schemes: [{ key: "gunwharf-quays", name: "Gunwharf Quays" }] },
     { place: "North West", schemes: [{ key: "liverpool-one", name: "Liverpool ONE" }] },
   ]);
   assert.equal(api.requirementDetailHidden({ company_id: LANDSEC, sources: null }, LANDSEC_FULL), false);
+  assert.equal(api.requirementDetailHidden({ company_id: BRAND, sources: null }, LANDSEC_FULL), false);
   assert.equal(api.requirementDetailHidden({ company_id: BRAND, sources: ["PIPnet"] }, JOINT_AGENT), true);
   assert.equal(api.requirementDetailHidden({ company_id: BRAND, sources: null }, STAFF), false);
+  // A joint agent reads "Requirement held" and nothing more, not even the id.
+  const ja = (await api.brandPlan(fakeDb(baseAnswers({
+    evidence: [ev({ ...unit("ts-1", "Unit L104"), src: "target_list" })],
+    requirements: [{ id: "req-bgp", company_id: BRAND, name: "JM", size: ["900"], use: null, requirement_locations: ["Scotland"], status: "Active", sources: null, deal_id: null, at: "2026-11-11T00:00:00Z", added_at: "2026-10-01T00:00:00Z" }],
+  })), BRAND, JOINT_AGENT, SCHEMES, NOW))!;
+  assert.deepEqual(ja.requirements, [{ id: "held-1", summary: "Requirement held", ageDays: null, source: null, detailHidden: true }]);
 });
 
 // An asset manager is a full Landsec login (Woody, 2026-11-13: "asset

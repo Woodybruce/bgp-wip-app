@@ -13,7 +13,7 @@ if (url.hostname || url.pathname !== '/bgp_smoke' || url.searchParams.get('host'
 const schema = `qa_brand_brief_${process.pid}_${Date.now()}`;
 const db = new pg.Pool({ connectionString: supplied, ssl: false, options: `-c search_path=${schema}` });
 const fn = name => find('server/brand-ai-take.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === name);
-const { loadBrandSlice, loadUkSlice } = evaluate(fn('marketListings') + '\n' + fn('loadBrandSlice') + '\n' + fn('loadUkSlice') + '\nexports.loadBrandSlice=loadBrandSlice;exports.loadUkSlice=loadUkSlice;', {
+const { loadBrandSlice, loadUkSlice } = evaluate(fn('openRequirements') + '\n' + fn('loadBrandSlice') + '\n' + fn('loadUkSlice') + '\nexports.loadBrandSlice=loadBrandSlice;exports.loadUkSlice=loadUkSlice;', {
   pool: db, brandActionEvidence, brandLegalEvidenceContext,
   requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql,
   bgpDealEvidence: deal => ({ property: deal.name }), relationshipEvidence: async () => null,
@@ -39,14 +39,16 @@ try {
       ('old','synthetic-cook','opening','Old event','manual',now()-interval '2 years','confirmed',true),
       ('future','synthetic-cook','opening','Future event','manual',now()+interval '2 years','reported',true),
       ('staff','synthetic-cook','requirement','Staff recorded requirement','bgp-deal:synthetic',now()-interval '1 day','confirmed',true)`);
-  // The take is read by client logins too: only this company's open PIPnet listings reach it, never BGP's own rows.
-  await check('actual requirements query uses existing columns and gives this company\'s open market listings only', async () => {
+  // The take is read by client logins too, and every requirement is open to them since 17 November 2026:
+  // this company's open requirements reach it, BGP's own included, each worded by the live rule.
+  await check('actual requirements query uses existing columns and gives this company\'s open requirements, by the live rule', async () => {
     const slice = await loadBrandSlice('synthetic-cook');
     assert.equal(slice.active_requirements.length, 0);
-    assert.deepEqual(slice.market_listings.map(row => row.name), ['Synthetic Leeds listing']);
-    assert.deepEqual(slice.market_listings[0].locations, ['Leeds']); assert.deepEqual(slice.market_listings[0].sizes, ['1500 sq ft']);
-    assert.match(slice.market_listings[0].listing, /^PIPnet listing from Sep/);
-    assert.doesNotMatch(JSON.stringify(slice), /employee_count|store_count|900|Bristol/);
+    assert.deepEqual(slice.requirements.map(row => row.name), ['Synthetic Bristol requirement', 'Synthetic Leeds listing']);
+    assert.deepEqual(slice.requirements[1].locations, ['Leeds']); assert.deepEqual(slice.requirements[1].sizes, ['1500 sq ft']);
+    assert.match(slice.requirements[0].requirement, /^BGP requirement dated 17 Sep, not confirmed$/);
+    assert.match(slice.requirements[1].requirement, /^PIPnet listing from Sep, not confirmed$/);
+    assert.doesNotMatch(JSON.stringify(slice), /employee_count|store_count|900|Old requirement|Other brand/);
   });
   await check('actual signal query excludes stale/future events and wrong-identity news while retaining staff evidence', async () => {
     const slice = await loadBrandSlice('synthetic-cook');

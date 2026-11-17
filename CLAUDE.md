@@ -559,7 +559,10 @@ tracker, viewings, chat addresses one by one), `jointAgentApiDenied`
 (`shared/landsec.ts`) refuses brand pages and the hub, company records,
 contacts, the CRM plan, landlord records, brand cases, the correspondence
 log, every other chat or ChatBGP door, the generated Targeting Brief, a
-requirement from a viewing and deleting a unit; everything else goes to the
+requirement from a viewing, deleting a unit, and since 17 November 2026
+leasing requirements (the list, a row, add and edit, the requirements
+centre, matching and brand suggestions) and the client Agents directory;
+everything else goes to the
 ordinary client checks, cut to its schemes by the middleware above. BGP's
 own fields stay hidden from it on the real pages (`isJointAgentLogin` before
 `withoutJointAgentFields`), and `briefAccess` still gives it `agentControl`
@@ -1791,8 +1794,9 @@ response types), `server/brand-scheme-plan.ts` (`brandPlan`, `brandGrid`,
   the Landsec slice, so every handler there that returns BGP's contacts or
   mail checks for BGP staff itself (`contacts-cascade`,
   `bgp-known-contacts`, the email threads, `suggested-units`). A client's
-  brand page shows only the requirements the Requirements page lets it read
-  (PIPnet listings and its own).
+  brand page shows the requirements the Requirements page lets it read:
+  every one that is not closed since 17 November 2026 (Requirements centre
+  section), never the state.
 - Not built, each waiting on Woody: Landsec writing its own Wanted lines;
   an all-landlords Targets list; showing Landsec that a shared action waits
   on Landsec; whether an On hold brand is safe from the brand tidy; draft
@@ -2794,6 +2798,83 @@ Two rules everything else follows (do not re-litigate):
    confirmation date. Nothing, at boot or on a timer, moves a row between
    states or back-fills; back-fills are admin Preview then Apply.
 
+**Every requirement is open to client logins, to read, add and amend**
+(Woody, 2026-11-17: "keep all requirements open for clients and access to
+amend and add"; do not re-litigate). This SUPERSEDES the "One client rule"
+as first written (PIPnet listings only, below) and "Client logins were given
+nothing new" under NOT built.
+
+- **Reading.** Every client login reads every leasing requirement, BGP's own
+  included. `requirementClientVisible()` and `requirementClientVisibleSql()`
+  pass every row (kept so the callers keep one name). Every row sent to a
+  client still goes through `requirementClientCopy`, and every line a client
+  reads is `requirementReason(row).clientText`: what it is and its own date
+  ("PIPnet listing from Sep", "requirement dated 4 Aug", "requirement added
+  12 Nov"), never the state, the BGP owner, or whether, when or by whom BGP
+  confirmed it. So a confirmation writes no requirement date onto any row
+  (`confirmationPatch` in `server/requirement-intake.ts`), and the brand
+  page and the Brand Pack list a client's rows by listed or added date,
+  never live first. One exception, as asked: the BGP take
+  (`openRequirements` in `server/brand-ai-take.ts`, one cached text for
+  staff and clients) words each open requirement with
+  `requirementReason(r).text`, so it may say when one was confirmed, never
+  who (cache policy `:market-listings-1` kept).
+- **Joint agents stay out.** `jointAgentApiDenied` (`shared/landsec.ts`)
+  refuses a joint agent the requirements list, one row, add and edit, the
+  centre routes, the unit Match dialog, the tracker's matching requirements,
+  brand suggestions and the client Agents directory (test in
+  `server/landsec-gateway.test.ts`). Where it still meets requirements,
+  Brand Gap and the target engine at its schemes, it reads PIPnet listings
+  only (`requirementJointAgentVisible[Sql]`, `RequirementReason.listingText`),
+  and Brand Gap's cached commentary, which every login reads, cites PIPnet
+  listings only. `requirementViewer(req)` in `server/landsec-access.ts`
+  answers "staff", "client" or "joint_agent" (a failed read is
+  "joint_agent").
+- **Writing.** A client login adds a leasing requirement and amends any
+  (`POST /api/crm/requirements-leasing` and `PUT …/:id`, opened on the CRM
+  write guard in `server/crm.ts` and on `CLIENT_ALLOWED_WRITES` in
+  `server/index.ts`); `DELETE` stays BGP staff only (403 to any client
+  scope), as do the landlord pack and the agent sweep. One door,
+  `clientRequirementWrite` in `server/crm.ts`: only
+  `CLIENT_REQUIREMENT_FIELDS` (`shared/requirement-live.ts`: name, brand,
+  group, status Active / Past / Archived, contacts, deal, use, type, size,
+  places, comments), and the brand must be a tenant brand the login may see
+  (`isClientVisibleBrand`); never provenance, an owner or a confirmation. A
+  new row is stamped by `clientCreatedStamp`: `origin = 'client'`, the
+  client company's name in `sources` (Source "Client" on BGP's screens), no
+  confirmation and no owner, so it reads To confirm for BGP until a named
+  BGP person confirms it ("client requirement added 17 Nov, not confirmed").
+  A client's edit is never a confirmation. Imports never label or fold into
+  a client's row (`importMayLabel`, `listingTarget`). A login not tied to a
+  client company (`NO_ACCESS_SCOPE`) reads and writes nothing. ChatBGP's
+  `create_requirement` and `update_requirement` stay BGP staff only.
+- **The page.** A client login, and BGP staff viewing as one, get Add
+  requirement and Edit on the client shape (`LeasingFormDialog` with
+  `clientForm`: the brand picked from the brands it may see, no BGP owner;
+  the form opens only once the login is known, `!!reqUser`), and no Delete
+  or centre tools. Brand Gap's Add requirement is open to every login with
+  brand pages (`noBrandPages` keeps it from a joint agent).
+- **Opened with it**: Brand Gap, the target engine (the requirement line is
+  shareable; whether and when BGP confirmed it is `internal`), suggested
+  pitches, brand suggestions, Who's hot, the market commentary, a contact's
+  requirements, the Expansion score's client view ("N requirements on BGP's
+  books"), the brand page and its Tenant rep agents, the Brand Pack (every
+  open requirement), the viewing form (`agentRequirementSql`: any open
+  requirement for a client), the client Agents directory and the Brand CRM's
+  requirement detail (a joint agent still reads only "Requirement held").
+- **Still BGP's**: the whole centre (suggestions and the tray, the evidence
+  drawer and `requirement_evidence`, Still live and Confirm, the owner, Sync
+  tools, the Health report, In the news; every `/api/requirement-suggestions*`
+  and `/api/requirement-centre/*` route) and the unit Match dialog
+  (`/api/requirements/matches/:id`).
+- **Left for Woody**: ChatBGP writes a staff member's note into a
+  requirement's Comments, which a client now reads; only a PIPnet-labelled
+  row is kept free of them (`clientsCanSee` in
+  `server/chatbgp-requirements.ts`). A client also sees each row's
+  `sources` chips (BGP, ChatBGP, News, Viewing, PIPnet). Tests:
+  `qa/regression/client-requirement-access.test.mjs`, with the requirement
+  guards and `qa/two-bot-round.mjs` brought up to the rule.
+
 - **The states**: LIVE = a named BGP person confirmed it within 90 days
   (`REQUIREMENT_LIVE_DAYS`). TO CONFIRM = confirmed 90 days to 12 months ago
   (`REQUIREMENT_TO_CONFIRM_DAYS`, 365), a Draft, BGP's own row nobody has
@@ -2810,8 +2891,9 @@ Two rules everything else follows (do not re-litigate):
   "last edited". Imports never set a confirmation; they set `origin`,
   `external_requirement_id` and `last_listed_at` (forward only) through
   `requirementListingUpdates`. A hand-made row is stamped `origin = 'bgp'`
-  and confirmed by its creator (`bgpCreatedStamp`). Request bodies never set
-  these columns (`stripRequirementProvenance`).
+  and confirmed by its creator (`bgpCreatedStamp`); one a client login makes
+  is `origin = 'client'` and unconfirmed (`clientCreatedStamp`, above).
+  Request bodies never set these columns (`stripRequirementProvenance`).
 - Anything a machine detects is a suggestion in `requirement_evidence`
   (status open), never a live requirement. Staff only: no evidence,
   suggestion, owner or health data goes to a client login.
@@ -2819,7 +2901,8 @@ Two rules everything else follows (do not re-litigate):
   `IDEMPOTENT_SQL_MIGRATIONS`, declared in `shared/schema.ts`; additive
   only): on `crm_requirements_leasing` the columns `last_confirmed_at`,
   `last_confirmed_by`, `last_confirmed_by_name`, `confirmed_how`, `origin`
-  ('bgp' | 'pipnet' | 'trl'; NULL = made before the build),
+  ('bgp' | 'pipnet' | 'trl', and 'client' since 17 November 2026; NULL =
+  made before the build),
   `external_requirement_id`, `last_listed_at`, `last_listed_source`; and the
   one new table `requirement_evidence` (evidence lines and suggestions).
   Existing rows were not back-filled: they have no confirmation, so none of
@@ -2829,7 +2912,8 @@ Two rules everything else follows (do not re-litigate):
   confirmation beside it. Six older paths still insert their own stamped
   requirement rows directly, with no evidence line: the two imports
   (`server/pipnet.ts`, `server/trl.ts`), the Add requirement form
-  (`POST /api/crm/requirements-leasing`), the convert route, the two bulk
+  (`POST /api/crm/requirements-leasing`, a client login's through
+  `clientRequirementWrite`), the convert route, the two bulk
   imports, and Import Anything. Do not add a seventh. Sources
   wired in: PIPnet and The Requirement List imports (market listings,
   stamped, never confirmed), Add requirement on the page, ChatBGP, team chat
@@ -2858,8 +2942,10 @@ Two rules everything else follows (do not re-litigate):
   Same brand and area = the existing requirement is confirmed and added to,
   never a second row; unclear which = nothing saved, the user is asked; an
   unmatched brand = a suggestion only. Chat text is never copied onto a
-  PIPnet-labelled row (client logins see those). An edit is not a
-  confirmation. ChatBGP's search, context and the MCP search read
+  PIPnet-labelled row (`clientsCanSee`, written when client logins read only
+  those; since 17 November 2026 they read every row, so a note ChatBGP adds
+  to any other row's comments reaches them too: Woody's call). An edit is
+  not a confirmation. ChatBGP's search, context and the MCP search read
   `crm_requirements_leasing` with the live rule. The old `requirements`
   table is no longer written or read by chat; its rows reach the centre only
   through `GET /api/admin/requirements-legacy` (preview) then
@@ -2936,9 +3022,10 @@ Two rules everything else follows (do not re-litigate):
   live keeps an earlier conversation or press basis (`nextHow`). A person
   confirming an ownerless row becomes its owner. Dismissals (tray, In the
   news, a draft) show Undo. A client login, and staff
-  viewing as one, get the read-only shape (`clientShape`): Open / Closed, no
-  state, owner, date line, edit or delete. Never show a client the state or
-  who confirmed.
+  viewing as one, get the client shape (`clientShape`): Open / Closed, no
+  state, owner or date line, no Delete and none of the centre's tools; since
+  17 November 2026 it has Add requirement and Edit (`clientForm`, above).
+  Never show a client the state or who confirmed.
 - **Tray, evidence drawer, news Dismiss** (`client/src/components/requirement-centre.tsx`,
   mounted only when `canUseCentre`): `SuggestionTray` sits at the top of To
   confirm and is the ONE place suggestions are answered (do not add a second
@@ -2960,26 +3047,28 @@ Two rules everything else follows (do not re-litigate):
   the state is live. Use `requirementReason(row)` from the live rule for the
   wording ("requirement confirmed 3 Nov", "PIPnet listing from Sep, not
   confirmed"; it never names who confirmed) and `REQUIREMENT_STATE_WEIGHT`
-  for scoring (live 1, to confirm 0.5, background 0.2). **One client rule**:
-  a client login is only ever given rows labelled PIPnet
-  (`requirementClientVisibleSql` / `requirementClientVisible`), by source and
-  month (`reason.clientText`), never the state, never BGP's hand-entered
-  rows. The one addition, on the Requirements list, the single GET and a
-  contact's requirements, is a requirement on the client's OWN company. Any
-  row sent to a client goes through `requirementClientCopy` (no provenance,
-  no BGP owner, no last-edit time), and a confirmation writes no date onto a
-  PIPnet-labelled row: a client must not learn who at BGP owns a listing or
-  when BGP confirmed it. The same rule covers the hub's "Who's hot" query
-  (`hotReqJoin`), the market commentary's activity count, the requirement
-  name on a viewing, and the Expansion score's why-lines and flags
-  (`clientScoreView` / `clientScoreLabel` in `server/hunter-score.ts`). That holds in the target engine (`server/target-tenant-engine.ts`:
-  a PIPnet listing is shareable evidence, everything else about a
-  requirement is `internal`, because saved rationales are read by the
-  landlord), tracker targets and suggested pitches (`server/crm.ts`), space
-  fits (`server/account-teams.ts`), Brand Gap (its cached commentary is read
-  by staff and clients alike, so it carries shareable lines only), the unit
-  Match dialog, the brand page feed, the Brand Pack and the Brands hub. The
-  brand page, pack, Brand Explorer flag and hub tile mean live or to confirm.
+  for scoring (live 1, to confirm 0.5, background 0.2). **One client rule**
+  (rewritten on 17 November 2026, see the top of this section; until then a
+  client login was given only rows labelled PIPnet and its own company's): a
+  client login is given every leasing requirement, by what it is and its own
+  date (`reason.clientText`), never the state and never whether, when or by
+  whom BGP confirmed it. Any row sent to a client goes through
+  `requirementClientCopy` (no provenance, no BGP owner, no last-edit time),
+  and a confirmation writes no requirement date onto any row: a client must
+  not learn who at BGP owns a requirement or when BGP confirmed it (the BGP
+  take is the one exception, above). The same rule covers the hub's "Who's
+  hot" query (`hotReqJoin`), the market commentary's activity count, the
+  requirement name on a viewing, and the Expansion score's why-lines and
+  flags (`clientScoreView` / `clientScoreLabel` in `server/hunter-score.ts`).
+  That holds in the target engine (`server/target-tenant-engine.ts`: the
+  requirement line is shareable evidence, whether and when BGP confirmed it
+  is `internal`, because saved rationales are read by the landlord), tracker
+  targets and suggested pitches (`server/crm.ts`), space fits
+  (`server/account-teams.ts`), Brand Gap (its cached commentary is read by
+  every login, joint agents included, so it cites PIPnet listings only), the
+  brand page feed, the Brand Pack and the Brands hub. For BGP staff the
+  brand page, pack, Brand Explorer flag and hub tile mean live or to confirm;
+  a client's brand page and pack list every requirement that is not closed.
   The expansion score counts an unconfirmed PIPnet or Requirement List import
   as a market listing, never BGP's own (`gatherBgpEvidence`); raise
   `SCORE_VERSION` in `server/brand-triggers.ts` whenever score weighting
@@ -3013,9 +3102,11 @@ Two rules everything else follows (do not re-litigate):
   - **Reading private chat threads and ChatBGP conversations** for
     requirements, and working back through emails already filed (the email
     feed reads new mail only).
-  - **The Landsec view.** Client logins were given nothing new; only leaks
-    of BGP's hand-entered requirements were closed. Slice-limited listings
-    and a share marker need his decision (review, Across the app 4).
+  - **The Landsec view.** Answered on 17 November 2026: every requirement
+    is open to client logins, to read, add and amend (the top of this
+    section). Until then client logins were given nothing new here, and
+    slice-limited listings and a share marker (review, Across the app 4)
+    waited on him; neither is needed now.
   - **The single fit rule.** The six matchers still disagree (Fits column,
     Match dialog, Brand Gap, AI matching, ChatBGP, target engine); he has to
     choose the rule (size alone, or size plus use or place).
@@ -3048,10 +3139,12 @@ Two rules everything else follows (do not re-litigate):
     contact's Requirements list link with it (the contact page used
     `?highlight=`, which nothing read, and sent investment requirements to
     the leasing page). "Add a requirement" on the brand pages carries
-    `&new=1`, so the form opens with the brand chosen. A client login is
+    `&new=1`, so the form opens with the brand chosen. A client login was
     never shown the create form (`createOpen && !clientShape`), and Brand
-    Gap offers "Add requirement" to BGP staff only. The phone's suggestions
-    alert keeps its `?list=`.
+    Gap offered "Add requirement" to BGP staff only: both superseded the
+    same day, when clients were given Add and Edit (`createOpen && !!reqUser`
+    with the client form; Brand Gap's button for every login with brand
+    pages). The phone's suggestions alert keeps its `?list=`.
   - Off the live rule, now on it: the brand plan's requirements (the
     Schemes and units card, Requirement held), Start strategy's
     "Requirement on file" (with its state), and the brand page's Tenant rep
@@ -3060,15 +3153,17 @@ Two rules everything else follows (do not re-litigate):
     label to staff only). ChatBGP's investment directions point at
     Investment → Requirements.
   - **Client leaks closed.** The BGP take is one cached text that staff
-    and clients read, so it now cites shareable market listings only
+    and clients read, so it then cited shareable market listings only
     ("PIPnet listing from Sep", `marketListings` in `server/brand-ai-take.ts`),
     never BGP's own requirements; takes saved before this stopped being
     served (cache policy `:market-listings-1`) until the weekly brief or
-    Refresh. The viewing form's agents, represented brands and save check
-    share one rule (`agentRequirementSql` in `server/leasing-viewings.ts`:
-    live or to confirm for staff; a market listing or the client's own,
-    not closed, for a client). The Brand Pack orders a client's listings
-    by listing date, not live-first.
+    Refresh. (Superseded the same day: the take reads every open
+    requirement, `openRequirements`, the policy unchanged.) The viewing
+    form's agents, represented brands and save check share one rule
+    (`agentRequirementSql` in `server/leasing-viewings.ts`: live or to
+    confirm for staff; any requirement that is not closed for a client,
+    since 17 November 2026). The Brand Pack orders a client's requirements
+    by listing or added date, not live-first.
   - **Matching by use.** Units hold planning classes (E(b), A3) and
     requirements hold categories (Restaurant), so Brand Gap, the Match
     dialog and the tracker's Find matching requirements came back empty for
@@ -3091,10 +3186,10 @@ Two rules everything else follows (do not re-litigate):
   - Left for Woody: the single fit rule; what a full Landsec login reads on
     a brand (the take still carries BGP's deal history, and the activity
     take BGP's investment requirements and board lots); ChatBGP's
-    `sql_write` can still insert a requirement row with any sources (a
-    PIPnet label makes it client-visible); the Brand CRM's "Requirement
-    held" for Landsec logins and joint agents is still read from all of
-    BGP's rows (decision 11).
+    `sql_write` can still insert a requirement row with any sources (every
+    row is client-visible since 17 November 2026); the Brand CRM's
+    "Requirement held" for joint agents is still read from all of BGP's
+    rows (decision 11; for Landsec logins that is now the rule).
 
 ## ChatBGP sets tasks for colleagues from either tool path (2026-11-16)
 

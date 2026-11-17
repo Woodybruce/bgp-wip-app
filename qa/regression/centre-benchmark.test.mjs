@@ -43,7 +43,7 @@ test('target-tenant engine: evidenced candidates exclude brands trading here and
   const { requirementReason } = await import('../../shared/requirement-live.ts');
   const today = new Date('2026-11-12T10:00:00Z');
   const requirement = row => ({ size: '1,500-2,500', use: ['Restaurant'], requirement_locations: ['Kent'], reason: requirementReason({ status: 'Active', ...row }, today) });
-  const confirmed = requirement({ origin: 'bgp', last_confirmed_at: '2026-11-03T09:00:00Z', last_confirmed_by: 'u-emily', last_confirmed_by_name: 'Emily Stone', confirmed_how: 'call' });
+  const confirmed = requirement({ origin: 'bgp', requirement_date: '2026-08-04', last_confirmed_at: '2026-11-03T09:00:00Z', last_confirmed_by: 'u-emily', last_confirmed_by_name: 'Emily Stone', confirmed_how: 'call' });
   const listing = requirement({ origin: 'pipnet', sources: ['PIPnet'], last_listed_at: '2026-09-03T00:00:00Z', last_listed_source: 'PIPnet' });
   const brand = (name, companyId, extra = {}) => ({ key: companyId || `name:${name.toLowerCase()}`, companyId, name, category: 'Tenant - Restaurant', stores: 20, rollout: null, signals: [], requirements: [], bgpClient: false, ...extra });
   const brands = new Map([
@@ -56,18 +56,23 @@ test('target-tenant engine: evidenced candidates exclude brands trading here and
     hereKeys: new Set(['nandos']), hereIds: new Set(), brands, context: '' };
   const out = unitCandidates(ev, { id: 'u', unit_name: 'SVL09', sqft: 2000, positioning: 'Quick Refuel' });
   assert.deepEqual(out.map(c => c.name), ['Wingstop', 'Five Guys']);
-  // A requirement is named by what it is and its date, never as "live", and BGP's own requirement is BGP-only evidence.
-  assert.deepEqual(out[0].internal, ['requirement confirmed 3 Nov, fits this unit (1,500-2,500)']);
-  assert.ok(out[0].evidence.every(line => !/requirement|confirmed/i.test(line)));
+  // A requirement is named by what it is and its own date, never as "live". Since 17 November 2026 every
+  // requirement is open to the landlord's logins, so that line is shareable; whether and when BGP confirmed it stays BGP-only.
+  assert.deepEqual(out[0].evidence, ['requirement dated 4 Aug, fits this unit (1,500-2,500)', 'BGP in conversation: 4 emails in 90 days']);
+  assert.deepEqual(out[0].internal, ['that requirement: confirmed 3 Nov']);
+  assert.ok(out[0].evidence.every(line => !/confirmed|live|Emily/i.test(line)));
   assert.equal(out[0].score, 8 + 35);
   // An unconfirmed PIPnet listing is shareable by source and month, scores a fifth, and whether BGP confirmed it stays internal.
   const listed = unitCandidates({ ...ev, brands: new Map([['a', brand('Wingstop', 'a', { requirements: [listing] })]]) }, { id: 'u', unit_name: 'SVL09', sqft: 2000, positioning: 'Quick Refuel' });
   assert.deepEqual(listed[0].evidence, ['PIPnet listing from Sep, fits this unit (1,500-2,500)']);
   assert.match(listed[0].internal[0], /not confirmed/);
   assert.equal(listed[0].score, 7);
-  // A client viewer is given the PIPnet listing only: never BGP's own requirement, never who confirmed.
+  // A client viewer is given every requirement by what it is and its own date: never its state, never whether, when or by whom BGP confirmed it.
   const forClient = unitCandidates({ ...ev, client: true, brands: new Map([['a', brand('Wingstop', 'a', { requirements: [confirmed] })], ['e', brand('Tortilla', 'e', { requirements: [listing] })]]) }, { id: 'u', unit_name: 'SVL09', sqft: 2000, positioning: 'Quick Refuel' });
-  assert.deepEqual(forClient.map(c => [c.name, c.evidence, c.internal]), [['Tortilla', ['PIPnet listing from Sep, fits this unit (1,500-2,500)'], []]]);
+  assert.deepEqual(forClient.map(c => [c.name, c.evidence, c.internal]), [
+    ['Wingstop', ['requirement dated 4 Aug, fits this unit (1,500-2,500)'], []],
+    ['Tortilla', ['PIPnet listing from Sep, fits this unit (1,500-2,500)'], []],
+  ]);
   const withTracker = unitCandidates(ev, { id: 'u', unit_name: 'SVL09', sqft: 2000, positioning: 'Quick Refuel', target_brands: '1. Five Guys\n2. Dishoom' });
   assert.ok(withTracker.find(c => c.name === 'Dishoom')?.evidence[0].includes("landlord's leasing tracker"));
   assert.ok(withTracker.find(c => c.name === 'Five Guys').evidence[0].includes("landlord's leasing tracker"));

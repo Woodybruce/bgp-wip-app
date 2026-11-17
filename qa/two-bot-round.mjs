@@ -4197,57 +4197,69 @@ async function markRound(page, cross) {
     if (r.strayInterest.length) throw new Error(`an interest record for a unit outside client scope leaked: ${r.strayInterest[0]}`);
   });
 
-  // Client must NOT see the requirement the agent just created for another
-  // brand unless it's theirs — guards requirements-board scoping.
+  // Every leasing requirement is open to a client login (Woody, 2026-11-17:
+  // "keep all requirements open for clients and access to amend and add"):
+  // the agent's requirement is in the client's list and readable by id, as
+  // the client copy (no confirmation, owner, provenance or last edit). The
+  // requirement-matches route lists every landlord's units, so it stays
+  // refused.
   await step(page, p, 'client-requirement-scoping', async () => {
     if (!cross.reqStamp) return; // agent step didn't run
-    // API-level: the live requirement must be absent from the client's list
-    // AND unreadable by id (the requirements book is BGP intel).
     const api = await page.evaluate(async (args) => {
       const [stamp, id] = args;
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const list = await (await fetch('/api/crm/requirements-leasing', { headers: auth })).json().catch(() => []);
       const rows = Array.isArray(list) ? list : (list?.data || []);
-      const inList = rows.some((r) => JSON.stringify(r).includes(stamp));
-      const byId = id ? (await fetch(`/api/crm/requirements-leasing/${id}`, { headers: auth }).catch(() => ({ status: 0 }))).status : null;
-      // The matches sub-resource is a separate route that takes a raw
-      // requirement id — it must refuse clients too (BGP intel by id).
+      const row = rows.find((r) => JSON.stringify(r).includes(stamp)) || null;
+      const byIdRes = id ? await fetch(`/api/crm/requirements-leasing/${id}`, { headers: auth }).catch(() => ({ status: 0, ok: false })) : null;
+      const one = byIdRes && byIdRes.ok ? await byIdRes.json().catch(() => null) : null;
       const matches = id ? (await fetch(`/api/requirements/matches/${id}`, { headers: auth }).catch(() => ({ status: 0 }))).status : null;
-      return { inList, byId, matches };
+      const bgpOnly = ['lastConfirmedAt', 'lastConfirmedBy', 'lastConfirmedByName', 'confirmedHow', 'origin', 'bgpContactUserId', 'bgpContactUserIds', 'updatedAt'];
+      const sentKeys = [row, one].filter(Boolean).flatMap((r) => bgpOnly.filter((k) => k in r));
+      return { inList: !!row, byId: byIdRes ? byIdRes.status : null, matches, sentKeys };
     }, [cross.reqStamp, cross.reqId]);
-    if (api.inList) throw new Error(`agent-only requirement "${cross.reqStamp}" leaked into the client's requirements list`);
-    if (cross.reqId && api.byId !== 404 && api.byId !== 403) throw new Error(`client read a BGP-intel requirement by id (expected 404/403, got ${api.byId})`);
+    if (!api.inList) throw new Error(`agent requirement "${cross.reqStamp}" missing from the client's requirements list (every requirement is open to clients)`);
+    if (cross.reqId && api.byId !== 200) throw new Error(`client could not read the requirement by id (expected 200, got ${api.byId})`);
+    if (api.sentKeys.length) throw new Error(`client was sent BGP-only requirement fields: ${[...new Set(api.sentKeys)].join(', ')}`);
     if (cross.reqId && api.matches !== 403 && api.matches !== 404) throw new Error(`client read requirement MATCHES by id (expected 403/404, got ${api.matches})`);
-    // UI: the stamp must not render on the client's requirements page either.
+    // UI: the stamp renders on the client's requirements page.
     await page.goto(`${BASE}/requirements`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2500);
-    const leaked = await page.getByText(cross.reqStamp, { exact: false }).count();
-    if (leaked) throw new Error(`agent-only requirement "${cross.reqStamp}" visible to client`);
+    const shown = await page.getByText(cross.reqStamp, { exact: false }).count();
+    if (!shown) throw new Error(`agent requirement "${cross.reqStamp}" not shown on the client's requirements page`);
   });
 
-  // Requirements are READ-ONLY for clients: they see the demand side but must
-  // never author or edit it (the pipeline is BGP-owned). Every write path —
-  // leasing create/edit/delete and investment create — must be refused, while
-  // the GET stays open (covered by client-requirements above).
+  // A client adds a requirement and amends any; it never deletes one, and the
+  // brand must be one from its own list. Investment requirements stay BGP's.
+  // The row it adds is named QA-REQ-..., so the run-round.sh 'QA-REQ%'
+  // cleanup sweeps it next round (a client cannot delete it).
   await step(page, p, 'client-requirements-write-guards', async () => {
-    const r = await page.evaluate(async () => {
+    const r = await page.evaluate(async (stamp) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const rl = await (await fetch('/api/crm/requirements-leasing', { headers: auth })).json().catch(() => []);
-      const anyId = Array.isArray(rl) && rl[0] ? rl[0].id : '00000000-0000-0000-0000-000000000000';
-      const probe = async (method, url, body) =>
-        (await fetch(url, { method, credentials: 'include', headers: auth, body: body ? JSON.stringify(body) : undefined }).catch(() => ({ status: 0 }))).status;
-      return {
-        readOk: Array.isArray(rl),
-        createLeasing: await probe('POST', '/api/crm/requirements-leasing', { name: 'QA-REQ-PROBE' }),
-        editLeasing: await probe('PUT', `/api/crm/requirements-leasing/${anyId}`, { name: 'QA-REQ-HIJACK' }),
-        deleteLeasing: await probe('DELETE', `/api/crm/requirements-leasing/${anyId}`),
-        createInvestment: await probe('POST', '/api/crm/requirements-investment', { name: 'QA-REQ-PROBE' }),
+      const companies = await (await fetch('/api/crm/companies', { headers: auth })).json().catch(() => []);
+      const brand = (Array.isArray(companies) ? companies : []).find((c) => /^tenant/i.test(String(c.companyType || '')));
+      const probe = async (method, url, body) => {
+        const res = await fetch(url, { method, credentials: 'include', headers: auth, body: body ? JSON.stringify(body) : undefined }).catch(() => null);
+        if (!res) return { status: 0, body: null };
+        return { status: res.status, body: res.ok ? await res.json().catch(() => null) : null };
       };
-    });
-    if (!r.readOk) throw new Error('client cannot read the requirements list (over-scoped)');
-    const leaked = Object.entries(r).filter(([k, v]) => k !== 'readOk' && v >= 200 && v < 300).map(([k]) => k);
-    if (leaked.length) throw new Error(`client allowed a requirements write: ${leaked.join(', ')}`);
+      const created = brand ? await probe('POST', '/api/crm/requirements-leasing', { name: stamp, companyId: brand.id, status: 'Active', origin: 'bgp', bgpContactUserIds: ['someone'], lastConfirmedBy: 'someone' }) : { status: 0, body: null };
+      const id = created.body?.id;
+      const edited = id ? await probe('PUT', `/api/crm/requirements-leasing/${id}`, { comments: `${stamp} amended` }) : { status: 0 };
+      const deleted = id ? await probe('DELETE', `/api/crm/requirements-leasing/${id}`) : { status: 0 };
+      const noBrand = await probe('POST', '/api/crm/requirements-leasing', { name: `${stamp}-NOBRAND` });
+      const investment = await probe('POST', '/api/crm/requirements-investment', { name: `${stamp}-INV` });
+      return { brand: !!brand, created: created.status, createdKeys: created.body ? Object.keys(created.body) : [], edited: edited.status, deleted: deleted.status, noBrand: noBrand.status, investment: investment.status };
+    }, `QA-REQ-R${ROUND}-CLIENT`);
+    if (!r.brand) return; // no tenant brand in the client's list this run
+    if (r.created !== 201) throw new Error(`client could not add a requirement (expected 201, got ${r.created})`);
+    const sent = r.createdKeys.filter((k) => ['origin', 'bgpContactUserIds', 'lastConfirmedAt', 'lastConfirmedBy', 'updatedAt'].includes(k));
+    if (sent.length) throw new Error(`client was sent BGP-only fields on its own requirement: ${sent.join(', ')}`);
+    if (r.edited !== 200) throw new Error(`client could not amend a requirement (expected 200, got ${r.edited})`);
+    if (r.deleted >= 200 && r.deleted < 300) throw new Error('client deleted a requirement');
+    if (r.noBrand >= 200 && r.noBrand < 300) throw new Error('client added a requirement with no brand from its list');
+    if (r.investment >= 200 && r.investment < 300) throw new Error('client added an investment requirement');
   });
 
   // Client team board: the badge count must match the cards actually rendered
