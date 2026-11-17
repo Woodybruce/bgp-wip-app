@@ -552,10 +552,17 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     const unitsHere: any[] = await pool.query(
       `SELECT id, unit_name, sqft, marketing_status, use_class FROM available_units WHERE property_id = $1`, [propertyId]
     ).then(r => r.rows).catch(() => [] as any[]);
+    // Requirements share a handful of use lists: each list is read against the units once.
+    const fitsHere = new Map<string, boolean>();
+    const useFitsHere = (use: any) => {
+      const key = JSON.stringify(use ?? null);
+      if (!fitsHere.has(key)) fitsHere.set(key, unitsHere.some(u => requirementUseFits(use, u)));
+      return fitsHere.get(key);
+    };
     const matchingRequirements = await pool.query(
       `SELECT r.id, r.use FROM crm_requirements_leasing r
         WHERE ${requirementStateSql("r")} <> 'closed'${gapScope ? ` AND ${requirementClientVisibleSql("r")}` : ""}`
-    ).then(open => open.rows.filter((r: any) => unitsHere.some(u => requirementUseFits(r.use, u))).map((r: any) => String(r.id))
+    ).then(open => open.rows.filter((r: any) => useFitsHere(r.use)).map((r: any) => String(r.id))
     ).then(ids => ids.length ? pool.query(
       `SELECT r.id, r.name, r.use, r.size, r.requirement_locations,
               r.company_id, c.name AS company_name, c.domain, c.company_type, c.industry, c.description AS company_description,

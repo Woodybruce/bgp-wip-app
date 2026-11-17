@@ -62,7 +62,8 @@ test('junk records are never offered as a gap', () => {
 test('the requirement list and Fits here read a unit\'s class against the requirement\'s use through one rule', () => {
   const gap = read('server/property-gap-analysis.ts');
   assert.doesNotMatch(gap, /use_class = ANY\(r\.use\)/);
-  assert.match(gap, /open\.rows\.filter\(\(r: any\) => unitsHere\.some\(u => requirementUseFits\(r\.use, u\)\)\)/);
+  assert.match(gap, /fitsHere\.set\(key, unitsHere\.some\(u => requirementUseFits\(use, u\)\)\)/);
+  assert.match(gap, /open\.rows\.filter\(\(r: any\) => useFitsHere\(r\.use\)\)/);
   assert.match(gap, /requirementUseFits\(held\?\.use, u\)/);
 });
 

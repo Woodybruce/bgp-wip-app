@@ -188,10 +188,13 @@ describe("imports and hand-made rows", () => {
     for (const k of ["origin", "lastConfirmedAt", "lastConfirmedBy", "lastConfirmedByName", "confirmedHow"]) assert.ok(!(k in u), k);
   });
 
-  it("does not label BGP's own row with an import's name", () => {
-    assert.equal(importMayLabel({ origin: "bgp" }), false);
-    assert.equal(importMayLabel({ origin: null }), true);
-    assert.equal(importMayLabel({ origin: "trl" }), true);
+  it("does not label BGP's own row, or an older row without that label, with an import's name", () => {
+    assert.equal(importMayLabel({ origin: "bgp" }, "PIPnet"), false);
+    assert.equal(importMayLabel({ origin: null }, "PIPnet"), false);
+    assert.equal(importMayLabel({ origin: null, sources: ["TRL"] }, "PIPnet"), false);
+    assert.equal(importMayLabel({ origin: null, sources: ["PIPnet"] }, "PIPnet"), true);
+    assert.equal(importMayLabel({ origin: null, sources: ["The Requirement List"] }, "TRL"), true);
+    assert.equal(importMayLabel({ origin: "trl" }, "PIPnet"), true);
   });
 
   it("a hand-made row is BGP's own, confirmed by its creator, and live", () => {
