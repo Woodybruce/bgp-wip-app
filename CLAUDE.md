@@ -2841,7 +2841,12 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   put an active integration's API key and shared secret on Railway
   (`VERIFF_API_KEY` / `VERIFF_SECRET`, or the other names `getCreds` reads)
   with its decision and event webhook URL https://chatbgp.app/api/veriff/webhook.
-  The diagnostic's signed webhook loopback passed the same day.
+  The diagnostic's signed webhook loopback passed the same day. Later that
+  evening Woody switched the integration on and the diagnostic passed in
+  full: Veriff created the session. Whether Veriff's own webhook delivery
+  reaches the app (the URL set in Veriff Station) is first seen when a real
+  check is finished: a check that stays at submitted and never shows a
+  decision means the URL there needs setting.
 - **Schema** (additive, nullable, boot MIGRATIONS in `server/index.ts`, not
   in `shared/schema.ts`): `kyc_upload_tokens` gained `company_id`,
   `contact_id`, `request` (JSONB: `KycRequestDetails`), `completed_at`,
