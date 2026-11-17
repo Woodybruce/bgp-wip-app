@@ -5,11 +5,13 @@
 // here decides anything. The agent raises the party with KYC4U, BGP's MLRO
 // service, and KYC4U decides.
 //
-// Not a flag on purpose: the MLRO's rejection (it already blocks the deal),
-// a client who has not replied (chase them), and adverse media (the
-// screening keeps no verdict to read back).
+// Not a flag on purpose: the MLRO's rejection (it already blocks the deal)
+// and a client who has not replied (chase them). Adverse media is a flag
+// since 17 November 2026, from BGP's checks before asking, where a web
+// search finds it with a source to check (shared/kyc-prechecks.ts).
 
-import type { KycAnswers } from "./kyc-request";
+import type { KycAnswers, KycOwnersReply } from "./kyc-request";
+import { precheckRedFlags, type KycPrecheckResult } from "./kyc-prechecks";
 
 export type KycRedFlagKind =
   | "client_pep"
@@ -18,7 +20,18 @@ export type KycRedFlagKind =
   | "sanctions"
   | "high_risk"
   | "edd"
-  | "sof_mismatch";
+  | "sof_mismatch"
+  // From BGP's checks before asking (shared/kyc-prechecks.ts).
+  | "provider_screen"
+  | "web_pep"
+  | "web_adverse"
+  | "company_status"
+  | "insolvency"
+  | "disqualified"
+  | "ownership_unclear"
+  | "offshore_owner"
+  // The client says the owners Companies House lists are not right.
+  | "owners_differ";
 
 export interface KycRedFlag {
   kind: KycRedFlagKind;
@@ -40,9 +53,14 @@ export interface PartyRedFlagFacts {
     aml_edd_reason?: string | null;
   } | null;
   // The party's latest screening record only: a later clear one clears it.
-  latestInvestigation: { sanctions_match: boolean | null; conducted_at: string | Date | null } | null;
+  // precheck: that record is BGP's checks before asking, whose own lines say
+  // who matched (so the general line is not added as well).
+  latestInvestigation: { sanctions_match: boolean | null; conducted_at: string | Date | null; precheck?: boolean } | null;
+  // The party's latest checks before asking, and whether they are its latest
+  // screening (a later screening replaces their sanctions lines).
+  precheck?: { result: KycPrecheckResult; current: boolean } | null;
   // The client checks sent on this deal to this party (tests left out).
-  requests: Array<{ ref: string; answers?: KycAnswers | null }>;
+  requests: Array<{ ref: string; answers?: KycAnswers | null; ownersAnswer?: KycOwnersReply | null }>;
   // The party's identity checks.
   idChecks: Array<{ status: string | null; decision_reason?: string | null; received_at?: string | Date | null; name?: string | null }>;
 }
@@ -109,6 +127,18 @@ export function partyRedFlags(facts: PartyRedFlagFacts): KycRedFlag[] {
       at: iso(r.answers!.answeredAt),
     });
   }
+  // The client's reply about the owners on the register, the latest that
+  // has one: a difference is reported to Companies House (HMRC, AMLG11400
+  // 14.8) and the owners found out.
+  for (const r of facts.requests.filter(r => r.ownersAnswer?.answer).slice(0, 1).filter(r => r.ownersAnswer!.answer === "no")) {
+    flags.push({
+      kind: "owners_differ",
+      label: "Says the owners Companies House lists are not right",
+      detail: words(r.ownersAnswer!.detail),
+      source: `Client checks, ref ${r.ref}`,
+      at: iso(r.ownersAnswer!.answeredAt),
+    });
+  }
   for (const s of facts.idChecks.filter(c => String(c.status || "").toLowerCase() === "declined")) {
     flags.push({
       kind: "id_declined",
@@ -120,7 +150,7 @@ export function partyRedFlags(facts: PartyRedFlagFacts): KycRedFlag[] {
   }
   const pep = pepStatusLabel(facts.company?.aml_pep_status);
   if (pep) flags.push({ kind: "screening", label: pep, detail: null, source: "Screening and KYC record", at: null });
-  if (facts.latestInvestigation?.sanctions_match) {
+  if (facts.latestInvestigation?.sanctions_match && !facts.latestInvestigation.precheck) {
     flags.push({ kind: "sanctions", label: "Possible match on the UK Sanctions List", detail: null, source: "Latest screening", at: iso(facts.latestInvestigation.conducted_at) });
   }
   if (highRisk(facts.company?.aml_risk_level)) {
@@ -129,6 +159,7 @@ export function partyRedFlags(facts: PartyRedFlagFacts): KycRedFlag[] {
   if (facts.company?.aml_edd_required) {
     flags.push({ kind: "edd", label: "Marked for enhanced due diligence", detail: eddReason(facts.company.aml_edd_reason), source: "KYC record", at: null });
   }
+  if (facts.precheck?.result) flags.push(...precheckRedFlags(facts.precheck.result, { sanctionsCurrent: facts.precheck.current }));
   return flags;
 }
 

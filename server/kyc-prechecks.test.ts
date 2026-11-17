@@ -1,0 +1,280 @@
+// BGP's checks before asking (17 November 2026). Woody: "we need to do
+// everyhting we can before we ask questions on someone"; he chose a web
+// search with sources for public roles and adverse media, and to ask the
+// client only what is left. The rules are shared/kyc-prechecks.ts.
+import "./test-database-url";
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  askInputFrom, checkWebAnswer, companyNamesMatch, controlWords, isOffshoreCountry, isRegisterDirector, listingFromExemptions,
+  ownerControlLine, ownerKind, personNamesMatch, precheckAsks, precheckCardLines, precheckNote, precheckRedFlags,
+  precheckSanctionsMatch, sanctionsLine, statementIsConcern, statementWords,
+  type KycPrecheckResult, type ListEntry, type PrecheckAskInput,
+} from "../shared/kyc-prechecks";
+import { partyRedFlags } from "../shared/kyc-red-flags";
+import { kycFinishedEmail, kycRequestEmail, kycSteps } from "../shared/kyc-request";
+
+const TODAY = new Date("2026-11-17T12:00:00Z");
+
+test("a listed company is read from Companies House's PSC exemptions, current ones only", () => {
+  assert.deepEqual(listingFromExemptions({ exemptions: { psc_exempt_as_trading_on_uk_regulated_market: { items: [{ exempt_from: "2016-06-30" }] } } }, TODAY),
+    { market: "uk_regulated", since: "2016-06-30" });
+  assert.deepEqual(listingFromExemptions({ exemptions: { disclosure_transparency_rules_chapter_five_applies: { items: [{ exempt_from: "2017-01-01" }] } } }, TODAY),
+    { market: "dtr5", since: "2017-01-01" });
+  assert.deepEqual(listingFromExemptions({ exemptions: { psc_exempt_as_shares_admitted_on_market: { items: [{ exempt_from: "2018-03-01", exempt_to: "2030-01-01" }] } } }, TODAY),
+    { market: "listed_market", since: "2018-03-01" });
+  // A period that has ended (delisted) is not a listing.
+  assert.equal(listingFromExemptions({ exemptions: { psc_exempt_as_trading_on_uk_regulated_market: { items: [{ exempt_from: "2016-06-30", exempt_to: "2020-05-01" }] } } }, TODAY), null);
+  assert.equal(listingFromExemptions({}, TODAY), null);
+  assert.equal(listingFromExemptions(null, TODAY), null);
+});
+
+test("owners and statements are put in words", () => {
+  assert.equal(ownerKind("individual-person-with-significant-control"), "individual");
+  assert.equal(ownerKind("corporate-entity-person-with-significant-control"), "company");
+  assert.equal(ownerKind("legal-person-person-with-significant-control"), "legal_person");
+  assert.equal(ownerKind("super-secure-person-with-significant-control"), "protected");
+  assert.equal(controlWords("ownership-of-shares-75-to-100-percent"), "more than 75% of the shares");
+  assert.equal(controlWords("voting-rights-25-to-50-percent-as-trust"), "more than 25% and up to 50% of the votes (as a trustee)");
+  assert.equal(controlWords("right-to-appoint-and-remove-directors"), "can appoint or remove most of the directors");
+  assert.equal(ownerControlLine({ controls: ["ownership-of-shares-75-to-100-percent", "voting-rights-75-to-100-percent"] }), "more than 75% of the shares; more than 75% of the votes");
+  // Companies House spells "signficant" without the second i.
+  assert.equal(statementWords("no-individual-or-entity-with-signficant-control"), "The company says no one has significant control over it");
+  assert.equal(statementIsConcern("no-individual-or-entity-with-signficant-control"), false);
+  assert.equal(statementIsConcern("psc-exists-but-not-identified"), true);
+  assert.equal(statementIsConcern("psc-contacted-but-no-response-partnership"), true);
+});
+
+test("names match when one holds every word of the other, two words at least", () => {
+  assert.equal(personNamesMatch("SMITH, John David", "John Smith"), true);
+  assert.equal(personNamesMatch("Mohammad Ali Khan", "Mohammed Ali Khan"), true);
+  assert.equal(personNamesMatch("J Smith", "John Smith"), false);
+  assert.equal(personNamesMatch("John Smithson", "John Smith"), false);
+  assert.equal(personNamesMatch("Smith", "Smith"), false);
+  assert.equal(companyNamesMatch("ACME LIMITED", "Acme Ltd"), true);
+  assert.equal(companyNamesMatch("Tesco", "Tesco Stores Limited"), false);
+  assert.equal(companyNamesMatch("Bank Melli Iran", "BANK MELLI IRAN"), true);
+  assert.equal(isRegisterDirector("Jane Doe", ["DOE, Jane Elizabeth", "SMITH, John"]), true);
+  assert.equal(isRegisterDirector("Jane Doe", ["DOE, John"]), false);
+  assert.equal(isRegisterDirector(null, ["DOE, Jane"]), false);
+});
+
+const entry = (over: Partial<ListEntry>): ListEntry => ({ name: "", source: "UK", regime: "Russia", designationType: "Individual", dob: "", nationality: "", ...over });
+
+test("a sanctions name match is possible unless both dates of birth disagree", () => {
+  const possible = sanctionsLine({ name: "PETROV, Ivan Sergeyevich", role: "director", person: true, dobYear: 1970 }, [entry({ name: "Ivan PETROV", dob: "12/03/1970" })]);
+  assert.equal(possible.outcome, "possible");
+  assert.match(possible.matches[0].why, /year of birth matches/);
+  const noDob = sanctionsLine({ name: "Ivan Petrov", role: "director", person: true, dobYear: 1970 }, [entry({ name: "Ivan PETROV" })]);
+  assert.equal(noDob.outcome, "possible");
+  assert.match(noDob.matches[0].why, /no date of birth/);
+  const discounted = sanctionsLine({ name: "Ivan Petrov", role: "director", person: true, dobYear: 1985 }, [entry({ name: "Ivan PETROV", dob: "00/00/1952" })]);
+  assert.equal(discounted.outcome, "discounted");
+  assert.match(discounted.matches[0].why, /1952.*1985/);
+  // A listed company, ship or partial name is never a person's match.
+  assert.equal(sanctionsLine({ name: "Ivan Petrov", role: "owner", person: true, dobYear: null }, [entry({ name: "Ivan Petrov", designationType: "Entity" })]).outcome, "clear");
+  assert.equal(sanctionsLine({ name: "Ivan Petrov", role: "owner", person: true, dobYear: null }, [entry({ name: "Ivan Petrov", designationType: "Ship" })]).outcome, "clear");
+  assert.equal(sanctionsLine({ name: "Ivan Petrovsky", role: "owner", person: true, dobYear: null }, [entry({ name: "Ivan Petrov" })]).outcome, "clear");
+  const company = sanctionsLine({ name: "BANK MELLI IRAN LIMITED", role: "the company", person: false, dobYear: null }, [entry({ name: "Bank Melli Iran", designationType: "Entity", source: "US" })]);
+  assert.equal(company.outcome, "possible");
+  assert.equal(sanctionsLine({ name: "Ivan Petrov Ltd", role: "the company", person: false, dobYear: null }, [entry({ name: "Ivan Petrov" })]).outcome, "clear");
+});
+
+test("a web finding is kept only with a source the search actually read", () => {
+  const cited = [{ url: "https://www.bbc.co.uk/news/123" }, { url: "https://www.gov.uk/government/people/x" }];
+  const r = checkWebAnswer({
+    publicRole: { status: "found", findings: [{ summary: "Minister for Trade until 2026", url: "https://www.gov.uk/government/people/x", source: "GOV.UK", sameIdentity: "likely" }] },
+    adverseMedia: { status: "possible", findings: [
+      { summary: "Charged with fraud", url: "https://made-up.example/story", source: "Nowhere" },
+      { summary: "Fined by the FCA", url: "https://bbc.co.uk/news/123", sameIdentity: "unsure", category: "regulatory" },
+    ] },
+  }, cited);
+  assert.equal(r.publicRole, "found");
+  assert.equal(r.adverseMedia, "possible");
+  assert.equal(r.findings.length, 2);
+  assert.equal(r.findings[1].unsureIdentity, true);
+  assert.equal(r.unsourced, 1);
+  // Said but not sourced: nothing found, counted.
+  const bare = checkWebAnswer({ publicRole: { status: "found", findings: [] }, adverseMedia: { status: "none_found", findings: [] } }, cited);
+  assert.deepEqual([bare.publicRole, bare.adverseMedia, bare.findings.length, bare.unsourced], ["none_found", "none_found", 0, 1]);
+  // No citations at all: nothing can be checked.
+  const none = checkWebAnswer({ adverseMedia: { status: "found", findings: [{ summary: "Convicted", url: "https://bbc.co.uk/x" }] } }, []);
+  assert.deepEqual([none.adverseMedia, none.findings.length, none.unsourced], ["none_found", 0, 1]);
+  assert.deepEqual(checkWebAnswer("nonsense", cited), { publicRole: "none_found", adverseMedia: "none_found", findings: [], unsourced: 0 });
+});
+
+const input = (over: Partial<PrecheckAskInput> = {}): PrecheckAskInput => ({
+  subjectKind: "company", ukRegistered: true, listing: null, owners: [], peopleUpChain: [], directors: [], accounts: null, ...over,
+});
+
+test("a listed company is not asked for an owners chart or owner IDs", () => {
+  const asks = precheckAsks(input({ listing: { market: "uk_regulated", since: "2016-06-30", company: "BIG PLC", companyNumber: "00000001", viaParent: false } }),
+    { kind: "company", role: "tenant", idCheck: true, contactName: null, today: TODAY });
+  assert.deepEqual(asks.docs, ["authority", "source_of_funds"]);
+  assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids"]);
+  assert.match(asks.notAsked[0].reason, /UK regulated market.*since 2016-06-30.*reg 28\(5\)/);
+  assert.equal(asks.confirmOwners, null);
+  // Through a parent, and a market abroad: KYC4U to confirm the market.
+  const viaParent = precheckAsks(input({ listing: { market: "listed_market", since: null, company: "BIG INC", companyNumber: "FC000001", viaParent: true } }),
+    { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY });
+  assert.deepEqual(viaParent.notAsked.map(n => n.key), ["ownership", "owner_ids"]);
+  assert.match(viaParent.notAsked[0].reason, /Owned through one company at each level by BIG INC.*KYC4U to confirm/);
+});
+
+test("owners on the register are confirmed, not drawn; a director is not asked for authority", () => {
+  const asks = precheckAsks(input({
+    owners: [
+      { name: "Jane DOE", kind: "individual", controls: ["ownership-of-shares-50-to-75-percent"], notifiedOn: null },
+      { name: "HOLDCO LIMITED", kind: "company", controls: ["ownership-of-shares-25-to-50-percent"], notifiedOn: null },
+    ],
+    peopleUpChain: [{ name: "John SMITH", foundAt: "HOLDCO LIMITED", controls: [] }],
+    directors: ["DOE, Jane"],
+  }), { kind: "company", role: "landlord", idCheck: true, contactName: "Jane Doe", today: TODAY });
+  assert.deepEqual(asks.docs, ["owner_ids"]);
+  assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "authority"]);
+  assert.deepEqual(asks.confirmOwners, [
+    { name: "Jane DOE", detail: "more than 50% and up to 75% of the shares" },
+    { name: "HOLDCO LIMITED", detail: "more than 25% and up to 50% of the shares" },
+  ]);
+  assert.deepEqual(asks.ownerNames, ["Jane DOE", "John SMITH"]);
+  // Someone who is not a director still confirms their authority.
+  assert.ok(precheckAsks(input({ directors: ["DOE, Jane"] }), { kind: "company", role: "landlord", idCheck: true, contactName: "Sam Lee", today: TODAY }).docs.includes("authority"));
+});
+
+test("a tenant company's recent accounts on file stand for where the money comes from", () => {
+  const recent = input({ accounts: { madeUpTo: "2026-03-31", dormant: false } });
+  const tenant = precheckAsks(recent, { kind: "company", role: "tenant", idCheck: true, contactName: null, today: TODAY });
+  assert.ok(!tenant.docs.includes("source_of_funds"));
+  assert.match(tenant.notAsked.find(n => n.key === "source_of_funds")!.reason, /2026-03-31/);
+  // A buyer's money for a purchase is not shown by its accounts.
+  assert.ok(precheckAsks(recent, { kind: "company", role: "purchaser", idCheck: true, contactName: null, today: TODAY }).docs.includes("source_of_funds"));
+  assert.ok(precheckAsks(input({ accounts: { madeUpTo: "2026-03-31", dormant: true } }), { kind: "company", role: "tenant", idCheck: true, contactName: null, today: TODAY }).docs.includes("source_of_funds"));
+  assert.ok(precheckAsks(input({ accounts: { madeUpTo: "2023-03-31", dormant: false } }), { kind: "company", role: "tenant", idCheck: true, contactName: null, today: TODAY }).docs.includes("source_of_funds"));
+});
+
+test("with nothing found, or for a private individual, the usual list is asked", () => {
+  assert.deepEqual(precheckAsks(null, { kind: "company", role: "tenant", idCheck: true, contactName: null }).docs, ["ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(precheckAsks(input({ subjectKind: "individual", ukRegistered: false }), { kind: "individual", role: "purchaser", idCheck: false, contactName: null }).docs, ["photo_id", "proof_of_address", "source_of_funds"]);
+  // Not at Companies House: the overseas register extract is asked for.
+  assert.ok(precheckAsks(input({ ukRegistered: false }), { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY }).docs.includes("company_documents"));
+});
+
+const result = (over: Partial<KycPrecheckResult> = {}): KycPrecheckResult => ({
+  kind: "precheck", version: 1, ranAt: "2026-11-17T12:00:00.000Z",
+  party: { companyId: "c1", name: "ACME LIMITED", subjectKind: "company", contactName: "Jane Doe" },
+  companiesHouse: {
+    number: "01234567", name: "ACME LIMITED", status: "active", type: "ltd", incorporatedOn: "2001-05-03", registeredOffice: "1 High St, London",
+    jurisdiction: "england-wales", sicCodes: ["68209"], accountsOverdue: false, confirmationOverdue: false, lastAccountsMadeUpTo: "2026-03-31",
+    lastAccountsType: "full", hasInsolvencyHistory: false, insolvencyCases: 0,
+    officers: [{ name: "DOE, Jane", role: "director", appointedOn: "2001-05-03", dob: { month: 3, year: 1970 }, nationality: "British" }],
+    owners: [{ name: "Jane DOE", kind: "individual", controls: ["ownership-of-shares-75-to-100-percent"], notifiedOn: "2016-06-30" }],
+    statements: [], listing: null, chain: [], peopleUpChain: [], offshoreOwners: [], disqualified: [],
+    covenant: { grade: "B", score: 72, flags: [], gazette: [] },
+    documents: [
+      { kind: "accounts", title: "ACME LIMITED accounts made up to 31 March 2026", filedOn: null, madeUpTo: "2026-03-31", kycDocumentId: "d1", error: null },
+      { kind: "incorporation", title: "Certificate of incorporation", filedOn: null, madeUpTo: null, kycDocumentId: null, error: "none filed" },
+    ],
+  },
+  notAtCompaniesHouse: null,
+  sanctions: { ran: true, lists: ["the UK Sanctions List", "the US OFAC list"], lines: [{ name: "ACME LIMITED", role: "the company", outcome: "clear", matches: [] }], error: null },
+  web: { ran: true, lines: [{ name: "Jane Doe", role: "the deal's contact", ran: true, publicRole: "none_found", adverseMedia: "none_found", findings: [], unsourced: 0 }], skipped: null },
+  complyAdvantage: { ran: false, lines: [], skipped: "ComplyAdvantage refused BGP's login" },
+  errors: [],
+  ...over,
+});
+
+test("a clean run raises no red flags; findings raise them with their source", () => {
+  assert.deepEqual(precheckRedFlags(result(), { sanctionsCurrent: true }), []);
+  const ch = result().companiesHouse!;
+  const flagged = result({
+    companiesHouse: {
+      ...ch, status: "liquidation", insolvencyCases: 1, hasInsolvencyHistory: true,
+      statements: [{ statement: "psc-exists-but-not-identified", words: statementWords("psc-exists-but-not-identified"), concern: true, notifiedOn: "2026-01-01" }],
+      offshoreOwners: [{ name: "SHELL CO", country: "British Virgin Islands" }],
+      disqualified: [
+        { officer: "DOE, Jane", match: "Jane DOE", dobMatches: true, url: "https://find-and-update.company-information.service.gov.uk/disqualified-officers/natural/x" },
+        { officer: "DOE, Jane", match: "Jane Doe", dobMatches: false, url: null },
+      ],
+    },
+    sanctions: { ran: true, lists: ["the UK Sanctions List"], lines: [{ name: "Jane DOE", role: "owner", outcome: "possible", matches: [{ ...entry({ name: "Jane DOE" }), why: "The name matches the listing." }] }], error: null },
+    web: { ran: true, lines: [{ name: "Jane Doe", role: "owner", ran: true, publicRole: "found", adverseMedia: "none_found", unsourced: 0,
+      findings: [{ kind: "public_role", summary: "Member of the Ruritanian parliament", url: "https://parliament.example/jane", source: "Parliament", date: null, category: null, unsureIdentity: true }] }], skipped: null },
+  });
+  const kinds = precheckRedFlags(flagged, { sanctionsCurrent: true }).map(f => f.kind);
+  assert.deepEqual(kinds.sort(), ["company_status", "disqualified", "insolvency", "offshore_owner", "ownership_unclear", "sanctions", "web_pep"].sort());
+  const pep = precheckRedFlags(flagged, { sanctionsCurrent: true }).find(f => f.kind === "web_pep")!;
+  assert.match(pep.source, /parliament\.example\/jane/);
+  assert.match(pep.detail!, /someone else of the same name/);
+  // A later screening replaces the run's sanctions lines.
+  assert.ok(!precheckRedFlags(flagged, { sanctionsCurrent: false }).some(f => f.kind === "sanctions"));
+});
+
+test("the party's flags take the run's own sanctions lines in place of the general one", () => {
+  const ch = result().companiesHouse!;
+  const run = result({ sanctions: { ran: true, lists: ["the UK Sanctions List"], lines: [{ name: "Jane DOE", role: "owner", outcome: "possible", matches: [{ ...entry({ name: "Jane DOE" }), why: "The name matches the listing." }] }], error: null }, companiesHouse: ch });
+  const flags = partyRedFlags({ company: null, latestInvestigation: { sanctions_match: true, conducted_at: run.ranAt, precheck: true }, precheck: { result: run, current: true }, requests: [], idChecks: [] });
+  assert.equal(flags.filter(f => f.kind === "sanctions").length, 1);
+  assert.match(flags[0].label, /Jane DOE/);
+  // An older screening that is not a pre-check keeps the general line.
+  const older = partyRedFlags({ company: null, latestInvestigation: { sanctions_match: true, conducted_at: run.ranAt }, requests: [], idChecks: [] });
+  assert.equal(older[0].label, "Possible match on the UK Sanctions List");
+  // The client saying the register's owners are wrong is a flag.
+  const differ = partyRedFlags({ company: null, latestInvestigation: null, idChecks: [],
+    requests: [{ ref: "7K2Q9M", answers: null, ownersAnswer: { answer: "no", detail: "Sold to Bob Ltd in October", answeredAt: "2026-11-17T10:00:00Z" } }] });
+  assert.equal(differ[0].kind, "owners_differ");
+  assert.equal(differ[0].detail, "Sold to Bob Ltd in October");
+});
+
+test("the sanctions column reads null when the lists could not be screened", () => {
+  assert.equal(precheckSanctionsMatch(result()), false);
+  assert.equal(precheckSanctionsMatch(result({ sanctions: { ran: false, lists: [], lines: [], error: "down" } })), null);
+  assert.equal(precheckSanctionsMatch(result({ complyAdvantage: { ran: true, lines: [{ name: "Jane Doe", status: "possible", types: ["sanction"], detail: null }], skipped: null } })), true);
+});
+
+test("KYC4U's note says what was checked, and that a run was still going", () => {
+  const note = precheckNote(result(), "done");
+  assert.match(note, /^What BGP checked before asking \(17 Nov 2026\):/);
+  assert.match(note, /Companies House: ACME LIMITED \(01234567\), active/);
+  assert.match(note, /Owners on the register: Jane DOE \(more than 75% of the shares\)/);
+  assert.match(note, /Downloaded from Companies House and attached: ACME LIMITED accounts made up to 31 March 2026\./);
+  assert.match(note, /Sanctions: 1 names screened against the UK Sanctions List and the US OFAC list: no match/);
+  assert.match(note, /web search with sources, 1 searched\): nothing found/);
+  assert.match(note, /ComplyAdvantage: not used/);
+  assert.match(precheckNote(null, "running"), /still running/);
+  assert.equal(precheckNote(null, "none"), "");
+  assert.ok(note.length <= 2800);
+});
+
+test("the deal card lists each check with its state", () => {
+  const lines = precheckCardLines(result());
+  assert.deepEqual(lines.map(l => [l.key, l.state]), [
+    ["companies_house", "ok"], ["documents", "ok"], ["owners", "ok"], ["directors", "ok"], ["sanctions", "ok"], ["web", "ok"], ["comply_advantage", "not_run"],
+  ]);
+  assert.match(lines[1].detail!, /Not downloaded: certificate of incorporation \(none filed\)/);
+  assert.equal(askInputFrom(result())!.accounts!.madeUpTo, "2026-03-31");
+  assert.equal(askInputFrom(null), null);
+});
+
+test("offshore places are the secrecy and call-for-action ones", () => {
+  assert.equal(isOffshoreCountry("British Virgin Islands"), true);
+  assert.equal(isOffshoreCountry("Cayman Islands"), true);
+  assert.equal(isOffshoreCountry("Iran"), true);
+  assert.equal(isOffshoreCountry("Luxembourg"), false);
+  assert.equal(isOffshoreCountry("England"), false);
+  assert.equal(isOffshoreCountry(null), false);
+});
+
+test("the client is asked to confirm the owners before sending their IDs, by name", () => {
+  const ctx = { needsIdCheck: true, docs: ["owner_ids" as const, "authority" as const], askPep: true, kind: "company" as const,
+    confirmOwners: [{ name: "Jane DOE", detail: "more than 75% of the shares" }], ownerNames: ["Jane DOE", "John SMITH"] };
+  const steps = kycSteps(ctx);
+  assert.deepEqual(steps.map(s => s.title), ["A quick identity check", "Confirm who owns the company", "ID for each of those owners", "Confirmation you can act for the company", "One question about public roles"]);
+  assert.match(steps[2].detail, /^For Jane DOE and John SMITH: a passport/);
+  const email = kycRequestEmail({ ...ctx, recipientName: "Jane", partyName: "ACME LIMITED", dealName: "1 High St", ref: "7K2Q9M", link: "https://chatbgp.app/kyc-upload/x", expiresAt: TODAY, agents: [], sentFrom: "kyc@chatbgp.app" });
+  assert.match(email.html, /Confirm who owns the company/);
+  const finished = kycFinishedEmail({ recipientName: "Jane", partyName: "ACME LIMITED", dealName: "1 High St", ref: "7K2Q9M", dealLink: "https://chatbgp.app/deals/d1",
+    idState: "approved", files: [], missing: [], sentFrom: "kyc@chatbgp.app", kind: "company",
+    owners: { list: ctx.confirmOwners, reply: { answer: "no", detail: "Sold in October", answeredAt: "2026-11-17T10:00:00Z" } } });
+  assert.match(finished.html, /Said the owners on the register are not right<\/strong>: Sold in October/);
+  assert.match(finished.html, /report the difference to Companies House/);
+});

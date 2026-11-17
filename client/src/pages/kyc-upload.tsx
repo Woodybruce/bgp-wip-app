@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "wouter";
 import { AlertCircle, CheckCircle2, ChevronDown, FileText, Loader2, Lock, Mail, Phone, ShieldCheck, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { KYC_DATA_USE, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_UPLOAD_EXTENSIONS, KYC_WHY_WE_ASK, kycLongDate, kycPepWords, type KycAgent, type KycDocKey, type KycPepAnswer, type KycPortalView } from "@shared/kyc-request";
+import { KYC_DATA_USE, KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_UPLOAD_EXTENSIONS, KYC_WHY_WE_ASK, kycLongDate, kycPepWords, type KycAgent, type KycDocKey, type KycOwnersAnswer, type KycPepAnswer, type KycPortalView } from "@shared/kyc-request";
 
 type Loaded =
   | { state: "loading" }
@@ -173,6 +173,70 @@ function QuestionCard({ n, kind, answer, detail, onSave }: {
   );
 }
 
+// The owners Companies House lists, to confirm rather than send a chart
+// (Woody, 2026-11-17: ask only what is left). Yes saves at once; No asks
+// what has changed.
+function OwnersCard({ n, owners, onSave }: {
+  n: number; owners: NonNullable<KycPortalView["owners"]>;
+  onSave: (answer: KycOwnersAnswer, detail: string | null) => Promise<string | null>;
+}) {
+  const [editing, setEditing] = useState(!owners.answer);
+  const [choice, setChoice] = useState<KycOwnersAnswer | null>(owners.answer);
+  const [text, setText] = useState(owners.detail || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async (answer: KycOwnersAnswer, detail: string | null) => {
+    setSaving(true);
+    setError(null);
+    const failed = await onSave(answer, detail);
+    setSaving(false);
+    if (failed) setError(failed); else setEditing(false);
+  };
+  const done = !!owners.answer && !editing;
+  return (
+    <div className={`rounded-lg border p-4 ${done ? "border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/10" : ""}`} data-testid="kyc-owners">
+      <div className="flex gap-3">
+        <StepNumber n={n} done={done} />
+        <div className="min-w-0 flex-1">
+          <h3 className="font-semibold text-base leading-snug">{KYC_OWNERS_QUESTION.title}</h3>
+          <p className="mt-1 text-sm leading-relaxed">{KYC_OWNERS_QUESTION.intro}</p>
+          <ul className="mt-2 space-y-1 text-sm" data-testid="kyc-owners-list">
+            {owners.list.map((o, i) => <li key={`${o.name}-${i}`}><strong>{o.name}</strong><span className="text-muted-foreground">: {o.detail}</span></li>)}
+          </ul>
+          {done ? (
+            <div className="mt-2 text-sm">
+              <span className="text-muted-foreground">Your answer: </span><strong>{owners.answer === "yes" ? "Yes, that's right" : "No, it has changed"}</strong>{owners.detail ? <span className="text-muted-foreground"> · {owners.detail}</span> : null}
+              <button type="button" className="ml-3 text-sm underline text-muted-foreground hover:text-foreground" onClick={() => setEditing(true)}>Change</button>
+            </div>
+          ) : (
+            <>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(["yes", "no"] as const).map(option => (
+                  <Button key={option} type="button" variant={choice === option ? "default" : "outline"} disabled={saving}
+                    className={choice === option ? "bg-[#6E0C25] hover:bg-[#5a0a1f] text-white" : ""}
+                    onClick={() => { setChoice(option); if (option === "yes") void save("yes", null); }} data-testid={`kyc-owners-${option}`}>
+                    {option === "yes" ? "Yes, that's right" : "No, it has changed"}
+                  </Button>
+                ))}
+              </div>
+              {choice === "no" && (
+                <div className="mt-3 space-y-2">
+                  <label className="text-sm font-medium" htmlFor="kyc-owners-detail">{KYC_OWNERS_QUESTION.no}</label>
+                  <textarea id="kyc-owners-detail" rows={3} value={text} onChange={e => setText(e.target.value)} className="w-full rounded-md border bg-background px-3 py-2 text-sm" />
+                  <Button type="button" disabled={saving || !text.trim()} onClick={() => save("no", text.trim())} data-testid="kyc-owners-save">
+                    {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}Save my answer
+                  </Button>
+                </div>
+              )}
+              {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const ID_COPY: Record<string, { line: string; button: string | null }> = {
   not_started: { line: "On your phone or computer: a photo of your passport, driving licence or identity card and a short selfie. It takes about two minutes.", button: "Start the identity check" },
   started: { line: "You've started the identity check. Pick up where you left off.", button: "Continue the identity check" },
@@ -237,10 +301,12 @@ export default function KycUploadPage() {
   const setView = (next: KycPortalView) => setLoaded({ state: "open", view: next });
   const idDone = !!view.idCheck && (view.idCheck.state === "approved" || view.idCheck.state === "submitted");
   const answered = !!view.question?.pep;
-  const total = view.docs.length + (view.idCheck ? 1 : 0) + (view.question ? 1 : 0);
-  const done = view.docs.filter(d => d.files.length).length + (idDone ? 1 : 0) + (view.question && answered ? 1 : 0);
+  const ownersDone = !!view.owners?.answer;
+  const total = view.docs.length + (view.idCheck ? 1 : 0) + (view.question ? 1 : 0) + (view.owners ? 1 : 0);
+  const done = view.docs.filter(d => d.files.length).length + (idDone ? 1 : 0) + (view.question && answered ? 1 : 0) + (view.owners && ownersDone ? 1 : 0);
   const outstanding = [
     ...(view.idCheck && !idDone ? ["the identity check"] : []),
+    ...(view.owners && !ownersDone ? ["confirming who owns the company"] : []),
     ...view.docs.filter(d => !d.files.length).map(d => d.title.toLowerCase()),
     ...(view.question && !answered ? ["the question about public roles"] : []),
   ];
@@ -284,6 +350,18 @@ export default function KycUploadPage() {
   const saveAnswer = async (pep: KycPepAnswer, pepDetail: string | null): Promise<string | null> => {
     try {
       const res = await fetch(`/api/kyc-upload/${encodeURIComponent(token)}/answers`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pep, pepDetail }) });
+      const body = await readJson(res);
+      if (!res.ok) { if (res.status === 410) await load(); return body.message || "Your answer wasn't saved. Please try again."; }
+      setView(body);
+      return null;
+    } catch {
+      return "Your answer wasn't saved. Please check your connection and try again.";
+    }
+  };
+
+  const saveOwners = async (answer: KycOwnersAnswer, detail: string | null): Promise<string | null> => {
+    try {
+      const res = await fetch(`/api/kyc-upload/${encodeURIComponent(token)}/owners`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer, detail }) });
       const body = await readJson(res);
       if (!res.ok) { if (res.status === 410) await load(); return body.message || "Your answer wasn't saved. Please try again."; }
       setView(body);
@@ -373,6 +451,11 @@ export default function KycUploadPage() {
               </div>
             </div>
           );
+        })()}
+
+        {view.owners && (() => {
+          step++;
+          return <OwnersCard n={step} owners={view.owners} onSave={saveOwners} />;
         })()}
 
         {view.docs.map(doc => {

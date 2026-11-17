@@ -4245,6 +4245,7 @@ import websiteContentRouter from "./website-content";
 import wpListingsSyncRouter, { startWpListingsSync } from "./wp-listings-sync";
 import veriffRouter from "./veriff";
 import kycRequestRouter from "./aml-portal";
+import kycPrecheckRouter from "./kyc-prechecks";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
 import brandDedupeRouter from "./brand-dedupe";
@@ -5588,6 +5589,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(wpListingsSyncRouter);
   app.use(veriffRouter);
   app.use(kycRequestRouter);
+  // BGP's checks before asking: Run again on the deal's AML card (BGP staff only).
+  app.use(kycPrecheckRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);
   app.use(brandDedupeRouter);

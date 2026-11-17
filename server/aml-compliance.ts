@@ -1447,7 +1447,17 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
     // Red flags send a party to KYC4U (Woody, 2026-11-17). BGP staff signed
     // in as themselves only: PEP and sanctions findings are BGP's.
     const { contactViewer } = await import("./contact-viewer");
-    const redFlags = (await contactViewer(req)).staff
+    const staff = (await contactViewer(req)).staff;
+    // BGP's checks before asking (Woody, 2026-11-17: "we need to do
+    // everyhting we can before we ask questions on someone"): each party's
+    // latest, and a run started for any party with none from the last 30
+    // days. Before the red flags, so a run that has just finished counts.
+    const prechecks = staff
+      ? await (await import("./kyc-prechecks")).dealPrechecks(d.id, counterparties.map(c => c.id), {
+          userId: (req as any).session?.userId || (req as any).tokenUserId || null, autoStart: true,
+        }).catch((e: any) => { console.warn("[kyc-prechecks] deal view:", e?.message); return null; })
+      : null;
+    const redFlags = staff
       ? await (await import("./kyc-red-flags")).loadDealRedFlags(d.id, counterparties.map(c => c.id))
       : null;
 
@@ -1462,6 +1472,7 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
       // KYC4U (IN_APP_AML_ENABLED, the one switch).
       inAppAml: !!process.env.IN_APP_AML_ENABLED,
       redFlags,
+      prechecks,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

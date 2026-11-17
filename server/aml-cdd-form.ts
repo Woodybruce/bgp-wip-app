@@ -13,6 +13,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
 
 const router = Router();
 
@@ -85,6 +86,9 @@ export async function prefillCddForm(companyId: string): Promise<CddForm> {
   // The latest run, but its ownership data from the latest run that HAD
   // PSCs — a sweep whose Companies House PSC call failed returns none.
   const inv = (await pool.query(`SELECT result, sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
+  // The sanctions reading from the latest record that screened anyone (a
+  // Companies House lookup screens nothing and must not read as clear).
+  const screened = (await pool.query(`SELECT sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 AND ${SCREENED_INVESTIGATION_SQL} ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
   const withPscs = (await pool.query(`SELECT result FROM kyc_investigations WHERE crm_company_id=$1 AND jsonb_array_length(COALESCE(result->'pscs','[]'::jsonb)) > 0 ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
   const result = { ...(inv?.result || {}), pscs: (inv?.result?.pscs?.length ? inv.result.pscs : withPscs?.result?.pscs) || [] };
   const profile = c.companies_house_data?.profile || {};
@@ -124,7 +128,7 @@ export async function prefillCddForm(companyId: string): Promise<CddForm> {
   const highCountries = codes.length ? (await pool.query(`SELECT country_code FROM aml_country_risks WHERE risk_level='high' AND country_code = ANY($1::text[])`, [codes])).rows : [];
   const overseasChain = chain.some(x => x.country && !/^(uk|united kingdom|gb|england|scotland|wales)$/i.test(x.country));
   put("riskFactors", {
-    client: /^pep|rca|review_required/.test(String(c.aml_pep_status || "")) || inv?.sanctions_match || profile.hasInsolvencyHistory ? "high" : "low",
+    client: /^pep|rca|review_required/.test(String(c.aml_pep_status || "")) || screened?.sanctions_match || profile.hasInsolvencyHistory ? "high" : "low",
     geographic: highCountries.length ? "high" : overseasChain ? "high" : "low",
     other: chain.length > 3 ? "high" : "low",
   });
@@ -154,7 +158,7 @@ export async function prefillCddForm(companyId: string): Promise<CddForm> {
 
 async function recomputeRecommendation(companyId: string, form: CddForm): Promise<CddForm> {
   const c = (await pool.query(`SELECT * FROM crm_companies WHERE id=$1`, [companyId])).rows[0];
-  const inv = (await pool.query(`SELECT sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 ORDER BY conducted_at DESC NULLS LAST LIMIT 1`, [companyId])).rows[0];
+  const inv = (await pool.query(`SELECT sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 AND ${SCREENED_INVESTIGATION_SQL} ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
   const { outstandingAmlItems, isHigherRisk } = await import("../shared/aml-checklist");
   const higherRisk = isHigherRisk({ ...c, aml_cdd_form: form });
   const open = outstandingAmlItems(c.aml_checklist, c.aml_subject_type || (c.companies_house_number ? "company" : null), c.aml_edd_required, higherRisk).filter(i => i.id !== "mlro_review");

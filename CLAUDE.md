@@ -2882,8 +2882,12 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   reason: the landlord packs set it, as on Bulgaria Mall). The deal record's
   own: its PEP status, risk, enhanced due diligence not yet completed, and a
   source of funds document read as not matching what was declared. Not a
-  flag on purpose: the MLRO's rejection (it already blocks), a client who has
-  not replied (chase them), adverse media (the screening keeps no verdict).
+  flag on purpose: the MLRO's rejection (it already blocks) and a client who
+  has not replied (chase them). Since 17 November 2026 the latest screening
+  is the latest record that screened anyone (`SCREENED_INVESTIGATION_SQL`),
+  and BGP's checks before asking add their own flags, adverse media with a
+  source among them, and the client saying the register's owners are wrong
+  (`owners_differ`): see the next section.
   Where they show: `redFlags` on `GET /api/kyc/deal/:id/status`, for BGP
   staff signed in as themselves only (`contactViewer`), on the deal's KYC
   card (a red box per party, the deal record's above, and a line naming any
@@ -2918,6 +2922,116 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   records are not deleted after the five years; the app does not prompt an OFSI report on a sanctions match;
   trusts, partnerships and charities have no request type of their own; the
   principal place of business (if not the registered office) is not asked.
+
+## BGP's checks before asking (Woody, 2026-11-17)
+
+Woody: "can you make sure you use all the companies house APIS to get the
+recent accounts downloaded for any check first before asking?", "and also
+access to plcs? how do we deal with that?", "the pep is that siorted?", "and
+the poloticaly media riskes etc ?", "we need to do everyhting we can before
+we ask questions on someone". Asked, he chose "Web search now, CA later"
+(public roles and adverse media by a web search with sources for each
+person, ComplyAdvantage automatically once it is unblocked and has fresh
+keys) and "Ask only what's left". Do not re-litigate. Rules (pure):
+`shared/kyc-prechecks.ts`; gathering and storing: `server/kyc-prechecks.ts`.
+Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
+`qa/regression/kyc-prechecks-guards.test.mjs`.
+
+- **What one run does, per deal party** (`runPrecheck`): a company with no
+  Companies House number is first looked for by the brand-page lookup
+  (`performAutoKyc`, at most once a week). Companies House: the profile,
+  officers, PSCs, PSC statements, the PSC exemptions, insolvency, the
+  ownership chain (`discoverUltimateParent`, five levels), the disqualified
+  directors register for up to ten directors (name, then date of birth: a
+  different year sets a name match aside), and the covenant report (charges,
+  The Gazette). It downloads the latest accounts (`fetchLatestAccountsForCompany`),
+  the latest confirmation statement and the certificate of incorporation
+  (the NEWINC filing) and files each on the party's KYC record
+  (`kyc_documents`, types `company_accounts`, `confirmation_statement`,
+  `company_cert`; the file under `chat-media/kyc-ch-<company>-<doc>.pdf`),
+  once per Companies House document id, so Request KYC4U check attaches them.
+  Sanctions: the UK Sanctions List and the US OFAC list (`screenName`) for the
+  company, its trading name, every officer and owner, the companies and people
+  up the chain and the deal's contact. A listing is a possible match only when
+  one name holds every word of the other (two words at least) and a known date
+  of birth does not disagree by more than a year (`sanctionsLine`). Web:
+  Perplexity (`sonar-pro`) for the company and up to ten people
+  (`KYC_PRECHECK_MAX_WEB_PEOPLE`), asked about public roles in the words of
+  MLR 2017 reg 35 and about adverse media (financial crime, corruption,
+  sanctions, criminal charges, disqualification, regulatory enforcement; not
+  ordinary disputes or a past insolvency); a finding is kept only when its
+  link is on a site the search actually read (`checkWebAnswer`), and anything
+  said without one is only counted. ComplyAdvantage: used when its keys are
+  set; a refused login is remembered against a hash of the keys
+  (`system_settings.kyc_precheck_ca_refusal`) and not tried again for a day
+  or until different keys are set, because repeated logins keep its account
+  locked. ComplyAdvantage was blocked (429) on 17 November 2026.
+- **Stored** as a `kyc_investigations` row (`result.kind = 'precheck'`, with
+  `sanctionsScreening` so it counts as a screening; `sanctions_match` true,
+  false, or null when the lists could not be loaded), a `kyc_audit_log` line
+  (`precheck`). It writes no KYC status, PEP status, EDD flag or checklist
+  tick: nothing it finds decides anything; it becomes red flags
+  (`precheckRedFlags`: sanctions, a ComplyAdvantage match, a public role or
+  adverse media with its link, the company in liquidation or similar,
+  insolvency or a Gazette notice, a disqualified director, a PSC statement of
+  concern, an owner registered offshore) and lines in KYC4U's note
+  (`precheckNote`).
+- **When it runs**: when a BGP person (signed in as themselves) opens the
+  deal's AML card and the party has no run from the last 30 days
+  (`dealPrechecks` from `GET /api/kyc/deal/:id/status`, which returns
+  `prechecks`; the Kick off AML step after New Deal or a handover reads the
+  same status, so a run starts the moment a deal is saved); on **Run again** (`POST /api/kyc/deal/:id/prechecks`, BGP
+  staff only, one party or all); and from KYC4U's prefill (`kyc4uPrefill`
+  starts one if needed and waits up to 20 seconds). Never on a timer or at
+  boot. A daily allowance (`KYC_PRECHECK_DAILY_CAP`, default 40 runs, 0 =
+  off) and `KYC_PRECHECKS=off` stop it. A run is in memory while it goes: a
+  restart loses it and the next view starts it again.
+- **The deal card** (`PartyPrechecks` in `deal-aml-status.tsx`): a
+  **Checked before asking** box per party, reading again every 5 seconds
+  while a run goes, with anything to review listed at once and **Show** for
+  every line (`precheckCardLines`).
+- **A listed company** (the plcs question): Companies House's exemptions
+  resource names the market. A UK or EU regulated market, or DTR chapter 5,
+  is listed on a regulated market (MLR 2017 reg 28(5)): no beneficial owners
+  to ask for, though the company itself is still identified. A market
+  elsewhere (`other_regulated`, `listed_market`) is treated the same but the
+  reason says KYC4U is to confirm the market's disclosure rules are
+  equivalent. AIM is not a regulated market: an AIM company keeps a PSC
+  register and is asked as any other. A company owned through one corporate
+  owner at each level by a listed company (`viaParent`, found by
+  `listedParent`, which reads each level's exemptions first because a listed
+  company keeps no PSC list and the general chain walk stops below it) is
+  treated as listed, and the reason says KYC4U is to confirm the chain: the
+  regulation names the listed company itself.
+- **Ask only what's left** (`precheckAsks`, the one rule; the client checks
+  dialog and `createClientCheck` both call it): listed, no owners chart and no
+  owners' IDs; owners on the register, the client confirms the list instead of
+  sending a chart (a new card on the client page, `POST
+  /api/kyc-upload/:token/owners`, a no needs words, logged as
+  `client_owners_confirmation`, a red flag `owners_differ` and a box in the
+  agents' finished note: report the difference to Companies House, HMRC
+  AMLG11400 14.8), and the owners' IDs step names them; a contact who is a
+  director at Companies House is not asked for authority; a tenant company
+  whose accounts made up within 24 months were downloaded (not dormant) is not
+  asked where the money comes from (a buyer still is); a company not found at
+  Companies House is asked for its overseas register extract. The request
+  records `notAsked` (with reasons), `confirmOwners`, `ownerNames`,
+  `ownersAnswer` and `precheckId`; the dialog lists what was not asked and the
+  agent can tick anything back. With no finished run, the usual list is asked.
+- **The nightly fix**: the nightly Companies House refresh (`runBatchReKyc`
+  → `performAutoKyc`, 120 companies a night) wrote a `kyc_investigations` row
+  with `sanctions_match = false` without screening anyone, so within 30 days
+  it hid an earlier sanctions match from the red flags and the CDD form, which
+  read the latest row. It writes null now, and those readers take the latest
+  row that screened anyone (`SCREENED_INVESTIGATION_SQL`: `sanctions_match`
+  true, or `result.sanctionsScreening` an array). Earlier rows were not
+  changed: the condition reads them correctly.
+- Not run from a build machine against Companies House, Perplexity or
+  ComplyAdvantage (no keys here): the first real run is the first deal card a
+  BGP person opens after the deploy. Not built: a register extract PDF of the
+  Companies House record itself, sanctions screening of officers' other
+  appointments, a check that a listed market abroad is equivalent, and reading
+  trusts, partnerships or charities as anything but a company.
 
 ## Emails come from chatbgp.app (Woody, 2026-11-17)
 

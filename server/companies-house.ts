@@ -918,8 +918,11 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
 
   // Persist to kyc_investigations so this run shows up in the Clouseau
   // history tab alongside investigator-launched checks. Risk is computed off
-  // the raw CH responses; sanctions screening isn't run here (use the deal
-  // AML sweep for that) so sanctions_match is left false.
+  // the raw CH responses. Sanctions screening isn't run here, so
+  // sanctions_match is null ("not screened"): it was false until 17 November
+  // 2026, and the nightly refresh's rows then read as a clear screening and
+  // hid an earlier match from the red flags and the CDD form, which take the
+  // latest record that screened anyone (SCREENED_INVESTIGATION_SQL).
   let investigationId: number | null = null;
   let riskLevel = "low";
   let riskScore = 0;
@@ -962,7 +965,7 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
         company.id,
         risk.level,
         risk.score,
-        false,
+        null,
         JSON.stringify(investigationResult),
         opts.userId || null,
       ]

@@ -106,6 +106,22 @@ export const KYC_PEP_QUESTION = {
   examples: "Prominent public roles are, in the UK or abroad: head of state or government, minister, member of parliament, member of a political party's governing body, judge of a supreme or constitutional court, member of a court of auditors or of a central bank's board, ambassador, high-ranking officer in the armed forces, board member of a state-owned company, or director of an international organisation. Middle-ranking and junior officials are not included.",
 };
 export const isKycPepAnswer = (value: unknown): value is KycPepAnswer => value === "no" || value === "yes" || value === "unsure";
+
+// The owners Companies House lists, shown to the client to confirm instead
+// of asking for a chart (Woody, 2026-11-17: ask only what is left). HMRC,
+// AMLG11400 14.8: the register alone is not enough, and a difference the
+// client tells us about is reported to Companies House.
+export type KycOwnersAnswer = "yes" | "no";
+export interface KycOwnersReply { answer: KycOwnersAnswer; detail: string | null; answeredAt: string }
+export const isKycOwnersAnswer = (value: unknown): value is KycOwnersAnswer => value === "yes" || value === "no";
+export const KYC_OWNERS_QUESTION = {
+  title: "Confirm who owns the company",
+  step: "We have read the company's owners from Companies House. Check the list and tell us if it is right. One click.",
+  intro: "Companies House lists these as having significant control of the company: owning or controlling more than 25% of its shares or votes, or controlling it in another way. Is this list right and up to date?",
+  no: "Tell us who owns or controls the company now, and what has changed.",
+};
+export const kycOwnersWords = (answer: KycOwnersAnswer | null | undefined): string =>
+  answer === "yes" ? "Confirmed the owners on the register" : answer === "no" ? "Said the owners on the register are not right" : "Not answered";
 export const kycPepWords = (answer: KycPepAnswer | null | undefined): string =>
   answer === "no" ? "No" : answer === "yes" ? "Yes" : answer === "unsure" ? "Not sure" : "Not answered";
 
@@ -176,6 +192,10 @@ export interface KycEmailContext {
   // The question about public roles (asked on every request since
   // 17 November 2026; absent on older rows, which did not ask it).
   askPep?: boolean;
+  // The owners on the register, to confirm (BGP's checks before asking).
+  confirmOwners?: Array<{ name: string; detail: string }> | null;
+  // The people whose ID is asked for, where the register names them.
+  ownerNames?: string[] | null;
 }
 
 // Who hears back from a request (the agents' Finished note, a red-flag
@@ -240,12 +260,23 @@ function agentNamesText(agents: KycAgent[]): string {
 }
 
 // The steps a request asks for, in the order the client page shows them.
-export function kycSteps(ctx: Pick<KycEmailContext, "needsIdCheck" | "docs" | "askPep"> & { kind?: KycPartyKind }): Array<{ title: string; detail: string }> {
+// The owner IDs step names the owners when the register gave them.
+export function kycDocDetail(key: KycDocKey, ownerNames?: string[] | null): string {
+  const names = (ownerNames || []).filter(Boolean);
+  if (key !== "owner_ids" || !names.length) return KYC_DOCS[key].detail;
+  const who = names.length > 6 ? `${names.slice(0, 6).join(", ")} and ${names.length - 6} more` : names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return KYC_DOCS.owner_ids.detail.replace("For each person on that list", `For ${who}`);
+}
+
+export function kycSteps(ctx: Pick<KycEmailContext, "needsIdCheck" | "docs" | "askPep" | "confirmOwners" | "ownerNames"> & { kind?: KycPartyKind }): Array<{ title: string; detail: string }> {
   const steps: Array<{ title: string; detail: string }> = [];
   if (ctx.needsIdCheck) {
     steps.push({ title: "A quick identity check", detail: "On your phone or computer: a photo of your passport, driving licence or identity card and a short selfie. It takes about two minutes." });
   }
-  for (const key of ctx.docs) steps.push({ title: KYC_DOCS[key].title, detail: KYC_DOCS[key].detail });
+  // The owners to confirm come before the owners' IDs, which refer to them.
+  const owners = ctx.confirmOwners?.length ? { title: KYC_OWNERS_QUESTION.title, detail: KYC_OWNERS_QUESTION.step } : null;
+  if (owners) steps.push(owners);
+  for (const key of ctx.docs) steps.push({ title: KYC_DOCS[key].title, detail: kycDocDetail(key, ctx.ownerNames) });
   if (ctx.askPep) {
     steps.push({ title: KYC_PEP_QUESTION.title, detail: ctx.kind === "individual"
       ? "Whether you hold a prominent public role, or are the spouse, partner, child or parent, or a close business associate, of someone who does. One click."
@@ -353,6 +384,8 @@ export interface KycProgress {
   docsDone: KycDocKey[];
   // The question about public roles has been answered.
   pepAnswered?: boolean;
+  // The owners on the register have been confirmed or corrected.
+  ownersAnswered?: boolean;
 }
 
 // The reminder: what is done, what is still needed, the same button.
@@ -360,6 +393,7 @@ export function kycReminderEmail(ctx: KycEmailContext & { progress: KycProgress 
   const done: string[] = [];
   const left: string[] = [];
   if (ctx.needsIdCheck) (ctx.progress.idDone ? done : left).push("Identity check");
+  if (ctx.confirmOwners?.length) (ctx.progress.ownersAnswered ? done : left).push(KYC_OWNERS_QUESTION.title);
   for (const key of ctx.docs) (ctx.progress.docsDone.includes(key) ? done : left).push(KYC_DOCS[key].title);
   if (ctx.askPep) (ctx.progress.pepAnswered ? done : left).push(KYC_PEP_QUESTION.title);
   const list = (items: string[], mark: string, colour: string) => items.map(item => `<tr><td style="width:24px;vertical-align:top;padding:3px 0;font-family:${FONT};font-size:15px;font-weight:bold;color:${colour}">${mark}</td><td style="padding:3px 0;font-family:${FONT};font-size:15px;color:${INK}">${escHtml(item)}</td></tr>`).join("");
@@ -418,6 +452,8 @@ export function kycFinishedEmail(ctx: {
   pep?: KycPepAnswer | null;
   pepDetail?: string | null;
   redFlags?: KycRedFlag[];
+  // The owners on the register the client was asked to confirm, and the reply.
+  owners?: { list: Array<{ name: string; detail: string }>; reply: KycOwnersReply | null } | null;
 }): { subject: string; html: string } {
   const who = ctx.recipientName || ctx.partyName;
   const idLine = ctx.idState === null ? "" :
@@ -437,8 +473,12 @@ export function kycFinishedEmail(ctx: {
     ctx.pep === "yes" || ctx.pep === "unsure"
       ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>Enhanced due diligence.</strong> A politically exposed person, or a family member or close associate of one, needs senior management approval (a director or the MLRO) before the deal goes ahead, their source of wealth and source of funds established, and closer monitoring (MLR 2017 reg 35; HMRC AMLG11650). A UK one starts as lower risk, so the checks can be lighter and use public information unless something else raises the risk (FCA FG25/3). Screening must confirm whether the answer is right.</div>`
       : "",
+    ctx.owners?.list.length ? h2("Owners on the register") + p(`${ctx.owners.list.map(o => `${escHtml(o.name)} (${escHtml(o.detail)})`).join("; ")}.<br><strong>${escHtml(kycOwnersWords(ctx.owners.reply?.answer))}</strong>${ctx.owners.reply?.detail ? `: ${escHtml(ctx.owners.reply.detail)}` : ""}`) : "",
+    ctx.owners?.reply?.answer === "no"
+      ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>A difference from the register.</strong> The client says the owners Companies House lists are not right. Find out who the owners are, and report the difference to Companies House (HMRC, AMLG11400 14.8).</div>`
+      : "",
     ctx.redFlags?.length ? redFlagBox(ctx.redFlags) : "",
-    ctx.kind === "company" ? p("Check the owners they list against the PSC register at Companies House. A difference must be reported to Companies House (HMRC, AMLG11400 14.8).", `font-size:13px;color:${BODY}`) : "",
+    ctx.kind === "company" && !ctx.owners?.list.length ? p("Check the owners they list against the PSC register at Companies House. A difference must be reported to Companies House (HMRC, AMLG11400 14.8).", `font-size:13px;color:${BODY}`) : "",
     button("Open the deal's AML", ctx.dealLink),
     p("The files are on the client's KYC record. Review them and sign off in the app as usual.", `font-size:13px;color:${MUTED}`),
   ].join("\n");
@@ -518,6 +558,8 @@ export interface KycPortalView {
   // when Veriff is set up, since 17 November 2026).
   idCheck: { state: KycIdState; canStart: boolean; real: boolean } | null;
   question: { pep: KycPepAnswer | null; pepDetail: string | null } | null;
+  // The owners on the register to confirm (null when not asked).
+  owners: { list: Array<{ name: string; detail: string }>; answer: KycOwnersAnswer | null; detail: string | null } | null;
   docs: Array<{ key: KycDocKey; title: string; detail: string; files: Array<{ name: string; uploadedAt: string }> }>;
   otherFiles: Array<{ name: string; uploadedAt: string }>;
   note: string | null;

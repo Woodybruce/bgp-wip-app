@@ -7,6 +7,8 @@
 import { pool } from "./db";
 import { dealRedFlags, partyRedFlags, redFlagAlertKey, type KycRedFlag, type KycRedFlagKind, type PartyRedFlagFacts } from "@shared/kyc-red-flags";
 import { kycRedFlagEmail, kycReplyAddresses } from "@shared/kyc-request";
+import { isPrecheckResult } from "@shared/kyc-prechecks";
+import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
 
 export interface DealRedFlags {
   parties: Record<string, KycRedFlag[]>;
@@ -30,9 +32,15 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[]): Pr
   const none: any[] = [];
   const companies = ids.length ? await read("KYC records", async () => (await pool.query(
     `SELECT id, aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason FROM crm_companies WHERE id = ANY($1::varchar[])`, [ids])).rows, none) : none;
+  // The latest record that screened anyone: a Companies House lookup that
+  // screened nothing (the nightly refresh) never reads as "no match".
   const investigations = ids.length ? await read("screening records", async () => (await pool.query(
-    `SELECT DISTINCT ON (crm_company_id) crm_company_id, sanctions_match, conducted_at
-       FROM kyc_investigations WHERE crm_company_id = ANY($1::varchar[])
+    `SELECT DISTINCT ON (crm_company_id) crm_company_id, id, sanctions_match, conducted_at, (result->>'kind' = 'precheck') AS precheck
+       FROM kyc_investigations WHERE crm_company_id = ANY($1::varchar[]) AND ${SCREENED_INVESTIGATION_SQL}
+      ORDER BY crm_company_id, conducted_at DESC NULLS LAST, id DESC`, [ids])).rows, none) : none;
+  const prechecks = ids.length ? await read("BGP's checks before asking", async () => (await pool.query(
+    `SELECT DISTINCT ON (crm_company_id) crm_company_id, id, result
+       FROM kyc_investigations WHERE crm_company_id = ANY($1::varchar[]) AND result->>'kind' = 'precheck'
       ORDER BY crm_company_id, conducted_at DESC NULLS LAST, id DESC`, [ids])).rows, none) : none;
   const requests = ids.length ? await read("client checks", async () => (await pool.query(
     `SELECT company_id, request FROM kyc_upload_tokens
@@ -48,10 +56,13 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[]): Pr
 
   const parties: Record<string, KycRedFlag[]> = {};
   for (const id of ids) {
+    const latest = investigations.find((i: any) => i.crm_company_id === id) || null;
+    const pre = prechecks.find((p: any) => p.crm_company_id === id && isPrecheckResult(p.result)) || null;
     parties[id] = partyRedFlags({
       company: companies.find((c: any) => c.id === id) || null,
-      latestInvestigation: investigations.find((i: any) => i.crm_company_id === id) || null,
-      requests: requests.filter((r: any) => r.company_id === id).map((r: any) => ({ ref: r.request?.ref || "", answers: r.request?.answers || null })),
+      latestInvestigation: latest ? { sanctions_match: latest.sanctions_match, conducted_at: latest.conducted_at, precheck: !!latest.precheck } : null,
+      precheck: pre ? { result: pre.result, current: !!latest && String(latest.id) === String(pre.id) } : null,
+      requests: requests.filter((r: any) => r.company_id === id).map((r: any) => ({ ref: r.request?.ref || "", answers: r.request?.answers || null, ownersAnswer: r.request?.ownersAnswer || null })),
       idChecks: idChecks.filter((s: any) => s.company_id === id).map((s: any) => ({
         status: s.status, decision_reason: s.decision_reason, received_at: s.received_at,
         name: [s.first_name, s.last_name].filter(Boolean).join(" ") || null,
@@ -90,7 +101,7 @@ export async function alertRedFlags(token: string): Promise<{ sent: number }> {
   if (!row || !request?.ref) return { sent: 0 };
   let flags: KycRedFlag[];
   if (row.is_test || !row.company_id) {
-    flags = partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null }], idChecks: await requestIdChecks(request.veriffSessionIds) });
+    flags = partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null, ownersAnswer: request.ownersAnswer || null }], idChecks: await requestIdChecks(request.veriffSessionIds) });
   } else {
     flags = (await loadDealRedFlags(row.deal_id, [row.company_id])).parties[row.company_id] || [];
   }

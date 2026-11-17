@@ -17,12 +17,17 @@ import { pillMetrics } from "@/components/ui/pill";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import {
-  KYC_DOCS, KYC_LETTING_SCOPE, KYC_LOGO_CID, KYC_PEP_QUESTION, KYC_TIMING, defaultKycDocs, kycPepWords, kycRequestEmail, kycWhatsAppHref, kycWhatsAppText,
-  type KycDocKey, type KycIdState, type KycPartyKind, type KycPepAnswer,
+  KYC_DOCS, KYC_LETTING_SCOPE, KYC_LOGO_CID, KYC_PEP_QUESTION, KYC_TIMING, kycOwnersWords, kycPepWords, kycRequestEmail, kycWhatsAppHref, kycWhatsAppText,
+  type KycDocKey, type KycIdState, type KycOwnersAnswer, type KycPartyKind, type KycPepAnswer,
 } from "@shared/kyc-request";
+import { precheckAsks, precheckDay, type PrecheckAskInput } from "@shared/kyc-prechecks";
 
 interface PartyContact { id: string; name: string; email: string | null; mobile: string | null }
-interface Party { companyId: string; name: string; role: string; kind: KycPartyKind; contactId: string | null; contacts: PartyContact[]; defaultDocs: KycDocKey[] }
+interface Party {
+  companyId: string; name: string; role: string; kind: KycPartyKind; contactId: string | null; contacts: PartyContact[]; defaultDocs: KycDocKey[];
+  // What BGP's checks before asking found, for "ask only what is left".
+  askInput: PrecheckAskInput | null; precheckRanAt: string | null;
+}
 export interface ClientCheckRequest {
   token: string; ref: string; companyId: string | null; partyName: string; role: string | null;
   recipientName: string | null; recipientEmail: string | null; mobile: string | null;
@@ -31,6 +36,8 @@ export interface ClientCheckRequest {
   status: "not_sent" | "sent" | "opened" | "in_progress" | "finished" | "expired" | "cancelled";
   needsIdCheck: boolean; idState: KycIdState | null; idCheckNote: string | null;
   askPep: boolean; pep: KycPepAnswer | null; pepDetail: string | null;
+  owners: { list: Array<{ name: string; detail: string }>; answer: KycOwnersAnswer | null; detail: string | null } | null;
+  notAsked: Array<{ key: KycDocKey; reason: string }>;
   docs: Array<{ key: KycDocKey; title: string; done: boolean }>;
   files: Array<{ name: string; docKey: KycDocKey | null; uploadedAt: string; url: string | null }>;
   remindersSent: number; link: string; whatsapp: string | null; canRemind: boolean;
@@ -114,6 +121,12 @@ export function ClientCheckRow({ dealId, request }: { dealId: string; request: C
         <p className={request.pep === "yes" || request.pep === "unsure" ? "rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900" : "text-muted-foreground"} data-testid={`client-check-pep-${request.ref}`}>
           Public roles: <strong>{kycPepWords(request.pep)}</strong>{request.pepDetail ? ` · ${request.pepDetail}` : ""}
           {(request.pep === "yes" || request.pep === "unsure") && <> · Enhanced due diligence: senior management approval (a director or the MLRO) before the deal goes ahead, source of wealth and of funds, closer monitoring. Lighter for a UK one with no other risk.</>}
+        </p>
+      )}
+      {request.owners && (
+        <p className={request.owners.answer === "no" ? "rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900" : "text-muted-foreground"} data-testid={`client-check-owners-${request.ref}`}>
+          Owners on the register: <strong>{kycOwnersWords(request.owners.answer)}</strong>{request.owners.detail ? ` · ${request.owners.detail}` : ""}
+          {request.owners.answer === "no" && <> · Find out who the owners are and report the difference to Companies House.</>}
         </p>
       )}
       {request.idCheckNote && <p className="text-muted-foreground italic">{request.idCheckNote}</p>}
@@ -203,10 +216,16 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
   // The online identity check is offered only when it is set up; without
   // it, photo ID is one of the documents (ticked by default).
   const wantId = veriff && (idCheck ?? true);
-  const chosenDocs = docs || (party ? defaultKycDocs(chosenKind, party.role, wantId) : []);
   const pickedContact = party?.contacts.find(c => c.id === (contactId ?? party?.contactId ?? party?.contacts[0]?.id ?? "")) || null;
   const usingOther = contactId === SOMEONE_ELSE || (!!party && !party.contacts.length);
   const toName = usingOther ? name.trim() : pickedContact?.name || "";
+  // What is still to ask once BGP's own checks are counted (Woody,
+  // 2026-11-17: "we need to do everyhting we can before we ask questions on
+  // someone"): the same rule the server records the request by.
+  const asks = party ? precheckAsks(party.askInput, { kind: chosenKind, role: party.role, idCheck: wantId, contactName: toName || null }) : null;
+  const chosenDocs = docs || asks?.docs || [];
+  const confirmOwners = chosenKind === "company" && !chosenDocs.includes("ownership") && asks?.confirmOwners?.length ? asks.confirmOwners : null;
+  const notAsked = (asks?.notAsked || []).filter(n => !chosenDocs.includes(n.key));
   const toEmail = usingOther ? email.trim() : pickedContact?.email || "";
   const mobileValue = mobile ?? (usingOther ? "" : pickedContact?.mobile || "");
   const toMobile = mobileValue.trim();
@@ -226,9 +245,10 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
       link: "https://chatbgp.app/kyc-upload/your-link", expiresAt: new Date(Date.now() + 14 * 86400000),
       needsIdCheck: wantId, docs: chosenDocs,
       note, agents: (data?.agents || []).map(a => ({ name: a.name, email: a.email, phone: null })), sentFrom: data?.mailbox || "kyc@chatbgp.app", askPep: true,
+      confirmOwners, ownerNames: chosenDocs.includes("owner_ids") ? asks?.ownerNames || [] : [],
     });
     return html.split(`cid:${KYC_LOGO_CID}`).join("/bgp-logo.png");
-  }, [preview, party, toName, chosenKind, veriff, wantId, chosenDocs, note, data]);
+  }, [preview, party, toName, chosenKind, veriff, wantId, chosenDocs, confirmOwners, asks, note, data]);
 
   const send = useMutation({
     mutationFn: async () => {
@@ -333,6 +353,18 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
                 </label>
               ))}
             </div>
+
+            {(confirmOwners || notAsked.length > 0) && (
+              <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs space-y-1" data-testid="client-checks-not-asked">
+                <p className="font-semibold">Already found by BGP's checks{party.precheckRanAt ? ` (${precheckDay(party.precheckRanAt)})` : ""}, so not asked:</p>
+                {notAsked.map(n => <p key={n.key}><strong>{KYC_DOCS[n.key].title}</strong>: {n.reason}</p>)}
+                {confirmOwners && <p data-testid="client-checks-confirm-owners">They are asked to confirm the owners Companies House lists: {confirmOwners.map(o => `${o.name} (${o.detail})`).join("; ")}.</p>}
+                <p className="text-muted-foreground">Tick anything above to ask for it after all.</p>
+              </div>
+            )}
+            {!party.askInput && (
+              <p className="text-xs text-muted-foreground" data-testid="client-checks-no-precheck">BGP's checks before asking have not finished for {partyName} yet, so everything usual is ticked. They show on the deal's AML card when done.</p>
+            )}
 
             <p className="text-xs text-muted-foreground">Every request also asks {KYC_PEP_QUESTION.title.toLowerCase()} (politically exposed persons). A yes comes back to you and the MLRO.</p>
 

@@ -16,7 +16,8 @@ const deals = read('client/src/pages/deals.tsx');
 test('the deal KYC status sends red flags to BGP staff signed in as themselves only', () => {
   const route = compliance.slice(compliance.indexOf('"/api/kyc/deal/:id/status"'));
   const body = route.slice(0, route.indexOf('router.post('));
-  assert.match(body, /\(await contactViewer\(req\)\)\.staff\s*\?\s*await \(await import\("\.\/kyc-red-flags"\)\)\.loadDealRedFlags/);
+  assert.match(body, /const staff = \(await contactViewer\(req\)\)\.staff;/);
+  assert.match(body, /const redFlags = staff\s*\?\s*await \(await import\("\.\/kyc-red-flags"\)\)\.loadDealRedFlags/);
   assert.match(body, /:\s*null;/);
   assert.match(body, /redFlags,/);
 });
@@ -25,7 +26,7 @@ test("KYC4U's request note carries the red flags", () => {
   const prefill = kyc4u.slice(kyc4u.indexOf('export async function kyc4uPrefill'), kyc4u.indexOf('export const KYC4U_DRAFT_KEYS'));
   assert.match(prefill, /loadDealRedFlags\(dealId, \[companyId\]\)/);
   assert.match(prefill, /redFlagNote\(/);
-  assert.match(prefill, /flagNote\]\.filter\(Boolean\)\.join/);
+  assert.match(prefill, /flagNote, checkedNote\]\.filter\(Boolean\)\.join/);
 });
 
 test('the alert goes to the agents on the request (the admin on a test), never the client, once per flag', () => {

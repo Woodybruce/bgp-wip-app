@@ -18,6 +18,7 @@ import multer from "./utils/upload";
 import { pool } from "./db";
 import { loadDealRedFlags } from "./kyc-red-flags";
 import { redFlagNote } from "@shared/kyc-red-flags";
+import { precheckNote } from "@shared/kyc-prechecks";
 
 const TENANT = process.env.KYC4U_TENANT || "kyc4ultd.onmicrosoft.com";
 const SITE_HOST = process.env.KYC4U_SITE_HOST || "kyc4ultd.sharepoint.com";
@@ -440,12 +441,29 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
   const me = (await pool.query(`SELECT email FROM users WHERE id = $1`, [userId])).rows[0];
   const feeEarners = [...new Set([...agents.map((a: any) => a.email), me?.email].filter(Boolean))];
   const jointAgent = deal?.joint_agent_id ? (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [deal.joint_agent_id])).rows[0]?.name : "";
+  // BGP's own checks first (Woody, 2026-11-17: "we need to do everyhting we
+  // can before we ask questions on someone"): a run that is going is waited
+  // for a little, one is started if the party has none from the last 30
+  // days, and what they found goes in the note. The Companies House
+  // documents they download are filed on the KYC record, so they are among
+  // the documents below.
+  let precheck: Awaited<ReturnType<typeof import("./kyc-prechecks").latestPrecheck>> = null;
+  let precheckState: "done" | "running" | "none" = "none";
+  try {
+    const checks = await import("./kyc-prechecks");
+    await checks.startPrecheck(companyId, { dealId: dealId || null, userId });
+    precheck = (await checks.awaitPrecheck(companyId, 20_000)) || await checks.latestPrecheck(companyId);
+    precheckState = checks.precheckRunning(companyId) ? "running" : precheck ? "done" : "none";
+  } catch (e: any) {
+    console.warn(`[kyc4u] BGP's checks before asking for ${companyId}: ${e?.message}`);
+  }
   const docs = (await pool.query(
     `SELECT id, doc_type, file_name, file_size FROM kyc_documents WHERE company_id = $1 AND deleted_at IS NULL ORDER BY uploaded_at DESC LIMIT 20`, [companyId])).rows;
   // The red flags that send this party to KYC4U go in the note (Woody,
   // 2026-11-17: "if there is a red flag then we get KYC4U").
   const flags = dealId ? await loadDealRedFlags(dealId, [companyId]).catch(() => null) : null;
   const flagNote = flags ? redFlagNote(flags.parties[companyId] || [], flags.deal) : "";
+  const checkedNote = precheckNote(precheck?.result || null, precheckState);
   return {
     fields: {
       partyType: isClient ? "Client" : "Counterparty",
@@ -460,7 +478,7 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
       feeEarnerEmails: feeEarners.join("; "),
       clientEmails: isClient && contact?.email ? contact.email : "",
       expectedCompletion: deal?.target_date ? new Date(deal.target_date).toISOString().slice(0, 10) : "",
-      note: [deal ? `BGP deal ${deal.deal_ref ? "#" + deal.deal_ref + " " : ""}${deal.name || ""}`.trim() : "", dt ? `Deal type: ${dt}` : "", role ? `Role: ${role}${isClient ? " (BGP's client)" : " (counterparty)"}` : "", flagNote].filter(Boolean).join("\n"),
+      note: [deal ? `BGP deal ${deal.deal_ref ? "#" + deal.deal_ref + " " : ""}${deal.name || ""}`.trim() : "", dt ? `Deal type: ${dt}` : "", role ? `Role: ${role}${isClient ? " (BGP's client)" : " (counterparty)"}` : "", flagNote, checkedNote].filter(Boolean).join("\n").slice(0, 4000),
     },
     docs,
   };

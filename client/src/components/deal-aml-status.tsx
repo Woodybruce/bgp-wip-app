@@ -8,6 +8,7 @@ import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { ClientChecksForParty, SendClientChecksButton } from "@/components/kyc-client-checks";
 import { legacyToCode } from "@shared/deal-status";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
+import { precheckDay, type PrecheckCardLine } from "@shared/kyc-prechecks";
 import { getAuthHeaders, queryClient, apiRequest } from "@/lib/queryClient";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,90 @@ export interface DealAmlStatus {
   inAppAml?: boolean;
   // What sends a party to KYC4U (BGP staff only; null for anyone else).
   redFlags?: { parties: Record<string, KycRedFlag[]>; deal: KycRedFlag[]; unchecked: string[] } | null;
+  // BGP's checks before asking, per party (BGP staff only).
+  prechecks?: Record<string, PartyPrecheck> | null;
+}
+
+export interface PartyPrecheck {
+  state: "done" | "running" | "none" | "cap" | "off" | "waiting";
+  startedAt: string | null;
+  ranAt: string | null;
+  lines: PrecheckCardLine[];
+  errors: string[];
+}
+
+// What BGP checked before anyone was asked anything (Woody, 2026-11-17: "we
+// need to do everyhting we can before we ask questions on someone"). It
+// starts by itself when the card opens; Run again starts it afresh.
+function PartyPrechecks({ dealId, data, companyId }: { dealId: string; data: DealAmlStatus; companyId: string }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const view = data.prechecks?.[companyId];
+  const again = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/kyc/deal/${dealId}/prechecks`, { companyId })).json(),
+    onSuccess: (r: any) => {
+      const state = r?.started?.[companyId];
+      if (state === "cap") toast({ title: "Not run", description: "Today's limit for these checks is used up. They run again tomorrow." });
+      else if (state === "off") toast({ title: "Not run", description: "These checks are switched off." });
+      queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
+    },
+    onError: (e: any) => toast({ title: "Not run", description: String(e?.message || e), variant: "destructive" }),
+  });
+  if (!view || view.state === "off") return null;
+  const running = view.state === "running" || again.isPending;
+  const attention = view.lines.filter(l => l.state === "attention").length;
+  const icon = (l: PrecheckCardLine) => l.state === "ok" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+    : l.state === "attention" ? <Flag className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+    : l.state === "not_run" ? <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+    : <AlertCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />;
+  return (
+    <div className="rounded-md border border-border bg-card p-2.5 text-xs space-y-1.5" data-testid={`kyc-prechecks-${companyId}`}>
+      <div className="flex items-center gap-2">
+        <span className="font-semibold uppercase tracking-wider text-muted-foreground text-[11px]">Checked before asking</span>
+        {view.ranAt && !running && <span className="text-[11px] text-muted-foreground">{precheckDay(view.ranAt)}</span>}
+        {view.lines.length > 0 && !running && (
+          <span className="text-[11px]" data-testid={`kyc-prechecks-summary-${companyId}`}>{attention ? `${attention} to review` : "nothing to review"}</span>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          {view.lines.length > 0 && (
+            <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-[11px]" onClick={() => setOpen(o => !o)} data-testid={`kyc-prechecks-toggle-${companyId}`}>
+              {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}{open ? "Hide" : "Show"}
+            </Button>
+          )}
+          <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-[11px]" disabled={running} onClick={() => again.mutate()} data-testid={`kyc-prechecks-again-${companyId}`}>
+            Run again
+          </Button>
+        </div>
+      </div>
+      {running && (
+        <p className="flex items-center gap-1.5 text-muted-foreground" data-testid={`kyc-prechecks-running-${companyId}`}>
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />Reading Companies House, screening the sanctions lists and searching the web for public roles and adverse media. This takes a minute or two.
+        </p>
+      )}
+      {!running && view.state === "cap" && <p className="text-muted-foreground">Today's limit for these checks is used up: they run when the card is next opened tomorrow.</p>}
+      {!running && view.state === "waiting" && <p className="text-muted-foreground">The last run did not finish. It is tried again shortly, or press Run again.</p>}
+      {!running && !view.lines.length && view.state === "none" && <p className="text-muted-foreground">Not run yet.</p>}
+      {(open || (attention > 0 && !running)) && view.lines.length > 0 && (
+        <ul className="space-y-1.5" data-testid={`kyc-prechecks-lines-${companyId}`}>
+          {view.lines.filter(l => open || l.state === "attention").map(l => (
+            <li key={l.key} className="flex items-start gap-1.5">
+              {icon(l)}
+              <div className="min-w-0">
+                <div className="text-foreground">{l.label}</div>
+                {l.detail && <div className="text-muted-foreground break-words">{l.detail}</div>}
+                {l.links.map(link => (
+                  <a key={link.url} href={link.url} target="_blank" rel="noreferrer" className="block underline underline-offset-2 text-muted-foreground hover:text-foreground break-words">{link.label}</a>
+                ))}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {open && view.errors.length > 0 && (
+        <p className="text-muted-foreground" data-testid={`kyc-prechecks-errors-${companyId}`}>Could not be read: {view.errors.join("; ")}.</p>
+      )}
+    </div>
+  );
 }
 
 // A red flag sends the party to KYC4U (Woody, 2026-11-17: "basically we do
@@ -93,6 +178,9 @@ export function useDealAmlStatus(dealId: string, enabled = true) {
   return useQuery<DealAmlStatus>({
     enabled,
     queryKey: ["/api/kyc/deal", dealId, "status"],
+    // While BGP's checks before asking run, read again every few seconds;
+    // otherwise every 30, as every other query does.
+    refetchInterval: (q) => Object.values((q.state.data as DealAmlStatus | undefined)?.prechecks || {}).some(p => p.state === "running") ? 5000 : 30_000,
     queryFn: async () => {
       const res = await fetch(`/api/kyc/deal/${dealId}/status`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load AML status");
@@ -129,6 +217,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
           <DealRedFlags data={data} />
           {data.counterparties.map(cp => (
             <div key={cp.id} className="space-y-2">
+              <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
               <PartyRedFlags data={data} companyId={cp.id} />
               {data.inAppAml && (
                 <>
@@ -202,6 +291,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                   </div>
                 </div>
                 <div className="mt-2 space-y-2">
+                  <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
                   <PartyRedFlags data={data} companyId={cp.id} />
                   {data.inAppAml && (
                     <>

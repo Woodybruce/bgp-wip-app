@@ -28,10 +28,11 @@ import { pool } from "./db";
 import { graphRequest, sendFromFirstMailbox, senderOrder, type EmailAttachment } from "./shared-mailbox";
 import {
   KYC_DOCS, KYC_LOGO_CID, KYC_MAX_FILE_MB, KYC_MAX_FILES_PER_REQUEST, KYC_REF_ALPHABET,
-  KYC_PEP_QUESTION, defaultKycDocs, isKycDocKey, isKycPepAnswer, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycPepWords,
+  KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, defaultKycDocs, isKycDocKey, isKycOwnersAnswer, isKycPepAnswer, kycDocDetail, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycOwnersWords, kycPepWords,
   kycRedFlagEmail, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycUploadAllowed, kycWhatsAppHref, kycWhatsAppText,
-  type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycPartyKind, type KycPortalView, type KycProgress,
+  type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycOwnersReply, type KycPartyKind, type KycPortalView, type KycProgress,
 } from "@shared/kyc-request";
+import { precheckAsks } from "@shared/kyc-prechecks";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
 
 export const KYC_MAILBOX = (process.env.KYC_MAILBOX || process.env.BGP_AML_MAILBOX || "kyc@chatbgp.app").trim();
@@ -74,6 +75,14 @@ export interface KycRequestDetails {
   // The red flags already sent to the agents, so each goes once
   // (server/kyc-red-flags.ts).
   redFlagAlerts?: string[];
+  // From BGP's checks before asking (server/kyc-prechecks.ts): the owners on
+  // the register for the client to confirm, the owners whose ID is asked
+  // for, the client's reply, what was not asked and why, and the run used.
+  confirmOwners?: Array<{ name: string; detail: string }> | null;
+  ownerNames?: string[];
+  ownersAnswer?: KycOwnersReply | null;
+  notAsked?: Array<{ key: KycDocKey; reason: string }>;
+  precheckId?: number | null;
 }
 
 interface TokenRow {
@@ -272,7 +281,8 @@ async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycPro
   const idState = request.needsIdCheck ? kycIdStateFor(session?.status) : null;
   const docsDone = request.docs.filter(key => list.some(f => f.docKey === key));
   const pepAnswered = !request.askPep || !!request.answers?.pep;
-  return { idDone: idState === "approved" || idState === "submitted", docsDone, pepAnswered, idState, files: list };
+  const ownersAnswered = !request.confirmOwners?.length || !!request.ownersAnswer;
+  return { idDone: idState === "approved" || idState === "submitted", docsDone, pepAnswered, ownersAnswered, idState, files: list };
 }
 
 export async function portalView(row: TokenRow): Promise<KycPortalView> {
@@ -301,8 +311,9 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
     expiresAt: new Date(row.expires_at).toISOString(),
     idCheck,
     question: request.askPep ? { pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null } : null,
+    owners: request.confirmOwners?.length ? { list: request.confirmOwners, answer: request.ownersAnswer?.answer ?? null, detail: request.ownersAnswer?.detail ?? null } : null,
     docs: request.docs.map(key => ({
-      key, title: KYC_DOCS[key].title, detail: KYC_DOCS[key].detail,
+      key, title: KYC_DOCS[key].title, detail: kycDocDetail(key, request.ownerNames),
       files: progress.files.filter(f => f.docKey === key).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
     })),
     otherFiles: progress.files.filter(f => !f.docKey || !requested.has(f.docKey)).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
@@ -380,6 +391,12 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   if (!needsIdCheck && !docs.includes("photo_id") && input.needsIdCheck) docs = ["photo_id", ...docs];
   if (!needsIdCheck && !docs.length) throw Object.assign(new Error("Ask for at least one thing: the identity check or a document."), { status: 400 });
 
+  // What BGP's checks before asking found (the agent's ticks decide what is
+  // asked; this records why the rest was not, and the owners to confirm).
+  const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(party.companyId)).catch(() => null);
+  const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName: input.name });
+  const confirmOwners = input.kind === "company" && !docs.includes("ownership") && asks.confirmOwners?.length ? asks.confirmOwners : null;
+
   const agents = await dealAgents(dealId);
   const agentList: KycAgent[] = agents.map(a => ({ name: a.name, email: a.email, phone: a.phone }));
   const meEmail = cleanEmail(me.email);
@@ -398,6 +415,8 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
     needsIdCheck, docs, note: input.note?.trim() || null, mobile: input.mobile?.trim() || null,
     agents: agentList, cc, sentBy: { id: me.id, name: me.name }, sentFrom: null, sentAt: null, sendError: null,
     openedAt: null, veriffSessionIds: [], idCheckNote, askPep: true, answers: null,
+    confirmOwners, ownerNames: docs.includes("owner_ids") ? asks.ownerNames : [], ownersAnswer: null,
+    notAsked: asks.notAsked.filter(n => !docs.includes(n.key)), precheckId: pre?.precheckId ?? null,
   };
   await pool.query(
     `INSERT INTO kyc_upload_tokens (token, deal_id, contact_email, contact_name, created_by, expires_at, company_id, contact_id, request, is_test)
@@ -424,6 +443,7 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
     build: sentFrom => kycRequestEmail({
       recipientName: input.name, partyName: party.name, kind: input.kind, dealName: found.deal.name, ref, link, expiresAt,
       needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, agents: agentList, sentFrom, askPep: true,
+      confirmOwners: request.confirmOwners, ownerNames: request.ownerNames,
     }),
   });
   request.sentFrom = sent.from;
@@ -462,6 +482,8 @@ export async function clientChecksForDeal(dealId: string) {
       finishedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
       status, needsIdCheck: request.needsIdCheck, idState: progress.idState, idCheckNote: request.idCheckNote,
       askPep: !!request.askPep, pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null,
+      owners: request.confirmOwners?.length ? { list: request.confirmOwners, answer: request.ownersAnswer?.answer ?? null, detail: request.ownersAnswer?.detail ?? null } : null,
+      notAsked: request.notAsked || [],
       docs: request.docs.map(key => ({ key, title: KYC_DOCS[key].title, done: progress.docsDone.includes(key) })),
       files: progress.files, remindersSent: row.reminders_sent || 0,
       link,
@@ -484,6 +506,7 @@ async function sendReminder(row: TokenRow): Promise<KycSendResult> {
       recipientName: row.contact_name, partyName: request.partyName, kind: request.kind, dealName: request.dealName,
       ref: request.ref, link, expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: request.docs,
       agents: request.agents, sentFrom, progress, test: !!row.is_test, askPep: !!request.askPep,
+      confirmOwners: request.confirmOwners, ownerNames: request.ownerNames,
     }),
   });
   if (sent.ok) await pool.query(`UPDATE kyc_upload_tokens SET reminders_sent = COALESCE(reminders_sent, 0) + 1, last_reminded_at = now() WHERE token = $1`, [row.token]);
@@ -511,7 +534,7 @@ export async function sendKycReminders(now = new Date()): Promise<{ sent: number
   for (const row of rows) {
     if (!reminderDue(row, now)) continue;
     const progress = await progressOf(row);
-    if ((!row.request!.needsIdCheck || progress.idDone) && progress.docsDone.length === row.request!.docs.length && progress.pepAnswered) { skipped++; continue; }
+    if ((!row.request!.needsIdCheck || progress.idDone) && progress.docsDone.length === row.request!.docs.length && progress.pepAnswered && progress.ownersAnswered) { skipped++; continue; }
     const result = await sendReminder(row);
     if (result.ok) sent++; else { failed++; console.warn(`[kyc] reminder for ${row.request!.ref} failed: ${result.error}`); }
   }
@@ -608,6 +631,7 @@ async function finishRequest(row: TokenRow): Promise<void> {
   const progress = await progressOf(row);
   const missing = [
     ...(request.needsIdCheck && !progress.idDone ? ["Identity check"] : []),
+    ...(progress.ownersAnswered ? [] : [KYC_OWNERS_QUESTION.title]),
     ...request.docs.filter(key => !progress.docsDone.includes(key)).map(key => KYC_DOCS[key].title),
     ...(progress.pepAnswered ? [] : [KYC_PEP_QUESTION.title]),
   ];
@@ -616,7 +640,7 @@ async function finishRequest(row: TokenRow): Promise<void> {
   const { loadDealRedFlags, requestIdChecks } = await import("./kyc-red-flags");
   const { partyRedFlags } = await import("@shared/kyc-red-flags");
   const redFlags = row.is_test || !row.company_id
-    ? partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null }], idChecks: await requestIdChecks(request.veriffSessionIds) })
+    ? partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null, ownersAnswer: request.ownersAnswer || null }], idChecks: await requestIdChecks(request.veriffSessionIds) })
     : await loadDealRedFlags(row.deal_id, [row.company_id]).then(r => r.parties[row.company_id!] || []).catch(() => []);
   const sent = await sendKycEmail({
     to,
@@ -625,7 +649,7 @@ async function finishRequest(row: TokenRow): Promise<void> {
       dealLink: row.is_test ? LINK_BASE : dealLinkFor(row.deal_id), idState: progress.idState,
       files: progress.files.map(f => ({ name: f.name, docKey: f.docKey })), missing, sentFrom, test: !!row.is_test,
       kind: request.kind, ...(request.askPep ? { pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null } : {}),
-      redFlags,
+      redFlags, owners: request.confirmOwners?.length ? { list: request.confirmOwners, reply: request.ownersAnswer || null } : null,
     }),
   });
   if (!sent.ok) console.warn(`[kyc] the finished note for ${request.ref} was not sent: ${sent.error}`);
@@ -727,7 +751,12 @@ kycRequestRouter.get("/api/aml/deal/:id/client-checks", signedIn, async (req: Re
       mailbox: KYC_MAILBOX,
       veriff,
       agents: agents.map(a => ({ name: a.name, email: a.email })),
-      parties: found.parties.map(p => ({ ...p, defaultDocs: defaultKycDocs(p.kind, p.role, veriff) })),
+      parties: await Promise.all(found.parties.map(async p => {
+        const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(p.companyId)).catch(() => null);
+        const contact = p.contacts.find(c => c.id === p.contactId) || p.contacts[0] || null;
+        const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff, contactName: contact?.name || null });
+        return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null };
+      })),
       requests: await clientChecksForDeal(dealId),
     });
   } catch (err: any) {
@@ -881,6 +910,32 @@ kycRequestRouter.post("/api/kyc-upload/:token/answers", async (req: Request, res
     if (row.company_id && !row.is_test) {
       await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_pep_declaration', $2, $3)`,
         [row.company_id, row.contact_name || row.contact_email, `Asked about public roles (ref ${request.ref}): ${kycPepWords(pep)}${pepDetail ? `. ${pepDetail}` : ""}${pep === "no" ? "" : ". Enhanced due diligence: MLRO approval, source of wealth and funds."}`]).catch(() => {});
+    }
+    res.json(await portalView((await tokenRow(row.token))!));
+  } catch (err: any) {
+    res.status(500).json({ message: "Something went wrong. Please try again." });
+  }
+});
+
+// The client's reply about the owners Companies House lists. A "no" is a
+// difference from the register: it goes on the party's KYC trail, and the
+// agents see it on the deal and in the finished note (HMRC, AMLG11400 14.8:
+// report it to Companies House).
+kycRequestRouter.post("/api/kyc-upload/:token/owners", async (req: Request, res: Response) => {
+  try {
+    const row = await openRow(req, res);
+    if (!row) return;
+    const request = row.request!;
+    if (!request.confirmOwners?.length) return res.status(400).json({ message: "There's no list of owners on this request." });
+    const answer = req.body?.answer;
+    if (!isKycOwnersAnswer(answer)) return res.status(400).json({ message: "Choose Yes or No." });
+    const detail = answer === "no" ? String(req.body?.detail || "").trim().slice(0, 2000) || null : null;
+    if (answer === "no" && !detail) return res.status(400).json({ message: KYC_OWNERS_QUESTION.no });
+    request.ownersAnswer = { answer, detail, answeredAt: new Date().toISOString() };
+    await saveRequest(row.token, request);
+    if (row.company_id && !row.is_test) {
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_owners_confirmation', $2, $3)`,
+        [row.company_id, row.contact_name || row.contact_email, `Owners on the register (ref ${request.ref}): ${kycOwnersWords(answer)}${detail ? `. ${detail}` : ""}${answer === "no" ? ". A difference from the register: report it to Companies House." : ""}`]).catch(() => {});
     }
     res.json(await portalView((await tokenRow(row.token))!));
   } catch (err: any) {
