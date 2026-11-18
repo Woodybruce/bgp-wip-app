@@ -843,6 +843,7 @@ function AuthenticatedApp() {
               if (location === "/settings/profile") return "My Profile";
               if (location.startsWith("/deals/properties")) return "Properties";
               if (location.startsWith("/deals/letting")) return "Letting Tracker";
+              if (location.startsWith("/deals/aml")) return "AML checks";
               if (location.startsWith("/landsec/tracker")) return "Tracker";
               if (location.startsWith("/landsec/viewings")) return "Viewings";
               if (location.startsWith("/landsec/calendar")) return "Calendar";

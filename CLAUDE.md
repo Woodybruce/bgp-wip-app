@@ -3404,8 +3404,57 @@ screens: `client/src/components/deal-party-aml.tsx`. Tests:
   a build machine (it cannot be until their admin approves): tried locally
   against a fake site on 18 November 2026.
 - Not built: the MLRO clearing a rejection from the deal (the old company
-  reject and approve routes are retired with in-app AML); step 6 of the
-  review, the AML dashboard.
+  reject and approve routes are retired with in-app AML). The AML dashboard
+  (step 6) is the next section.
+
+## The AML dashboard (Woody, 2026-11-18)
+
+Woody: "a dashboard of all AML / KYC live and finished checks ... nice and
+easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
+"go ahead with your suggestions", in the place the review proposed (decision
+5: a pill on Deals). Rules (pure): `shared/aml-dashboard.ts`; feed:
+`server/aml-dashboard.ts`; page: `client/src/pages/aml-dashboard.tsx`, the
+**AML** pill on the Deals hub (`/deals/aml`, `deals-hub.tsx`). Tests:
+`server/aml-dashboard.test.ts` (in `npm test`),
+`qa/regression/aml-dashboard-guards.test.mjs`.
+
+- **Who**: BGP staff signed in as themselves (`staffMe`, `contactViewer`) on
+  `GET /api/aml-dashboard` and `GET /api/aml-dashboard/party`. The address is
+  on no client gateway list and outside the retired-AML switch (which matches
+  `/api/aml/` only). The pill is never offered or mounted for a client login,
+  and `/deals/aml` sends one to the deal list. It reads; it writes nothing.
+- **Rows**: one per party (landlord, tenant, vendor, purchaser) of every deal
+  not withdrawn or archived, completed or invoiced ones changed in the last
+  90 days included (`AML_DASHBOARD_CLOSED_DAYS`), an investment deal only from
+  Solicitors (`dealLeftTrackerSql`), at most 2,000 deals. Each party is read
+  the deal card's way and in one batch for every deal: its state through
+  `loadPartyKyc` (the company that signs when the deal names one), its red
+  flags by `partyRedFlags` and `dealRedFlags` on the same records the card
+  reads (a deal record's flag is listed on each of its parties as "Deal:
+  …"). A record that could not be read is listed (`unchecked`), never read
+  as no red flags.
+- **One stage rule** (`amlStage`): a decision first (rejected; approved,
+  Expiring within `AML_EXPIRING_DAYS` (30) of its re-check date, Expired past
+  it), then with KYC4U (a request raised on this deal and not answered, or the
+  party in review), client finished, client checks sent (a request not
+  cancelled), BGP checked (checks before asking in the last 30 days), else not
+  started. **HMRC's timing** (`amlDue`, from `KYC_TIMING`): a landlord or
+  seller on any live deal, a tenant or buyer from Heads of Terms. **Pills**
+  (`amlBucket`): To do (due, not started or only BGP checked), In progress
+  (client sent or finished, with KYC4U), Done (approved or rejected), Expiring
+  (expiring or expired), Not due yet. **Waiting on** (`amlWaitingOn`) and the
+  days since anything moved (`daysSince`: the checks, the requests, KYC4U
+  drafts, the approval). Mine = the deal's `internal_agent_ids` or names.
+- **The page**: the pills with counts, All / Mine, a search (`rowMatches`), a
+  table on a computer and cards on a phone; a row opens the party's trail:
+  the deal's own AML card (every button: checks before asking, client checks,
+  KYC4U request, Sign off, Add KYC4U result), the documents on the party's
+  KYC record and its history (the KYC audit log and the deal's AML lines).
+  The view is kept in the address (`?view=`, `?who=mine`), replaced, so a pill
+  is never a Back step. The KYC4U grid stays on the KYC4U pill of My BGP.
+- Checked in a browser against a local copy on 18 November 2026 (desktop and
+  an iPhone profile). Not built: the stage on the deal page's own card (it
+  shows the state, not this chain), and a count of To do on the side bar.
 
 ## Emails come from chatbgp.app (Woody, 2026-11-17)
 

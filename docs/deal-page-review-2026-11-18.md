@@ -327,7 +327,9 @@ Each step ships on its own.
 4. **Negotiation, checklist and tasks on the deal**: the deal-keyed reads,
    the pills, the existing dialogs, the deal's tasks.
 5. **The conversation**: the property's thread cut to the deal.
-6. **The AML dashboard.**
+6. **The AML dashboard.** **Built on 18 November 2026**, brought forward
+   (Woody: "go ahead with your suggestions"), as the AML pill on Deals: see
+   "The AML dashboard" in CLAUDE.md.
 7. **The page shape and the tidy**: the pills and summary card in the landlord
    page's frame, files, the phone pills, the unused code and whole-table
    downloads removed, CLAUDE.md put right on what a joint agent sees.

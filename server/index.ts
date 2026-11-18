@@ -4264,6 +4264,7 @@ import kycRequestRouter from "./aml-portal";
 import kycPrecheckRouter from "./kyc-prechecks";
 import dealPartiesRouter from "./deal-parties";
 import dealPartyAmlRouter from "./deal-party-aml";
+import amlDashboardRouter from "./aml-dashboard";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
 import brandDedupeRouter from "./brand-dedupe";
@@ -5619,6 +5620,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // Each deal party's company that signs and the person to ask (BGP staff only).
   app.use(dealPartiesRouter);
   app.use(dealPartyAmlRouter);
+  app.use(amlDashboardRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);
   app.use(brandDedupeRouter);
