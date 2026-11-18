@@ -18,7 +18,9 @@ Mark Warne's feedback, as Woody passed it on, changes who is in the film:
 - **The joint agent** sits alongside Millie to run the marketing campaign,
   with oversight from Jonny.
 - **Richard Willcox** of Etch acts for Jersey Mike's; Millie holds that
-  relationship.
+  relationship. The introduction came from a meeting with Jersey Mike's:
+  Woody, Jonny, Richard and the CEO, **Satnam Leihal** (who also knows Mark
+  and Jonny outside this instruction). David Bell stays the joint agent.
 - **Agreeing terms and finalising Heads of Terms** sits with Will and Millie,
   as does completing the transaction once Heads are agreed.
 - **Informed**, able to look in live at any time, comment and add tasks:
@@ -54,8 +56,9 @@ is simply said again.
 >
 > **The brand.** And it tracks who is growing. Jersey Mike's: new to the UK,
 > backed by Blackstone, with a stated plan for four hundred sites. A first to
-> market for Bluewater. Their agent is Richard Willcox at Etch, and Millie
-> Edwards holds that relationship for us.
+> market for Bluewater. Their agent is Richard Willcox at Etch. Jonny and I
+> have already met him and their CEO, Satnam Leihal, and Millie Edwards holds
+> that relationship for us.
 >
 > **The brief.** Before anyone picks up the phone, there's a brief. Will
 > Harvey, your senior asset manager, is accountable for it: the business

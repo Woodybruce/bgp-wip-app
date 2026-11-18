@@ -19,6 +19,7 @@ html,body{margin:0;background:transparent;overflow:hidden}
 .tag{position:absolute;bottom:14px;transform:translateX(-50%);white-space:nowrap;background:#6E0C25;color:#fff;border-radius:999px;padding:7px 18px 8px;font-size:21px;font-weight:700;box-shadow:0 3px 10px rgba(0,0,0,.35);z-index:5}
 .tag small{display:block;font-weight:400;font-size:.72em;opacity:.92;text-align:center;margin-top:1px}
 .tag.landsec{background:#1f3a5f}
+.tag.other{background:#46464c}
 .card{position:absolute;white-space:nowrap;background:#fff;color:#6E0C25;border:2px solid #eadfce;border-radius:18px;padding:16px 30px 18px;font-size:38px;font-weight:700;box-shadow:0 10px 24px rgba(60,30,20,.22)}
 .card.done{background:#6E0C25;color:#fff;border-color:#6E0C25}
 .card.done::before{content:"✓  ";color:#FC9F8D}
@@ -55,7 +56,7 @@ function build(a) {
     const svg = document.createElementNS(NS, "svg"); svg.setAttribute("viewBox", `0 0 ${r.w} ${r.h}`); svg.style.left = `${pad * k}px`; svg.style.width = `${r.w * k}px`; svg.style.height = `${r.h * k}px`;
     svg.innerHTML = `<g class="mouth"></g><g class="lids"></g>`; inner.appendChild(svg);
   }
-  if (a.tag) { const tag = document.createElement("div"); tag.className = `tag${a.char === "mark" ? " landsec" : ""}`; tag.innerHTML = `${a.tag}${a.role ? `<small>${a.role}</small>` : ""}`; tag.style.fontSize = `${(a.tagSize || 21) / a.scale}px`; el.appendChild(tag); }
+  if (a.tag) { const tag = document.createElement("div"); tag.className = `tag${a.char === "mark" || a.org === "landsec" ? " landsec" : a.org === "other" ? " other" : ""}`; tag.innerHTML = `${a.tag}${a.role ? `<small>${a.role}</small>` : ""}`; tag.style.fontSize = `${(a.tagSize || 21) / a.scale}px`; el.appendChild(tag); }
   el._k = k; el._pad = pad; el._r = r;
   return el;
 }
