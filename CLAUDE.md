@@ -68,6 +68,15 @@ explicit permission.
   go on that list; CREATE TABLE still needs a boot statement or a listed
   file. `GET /api/admin/schema-drift` shows what's missing.
 - For UI changes, say explicitly when you haven't verified in a browser.
+- **The build sets its own memory limit** (`"build"` in `package.json`:
+  `--max-old-space-size=4096`, ahead of any `NODE_OPTIONS` the caller set, so
+  a caller's own figure still wins). The client build needs about 2.5 GB of
+  heap (it failed at 2304 MB and passed at 2560 MB on 18 November 2026) and
+  died with "JavaScript heap out of memory" wherever Node's default was
+  about 2 GB. The whole build peaks at about 3.9 GB of memory whether the
+  limit is 4096 or 8192, so the limit asks for no more than a passing build
+  already used. The in-app deploy builds inside the live container
+  (`server/auto-deploy.ts`); Railway's memory size was not checked.
 - **`npm run qa:regression` is the deploy gate** (`.github/workflows/auto-deploy.yml`):
   a red run skips the build, the smoke suites and the deploy job. Run it
   before pushing. Many of its tests cut one function or route out of the
