@@ -4,24 +4,48 @@
 // scheme: each name is a suggestion the person adding them confirms, and the
 // server still takes every name and email from the login or CRM record. The
 // sheet dates from February 2026, so check it against the team as it is now.
+//
+// Bluewater was brought up to date on 18 November 2026 from Landsec's own
+// account of who does what there (Mark Warne's feedback, passed on by Woody):
+// Will Harvey is the senior asset manager, accountable for the business plan,
+// the brief and the transaction; Jonny Rushton is the Portfolio Leasing
+// Manager; Millie Edwards manages the process for BGP; Gemma Casey (Senior
+// Asset Director), Rebecca "Becs" Blenkinsop (Senior Leasing Manager, Retail)
+// and Mark Warne (Commercial Director) are kept informed and do not sign.
+// Every other scheme is still the February sheet. An entry confirmed since
+// carries `checked`.
 export const LANDSEC_TEAM_SHEET_DATE = "February 2026";
 
 export interface LandsecSchemeTeam {
   key: string;
   match: RegExp;                 // on the property name
   assetManagers: string[];       // Landsec
+  // The senior asset manager who is accountable for the brief, where Landsec has named one.
+  // Also listed under assetManagers; suggested on a brief in that role.
+  seniorAssetManagers?: string[];
   leasing: string[];             // Landsec leasing leads
+  // On the scheme's team but only kept informed (they read, comment and add
+  // tasks): listed with the team, never suggested as someone who agrees a brief.
+  informed?: string[];
+  checked?: string;              // when this entry was last confirmed, if after the sheet's date
   bgpLead: string[];
   bgpSupport: string[];
   jointAgents: string[];         // the joint agency team, where there is one
 }
 
-const RETAIL_LEASING = ["Mark Warne", "Victoria Gould", "George O'Hara", "Heinz Kloihofer", "Jonathan Rushton"];
-const LONDON_LEASING = ["Ruth McFetridge", "Jonathan Rushton", "Mark Warne"];
+const RETAIL_LEASING = ["Mark Warne", "Victoria Gould", "George O'Hara", "Heinz Kloihofer", "Jonny Rushton"];
+const LONDON_LEASING = ["Ruth McFetridge", "Jonny Rushton", "Mark Warne"];
 const JOINT_FOUR = ["Nigel Costain", "Tamara Lamb", "George Radford", "Tom Dracup"];
 
 export const LANDSEC_SCHEME_TEAMS: LandsecSchemeTeam[] = [
-  { key: "bluewater", match: /bluewater/i, assetManagers: ["Gemma Casey", "Alice Wilkins", "Rebecca Blenkinsop"], leasing: RETAIL_LEASING, bgpLead: ["Emily Dumbell"], bgpSupport: ["Lucy Gardiner", "Rob Barnes"], jointAgents: JOINT_FOUR },
+  {
+    key: "bluewater", match: /bluewater/i, checked: "November 2026",
+    seniorAssetManagers: ["Will Harvey"],
+    assetManagers: ["Will Harvey", "Gemma Casey", "Alice Wilkins"],
+    leasing: ["Jonny Rushton", "Rebecca Blenkinsop", ...RETAIL_LEASING.filter(n => n !== "Jonny Rushton")],
+    informed: ["Gemma Casey", "Rebecca Blenkinsop", "Mark Warne"],
+    bgpLead: ["Millie Edwards", "Emily Dumbell"], bgpSupport: ["Lucy Gardiner", "Rob Barnes"], jointAgents: JOINT_FOUR,
+  },
   { key: "liverpool-one", match: /liverpool\s*(one|1)\b/i, assetManagers: ["Rob Deacon", "Nick Cywinski"], leasing: RETAIL_LEASING, bgpLead: ["Lucy Gardiner", "Emily Dumbell"], bgpSupport: ["Rob Barnes", "Luke Donohoe"], jointAgents: ["Sammy Jones", "David Bell"] },
   { key: "buchanan-galleries", match: /buchanan/i, assetManagers: ["Charlie Griffiths", "Ben Doughty", "Colin Kennedy"], leasing: RETAIL_LEASING, bgpLead: ["Victoria Broadhead"], bgpSupport: [], jointAgents: ["James Godfrey", "Alex Culverwell"] },
   { key: "st-davids", match: /st\.?\s*david|queen'?s?\s*arcade/i, assetManagers: ["Charlie Griffiths", "Francesca Moffat", "James Hamilton"], leasing: RETAIL_LEASING, bgpLead: ["Victoria Broadhead"], bgpSupport: ["Rob Barnes", "Luke Donohoe"], jointAgents: JOINT_FOUR },
@@ -46,11 +70,14 @@ export function landsecSchemeTeamFor(propertyName: string | null | undefined): L
 export function landsecTeamSuggestions(propertyName: string | null | undefined): { name: string; role: string; firm: string | null; email: string | null }[] {
   const t = landsecSchemeTeamFor(propertyName);
   if (!t) return [];
-  const of = (names: string[], role: string, firm: string | null) => names.map(name => ({ name, role, firm, email: null }));
+  // People who are only kept informed are not asked to agree a brief; the senior asset manager is offered as that.
+  const informed = new Set((t.informed || []).map(n => n.toLowerCase())), senior = t.seniorAssetManagers || [];
+  const of = (names: string[], role: string, firm: string | null) => names.filter(name => !informed.has(name.toLowerCase())).map(name => ({ name, role, firm, email: null }));
   return [
     ...of(t.bgpLead, "bgp_agent", "BGP"), ...of(t.bgpSupport, "bgp_agent", "BGP"),
     ...of(t.jointAgents, "joint_agent", null),
     ...of(t.leasing, "client_leasing", "Landsec"),
-    ...of(t.assetManagers, "asset_manager", "Landsec"),
+    ...of(senior, "senior_asset_manager", "Landsec"),
+    ...of(t.assetManagers.filter(name => !senior.includes(name)), "asset_manager", "Landsec"),
   ];
 }

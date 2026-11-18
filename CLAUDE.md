@@ -2322,6 +2322,16 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   Landsec scheme. Names are confirmed by the person adding them and matched
   to a real login where there is one. It will go stale: update it from the
   team's current sheet, never treat it as who has access.
+  Bluewater was updated on 18 November 2026 from Landsec's own account
+  (Mark Warne's feedback): Will Harvey senior asset manager
+  (`seniorAssetManagers`, suggested on a brief in that role), Jonny Rushton
+  leasing, Millie Edwards first for BGP, and Gemma Casey, Rebecca "Becs"
+  Blenkinsop and Mark Warne kept informed (`informed`: listed with the team,
+  never suggested as someone who agrees a brief). Every other scheme is
+  still the February sheet; an entry confirmed since carries `checked`. The
+  sheet also feeds a client's own Contacts groups and the BGP team a client
+  sees per scheme, so a name is spelt as its login or CRM record spells it
+  (Jonny, not Jonathan). Tests: `shared/landsec-personnel.test.ts`.
 - **The public website gets only files stored with file type `upload`**
   (review, 2026-11-13). The rule is `publicUnitFileSql` in
   `shared/letting-rules.ts` (`publicUnitFile` in `server/routes.ts` is that

@@ -31,6 +31,11 @@ Mark Warne's feedback, as Woody passed it on, changes who is in the film:
   Leasing Manager, Retail) and Mark Warne (Commercial Director).
 - **Ollie Duthie** (Data and Technology, Landsec) has already given initial
   clearance for pilot use.
+- **Brands** (Woody, 18 November): a scene showing that Landsec gets the
+  brands. They add a brand to get intel on it and its page fills in; the
+  example is Flat Iron, which is of course already there with hundreds of
+  others. And the close says the app can be changed or built to Landsec's
+  specification, within reason.
 - The drawn presenter is **Woody**, not "Big Wood", and the phone opening ends
   on "my more able and capable self".
 
@@ -88,6 +93,11 @@ is simply said again.
 > Blenkinsop and Mark Warne can look in at any time, live. They can comment,
 > and they can add a task.
 >
+> **Brands.** And you get the brands. If you want intel on a brand, add it,
+> and the app builds its page: who owns it, where it trades, how fast it's
+> growing, and who to call. Take Flat Iron. Of course, Flat Iron is already
+> there, along with hundreds of other brands you get access to.
+>
 > **The joint agent.** You also asked how we work with the other agents on
 > the panel. So here comes one now. This is David Bell. And yes, we like him.
 > David gets his own login, with his schemes and nothing else. The same
@@ -101,7 +111,9 @@ is simply said again.
 >
 > **The close.** That's it. It runs the same way across all fourteen schemes,
 > so our time goes on brands and deals, not on chasing updates. It joins up
-> the deal process, and lets everyone come along the journey.
+> the deal process, and lets everyone come along the journey. And if you want
+> it changed, or something built, we can do that to your specification,
+> within reason. It's very flexible.
 >
 > **The ending (deep voice).** Welcome to ChatBGP. Your superhero app.
 
