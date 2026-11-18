@@ -16,7 +16,10 @@ Mark Warne's feedback, as Woody passed it on, changes who is in the film:
   relationship management and QSR expertise across brands; helps create the
   agency brief. Replaces Mark as the leasing lead.
 - **The joint agent** sits alongside Millie to run the marketing campaign,
-  with oversight from Jonny.
+  with oversight from Jonny. In the film the joint agent keeps his own place
+  near the end, as in the earlier cuts, on his own schemes (Woody, 18
+  November: "we dont want him associated with bluewater the old one was
+  fine"): David Bell is not put on the Bluewater letting.
 - **Richard Willcox** of Etch acts for Jersey Mike's; Millie holds that
   relationship. The introduction came from a meeting with Jersey Mike's:
   Woody, Jonny, Richard and the CEO, **Satnam Leihal** (who also knows Mark
@@ -67,11 +70,6 @@ is simply said again.
 > Millie Edwards runs the process for BGP, from the asset side and the brand
 > side. Each of them agrees it, in their own login.
 >
-> **The joint agent.** Then the marketing. Our joint agent works alongside
-> Millie on the campaign, with Jonny's oversight. This is David Bell. And
-> yes, we like him. David gets his own login, with his schemes and nothing
-> else. The same tracker, the same checklist, the same conversation.
->
 > **The offer.** An offer comes in. We type it the way we'd say it. The app
 > fills the form, and measures it against the brief.
 >
@@ -89,6 +87,12 @@ is simply said again.
 > **Kept informed.** And nobody has to ask for an update. Gemma Casey, Becs
 > Blenkinsop and Mark Warne can look in at any time, live. They can comment,
 > and they can add a task.
+>
+> **The joint agent.** You also asked how we work with the other agents on
+> the panel. So here comes one now. This is David Bell. And yes, we like him.
+> David gets his own login, with his schemes and nothing else. The same
+> tracker, the same checklist, the same conversation. You see one version of
+> every deal, whoever did the work.
 >
 > **The phone.** And it all goes with you. Open it and ask it a question.
 > Call Richard from the brand's page. Log the viewing before you're back at
