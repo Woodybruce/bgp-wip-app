@@ -16,6 +16,7 @@ import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { TargetOperatorsTable, isJointAgentLogin } from "@/components/target-operators-table";
 import { useToast } from "@/hooks/use-toast";
 import { TENANT_CATEGORIES } from "@shared/tenant-categories";
+import { LANDSEC_BRIEF_CATEGORIES } from "@shared/landsec";
 import type { AvailableUnit, UnitBrief, UnitTargetOperator } from "@shared/schema";
 import { normaliseCommercials, type BriefCommercials, type BriefWorkspace } from "@shared/unit-brief";
 import { Pill, PillCount } from "@/components/ui/pill";
@@ -401,7 +402,7 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
                   </div>
                   <div>
                     <Label className="text-xs">Priority categories</Label>
-                    <CategoryMultiSelect value={f("priorityCategories")} onChange={v => setF("priorityCategories", v)} />
+                    <CategoryMultiSelect value={f("priorityCategories")} onChange={v => setF("priorityCategories", v)} landsec={!!ws?.unit.landsecScheme} />
                   </div>
                   <div>
                     <Label className="text-xs">Agent instruction</Label>
@@ -543,19 +544,42 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
   );
 }
 
-// Priority categories as a searchable multiselect over the Landsec/BGP
-// tenant taxonomy, with free-add for anything not on the list. Stored as a
+// A category can hold a comma ("Café, Grab & Go and QSR"), so the names on
+// the list are read whole before the rest is split at its commas.
+function splitCategories(value: string, known: readonly string[]): string[] {
+  let rest = value;
+  const found: Array<[number, string]> = [];
+  for (const name of known) {
+    if (!name.includes(",")) continue;
+    for (let at = rest.indexOf(name); at >= 0; at = rest.indexOf(name)) {
+      found.push([at, name]);
+      rest = rest.slice(0, at) + " ".repeat(name.length) + rest.slice(at + name.length);
+    }
+  }
+  let at = 0;
+  for (const part of rest.split(",")) {
+    const text = part.trim();
+    if (text) found.push([at + part.indexOf(text), text]);
+    at += part.length + 1;
+  }
+  return Array.from(new Set(found.sort((a, b) => a[0] - b[0]).map(([, text]) => text)));
+}
+
+// Priority categories as a searchable multiselect over the BGP tenant
+// taxonomy, or the categories of Landsec's agency brief for a unit at one of
+// its schemes, with free-add for anything not on the list. Stored as a
 // comma-separated string (the column is text) so it stays compatible with
 // the AI extract/draft output and the generated PDF.
-function CategoryMultiSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function CategoryMultiSelect({ value, onChange, landsec }: { value: string; onChange: (v: string) => void; landsec: boolean }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const selected = value.split(",").map(s => s.trim()).filter(Boolean);
+  const options: readonly string[] = landsec ? LANDSEC_BRIEF_CATEGORIES : TENANT_CATEGORIES;
+  const selected = splitCategories(value, options);
   const set = (next: string[]) => onChange(Array.from(new Set(next)).join(", "));
   const toggle = (cat: string) => selected.includes(cat) ? set(selected.filter(c => c !== cat)) : set([...selected, cat]);
   const short = (c: string) => c.replace(/^Tenant - /, "");
-  const matches = TENANT_CATEGORIES.filter(c => c.toLowerCase().includes(query.toLowerCase()));
-  const canAdd = query.trim() && !TENANT_CATEGORIES.some(c => c.toLowerCase() === query.trim().toLowerCase()) && !selected.some(s => s.toLowerCase() === query.trim().toLowerCase());
+  const matches = options.filter(c => c.toLowerCase().includes(query.toLowerCase()));
+  const canAdd = query.trim() && !options.some(c => c.toLowerCase() === query.trim().toLowerCase()) && !selected.some(s => s.toLowerCase() === query.trim().toLowerCase());
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap gap-1 min-h-[28px]">
@@ -579,7 +603,7 @@ function CategoryMultiSelect({ value, onChange }: { value: string; onChange: (v:
             <CommandList className="max-h-[240px]">
               <CommandEmpty>No categories match.</CommandEmpty>
               {matches.length > 0 && (
-                <CommandGroup heading="Taxonomy">
+                <CommandGroup heading={landsec ? "Landsec brief categories" : "Taxonomy"}>
                   {matches.map(c => (
                     <CommandItem key={c} onSelect={() => toggle(c)}>
                       <div className={`w-3 h-3 rounded-sm border mr-2 ${selected.includes(c) ? "bg-primary border-primary" : "border-muted-foreground/30"}`} />

@@ -45,7 +45,7 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, asc, inArray, isNull } from "drizzle-orm";
 import { newsArticles, BRIEF_TARGET_STATUSES } from "@shared/schema";
-import { requirementListingUpdates, parseRequirementDate, requirementLive, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql, requirementClientCopy } from "@shared/requirement-live";
+import { requirementListingUpdates, parseRequirementDate, requirementLive, requirementStateSql, requirementLiveColumnsSql, requirementClientCopy } from "@shared/requirement-live";
 import { legacyToCode, statusSpellingsFor, CLOSED_STATUSES, TERMINAL_STATUSES, DEAL_STATUS_CODES, INVESTMENT_PROVISIONAL_STATUSES, investmentDealSql } from "@shared/deal-status";
 import { codeToLeasingStatus } from "@shared/lease-status-mirror";
 import { DEFAULT_LETTING_TYPE, LETTING_DEAL_TYPES, effectiveStatus, isHistoricStatus, isLettingType, isTrackerDeal, publicUnitFileSql, publicUnitPhotoSql } from "@shared/letting-rules";
@@ -853,6 +853,9 @@ export async function registerRoutes(
 ): Promise<Server> {
 
   registerLeasingViewingRoutes(app);
+
+  const { registerInvestmentResearchRoutes } = await import("./investment-research");
+  registerInvestmentResearchRoutes(app);
 
   const { registerImageStudioRoutes } = await import("./image-studio");
   registerImageStudioRoutes(app);
@@ -7741,7 +7744,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       ).catch(() => ({ rows: [] as any[] }));
       const currentTenants = tenantsQ.rows.map((r: any) => String(r.n)).filter(Boolean);
       const { TENANT_CATEGORIES } = await import("@shared/tenant-categories");
-      const taxonomy: string[] = [...TENANT_CATEGORIES];
+      // A unit at one of Landsec's 14 schemes, let by Landsec, is briefed in
+      // the categories of Landsec's agency brief (Woody, 2026-11-16).
+      const { schemeForPropertyName } = await import("./landsec-schemes");
+      const { LANDSEC_BRIEF_CATEGORIES } = await import("@shared/landsec");
+      const landsecScheme = !!schemeForPropertyName(property?.name) && /land\s?sec/i.test(clientCompany || "");
+      const taxonomy: string[] = landsecScheme ? [...LANDSEC_BRIEF_CATEGORIES] : [...TENANT_CATEGORIES];
       const { draftBriefFromContext } = await import("./unit-brief-doc");
       const draft = await draftBriefFromContext({
         unitName: (unit as any).unitName,
@@ -9498,6 +9506,29 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.status(500).json({ message: e?.message || "Undo failed" });
     }
   });
+  // Comps clean-up (Jack, 2026-11-16): lettings and refinancings off, live
+  // deals back to the tracker, duplicates merged, Subtype = tracker class.
+  // Preview → Apply → Undo; see server/investment-comp-cleanup.ts.
+  app.post("/api/admin/investment-comp-cleanup/preview", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { runCompCleanup } = await import("./investment-comp-cleanup");
+      res.json(await runCompCleanup({ apply: false }));
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Preview failed" }); }
+  });
+  app.post("/api/admin/investment-comp-cleanup/apply", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { runCompCleanup } = await import("./investment-comp-cleanup");
+      res.json(await runCompCleanup({ apply: true, actorId: (req as any).session?.userId || (req as any).tokenUserId || null }));
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Apply failed" }); }
+  });
+  app.post("/api/admin/investment-comp-cleanup/undo", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { undoCompCleanup } = await import("./investment-comp-cleanup");
+      const batch = String(req.body?.batch || "");
+      if (!batch) return res.status(400).json({ message: "batch required" });
+      res.json(await undoCompCleanup(batch));
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Undo failed" }); }
+  });
 
   // Move a brochure filed on the wrong property, with the images, tenancy
   // rows and notes blocks its ingest put there (feedback #78/#79).
@@ -10507,13 +10538,6 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const params: any[] = [];
       let paramIndex = 1;
 
-      const useArray = requirement.use;
-      if (useArray && useArray.length > 0) {
-        conditions.push(`au.use_class = ANY($${paramIndex})`);
-        params.push(useArray);
-        paramIndex++;
-      }
-
       if (Array.isArray(requirement.requirement_locations) && requirement.requirement_locations.length > 0) {
         const locClauses = requirement.requirement_locations.map((_: any, i: number) => {
           params.push(`%${requirement.requirement_locations[i]}%`);
@@ -10524,14 +10548,20 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
       const query = `
-        SELECT au.*, p.name as property_name, p.address as property_address 
-        FROM available_units au 
+        SELECT au.*, p.name as property_name, p.address as property_address
+        FROM available_units au
         LEFT JOIN crm_properties p ON au.property_id = p.id
         ${whereClause}
-        ORDER BY au.created_at DESC LIMIT 20
+        ORDER BY au.created_at DESC
       `;
       const matches = await pool.query(query, params);
-      res.json(matches.rows);
+      // Only units live on the Letting Tracker (Brand Gap's rule for the
+      // marketing units), and the unit's planning class (E(b), A3) read
+      // against the requirement's uses (Restaurant): compared as text in SQL,
+      // the dialog was empty for every requirement that names a use.
+      const { requirementUseFits } = await import("@shared/requirement-fit");
+      const { isTrackerLiveStatus } = await import("@shared/letting-rules");
+      res.json(matches.rows.filter((u: any) => isTrackerLiveStatus(u.marketing_status) && requirementUseFits(requirement.use, u)).slice(0, 20));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -10552,12 +10582,6 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const params: any[] = [];
       let paramIndex = 1;
 
-      if (unit.use_class) {
-        conditions.push(`$${paramIndex} = ANY(r.use)`);
-        params.push(unit.use_class);
-        paramIndex++;
-      }
-
       if (unit.location) {
         conditions.push(`r.requirement_locations IS NOT NULL AND array_length(r.requirement_locations, 1) > 0 AND EXISTS (SELECT 1 FROM unnest(r.requirement_locations) loc WHERE $${paramIndex} ILIKE '%' || loc || '%' OR loc ILIKE '%' || $${paramIndex} || '%')`);
         params.push(unit.location);
@@ -10566,28 +10590,39 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       // The one live rule: closed requirements are not matches, and the
       // best-evidenced come first. Staff get each row's state and dated line.
-      // A client login gets only rows its Requirements list shows (PIPnet
-      // listings) for brands in its slice, with no state and none of the
-      // "who confirmed" columns: it used to receive BGP's hand-entered rows.
+      // A client login gets every requirement for brands in its slice (all
+      // are open to it since 17 November 2026), newest first, with no state
+      // and none of the "who confirmed" columns (requirementClientCopy). A
+      // Landsec joint agent is refused this route at the gateway.
       const { resolveCompanyScope, getClientExtraBrandIds } = await import("./company-scope");
       const matchScope = await resolveCompanyScope(req);
       conditions.push(`${requirementStateSql("r")} <> 'closed'`);
-      if (matchScope) conditions.push(requirementClientVisibleSql("r"));
       const whereClause = `WHERE ${conditions.join(" AND ")}`;
+      const orderBy = `ORDER BY ${matchScope ? "" : `(CASE ${requirementStateSql("r")} WHEN 'live' THEN 0 WHEN 'to_confirm' THEN 1 ELSE 2 END), `}r.created_at DESC`;
+      // The unit's planning class (E(b), A3) read against each requirement's
+      // uses (Restaurant): compared as text in SQL, a unit with a use class
+      // matched only rows holding that raw text. The uses are read first, then
+      // the first 20 that fit are fetched whole, in the same order.
+      const { requirementUseFits } = await import("@shared/requirement-fit");
+      const candidates = await pool.query(`SELECT r.id, r.use FROM crm_requirements_leasing r ${whereClause} ${orderBy}`, params);
+      const ids: string[] = candidates.rows.filter((r: any) => requirementUseFits(r.use, unit)).slice(0, 20).map((r: any) => String(r.id));
       const query = `
         SELECT r.*, c.name as company_name, c.company_type as company_type
         FROM crm_requirements_leasing r
         LEFT JOIN crm_companies c ON r.company_id = c.id
-        ${whereClause}
-        ORDER BY ${matchScope ? "" : `(CASE ${requirementStateSql("r")} WHEN 'live' THEN 0 WHEN 'to_confirm' THEN 1 ELSE 2 END), `}r.created_at DESC LIMIT 20
+        WHERE r.id = ANY($1::text[])
       `;
-      const matches = await pool.query(query, params);
+      const fetched: any[] = ids.length ? (await pool.query(query, [ids])).rows : [];
+      const matches = { rows: ids.map(id => fetched.find((r: any) => String(r.id) === id)).filter(Boolean) };
       if (!matchScope) {
         return res.json(matches.rows.map((r: any) => { const live = requirementLive(r); return { ...r, state: live.state, state_label: live.stateLabel, date_label: live.dateLabel }; }));
       }
       const { isClientCrmCategory } = await import("@shared/tenant-categories");
       const matchExtras = await getClientExtraBrandIds(matchScope);
-      res.json(matches.rows.filter((r: any) => isClientCrmCategory(r.company_type) || matchExtras.has(r.company_id)).map((r: any) => requirementClientCopy(r)));
+      // The client brand slice as isClientVisibleBrand reads it since 14 November
+      // 2026 (any type starting "Tenant", the categories, self-adds), not the
+      // older category slice alone.
+      res.json(matches.rows.filter((r: any) => /^tenant/i.test(String(r.company_type || "")) || isClientCrmCategory(r.company_type) || matchExtras.has(r.company_id)).map((r: any) => requirementClientCopy(r)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -10714,7 +10749,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             WHERE au.property_id = $1 
             AND (au.use_class = ANY(r.use) OR r.use IS NULL OR array_length(r.use, 1) IS NULL)
           )
-          AND ${requirementStateSql("r")} <> 'closed'${(await (await import("./company-scope")).resolveCompanyScope(req)) ? ` AND ${requirementClientVisibleSql("r")}` : ""}
+          AND ${requirementStateSql("r")} <> 'closed'
           ORDER BY (CASE ${requirementStateSql("r")} WHEN 'live' THEN 0 WHEN 'to_confirm' THEN 1 ELSE 2 END), r.created_at DESC LIMIT 10
         `, [propertyId]),
       ]);

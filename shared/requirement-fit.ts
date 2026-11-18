@@ -38,6 +38,24 @@ export function pitchFitWords(req: { size?: string[] | string | null; requiremen
   return !places.length || places.some(l => text.includes(l)) ? "Fits" : "Size fits";
 }
 
+// The order a brand's suggested pitches are shown in (Woody, 2026-11-16:
+// "Jersey mikes should be suggesting everywhere but its just all of the
+// available units at gunwharf"). The ranking puts every unit at a centre level
+// on size and use, and the centre with the most same-format brands already
+// trading wins every tie, so one centre took all six places. Taken in the
+// ranking's order: the best unit at each centre, then the next best at each.
+export function spreadAcrossCentres<T>(ranked: T[], centreOf: (row: T) => string): T[] {
+  const rounds: T[][] = [];
+  const taken = new Map<string, number>();
+  for (const row of ranked) {
+    const centre = centreOf(row);
+    const round = taken.get(centre) ?? 0;
+    taken.set(centre, round + 1);
+    (rounds[round] ||= []).push(row);
+  }
+  return rounds.flat();
+}
+
 export const USE_HINTS: Array<[RegExp, RegExp]> = [
   [/restaurant|a1 food|f&b|caf/i, /f&b|rest|kiosk|caf|coffee|food|dining/i],
   [/gym|wellness|fitness/i, /gym|fitness|studio|wellness|health/i],
@@ -45,6 +63,62 @@ export const USE_HINTS: Array<[RegExp, RegExp]> = [
   // "Coffee Shop" is F&B, not a shop for a fashion retailer.
   [/retail/i, /retail|(?<!coffee |barber |betting )shop|store/i],
 ];
+
+// A unit's planning use class read as the uses a requirement names (audit,
+// 2026-11-17). Units hold a class ("E(b)", "A3"), requirements a use
+// ("Restaurant", "A1 Food"), so comparing the two as text kept only the
+// requirements that name no use. A class lines up with the uses PIPnet's
+// import and the requirement reader give it (A1 / E(a) Retail; A3 to A5 and
+// E(b) Restaurant; D2 / E(d) Gym and Leisure), A1 Food goes with shops and
+// food and drink as USE_HINTS has it, Sui Generis takes the old A4 and A5
+// uses and cinemas, and Class E on its own covers every use. A legacy code
+// is read as its 2020 class, as toUseClass in server/property-enrich.ts does.
+const LEGACY_CLASSES: Record<string, string> = { a1: "e(a)", a2: "e(c)", a3: "e(b)", a4: "sg", a5: "sg", b1: "e(g)", d1: "f1", d2: "e(d)" };
+const CLASS_USES: Record<string, RegExp> = {
+  "e": /./,
+  "e(a)": /retail|a1 food/i,
+  "e(b)": /restaurant|a1 food|f&b|caf/i,
+  "e(d)": /gym|fitness|wellness|leisure/i,
+  "e(e)": /wellness|other/i,
+  "sg": /restaurant|f&b|leisure|other/i,
+};
+// E(c), E(f), E(g) and the B, C and F classes.
+const OTHER_USE = /other/i;
+
+function planningClasses(text: string): string[] {
+  const t = text.toLowerCase();
+  const found = new Set<string>();
+  for (const m of t.matchAll(/\be\s*\(\s*([a-g])\s*\)/g)) found.add(`e(${m[1]})`);
+  for (const m of t.matchAll(/\b([abcd][1-9]|f\.?\s*[12])\b/g)) {
+    const code = m[1].replace(/[.\s]/g, "");
+    found.add(LEGACY_CLASSES[code] || code);
+  }
+  if (/\bsui\s*generis\b|\bsg\b/.test(t)) found.add("sg");
+  // Class E on its own: an E that is not inside a word or before "(b)".
+  if (/(?:^|[^a-z(])e(?![a-z0-9]|\s*\(\s*[a-g]\s*\))/.test(t)) found.add("e");
+  return [...found];
+}
+
+const sameClass = (a: string, b: string) => a === b || (a === "e" && b.startsWith("e(")) || (b === "e" && a.startsWith("e("));
+
+// Does a requirement's use line up with a unit? A side with no use stated
+// fits (on size alone, where the caller checks size). Otherwise the unit's
+// use class is one the requirement lists, or lines up by USE_HINTS, or its
+// planning class takes one of the requirement's uses. Brand Gap's lists and
+// the Match dialogs on the Requirements page and the Letting Tracker.
+export function requirementUseFits(uses: readonly unknown[] | null | undefined, unit: { use_class?: string | null; unit_name?: string | null }): boolean {
+  const wanted = (Array.isArray(uses) ? uses : []).map(u => String(u ?? "").trim()).filter(Boolean);
+  const useClass = String(unit.use_class ?? "").trim();
+  if (!wanted.length || !useClass) return true;
+  if (wanted.some(w => w.toLowerCase() === useClass.toLowerCase())) return true;
+  const said = wanted.join(" ");
+  if (USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(said) && unitRe.test(`${useClass} ${unit.unit_name || ""}`))) return true;
+  const classes = planningClasses(useClass);
+  return wanted.some(w => {
+    const named = planningClasses(w);
+    return classes.some(c => named.some(n => sameClass(c, n)) || (CLASS_USES[c] || OTHER_USE).test(w));
+  });
+}
 
 // A live leasing requirement fits a unit when the unit's size sits in the
 // requirement's range and its use or location lines up too; a unit with no

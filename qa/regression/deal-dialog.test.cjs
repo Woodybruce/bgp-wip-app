@@ -8,7 +8,7 @@ assert.ok(dialog);
 let resetEffect;
 function visit(node) {
   if (ts.isCallExpression(node) && node.expression.getText(ast) === 'useEffect'
-      && node.arguments[0]?.getText(ast).includes('setForm(deal ? dealToForm(deal) : freshForm())')) {
+      && node.arguments[0]?.getText(ast).includes('const start = handover ? handoverForm(deal, handover, handoverLandlordId) : deal ? dealToForm(deal) : freshForm();')) {
     resetEffect = node.arguments[0];
   }
   ts.forEachChild(node, visit);
@@ -19,17 +19,22 @@ assert.ok(resetEffect, 'Exercise the real dialog reset effect');
 const { EMPTY_JOINT_AGENCY } = evaluate(find('client/src/components/joint-agency-aml.tsx', node => ts.isVariableStatement(node)
   && node.declarationList.declarations.some(item => item.name.getText() === 'EMPTY_JOINT_AGENCY')));
 
-function setup() {
+// A handover (Promote to Solicitors, the Heads of Terms' Convert, 2026-11-17)
+// opens the same dialog on the unit's deal through handoverForm.
+function setup({ handover } = {}) {
   const state = { form: null, resets: 0, changeReason: '', learning: '', showAllFields: false, feeRows: [], feeAllocType: 'percentage', nameAutoFilled: false,
-    pickedUnit: null, jointAgency: EMPTY_JOINT_AGENCY, jointAgencyErrors: false };
+    pickedUnit: null, jointAgency: EMPTY_JOINT_AGENCY, jointAgencyErrors: false, noteBrandHint: 'stale' };
   const bindings = {
     draftSessionRef: { current: null },
     dealToForm: deal => ({ ...deal }),
     freshForm: () => ({ name: '', rentPa: '' }),
+    handover,
+    handoverLandlordId: 'landlord-1',
+    handoverForm: (deal, h, landlordId) => ({ ...(deal || {}), status: 'SOL', landlordId, from: h.kind }),
     setForm: value => { state.form = value; state.resets++; },
     EMPTY_JOINT_AGENCY,
   };
-  for (const field of ['changeReason', 'learning', 'showAllFields', 'feeRows', 'feeAllocType', 'nameAutoFilled', 'pickedUnit', 'jointAgency', 'jointAgencyErrors']) {
+  for (const field of ['changeReason', 'learning', 'showAllFields', 'feeRows', 'feeAllocType', 'nameAutoFilled', 'pickedUnit', 'jointAgency', 'jointAgencyErrors', 'noteBrandHint']) {
     bindings[`set${field[0].toUpperCase()}${field.slice(1)}`] = value => { state[field] = value; };
   }
   const { render } = evaluate(`exports.render = (open, deal) => (${resetEffect.getText(ast)})();`, bindings);
@@ -91,4 +96,17 @@ test('new-deal drafts survive rerenders and clear when starting another create s
   assert.equal(state.form.name, '');
   assert.equal(state.nameAutoFilled, true);
   assert.equal(state.resets, 2);
+});
+
+test('a handover starts from the unit\'s deal at Solicitors, keeps the deal\'s name and clears the note hint', () => {
+  const { state, render } = setup({ handover: { kind: 'promote', unit: { id: 'row-1' } } });
+  render(true, { id: 'deal-a', name: 'Bluewater – Unit 12' });
+  assert.deepEqual(state.form, { id: 'deal-a', name: 'Bluewater – Unit 12', status: 'SOL', landlordId: 'landlord-1', from: 'promote' });
+  assert.equal(state.nameAutoFilled, false, 'the deal\'s own name is never overwritten by the auto-name rule');
+  assert.equal(state.noteBrandHint, null);
+  // A tracker row with no deal yet still opens on the handover form.
+  const orphan = setup({ handover: { kind: 'promote', unit: { id: 'row-2' } } });
+  orphan.render(true, undefined);
+  assert.equal(orphan.state.form.status, 'SOL');
+  assert.equal(orphan.state.nameAutoFilled, false);
 });

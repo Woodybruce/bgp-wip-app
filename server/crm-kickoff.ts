@@ -12,6 +12,7 @@ import type { EngagementNoun, EngagementData } from "../shared/crm-engagement";
 import { checkKickoffAnswer, type CrmKickoff, type KickoffApply, type KickoffOffer } from "../shared/crm-kickoff";
 import { PLAN_COMPANY_PREDICATE, companyNounSql, getCrmEngagementData, saveEngagementStrategy, saveEngagementEvent, createEngagementAction, EngagementError, type ActionPlanDeps } from "./crm-engagement";
 import { isPrivateMailboxAddress } from "./private-mail";
+import { requirementStateSql } from "../shared/requirement-live";
 
 type Queryable = { query: (text: string, values?: any[]) => Promise<{ rows: any[] }> };
 const USAGE_KEY = "crm_kickoff_usage";
@@ -71,7 +72,11 @@ export async function buildKickoff(q: Queryable, companyId: string, deps: Kickof
            WHERE i.company_id=$1 AND i.interaction_date > now() - interval '12 months' GROUP BY u.name ORDER BY n DESC LIMIT 5`),
     rows(`SELECT d.name, d.status, p.name AS property FROM crm_deals d LEFT JOIN crm_properties p ON p.id=d.property_id
            WHERE ${noun === "brand" ? "d.tenant_id" : "d.landlord_id"}=$1 AND COALESCE(d.status,'') <> 'ARCH' ORDER BY d.updated_at DESC NULLS LAST LIMIT 10`),
-    noun === "brand" ? rows(`SELECT size, use, requirement_locations FROM crm_requirements_leasing WHERE company_id=$1 AND status='Active' ORDER BY requirement_date DESC NULLS LAST LIMIT 1`) : Promise.resolve([]),
+    // Live or to confirm by the one live rule (shared/requirement-live.ts), never
+    // any "Active" row however old; its state goes into the fact.
+    noun === "brand" ? rows(`SELECT r.size, r.use, r.requirement_locations, ${requirementStateSql("r")} AS state FROM crm_requirements_leasing r
+           WHERE r.company_id=$1 AND ${requirementStateSql("r")} IN ('live', 'to_confirm')
+           ORDER BY (${requirementStateSql("r")} = 'live') DESC, r.requirement_date DESC NULLS LAST LIMIT 1`) : Promise.resolve([]),
     noun === "brand" ? rows(`SELECT headline, signal_type FROM brand_signals WHERE brand_company_id=$1 AND ai_relevant IS DISTINCT FROM FALSE AND signal_type <> 'news'
            AND COALESCE(signal_date, created_at) > now() - interval '12 months' ORDER BY COALESCE(signal_date, created_at) DESC LIMIT 6`) : Promise.resolve([]),
     noun === "landlord" ? rows(`SELECT p.id, p.name FROM crm_properties p WHERE p.landlord_id=$1 OR p.freeholder_id=$1 OR p.long_leaseholder_id=$1 ORDER BY p.name LIMIT 40`) : Promise.resolve([]),
@@ -104,7 +109,7 @@ export async function buildKickoff(q: Queryable, companyId: string, deps: Kickof
   const last = ukDay(lastContact[0]?.at);
   facts.push(last ? `Last contact ${last}` : "No contact on record");
   facts.push(`${people.length} contact${people.length === 1 ? "" : "s"} on file${inTouch.length ? `; in touch from BGP: ${inTouch.map(u => u.name).join(", ")}` : ""}`);
-  if (requirement[0]) facts.push(`Requirement on file: ${[clip(requirement[0].size, 60), clip(Array.isArray(requirement[0].requirement_locations) ? requirement[0].requirement_locations.join(", ") : requirement[0].requirement_locations, 120)].filter(Boolean).join("; ") || "no size or places given"}`);
+  if (requirement[0]) facts.push(`Requirement on file (${requirement[0].state === "live" ? "live" : "to confirm"}): ${[clip(requirement[0].size, 60), clip(Array.isArray(requirement[0].requirement_locations) ? requirement[0].requirement_locations.join(", ") : requirement[0].requirement_locations, 120)].filter(Boolean).join("; ") || "no size or places given"}`);
   if (reps.length) facts.push(`Represented by ${list(reps.map(r => r.name), 3)}`);
   if (acts.length) facts.push(`Acts for ${list(acts.map(r => r.name), 8)}`);
   if (properties.length) facts.push(`${properties.length} propert${properties.length === 1 ? "y" : "ies"}: ${list(properties.map(p => p.name), 6)}`);

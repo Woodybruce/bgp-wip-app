@@ -507,8 +507,9 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       const access = await briefAccess(req, brief.property_id);
       if (!access) return res.status(403).json({ message: "This brief is outside your access" });
       const [unitQ, peopleQ, commentsQ, filesQ, plansQ, brochuresQ, tenancyQ] = await Promise.all([
-        pool.query(`SELECT au.id, au.unit_name, au.property_id, au.floor, au.sqft, au.marketing_status, au.asking_rent, au.service_charge_pa, au.rates_pa, au.use_class, au.available_date, au.tenancy_unit_id, p.name AS property_name
-                      FROM available_units au LEFT JOIN crm_properties p ON p.id = au.property_id WHERE au.id = $1`, [brief.unit_id]),
+        pool.query(`SELECT au.id, au.unit_name, au.property_id, au.floor, au.sqft, au.marketing_status, au.asking_rent, au.service_charge_pa, au.rates_pa, au.use_class, au.available_date, au.tenancy_unit_id, p.name AS property_name,
+                           lc.name AS landlord_name
+                      FROM available_units au LEFT JOIN crm_properties p ON p.id = au.property_id LEFT JOIN crm_companies lc ON lc.id = p.landlord_id WHERE au.id = $1`, [brief.unit_id]),
         pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1 ORDER BY sort_order, created_at`, [brief.id]),
         pool.query(`SELECT * FROM unit_brief_comments WHERE brief_id = $1 ORDER BY created_at DESC LIMIT 300`, [brief.id]),
         // The generated brief document carries BGP's notes on the targets: not for a joint agent.
@@ -528,9 +529,13 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       };
       const planIds = new Set<string>(brief.plan_ids || []);
       const brochureIds = new Set<string>(brief.brochure_ids || []);
+      // A unit at one of the 14 schemes, let by Landsec (the Heads of Terms
+      // forms' test): its priority categories are the agency brief's.
+      const { schemeForPropertyName } = await import("./landsec-schemes");
+      const landsecScheme = !!schemeForPropertyName(unit.property_name) && /land\s?sec/i.test(String(unit.landlord_name || ""));
       const out: BriefWorkspace = {
         brief: briefForViewer(briefJson(brief), access) as any,
-        unit: { id: unit.id, unitName: unit.unit_name, propertyId: unit.property_id, propertyName: unit.property_name, floor: unit.floor, sqft: unit.sqft, marketingStatus: unit.marketing_status,
+        unit: { id: unit.id, unitName: unit.unit_name, propertyId: unit.property_id, propertyName: unit.property_name, floor: unit.floor, sqft: unit.sqft, marketingStatus: unit.marketing_status, landsecScheme,
           // The row on the property's tenancy schedule this unit is.
           tenancy: tenancyQ.rows[0] ? { id: tenancyQ.rows[0].id, unitName: tenancyQ.rows[0].unit_name, status: tenancyQ.rows[0].status, tenant: tenancyQ.rows[0].tenant, leaseExpiry: iso(tenancyQ.rows[0].lease_expiry) } : null },
         unitDefaults: {

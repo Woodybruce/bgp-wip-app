@@ -22,7 +22,7 @@ test('landlord chat writes the current investment board, links its company, pres
     assert.equal(saved.data.success, true);
     assert.equal(saved.action.companyId, companyId);
     assert.equal(saved.action.success, true);
-    assert.match(saved.action.url, /requirements\?type=investment&requirementId=/);
+    assert.match(saved.action.url, /^\/investment\/requirements\?requirementId=/);
     assert.deepEqual(saved.data.record.size_range, ['£5m–£10m']);
     assert.match(saved.data.record.comments, /Minimum floor area: 2,000 sq ft/);
     const retry = await runLandlordRequirementTool(pool, context, 'create_requirement', input);

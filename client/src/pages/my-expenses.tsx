@@ -87,7 +87,14 @@ function StatusBadge({ status, isPersonal }: { status: string; isPersonal: boole
   return <Badge variant="outline">{status}</Badge>;
 }
 
+// The page at /my-expenses (expense notifications link here) and the
+// Card & expenses tab of My BGP (Woody, 2026-11-16: folded into each
+// person's own HR page), which draws it without its own title.
 export default function MyExpenses() {
+  return <MyCardAndExpenses />;
+}
+
+export function MyCardAndExpenses({ embedded = false }: { embedded?: boolean }) {
   const { toast } = useToast();
   const [showCardDetails, setShowCardDetails] = useState(false);
   const [showWallet, setShowWallet] = useState(false);
@@ -305,12 +312,12 @@ export default function MyExpenses() {
   }, []);
 
   if (isLoading) {
-    return <div className="container mx-auto p-6"><Loader2 className="w-6 h-6 animate-spin" /></div>;
+    return <div className={embedded ? "py-6" : "container mx-auto p-6"}><Loader2 className="w-6 h-6 animate-spin" /></div>;
   }
 
   if (!data?.cardholder) {
     return (
-      <div className="container mx-auto p-6 max-w-2xl">
+      <div className={embedded ? "max-w-2xl" : "container mx-auto p-6 max-w-2xl"}>
         <Card>
           <CardContent className="p-8 text-center">
             <CreditCard className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
@@ -348,13 +355,15 @@ export default function MyExpenses() {
     : 0;
 
   return (
-    <div className="container mx-auto p-6 max-w-7xl space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">My Card & Expenses</h1>
-          <p className="text-sm text-muted-foreground">{cardholder.userName} · {cardholder.email}</p>
+    <div className={embedded ? "space-y-6" : "container mx-auto p-6 max-w-7xl space-y-6"} data-testid={embedded ? "my-bgp-card-expenses" : undefined}>
+      {!embedded && (
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">My Card & Expenses</h1>
+            <p className="text-sm text-muted-foreground">{cardholder.userName} · {cardholder.email}</p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Card visual + summary */}
       <div className="grid md:grid-cols-3 gap-4">

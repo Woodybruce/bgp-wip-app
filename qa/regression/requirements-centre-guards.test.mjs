@@ -181,27 +181,63 @@ test('only a pure publisher newsletter feeds requirement suggestions, never an a
     assert.match(rules, new RegExp(`domain: "${firm.replace('.', '\\.')}", scope: "shared"`), `${firm} must not be a publisher`);
 });
 
-test('a client login gets no BGP owner, confirmation trace or hand-entered requirement', () => {
+// Since 17 November 2026 every leasing requirement is open to a client login,
+// to read, add and amend (Woody: "keep all requirements open for clients and
+// access to amend and add"). What it is never sent is BGP's own: the owner,
+// who confirmed one and when (and so the last edit a confirmation moves), and
+// the state.
+test('a client login reads every requirement but no BGP owner or confirmation trace', () => {
   const crm = source('server/crm.ts');
-  // The list, the single GET and a contact's requirements send the client copy.
-  assert.ok([...crm.matchAll(/requirementClientCopy\(/g)].length >= 3);
+  // The list, the single GET, a contact's requirements and the replies to a client's add and save send the client copy.
+  assert.ok([...crm.matchAll(/requirementClientCopy\(/g)].length >= 5);
+  const list = crm.slice(crm.indexOf('app.get("/api/crm/requirements-leasing", async'), crm.indexOf('app.get("/api/crm/requirements-leasing/:id"'));
+  assert.match(list, /if \(scopeCompanyId === NO_ACCESS_SCOPE \|\| await requirementViewer\(req\) === "joint_agent"\) return res\.json\(\[\]\);\s+reqs = reqs\.map\(\(r: any\) => requirementClientCopy\(r\)\);/);
+  assert.doesNotMatch(list, /PIPnet/);
   const contact = crm.slice(crm.indexOf('app.get("/api/crm/contacts/:id/requirements"'), crm.indexOf('app.post("/api/crm/contacts/:id/requirements"'));
-  assert.match(contact, /r\.companyId === reqScope \|\| requirementClientVisible\(r\)/);
+  assert.match(contact, /r\.requirementType === "leasing" \? Promise\.resolve\(true\)/);
+  assert.doesNotMatch(contact, /requirementClientVisible|PIPnet/);
   const copy = find('shared/requirement-live.ts', (n, ast) => ts.isFunctionDeclaration(n) && n.name?.text === 'requirementClientCopy');
   for (const field of ['bgpContactUserId', 'bgpContactUserIds', 'updatedAt']) assert.ok(copy.includes(`"${field}"`), `client copy keeps ${field}`);
-  // Who's hot: a client counts only rows its own list shows, dated by the listing.
+  // Who's hot: a client counts every requirement, dated by the listing or the day it was added, never a confirmation.
   const hub = crm.slice(crm.indexOf('app.get("/api/brands/hub"'), crm.indexOf('// Super brands'));
-  assert.match(hub, /clientScoped \? ` AND \$\{requirementClientVisibleSql\("rl"\)\}` : ""/);
+  assert.doesNotMatch(hub, /requirementClientVisibleSql|PIPnet/);
   assert.match(hub, /clientScoped \? "coalesce\(rl\.last_listed_at, rl\.created_at\)" : "rl\.updated_at"/);
-  // A confirmation never writes a date onto a row clients are shown.
+  // A confirmation never writes a date onto a requirement: every row is shown to clients.
   const patch = find('server/requirement-intake.ts', (n, ast) => ts.isFunctionDeclaration(n) && n.name?.text === 'confirmationPatch');
-  assert.match(patch, /!requirementClientVisible\(\{ sources: existing\.sources \}\)\) patch\.requirement_date/);
-  // A viewing tells a client the linked requirement's name only when its list shows that row.
+  assert.doesNotMatch(patch, /patch\.requirement_date/);
+  // A viewing tells a client the linked requirement's name; a joint agent's copy takes it off.
   const viewings = source('server/leasing-viewings.ts');
-  assert.match(viewings, /if \(scoped && !v\.requirementClientVisible\) v\.requirementName = null/);
+  assert.doesNotMatch(viewings, /requirementClientVisible/);
+  assert.match(viewings, /for \(const key of \["contactId", "contact_id", "agentContactId", "agent_contact_id", "requirementId", "requirement_id",\s+"requirementName", "requirement_name"/);
   // Score why-lines pass through the client view on both brand endpoints.
   assert.match(source('server/expansion-intel.ts'), /resolveCompanyScope\(req\)\) \? clientScoreView\(result\) : result/);
   assert.match(source('server/brand-ai-take.ts'), /resolveCompanyScope\(req\)\) \? clientScoreView\(result\) : result/);
+});
+
+test('a client login adds a requirement and amends any through its own fields; only BGP staff delete one', () => {
+  const crm = source('server/crm.ts');
+  // The CRM write guard lets a client's create and save through, and nothing else under the path.
+  const guard = find('server/crm.ts', (n, ast) => ts.isCallExpression(n) && n.expression.getText(ast) === 'app.use' && n.arguments[0]?.getText(ast) === '"/api/crm"' && n.getText(ast).includes('isClientRequestUser'));
+  assert.match(guard, /\["\/contacts", "\/deals", "\/companies", "\/requirements-leasing"\]\.includes\(p\)/);
+  assert.match(guard, /\^\\\/\(contacts\|deals\|properties\|requirements-leasing\)\\\/\[\^\/\]\+\$/);
+  // The outer gateway names the path among the client writes.
+  const index = source('server/index.ts');
+  const writes = index.slice(index.indexOf('const CLIENT_ALLOWED_WRITES = ['), index.indexOf('const CLIENT_BLOCKED_SUBPATHS = ['));
+  assert.ok(writes.includes('"/api/crm/requirements-leasing"'));
+  // A client's add and save go through one checked door: the form's fields only.
+  const door = find('server/crm.ts', (n, ast) => ts.isFunctionDeclaration(n) && n.name?.text === 'clientRequirementWrite');
+  assert.match(door, /const data = clientRequirementFields\(req\.body\);/);
+  assert.match(door, /isClientVisibleBrand\(String\(companyId\), scopeCompanyId\)/);
+  assert.match(door, /if \(await requirementViewer\(req\) === "joint_agent"\) return \{ status: 403/);
+  const post = crm.slice(crm.indexOf('app.post("/api/crm/requirements-leasing", async'), crm.indexOf('app.put("/api/crm/requirements-leasing/:id"'));
+  assert.match(post, /Object\.assign\(parsed, clientCreatedStamp\(await getScopeCompanyName\(scopeCompanyId\)\)\);/);
+  // Never confirmed, never owned by BGP: BGP's stamp is for BGP's own rows, after the client path has returned.
+  assert.ok(post.indexOf('clientCreatedStamp') < post.indexOf('bgpCreatedStamp(creator)'));
+  assert.match(post, /return res\.status\(201\)\.json\(requirementClientCopy\(created\)\);/);
+  // Deleting a requirement is BGP staff's, whatever the gateway lets through.
+  const del = crm.slice(crm.indexOf('app.delete("/api/crm/requirements-leasing/:id"'), crm.indexOf('app.post("/api/crm/requirements-leasing/:id/landlord-pack"'));
+  assert.match(del, /if \(await resolveCompanyScope\(req\)\) return res\.status\(403\)/);
+  assert.ok(del.indexOf('resolveCompanyScope') < del.indexOf('deleteCrmRequirementLeasing'));
 });
 
 test('the tray never splits a size at its thousands comma, and a first Confirm asks how the person knows', () => {

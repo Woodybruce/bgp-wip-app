@@ -235,8 +235,14 @@ test('the retired-AML switch reads every spelling of a retired address as that a
   for (const target of ['/api/aml/status', '/api/AML/status', '/api/Kyc-Clouseau/x', '/api//aml/status', '/api/aml/status#x', '/api/kyc-clouseau/x?y=1#z', '/api/kyc/run-all-checks', '/api/KYC/Run-All-Checks', '/api/sanctions']) {
     assert.equal((await send(target)).status, 410, target);
   }
-  // Kept: the deal's KYC status read, and everything that is not AML.
+  // Kept: the deal's KYC status read, the client's own client checks page
+  // (its token is the key; server/aml-portal.ts), and everything not AML.
   assert.equal((await send('/api/kyc/deal/d1/status')).status, 200);
+  assert.equal((await send('/api/kyc-upload/abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG')).status, 200);
   assert.equal((await send('/api/kyc4u/requests')).status, 200);
   assert.equal((await send('/api/crm/deals')).status, 200);
+  // Veriff stays retired but for its signed decision webhook and the admin
+  // diagnostic, which the test page's real identity check needs (2026-11-17).
+  for (const open of ['/api/veriff/webhook', '/api/Veriff/Webhook', '/api/veriff/diagnostic']) assert.equal((await send(open)).status, 200, open);
+  for (const shut of ['/api/veriff', '/api/veriff/sessions', '/api/Veriff/Sessions', '/api/veriff/webhook/x', '/api/veriff/diagnostics', '/api/veriff/sessions/s1/report']) assert.equal((await send(shut)).status, 410, shut);
 });

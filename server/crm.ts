@@ -1,5 +1,5 @@
 import { BGP_TEAM_NAMES } from "@shared/teams";
-import { parseReqSize, pitchFitWords, USE_HINTS } from "@shared/requirement-fit";
+import { parseReqSize, pitchFitWords, spreadAcrossCentres, USE_HINTS } from "@shared/requirement-fit";
 import { formatSizeList } from "@shared/format-size";
 import type { Express, Request } from "express";
 import multer from "./utils/upload";
@@ -10,7 +10,7 @@ import { requireAuth } from "./auth";
 import { db, pool } from "./db";
 import { saveFile, getFile, deleteFile as deleteStoredFile } from "./file-storage";
 import { enrichPropertyInBackground } from "./property-enrich";
-import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser, isClientVisibleBrand, getClientExtraBrandIds, clientBrandSliceSql, NO_ACCESS_SCOPE, schemeLimitSql, inSchemeLimit } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser, isClientVisibleBrand, getClientExtraBrandIds, clientBrandSliceSql, getScopeCompanyName, NO_ACCESS_SCOPE, schemeLimitSql, inSchemeLimit } from "./company-scope";
 import { buildClientAgentDirectoryQuery, mapClientAgentDirectoryRows, type ClientAgentDirectoryRow } from "./client-agent-directory";
 import { loadClientAgentsOverview } from "./client-agents-overview";
 import { loadClientOwnContacts } from "./client-own-contacts";
@@ -30,12 +30,13 @@ import {
   crmContactProperties, crmContactDeals, crmContactRequirements,
   crmProperties, crmDeals, crmComps, crmRequirementsLeasing, crmRequirementsInvestment,
   crmPropertyAgents, crmPropertyTenants, crmPropertyClients, crmCompanies, crmCompanyDeals, users, dealFeeAllocations,
-  crmContacts, newsArticles, wipEntries, investmentComps, insertInvestmentCompSchema,
+  crmContacts, wipEntries, investmentComps, insertInvestmentCompSchema,
   xeroInvoices, availableUnits, investmentTracker,
   dealAuditLog,
-  type CrmCompany, type CrmContact,
+  type CrmCompany, type CrmContact, type CrmRequirementsLeasing,
 } from "@shared/schema";
-import { isInvoicedStatus, isProvisionalFee, legacyToCode, WIP_STATUSES, deriveStageFromStatus, DEAL_STATUS_CODES, CLOSED_STATUSES } from "@shared/deal-status";
+import { compTrackerClass } from "@shared/tracker-class";
+import { isInvoicedStatus, isProvisionalFee, legacyToCode, WIP_STATUSES, deriveStageFromStatus, DEAL_STATUS_CODES, CLOSED_STATUSES, dealLeftTracker } from "@shared/deal-status";
 import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, wipDealStatus } from "@shared/letting-rules";
 import { createDeal, updateDeal, writeDealFeeAllocations, resolveTenancyTokenToUnitId, LettingRefusal, lettingSource } from "./letting-service";
 import { isClientCrmCategory, clientBrandCompanyView, clientOwnCompanyView, clientCompanyListRow, CLIENT_NEW_BRAND_FIELDS } from "@shared/tenant-categories";
@@ -46,7 +47,7 @@ import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { contentDispositionFor } from "./utils/http-headers";
 import { searchPipnetRequirements } from "./pipnet";
-import { bgpCreatedStamp, parseRequirementDate, stripRequirementProvenance, requirementClientCopy, requirementClientVisible, requirementOwnerColumns, requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "@shared/requirement-live";
+import { bgpCreatedStamp, clientCreatedStamp, clientRequirementFields, CLIENT_REQUIREMENT_STATUSES, parseRequirementDate, stripRequirementProvenance, requirementClientCopy, requirementOwnerColumns, requirementReason, requirementStateSql, requirementLiveColumnsSql } from "@shared/requirement-live";
 import { clientScoreLabel, schemeLimitedScoreLabel, splitSubScores } from "./hunter-score";
 import { xeroApi, refreshXeroToken, SALES_ACCOUNT_CODE, feeCurrencyOf, invoiceCurrencyFields } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
@@ -54,7 +55,7 @@ import { getPlanningSummary } from "./planning-summary";
 import { getLandlordInterviewMentions } from "./landlord-interview-links";
 import { canReadLandlordMeetings } from "./landlord-meetings";
 import { contactViewer } from "./contact-viewer";
-import { schemeLimitedPropertyIdsOrNone, isJointAgentLogin } from "./landsec-access";
+import { schemeLimitedPropertyIdsOrNone, isJointAgentLogin, requirementViewer } from "./landsec-access";
 import { withoutJointAgentFields, JOINT_AGENT_HIDDEN_PROPERTY_FIELDS, JOINT_AGENT_HIDDEN_DEAL_FIELDS } from "@shared/landsec";
 import { parseRequirementBrochure } from "./requirement-vision-parser";
 
@@ -1515,8 +1516,13 @@ export function setupCrmRoutes(app: Express) {
         // this far: that handler writes whatever columns the request
         // carries, so it stays closed until there is a list of the fields a
         // client may save.
-        (req.method === "POST" && ["/contacts", "/deals", "/companies"].includes(p)) ||
-        (req.method === "PUT" && /^\/(contacts|deals|properties)\/[^/]+$/.test(p)) ||
+        // A leasing requirement: add one, and amend any (Woody, 2026-11-17:
+        // "keep all requirements open for clients and access to amend and
+        // add"). The handlers save only CLIENT_REQUIREMENT_FIELDS and check
+        // the brand, contacts and deal. Delete, the landlord pack and the
+        // agent sweep stay BGP's.
+        (req.method === "POST" && ["/contacts", "/deals", "/companies", "/requirements-leasing"].includes(p)) ||
+        (req.method === "PUT" && /^\/(contacts|deals|properties|requirements-leasing)\/[^/]+$/.test(p)) ||
         (req.method === "POST" && /^\/(properties|deals)\/bulk-update$/.test(p)) ||
         // Relationship handlers validate both the visible company and the
         // owned/shared property or deal before adding or removing a link.
@@ -3282,7 +3288,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // cannot be read it gets none.
       const cdScope = await resolveCompanyScope(req);
       if (cdScope && cdScope !== req.params.id) return res.json([]);
-      const deals = await storage.getCompanyDeals(req.params.id);
+      // An investment deal stays on the Investment Tracker until Solicitors
+      // (Jack, 2026-11-16), so a company's deals leave it out before then.
+      const deals = (await storage.getCompanyDeals(req.params.id)).filter((d: any) => dealLeftTracker(d));
       // A Landsec login limited to its own schemes reads the deals at those
       // schemes only (a deal with no property is at none of them). Every deal
       // sent to a client goes through the one strip: all fee terms and BGP's
@@ -5250,7 +5258,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
   // Driven by the brand's best-evidenced open requirement when one exists
   // (size range; live before to confirm before a background listing, and the
   // reason says which with its date), else by category/use alignment. A
-  // client login is only ever given a PIPnet listing here, by source and date. Excludes units already targeted or
+  // client login reads every requirement since 17 November 2026, worded by
+  // what it is and its own date (clientText), never its state or whether BGP
+  // confirmed it. Excludes units already targeted or
   // where they're the tenant. Deterministic reasons — instant, no AI call.
   app.get("/api/brands/:id/suggested-pitches", requireAuth, async (req, res) => {
     try {
@@ -5265,7 +5275,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
       const reqQ = await pool.query(
         `SELECT r.size, r.use, r.requirement_locations, ${requirementLiveColumnsSql("r")} FROM crm_requirements_leasing r
-          WHERE r.company_id = $1 AND ${requirementStateSql("r")} <> 'closed'${scope ? ` AND ${requirementClientVisibleSql("r")}` : ""}
+          WHERE r.company_id = $1 AND ${requirementStateSql("r")} <> 'closed'
           ORDER BY r.requirement_date DESC NULLS LAST`, [brandId]);
       const liveReq = reqQ.rows.map((r: any) => ({ ...r, reason: requirementReason(r) }))
         .sort((a: any, b: any) => b.reason.weight - a.reason.weight)[0] || null;
@@ -5430,7 +5440,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
         }
       }
       suggestions.sort((a, b) => b.sizeFit - a.sizeFit || b.useFit - a.useFit || b.peers - a.peers);
-      res.json({ brandName, liveRequirement: !scope && liveReq?.reason.state === "live", suggestions: suggestions.slice(0, 6).map(({ sizeFit, useFit, peers, ...s }) => ({ ...s, strength: sizeFit === 2 ? 2 : 1 })) });
+      // The best unit at each centre before a second unit at any, so six
+      // units at one centre no longer fill the list.
+      res.json({ brandName, liveRequirement: !scope && liveReq?.reason.state === "live", suggestions: spreadAcrossCentres(suggestions, s => String(s.property_id)).slice(0, 6).map(({ sizeFit, useFit, peers, ...s }) => ({ ...s, strength: sizeFit === 2 ? 2 : 1 })) });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -5438,7 +5450,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
   // Given an available unit, suggest brands to target: open leasing
   // requirements whose size/use/location fit the unit (a requirement a BGP
   // person confirmed recently is the strongest signal; each carries its state
-  // and dated reason, and a client login gets PIPnet listings only), topped
+  // and dated reason for staff; a client login reads every requirement, by
+  // what it is and its own date, never the state), topped
   // up with tracked brands in matching tenant
   // categories, then ranked by Fable with a one-line reason each. Feeds
   // the letting tracker's "AI targets" and the operator briefs.
@@ -5463,15 +5476,17 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const sqft = unit.sqft != null ? Number(unit.sqft) : null;
 
       // 1. Open requirements that fit this unit (reverse of the Fits column),
-      // each with its state by the one live rule. A client login gets the
-      // rows its Requirements list shows (PIPnet listings), by source and date.
+      // each with its state by the one live rule. A client login gets every
+      // requirement its Requirements list shows, which since 17 November 2026
+      // is every one, worded by what it is and its own date (clientText). A
+      // Landsec joint agent is refused this route at the gateway.
       const reqRows = await pool.query(
         `SELECT r.id, r.name, r.company_id, r.size, r.use, r.requirement_locations,
                 r.agent_contact_id, ${requirementLiveColumnsSql("r")},
                 c.name AS agent_name
            FROM crm_requirements_leasing r
            LEFT JOIN crm_contacts c ON c.id = r.agent_contact_id
-          WHERE ${requirementStateSql("r")} <> 'closed'${scopeCompanyId ? ` AND ${requirementClientVisibleSql("r")}` : ""}`
+          WHERE ${requirementStateSql("r")} <> 'closed'`
       );
       const candidates: any[] = [];
       for (const r of reqRows.rows) {
@@ -5492,7 +5507,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
           use: (r.use || []).join(", "), agent: r.agent_name || null,
           requirementDate: r.requirement_date, sizeFit, useHint, locationHit,
           ...(scopeCompanyId
-            ? { requirementLabel: "PIPnet listing", requirementReason: why.clientText }
+            ? { requirementLabel: why.importOnly ? "market listing" : "requirement", requirementReason: why.clientText }
             : { requirementState: why.state, requirementLabel: why.pressReported ? "press-reported" : why.state === "live" ? "confirmed requirement" : why.state === "to_confirm" ? "requirement to confirm" : "unconfirmed listing", requirementReason: why.text }),
           requirementWeight: why.weight,
         });
@@ -5600,15 +5615,13 @@ Return a JSON object with these fields (use null for any field you cannot find):
                  OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("p.id")}`,
         [scopeCompanyId]
       );
-      // A client login gets fits only for the requirements its list shows
-      // (PIPnet-labelled or its own company): it used to receive a fit for
-      // every requirement, BGP's hand-entered ones included, by id.
-      const reqRows = await pool.query(
+      // A client login gets fits for every requirement its list shows, which
+      // since 17 November 2026 is every requirement (Woody: "keep all
+      // requirements open for clients"); against its own units only. A login
+      // tied to no company (NO_ACCESS_SCOPE) gets none.
+      const reqRows = scopeCompanyId === NO_ACCESS_SCOPE ? { rows: [] as any[] } : await pool.query(
         `SELECT id, size, use, requirement_locations FROM crm_requirements_leasing
-          WHERE (status IS NULL OR status = 'Active')
-            AND ($1::text IS NULL OR company_id = $1
-                 OR ($2::boolean AND 'PIPnet' = ANY(coalesce(sources, '{}'::text[]))))`,
-        [scopeCompanyId, scopeCompanyId !== NO_ACCESS_SCOPE]
+          WHERE (status IS NULL OR status = 'Active')`
       );
       const matches: Record<string, { count: number; top: any[] }> = {};
       for (const r of reqRows.rows) {
@@ -5663,16 +5676,14 @@ Return a JSON object with these fields (use null for any field you cannot find):
       let reqs = await storage.getCrmRequirementsLeasing(filters);
       const scopeCompanyId = await resolveCompanyScope(req);
       if (scopeCompanyId) {
-        // Clients see occupier requirements BGP has imported from PIPnet
-        // (public market listings — useful leasing intel for a landlord)
-        // plus anything scoped to their own company. Manually-entered BGP
-        // requirements stay hidden. Unresolvable clients (NO_ACCESS_SCOPE)
-        // keep the strict own-company filter, which matches nothing.
-        const { NO_ACCESS_SCOPE } = await import("./company-scope");
-        reqs = reqs.filter((r: any) =>
-          r.companyId === scopeCompanyId ||
-          (scopeCompanyId !== NO_ACCESS_SCOPE && Array.isArray(r.sources) && r.sources.includes("PIPnet"))
-        ).map((r: any) => requirementClientCopy(r));
+        // Every client login sees every leasing requirement (Woody,
+        // 2026-11-17: "keep all requirements open for clients and access to
+        // amend and add"), with no confirmation, provenance, BGP owner or last
+        // edit on it (requirementClientCopy). A login tied to no company
+        // (NO_ACCESS_SCOPE) sees none, and a Landsec joint agent, another
+        // agency, none either (the gateway refuses it this route too).
+        if (scopeCompanyId === NO_ACCESS_SCOPE || await requirementViewer(req) === "joint_agent") return res.json([]);
+        reqs = reqs.map((r: any) => requirementClientCopy(r));
       }
       res.json(reqs);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -5684,15 +5695,125 @@ Return a JSON object with these fields (use null for any field you cannot find):
       if (!req_) return res.status(404).json({ error: "Not found" });
       const scopeCompanyId = await resolveCompanyScope(req);
       if (scopeCompanyId) {
-        // Same client rule as the list: PIPnet-sourced or own-company only.
-        const { NO_ACCESS_SCOPE } = await import("./company-scope");
-        const visible = (req_ as any).companyId === scopeCompanyId ||
-          (scopeCompanyId !== NO_ACCESS_SCOPE && Array.isArray((req_ as any).sources) && (req_ as any).sources.includes("PIPnet"));
-        if (!visible) return res.status(404).json({ error: "Not found" });
+        // The list's client rule: every requirement, as the client copy.
+        if (scopeCompanyId === NO_ACCESS_SCOPE || await requirementViewer(req) === "joint_agent") return res.status(404).json({ error: "Not found" });
         // Who confirmed a requirement, and where it came from, is BGP's own.
         return res.json(requirementClientCopy(req_));
       }
       res.json(req_);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // A client login's add or amendment (Woody, 2026-11-17: "keep all
+  // requirements open for clients and access to amend and add"). Only the
+  // form's fields (CLIENT_REQUIREMENT_FIELDS): never provenance, a
+  // confirmation, the BGP owner, the sources or the requirement date. The
+  // brand must be a tenant brand the client may see; a principal contact a
+  // person at that brand; an agent contact one the client's contacts list
+  // holds (its own company, an agent firm or a brand it may see); a deal one
+  // of its own. On an amendment only what changes is checked, so a client can
+  // still edit a BGP row whose links it could not have chosen itself.
+  async function clientRequirementWrite(req: any, scopeCompanyId: string, existing: CrmRequirementsLeasing | null): Promise<{ data: Record<string, any> } | { status: number; error: string }> {
+    if (scopeCompanyId === NO_ACCESS_SCOPE) return { status: 403, error: "Your login is not linked to a client company yet. Ask BGP to finish setting it up." };
+    if (await requirementViewer(req) === "joint_agent") return { status: 403, error: "Not available for this login" };
+    const data = clientRequirementFields(req.body);
+    const changed = (field: string) => field in data && JSON.stringify(data[field] ?? null) !== JSON.stringify((existing as any)?.[field] ?? null);
+    if (!existing || "name" in data) {
+      const name = String(data.name ?? "").trim();
+      if (!name) return { status: 400, error: "Give the requirement a name" };
+      data.name = name;
+    }
+    const companyId = "companyId" in data ? (data.companyId || null) : existing?.companyId ?? null;
+    if (!existing || changed("companyId")) {
+      if (!companyId || !(await isClientVisibleBrand(String(companyId), scopeCompanyId))) {
+        return { status: 403, error: "Choose the brand from your brand list" };
+      }
+      const brand = (await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+      if (!/^tenant/i.test(String(brand?.company_type || ""))) return { status: 403, error: "Choose the brand from your brand list" };
+    }
+    if ((!existing || changed("status")) && data.status != null && !(CLIENT_REQUIREMENT_STATUSES as readonly string[]).includes(String(data.status))) {
+      return { status: 400, error: `Status must be ${CLIENT_REQUIREMENT_STATUSES.join(", ")}` };
+    }
+    if ((!existing || changed("principalContactId") || changed("companyId")) && data.principalContactId) {
+      const at = (await pool.query(`SELECT company_id FROM crm_contacts WHERE id = $1`, [data.principalContactId])).rows[0];
+      if (!at || !companyId || at.company_id !== companyId) return { status: 403, error: "Choose a contact at this brand" };
+    }
+    if ((!existing || changed("agentContactId")) && data.agentContactId) {
+      // The contacts list's own rule (GET /api/crm/contacts); company_type is crm_companies' alone.
+      const slice = await clientBrandSliceSql(scopeCompanyId, "co.id");
+      const seen = (await pool.query(`SELECT 1 FROM crm_contacts ct JOIN crm_companies co ON co.id = ct.company_id
+        WHERE ct.id = $1 AND (co.id = $2 OR co.company_type ILIKE 'Agent%' OR ${slice})`,
+        [data.agentContactId, scopeCompanyId])).rows[0];
+      if (!seen) return { status: 403, error: "Choose an agent from your contacts" };
+    }
+    if ((!existing || changed("dealId")) && data.dealId && !(await isDealInScope(scopeCompanyId, String(data.dealId)))) {
+      return { status: 403, error: "Choose one of your own deals" };
+    }
+    return { data };
+  }
+
+  app.post("/api/crm/requirements-leasing", async (req, res) => {
+    try {
+      const creatorId = (req.session as any)?.userId || (req as any).tokenUserId;
+      const creator = creatorId ? (await pool.query(`SELECT id, name FROM users WHERE id = $1`, [creatorId])).rows[0] : null;
+      if (!creator) return res.status(401).json({ error: "Sign in to add a requirement" });
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId) {
+        // A client login's requirement (BGP staff viewing as a client add as
+        // the client does): the client's record, labelled with its name,
+        // never confirmed and with no BGP owner, so it reads To confirm for
+        // BGP until a named BGP person confirms it.
+        const checked = await clientRequirementWrite(req, scopeCompanyId, null);
+        if ("error" in checked) return res.status(checked.status).json({ error: checked.error });
+        const parsed = insertCrmReqLeasingSchema.parse({ ...checked.data, requirementDate: new Date().toISOString().slice(0, 10) });
+        Object.assign(parsed, clientCreatedStamp(await getScopeCompanyName(scopeCompanyId)));
+        const created = await storage.createCrmRequirementLeasing(parsed);
+        if (created.dealId && created.companyId) await storage.linkCompanyDeal(created.companyId, created.dealId);
+        return res.status(201).json(requirementClientCopy(created));
+      }
+      // A requirement made by hand is BGP's own and is confirmed by the person
+      // who made it, at creation. The body never sets who confirmed what.
+      const parsed = insertCrmReqLeasingSchema.parse(requirementOwnerColumns(stripRequirementProvenance(req.body)));
+      // Hand-added requirements default to today — the dialog has no date
+      // field, and a NULL date means no Fresh badge and a 90-day KPI of 0
+      // the moment fresh demand is logged. Imports send their own dates.
+      if (!parsed.requirementDate) {
+        parsed.requirementDate = new Date().toISOString().slice(0, 10);
+      }
+      Object.assign(parsed, bgpCreatedStamp(creator));
+      const created = await storage.createCrmRequirementLeasing(parsed);
+      if (created.dealId && created.companyId) {
+        await storage.linkCompanyDeal(created.companyId, created.dealId);
+      }
+      await ensureAgentTyped(created.agentContactId);
+      res.status(201).json(created);
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  app.put("/api/crm/requirements-leasing/:id", async (req, res) => {
+    try {
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId) {
+        // A client login amends any requirement, through the form's fields
+        // only. An edit is never a confirmation: the state and who confirmed
+        // it stay as they were.
+        const existing = await storage.getCrmRequirementLeasing(req.params.id);
+        if (!existing) return res.status(404).json({ error: "Not found" });
+        const checked = await clientRequirementWrite(req, scopeCompanyId, existing);
+        if ("error" in checked) return res.status(checked.status).json({ error: checked.error });
+        const updated = await storage.updateCrmRequirementLeasing(req.params.id, checked.data);
+        if (updated.dealId && updated.companyId) await storage.linkCompanyDeal(updated.companyId, updated.dealId);
+        return res.json(requirementClientCopy(updated));
+      }
+      // An edit is not a confirmation: who confirmed it, and whose record it is, are never taken from the body.
+      const updated = await storage.updateCrmRequirementLeasing(req.params.id, requirementOwnerColumns(stripRequirementProvenance(req.body)));
+      const dealId = updated.dealId;
+      const companyId = updated.companyId;
+      if (dealId && companyId) {
+        await storage.linkCompanyDeal(companyId, dealId);
+      }
+      await ensureAgentTyped(updated.agentContactId);
+      res.json(updated);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -5715,44 +5836,6 @@ Return a JSON object with these fields (use null for any field you cannot find):
       }
     } catch (e: any) { console.warn("[requirements] ensureAgentTyped failed:", e?.message); }
   }
-
-  app.post("/api/crm/requirements-leasing", async (req, res) => {
-    try {
-      // A requirement made by hand is BGP's own and is confirmed by the person
-      // who made it, at creation. The body never sets who confirmed what.
-      const creatorId = (req.session as any)?.userId || (req as any).tokenUserId;
-      const creator = creatorId ? (await pool.query(`SELECT id, name FROM users WHERE id = $1`, [creatorId])).rows[0] : null;
-      if (!creator) return res.status(401).json({ error: "Sign in to add a requirement" });
-      const parsed = insertCrmReqLeasingSchema.parse(requirementOwnerColumns(stripRequirementProvenance(req.body)));
-      // Hand-added requirements default to today — the dialog has no date
-      // field, and a NULL date means no Fresh badge and a 90-day KPI of 0
-      // the moment fresh demand is logged. Imports send their own dates.
-      if (!parsed.requirementDate) {
-        parsed.requirementDate = new Date().toISOString().slice(0, 10);
-      }
-      Object.assign(parsed, bgpCreatedStamp(creator));
-      const created = await storage.createCrmRequirementLeasing(parsed);
-      if (created.dealId && created.companyId) {
-        await storage.linkCompanyDeal(created.companyId, created.dealId);
-      }
-      await ensureAgentTyped(created.agentContactId);
-      res.status(201).json(created);
-    } catch (e: any) { res.status(400).json({ error: e.message }); }
-  });
-
-  app.put("/api/crm/requirements-leasing/:id", async (req, res) => {
-    try {
-      // An edit is not a confirmation: who confirmed it, and whose record it is, are never taken from the body.
-      const updated = await storage.updateCrmRequirementLeasing(req.params.id, requirementOwnerColumns(stripRequirementProvenance(req.body)));
-      const dealId = updated.dealId;
-      const companyId = updated.companyId;
-      if (dealId && companyId) {
-        await storage.linkCompanyDeal(companyId, dealId);
-      }
-      await ensureAgentTyped(updated.agentContactId);
-      res.json(updated);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
-  });
 
   // One-shot repair sweep for existing rows (staff): types untyped agent
   // contacts/firms so they appear in the Agents view, and clears dangling
@@ -5788,6 +5871,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.delete("/api/crm/requirements-leasing/:id", async (req, res) => {
     try {
+      // BGP staff only: a client login adds and amends a requirement but never
+      // deletes one (Woody, 2026-11-17), nor does staff viewing as a client.
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Only BGP staff can delete a requirement" });
       await storage.deleteCrmRequirementLeasing(req.params.id);
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -6639,14 +6725,18 @@ Return a JSON object with these fields (use null for any field you cannot find):
           seenIds.add(r.id);
         }
       }
-      // Scoped callers see only requirements for brands in their CRM slice,
-      // and of the leasing ones only what their list shows: PIPnet-labelled
-      // rows or their own company's. BGP's hand-entered rows stay private.
+      // Scoped callers see every leasing requirement, as their Requirements
+      // list does since 17 November 2026 (Woody: "keep all requirements open
+      // for clients"), sent as the client copy; investment requirements only
+      // for brands in their CRM slice, as before. A Landsec joint agent is
+      // refused contacts at the gateway.
       const reqScope = await resolveCompanyScope(req);
       if (reqScope) {
-        const visible = await Promise.all(results.map(r => r.companyId ? isClientVisibleBrand(r.companyId, reqScope) : Promise.resolve(false)));
+        if (reqScope === NO_ACCESS_SCOPE) return res.json([]);
+        const visible = await Promise.all(results.map(r => r.requirementType === "leasing" ? Promise.resolve(true)
+          : r.companyId ? isClientVisibleBrand(r.companyId, reqScope) : Promise.resolve(false)));
         return res.json(results
-          .filter((r, i) => visible[i] && (r.requirementType !== "leasing" || r.companyId === reqScope || requirementClientVisible(r)))
+          .filter((_r, i) => visible[i])
           .map(r => r.requirementType === "leasing" ? requirementClientCopy(r) : r));
       }
       res.json(results);
@@ -7466,162 +7556,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
-  app.get("/api/board-report", requireAuth, async (_req, res) => {
-    try {
-      const allDeals = await db.select().from(crmDeals);
-      const allAllocations = await db.select().from(dealFeeAllocations);
-      const now = new Date();
-      const yearStart = new Date(now.getFullYear(), 0, 1);
-
-      const statusCounts: Record<string, number> = {};
-      const teamCounts: Record<string, number> = {};
-      const dealTypeCounts: Record<string, number> = {};
-      const assetClassCounts: Record<string, number> = {};
-
-      let totalFeesYTD = 0;
-      let completedCount = 0;
-      let totalDays = 0;
-      let completedWithDays = 0;
-      const fees: number[] = [];
-      const monthlyFees: Record<string, number> = {};
-      const topDeals: Array<{ name: string; fee: number; team: string; status: string; dealType: string }> = [];
-
-      for (const deal of allDeals) {
-        const status = deal.status || "Unknown";
-        statusCounts[status] = (statusCounts[status] || 0) + 1;
-
-        if (deal.team && Array.isArray(deal.team)) {
-          for (const t of deal.team) {
-            teamCounts[t] = (teamCounts[t] || 0) + 1;
-          }
-        }
-
-        const dt = deal.dealType || "Unknown";
-        dealTypeCounts[dt] = (dealTypeCounts[dt] || 0) + 1;
-
-        const ac = deal.assetClass || "Unknown";
-        assetClassCounts[ac] = (assetClassCounts[ac] || 0) + 1;
-
-        if (deal.fee && deal.fee > 0) {
-          fees.push(deal.fee);
-          topDeals.push({
-            name: deal.name || "Unnamed",
-            fee: deal.fee,
-            team: (deal.team || []).join(", "),
-            status: deal.status || "",
-            dealType: deal.dealType || "",
-          });
-
-          const completionStr = deal.completedAt || deal.exchangedAt || deal.targetDate || deal.updatedAt?.toISOString?.();
-          if (completionStr) {
-            const completionDate = new Date(completionStr);
-            if (completionDate >= yearStart && completionDate <= now) {
-              totalFeesYTD += deal.fee;
-              const monthKey = `${completionDate.getFullYear()}-${String(completionDate.getMonth() + 1).padStart(2, "0")}`;
-              monthlyFees[monthKey] = (monthlyFees[monthKey] || 0) + deal.fee;
-            }
-          }
-        }
-
-        const isComplete = ["EXC", "COM", "INV"].includes(legacyToCode(status) || "");
-        if (isComplete) completedCount++;
-
-        if (isComplete && deal.createdAt) {
-          const created = new Date(deal.createdAt);
-          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : (deal.updatedAt || now));
-          const days = Math.round((new Date(completed).getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
-          if (days > 0 && days < 1000) {
-            totalDays += days;
-            completedWithDays++;
-          }
-        }
-      }
-
-      topDeals.sort((a, b) => b.fee - a.fee);
-
-      const conversionRate = allDeals.length > 0 ? Math.round((completedCount / allDeals.length) * 100) : 0;
-      const avgDealSize = fees.length > 0 ? Math.round(fees.reduce((a, b) => a + b, 0) / fees.length) : 0;
-      const avgTimeToClose = completedWithDays > 0 ? Math.round(totalDays / completedWithDays) : 0;
-
-      const timeToCloseBuckets: Record<string, number> = {
-        "0-30": 0, "31-60": 0, "61-90": 0, "91-180": 0, "181-365": 0, "365+": 0,
-      };
-      for (const deal of allDeals) {
-        const isComplete = ["EXC", "COM", "INV"].includes(legacyToCode(deal.status) || "");
-        if (isComplete && deal.createdAt) {
-          const created = new Date(deal.createdAt);
-          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : (deal.updatedAt || now));
-          const days = Math.round((new Date(completed).getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
-          if (days >= 0 && days < 1000) {
-            if (days <= 30) timeToCloseBuckets["0-30"]++;
-            else if (days <= 60) timeToCloseBuckets["31-60"]++;
-            else if (days <= 90) timeToCloseBuckets["61-90"]++;
-            else if (days <= 180) timeToCloseBuckets["91-180"]++;
-            else if (days <= 365) timeToCloseBuckets["181-365"]++;
-            else timeToCloseBuckets["365+"]++;
-          }
-        }
-      }
-
-      const monthlyFeesArr = Object.entries(monthlyFees)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([month, total]) => ({ month, total: Math.round(total) }));
-
-      const articles = await db.select().from(newsArticles);
-      const tagCounts: Record<string, number> = {};
-      const categoryCounts: Record<string, number> = {};
-      const recentArticles = articles
-        .filter(a => a.publishedAt && new Date(a.publishedAt) >= new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000))
-        .sort((a, b) => new Date(b.publishedAt!).getTime() - new Date(a.publishedAt!).getTime());
-
-      for (const article of recentArticles) {
-        if (article.aiTags) {
-          for (const tag of article.aiTags) {
-            tagCounts[tag] = (tagCounts[tag] || 0) + 1;
-          }
-        }
-        if (article.category) {
-          categoryCounts[article.category] = (categoryCounts[article.category] || 0) + 1;
-        }
-      }
-
-      const trendingTags = Object.entries(tagCounts)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 15)
-        .map(([tag, count]) => ({ tag, count }));
-
-      const categoryBreakdown = Object.entries(categoryCounts)
-        .sort(([, a], [, b]) => b - a)
-        .map(([category, count]) => ({ category, count }));
-
-      res.json({
-        pipeline: {
-          byStatus: Object.entries(statusCounts).map(([name, value]) => ({ name, value })),
-          byTeam: Object.entries(teamCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value),
-          byDealType: Object.entries(dealTypeCounts).map(([name, value]) => ({ name, value })),
-          byAssetClass: Object.entries(assetClassCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value),
-        },
-        performance: {
-          totalFeesYTD,
-          conversionRate,
-          avgDealSize,
-          avgTimeToClose,
-          monthlyFees: monthlyFeesArr,
-          timeToCloseBuckets: Object.entries(timeToCloseBuckets).map(([range, count]) => ({ range, count })),
-        },
-        topDeals: topDeals.slice(0, 10),
-        marketInsights: {
-          trendingTags,
-          categoryBreakdown,
-          totalArticles: recentArticles.length,
-        },
-        totalDeals: allDeals.length,
-        generatedAt: now.toISOString(),
-      });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
+  // (The firm-wide board report moved to Finance → Fees & pipeline,
+  // GET /api/finance/board in server/finance-board.ts, 17 November 2026: it
+  // summed every deal's fee, withdrawn and duplicate rows included, by
+  // calendar year, and counted a deal once per team.)
 
   const WIP_SENIOR_EMAILS = new Set([
     "woody@brucegillinghampollard.com",
@@ -7690,7 +7628,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       for (const deal of deals) {
         const code = legacyToCode(deal.status);
-        if (!code || !WIP_STATUSES.includes(code) || deal.fee == null) continue;
+        if (!code || !WIP_STATUSES.includes(code) || deal.fee == null || !dealLeftTracker(deal)) continue;
         const dealTeamArr = Array.isArray(deal.team) ? deal.team : (deal.team ? [deal.team] : []);
         const dealTeamsLower = dealTeamArr.map(t => (t || "").toLowerCase());
         // Wendy/Layla (fullView) see BGP-team rows too. fullView is folded
@@ -7777,7 +7715,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       for (const deal of deals) {
         // Skip archived rows: WIT (withdrawn/lost/dead) + legacy comps statuses still present pre-migration
         const code = legacyToCode(deal.status);
-        if (!code || !WIP_STATUSES.includes(code)) continue;
+        if (!code || !WIP_STATUSES.includes(code) || !dealLeftTracker(deal)) continue;
         const totalFee = deal.fee || 0;
         const isInvoiced = isInvoicedStatus(deal.status);
         const dealAllocs = allocsByDeal.get(deal.id);
@@ -7928,7 +7866,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       };
       const eligibleDeals = deals.filter(d => {
         const code = legacyToCode(d.status);
-        return code !== null && WIP_STATUSES.includes(code);
+        // An investment deal joins the WIP only at Solicitors (Jack,
+        // 2026-11-16): before that it lives on the Investment Tracker.
+        return code !== null && WIP_STATUSES.includes(code) && dealLeftTracker(d);
       });
       for (const deal of eligibleDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
@@ -8547,7 +8487,12 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         longitude: typeof r.Longitude === "number" ? r.Longitude : null,
         submarket: r.Submarket || null,
         source: "RCA",
-      }));
+      }))
+        // Comps are completed sales (Jack, 2026-11-16): a refinancing is not
+        // one, and a pending deal belongs on the tracker until it completes.
+        .filter((r: any) => !/^refinanc|pending/i.test(String(r.status || "")))
+        // Subtype is the tracker class, as on every other comp.
+        .map((r: any) => ({ ...r, subtype: compTrackerClass(r) }));
 
       const existingIds = new Set(
         (await db.select({ rcaDealId: investmentComps.rcaDealId }).from(investmentComps).where(eq(investmentComps.source, "RCA")))
@@ -8995,7 +8940,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                   ) tg
                 ) AS "targetedAt",
                 EXISTS (SELECT 1 FROM crm_contacts ct WHERE ct.company_id = c.id) AS "hasContacts",
-                (COALESCE(c.hunter_flag, false) OR COALESCE(c.letting_hunter_flag, false) OR COALESCE(c.investment_hunter_flag, false)) AS "hunterFlag",
+                -- The Super Brand star alone (Woody, 2026-11-17): the landlord-side
+                -- letting and investment hunter flags are not a brand's star.
+                COALESCE(c.hunter_flag, false) AS "hunterFlag",
                 EXISTS (SELECT 1 FROM crm_requirements_leasing rl
                          WHERE rl.company_id = c.id AND ${requirementStateSql("rl")} IN ('live', 'to_confirm')) AS "liveRequirement"
            FROM crm_companies c
@@ -9112,11 +9059,11 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       ).then(r => r.rows);
 
       // Who's hot — most recently active brands (deals, requirements, contacts updated last 60 days)
-      // A client login counts only the requirements its own list shows
-      // (PIPnet-labelled), dated by the listing: never BGP's hand-entered
-      // rows, and never the moment BGP confirmed one (which moves updated_at).
+      // A client login counts every requirement, as its own list shows them
+      // since 17 November 2026, dated by the listing or the day it was added:
+      // never the moment BGP confirmed one (which moves updated_at).
       const hotReqAt = clientScoped ? "coalesce(rl.last_listed_at, rl.created_at)" : "rl.updated_at";
-      const hotReqJoin = `rl.company_id = c.id AND ${hotReqAt} > NOW() - INTERVAL '90 days'${clientScoped ? ` AND ${requirementClientVisibleSql("rl")}` : ""}`;
+      const hotReqJoin = `rl.company_id = c.id AND ${hotReqAt} > NOW() - INTERVAL '90 days'`;
       // A client login's deal count on a brand is its own deals with that
       // brand, as on the brand page: never a count of the brand's deals with
       // other landlords. A Landsec login limited to its own schemes counts a
@@ -9152,14 +9099,19 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       `, hotDealParams).then(r => r.rows);
 
       // Super brands — Luxury + Flagship Fashion
-      const superRows = await pool.query(`
-        SELECT id, name, company_type, domain, description
-        FROM crm_companies
-        WHERE company_type IN ('Tenant - Luxury','Tenant - Flagship Fashion','Tenant - Luxury Accessories')
-          AND merged_into_id IS NULL AND archived_at IS NULL
-        ORDER BY name
-        LIMIT 60
-      `).then(r => r.rows);
+      // Super Brands are the brands BGP has starred, its own choice of prime
+      // expansion targets (Woody, 2026-11-17). Until then the card listed the
+      // Luxury and Flagship Fashion types, which put Beaverbrooks there and
+      // nothing BGP chose. Each says whether it is on a running strategy.
+      const { onStrategySql } = await import("./crm-watch");
+      const superRows = clientScoped ? [] : await pool.query(`
+        SELECT c.id, c.name, c.company_type, c.domain, c.description, ${onStrategySql("c")} AS on_strategy
+        FROM crm_companies c
+        WHERE c.hunter_flag IS TRUE AND c.company_type ILIKE 'tenant%'
+          AND c.merged_into_id IS NULL AND c.archived_at IS NULL
+        ORDER BY lower(c.name)
+        LIMIT 200
+      `).then(r => r.rows.map((row: any) => ({ ...row, on_strategy: row.on_strategy === true }))).catch(() => []);
 
       // Top turnover — join with turnover_data, most recent per brand
       const turnoverRows = await pool.query(`
@@ -9182,12 +9134,14 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       // Requirements that are live or to confirm by the one live rule, live
       // first (the page titles this list and its tile "live"; an unconfirmed
-      // market listing is neither). A client login gets the rows its
-      // Requirements list shows instead: PIPnet listings that are not closed.
+      // market listing is neither). A client login gets every requirement
+      // that is not closed instead, as its Requirements list shows them since
+      // 17 November 2026, newest first: the live state is BGP's and is never
+      // a client's order or cut.
       // Note size/use/requirement_locations are text[] arrays,
       // not numeric size_min/size_max columns.
       const hubReqFilter = (alias: string) => clientScoped
-        ? `${requirementClientVisibleSql(alias)} AND ${requirementStateSql(alias)} <> 'closed'`
+        ? `${requirementStateSql(alias)} <> 'closed'`
         : `${requirementStateSql(alias)} IN ('live', 'to_confirm')`;
       const reqRows = await pool.query(`
         SELECT rl.id, rl.company_id, c.name AS company_name, c.company_type, c.domain,
@@ -9295,7 +9249,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const flags: string[] = [];
 
         // Manual signals (highest weight)
-        if (b.hunter_flag) { score += 25; flags.push("Hunter Pick"); }
+        if (b.hunter_flag) { score += 25; flags.push("Super Brand"); }
 
         // Rollout status (strongest structural signal)
         if (b.rollout_status === "entering_uk") { score += 30; flags.push("Entering UK"); }
@@ -9429,9 +9383,32 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
-  // ── Toggle hunter_flag on a brand ────────────────────────────────────────
+  // ── The Super Brand star (hunter_flag) ──────────────────────────────────
+  // BGP's own choice of prime expansion targets (Woody, 2026-11-17: "prime
+  // targets for expansion via our choice ... they get the CRM VIP
+  // treatment"), so only BGP staff signed in as themselves set it. The set
+  // route takes the state wanted, so a double press never undoes itself; the
+  // older toggle stays for a cached screen.
+  app.post("/api/brands/:id/super-brand", requireAuth, async (req, res) => {
+    try {
+      const { contactViewer } = await import("./contact-viewer");
+      if (!(await contactViewer(req)).staff) return res.status(403).json({ error: "Super Brands are set by BGP staff" });
+      if (typeof req.body?.on !== "boolean") return res.status(400).json({ error: "Say on or off" });
+      const result = await pool.query(
+        `UPDATE crm_companies SET hunter_flag = $2, updated_at = NOW()
+          WHERE id = $1 AND merged_into_id IS NULL RETURNING id, hunter_flag`,
+        [req.params.id, req.body.on]);
+      if (!result.rows[0]) return res.status(404).json({ error: "Not found" });
+      res.json({ id: result.rows[0].id, superBrand: result.rows[0].hunter_flag === true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/brands/:id/hunter-flag", requireAuth, async (req, res) => {
     try {
+      const { contactViewer } = await import("./contact-viewer");
+      if (!(await contactViewer(req)).staff) return res.status(403).json({ error: "Super Brands are set by BGP staff" });
       const { id } = req.params;
       const result = await pool.query(
         `UPDATE crm_companies SET hunter_flag = NOT COALESCE(hunter_flag, false), updated_at = NOW()
@@ -9608,15 +9585,16 @@ Rules:
 
     // Recent activity (last 90 days) so we know who's actually moving.
     // The commentary is one cached text read by staff and client logins
-    // alike, so it counts only requirements a client may be told about
-    // (PIPnet-labelled, dated by the listing), never BGP's hand-entered rows.
+    // alike. Every requirement is open to a client since 17 November 2026,
+    // so it counts them all, dated by the listing or the day it was added,
+    // never by a confirmation (which moves updated_at).
     const hotRows = await pool.query(
       `SELECT c.id, c.name,
               COUNT(DISTINCT d.id) AS deal_count,
               COUNT(DISTINCT rl.id) AS req_count
        FROM crm_companies c
        LEFT JOIN crm_deals d ON d.tenant_id = c.id AND d.updated_at > NOW() - INTERVAL '90 days'
-       LEFT JOIN crm_requirements_leasing rl ON rl.company_id = c.id AND coalesce(rl.last_listed_at, rl.created_at) > NOW() - INTERVAL '90 days' AND ${requirementClientVisibleSql("rl")}
+       LEFT JOIN crm_requirements_leasing rl ON rl.company_id = c.id AND coalesce(rl.last_listed_at, rl.created_at) > NOW() - INTERVAL '90 days'
        WHERE c.company_type = ANY($1::text[])
        GROUP BY c.id, c.name
        HAVING COUNT(DISTINCT d.id) + COUNT(DISTINCT rl.id) > 0
@@ -10092,7 +10070,9 @@ Rules:
       const unmatchedDeals = deals.filter(d => {
         if (usedDealIds.has(d.id)) return false;
         const code = legacyToCode(d.status);
-        return code !== null && WIP_STATUSES.includes(code);
+        // An investment deal joins the WIP only at Solicitors (Jack,
+        // 2026-11-16): before that it lives on the Investment Tracker.
+        return code !== null && WIP_STATUSES.includes(code) && dealLeftTracker(d);
       });
       for (const deal of unmatchedDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
@@ -10367,271 +10347,8 @@ Rules:
     }
   });
 
-  // ────────────────────────────────────────────────────────────
-  // Board Report — Excel Export
-  // ────────────────────────────────────────────────────────────
-  app.get("/api/board-report/export-excel", requireAuth, async (_req: any, res: any) => {
-    try {
-      const ExcelJS = await import("exceljs");
-
-      const allDeals = await db.select().from(crmDeals);
-      const allAllocations = await db.select().from(dealFeeAllocations);
-      const now = new Date();
-      const yearStart = new Date(now.getFullYear(), 0, 1);
-
-      const statusCounts: Record<string, number> = {};
-      const teamCounts: Record<string, number> = {};
-      const dealTypeCounts: Record<string, number> = {};
-
-      let totalFeesYTD = 0;
-      let completedCount = 0;
-      let totalDays = 0;
-      let completedWithDays = 0;
-      const fees: number[] = [];
-      const topDeals: Array<{ name: string; fee: number; team: string; status: string; dealType: string }> = [];
-
-      for (const deal of allDeals) {
-        const status = deal.status || "Unknown";
-        statusCounts[status] = (statusCounts[status] || 0) + 1;
-
-        if (deal.team && Array.isArray(deal.team)) {
-          for (const t of deal.team) {
-            teamCounts[t] = (teamCounts[t] || 0) + 1;
-          }
-        }
-
-        const dt = deal.dealType || "Unknown";
-        dealTypeCounts[dt] = (dealTypeCounts[dt] || 0) + 1;
-
-        if (deal.fee && deal.fee > 0) {
-          fees.push(deal.fee);
-          topDeals.push({
-            name: deal.name || "Unnamed",
-            fee: deal.fee,
-            team: (deal.team || []).join(", "),
-            status: deal.status || "",
-            dealType: deal.dealType || "",
-          });
-
-          const completionStr = deal.completedAt || deal.exchangedAt || deal.targetDate || deal.updatedAt?.toISOString?.();
-          if (completionStr) {
-            const completionDate = new Date(completionStr);
-            if (completionDate >= yearStart && completionDate <= now) {
-              totalFeesYTD += deal.fee;
-            }
-          }
-        }
-
-        const isComplete = ["EXC", "COM", "INV"].includes(legacyToCode(status) || "");
-        if (isComplete) completedCount++;
-
-        if (isComplete && deal.createdAt) {
-          const created = new Date(deal.createdAt);
-          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : (deal.updatedAt || now));
-          const days = Math.round((new Date(completed).getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
-          if (days > 0 && days < 1000) {
-            totalDays += days;
-            completedWithDays++;
-          }
-        }
-      }
-
-      topDeals.sort((a, b) => b.fee - a.fee);
-
-      const conversionRate = allDeals.length > 0 ? Math.round((completedCount / allDeals.length) * 100) : 0;
-      const avgDealSize = fees.length > 0 ? Math.round(fees.reduce((a, b) => a + b, 0) / fees.length) : 0;
-      const avgTimeToClose = completedWithDays > 0 ? Math.round(totalDays / completedWithDays) : 0;
-
-      // Build workbook
-      const wb = new ExcelJS.default.Workbook();
-      wb.creator = "BGP Dashboard";
-      wb.created = new Date();
-
-      const BGP_GREEN = "6E0C25";
-      const LIGHT_ROW = "F9F4F0";
-      const CURRENCY_FMT = "£#,##0";
-
-      const headerFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: `FF${BGP_GREEN}` } };
-      const headerFont = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
-      const altFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: `FF${LIGHT_ROW}` } };
-
-      // Sheet 1 — Executive Summary
-      const ws1 = wb.addWorksheet("Executive Summary");
-      ws1.columns = [
-        { header: "", key: "label", width: 30 },
-        { header: "", key: "value", width: 30 },
-      ];
-
-      // Title
-      const titleRow = ws1.addRow({ label: "BGP Board Report — Executive Summary" });
-      titleRow.font = { bold: true, size: 16, color: { argb: `FF${BGP_GREEN}` } };
-      ws1.mergeCells(titleRow.number, 1, titleRow.number, 2);
-      ws1.addRow({});
-
-      const dateRow = ws1.addRow({ label: "Generated", value: now.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) });
-      dateRow.font = { italic: true, color: { argb: "FF666666" } };
-      ws1.addRow({});
-
-      // KPIs
-      const kpiHeader = ws1.addRow({ label: "Key Performance Indicators" });
-      kpiHeader.font = { bold: true, size: 13, color: { argb: `FF${BGP_GREEN}` } };
-      ws1.addRow({});
-
-      const kpis = [
-        ["Total Deals in Pipeline", allDeals.length.toString()],
-        ["Fees Billed YTD", `£${totalFeesYTD.toLocaleString()}`],
-        ["Conversion Rate", `${conversionRate}%`],
-        ["Average Deal Size", `£${avgDealSize.toLocaleString()}`],
-        ["Average Time to Close", `${avgTimeToClose} days`],
-        ["Completed Deals", completedCount.toString()],
-      ];
-      for (const [label, value] of kpis) {
-        const row = ws1.addRow({ label, value });
-        row.getCell("label").font = { bold: true };
-      }
-      ws1.addRow({});
-
-      // Status breakdown
-      const statusHeader = ws1.addRow({ label: "Pipeline by Status" });
-      statusHeader.font = { bold: true, size: 13, color: { argb: `FF${BGP_GREEN}` } };
-      ws1.addRow({});
-      const statusTableHeader = ws1.addRow({ label: "Status", value: "Count" });
-      statusTableHeader.eachCell(cell => { cell.fill = headerFill; cell.font = headerFont; });
-      for (const [status, count] of Object.entries(statusCounts).sort((a, b) => b[1] - a[1])) {
-        ws1.addRow({ label: status, value: count.toString() });
-      }
-
-      // Sheet 2 — Pipeline
-      const ws2 = wb.addWorksheet("Pipeline");
-      ws2.columns = [
-        { header: "Deal Name", key: "name", width: 32 },
-        { header: "Status", key: "status", width: 16 },
-        { header: "Fee", key: "fee", width: 18 },
-        { header: "Team", key: "team", width: 20 },
-        { header: "Agent(s)", key: "agent", width: 24 },
-        { header: "Deal Type", key: "dealType", width: 16 },
-        { header: "Asset Class", key: "assetClass", width: 16 },
-      ];
-      const pipelineHeader = ws2.getRow(1);
-      pipelineHeader.eachCell(cell => { cell.fill = headerFill; cell.font = headerFont; cell.alignment = { vertical: "middle", horizontal: "center" }; });
-      pipelineHeader.height = 28;
-
-      const sortedDeals = [...allDeals].sort((a, b) => (b.fee || 0) - (a.fee || 0));
-      for (let i = 0; i < sortedDeals.length; i++) {
-        const deal = sortedDeals[i];
-        const row = ws2.addRow({
-          name: deal.name || "Unnamed",
-          status: deal.status || "",
-          fee: deal.fee || 0,
-          team: Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || ""),
-          agent: Array.isArray(deal.internalAgent) ? deal.internalAgent.join(", ") : (deal.internalAgent || ""),
-          dealType: deal.dealType || "",
-          assetClass: deal.assetClass || "",
-        });
-        row.getCell("fee").numFmt = CURRENCY_FMT;
-        if (i % 2 === 1) row.eachCell(cell => { cell.fill = altFill; });
-      }
-
-      // Totals
-      const pipelineTotals = ws2.addRow({
-        name: "TOTAL",
-        fee: allDeals.reduce((s, d) => s + (d.fee || 0), 0),
-      });
-      pipelineTotals.font = { bold: true, size: 11 };
-      pipelineTotals.getCell("fee").numFmt = CURRENCY_FMT;
-      pipelineTotals.eachCell(cell => { cell.border = { top: { style: "double" } }; });
-
-      ws2.views = [{ state: "frozen", ySplit: 1, xSplit: 0 }];
-      ws2.autoFilter = { from: "A1", to: `G${sortedDeals.length + 1}` };
-
-      // Sheet 3 — Fee Analysis
-      const ws3 = wb.addWorksheet("Fee Analysis");
-      ws3.columns = [
-        { header: "Category", key: "category", width: 24 },
-        { header: "Name", key: "name", width: 24 },
-        { header: "Deal Count", key: "count", width: 14 },
-        { header: "Total Fees", key: "totalFees", width: 18 },
-      ];
-      const feeHeader = ws3.getRow(1);
-      feeHeader.eachCell(cell => { cell.fill = headerFill; cell.font = headerFont; cell.alignment = { vertical: "middle", horizontal: "center" }; });
-      feeHeader.height = 28;
-
-      // By Team
-      const teamFees = new Map<string, { count: number; total: number }>();
-      for (const deal of allDeals) {
-        if (deal.team && Array.isArray(deal.team)) {
-          for (const t of deal.team) {
-            const existing = teamFees.get(t) || { count: 0, total: 0 };
-            existing.count++;
-            existing.total += deal.fee || 0;
-            teamFees.set(t, existing);
-          }
-        }
-      }
-      let feeRowIdx = 0;
-      for (const [name, vals] of [...teamFees.entries()].sort((a, b) => b[1].total - a[1].total)) {
-        const row = ws3.addRow({ category: "Team", name, count: vals.count, totalFees: vals.total });
-        row.getCell("totalFees").numFmt = CURRENCY_FMT;
-        if (feeRowIdx % 2 === 1) row.eachCell(cell => { cell.fill = altFill; });
-        feeRowIdx++;
-      }
-
-      // Separator
-      ws3.addRow({});
-      feeRowIdx = 0;
-
-      // By Agent
-      const agentFees = new Map<string, { count: number; total: number }>();
-      for (const deal of allDeals) {
-        const agents = Array.isArray(deal.internalAgent) ? deal.internalAgent : (deal.internalAgent ? [deal.internalAgent] : []);
-        const perAgent = (deal.fee || 0) / Math.max(agents.length, 1);
-        for (const agent of agents) {
-          const existing = agentFees.get(agent) || { count: 0, total: 0 };
-          existing.count++;
-          existing.total += perAgent;
-          agentFees.set(agent, existing);
-        }
-      }
-      for (const [name, vals] of [...agentFees.entries()].sort((a, b) => b[1].total - a[1].total)) {
-        const row = ws3.addRow({ category: "Agent", name, count: vals.count, totalFees: Math.round(vals.total) });
-        row.getCell("totalFees").numFmt = CURRENCY_FMT;
-        if (feeRowIdx % 2 === 1) row.eachCell(cell => { cell.fill = altFill; });
-        feeRowIdx++;
-      }
-
-      // Separator
-      ws3.addRow({});
-      feeRowIdx = 0;
-
-      // By Deal Type
-      const dtFees = new Map<string, { count: number; total: number }>();
-      for (const deal of allDeals) {
-        const dt = deal.dealType || "Unknown";
-        const existing = dtFees.get(dt) || { count: 0, total: 0 };
-        existing.count++;
-        existing.total += deal.fee || 0;
-        dtFees.set(dt, existing);
-      }
-      for (const [name, vals] of [...dtFees.entries()].sort((a, b) => b[1].total - a[1].total)) {
-        const row = ws3.addRow({ category: "Deal Type", name, count: vals.count, totalFees: vals.total });
-        row.getCell("totalFees").numFmt = CURRENCY_FMT;
-        if (feeRowIdx % 2 === 1) row.eachCell(cell => { cell.fill = altFill; });
-        feeRowIdx++;
-      }
-
-      ws3.views = [{ state: "frozen", ySplit: 1, xSplit: 0 }];
-
-      // Send
-      const buffer = await wb.xlsx.writeBuffer();
-      const dateStr = now.toISOString().slice(0, 10);
-      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      res.setHeader("Content-Disposition", `attachment; filename="BGP_Board_Report_${dateStr}.xlsx"`);
-      res.send(Buffer.from(buffer as ArrayBuffer));
-    } catch (e: any) {
-      console.error("[board-report-export-excel] Error:", e);
-      res.status(500).json({ error: e.message });
-    }
-  });
+  // (The Board Report Excel export moved to Finance → Fees & pipeline,
+  // GET /api/finance/board.xlsx in server/finance-board.ts, 17 November 2026.)
 }
 
 const AUTO_ENRICH_INTERVAL_HOURS = 6;
@@ -10805,7 +10522,7 @@ export async function computeWipHealth(): Promise<any> {
   `);
   const wipDeals = rows.filter((r: any) => {
     const c = legacyToCode(r.status);
-    return c !== null && WIP_STATUSES.includes(c);
+    return c !== null && WIP_STATUSES.includes(c) && dealLeftTracker(r);
   });
   const slim = (r: any) => ({
     dealId: r.id,

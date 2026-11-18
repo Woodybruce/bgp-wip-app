@@ -51,7 +51,7 @@ import { db, pool } from "./db";
 import { stripRequirementProvenance } from "@shared/requirement-live";
 import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull, arrayContains } from "drizzle-orm";
 import { RECORD_THREAD_CREATOR } from "./record-thread-links";
-import { CLOSED_STATUSES } from "@shared/deal-status";
+import { CLOSED_STATUSES, dealLeftTrackerSql } from "@shared/deal-status";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -1081,15 +1081,10 @@ export class DatabaseStorage implements IStorage {
     if (filters?.dealType) conditions.push(eq(crmDeals.dealType, filters.dealType));
     if (filters?.propertyId) conditions.push(eq(crmDeals.propertyId, filters.propertyId));
     if (filters?.excludeTrackerDeals) {
-      // The Deals board shows every deal from Marketing onwards (Woody,
-      // 2026-10-26: "marketing deals need a fee so need to sit in the WIP
-      // and deals so people can see them and add fees") — it used to start
-      // at Solicitors (2026-08-25). Only the pre-marketing investment
-      // pipeline (Opportunity / Reporting / Speculative / Live) stays on the
-      // trackers. NULL/unknown statuses stay visible rather than silently
-      // vanishing.
-      conditions.push(sql`(${crmDeals.status} IS NULL OR lower(${crmDeals.status}) NOT IN (
-        'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live'))`);
+      // A letting shows from Marketing onwards (Woody, 2026-10-26); an
+      // investment deal stays on the Investment Tracker until Solicitors
+      // (Jack, 2026-11-16). One rule: dealLeftTrackerSql.
+      conditions.push(sql.raw(dealLeftTrackerSql("crm_deals")));
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     if (filters?.page && filters?.limit) {
@@ -1203,8 +1198,9 @@ export class DatabaseStorage implements IStorage {
 
   async createCrmRequirementLeasing(req: InsertCrmRequirementsLeasing): Promise<CrmRequirementsLeasing> {
     // Requirements centre: a row made here is BGP's own unless the caller
-    // says it came from an import, and a confirmation with no named person
-    // behind it is not kept. The imports and the intake stamp their own.
+    // says it came from an import or a client login (origin 'client'), and a
+    // confirmation with no named person behind it is not kept. The imports,
+    // the intake and the client's Add requirement stamp their own.
     const confirmed = !!req.lastConfirmedAt && !!(req.lastConfirmedBy || req.lastConfirmedByName);
     const values = { ...req, origin: req.origin ?? "bgp", ...(confirmed ? {} : { lastConfirmedAt: null, lastConfirmedBy: null, lastConfirmedByName: null, confirmedHow: null }) };
     const [r] = await db.insert(crmRequirementsLeasing).values(values).returning();

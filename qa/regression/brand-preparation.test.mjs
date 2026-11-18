@@ -64,7 +64,7 @@ test('ordinary BGP take reads only persisted matching-identity output and never 
   const oldPolicy = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(oldPolicy.text, ''); assert.equal(oldPolicy.pending, true);
   saved.policyVersion = BRAND_BRIEF_POLICY_VERSION;
   const beforeMailPolicy = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(beforeMailPolicy.text, ''); assert.equal(beforeMailPolicy.pending, true);
-  assert.equal(policyVersion(company, 'brand'), `${BRAND_BRIEF_POLICY_VERSION}:${PRIVATE_MAIL_POLICY_VERSION}`);
+  assert.equal(policyVersion(company, 'brand'), `${BRAND_BRIEF_POLICY_VERSION}:market-listings-1:${PRIVATE_MAIL_POLICY_VERSION}`);
   saved.policyVersion = policyVersion(company, 'brand');
   const cached = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(cached.text, saved.text); assert.equal(cached.cached, true);
   company.ai_generated_fields.brand_identity.previousFactsNeedReview = true;

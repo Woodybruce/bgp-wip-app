@@ -10,6 +10,7 @@
 import { legacyToCode, type DealStatusCode } from "./deal-status";
 import { isLettingType, LETTING_STATUS_LABELS, TENANT_REP_TYPES } from "./letting-rules";
 import { parseReqSize } from "./requirement-fit";
+import type { LandsecCategoryOrOther } from "./landsec";
 
 // ── Stages ───────────────────────────────────────────────────────────────
 export const RANKED_BRAND_STAGES = ["wanted", "unit_identified", "approached", "viewed", "negotiating", "hots", "solicitors", "let", "trading"] as const;
@@ -488,12 +489,15 @@ export interface BrandGridBrand {
   id: string | null;                 // null for a joint agent
   name: string;
   logoUrl: string | null;
+  category?: LandsecCategoryOrOther | null; // the Landsec agency brief's category, from the brand's type
   requirementHeld: boolean;
   furthest: BrandStage | null;       // null = on a strategy with no line yet
   wantedNoUnit: number;
   cells: Record<string, BrandGridCell>;
   // BGP only.
   onHold?: boolean; lead?: { id: string; name: string } | null; openActions?: number;
+  /** Starred as a Super Brand: BGP's own choice of expansion target. */
+  superBrand?: boolean;
   nextAction?: { id: string; title: string; dueAt: string | null; ownerName: string | null } | null;
   // Joint agents only: they hold no brand id to ask for one brand's plan, so the lines come with the grid.
   rows?: PlanRow[];

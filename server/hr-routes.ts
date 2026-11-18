@@ -627,25 +627,36 @@ export function setupHrRoutes(app: Express) {
   app.get("/api/hr/staff", requireAuth, async (req: any, res) => {
     try {
       const { userId: myId, isAdmin } = await getActor(req);
-      // Personal-tier fields (DOB, address) are masked for everyone except
-      // the user themselves and admins. Layla's HR brief specifies these as
-      // "Visible to individual & Equity / HR".
+      // Personal-tier fields are masked for everyone except the user
+      // themselves and admins. Layla's HR brief specifies these as "Visible
+      // to individual & Equity / HR". Until 16 November 2026 only DOB and
+      // address were masked here, so every signed-in login was sent each
+      // colleague's salary, emergency contact, holiday allowance, pension and
+      // contract / passport links (the screens hid them, the reply did not).
+      // The masked list is the one GET /api/hr/staff/:userId masks;
+      // qa/regression/hr-staff-masking.test.mjs holds the two in step.
       const { rows } = await pool.query(`
         SELECT
           u.id, u.name, u.email, u.phone, u.role, u.department, u.team,
           u.is_admin, u.is_active, u.profile_pic_url,
           sp.id AS profile_id,
           sp.title, sp.start_date, sp.end_date, sp.status AS hr_status,
-          sp.salary_current, sp.manager_id, sp.department AS hr_department,
+          CASE WHEN $2::boolean OR u.id = $1 THEN sp.salary_current ELSE NULL END AS salary_current,
+          sp.manager_id, sp.department AS hr_department,
           sp.rics_pathway, sp.rics_number, sp.apc_status, sp.apc_assessment_date,
           sp.apc_planned_sitting, sp.apc_submission_deadline,
           sp.apc_intent_to_submit_date, sp.apc_submission_date,
           sp.apc_counsellor_name, sp.apc_counsellor_email,
           sp.cv_summary, sp.cv_specialisms, sp.cv_notable_clients, sp.cv_career_history,
           sp.education, sp.bio,
-          sp.emergency_contact_name, sp.emergency_contact_phone, sp.emergency_contact_relation,
-          sp.holiday_entitlement, sp.pension_opt_in, sp.pension_rate,
-          sp.contract_sharepoint_url, sp.passport_sharepoint_url,
+          CASE WHEN $2::boolean OR u.id = $1 THEN sp.emergency_contact_name ELSE NULL END AS emergency_contact_name,
+          CASE WHEN $2::boolean OR u.id = $1 THEN sp.emergency_contact_phone ELSE NULL END AS emergency_contact_phone,
+          CASE WHEN $2::boolean OR u.id = $1 THEN sp.emergency_contact_relation ELSE NULL END AS emergency_contact_relation,
+          CASE WHEN $2::boolean OR u.id = $1 THEN sp.holiday_entitlement ELSE NULL END AS holiday_entitlement,
+          CASE WHEN $2::boolean OR u.id = $1 THEN sp.pension_opt_in ELSE NULL END AS pension_opt_in,
+          CASE WHEN $2::boolean OR u.id = $1 THEN sp.pension_rate ELSE NULL END AS pension_rate,
+          CASE WHEN $2::boolean OR u.id = $1 THEN sp.contract_sharepoint_url ELSE NULL END AS contract_sharepoint_url,
+          CASE WHEN $2::boolean OR u.id = $1 THEN sp.passport_sharepoint_url ELSE NULL END AS passport_sharepoint_url,
           sp.linkedin_url, sp.instagram_handle, sp.xero_tracking_name,
           sp.wfh_days, sp.employment_type, sp.cv_sharepoint_url,
           sp.board_member, sp.management_team,
@@ -659,14 +670,18 @@ export function setupHrRoutes(app: Express) {
           -- against the new year. Pending
           -- requests surfaced separately so the UI can show used / pending
           -- / remaining without double-subtracting.
-          (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
-           WHERE user_id = u.id AND status = 'approved'
-             AND start_date::date >= (date_trunc('year', now() - interval '4 months') + interval '4 months')::date
-                 AND start_date::date <  (date_trunc('year', now() - interval '4 months') + interval '16 months')::date) AS holiday_used,
-          (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
-           WHERE user_id = u.id AND status = 'pending'
-             AND start_date::date >= (date_trunc('year', now() - interval '4 months') + interval '4 months')::date
-                 AND start_date::date <  (date_trunc('year', now() - interval '4 months') + interval '16 months')::date) AS holiday_pending
+          CASE WHEN $2::boolean OR u.id = $1 THEN
+            (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
+              WHERE user_id = u.id AND status = 'approved'
+                AND start_date::date >= (date_trunc('year', now() - interval '4 months') + interval '4 months')::date
+                 AND start_date::date <  (date_trunc('year', now() - interval '4 months') + interval '16 months')::date)
+          ELSE NULL END AS holiday_used,
+          CASE WHEN $2::boolean OR u.id = $1 THEN
+            (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
+              WHERE user_id = u.id AND status = 'pending'
+                AND start_date::date >= (date_trunc('year', now() - interval '4 months') + interval '4 months')::date
+                 AND start_date::date <  (date_trunc('year', now() - interval '4 months') + interval '16 months')::date)
+          ELSE NULL END AS holiday_pending
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
         LEFT JOIN users m ON m.id = sp.manager_id
@@ -5658,6 +5673,20 @@ Use the language and tone of BGP's review docs.`,
          VALUES ($1, $2, $3, 'weekly', COALESCE($4, 0), $5) RETURNING *`,
         [label, description || null, emoji || null, sortOrder ?? null, value]
       );
+      res.json(rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Change a prize's emoji (the prize manager's emoji picker). Empty clears it: the wheel shows 🏅.
+  app.patch("/api/hr/brucey-prizes/:id", requireAuth, requireAdmin, async (req: any, res) => {
+    const raw = req.body?.emoji;
+    if (raw !== null && raw !== undefined && typeof raw !== "string") return res.status(400).json({ error: "emoji must be text" });
+    const emoji = typeof raw === "string" ? raw.trim().slice(0, 16) : "";
+    try {
+      const { rows } = await pool.query("UPDATE brucey_prizes SET emoji = $2 WHERE id = $1 RETURNING *", [req.params.id, emoji || null]);
+      if (!rows[0]) return res.status(404).json({ error: "Prize not found" });
       res.json(rows[0]);
     } catch (e: any) {
       res.status(500).json({ error: e.message });

@@ -17,9 +17,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Pill } from "@/components/ui/pill";
-import { DealWaitingPill, dealIsWaitingOn, waitedOnFirst } from "@/components/deal-waiting-pill";
-import { checklistLinkPath } from "@shared/deal-checklist";
+import { Pill, PillCount, pillMetrics } from "@/components/ui/pill";
+import { DealWaitingPill, dealIsWaitingOn } from "@/components/deal-waiting-pill";
+import { CHECKLIST_STAGES, checklistLinkPath } from "@shared/deal-checklist";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -64,12 +64,24 @@ interface Task {
   assignee_name?: string | null;
   source?: string | null;
   source_ref?: string | null;
-  // A task made for a deal checklist item: its unit, and whether the deal's
-  // waiting-on points at that item (GET /api/tasks).
+  // A task made for a deal checklist item: its unit and stage, and whether
+  // the deal's waiting-on points at that item (GET /api/tasks).
+  kind?: "deal_checklist" | "viewing_followup" | "task";
   unit_id?: string | null;
+  unit_name?: string | null;
+  checklist_stage?: string | null;
   waitingOnDeal?: boolean;
   waitingDays?: number | null;
 }
+
+// What a task is about, read the way the Landsec Tasks page reads it.
+const taskKind = (t: Task): "deal_checklist" | "viewing_followup" | "task" => {
+  if (t.kind) return t.kind;
+  const ref = String(t.source_ref || "");
+  return ref.startsWith("deal_checklist:") ? "deal_checklist" : ref.startsWith("viewing_followup:") ? "viewing_followup" : "task";
+};
+const checklistStageLabel = (t: Task) => CHECKLIST_STAGES.find(stage => stage.key === t.checklist_stage)?.label || null;
+const ROW_CHIP = `${pillMetrics} border border-border px-2 py-[3px] text-[10px] text-muted-foreground`;
 
 interface BriefingData {
   briefing: string;
@@ -160,24 +172,42 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
     : task.description;
   const viewingRef = task.source_ref?.startsWith("viewing_followup:") ? task.source_ref.slice("viewing_followup:".length) : null;
   const titleHref = viewingRef ? `/available?tab=viewings&viewingId=${encodeURIComponent(viewingRef)}` : null;
+  // A deal checklist task (as on the Landsec Tasks page): where it is, its
+  // stage, whether the item is required, and the checklist always one press
+  // away. Its own "Deal checklist, ... stage. Required." line is what the
+  // chips say, so it is not repeated.
+  const checklist = taskKind(task) === "deal_checklist";
+  const stage = checklist ? checklistStageLabel(task) : null;
+  const place = checklist ? [task.property_name, task.unit_name].filter(Boolean).join(" · ") : "";
+  const checklistHref = checklist && task.unit_id ? checklistLinkPath("tracker", task.unit_id) : null;
+  const shownDescription = checklist && descriptionText
+    ? descriptionText.split("\n").filter(line => !/^Deal checklist, /i.test(line.trim())).join("\n").trim() || null
+    : descriptionText;
 
   return (
     <div data-testid={`task-row-${task.id}`}>
     <div
       className={`group flex items-start gap-3 px-4 py-3 border-b last:border-b-0 transition-colors hover:bg-muted/30 ${isDone ? "opacity-50" : ""} ${isOverdue ? "bg-red-50/50 dark:bg-red-950/20" : ""} ${task.is_pinned ? "bg-amber-50/50 dark:bg-amber-950/10" : ""}`}
     >
+      {/* The circle stays 20px; the button around it is a 40px tap area. */}
       <button
+        type="button"
+        data-no-min-touch
         onClick={onToggle}
-        className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
+        aria-label={isDone ? `Mark as not done: ${task.title}` : `Mark as done: ${task.title}`}
+        title={isDone ? "Mark as not done" : "Mark as done"}
+        className="group/tick -m-2.5 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full"
+        data-testid={`task-toggle-${task.id}`}
+      >
+        <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
           isDone
             ? "bg-emerald-500 border-emerald-500 text-white"
             : isOverdue
-              ? "border-red-400 hover:border-red-500 hover:bg-red-50"
-              : "border-border hover:border-primary hover:bg-primary/5"
-        }`}
-        data-testid={`task-toggle-${task.id}`}
-      >
-        {isDone && <Check className="w-3 h-3" />}
+              ? "border-red-400 group-hover/tick:border-red-500 group-hover/tick:bg-red-50"
+              : "border-border group-hover/tick:border-primary group-hover/tick:bg-primary/5"
+        }`}>
+          {isDone && <Check className="w-3 h-3" />}
+        </span>
       </button>
 
       <div className="flex-1 min-w-0">
@@ -203,7 +233,13 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
               testId={`task-deal-waiting-${task.id}`}
             />
           )}
-          <PriorityBadge priority={task.priority} />
+          {checklist ? (
+            <>
+              <span className={ROW_CHIP}>Deal checklist</span>
+              {stage && <span className={ROW_CHIP} data-testid={`task-stage-${task.id}`}>{stage} stage</span>}
+              {(task.priority === "high" || task.priority === "urgent") && <span className={`${ROW_CHIP} text-foreground`}>Required</span>}
+            </>
+          ) : <PriorityBadge priority={task.priority} />}
           {task.category && <CategoryBadge category={task.category} />}
           {task.source === "ai_suggested" && (
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950 dark:border-violet-800 dark:text-violet-300" title="Suggested by ChatBGP from letting-tracker activity — mark done when handled, or done to dismiss">
@@ -234,10 +270,18 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
             </button>
           )}
         </div>
-        {descriptionText && (
+        {place && (
+          <p className="text-xs text-muted-foreground mt-0.5 truncate" data-testid={`task-place-${task.id}`}>
+            {task.property_name && task.linked_property_id
+              ? <Link href={`/properties/${task.linked_property_id}`}><span className="hover:underline cursor-pointer">{task.property_name}</span></Link>
+              : task.property_name}
+            {task.property_name && task.unit_name ? " · " : ""}{task.unit_name}
+          </p>
+        )}
+        {shownDescription && (
           <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
             {(() => {
-              const truncated = descriptionText.replace(/\n+/g, " · ").slice(0, 200);
+              const truncated = shownDescription.replace(/\n+/g, " · ").slice(0, 200);
               const parts: React.ReactNode[] = [];
               const regex = /(\*\*[^*]+\*\*)|(\*[^*]+\*)/g;
               let last = 0;
@@ -261,6 +305,13 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
               {dueInfo.text}
             </span>
           )}
+          {checklistHref && (
+            <Link href={checklistHref}>
+              <span className="text-[11px] text-blue-600 hover:underline cursor-pointer" data-testid={`task-open-checklist-${task.id}`}>
+                Open the checklist →
+              </span>
+            </Link>
+          )}
           {descriptionPath && (
             <Link href={descriptionPath}>
               <span className="text-[11px] text-blue-600 hover:underline cursor-pointer" data-testid={`task-description-link-${task.id}`}>
@@ -276,7 +327,7 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
               </span>
             </Link>
           )}
-          {task.property_name && (
+          {task.property_name && task.linked_property_id && !place && (
             <Link href={`/properties/${task.linked_property_id}`}>
               <span className="text-[11px] text-blue-600 flex items-center gap-1 hover:underline cursor-pointer">
                 <Building2 className="w-3 h-3" />
@@ -501,9 +552,10 @@ export default function TasksPage() {
   const [exportNotebooks, setExportNotebooks] = useState<any[]>([]);
   const [exporting, setExporting] = useState(false);
 
-  const { data: tasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
+  const tasksKey = ["/api/tasks", viewAssigned ? "assigned" : "mine"];
+  const { data: tasksData, isLoading: tasksLoading, isError: tasksFailed, error: tasksError, refetch: refetchTasks } = useQuery<Task[]>({
     // Prefix invalidations on ["/api/tasks"] still hit both variants.
-    queryKey: ["/api/tasks", viewAssigned ? "assigned" : "mine"],
+    queryKey: tasksKey,
     queryFn: async () => {
       const res = await fetch(`/api/tasks${viewAssigned ? "?view=assigned" : ""}`, {
         credentials: "include", headers: getAuthHeaders(),
@@ -512,6 +564,10 @@ export default function TasksPage() {
       return res.json();
     },
   });
+  const tasks = tasksData ?? [];
+  // Nothing loaded and the load failed: say so, never "All clear!". A list
+  // already on screen stays when only a later refresh fails.
+  const loadFailed = tasksFailed && !tasksData;
 
   const { data: assignableUsers = [] } = useQuery<Array<{ id: string; name: string }>>({
     queryKey: ["/api/users"],
@@ -647,12 +703,35 @@ export default function TasksPage() {
     setImportingEvernote(false);
   };
 
+  // A tick shows at once and is put back if the save fails (as on the Landsec
+  // Tasks page). The checklist item follows its task and a deal waiting on
+  // the item moves on, so the checklist and the deal clock are read again.
+  const toggleMutation = useMutation({
+    mutationFn: async (v: { id: string; status: "done" | "todo" }) => (await apiRequest("PATCH", `/api/tasks/${v.id}`, { status: v.status })).json(),
+    onMutate: async v => {
+      await queryClient.cancelQueries({ queryKey: tasksKey });
+      const before = queryClient.getQueryData<Task[]>(tasksKey);
+      queryClient.setQueryData<Task[]>(tasksKey, old => (Array.isArray(old) ? old : []).map(t => (t.id === v.id ? { ...t, status: v.status, completed_at: v.status === "done" ? new Date().toISOString() : null } : t)));
+      return { before };
+    },
+    onError: (e: any, _v, ctx) => {
+      if (ctx?.before) queryClient.setQueryData(tasksKey, ctx.before);
+      toast({ title: "Not saved", description: e?.message, variant: "destructive" });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      queryClient.invalidateQueries({ predicate: q => {
+        const k = String(q.queryKey[0] || "");
+        return k.startsWith("/api/deal-checklists") || k.startsWith("/api/landsec/deal") || k.startsWith("/api/landsec/unit/");
+      } });
+    },
+  });
+  const toggleStatus = (task: Task) => toggleMutation.mutate({ id: task.id, status: task.status === "done" ? "todo" : "done" });
+
   const handleToggle = (task: Task) => {
-    const newStatus = task.status === "done" ? "todo" : "done";
-    updateMutation.mutate({ id: task.id, status: newStatus });
-    if (newStatus === "done") {
-      toast({ title: "Nice!", description: `"${task.title}" completed` });
-    }
+    const done = task.status !== "done";
+    toggleStatus(task);
+    if (done) toast({ title: "Nice!", description: `"${task.title}" completed` });
   };
 
   const openEdit = (task: Task) => {
@@ -696,8 +775,12 @@ export default function TasksPage() {
 
   const activeTasks = tasks.filter(t => t.status !== "done");
   const completedTasks = tasks.filter(t => t.status === "done");
-  // The tasks a deal is waiting on come first, in the Overdue card and in the list.
-  const overdueTasks = waitedOnFirst(activeTasks.filter(t => t.due_date && new Date(t.due_date) < new Date()));
+  // "Waiting on you" leads, as on the Landsec Tasks page: the open tasks a
+  // deal is waiting on, the longest wait first. Each task shows once, so
+  // they are not in the Overdue card or the list below.
+  const waitingTasks = activeTasks.filter(t => !t.parent_task_id && dealIsWaitingOn(t)).sort((a, b) => (b.waitingDays ?? -1) - (a.waitingDays ?? -1));
+  const waitingIds = new Set(waitingTasks.map(t => t.id));
+  const overdueTasks = activeTasks.filter(t => !waitingIds.has(t.id) && t.due_date && new Date(t.due_date) < new Date());
   const todayTasks = activeTasks.filter(t => {
     if (!t.due_date) return false;
     return new Date(t.due_date).toDateString() === new Date().toDateString();
@@ -729,8 +812,52 @@ export default function TasksPage() {
     );
   }
   const overdueIds = new Set(overdueTasks.map(t => t.id));
-  const displayActive = waitedOnFirst(filteredTasks.filter(t => t.status !== "done" && !overdueIds.has(t.id)));
+  const displayActive = filteredTasks.filter(t => t.status !== "done" && !overdueIds.has(t.id) && !waitingIds.has(t.id));
   const displayCompleted = filteredTasks.filter(t => t.status === "done");
+  // The box for a new subtask sits under the list holding its task, in
+  // whichever section that is (Waiting on you, Overdue or the list).
+  const subtaskInputFor = (list: Task[]) => addingSubtaskFor && list.some(t => t.id === addingSubtaskFor) ? (
+    <div className="ml-12 pl-3 border-l-2 border-muted py-2 flex items-center gap-2">
+      <Input
+        autoFocus
+        placeholder="Subtask title..."
+        value={subtaskTitle}
+        onChange={e => setSubtaskTitle(e.target.value)}
+        className="h-7 text-xs flex-1"
+        onKeyDown={e => {
+          if (e.key === "Enter" && subtaskTitle.trim()) {
+            createMutation.mutate({ title: subtaskTitle.trim(), parentTaskId: addingSubtaskFor, priority: "medium" });
+            setSubtaskTitle("");
+            setAddingSubtaskFor(null);
+          }
+          if (e.key === "Escape") setAddingSubtaskFor(null);
+        }}
+      />
+      <Button size="sm" className="h-7 text-xs" onClick={() => {
+        if (subtaskTitle.trim()) {
+          createMutation.mutate({ title: subtaskTitle.trim(), parentTaskId: addingSubtaskFor, priority: "medium" });
+          setSubtaskTitle("");
+          setAddingSubtaskFor(null);
+        }
+      }}>Add</Button>
+      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setAddingSubtaskFor(null)}>
+        <X className="w-3 h-3" />
+      </Button>
+    </div>
+  ) : null;
+  // The number on each status pill: the tasks (not subtasks) at that status.
+  const statusCount = (f: "all" | "todo" | "in_progress" | "done") => f === "all" ? parentTasks.length : parentTasks.filter(t => t.status === f).length;
+  const rowProps = (task: Task) => ({
+    task,
+    subtasks: subtaskMap[task.id] || [],
+    onToggle: () => handleToggle(task),
+    onEdit: () => openEdit(task),
+    onDelete: () => deleteMutation.mutate(task.id),
+    onPin: () => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned }),
+    showAssignee: viewAssigned,
+    onAddSubtask: () => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); },
+    onToggleSubtask: (id: string) => { const sub = tasks.find(t => t.id === id); if (sub) toggleStatus(sub); },
+  });
 
   return (
     <>
@@ -742,7 +869,7 @@ export default function TasksPage() {
               <div>
                 <h1 className="text-2xl font-bold tracking-tight">My Tasks</h1>
                 <p className="text-sm text-muted-foreground mt-0.5">
-                  {activeTasks.length} open{overdueTasks.length > 0 ? ` · ${overdueTasks.length} overdue` : ""}{todayTasks.length > 0 ? ` · ${todayTasks.length} due today` : ""}
+                  {activeTasks.length} open{waitingTasks.length > 0 ? ` · ${waitingTasks.length} with a deal waiting on ${viewAssigned ? "them" : "you"}` : ""}{overdueTasks.length > 0 ? ` · ${overdueTasks.length} overdue` : ""}{todayTasks.length > 0 ? ` · ${todayTasks.length} due today` : ""}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -855,6 +982,21 @@ export default function TasksPage() {
               )}
             </Card>
 
+            {waitingTasks.length > 0 && filter !== "done" && (
+              <Card className="border-amber-500/50" data-testid="tasks-waiting-on-you">
+                <CardHeader className="pb-2 pt-3 px-4">
+                  <CardTitle className="text-sm font-semibold">
+                    {viewAssigned ? "A deal is waiting on them" : "Waiting on you"}
+                    <span className="ml-1.5 font-mono tabular-nums text-muted-foreground">{waitingTasks.length}</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="px-0 pb-0">
+                  {waitingTasks.map(task => <TaskRow key={task.id} {...rowProps(task)} />)}
+                  {subtaskInputFor(waitingTasks)}
+                </CardContent>
+              </Card>
+            )}
+
             {overdueTasks.length > 0 && (
               <Card className="border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/20">
                 <CardHeader className="pb-2 pt-3 px-4">
@@ -866,23 +1008,8 @@ export default function TasksPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="px-0 pb-0">
-                  {overdueTasks.map(task => (
-                    <TaskRow
-                      key={task.id}
-                      task={task}
-                      subtasks={subtaskMap[task.id] || []}
-                      onToggle={() => handleToggle(task)}
-                      onEdit={() => openEdit(task)}
-                      onDelete={() => deleteMutation.mutate(task.id)}
-                      onPin={() => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned })}
-                      showAssignee={viewAssigned}
-                      onAddSubtask={() => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); }}
-                      onToggleSubtask={(id) => {
-                        const sub = tasks.find(t => t.id === id);
-                        if (sub) updateMutation.mutate({ id, status: sub.status === "done" ? "todo" : "done" });
-                      }}
-                    />
-                  ))}
+                  {overdueTasks.map(task => <TaskRow key={task.id} {...rowProps(task)} />)}
+                  {subtaskInputFor(overdueTasks)}
                 </CardContent>
               </Card>
             )}
@@ -911,6 +1038,7 @@ export default function TasksPage() {
                         data-testid={`filter-${f}`}
                       >
                         {f === "all" ? "All" : f === "todo" ? "To Do" : f === "in_progress" ? "In Progress" : "Done"}
+                        <PillCount n={statusCount(f)} active={filter === f} />
                       </Pill>
                     ))}
                   </div>
@@ -942,6 +1070,15 @@ export default function TasksPage() {
                   <div className="p-4 space-y-3">
                     {[1, 2, 3].map(i => <Skeleton key={i} className="h-12 w-full" />)}
                   </div>
+                ) : loadFailed ? (
+                  <div className="text-center py-12 px-4" data-testid="tasks-load-failed">
+                    <AlertTriangle className="w-8 h-8 mx-auto mb-3 text-muted-foreground" />
+                    <p className="text-sm font-medium">Your tasks could not be loaded.</p>
+                    <p className="text-xs text-muted-foreground mt-1">{(tasksError as any)?.message ? `The server answered ${(tasksError as any).message}. ` : ""}Nothing has been changed.</p>
+                    <Button variant="outline" size="sm" className="mt-3" onClick={() => refetchTasks()} data-testid="button-tasks-retry">Try again</Button>
+                  </div>
+                ) : waitingTasks.length > 0 && displayActive.length === 0 && displayCompleted.length === 0 ? (
+                  <p className="text-center py-8 text-sm text-muted-foreground">Nothing else to do.</p>
                 ) : displayActive.length === 0 && displayCompleted.length === 0 ? (
                   <div className="text-center py-12">
                     <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-emerald-400 opacity-60" />
@@ -950,52 +1087,8 @@ export default function TasksPage() {
                   </div>
                 ) : (
                   <>
-                    {displayActive.map(task => (
-                      <TaskRow
-                        key={task.id}
-                        task={task}
-                        subtasks={subtaskMap[task.id] || []}
-                        onToggle={() => handleToggle(task)}
-                        onEdit={() => openEdit(task)}
-                        onDelete={() => deleteMutation.mutate(task.id)}
-                        onPin={() => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned })}
-                      showAssignee={viewAssigned}
-                        onAddSubtask={() => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); }}
-                        onToggleSubtask={(id) => {
-                          const sub = tasks.find(t => t.id === id);
-                          if (sub) updateMutation.mutate({ id, status: sub.status === "done" ? "todo" : "done" });
-                        }}
-                      />
-                    ))}
-                    {addingSubtaskFor && displayActive.some(t => t.id === addingSubtaskFor) && (
-                      <div className="ml-12 pl-3 border-l-2 border-muted py-2 flex items-center gap-2">
-                        <Input
-                          autoFocus
-                          placeholder="Subtask title..."
-                          value={subtaskTitle}
-                          onChange={e => setSubtaskTitle(e.target.value)}
-                          className="h-7 text-xs flex-1"
-                          onKeyDown={e => {
-                            if (e.key === "Enter" && subtaskTitle.trim()) {
-                              createMutation.mutate({ title: subtaskTitle.trim(), parentTaskId: addingSubtaskFor, priority: "medium" });
-                              setSubtaskTitle("");
-                              setAddingSubtaskFor(null);
-                            }
-                            if (e.key === "Escape") setAddingSubtaskFor(null);
-                          }}
-                        />
-                        <Button size="sm" className="h-7 text-xs" onClick={() => {
-                          if (subtaskTitle.trim()) {
-                            createMutation.mutate({ title: subtaskTitle.trim(), parentTaskId: addingSubtaskFor, priority: "medium" });
-                            setSubtaskTitle("");
-                            setAddingSubtaskFor(null);
-                          }
-                        }}>Add</Button>
-                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setAddingSubtaskFor(null)}>
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    )}
+                    {displayActive.map(task => <TaskRow key={task.id} {...rowProps(task)} />)}
+                    {subtaskInputFor(displayActive)}
 
                     {displayCompleted.length > 0 && (
                       <>
@@ -1007,23 +1100,7 @@ export default function TasksPage() {
                           {showCompletedSection ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                           Completed ({displayCompleted.length})
                         </button>
-                        {showCompletedSection && displayCompleted.map(task => (
-                          <TaskRow
-                            key={task.id}
-                            task={task}
-                            subtasks={subtaskMap[task.id] || []}
-                            onToggle={() => handleToggle(task)}
-                            onEdit={() => openEdit(task)}
-                            onDelete={() => deleteMutation.mutate(task.id)}
-                            onPin={() => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned })}
-                      showAssignee={viewAssigned}
-                            onAddSubtask={() => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); }}
-                            onToggleSubtask={(id) => {
-                              const sub = tasks.find(t => t.id === id);
-                              if (sub) updateMutation.mutate({ id, status: sub.status === "done" ? "todo" : "done" });
-                            }}
-                          />
-                        ))}
+                        {showCompletedSection && displayCompleted.map(task => <TaskRow key={task.id} {...rowProps(task)} />)}
                       </>
                     )}
                   </>

@@ -1,21 +1,26 @@
-// Matching a plan to the tenancy schedule, one outline at a time
-// (docs/property-page-rebuild-2026-11-13.md). A scan only ever PROPOSES
-// outlines. A person then links each one to a schedule row, keeps it as
-// context (drawn, no row) or marks it "not a unit". Nothing here writes to the
+// Matching a plan to the tenancy schedule (docs/property-page-rebuild-2026-11-13.md).
+// Everything a scan finds is saved the moment it finishes (Woody, 2026-11-16:
+// "the scan and tenancy schedule matches dont need checking they are all done
+// immediately and then there is the ability to edit"): an outline whose
+// printed unit number or tenant name points at one free schedule row is linked
+// to it, and every other outline is saved unlinked, drawn in grey, for a
+// person to link, change or remove on the plan. Nothing here writes to the
 // tenancy schedule: the schedule stays the list of units and the plan follows.
 //
-// Unlike the older one-shot review (applyPropertyPlanScan), a scan stays open:
-// each accepted proposal is marked on the scan with the outline it became, so
-// the work can be done over several sittings and by more than one person.
-// Suggestions are worked out when the board is read, against the rows that
-// have no outline on this plan yet, so they improve as the schedule is filled.
+// Each saved proposal is marked on the scan with the outline it became, and a
+// removed outline marks its proposal "not a unit" (DELETE /api/plan-units/:id),
+// so nothing comes back by itself. A scan from before saving was automatic
+// still holds proposals; the Plan tab saves them all with one press.
+// Suggestions for an unlinked outline are worked out when the board is read,
+// against the rows that have no outline on this plan yet, so they improve as
+// the schedule is filled.
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { isClientRequestUser } from "./company-scope";
 import { isValidPolygon } from "@shared/plan-geometry";
 import type { PropertyPlanCandidate } from "@shared/property-plan-scan";
-import { bulkAcceptable, floorsDisagree, sameFloor, type PlanMatchBoard, type PlanMatchMethod, type PlanMatchProposal } from "@shared/property-plan-match";
+import { floorsDisagree, planSaveOrder, sameFloor, type PlanMatchBoard, type PlanMatchMethod, type PlanMatchProposal } from "@shared/property-plan-match";
 import { namedTenant } from "@shared/property-units";
 import { planPolygonsOverlap } from "./plan-unit-detection";
 import { planPoints } from "./property-plan-scan";
@@ -170,12 +175,22 @@ export async function loadPlanMatchBoard(db: Queryable, plan: any, viewer: { can
   const otherFloors = new Set<string>(elsewhere.rows.map((r: any) => r.tenancy_unit_id));
   const stored: StoredCandidate[] = job?.status === "ready" ? job.candidates || [] : [];
   const free = scheduleRows.rows.filter((r: any) => !here.has(r.id)).map(matchRow);
+  // What the scan read where each of its outlines was saved.
+  const read = new Map<string, StoredCandidate>(((job?.candidates || []) as StoredCandidate[]).filter(c => c?.acceptedOutlineId).map(c => [c.acceptedOutlineId as string, c]));
   return {
     plan: { id: plan.id, propertyId: plan.property_id, floor: plan.floor, width: plan.width ?? null, height: plan.height ?? null, imageKey: plan.storage_key },
     scan: job ? { id: job.id, status: job.status, message: job.message ?? null, completed: job.completed ?? 0, total: job.total ?? 0 } : null,
-    outlines: outlines.map(o => ({ id: o.id, label: o.label, polygon: o.polygon, scheduleRowId: o.tenancy_unit_id && live.has(o.tenancy_unit_id) ? o.tenancy_unit_id : null })),
+    outlines: outlines.map(o => {
+      const scheduleRowId = o.tenancy_unit_id && live.has(o.tenancy_unit_id) ? o.tenancy_unit_id : null;
+      const scanned = read.get(o.id);
+      const guess = scheduleRowId ? null : matchPlanLabel(scanned?.label ?? o.label, scanned?.tenant ?? null, free, plan.floor);
+      return {
+        id: o.id, label: o.label, polygon: o.polygon, scheduleRowId,
+        printed: scanned ? { label: String(scanned.label ?? ""), tenant: scanned.tenant ?? null } : null,
+        possibleRowIds: guess ? [...new Set([...(guess.rowId ? [guess.rowId] : []), ...guess.possible])] : [],
+      };
+    }),
     proposals: suggestPlanMatches(openPlanCandidates(stored, outlines), free, plan.floor),
-    dismissed: stored.filter(c => c?.dismissed).length,
     rows: scheduleRows.rows.map((r: any) => ({
       id: r.id, label: r.label, tenant: namedTenant(r.trading_name, r.tenant_name), floor: r.floor, use: r.use,
       outlinedHere: here.has(r.id), outlinedElsewhere: otherFloors.has(r.id),
@@ -253,54 +268,86 @@ export async function acceptPlanProposal(database: Database, planId: string, sca
   });
 }
 
-// "Accept the suggested matches": every proposal whose row was suggested on
-// its unit number or tenant name alone, as the board showed it. Anything that
-// cannot be saved cleanly is left for a person, with the reason.
-export async function acceptSuggestedPlanProposals(database: Database, planId: string, scanId: string, canAccess: CanAccess): Promise<{ created: number; skipped: Array<{ label: string; reason: string }> }> {
-  return transaction(database, planId, scanId, canAccess, async (db, propertyId) => {
-    const { plan, candidates, outlines } = await lockScan(db, planId, scanId, propertyId);
-    const rows = (await db.query(ROWS_SQL, [plan.property_id])).rows;
-    const live = new Set<string>(rows.map((r: any) => r.id));
-    const here = new Set(outlines.map(o => o.tenancy_unit_id).filter((id): id is string => !!id && live.has(id)));
-    const suggested = suggestPlanMatches(openPlanCandidates(candidates, outlines), rows.filter((r: any) => !here.has(r.id)).map(matchRow), plan.floor).filter(bulkAcceptable);
-    const accepted = new Map<string, string>();
-    const skipped: Array<{ label: string; reason: string }> = [];
-    const drawn = outlines.map(o => ({ shape: planPoints(o.polygon), tenancy_unit_id: o.tenancy_unit_id, unit_id: o.unit_id }));
-    for (const proposal of suggested) {
-      const shape = planPoints(proposal.polygon);
-      if (drawn.some(o => planPolygonsOverlap(o.shape, shape))) { skipped.push({ label: proposal.label, reason: "It overlaps another outline." }); continue; }
-      let link: { unit_id: string | null; tenancy_unit_id: string | null };
-      try { link = await validatePlanUnitLink(db, plan.property_id, { tenancy_unit_id: proposal.suggestedRowId }); }
-      catch { skipped.push({ label: proposal.label, reason: "Its schedule row is no longer on this property." }); continue; }
-      if (drawn.some(o => (link.tenancy_unit_id && o.tenancy_unit_id === link.tenancy_unit_id) || (link.unit_id && o.unit_id === link.unit_id))) { skipped.push({ label: proposal.label, reason: "Its unit already has an outline on this floor." }); continue; }
-      const outlineId: string = (await db.query(`INSERT INTO property_plan_units (plan_id, unit_id, tenancy_unit_id, label, polygon)
-        VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id`, [planId, link.unit_id, link.tenancy_unit_id, proposal.label, JSON.stringify(proposal.polygon)])).rows[0].id;
-      accepted.set(proposal.id, outlineId);
-      drawn.push({ shape, tenancy_unit_id: link.tenancy_unit_id, unit_id: link.unit_id });
+export type PlanScanSaved = { linked: number; unlinked: number; setAside: number };
+
+// Every proposal still waiting on a locked scan goes on the plan: linked to
+// the row the board would suggest (a unit number or a tenant name, a floor
+// tie-break, a different tenant or floor on the plan included: the unit
+// number is the unit), and unlinked where nothing points at exactly one free
+// row. The surest readings are saved first. A proposal over something already
+// drawn is left off and marked "not a unit", so the scan leaves nothing waiting.
+async function saveOpenProposals(db: Queryable, scanId: string, { plan, candidates, outlines }: { plan: any; candidates: StoredCandidate[]; outlines: SavedOutline[] }): Promise<PlanScanSaved> {
+  const rows = (await db.query(ROWS_SQL, [plan.property_id])).rows;
+  const live = new Set<string>(rows.map((r: any) => r.id));
+  const here = new Set(outlines.map(o => o.tenancy_unit_id).filter((id): id is string => !!id && live.has(id)));
+  const proposals = suggestPlanMatches(openPlanCandidates(candidates, outlines), rows.filter((r: any) => !here.has(r.id)).map(matchRow), plan.floor);
+  const drawn = outlines.map(o => ({ shape: planPoints(o.polygon), tenancy_unit_id: o.tenancy_unit_id, unit_id: o.unit_id }));
+  const saved = new Map<string, string>(), setAside = new Set<string>();
+  let linked = 0;
+  for (const proposal of [...proposals].sort((a, b) => planSaveOrder(a) - planSaveOrder(b))) {
+    const shape = planPoints(proposal.polygon);
+    if (drawn.some(o => planPolygonsOverlap(o.shape, shape))) { setAside.add(proposal.id); continue; }
+    let link: { unit_id: string | null; tenancy_unit_id: string | null } = { unit_id: null, tenancy_unit_id: null };
+    if (proposal.suggestedRowId) {
+      const found = await validatePlanUnitLink(db, plan.property_id, { tenancy_unit_id: proposal.suggestedRowId }).catch(() => null);
+      // One schedule row, one outline per floor: a row (or the physical unit behind it) drawn already leaves this one unlinked.
+      if (found && !drawn.some(o => (found.tenancy_unit_id && o.tenancy_unit_id === found.tenancy_unit_id) || (found.unit_id && o.unit_id === found.unit_id))) link = found;
     }
-    if (accepted.size) await saveCandidates(db, scanId, candidates.map(c => accepted.has(c.id) ? { ...c, acceptedOutlineId: accepted.get(c.id), dismissed: false } : c));
-    return { created: accepted.size, skipped };
-  });
+    // "Unlabelled 7" is the scan's name for an outline where the plan prints nothing.
+    const label = proposal.label && !/^unlabelled \d+$/i.test(proposal.label.trim()) ? proposal.label : null;
+    const outlineId: string = (await db.query(`INSERT INTO property_plan_units (plan_id, unit_id, tenancy_unit_id, label, polygon)
+      VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id`, [plan.id, link.unit_id, link.tenancy_unit_id, label, JSON.stringify(proposal.polygon)])).rows[0].id;
+    saved.set(proposal.id, outlineId);
+    if (link.tenancy_unit_id || link.unit_id) linked++;
+    drawn.push({ shape, ...link });
+  }
+  if (saved.size || setAside.size) await saveCandidates(db, scanId, candidates.map(c => saved.has(c.id) ? { ...c, acceptedOutlineId: saved.get(c.id), dismissed: false } : setAside.has(c.id) ? { ...c, dismissed: true } : c));
+  return { linked, unlinked: saved.size - linked, setAside: setAside.size };
 }
 
-// "Not a unit" (a mall, a void, a misread): the proposal leaves the queue and
-// nothing is drawn. It can be put back, one at a time or all together.
-export async function dismissPlanProposal(database: Database, planId: string, scanId: string,
-  body: { candidateId?: unknown; dismissed?: unknown; restoreAll?: unknown }, canAccess: CanAccess): Promise<{ dismissed: number }> {
-  const restoreAll = body.restoreAll === true;
-  if (!restoreAll && (typeof body.candidateId !== "string" || !CANDIDATE_ID.test(body.candidateId))) throw new PropertyPlanScanError(400, "Choose an outline from this scan");
-  const dismissed = body.dismissed !== false;
-  return transaction(database, planId, scanId, canAccess, async (db, propertyId) => {
-    const { candidates, outlines } = await lockScan(db, planId, scanId, propertyId);
-    if (!restoreAll) {
-      const candidate = candidates.find(c => c.id === body.candidateId);
-      if (!candidate) throw new PropertyPlanScanError(404, "That outline is not in this scan");
-      if (dismissed && candidate.acceptedOutlineId && outlines.some(o => o.id === candidate.acceptedOutlineId)) throw new PropertyPlanScanError(409, "This outline has been saved. Remove it from the plan instead.");
+// A removed outline stays removed: the scan proposal it was saved from is
+// marked "not a unit", so it is not offered again. Run inside the delete's own
+// transaction (DELETE /api/plan-units/:id, server/property-plans.ts).
+export async function setRemovedOutlineAside(db: Queryable, planId: string, outlineId: string): Promise<void> {
+  await db.query(`UPDATE property_plan_scans SET updated_at = now(), candidates = (
+      SELECT jsonb_agg(CASE WHEN c->>'acceptedOutlineId' = $2 THEN c || '{"dismissed": true}'::jsonb ELSE c END ORDER BY n)
+        FROM jsonb_array_elements(candidates) WITH ORDINALITY AS e(c, n))
+    WHERE plan_id = $1 AND candidates @> jsonb_build_array(jsonb_build_object('acceptedOutlineId', $2::text))`, [planId, outlineId]);
+}
+
+// "Save them" on the Plan tab: the proposals of a scan that finished before
+// saving was automatic, or whose save failed.
+export async function acceptAllPlanProposals(database: Database, planId: string, scanId: string, canAccess: CanAccess): Promise<PlanScanSaved> {
+  return transaction(database, planId, scanId, canAccess, async (db, propertyId) => saveOpenProposals(db, scanId, await lockScan(db, planId, scanId, propertyId)));
+}
+
+// The scan runner's last step (server/property-plan-scanning.ts): the scan is
+// marked ready and what it found is saved in the same transaction, under the
+// plan's lock, so a finished scan is never seen with its outlines still
+// waiting. A failed save leaves the scan ready with its proposals open, for
+// "Save them". Null when the scan stopped or the plan's image changed while it ran.
+export async function completePlanScan(database: Database, scanId: string, planId: string, candidates: PropertyPlanCandidate[], message: string): Promise<PlanScanSaved | null> {
+  const db = await database.connect();
+  try {
+    await db.query("BEGIN");
+    const plan = (await db.query("SELECT * FROM property_plans WHERE id = $1 FOR UPDATE", [planId])).rows[0];
+    const marked = plan ? (await db.query(`UPDATE property_plan_scans SET status = 'ready', candidates = $2::jsonb, message = $3, completed = total, updated_at = now()
+      WHERE id = $1 AND plan_id = $4 AND image_key = $5 AND status = 'running' AND updated_at > now() - interval '3 minutes' AND created_at > now() - interval '30 minutes'
+      RETURNING id`, [scanId, JSON.stringify(candidates), message, planId, plan.storage_key])).rows.length > 0 : false;
+    if (!marked) { await db.query("ROLLBACK"); return null; }
+    let saved: PlanScanSaved = { linked: 0, unlinked: 0, setAside: 0 };
+    await db.query("SAVEPOINT scan_outlines");
+    try {
+      saved = await saveOpenProposals(db, scanId, await lockScan(db, planId, scanId, plan.property_id));
+      await db.query("RELEASE SAVEPOINT scan_outlines");
+    } catch (error: any) {
+      await db.query("ROLLBACK TO SAVEPOINT scan_outlines");
+      console.warn("[plan match] the scan finished but its outlines were not saved:", error?.message);
     }
-    const next = candidates.map(c => restoreAll ? { ...c, dismissed: false } : c.id === body.candidateId ? { ...c, dismissed } : c);
-    await saveCandidates(db, scanId, next);
-    return { dismissed: next.filter(c => c.dismissed).length };
-  });
+    await db.query("COMMIT");
+    return saved;
+  } catch (error) { await db.query("ROLLBACK").catch(() => {}); throw error; }
+  finally { db.release(); }
 }
 
 const router = Router();
@@ -325,16 +372,10 @@ router.post("/api/plans/:planId/match/accept", requireAuth, async (req: Request,
   } catch (error) { fail(res, error, "Could not save this outline"); }
 });
 
-router.post("/api/plans/:planId/match/accept-suggested", requireAuth, async (req: Request, res: Response) => {
+router.post("/api/plans/:planId/match/accept-all", requireAuth, async (req: Request, res: Response) => {
   try {
-    res.json(await acceptSuggestedPlanProposals(pool, String(req.params.planId), String(req.body?.scanId || ""), access(req)));
-  } catch (error) { fail(res, error, "Could not save the suggested matches"); }
-});
-
-router.post("/api/plans/:planId/match/dismiss", requireAuth, async (req: Request, res: Response) => {
-  try {
-    res.json(await dismissPlanProposal(pool, String(req.params.planId), String(req.body?.scanId || ""), req.body || {}, access(req)));
-  } catch (error) { fail(res, error, "Could not update this outline"); }
+    res.json(await acceptAllPlanProposals(pool, String(req.params.planId), String(req.body?.scanId || ""), access(req)));
+  } catch (error) { fail(res, error, "Could not save the scan's outlines"); }
 });
 
 export default router;

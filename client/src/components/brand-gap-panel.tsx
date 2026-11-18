@@ -19,6 +19,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CompanyChip } from "@/components/company-chip";
+import { PillSelect } from "@/components/crm-hub/company-list";
+import { useIsLandsecView } from "@/components/landsec/deal-clock";
+import { LANDSEC_CATEGORIES, LANDSEC_OTHER_LABEL, landsecCategoryLabel, landsecCategoryOf } from "@shared/landsec";
 import { renderAiCommentary } from "@/components/property-asset-brief";
 import {
   MapPin, TrendingUp, AlertCircle, FileText, Sparkles, RefreshCw,
@@ -321,7 +324,7 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
 }
 
 type GapTarget = {
-  brand_company_id: string; brand_name: string; domain: string | null;
+  brand_company_id: string; brand_name: string; domain: string | null; company_type?: string | null;
   sector: string | null; sector_label: string | null; sector_missing: boolean;
   competing_at: string[]; top_count: number; top_centres: string[]; local_km: number | null;
   rollout_status: string | null; expanding: boolean; expanding_note: string | null; score: number | null;
@@ -414,6 +417,9 @@ function TargetDetail({ target, onClose, propertyId, propertyName, units, canWan
                 {want.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Target className="w-3.5 h-3.5 mr-1" />}Want at this scheme
               </Button>
             )}
+            {/* Every login with brand pages adds a requirement or opens the brand's
+                (Woody, 2026-11-17: "keep all requirements open for clients and access
+                to amend and add"); never a joint agent (noBrandPages). */}
             {!noBrandPages && <Button size="sm" variant="outline" asChild><Link href={`/requirements?type=leasing&companyId=${t.brand_company_id}${t.requirement_note ? "" : "&new=1"}`} onClick={onClose}><FileText className="w-3.5 h-3.5 mr-1" />{t.requirement_note ? "Its requirements" : "Add requirement"}</Link></Button>}
             {!noBrandPages && <Button size="sm" variant="ghost" asChild><Link href={`/companies/${t.brand_company_id}`} onClick={onClose}><Store className="w-3.5 h-3.5 mr-1" />Brand page</Link></Button>}
           </div>
@@ -433,10 +439,22 @@ function GapLine({ label, children }: { label: string; children: React.ReactNode
 
 type TargetFilter = "all" | "competitors" | "missing" | "requirement" | "fits" | "inplay";
 
-function TargetsTable({ targets, onOpen }: { targets: GapTarget[]; onOpen: (t: GapTarget) => void }) {
+// landsec: the Landsec view, which reads each target by the categories of
+// Landsec's agency brief (shared/landsec.ts) and filters by them.
+function TargetsTable({ targets, onOpen, landsec }: { targets: GapTarget[]; onOpen: (t: GapTarget) => void; landsec: boolean }) {
   const [filter, setFilter] = useState<TargetFilter>("all");
+  const [category, setCategory] = useState("");
   const [q, setQ] = useState("");
   const [all, setAll] = useState(false);
+  const categoryOf = (t: GapTarget) => landsecCategoryOf(t.company_type) || "other";
+  const inCategory = (t: GapTarget) => !landsec || !category || categoryOf(t) === category;
+  const categoryOptions = landsec
+    ? [...LANDSEC_CATEGORIES.map(c => ({ value: c.key as string, label: c.label })), { value: "other", label: LANDSEC_OTHER_LABEL }]
+        .filter(option => targets.some(t => categoryOf(t) === option.value))
+    : [];
+  const kindLine = (t: GapTarget) => landsec
+    ? [landsecCategoryLabel(categoryOf(t)), t.sector_label].filter(Boolean).join(" · ")
+    : t.sector_label || "Unsorted";
   const tests: Record<TargetFilter, (t: GapTarget) => boolean> = {
     all: () => true,
     competitors: t => t.competing_at.length > 0,
@@ -447,16 +465,20 @@ function TargetsTable({ targets, onOpen }: { targets: GapTarget[]; onOpen: (t: G
   };
   const labels: Array<[TargetFilter, string]> = [["all", "All"], ["competitors", "At competitors"], ["missing", "Missing sectors"], ["requirement", "With a requirement"], ["fits", "Fits a unit"], ["inplay", "In play"]];
   const needle = q.trim().toLowerCase();
-  const rows = targets.filter(tests[filter]).filter(t => !needle || `${t.brand_name} ${t.sector_label || ""} ${t.competing_at.join(" ")}`.toLowerCase().includes(needle));
+  const rows = targets.filter(tests[filter]).filter(inCategory).filter(t => !needle || `${t.brand_name} ${kindLine(t)} ${t.competing_at.join(" ")}`.toLowerCase().includes(needle));
   const shown = all || needle ? rows : rows.slice(0, 15);
   return (
     <div className="space-y-2" data-testid="gap-targets">
       <div className="flex items-center gap-1.5 flex-wrap">
         {labels.map(([key, label]) => {
-          const n = targets.filter(tests[key]).length;
+          const n = targets.filter(inCategory).filter(tests[key]).length;
           if (key !== "all" && !n) return null;
           return <Pill key={key} active={filter === key} onClick={() => { setFilter(key); setAll(false); }} data-testid={`gap-filter-${key}`}>{label} <span className="font-mono tabular-nums">{n}</span></Pill>;
         })}
+        {categoryOptions.length > 0 && (
+          <PillSelect label="Category" any="Every category" value={category} onChange={value => { setCategory(value); setAll(false); }}
+            options={categoryOptions} testId="gap-filter-category" />
+        )}
         <div className="relative ml-auto w-full sm:w-52">
           <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input value={q} onChange={e => setQ(e.target.value)} placeholder="Search brands" className="h-8 pl-7 text-sm" data-testid="gap-target-search" />
@@ -474,7 +496,7 @@ function TargetsTable({ targets, onOpen }: { targets: GapTarget[]; onOpen: (t: G
               data-testid={`gap-target-${t.brand_company_id}`}>
               <span className="min-w-0">
                 <span className="flex items-center gap-1.5 min-w-0 text-sm font-medium"><CompanyChip name={t.brand_name} domain={t.domain} size={18} /></span>
-                <span className="block text-[11px] text-muted-foreground truncate">{t.sector_label || "Unsorted"}{t.sector_missing ? " · missing here" : ""}</span>
+                <span className="block text-[11px] text-muted-foreground truncate">{kindLine(t)}{t.sector_missing ? " · missing here" : ""}</span>
               </span>
               <span className="text-xs text-muted-foreground min-w-0 md:truncate" title={targetWhy(t)}>{targetWhy(t)}</span>
               <span className="text-xs min-w-0 truncate">
@@ -514,6 +536,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
   const positioning = data.positioning;
   const peers = positioning?.peers || "the top UK centres";
   const noBrandPages = useLandsecRestricted();
+  const landsecView = useIsLandsecView();
   const targets = data.targets || [];
   const cards = data.competingCards || [];
   const [tab, setTab] = useState<"targets" | "sectors" | "centres" | "take" | "more">("targets");
@@ -568,7 +591,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
 
       {tab === "targets" && (
         targets.length
-          ? <TargetsTable targets={targets} onOpen={setOpened} />
+          ? <TargetsTable targets={targets} onOpen={setOpened} landsec={landsecView} />
           : <p className="text-xs text-muted-foreground italic">No store data nearby yet. Populate stores for brands with "Find stores" on each brand page.</p>
       )}
 

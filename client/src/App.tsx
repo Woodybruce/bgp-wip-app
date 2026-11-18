@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore, lazy, Suspense } from "react";
-import { Switch, Route, useLocation, Redirect } from "wouter";
+import { Switch, Route, useLocation, useSearch, Redirect } from "wouter";
 import { queryClient, getQueryFn, apiRequest, refreshSession, sessionIdentity, subscribeSessionVerification, getSessionVerificationSnapshot } from "./lib/queryClient";
 import { isEquityUser } from "./lib/utils";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
@@ -60,7 +60,6 @@ const JointAgentChat = lazy(() => import("@/components/landsec/joint-agent-chat"
 const LandsecBrandCrm = lazy(() => import("@/pages/landsec-brand-crm"));
 const PropertiesHub = lazy(() => import("@/pages/properties-hub"));
 const DealsHub = lazy(() => import("@/pages/deals-hub"));
-const Requirements = lazy(() => import("@/pages/requirements"));
 const News = lazy(() => import("@/pages/news"));
 const PeoplePage = lazy(() => import("@/pages/people"));
 // A company page opened by its address: its two page chunks (the People page,
@@ -94,7 +93,6 @@ const Subscriptions = lazy(() => import("@/pages/subscriptions"));
 const ChatBGP = lazy(() => import("@/pages/chatbgp"));
 const Instructions = lazy(() => import("@/pages/instructions"));
 const Enrichment = lazy(() => import("@/pages/enrichment"));
-const BoardReport = lazy(() => import("@/pages/board-report"));
 const LeasingSchedule = lazy(() => import("@/pages/leasing-schedule"));
 const TenancyScheduleFull = lazy(() => import("@/pages/tenancy-schedule-full"));
 const UploadPage = lazy(() => import("@/pages/upload"));
@@ -110,6 +108,7 @@ const ExpensesAdmin = lazy(() => import("@/pages/expenses-admin"));
 const Portfolios = lazy(() => import("@/pages/portfolios"));
 const MyExpenses = lazy(() => import("@/pages/my-expenses"));
 const BusinessCardPage = lazy(() => import("@/pages/business-card"));
+const MyBgpPage = lazy(() => import("@/pages/hr").then((m) => ({ default: m.MyBgpPage })));
 const Kyc4uImport = lazy(() => import("@/pages/kyc4u-import"));
 const TeamExpenses = lazy(() => import("@/pages/team-expenses"));
 const MobileExpenses = lazy(() => import("@/pages/mobile-expenses"));
@@ -129,7 +128,6 @@ const LeaseEvents = lazy(() => import("@/pages/lease-events"));
 const KycHub = lazy(() => import("@/pages/kyc-hub"));
 const PropertyIntelligence = lazy(() => import("@/pages/property-intelligence"));
 const MapBgp = lazy(() => import("@/pages/map-bgp"));
-const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
 const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
 const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
@@ -145,13 +143,15 @@ const DocumentStudioV2 = lazy(() => import("@/pages/document-studio"));
 const HRPage = lazy(() => import("@/pages/hr"));
 const FinancePage = lazy(() => import("@/pages/finance"));
 const CashflowPage = lazy(() => import("@/pages/cashflow"));
+// The client checks page (public; the token is the key).
+const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
 
 function PublicKycUploadRoute() {
   return (
     <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Switch>
-          <Route path="/kyc-upload/:token">{() => <div className="min-h-screen flex items-center justify-center p-6 text-center text-sm text-muted-foreground">This upload link is no longer in use. Please send documents to your Bruce Gillingham Pollard contact.</div>}</Route>
+          <Route path="/kyc-upload/:token" component={KycUploadPage} />
         </Switch>
       </Suspense>
     </ErrorBoundary>
@@ -287,6 +287,14 @@ function StudioRoute({ children }: { children: React.ReactNode }) {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   if (!user) return <PageLoader />;
   return <>{children}</>;
+}
+
+// /requirements → the Requirements pill on Brands, with every parameter the
+// link carried (companyId, list, new, team, type, requirementId).
+function RequirementsToBrands() {
+  const params = new URLSearchParams(useSearch());
+  params.set("tab", "requirements");
+  return <Redirect to={`/brands?${params.toString()}`} replace />;
 }
 
 // Prefixes a client login (role='Client', e.g. Landsec) is allowed to open.
@@ -447,7 +455,8 @@ function Router() {
       <Route path="/map">{() => <PropertyIntelligenceTabRedirect tab="map" />}</Route>
       <Route path="/deals" component={DealsHub} />
       <Route path="/deals/:rest*" component={DealsHub} />
-      <Route path="/requirements" component={Requirements} />
+      {/* Requirements is a pill on Brands for every login (Woody, 2026-11-17); old links keep what they carried. */}
+      <Route path="/requirements">{() => <RequirementsToBrands />}</Route>
       <Route path="/tenant-rep" component={TenantRep} />
       <Route path="/evidence-plans" component={EvidencePlans} />
       <Route path="/evidence-plans/:id" component={EvidencePlans} />
@@ -491,8 +500,9 @@ function Router() {
       <Route path="/chatbgp" component={ChatBGP} />
       <Route path="/enrichment" component={Enrichment} />
       <Route path="/admin/dedupe" component={AdminDedupe} />
-      <Route path="/board-report" component={BoardReport} />
-      <Route path="/reporting" component={Reporting} />
+      {/* Reporting and Board Report are Finance → Fees & pipeline now (Woody, 2026-11-17). */}
+      <Route path="/board-report">{() => <Redirect to="/finance?tab=pipeline" />}</Route>
+      <Route path="/reporting">{() => <Redirect to="/finance?tab=pipeline" />}</Route>
       <Route path="/leasing-schedule" component={LeasingSchedule} />
       <Route path="/leasing-schedule/:propertyId" component={LeasingSchedule} />
       <Route path="/tenancy-schedule" component={TenancyScheduleRedirect} />
@@ -549,6 +559,7 @@ function Router() {
       <Route path="/m/images" component={MobileImages} />
       <Route path="/m/profile" component={MobileProfile} />
       <Route path="/hr" component={HRPage} />
+      <Route path="/my-bgp" component={MyBgpPage} />
       <Route path="/hr/:userId">{(params) => <HrPersonRedirect params={params as { userId: string }} />}</Route>
       <Route component={NotFound} />
     </Switch>
@@ -850,13 +861,14 @@ function AuthenticatedApp() {
               // Clouseau", "Hr", "Sharepoint"; design review 2026-08-23).
               const ROUTE_TITLES: Record<string, string> = {
                 "wip-report": "WIP Report", pla: "PLA Matters",
-                "kyc-clouseau": "KYC4U", hr: "People & HR",
+                "kyc-clouseau": "KYC4U", hr: "My BGP",
                 sharepoint: "SharePoint", "aml-compliance": "KYC4U",
                 "aml-training": "KYC4U", "cad-measure": "Cann CAD",
                 edozo: "Properties", available: "Letting Tracker",
                 contacts: "CRM", companies: "CRM", chatbgp: "ChatBGP",
                 "map-bgp": "Map", "westminster-restaurants": "London Restaurants",
                 "property-intelligence": "Property Intelligence",
+                "my-bgp": "My BGP", "my-expenses": "My Card & Expenses",
               };
               if (ROUTE_TITLES[root]) return ROUTE_TITLES[root];
               return root.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());

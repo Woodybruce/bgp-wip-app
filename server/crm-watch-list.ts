@@ -3,7 +3,9 @@ import { companyNounSql } from "./crm-engagement";
 
 // ── The watch list ─────────────────────────────────────────────────────────
 // What is new, and what is owed, on every company that is on a running
-// strategy: the Overview's first card. A fixed number of queries; each side
+// strategy, and on every Super Brand whether or not its strategy has started
+// (Woody, 2026-11-17: Super Brands "get the CRM VIP treatment and massive
+// focus"): the Overview's first card. A fixed number of queries; each side
 // query may fail and costs only its own column. BGP staff only (the route is
 // on the CRM engagement router).
 
@@ -13,10 +15,15 @@ export const WATCH_QUIET_DAYS = 30;
 
 export async function watchList(q: Queryable, now: Date = new Date()): Promise<CrmWatchRow[]> {
   const companies = (await q.query(
-    `SELECT c.id, c.name, ${companyNounSql("c")} AS noun, array_agg(DISTINCT s.name) AS strategies, array_agg(DISTINCT s.id) AS strategy_ids
-       FROM crm_strategy_targets t JOIN marketing_campaigns s ON s.id = t.strategy_id AND s.status = 'active'
-       JOIN crm_companies c ON c.id = t.company_id AND c.merged_into_id IS NULL
-      GROUP BY c.id, c.name, c.company_type ORDER BY c.name`)).rows;
+    `SELECT c.id, c.name, ${companyNounSql("c")} AS noun, c.hunter_flag IS TRUE AND c.company_type ILIKE 'tenant%' AS super_brand,
+            COALESCE(array_agg(DISTINCT s.name) FILTER (WHERE s.id IS NOT NULL), '{}') AS strategies,
+            COALESCE(array_agg(DISTINCT s.id) FILTER (WHERE s.id IS NOT NULL), '{}') AS strategy_ids
+       FROM crm_companies c
+       LEFT JOIN crm_strategy_targets t ON t.company_id = c.id
+       LEFT JOIN marketing_campaigns s ON s.id = t.strategy_id AND s.status = 'active'
+      WHERE c.merged_into_id IS NULL
+        AND (s.id IS NOT NULL OR (c.hunter_flag IS TRUE AND c.company_type ILIKE 'tenant%' AND c.archived_at IS NULL))
+      GROUP BY c.id ORDER BY c.name`)).rows;
   if (!companies.length) return [];
   const ids = companies.map(c => String(c.id));
   const side = (sql: string) => q.query(sql, [ids]).then(r => r.rows).catch(() => [] as any[]);
@@ -48,11 +55,14 @@ export async function watchList(q: Queryable, now: Date = new Date()): Promise<C
     if (pipe?.jobs) news.push(`${pipe.jobs} new job advert${pipe.jobs === 1 ? "" : "s"} for an opening or a property role`);
     if (touch?.recent) news.push(`${touch.recent} email${touch.recent === 1 ? "" : "s"} or meeting${touch.recent === 1 ? "" : "s"} in ${WATCH_NEWS_DAYS} days`);
     const owed: string[] = [];
+    const superBrand = c.super_brand === true;
+    const strategies = (c.strategies || []).map(String);
+    if (superBrand && !strategies.length) owed.push("No strategy yet");
     if (act?.overdue) owed.push(`${act.overdue} action${act.overdue === 1 ? "" : "s"} overdue`);
     if (!act?.open) owed.push("No next step");
     if (quietDays == null) owed.push("No contact on record");
     else if (quietDays >= WATCH_QUIET_DAYS) owed.push(`No contact for ${quietDays} days`);
-    return { id, name: String(c.name), noun: c.noun, strategies: (c.strategies || []).map(String), strategyIds: (c.strategy_ids || []).map(String),
+    return { id, name: String(c.name), noun: c.noun, strategies, strategyIds: (c.strategy_ids || []).map(String), ...(superBrand ? { superBrand } : {}),
       lastContactAt: lastAt, openActions: act?.open || 0, overdueActions: act?.overdue || 0,
       nextAction: act?.open ? { title: String(act.next_title || ""), dueAt: act.next_due ? new Date(act.next_due).toISOString() : null, ownerName: act.next_owner || null } : null,
       news, owed };

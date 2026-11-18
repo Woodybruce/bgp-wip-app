@@ -25,6 +25,7 @@
 
 import { pool } from "./db";
 import { legacyToCode, isProvisionalFee } from "../shared/deal-status";
+import { FORWARD_COMMISSION_STAGES, PIPELINE_WEIGHTS } from "../shared/finance-pipeline";
 
 const TIERS = [
   { fromMultiple: 2, toMultiple: 3, rate: 0.3 },
@@ -272,14 +273,16 @@ export async function buildCommissionStatements(): Promise<{ fyStart: string; st
 // Forward commission outlook (Woody, 2026-08-28: "work out the commissions
 // payments based on everyone's project fee splits and billings in the deal
 // boards") — the cost side of the Finance outlook. On top of the FYTD
-// statements, each agent's share of the live pipeline (NEG 50% / SOL 75%
-// weighted, same weights as the income projection) is added to their
-// cumulative billings and run through the same tier bands, giving the
-// commission the firm would owe if the weighted book lands. Deals already
-// at fee-due (EXC/COM/INV) are in the statements, not the forward book.
-// Investment deals before Solicitors (incl. NEG) are provisional and never
-// forecast (isProvisionalFee, shared/deal-status.ts, 2026-11-09).
-const FORWARD_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75 };
+// statements, each agent's share of the live pipeline (the one pipeline
+// rule, shared/finance-pipeline.ts: NEG and HOT 50%, SOL 100%, the same
+// weights as the income projection) is added to their cumulative billings
+// and run through the same tier bands, giving the commission the firm would
+// owe if the weighted book lands. Deals already at fee-due (EXC/COM/INV) are
+// in the statements, not the forward book. Investment deals before
+// Solicitors are provisional and never forecast (isProvisionalFee).
+const FORWARD_WEIGHTS: Record<string, number> = Object.fromEntries(
+  FORWARD_COMMISSION_STAGES.map(stage => [stage, PIPELINE_WEIGHTS[stage]]),
+);
 
 export interface CommissionOutlook {
   fyStart: string;

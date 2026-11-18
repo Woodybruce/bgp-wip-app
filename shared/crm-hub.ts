@@ -31,6 +31,8 @@ export interface CrmHubRow {
   counts: { properties?: number; deals?: number; requirements?: number; brandsRepresented?: number };
   line: string | null;
   why?: string[];
+  /** A brand BGP has starred as a Super Brand (hunter_flag): VIP, listed first. */
+  superBrand?: boolean;
 }
 export interface CrmHubResponse { kind: CrmHubKind; rows: CrmHubRow[]; owners: Array<{ id: string; name: string }>; cities: string[]; subTypes: string[] }
 export const CRM_HUB_PEOPLE_SHOWN = 6;
@@ -91,12 +93,13 @@ export function lenderSubType(companyType: string | null | undefined): LenderSub
 // ── The brands BGP is working ───────────────────────────────────────────────
 
 export interface BrandWorkSignals { onStrategy: boolean; openAction: boolean; liveDeal: boolean; requirement: boolean; hunterPick: boolean }
-export const BRAND_WHY = { onStrategy: "On a strategy", openAction: "Open action", liveDeal: "Live deal", requirement: "Requirement", hunterPick: "Hunter pick" } as const;
+export const BRAND_WHY = { onStrategy: "On a strategy", openAction: "Open action", liveDeal: "Live deal", requirement: "Requirement", hunterPick: "Super Brand" } as const;
 /**
  * Why a brand is on the CRM list, in a fixed order; an empty answer means it
  * is not on it. On a CRM strategy that is not completed, an open CRM action,
  * tenant on a deal that is not closed, a requirement that is live or to
- * confirm by the one live rule, or flagged as a Hunter pick.
+ * confirm by the one live rule, or starred as a Super Brand (hunter_flag,
+ * once called a Hunter pick).
  */
 export function brandWhy(signals: Partial<BrandWorkSignals>): string[] {
   return (Object.keys(BRAND_WHY) as Array<keyof BrandWorkSignals>).filter(key => signals[key] === true).map(key => BRAND_WHY[key]);

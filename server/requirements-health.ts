@@ -59,7 +59,7 @@ export async function requirementsHealthReport(pool: Pool): Promise<Requirements
     () => grouped(`SELECT coalesce(nullif(btrim(r.status), ''), '(blank)') AS label, count(*) AS count FROM ${T} r GROUP BY 1 ORDER BY 2 DESC`));
 
   await section("origin", "Whose record", "Stamped from 12 November 2026. 'Not stamped' rows were made before that and cannot be told apart by this column.",
-    () => grouped(`SELECT CASE lower(btrim(coalesce(r.origin, ''))) WHEN 'bgp' THEN 'BGP''s own (made by a person)' WHEN 'pipnet' THEN 'PIPnet import' WHEN 'trl' THEN 'The Requirement List import' WHEN '' THEN 'Not stamped (older row)' ELSE r.origin END AS label, count(*) AS count FROM ${T} r GROUP BY 1 ORDER BY 2 DESC`));
+    () => grouped(`SELECT CASE lower(btrim(coalesce(r.origin, ''))) WHEN 'bgp' THEN 'BGP''s own (made by a person)' WHEN 'client' THEN 'Added by a client login' WHEN 'pipnet' THEN 'PIPnet import' WHEN 'trl' THEN 'The Requirement List import' WHEN '' THEN 'Not stamped (older row)' ELSE r.origin END AS label, count(*) AS count FROM ${T} r GROUP BY 1 ORDER BY 2 DESC`));
 
   await section("sources", "By source label",
     "A row can carry several labels. A hand-added row had no label, and the PIPnet import then added 'PIPnet' to it, so 'PIPnet only' includes hand-made rows.",

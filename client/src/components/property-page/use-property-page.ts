@@ -2,8 +2,9 @@
 // (docs/property-page-rebuild-2026-11-13.md). One read of the property's units
 // (GET /api/properties/:id/units) feeds the unit list, the plan colouring and
 // the pills, so a unit says the same thing in each place. The plan's outlines
-// and proposals come from the match board (GET /api/plans/:id/match). Every
-// change here refreshes both, and the older Plans card's own reads.
+// (and any scan outlines not yet saved) come from the match board
+// (GET /api/plans/:id/match). Every change here refreshes both, and the older
+// Plans card's own reads.
 import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -66,14 +67,13 @@ export function usePlanMatchBoard(planId: string | null) {
 
 export interface PlanMatchActions {
   busy: boolean;
-  // Save a scan's proposal as an outline: on a schedule row, or with none (context).
+  // Save one scan proposal as an outline: on a schedule row, or with none.
   accept: (input: { scanId: string; candidateId: string; scheduleRowId: string | null; label?: string }) => Promise<{ outlineId: string }>;
-  acceptSuggested: (scanId: string) => Promise<{ created: number; skipped: Array<{ label: string; reason: string }> }>;
-  // "Not a unit": the proposal leaves the queue. dismissed: false puts it back.
-  dismiss: (input: { scanId: string; candidateId: string; dismissed: boolean }) => Promise<void>;
-  restoreDismissed: (scanId: string) => Promise<void>;
-  // Point a saved outline at another schedule row, or at none (context).
+  // Save every proposal an older scan left waiting: linked where its number or tenant names a row, else unlinked.
+  acceptAll: (scanId: string) => Promise<{ linked: number; unlinked: number; setAside: number }>;
+  // Point a saved outline at another schedule row, or at none (unlinked, grey).
   relink: (outlineId: string, scheduleRowId: string | null) => Promise<void>;
+  // Removed for good: the scan proposal it came from is not offered again.
   removeOutline: (outlineId: string) => Promise<void>;
   // Find the walls around a point on the plan. Nothing is saved until saveTraced.
   trace: (point: { x: number; y: number }) => Promise<{ polygon: PropertyPlanPolygon; imageKey: string }>;
@@ -90,6 +90,7 @@ export function usePlanMatchActions(propertyId: string, planId: string | null): 
     queryClient.invalidateQueries({ queryKey: ["/api/plans", planId, "units"] }),
     queryClient.invalidateQueries({ queryKey: ["/api/plans", planId, "scan"] }),
     queryClient.invalidateQueries({ queryKey: ["/api/plans", "property-links", propertyId] }),
+    queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "review-items"] }),
   ]), [queryClient, propertyId, planId]);
   const run = useCallback(async <T,>(method: string, path: string, body?: unknown, refreshAfter = true): Promise<T> => {
     if (!planId) throw new Error("Choose a plan first");
@@ -106,10 +107,8 @@ export function usePlanMatchActions(propertyId: string, planId: string | null): 
   return {
     busy: running > 0,
     accept: input => run("POST", `${plan}/match/accept`, input),
-    acceptSuggested: scanId => run("POST", `${plan}/match/accept-suggested`, { scanId }),
-    dismiss: async input => { await run("POST", `${plan}/match/dismiss`, input); },
-    restoreDismissed: async scanId => { await run("POST", `${plan}/match/dismiss`, { scanId, restoreAll: true }); },
-    // An outline made context is marked unlinked on purpose (status_override), as the Match routes mark it.
+    acceptAll: scanId => run("POST", `${plan}/match/accept-all`, { scanId }),
+    // An outline a person unlinks is marked unlinked on purpose (status_override), so nothing links it again by itself.
     relink: async (outlineId, scheduleRowId) => { await run("PATCH", `/api/plan-units/${encodeURIComponent(outlineId)}`, { tenancy_unit_id: scheduleRowId, unit_id: null, status_override: scheduleRowId ? null : "unlinked" }); },
     removeOutline: async outlineId => { await run("DELETE", `/api/plan-units/${encodeURIComponent(outlineId)}`); },
     trace: point => run("POST", `${plan}/trace-unit`, point, false),

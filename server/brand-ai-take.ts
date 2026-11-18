@@ -21,6 +21,7 @@ import { currentOfficialProfileEvidence } from "./brand-profile-evidence";
 import { readBrandCoreRefresh, startBrandCoreRefresh } from "./brand-core-refresh";
 import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevance";
 import { PRIVATE_MAIL_POLICY_VERSION } from "./private-mail";
+import { requirementReason, requirementStateSql, requirementLiveColumnsSql } from "../shared/requirement-live";
 
 const router = Router();
 const anthropic = getAnthropicClient(true);
@@ -41,6 +42,28 @@ function dataHash(obj: any): string {
 // ─── Data slicers ───────────────────────────────────────────────────────
 // Each tab pulls only the fields it needs — keeps prompts small/cheap.
 
+// The take is one saved text that client logins read too (GET
+// /api/brand/:id/ai-take/:tab, and the client Brand Pack). Every leasing
+// requirement is open to a client login since 17 November 2026 (Woody: "keep
+// all requirements open for clients and access to amend and add"), so the
+// take is given every requirement on the brand that is not closed by the one
+// live rule, live first, each worded honestly by requirementReason
+// ("requirement confirmed 3 Nov", "BGP requirement dated 4 Aug, not
+// confirmed", "PIPnet listing from Sep, not confirmed"). The wording never
+// says who at BGP confirmed one. A Landsec joint agent has no brand pages, so
+// never reads it.
+async function openRequirements(companyId: string, limit: number) {
+  const { rows } = await pool.query(
+    `SELECT r.name, r.use, r.size, r.requirement_locations, ${requirementLiveColumnsSql("r")}
+       FROM crm_requirements_leasing r
+      WHERE r.company_id = $1 AND ${requirementStateSql("r")} <> 'closed'
+      ORDER BY (CASE ${requirementStateSql("r")} WHEN 'live' THEN 0 WHEN 'to_confirm' THEN 1 ELSE 2 END),
+               coalesce(r.last_confirmed_at, r.last_listed_at, r.created_at) DESC NULLS LAST, r.id LIMIT $2`,
+    [companyId, limit]
+  );
+  return rows.map((r: any) => ({ requirement: requirementReason(r).text, name: r.name, uses: r.use || [], sizes: r.size || [], locations: r.requirement_locations || [] }));
+}
+
 async function loadBrandSlice(companyId: string) {
   const { rows } = await pool.query(
     `SELECT id, name, company_type, description, concept_pitch, industry, domain, domain_url, website,
@@ -58,9 +81,7 @@ async function loadBrandSlice(companyId: string) {
       portfolio_note: "These are linked CRM properties, not a complete or independently verified ownership portfolio.", activity };
   }
   const [requirements, signals, deals] = await Promise.all([
-    pool.query(`SELECT id, name, status, "use", size, requirement_locations, requirement_date, updated_at, sources
-      FROM crm_requirements_leasing WHERE company_id = $1 AND LOWER(TRIM(COALESCE(status, ''))) = 'active'
-      ORDER BY updated_at DESC NULLS LAST, id LIMIT 8`, [companyId]),
+    openRequirements(companyId, 8),
     pool.query(`SELECT id, signal_type, headline, detail, signal_date, source, confidence, geography, ai_relevant
       FROM brand_signals WHERE brand_company_id = $1 AND ai_relevant IS DISTINCT FROM FALSE
         AND signal_type IN ('opening', 'closure', 'requirement')
@@ -74,7 +95,9 @@ async function loadBrandSlice(companyId: string) {
       WHERE d.tenant_id = $1 OR d.purchaser_id = $1 OR d.vendor_id = $1
       ORDER BY d.updated_at DESC NULLS LAST LIMIT 10`, [companyId]).catch(() => ({ rows: [] as any[] })),
   ]);
-  return { ...brandActionEvidence(rows[0], requirements.rows, signals.rows), bgp_deals: deals.rows.map((d: any) => bgpDealEvidence(d)),
+  // No requirement rows go to brandActionEvidence (it reads any "Active" row
+  // as current): the take's are the open requirements, each worded by the live rule.
+  return { ...brandActionEvidence(rows[0], [], signals.rows), requirements, bgp_deals: deals.rows.map((d: any) => bgpDealEvidence(d)),
     bgp_relationship: await relationshipEvidence(rows[0]) };
 }
 
@@ -235,12 +258,8 @@ async function loadActivitySlice(companyId: string) {
       ORDER BY updated_at DESC NULLS LAST LIMIT 10`,
     [companyId]
   );
-  const reqs = await pool.query(
-    `SELECT name, status, "use", size, requirement_locations
-       FROM crm_requirements_leasing
-      WHERE company_id = $1 AND status = 'Active' LIMIT 10`,
-    [companyId]
-  ).catch(() => ({ rows: [] }));
+  // The open requirements, each worded by the live rule, as on the brand tab.
+  const requirements = await openRequirements(companyId, 10).catch(() => []);
   const lastAt = interactions.rows[0]?.last_at;
   return {
     name: company.rows[0].name,
@@ -254,7 +273,7 @@ async function loadActivitySlice(companyId: string) {
     interactions_total: interactions.rows[0]?.total || 0,
     contacts: contacts.rows.map((r: any) => ({ name: r.name, role: r.role })),
     deals: deals.rows.map((r: any) => ({ name: r.name, status: r.status, type: r.deal_type })),
-    active_requirements: reqs.rows,
+    requirements,
   };
 }
 
@@ -327,9 +346,10 @@ ${BRAND_BRIEF_EVIDENCE_RULES}
 Data — profile_context is displayed separately in the factual overview. Do not repeat it or treat a previous AI narrative, rollout label or static company size as evidence of current demand:
 ${JSON.stringify(d, null, 2)}
 
-Write a short action brief grounded in the recorded requirements, dated site events, BGP's own deal history (bgp_deals — deals BGP has done or is doing with this brand; name the property, stage and BGP agents) and BGP's email relationship (bgp_relationship — thread counts, last touch, who at the brand we speak to most):
+Write a short action brief grounded in the brand's requirements (requirements — each with what it is and its date in "requirement": "requirement confirmed 3 Nov" means a BGP person confirmed it with the brand then; "BGP requirement dated 4 Aug, not confirmed" and "client requirement dated 4 Aug, not confirmed" are records nobody at BGP has confirmed; "PIPnet listing from Sep, not confirmed" is a market listing that shows appetite at its date), dated site events, BGP's own deal history (bgp_deals — deals BGP has done or is doing with this brand; name the property, stage and BGP agents) and BGP's email relationship (bgp_relationship — thread counts, last touch, who at the brand we speak to most):
 - State the strongest recorded property-demand evidence and its limits; if strategy is unconfirmed, say so instead of choosing a trajectory
-- Use a recorded active requirement's stated size, use and locations to suggest a suitable next check or shortlist; do not broaden its geography or assume a live mandate
+- Use a requirement's stated size, use and locations to suggest a suitable next check or shortlist; attribute it with its line (such as "requirement confirmed 3 Nov" or "PIPnet listing from Sep, not confirmed"), call it confirmed only when its line says confirmed, never call one live, and do not broaden its geography or assume a live mandate
+- Never say who at BGP confirmed or logged a requirement
 - When bgp_deals exist, lead with that relationship: a completed letting shows the brand takes space in this market and BGP knows the decision-makers — use it for the BGP angle and next step (e.g. the agent who ran it follows up on their next site)
 - Include one relationship bullet: its temperature from last_email_touch (warm under 30 days, cooling under 90, cold beyond) and the live contact by name and role from most_contacted
 - Propose one concrete next step — who at BGP contacts whom at the brand, about what. Checking current requirements/contact is a useful action when the evidence is insufficient
@@ -340,7 +360,7 @@ FORMAT (the app renders this as a styled card — follow it exactly):
 - Line 1: one bold headline sentence in **double asterisks** — the read in a nutshell.
 - Then 3-4 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **BGP relationship:**, **Contact:**, **Demand:**, **BGP angle:**, **Next step:**). One sentence each, max ~25 words.
 - The last bullet MUST be "- **Next step:** …" — a concrete check or proposed action, with timing only if recorded evidence supports it.
-- Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). Attribute evidence briefly in the bullet, such as "CRM requirement dated …" or "reported opening, source, date". No markdown headings or numbered lists.
+- Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). Attribute evidence briefly in the bullet, such as "requirement confirmed 3 Nov", "PIPnet listing from Sep" or "reported opening, source, date". No markdown headings or numbered lists.
 Total under 130 words.`;
 }
 
@@ -382,6 +402,7 @@ Cover, where the data supports it:
 - What they're selling and buying with BGP (investment: selling_on_bgp_boards, buying_on_bgp_boards, investment_requirements, buying_brief) — name the assets, prices and yields given
 - Relationship moments in recent_email_subjects — invitations, events, hospitality, introductions, new instructions — with their date. Use only what a subject line plainly says.
 - Who on the BGP team (bgp_team) owns which part of the relationship, when it helps
+- Their leasing requirements (requirements — each with what it is and its date in "requirement"), attributed with that line: call one confirmed only when its line says confirmed, never live, and never say who at BGP confirmed or logged one
 - The next best action (who at BGP contacts whom, what about, why now)
 
 Tone: direct, broker-to-broker.
@@ -454,6 +475,14 @@ const takeKey = (companyId: string, tab: Tab) => `brand-prepared-take:${companyI
 function preparedTakePolicyVersion(company: any, tab: Tab): string {
   return BRAND_BRIEF_POLICY_VERSION
     + (tab === "brand" && /landlord|client/i.test(company.company_type || "") ? ":landlord-records-1" : "")
+    // On the morning of 17 November 2026 these two takes were cut to market
+    // listings, and a take saved before stopped being served. Later that day
+    // every requirement was opened to client logins (Woody: "keep all
+    // requirements open for clients"), and the takes read every open
+    // requirement again (openRequirements), each worded by the live rule. The
+    // version was kept: a take saved under it holds nothing a client may not
+    // now read.
+    + (tab === "brand" || tab === "activity" ? ":market-listings-1" : "")
     + `:${PRIVATE_MAIL_POLICY_VERSION}`;
 }
 
@@ -494,7 +523,8 @@ export async function prepareBrandAiTake(companyId: string, tab: Tab = "brand") 
   if (saved?.text && saved.policyVersion === policyVersion && saved.fingerprint === identity.fingerprint && saved.dataHash === hash && Date.now() < saved.expiresAt) {
     return { text: saved.text as string, cached: true, generatedAt: Number(saved.generatedAt) };
   }
-  const text = (tab === "brand" ? slice.landlord ? landlordBriefFromRecords(slice) : brandBriefWithoutEvidence(slice) : null) || await callClaude(prompt);
+  // An open requirement is evidence for the model to read.
+  const text = (tab === "brand" ? slice.landlord ? landlordBriefFromRecords(slice) : slice.requirements?.length ? null : brandBriefWithoutEvidence(slice) : null) || await callClaude(prompt);
   const now = Date.now();
   const client = await pool.connect();
   try {

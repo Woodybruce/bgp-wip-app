@@ -243,24 +243,30 @@ test('the gateway for a joint agent: the Landsec Brand CRM door and nothing else
   assert.match(discovery, /async function staffOnlyContacts\(req: Request, res: Response\): Promise<boolean> \{\s+const \{ canReadLandlordMeetings \} = await import\("\.\/landlord-meetings"\);\s+if \(await canReadLandlordMeetings\(req\)\) return true;\s+res\.status\(403\)/);
 });
 
-test('a client is never sent a dismissed contact suggestion or a requirement BGP entered by hand', () => {
+test('a client is never sent a dismissed contact suggestion; it reads every requirement, never its state', () => {
   const profile = source('server/brand-profile.ts');
   // A dismissed suggestion's key is a person's name or email.
   assert.match(profile, /dismissedDiscoveries: \(dismissedDiscoveries\.rows \|\| \[\]\)\.map\(\(r: any\) => r\.discovery_key\)\.filter\(\(k: any\) => !bpScope \|\| !\/\^contact:\/i\.test\(String\(k\)\)\)/);
-  // The one client rule of the requirements centre (requirementClientVisibleSql
-  // in shared/requirement-live.ts: rows labelled PIPnet only), which replaced
-  // the hand-written PIPnet test here on 12 November 2026. On the profile a
-  // client also reads a requirement on its own company; suggested pitches
-  // read the listings only. Staff get neither cut.
+  // Every leasing requirement is open to a client login since 17 November
+  // 2026 (Woody: "keep all requirements open for clients and access to amend
+  // and add"). The client rule that showed it PIPnet listings only is gone:
+  // on the profile a client reads every requirement that is not closed,
+  // newest first, with no state and no updated_at; staff read the live and
+  // to-confirm ones, live first. Suggested pitches read them all too.
   const requirements = profile.slice(profile.indexOf('const requirementsQ = pool.query('), profile.indexOf('// Pitched-to history'));
   assert.ok(requirements.length > 0);
-  assert.match(requirements, /AND \$\{bpScope\s+\? `\(\$\{requirementClientVisibleSql\("r"\)\} OR r\.company_id = \$2\) AND /);
-  assert.match(requirements, /bpScope \? \[companyId, bpScope\] : \[companyId\]/);
+  assert.doesNotMatch(requirements, /requirementClientVisibleSql|PIPnet/);
+  assert.match(requirements, /AND \$\{bpScope\s+\? `\$\{requirementStateSql\("r"\)\} <> 'closed'`\s+: `\$\{requirementStateSql\("r"\)\} IN \('live', 'to_confirm'\)`\}/);
+  assert.match(requirements, /ORDER BY \$\{bpScope \? "r\.created_at DESC NULLS LAST" :/);
+  assert.match(requirements, /if \(bpScope\) return \{ \.\.\.row, updated_at: null \};/);
   const crm = source('server/crm.ts');
   const pitches = crm.slice(crm.indexOf('app.get("/api/brands/:id/suggested-pitches"'));
   const pitchRequirements = pitches.slice(0, pitches.indexOf('const unitsQ'));
   assert.ok(pitchRequirements.length > 0);
-  assert.match(pitchRequirements, /FROM crm_requirements_leasing r\s+WHERE r\.company_id = \$1 AND [^\n]*\$\{scope \? ` AND \$\{requirementClientVisibleSql\("r"\)\}` : ""\}/);
+  assert.match(pitchRequirements, /FROM crm_requirements_leasing r\s+WHERE r\.company_id = \$1 AND \$\{requirementStateSql\("r"\)\} <> 'closed'\s+ORDER BY/);
+  assert.doesNotMatch(pitchRequirements, /requirementClientVisibleSql|PIPnet/);
+  // A client reads a pitch's requirement by what it is and its own date, never its state.
+  assert.match(pitches, /requirement: \$\{scope \? liveReq\.reason\.clientText : liveReq\.reason\.short\}/);
 });
 
 // ── "On hold" (crm_companies.concept_status) ─────────────────────────────

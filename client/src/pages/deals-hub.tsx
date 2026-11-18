@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "wouter";
+import { leasingSideOnly } from "@shared/teams";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BarChart3, Store, TrendingUp, Building2, FileText } from "lucide-react";
@@ -118,12 +119,15 @@ export default function DealsHub() {
     { key: "investment" as const, label: "Investment", icon: TrendingUp },
   ], [isMobile]);
 
+  // A login whose every team is a leasing team or Tenant Rep has no
+  // Investment tab, whatever the team picker shows (Woody, 2026-11-16).
+  const leasingOnly = !isClient && leasingSideOnly([dhUser?.team, ...(Array.isArray(dhUser?.additionalTeams) ? dhUser.additionalTeams : [])]);
   const tabs = useMemo(() => {
     if (isClient) return allTabs.filter(t => t.key === "deals" || t.key === "letting" || t.key === "properties");
-    if (activeTeam === "Investment") return allTabs.filter(t => t.key !== "letting");
-    if (activeTeam && activeTeam !== "all") return allTabs.filter(t => t.key !== "investment");
+    if (activeTeam === "Investment" && !leasingOnly) return allTabs.filter(t => t.key !== "letting");
+    if (leasingOnly || (activeTeam && activeTeam !== "all")) return allTabs.filter(t => t.key !== "investment");
     return allTabs;
-  }, [activeTeam, allTabs, isClient]);
+  }, [activeTeam, allTabs, isClient, leasingOnly]);
 
   useEffect(() => {
     const button = activeTabButton.current;

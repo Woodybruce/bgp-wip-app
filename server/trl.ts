@@ -1,8 +1,8 @@
 import { db } from "./db";
 import { externalRequirements, crmRequirementsLeasing, crmCompanies, crmContacts } from "@shared/schema";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, desc } from "drizzle-orm";
 import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
-import { requirementListingUpdates, importMayLabel } from "@shared/requirement-live";
+import { requirementListingUpdates, importMayLabel, listingTarget } from "@shared/requirement-live";
 
 const TRL_BASE = "https://www.therequirementlist.com";
 const MEMBERSTACK_SITE_ID = process.env.TRL_SITE_ID || "71a8cd36166fbac3ef4f574f428d449b";
@@ -260,7 +260,7 @@ export async function importTrlRequirement(url: string, autoPromote = true): Pro
   } else if (autoPromote) {
     // Already on the Requirements page: the brand is listed again, so only
     // the link and the last-listed date move. Nothing else is touched.
-    await refreshTrlListing(externalId, record);
+    if (!(await refreshTrlListing(externalId, record))) await promoteTrlToCrmRequirement(externalId, record);
   }
   return externalId;
 }
@@ -282,18 +282,20 @@ function parseTrlListedDate(text: string | null | undefined): Date | null {
   return isNaN(parsed.getTime()) || parsed.getTime() > Date.now() ? null : parsed;
 }
 
-async function refreshTrlListing(externalId: string, item: { companyName: string; lastUpdated: string | null }): Promise<void> {
-  // By its link first; rows converted before the link existed are found by name, as promote does.
-  let [existingReq] = await db.select().from(crmRequirementsLeasing).where(eq(crmRequirementsLeasing.externalRequirementId, externalId)).limit(1);
-  if (!existingReq) {
-    const target = normaliseBrandName(item.companyName);
-    existingReq = (await db.select().from(crmRequirementsLeasing)).find(r => normaliseBrandName(r.name) === target)!;
-  }
-  if (!existingReq) return;
+// False when no row holds the listing: the caller then makes it a row, as
+// for a brand never seen (a listing swallowed by a closed row comes back).
+async function refreshTrlListing(externalId: string, item: { companyName: string; lastUpdated: string | null }): Promise<boolean> {
+  // An open row by its link first, else an open row by name, as promote finds it.
+  const target = normaliseBrandName(item.companyName);
+  const rows = await db.select().from(crmRequirementsLeasing).orderBy(desc(crmRequirementsLeasing.createdAt));
+  const existingReq = listingTarget(rows, externalId, r => normaliseBrandName(r.name) === target);
+  if (existingReq === "closed") return true;
+  if (!existingReq) return false;
   const updates = requirementListingUpdates(existingReq, { source: "TRL", externalId, listedAt: parseTrlListedDate(item.lastUpdated), seenAt: new Date() });
   if (Object.keys(updates).length > 0) {
     await db.update(crmRequirementsLeasing).set(updates).where(eq(crmRequirementsLeasing.id, existingReq.id));
   }
+  return true;
 }
 
 // Classify a TRL contact as Principal (brand staff) or Agent (external rep)
@@ -432,14 +434,22 @@ async function promoteTrlToCrmRequirement(
       ? item.useClass.split(/[,;|]/).map(s => s.trim()).filter(Boolean)
       : null;
 
-    // Skip if a leasing requirement for this brand already exists. Match by
-    // normalised name so agents registering on both PIPnet and TRL under
-    // slightly different brand strings collapse to a single CRM row.
+    // Fold into the open requirement this listing became, else an open one
+    // for the brand, matched by normalised name so agents registering on both
+    // PIPnet and TRL under slightly different brand strings collapse to a
+    // single CRM row. Never into a closed row: that swallowed fresh listings
+    // (listingTarget).
     const normalisedTarget = normaliseBrandName(item.companyName);
     const candidateReqs = await tx
       .select()
-      .from(crmRequirementsLeasing);
-    const existingReq = candidateReqs.find(r => normaliseBrandName(r.name) === normalisedTarget);
+      .from(crmRequirementsLeasing)
+      .orderBy(desc(crmRequirementsLeasing.createdAt));
+    const existingReq = listingTarget(candidateReqs, externalId, r => normaliseBrandName(r.name) === normalisedTarget);
+    if (existingReq === "closed") {
+      // A person closed the row this listing became: it stays closed.
+      await tx.update(externalRequirements).set({ status: "converted" }).where(eq(externalRequirements.id, externalId));
+      return false;
+    }
     if (existingReq) {
       // Enrich: fill empty fields on the existing row with TRL data. TRL is
       // particularly valuable for locations + principal contact + pitch text
@@ -453,7 +463,7 @@ async function promoteTrlToCrmRequirement(
         updates.requirementLocations = item.locations;
       }
       const existingSources = existingReq.sources ?? [];
-      if (importMayLabel(existingReq) && !existingSources.includes("TRL")) {
+      if (importMayLabel(existingReq, "TRL") && !existingSources.includes("TRL")) {
         updates.sources = [...existingSources, "TRL"];
       }
       // The link to this listing and the day it was last issued. Never a confirmation.

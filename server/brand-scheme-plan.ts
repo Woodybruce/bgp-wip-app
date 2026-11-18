@@ -25,6 +25,8 @@ import { key as nameKeySql } from "./brand-relevance";
 import { legacyToCode } from "@shared/deal-status";
 import { isLettingType } from "@shared/letting-rules";
 import { formatSizeList } from "@shared/format-size";
+import { landsecCategoryOf } from "@shared/landsec";
+import { requirementStateSql } from "@shared/requirement-live";
 import {
   BRAND_STAGE_LABELS, askedNoTarget, brandStageRank, daysSince, furthestStage, isAgreedOfferStatus, isOnHold, planHeadline,
   requirementChip, resolveStage,
@@ -256,11 +258,12 @@ const isStaff = (v: PlanViewer) => v.kind === "staff";
 const isRestricted = (v: PlanViewer) => v.kind === "joint_agent";
 
 // Requirement detail follows the Requirements page rule for client logins
-// (server/crm.ts): PIPnet listings and the client's own.
-export function requirementDetailHidden(req: any, viewer: PlanViewer): boolean {
+// (server/crm.ts): every requirement since 17 November 2026 (Woody: "keep all
+// requirements open for clients"). A joint agent, another agency with no
+// Brands, reads "Requirement held" and no detail.
+export function requirementDetailHidden(_req: any, viewer: PlanViewer): boolean {
   if (isStaff(viewer)) return false;
-  if (viewer.kind === "joint_agent") return true;
-  return !(req.company_id === viewer.clientCompanyId || (Array.isArray(req.sources) && req.sources.includes("PIPnet")));
+  return viewer.kind === "joint_agent";
 }
 
 function requirementSummary(req: any): string {
@@ -555,10 +558,13 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
       `/* brand-plan:clocks */ SELECT deal_id, waiting_on_party, waiting_on_name, ${iso("waiting_since")} AS waiting_since FROM landsec_deal_clock
         WHERE deal_id = ANY($1) AND waiting_on_party IS NOT NULL`, [dealIds])).rows, [] as any[]),
     requirementBrandIds.length === 0 ? [] : guarded("Requirements", async () => (await q.query(
-      `/* brand-plan:requirements */ SELECT id, company_id, name, size, use, requirement_locations, status, sources, deal_id,
-              ${iso("COALESCE(updated_at, created_at)")} AS at
-         FROM crm_requirements_leasing WHERE company_id = ANY($1) AND (status IS NULL OR status = 'Active')
-        ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST`, [requirementBrandIds])).rows, [] as any[]),
+      // Live or to confirm by the one live rule (shared/requirement-live.ts),
+      // never "status = Active": a stale import is not the brand's
+      // requirement, and a Draft waiting to be confirmed still is one.
+      `/* brand-plan:requirements */ SELECT r.id, r.company_id, r.name, r.size, r.use, r.requirement_locations, r.status, r.sources, r.deal_id,
+              ${iso("COALESCE(r.updated_at, r.created_at)")} AS at, ${iso("r.created_at")} AS added_at
+         FROM crm_requirements_leasing r WHERE r.company_id = ANY($1) AND ${requirementStateSql("r")} IN ('live', 'to_confirm')
+        ORDER BY COALESCE(r.updated_at, r.created_at) DESC NULLS LAST`, [requirementBrandIds])).rows, [] as any[]),
     // The scheme, unit and share columns are read through to_jsonb so the
     // query holds before they exist.
     requirementBrandIds.length === 0 ? [] : guarded("CRM actions", async () => (await q.query(
@@ -764,7 +770,8 @@ export async function brandPlan(q: Queryable, companyId: string, viewer: PlanVie
     requirements: reqs.map((r: any, i: number) => {
       const hidden = requirementDetailHidden(r, viewer);
       return {
-        id: hidden ? `held-${i + 1}` : r.id, summary: hidden ? "Requirement held" : requirementSummary(r), ageDays: hidden ? null : daysSince(r.at, now),
+        // A client's age is from the day the row was added: the last edit moves when BGP confirms one.
+        id: hidden ? `held-${i + 1}` : r.id, summary: hidden ? "Requirement held" : requirementSummary(r), ageDays: hidden ? null : daysSince(staff ? r.at : r.added_at, now),
         source: hidden ? null : (Array.isArray(r.sources) && r.sources.length ? r.sources.join(", ") : null), detailHidden: hidden,
       };
     }),
@@ -801,10 +808,12 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
   const shown = schemes.filter(s => !viewer.schemes || viewer.schemes.has(s.key));
   const early: string[] = [];
 
-  // Staff also see brands a strategy targets, before they have a line.
+  // Staff also see brands a strategy targets, and every Super Brand (BGP's
+  // own starred choice, Woody 2026-11-17), before they have a line.
   const strategyBrandIds: string[] = !staff ? [] : await q.query(
     `/* brand-plan:strategy-brands */ SELECT DISTINCT st.company_id FROM crm_strategy_targets st JOIN crm_companies c ON c.id = st.company_id
-      WHERE c.company_type ILIKE 'tenant%'`).then(r => r.rows.map((x: any) => x.company_id as string)).catch((e: any) => {
+      WHERE c.company_type ILIKE 'tenant%'
+     UNION SELECT c.id FROM crm_companies c WHERE c.hunter_flag IS TRUE AND c.company_type ILIKE 'tenant%'`).then(r => r.rows.map((x: any) => x.company_id as string)).catch((e: any) => {
     early.push("Brands on a strategy could not be read, so only brands with a line are listed.");
     console.warn(`[brand-plan] strategy brands: ${e?.message}`);
     return [];
@@ -813,7 +822,7 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
   const warnings = [...early, ...data.warnings];
   const ids = uniq([...data.rowsByBrand.keys(), ...strategyBrandIds]);
   const brands = ids.length === 0 ? [] : (await q.query(
-    `/* brand-plan:brands */ SELECT c.id, c.name, c.logo_url, c.concept_status, c.bgp_contact_user_ids FROM crm_companies c
+    `/* brand-plan:brands */ SELECT c.id, c.name, c.logo_url, c.concept_status, c.bgp_contact_user_ids, c.company_type, c.hunter_flag FROM crm_companies c
       WHERE c.id = ANY($1) AND c.company_type ILIKE 'tenant%' AND c.archived_at IS NULL AND c.merged_into_id IS NULL
         ${brandFilterSql ? `AND ${brandFilterSql}` : ""}
       ORDER BY lower(c.name)`, [ids])).rows;
@@ -854,6 +863,8 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
       key: jointAgent ? token : b.id,
       id: jointAgent ? null : b.id,
       name: b.name, logoUrl: b.logo_url || null,
+      // The category of Landsec's agency brief, read from the brand's type (a label, never its id).
+      category: landsecCategoryOf(b.company_type),
       requirementHeld: data.requirements.has(b.id),
       furthest: furthestStage(liveStages.length ? liveStages : rows.map(r => r.stage)),
       wantedNoUnit: rows.filter(r => r.stage === "wanted").length,
@@ -867,9 +878,12 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
       entry.lead = leadId && leadNames.has(leadId) ? { id: leadId, name: leadNames.get(leadId)! } : null;
       entry.openActions = (data.actions.get(b.id) || []).length;
       entry.nextAction = nextActionOf(data.actions.get(b.id));
+      if (b.hunter_flag === true) entry.superBrand = true;
     }
     out.push(entry);
   });
+  // For BGP staff the Super Brands lead the board (name order within each part).
+  if (staff) out.sort((a, b) => Number(!!b.superBrand) - Number(!!a.superBrand));
 
   return { schemes: shown.map(s => ({ key: s.key, name: s.name, group: s.group })), brands: out, canEdit: staff, warnings };
 }

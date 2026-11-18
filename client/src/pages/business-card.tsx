@@ -19,7 +19,14 @@ interface CardResponse {
 }
 
 // Digital business card + email signature (Woody, 2026-09-28, "like blinq").
+// The page at /business-card (the phone's Business card tile and My Profile
+// row) and the Business card tab of My BGP (Woody, 2026-11-16: folded into
+// each person's own HR page), which draws it without its own headers.
 export default function BusinessCardPage() {
+  return <BusinessCardPanel />;
+}
+
+export function BusinessCardPanel({ embedded = false }: { embedded?: boolean }) {
   const [, navigate] = useLocation();
   const goBack = useGoBack();
   const { toast } = useToast();
@@ -71,18 +78,24 @@ export default function BusinessCardPage() {
   };
 
   return (
-    <div className="min-h-full bg-background pb-10" data-testid="page-business-card">
-      <div className="flex items-center gap-3 px-4 py-3 border-b bg-card md:hidden sticky top-0 z-10" style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}>
-        <button onClick={goBack} className="p-1 -ml-1" aria-label="Back">
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <h1 className="text-base font-semibold">Business card</h1>
-      </div>
-      <div className="max-w-5xl mx-auto px-4 md:px-6 pt-5 md:pt-8">
-        <div className="hidden md:block mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight">Business card</h1>
-          <p className="text-sm text-muted-foreground mt-1">Show the QR code or send the link. People save your contact in one tap and can send you theirs, which goes into the CRM and your notifications.</p>
+    <div className={embedded ? "" : "min-h-full bg-background pb-10"} data-testid={embedded ? "my-bgp-business-card" : "page-business-card"}>
+      {!embedded && (
+        <div className="flex items-center gap-3 px-4 py-3 border-b bg-card md:hidden sticky top-0 z-10" style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}>
+          <button onClick={goBack} className="p-1 -ml-1" aria-label="Back">
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <h1 className="text-base font-semibold">Business card</h1>
         </div>
+      )}
+      <div className={embedded ? "" : "max-w-5xl mx-auto px-4 md:px-6 pt-5 md:pt-8"}>
+        {embedded ? (
+          <p className="text-sm text-muted-foreground mb-4">Show the QR code or send the link. People save your contact in one tap and can send you theirs, which goes into the CRM and your notifications.</p>
+        ) : (
+          <div className="hidden md:block mb-6">
+            <h1 className="text-2xl font-semibold tracking-tight">Business card</h1>
+            <p className="text-sm text-muted-foreground mt-1">Show the QR code or send the link. People save your contact in one tap and can send you theirs, which goes into the CRM and your notifications.</p>
+          </div>
+        )}
 
         <div className="grid gap-5 md:grid-cols-2">
           <section className="rounded-xl border bg-card p-5 flex flex-col items-center text-center">

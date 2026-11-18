@@ -39,6 +39,6 @@ export function landlordInvestmentRequirementSummary(requirement: InvestmentRequ
     missing: missing.length ? `Fields not recorded: ${missing.join(", ")}.` : "",
     notes,
     excerpt,
-    href: `/requirements?type=investment&requirementId=${encodeURIComponent(requirement.id)}`,
+    href: `/investment/requirements?requirementId=${encodeURIComponent(requirement.id)}`,
   };
 }

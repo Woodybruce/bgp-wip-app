@@ -16,9 +16,10 @@ import { crmEngagementLink } from '../../shared/landlord-engagement-view.ts';
 
 test('a landlord plan links to the CRM page and a brand plan to the Brand CRM; the client view is unchanged', () => {
   assert.equal(crmEngagementLink('landsec'), '/contacts?tab=overview&company=landsec');
-  assert.equal(crmEngagementLink('landsec', { action: 'a1' }, 'landlord'), '/contacts?tab=overview&company=landsec&action=a1');
-  assert.equal(crmEngagementLink('wingstop', undefined, 'brand'), '/brands?tab=crm&view=strategies&company=wingstop');
-  assert.equal(crmEngagementLink('wingstop', { event: 'x/y' }, 'brand'), '/brands?tab=crm&view=strategies&company=wingstop&event=x%2Fy');
+  assert.equal(crmEngagementLink('landsec', { action: 'a1' }), '/contacts?tab=overview&company=landsec&action=a1');
+  // A brand's plan opens on the CRM page too: the Brand CRM is Targets only for BGP staff (Woody, 2026-11-16).
+  assert.equal(crmEngagementLink('wingstop'), '/contacts?tab=overview&company=wingstop');
+  assert.equal(crmEngagementLink('wingstop', { event: 'x/y' }), '/contacts?tab=overview&company=wingstop&event=x%2Fy');
   const action = id => ({ id, title: id, notes: 'note', dueAt: null, status: 'todo', ownerId: 'owner', ownerName: 'Owner', companyId: 'wingstop', companyName: 'Wingstop', strategyId: 's', eventId: 'e', source: null });
   const view = clientPlanView({ strategies: [{ id: 's' }], events: [{ id: 'e' }], actions: [action('own'), action('bgp')] }, new Set(['own']));
   assert.deepEqual(view.strategies, []); assert.deepEqual(view.events, []);
@@ -89,11 +90,13 @@ test('CRM planning splits into a landlord view and a brand view without losing o
         ('ham-user','Hammerson login','leasing@hammerson.example','Client',true,false,'Hammerson');
       INSERT INTO crm_companies(id,name,company_type) VALUES
         ('landsec','Landsec','Landlord'),('aew','AEW','Investor'),
-        ('wingstop','Wingstop','Tenant - Restaurant'),('flatiron','Flat Iron','Tenant - Restaurant'),('yochi','Yo Chi','Tenant - Cafe');
+        ('wingstop','Wingstop','Tenant - Restaurant'),('flatiron','Flat Iron','Tenant - Restaurant'),('yochi','Yo Chi','Tenant - Cafe'),
+        ('agency','Agency','Agent');
       INSERT INTO crm_contacts VALUES
         ('jon','Jon','landsec','jon@landsec.example','Leasing'),('manish','Manish','aew','manish@aew.example','Investment'),
         ('wing-contact','Wing contact','wingstop','property@wingstop.example','Property'),
-        ('flat-contact','Flat contact','flatiron','property@flatiron.example','Property');
+        ('flat-contact','Flat contact','flatiron','property@flatiron.example','Property'),
+        ('agency-contact','Agency contact','agency','leasing@agency.example','Leasing');
     `);
     for (const sql of CRM_ENGAGEMENT_MIGRATIONS) await pool.query(sql);
     // Records as they stood before the split: one of each kind, one linking
@@ -169,8 +172,13 @@ test('CRM planning splits into a landlord view and a brand view without losing o
       assert.deepEqual(companyIds(mixedEvent.companies), ['aew', 'flatiron']);
       assert.deepEqual(mixedEvent.strategyIds.sort(), ['s-brand', 's-landlord', 's-mixed']);
       const options = (await request('GET', '/options')).body;
-      assert.deepEqual(ids(options.companies), ['aew', 'flatiron', 'landsec', 'wingstop'], 'landlords plus the brands already on a plan');
-      assert.deepEqual(ids((await request('GET', '/options?companyId=yochi')).body.companies), ['aew', 'flatiron', 'landsec', 'wingstop', 'yochi']);
+      // A company page's form (no kind) lists what the joined CRM lists: agent
+      // firms and lenders too (Woody, 2026-11-16: "cant seem to add brands or agents").
+      assert.deepEqual(ids(options.companies), ['aew', 'agency', 'flatiron', 'landsec', 'wingstop'], 'landlords, agent firms and lenders, and the brands already on a plan');
+      assert.ok(ids(options.contacts).includes('agency-contact'), "an agent firm's people are there to choose");
+      assert.equal(options.companies.find(c => c.id === 'agency').noun, 'agent');
+      assert.deepEqual(ids((await request('GET', '/options?companyId=yochi')).body.companies), ['aew', 'agency', 'flatiron', 'landsec', 'wingstop', 'yochi']);
+      assert.deepEqual(ids((await request('GET', '/options?kind=all')).body.companies), ids(options.companies), 'the same list as the joined CRM');
       assert.equal((await request('GET', '?kind=tenants')).status, 400);
     });
 

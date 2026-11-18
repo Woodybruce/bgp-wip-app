@@ -28,9 +28,9 @@ import { computeExpansionScoreV2, clientScoreView, schemeLimitedScoreView, type 
 import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
 import { statusSpellingsFor } from "@shared/deal-status";
 import { closedStatusSqlList } from "@shared/letting-rules";
-import { requirementStateSql, requirementImportOnlySql } from "@shared/requirement-live";
+import { requirementStateSql, requirementImportOnlySql, REQUIREMENT_ORIGIN_CLIENT } from "@shared/requirement-live";
 import { INTERACTIONS_90D_SQL, DOMAIN_THREADS_90D_SQL } from "./brand-profile-suggestions";
-import { onStrategySql } from "./crm-watch";
+import { watchedSql } from "./crm-watch";
 import { parseStoryRead, checkStoryRead, statedText, signalSource, newsStoriesRead, type NewsStory } from "./requirement-news";
 
 const router = Router();
@@ -71,13 +71,17 @@ export async function gatherBgpEvidence(companyId: string, opts: { domainThreads
     // can never count as BGP's own (a Requirement List import used to); it
     // counts as a market listing when it was listed or touched in 12 months.
     // A requirement a person added from a press story (confirmed_how = 'press')
-    // is not counted as BGP's own: the story already scores as a signal.
-    q(`SELECT count(*) FILTER (WHERE st IN ('live', 'to_confirm') AND confirmed_how IS DISTINCT FROM 'press')::int AS bgp,
+    // is not counted as BGP's own: the story already scores as a signal. Nor
+    // is one a client login added (origin 'client') until a BGP person has
+    // confirmed it: it is the client's word, not BGP's (17 November 2026).
+    q(`SELECT count(*) FILTER (WHERE st IN ('live', 'to_confirm') AND confirmed_how IS DISTINCT FROM 'press'
+                                 AND NOT (client_made AND last_confirmed_at IS NULL))::int AS bgp,
               count(*) FILTER (WHERE st = 'background' AND import_only
                                  AND COALESCE(last_listed_at, updated_at, created_at) >= now() - interval '12 months')::int AS pipnet
-         FROM (SELECT r.confirmed_how, r.last_listed_at, r.updated_at, r.created_at,
+         FROM (SELECT r.confirmed_how, r.last_listed_at, r.last_confirmed_at, r.updated_at, r.created_at,
                       ${requirementStateSql("r")} AS st,
-                      ${requirementImportOnlySql("r")} AS import_only
+                      ${requirementImportOnlySql("r")} AS import_only,
+                      coalesce(lower(btrim(r.origin)) = '${REQUIREMENT_ORIGIN_CLIENT}', false) AS client_made
                  FROM crm_requirements_leasing r
                 WHERE r.company_id = $1 AND r.status = 'Active') x`, [companyId]),
     // Status spellings (codes + legacy labels) come from shared/deal-status;
@@ -374,7 +378,7 @@ export async function nightlyNormalisePass(cap = 25): Promise<{ brands: number; 
         AND c.ai_disabled IS DISTINCT FROM TRUE
         AND (s.source IS NULL OR s.source NOT LIKE 'bgp-deal:%')
       GROUP BY brand_company_id, c.id
-      ORDER BY ${onStrategySql("c")} DESC, count(*) DESC
+      ORDER BY ${watchedSql("c")} DESC, count(*) DESC
       LIMIT $1`,
     [cap]
   );

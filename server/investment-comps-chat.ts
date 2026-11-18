@@ -50,7 +50,13 @@ export async function fileCompsFromChat(args: { comps: ChatComp[]; sourceDocumen
     const name = String(c.propertyName || c.address || "").trim();
     if (!name) { out.push({ error: "A comp needs the property name or address" }); continue; }
     const evidenceStatus: EvidenceStatus | null = evidenceStatusOf(c.evidenceStatus);
-    if (!evidenceStatus) { out.push({ propertyName: name, error: `Unclear status "${c.evidenceStatus}" — say sold, exchanged, under offer or quoting` }); continue; }
+    if (!evidenceStatus) { out.push({ propertyName: name, error: `Unclear status "${c.evidenceStatus}" — say sold or exchanged` }); continue; }
+    // Comps are completed sales (Jack, 2026-11-16): a deal still under offer
+    // or quoting belongs on the Investment Tracker until it completes.
+    if (evidenceStatus === "under offer" || evidenceStatus === "quoting") {
+      out.push({ propertyName: name, error: `Not filed: ${evidenceStatus} is a live deal. Add it to the Investment Tracker instead (U/O - Not BGP for someone else's deal under offer, Available when quoting), and file it here once it has sold.` });
+      continue;
+    }
     // Keep the file name with the label so the brochure can be found again.
     const sourceDocument = [args.sourceLabel, args.sourceDocument ? `chat-media/${String(args.sourceDocument).replace(/^\/?(api\/)?chat-media\//, "")}` : null].filter(Boolean).join(", ") || null;
     try {

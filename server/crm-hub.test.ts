@@ -66,10 +66,10 @@ test("the SQL that narrows each list names the same types as the rule", () => {
 test("a brand is on the list for each reason it is being worked, in a fixed order", () => {
   assert.deepEqual(brandWhy({}), []);
   assert.deepEqual(brandWhy({ onStrategy: false, openAction: false, liveDeal: false, requirement: false, hunterPick: false }), []);
-  assert.deepEqual(brandWhy({ hunterPick: true }), ["Hunter pick"]);
+  assert.deepEqual(brandWhy({ hunterPick: true }), ["Super Brand"]);
   assert.deepEqual(brandWhy({ requirement: true, onStrategy: true }), ["On a strategy", "Requirement"]);
   assert.deepEqual(brandWhy({ onStrategy: true, openAction: true, liveDeal: true, requirement: true, hunterPick: true }),
-    ["On a strategy", "Open action", "Live deal", "Requirement", "Hunter pick"]);
+    ["On a strategy", "Open action", "Live deal", "Requirement", "Super Brand"]);
 });
 
 // ── What a row shows ────────────────────────────────────────────────────────
@@ -338,19 +338,20 @@ test("brands: only the ones BGP is working, each saying why", async () => {
     companies: [brand("b-action"), brand("b-all", { hunter_flag: true }), brand("b-deal"), brand("b-hunter", { hunter_flag: true }), brand("b-private"), brand("b-req")],
   });
   const out = await loadCrmHub(q, "brand", NOW);
-  assert.deepEqual(out.rows.map(row => [row.id, row.why]), [
-    ["b-action", ["Open action"]],
-    ["b-all", ["On a strategy", "Live deal", "Requirement", "Hunter pick"]],
-    ["b-deal", ["Live deal"]],
-    ["b-hunter", ["Hunter pick"]],
-    ["b-req", ["Requirement"]],
+  // Super Brands first, each part in name order.
+  assert.deepEqual(out.rows.map(row => [row.id, row.why, row.superBrand === true]), [
+    ["b-all", ["On a strategy", "Live deal", "Requirement", "Super Brand"], true],
+    ["b-hunter", ["Super Brand"], true],
+    ["b-action", ["Open action"], false],
+    ["b-deal", ["Live deal"], false],
+    ["b-req", ["Requirement"], false],
   ]);
   const all = out.rows.find(row => row.id === "b-all")!;
-  assert.equal(all.line, "On a strategy · Live deal · Requirement · Hunter pick");
+  assert.equal(all.line, "On a strategy · Live deal · Requirement · Super Brand");
   assert.deepEqual(all.counts, { deals: 2, requirements: 1 });
   assert.deepEqual(all.strategies, [{ id: "s1", name: "Bakeries" }]);
   assert.equal(out.rows.find(row => row.id === "b-action")!.openActions, 1);
-  // The company read is asked only for the worked brands and the Hunter picks; a brand
+  // The company read is asked only for the worked brands and the Super Brands; a brand
   // named only by an action the private mailbox is on is not asked for.
   const companies = calls.find(call => call.name === "companies")!;
   assert.match(companies.sql, /c\.hunter_flag IS TRUE OR c\.id = ANY\(\$1::text\[\]\)/);
@@ -370,7 +371,7 @@ test("brands: a missing plan table loses that reason, not the list", async () =>
     companies: [company("b1", { company_type: "Tenant" }), company("b2", { company_type: "Tenant", hunter_flag: true })],
   });
   const out = await quiet(() => loadCrmHub(q, "brand", NOW));
-  assert.deepEqual(out.rows.map(row => [row.id, row.why, row.counts]), [["b1", ["Live deal"], { deals: 1 }], ["b2", ["Hunter pick"], { deals: 0 }]]);
+  assert.deepEqual(out.rows.map(row => [row.id, row.why, row.counts]), [["b2", ["Super Brand"], { deals: 0 }], ["b1", ["Live deal"], { deals: 1 }]]);
 });
 
 test("everyone at a company, less the private mailbox", async () => {

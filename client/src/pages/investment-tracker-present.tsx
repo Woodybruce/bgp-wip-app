@@ -134,9 +134,11 @@ function DesktopPresentation() {
 
   return (
     <div className="h-screen overflow-hidden bg-background text-foreground relative" data-testid="tracker-present">
-      {/* CSS zoom scales the layout, so the board is given the un-zoomed
-          share of the height to fill the window exactly. */}
-      <div style={{ zoom, height: `${100 / zoom}%` }}>
+      {/* Pinned to the four edges, the zoomed board fills the window at
+          every size. A percentage height did not: browsers disagree on
+          whether zoom scales it, and the board stopped short of the bottom
+          (at 130% it had lost a quarter of the window). */}
+      <div className="absolute inset-0" style={{ zoom }}>
         <InvestmentTrackerPage present />
       </div>
       {/* The window's own controls float in the corner so every row of the

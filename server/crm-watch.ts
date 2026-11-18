@@ -6,3 +6,7 @@
 export const WATCH_RECHECK_DAYS = 7;
 export const onStrategySql = (alias: string) =>
   `EXISTS (SELECT 1 FROM crm_strategy_targets wt JOIN marketing_campaigns ws ON ws.id = wt.strategy_id WHERE wt.company_id = ${alias}.id AND ws.status = 'active')`;
+// A Super Brand (BGP's own starred choice, Woody 2026-11-17: "they get the
+// CRM VIP treatment and massive focus") is watched as closely as a company
+// on a running strategy, whether or not its strategy has been started.
+export const watchedSql = (alias: string) => `(${onStrategySql(alias)} OR COALESCE(${alias}.hunter_flag, false))`;

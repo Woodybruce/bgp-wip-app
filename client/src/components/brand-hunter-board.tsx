@@ -4,6 +4,7 @@ import { Link } from "wouter";
 import { AIActivityTrigger } from "@/components/ai-activity-card";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { refreshSuperBrands } from "@/components/brand-page/super-brand-star";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,7 @@ import { extractDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import {
   Flame, Search, Crosshair, Star, TrendingUp, Building2,
   Globe2, Zap, Instagram, ChevronRight, MapPin, Filter,
-  Trophy, Sparkles, Coins, Bookmark, BookmarkCheck,
+  Trophy, Sparkles, Coins,
   Users, Newspaper, Shuffle, ShoppingBag,
 } from "lucide-react";
 
@@ -65,7 +66,7 @@ interface HunterBrand {
 }
 
 const FLAG_META: Record<string, { color: string; icon: any }> = {
-  "Hunter Pick":        { color: "bg-orange-100 text-orange-700 border-orange-200", icon: Flame },
+  "Super Brand":        { color: "bg-amber-100 text-amber-800 border-amber-200",   icon: Star },
   "Entering UK":        { color: "bg-green-100 text-green-700 border-green-200",   icon: Globe2 },
   "Scaling":            { color: "bg-blue-100 text-blue-700 border-blue-200",      icon: TrendingUp },
   "Rumoured":           { color: "bg-yellow-100 text-yellow-700 border-yellow-200", icon: Zap },
@@ -153,7 +154,7 @@ function BrandLogo({ name, domain, size = 28 }: { name: string; domain?: string 
 }
 
 const ALL_FILTERS = [
-  "All", "Hunter Pick", "Entering UK", "Scaling",
+  "All", "Super Brand", "Entering UK", "Scaling",
   "Dept Store Entry", "Franchise Abroad", "DTC / Online-only",
   "European Presence", "Funding Raised", "Pop-up Activity",
   "New Leadership", "Stock Momentum",
@@ -179,15 +180,19 @@ export default function BrandHunterBoard() {
     staleTime: 60_000,
   });
 
+  // The Super Brand star (Woody, 2026-11-17): BGP's own choice of expansion
+  // targets, VIP in the CRM. Set to the state wanted, so a double press holds.
   const flagMut = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiRequest("POST", `/api/brands/${id}/hunter-flag`);
-      return res.json();
+    mutationFn: async ({ id, on }: { id: string; name: string; on: boolean }) => {
+      const res = await apiRequest("POST", `/api/brands/${encodeURIComponent(id)}/super-brand`, { on });
+      return res.json() as Promise<{ superBrand: boolean }>;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/brands/hunter"] });
+    onSuccess: (result, vars) => {
+      void refreshSuperBrands(queryClient);
+      toast({ title: result.superBrand ? `${vars.name} is a Super Brand` : `${vars.name} is no longer a Super Brand`,
+        description: result.superBrand ? "It is on the CRM Watch list. Start its strategy from its page." : undefined });
     },
-    onError: () => toast({ title: "Failed to update", variant: "destructive" }),
+    onError: () => toast({ title: "The star could not be changed", variant: "destructive" }),
   });
 
   const displayed = useMemo(() => {
@@ -221,7 +226,7 @@ export default function BrandHunterBoard() {
         {[
           { label: "Very Hot", value: hotCount,   icon: Flame,        color: "text-red-500" },
           { label: "Watching", value: watchCount, icon: Star,         color: "text-yellow-500" },
-          { label: "Flagged",  value: flagCount,  icon: BookmarkCheck, color: "text-orange-500" },
+          { label: "Super Brands", value: flagCount, icon: Star,      color: "text-amber-500" },
         ].map(s => (
           <Card key={s.label}>
             <CardContent className="p-3 flex items-center gap-2">
@@ -321,22 +326,22 @@ export default function BrandHunterBoard() {
                             </div>
                           )}
 
-                          {/* Hunter flag toggle */}
+                          {/* The Super Brand star */}
                           {!isClientViewer && (
                             <button
-                              onClick={() => flagMut.mutate(brand.id)}
+                              type="button"
+                              onClick={() => flagMut.mutate({ id: brand.id, name: brand.name, on: !brand.hunter_flag })}
+                              disabled={flagMut.isPending}
+                              aria-pressed={!!brand.hunter_flag}
                               className={`p-1.5 rounded-full transition-colors ${
                                 brand.hunter_flag
-                                  ? "text-orange-500 bg-orange-50 hover:bg-orange-100"
-                                  : "text-muted-foreground hover:text-orange-500 hover:bg-orange-50"
+                                  ? "text-amber-500 bg-amber-50 hover:bg-amber-100"
+                                  : "text-muted-foreground hover:text-amber-500 hover:bg-amber-50"
                               }`}
-                              title={brand.hunter_flag ? "Remove from Hunter watchlist" : "Flag as Hunter Pick"}
+                              title={brand.hunter_flag ? "Super Brand: press to take the star off" : "Make a Super Brand (BGP's own choice of expansion target, VIP in the CRM)"}
+                              data-testid={`hunter-super-brand-${brand.id}`}
                             >
-                              {brand.hunter_flag ? (
-                                <BookmarkCheck className="w-4 h-4" />
-                              ) : (
-                                <Bookmark className="w-4 h-4" />
-                              )}
+                              <Star className={`w-4 h-4 ${brand.hunter_flag ? "fill-amber-400" : ""}`} />
                             </button>
                           )}
                           {!isClientViewer && (
@@ -441,7 +446,7 @@ export default function BrandHunterBoard() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5">
             {[
-              ["Hunter Pick (manual flag)", "+25"],
+              ["Super Brand (BGP's own star)", "+25"],
               ["Entering UK (rollout status)", "+30"],
               ["Scaling (rollout status)", "+20"],
               ["Dept store entry (Selfridges, HN…)", "+20"],
@@ -470,7 +475,7 @@ export default function BrandHunterBoard() {
           </div>
           {!isClientViewer && (
             <p className="pt-1 text-[11px]">
-              Flag any brand as a "Hunter Pick" with the bookmark icon. Fill in Dept Store / Franchise / TikTok / stock ticker fields in the brand profile to boost the score. Brand signals (openings, funding, exec changes) are auto-detected from the news feed; stock data comes from Yahoo Finance (6h cache).
+              Star any brand as a Super Brand with the star icon: it then gets the CRM's VIP treatment. Fill in Dept Store / Franchise / TikTok / stock ticker fields in the brand profile to boost the score. Brand signals (openings, funding, exec changes) are auto-detected from the news feed; stock data comes from Yahoo Finance (6h cache).
             </p>
           )}
         </CardContent>

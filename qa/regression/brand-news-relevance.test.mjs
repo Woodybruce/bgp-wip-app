@@ -173,7 +173,11 @@ test('actual brand PDF loader applies the same read filter and retains staff not
   assert.equal('status' in result.requirements[0], false);
   queries.length = 0;
   const forClient = await loadBrandPackData('cook', 'landlord-1');   // the second argument is the client's company id
-  assert.match(queries.find(sql => sql.includes('FROM crm_requirements_leasing')), /PIPnet/);
+  // Every requirement is open to a client since 17 November 2026: not closed, newest listed or added first.
+  const clientQuery = queries.find(sql => sql.includes('FROM crm_requirements_leasing'));
+  assert.match(clientQuery, /<> 'closed'/);
+  assert.doesNotMatch(clientQuery, /PIPnet|IN \('live', 'to_confirm'\)/);
+  assert.match(forClient.requirements[0].reason, /^PIPnet listing from Sep$/);
   assert.doesNotMatch(forClient.requirements[0].reason, /confirm/i, 'a client is never told whether BGP confirmed it');
 });
 

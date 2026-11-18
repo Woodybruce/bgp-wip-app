@@ -27,12 +27,19 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { BrandTidyButton, HiddenBrands } from "@/components/brand-tidy";
 import { OwnershipIntelButton } from "@/components/ownership-intel";
+import { BrandRetypeButton } from "@/components/brand-retype";
 import { BrandCrmTab } from "@/components/brand-crm/brand-crm-tab";
 import { useBrand } from "@/lib/brand-context";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { useIsLandsecView } from "@/components/landsec/deal-clock";
+import { LANDSEC_CATEGORIES, LANDSEC_CATEGORY_GROUPS, LANDSEC_CATEGORY_TYPES, LANDSEC_OTHER_LABEL, landsecCategoryOf, type LandsecCategoryOrOther } from "@shared/landsec";
 
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandHunterBoard = lazy(() => import("@/components/brand-hunter-board"));
+// Requirements is a pill here for every login (Woody, 2026-11-17: "put
+// requirements in the brands section for everyone"); /requirements forwards
+// to it. The page decides what a client login sees.
+const RequirementsPage = lazy(() => import("@/pages/requirements"));
 
 interface HubData {
   stats: {
@@ -53,6 +60,8 @@ interface Brand {
   company_type: string | null;
   domain: string | null;
   description: string | null;
+  // Super Brands only: on a running CRM strategy.
+  on_strategy?: boolean;
 }
 
 interface HotBrand extends Brand {
@@ -178,8 +187,8 @@ function confidenceColour(c: string) {
   return "bg-slate-400";
 }
 
-type HubTab = "overview" | "explorer" | "turnover" | "hunter" | "crm";
-const HUB_TABS: HubTab[] = ["overview", "explorer", "turnover", "hunter", "crm"];
+type HubTab = "overview" | "explorer" | "requirements" | "turnover" | "hunter" | "crm";
+const HUB_TABS: HubTab[] = ["overview", "explorer", "requirements", "turnover", "hunter", "crm"];
 
 export default function BrandsHub() {
   const { toast } = useToast();
@@ -220,12 +229,13 @@ export default function BrandsHub() {
   const VISIBLE_HUB_TABS = ([
     { key: "overview", label: "Overview", icon: BarChart3 },
     { key: "explorer", label: "Brand Explorer", icon: LayoutGrid },
+    { key: "requirements", label: "Requirements", icon: ClipboardList },
     { key: "turnover", label: "Turnover Board", icon: TrendingUp },
     { key: "hunter",  label: "Brand Hunter",   icon: Crosshair },
     { key: "crm",     label: "Brand CRM",      icon: Target },
   ] as { key: HubTab; label: string; icon: any }[])
     .filter(t => t.key !== "crm" || showBrandCrm)
-    .filter(t => !isMobile || t.key === "explorer" || t.key === "crm");
+    .filter(t => !isMobile || t.key === "explorer" || t.key === "requirements" || t.key === "crm");
   const [search, setSearch] = useState("");
   const [researchingId, setResearchingId] = useState<string | null>(null);
 
@@ -270,7 +280,7 @@ export default function BrandsHub() {
   // Categories with at least one visible brand — the same tiles Brand
   // Explorer shows (the server's counts already leave out hidden and merged
   // brands, and are cut to the client slice for client logins).
-  const categoriesInUse = BRAND_CATEGORIES.filter(cat =>
+  const categoriesInUse = (hubBrand.id === "landsec" ? LANDSEC_BRAND_CATEGORIES : BRAND_CATEGORIES).filter(cat =>
     (data?.categoryCounts || []).some(r => (parseInt(r.count) || 0) > 0 && catMatch(r.company_type, cat))
   ).length;
 
@@ -296,8 +306,9 @@ export default function BrandsHub() {
       {/* ── Header ─────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          {/* No strap line, and on a phone no title: the top bar names the page (Woody, 2026-11-14). */}
-          <h1 className="hidden md:block text-2xl font-bold tracking-tight">Brand Intelligence</h1>
+          {/* No strap line, and on a phone no title: the top bar names the page (Woody, 2026-11-14).
+              "Brands", the side bar's name for it on every menu (Woody, 2026-11-16). */}
+          <h1 className="hidden md:block text-2xl font-bold tracking-tight">Brands</h1>
         </div>
         <div className="flex items-center gap-2">
           {isClientHub && <ClientAddBrandButton />}
@@ -452,10 +463,12 @@ export default function BrandsHub() {
           </CardContent>
         </Card>
 
-        {/* Super Brands — luxury/flagship intel, staff only (server sends
-            [] for clients, so the card would sit permanently empty).
-            Sized to its chips, not stretched to the row — two chips in a
-            full-height box read as empty (Woody, 2026-09-28). */}
+        {/* Super Brands: the brands BGP has starred, its own choice of prime
+            expansion targets, each VIP in the CRM (Woody, 2026-11-17). Until
+            then the card listed the Luxury and Flagship Fashion types, which
+            showed Beaverbrooks and nothing BGP chose. Staff only (the server
+            sends a client none). Sized to its chips, not stretched to the
+            row (Woody, 2026-09-28). */}
         {/* A client hub has no Super Brands card, which left the third column
             blank: the requirements radar sits there instead, as a list like
             its two neighbours (Woody, 2026-11-13). */}
@@ -502,28 +515,30 @@ export default function BrandsHub() {
         <Card className="self-start">
           <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
             <div className="flex items-center gap-2">
-              <Star className="w-4 h-4 text-muted-foreground" />
+              <Star className="w-4 h-4 fill-amber-400 text-amber-500" />
               <CardTitle className="text-sm font-semibold">Super Brands</CardTitle>
               <Badge variant="secondary" className="text-[10px]">{data?.superBrands?.length || 0}</Badge>
             </div>
-            <Link href="/brands?tab=explorer" replace>
+            <Link href="/brands?tab=explorer&rel=super" replace>
               <Button variant="ghost" size="sm" className="text-xs h-7" data-testid="link-super-brands-all">
                 Show all <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
             </Link>
           </CardHeader>
           <CardContent className="px-5 pb-4">
-            <div className="flex flex-wrap gap-1.5 max-h-[460px] overflow-y-auto pr-1">
+            <p className="text-xs text-muted-foreground mb-2">Our own chosen expansion targets. Each is VIP in the CRM: listed first, on the Watch list and checked weekly.</p>
+            <div className="flex flex-wrap gap-1.5 max-h-[460px] overflow-y-auto pr-1" data-testid="super-brands-list">
               {(data?.superBrands || []).map(b => (
                 <Link key={b.id} href={`/companies/${b.id}`}>
-                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border bg-card hover:bg-muted/60 transition-colors cursor-pointer" title={b.name}>
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border bg-card hover:bg-muted/60 transition-colors cursor-pointer" title={b.on_strategy ? `${b.name}: on a CRM strategy` : `${b.name}: no CRM strategy yet. Open it to start one`} data-testid={`super-brand-${b.id}`}>
                     <BrandLogo name={b.name} domain={b.domain} size={16} />
                     <span className="text-[11px] font-medium">{b.name}</span>
+                    {b.on_strategy === false && <span className="text-[10px] text-amber-700 dark:text-amber-300">No strategy yet</span>}
                   </div>
                 </Link>
               ))}
               {!data?.superBrands?.length && (
-                <p className="text-sm text-muted-foreground py-4">No luxury/flagship brands added yet</p>
+                <p className="text-sm text-muted-foreground py-2" data-testid="super-brands-empty">No Super Brands yet. Star a brand on its page or on Brand Hunter to make it one.</p>
               )}
             </div>
           </CardContent>
@@ -618,6 +633,12 @@ export default function BrandsHub() {
         <BrandExplorer />
       )}
 
+      {activeTab === "requirements" && (
+        <Suspense fallback={<Skeleton className="h-64 w-full" />}>
+          <RequirementsPage embedded />
+        </Suspense>
+      )}
+
       {activeTab === "turnover" && (
         <Suspense fallback={<Skeleton className="h-64 w-full" />}>
           <TurnoverBoard embedded={true} />
@@ -642,7 +663,9 @@ export default function BrandsHub() {
 // Brand Explorer (moved from People Hub)
 // ─────────────────────────────────────────────────────────────────────────────
 
-type SubCat = { key: string; label: string; icon: any; match: string[] };
+// landsecKey: a group of the Landsec view, matched by the brand's Landsec
+// category (landsecCategoryOf) rather than by the exact types in `match`.
+type SubCat = { key: string; label: string; icon: any; match: string[]; landsecKey?: LandsecCategoryOrOther };
 type TopCat = { key: string; label: string; icon: any; color: string; gradient: string; subs: SubCat[] };
 
 const BRAND_CATEGORIES: TopCat[] = [
@@ -692,6 +715,7 @@ const BRAND_CATEGORIES: TopCat[] = [
       { key: "cafes", label: "Cafés & Coffee", icon: Coffee, match: ["Tenant - Café", "Tenant - Coffee", "Tenant - Café & Coffee", "Tenant - F&B"] },
       { key: "bars", label: "Bars & Pubs", icon: Wine, match: ["Tenant - Bar", "Tenant - Pub", "Tenant - Wine Bar"] },
       { key: "bakery", label: "Bakery & Patisserie", icon: CakeSlice, match: ["Tenant - Bakery", "Tenant - Patisserie"] },
+      { key: "food-halls", label: "Food Halls", icon: Store, match: ["Tenant - Food Hall", "Tenant - Market Hall"] },
     ],
   },
   {
@@ -700,8 +724,11 @@ const BRAND_CATEGORIES: TopCat[] = [
       { key: "cinema", label: "Cinema", icon: Tv, match: ["Tenant - Cinema", "Tenant - Cinema & Film"] },
       { key: "experiential", label: "Experiential", icon: PartyPopper, match: ["Tenant - Experiential", "Tenant - Activation", "Tenant - Entertainment"] },
       { key: "immersive", label: "Immersive Experience", icon: Zap, match: ["Tenant - Immersive Experience", "Tenant - Immersive"] },
+      { key: "competitive-socialising", label: "Competitive Socialising", icon: Target, match: ["Tenant - Competitive Socialising"] },
+      { key: "active-leisure", label: "Active Leisure", icon: Activity, match: ["Tenant - Active Leisure", "Tenant - Padel"] },
       { key: "gaming", label: "Gaming & Escape Rooms", icon: Gamepad2, match: ["Tenant - Gaming", "Tenant - Escape Room", "Tenant - Bowling", "Tenant - Arcade"] },
       { key: "family", label: "Family Entertainment", icon: Baby, match: ["Tenant - Family Entertainment", "Tenant - Family", "Tenant - Soft Play", "Tenant - Kids Entertainment"] },
+      { key: "theme-water-parks", label: "Theme & Water Parks", icon: PartyPopper, match: ["Tenant - Theme & Water Park", "Tenant - Theme Park", "Tenant - Water Park"] },
       { key: "leisure-other", label: "Other Leisure", icon: Clapperboard, match: ["Tenant - Leisure"] },
       { key: "arts", label: "Arts & Culture", icon: Palette, match: ["Tenant - Arts", "Tenant - Culture", "Tenant - Gallery"] },
     ],
@@ -719,13 +746,38 @@ const BRAND_CATEGORIES: TopCat[] = [
   // DIY, high street) live under Fashion & Retail above.
 ];
 
-function catMatch(companyType: string, cat: TopCat): boolean {
-  const t = (companyType || "").toLowerCase().trim();
-  return cat.subs.some(s => s.match.some(m => m.toLowerCase() === t));
-}
+// The Landsec view's groups: the categories of Landsec's H&L agency brief
+// (shared/landsec.ts; Woody, 2026-11-16). Only that view uses them; BGP's
+// groups above stay as they are.
+const LANDSEC_GROUP_LOOK: Record<string, { key: string; icon: any; color: string; gradient: string }> = {
+  "Hospitality": { key: "ls-hospitality", icon: Utensils, color: "bg-red-900", gradient: "from-red-900 to-rose-950" },
+  "Leisure": { key: "ls-leisure", icon: Target, color: "bg-violet-900", gradient: "from-violet-900 to-purple-950" },
+  "Cinema & entertainment": { key: "ls-cinema", icon: Clapperboard, color: "bg-orange-900", gradient: "from-orange-900 to-amber-950" },
+  "London retail": { key: "ls-retail", icon: Store, color: "bg-rose-800", gradient: "from-rose-800 to-rose-900" },
+};
+const LANDSEC_SUB_ICONS: Record<string, any> = {
+  restaurants_bars: Utensils, cafe_qsr: Coffee, food_halls: Store, competitive_socialising: Target, active_leisure: Activity,
+  gyms_wellness_softplay: Dumbbell, cinema: Tv, immersive: Zap, major_leisure: PartyPopper, retail: ShoppingBag,
+};
+const LANDSEC_BRAND_CATEGORIES: TopCat[] = [
+  ...LANDSEC_CATEGORY_GROUPS.map(group => ({
+    ...LANDSEC_GROUP_LOOK[group],
+    label: group,
+    subs: LANDSEC_CATEGORIES.filter(c => c.group === group).map(c => ({
+      key: `ls-${c.key}`, label: c.label, icon: LANDSEC_SUB_ICONS[c.key], match: [...LANDSEC_CATEGORY_TYPES[c.key]], landsecKey: c.key,
+    })),
+  })),
+  { key: "ls-other", label: LANDSEC_OTHER_LABEL, icon: LayoutGrid, color: "bg-slate-500", gradient: "from-slate-600 to-slate-700",
+    subs: [{ key: "ls-other-types", label: "Not in a brief category", icon: LayoutGrid, match: ["Tenant - Leisure", "Tenant"], landsecKey: "other" }] },
+];
+
 function subMatch(companyType: string, sub: SubCat): boolean {
+  if (sub.landsecKey) return landsecCategoryOf(companyType) === sub.landsecKey;
   const t = (companyType || "").toLowerCase().trim();
   return sub.match.some(m => m.toLowerCase() === t);
+}
+function catMatch(companyType: string, cat: TopCat): boolean {
+  return cat.subs.some(s => subMatch(companyType, s));
 }
 
 function BrandExplorer() {
@@ -761,27 +813,33 @@ function BrandExplorer() {
   // window check mirrors BrandsHub's initialTab — useIsMobile's first
   // render can't be trusted inside a useState initializer.
   const landsClean = typeof window !== "undefined" && window.innerWidth < 768;
+  // The Landsec view sorts by the categories of Landsec's agency brief.
+  const landsecView = useIsLandsecView();
+  const categories = landsecView ? LANDSEC_BRAND_CATEGORIES : BRAND_CATEGORIES;
   const [activeCat, setActiveCat] = useState<string | null>(() => {
     if (landsClean) return null;
     // Saved selections may reference a retired category (e.g. "national") —
     // fall back to All rather than silently applying no filter.
     try {
       const saved = localStorage.getItem("brand-explorer-cat") || null;
-      return saved && BRAND_CATEGORIES.some(c => c.key === saved) ? saved : null;
+      return saved && categories.some(c => c.key === saved) ? saved : null;
     } catch { return null; }
   });
   const [activeSub, setActiveSub] = useState<string | null>(() => {
     if (landsClean) return null;
     try {
       const saved = localStorage.getItem("brand-explorer-sub") || null;
-      return saved && BRAND_CATEGORIES.some(c => c.subs.some(s => s.key === saved)) ? saved : null;
+      return saved && categories.some(c => c.subs.some(s => s.key === saved)) ? saved : null;
     } catch { return null; }
   });
   const [search, setSearch] = useState(() => {
     if (landsClean) return "";
     try { return localStorage.getItem("brand-explorer-search") || ""; } catch { return ""; }
   });
-  const [relFilter, setRelFilter] = useState<string>("all");
+  // ?rel=super (the Super Brands card's Show all) opens on the Super Brands.
+  const [relFilter, setRelFilter] = useState<string>(() => {
+    try { return new URLSearchParams(window.location.search).get("rel") === "super" ? "super" : "all"; } catch { return "all"; }
+  });
   const [propFilter, setPropFilter] = useState<string>("all");
   // Phone renders 30 cards then "Show more" — the full ~1,900-card grid made
   // the page ~117k px tall (Woody, 2026-09-27). Resets when filters change.
@@ -892,16 +950,16 @@ function BrandExplorer() {
 
   const catCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    BRAND_CATEGORIES.forEach(cat => {
+    categories.forEach(cat => {
       counts[cat.key] = companies.filter(c => catMatch(c.companyType, cat)).length;
       cat.subs.forEach(sub => {
         counts[sub.key] = companies.filter(c => subMatch(c.companyType, sub)).length;
       });
     });
     return counts;
-  }, [companies]);
+  }, [companies, categories]);
 
-  const activeCatObj = BRAND_CATEGORIES.find(c => c.key === activeCat);
+  const activeCatObj = categories.find(c => c.key === activeCat);
 
   const filtered = useMemo(() => {
     let list = companies;
@@ -922,7 +980,7 @@ function BrandExplorer() {
         if (relFilter === "tenant") return f.isTenant;
         if (relFilter === "targeted") return (f.targetedAt || []).length > 0;
         if (relFilter === "contacts") return f.hasContacts;
-        if (relFilter === "hunter") return f.hunterFlag;
+        if (relFilter === "super") return f.hunterFlag;
         if (relFilter === "requirement") return f.liveRequirement;
         return true;
       });
@@ -1073,7 +1131,7 @@ function BrandExplorer() {
           <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{companies.length.toLocaleString("en-GB")}</div>
         </button>
         {/* Empty categories are hidden for everyone, not just clients (brand tidy, 2026-11-11). */}
-        {BRAND_CATEGORIES.filter(cat => (catCounts[cat.key] || 0) > 0).map(cat => {
+        {categories.filter(cat => (catCounts[cat.key] || 0) > 0).map(cat => {
           const isActive = activeCat === cat.key;
           return (
             <button
@@ -1166,7 +1224,7 @@ function BrandExplorer() {
                 ["targeted", "Being targeted"],
                 ["contacts", "With contacts"],
                 ["requirement", "Live requirement"],
-                ["hunter", "Hunter-flagged"],
+                ["super", "Super Brands"],
                 ...(exUser?.isAdmin ? [["archived", "Hidden"]] as const : []),
               ] as const).map(([key, label]) => (
                 <Pill
@@ -1181,6 +1239,7 @@ function BrandExplorer() {
             </div>
             {exUser?.isAdmin && <BrandTidyButton />}
             {exUser?.isAdmin && <OwnershipIntelButton />}
+            {exUser?.isAdmin && <BrandRetypeButton />}
             {targetProperties.length > 0 && (
               <select
                 value={propFilter}

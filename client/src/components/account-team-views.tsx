@@ -317,7 +317,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
               )}
             </div>
             <div className="space-y-4">
-              <Section title="Buying — investment requirements" link="/requirements?type=investment" linkLabel="Requirements" empty="No investment requirements recorded.">
+              <Section title="Buying — investment requirements" link="/investment/requirements" linkLabel="Requirements" empty="No investment requirements recorded.">
                 {inv.requirements.length > 0 && <div className="space-y-2">{inv.requirements.slice(0, 6).map((requirement: any) => (
                   <LandlordInvestmentRequirementRow key={requirement.id} requirement={requirement} status={requirement.status && statusLabel(requirement.status)} />
                 ))}</div>}

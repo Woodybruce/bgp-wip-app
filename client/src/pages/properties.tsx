@@ -131,7 +131,7 @@ import { PropertyDetail } from "@/components/property-detail";
 import { CompanyLinkPicker } from "@/components/company-link-picker";
 import { useIsLandsecView, useLandsecRestricted } from "@/components/landsec/deal-clock";
 import {
-  landsecTotalsLine, SchemeGroups, LandsecStagePills, LandsecAdminBlock, type LandsecHomeData,
+  landsecTotalsLine, SchemeGroups, LandsecStagePills, LandsecAdminBlock, CategoryMixTable, type LandsecHomeData,
 } from "@/components/landsec/scheme-cards";
 import type { CrmProperty, CrmDeal, CrmContact, CrmCompany, CrmLead, User } from "@shared/schema";
 import {
@@ -6183,13 +6183,14 @@ function PropertiesList({
                 The schemes could not be loaded. The Table and Cards views still list the properties.
               </p>
             )}
-            {landsecHome.data && (landsecGroups.length > 0 ? (
+            {landsecHome.data && (landsecGroups.length > 0 ? (<>
               <SchemeGroups
                 groups={landsecGroups}
                 hrefFor={sc => (sc.propertyId ? `/properties/${sc.propertyId}` : null)}
                 isStaff={landsecHome.data.outOfScope !== undefined}
               />
-            ) : (
+              <CategoryMixTable groups={landsecGroups} />
+            </>) : (
               <div className="py-12 text-center text-muted-foreground" data-testid="properties-landsec-schemes-empty">
                 <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
                   <Building2 className="w-6 h-6 text-muted-foreground" />

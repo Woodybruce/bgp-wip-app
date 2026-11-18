@@ -1444,6 +1444,23 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
     const allApproved = counterparties.length >= 2 && counterparties.every(c => c.isApproved && !c.isExpired);
     const missing = counterparties.filter(c => !c.isApproved || c.isExpired).map(c => c.name);
 
+    // Red flags send a party to KYC4U (Woody, 2026-11-17). BGP staff signed
+    // in as themselves only: PEP and sanctions findings are BGP's.
+    const { contactViewer } = await import("./contact-viewer");
+    const staff = (await contactViewer(req)).staff;
+    // BGP's checks before asking (Woody, 2026-11-17: "we need to do
+    // everyhting we can before we ask questions on someone"): each party's
+    // latest, and a run started for any party with none from the last 30
+    // days. Before the red flags, so a run that has just finished counts.
+    const prechecks = staff
+      ? await (await import("./kyc-prechecks")).dealPrechecks(d.id, counterparties.map(c => c.id), {
+          userId: (req as any).session?.userId || (req as any).tokenUserId || null, autoStart: true,
+        }).catch((e: any) => { console.warn("[kyc-prechecks] deal view:", e?.message); return null; })
+      : null;
+    const redFlags = staff
+      ? await (await import("./kyc-red-flags")).loadDealRedFlags(d.id, counterparties.map(c => c.id))
+      : null;
+
     res.json({
       dealId: d.id,
       dealName: d.name,
@@ -1451,6 +1468,11 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
       allApproved,
       canInvoice: allApproved,
       missing,
+      // Whether the deal's screens offer the in-app client checks, or only
+      // KYC4U (IN_APP_AML_ENABLED, the one switch).
+      inAppAml: !!process.env.IN_APP_AML_ENABLED,
+      redFlags,
+      prechecks,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1765,111 +1787,7 @@ router.delete("/api/aml/country-risk/:code", requireAuth, async (req: any, res: 
   }
 });
 
-// ── KYC upload portal — admin-side: issue / list / revoke tokens, send email
-router.post("/api/aml/deal/:id/upload-link", requireAuth, async (req: any, res: Response) => {
-  const userId = req.session?.userId || req.tokenUserId;
-  const { contactEmail, contactName, ttlDays, sendEmail, customNote, cc } = req.body || {};
-  try {
-    const { issueUploadToken, sendKycRequestEmail } = await import("./aml-portal");
-    const dealRow = await pool.query(`SELECT id, name FROM crm_deals WHERE id = $1`, [req.params.id]);
-    if (!dealRow.rows[0]) return res.status(404).json({ error: "deal not found" });
-    const issued = await issueUploadToken({
-      dealId: req.params.id,
-      contactEmail: contactEmail || null,
-      contactName: contactName || null,
-      createdBy: userId,
-      ttlDays,
-    });
-    let emailResult: any = null;
-    if (sendEmail && contactEmail) {
-      emailResult = await sendKycRequestEmail({
-        dealId: req.params.id,
-        dealName: dealRow.rows[0].name,
-        recipientEmail: contactEmail,
-        recipientName: contactName || "",
-        uploadUrl: issued.url,
-        expiresAt: issued.expiresAt,
-        customNote,
-        cc,
-      });
-    }
-    res.json({ token: issued.token, url: issued.url, expiresAt: issued.expiresAt, emailResult });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-router.get("/api/aml/deal/:id/upload-links", requireAuth, async (req: Request, res: Response) => {
-  try {
-    const { listUploadTokensForDeal } = await import("./aml-portal");
-    res.json(await listUploadTokensForDeal(req.params.id as string));
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-router.delete("/api/aml/upload-link/:token", requireAuth, async (req: Request, res: Response) => {
-  try {
-    const { revokeUploadToken } = await import("./aml-portal");
-    await revokeUploadToken(req.params.token as string);
-    res.json({ ok: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-// Public-side: validate token + accept file uploads. NO auth — token is the auth.
-router.get("/api/kyc-upload/:token", async (req: Request, res: Response) => {
-  try {
-    const { validateUploadToken } = await import("./aml-portal");
-    const r = await validateUploadToken(req.params.token as string);
-    if (!r.valid) return res.status(410).json({ error: r.reason });
-    res.json({ deal: r.deal });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-router.post("/api/kyc-upload/:token/file", kycUpload.single("file"), async (req: Request, res: Response) => {
-  try {
-    const { validateUploadToken, recordUploadTokenUse } = await import("./aml-portal");
-    const v = await validateUploadToken(req.params.token as string);
-    if (!v.valid) return res.status(410).json({ error: v.reason });
-    if (!req.file) return res.status(400).json({ error: "file required" });
-
-    const dealRow = await pool.query(`SELECT name, aml_source_of_funds FROM crm_deals WHERE id = $1`, [v.deal!.id]);
-    const buffer = fs.readFileSync(req.file.path);
-    const { processInboundKycFile } = await import("./aml-portal");
-    const result = await processInboundKycFile({
-      dealId: v.deal!.id,
-      dealName: dealRow.rows[0].name,
-      declaredSource: dealRow.rows[0].aml_source_of_funds,
-      filename: req.file.originalname,
-      contentType: req.file.mimetype,
-      buffer,
-      token: req.params.token as string,
-    });
-    try { fs.unlinkSync(req.file.path); } catch {}
-    await recordUploadTokenUse(req.params.token as string);
-    res.json({ ok: true, classification: result.classification?.documentType || "uncategorised" });
-  } catch (err: any) {
-    try { if (req.file?.path) fs.unlinkSync(req.file.path); } catch {}
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-// Admin trigger for the inbound mailbox poller. Runs synchronously and
-// returns a small report. A cron will call this periodically; admins can
-// also click it from the AML hub to force a sweep.
-router.post("/api/aml/poll-mailbox", requireAuth, async (_req: Request, res: Response) => {
-  try {
-    const { pollAmlMailbox } = await import("./aml-portal");
-    const report = await pollAmlMailbox();
-    res.json(report);
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message });
-  }
-});
-
+// The client checks request (send, the client's page, reminders, replies
+// by email) is server/aml-portal.ts.
 
 export default router;

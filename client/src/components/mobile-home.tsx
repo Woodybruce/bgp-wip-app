@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useCompanyOutlook } from "@/lib/use-company-outlook";
 import { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders, startXeroConnect } from "@/lib/queryClient";
@@ -147,7 +148,7 @@ function AiDailyBriefing() {
   );
 }
 
-type Alert = { type: string; severity: "critical" | "warning" | "info"; title: string; detail?: string; entityId?: string; entityType?: string };
+type Alert = { type: string; severity: "critical" | "warning" | "info"; title: string; detail?: string; entityId?: string; entityType?: string; href?: string };
 type Task = { id: string; title: string; status: string; priority: string; deal_name?: string | null; property_name?: string | null; contact_name?: string | null; waitingOnDeal?: boolean; waitingDays?: number | null };
 type DealSummary = { id: string; name: string; status: string; property_name?: string | null };
 type Commission = { billedPence: number; commissionEarned: number; commissionForecast: number; schemeYear: string; wipByStage?: { neg: number; sol: number; exc: number; com: number } };
@@ -156,9 +157,10 @@ type Commission = { billedPence: number; commissionEarned: number; commissionFor
 // hides behind "Show all" so the home screen stays focused on daily work.
 // People & HR added so reviews/1:1s can be updated on the move (Carly,
 // 2026-09-21) — staff only, stripped from client homes below.
-// Business card too — shown to people you meet, so one tap from Home
-// (Woody, 2026-09-28).
-const CORE_BOARD_URLS = new Set(["/comps", "/brands", "/property-intelligence", "/sharepoint", "/hr", "/business-card"]);
+// My BGP is the people page renamed (Woody, 2026-11-17), with your own page
+// and its Business card and Card & expenses pills inside it: one tile, in
+// place of People & HR, My BGP and the Business card tile of 2026-09-28.
+const CORE_BOARD_URLS = new Set(["/comps", "/brands", "/property-intelligence", "/sharepoint", "/hr"]);
 
 // Pence → compact £ (e.g. £1.2m, £340k, £980)
 function fmtMoney(pence: number | undefined | null): string {
@@ -198,7 +200,9 @@ const SEV: Record<string, { cls: string; icon: any }> = {
 function alertHref(a: Alert): string {
   if (a.entityType === "deal" && a.entityId) return `/deals/${a.entityId}`;
   if (a.entityType === "contact" && a.entityId) return `/contacts/${a.entityId}`;
-  if (a.entityType === "requirement") return `/requirements`;
+  // The alert's own link where it carries one ("/requirements?list=to_confirm"
+  // for the suggestions digest), so the phone opens the same list the desktop does.
+  if (a.entityType === "requirement") return a.href && a.href.startsWith("/requirements") ? a.href : `/requirements`;
   return "/today";
 }
 
@@ -217,6 +221,9 @@ export default function MobileHome() {
     enabled: isEquity,
     staleTime: 5 * 60 * 1000,
   });
+  // The projected year as Finance's Company outlook works it out — never a
+  // second calculation (Woody, 2026-11-17: "make it sync").
+  const equityOutlook = useCompanyOutlook(isEquity);
   // Personal (my billing) vs Company (equity finance) tab on the combined
   // finance tile — Company is the default (Woody, 2026-08-22), an explicit
   // switch to Personal sticks per device.
@@ -288,14 +295,15 @@ export default function MobileHome() {
   // The bottom-nav "More" drawer is gone — board navigation lives here.
   // Default to the core daily boards; the rest (admin / WIP tools) sit behind
   // "Show all" so Home stays focused. Admins still get their extra tools.
-  const visibleBoards = (mobileOverlayItems as any[]).filter(b => (user?.isAdmin || !b.adminOnly) && b.url !== "/mail");
+  const visibleBoards = (mobileOverlayItems as any[])
+    .filter(b => (user?.isAdmin || !b.adminOnly) && b.url !== "/mail");
   // Portfolio homes already have a Brands tile in the quick trio above, so
   // drop the Brand Intelligence board there to avoid showing /brands twice.
   const boards = visibleBoards.filter(b =>
     CORE_BOARD_URLS.has(b.url)
     && !(showPortfolioHome && b.url === "/brands")
-    // HR and business cards are BGP-internal — never on a client (Landsec) home.
-    && !(isClientHome && (b.url === "/hr" || b.url === "/business-card")));
+    // HR and My BGP are BGP-internal — never on a client (Landsec) home.
+    && !(isClientHome && (b.url === "/hr" || b.url === "/my-bgp")));
   // The tasks a deal is waiting on come first, so they are never cut off.
   const openTasks = waitedOnFirst((tasks || []).filter(t => t.status !== "done")).slice(0, 6);
   // Count-gated approvals link — mirrors the desktop sidebar entry so Wendy/
@@ -529,12 +537,12 @@ export default function MobileHome() {
                     <p className="text-base font-bold tabular-nums leading-tight">£{Math.round(equityFin.cashTotal || 0).toLocaleString("en-GB")}</p>
                     <p className="text-[10px] opacity-70">Cash at bank</p>
                   </div>
-                  {equityFin.projection?.projectedNet != null && (
+                  {equityOutlook && (
                     <div>
-                      <p className={`text-base font-bold tabular-nums leading-tight ${equityFin.projection.projectedNet < 0 ? "text-red-400" : "text-emerald-400"}`}>
-                        £{Math.round(equityFin.projection.projectedNet).toLocaleString("en-GB")}
+                      <p className={`text-base font-bold tabular-nums leading-tight ${equityOutlook.profit.projectedFy < 0 ? "text-red-400" : "text-emerald-400"}`}>
+                        {equityOutlook.profit.projectedFy < 0 ? "-" : ""}£{Math.abs(Math.round(equityOutlook.profit.projectedFy)).toLocaleString("en-GB")}
                       </p>
-                      <p className="text-[10px] opacity-70">Projected FY net</p>
+                      <p className="text-[10px] opacity-70">Projected FY profit</p>
                     </div>
                   )}
                   <div>

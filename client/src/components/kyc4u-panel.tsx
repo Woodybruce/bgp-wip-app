@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { KycEmailsAdmin } from "@/components/kyc-emails-admin";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Loader2, ExternalLink, Bookmark, Upload } from "lucide-react";
@@ -130,6 +131,8 @@ export default function Kyc4uPanel() {
         </p>
         <a href={status.site} target="_blank" rel="noopener" className="text-xs text-primary inline-flex items-center gap-1 mt-1">KYC4U site <ExternalLink className="w-3 h-3" /></a>
       </section>
+
+      {isAdmin && <KycEmailsAdmin />}
 
       {isAdmin && (
         <section className="rounded-xl border bg-card p-4" data-testid="kyc4u-bookmark">
@@ -294,7 +297,7 @@ const DRAFT_FIELDS: Array<{ key: string; label: string; required?: boolean; long
   { key: "note", label: "Note", long: true },
 ];
 
-export function Kyc4uRequestButton({ dealId, companyId, role, partyName }: { dealId?: string; companyId: string; role?: string; partyName: string }) {
+export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label = "Request KYC4U check" }: { dealId?: string; companyId: string; role?: string; partyName: string; label?: string }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [fields, setFields] = useState<DraftFields>({});
@@ -331,7 +334,7 @@ export function Kyc4uRequestButton({ dealId, companyId, role, partyName }: { dea
     <div className="space-y-1" data-testid={`kyc4u-request-${companyId}`}>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="outline" className="h-8 rounded-full" onClick={() => setOpen(true)} data-testid="button-kyc4u-request">
-          <Upload className="w-3.5 h-3.5 mr-1.5" />Request KYC4U check
+          <Upload className="w-3.5 h-3.5 mr-1.5" />{label}
         </Button>
         {!latest && req && <span className="text-xs text-muted-foreground">KYC4U · <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${kyc4uTone(req.status)}`}>{req.status || "No status yet"}</span>{req.webUrl && <> · <a href={req.webUrl} target="_blank" rel="noopener noreferrer" className="underline">open their record</a></>}</span>}
         {!latest && !req && companyReqs.isFetched && <span className="rounded-full px-2 py-0.5 text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" data-testid="flag-not-raised-kyc4u">Not raised with KYC4U</span>}

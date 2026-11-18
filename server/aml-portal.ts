@@ -1,311 +1,1104 @@
-// Tokenised KYC upload portal + outbound KYC email helpers + inbound email
-// ingestion. Replaces the manual "email Charlotte for the KYC docs" loop
-// with a self-service flow:
-//
-//   1. MLRO clicks "Send KYC request" on a deal → server creates a token,
-//      sends the deal contact a branded email from the firm-wide AML mailbox
-//      with a link like https://app.bgp.com/kyc-upload/<token>
-//   2. Contact opens the link (no BGP login), drops their passport / bank
-//      statement / utility bill, server saves it to SP, runs SoF analysis
-//      via aml-ai.analyseSourceOfFundsDoc
-//   3. If they reply to the email with the docs attached instead of using
-//      the portal, ingestKycEmail() picks it up by parsing the [BGP-DEAL-...]
-//      tag in the subject and routes the attachments the same way.
-//
-// The shared mailbox identity (e.g. kyc@brucegillinghampollard.com) is set
-// via env BGP_AML_MAILBOX. Woody creates the mailbox in the M365 admin
-// portal — that part can't be done from code.
+// The client checks request (in-app AML). An agent asks a party's contact
+// for an identity check and documents; the contact gets one email and one
+// page of their own; reminders follow; replies with documents are filed;
+// the deal's agents hear when the contact has finished. Rebuilt on
+// 17 November 2026 (Woody: emails "from kyc@chatbgp.app", "copy the agent
+// that has done the deal", "BGP logo", "check the whole system because it
+// was built ages ago and wasnt working properly", "not that clear or user
+// friendly"). What the old one did wrong, and the rule now:
+//   - it sent from BGP_AML_MAILBOX, which was never set, so nothing went:
+//     KYC_MAILBOX (default kyc@chatbgp.app), and the shared mailbox when
+//     Microsoft will not send as it;
+//   - its link opened a "no longer in use" page: the client page is back;
+//   - an upload was read by the AI and then deleted: every file is now
+//     stored and filed on the party's KYC record;
+//   - reminders and the reply reader were never run: they run on a timer
+//     while in-app AML is on;
+//   - the agents were never copied: the deal's agents and the sender are.
+// The words of every email are in shared/kyc-request.ts.
 
 import crypto from "crypto";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { Router, type Request, type Response, type NextFunction } from "express";
+import { z } from "zod";
+import multer from "./utils/upload";
 import { pool } from "./db";
-import { graphRequest } from "./shared-mailbox";
+import { graphRequest, sendFromFirstMailbox, senderOrder, type EmailAttachment } from "./shared-mailbox";
+import {
+  KYC_DOCS, KYC_LOGO_CID, KYC_MAX_FILE_MB, KYC_MAX_FILES_PER_REQUEST, KYC_REF_ALPHABET,
+  KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, defaultKycDocs, isKycDocKey, isKycOwnersAnswer, isKycPepAnswer, kycDocDetail, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycOwnersWords, kycPepWords,
+  kycRedFlagEmail, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycUploadAllowed, kycWhatsAppHref, kycWhatsAppText,
+  type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycOwnersReply, type KycPartyKind, type KycPortalView, type KycProgress,
+} from "@shared/kyc-request";
+import { precheckAsks } from "@shared/kyc-prechecks";
+import type { KycRedFlag } from "@shared/kyc-red-flags";
 
-const AML_MAILBOX = process.env.BGP_AML_MAILBOX || "";
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || "https://app.brucegillinghampollard.com";
+export const KYC_MAILBOX = (process.env.KYC_MAILBOX || process.env.BGP_AML_MAILBOX || "kyc@chatbgp.app").trim();
+const LINK_BASE = (process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
+const STAFF_DOMAIN = "@brucegillinghampollard.com";
 const TOKEN_TTL_DAYS = 14;
+// A reminder three days after the request and another four days after that.
+const REMINDER_DAYS = [3, 7];
+// A new identity check is started at most this many times on one request.
+const MAX_ID_SESSIONS = 3;
+const FILED = "BGP-KYC-Filed", UNMATCHED = "BGP-KYC-Unmatched", OLD_FILED = "BGP-AML-Processed";
 
-// ── Token issuance ───────────────────────────────────────────────────────────
-// Random 32-byte URL-safe token. Stored in kyc_upload_tokens with a 14-day
-// TTL by default. Admins can revoke from the deal AML panel.
+export const inAppAmlOn = () => !!process.env.IN_APP_AML_ENABLED;
+export const kycLinkFor = (token: string) => `${LINK_BASE}/kyc-upload/${token}`;
+const dealLinkFor = (dealId: string) => `${LINK_BASE}/deals/${encodeURIComponent(dealId)}`;
 
-export async function issueUploadToken(args: {
-  dealId: string;
-  contactEmail?: string | null;
-  contactName?: string | null;
-  createdBy: string;
-  ttlDays?: number;
-}): Promise<{ token: string; url: string; expiresAt: Date }> {
-  const token = crypto.randomBytes(32).toString("base64url");
-  const ttl = args.ttlDays ?? TOKEN_TTL_DAYS;
-  const expiresAt = new Date(Date.now() + ttl * 86400000);
-  await pool.query(
-    `INSERT INTO kyc_upload_tokens (token, deal_id, contact_email, contact_name, created_by, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [token, args.dealId, args.contactEmail || null, args.contactName || null, args.createdBy, expiresAt],
-  );
-  return { token, url: `${PUBLIC_BASE_URL}/kyc-upload/${token}`, expiresAt };
+export interface KycRequestDetails {
+  ref: string;
+  kind: KycPartyKind;
+  role: string | null;
+  partyName: string;
+  dealName: string;
+  needsIdCheck: boolean;
+  docs: KycDocKey[];
+  note: string | null;
+  mobile: string | null;
+  agents: KycAgent[];
+  cc: string[];
+  sentBy: { id: string | null; name: string | null };
+  sentFrom: string | null;
+  sentAt: string | null;
+  sendError: string | null;
+  openedAt: string | null;
+  veriffSessionIds: string[];
+  idCheckNote: string | null;
+  // The question about public roles (HMRC, AMLG11650: asking the customer).
+  // Requests made before it was added do not ask it.
+  askPep?: boolean;
+  answers?: KycAnswers | null;
+  // The red flags already sent to the agents, so each goes once
+  // (server/kyc-red-flags.ts).
+  redFlagAlerts?: string[];
+  // From BGP's checks before asking (server/kyc-prechecks.ts): the owners on
+  // the register for the client to confirm, the owners whose ID is asked
+  // for, the client's reply, what was not asked and why, and the run used.
+  confirmOwners?: Array<{ name: string; detail: string }> | null;
+  ownerNames?: string[];
+  ownersAnswer?: KycOwnersReply | null;
+  notAsked?: Array<{ key: KycDocKey; reason: string }>;
+  precheckId?: number | null;
 }
 
-export async function validateUploadToken(token: string): Promise<{
-  valid: boolean;
-  reason?: string;
-  deal?: { id: string; name: string };
-} > {
-  const r = await pool.query(`SELECT * FROM kyc_upload_tokens WHERE token = $1`, [token]);
-  const row = r.rows[0];
-  if (!row) return { valid: false, reason: "Unknown link." };
-  if (row.revoked_at) return { valid: false, reason: "This link has been revoked." };
-  if (new Date(row.expires_at) < new Date()) return { valid: false, reason: "This link has expired." };
-  const deal = await pool.query(`SELECT id, name FROM crm_deals WHERE id = $1`, [row.deal_id]);
-  if (!deal.rows[0]) return { valid: false, reason: "Deal not found." };
-  return { valid: true, deal: { id: deal.rows[0].id, name: deal.rows[0].name } };
+interface TokenRow {
+  token: string;
+  deal_id: string;
+  contact_email: string | null;
+  contact_name: string | null;
+  created_at: Date;
+  created_by: string | null;
+  expires_at: Date;
+  revoked_at: Date | null;
+  last_used_at: Date | null;
+  use_count: number | null;
+  company_id: string | null;
+  contact_id: string | null;
+  request: KycRequestDetails | null;
+  completed_at: Date | null;
+  reminders_sent: number | null;
+  last_reminded_at: Date | null;
+  is_test: boolean | null;
 }
 
-export async function recordUploadTokenUse(token: string) {
-  await pool.query(
-    `UPDATE kyc_upload_tokens SET last_used_at = now(), use_count = use_count + 1 WHERE token = $1`,
-    [token],
-  );
+// ── Sending ─────────────────────────────────────────────────────────────────
+
+let logoCache: string | null = null;
+// The BGP wordmark (black holder, for a white ground) as base64, sent as an
+// inline image so it shows without the reader loading pictures from the web.
+export function kycLogoBase64(): string {
+  if (logoCache !== null) return logoCache;
+  for (const p of [path.join(process.cwd(), "server/assets/BGP_BlackHolder.png"), path.join(process.cwd(), "dist/server/assets/BGP_BlackHolder.png")]) {
+    try {
+      if (fs.existsSync(p)) { logoCache = fs.readFileSync(p).toString("base64"); return logoCache; }
+    } catch {}
+  }
+  logoCache = "";
+  return logoCache;
 }
 
-export async function revokeUploadToken(token: string) {
-  await pool.query(`UPDATE kyc_upload_tokens SET revoked_at = now() WHERE token = $1`, [token]);
+const cleanEmail = (value: unknown): string => String(value || "").trim().toLowerCase();
+const isEmail = (value: string) => /^[^\s@<>()",;]+@[^\s@<>()",;]+\.[^\s@<>()",;]+$/.test(value);
+
+export interface KycSendResult { ok: boolean; from: string | null; fellBack: boolean; error: string | null }
+
+// One door for every client checks email: from the KYC mailbox, else the
+// app's address, else the shared mailbox (the footer names whichever sent
+// it), with the logo inline.
+export async function sendKycEmail(opts: {
+  to: string[];
+  cc?: string[];
+  build: (sentFrom: string) => { subject: string; html: string };
+}): Promise<KycSendResult> {
+  const to = [...new Set(opts.to.map(cleanEmail).filter(isEmail))];
+  if (!to.length) return { ok: false, from: null, fellBack: false, error: "No address to send to" };
+  const cc = [...new Set((opts.cc || []).map(cleanEmail).filter(isEmail))].filter(address => !to.includes(address));
+  const logo = kycLogoBase64();
+  const attachments: EmailAttachment[] = logo
+    ? [{ name: "bgp-logo.png", contentType: "image/png", contentBytes: logo, isInline: true, contentId: KYC_LOGO_CID }]
+    : [];
+  try {
+    const sent = await sendFromFirstMailbox({ mailboxes: [KYC_MAILBOX], to, cc: cc.length ? cc : undefined, attachments, build: opts.build });
+    const fellBack = cleanEmail(sent.from) !== cleanEmail(KYC_MAILBOX);
+    return { ok: true, from: sent.from, fellBack, error: fellBack ? (sent.refused[0]?.error || `${KYC_MAILBOX} was refused within the hour`) : null };
+  } catch (e: any) {
+    return { ok: false, from: null, fellBack: false, error: String(e?.message || e).slice(0, 300) };
+  }
 }
 
-export async function listUploadTokensForDeal(dealId: string) {
-  const r = await pool.query(
-    `SELECT token, contact_email, contact_name, created_at, expires_at, revoked_at, last_used_at, use_count
-     FROM kyc_upload_tokens WHERE deal_id = $1 ORDER BY created_at DESC`,
+// ── Who is on the deal ──────────────────────────────────────────────────────
+
+// The BGP people on a deal, the deal's own agents first, then the agents on
+// its fee split (never BGP House). BGP addresses only, so a client is never
+// copied by mistake.
+export async function dealAgents(dealId: string): Promise<Array<KycAgent & { id: string }>> {
+  const { rows } = await pool.query(
+    `WITH d AS (SELECT internal_agent_ids, internal_agent FROM crm_deals WHERE id = $1)
+     SELECT u.id, u.name, u.email, u.phone,
+            (u.id = ANY(COALESCE(d.internal_agent_ids, '{}'::varchar[]))
+              OR lower(u.name) = ANY(SELECT lower(x) FROM unnest(COALESCE(d.internal_agent, '{}'::text[])) x)) AS on_deal
+       FROM users u, d
+      WHERE u.is_active IS NOT FALSE AND COALESCE(u.email, '') <> ''
+        AND (u.id = ANY(COALESCE(d.internal_agent_ids, '{}'::varchar[]))
+             OR lower(u.name) = ANY(SELECT lower(x) FROM unnest(COALESCE(d.internal_agent, '{}'::text[])) x)
+             OR u.id IN (SELECT agent_user_id FROM deal_fee_allocations
+                          WHERE deal_id = $1 AND agent_user_id IS NOT NULL AND is_bgp_house IS NOT TRUE))`,
     [dealId],
   );
-  return r.rows.map((row: any) => ({
-    ...row,
-    url: `${PUBLIC_BASE_URL}/kyc-upload/${row.token}`,
+  return rows
+    .filter((r: any) => cleanEmail(r.email).endsWith(STAFF_DOMAIN))
+    .sort((a: any, b: any) => Number(b.on_deal) - Number(a.on_deal) || String(a.name).localeCompare(String(b.name)))
+    .map((r: any) => ({ id: r.id, name: r.name || r.email, email: r.email, phone: r.phone || null }));
+}
+
+async function staffMe(req: Request): Promise<{ id: string; name: string | null; email: string | null; phone: string | null } | null> {
+  const { contactViewer } = await import("./contact-viewer");
+  if (!(await contactViewer(req)).staff) return null;
+  const id = (req.session as any)?.userId || (req as any).tokenUserId;
+  if (!id) return null;
+  const r = await pool.query(`SELECT id, name, email, phone FROM users WHERE id = $1`, [id]);
+  return r.rows[0] ? { id: r.rows[0].id, name: r.rows[0].name || null, email: r.rows[0].email || null, phone: r.rows[0].phone || null } : null;
+}
+
+const STAFF_ONLY = "Only BGP staff, signed in as themselves, send client checks.";
+
+// ── Tokens ──────────────────────────────────────────────────────────────────
+
+async function newRef(): Promise<string> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const bytes = crypto.randomBytes(6);
+    const ref = Array.from(bytes, b => KYC_REF_ALPHABET[b % KYC_REF_ALPHABET.length]).join("");
+    const taken = await pool.query(`SELECT 1 FROM kyc_upload_tokens WHERE request->>'ref' = $1 LIMIT 1`, [ref]);
+    if (!taken.rowCount) return ref;
+  }
+  throw new Error("Could not make a reference for the request");
+}
+
+async function tokenRow(token: string): Promise<TokenRow | null> {
+  if (!/^[A-Za-z0-9_-]{20,64}$/.test(token)) return null;
+  const r = await pool.query(`SELECT * FROM kyc_upload_tokens WHERE token = $1`, [token]);
+  return (r.rows[0] as TokenRow) || null;
+}
+
+async function saveRequest(token: string, request: KycRequestDetails): Promise<void> {
+  await pool.query(`UPDATE kyc_upload_tokens SET request = $2 WHERE token = $1`, [token, JSON.stringify(request)]);
+}
+
+// Why a link no longer opens, in the words the client page shows.
+function closedReason(row: TokenRow | null): string | null {
+  if (!row || !row.request) return "This link is not recognised. Please check you have the whole address, or ask your contact at Bruce Gillingham Pollard for a new one.";
+  if (row.revoked_at) return "This link has been cancelled. If you still need to send something, please contact Bruce Gillingham Pollard.";
+  if (new Date(row.expires_at) < new Date()) return "This link has expired. Please ask your contact at Bruce Gillingham Pollard for a new one.";
+  return null;
+}
+
+// ── The identity check ──────────────────────────────────────────────────────
+
+function veriffConfigured(): boolean {
+  const key = process.env.VERIFF_API_KEY || process.env.VERIFF_PUBLIC_KEY || process.env.VERIFF_KEY || process.env.VERIFF_INTEGRATION_ID;
+  const secret = process.env.VERIFF_SECRET || process.env.VERIFF_PRIVATE_KEY || process.env.VERIFF_SHARED_SECRET;
+  return !!(key && secret);
+}
+
+async function latestSession(request: KycRequestDetails): Promise<{ session_id: string; status: string | null; verification_url: string | null } | null> {
+  const id = request.veriffSessionIds[request.veriffSessionIds.length - 1];
+  if (!id) return null;
+  const r = await pool.query(`SELECT session_id, status, verification_url FROM veriff_sessions WHERE session_id = $1`, [id]);
+  return r.rows[0] || null;
+}
+
+async function startIdSession(row: TokenRow, request: KycRequestDetails): Promise<{ sessionId: string; url: string }> {
+  const { createVeriffSession } = await import("./veriff");
+  const parts = String(row.contact_name || "").trim().split(/\s+/).filter(Boolean);
+  const firstName = parts[0] || "Client";
+  const lastName = parts.slice(1).join(" ") || firstName;
+  const session = await createVeriffSession({
+    firstName, lastName,
+    email: row.contact_email || undefined,
+    companyId: row.company_id || undefined,
+    contactId: row.contact_id || undefined,
+    dealId: row.deal_id,
+    userId: row.created_by || undefined,
+    callbackUrl: kycLinkFor(row.token),
+  });
+  await pool.query(
+    `INSERT INTO veriff_sessions (session_id, company_id, contact_id, deal_id, first_name, last_name, email, status, verification_url, requested_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (session_id) DO NOTHING`,
+    [session.sessionId, row.company_id, row.contact_id, row.deal_id, firstName, lastName, row.contact_email, session.status, session.verificationUrl, row.created_by],
+  );
+  request.veriffSessionIds = [...request.veriffSessionIds, session.sessionId];
+  await saveRequest(row.token, request);
+  return { sessionId: session.sessionId, url: session.verificationUrl };
+}
+
+// ── What the client has done ────────────────────────────────────────────────
+
+interface UploadedFile { name: string; docKey: KycDocKey | null; uploadedAt: string; url: string | null }
+
+async function uploadedFiles(token: string): Promise<UploadedFile[]> {
+  const r = await pool.query(
+    `SELECT f.original_filename, f.doc_type, f.uploaded_at, d.file_url
+       FROM kyc_upload_files f LEFT JOIN kyc_documents d ON d.id::text = f.kyc_document_id
+      WHERE f.token = $1 ORDER BY f.uploaded_at`,
+    [token],
+  );
+  return r.rows.map((f: any) => ({
+    name: f.original_filename,
+    docKey: isKycDocKey(f.doc_type) ? f.doc_type : null,
+    uploadedAt: new Date(f.uploaded_at).toISOString(),
+    url: f.file_url || null,
   }));
 }
 
-// ── Outbound email ──────────────────────────────────────────────────────────
-// Sends from the shared AML mailbox via Graph. Subject prefix is what tells
-// our inbound poller which deal a reply belongs to.
-
-export async function sendKycRequestEmail(args: {
-  dealId: string;
-  dealName: string;
-  recipientEmail: string;
-  recipientName: string;
-  uploadUrl: string;
-  expiresAt: Date;
-  customNote?: string;
-  cc?: string[];
-}): Promise<{ ok: boolean; messageId?: string; error?: string }> {
-  if (!AML_MAILBOX) return { ok: false, error: "BGP_AML_MAILBOX env not configured" };
-
-  const expiresStr = args.expiresAt.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
-  const subject = `[BGP-DEAL-${args.dealId}] KYC documents request — ${args.dealName}`;
-  const html = `
-    <p>Hi ${args.recipientName || ""},</p>
-    <p>To complete the AML/KYC checks for <strong>${args.dealName}</strong>, please upload your supporting documents using the secure link below.</p>
-    ${args.customNote ? `<p>${args.customNote}</p>` : ""}
-    <p style="margin: 24px 0;"><a href="${args.uploadUrl}" style="background:#10b981;color:white;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block;font-weight:600;">Upload KYC documents</a></p>
-    <p>The link expires on <strong>${expiresStr}</strong>. We'll need:</p>
-    <ul>
-      <li>Photo ID — passport or driving licence</li>
-      <li>Proof of address — recent utility bill, bank statement or council tax letter (within 3 months)</li>
-      <li>Proof of source of funds — bank statement, payslip, or confirmation from your accountant / lender</li>
-    </ul>
-    <p>Alternatively, you can reply to this email with the documents attached — please keep the subject line as it is so we can route the reply to the right file.</p>
-    <p>Any questions, just reply.</p>
-    <p>— Bruce Gillingham Pollard</p>
-  `;
-
-  try {
-    await graphRequest(`/users/${encodeURIComponent(AML_MAILBOX)}/sendMail`, {
-      method: "POST",
-      body: JSON.stringify({
-        message: {
-          subject,
-          body: { contentType: "HTML", content: html },
-          toRecipients: [{ emailAddress: { address: args.recipientEmail, name: args.recipientName || "" } }],
-          ccRecipients: (args.cc || []).map(a => ({ emailAddress: { address: a } })),
-        },
-        saveToSentItems: true,
-      }),
-    });
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e?.message || "sendMail failed" };
-  }
+async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycProgress & { idState: KycIdState | null; files: UploadedFile[] }> {
+  const request = row.request!;
+  const list = files || await uploadedFiles(row.token);
+  const session = request.needsIdCheck ? await latestSession(request) : null;
+  const idState = request.needsIdCheck ? kycIdStateFor(session?.status) : null;
+  const docsDone = request.docs.filter(key => list.some(f => f.docKey === key));
+  const pepAnswered = !request.askPep || !!request.answers?.pep;
+  const ownersAnswered = !request.confirmOwners?.length || !!request.ownersAnswer;
+  return { idDone: idState === "approved" || idState === "submitted", docsDone, pepAnswered, ownersAnswered, idState, files: list };
 }
 
-// Reminder email — same template, briefer.
-export async function sendKycReminderEmail(args: {
-  dealId: string;
-  dealName: string;
-  recipientEmail: string;
-  recipientName: string;
-  uploadUrl: string;
-  expiresAt: Date;
-}): Promise<{ ok: boolean; error?: string }> {
-  if (!AML_MAILBOX) return { ok: false, error: "BGP_AML_MAILBOX env not configured" };
-  const subject = `[BGP-DEAL-${args.dealId}] Reminder: KYC docs still needed — ${args.dealName}`;
-  const html = `
-    <p>Hi ${args.recipientName || ""},</p>
-    <p>Just a quick nudge — we still need your KYC documents to progress <strong>${args.dealName}</strong>.</p>
-    <p style="margin: 24px 0;"><a href="${args.uploadUrl}" style="background:#10b981;color:white;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block;font-weight:600;">Upload now</a></p>
-    <p>Or reply to this email with the docs attached.</p>
-    <p>— Bruce Gillingham Pollard</p>
-  `;
-  try {
-    await graphRequest(`/users/${encodeURIComponent(AML_MAILBOX)}/sendMail`, {
-      method: "POST",
-      body: JSON.stringify({
-        message: {
-          subject,
-          body: { contentType: "HTML", content: html },
-          toRecipients: [{ emailAddress: { address: args.recipientEmail, name: args.recipientName || "" } }],
-        },
-        saveToSentItems: true,
-      }),
-    });
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e?.message };
+export async function portalView(row: TokenRow): Promise<KycPortalView> {
+  const request = row.request!;
+  const progress = await progressOf(row);
+  let idCheck: KycPortalView["idCheck"] = null;
+  if (request.needsIdCheck) {
+    const state = progress.idState || "not_started";
+    // A test page runs a real Veriff check when Veriff is set up (Woody,
+    // 2026-11-17: "can you do the test page a real identity check with
+    // veriff"), under the same three-session cap as a client's.
+    const real = !row.is_test || veriffConfigured();
+    const canStart = !real ? true
+      : state === "restart" ? request.veriffSessionIds.length < MAX_ID_SESSIONS
+      : state !== "approved" && state !== "submitted";
+    idCheck = { state, canStart, real };
   }
+  const requested = new Set(request.docs);
+  return {
+    test: !!row.is_test,
+    ref: request.ref,
+    recipientName: row.contact_name,
+    partyName: request.partyName,
+    kind: request.kind,
+    dealName: request.dealName,
+    expiresAt: new Date(row.expires_at).toISOString(),
+    idCheck,
+    question: request.askPep ? { pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null } : null,
+    owners: request.confirmOwners?.length ? { list: request.confirmOwners, answer: request.ownersAnswer?.answer ?? null, detail: request.ownersAnswer?.detail ?? null } : null,
+    docs: request.docs.map(key => ({
+      key, title: KYC_DOCS[key].title, detail: kycDocDetail(key, request.ownerNames),
+      files: progress.files.filter(f => f.docKey === key).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
+    })),
+    otherFiles: progress.files.filter(f => !f.docKey || !requested.has(f.docKey)).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
+    note: request.note,
+    agents: request.agents,
+    finishedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
+    maxFileMb: KYC_MAX_FILE_MB,
+  };
 }
 
-// ── Inbound poller ──────────────────────────────────────────────────────────
-// Run on a cron (every 5 min). Reads the AML mailbox, looks for unprocessed
-// emails, parses [BGP-DEAL-<id>] from the subject, downloads attachments,
-// runs aml-ai analysis, attaches to the deal. Also tries Claude triage on
-// the body when no token is present.
+// ── Creating a request ──────────────────────────────────────────────────────
 
-const DEAL_TAG_RE = /\[BGP-DEAL-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\]/i;
+export const clientCheckBody = z.object({
+  companyId: z.string().min(1).max(200),
+  contactId: z.string().min(1).max(200).nullish(),
+  name: z.string().trim().min(1).max(120),
+  email: z.string().trim().max(200),
+  mobile: z.string().trim().max(40).nullish(),
+  kind: z.enum(["individual", "company"]),
+  needsIdCheck: z.boolean(),
+  docs: z.array(z.string()).max(10),
+  note: z.string().max(2000).nullish(),
+}).strict();
 
-export async function pollAmlMailbox(): Promise<{
-  scanned: number;
-  processed: number;
-  attachments: number;
-  warnings: string[];
+const PARTY_COLUMNS: Array<{ role: string; company: string; contact: string }> = [
+  { role: "landlord", company: "landlord_id", contact: "landlord_contact_id" },
+  { role: "tenant", company: "tenant_id", contact: "tenant_contact_id" },
+  { role: "vendor", company: "vendor_id", contact: "vendor_contact_id" },
+  { role: "purchaser", company: "purchaser_id", contact: "purchaser_contact_id" },
+];
+
+async function dealParties(dealId: string) {
+  const d = (await pool.query(
+    `SELECT id, name, landlord_id, landlord_contact_id, tenant_id, tenant_contact_id, vendor_id, vendor_contact_id, purchaser_id, purchaser_contact_id
+       FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
+  if (!d) return null;
+  const parties: Array<{ companyId: string; name: string; role: string; kind: KycPartyKind; contactId: string | null;
+    contacts: Array<{ id: string; name: string; email: string | null; mobile: string | null }> }> = [];
+  for (const col of PARTY_COLUMNS) {
+    const companyId = d[col.company];
+    if (!companyId || parties.some(p => p.companyId === companyId)) continue;
+    const c = (await pool.query(`SELECT id, name, aml_subject_type FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+    if (!c) continue;
+    const contacts = (await pool.query(
+      `SELECT id, name, email, COALESCE(NULLIF(phone_mobile, ''), NULLIF(phone, '')) AS mobile
+         FROM crm_contacts WHERE company_id = $1 AND COALESCE(email, '') <> ''
+        ORDER BY (id = $2) DESC, name LIMIT 60`, [companyId, d[col.contact] || ""])).rows;
+    parties.push({
+      companyId, name: c.name, role: col.role,
+      kind: String(c.aml_subject_type || "").toLowerCase() === "individual" ? "individual" : "company",
+      contactId: d[col.contact] && contacts.some((x: any) => x.id === d[col.contact]) ? d[col.contact] : null,
+      contacts: contacts.map((x: any) => ({ id: x.id, name: x.name, email: x.email, mobile: x.mobile || null })),
+    });
+  }
+  return { deal: { id: d.id as string, name: d.name as string }, parties };
+}
+
+export async function createClientCheck(dealId: string, input: z.infer<typeof clientCheckBody>, me: { id: string; name: string | null; email: string | null }): Promise<{
+  token: string; ref: string; link: string; sent: KycSendResult; idCheck: boolean; idCheckNote: string | null; cc: string[];
 }> {
-  if (!AML_MAILBOX) return { scanned: 0, processed: 0, attachments: 0, warnings: ["BGP_AML_MAILBOX env not configured"] };
-  const warnings: string[] = [];
-  let scanned = 0, processed = 0, attachments = 0;
+  const found = await dealParties(dealId);
+  if (!found) throw Object.assign(new Error("Deal not found"), { status: 404 });
+  const party = found.parties.find(p => p.companyId === input.companyId);
+  if (!party) throw Object.assign(new Error("That company is not a party to this deal. Set it on the deal first."), { status: 400 });
+  const email = cleanEmail(input.email);
+  if (!isEmail(email)) throw Object.assign(new Error("Enter a valid email address for the person to ask."), { status: 400 });
+  if (input.contactId && !party.contacts.some(c => c.id === input.contactId)) throw Object.assign(new Error("That contact is not at this company."), { status: 400 });
+  let docs = [...new Set(input.docs.filter(isKycDocKey))];
+  let needsIdCheck = input.needsIdCheck;
+  let idCheckNote: string | null = null;
+  if (needsIdCheck && !veriffConfigured()) {
+    needsIdCheck = false;
+    idCheckNote = "The online identity check is not set up, so photo ID is asked for as a document instead.";
+  }
+  if (!needsIdCheck && !docs.includes("photo_id") && input.needsIdCheck) docs = ["photo_id", ...docs];
+  if (!needsIdCheck && !docs.length) throw Object.assign(new Error("Ask for at least one thing: the identity check or a document."), { status: 400 });
 
-  try {
-    // Pull unread inbox messages with attachments. Categories used as a
-    // poor-man's processed flag: we tag with "BGP-AML-Processed" once done.
-    const data: any = await graphRequest(
-      `/users/${encodeURIComponent(AML_MAILBOX)}/mailFolders/Inbox/messages?$filter=hasAttachments eq true&$top=50&$orderby=receivedDateTime desc&$select=id,subject,from,categories,receivedDateTime,bodyPreview`,
-    );
-    const messages = data?.value || [];
-    scanned = messages.length;
+  // What BGP's checks before asking found (the agent's ticks decide what is
+  // asked; this records why the rest was not, and the owners to confirm).
+  const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(party.companyId)).catch(() => null);
+  const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName: input.name });
+  const confirmOwners = input.kind === "company" && !docs.includes("ownership") && asks.confirmOwners?.length ? asks.confirmOwners : null;
 
-    for (const msg of messages) {
-      try {
-        if ((msg.categories || []).includes("BGP-AML-Processed")) continue;
-        const dealMatch = (msg.subject || "").match(DEAL_TAG_RE);
-        if (!dealMatch) {
-          warnings.push(`Skipped "${msg.subject}" — no [BGP-DEAL-<id>] tag`);
-          continue;
-        }
-        const dealId = dealMatch[1];
-        const dealRow = await pool.query(`SELECT id, name, aml_source_of_funds FROM crm_deals WHERE id = $1`, [dealId]);
-        if (!dealRow.rows[0]) {
-          warnings.push(`Deal ${dealId} not found`);
-          continue;
-        }
-
-        const attachListData: any = await graphRequest(
-          `/users/${encodeURIComponent(AML_MAILBOX)}/messages/${msg.id}/attachments?$select=id,name,contentType,size`,
-        );
-        const list = attachListData?.value || [];
-        for (const a of list) {
-          if (a.size > 25 * 1024 * 1024) { warnings.push(`Attachment ${a.name} too large`); continue; }
-          // Pull contentBytes (one-by-one — Graph won't return bytes in the list)
-          const att: any = await graphRequest(
-            `/users/${encodeURIComponent(AML_MAILBOX)}/messages/${msg.id}/attachments/${a.id}`,
-          );
-          if (!att?.contentBytes) continue;
-          const buf = Buffer.from(att.contentBytes, "base64");
-          await processInboundKycFile({
-            dealId,
-            dealName: dealRow.rows[0].name,
-            declaredSource: dealRow.rows[0].aml_source_of_funds,
-            filename: a.name,
-            contentType: a.contentType,
-            buffer: buf,
-            sourceLabel: `email from ${msg.from?.emailAddress?.address || "unknown"} on ${msg.receivedDateTime?.slice(0,10)}`,
-          });
-          attachments++;
-        }
-
-        // Mark processed via category so we don't re-ingest.
-        await graphRequest(
-          `/users/${encodeURIComponent(AML_MAILBOX)}/messages/${msg.id}`,
-          {
-            method: "PATCH",
-            body: JSON.stringify({ categories: [...(msg.categories || []), "BGP-AML-Processed"] }),
-          },
-        );
-        processed++;
-      } catch (e: any) {
-        warnings.push(`${msg.subject}: ${e?.message?.slice(0, 200)}`);
-      }
-    }
-  } catch (e: any) {
-    warnings.push(`mailbox poll failed: ${e?.message}`);
+  const agents = await dealAgents(dealId);
+  const agentList: KycAgent[] = agents.map(a => ({ name: a.name, email: a.email, phone: a.phone }));
+  const meEmail = cleanEmail(me.email);
+  const cc = [...new Set([...agents.map(a => cleanEmail(a.email)), meEmail].filter(e => e.endsWith(STAFF_DOMAIN)))];
+  // The sender is the client's contact too when the deal names no agent.
+  if (!agentList.length && me.name) {
+    const meRow = (await pool.query(`SELECT phone FROM users WHERE id = $1`, [me.id])).rows[0];
+    agentList.push({ name: me.name, email: me.email, phone: meRow?.phone || null });
   }
 
-  return { scanned, processed, attachments, warnings };
-}
-
-// Shared by the upload portal and the email poller — runs the AI analysis,
-// stashes the file metadata in kyc_upload_files, and writes the structured
-// SoF analysis to crm_deals.aml_sof_analysis when applicable.
-export async function processInboundKycFile(args: {
-  dealId: string;
-  dealName: string;
-  declaredSource?: string | null;
-  filename: string;
-  contentType: string;
-  buffer: Buffer;
-  token?: string;
-  sourceLabel?: string;
-}): Promise<{ classification: any; analysis?: any }> {
-  const { extractTextFromFile } = await import("./utils/file-extractor");
-  const { analyseSourceOfFundsDoc, saveSofAnalysis } = await import("./aml-ai");
-  const fs = await import("fs");
-  const path = await import("path");
-  const os = await import("os");
-
-  // Persist to a tmp file so the existing extractor can read it (it expects a path).
-  const tmp = path.join(os.tmpdir(), `bgp_kyc_${Date.now()}_${args.filename}`);
-  fs.writeFileSync(tmp, args.buffer);
-  let analysis: any = null;
-  try {
-    const text = await extractTextFromFile(tmp, args.filename);
-    if (text && text.length > 30) {
-      analysis = await analyseSourceOfFundsDoc({
-        dealName: args.dealName,
-        declaredSource: args.declaredSource,
-        documentText: text,
-        filename: args.filename,
-      });
-      // Only persist as a SoF entry if Claude classified it as a financial doc
-      // (bank_statement, payslip, tax_return). For ID / utility bills we still
-      // keep the kyc_upload_files row but don't pollute the SoF list.
-      if (["bank_statement", "payslip", "tax_return"].includes(String(analysis.documentType))) {
-        await saveSofAnalysis(args.dealId, analysis, args.declaredSource);
-      }
-    }
-  } finally {
-    try { fs.unlinkSync(tmp); } catch {}
-  }
-
+  const token = crypto.randomBytes(32).toString("base64url");
+  const ref = await newRef();
+  const expiresAt = new Date(Date.now() + TOKEN_TTL_DAYS * 86400000);
+  const request: KycRequestDetails = {
+    ref, kind: input.kind, role: party.role, partyName: party.name, dealName: found.deal.name,
+    needsIdCheck, docs, note: input.note?.trim() || null, mobile: input.mobile?.trim() || null,
+    agents: agentList, cc, sentBy: { id: me.id, name: me.name }, sentFrom: null, sentAt: null, sendError: null,
+    openedAt: null, veriffSessionIds: [], idCheckNote, askPep: true, answers: null,
+    confirmOwners, ownerNames: docs.includes("owner_ids") ? asks.ownerNames : [], ownersAnswer: null,
+    notAsked: asks.notAsked.filter(n => !docs.includes(n.key)), precheckId: pre?.precheckId ?? null,
+  };
   await pool.query(
-    `INSERT INTO kyc_upload_files (token, deal_id, original_filename, content_type, size_bytes, ai_classification)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [args.token || "email", args.dealId, args.filename, args.contentType || null, args.buffer.length, analysis || null],
+    `INSERT INTO kyc_upload_tokens (token, deal_id, contact_email, contact_name, created_by, expires_at, company_id, contact_id, request, is_test)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false)`,
+    [token, dealId, email, input.name.trim(), me.id, expiresAt, party.companyId, input.contactId || null, JSON.stringify(request)],
   );
-  return { classification: analysis, analysis };
+  const row = (await tokenRow(token))!;
+
+  if (needsIdCheck) {
+    try {
+      await startIdSession(row, request);
+    } catch (e: any) {
+      // The request still goes: the client uploads photo ID instead.
+      request.needsIdCheck = false;
+      if (!request.docs.includes("photo_id")) request.docs = ["photo_id", ...request.docs];
+      request.idCheckNote = `The identity check could not be started (${String(e?.message || e).slice(0, 160)}), so photo ID is asked for as a document instead.`;
+      await saveRequest(token, request);
+    }
+  }
+
+  const link = kycLinkFor(token);
+  const sent = await sendKycEmail({
+    to: [email], cc,
+    build: sentFrom => kycRequestEmail({
+      recipientName: input.name, partyName: party.name, kind: input.kind, dealName: found.deal.name, ref, link, expiresAt,
+      needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, agents: agentList, sentFrom, askPep: true,
+      confirmOwners: request.confirmOwners, ownerNames: request.ownerNames,
+    }),
+  });
+  request.sentFrom = sent.from;
+  request.sentAt = sent.ok ? new Date().toISOString() : null;
+  request.sendError = sent.ok ? (sent.fellBack ? `Sent from ${sent.from}: Microsoft would not send as ${KYC_MAILBOX}` : null) : sent.error;
+  await saveRequest(token, request);
+  await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_checks_sent', $2, $3)`,
+    [party.companyId, me.name || me.id, `${sent.ok ? "Sent" : "Not sent"} to ${input.name} <${email}> for ${found.deal.name} (ref ${ref})${sent.ok ? `, from ${sent.from}, copied to ${cc.join(", ") || "nobody"}` : `: ${sent.error}`}`]).catch(() => {});
+  return { token, ref, link, sent, idCheck: request.needsIdCheck, idCheckNote: request.idCheckNote, cc };
 }
+
+// ── What the agents see on the deal ─────────────────────────────────────────
+
+export type ClientCheckStatus = "not_sent" | "sent" | "opened" | "in_progress" | "finished" | "expired" | "cancelled";
+
+export async function clientChecksForDeal(dealId: string) {
+  const rows = (await pool.query(
+    `SELECT * FROM kyc_upload_tokens WHERE deal_id = $1 AND request IS NOT NULL AND is_test IS NOT TRUE ORDER BY created_at DESC`, [dealId])).rows as TokenRow[];
+  const out = [];
+  for (const row of rows) {
+    const request = row.request!;
+    const progress = await progressOf(row);
+    const expired = new Date(row.expires_at) < new Date();
+    const status: ClientCheckStatus = row.revoked_at ? "cancelled"
+      : row.completed_at ? "finished"
+      : expired ? "expired"
+      : !request.sentAt ? "not_sent"
+      : progress.files.length || (progress.idState && progress.idState !== "not_started") ? "in_progress"
+      : request.openedAt ? "opened" : "sent";
+    const link = kycLinkFor(row.token);
+    out.push({
+      token: row.token, ref: request.ref, companyId: row.company_id, partyName: request.partyName, role: request.role,
+      recipientName: row.contact_name, recipientEmail: row.contact_email, mobile: request.mobile,
+      sentAt: request.sentAt, sentFrom: request.sentFrom, sendError: request.sendError, sentBy: request.sentBy.name,
+      cc: request.cc, openedAt: request.openedAt, expiresAt: new Date(row.expires_at).toISOString(),
+      finishedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
+      status, needsIdCheck: request.needsIdCheck, idState: progress.idState, idCheckNote: request.idCheckNote,
+      askPep: !!request.askPep, pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null,
+      owners: request.confirmOwners?.length ? { list: request.confirmOwners, answer: request.ownersAnswer?.answer ?? null, detail: request.ownersAnswer?.detail ?? null } : null,
+      notAsked: request.notAsked || [],
+      docs: request.docs.map(key => ({ key, title: KYC_DOCS[key].title, done: progress.docsDone.includes(key) })),
+      files: progress.files, remindersSent: row.reminders_sent || 0,
+      link,
+      whatsapp: request.mobile ? kycWhatsAppHref(request.mobile, kycWhatsAppText({ recipientName: row.contact_name, dealName: request.dealName, link, expiresAt: row.expires_at, senderName: request.sentBy.name })) : null,
+      canRemind: !row.revoked_at && !row.completed_at && !expired && !!request.sentAt,
+    });
+  }
+  return out;
+}
+
+// ── Reminders ───────────────────────────────────────────────────────────────
+
+async function sendReminder(row: TokenRow): Promise<KycSendResult> {
+  const request = row.request!;
+  const progress = await progressOf(row);
+  const link = kycLinkFor(row.token);
+  const sent = await sendKycEmail({
+    to: [row.contact_email || ""], cc: request.cc,
+    build: sentFrom => kycReminderEmail({
+      recipientName: row.contact_name, partyName: request.partyName, kind: request.kind, dealName: request.dealName,
+      ref: request.ref, link, expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: request.docs,
+      agents: request.agents, sentFrom, progress, test: !!row.is_test, askPep: !!request.askPep,
+      confirmOwners: request.confirmOwners, ownerNames: request.ownerNames,
+    }),
+  });
+  if (sent.ok) await pool.query(`UPDATE kyc_upload_tokens SET reminders_sent = COALESCE(reminders_sent, 0) + 1, last_reminded_at = now() WHERE token = $1`, [row.token]);
+  return sent;
+}
+
+// Due when the request went out, has not been finished, cancelled or run
+// out, and the next reminder's day has come. Nothing is sent once every
+// step is done (the client only forgot to press Finish).
+export function reminderDue(row: Pick<TokenRow, "revoked_at" | "completed_at" | "expires_at" | "reminders_sent" | "is_test"> & { request: Pick<KycRequestDetails, "sentAt"> | null }, now: Date): boolean {
+  if (!row.request?.sentAt || row.revoked_at || row.completed_at || row.is_test) return false;
+  if (new Date(row.expires_at) <= now) return false;
+  const count = row.reminders_sent || 0;
+  if (count >= REMINDER_DAYS.length) return false;
+  return now.getTime() >= new Date(row.request.sentAt).getTime() + REMINDER_DAYS[count] * 86400000;
+}
+
+export async function sendKycReminders(now = new Date()): Promise<{ sent: number; failed: number; skipped: number }> {
+  if (!inAppAmlOn()) return { sent: 0, failed: 0, skipped: 0 };
+  const rows = (await pool.query(
+    `SELECT * FROM kyc_upload_tokens
+      WHERE request IS NOT NULL AND is_test IS NOT TRUE AND revoked_at IS NULL AND completed_at IS NULL
+        AND expires_at > now() AND COALESCE(reminders_sent, 0) < $1`, [REMINDER_DAYS.length])).rows as TokenRow[];
+  let sent = 0, failed = 0, skipped = 0;
+  for (const row of rows) {
+    if (!reminderDue(row, now)) continue;
+    const progress = await progressOf(row);
+    if ((!row.request!.needsIdCheck || progress.idDone) && progress.docsDone.length === row.request!.docs.length && progress.pepAnswered && progress.ownersAnswered) { skipped++; continue; }
+    const result = await sendReminder(row);
+    if (result.ok) sent++; else { failed++; console.warn(`[kyc] reminder for ${row.request!.ref} failed: ${result.error}`); }
+  }
+  if (sent || failed) console.log(`[kyc] reminders: ${sent} sent, ${failed} failed, ${skipped} with nothing left to send`);
+  return { sent, failed, skipped };
+}
+
+// ── Filing a file ───────────────────────────────────────────────────────────
+
+const safeFileName = (name: string) => path.basename(String(name || "file")).replace(/[^a-zA-Z0-9_.\-]/g, "_").slice(-120) || "file";
+
+// Store a file the client sent and file it on the party's KYC record (a
+// test request records the name only and keeps nothing).
+async function fileClientDocument(row: TokenRow, file: { name: string; mime: string; buffer: Buffer }, docKey: KycDocKey | null, how: string): Promise<void> {
+  const request = row.request!;
+  if (row.is_test) {
+    await pool.query(
+      `INSERT INTO kyc_upload_files (token, deal_id, original_filename, content_type, size_bytes, doc_type) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [row.token, row.deal_id, file.name, file.mime || null, file.buffer.length, docKey],
+    );
+    return;
+  }
+  const { saveFile } = await import("./file-storage");
+  const safeName = `kyc-${Date.now()}-${crypto.randomBytes(6).toString("hex")}-${safeFileName(file.name)}`;
+  await saveFile(`chat-media/${safeName}`, file.buffer, file.mime || "application/octet-stream", file.name);
+  let docType = docKey ? KYC_DOCS[docKey].docType : "other";
+  if (!docKey) {
+    try { docType = (await import("./kyc-pack-intake")).classifyPackFile(file.name); } catch {}
+  }
+  const doc = await pool.query(
+    `INSERT INTO kyc_documents (company_id, contact_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL) RETURNING id`,
+    [row.company_id, row.contact_id, row.deal_id, docType, `/api/chat-media/${safeName}`, file.name, file.buffer.length, file.mime || null,
+      `${how} by ${row.contact_name || "the client"} <${row.contact_email || "unknown"}> (client checks ref ${request.ref}${docKey ? `, as ${KYC_DOCS[docKey].title}` : ""})`],
+  );
+  await pool.query(
+    `INSERT INTO kyc_upload_files (token, deal_id, original_filename, content_type, size_bytes, doc_type, kyc_document_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [row.token, row.deal_id, file.name, file.mime || null, file.buffer.length, docKey, String(doc.rows[0].id)],
+  );
+  await pool.query(`UPDATE kyc_upload_tokens SET last_used_at = now(), use_count = COALESCE(use_count, 0) + 1 WHERE token = $1`, [row.token]);
+
+  if (row.company_id) {
+    // The checklist items the file evidences, for the MLRO to confirm (the
+    // KYC pack intake's rule). A failure here never loses the file.
+    try {
+      const { packEvidence } = await import("./kyc-pack-intake");
+      const types = (await pool.query(`SELECT doc_type FROM kyc_documents WHERE company_id = $1 AND deleted_at IS NULL`, [row.company_id])).rows.map((r: any) => r.doc_type);
+      const evidence = packEvidence(types);
+      if (Object.keys(evidence).length) {
+        const { tickChecklistItems } = await import("./kyc-orchestrator");
+        await tickChecklistItems(row.company_id, Object.fromEntries(Object.entries(evidence).map(([key, list]) => [key, {
+          source: "system" as const, tickedBy: null,
+          evidence: { documents: list, source: `client checks ${request.ref}` },
+          notes: `Evidence sent by the client through client checks (ref ${request.ref}): ${list.join(", ").replace(/_/g, " ")}. MLRO to confirm.`,
+        }])));
+      }
+    } catch (e: any) { console.warn(`[kyc] checklist update after an upload failed: ${e?.message}`); }
+    await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_document_received', $2, $3)`,
+      [row.company_id, row.contact_name || row.contact_email, `${file.name} (${docType}) ${how.toLowerCase()}, ref ${request.ref}`]).catch(() => {});
+  }
+
+  if (docKey === "source_of_funds") {
+    // The AI reading of a source of funds document, as before. After the
+    // file is safe; a temporary copy under a name the app chose.
+    void (async () => {
+      const tmp = path.join(os.tmpdir(), `bgp_kyc_${Date.now()}_${crypto.randomBytes(4).toString("hex")}${path.extname(safeFileName(file.name))}`);
+      try {
+        fs.writeFileSync(tmp, file.buffer);
+        const { extractTextFromFile } = await import("./utils/file-extractor");
+        const text = await extractTextFromFile(tmp, file.name);
+        if (text && text.length > 30) {
+          const { analyseSourceOfFundsDoc, saveSofAnalysis } = await import("./aml-ai");
+          const deal = (await pool.query(`SELECT name, aml_source_of_funds FROM crm_deals WHERE id = $1`, [row.deal_id])).rows[0];
+          const analysis = await analyseSourceOfFundsDoc({ dealName: deal?.name || request.dealName, declaredSource: deal?.aml_source_of_funds, documentText: text, filename: file.name });
+          if (["bank_statement", "payslip", "tax_return"].includes(String(analysis.documentType))) await saveSofAnalysis(row.deal_id, analysis, deal?.aml_source_of_funds);
+          await pool.query(`UPDATE kyc_upload_files SET ai_classification = $2 WHERE token = $1 AND original_filename = $3 AND ai_classification IS NULL`, [row.token, analysis, file.name]);
+        }
+      } catch (e: any) {
+        console.warn(`[kyc] source of funds reading failed: ${e?.message}`);
+      } finally {
+        try { fs.unlinkSync(tmp); } catch {}
+      }
+    })();
+  }
+}
+
+// ── Finishing ───────────────────────────────────────────────────────────────
+
+async function finishRequest(row: TokenRow): Promise<void> {
+  if (row.completed_at) return;
+  await pool.query(`UPDATE kyc_upload_tokens SET completed_at = now() WHERE token = $1 AND completed_at IS NULL`, [row.token]);
+  const request = row.request!;
+  const progress = await progressOf(row);
+  const missing = [
+    ...(request.needsIdCheck && !progress.idDone ? ["Identity check"] : []),
+    ...(progress.ownersAnswered ? [] : [KYC_OWNERS_QUESTION.title]),
+    ...request.docs.filter(key => !progress.docsDone.includes(key)).map(key => KYC_DOCS[key].title),
+    ...(progress.pepAnswered ? [] : [KYC_PEP_QUESTION.title]),
+  ];
+  // The agents hear it; on a test, the admin who sent it.
+  const to = kycReplyAddresses(row, request.cc);
+  const { loadDealRedFlags, requestIdChecks } = await import("./kyc-red-flags");
+  const { partyRedFlags } = await import("@shared/kyc-red-flags");
+  const redFlags = row.is_test || !row.company_id
+    ? partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null, ownersAnswer: request.ownersAnswer || null }], idChecks: await requestIdChecks(request.veriffSessionIds) })
+    : await loadDealRedFlags(row.deal_id, [row.company_id]).then(r => r.parties[row.company_id!] || []).catch(() => []);
+  const sent = await sendKycEmail({
+    to,
+    build: sentFrom => kycFinishedEmail({
+      recipientName: row.contact_name, partyName: request.partyName, dealName: request.dealName, ref: request.ref,
+      dealLink: row.is_test ? LINK_BASE : dealLinkFor(row.deal_id), idState: progress.idState,
+      files: progress.files.map(f => ({ name: f.name, docKey: f.docKey })), missing, sentFrom, test: !!row.is_test,
+      kind: request.kind, ...(request.askPep ? { pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null } : {}),
+      redFlags, owners: request.confirmOwners?.length ? { list: request.confirmOwners, reply: request.ownersAnswer || null } : null,
+    }),
+  });
+  if (!sent.ok) console.warn(`[kyc] the finished note for ${request.ref} was not sent: ${sent.error}`);
+  if (row.company_id && !row.is_test) {
+    await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_checks_finished', $2, $3)`,
+      [row.company_id, row.contact_name || row.contact_email, `Finished, ref ${request.ref}: ${progress.files.length} file(s)${missing.length ? `; not sent: ${missing.join(", ")}` : ""}`]).catch(() => {});
+  }
+}
+
+// ── Replies with documents ──────────────────────────────────────────────────
+
+// Reads the KYC mailbox for replies with attachments. A reply is filed only
+// when its subject carries a request's reference AND it comes from the
+// address that request was sent to; anything else is marked for a person
+// to look at in the mailbox, and never filed.
+export async function pollKycMailbox(): Promise<{ scanned: number; filed: number; unmatched: number; warnings: string[] }> {
+  const warnings: string[] = [];
+  let scanned = 0, filed = 0, unmatched = 0;
+  const mailbox = encodeURIComponent(KYC_MAILBOX);
+  const tag = async (msg: any, category: string) => {
+    await graphRequest(`/users/${mailbox}/messages/${msg.id}`, {
+      method: "PATCH", body: JSON.stringify({ categories: [...(msg.categories || []), category] }),
+    }).catch((e: any) => warnings.push(`could not mark "${msg.subject}": ${String(e?.message).slice(0, 120)}`));
+  };
+  let messages: any[] = [];
+  try {
+    // Microsoft takes a sort only on a property the filter names first.
+    const since = new Date(Date.now() - 45 * 86400000).toISOString();
+    const data: any = await graphRequest(`/users/${mailbox}/mailFolders/Inbox/messages?$filter=${encodeURIComponent(`receivedDateTime ge ${since} and hasAttachments eq true`)}&$orderby=receivedDateTime desc&$top=50&$select=id,subject,from,categories,receivedDateTime`);
+    messages = data?.value || [];
+  } catch (e: any) {
+    return { scanned: 0, filed: 0, unmatched: 0, warnings: [`Could not read ${KYC_MAILBOX}: ${String(e?.message).slice(0, 200)}`] };
+  }
+  for (const msg of messages) {
+    const categories: string[] = msg.categories || [];
+    if (categories.includes(FILED) || categories.includes(UNMATCHED) || categories.includes(OLD_FILED)) continue;
+    scanned++;
+    try {
+      const ref = kycRefFromSubject(msg.subject);
+      const row = ref ? (await pool.query(`SELECT * FROM kyc_upload_tokens WHERE request->>'ref' = $1 LIMIT 1`, [ref])).rows[0] as TokenRow | undefined : undefined;
+      const from = cleanEmail(msg.from?.emailAddress?.address);
+      if (!row || !row.request || row.revoked_at || row.is_test) {
+        unmatched++; warnings.push(`"${msg.subject}" from ${from}: no open request with that reference`); await tag(msg, UNMATCHED); continue;
+      }
+      if (!from || from !== cleanEmail(row.contact_email)) {
+        unmatched++; warnings.push(`"${msg.subject}" came from ${from}, not the address the request went to`); await tag(msg, UNMATCHED); continue;
+      }
+      const list: any = await graphRequest(`/users/${mailbox}/messages/${msg.id}/attachments?$select=id,name,contentType,size,isInline`);
+      for (const a of list?.value || []) {
+        if (a.isInline || a["@odata.type"] === "#microsoft.graph.itemAttachment") continue;
+        if (a.size > KYC_MAX_FILE_MB * 1024 * 1024) { warnings.push(`${a.name} is over ${KYC_MAX_FILE_MB}MB`); continue; }
+        if (!kycUploadAllowed(a.name || "", a.contentType)) { warnings.push(`${a.name}: not a document or photo`); continue; }
+        // A message whose mark could not be saved is read again next time:
+        // a file already filed from it is not filed twice.
+        const already = await pool.query(`SELECT 1 FROM kyc_upload_files WHERE token = $1 AND original_filename = $2 AND size_bytes = $3 LIMIT 1`, [row.token, a.name, a.size]);
+        if (already.rowCount) continue;
+        const att: any = await graphRequest(`/users/${mailbox}/messages/${msg.id}/attachments/${a.id}`);
+        if (!att?.contentBytes) continue;
+        await fileClientDocument(row, { name: a.name, mime: a.contentType, buffer: Buffer.from(att.contentBytes, "base64") }, null, "Emailed");
+        filed++;
+      }
+      await tag(msg, FILED);
+    } catch (e: any) {
+      warnings.push(`${msg.subject}: ${String(e?.message).slice(0, 200)}`);
+    }
+  }
+  return { scanned, filed, unmatched, warnings };
+}
+
+// ── Routes ──────────────────────────────────────────────────────────────────
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: KYC_MAX_FILE_MB * 1024 * 1024, files: 1 } });
+const portalUpload = (req: Request, res: Response, next: NextFunction) => upload.single("file")(req, res, (err: any) => {
+  if (!err) return next();
+  if (err?.code === "LIMIT_FILE_SIZE") return res.status(413).json({ message: `That file is over ${KYC_MAX_FILE_MB}MB. Please send a smaller copy, or a photo of the page.` });
+  return res.status(400).json({ message: "That file could not be read. Please try again." });
+});
+
+export const kycRequestRouter = Router();
+
+const signedIn = (req: Request, res: Response, next: NextFunction) => {
+  import("./auth").then(m => m.requireAuth(req, res, next)).catch(next);
+};
+const adminOnly = (req: Request, res: Response, next: NextFunction) => {
+  import("./auth").then(m => m.requireAdmin(req, res, next)).catch(next);
+};
+
+// The deal's requests, its parties and their contacts, who would be copied.
+kycRequestRouter.get("/api/aml/deal/:id/client-checks", signedIn, async (req: Request, res: Response) => {
+  try {
+    if (!(await staffMe(req))) return res.status(403).json({ message: STAFF_ONLY });
+    const dealId = String(req.params.id);
+    const found = await dealParties(dealId);
+    if (!found) return res.status(404).json({ message: "Deal not found" });
+    const agents = await dealAgents(dealId);
+    const veriff = veriffConfigured();
+    res.json({
+      dealName: found.deal.name,
+      mailbox: KYC_MAILBOX,
+      veriff,
+      agents: agents.map(a => ({ name: a.name, email: a.email })),
+      parties: await Promise.all(found.parties.map(async p => {
+        const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(p.companyId)).catch(() => null);
+        const contact = p.contacts.find(c => c.id === p.contactId) || p.contacts[0] || null;
+        const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff, contactName: contact?.name || null });
+        return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null };
+      })),
+      requests: await clientChecksForDeal(dealId),
+    });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not load the client checks" });
+  }
+});
+
+kycRequestRouter.post("/api/aml/deal/:id/client-checks", signedIn, async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const parsed = clientCheckBody.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message || "Check the form and try again" });
+    const result = await createClientCheck(String(req.params.id), parsed.data, me);
+    res.json(result);
+  } catch (err: any) {
+    res.status(err?.status || 500).json({ message: err?.message || "Could not send the client checks" });
+  }
+});
+
+kycRequestRouter.post("/api/aml/client-checks/:token/remind", signedIn, async (req: Request, res: Response) => {
+  try {
+    if (!(await staffMe(req))) return res.status(403).json({ message: STAFF_ONLY });
+    const row = await tokenRow(String(req.params.token));
+    if (!row || !row.request || row.is_test) return res.status(404).json({ message: "Request not found" });
+    if (closedReason(row) || row.completed_at) return res.status(409).json({ message: "That request is finished, cancelled or has run out. Send a new one." });
+    const sent = await sendReminder(row);
+    if (!sent.ok) return res.status(502).json({ message: `The reminder was not sent: ${sent.error}` });
+    res.json({ ok: true, from: sent.from });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not send the reminder" });
+  }
+});
+
+kycRequestRouter.delete("/api/aml/client-checks/:token", signedIn, async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const row = await tokenRow(String(req.params.token));
+    if (!row || !row.request || row.is_test) return res.status(404).json({ message: "Request not found" });
+    await pool.query(`UPDATE kyc_upload_tokens SET revoked_at = now() WHERE token = $1 AND revoked_at IS NULL`, [row.token]);
+    if (row.company_id) await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_checks_cancelled', $2, $3)`,
+      [row.company_id, me.name || me.id, `Request ${row.request.ref} to ${row.contact_email} cancelled`]).catch(() => {});
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not cancel the request" });
+  }
+});
+
+// Read the KYC mailbox now (the timer does it every 15 minutes).
+kycRequestRouter.post("/api/aml/poll-mailbox", adminOnly, async (_req: Request, res: Response) => {
+  try { res.json(await pollKycMailbox()); }
+  catch (err: any) { res.status(500).json({ message: err?.message }); }
+});
+
+// ── The client's page (public: the token is the key) ───────────────────────
+
+async function openRow(req: Request, res: Response): Promise<TokenRow | null> {
+  const row = await tokenRow(String(req.params.token));
+  const reason = closedReason(row);
+  if (reason) {
+    res.status(410).json({ message: reason, agents: row?.request?.agents?.slice(0, 2) || [] });
+    return null;
+  }
+  return row;
+}
+
+kycRequestRouter.get("/api/kyc-upload/:token", async (req: Request, res: Response) => {
+  try {
+    res.set("Cache-Control", "no-store");
+    const row = await openRow(req, res);
+    if (!row) return;
+    if (!row.request!.openedAt) {
+      row.request!.openedAt = new Date().toISOString();
+      await saveRequest(row.token, row.request!);
+    }
+    res.json(await portalView(row));
+  } catch (err: any) {
+    res.status(500).json({ message: "Something went wrong. Please try again in a minute." });
+  }
+});
+
+kycRequestRouter.post("/api/kyc-upload/:token/file", portalUpload, async (req: Request, res: Response) => {
+  try {
+    const row = await openRow(req, res);
+    if (!row) return;
+    const file = (req as any).file as { originalname: string; mimetype: string; buffer: Buffer } | undefined;
+    if (!file?.buffer?.length) return res.status(400).json({ message: "Choose a file to upload." });
+    if (!kycUploadAllowed(file.originalname, file.mimetype)) {
+      return res.status(400).json({ message: "That type of file can't be uploaded. Please send a PDF, a photo (JPG, PNG or HEIC) or a Word document." });
+    }
+    const count = (await pool.query(`SELECT count(*)::int AS n FROM kyc_upload_files WHERE token = $1`, [row.token])).rows[0].n;
+    if (count >= KYC_MAX_FILES_PER_REQUEST) return res.status(409).json({ message: "That's the most files this link takes. Please email anything else to your contact." });
+    const key = String(req.body?.docKey || "");
+    const docKey = isKycDocKey(key) ? key : null;
+    await fileClientDocument(row, { name: file.originalname, mime: file.mimetype, buffer: file.buffer }, docKey, "Uploaded on the client checks page");
+    res.json(await portalView((await tokenRow(row.token))!));
+  } catch (err: any) {
+    console.error(`[kyc] upload failed: ${err?.message}`);
+    res.status(500).json({ message: "The upload didn't work. Please try again." });
+  }
+});
+
+kycRequestRouter.post("/api/kyc-upload/:token/id-check", async (req: Request, res: Response) => {
+  let isTest = false;
+  try {
+    const row = await openRow(req, res);
+    if (!row) return;
+    isTest = !!row.is_test;
+    const request = row.request!;
+    if (!request.needsIdCheck) return res.status(400).json({ message: "No identity check is needed on this request." });
+    if (row.is_test && !veriffConfigured()) return res.json({ url: null, test: true });
+    const session = await latestSession(request);
+    const state = kycIdStateFor(session?.status);
+    if (session?.verification_url && (state === "not_started" || state === "started" || state === "retry")) return res.json({ url: session.verification_url });
+    if (state === "approved" || state === "submitted") return res.status(409).json({ message: "Your identity check is done. Thank you." });
+    if (session && request.veriffSessionIds.length >= MAX_ID_SESSIONS) {
+      return res.status(409).json({ message: "The identity check can't be started again from here. Please contact your agent." });
+    }
+    const started = await startIdSession(row, request);
+    res.json({ url: started.url });
+  } catch (err: any) {
+    console.error(`[kyc] identity check start failed: ${err?.message}`);
+    // A test page is BGP's own: it shows the tester what Veriff said, so a
+    // setting can be fixed. A client sees the plain message.
+    res.status(502).json({ message: isTest
+      ? `Test page: Veriff did not start the check (${String(err?.message || "no reason given").slice(0, 300)}).`
+      : "The identity check couldn't be started just now. Please try again in a few minutes." });
+  }
+});
+
+// The client's answer to the question about public roles. A yes or a not
+// sure goes on the party's KYC trail for the MLRO (enhanced due diligence).
+kycRequestRouter.post("/api/kyc-upload/:token/answers", async (req: Request, res: Response) => {
+  try {
+    const row = await openRow(req, res);
+    if (!row) return;
+    const request = row.request!;
+    if (!request.askPep) return res.status(400).json({ message: "There's no question on this request." });
+    const pep = req.body?.pep;
+    if (!isKycPepAnswer(pep)) return res.status(400).json({ message: "Choose No, Yes or Not sure." });
+    const pepDetail = pep === "no" ? null : String(req.body?.pepDetail || "").trim().slice(0, 1000) || null;
+    request.answers = { pep, pepDetail, answeredAt: new Date().toISOString() };
+    await saveRequest(row.token, request);
+    // A yes or a not sure is a red flag: the agents hear at once, without
+    // the client's page waiting for the email.
+    if (pep !== "no") {
+      import("./kyc-red-flags").then(m => m.alertRedFlags(row.token))
+        .catch((e: any) => console.warn(`[kyc] red flag alert for ${request.ref} failed: ${e?.message}`));
+    }
+    if (row.company_id && !row.is_test) {
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_pep_declaration', $2, $3)`,
+        [row.company_id, row.contact_name || row.contact_email, `Asked about public roles (ref ${request.ref}): ${kycPepWords(pep)}${pepDetail ? `. ${pepDetail}` : ""}${pep === "no" ? "" : ". Enhanced due diligence: MLRO approval, source of wealth and funds."}`]).catch(() => {});
+    }
+    res.json(await portalView((await tokenRow(row.token))!));
+  } catch (err: any) {
+    res.status(500).json({ message: "Something went wrong. Please try again." });
+  }
+});
+
+// The client's reply about the owners Companies House lists. A "no" is a
+// difference from the register: it goes on the party's KYC trail, and the
+// agents see it on the deal and in the finished note (HMRC, AMLG11400 14.8:
+// report it to Companies House).
+kycRequestRouter.post("/api/kyc-upload/:token/owners", async (req: Request, res: Response) => {
+  try {
+    const row = await openRow(req, res);
+    if (!row) return;
+    const request = row.request!;
+    if (!request.confirmOwners?.length) return res.status(400).json({ message: "There's no list of owners on this request." });
+    const answer = req.body?.answer;
+    if (!isKycOwnersAnswer(answer)) return res.status(400).json({ message: "Choose Yes or No." });
+    const detail = answer === "no" ? String(req.body?.detail || "").trim().slice(0, 2000) || null : null;
+    if (answer === "no" && !detail) return res.status(400).json({ message: KYC_OWNERS_QUESTION.no });
+    request.ownersAnswer = { answer, detail, answeredAt: new Date().toISOString() };
+    await saveRequest(row.token, request);
+    if (row.company_id && !row.is_test) {
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_owners_confirmation', $2, $3)`,
+        [row.company_id, row.contact_name || row.contact_email, `Owners on the register (ref ${request.ref}): ${kycOwnersWords(answer)}${detail ? `. ${detail}` : ""}${answer === "no" ? ". A difference from the register: report it to Companies House." : ""}`]).catch(() => {});
+    }
+    res.json(await portalView((await tokenRow(row.token))!));
+  } catch (err: any) {
+    res.status(500).json({ message: "Something went wrong. Please try again." });
+  }
+});
+
+kycRequestRouter.post("/api/kyc-upload/:token/finish", async (req: Request, res: Response) => {
+  try {
+    const row = await openRow(req, res);
+    if (!row) return;
+    await finishRequest(row);
+    res.json(await portalView((await tokenRow(row.token))!));
+  } catch (err: any) {
+    res.status(500).json({ message: "Something went wrong. Please try again." });
+  }
+});
+
+// ── Admin: see every email, and send each one to yourself ──────────────────
+
+const SAMPLE = { dealName: "12 Example Street (sample)", partyName: "Example Trading Ltd", recipientName: "Jane Smith" };
+const SAMPLE_RED_FLAGS: KycRedFlag[] = [
+  { kind: "client_pep", label: "Said yes to the question about public roles", detail: "My father is a serving member of a foreign parliament.", source: "Client checks, ref 7K2Q9M", at: null },
+];
+
+async function adminMe(req: Request) {
+  const id = (req.session as any)?.userId || (req as any).tokenUserId;
+  const r = await pool.query(`SELECT id, name, email, phone FROM users WHERE id = $1`, [id]);
+  return r.rows[0] as { id: string; name: string | null; email: string | null; phone: string | null } | undefined;
+}
+
+export function kycPreviews(agent: KycAgent, now = new Date()) {
+  const expiresAt = new Date(now.getTime() + TOKEN_TTL_DAYS * 86400000);
+  const link = `${LINK_BASE}/kyc-upload/sample`;
+  const base = { recipientName: SAMPLE.recipientName, partyName: SAMPLE.partyName, dealName: SAMPLE.dealName, ref: "7K2Q9M", link, expiresAt, agents: [agent], sentFrom: KYC_MAILBOX, askPep: true };
+  const veriff = veriffConfigured();
+  const company = kycRequestEmail({ ...base, kind: "company", needsIdCheck: veriff, docs: defaultKycDocs("company", "tenant", veriff), note: "Thanks for your help with this. Any questions, just call me." });
+  const individual = kycRequestEmail({ ...base, kind: "individual", needsIdCheck: veriff, docs: defaultKycDocs("individual", "purchaser", veriff), note: null });
+  const reminder = kycReminderEmail({ ...base, kind: "company", needsIdCheck: true, docs: ["ownership", "owner_ids", "authority"], progress: { idDone: true, docsDone: ["ownership"], pepAnswered: true } });
+  const idCheck = kycIdCheckEmail({ recipientName: SAMPLE.recipientName, partyName: SAMPLE.partyName, kind: "company", dealName: SAMPLE.dealName, link: "https://example.veriff.me/v/sample", agents: [agent], sentFrom: KYC_MAILBOX });
+  const finished = kycFinishedEmail({ recipientName: SAMPLE.recipientName, partyName: SAMPLE.partyName, dealName: SAMPLE.dealName, ref: "7K2Q9M", dealLink: LINK_BASE, idState: "approved",
+    files: [{ name: "ownership-structure.pdf", docKey: "ownership" }, { name: "passport-john-smith.jpg", docKey: "owner_ids" }], missing: [], sentFrom: KYC_MAILBOX, kind: "company", pep: "no", pepDetail: null });
+  const redFlag = kycRedFlagEmail({ partyName: SAMPLE.partyName, recipientName: SAMPLE.recipientName, dealName: SAMPLE.dealName, ref: "7K2Q9M", dealLink: LINK_BASE,
+    flags: SAMPLE_RED_FLAGS, sentFrom: KYC_MAILBOX });
+  return [
+    { kind: "request_company", title: "Request to a company's contact", to: "The person dealing for the party", ...company },
+    { kind: "request_individual", title: "Request to a private individual", to: "The person", ...individual },
+    { kind: "reminder", title: "Reminder (3 and 7 days on)", to: "The person, while anything is outstanding", ...reminder },
+    { kind: "finished", title: "To the agents when the client finishes", to: "The deal's agents and whoever sent it", ...finished },
+    { kind: "id_check", title: "Identity check on its own", to: "One person, from a company's record", ...idCheck },
+    { kind: "red_flag", title: "Red flag: raise with KYC4U", to: "The deal's agents, the moment a client's answer or identity check raises one", ...redFlag },
+  ];
+}
+
+kycRequestRouter.get("/api/admin/kyc-emails", adminOnly, async (req: Request, res: Response) => {
+  try {
+    const me = await adminMe(req);
+    const agent: KycAgent = { name: me?.name || "Your name", email: me?.email || null, phone: me?.phone || null };
+    const logo = kycLogoBase64();
+    const withLogo = (html: string) => logo ? html.split(`cid:${KYC_LOGO_CID}`).join(`data:image/png;base64,${logo}`) : html;
+    res.json({
+      mailbox: KYC_MAILBOX,
+      // The addresses after the KYC mailbox, in the order they are tried.
+      fallback: senderOrder([KYC_MAILBOX], Number.POSITIVE_INFINITY).slice(1).join(", then "),
+      inAppAml: inAppAmlOn(),
+      veriff: veriffConfigured(),
+      previews: kycPreviews(agent).map(p => ({ ...p, html: withLogo(p.html) })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not build the previews" });
+  }
+});
+
+// Sends one email to the admin who pressed it, and nobody else. The request
+// and the reminder carry a real test link: the client page opens on it,
+// uploads are recorded by name only, and Finish sends the agents' note back
+// to the same admin. Works whether in-app AML is on or off.
+// The request can instead go to one colleague, to try the page as a client
+// would (Woody, 17 November 2026: a test for Jack to do KYC for Bruce
+// Gillingham Pollard Ltd): an active BGP login only, never an outside
+// address, copied to the admin as the agent, who gets the Finished note and
+// any red-flag alert. The party being checked can be named; it is only
+// words on the test.
+kycRequestRouter.post("/api/admin/kyc-emails/test", adminOnly, async (req: Request, res: Response) => {
+  try {
+    const kind = String(req.body?.kind || "");
+    if (!["request", "reminder", "finished", "id_check", "red_flag"].includes(kind)) return res.status(400).json({ message: "Unknown email" });
+    const me = await adminMe(req);
+    const email = cleanEmail(me?.email);
+    if (!me || !isEmail(email)) return res.status(400).json({ message: "Your login has no email address to send to." });
+    const agent: KycAgent = { name: me.name || "BGP", email: me.email, phone: me.phone };
+    const veriff = veriffConfigured();
+    const toUserId = typeof req.body?.toUserId === "string" ? req.body.toUserId.trim() : "";
+    let colleague: { name: string | null; email: string } | null = null;
+    if (toUserId && toUserId !== me.id) {
+      if (kind !== "request") return res.status(400).json({ message: "Only the request can be sent to a colleague." });
+      const found = (await pool.query(`SELECT name, email FROM users WHERE id = $1 AND is_active IS NOT FALSE`, [toUserId])).rows[0];
+      const address = cleanEmail(found?.email);
+      if (!found || !isEmail(address) || !address.endsWith(STAFF_DOMAIN)) return res.status(400).json({ message: "A test goes only to a colleague with an active BGP login." });
+      colleague = { name: found.name || null, email: address };
+    }
+    const recipient = colleague || { name: me.name, email };
+    let link = "";
+    let cc: string[] = [];
+    let sent: KycSendResult;
+    if (kind === "request" || kind === "reminder") {
+      const partyKind: KycPartyKind = req.body?.partyKind === "individual" ? "individual" : "company";
+      const partyName = String(req.body?.partyName ?? "").replace(/\s+/g, " ").trim().slice(0, 120) || SAMPLE.partyName;
+      cc = colleague ? [email] : [];
+      const token = crypto.randomBytes(32).toString("base64url");
+      const ref = await newRef();
+      const expiresAt = new Date(Date.now() + 2 * 86400000);
+      const request: KycRequestDetails = {
+        ref, kind: partyKind, role: "tenant", partyName, dealName: SAMPLE.dealName,
+        needsIdCheck: true, docs: defaultKycDocs(partyKind, "tenant", true), note: veriff ? "This is a test request. Try the page as a client would: the identity check is a real one, run by Veriff." : "This is a test request. Try the page as a client would.",
+        mobile: null, agents: [agent], cc, sentBy: { id: me.id, name: me.name }, sentFrom: null, sentAt: null, sendError: null,
+        openedAt: null, veriffSessionIds: [], idCheckNote: veriff ? null : "The identity check is not set up, so the test shows the step only.",
+        askPep: true, answers: null,
+      };
+      await pool.query(
+        `INSERT INTO kyc_upload_tokens (token, deal_id, contact_email, contact_name, created_by, expires_at, request, is_test)
+         VALUES ($1, 'test', $2, $3, $4, $5, $6, true)`,
+        [token, recipient.email, recipient.name || "Test", me.id, expiresAt, JSON.stringify(request)],
+      );
+      link = kycLinkFor(token);
+      const ctx = { recipientName: recipient.name, partyName, kind: partyKind, dealName: SAMPLE.dealName, ref, link, expiresAt,
+        needsIdCheck: true, docs: request.docs, note: request.note, agents: [agent], test: true, testBy: colleague ? (me.name || "A BGP admin") : null, askPep: true };
+      sent = await sendKycEmail({
+        to: [recipient.email],
+        cc,
+        build: sentFrom => kind === "request"
+          ? kycRequestEmail({ ...ctx, sentFrom })
+          : kycReminderEmail({ ...ctx, sentFrom, progress: { idDone: true, docsDone: [request.docs[0]], pepAnswered: true } }),
+      });
+      if (sent.ok) {
+        request.sentAt = new Date().toISOString();
+        request.sentFrom = sent.from;
+        await saveRequest(token, request);
+      }
+    } else if (kind === "finished") {
+      sent = await sendKycEmail({
+        to: [email],
+        build: sentFrom => kycFinishedEmail({ recipientName: SAMPLE.recipientName, partyName: SAMPLE.partyName, dealName: SAMPLE.dealName, ref: "7K2Q9M", dealLink: LINK_BASE, idState: "approved",
+          files: [{ name: "ownership-structure.pdf", docKey: "ownership" }, { name: "passport.jpg", docKey: "owner_ids" }], missing: [], sentFrom, test: true, kind: "company", pep: "no", pepDetail: null }),
+      });
+    } else if (kind === "red_flag") {
+      sent = await sendKycEmail({
+        to: [email],
+        build: sentFrom => kycRedFlagEmail({ partyName: SAMPLE.partyName, recipientName: SAMPLE.recipientName, dealName: SAMPLE.dealName, ref: "7K2Q9M", dealLink: LINK_BASE,
+          flags: SAMPLE_RED_FLAGS, sentFrom, test: true }),
+      });
+    } else {
+      sent = await sendKycEmail({
+        to: [email],
+        build: sentFrom => kycIdCheckEmail({ recipientName: me.name, partyName: SAMPLE.partyName, kind: "company", dealName: SAMPLE.dealName, link: `${LINK_BASE}/kyc-upload/sample`, agents: [agent], sentFrom, test: true }),
+      });
+    }
+    // A failed send still hands back the test page's link, so the page can
+    // be tried while the mailbox is being set up.
+    res.json({ ok: sent.ok, error: sent.ok ? null : sent.error, to: recipient.email, cc, from: sent.from, fellBack: sent.fellBack, firstError: sent.fellBack ? sent.error : null, link: link || null });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not send the test" });
+  }
+});
+
+export default kycRequestRouter;

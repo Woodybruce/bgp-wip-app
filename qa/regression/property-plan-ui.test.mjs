@@ -95,24 +95,37 @@ test('relinking or unlinking an existing outline leaves its geometry untouched',
   assert.equal('polygon' in app.calls[0].body, false);
 });
 
-test('scan review saves only explicitly chosen outlines with stable tenancy links', async () => {
-  const app = fixture('PropertyPlanScanReview', { file: 'client/src/components/property-plan-scan-review.tsx', props: { plan }, data: { scan: { job: { id: 'job-1', status: 'ready', candidates: [candidate, { ...candidate, id: 'candidate-2', label: 'Shop 2' }] } }, 'plan-pickable-units': { units: [tenancy] } } });
-  let tree = app.render();
-  let add = descendants(tree).find(node => node.type === app.bindings.Button && /^Add \d/.test(content(node)));
-  assert.equal(add.props.disabled, true, 'no proposals are accepted automatically');
-  assert.equal(app.calls.length, 0);
-  const checkboxes = descendants(tree).filter(node => node.type === 'input' && node.props.type === 'checkbox');
-  assert.equal(checkboxes.length, 2);
-  assert.ok(checkboxes.every(node => node.props.checked === false));
-  checkboxes[0].props.onChange({ target: { checked: true } });
-  tree = app.render();
-  add = descendants(tree).find(node => node.type === app.bindings.Button && /^Add 1/.test(content(node)));
-  assert.equal(add.props.disabled, false);
-  add.props.onClick(); await app.settle();
+// A finished scan saves its own outlines (Woody, 2026-11-16: "all done
+// immediately"), so the card only shows a scan running, saves what an older
+// scan left waiting, and lets BGP staff scan again.
+const SCAN_STATUS = 'client/src/components/property-plan-scan-status.tsx';
+const button = (app, tree, pattern) => descendants(tree).find(node => node.type === app.bindings.Button && pattern.test(content(node)));
+test('the scan on the Plans card: what an older scan left is saved in one press, with nothing to tick', async () => {
+  const waiting = { id: 'job-1', status: 'ready', candidates: [candidate, { ...candidate, id: 'candidate-2', label: 'Shop 2' }] };
+  const app = fixture('PropertyPlanScanStatus', { file: SCAN_STATUS, props: { plan, canStart: true }, data: { scan: { job: waiting } } });
+  const tree = app.render();
+  assert.equal(descendants(tree).filter(node => node.type === 'input').length, 0, 'no proposal is ticked or left out by hand');
+  const save = button(app, tree, /^Save 2 scanned outlines$/);
+  assert.ok(save, 'the waiting outlines are offered as one save');
+  save.props.onClick(); await app.settle();
   assert.equal(app.errors.length, 0);
-  assert.equal(app.calls[0].url, '/api/plans/plan-1/scans/job-1/apply');
-  assert.deepEqual(JSON.parse(JSON.stringify(app.calls[0].body.assignments)), [{ candidateId: 'candidate-1', tenancy_unit_id: 'tenancy-1', unit_id: 'physical-1', label: 'Shop 1' }]);
-  assert.ok(app.invalidations.some(value => JSON.stringify(value.queryKey) === JSON.stringify(['/api/plans', 'property-links', propertyId])));
+  assert.deepEqual(JSON.parse(JSON.stringify(app.calls)), [{ method: 'POST', url: '/api/plans/plan-1/match/accept-all', body: { scanId: 'job-1' } }]);
+  for (const key of [['/api/plans', 'plan-1', 'match'], ['/api/plans', 'plan-1', 'units'], ['/api/properties', propertyId, 'units'], ['/api/plans', 'property-links', propertyId]]) {
+    assert.ok(app.invalidations.some(value => JSON.stringify(value.queryKey) === JSON.stringify(key)), JSON.stringify(key));
+  }
+});
+
+test('the scan on the Plans card: running, then Scan again for staff once nothing is waiting', async () => {
+  const running = fixture('PropertyPlanScanStatus', { file: SCAN_STATUS, props: { plan, canStart: true }, data: { scan: { job: { id: 'job-2', status: 'running', candidates: [] } } } });
+  const scanning = button(running, running.render(), /Scanning/);
+  assert.ok(scanning && scanning.props.disabled, 'a running scan cannot be started again');
+  for (const status of ['ready', 'failed', 'applied']) {
+    const app = fixture('PropertyPlanScanStatus', { file: SCAN_STATUS, props: { plan, canStart: true }, data: { scan: { job: { id: 'job-3', status, message: 'Earlier scan', candidates: [] } } } });
+    const again = button(app, app.render(), /^Scan again$/);
+    assert.ok(again, status);
+    again.props.onClick(); await app.settle();
+    assert.deepEqual(JSON.parse(JSON.stringify(app.calls.at(-1))), { method: 'POST', url: '/api/plans/plan-1/scan', body: {} });
+  }
 });
 
 test('repeating View on plan returns to the linked floor after manual floor browsing', () => {
@@ -156,7 +169,7 @@ test('clients retain manual trace, draw and upload; paid scanning stays with sta
     assert.ok(menu, 'the Edit menu is offered');
     assert.equal(typeof menu.props.onTrace, 'function');
     assert.equal(typeof menu.props.onDraw, 'function');
-    assert.equal(app.leaf(tree, 'PropertyPlanScanReview').props.canStart, user.role === 'Admin');
+    assert.equal(app.leaf(tree, 'PropertyPlanScanStatus').props.canStart, user.role === 'Admin');
   }
 });
 
@@ -185,9 +198,9 @@ test('drawing adds a corner in transformed image coordinates without starting a 
 });
 
 for (const canStart of [true, false]) test(`scan start controls respect staff scope (${canStart})`, () => {
-  const app = fixture('PropertyPlanScanReview', { file: 'client/src/components/property-plan-scan-review.tsx', props: { plan, canStart }, data: { scan: { job: null } } });
+  const app = fixture('PropertyPlanScanStatus', { file: SCAN_STATUS, props: { plan, canStart }, data: { scan: { job: null } } });
   const tree = app.render();
-  assert.equal(Boolean(descendants(tree).find(node => node.type === app.bindings.Button && content(node) === 'Start scan')), canStart);
+  assert.equal(Boolean(button(app, tree, /^Scan units$/)), canStart);
 });
 
 function evidenceReviewFixture({ source = 'manual', suggestions = ['saved-1'], applied = {}, clearedUnitIds = [] } = {}) {

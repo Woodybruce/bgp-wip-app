@@ -18,7 +18,7 @@ after(() => queryClient.clear());
 const item = (over) => ({
   id: 'crm_action:a1', kind: 'crm_action', title: 'Send the plans', date: '2026-11-16', daysWaiting: null, overdue: false,
   brand: { id: 'b1', name: 'Test Subs' }, scheme: { key: 'bluewater', name: 'Bluewater' }, unitLabel: 'Unit L104', owner: 'Alex Todd', waitingOn: null,
-  raisedBy: 'bgp', status: 'todo', actionId: null, canComplete: false, url: '/brands?tab=crm&view=strategies&company=b1&action=a1', ...over,
+  raisedBy: 'bgp', status: 'todo', actionId: null, canComplete: false, url: '/contacts?tab=overview&company=b1&action=a1', ...over,
 });
 const diary = (items, over = {}) => ({ items, counts: { overdue: 1, thisWeek: 1, nextWeek: 1, later: 0, waiting: 1 }, today: '2026-11-12', canAddAction: false, canAddRequest: false, warnings: [], ...over });
 

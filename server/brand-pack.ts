@@ -26,7 +26,7 @@ import { publishableBrandImage } from "./brand-publishing";
 import { rankCompanyHeroImages, companyImageHeroIssue } from "../shared/brand-image-selection";
 import { legacyToCode } from "@shared/deal-status";
 import { clientBrandAnalysis } from "@shared/tenant-categories";
-import { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "@shared/requirement-live";
+import { requirementReason, requirementStateSql, requirementLiveColumnsSql } from "@shared/requirement-live";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -114,16 +114,22 @@ async function loadBrandPackData(companyId: string, forClient = false, viewer: {
   );
   // The one live rule: BGP's pack lists requirements that are live or to
   // confirm, live first, each with its dated reason in place of the status.
-  // A client login's pack lists only what its Requirements list shows it
-  // (PIPnet listings), by source and date.
+  // A client login's pack lists every requirement that is not closed (all
+  // are open to it since 17 November 2026), by what it is and its own date
+  // (clientText), newest listed or added first: the live-first order and
+  // updated_at both move when BGP confirms one, so either would tell the
+  // client which ones BGP has confirmed (the brand page keeps that order from
+  // a client too, server/brand-profile.ts).
   const requirementsQ = pool.query(
     `SELECT r.name, r.use, r.size, r.requirement_locations, ${requirementLiveColumnsSql("r")}
        FROM crm_requirements_leasing r
       WHERE r.company_id = $1
         AND ${forClient
-          ? `${requirementClientVisibleSql("r")} AND ${requirementStateSql("r")} <> 'closed'`
+          ? `${requirementStateSql("r")} <> 'closed'`
           : `${requirementStateSql("r")} IN ('live', 'to_confirm')`}
-      ORDER BY (${requirementStateSql("r")} = 'live') DESC, r.updated_at DESC NULLS LAST LIMIT 3`,
+      ORDER BY ${forClient
+          ? "coalesce(r.last_listed_at, r.created_at) DESC NULLS LAST"
+          : `(${requirementStateSql("r")} = 'live') DESC, r.updated_at DESC NULLS LAST`} LIMIT 3`,
     [companyId]
   ).then(q => ({ rows: q.rows.map((r: any) => {
     const why = requirementReason(r);

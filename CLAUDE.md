@@ -86,7 +86,14 @@ explicit permission.
   on every push from 13 to 15 November 2026 because its property scenario
   still waited for the simple view after the plan-led page became the staff
   default; it now follows the plan-led page first and reaches the older
-  page from More → Back to the current page. To run it locally: `bash
+  page from More → Back to the current page. The staff smoke check failed
+  on 16 and 17 November 2026 (runs 1988 and 2004) with a 504 from
+  `/api/property-lookup` (Bluewater, DA9 9ST): public sources called with no
+  time limit (Land Registry price paid, postcodes.io, flood, listed
+  buildings) ran past the 45 second request limit. Every outside call in
+  `server/property-lookup.ts` now has its own limit and a failed price paid
+  read is not cached; `qa/regression/property-lookup-timeouts.test.mjs`
+  fails on a new call without one. To run it locally: `bash
   qa/start-postgres.sh`, restore `qa/smoke-fixture.sql.gz` into a database
   named `bgpsmoke`, `npm run build`, start `node dist/index.cjs` on it, then
   `SMOKE_CHROMIUM=/opt/pw-browsers/chromium SMOKE_BASE=http://localhost:<port>
@@ -112,6 +119,17 @@ explicit permission.
 
 ## Landsec client brand access (DECIDED — do not re-litigate in merges)
 
+**Superseded on 14 November 2026** (Woody: "let clients full access to the
+brands regardless of anything"; commit 2e4cc81c, "Client logins see every
+brand, whatever its category"): `isClientVisibleBrand` and
+`clientBrandSliceSql` in `server/company-scope.ts` now pass any company whose
+type starts "Tenant", as well as the categories and self-adds below. A client
+login, Landsec included, sees retail brands too, which also covers the
+retail at the four London schemes in Landsec's H&L agency brief (October
+2026). Do not put the category slice back in a merge. A joint agent still
+has no brand pages (see the Landsec sections below). The rest of this
+section is the earlier rule, kept for its history.
+
 Client logins see the **hospitality / leisure / fitness category slice**
 (`CLIENT_CRM_CATEGORIES` in `shared/tenant-categories.ts`) **plus any brand
 they self-add** from the global directory (`crm_extra_brand_ids` on their
@@ -133,6 +151,77 @@ flags alone do not qualify. Show only the named linked contacts, not every
 employee at a qualifying firm. Preserve people whose firm is unconfirmed;
 do not infer an employer or change stored company attachments. The shared
 brand slice (including self-added brands) still defines eligible brands.
+
+## Landsec's brief categories (Woody, 2026-11-16)
+
+Landsec's Hospitality & Leisure agency brief (October 2026, the pitch brief
+Woody sent) names the categories the instruction covers. Asked how the app
+should reflect them, Woody answered "go ahead with the catagories", "2 yes"
+(only the Landsec view uses the brief's groups; BGP's own Brands groups gain
+the new types) and "3 ignore" (the fee stays as it is: the brief pays 10% of
+NER sole and 7.5% joint, and nothing works a fee from NER). Do not
+re-litigate.
+
+- **The categories and the map** are `shared/landsec.ts`:
+  `LANDSEC_CATEGORIES` (key, label, group, the agreed brief's label), the
+  groups Hospitality, Leisure, Cinema & entertainment and London retail
+  (the agreed brief still says "Retail (London schemes)", so stored rows
+  read), `LANDSEC_CATEGORY_TYPES` (every company type, imported variants
+  included, by category) and `landsecCategoryOf(companyType)`: null for a
+  company that is not a tenant brand, "other" for a tenant type that names
+  no category (a bare "Tenant", "Tenant - Leisure"), words read for a type
+  the lists do not hold. A brand's category is READ from its type, never
+  stored. `LANDSEC_BRIEF_CATEGORIES` (the agreed brief's list) holds all
+  ten; the stored labels did not change, so old rows still read.
+- **New company types**: Food Hall, Competitive Socialising, Active Leisure,
+  Soft Play, Theme & Water Park, in `TENANT_CATEGORIES`,
+  `CLIENT_CRM_CATEGORIES` (they are hospitality and leisure, so every test
+  that reads "hospitality, leisure or fitness" takes them) and the type
+  picker (`client/src/lib/crm-options.ts`, with a colour each). The three
+  lists are held in step by `qa/regression/landsec-categories.test.mjs`.
+- **Where they show** (the Landsec view, `useIsLandsecView()`, unless said):
+  Brand Explorer's cards (`LANDSEC_BRAND_CATEGORIES` in `brands-hub.tsx`, a
+  group matched by `landsecCategoryOf` through `landsecKey`; BGP's
+  `BRAND_CATEGORIES` gained Food Halls, Competitive Socialising, Active
+  Leisure and Theme & Water Parks); the client Brand Directory's Category
+  filter (`client-brand-list.tsx`, Landsec only); Brand gap's Targets
+  (`brand-gap-panel.tsx`: the category under each brand and a Category
+  filter, read from `company_type`, which the target rows now carry: the
+  route itself gained no import, because `qa/regression/scheme-positioning.test.mjs`
+  runs it with a fixed module list); the Brand CRM Targets board, for every
+  viewer because it is Landsec's schemes (`category` on `BrandGridBrand`,
+  set in `brandGrid`); the Targeting Brief's Priority categories and its AI
+  draft at a Landsec scheme (property name matches a scheme AND Landsec is
+  the landlord, the Heads of Terms forms' test; `landsecScheme` on the
+  workspace's unit; a name with a comma is read whole, `splitCategories`).
+- **Trading units by brief category** on Properties → Schemes
+  (`CategoryMixTable` in `scheme-cards.tsx`): `categoryMix` on each scheme
+  of `GET /api/landsec/home`, from `categoryMixByProperty` in
+  `server/landsec-home.ts`: tenancy schedule rows read as occupied by
+  `unitOccupancy`, archived rows left out, the category of the row's brand
+  as the property page's unit feed gives it (the stored brand, else the one
+  brand its trading or lease name matches: the same `BRAND_KEYS_CTE` join as
+  `server/property-units.ts`, held in step by the test; the caption says how
+  many were found by name). A trading row with neither is "No brand". A
+  failed read leaves the table out.
+- **Sort categories** (admins, beside Ownership intel on Brand Explorer;
+  `client/src/components/brand-retype.tsx`, `server/brand-retype.ts`, rules
+  in `shared/brand-retype.ts`): for brands on a catch-all type
+  (`CATCH_ALL_TENANT_TYPES`: Tenant, Leisure, Experiential, Entertainment,
+  Gaming, Family Entertainment, Restaurant, F&B, Food & Drink; never retail,
+  never a type a person chose), a type suggested from the name, then the
+  description and industry, only where it moves the brand to another
+  category. Rules only, no AI, never at boot or on a timer. Apply changes a
+  ticked brand only while it still holds the type the preview read (one
+  UPDATE); the batch is kept in `system_settings.brand_retype_last`, and
+  Undo puts back a brand still on the type it was given, once. Tests:
+  `qa/regression/brand-retype.test.mjs`. It has not been run on the live
+  directory: the first preview is an admin's.
+- Not built: a category on a unit (joint agent logins cut by category, the
+  leisure consultant's cinema and immersive remit); fees from NER; counting
+  Landsec's in-house lettings for the fee forecast; the inclusive costs in
+  Landsec's NER definition; Landsec's new Portfolio Leasing / asset leasing
+  split on the deal clock.
 
 ## Landsec pitch build (Woody, 2026-11-11) — docs/landsec-pitch-plan.md
 
@@ -477,7 +566,10 @@ tracker, viewings, chat addresses one by one), `jointAgentApiDenied`
 (`shared/landsec.ts`) refuses brand pages and the hub, company records,
 contacts, the CRM plan, landlord records, brand cases, the correspondence
 log, every other chat or ChatBGP door, the generated Targeting Brief, a
-requirement from a viewing and deleting a unit; everything else goes to the
+requirement from a viewing, deleting a unit, and since 17 November 2026
+leasing requirements (the list, a row, add and edit, the requirements
+centre, matching and brand suggestions) and the client Agents directory;
+everything else goes to the
 ordinary client checks, cut to its schemes by the middleware above. BGP's
 own fields stay hidden from it on the real pages (`isJointAgentLogin` before
 `withoutJointAgentFields`), and `briefAccess` still gives it `agentControl`
@@ -1035,7 +1127,8 @@ not opened to them.
     and prospecting flags, every aml column, the saved AI fields, the saved
     analysis, On hold). The brand page has its own cut, described below,
     which keeps four things from that list on purpose: the PEP flag, the
-    Hunter pick, the analysis without its advice and two saved AI keys.
+    Super Brand star (`hunter_flag`, the Hunter pick until 17 November 2026),
+    the analysis without its advice and two saved AI keys.
     Every company row the CRM routes send a client goes
     through one of three cuts beside it: `clientBrandCompanyView` (another
     company's record, and the reply to a save or a create: also without
@@ -1131,7 +1224,10 @@ not opened to them.
   - Sizes go through `shared/format-size.ts` (a size stored split at its
     thousands commas is rejoined); a suggested pitch's opening words come
     from `pitchFitWords` in `shared/requirement-fit.ts` (Fits / Size fits /
-    Close to). One stage pill across the page (`stageChipClass`).
+    Close to), and its six are spread across centres (`spreadAcrossCentres`
+    there: the best unit at each centre before a second at any; Woody,
+    2026-11-16, after Jersey Mike's showed six Gunwharf units and nothing
+    else). One stage pill across the page (`stageChipClass`).
   - Waiting on Woody: what a full Landsec login reads on a brand (the BGP
     take in full, live tenancies and rent at other landlords' schemes, the
     expansion score, Tracker updates).
@@ -1310,8 +1406,14 @@ calendars), the order of work and the four decisions waiting on him are in
   `CrmEngagementPanel kind="all"`: pills All / Landlords / Brands / Agents /
   Lenders filter it (`options.companies[].noun`), its pickers list every
   landlord, agent and lender and find a brand by typing, and the form words
-  follow each company's kind. The scheme, sharing and waiting-on fields on
-  an action still belong to a brand. Tests:
+  follow each company's kind. Each company in those pickers says what it is,
+  the list opens on a few of each kind (not the first names alphabetically,
+  which were all landlords) and scrolls into view at the foot of the form,
+  and a company with no contacts says so (Woody, 2026-11-16: "cant seem to
+  add brands or agents to the CRM forms just landlords?"). A form opened
+  with no kind (a company page's CRM card, the property People board) lists
+  agent firms and lenders as well (`getCrmEngagementOptions`). The scheme,
+  sharing and waiting-on fields on an action still belong to a brand. Tests:
   `qa/regression/crm-engagement-postgres.test.mjs` (needs
   `CRM_ENGAGEMENT_DATABASE_URL`).
 - **Start strategy** (`client/src/components/crm-engagement/start-strategy.tsx`,
@@ -1341,8 +1443,9 @@ calendars), the order of work and the four decisions waiting on him are in
   Landlords, agents and lenders are every company of that kind, by the
   rules the old tabs used (`companyIsKind`); **Brands is only the brands BGP
   is working**: on a strategy that is not completed, with an open CRM
-  action, a live deal, a live or to-confirm requirement, or a Hunter pick
-  (`brandWhy`). Every row carries the BGP owner (`bgp_contact_user_ids`,
+  action, a live deal, a live or to-confirm requirement, or the Super Brand
+  star (`brandWhy`; it read "Hunter pick" until 17 November 2026, and Super
+  Brands now lead the list, see "Super Brands" below). Every row carries the BGP owner (`bgp_contact_user_ids`,
   else the agents on its deals, greyed), last contact
   (`shared/last-contact.ts`), the next action, its strategies and a
   kind line; a card or row opens the company page and its arrow opens the
@@ -1597,12 +1700,21 @@ Asked the four questions, he answered "Yes to all".
 The brands' own CRM: which schemes BGP wants each brand in, whether there is
 a unit for it there, how far it has got, and what happens next. Built from
 `docs/brand-crm-spec-2026-11-12.md`; **its "Decisions" section at the top
-overrides the spec body.** Staff: `/brands?tab=crm` (the Brand CRM pill in
-Brand Intelligence, and a sidebar link). Landsec logins: the same pill under
-Brands. A joint agent has no Brands entry, so it has `/landsec/brand-crm`.
-Three views: Targets (brands against the Landsec schemes), Diary, and
-Strategies and events (BGP staff only). The same plan is the **Schemes and
-units** card on every brand page.
+overrides the spec body.** Staff: `/brands?tab=crm` (the Brand CRM pill on
+Brands; its own side bar link was removed on 16 November 2026, see "The BGP
+side bar" below). Landsec logins: the same pill under Brands. A joint agent has no Brands entry, so it has `/landsec/brand-crm`.
+Three views were built: Targets (brands against the Landsec schemes), Diary,
+and Strategies and events (BGP staff only). **Since 16 November 2026 BGP
+staff get Targets only** (Woody: "1 and 2 yes", on taking off the two views
+the CRM page already holds): the brands' diary is the CRM page's Diary
+(`/contacts?tab=diary`) and their strategies, events and actions its Overview
+(`/contacts?tab=overview`, kind `all`), where a brand action's detail now
+shows its scheme and sharing with Change scheme, sharing or waiting on.
+`crmEngagementLink` sends every company's plan there, a brand's included,
+and `brandCrmMovedHref` (`brand-crm-tab.tsx`) sends an old staff
+`?view=diary` or `?view=strategies` link on. Landsec logins keep Targets and
+Diary; the joint agent's `/landsec/brand-crm` is unchanged. The same plan is
+the **Schemes and units** card on every brand page.
 
 Decided (do not re-litigate):
 
@@ -1691,8 +1803,9 @@ response types), `server/brand-scheme-plan.ts` (`brandPlan`, `brandGrid`,
   the Landsec slice, so every handler there that returns BGP's contacts or
   mail checks for BGP staff itself (`contacts-cascade`,
   `bgp-known-contacts`, the email threads, `suggested-units`). A client's
-  brand page shows only the requirements the Requirements page lets it read
-  (PIPnet listings and its own).
+  brand page shows the requirements the Requirements page lets it read:
+  every one that is not closed since 17 November 2026 (Requirements centre
+  section), never the state.
 - Not built, each waiting on Woody: Landsec writing its own Wanted lines;
   an all-landlords Targets list; showing Landsec that a shared action waits
   on Landsec; whether an On hold brand is safe from the brand tidy; draft
@@ -1725,6 +1838,14 @@ appendix `docs/letting-cleanup-technical-appendix.md`):
 - **Marketing deals sit on the Deals board and the WIP from birth** with
   or without a fee (no fee = "fee needed" on Needs Attention, not "not
   WIP") — this is the leasing fee forecast.
+- **Investment deals stay on the Investment Tracker until Solicitors**
+  (Jack, 2026-11-16: "It should only move to other parts of the app once in
+  solicitors"). The Deals board, its stat cards, property summaries, the
+  Deal Report, a company's deals and the WIP Report (its Deal Detail,
+  agent summary and drill-down, Needs attention and the Excel export) leave out an investment deal (deal type
+  Purchase / Sale / Investment, or the Investment team) before SOL; lettings
+  still show from Marketing. One rule, `dealLeftTrackerSql` /
+  `dealLeftTracker` in `shared/deal-status.ts`: never a second list.
 - **No unplaced letting deals:** a letting deal must have a property and a
   unit (an actual address); otherwise it is refused, never parked.
 - **Client-added units** (Landsec logins) create a BGP instruction (deal +
@@ -1965,15 +2086,47 @@ untouched when it is off, and
   conversation whose property no longer exists, for records removed some
   other way. A person's own thread linked to the property is never touched.
   Anything new that removes a property record must do one of these.
-- **Matching**: `shared/property-plan-match.ts`,
+- **Matching: a scan's matches are saved, not checked** (Woody, 2026-11-16:
+  "fold the whole matching units to tenancy schedule and upload scan process
+  into the main plan page ... the base case should be that the scan and
+  tenancy schedule matches dont need checking they are all done immediately
+  and then there is the ability to edit should it be required"; do not
+  re-litigate). `shared/property-plan-match.ts`,
   `server/property-plan-match.ts` (`GET /api/plans/:id/match`, `POST
-  …/match/accept`, `…/accept-suggested`, `…/dismiss`). A scan stays open and
-  is worked through one outline at a time; the unit number printed on the
-  plan decides before the tenant's name; one schedule row has at most one
-  outline per floor (also enforced on the older save routes in
-  `server/property-plans.ts`). The older one-shot review
-  (`applyPropertyPlanScan`) and the Plans card still work and are reached
-  from the **Plans** button.
+  …/match/accept`, `…/accept-all`). A finished scan is marked ready and
+  every outline it found is saved in the same transaction, under the plan's
+  lock (`completePlanScan`, called by the scan runner): linked to the free
+  schedule row its printed unit number names (else its tenant's name, else
+  a floor tie-break), whatever tenant or floor the plan prints, and saved
+  unlinked (grey) where nothing points at exactly one row. Where two
+  overlap the surer reading stays and the other is set aside
+  (`planSaveOrder`). A failed save leaves the proposals open for **Save
+  them** on the Plan tab (`…/accept-all`), which is also how a scan from
+  before 16 November is saved. Removing an outline marks its proposal "not
+  a unit" (`setRemovedOutlineAside`, inside `DELETE /api/plan-units/:id`), so
+  nothing comes back by itself. The unit number printed on the plan decides
+  before the tenant's name; one schedule row has at most one outline per
+  floor (also enforced on the older save routes in
+  `server/property-plans.ts`); the plan never writes to the schedule. The
+  client gateway lets client logins reach `…/accept` and `…/accept-all`,
+  as it did the older apply route (the handlers check the property with
+  `propertyReadBlocked`): until then the Match screen's saves were refused
+  for every client login although the screen offered them.
+  - **The Plan tab is the one place for it** (`plan-workspace.tsx`): Upload
+    plan (each page cropped or used whole, then the scan), Add from (BGP
+    staff), **Edit plan** (Scan again for staff, Rename this floor, Crop,
+    Restore the whole page, Original PDF, Delete), the scan's progress, a
+    grey outline's panel (`OutlinePanel` in `match-panel.tsx`: the units it
+    could be, Choose a unit, Remove from plan, Next not linked), the unit
+    panel's plan block (Not this unit, Unlink, Remove from plan, for
+    everyone, not only BGP staff) and **Find it on the plan** (click inside
+    the unit: the outline under the click is taken, even another unit's,
+    else its walls are traced; or Draw its corners instead). The Plans
+    dialog, the Match screen and the one-shot Review scan are gone from the
+    plan-led page. The classic page's Plans card keeps its tools, with a scan
+    status (`property-plan-scan-status.tsx`: Scanning…, Scan again, Save N
+    scanned outlines) in place of Review scan; the older apply route
+    (`applyPropertyPlanScan`) is kept for cached clients.
 - **Cropping a plan** (Woody, 2026-11-16: "ability to crop the page when
   loading up"). Rules and tests: `shared/plan-crop.ts`,
   `shared/plan-crop.test.ts` (in `npm test`). `POST /api/plans/:planId/crop`
@@ -2197,10 +2350,10 @@ client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
 
 ## Offer to Solicitors on the Letting Tracker (Woody, 2026-11-12)
 
-The older **Promote to Solicitors** box on the staff tracker (picking
-Solicitors in the status column, `POST /api/available-units/:id/create-deal`)
-is BGP staff only since 2026-11-13: no client screen offers it and a client
-login is refused. It refuses a move to Solicitors when a party the deal is
+The older **Promote to Solicitors** route (`POST
+/api/available-units/:id/create-deal`; since 17 November 2026 no screen calls
+it: the status column opens the one deal form below) is BGP staff only since
+2026-11-13: no client screen offers it and a client login is refused. It refuses a move to Solicitors when a party the deal is
 about to carry has been rejected by the MLRO, before anything is written
 (the parties from the form where it gives them), and refuses the same way
 when it is asked to put a new tenant or landlord on a deal already at
@@ -2225,6 +2378,126 @@ YES" from the New Deal form: whether that stays is Woody's call. Where the
 MLRO's block answers a client login it says the deal is held and nothing
 else (`AML_HELD_FOR_CLIENT` in `server/deal-gates.ts`): never the party or
 the reason. Tests: `qa/regression/aml-gate-doors.test.mjs`.
+
+**One deal form for Solicitors (Woody, 2026-11-17).** His words: "in each of
+these situations lets have one form its exactly the same. use the new deal
+form as the basis but we need billing entity also linked to the tenants with
+ability to create as per the last one. also the type it and AI fills in
+ability in a new box at the top. This will then cover all eventualities." It
+replaces the Promote box's own form (rebuilt that morning and replaced the
+same day, never live). Do not re-litigate. Tests:
+`qa/regression/promote-to-solicitors.test.mjs`, `qa/regression/deal-dialog.test.cjs`.
+
+- **One form**: `DealFormDialog` in `client/src/pages/deals.tsx`, with the New
+  Deal form's essentials body (`SimplifiedCreateBody`). New Deal opens it as
+  before. A **handover** (`DealHandover`, opened through `DealHandoverDialog`,
+  which loads the deal and the lists the form picks from) opens it on a
+  Letting Tracker unit's own deal, at Solicitors, with the property and unit
+  fixed (`place`) and no Show all fields: `kind: "promote"` from the tracker's
+  Deal Status column (BGP staff; `promoteUnit` in `available-units.tsx`), and
+  `kind: "hots"` from the Heads of Terms dialog's Convert to Solicitors step
+  for BGP staff. A joint agent keeps `HotsConvertForm` there (it has no CRM,
+  BGP people or fee). `handoverForm` is the start: the deal's own values, the
+  unit's fee, rent and size where the deal has none, the property's landlord,
+  and for hots the agreed offer's tenant and terms (a new tenant clears the
+  billing entity).
+- **It saves through the doors the deal already has, never a new deal**
+  (`saveHandover`). Promote is the deal's own save at SOL (`PUT
+  /api/crm/deals/:id`: the AML gate on the parties after the save, the
+  history line "Moved to Solicitors from the Letting Tracker", the mirror to
+  the tracker row; its `X-AML-Warning` header is shown); a tracker row with no
+  deal is first given one by `POST /api/available-units/:id/ensure-deal`.
+  Hots saves the deal's other details through the same PUT (no status, none
+  of the six terms), then the tenant and the terms through `POST
+  /api/unit-hots/:unitId/convert`, which keeps its checks (final HOTs on
+  file, the agreed offer, the AML gate) and its event line; with no deal yet
+  the convert heals one and the PUT follows. Then the fee split (`saveSplit`:
+  `internalAgent` is never sent, the split's own save keeps BGP Contact in
+  step) and the joint agency note. The old Promote route (`/create-deal`) is
+  called by no screen now; it stays for a cached client.
+- **Describe the deal**, the box at the top (BGP staff, New Deal and both
+  handovers, never the edit form): `NoteFill` with `readUrl=
+  "/api/deal-notes/read"` (`server/unit-note-reader.ts`), the letting note
+  reader read as an offer with the same rules (tight shorthand fills; a note
+  written out in full lists Use lines), for a deal with a tracker unit (its
+  brands count) or only a property. BGP staff signed in as themselves only (a
+  client login or staff viewing as a client is refused, and the address is on
+  no client gateway list); one read of the users table, shared with the unit
+  route (`staffNamesFor`). `client/src/lib/deal-note.ts` (`dealNotePatch`)
+  maps a reading: rent, lease length, rent free, break and capital
+  contribution fill; the tenant only when the tenant picker lists it (else
+  "Brand read as"); anything else is a Comments line, once. An offer's date is
+  never the target date. A note led by a brand that is not on a unit is not
+  tight, so the box's example names none.
+- **Add heads of terms**: the New Deal form's HOTs parser
+  (`/api/crm/deals/parse-hots`) fills the form; on promote the document is
+  first filed on the unit as its final agreed Heads of Terms (`POST
+  /api/unit-hots/:unitId/final`: `hots_final`, never public, moves no
+  status), and a handover is not moved to HOTs by the reading; hots shows the
+  file already on file instead. Client logins no longer see the button (the
+  parser was always refused them). The note reader's `hots_final` source,
+  built for the Promote box, was removed with it.
+- **Lease terms and fee agreement** are on the essentials body for every
+  leasing type: lease length, break (words: the column is text, and the save
+  no longer reads it as a number, which blanked a worded break), rent free,
+  capital contribution, total area (the save keeps a typed total when no
+  floor areas are given; before, it saved it blank) and Fee agreement signed.
+- **Duplicates** (Woody, 2026-11-17: "We are hitting duplicate issues when a
+  deal is added to the app but its also on the letting tracker at the same
+  time"). A letting deal at Solicitors is on the tracker: it is one record.
+  New Deal takes the unit's row when it has no live deal and refuses a second
+  live letting on the unit (`findLiveLandlordLetting` in
+  `server/letting-service.ts`: the same unit record, schedule row, or unit
+  name before any comma). **Use that deal** on New Deal's "Already on the
+  Letting Tracker" notice now opens that unit's own deal in the one form
+  (promote) while it is before Solicitors, else the deal page. Unit names
+  that differ ("Unit 12" and "12"), a duplicate property record, or a deal
+  type that is not a letting still get past the check, and the integrity
+  report (`GET /api/admin/letting-integrity`) lists such pairs: a looser match
+  is Woody's call.
+- **Billing entities linked to their party** (Woody, 2026-11-17: "tenant
+  and Landlord first then the billing entity comes up linked to that tenant
+  or landlord"). On the essentials body each party (landlord, tenant, vendor,
+  purchaser) gets its own **Billing entity for <name> (Xero)** box once the
+  party is picked, BGP staff only (`!hideFees`: Xero is BGP's and a client
+  login cannot reach it, so the box never worked for one). The picker's
+  `createFor` is that party: it lists the companies filed under it first
+  (`crm_trading_entities`, the `leaseCompaniesKey` cache shared with the lease
+  company picker); picking one with a Companies House number goes through
+  `POST /api/billing-entities`, which keeps it under the party and finds its
+  Xero contact by name or makes one; without a number its name is searched
+  in Xero. **New billing entity for <name>** is always offered at the foot.
+- **Kick off AML** (Woody, 2026-11-17: "on the form we need a button to allow
+  us to Kick off the AML"). When New Deal or a handover saves, BGP staff see
+  the form turn into a Kick off AML step (`showAmlStep`, `amlStep`): one
+  `Kyc4uRequestButton` (label "Kick off AML") per party on the saved deal,
+  the deal page's KYC4U request (prefilled from the deal; the person checks
+  and saves it, then clicks the Send to ChatBGP bookmark on KYC4U's page and
+  presses Submit there). The edit form and client logins never get it, and a
+  deal with no party closes as before. It cannot send the request by itself
+  until KYC4U agrees to take requests some other way, or the in-app checks
+  (`IN_APP_AML_ENABLED`, ComplyAdvantage and Veriff) are switched back on.
+  While in-app AML is on, each button is **Send client checks** instead
+  (`amlInApp`, read from `inAppAml` on `GET /api/kyc/deal/:id/status`); see
+  "Client checks" below.
+- **Create billing entity** (`server/billing-entity.ts`,
+  `POST /api/billing-entities { brandId, companyNumber }`, `brandId` the
+  landlord or brand, BGP staff signed in as themselves;
+  `client/src/components/billing-entity-create.tsx`). The
+  Xero picker (`xero-contact-picker.tsx`) says "not in Xero yet" when the
+  firm's link answered with contacts and the search found none, and keeps the
+  reconnect line for a real connection problem; with `createFor` (the one
+  deal form's four party boxes, for BGP staff) it offers Create billing
+  entity. The company is read from Companies House on the server
+  (never a name or address from the request; a closed company is refused),
+  saved under the brand with `insertTradingEntity` (never a brand; a company
+  of that name already there is reused unless its number differs) and logged
+  (batch `billing-entity`), then made a contact in the firm's Xero through
+  `withSystemXero` after a search by name (the invoice routes' POST
+  /Contacts), and selected: the deal stores its ContactID as the tenant's
+  billing entity. `rememberXeroContact` puts it on the picker's cached list.
+  A Xero refusal leaves the company saved and says why. It has not been run
+  against Xero or Companies House from a build machine.
 
 The run from a first offer to solicitors is three linked pieces on a unit.
 Migrations 0051 to 0053. All access goes through `briefAccess()`.
@@ -2311,8 +2584,9 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   stop counting. A joint agent never receives the brand's CRM website. The measure (psf, net effective, less three months' fit-out,
   % of ERV and floor, occupational cost) is worked out on read, never stored.
   AI drafts are Anthropic only and are never saved by themselves.
-- **Landsec emails come from `landsec@chatbgp.app`** (Woody, 2026-11-12;
-  `LANDSEC_MAILBOX` overrides): `sendWorkspaceEmail` in
+- **Landsec emails come from the Landsec mailbox** (Woody, 2026-11-12:
+  landsec@chatbgp.app; the mailbox made on 17 November 2026 is
+  `landsec2@chatbgp.app`, the default; `LANDSEC_MAILBOX` overrides): `sendWorkspaceEmail` in
   `server/shared-mailbox.ts` sends checklist and recommendation emails about
   a Landsec property as that mailbox, and falls back to the shared mailbox,
   with a log line, if Microsoft will not send as it. Use it for any new
@@ -2399,7 +2673,9 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   task list never fails because of it). The screens show one pill, "Deal is
   waiting on you" with the days, and list those tasks first
   (`client/src/components/deal-waiting-pill.tsx`: My Tasks, the phone home,
-  the Landsec Tasks page). A new task screen uses that file. **Waiting on
+  the Landsec Tasks page); My Tasks and the Landsec Tasks page put them in a
+  "Waiting on you" section of their own (16 November 2026). A new task
+  screen uses that file. **Waiting on
   follows the checklist** (Woody, 2026-11-13; the rules are
   `shared/deal-waiting.ts`, tested in `server/deal-waiting.test.ts`): a
   deal's waiting-on can point at one checklist item
@@ -2433,6 +2709,441 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   the main table (`TrackerChecklistCell`), on the staff tracker and the
   joint agent's (Woody, 2026-11-13: "swap the check list and against the
   brief"). Do not swap them back.
+
+## Client checks: the in-app KYC request (Woody, 2026-11-17)
+
+Woody: the emails should "come from kyc@chatbgp.app", "copy the agent that
+has done the deal" and carry the "BGP logo"; "check the whole system because
+it was built ages ago and wasnt working properly"; "not that clear or user
+friendly"; then "check this all against HMRC guidance" and "FCA and bank of
+England Guidance". The in-app request an agent sends a party's contact, the
+client's own page, reminders, replies by email, and the admin's test send.
+It is part of in-app AML, so the agent's side shows only while
+`IN_APP_AML_ENABLED` is on; the client's page and the admin's test work
+either way. Server `server/aml-portal.ts`; every email's words and the
+page's rules `shared/kyc-request.ts`; client page
+`client/src/pages/kyc-upload.tsx` (public, `/kyc-upload/:token`); agent
+dialog and request rows `client/src/components/kyc-client-checks.tsx` (on
+the deal's KYC card per party, and the deal form's Kick off AML step);
+admin card `client/src/components/kyc-emails-admin.tsx` (My BGP → KYC4U
+pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
+`qa/regression/kyc-client-checks.test.mjs`.
+
+- **What was wrong, and the rule now** (do not undo): it sent from
+  `BGP_AML_MAILBOX`, never set, so nothing went (now `KYC_MAILBOX`, default
+  kyc@chatbgp.app, then the shared mailbox when Microsoft will not send as
+  it, through `sendKycEmail`, the one door); its link opened a "no longer in
+  use" page (the page is back); an upload was read by the AI and then
+  DELETED (every file is stored with `saveFile` and filed in `kyc_documents`
+  on the party, with the checklist items it evidences ticked for the MLRO to
+  confirm, the KYC pack's rule); the reminder and the reply reader never ran
+  (reminders daily 10:00, `kyc-client-reminders`; the KYC mailbox read every
+  15 minutes; both only while in-app AML is on); the agents were never
+  copied (the deal's agents, `internal_agent_ids` / names and the fee split,
+  never BGP House, BGP addresses only, plus the sender); the links pointed at
+  app.brucegillinghampollard.com (now `PUBLIC_APP_URL`, default chatbgp.app);
+  the orchestrator started a paid Veriff check for EVERY contact on a company
+  and sent nobody the link (removed: the identity check is asked for one
+  person, from the request); WhatsApp free text was sent from the server,
+  which WhatsApp refuses for a business's first message (removed: a wa.me
+  link opens the agent's own WhatsApp); Veriff's event webhook wrote a blank
+  status over a session (it now records started / submitted and never
+  overwrites a decision).
+- **One email, one page.** The request email has the logo inline (cid), a
+  numbered list of what is needed, one **Start your checks** button, the
+  agent's note, Why we ask, the agent's phone and email, and the reference
+  in the subject (`(ref 7K2Q9M)`, six letters and digits) so a reply finds
+  its request. The page: a card per step with an Upload button (PDF, photos
+  including HEIC, Word; 25MB; 40 files a request), the Veriff check (returns
+  to the page when done; a new session at most three times), the question,
+  progress, and **Finish**, which emails the deal's agents what came in and
+  what did not. Reminders three and seven days after sending while anything
+  is outstanding. A reply by email is filed only when it carries a request's
+  reference AND comes from the address the request went to; anything else is
+  marked in the mailbox for a person (`BGP-KYC-Unmatched`) and never filed.
+- **Checked against HMRC's guidance for supervised businesses** (AMLG2200
+  estate agency, AMLG2300 letting agency, AMLG11400 identification and
+  verification, AMLG11600 / 11630 / 11650 enhanced due diligence, source of
+  funds and PEPs, AMLG11700 records; read 17 November 2026). What it changed:
+  the identity documents HMRC lists (passport, photocard driving licence,
+  national identity card); without the online check, photo ID is a CERTIFIED
+  copy ("Certified to be a true copy of the original seen by me") or the
+  original shown to the agent, because HMRC wants originals where possible;
+  address documents are those HMRC names (utility bill, bank or building
+  society statement, mortgage statement); beneficial owners are "more than
+  25%" or control (MLR reg 5), never "25% or more"; a company's contact
+  confirms their authority to act (a director's email or letter, AMLG11400
+  14.7: "Obtain evidence that they have authority to act"); an overseas
+  company sends a register extract (14.8); source of funds is where the money
+  comes from, not only the bank (AMLG11630), and is asked of a tenant as well
+  as a buyer (AMLG2300 s21: "all customers making a payment"); the data
+  statement of MLR reg 41 ("only to prevent money laundering and terrorist
+  financing") and the privacy notice (brucegillinghampollard.com/privacy);
+  records "kept for five years after our work with you ends" (AMLG11700);
+  the agent's dialog says when HMRC expects each party's checks (landlord:
+  before terms of engagement and before marketing; tenant: once the landlord
+  accepts the offer, before any agreement, no deposit before; seller: before
+  marketing; buyer: before an offer is accepted, at the latest exchange) and
+  that a letting is in scope at £10,000 a month or more for any part of the
+  term, turnover rent included; the agents' email reminds them to compare the
+  owners with the PSC register, a difference being reportable to Companies
+  House.
+- **The question about public roles** (`KYC_PEP_QUESTION`): every request
+  since 17 November asks it ("Asking your customer" is one of HMRC's ways to
+  find a PEP; screening is the other). Its words are the legal definition
+  and no wider (MLR reg 35(12)-(14); the FCA's FG25/3, which replaced FG17/6,
+  found firms using definitions wider than the regulations): family is a
+  spouse or partner, a child and their spouse or partner, a parent (never a
+  sibling); 12 months after leaving office; middle-ranking and junior
+  officials excluded. A yes or not sure goes on the party's KYC trail
+  (`client_pep_declaration`), shows on the request and in the agents' email
+  as enhanced due diligence: senior management approval (a director or the
+  MLRO), source of wealth and of funds, closer monitoring; lighter for a UK
+  PEP with no other risk factor (FCA FG25/3). It never writes
+  `aml_pep_status` (the MLRO's field).
+- **FCA and Bank of England** (17 November 2026): BGP's AML supervisor is
+  HMRC; the FCA supervises financial firms and the Bank of England / PRA
+  supervises no one for AML, so neither's AML rulebook binds BGP. What does
+  apply: the FCA's PEP guidance as the reference for PEP treatment (above),
+  and sanctions: the app screens the FCDO's UK Sanctions List
+  (`server/sanctions-screening.ts`), the one list since OFSI's Consolidated
+  List closed on 28 January 2026; estate agents, and letting agents since
+  14 May 2025, are OFSI "relevant firms" and must report a designated person
+  or a breach to OFSI as soon as practicable, whatever the rent, even when
+  the business is declined. The dialog's scope line says so.
+- **Admin test** (`GET /api/admin/kyc-emails`, `POST
+  /api/admin/kyc-emails/test`, admins only): every email as the client sees
+  it, and **Send me a test** to the admin who pressed it, copied to nobody.
+  The test request's link opens the real page in test mode (a token with
+  `is_test`, two days, uploads recorded by name only and not kept, Finish
+  emails the same admin). A failed send still returns the test page's link.
+  **Try it with a colleague** (Woody, 2026-11-17: "send a test email to both
+  me and jack@... that he needs to do KYC for bruce Gillingham pollard ltd as
+  a test so we can see how it works"): the request only, to one ACTIVE login
+  with an address on brucegillinghampollard.com (`toUserId`; anything else is
+  a 400, so a test never reaches an outside address), naming the company or
+  person being checked (`partyName`, `partyKind`; words only), copied to the
+  admin, who is the agent on it. It is still an `is_test` token. Who hears
+  back from any request is one rule, `kycReplyAddresses` in
+  `shared/kyc-request.ts`: the copy list (the deal's agents and the sender),
+  never the client; a self-test has none and comes back to its own address.
+  So the colleague's Finish note and any red-flag alert go to the admin. The
+  banner names the admin (`testBy`) instead of "nothing sent to anyone
+  else". **A test page runs a real Veriff identity check** when Veriff is set
+  up (Woody, 2026-11-17: "can you do the test page a real identity check
+  with veriff"; `real` on the page's `idCheck`), charged like any check and
+  under the same three-session cap. Its session has no company or contact
+  (deal `test`), so an approval files nothing on any party (the decision
+  handler files a document only for one or the other); its own sessions feed
+  its red flags (`requestIdChecks` in `server/kyc-red-flags.ts`), so a
+  decline alerts the admin and is listed in the Finished note. A test page
+  without Veriff set up still shows the step only. Uploads on a test are
+  still recorded by name only and not kept. While in-app AML is off, the
+  retired switch in `server/index.ts` keeps two Veriff addresses open for it:
+  `/api/veriff/webhook` (Veriff's decisions; Veriff signs them and the
+  handler checks the signature) and `/api/veriff/diagnostic` (admins only:
+  it asks Veriff for a session and reports Veriff's answer). When Veriff does
+  not start a check, a test page shows the tester Veriff's own reason; a
+  client sees the plain "couldn't be started" line. First try on live, 17
+  November 2026: Veriff answered 401, code 1804, "Integration with the API
+  key ... is not active" (read with the diagnostic): the integration whose
+  key is on Railway is switched off at Veriff (the Veriff keys were on the
+  October rotation list). Woody's to fix in Veriff Station: activate it, or
+  put an active integration's API key and shared secret on Railway
+  (`VERIFF_API_KEY` / `VERIFF_SECRET`, or the other names `getCreds` reads)
+  with its decision and event webhook URL https://chatbgp.app/api/veriff/webhook.
+  The diagnostic's signed webhook loopback passed the same day. Later that
+  evening Woody switched the integration on and the diagnostic passed in
+  full: Veriff created the session. Whether Veriff's own webhook delivery
+  reaches the app (the URL set in Veriff Station) is first seen when a real
+  check is finished: a check that stays at submitted and never shows a
+  decision means the URL there needs setting.
+- **Schema** (additive, nullable, boot MIGRATIONS in `server/index.ts`, not
+  in `shared/schema.ts`): `kyc_upload_tokens` gained `company_id`,
+  `contact_id`, `request` (JSONB: `KycRequestDetails`), `completed_at`,
+  `reminders_sent`, `last_reminded_at`, `is_test`; `kyc_upload_files` gained
+  `doc_type`, `kyc_document_id`. Approved with the push (Woody,
+  2026-11-17: "push the work to date").
+- **The deal gate stays as it is** (Woody, 2026-11-17: "gating remain as
+  is", asked about HMRC's line that a contract cannot proceed without CDD):
+  a move to Solicitors with checks outstanding warns and does not stop; only
+  an MLRO rejection blocks. Do not add a hold at exchange or completion.
+- **The gates**: `/api/kyc-upload/*` is no longer on the retired-AML list and
+  passes the client gateway (the token is the only key, and no live token
+  exists while in-app AML is off except an admin's test). Every other client
+  checks route is under `/api/aml/` (retired while off) and is BGP staff
+  only (`contactViewer`).
+- **How BGP runs AML** (Woody, 2026-11-17: "basically we do the normal
+  checks expected and if there is a red flag then we get KYC4U"): the
+  client checks and screening in the app for the routine checks; a red flag
+  goes to KYC4U (Request KYC4U check, beside Send client checks on each
+  party). AML Dealcheck (Compliance On Demand), offered the same day, was
+  not taken up (Woody: "looks rubbish").
+- **The red-flag hand-off** (Woody, same day: "yes build the red flag
+  handoff to KYC4U"). Rules: `shared/kyc-red-flags.ts` (`partyRedFlags`,
+  `dealRedFlags`, `redFlagNote`; tests `server/kyc-red-flags.test.ts`, in
+  `npm test`, and `qa/regression/kyc-red-flags.test.mjs`); reading and
+  alerting: `server/kyc-red-flags.ts`. Every flag is read from a record the
+  app already holds, and nothing decides: KYC4U does. A party's flags: the
+  client's yes or not sure to the question about public roles (any request
+  to it on the deal; a later no does not wipe it), a declined Veriff check,
+  `aml_pep_status` read as review_required, PEP or close associate (the KYC
+  form's own reading), the latest `kyc_investigations` row with a sanctions
+  match, `aml_risk_level` high or critical, and `aml_edd_required` (with its
+  reason: the landlord packs set it, as on Bulgaria Mall). The deal record's
+  own: its PEP status, risk, enhanced due diligence not yet completed, and a
+  source of funds document read as not matching what was declared. Not a
+  flag on purpose: the MLRO's rejection (it already blocks) and a client who
+  has not replied (chase them). Since 17 November 2026 the latest screening
+  is the latest record that screened anyone (`SCREENED_INVESTIGATION_SQL`),
+  and BGP's checks before asking add their own flags, adverse media with a
+  source among them, and the client saying the register's owners are wrong
+  (`owners_differ`): see the next section.
+  Where they show: `redFlags` on `GET /api/kyc/deal/:id/status`, for BGP
+  staff signed in as themselves only (`contactViewer`), on the deal's KYC
+  card (a red box per party, the deal record's above, and a line naming any
+  record that could not be read: never a silent "no red flags"); in the
+  KYC4U request's note (`kyc4uPrefill`), so Request KYC4U check carries
+  them; in the agents' Finished email; and in Kick off AML, where a flagged
+  party gets the KYC4U request instead of the client checks. **The alert**:
+  the client's yes or not sure, and Veriff declining a check the client page
+  started, email the agents copied on the request at once ("Red flag on
+  <deal>: raise <party> with KYC4U", `kycRedFlagEmail`), once per flag per
+  request (`request.redFlagAlerts`, written only after a send), never the
+  client; a test request alerts the admin. The other flags show on the card
+  and in the note but send no email. Admins preview and test it with the
+  other client check emails.
+- **Veriff is on the UK DVS register** (checked 17 November 2026,
+  access-dvs-register.service.gov.uk): provider "Veriff OÜ", service "Veriff
+  UK Identity Verification Service", roles Identity and Component, trust
+  framework 0.4 gamma, certified by Kantara, certificate 14 January 2026 to
+  14 January 2029, profiles L1B, M1A, M1B, supplementary codes Right to Work
+  and Right to Rent. HMRC (AMLG11400 14.5): a service "certified against the
+  trust framework and on the DVS register" is "a reliable and independent
+  source".
+- **Not built, each waiting on Woody**: the kyc@chatbgp.app mailbox exists
+  since 17 November 2026 (see "Emails come from chatbgp.app" below), but
+  sending as it and reading it from the app have not been seen working from
+  a build machine: the admin's Send me a test says which address an email
+  came from; whether the privacy notice covers AML
+  processing (reg 41 / Article 13: read on 17 November 2026, it does not:
+  no controller company or number, no lawful basis, no AML or reg 41
+  statement, no retention period, no right to complain to the ICO; an AML
+  notice for these checks is Woody's and Rupert Bentley-Smith's to approve);
+  records are not deleted after the five years; the app does not prompt an OFSI report on a sanctions match;
+  trusts, partnerships and charities have no request type of their own; the
+  principal place of business (if not the registered office) is not asked.
+
+## BGP's checks before asking (Woody, 2026-11-17)
+
+Woody: "can you make sure you use all the companies house APIS to get the
+recent accounts downloaded for any check first before asking?", "and also
+access to plcs? how do we deal with that?", "the pep is that siorted?", "and
+the poloticaly media riskes etc ?", "we need to do everyhting we can before
+we ask questions on someone". Asked, he chose "Web search now, CA later"
+(public roles and adverse media by a web search with sources for each
+person, ComplyAdvantage automatically once it is unblocked and has fresh
+keys) and "Ask only what's left". Do not re-litigate. Rules (pure):
+`shared/kyc-prechecks.ts`; gathering and storing: `server/kyc-prechecks.ts`.
+Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
+`qa/regression/kyc-prechecks-guards.test.mjs`.
+
+- **What one run does, per deal party** (`runPrecheck`): a company with no
+  Companies House number is first looked for by the brand-page lookup
+  (`performAutoKyc`, at most once a week). Companies House: the profile,
+  officers, PSCs, PSC statements, the PSC exemptions, insolvency, the
+  ownership chain (`discoverUltimateParent`, five levels), the disqualified
+  directors register for up to ten directors (name, then date of birth: a
+  different year sets a name match aside), and the covenant report (charges,
+  The Gazette). It downloads the latest accounts (`fetchLatestAccountsForCompany`),
+  the latest confirmation statement and the certificate of incorporation
+  (the NEWINC filing) and files each on the party's KYC record
+  (`kyc_documents`, types `company_accounts`, `confirmation_statement`,
+  `company_cert`; the file under `chat-media/kyc-ch-<company>-<doc>.pdf`),
+  once per Companies House document id, so Request KYC4U check attaches them.
+  Sanctions: the UK Sanctions List and the US OFAC list (`screenName`) for the
+  company, its trading name, every officer and owner, the companies and people
+  up the chain and the deal's contact. A listing is a possible match only when
+  one name holds every word of the other (two words at least) and a known date
+  of birth does not disagree by more than a year (`sanctionsLine`). Web:
+  Perplexity (`sonar-pro`) for the company and up to ten people
+  (`KYC_PRECHECK_MAX_WEB_PEOPLE`), asked about public roles in the words of
+  MLR 2017 reg 35 and about adverse media (financial crime, corruption,
+  sanctions, criminal charges, disqualification, regulatory enforcement; not
+  ordinary disputes or a past insolvency); a finding is kept only when its
+  link is on a site the search actually read (`checkWebAnswer`), and anything
+  said without one is only counted. ComplyAdvantage: used when its keys are
+  set; a refused login is remembered against a hash of the keys
+  (`system_settings.kyc_precheck_ca_refusal`) and not tried again for a day
+  or until different keys are set, because repeated logins keep its account
+  locked. ComplyAdvantage was blocked (429) on 17 November 2026.
+- **Stored** as a `kyc_investigations` row (`result.kind = 'precheck'`, with
+  `sanctionsScreening` so it counts as a screening; `sanctions_match` true,
+  false, or null when the lists could not be loaded), a `kyc_audit_log` line
+  (`precheck`). It writes no KYC status, PEP status, EDD flag or checklist
+  tick: nothing it finds decides anything; it becomes red flags
+  (`precheckRedFlags`: sanctions, a ComplyAdvantage match, a public role or
+  adverse media with its link, the company in liquidation or similar,
+  insolvency or a Gazette notice, a disqualified director, a PSC statement of
+  concern, an owner registered offshore) and lines in KYC4U's note
+  (`precheckNote`).
+- **When it runs**: when a BGP person (signed in as themselves) opens the
+  deal's AML card and the party has no run from the last 30 days
+  (`dealPrechecks` from `GET /api/kyc/deal/:id/status`, which returns
+  `prechecks`; the Kick off AML step after New Deal or a handover reads the
+  same status, so a run starts the moment a deal is saved); on **Run again** (`POST /api/kyc/deal/:id/prechecks`, BGP
+  staff only, one party or all); and from KYC4U's prefill (`kyc4uPrefill`
+  starts one if needed and waits up to 20 seconds). Never on a timer or at
+  boot. A daily allowance (`KYC_PRECHECK_DAILY_CAP`, default 40 runs, 0 =
+  off) and `KYC_PRECHECKS=off` stop it. A run is in memory while it goes: a
+  restart loses it and the next view starts it again.
+- **The deal card** (`PartyPrechecks` in `deal-aml-status.tsx`): a
+  **Checked before asking** box per party, reading again every 5 seconds
+  while a run goes, with anything to review listed at once and **Show** for
+  every line (`precheckCardLines`).
+- **A listed company** (the plcs question): Companies House's exemptions
+  resource names the market. A UK or EU regulated market, or DTR chapter 5,
+  is listed on a regulated market (MLR 2017 reg 28(5)): no beneficial owners
+  to ask for, though the company itself is still identified. A market
+  elsewhere (`other_regulated`, `listed_market`) is treated the same but the
+  reason says KYC4U is to confirm the market's disclosure rules are
+  equivalent. AIM is not a regulated market: an AIM company keeps a PSC
+  register and is asked as any other. A company owned through one corporate
+  owner at each level by a listed company (`viaParent`, found by
+  `listedParent`, which reads each level's exemptions first because a listed
+  company keeps no PSC list and the general chain walk stops below it) is
+  treated as listed, and the reason says KYC4U is to confirm the chain: the
+  regulation names the listed company itself.
+- **Ask only what's left** (`precheckAsks`, the one rule; the client checks
+  dialog and `createClientCheck` both call it): listed, no owners chart and no
+  owners' IDs; owners on the register, the client confirms the list instead of
+  sending a chart (a new card on the client page, `POST
+  /api/kyc-upload/:token/owners`, a no needs words, logged as
+  `client_owners_confirmation`, a red flag `owners_differ` and a box in the
+  agents' finished note: report the difference to Companies House, HMRC
+  AMLG11400 14.8), and the owners' IDs step names them; a contact who is a
+  director at Companies House is not asked for authority; a tenant company
+  whose accounts made up within 24 months were downloaded (not dormant) is not
+  asked where the money comes from (a buyer still is); a company not found at
+  Companies House is asked for its overseas register extract. The request
+  records `notAsked` (with reasons), `confirmOwners`, `ownerNames`,
+  `ownersAnswer` and `precheckId`; the dialog lists what was not asked and the
+  agent can tick anything back. With no finished run, the usual list is asked.
+- **The nightly fix**: the nightly Companies House refresh (`runBatchReKyc`
+  → `performAutoKyc`, 120 companies a night) wrote a `kyc_investigations` row
+  with `sanctions_match = false` without screening anyone, so within 30 days
+  it hid an earlier sanctions match from the red flags and the CDD form, which
+  read the latest row. It writes null now, and those readers take the latest
+  row that screened anyone (`SCREENED_INVESTIGATION_SQL`: `sanctions_match`
+  true, or `result.sanctionsScreening` an array). Earlier rows were not
+  changed: the condition reads them correctly.
+- Not run from a build machine against Companies House, Perplexity or
+  ComplyAdvantage (no keys here): the first real run is the first deal card a
+  BGP person opens after the deploy. Not built: a register extract PDF of the
+  Companies House record itself, sanctions screening of officers' other
+  appointments, a check that a listed market abroad is equivalent, and reading
+  trusts, partnerships or charities as anything but a company.
+
+## Emails come from chatbgp.app (Woody, 2026-11-17)
+
+Woody: "just use chatbgp.app for all emails now". Every email the app sends
+goes through `sendFromFirstMailbox` in `server/shared-mailbox.ts` (the old
+`sendFromSharedMailbox`, `sendSharedMailboxEmail`, `sendWorkspaceEmail` and
+the KYC sender all call it): the first address Microsoft takes, in the order
+`senderOrder` gives: a workspace's own (landsec2@chatbgp.app) or the KYC
+mailbox (kyc@chatbgp.app) where there is one, then `APP_MAILBOX`
+(chatbgp1@chatbgp.app unless set), then the shared mailbox
+(chatbgp@brucegillinghampollard.com). An address refused while the next one
+took the same email is skipped for an hour. From the app's address, replies
+go to the shared mailbox (`replyTo`), which the app reads; the KYC and
+Landsec addresses take their own replies. Replies to an email in the shared
+mailbox stay in its thread, from there; staff sending as themselves
+(`/me/sendMail`) are unchanged. Tests: `server/app-mailbox.test.ts`.
+
+- **The app's own addresses are never a person or a firm**
+  (`isAppAddress` in `shared/app-mailbox.ts`; `INTERNAL_DOMAIN_RE` in
+  `server/tracker-correspondence.ts` now matches chatbgp.app): the hourly
+  contact auto-adding, the suggested contacts and the shared inbox reader
+  skip them. A new reader of staff mail must too.
+- **DNS** (set through Porkbun on 17 November 2026, checked live): MX
+  `0 chatbgp-app.mail.protection.outlook.com`, SPF
+  `v=spf1 include:spf.protection.outlook.com -all`, `autodiscover` CNAME to
+  `autodiscover.outlook.com`, DMARC `p=none`.
+- **Microsoft 365, done by Woody on 17 November 2026**: chatbgp.app added
+  and verified (the TXT record `MS=ms36600512` was added at Porkbun through
+  its API; Microsoft found the MX, SPF and autodiscover records already in
+  place), and three shared mailboxes made: `chatbgp1@chatbgp.app`,
+  `kyc@chatbgp.app` and `landsec2@chatbgp.app`. Microsoft numbered the two
+  whose names BGP's Microsoft 365 already uses (the shared mailbox is
+  chatbgp@brucegillinghampollard.com), so the defaults in
+  `server/shared-mailbox.ts` are those three addresses. A display name can be
+  changed in the admin centre without touching the address or the app.
+- **DKIM is not set up** (Woody, 2026-11-17, at the Defender portal: "is
+  there another solution I have to set up a account and everything"): it is
+  optional at BGP's volumes, because SPF passes and aligns for mail sent
+  through Microsoft 365 from chatbgp.app. If emails start landing in spam,
+  turn it on in the Defender portal (security.microsoft.com → Email
+  authentication settings → DKIM → chatbgp.app) and add its two CNAMEs at
+  Porkbun. Nothing has been sent from chatbgp.app from a build machine.
+- **The live KYC sender is kyc@brucegillinghampollard.com** (read from the
+  live admin card on 17 November 2026, when the test request to Jack went
+  from it first time): a Railway variable (`KYC_MAILBOX` or the older
+  `BGP_AML_MAILBOX`) holds that address and wins over the code's default
+  kyc@chatbgp.app. The app's own address on live is chatbgp1@chatbgp.app and
+  the shared mailbox follows it, as in the code. To send client checks from
+  kyc@chatbgp.app, delete that variable on Railway (Woody's).
+
+## Super Brands are BGP's VIP brands (Woody, 2026-11-17)
+
+Woody, on the Brands overview's Super Brands card: "super brand lets have
+those as VIP CRM brands have we got a star or something for those? then we
+know they are prime targets for expansion via our choice ... they get the CRM
+VIP treatment and massive focus?", then "superbrands just has beaverbrooks
+which I know for sure isn't a super brand so its not doing anything". The
+card had listed every brand typed Luxury, Flagship Fashion or Luxury
+Accessories; nobody chose them.
+
+- **The star is the brand's `hunter_flag`**, the hand-set "Hunter pick"
+  until then (described in the schema as "manually flagged as a hot
+  expansion target"). Asked whether Super Brand should be that flag or a new
+  one, Woody sent no answer, so it is the one star (no database change);
+  today's Hunter picks became Super Brands. Splitting them later needs a new
+  column.
+- **Who sets it**: BGP staff signed in as themselves (`contactViewer`), with
+  `POST /api/brands/:id/super-brand { on }` (the state wanted, so a double
+  press holds) or the older toggle `POST /api/brands/:id/hunter-flag`, now
+  staff only too. A client login's brand save (`PATCH /api/brand/:companyId`)
+  has the flag taken out, as "On hold" is. A client login still sees the
+  badge on a brand's page (the brand page's cut kept the Hunter pick).
+- **Screens**: the brand page's header has **Make Super Brand** / **Super
+  Brand** (`SuperBrandStar` in
+  `client/src/components/brand-page/super-brand-star.tsx`, staff only;
+  everyone else `SuperBrandBadge`). Starring a brand on no running CRM
+  strategy opens Start strategy (the kick-off dialog, nothing saved until
+  ticked), and a starred brand with no strategy keeps a Start strategy button
+  beside the star. Brand Hunter's bookmark is the star (and its stat tile and
+  flag filter say Super Brand); Brand Explorer's filter pill is **Super
+  Brands** (`?rel=super` opens on it); the edit form's tick box names it.
+  The Overview's **Super Brands** card lists the starred brands
+  (`superRows` in `server/crm.ts`), each saying No strategy yet until one
+  starts.
+- **The CRM's VIP treatment**: the CRM page's Brands list puts Super Brands
+  first with a star (`superBrand` on `CrmHubRow`, reason "Super Brand"); the
+  Overview's **Watch list** holds every Super Brand, owing "No strategy yet"
+  with a Start strategy button until one starts (`server/crm-watch-list.ts`);
+  the Brand CRM Targets board lists them for BGP staff before they have a
+  line, first, starred (`brandGrid`); and the nightly store count, planning
+  and jobs check, accounts read and signal tidy take them first and
+  re-check them weekly (`watchedSql` in `server/crm-watch.ts`, a running
+  strategy or the star). The Monday brand digest tags them "★ Super Brand".
+- Brand Hunter's own ordering score still adds 25 for the flag (it did as
+  Hunter pick); the Expansion score is untouched.
+- Tests: `qa/regression/super-brand.test.mjs`, `server/super-brand.test.ts`
+  (in `npm test`), `server/crm-hub.test.ts`, `server/brand-scheme-plan.test.ts`
+  (not in `npm test`; its two stale assertions, from the scheme limit of
+  14 November and the category of 16 November, were brought up to date).
+- Not built: ChatBGP setting the star; a separate Super Brand flag beside
+  the Hunter pick.
 
 ## Notes into forms (Woody, 2026-11-13)
 
@@ -2637,6 +3348,10 @@ what was read, fills the form, and saves through the form's own route.
 
 ## Requirements centre (Woody, 2026-11-12) — docs/requirements-review-2026-11-12.md
 
+(Since 17 November 2026 the page is the **Requirements** pill on Brands,
+`/brands?tab=requirements`, for every login; `/requirements` forwards there
+with its parameters. See "The BGP side bar".)
+
 Woody: "the requirements page is just picking up historic requirements
 dragged from a couple of data bases. We need it to be the live requirements
 centre for brands that are expanding to include and pick up on all chats and
@@ -2659,6 +3374,83 @@ Two rules everything else follows (do not re-litigate):
    confirmation date. Nothing, at boot or on a timer, moves a row between
    states or back-fills; back-fills are admin Preview then Apply.
 
+**Every requirement is open to client logins, to read, add and amend**
+(Woody, 2026-11-17: "keep all requirements open for clients and access to
+amend and add"; do not re-litigate). This SUPERSEDES the "One client rule"
+as first written (PIPnet listings only, below) and "Client logins were given
+nothing new" under NOT built.
+
+- **Reading.** Every client login reads every leasing requirement, BGP's own
+  included. `requirementClientVisible()` and `requirementClientVisibleSql()`
+  pass every row (kept so the callers keep one name). Every row sent to a
+  client still goes through `requirementClientCopy`, and every line a client
+  reads is `requirementReason(row).clientText`: what it is and its own date
+  ("PIPnet listing from Sep", "requirement dated 4 Aug", "requirement added
+  12 Nov"), never the state, the BGP owner, or whether, when or by whom BGP
+  confirmed it. So a confirmation writes no requirement date onto any row
+  (`confirmationPatch` in `server/requirement-intake.ts`), and the brand
+  page and the Brand Pack list a client's rows by listed or added date,
+  never live first. One exception, as asked: the BGP take
+  (`openRequirements` in `server/brand-ai-take.ts`, one cached text for
+  staff and clients) words each open requirement with
+  `requirementReason(r).text`, so it may say when one was confirmed, never
+  who (cache policy `:market-listings-1` kept).
+- **Joint agents stay out.** `jointAgentApiDenied` (`shared/landsec.ts`)
+  refuses a joint agent the requirements list, one row, add and edit, the
+  centre routes, the unit Match dialog, the tracker's matching requirements,
+  brand suggestions and the client Agents directory (test in
+  `server/landsec-gateway.test.ts`). Where it still meets requirements,
+  Brand Gap and the target engine at its schemes, it reads PIPnet listings
+  only (`requirementJointAgentVisible[Sql]`, `RequirementReason.listingText`),
+  and Brand Gap's cached commentary, which every login reads, cites PIPnet
+  listings only. `requirementViewer(req)` in `server/landsec-access.ts`
+  answers "staff", "client" or "joint_agent" (a failed read is
+  "joint_agent").
+- **Writing.** A client login adds a leasing requirement and amends any
+  (`POST /api/crm/requirements-leasing` and `PUT …/:id`, opened on the CRM
+  write guard in `server/crm.ts` and on `CLIENT_ALLOWED_WRITES` in
+  `server/index.ts`); `DELETE` stays BGP staff only (403 to any client
+  scope), as do the landlord pack and the agent sweep. One door,
+  `clientRequirementWrite` in `server/crm.ts`: only
+  `CLIENT_REQUIREMENT_FIELDS` (`shared/requirement-live.ts`: name, brand,
+  group, status Active / Past / Archived, contacts, deal, use, type, size,
+  places, comments), and the brand must be a tenant brand the login may see
+  (`isClientVisibleBrand`); never provenance, an owner or a confirmation. A
+  new row is stamped by `clientCreatedStamp`: `origin = 'client'`, the
+  client company's name in `sources` (Source "Client" on BGP's screens), no
+  confirmation and no owner, so it reads To confirm for BGP until a named
+  BGP person confirms it ("client requirement added 17 Nov, not confirmed").
+  A client's edit is never a confirmation. Imports never label or fold into
+  a client's row (`importMayLabel`, `listingTarget`). A login not tied to a
+  client company (`NO_ACCESS_SCOPE`) reads and writes nothing. ChatBGP's
+  `create_requirement` and `update_requirement` stay BGP staff only.
+- **The page.** A client login, and BGP staff viewing as one, get Add
+  requirement and Edit on the client shape (`LeasingFormDialog` with
+  `clientForm`: the brand picked from the brands it may see, no BGP owner;
+  the form opens only once the login is known, `!!reqUser`), and no Delete
+  or centre tools. Brand Gap's Add requirement is open to every login with
+  brand pages (`noBrandPages` keeps it from a joint agent).
+- **Opened with it**: Brand Gap, the target engine (the requirement line is
+  shareable; whether and when BGP confirmed it is `internal`), suggested
+  pitches, brand suggestions, Who's hot, the market commentary, a contact's
+  requirements, the Expansion score's client view ("N requirements on BGP's
+  books"), the brand page and its Tenant rep agents, the Brand Pack (every
+  open requirement), the viewing form (`agentRequirementSql`: any open
+  requirement for a client), the client Agents directory and the Brand CRM's
+  requirement detail (a joint agent still reads only "Requirement held").
+- **Still BGP's**: the whole centre (suggestions and the tray, the evidence
+  drawer and `requirement_evidence`, Still live and Confirm, the owner, Sync
+  tools, the Health report, In the news; every `/api/requirement-suggestions*`
+  and `/api/requirement-centre/*` route) and the unit Match dialog
+  (`/api/requirements/matches/:id`).
+- **Left for Woody**: ChatBGP writes a staff member's note into a
+  requirement's Comments, which a client now reads; only a PIPnet-labelled
+  row is kept free of them (`clientsCanSee` in
+  `server/chatbgp-requirements.ts`). A client also sees each row's
+  `sources` chips (BGP, ChatBGP, News, Viewing, PIPnet). Tests:
+  `qa/regression/client-requirement-access.test.mjs`, with the requirement
+  guards and `qa/two-bot-round.mjs` brought up to the rule.
+
 - **The states**: LIVE = a named BGP person confirmed it within 90 days
   (`REQUIREMENT_LIVE_DAYS`). TO CONFIRM = confirmed 90 days to 12 months ago
   (`REQUIREMENT_TO_CONFIRM_DAYS`, 365), a Draft, BGP's own row nobody has
@@ -2675,8 +3467,9 @@ Two rules everything else follows (do not re-litigate):
   "last edited". Imports never set a confirmation; they set `origin`,
   `external_requirement_id` and `last_listed_at` (forward only) through
   `requirementListingUpdates`. A hand-made row is stamped `origin = 'bgp'`
-  and confirmed by its creator (`bgpCreatedStamp`). Request bodies never set
-  these columns (`stripRequirementProvenance`).
+  and confirmed by its creator (`bgpCreatedStamp`); one a client login makes
+  is `origin = 'client'` and unconfirmed (`clientCreatedStamp`, above).
+  Request bodies never set these columns (`stripRequirementProvenance`).
 - Anything a machine detects is a suggestion in `requirement_evidence`
   (status open), never a live requirement. Staff only: no evidence,
   suggestion, owner or health data goes to a client login.
@@ -2684,7 +3477,8 @@ Two rules everything else follows (do not re-litigate):
   `IDEMPOTENT_SQL_MIGRATIONS`, declared in `shared/schema.ts`; additive
   only): on `crm_requirements_leasing` the columns `last_confirmed_at`,
   `last_confirmed_by`, `last_confirmed_by_name`, `confirmed_how`, `origin`
-  ('bgp' | 'pipnet' | 'trl'; NULL = made before the build),
+  ('bgp' | 'pipnet' | 'trl', and 'client' since 17 November 2026; NULL =
+  made before the build),
   `external_requirement_id`, `last_listed_at`, `last_listed_source`; and the
   one new table `requirement_evidence` (evidence lines and suggestions).
   Existing rows were not back-filled: they have no confirmation, so none of
@@ -2694,7 +3488,8 @@ Two rules everything else follows (do not re-litigate):
   confirmation beside it. Six older paths still insert their own stamped
   requirement rows directly, with no evidence line: the two imports
   (`server/pipnet.ts`, `server/trl.ts`), the Add requirement form
-  (`POST /api/crm/requirements-leasing`), the convert route, the two bulk
+  (`POST /api/crm/requirements-leasing`, a client login's through
+  `clientRequirementWrite`), the convert route, the two bulk
   imports, and Import Anything. Do not add a seventh. Sources
   wired in: PIPnet and The Requirement List imports (market listings,
   stamped, never confirmed), Add requirement on the page, ChatBGP, team chat
@@ -2723,8 +3518,10 @@ Two rules everything else follows (do not re-litigate):
   Same brand and area = the existing requirement is confirmed and added to,
   never a second row; unclear which = nothing saved, the user is asked; an
   unmatched brand = a suggestion only. Chat text is never copied onto a
-  PIPnet-labelled row (client logins see those). An edit is not a
-  confirmation. ChatBGP's search, context and the MCP search read
+  PIPnet-labelled row (`clientsCanSee`, written when client logins read only
+  those; since 17 November 2026 they read every row, so a note ChatBGP adds
+  to any other row's comments reaches them too: Woody's call). An edit is
+  not a confirmation. ChatBGP's search, context and the MCP search read
   `crm_requirements_leasing` with the live rule. The old `requirements`
   table is no longer written or read by chat; its rows reach the centre only
   through `GET /api/admin/requirements-legacy` (preview) then
@@ -2801,9 +3598,10 @@ Two rules everything else follows (do not re-litigate):
   live keeps an earlier conversation or press basis (`nextHow`). A person
   confirming an ownerless row becomes its owner. Dismissals (tray, In the
   news, a draft) show Undo. A client login, and staff
-  viewing as one, get the read-only shape (`clientShape`): Open / Closed, no
-  state, owner, date line, edit or delete. Never show a client the state or
-  who confirmed.
+  viewing as one, get the client shape (`clientShape`): Open / Closed, no
+  state, owner or date line, no Delete and none of the centre's tools; since
+  17 November 2026 it has Add requirement and Edit (`clientForm`, above).
+  Never show a client the state or who confirmed.
 - **Tray, evidence drawer, news Dismiss** (`client/src/components/requirement-centre.tsx`,
   mounted only when `canUseCentre`): `SuggestionTray` sits at the top of To
   confirm and is the ONE place suggestions are answered (do not add a second
@@ -2825,26 +3623,28 @@ Two rules everything else follows (do not re-litigate):
   the state is live. Use `requirementReason(row)` from the live rule for the
   wording ("requirement confirmed 3 Nov", "PIPnet listing from Sep, not
   confirmed"; it never names who confirmed) and `REQUIREMENT_STATE_WEIGHT`
-  for scoring (live 1, to confirm 0.5, background 0.2). **One client rule**:
-  a client login is only ever given rows labelled PIPnet
-  (`requirementClientVisibleSql` / `requirementClientVisible`), by source and
-  month (`reason.clientText`), never the state, never BGP's hand-entered
-  rows. The one addition, on the Requirements list, the single GET and a
-  contact's requirements, is a requirement on the client's OWN company. Any
-  row sent to a client goes through `requirementClientCopy` (no provenance,
-  no BGP owner, no last-edit time), and a confirmation writes no date onto a
-  PIPnet-labelled row: a client must not learn who at BGP owns a listing or
-  when BGP confirmed it. The same rule covers the hub's "Who's hot" query
-  (`hotReqJoin`), the market commentary's activity count, the requirement
-  name on a viewing, and the Expansion score's why-lines and flags
-  (`clientScoreView` / `clientScoreLabel` in `server/hunter-score.ts`). That holds in the target engine (`server/target-tenant-engine.ts`:
-  a PIPnet listing is shareable evidence, everything else about a
-  requirement is `internal`, because saved rationales are read by the
-  landlord), tracker targets and suggested pitches (`server/crm.ts`), space
-  fits (`server/account-teams.ts`), Brand Gap (its cached commentary is read
-  by staff and clients alike, so it carries shareable lines only), the unit
-  Match dialog, the brand page feed, the Brand Pack and the Brands hub. The
-  brand page, pack, Brand Explorer flag and hub tile mean live or to confirm.
+  for scoring (live 1, to confirm 0.5, background 0.2). **One client rule**
+  (rewritten on 17 November 2026, see the top of this section; until then a
+  client login was given only rows labelled PIPnet and its own company's): a
+  client login is given every leasing requirement, by what it is and its own
+  date (`reason.clientText`), never the state and never whether, when or by
+  whom BGP confirmed it. Any row sent to a client goes through
+  `requirementClientCopy` (no provenance, no BGP owner, no last-edit time),
+  and a confirmation writes no requirement date onto any row: a client must
+  not learn who at BGP owns a requirement or when BGP confirmed it (the BGP
+  take is the one exception, above). The same rule covers the hub's "Who's
+  hot" query (`hotReqJoin`), the market commentary's activity count, the
+  requirement name on a viewing, and the Expansion score's why-lines and
+  flags (`clientScoreView` / `clientScoreLabel` in `server/hunter-score.ts`).
+  That holds in the target engine (`server/target-tenant-engine.ts`: the
+  requirement line is shareable evidence, whether and when BGP confirmed it
+  is `internal`, because saved rationales are read by the landlord), tracker
+  targets and suggested pitches (`server/crm.ts`), space fits
+  (`server/account-teams.ts`), Brand Gap (its cached commentary is read by
+  every login, joint agents included, so it cites PIPnet listings only), the
+  brand page feed, the Brand Pack and the Brands hub. For BGP staff the
+  brand page, pack, Brand Explorer flag and hub tile mean live or to confirm;
+  a client's brand page and pack list every requirement that is not closed.
   The expansion score counts an unconfirmed PIPnet or Requirement List import
   as a market listing, never BGP's own (`gatherBgpEvidence`); raise
   `SCORE_VERSION` in `server/brand-triggers.ts` whenever score weighting
@@ -2878,9 +3678,11 @@ Two rules everything else follows (do not re-litigate):
   - **Reading private chat threads and ChatBGP conversations** for
     requirements, and working back through emails already filed (the email
     feed reads new mail only).
-  - **The Landsec view.** Client logins were given nothing new; only leaks
-    of BGP's hand-entered requirements were closed. Slice-limited listings
-    and a share marker need his decision (review, Across the app 4).
+  - **The Landsec view.** Answered on 17 November 2026: every requirement
+    is open to client logins, to read, add and amend (the top of this
+    section). Until then client logins were given nothing new here, and
+    slice-limited listings and a share marker (review, Across the app 4)
+    waited on him; neither is needed now.
   - **The single fit rule.** The six matchers still disagree (Fits column,
     Match dialog, Brand Gap, AI matching, ChatBGP, target engine); he has to
     choose the rule (size alone, or size plus use or place).
@@ -2905,6 +3707,484 @@ Two rules everything else follows (do not re-litigate):
   bindings (sql-tools, brand pack, Brand Gap, target engine, nightly brand
   pass, insights report leg): a new import in those functions needs the
   binding added to the test. Run that suite with `--import tsx`.
+- **Checked across the app (17 November 2026**; Woody: "check that the
+  requirments function speaks properly to the whole app and it works
+  properly"). An audit of every link in and every reader. Fixed:
+  - The leasing page now reads `?requirementId=` (BGP staff get its form, a
+    client login a search for it); ChatBGP receipts, landlord chat and a
+    contact's Requirements list link with it (the contact page used
+    `?highlight=`, which nothing read, and sent investment requirements to
+    the leasing page). "Add a requirement" on the brand pages carries
+    `&new=1`, so the form opens with the brand chosen. A client login was
+    never shown the create form (`createOpen && !clientShape`), and Brand
+    Gap offered "Add requirement" to BGP staff only: both superseded the
+    same day, when clients were given Add and Edit (`createOpen && !!reqUser`
+    with the client form; Brand Gap's button for every login with brand
+    pages). The phone's suggestions alert keeps its `?list=`.
+  - Off the live rule, now on it: the brand plan's requirements (the
+    Schemes and units card, Requirement held), Start strategy's
+    "Requirement on file" (with its state), and the brand page's Tenant rep
+    agents. A client is never told a market listing is a "BGP" or "Live"
+    requirement (brand page headings; the phone list shows the rule's state
+    label to staff only). ChatBGP's investment directions point at
+    Investment → Requirements.
+  - **Client leaks closed.** The BGP take is one cached text that staff
+    and clients read, so it then cited shareable market listings only
+    ("PIPnet listing from Sep", `marketListings` in `server/brand-ai-take.ts`),
+    never BGP's own requirements; takes saved before this stopped being
+    served (cache policy `:market-listings-1`) until the weekly brief or
+    Refresh. (Superseded the same day: the take reads every open
+    requirement, `openRequirements`, the policy unchanged.) The viewing
+    form's agents, represented brands and save check share one rule
+    (`agentRequirementSql` in `server/leasing-viewings.ts`: live or to
+    confirm for staff; any requirement that is not closed for a client,
+    since 17 November 2026). The Brand Pack orders a client's requirements
+    by listing or added date, not live-first.
+  - **Matching by use.** Units hold planning classes (E(b), A3) and
+    requirements hold categories (Restaurant), so Brand Gap, the Match
+    dialog and the tracker's Find matching requirements came back empty for
+    any requirement with a use. They read `requirementUseFits` in
+    `shared/requirement-fit.ts` (the class-to-use map PIPnet's import
+    uses; bare Class E fits every use; a side with no use fits on size
+    alone). The Match dialog offers only units live on the tracker. The
+    Fits column, account space fits and the target engine still match use
+    by words (OR a place): part of the single fit rule, Woody's call.
+  - **Imports fold into open rows only** (`listingTarget` in
+    `shared/requirement-live.ts`): by the listing's own link first, then
+    the brand, newest first, never a closed row. A listing whose own row a
+    person closed stays closed. `importMayLabel` never labels BGP's rows,
+    nor a row made before `origin` existed unless it already carries that
+    import's label. PIPnet rows imported before 12 November and since
+    closed may come back once as Market listings.
+  - Guards: `qa/regression/requirements-app-links.test.mjs`,
+    `requirement-client-leaks.test.mjs`, `requirement-match-dialogs.test.mjs`,
+    `requirement-import-matching.test.mjs`.
+  - Left for Woody: the single fit rule; what a full Landsec login reads on
+    a brand (the take still carries BGP's deal history, and the activity
+    take BGP's investment requirements and board lots); ChatBGP's
+    `sql_write` can still insert a requirement row with any sources (every
+    row is client-visible since 17 November 2026); the Brand CRM's
+    "Requirement held" for joint agents is still read from all of BGP's
+    rows (decision 11; for Landsec logins that is now the rule).
+
+## ChatBGP sets tasks for colleagues from either tool path (2026-11-16)
+
+Woody pasted a ChatBGP conversation (making the agent firm Matta "VIP"
+and planning how leasing engages with it) that ended "the task-assignment
+tool returned Unknown tool: create_task, so tasks have not landed on" the
+two colleagues' lists. ChatBGP has two tool paths in `server/chatbgp.ts`:
+`handleCrmToolCall` (one step) and `executeCrmToolRaw` (a multi-step
+answer). Only the first knew `create_task`. Both now call one rule,
+`createTaskFromChat` (the asker's own list or a named colleague's; a client
+login only within the people on its account). Guard:
+`qa/regression/chatbgp-create-task-paths.test.mjs`. A tool added to one path
+is added to the other.
+
+**ChatBGP starts a CRM strategy** (Woody, 2026-11-16, asked whether "make
+them VIP" should put a company on one: "yes chat should be able to"). In the
+CRM a company is turned on by a strategy. Since 17 November 2026 a brand can
+also carry the Super Brand star (below); ChatBGP's tools do not set it, and
+its tool description sends a user to the star on the brand's page.
+`server/chatbgp-crm-strategy.ts`, two tools, BGP staff signed in as
+themselves only (both on `CLIENT_BLOCKED_TOOLS`, never a joint agent's):
+
+- `start_crm_strategy`: a new strategy (name and objective), or the running
+  one named, or with no name the one strategy the company is already on
+  (`chooseStrategy`); the company's people (only contacts filed under it);
+  and up to 8 first actions, each for a named BGP colleague, on that
+  colleague's My Tasks. Refused on an automated run: a strategy is a
+  person's decision. A name that means two records, an unknown colleague or
+  a new strategy with no objective is a question back and nothing is saved
+  (`pickByName`).
+- `get_crm_plan`: whether a company is on a strategy, its strategies, open
+  actions and events.
+- **It has no save of its own.** The strategy goes through `applyKickoff`
+  (the save behind the Start strategy button) and each action through
+  `createEngagementAction`, so what chat starts is what the page would have
+  started and it shows on the Overview, the Watch list and the Diary. It
+  sends nothing and books nothing. Tests:
+  `server/chatbgp-crm-strategy.test.ts` (in `npm test`) and
+  `qa/regression/chatbgp-crm-strategy-guards.test.mjs`.
+- **The rest of the plan** (Woody, 2026-11-16, on the three things listed
+  as not built: "build it"). Three more tools in the same file, by the same
+  rules (BGP staff as themselves, both on `CLIENT_BLOCKED_TOOLS`, no write
+  on an automated run, no save of their own):
+  - `add_crm_event`: an event for one or more companies (up to 6), through
+    `saveEngagementEvent` in the joined view after the form's own checks
+    (`eventInputSchema`). Date and time are London time (`londonIso`; a
+    date with no time goes in at 09:00 and the reply says so; the hour the
+    clocks skip is refused). No date = a draft under Dates to confirm.
+    Linked to the strategy named, else the ONE running strategy each
+    company is on. Guests are contacts filed under a company on the event,
+    saved as `suggested` only. The same title on the same day is a question,
+    never a second event. **It is a plan: no invitation, nothing in Outlook.**
+  - `update_crm_strategy`: rename, objective, owner, dates, and status
+    (paused, completed, active again), through `saveEngagementStrategy` with
+    every company and person on it kept (`planStrategyChange`) and the
+    version that was read (`expectedUpdatedAt`). The strategy is the one
+    named (a completed one can be named, to reopen it) or the one the
+    company is on (`findStrategy`). It does not add or remove a company.
+  - `update_crm_action`: the STATUS of a CRM action only (done, in progress,
+    to do), through `setEngagementActionStatus` in
+    `server/crm-engagement.ts`, the one door the CRM page's own save now
+    uses too (`PATCH /actions/:id`): the action's owner or the person who
+    set it, nobody else. The action is found by its id (`get_crm_plan`
+    sends each open action's id and `youCanTick`) or the words of its title
+    (`pickAction`).
+  - The five names are one list in each file (`CRM_PLAN_TOOL_NAMES` in
+    `server/chatbgp.ts`, `CRM_PLAN_TOOLS` in the tool file): a new CRM plan
+    tool goes on both, and both tool paths pick it up.
+- Not built: ChatBGP editing or cancelling an event, taking a company off a
+  strategy, or changing an action's title, owner or due date (the engine
+  has no door for the last). None of the five has been asked a real
+  question against a model from a build machine: each was run directly
+  against a local database.
+
+## CRM week: meetings on the events calendar, and Monday's two emails (Woody, 2026-11-16)
+
+Woody: "can you merge CRM meetings with the events calendar in CRM, the CRM
+meeting is great just need to overlay for the week. The directors then want
+a summary of those meetings emailed to them on a monday morning." Asked who
+and what, he answered: the directors' address; no look back at last week;
+and "just landlords at this stage but should also do for brands and agents
+separately and send to" the leasing address. Do not re-litigate.
+
+- **Two books of meetings from the same diaries** (`server/landlord-meetings.ts`,
+  `DiaryBook`): `landlord`, the one CRM Meetings always read, and `leasing`,
+  agent firms and the brands BGP is working (`loadLeasingCatalogue`:
+  `workedBrandIds` in `server/crm-hub.ts`, the Brands list's own rule; never
+  the whole brand directory, never BGP's own record or people). Each has its
+  own store (`landlord_diary_v1:` / `leasing_diary_v1:`), so neither adds to
+  the other, and every privacy rule in that file applies to both (private
+  mailboxes and entries, absences, revocations). The hourly mailbox sync
+  and Check diaries fill both from one read, each failing on its own.
+- **Matching** (`server/landlord-meeting-matching.ts`): a person's email
+  address or their firm's domain matches in both books. The leasing book
+  (`LEASING_MATCHER`) trusts a name in the invitation only when it is two
+  words or more: "Next steps" is not Next. Do not loosen that.
+- **Feeds**, BGP staff only: `GET /api/crm/landlords/meetings/calendar` and
+  `GET /api/crm/leasing-meetings/calendar` (each the whole digest, 30 days
+  back and 90 ahead). A meeting carries `companyKind`.
+- **The calendar** (`client/src/components/crm-engagement/overview.tsx`,
+  the Events calendar on the CRM Overview) opens on a **Week** view and
+  draws those meetings over the CRM's confirmed events, in Week, Month and
+  List: an event is a filled chip, a meeting an outlined one (`MeetingChip`,
+  `MeetingRow`, `MeetingDetail`). The **Meetings** pill switches them off.
+  A meeting follows the company, kind (Landlords / Brands / Agents) and BGP
+  owner filters and steps aside while a strategy or Lenders is picked. It is
+  not a CRM event and is never saved as one. Not on a company page's compact
+  panel.
+- **One set of rules**, `shared/crm-week-ahead.ts` (tests
+  `server/crm-week-ahead.test.ts`, in `npm test`): `groupWeekMeetings` (a
+  diary entry that names two companies is ONE meeting with both names),
+  `leasingSections` (a meeting with a brand and its agent is under Brands;
+  Agents holds the rest), the London day and time, the Monday-to-Sunday
+  week, and each email's subject and body. The calendar and the emails all
+  use it: change a rule there.
+- **Monday's emails** (`server/crm-week-ahead.ts`, job `crm-week-ahead`,
+  Monday 07:30, both editions, one failing never stops the other):
+  **directors** = the week's landlord meetings and the CRM's confirmed
+  events, to the directors' address; **leasing** = the week's meetings with
+  brands and with agents, no CRM events, to the leasing address. Week ahead
+  only. `CRM_WEEK_AHEAD_TO` / `LEASING_WEEK_AHEAD_TO` (a comma list) move
+  one and `off` stops it; an address outside BGP's own domain is dropped
+  whatever a setting holds. Every word from a diary is escaped and the only
+  links are to the app. **A request never names a recipient**: admins have
+  `GET /api/admin/crm-week-ahead` (both emails as they stand, and who gets
+  them) and `POST …/:edition/send-me` (a copy to the admin who pressed it),
+  from "See this week's emails" on CRM Meetings. Guards:
+  `qa/regression/crm-week-ahead-guards.test.mjs`. Neither has been sent
+  through Microsoft from a build machine, and the leasing book holds nothing
+  until the first hourly sync after it goes live.
+- Not built: lender meetings; a list of brand and agent meetings on the CRM
+  Meetings tab (they are on the calendar and in the email).
+
+## Investment Tracker: the top folds away (Woody, 2026-11-16)
+
+Woody, presenting the tracker in a meeting: "everything stays at the top
+when scrolling can you think about how we solve that", then "ok go ahead".
+The title, search, status pills, class pills, two drop-downs and the charts
+line were all fixed above the table, which was left about a third of the
+screen. On a computer (`client/src/pages/investment-tracker.tsx`; a phone
+is unchanged, its whole page scrolls):
+
+- **The top is two lines.** The title line (Purchases / Sales, the count,
+  Activity charts, Present, Add Asset), then the search, the status pills on
+  ONE line (`PillLine`: an arrow at either end and the mouse wheel reach the
+  rest; never let them wrap again) and **Filters**: Class, Tenure and Agent
+  in one popover, with a count on the button and a chip per filter in use
+  (`filterChips`). Class and Tenure are also on their column headings.
+- **Scrolling the table folds the top to one line** (`folded`, drawn as
+  `foldedTop`; `data-folded` on `tracker-top`): title, board, search, the
+  chips, Filters, Show all, Add Asset. It folds past 48px and opens when the
+  table is scrolled back to its top, on a wheel-up at the top, or from Show
+  all. Folding makes the table taller, which can pull a short list back to
+  its top, so a return to the top within 400ms of folding is ignored
+  (`foldedAtRef`); a sideways scroll at the top is not a return to the top
+  (`lastTopRef`). Keep both or the top flickers.
+- **The Present window is the table alone** (Jack, 2026-11-16, built by
+  another session the same morning and kept as it was in the merge): the
+  title, Purchases / Sales, the count and a search box, no pills, filters,
+  charts or Add Asset, with the size buttons and Full screen floating bottom
+  right. Nothing there folds (`foldedTop` is never true when `present`). Its
+  board is pinned to the four edges of the window (`absolute inset-0` with
+  the zoom, in `investment-tracker-present.tsx`): the percentage height it
+  had left the board short of the bottom at every size but 100%.
+  `ScrollableTable` takes `fill` there: no measured cap, because one
+  measured in window pixels is the wrong size inside a zoom.
+- Guards: `qa/regression/investment-tracker-top.test.mjs`. The Letting
+  Tracker and the Deals table have the same fixed top and have NOT been
+  changed: waiting on Woody.
+
+## Investment Comps (Jack, 2026-11-16)
+
+`/investment/comps` (`client/src/pages/investment-comps.tsx`, table
+`investment_comps`) holds **completed investment sales only**. Jack's rules:
+lettings are not comps; refinancings are deleted; a live deal (pending,
+under offer, quoting, on the market) belongs on the Investment Tracker until
+it sells. **Subtype is the tracker class** (Retail - London, Office London,
+Retail Parks ... `TRACKER_CLASSES`); Type is not used and has no column. The
+one class rule is `compTrackerClass` in `shared/tracker-class.ts` (the
+tracker's `trackerClass` moved there; `client/src/lib/tracker-class.ts`
+re-exports it). The page lists by class, newest sale first.
+- Sale evidence is written by ONE door, `fileSaleEvidence` in
+  `server/investment-sale-evidence.ts` (find-first, so RCA, the tracker and
+  ChatBGP do not duplicate a sale). A tracker row moves to Comps through
+  Sold - Comp (row or bulk Change status). Buyers come from Green Street and
+  public web sources, never Land Registry (each check costs money).
+- ChatBGP's `file_investment_comps` refuses under offer / quoting and sends
+  them to the tracker. The RCA import skips refinancings and pending deals
+  and sets Subtype to the class.
+- The clean-up of 16 November (`server/investment-comp-cleanup.ts`, admin
+  `POST /api/admin/investment-comp-cleanup/preview|apply|undo`): lettings and
+  refinancings deleted, live deals back to the tracker (a Sold - Comp row
+  restored, a building already on the tracker filled, else a new Purchases
+  row at U/O - Not BGP or Available), duplicates merged (same building and
+  deal; the newest record kept, blanks filled from the older), Subtype set
+  to the class. Logged in `investment_comp_migration_log` (batch
+  `comp-cleanup-<time>`); Undo puts every row back. Terminated, withdrawn and
+  blank-status comps are left for Jack.
+
+## Investment Research (Jack, 2026-11-17)
+
+`/investment/research` (`client/src/pages/investment-research.tsx`,
+`server/investment-research.ts`): the investment team's research library,
+filed by sector (General or a tracker class). Files are `knowledge_base` rows
+(source `investment-research`, category = sector), so ChatBGP's knowledge
+search reads their text (PDF, Word, PowerPoint, Excel, text; OCR for a
+scanned PDF where set up). BGP staff only on every route.
+- **Choose for me** (the upload default) files each document by its name,
+  then its text (`shared/research-sector.ts`, rules only); mixed or unclear
+  goes to General.
+- **Order**: the first batch (added before 10:59 UTC on 17 November 2026)
+  is listed flipped, as Jack added it in reverse; files added since sit on
+  top, newest upload first. Jack asked for exactly this: not by
+  publication date.
+- **Key points** (`server/investment-research-intel.ts`, checks
+  `shared/research-read.ts`, tests `server/research-read.test.ts`): each
+  paper is read once by Anthropic (called directly, cap
+  `RESEARCH_READER_DAILY_CAP`, default 100, 0 = off) on upload, or in the
+  background when the tab is opened (never on a timer): publisher, month,
+  headline, summary, outlook and up to 12 figures, each kept only when its
+  quote is in the paper and the figure in the quote. A scanned PDF with no
+  text is read from its pages and the words read become its text. Kept in
+  `investment_research_reads` (made by the module if missing). Read again
+  per row.
+- **ChatBGP** `get_market_research` (on `CLIENT_BLOCKED_TOOLS`, both tool
+  paths): the read papers by sector or word, newest publication first.
+- **Insights feed**: a paper published in the last 12 months (or a new
+  upload with no date) is posted once as a staff-only card (audience
+  `staff`, source_kind `research`, "BGP research"); clients never see it.
+
+## The BGP side bar (Woody, 2026-11-16)
+
+Woody tidied the BGP staff side bar. His words, in order: "folder business
+card and Expenses / my card into each persons individual HR panel and call
+it my BGP", "not people and HR", "Website goes to admin", "brand CRM is
+already folded into Brand intelligence? can it be the same as Landsec and
+just be brands", "move investment requirements out of requirements and put
+into investment side panel", "hide lease advisory and investment from all
+leasing teams shopping centre london estates high street city and tenant
+rep". Do not re-litigate. Guards: `qa/regression/staff-menu.test.mjs`.
+
+- **Brands** is one entry (`/brands`), as on the Landsec menu; the Brand CRM
+  is its pill (`/brands?tab=crm`) and has no side bar link. The page's title
+  reads Brands. Brand CRM's three views stay as they are.
+- **My BGP** (`/my-bgp`, `MyBgpPage` in `client/src/pages/hr.tsx`) is the
+  person's own HR profile (`StaffProfile` with `myBgp`): Personal, My stuff,
+  Reviews, Career, **Card & expenses** (`MyCardAndExpenses embedded` from
+  `my-expenses.tsx`, then the year's analysis without its ledger link) and
+  **Business card** (`BusinessCardPanel embedded` from `business-card.tsx`),
+  then CV. The same two pills show on your own profile from People & HR.
+  People & HR stays the team directory. `/my-expenses` and `/business-card`
+  still open on their own (expense notifications, the public card's back
+  link and old links) and light My BGP (`MY_BGP_PATHS`). The phone home's
+  Boards have My BGP and no Business card tile, and the Business card row
+  on the phone's My Profile opens `/my-bgp?tab=business-card` (Woody, same
+  day: "Fold into my BGP", superseding the one-tap tile of 2026-09-28).
+  Staff only: not on `CLIENT_ALLOWED_ROUTES`.
+- **People & HR is renamed My BGP, and is the one entry** (Woody,
+  2026-11-17: "put MY BGP above this when coming via the people and HR page
+  and remove the my BGP link from the side bar and rename People and HR to
+  my BGP"). The side bar and the phone list have one **My BGP** entry, to
+  `/hr` (the people page, now titled My BGP), lit on `/hr`, `/my-bgp`,
+  `/my-expenses` and `/business-card`; the separate `/my-bgp` entry and the
+  phone's People & HR tile are gone (`/my-bgp` still opens your own page,
+  for the phone's My Profile row and old links). Your own profile carries
+  the My BGP heading whether opened from the people page (with Back) or at
+  `/my-bgp` (`myBgp || isOwn` in `StaffProfile`).
+- **KYC4U is a pill on My BGP for admins** (Woody, same day: "KYC4U put in
+  the People and HR page"): `Kyc4uPanel` in the people page's tabs
+  (`?section=kyc4u` opens it), off the More group and the phone list.
+  `/kyc-clouseau` and its old aliases still open the KYC4U page, so the
+  bookmark install and old links work.
+- **Website** is in the Admin group (`adminNavBase`; admin only on the phone
+  list). Its routes are unchanged (`requireAuth`): the page still opens by
+  its address.
+- **Requirements is a pill on Brands for every login** (Woody, 2026-11-17:
+  "put requirements in the brands section for everyone"):
+  `/brands?tab=requirements`, after Brand Explorer, on a computer and on a
+  phone, for BGP staff, Landsec and every other client login (the page still
+  decides what a client sees: its read-only Open / Closed list). It is off
+  the staff side bar and the phone list. `/requirements` forwards there with
+  every parameter it carried (`RequirementsToBrands` in `App.tsx`), so the
+  links the app writes keep working; the page draws `embedded` there, under
+  the Brands title. A joint agent has no Brands, as before.
+- **Reporting and Board Report are Finance → Fees & pipeline** (see "Finance:
+  one money page" below): off the More group and the phone list;
+  `/reporting` and `/board-report` open `/finance?tab=pipeline`.
+- **Investment requirements live only under Investment**
+  (`/investment/requirements`, which honours `?requirementId=` and
+  `?team=`). The Requirements page is leasing only, with a line pointing to
+  Investment; an old `/requirements?type=investment` link is sent on by
+  `investmentRequirementsHref` with its requirement, team and "new". Links
+  the app writes (landlord pages, landlord chat receipts, the dashboard
+  widget, the agent relationship card) point straight at Investment.
+- **The leasing teams and Tenant Rep have no Lease Advisory or Investment**
+  on the side bar, the phone list or the Deals tabs: `leasingSideOnly` in
+  `shared/teams.ts` (every one of the login's BGP teams, `team` plus
+  `additionalTeams`, is Shopping Centre, London Estate, High Street, City or
+  Tenant Rep; "Landsec" on a login is the client view it may switch to and
+  does not count). Anyone also in Investment or Lease Advisory (Pete Wood) and
+  anyone with no team (the board, support, consultants) keeps both. Entries
+  only: the pages still open by their address.
+- **Picking a team shows that team's view** (Woody, 2026-11-17: "its my
+  view when I click on a team i should see what they see but I dont"). In
+  `app-sidebar.tsx`: the two entries are also hidden while the team switcher
+  is on a leasing-side team (`leasingSideOnly([activeTeam])`); while it is on
+  a BGP team that is not one of the login's own (`viewingAsTeam`), an
+  admin's More and Admin groups step aside for one line, "More and Admin are
+  under All Teams"; and a leasing-side login's switcher does not list
+  Investment or Lease Advisory. Pages are not cut by the switcher beyond what
+  they already filter by team (an admin still sees admin buttons on a page,
+  such as Add staff on People & HR).
+- **People & HR overview: both columns end level** (Woody, same day: "fix
+  this so they line up at the bottom"). `hr-overview.tsx`: the Brucey Bonus
+  and Hunger Games boards are `lg:flex-auto` (their own height, sharing only
+  spare height; `lg:flex-1` made them equal, so Hunger Games stretched to
+  the long Brucey Bonus board and the column ran past the Teams card), and
+  the Teams card is `lg:flex-1` in a flex column, so it reaches the foot of
+  the row when the left side is taller. Guard:
+  `qa/regression/hr-overview-columns.test.mjs`.
+- **Brand CRM is Targets only for BGP staff** (Woody, same day: "1 and 2
+  yes"): its Diary and Strategies and events were the CRM page's own views
+  narrowed to brands. See the Brand CRM section.
+- **My Tasks matches the Landsec Tasks page** (the "2" of the same answer):
+  a Waiting on you card first (the longest wait first, each task once, not
+  repeated in Overdue or the list), numbers on the status pills and the
+  summary, a checklist task's property and unit, Deal checklist, stage and
+  Required chips and Open the checklist, a tick shown at once and put back
+  if the save fails (then the checklist and deal clock are read again), a
+  40px tap area round the tick, and "could not be loaded" with Try again in
+  place of "All clear!". Everything My Tasks had stays.
+- **Approvals is in Admin** (Woody, 2026-11-17: "move approvals into
+  admin"). For an admin the entry (`approvalsEntry`, shown only while
+  something waits for that person's approval) sits in the Admin group beside
+  Expenses, and its count shows beside the word Admin while the group is
+  closed (`closedBadge` on `NavSection`); Expenses is not lit beside it on
+  the approvals page. Every approver today (Wendy's Accounts login, Layla,
+  the directors) is on `ADMIN_EMAILS` and gets it there; an approver who is
+  not an admin has no Admin group, so theirs would stay in Core. The phone home's "N expenses to approve"
+  card is unchanged.
+- **The Investment team has no Brands** (Woody, 2026-11-17: "move brands
+  out of investment side panel"): `investmentSideOnly` in `shared/teams.ts`
+  (every one of the login's BGP teams is Investment: Jack Barratt, Nick
+  Halley, Jonny Palmer), `INVESTMENT_SIDE_HIDDEN_URLS`. On the side bar the
+  team on the switcher decides when it is a BGP team (viewing as Investment
+  hides Brands; an Investment login viewing a leasing team sees that team's
+  menu), else the login's own teams; the phone list reads the login's teams,
+  as the leasing rule does. Entries only: `/brands` still opens.
+
+**The People & HR staff list masks personal fields** (16 November 2026,
+found while building My BGP): `GET /api/hr/staff` sent every login each
+colleague's salary, emergency contact, holiday allowance and days, pension
+and contract / passport links (the screens hid them). It now masks exactly
+what `GET /api/hr/staff/:userId` masks, for anyone but an admin or the
+person. `qa/regression/hr-staff-masking.test.mjs` holds the two lists in
+step: a new personal field is masked on both.
+
+## Finance: one money page (Woody, 2026-11-17)
+
+Woody: "can you fold reporting and board report in to finance trya nd make
+it sync and to the point there is so much going on its overhwelming and it
+defo double counts". Asked, he chose "Neg & HOTs 50%, SOL+ 100%" for every
+pipeline figure, "Xero invoices, May–April" for fees billed and "Keep money
+only". Do not re-litigate. Guards: `qa/regression/finance-one-rule.test.mjs`.
+
+- **One pipeline rule**, `shared/finance-pipeline.ts` (`PIPELINE_WEIGHTS`,
+  `pipelineStage`): Negotiating and HOTs 50%; Solicitors, Exchanged and
+  Completed-not-yet-invoiced 100%; an invoiced deal (a Xero invoice raised
+  against it at any stage, or INV) is Xero income only, never the book;
+  withdrawn, archived,
+  Marketing and earlier never count; an investment deal counts from
+  Solicitors (`isProvisionalFee`). Before this there were four sets of
+  weights (the outlook NEG 50/SOL+ 100, the dashboard's projection NEG 50 /
+  SOL 75 / EXC 90, forward commission NEG 50 / SOL 75, Reporting and Board
+  Report every deal's full fee by calendar year) and HOTs dropped out of all
+  of them. The cash flow projection (`buildDealProjection`), the Xero WIP
+  forecast (`buildWipForecast`), forward commission (`FORWARD_WEIGHTS` from
+  `FORWARD_COMMISSION_STAGES`: NEG, HOT, SOL; EXC, COM and INV are in the
+  statements), the outlook's stage list and Fees & pipeline all read it.
+  Never write a weight anywhere else.
+- **One book**: `loadBookDeals` in `server/finance-board.ts` is the query
+  behind both the cash flow projection and Fees & pipeline.
+- **The page is six pills** (`FINANCE_TABS` in `client/src/pages/finance.tsx`,
+  `?tab=`, a pill change replaces the address): **Overview** (the four Xero
+  headline stats and the Company outlook, whose deal book is now one line
+  with a Fees & pipeline link), **Fees & pipeline**
+  (`client/src/components/finance-board.tsx`, `GET /api/finance/board`):
+  the deal book weighted and at full fee, expected this year (with no date
+  and after 30 April named, so the parts add up), invoiced this year, the
+  stage rows with their deals, by team (a deal on several teams is shared
+  equally, `teamShares`, so the teams add up to the book), by deal type, the
+  ten largest deals, fees by agent (invoiced this year and the weighted
+  book, each shared by the deal's fee split; BGP House's slice is its own
+  line, never an agent; invoices with no deal or no split are named) and
+  **Download Excel** (`GET /api/finance/board.xlsx`, the board pack: Summary,
+  By stage, By team, By deal type, Deals, Fees by agent, Invoiced by month);
+  **Cash flow**; **Commission** (statements and Equity partners);
+  **History** (Historical billings); **Spend** (card spend, app costs). Both
+  routes are `requireEquityOrAdmin`, like the rest of Finance.
+- **Fees billed** = Xero sales invoices (AUTHORISED or PAID) dated in the
+  financial year, ex VAT: `fyInvoices` from `buildFinancials`, kept on the
+  server (`forReply` strips it from `/api/xero/financials` and the saved
+  last-good copy). Deals never add to fees billed.
+- **Dropped on purpose** (Woody: "keep money only"): record counts
+  (contacts, properties, deals), the leasing activity trend, conversion
+  rate, average deal size, time-to-close charts and the news panel. The old
+  `/api/board-report` and its Excel export (all deals, any status, a deal
+  counted once per team) are deleted; `client/src/pages/reporting.tsx` and
+  `board-report.tsx` too.
+- **The dashboard and phone match Finance**: the Equity Finance widget and
+  the phone's Company tile take the deal book and the projected year from
+  the Company outlook itself (`useCompanyOutlook` in
+  `client/src/lib/use-company-outlook.ts`: the same queries, builder and Xero
+  fallback as the page). The server's old `projection` (income + weighted
+  book − a Xero cost run rate) is retired: it disagreed with the outlook.
+  The widget's "Cost run rate" tile went with it.
+- Not changed: the WIP report and `/api/wip/agent-summary` (the WIP
+  schedule's own view, every WIP status at full fee), and the commission
+  statements' billings (fee due at exchange or completion, Woody's scheme).
 
 ## Document design preferences (the "house style" pattern)
 
@@ -3067,7 +4347,20 @@ it as `Authorization: Bearer $BGP_QA_TOKEN` for API calls, or set
 `localStorage.bgp_auth_token` in a Playwright page (Chromium at
 `/opt/pw-browsers/chromium`) to screenshot and measure pages across a
 spread of brands after a UI change. It acts as Woody: stick to reading
-pages and don't trigger paid refreshes or send anything.
+pages and don't trigger paid refreshes or send anything (unless Woody asks
+for that one thing, as he did on 17 November 2026 for the KYC test to Jack).
+
+**Use the Railway address, not chatbgp.app** (found 17 November 2026). The
+web session's proxy has a stored credential for chatbgp.app and writes it
+into the `Authorization` header of every request there, over any token sent;
+that stored credential is stale, so every call to chatbgp.app answers 401
+(`/mcp` with no header answering "Invalid API key" rather than "Missing
+Authorization header" is how this was proved). The same live app answers at
+`https://bgp-wip-app-production-efac.up.railway.app`, where nothing is
+injected and `BGP_QA_TOKEN` signs in as Woody. Use that address for API
+calls and Playwright checks. Replacing or removing the chatbgp.app entry in
+the environment's Network secrets would fix the main address; that is
+Woody's, in the environment settings.
 
 **If chatbgp.app answers 401 to a token that should work** (found
 16 November 2026): look at the reply's headers. `X-Proxy-Error: upstream

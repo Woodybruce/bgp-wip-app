@@ -140,7 +140,15 @@ import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DE
 import { lastContactCell, lastContactSortValue, type LastContactSource } from "@shared/last-contact";
 import { stageDaysLabel } from "@shared/stage-since";
 import { dealListSeed } from "@shared/landsec-menu";
-import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, TENANT_REP_TYPES, PRE_MARKETING_STATUSES, isTrackerLiveStatus, LETTING_STATUS_LABELS, statusLabelsFor, dealStatusLabel } from "@shared/letting-rules";
+import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, TENANT_REP_TYPES, PRE_MARKETING_STATUSES, isTrackerLiveStatus, LETTING_STATUS_LABELS, statusLabelsFor, dealStatusLabel, DEFAULT_LETTING_TYPE, LEGACY_LETTING_TYPES } from "@shared/letting-rules";
+import { NoteFill } from "@/components/letting-note/note-fill";
+import type { LettingNoteReading } from "@shared/letting-note";
+import type { HotsConversion, HotsConvertDefaults } from "@shared/unit-hots";
+import { hotsCall } from "@/components/unit-hots/hots-api";
+import { dealNotePatch, noteTenant } from "@/lib/deal-note";
+import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
+import { SendClientChecksButton } from "@/components/kyc-client-checks";
+import { useDealAmlStatus } from "@/components/deal-aml-status";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
 import { JointAgencyWidget, JointAgencyRegisterDialog, jointAgencyMissing, jointAgencyPayload, EMPTY_JOINT_AGENCY, type JointAgencyState } from "@/components/joint-agency-aml";
 
@@ -677,9 +685,12 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     basementAreaSqft: parseNum(form.basementAreaSqft),
     gfAreaSqft: parseNum(form.gfAreaSqft),
     ffAreaSqft: parseNum(form.ffAreaSqft),
+    // The floors' sum when any floor is given, else the total typed or read
+    // into the form (the one deal form's lease terms, a unit's size): a deal
+    // with no floor areas no longer saves its total area as blank.
     totalAreaSqft: (() => {
       const t = (parseNum(form.basementAreaSqft) || 0) + (parseNum(form.gfAreaSqft) || 0) + (parseNum(form.ffAreaSqft) || 0);
-      return t > 0 ? t : null;
+      return t > 0 ? t : parseNum(form.totalAreaSqft);
     })(),
     itzaAreaSqft: parseNum(form.itzaAreaSqft),
     pricePsf: parseNum(form.pricePsf),
@@ -688,7 +699,9 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     capitalContribution: parseNum(form.capitalContribution),
     rentFree: parseNum(form.rentFree),
     leaseLength: parseNum(form.leaseLength),
-    breakOption: parseNum(form.breakOption),
+    // Words ("Tenant break at year 5"), as the column and the Heads of Terms'
+    // convert keep it: a number-only read blanked a worded break on save.
+    breakOption: form.breakOption.trim() || null,
     instructedAt: form.instructedAt || null,
     targetDate: form.targetDate || null,
     exchangedAt: form.exchangedAt || null,
@@ -1961,7 +1974,19 @@ function SimplifiedCreateBody({
   nameAutoFilled, setNameAutoFilled, hideFees = false,
   onUnitPicked, liveLettingRow, onUseLiveDeal,
   jointAgency, setJointAgency, jointAgencyErrors, signedBy,
+  place = null, hotsUnitId = null, hotsOnFile = null, tenantHint = null,
 }: {
+  // A handover (Promote, the Heads of Terms' Convert): the property and unit
+  // are the tracker unit's, shown as one line in place of the pickers.
+  place?: { propertyName: string; unitName: string } | null;
+  // Promote: Add heads of terms also files the document on this tracker unit
+  // as its final agreed Heads of Terms (Woody, 2026-11-17: "allow for add HOTs
+  // which should also then file and populate").
+  hotsUnitId?: string | null;
+  // Convert: the final Heads of Terms are already on file, so no upload.
+  hotsOnFile?: string | null;
+  // A brand the box at the top read that the tenant picker does not list.
+  tenantHint?: string | null;
   jointAgency: JointAgencyState;
   setJointAgency: (s: JointAgencyState) => void;
   jointAgencyErrors: boolean;
@@ -2131,6 +2156,16 @@ function SimplifiedCreateBody({
   const handleHotsFile = async (file: File) => {
     setHotsBusy(true);
     try {
+      // On a tracker unit the document is filed first, through the Heads of
+      // Terms flow's own upload (file type hots_final, never public, moves no
+      // status), then read into the form as on New Deal.
+      if (hotsUnitId) {
+        const filing = new FormData();
+        filing.append("file", file);
+        await hotsCall("POST", `/api/unit-hots/${encodeURIComponent(hotsUnitId)}/final`, filing);
+        queryClient.invalidateQueries({ queryKey: ["/api/unit-hots", hotsUnitId] });
+        queryClient.invalidateQueries({ queryKey: ["/api/available-units", hotsUnitId, "files"] });
+      }
       const fd = new FormData();
       fd.append("file", file);
       const r = await fetch("/api/crm/deals/parse-hots", { method: "POST", credentials: "include", headers: getAuthHeaders(), body: fd });
@@ -2153,7 +2188,8 @@ function SimplifiedCreateBody({
       const propId = form.propertyId || matchProperty(ex.propertyAddress);
       if (propId && propId !== form.propertyId) pickProperty(propId);
       const str = (v: unknown) => (v === null || v === undefined || v === "" ? "" : String(v));
-      const patch: Record<string, any> = { status: "HOT" };
+      // New Deal starts at HOTs; a handover stays at Solicitors.
+      const patch: Record<string, any> = place ? {} : { status: "HOT" };
       const validType = typeof ex.dealType === "string" && [...LETTING_DEAL_TYPES, ...TENANT_REP_TYPES, ...ADVISORY_UNIT_TYPES, "Purchase", "Sale"].includes(ex.dealType);
       if (!form.dealType && validType) patch.dealType = ex.dealType;
       const tenantId = matchCompany(ex.tenantName);
@@ -2185,7 +2221,12 @@ function SimplifiedCreateBody({
       }
       const fields = Object.values(ex).filter(v => v !== null && v !== "" && !(Array.isArray(v) && v.length === 0)).length;
       setHotsParsed({ fileName: file.name, fields });
-      comboToast({ title: "Heads of terms read", description: `${fields} details filled from ${file.name} — check them, then Create. The deal starts at HOTs.` });
+      comboToast({
+        title: hotsUnitId ? "Heads of terms filed and read" : "Heads of terms read",
+        description: place
+          ? `${fields} details filled from ${file.name}${hotsUnitId ? ", now on the unit as the final agreed Heads of Terms" : ""} — check them, then save.`
+          : `${fields} details filled from ${file.name} — check them, then Create. The deal starts at HOTs.`,
+      });
     } catch (e: any) {
       comboToast({ title: "Couldn't read the heads of terms", description: e?.message || "Try again", variant: "destructive" });
     } finally {
@@ -2193,6 +2234,9 @@ function SimplifiedCreateBody({
       if (hotsInputRef.current) hotsInputRef.current.value = "";
     }
   };
+
+  // The landlord's or brand's name, for its billing entity box.
+  const partyName = (id: string, fallback: string) => companies.find(c => c.id === id)?.name || fallback;
 
   const toComboItems = (list: CrmCompany[]) => {
     // SubLabel = legal/contracting entity ("Land Securities Group Plc"
@@ -2227,14 +2271,17 @@ function SimplifiedCreateBody({
           — adding a unit there auto-creates a backing deal and links
           them. Flag this up so Layla doesn't add a marketing-stage deal
           here by mistake. */}
+      {!place && (
       <div className="text-[11px] text-muted-foreground bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-md px-3 py-2 leading-snug">
         New Deal creates a <strong>Solicitors-stage</strong> deal on the CRM kanban.
         For marketing / viewings / negotiating units, use the{" "}
         <a href="/deals/letting" className="underline">Letting Tracker → Add Unit</a> instead.
+        A unit already on the Letting Tracker moves to Solicitors from its row there, never as a new deal.
       </div>
+      )}
       {/* Secondment has no property — the deal is a person placed with a
           landlord, so the picker is hidden and the deal is named manually. */}
-      {!isSecondment && (
+      {!isSecondment && !place && (
       <FindUnitSearch
         propertyId={form.propertyId}
         onPick={(row) => {
@@ -2252,12 +2299,17 @@ function SimplifiedCreateBody({
         }}
       />
       )}
-      {!isSecondment && (
+      {!isSecondment && !hideFees && hotsOnFile && (
+        <p className="text-[11px] text-muted-foreground" data-testid="deal-hots-on-file">
+          Final Heads of Terms on file: <span className="font-medium text-foreground">{hotsOnFile}</span>. The tenant and terms below come from the agreed offer: check them against it.
+        </p>
+      )}
+      {!isSecondment && !hideFees && !hotsOnFile && (
         <div className="space-y-1">
           <input
             ref={hotsInputRef}
             type="file"
-            accept=".pdf,.docx,.doc,.txt,.rtf,.md"
+            accept={hotsUnitId ? ".pdf,.docx" : ".pdf,.docx,.doc,.txt,.rtf,.md"}
             className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleHotsFile(f); }}
             data-testid="input-add-hots"
@@ -2276,12 +2328,20 @@ function SimplifiedCreateBody({
           </Button>
           <p className="text-[11px] text-muted-foreground">
             {hotsParsed
-              ? <>Read {hotsParsed.fileName}: {hotsParsed.fields} details filled below and the deal set to HOTs — check them before Create.</>
-              : <>Upload the HOTs (PDF or Word) and the form fills itself; the deal starts at HOTs.</>}
+              ? <>Read {hotsParsed.fileName}: {hotsParsed.fields} details filled below{place ? "" : " and the deal set to HOTs"} — check them before {place ? "you save" : "Create"}.</>
+              : hotsUnitId
+                ? <>Upload the final agreed HOTs (PDF or Word): they are filed on the unit and the form fills itself.</>
+                : <>Upload the HOTs (PDF or Word) and the form fills itself; the deal starts at HOTs.</>}
           </p>
         </div>
       )}
-      {!isSecondment && (
+      {place && (
+        <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm" data-testid="deal-handover-place">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Property and unit</span>
+          <div className="break-words">{place.propertyName} — {place.unitName}</div>
+        </div>
+      )}
+      {!isSecondment && !place && (
       <div>
         <Label>Property *</Label>
         <PropertyCombobox
@@ -2412,7 +2472,7 @@ function SimplifiedCreateBody({
           ...ADVISORY_UNIT_TYPES,
           ...LETTING_DEAL_TYPES,
         ]);
-        if (!UNIT_LEVEL_TYPES.has(form.dealType)) return null;
+        if (place || !UNIT_LEVEL_TYPES.has(form.dealType)) return null;
         const unitOptions = propertyUnits.filter(pu => !form.propertyId || pu.propertyId === form.propertyId);
         const isLetting = (LETTING_DEAL_TYPES as readonly string[]).includes(form.dealType);
         return (
@@ -2471,9 +2531,9 @@ function SimplifiedCreateBody({
               onCreate={createLandlord}
               createLabel="landlord"
             />
-            {form.landlordId && (
+            {form.landlordId && !hideFees && (
               <div>
-                <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                <Label className="text-[10px] text-muted-foreground">Billing entity for {partyName(form.landlordId, "the landlord")} (Xero)</Label>
                 <XeroContactPicker
                   testIdPrefix="deal-landlord-entity"
                   value={form.landlordEntityId || null}
@@ -2485,6 +2545,7 @@ function SimplifiedCreateBody({
                       landlordEntityName: c?.Name || "",
                     }));
                   }}
+                  createFor={{ id: form.landlordId, name: partyName(form.landlordId, "the landlord") }}
                   compact
                 />
               </div>
@@ -2503,9 +2564,18 @@ function SimplifiedCreateBody({
               onCreate={createTenant}
               createLabel="tenant"
             />
-            {form.tenantId && (
+            {tenantHint && (
+              <p className="text-[11px] text-muted-foreground" data-testid="deal-note-brand">
+                Brand read as <span className="font-medium text-foreground">{tenantHint}</span>. Pick it above if it is the tenant.
+              </p>
+            )}
+            {form.tenantId && !hideFees && (
               <div>
-                <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                <Label className="text-[10px] text-muted-foreground">Billing entity for {partyName(form.tenantId, "the tenant")} (Xero)</Label>
+                {/* Linked to the party (Woody, 2026-11-17: "tenant and Landlord first then the billing entity comes up
+                    linked to that tenant or landlord"): the companies filed under it first, and Create billing entity
+                    finds a new one at Companies House, files it under it and adds it to the firm's Xero. BGP staff only:
+                    Xero is BGP's, and a client login cannot reach it. */}
                 <XeroContactPicker
                   testIdPrefix="deal-tenant-entity"
                   value={form.tenantEntityId || null}
@@ -2517,6 +2587,7 @@ function SimplifiedCreateBody({
                       tenantEntityName: c?.Name || "",
                     }));
                   }}
+                  createFor={{ id: form.tenantId, name: partyName(form.tenantId, "the tenant") }}
                   compact
                 />
               </div>
@@ -2539,9 +2610,9 @@ function SimplifiedCreateBody({
               onCreate={createVendor}
               createLabel="vendor"
             />
-            {form.vendorId && (
+            {form.vendorId && !hideFees && (
               <div>
-                <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                <Label className="text-[10px] text-muted-foreground">Billing entity for {partyName(form.vendorId, "the vendor")} (Xero)</Label>
                 <XeroContactPicker
                   testIdPrefix="deal-vendor-entity"
                   value={form.vendorEntityId || null}
@@ -2553,6 +2624,7 @@ function SimplifiedCreateBody({
                       vendorEntityName: c?.Name || "",
                     }));
                   }}
+                  createFor={{ id: form.vendorId, name: partyName(form.vendorId, "the vendor") }}
                   compact
                 />
               </div>
@@ -2570,9 +2642,9 @@ function SimplifiedCreateBody({
               onCreate={createPurchaser}
               createLabel="purchaser"
             />
-            {form.purchaserId && (
+            {form.purchaserId && !hideFees && (
               <div>
-                <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                <Label className="text-[10px] text-muted-foreground">Billing entity for {partyName(form.purchaserId, "the purchaser")} (Xero)</Label>
                 <XeroContactPicker
                   testIdPrefix="deal-purchaser-entity"
                   value={form.purchaserEntityId || null}
@@ -2584,6 +2656,7 @@ function SimplifiedCreateBody({
                       purchaserEntityName: c?.Name || "",
                     }));
                   }}
+                  createFor={{ id: form.purchaserId, name: partyName(form.purchaserId, "the purchaser") }}
                   compact
                 />
               </div>
@@ -2643,6 +2716,55 @@ function SimplifiedCreateBody({
           </div>
           </>)}
         </div>
+
+        {/* The lease terms, on the form in every situation (Woody, 2026-11-17:
+            one form "will then cover all eventualities"): what the Promote box
+            and the Heads of Terms' convert asked for, and what the box at the
+            top and the Heads of Terms read into. */}
+        {counterpartyKind === "leasing" && !isSecondment && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3" data-testid="deal-lease-terms">
+            <div>
+              <Label htmlFor="deal-lease-length" className="text-xs">Lease length (years)</Label>
+              <Input id="deal-lease-length" type="number" step="0.5" min="0" value={form.leaseLength}
+                onChange={(e) => set("leaseLength", e.target.value)} placeholder="e.g. 10" data-testid="input-deal-lease-length" />
+            </div>
+            <div>
+              <Label htmlFor="deal-break" className="text-xs">Break</Label>
+              <Input id="deal-break" value={form.breakOption} maxLength={500}
+                onChange={(e) => set("breakOption", e.target.value)} placeholder="e.g. Tenant break at year 5" data-testid="input-deal-break-option" />
+            </div>
+            <div>
+              <Label htmlFor="deal-rent-free" className="text-xs">Rent free (months)</Label>
+              <Input id="deal-rent-free" type="number" min="0" value={form.rentFree}
+                onChange={(e) => set("rentFree", e.target.value)} placeholder="e.g. 6" data-testid="input-deal-rent-free" />
+            </div>
+            <div>
+              <Label htmlFor="deal-capital" className="text-xs">Capital contribution (£)</Label>
+              <Input id="deal-capital" type="number" min="0" value={form.capitalContribution}
+                onChange={(e) => set("capitalContribution", e.target.value)} placeholder="0" data-testid="input-deal-capital-contribution" />
+            </div>
+            <div>
+              <Label htmlFor="deal-area" className="text-xs">Total area (sq ft)</Label>
+              <Input id="deal-area" type="number" min="0" value={form.totalAreaSqft}
+                onChange={(e) => set("totalAreaSqft", e.target.value)} placeholder="e.g. 2450" data-testid="input-deal-total-area" />
+            </div>
+          </div>
+        )}
+
+        {!hideFees && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <Label className="text-xs">Fee agreement signed</Label>
+              <Select value={form.feeAgreement || undefined} onValueChange={(v) => set("feeAgreement", v === "__clear__" ? "" : v)}>
+                <SelectTrigger data-testid="select-deal-fee-agreement"><SelectValue placeholder="Select" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__clear__">Not known</SelectItem>
+                  {CRM_OPTIONS.dealFeeAgreement.map((f) => (<SelectItem key={f} value={f}>{f}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
 
         {!hideFees && (
         <div>
@@ -2755,6 +2877,107 @@ function SimplifiedCreateBody({
   );
 }
 
+// The lists the deal form picks from, as the Deals page reads them; the
+// handover dialog below asks for the same ones, so the cache is shared.
+export const dealFormPropertiesQuery = {
+  queryKey: ["/api/crm/properties", { excludeComps: true }],
+  queryFn: async (): Promise<CrmProperty[]> => {
+    const res = await fetch("/api/crm/properties?excludeComps=true", { credentials: "include", headers: getAuthHeaders() });
+    if (!res.ok) throw new Error("Failed to load properties");
+    const data = await res.json();
+    return Array.isArray(data) ? data : (data?.data ?? []);
+  },
+};
+export const dealFormCompaniesQuery = {
+  queryKey: ["/api/crm/companies", { includeBillingEntities: true }],
+  queryFn: async (): Promise<CrmCompany[]> => {
+    const res = await fetch("/api/crm/companies?includeBillingEntities=true", { credentials: "include", headers: getAuthHeaders() });
+    if (!res.ok) throw new Error("Failed to load companies");
+    return res.json();
+  },
+};
+
+// One deal form for every way a letting reaches Solicitors (Woody,
+// 2026-11-17: "in each of these situations lets have one form its exactly the
+// same. use the new deal form as the basis"): New Deal, moving a Letting
+// Tracker unit to Solicitors (promote), and the Heads of Terms' Convert to
+// Solicitors (hots). A handover opens the form on the unit's own deal, set to
+// Solicitors, with the unit fixed: it never makes a second deal for the unit.
+export interface DealHandoverUnit {
+  id: string;                       // the Letting Tracker row (available_units.id)
+  unitName: string;
+  propertyId: string | null;
+  propertyName?: string | null;
+  propertyUnitId?: string | null;   // property_units.id
+  dealId: string | null;
+  fee?: number | null;
+  askingRent?: number | null;
+  sqft?: number | null;
+}
+export type DealHandover =
+  | { kind: "promote"; unit: DealHandoverUnit }
+  | { kind: "hots"; unit: DealHandoverUnit; defaults: HotsConvertDefaults | null; finalFileName?: string | null; onConverted: (out: HotsConversion) => void };
+
+/** The form a handover starts from: the deal as it stands at Solicitors, the
+ *  unit's figures where the deal has none, the property's landlord, and for a
+ *  Heads of Terms convert the agreed offer's tenant and terms. */
+export function handoverForm(deal: CrmDeal | null | undefined, h: DealHandover, landlordId?: string | null): DealFormData {
+  const f: DealFormData = { ...(deal ? dealToForm(deal) : emptyForm) };
+  f.status = "SOL";
+  if (!f.propertyId && h.unit.propertyId) f.propertyId = h.unit.propertyId;
+  if (!f.unitId && h.unit.propertyUnitId) f.unitId = h.unit.propertyUnitId;
+  if (!f.dealType || (LEGACY_LETTING_TYPES as readonly string[]).includes(f.dealType)) f.dealType = DEFAULT_LETTING_TYPE;
+  if (!f.landlordId && landlordId) f.landlordId = landlordId;
+  if (!f.fee && h.unit.fee != null) f.fee = String(h.unit.fee);
+  if (!f.rentPa && h.unit.askingRent != null) f.rentPa = String(h.unit.askingRent);
+  if (!f.totalAreaSqft && h.unit.sqft != null) f.totalAreaSqft = String(h.unit.sqft);
+  if (!f.name) f.name = [h.unit.propertyName, h.unit.unitName].filter(Boolean).join(" – ");
+  if (h.kind === "hots" && h.defaults) {
+    const d = h.defaults;
+    if (d.tenantCompanyId && d.tenantCompanyId !== f.tenantId) { f.tenantId = d.tenantCompanyId; f.tenantEntityId = ""; f.tenantEntityName = ""; }
+    if (d.rentPa != null) f.rentPa = String(d.rentPa);
+    if (d.leaseLengthYears != null) f.leaseLength = String(d.leaseLengthYears);
+    if (d.rentFreeMonths != null) f.rentFree = String(d.rentFreeMonths);
+    if (d.breakOption) f.breakOption = d.breakOption;
+    if (d.capitalContribution != null) f.capitalContribution = String(d.capitalContribution);
+  }
+  return f;
+}
+
+/** The deal form opened as a handover: it loads the unit's deal and the lists the form picks from, then opens. */
+export function DealHandoverDialog({ open, onOpenChange, handover }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  handover: DealHandover | null;
+}) {
+  const { toast } = useToast();
+  const want = open && !!handover;
+  const dealId = handover?.unit.dealId || null;
+  const properties = useQuery<CrmProperty[]>({ ...dealFormPropertiesQuery, enabled: want });
+  const { data: companies = [] } = useQuery<CrmCompany[]>({ ...dealFormCompaniesQuery, enabled: want });
+  const { data: users = [] } = useQuery<{ id: number; name: string; email: string }[]>({ queryKey: ["/api/users"], enabled: want });
+  const deal = useQuery<CrmDeal>({ queryKey: ["/api/crm/deals", dealId], enabled: want && !!dealId });
+  const failed = want && (properties.isError || (!!dealId && deal.isError));
+  useEffect(() => {
+    if (!failed) return;
+    toast({ title: "The deal could not be loaded", description: "Refresh the page and try again.", variant: "destructive" });
+    onOpenChange(false);
+  }, [failed]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!handover) return null;
+  const ready = properties.isSuccess && (!dealId || deal.isSuccess);
+  return (
+    <DealFormDialog
+      open={want && ready}
+      onOpenChange={onOpenChange}
+      deal={dealId ? deal.data : undefined}
+      properties={properties.data || []}
+      companies={companies}
+      users={users}
+      handover={handover}
+    />
+  );
+}
+
 export function DealFormDialog({
   open,
   onOpenChange,
@@ -2763,6 +2986,7 @@ export function DealFormDialog({
   propertyUnits = [],
   companies,
   users,
+  handover,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -2771,6 +2995,7 @@ export function DealFormDialog({
   propertyUnits?: PropertyUnit[];
   companies: CrmCompany[];
   users: { id: number; name: string; email: string }[];
+  handover?: DealHandover;
 }) {
   const { toast } = useToast();
   // Search-or-create pickers for the full form — the "Show all fields" /
@@ -2801,7 +3026,9 @@ export function DealFormDialog({
       keywords: [c.companyType || "", c.domainUrl || "", c.domain || "", ...(uk ? [uk] : []), ...aliases].filter(Boolean),
     };
   });
-  const isEdit = !!deal;
+  // A handover opens on an existing deal but is not the edit form: it is the
+  // New Deal form, at Solicitors, saving through its own route.
+  const isEdit = !!deal && !handover;
   const { activeTeam } = useTeam();
   const [, navigateTo] = useLocation();
   // Seed a created deal with the creator's own team. Deal types without an
@@ -2841,6 +3068,22 @@ export function DealFormDialog({
   // Joint Agency Lead Deal: the AML file note saved with a new deal.
   const [jointAgency, setJointAgency] = useState<JointAgencyState>(EMPTY_JOINT_AGENCY);
   const [jointAgencyErrors, setJointAgencyErrors] = useState(false);
+  // Said under the tenant picker when the box at the top read a brand the picker does not list.
+  const [noteBrandHint, setNoteBrandHint] = useState<string | null>(null);
+  // After New Deal or a move to Solicitors saves (Woody, 2026-11-17: "on the
+  // form we need a button to allow us to Kick off the AML"): the form shows
+  // a Kick off AML button for each party, each the deal page's KYC4U request.
+  type AmlParty = { role: "landlord" | "tenant" | "vendor" | "purchaser"; label: string; id: string; name: string };
+  const [amlStep, setAmlStep] = useState<{ dealId: string; dealRef: string | number | null; parties: AmlParty[] } | null>(null);
+  useEffect(() => { if (!open) setAmlStep(null); }, [open]);
+  // While in-app AML is on, Kick off AML sends the client checks (one email
+  // from the KYC mailbox, the deal's agents copied); otherwise KYC4U.
+  const { data: amlStepStatus } = useDealAmlStatus(amlStep?.dealId ?? "", !!amlStep);
+  const amlInApp = !!amlStepStatus?.inAppAml;
+  // A handover's landlord, when the deal has none: the property's.
+  const handoverLandlordId: string | null = handover
+    ? ((properties.find(p => p.id === handover.unit.propertyId) as { landlordId?: string | null } | undefined)?.landlordId || null)
+    : null;
 
   // A live query can replace the deal while this dialog is open. Keep the
   // current draft until the user closes it or switches to another deal.
@@ -2852,18 +3095,53 @@ export function DealFormDialog({
     }
     const dealId = deal?.id ?? null;
     if (draftSessionRef.current?.dealId === dealId) return;
-    draftSessionRef.current = { dealId, source: JSON.stringify(deal ? dealToForm(deal) : freshForm()) };
-    setForm(deal ? dealToForm(deal) : freshForm());
+    const start = handover ? handoverForm(deal, handover, handoverLandlordId) : deal ? dealToForm(deal) : freshForm();
+    draftSessionRef.current = { dealId, source: JSON.stringify(start) };
+    setForm(start);
     setChangeReason("");
     setLearning("");
     setShowAllFields(false);
     setFeeRows([]);
     setFeeAllocType("percentage");
-    setNameAutoFilled(!deal); // new = auto-managed; edit = treat name as user-owned
+    setNameAutoFilled(!deal && !handover); // new = auto-managed; edit and handover = treat name as user-owned
     setPickedUnit(null);
     setJointAgency(EMPTY_JOINT_AGENCY);
     setJointAgencyErrors(false);
+    setNoteBrandHint(null);
   }, [open, deal]);
+
+  // A handover's fee split starts from the deal's own (the editor keeps BGP
+  // House's row); set once per opening, after the reset above.
+  const { data: dealAllocations } = useQuery<DealFeeAllocation[]>({
+    queryKey: ["/api/crm/deals", deal?.id, "fee-allocations"],
+    enabled: open && !!handover && !!deal?.id,
+  });
+  const splitSeededFor = useRef<string | null>(null);
+  useEffect(() => { if (!open) splitSeededFor.current = null; }, [open]);
+  useEffect(() => {
+    if (!open || !handover || !deal?.id || !dealAllocations || splitSeededFor.current === deal.id) return;
+    splitSeededFor.current = deal.id;
+    if (!dealAllocations.length) return;
+    const fixed = dealAllocations.some(a => !a.isBgpHouse && a.allocationType === "fixed");
+    setFeeAllocType(fixed ? "fixed" : "percentage");
+    setFeeRows(dealAllocations.map(a => ({
+      agentName: a.agentName,
+      allocationType: (a.allocationType === "fixed" ? "fixed" : "percentage") as "fixed" | "percentage",
+      percentage: a.percentage || 0,
+      fixedAmount: a.fixedAmount || 0,
+      isBgpHouse: !!a.isBgpHouse,
+    })));
+  }, [open, handover, deal?.id, dealAllocations]);
+
+  // The box at the top: a note read as an offer fills the boxes it names (the
+  // rent, the lease terms, the tenant when the picker lists that brand); the
+  // rest goes into Comments as lines (client/src/lib/deal-note.ts).
+  const applyDealNote = (reading: LettingNoteReading) => {
+    const tenants = companies.filter(c => c.companyType?.startsWith("Tenant")).map(c => ({ id: c.id, name: c.name }));
+    const f = reading.fields || {};
+    if (f.brandId || String(f.brandName || "").trim()) setNoteBrandHint(noteTenant(reading, tenants) ? null : String(f.brandName || "").trim() || null);
+    setForm(prev => ({ ...prev, ...dealNotePatch(prev, reading, tenants).patch }));
+  };
 
   const hasLiveChanges = isEdit && open && draftSessionRef.current?.dealId === deal?.id
     && draftSessionRef.current.source !== JSON.stringify(dealToForm(deal));
@@ -2884,10 +3162,20 @@ export function DealFormDialog({
   const liveLettingRow = pickedUnit && hasLiveLetting(pickedUnit)
     && form.propertyId === pickedUnit.propertyId && form.unitId === unitIdForSearchRow(pickedUnit)
     ? pickedUnit : null;
-  const lettingNeedsUnit = !isEdit && isLettingType && (!form.propertyId || !form.unitId);
-  const blockedByLiveLetting = !isEdit && isLandlordLetting && !!liveLettingRow;
+  const lettingNeedsUnit = !isEdit && !handover && isLettingType && (!form.propertyId || !form.unitId);
+  const blockedByLiveLetting = !isEdit && !handover && isLandlordLetting && !!liveLettingRow;
+  // The unit is already on the Letting Tracker with a live deal: rather than a
+  // second deal (the duplicates Woody saw, 2026-11-17), its own deal opens in
+  // this same form, moving to Solicitors. A deal already at Solicitors or past
+  // it opens on its deal page instead, so nothing moves backwards.
+  const [moveTo, setMoveTo] = useState<DealHandoverUnit | null>(null);
   const useLiveDeal = (row: LettingUnitSearchRow) => {
     onOpenChange(false);
+    const code = legacyToCode(row.statusCode);
+    if (row.trackerRowId && code && ([...PRE_MARKETING_STATUSES, "AVA", "NEG", "HOT"] as string[]).includes(code)) {
+      setMoveTo({ id: row.trackerRowId, unitName: row.unitName, propertyId: row.propertyId, propertyName: row.propertyName, propertyUnitId: row.propertyUnitId, dealId: row.dealId });
+      return;
+    }
     if (row.dealId) navigateTo(`/deals/${row.dealId}`);
   };
 
@@ -2919,6 +3207,121 @@ export function DealFormDialog({
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
+  // Persist fee allocations alongside the deal. The fee-split editor
+  // auto-seeds a BGP House 15% row, so feeRows is rarely empty — but a
+  // lone BGP House row (no agents) is just the placeholder, not a real
+  // split, and PUTting it 400s the "must sum to 100%" check. Only fire
+  // when the user actually added at least one agent row. Everything else
+  // is set later on the deal board. The deal exists either way: a failure
+  // is said, never undone (Layla can retry from the deal page).
+  const saveSplit = async (dealId: string, saved: string) => {
+    if (!feeRows.some(r => !r.isBgpHouse && r.agentName)) return;
+    const allocations = feeRows
+      .filter(r => (r.isBgpHouse || r.agentName))
+      .map(r => ({
+        agentName: r.isBgpHouse ? (r.agentName || "BGP House") : r.agentName,
+        allocationType: feeAllocType,
+        percentage: feeAllocType === "percentage" ? r.percentage : null,
+        fixedAmount: feeAllocType === "fixed" ? r.fixedAmount : null,
+        isBgpHouse: !!r.isBgpHouse,
+      }));
+    if (allocations.length === 0) return;
+    try {
+      await apiRequest("PUT", `/api/crm/deals/${dealId}/fee-allocations`, { allocations });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId, "fee-allocations"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/fee-allocations"] });
+    } catch (e: any) {
+      toast({
+        title: `${saved}, fee split failed to save`,
+        description: e?.message || "Open the deal and set the split there.",
+        variant: "destructive",
+      });
+    }
+  };
+  // Joint Agency Lead Deal: record the AML file note against the deal. The
+  // deal exists either way — a failed note is flagged so it isn't silently
+  // missing from the register.
+  const saveJointAgencyNote = async (dealId: string, saved: string) => {
+    if (!jointAgency.on) return;
+    try {
+      await apiRequest("POST", `/api/crm/deals/${dealId}/joint-agency-note`, jointAgencyPayload(jointAgency));
+      queryClient.invalidateQueries({ queryKey: ["/api/joint-agency-notes"] });
+    } catch (e: any) {
+      toast({
+        title: `${saved}, but the joint agency AML note did NOT save`,
+        description: `${e?.message || "Unknown error"} — tell Jack Barratt so the note can be added.`,
+        variant: "destructive",
+        duration: 60000,
+      });
+    }
+  };
+
+  // A handover saves through the doors the unit's deal already has. Promote:
+  // the deal's own save at Solicitors (the AML gate on the parties it will
+  // carry, the history line, the move mirrored to the Letting Tracker). A
+  // tracker row with no deal yet goes through the tracker's own door, which
+  // makes its deal. Convert: the deal's other details through the deal's own
+  // save, then the tenant and the agreed terms through the Heads of Terms'
+  // convert, which checks the final HOTs and the agreed offer and moves it.
+  const saveHandover = async (h: DealHandover, finalForm: DealFormData) => {
+    const payload = formToPayload(finalForm, h.kind === "promote" ? "Moved to Solicitors from the Letting Tracker" : undefined);
+    delete payload.internalAgent; // the fee split's save keeps BGP Contact in step
+    let dealId: string | null = deal?.id || null;
+    let amlWarning: string | null = null;
+    let conversion: HotsConversion | null = null;
+    const saved = h.kind === "promote" ? "Moved to Solicitors" : "Converted to Solicitors";
+    if (h.kind === "promote") {
+      payload.status = "SOL";
+      if (!dealId) {
+        // A tracker row with no deal yet: the tracker's own door gives it its deal first.
+        const res = await apiRequest("POST", `/api/available-units/${encodeURIComponent(h.unit.id)}/ensure-deal`);
+        dealId = (await res.json())?.dealId || null;
+        if (!dealId) throw new Error("This unit has no deal yet, and one could not be made.");
+      }
+      const res = await apiRequest("PUT", `/api/crm/deals/${dealId}`, payload);
+      const warned = res.headers.get("X-AML-Warning");
+      amlWarning = warned ? decodeURIComponent(warned) : null;
+    } else {
+      delete payload.status;
+      const terms: Record<string, string> = {};
+      for (const [key, value] of [["tenantCompanyId", finalForm.tenantId], ["rentPa", finalForm.rentPa], ["leaseLengthYears", finalForm.leaseLength],
+        ["rentFreeMonths", finalForm.rentFree], ["breakOption", finalForm.breakOption], ["capitalContribution", finalForm.capitalContribution]] as const) {
+        if (String(value || "").trim()) terms[key] = String(value).trim();
+      }
+      for (const key of ["tenantId", "rentPa", "leaseLength", "rentFree", "breakOption", "capitalContribution"]) delete payload[key];
+      if (dealId) await apiRequest("PUT", `/api/crm/deals/${dealId}`, payload);
+      try {
+        conversion = await hotsCall<HotsConversion>("POST", `/api/unit-hots/${encodeURIComponent(h.unit.id)}/convert`, terms);
+      } catch (e: any) {
+        throw new Error(dealId ? `The deal's details were saved, but it did not move to Solicitors: ${e?.message || "try again"}` : (e?.message || "The deal was not converted"));
+      }
+      if (!dealId) {
+        dealId = conversion.dealId;
+        await apiRequest("PUT", `/api/crm/deals/${dealId}`, payload);
+      }
+    }
+    if (dealId) {
+      await saveSplit(dealId, saved);
+      await saveJointAgencyNote(dealId, saved);
+    }
+    return { id: dealId, amlWarning, conversion };
+  };
+
+  // The saved deal's parties, for the Kick off AML step: BGP staff only (the
+  // KYC4U request is BGP's). Shown when the deal has at least one party.
+  const showAmlStep = (dealId: string | null | undefined, dealRef: string | number | null | undefined): boolean => {
+    if (!dealId || isClientCreate) return false;
+    const sides: Array<[AmlParty["role"], string, string]> = [
+      ["landlord", "Landlord", form.landlordId], ["tenant", "Tenant", form.tenantId],
+      ["vendor", "Vendor", form.vendorId], ["purchaser", "Purchaser", form.purchaserId],
+    ];
+    const parties: AmlParty[] = sides.filter(([, , id]) => !!id)
+      .map(([role, label, id]) => ({ role, label, id, name: companies.find(c => c.id === id)?.name || label }));
+    if (!parties.length) return false;
+    setAmlStep({ dealId, dealRef: dealRef ?? null, parties });
+    return true;
+  };
+
   const mutation = useMutation({
     mutationFn: async () => {
       const finalForm = { ...form };
@@ -2926,6 +3329,7 @@ export function DealFormDialog({
         const prop = properties.find(p => p.id === finalForm.propertyId);
         if (prop) finalForm.name = prop.name;
       }
+      if (handover) return saveHandover(handover, finalForm);
       const payload = formToPayloadWithLearning(finalForm, changeReason || undefined, isCompletingNow ? learning : undefined);
       // BGP Contact comes from the fee split: on create the split's agent
       // rows are the contacts; on edit the form never writes them (the
@@ -2938,56 +3342,31 @@ export function DealFormDialog({
         const splitAgents = splitAgentNames(feeRows);
         if (splitAgents.length > 0) payload.internalAgent = splitAgents;
         const created = await postDeal(payload);
-        // Persist fee allocations alongside the new deal. The fee-split editor
-        // auto-seeds a BGP House 15% row, so feeRows is rarely empty — but a
-        // lone BGP House row (no agents) is just the placeholder, not a real
-        // split, and PUTting it 400s the "must sum to 100%" check. Only fire
-        // when the user actually added at least one agent row. Everything else
-        // is set later on the deal board.
-        if (created?.id && feeRows.some(r => !r.isBgpHouse && r.agentName)) {
-          const allocations = feeRows
-            .filter(r => (r.isBgpHouse || r.agentName))
-            .map(r => ({
-              agentName: r.isBgpHouse ? (r.agentName || "BGP House") : r.agentName,
-              allocationType: feeAllocType,
-              percentage: feeAllocType === "percentage" ? r.percentage : null,
-              fixedAmount: feeAllocType === "fixed" ? r.fixedAmount : null,
-              isBgpHouse: !!r.isBgpHouse,
-            }));
-          if (allocations.length > 0) {
-            try {
-              await apiRequest("PUT", `/api/crm/deals/${created.id}/fee-allocations`, { allocations });
-            } catch (e: any) {
-              // Deal exists, allocations failed — surface but don't undo
-              // the deal create (Layla can retry from the deal page).
-              toast({
-                title: "Deal created, fee split failed to save",
-                description: e?.message || "Open the deal and set the split there.",
-                variant: "destructive",
-              });
-            }
-          }
-        }
-        // Joint Agency Lead Deal: record the AML file note against the new
-        // deal. The deal exists either way — a failed note is flagged so it
-        // isn't silently missing from the register.
-        if (created?.id && jointAgency.on) {
-          try {
-            await apiRequest("POST", `/api/crm/deals/${created.id}/joint-agency-note`, jointAgencyPayload(jointAgency));
-            queryClient.invalidateQueries({ queryKey: ["/api/joint-agency-notes"] });
-          } catch (e: any) {
-            toast({
-              title: "Deal created, but the joint agency AML note did NOT save",
-              description: `${e?.message || "Unknown error"} — tell Jack Barratt so the note can be added.`,
-              variant: "destructive",
-              duration: 60000,
-            });
-          }
+        if (created?.id) {
+          await saveSplit(created.id, "Deal created");
+          await saveJointAgencyNote(created.id, "Deal created");
         }
         return created;
       }
     },
     onSuccess: async (data: any) => {
+      if (handover) {
+        toast({
+          title: handover.kind === "promote" ? "Moved to Solicitors" : "Converted to Solicitors",
+          description: data?.conversion?.dealRef != null ? `Deal #${data.conversion.dealRef} is now at Solicitors.` : undefined,
+        });
+        if (data?.amlWarning) toast({ title: "At Solicitors — AML follow-up needed", description: data.amlWarning, variant: "destructive" });
+        invalidateDealCaches();
+        queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/unit-hots", handover.unit.id] });
+        if (data?.id) {
+          queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", data.id] });
+          queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", data.id, "audit-log"] });
+        }
+        if (handover.kind === "hots" && data?.conversion) handover.onConverted(data.conversion);
+        if (!showAmlStep(data?.id, data?.conversion?.dealRef ?? deal?.dealRef ?? null)) onOpenChange(false);
+        return;
+      }
       toast({
         title: isEdit ? "Deal updated" : "Deal created",
         action: !isEdit && data?.id ? (
@@ -3008,7 +3387,7 @@ export function DealFormDialog({
         queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", deal.id, "audit-log"] });
       }
       setChangeReason("");
-      onOpenChange(false);
+      if (isEdit || !showAmlStep(data?.id, data?.dealRef ?? null)) onOpenChange(false);
     },
     onError: (err: Error) => {
       // Letting-service refusals (409 LIVE_LETTING_EXISTS / UNIT_REQUIRED):
@@ -3080,7 +3459,7 @@ export function DealFormDialog({
     const UNIT_LEVEL_TYPES = new Set<string>(
       ADVISORY_UNIT_TYPES.filter((t) => t !== "Dilapidations" && t !== "Service Charge"),
     );
-    if (UNIT_LEVEL_TYPES.has(form.dealType) && !form.unitId) {
+    if (!handover && UNIT_LEVEL_TYPES.has(form.dealType) && !form.unitId) {
       toast({ title: `${form.dealType} needs a unit`, description: "Pick or add a unit on this property — leasing deals can't be unit-less.", variant: "destructive" });
       return;
     }
@@ -3157,14 +3536,76 @@ export function DealFormDialog({
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[700px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEdit ? "Edit Deal" : "New Deal"}</DialogTitle>
+          <DialogTitle>{amlStep ? "Kick off AML" : handover?.kind === "promote" ? "Promote to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Edit Deal" : "New Deal"}</DialogTitle>
           <DialogDescription>
-            {isEdit ? "Update deal details below." : "Fill in the details to create a new deal."}
+            {amlStep ? (amlInApp ? "Send each party's contact the client checks: one email, and a page of their own to do them on." : "Start the checks on each party with KYC4U.") : handover
+              ? `${[handover.unit.propertyName || properties.find(p => p.id === handover.unit.propertyId)?.name, handover.unit.unitName].filter(Boolean).join(" — ")}. Check the deal, then save: it moves to Solicitors.`
+              : isEdit ? "Update deal details below." : "Fill in the details to create a new deal."}
           </DialogDescription>
         </DialogHeader>
+        {amlStep ? (
+          <div className="space-y-4" data-testid="deal-aml-step">
+            <p className="text-sm">
+              {amlStep.dealRef != null ? <>Deal <span className="font-mono">#{amlStep.dealRef}</span> is saved.</> : <>The deal is saved.</>}
+            </p>
+            <div className="space-y-2">
+              {amlStep.parties.map(p => {
+                // A party with a red flag already goes to KYC4U, not the
+                // routine client checks (Woody, 2026-11-17).
+                const flags = amlStepStatus?.redFlags?.parties[p.id] || [];
+                return (
+                  <div key={`${p.role}:${p.id}`} className="space-y-1.5 rounded-md border px-3 py-2" data-testid={`deal-aml-party-${p.role}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{p.label}</div>
+                        <div className="text-sm font-medium break-words">{p.name}</div>
+                      </div>
+                      {amlInApp && !flags.length
+                        ? <SendClientChecksButton dealId={amlStep.dealId} companyId={p.id} partyName={p.name} label="Kick off AML" />
+                        : <Kyc4uRequestButton dealId={amlStep.dealId} companyId={p.id} role={p.role} partyName={p.name} label="Kick off AML" />}
+                    </div>
+                    {flags.length > 0 && (
+                      <p className="text-xs text-red-800" data-testid={`deal-aml-party-flags-${p.role}`}>
+                        Red flag: {flags.map(f => f.label).join("; ")}. Raise it with KYC4U: the red flags go in the request's note.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {amlInApp
+                ? "Each button opens the client checks: pick who to ask, choose what to ask for, see the email, send. It goes from the KYC mailbox with the deal's agents copied, and progress shows on the deal's AML card."
+                : "Each button fills in KYC4U's request from the deal: check it and save. Then, on KYC4U's Raise New Service Request page, click your Send to ChatBGP bookmark and press Submit there. KYC4U's answer comes back to the deal after the next sync."}
+            </p>
+            <DialogFooter className="flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => { const id = amlStep.dealId; onOpenChange(false); navigateTo(`/deals/${id}`); }} data-testid="deal-aml-open-deal">Open the deal</Button>
+              <Button type="button" onClick={() => onOpenChange(false)} data-testid="deal-aml-done">Done</Button>
+            </DialogFooter>
+          </div>
+        ) : (
+        <>
+        {/* Type it and the form fills (Woody, 2026-11-17): the same note reader
+            as the letting forms, read as an offer. BGP staff only; never on the
+            edit form. Nothing is saved until the form is. */}
+        {!isEdit && !isClientCreate && form.dealType !== "Consultant" && (
+          <NoteFill
+            key={`deal-note:${handover?.unit.id || "new"}`}
+            kind="offer"
+            unitId={handover?.unit.id || ""}
+            readUrl="/api/deal-notes/read"
+            readExtra={{ propertyId: form.propertyId || null, trackerUnitId: handover?.unit.id || null }}
+            title="Describe the deal"
+            example="Terms: 10 year lease. Rent £120k pax. 6 MRF. TBO yr 5"
+            startOpen
+            autoApply
+            onApply={applyDealNote}
+          />
+        )}
         {hasLiveChanges && (
           <p role="status" className="rounded-md border border-border bg-muted p-3 text-sm" data-testid="deal-draft-update-notice">
             This deal was updated while you were editing. Your draft is kept; saving it may replace those changes. Cancel and reopen to load the latest version.
@@ -3215,6 +3656,13 @@ export function DealFormDialog({
               setJointAgency={(s) => { setJointAgency(s); if (jointAgencyMissing(s).length === 0) setJointAgencyErrors(false); }}
               jointAgencyErrors={jointAgencyErrors}
               signedBy={currentUser?.name}
+              place={handover ? {
+                propertyName: handover.unit.propertyName || properties.find(p => p.id === handover.unit.propertyId)?.name || "Property",
+                unitName: handover.unit.unitName,
+              } : null}
+              hotsUnitId={handover?.kind === "promote" ? handover.unit.id : null}
+              hotsOnFile={handover?.kind === "hots" ? (handover.finalFileName || "the final Heads of Terms") : null}
+              tenantHint={noteBrandHint}
             />
             )
           ) : (
@@ -3693,8 +4141,8 @@ export function DealFormDialog({
                         <Input type="number" step="0.5" min="0" value={form.leaseLength} onChange={(e) => set("leaseLength", e.target.value)} data-testid="input-deal-lease-length" />
                       </div>
                       <div>
-                        <Label>Break Option (years)</Label>
-                        <Input type="number" step="0.5" min="0" value={form.breakOption} onChange={(e) => set("breakOption", e.target.value)} data-testid="input-deal-break-option" />
+                        <Label>Break Option</Label>
+                        <Input value={form.breakOption} maxLength={500} onChange={(e) => set("breakOption", e.target.value)} placeholder="e.g. Tenant break at year 5" data-testid="input-deal-break-option" />
                       </div>
                       <div>
                         <Label>Rent Free (months)</Label>
@@ -3776,7 +4224,7 @@ export function DealFormDialog({
           )}
 
           <DialogFooter className="flex items-center gap-2">
-            {!isEdit && !isClientCreate && (
+            {!isEdit && !isClientCreate && !handover && (
               <Button
                 type="button"
                 variant="ghost"
@@ -3802,10 +4250,12 @@ export function DealFormDialog({
               data-testid="button-save-deal"
             >
               {mutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              {isEdit ? "Save Changes" : "Create Deal"}
+              {handover?.kind === "promote" ? "Move to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Save Changes" : "Create Deal"}
             </Button>
           </DialogFooter>
         </form>
+        </>
+        )}
 
         {isEdit && deal && !isClientCreate && (
           <div className="px-6 pb-4">
@@ -3842,6 +4292,11 @@ export function DealFormDialog({
         </AlertDialogContent>
       </AlertDialog>
     </Dialog>
+    {/* New Deal for a unit already live on the tracker: its own deal, in this form, moving to Solicitors. */}
+    {!deal && !handover && (
+      <DealHandoverDialog open={!!moveTo} onOpenChange={(v) => { if (!v) setMoveTo(null); }} handover={moveTo ? { kind: "promote", unit: moveTo } : null} />
+    )}
+    </>
   );
 }
 
@@ -6336,24 +6791,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     return new Set(availableUnitsData.filter(u => u.dealId && !crmIds.has(u.dealId)).map(u => u.dealId)).size;
   }, [isClientDeals, availableUnitsData, deals]);
 
-  const { data: properties = [] } = useQuery<CrmProperty[]>({
-    queryKey: ["/api/crm/properties", { excludeComps: true }],
-    queryFn: async () => {
-      const res = await fetch("/api/crm/properties?excludeComps=true", { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("Failed to load properties");
-      const data = await res.json();
-      return Array.isArray(data) ? data : (data?.data ?? []);
-    },
-  });
+  const { data: properties = [] } = useQuery<CrmProperty[]>(dealFormPropertiesQuery);
 
-  const { data: companies = [] } = useQuery<CrmCompany[]>({
-    queryKey: ["/api/crm/companies", { includeBillingEntities: true }],
-    queryFn: async () => {
-      const res = await fetch("/api/crm/companies?includeBillingEntities=true", { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("Failed to load companies");
-      return res.json();
-    },
-  });
+  const { data: companies = [] } = useQuery<CrmCompany[]>(dealFormCompaniesQuery);
 
   const { data: contacts = [] } = useQuery<CrmContact[]>({
     queryKey: ["/api/crm/contacts"],

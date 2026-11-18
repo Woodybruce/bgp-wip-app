@@ -1287,7 +1287,19 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           {/* KYC4U is BGP's MLRO (2026-10-05): each party's KYC4U status and
               the Request KYC4U check button. The in-app KYC pack is retired. */}
           <DealAmlStatusCard dealId={id} dealStatus={deal.status} />
-          <JointAgencyNoteCard dealId={id} />
+          {/* The Joint Agency Lead Deal note can be added here later, not
+              only on the New deal form (Woody, 2026-11-16). Staff only. */}
+          <JointAgencyNoteCard
+            dealId={id}
+            canAdd={!jointAgent}
+            signedBy={ddUser?.name || undefined}
+            defaults={{
+              property: linkedProperty ? [linkedProperty.name, (linkedProperty as any).address && (linkedProperty as any).address !== linkedProperty.name ? (linkedProperty as any).address : null].filter(Boolean).join(", ") : ((deal as any).propertyName || ""),
+              client: linkedLandlord?.name || "",
+              tenant: linkedTenant?.name || "",
+              rentPa: deal.rentPa ? String(deal.rentPa) : "",
+            }}
+          />
         </div>
       </CollapsibleCard>
       </div>

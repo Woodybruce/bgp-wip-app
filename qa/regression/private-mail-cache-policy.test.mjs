@@ -91,7 +91,8 @@ function takeHarness(companyType, tab, policyVersion) {
 
 test("every prepared-take tab rejects pre-policy caches and stamps fresh writes", async () => {
   for (const companyType of ["Tenant", "Landlord"]) for (const tab of ["brand", "uk", "activity", "intel"]) {
-    const priorPolicy = "evidence-v1" + (companyType === "Landlord" && tab === "brand" ? ":landlord-records-1" : "");
+    const priorPolicy = "evidence-v1" + (companyType === "Landlord" && tab === "brand" ? ":landlord-records-1" : "")
+      + (tab === "brand" || tab === "activity" ? ":market-listings-1" : "");
     const h = takeHarness(companyType, tab, priorPolicy);
     const legacy = h.getSaved();
     const oldRead = await h.readPreparedBrandAiTake(h.company.id, tab);

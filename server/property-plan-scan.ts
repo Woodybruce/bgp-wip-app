@@ -108,10 +108,10 @@ export async function scanPropertyPlanImage(image: Buffer, options: ScheduleOpti
         : candidate.reviewRequired ? "The identity or boundary needs checking."
         : !link ? "Choose a tenancy row, or save as an unlinked outline." : null };
   });
-  const message = `${candidates.length} proposed outlines. Review them before saving.`
+  const message = (candidates.length ? `${candidates.length} outline${candidates.length === 1 ? "" : "s"} found.` : "No outlines found.")
     + (failures ? ` ${failures} sections could not be read; this scan is incomplete.` : "")
     + (untraced ? ` ${untraced} detections had no reliable boundary and were left out.` : "")
     + (covered ? " Areas with existing outlines were kept unchanged." : "")
-    + (!candidates.length ? " Try Trace unit inside a clear unit, or draw its boundary." : "");
+    + (!candidates.length ? " Open a unit and use Find it on the plan to outline it." : "");
   return { candidates, message };
 }

@@ -37,6 +37,14 @@ export function isSanctionsListLoaded(): boolean {
   return sanctionsCache.length > 0;
 }
 
+// The lists held now, in words (BGP's checks before asking name them).
+export function loadedSanctionsLists(): string[] {
+  const lists: string[] = [];
+  if (sanctionsCache.some(e => e.source === "UK-OFSI")) lists.push("the UK Sanctions List");
+  if (sanctionsCache.some(e => e.source === "US-OFAC")) lists.push("the US OFAC list");
+  return lists;
+}
+
 const LEGAL_SUFFIXES = /\b(ltd|limited|llc|llp|plc|inc|incorporated|corp|corporation|gmbh|sa|ag|bv|nv|pty|co)\b/g;
 
 function normalise(s: string): string {

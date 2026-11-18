@@ -3,7 +3,6 @@ import { calendarDateValue } from "@shared/calendar-date";
 import type { ViewingRecord } from "@shared/viewing-workflow";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
-import { useTeam } from "@/lib/team-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pill, pillMetrics, pillActive, pillInactive } from "@/components/ui/pill";
@@ -335,7 +334,7 @@ function MapLocationsCell({
   );
 }
 
-function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { teamFilter?: string | null; companyFilter?: string | null; autoCreate?: boolean; initialList?: string | null }) {
+function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requirementId }: { teamFilter?: string | null; companyFilter?: string | null; autoCreate?: boolean; initialList?: string | null; requirementId?: string | null }) {
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
@@ -359,13 +358,16 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
   const [evidenceItem, setEvidenceItem] = useState<CrmRequirementsLeasing | null>(null);
   const { toast } = useToast();
   const [, navigate] = useLocation();
-  // Client logins (e.g. Landsec) get a read-only market view — no sync /
-  // inspect / add controls (the writes are gated server-side anyway).
+  // Client logins (e.g. Landsec) see every requirement and may add one and
+  // amend any through the form (Woody, 2026-11-17: "keep all requirements
+  // open for clients and access to amend and add"); no sync / inspect tools,
+  // no delete, and none of the centre's tools.
   const { data: reqUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientView = reqUser?.role === "Client";
   // A client login, and staff viewing as one, are sent no confirmation,
-  // origin or owner: they get the read-only list with no states.
-  // Until the login is known the page keeps to that reduced shape.
+  // origin or owner: they get the list with no states, Open and Closed, and
+  // the form without the BGP owner. Until the login is known the page keeps
+  // to that reduced shape.
   const clientShape = !reqUser || isClientView || !!reqUser.companyScopeId;
   // Still live, owners and In the news are BGP staff routes.
   const canUseCentre = !!reqUser && !clientShape && STAFF_EMAIL.test(String(reqUser.email || "").trim());
@@ -508,6 +510,23 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
   const { data: items = [], isLoading, error } = useQuery<CrmRequirementsLeasing[]>({
     queryKey: ["/api/crm/requirements-leasing"],
   });
+  // ?requirementId= (ChatBGP receipts, landlord chat, a contact's list) opens
+  // that requirement: its form for BGP staff, a search for it for a client
+  // login (its row has Edit). One not in the list says so.
+  const openedRequirementId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!requirementId) { openedRequirementId.current = null; return; }
+    if (!reqUser || isLoading || error || openedRequirementId.current === requirementId) return;
+    openedRequirementId.current = requirementId;
+    const linked = items.find(item => item.id === requirementId);
+    if (!linked) {
+      toast({ title: "Requirement unavailable", description: "This requirement was removed or is not available to your account.", variant: "destructive" });
+    } else if (clientShape) {
+      setSearch(linked.name || "");
+    } else {
+      setEditItem(linked);
+    }
+  }, [requirementId, items, isLoading, error, reqUser, clientShape, toast]);
   // The one live rule, worked out as the rows are read (shared/requirement-live.ts).
   const liveMap = useMemo(() => {
     const today = new Date();
@@ -687,6 +706,12 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
     companies.forEach((c) => map.set(c.id, c));
     return map;
   }, [companies]);
+  // The brands a client login's form offers: the tenant brands its company
+  // list holds, never its own company (the server refuses anything else).
+  const formCompanies = useMemo(
+    () => (clientShape ? companies.filter((c) => c.id !== reqUser?.companyScopeId && /^tenant/i.test(String(c.companyType || ""))) : companies),
+    [companies, clientShape, reqUser?.companyScopeId],
+  );
 
   const contactMap = useMemo(() => {
     const map = new Map<string, CrmContact>();
@@ -712,7 +737,9 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
       setCreateOpen(false);
-      toast({ title: "Requirement created" });
+      toast(clientShape
+        ? { title: "Requirement added", description: "It is on BGP's list to check with the brand." }
+        : { title: "Requirement created" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1125,12 +1152,14 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
           </DropdownMenuContent>
         </DropdownMenu>
         )}
-        {!isClientView && (
+        {/* Every login adds a requirement, a client login included (Woody,
+            2026-11-17: "keep all requirements open for clients and access to
+            amend and add"). A client's is saved as the client's, for BGP to
+            confirm. */}
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-leasing">
           <Plus className="w-4 h-4 mr-1" />
           Add requirement
         </Button>
-        )}
       </div>
 
       {/* Filters as pills: a number that filters the list is a pill, not a
@@ -1276,7 +1305,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
           emptyIcon={Users}
           emptyDescription={anyFilter
             ? undefined
-            : clientShape ? "No requirements for your portfolio yet — BGP logs these on your behalf" : LIST_NOTES[activeList]}
+            : clientShape ? "No requirements yet. Add one with Add requirement." : LIST_NOTES[activeList]}
           items={listItems.slice(0, phoneShown).map((item) => {
             const live = liveMap.get(item.id)!;
             const stale = requirementGoingStale(live);
@@ -1316,8 +1345,10 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
               { label: "Wants", value: [useText, sizeText].filter(Boolean).join(" · ") },
               { label: "Locations", value: locText },
             ],
-            // A client login cannot save an edit, so it is not offered one.
-            onEdit: clientShape ? undefined : () => setEditItem(item),
+            // Every login amends a requirement through the form, a client login
+            // included (it is offered no delete or centre tools); not until the
+            // login is known.
+            onEdit: reqUser ? () => setEditItem(item) : undefined,
             // Delete lives in the ⋮ menu in the footer — a red Delete on every
             // phone card was one mis-tap from losing a requirement
             // (Woody, 2026-09-27).
@@ -1434,6 +1465,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
         propertyMatchMap={propertyMatchMap}
         liveMap={liveMap}
         readOnly={clientShape}
+        canEdit={!!reqUser}
         staffTools={canUseCentre}
         ownerUsers={staffUsers}
         onStillLive={confirmRow}
@@ -1499,25 +1531,29 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
       )}
 
       {/* Mounted on open, so each new requirement starts from an empty form
-          with the person adding it as its owner. */}
-      {createOpen && (
+          with the person adding it as its owner. A client login adds one too
+          (Woody, 2026-11-17), on the client form: no BGP owner, a brand from
+          its own brand list. It waits for the login, so ?new=1 (an Add link)
+          never opens the wrong form. */}
+      {createOpen && !!reqUser && (
       <LeasingFormDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
         onSubmit={(data) => createMutation.mutate(data)}
         isPending={createMutation.isPending}
-        title="Create Leasing Requirement"
+        title={clientShape ? "Add a leasing requirement" : "Create Leasing Requirement"}
         groups={groups}
-        companies={companies}
+        companies={formCompanies}
         contacts={contacts}
         deals={deals}
         ownerOptions={staffUsers}
         defaultOwnerId={canUseCentre ? meId : null}
         presetCompanyId={autoCreate ? companyFilter : null}
+        clientForm={clientShape}
       />
       )}
 
-      {editItem && (
+      {editItem && !!reqUser && (
         <LeasingFormDialog
           open={!!editItem}
           onOpenChange={(open) => { if (!open) setEditItem(null); }}
@@ -1525,11 +1561,12 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
           isPending={updateMutation.isPending}
           title="Edit Leasing Requirement"
           defaultValues={editItem}
-          companies={companies}
+          companies={formCompanies}
           contacts={contacts}
           deals={deals}
           groups={groups}
           ownerOptions={staffUsers}
+          clientForm={clientShape}
         />
       )}
 
@@ -2785,6 +2822,7 @@ function LeasingSection({
   propertyMatchMap = new Map(),
   liveMap,
   readOnly,
+  canEdit,
   staffTools,
   ownerUsers,
   onStillLive,
@@ -2821,8 +2859,10 @@ function LeasingSection({
   propertyMatchMap?: Map<string, CrmProperty[]>;
   /** The state and honest date line of every row (shared/requirement-live.ts). */
   liveMap: Map<string, RequirementLive>;
-  /** A client login: no state, owner, edit or delete, and nothing to click that it cannot save. */
+  /** A client login: no state, owner, inline editing or delete, and nothing to click that it cannot save. */
   readOnly?: boolean;
+  /** The row's Edit (the form): every login once it is known, a client login included (Woody, 2026-11-17). */
+  canEdit?: boolean;
   /** BGP staff: Still live and the owner picker. */
   staffTools?: boolean;
   ownerUsers: BgpUser[];
@@ -3316,8 +3356,9 @@ function LeasingSection({
                             <Sparkles className="w-3.5 h-3.5" />
                           </Button>
                         )}
-                        {/* A client login cannot save an edit or a delete, so neither is offered. */}
-                        {!readOnly && (
+                        {/* Every login amends a requirement through the form, a
+                            client login included; only BGP staff delete one. */}
+                        {canEdit && (
                         <Button
                           variant="ghost"
                           size="icon"
@@ -3781,6 +3822,7 @@ function LeasingFormDialog({
   ownerOptions,
   defaultOwnerId,
   presetCompanyId,
+  clientForm = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -3797,6 +3839,12 @@ function LeasingFormDialog({
   /** The owner a new requirement starts with: the person adding it. */
   defaultOwnerId?: string | null;
   presetCompanyId?: string | null;   // opened from a brand's page (?companyId=&new=1): start with that brand chosen
+  /**
+   * A client login (or staff viewing as one), Woody 2026-11-17: no BGP owner
+   * (the owner is BGP's, and is never sent), and the brand is picked from its
+   * own brand list, never typed. The server takes only these fields.
+   */
+  clientForm?: boolean;
 }) {
   const [form, setForm] = useState({
     name: defaultValues?.name || "",
@@ -3826,8 +3874,9 @@ function LeasingFormDialog({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const { bgpContactUserIds, ...fields } = form;
     onSubmit({
-      ...form,
+      ...fields,
       companyId: form.companyId || null,
       principalContactId: form.principalContactId || null,
       agentContactId: form.agentContactId || null,
@@ -3838,8 +3887,11 @@ function LeasingFormDialog({
       requirementLocations: form.requirementLocations.length > 0 ? form.requirementLocations : null,
       locationData: form.locationData,
       // The owner list is the field the page reads; the single id follows it.
-      bgpContactUserIds: form.bgpContactUserIds.length > 0 ? form.bgpContactUserIds : null,
-      bgpContactUserId: form.bgpContactUserIds[0] || null,
+      // A client's form sends no owner at all.
+      ...(clientForm ? {} : {
+        bgpContactUserIds: bgpContactUserIds.length > 0 ? bgpContactUserIds : null,
+        bgpContactUserId: bgpContactUserIds[0] || null,
+      }),
     });
   };
   const ownerName = (id: string) => ownerOptions.find((u) => u.id === id)?.name || "Unknown";
@@ -3860,7 +3912,7 @@ function LeasingFormDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label>Name / Company</Label>
+            <Label>{clientForm ? "Brand" : "Name / Company"}</Label>
             <CompanySearchPicker
               companies={companies}
               selectedId={form.companyId}
@@ -3868,13 +3920,21 @@ function LeasingFormDialog({
               onSelect={(c) => setForm({ ...form, name: c.name, companyId: c.id, principalContactId: "" })}
               onClear={() => setForm({ ...form, name: "", companyId: "", principalContactId: "" })}
             />
-            {!form.companyId && (
+            {!form.companyId && !clientForm && (
               <Input
                 placeholder="Or type a name manually..."
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 data-testid="input-leasing-name"
               />
+            )}
+            {clientForm && !form.companyId && form.name && (
+              <p className="text-xs" data-testid="leasing-client-unlinked-name">{form.name} <span className="text-muted-foreground">(no brand linked)</span></p>
+            )}
+            {clientForm && (
+              <p className="text-[11px] text-muted-foreground" data-testid="leasing-client-brand-note">
+                Choose the brand from your brand list, or add it there by typing its name. BGP checks a requirement you add with the brand.
+              </p>
             )}
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -3905,6 +3965,7 @@ function LeasingFormDialog({
               </Select>
             </div>
           </div>
+          {!clientForm && (
           <div className="space-y-2">
             <Label>BGP owner</Label>
             <div className="flex flex-wrap items-center gap-1.5" data-testid="leasing-owner-picker">
@@ -3936,6 +3997,7 @@ function LeasingFormDialog({
             </div>
             <p className="text-[11px] text-muted-foreground">The BGP person who keeps this requirement up to date.</p>
           </div>
+          )}
           <div className="space-y-2">
             <Label>Principal Contact</Label>
             {form.companyId ? (
@@ -4092,7 +4154,8 @@ function LeasingFormDialog({
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={isPending || !form.name} data-testid="button-submit-leasing">
+            {/* A client's requirement names a brand from its list; a row that never had one can still be edited. */}
+            <Button type="submit" disabled={isPending || !form.name || (clientForm && !form.companyId && (!defaultValues || !!defaultValues.companyId))} data-testid="button-submit-leasing">
               {isPending ? "Saving..." : "Save"}
             </Button>
           </DialogFooter>
@@ -4834,62 +4897,74 @@ function InvestmentFormDialog({
   );
 }
 
-export default function Requirements() {
-  const { activeTeam, userTeam } = useTeam();
+// The Requirements pill on Brands (Woody, 2026-11-17: "put requirements in
+// the brands section for everyone"): /brands?tab=requirements draws this with
+// `embedded`, under the Brands title and pills; /requirements forwards there
+// with its address parameters.
+export default function Requirements({ embedded = false }: { embedded?: boolean } = {}) {
   const urlParams = new URLSearchParams(useSearch());
   const typeParam = urlParams.get("type");
   const teamParam = urlParams.get("team");
   const companyIdParam = urlParams.get("companyId");
   const listParam = urlParams.get("list");
   const newParam = urlParams.get("new");
-  const requirementIdParam = typeParam === "investment" ? urlParams.get("requirementId") : null;
-  const effectiveTeam = activeTeam === "all" ? userTeam : activeTeam;
-  // Investment requirements are BGP's own acquisition mandates — not relevant
-  // to a landlord client, so the toggle is hidden and the view forced to
-  // Leasing for client logins (Woody, 2026-08).
+  const requirementIdParam = urlParams.get("requirementId");
+  // Leasing only: investment requirements live under Investment
+  // (/investment/requirements), not here (Woody, 2026-11-16: "move investment
+  // requirements out of requirements and put into investment"). Old links
+  // with ?type=investment, from emails, saved chat answers and bookmarks, go
+  // there with the requirement, team and "new" they carried. A client login
+  // never had the investment view, so it stays here on leasing.
   const { data: pageUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientView = pageUser?.role === "Client";
-  const defaultIsInvestment = effectiveTeam === "Investment";
-  const initialView = typeParam ? typeParam === "investment" : defaultIsInvestment;
-  const [isInvestmentView, setIsInvestmentView] = useState(initialView);
-  const showInvestment = isInvestmentView && !isClientView;
+  const [, navigate] = useLocation();
+  const toInvestment = typeParam === "investment" && !!pageUser && !isClientView ? investmentRequirementsHref(urlParams) : null;
   useEffect(() => {
-    if (requirementIdParam) setIsInvestmentView(true);
-  }, [requirementIdParam]);
-  // ?new=1 (dashboard widget "Add") opens the create dialog for the view we
-  // landed on; strip it from the URL so a refresh doesn't reopen the dialog.
-  const [autoCreateView] = useState(newParam ? (initialView ? "investment" : "leasing") : null);
+    if (toInvestment) navigate(toInvestment, { replace: true });
+  }, [toInvestment, navigate]);
+  // ?new=1 (dashboard widget "Add") opens the create dialog; strip it from
+  // the URL so a refresh doesn't reopen the dialog.
+  const [autoCreate] = useState(!!newParam && typeParam !== "investment");
   useEffect(() => {
-    if (!newParam) return;
+    if (!newParam || typeParam === "investment") return;
     const url = new URL(window.location.href);
     url.searchParams.delete("new");
     window.history.replaceState(null, "", url.pathname + url.search);
-  }, [newParam]);
+  }, [newParam, typeParam]);
+
+  if (typeParam === "investment" && (!pageUser || toInvestment)) return null;
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto" data-testid="requirements-page">
+    <div className={embedded ? "space-y-6" : "p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto"} data-testid="requirements-page">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
+          {!embedded && <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>}
           <p className="text-sm text-muted-foreground">
-            {showInvestment ? "Investment requirements" : "Leasing requirements"}
+            Leasing requirements
             {teamParam ? ` · Filtered by ${teamParam} team` : ""}
             {companyIdParam ? " · Filtered by company" : ""}
           </p>
         </div>
         {!isClientView && (
-        <div className="flex items-center gap-1.5 shrink-0" data-testid="view-toggle">
-          <Pill active={!isInvestmentView} onClick={() => setIsInvestmentView(false)} data-testid="button-leasing-view">
-            Leasing
-          </Pill>
-          <Pill active={isInvestmentView} onClick={() => setIsInvestmentView(true)} data-testid="button-investment-view">
-            Investment
-          </Pill>
-        </div>
+          <Link href="/investment/requirements" className="text-sm text-muted-foreground hover:text-foreground hover:underline shrink-0" data-testid="link-investment-requirements">
+            Investment requirements are under Investment →
+          </Link>
         )}
       </div>
 
-      {showInvestment ? <InvestmentTable teamFilter={teamParam} autoCreate={autoCreateView === "investment"} requirementId={requirementIdParam} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreateView === "leasing"} initialList={listParam} />}
+      <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreate} initialList={listParam} requirementId={requirementIdParam} />
     </div>
   );
+}
+
+// Where an investment requirements link goes now: Investment → Requirements,
+// with the requirement to open, the team filter and "new" carried over.
+export function investmentRequirementsHref(params: URLSearchParams): string {
+  const next = new URLSearchParams();
+  for (const key of ["requirementId", "team", "new"]) {
+    const value = params.get(key);
+    if (value) next.set(key, value);
+  }
+  const query = next.toString();
+  return `/investment/requirements${query ? `?${query}` : ""}`;
 }

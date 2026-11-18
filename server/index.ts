@@ -2354,6 +2354,18 @@ const schemaStartup = (async () => {
       uploaded_at TIMESTAMP DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_kyc_upload_files_deal ON kyc_upload_files(deal_id)`,
+    // Client checks (17 November 2026): the party and person a request is
+    // for, what it asks for (server/aml-portal.ts KycRequestDetails), when
+    // the client finished, reminders, and the admin's test requests.
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS company_id VARCHAR`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS contact_id VARCHAR`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS request JSONB`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS reminders_sent INTEGER DEFAULT 0`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS last_reminded_at TIMESTAMP`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS is_test BOOLEAN DEFAULT false`,
+    `ALTER TABLE kyc_upload_files ADD COLUMN IF NOT EXISTS doc_type TEXT`,
+    `ALTER TABLE kyc_upload_files ADD COLUMN IF NOT EXISTS kyc_document_id VARCHAR`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_mlro_report_url TEXT`,
     // Promote the three other board members to admin alongside Woody +
     // Layla. Idempotent: re-runs are no-ops once is_admin is already true.
@@ -4171,6 +4183,7 @@ import { setupCanvaRoutes } from "./canva";
 import { setupXeroRoutes } from "./xero";
 import { registerXeroFinancialRoutes } from "./xero-financials";
 import { registerCashflowRoutes } from "./cashflow-board";
+import { registerFinanceBoardRoutes } from "./finance-board";
 import { registerPartnerRemunerationRoutes } from "./partner-remuneration";
 import { registerHistoricalWipRoutes } from "./historical-wip";
 import { registerApiUsageRoutes } from "./api-usage";
@@ -4216,6 +4229,8 @@ import { setupLandsecAccessRoutes } from "./landsec-access";
 import { setupJointAgentChatRoutes } from "./chat-joint-agent";
 import { setupBrandRelevanceRoutes } from "./brand-relevance";
 import { setupOwnershipIntelRoutes } from "./ownership-intel";
+import { setupBrandRetypeRoutes } from "./brand-retype";
+import { setupCrmWeekAheadRoutes } from "./crm-week-ahead";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
 import { registerDemeterRoutes } from "./demeter";
@@ -4229,6 +4244,8 @@ import amlCddFormRouter from "./aml-cdd-form";
 import websiteContentRouter from "./website-content";
 import wpListingsSyncRouter, { startWpListingsSync } from "./wp-listings-sync";
 import veriffRouter from "./veriff";
+import kycRequestRouter from "./aml-portal";
+import kycPrecheckRouter from "./kyc-prechecks";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
 import brandDedupeRouter from "./brand-dedupe";
@@ -4926,6 +4943,12 @@ app.use("/api/branding/assets", express.static(
     // Client pulls brands into their own CRM from the global directory
     // (crm_extra_brand_ids on their company) — scope-checked per handler.
     "/api/client/crm/",
+    // Clients add a leasing requirement and amend any (Woody, 2026-11-17:
+    // "keep all requirements open for clients and access to amend and add").
+    // The CRM write guard in server/crm.ts lets through only the create and
+    // the save; the handlers take the form's fields and check the brand.
+    // Delete, the landlord pack and the agent sweep stay BGP's.
+    "/api/crm/requirements-leasing",
     // Clients may create + edit deals on their OWN portfolio (Woody, 2026-07:
     // "client needs to be able to do as much as the agent"). The handler
     // forces the deal onto the client's own company and strips every fee
@@ -5030,8 +5053,15 @@ app.use("/api/branding/assets", express.static(
   // read (/api/kyc/deal/:id/status — KYC4U's mirrored verdict drives the
   // gate), Companies House lookups and covenant. Stored AML records are
   // untouched (MLR 2017 record keeping). IN_APP_AML_ENABLED=1 restores it.
+  // Also kept: the client's own client checks page (/api/kyc-upload/<token>),
+  // which only opens on a live token, and only the admin's test send makes
+  // one while the switch is off (server/aml-portal.ts). And two Veriff
+  // addresses the test page's real identity check needs (Woody, 2026-11-17):
+  // Veriff's decision webhook (Veriff signs it; the handler checks the
+  // signature) and the admin-only diagnostic that reads Veriff's answer.
   const RETIRED_AML = [
-    /^\/api\/(aml|kyc-clouseau|veriff|sanctions|kyc-upload|comply-advantage)(\/|$)/,
+    /^\/api\/(aml|kyc-clouseau|sanctions|comply-advantage)(\/|$)/,
+    /^\/api\/veriff(?!\/(webhook|diagnostic)$)(\/|$)/,
     /^\/api\/kyc\/(?!deal\/[^/]+\/status$)/,
     /^\/api\/accounts\/[^/]+\/entity-checks/,
     /^\/api\/entities\/[^/]+\/[^/]+\/kyc(\/|$)/,
@@ -5074,6 +5104,10 @@ app.use("/api/branding/assets", express.static(
     const resourcePath = routedApiPath(req);
     const p = resourcePath.toLowerCase();
     if (p.startsWith("/api/auth/")) return next();
+    // The client checks page answers to its token alone and reads nothing
+    // of the session, so a client signed in to the app (a Landsec login
+    // asked for its own checks) opens it like anyone else.
+    if (p.startsWith("/api/kyc-upload/")) return next();
     try {
       const { isClientRequestUser } = await import("./company-scope");
       if (!(await isClientRequestUser(req))) return next(); // BGP staff: unaffected
@@ -5128,10 +5162,12 @@ app.use("/api/branding/assets", express.static(
         if ((req.method === "PUT" && /^\/api\/crm\/properties\/[^/]+$/.test(p)) ||
             (req.method === "POST" && p === "/api/crm/properties/bulk-update")) return next();
         // Manual plan editing is property-scoped in the handlers. Paid scan
-        // starts remain staff-only; clients can review already scanned outlines.
+        // starts remain staff-only; clients can save already scanned outlines
+        // (the match routes check the property with propertyReadBlocked).
         if (((req.method === "PATCH" || req.method === "DELETE") && /^\/api\/plans\/[^/]+$/.test(p)) ||
             (req.method === "POST" && /^\/api\/plans\/[^/]+\/(units|trace-unit|crop|crop\/undo)$/.test(p)) ||
             (req.method === "POST" && /^\/api\/plans\/[^/]+\/scans\/[^/]+\/apply$/.test(p)) ||
+            (req.method === "POST" && /^\/api\/plans\/[^/]+\/match\/(accept|accept-all)$/.test(p)) ||
             ((req.method === "PATCH" || req.method === "DELETE") && /^\/api\/plan-units\/[^/]+$/.test(p))) return next();
         // Contact-graph link writes ride under the allowed /api/crm/contacts
         // prefix but have no scope check — a client could wire ANY contact
@@ -5430,6 +5466,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupXeroRoutes(app);
   registerXeroFinancialRoutes(app);
   registerCashflowRoutes(app);
+  registerFinanceBoardRoutes(app);
   registerHistoricalWipRoutes(app);
   registerPartnerRemunerationRoutes(app);
   registerApiUsageRoutes(app);
@@ -5498,6 +5535,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupUnitNoteReaderRoutes(app);
   setupLettingSuggestionRoutes(app);
   setupUnitHotsRoutes(app);
+  (await import("./billing-entity")).setupBillingEntityRoutes(app);
   setupUnitShareRoutes(app);
   setupDealChecklistRoutes(app);
   setupUnitRecommendationRoutes(app);
@@ -5508,6 +5546,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupJointAgentChatRoutes(app);
   setupBrandRelevanceRoutes(app);
   setupOwnershipIntelRoutes(app);
+  setupBrandRetypeRoutes(app);
+  setupCrmWeekAheadRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
   const { registerPortfolioRoutes } = await import("./portfolios");
@@ -5548,6 +5588,9 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(websiteContentRouter);
   app.use(wpListingsSyncRouter);
   app.use(veriffRouter);
+  app.use(kycRequestRouter);
+  // BGP's checks before asking: Run again on the deal's AML card (BGP staff only).
+  app.use(kycPrecheckRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);
   app.use(brandDedupeRouter);
@@ -6686,6 +6729,14 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             console.error("[kyc-orch-boot] AML top-up failed:", err?.message)
           );
         }, 4 * 60 * 1000);
+        // Client checks: replies with documents to the KYC mailbox, read
+        // every 15 minutes while in-app AML is on (server/aml-portal.ts).
+        setInterval(() => {
+          if (!process.env.IN_APP_AML_ENABLED) return;
+          import("./aml-portal").then(m => m.pollKycMailbox()).then(r => {
+            if (r.filed || r.unmatched || r.warnings.length) console.log(`[kyc-mailbox] ${r.filed} filed, ${r.unmatched} left for a person${r.warnings.length ? `: ${r.warnings.slice(0, 3).join(" | ")}` : ""}`);
+          }).catch(err => console.error("[kyc-mailbox] read failed:", err?.message));
+        }, 15 * 60 * 1000).unref();
       }
 
       // Fixed-time jobs — one 5-minute tick with persisted once-per-slot
@@ -6801,6 +6852,16 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             { key: "fortnightly-brand-digest", due: (now) =>
               now.day === 1 && now.epochWeek % 2 === 1 ? dailyAt(8)(now) : null,
               run: () => runFortnightlyBrandDigest() },
+            // CRM week ahead — Monday 07:30, to the equity directors (sends
+            // email): the week's landlord meetings from BGP diaries and the
+            // CRM's confirmed events. CRM_WEEK_AHEAD_TO moves it, "off" stops it.
+            { key: "crm-week-ahead", due: weeklyAt(1, 7, 30), run: () =>
+              import("./crm-week-ahead").then(m => m.mondayWeekAhead()).then(() => undefined) },
+            // Client checks reminders — daily 10:00: three and seven days
+            // after a request, while anything is outstanding. Does nothing
+            // while in-app AML is off (server/aml-portal.ts).
+            { key: "kyc-client-reminders", due: dailyAt(10), run: () =>
+              import("./aml-portal").then(m => m.sendKycReminders()).then(() => undefined) },
             // Weekly client report — Monday 09:00 (sends email).
             { key: "weekly-client-reports", due: weeklyAt(1, 9), run: () => runWeeklyClientReports() },
           );

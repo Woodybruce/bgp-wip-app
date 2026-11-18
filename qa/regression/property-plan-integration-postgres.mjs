@@ -13,6 +13,9 @@ import { scanPropertyPlanImage, propertyPlanRaster, suggestPropertyPlanLink } fr
 import { tracePlanUnit } from '../../server/plan-unit-detection.ts';
 import { pointInPolygon } from '../../shared/plan-geometry.ts';
 const require = createRequire(import.meta.url);
+process.env.DATABASE_URL ||= 'postgres://test:test@localhost:1/test';
+// A finished scan saves its outlines (completePlanScan), and a removed outline sets its proposal aside.
+const { completePlanScan, setRemovedOutlineAside } = await import('../../server/property-plan-match.ts');
 const { source, find, evaluate, ts } = require('./source-harness.cjs');
 const supplied = process.env.PROPERTY_PLAN_TEST_DATABASE_URL;
 if (!supplied) throw new Error('Provide PROPERTY_PLAN_TEST_DATABASE_URL for the disposable local QA database');
@@ -37,7 +40,7 @@ for (const [method, path] of [['get','/api/plans/:planId/units'],['post','/api/p
   routeScripts.push(find('server/property-plans.ts', (node, tree) => ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.expression.getText(tree) === 'router' && node.expression.name.text === method && ts.isStringLiteral(node.arguments[0]) && node.arguments[0].text === path)+';');
 }
 evaluate([constants,...['inputStatus','inputLabel','errorResponse','planForRequest','unitOwnerForRequest','unitForRequest'].map(declaration),...routeScripts].join('\n'), {
-  ...links, pool: routePool, requireAuth(){}, clientBlockedForProperty: async(req,propertyId) => {assert.equal(leased,0,'Scope must be resolved before a transaction reserves a pool connection');return req.scope && req.scope !== propertyId;},
+  ...links, setRemovedOutlineAside, pool: routePool, requireAuth(){}, clientBlockedForProperty: async(req,propertyId) => {assert.equal(leased,0,'Scope must be resolved before a transaction reserves a pool connection');return req.scope && req.scope !== propertyId;},
   router: Object.fromEntries(['get','post','patch','delete'].map(method => [method, (path,_auth,handler) => routes.set(`${method} ${path}`,handler)])),
 });
 async function invoke(method,path,params,body={},scope='property') {
@@ -176,21 +179,22 @@ try {
     const job=(await db.query('SELECT * FROM property_plan_scans WHERE id=$1',[jobId])).rows[0];
     const plan=(await db.query('SELECT * FROM property_plans WHERE id=$1',[scanPlanId])).rows[0];
     const {run}=evaluate(workerDeclaration+'\nexports.run=runPropertyPlanScan;',{
-      pool:db,setInterval,clearInterval,getFile:async()=>({data:png}),queryPickableUnits:links.queryPickableUnits,
+      pool:db,completePlanScan,setInterval,clearInterval,getFile:async()=>({data:png}),queryPickableUnits:links.queryPickableUnits,
       scanPropertyPlanImage:async(_image,_options,_existing,checkpoint)=>{
         await checkpoint('Reading synthetic identities',0,1);
         if(intervene)await intervene();
-        return {candidates:scanned.candidates,message:'Synthetic review ready'};
+        return {candidates:scanned.candidates,message:'1 outline found.'};
       },
     });
     await run(job,plan);
   }
   const workerStart=await startPropertyPlanScan(db,scanPlanId,access);
   await runWorker(workerStart.job.id);
-  const workerResult=(await db.query('SELECT * FROM property_plan_scans WHERE id=$1',[workerStart.job.id])).rows[0];assert.equal(workerResult.status,'ready');assert.equal(workerResult.candidates.length,1);assert.equal((await db.query('SELECT count(*)::int AS n FROM property_plan_units WHERE plan_id=$1',[scanPlanId])).rows[0].n,0);
+  const workerResult=(await db.query('SELECT * FROM property_plan_scans WHERE id=$1',[workerStart.job.id])).rows[0];assert.equal(workerResult.status,'ready');assert.equal(workerResult.candidates.length,1);assert.equal((await db.query('SELECT count(*)::int AS n FROM property_plan_units WHERE plan_id=$1',[scanPlanId])).rows[0].n,1);assert.ok(workerResult.candidates[0].acceptedOutlineId,'the proposal is marked with the outline it became');
   const freshConnection=new pg.Pool({connectionString:supplied,ssl:false,max:1,options:`-c search_path=${schema}`});
   try{const durable=(await freshConnection.query('SELECT * FROM property_plan_scans WHERE id=$1',[workerStart.job.id])).rows[0];assert.deepEqual(durable.candidates,workerResult.candidates);assert.equal(durable.status,'ready');}finally{await freshConnection.end();}
-  pass('real worker persists review without geometry writes and a fresh database connection retrieves it');
+  pass('real worker marks the scan ready and saves its outline in one transaction, and a fresh database connection retrieves it');
+  await db.query('DELETE FROM property_plan_units WHERE plan_id=$1',[scanPlanId]);
   const expiredWorker=await startPropertyPlanScan(db,scanPlanId,access);
   await runWorker(expiredWorker.job.id,()=>db.query("UPDATE property_plan_scans SET status='failed',message='Expired during scan' WHERE id=$1",[expiredWorker.job.id]));
   let expired=(await db.query('SELECT * FROM property_plan_scans WHERE id=$1',[expiredWorker.job.id])).rows[0];assert.equal(expired.status,'failed');assert.equal(expired.message,'Expired during scan');assert.equal(expired.candidates.length,0);

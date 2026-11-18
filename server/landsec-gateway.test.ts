@@ -461,6 +461,35 @@ test("no role is a restricted role: a joint agent's difference is the deny list,
   }
 });
 
+// Every leasing requirement is open to a client login since 17 November 2026,
+// to read, add and amend (Woody: "keep all requirements open for clients and
+// access to amend and add"). A joint agent is another agency with no Brands:
+// it is refused every route that hands out requirements or the brand and agent
+// contacts on them, by jointAgentApiDenied, so the ordinary client checks
+// (which now open them) are never reached for it.
+test("a joint agent is refused the requirements, their writes and every route that hands them out", () => {
+  const refused: Array<[string, string]> = [
+    ["GET", "/api/crm/requirements-leasing"], ["GET", "/api/crm/requirements-leasing/"], ["GET", "/API/CRM/Requirements-Leasing"],
+    ["GET", `/api/crm/requirements-leasing/${X}`], ["GET", "/api/crm/requirements-leasing/matches"],
+    ["POST", "/api/crm/requirements-leasing"], ["PUT", `/api/crm/requirements-leasing/${X}`], ["PATCH", `/api/crm/requirements-leasing/${X}`],
+    ["DELETE", `/api/crm/requirements-leasing/${X}`], ["POST", `/api/crm/requirements-leasing/${X}/landlord-pack`],
+    ["POST", "/api/crm/requirements-leasing/agent-audit"], ["GET", "/api/crm/requirements-leasing?status=Active"],
+    ["GET", `/api/requirements/matches/${X}`], ["GET", `/api/available-units/matches/${U}`], ["GET", `/api/available-units/${U}/brand-suggestions`],
+    ["GET", "/api/requirement-suggestions"], ["POST", `/api/requirement-centre/requirements/${X}/still-live`],
+    ["GET", "/api/client/agent-directory"], ["GET", "/api/client/agents-overview"],
+  ];
+  for (const [method, path] of refused) {
+    assert.equal(jointAgentApiDenied(method, path), true, `${method} ${path}`);
+    assert.equal(restrictedLandsecApiRule("joint_agent", method, path), "deny", `${method} ${path} is not opened by the rule either`);
+  }
+  // What it still reads on its own schemes goes on to the client checks: a
+  // unit's own record, the viewings calendar, the property page's Brand Gap
+  // (cut to PIPnet listings in the handler for a joint agent).
+  for (const [method, path] of [["GET", `/api/available-units/${U}`], ["GET", "/api/leasing-viewings/options"], ["GET", `/api/property/${X}/brand-gaps`]] as const) {
+    assert.equal(jointAgentApiDenied(method, path), false, `${method} ${path}`);
+  }
+});
+
 // The role as a label on the older two-signature brief: a role login signs
 // its own line only, and that is the one thing an asset manager and a login
 // with no role do differently. The unit page hides the other line's button

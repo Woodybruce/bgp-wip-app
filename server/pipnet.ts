@@ -1,13 +1,13 @@
 import { db } from "./db";
 import { externalRequirements, crmRequirementsLeasing, crmCompanies, crmContacts } from "@shared/schema";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, desc } from "drizzle-orm";
 import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
 import { getPipnetCreds } from "./integration-credentials";
 import { saveFile } from "./file-storage";
 import { randomBytes } from "crypto";
 import { parseRequirementBrochure, mergeVisionIntoRecord } from "./requirement-vision-parser";
 import { geocodeOne } from "./geocode";
-import { requirementListingUpdates, importMayLabel } from "@shared/requirement-live";
+import { requirementListingUpdates, importMayLabel, listingTarget } from "@shared/requirement-live";
 
 const PIPNET_DEFAULT = "https://v1.pipnet.co.uk";
 const PIPNET_URL = sanitisePipnetUrl(process.env.PIPNET_URL);
@@ -1248,14 +1248,22 @@ async function promoteToCrmRequirement(
     const requirementDate = parseUkDate(item.lastUpdated || "");
     const requirementDateIso = requirementDate ? requirementDate.toISOString().slice(0, 10) : null;
 
-    // Skip if a leasing requirement for this client already exists. Match by
-    // normalised name so "Pret", "Pret A Manger", "Pret A Manger Ltd" — and
-    // the same brand seen via TRL — all collapse to a single CRM row.
+    // Fold into the open requirement this listing became, else an open one
+    // for the brand, matched by normalised name so "Pret", "Pret A Manger",
+    // "Pret A Manger Ltd" — and the same brand seen via TRL — all collapse to
+    // a single CRM row. Never into a closed row: that swallowed fresh
+    // listings (listingTarget).
     const normalisedTarget = normaliseBrandName(item.companyName);
     const candidateReqs = await tx
       .select()
-      .from(crmRequirementsLeasing);
-    const existingReq = candidateReqs.find(r => normaliseBrandName(r.name) === normalisedTarget);
+      .from(crmRequirementsLeasing)
+      .orderBy(desc(crmRequirementsLeasing.createdAt));
+    const existingReq = listingTarget(candidateReqs, externalId, r => normaliseBrandName(r.name) === normalisedTarget);
+    if (existingReq === "closed") {
+      // A person closed the row this listing became: it stays closed.
+      await tx.update(externalRequirements).set({ status: "converted" }).where(eq(externalRequirements.id, externalId));
+      return false;
+    }
     if (existingReq) {
       // Enrich: fill any empty field on the existing row with PIPnet data,
       // leave non-empty fields untouched (don't trample manual edits).
@@ -1274,11 +1282,13 @@ async function promoteToCrmRequirement(
       else if (!existingReq.landlordPack && landlordPackJson) updates.landlordPack = landlordPackJson;
       if (!existingReq.requirementDate && requirementDateIso) updates.requirementDate = requirementDateIso;
       if ((!existingReq.comments || !existingReq.comments.trim()) && aiSummary) updates.comments = aiSummary;
-      // Append "PIPnet" to the sources array if not already there. Not on
-      // BGP's own rows: client logins are shown rows labelled PIPnet, so the
-      // label would hand them a requirement a person at BGP entered.
+      // Append "PIPnet" to the sources array if not already there. Not on a
+      // row a person made (BGP's own or a client's), nor on an older
+      // unlabelled row that may be one: the label says where a row came from
+      // (importMayLabel). A client's row is never folded into at all
+      // (listingTarget).
       const existingSources = existingReq.sources ?? [];
-      if (importMayLabel(existingReq) && !existingSources.includes("PIPnet")) {
+      if (importMayLabel(existingReq, "PIPnet") && !existingSources.includes("PIPnet")) {
         updates.sources = [...existingSources, "PIPnet"];
       }
       // The link to this listing and the day it was last issued. Never a confirmation.

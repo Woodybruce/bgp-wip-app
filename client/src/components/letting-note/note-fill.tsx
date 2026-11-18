@@ -31,6 +31,14 @@ export interface NoteFillProps {
   autoApply?: boolean;              // and fill the form without a second press; the person still checks and saves
   onApply: (reading: LettingNoteReading) => void;
   className?: string;
+  // The one deal form's box (2026-11-17): it reads at /api/deal-notes/read,
+  // which takes the note and where the deal is, open from the start, under
+  // its own heading. A typed note only: no source.
+  readUrl?: string;
+  readExtra?: Record<string, string | null>;
+  title?: string;
+  example?: string;
+  startOpen?: boolean;
 }
 
 export interface NoteReadingRow { field: LettingNoteField; label: string; value: string; quote: string | null }
@@ -113,9 +121,10 @@ export function NoteFill(props: NoteFillProps) {
   return <NoteFillBox {...props} />;
 }
 
-function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, autoRead, autoApply, onApply, className }: NoteFillProps) {
+function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, autoRead, autoApply, onApply, className, readUrl, readExtra, title, example, startOpen }: NoteFillProps) {
   const [source, setSource] = useState<NoteSource | undefined>(sourceProp);
-  const [open, setOpen] = useState(!!sourceProp || !!initialText || !!autoRead);
+  const heading = title || "Paste a note";
+  const [open, setOpen] = useState(!!sourceProp || !!initialText || !!autoRead || !!startOpen);
   const [text, setText] = useState(initialText || "");
   const [reading, setReading] = useState<LettingNoteReading | null>(null);
   const [busy, setBusy] = useState(false);
@@ -130,13 +139,16 @@ function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, a
   const read = async (from?: NoteSource) => {
     const words = text.trim();
     if (!from && !words) return;
-    const body: ReadNoteRequest = from
-      ? { kind, source: from, ...(offerId ? { offerId } : {}) }
-      : { kind, text: words.slice(0, NOTE_MAX), ...(offerId ? { offerId } : {}) };
+    if (readUrl && from) return;
+    const body: ReadNoteRequest | Record<string, string | null> = readUrl
+      ? { ...(readExtra || {}), text: words.slice(0, NOTE_MAX) }
+      : from
+        ? { kind, source: from, ...(offerId ? { offerId } : {}) }
+        : { kind, text: words.slice(0, NOTE_MAX), ...(offerId ? { offerId } : {}) };
     const turn = ++latest.current;
     setBusy(true); setError(null); setReading(null); setFilled(false); setUsed(new Set());
     try {
-      const res = await apiRequest("POST", `/api/unit-offers/unit/${encodeURIComponent(unitId)}/read-note`, body);
+      const res = await apiRequest("POST", readUrl || `/api/unit-offers/unit/${encodeURIComponent(unitId)}/read-note`, body);
       const data = (await res.json()) as LettingNoteReading;
       if (turn !== latest.current) return;
       if (!data || typeof data !== "object" || !data.fields) throw new Error("500: empty");
@@ -171,7 +183,7 @@ function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, a
           data-testid="note-fill-open"
         >
           <Sparkles className="h-3.5 w-3.5 shrink-0" />
-          Paste a note
+          {heading}
         </button>
       </div>
     );
@@ -182,7 +194,7 @@ function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, a
       <div className="flex items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-xs font-medium">
           <Sparkles className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          {source ? "Read from the comment" : "Paste a note"}
+          {source ? "Read from the comment" : heading}
         </p>
         {!busy && (
           <button
@@ -226,7 +238,7 @@ function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, a
             value={text}
             maxLength={NOTE_MAX}
             onChange={e => setText(e.target.value)}
-            placeholder={`e.g. ${EXAMPLE}`}
+            placeholder={`e.g. ${example || EXAMPLE}`}
             aria-label="Note to read"
             className="w-full text-sm"
             disabled={busy}

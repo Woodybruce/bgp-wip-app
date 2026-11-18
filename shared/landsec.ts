@@ -9,9 +9,108 @@ export const LANDSEC_BRIEF_CATEGORIES = [
   "Competitive Socialising",
   "Active Leisure",
   "Gyms, Wellness & Softplay",
+  "Cinema",
+  "Immersive & Entertainment",
+  "Major Project Leisure",
   "Retail (London schemes)",
 ] as const;
 export type LandsecBriefCategory = (typeof LANDSEC_BRIEF_CATEGORIES)[number];
+
+// The categories of Landsec's H&L agency brief (October 2026), as the Landsec
+// view sorts brands by them (Woody, 2026-11-16: "go ahead with the
+// catagories"; only the Landsec view uses them, BGP's own Brands groups keep
+// theirs). The lead agency's six, the leisure consultant's three, and retail,
+// which the brief takes at the four London schemes only. A brand's category is
+// read from its company type, never stored; "other" is a type that names no
+// category (a bare "Tenant", "Tenant - Leisure"), for the admin re-typing tool
+// to sort.
+export const LANDSEC_CATEGORIES = [
+  { key: "restaurants_bars", label: "Restaurants & Bars", group: "Hospitality", brief: "Restaurants & Bars" },
+  { key: "cafe_qsr", label: "Café, Grab & Go and QSR", group: "Hospitality", brief: "Café, Grab & Go and QSR" },
+  { key: "food_halls", label: "Food Halls", group: "Hospitality", brief: "Food Halls" },
+  { key: "competitive_socialising", label: "Competitive Socialising", group: "Leisure", brief: "Competitive Socialising" },
+  { key: "active_leisure", label: "Active Leisure", group: "Leisure", brief: "Active Leisure" },
+  { key: "gyms_wellness_softplay", label: "Gyms, Wellness & Softplay", group: "Leisure", brief: "Gyms, Wellness & Softplay" },
+  { key: "cinema", label: "Cinema", group: "Cinema & entertainment", brief: "Cinema" },
+  { key: "immersive", label: "Immersive & Entertainment", group: "Cinema & entertainment", brief: "Immersive & Entertainment" },
+  { key: "major_leisure", label: "Major Project Leisure", group: "Cinema & entertainment", brief: "Major Project Leisure" },
+  { key: "retail", label: "Retail", group: "London retail", brief: "Retail (London schemes)" },
+] as const;
+export type LandsecCategoryKey = (typeof LANDSEC_CATEGORIES)[number]["key"];
+export type LandsecCategoryOrOther = LandsecCategoryKey | "other";
+export const LANDSEC_CATEGORY_GROUPS = ["Hospitality", "Leisure", "Cinema & entertainment", "London retail"] as const;
+export const LANDSEC_OTHER_LABEL = "Other";
+
+// Every company type the app holds or has held, by category. The Brands hub's
+// own lists name the variants that came in from imports ("Tenant - Pub",
+// "Tenant - QSR"), so they are here too.
+export const LANDSEC_CATEGORY_TYPES: Record<LandsecCategoryKey, readonly string[]> = {
+  restaurants_bars: ["Tenant - Fine Dining", "Tenant - Casual Dining", "Tenant - Restaurant", "Tenant - Food & Drink", "Tenant - F&B", "Tenant - Bar", "Tenant - Pub", "Tenant - Wine Bar"],
+  cafe_qsr: ["Tenant - Café", "Tenant - Coffee", "Tenant - Café & Coffee", "Tenant - Quick Service", "Tenant - Fast Casual", "Tenant - Fast Food", "Tenant - QSR", "Tenant - Bakery", "Tenant - Patisserie"],
+  food_halls: ["Tenant - Food Hall", "Tenant - Market Hall"],
+  competitive_socialising: ["Tenant - Competitive Socialising", "Tenant - Gaming", "Tenant - Escape Room", "Tenant - Bowling", "Tenant - Arcade"],
+  active_leisure: ["Tenant - Active Leisure", "Tenant - Padel"],
+  gyms_wellness_softplay: ["Tenant - Gym", "Tenant - Fitness", "Tenant - Gym & Fitness", "Tenant - Health & Fitness", "Tenant - Wellness", "Tenant - Spa", "Tenant - Yoga", "Tenant - Pilates", "Tenant - Soft Play", "Tenant - Family Entertainment", "Tenant - Family", "Tenant - Kids Entertainment"],
+  cinema: ["Tenant - Cinema", "Tenant - Cinema & Film"],
+  immersive: ["Tenant - Immersive Experience", "Tenant - Immersive", "Tenant - Experiential", "Tenant - Entertainment", "Tenant - Arts", "Tenant - Culture", "Tenant - Gallery"],
+  major_leisure: ["Tenant - Theme & Water Park", "Tenant - Theme Park", "Tenant - Water Park"],
+  retail: [
+    "Tenant - Luxury", "Tenant - Luxury Accessories", "Tenant - Luxury Beauty", "Tenant - Flagship Fashion", "Tenant - Fashion",
+    "Tenant - Athleisure", "Tenant - Sportswear", "Tenant - Footwear", "Tenant - Accessories & Footwear", "Tenant - Jewellery & Watches",
+    "Tenant - Beauty", "Tenant - Skincare", "Tenant - Fragrance", "Tenant - Homewares", "Tenant - Lifestyle & Home", "Tenant - Gifts & Perfumes",
+    "Tenant - Department Store", "Tenant - Technology", "Tenant - Electronics", "Tenant - Tech", "Tenant - Automotive", "Tenant - Cars",
+    "Tenant - Telecoms", "Tenant - Telecommunications", "Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket",
+    "Tenant - Books & Stationery", "Tenant - Books", "Tenant - Stationery", "Tenant - Financial Services", "Tenant - Bank", "Tenant - Finance",
+    "Tenant - Services", "Tenant - Optician", "Tenant - Travel", "Tenant - Other Services", "Tenant - Hair", "Tenant - Nails", "Tenant - Aesthetics",
+    "Tenant - Value Retail", "Tenant - Discount", "Tenant - Pound Store", "Tenant - Trade", "Tenant - DIY", "Tenant - Hardware",
+    "Tenant - Builders Merchants", "Tenant - National Retail", "Tenant - High Street", "Tenant - Retail", "Tenant - General Retail",
+    "Tenant - Activation",
+  ],
+};
+
+const LANDSEC_TYPE_INDEX = new Map<string, LandsecCategoryKey>(
+  (Object.entries(LANDSEC_CATEGORY_TYPES) as Array<[LandsecCategoryKey, readonly string[]]>)
+    .flatMap(([key, types]) => types.map(t => [t.toLowerCase(), key] as [string, LandsecCategoryKey])));
+
+// A type the lists above do not hold, by the words in it. Order matters:
+// "Food Hall" before "food", "Soft Play" before "play".
+const LANDSEC_TYPE_WORDS: Array<[RegExp, LandsecCategoryKey]> = [
+  [/food hall|market hall/, "food_halls"],
+  [/theme park|water park/, "major_leisure"],
+  [/competitive|bowl|arcade|gaming|escape|darts|golf|karaoke|axe/, "competitive_socialising"],
+  [/padel|climb|trampoline|active|karting|skate/, "active_leisure"],
+  [/soft ?play|kids|family|gym|fitness|wellness|spa\b|yoga|pilates/, "gyms_wellness_softplay"],
+  [/cinema|film/, "cinema"],
+  [/immersive|experien|entertain|\barts?\b|culture|gallery|museum/, "immersive"],
+  [/caf[eé]|coffee|bakery|patisserie|quick service|qsr|fast (food|casual)|grab/, "cafe_qsr"],
+  [/restaurant|dining|\bbar\b|\bpub\b|food|drink|f&b/, "restaurants_bars"],
+  [/retail|fashion|beauty|luxury|jewel|footwear|shoe|accessor|fragrance|skincare|home|gift|department|tech|electr|telecom|mobile|grocery|convenience|supermarket|book|stationer|financ|bank|service|optic|travel|hair|nail|aesthetic|discount|value|pound|trade|diy|hardware|sport|athleisure|toy|pet\b|pharm|vape/, "retail"],
+];
+
+// A brand's category by its company type. null = not a tenant brand
+// (a landlord, an agent, no type); "other" = a tenant whose type names no
+// category ("Tenant", "Tenant - Leisure", "Tenant - Hotel").
+export function landsecCategoryOf(companyType: string | null | undefined): LandsecCategoryOrOther | null {
+  const type = String(companyType || "").trim();
+  if (!/^tenant\b/i.test(type)) return null;
+  const known = LANDSEC_TYPE_INDEX.get(type.toLowerCase());
+  if (known) return known;
+  const words = type.replace(/^tenant\s*-?\s*/i, "").toLowerCase();
+  if (!words || words === "leisure") return "other";
+  for (const [rule, key] of LANDSEC_TYPE_WORDS) if (rule.test(words)) return key;
+  return "other";
+}
+
+export function landsecCategoryLabel(key: LandsecCategoryOrOther | null | undefined): string | null {
+  if (!key) return null;
+  if (key === "other") return LANDSEC_OTHER_LABEL;
+  return LANDSEC_CATEGORIES.find(c => c.key === key)?.label ?? null;
+}
+
+// The company types that sort into one category, for a query or a picker.
+export function landsecCategoryTypes(key: LandsecCategoryKey): readonly string[] {
+  return LANDSEC_CATEGORY_TYPES[key];
+}
 
 export type LandsecBriefSigner = "leasing" | "am";
 
@@ -222,9 +321,23 @@ export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = [];
 // brand cases, the correspondence log, the generated Targeting Brief (BGP's notes on targets) and making a CRM
 // requirement from a viewing. The company LIST stays open: it is what a
 // brand picker reads (a name to pick, never a page).
+// Since 17 November 2026 every leasing requirement is open to a client login,
+// to read, add and amend (Woody: "keep all requirements open for clients and
+// access to amend and add"). A joint agent is another agency and has no
+// Brands, so it is refused every route that hands out requirements or the
+// brand and agent contacts on them: the requirements list and one by id, their
+// writes and fits, a requirement's units, a unit's matching requirements and
+// suggested brands (which carry each requirement's agent), the client CRM's
+// agent directory (the agents named on requirements, with their email and
+// phone), and the centre.
 export function jointAgentApiDenied(method: string, path: string): boolean {
   const p = String(path || "").toLowerCase().split("?")[0];
   if (/^\/api\/(brand|brands|brand-crm|brand-pack|covenant\/by-crm)(\/|$)/.test(p)) return true;
+  if (/^\/api\/crm\/requirements-leasing(\/|$)/.test(p)) return true;
+  if (/^\/api\/(requirements|requirement-suggestions|requirement-centre)(\/|$)/.test(p)) return true;
+  if (/^\/api\/available-units\/matches(\/|$)/.test(p)) return true;
+  if (/^\/api\/available-units\/[^/]+\/brand-suggestions$/.test(p)) return true;
+  if (/^\/api\/client\/(agent-directory|agents-overview)$/.test(p)) return true;
   // Its chat stays its own (server/chat-joint-agent.ts): the addresses that
   // chat uses are opened one by one by restrictedLandsecApiRule, every other
   // chat or ChatBGP door is shut.

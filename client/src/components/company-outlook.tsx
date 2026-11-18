@@ -70,8 +70,8 @@ export function TapAwayChart({ className, children }: { className?: string; chil
 }
 
 // A deal-book stage row — the same DisclosureRow as everything else,
-// opening to the stage's deals.
-function StageRow({ stage, open, onToggle }: {
+// opening to the stage's deals. Drawn on Finance → Fees & pipeline.
+export function StageRow({ stage, open, onToggle }: {
   stage: { code: string; label: string; weightPct: number; weighted: number; unweighted: number; count: number; deals: Array<{ id: string; name: string; fee: number; weighted: number }> };
   open: boolean; onToggle: () => void;
 }) {
@@ -124,7 +124,7 @@ function LineList({ lines }: { lines: CostLineDetail[] }) {
 // feed the headline cards use). If the cashflow snapshot's Xero fetch
 // hiccups, the outlook borrows this instead of showing "£0 billed so far"
 // under a headline card that says £600k+.
-export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: CashflowXero } = {}) {
+export function CompanyOutlookSection({ xeroFallback, onOpenPipeline }: { xeroFallback?: CashflowXero; onOpenPipeline?: () => void } = {}) {
   const { data: cashflow } = useQuery<CashflowData>({
     queryKey: ["/api/cashflow"],
     queryFn: async () => (await cashflowFetch("GET", "/api/cashflow")).json(),
@@ -206,32 +206,31 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
           </div>
         </div>
 
-        {/* Where the income comes from — same stages, same weights, same
-            book as the WIP report */}
-        <div>
-          <div className="flex items-center justify-between gap-2 mb-1.5">
-            <p className="text-[10px] uppercase tracking-widest text-muted-foreground">The deal book — as on the WIP report</p>
-            <Link href="/wip-report">
-              <span className="text-xs text-primary cursor-pointer inline-flex items-center gap-1 whitespace-nowrap shrink-0" data-testid="outlook-open-wip">
-                WIP report <ArrowRight className="w-3 h-3" />
-              </span>
-            </Link>
-          </div>
-          <div className="space-y-2">
-            {income.byStage.map(s => (
-              <StageRow key={s.code} stage={s} open={openRow === `stage-${s.code}`} onToggle={() => toggle(`stage-${s.code}`)} />
-            ))}
-            {income.byStage.length === 0 && (
-              <p className="text-xs text-muted-foreground">No live deals with fees on the boards yet.</p>
-            )}
-            {income.unscheduled.count > 0 && (
-              <p className="text-xs text-muted-foreground" data-testid="outlook-unscheduled">
-                Unscheduled / TBC: {money(income.unscheduled.weighted)} weighted across {income.unscheduled.count} deal{income.unscheduled.count === 1 ? "" : "s"} with no expected completion date — counted in the year, not in any month.
-              </p>
-            )}
-            <p className="text-[11px] text-muted-foreground">Investment deals before Solicitors are provisional and not counted.</p>
-          </div>
-        </div>
+        {/* The deal book in one line; its stages, teams, deal types and
+            largest deals are on Fees & pipeline (Woody, 2026-11-17: "to the
+            point"). Same book, same rule (shared/finance-pipeline.ts). */}
+        {(() => {
+          const bookWeighted = income.byStage.reduce((s, st) => s + st.weighted, 0);
+          const bookFee = income.byStage.reduce((s, st) => s + st.unweighted, 0);
+          const bookCount = income.byStage.reduce((s, st) => s + st.count, 0);
+          return (
+            <div className="border rounded-xl p-3 flex items-start gap-3" data-testid="outlook-deal-book">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium">
+                  Deal book {money(bookWeighted)} <span className="font-normal text-muted-foreground">weighted · {bookCount} live deal{bookCount === 1 ? "" : "s"} · {money(bookFee)} at full fee</span>
+                </p>
+                <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">
+                  {money(income.forwardDeals + income.unscheduled.weighted)} expected this year{income.unscheduled.count ? ` (incl. ${money(income.unscheduled.weighted)} with no date yet)` : ""}{income.afterYearEnd.count ? ` · ${money(income.afterYearEnd.weighted)} more after 30 April` : ""}
+                </p>
+              </div>
+              {onOpenPipeline && (
+                <button type="button" onClick={onOpenPipeline} className="text-xs text-primary inline-flex items-center gap-1 whitespace-nowrap shrink-0 pt-0.5" data-testid="outlook-open-pipeline">
+                  Fees &amp; pipeline <ArrowRight className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Month by month vs the last few years — moved above the costs
             (Woody, 2026-08-29). */}
@@ -302,7 +301,7 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
                   Earned so far {money(costs.commissionEarned)} + {money(costs.commissionForward)} if the weighted book lands.
                   {costs.commissionTypedFy ? ` Wendy's plan line had ${money(costs.commissionTypedFy)}.` : ""}
                   {costs.commissionByAgent.some(a => a.salary == null) ? " ⚠︎ = no salary on file, so no commission can be worked out." : ""}
-                  {" "}Full per-deal statements with band progress are in Commission statements further down the page.
+                  {" "}Full per-deal statements with band progress are on the Commission pill.
                 </p>
               </div>
             )}
@@ -330,7 +329,7 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
         {/* (The "Basis:" footnote was deleted 2026-08-29 on Woody's
             instruction — the methodology lives in this comment instead:
             income = Xero accrual income for months gone + deal board
-            weighted NEG 50/SOL 100/EXC 100/COM 100 ahead (full fee from Solicitors, 2026-11-09), invoiced deals
+            weighted by shared/finance-pipeline.ts ahead (NEG and HOT 50, SOL/EXC/COM 100, 2026-11-17), invoiced deals
             count once; costs = Xero actuals gone + typed plan forward;
             commissions = fee splits through the tier bands; VAT/transfers/
             corp tax excluded, profit pre-tax; prior years = Sage archive.) */}

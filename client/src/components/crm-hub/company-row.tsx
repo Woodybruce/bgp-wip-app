@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Crown, Mail, Phone, Target, Users } from "lucide-react";
+import { ChevronDown, Crown, Mail, Phone, Star, Target, Users } from "lucide-react";
 import type { CrmHubKind, CrmHubPerson, CrmHubRow } from "@shared/crm-hub";
 import { lastContactShort } from "@shared/last-contact";
 import { apiRequest } from "@/lib/queryClient";
@@ -30,7 +30,7 @@ const fullDay = (value: string) => new Date(value).toLocaleDateString("en-GB", {
 
 // ── The cells ───────────────────────────────────────────────────────────────
 
-/** Logo or initials, the name, the crown for a company BGP acts for, then what it is and the list's own fact line. */
+/** Logo or initials, the name, the crown for a company BGP acts for, the star for a Super Brand, then what it is and the list's own fact line. */
 export function CompanyCell({ row, size, roomy = false }: { row: CrmHubRow; size: number; roomy?: boolean }) {
   const meta = [row.subType && row.subType !== "Other" ? row.subType : row.companyType || KIND_LABEL[row.kind], row.city].filter(Boolean).join(" · ");
   return (
@@ -40,6 +40,7 @@ export function CompanyCell({ row, size, roomy = false }: { row: CrmHubRow; size
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="text-sm font-semibold truncate" title={row.name}>{row.name}</span>
           {row.isClient && <span title="BGP client" className="shrink-0 inline-flex"><Crown className="w-3.5 h-3.5 text-amber-500" aria-label="BGP client" /></span>}
+          {row.superBrand && <span title="Super Brand: one of BGP's chosen expansion targets, VIP in the CRM" className="shrink-0 inline-flex" data-testid={`crm-hub-super-${row.id}`}><Star className="w-3.5 h-3.5 fill-amber-400 text-amber-500" aria-label="Super Brand" /></span>}
         </div>
         <p className="text-[11px] text-muted-foreground truncate">{meta}</p>
         {row.line && <p className="text-xs text-foreground/80 truncate" data-testid={`crm-hub-line-${row.id}`}>{row.line}</p>}

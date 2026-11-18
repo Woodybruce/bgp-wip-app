@@ -678,10 +678,13 @@ test("confirming the requirement on file fills its empty size, use and places fr
   // Empty fields are filled; the saved size is never replaced.
   assert.deepEqual([requirements[0].status, requirements[0].size, requirements[0].use, requirements[0].requirement_locations, requirements[0].bgp_contact_user_ids],
     ["Active", ["1,000 - 2,000 sq ft"], ["Restaurant"], ["Leeds", "Liverpool"], ["u-emily"]]);
-  // A PIPnet-labelled row is shown to client logins: nothing detected is copied onto it.
+  // Every row is shown to client logins since 17 November 2026, and its size,
+  // use and places are the requirement itself: a PIPnet listing's empty
+  // fields are filled too, and no requirement date is written.
   const g = await suggest(store, { kind: "chat", brand: { companyIds: ["c-gails"] }, sourceLabel: "ChatBGP", headline: "Gail's want York", details }, { now: NOW });
   await confirm(store, { suggestionId: g.evidence.id, requirementId: "r-list" }, EMILY, NOW);
-  assert.deepEqual([requirements[1].confirmed_how, requirements[1].size, requirements[1].use, requirements[1].requirement_locations], ["chat", undefined, undefined, undefined]);
+  assert.deepEqual([requirements[1].confirmed_how, requirements[1].size, requirements[1].use, requirements[1].requirement_locations, requirements[1].requirement_date],
+    ["chat", ["1,500 - 2,500 sq ft"], ["Restaurant"], ["Leeds", "Liverpool"], undefined]);
 });
 
 test("a requirement belongs to a tenant brand: a landlord or agent company is refused as the brand", async () => {

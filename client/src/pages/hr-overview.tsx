@@ -419,7 +419,7 @@ function TeamCard({ team, allStaff, aiSummary, onSelectPerson }: { team: TeamSum
   );
 }
 
-function OrganigramSection({ allStaff, isAdmin, onSelectPerson }: { allStaff: StaffMember[]; isAdmin: boolean; onSelectPerson?: (id: string) => void }) {
+function OrganigramSection({ allStaff, isAdmin, onSelectPerson, className = "" }: { allStaff: StaffMember[]; isAdmin: boolean; onSelectPerson?: (id: string) => void; className?: string }) {
   const { toast } = useToast();
   const { data, isLoading } = useQuery<{ teams: TeamSummary[] }>({ queryKey: ["/api/hr/team-summary"] });
   const { data: aiSummaries = [] } = useQuery<TeamAiSummary[]>({ queryKey: ["/api/hr/team-ai-summaries"] });
@@ -440,7 +440,7 @@ function OrganigramSection({ allStaff, isAdmin, onSelectPerson }: { allStaff: St
   if (!data?.teams?.length) return null;
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center justify-between">
           <span className="flex items-center gap-2"><GitBranch className="w-4 h-4 text-primary" /> Teams</span>
@@ -606,7 +606,7 @@ function BruceyWheelDialog({
       const r = await fetch("/api/hr/brucey-winners/spin", {
         method: "POST",
         credentials: "include",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ userId: winnerUserId }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Spin failed");
@@ -796,7 +796,8 @@ function BruceyWheelDialog({
             )}
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => { onClose(); setResult(null); setRotation(0); setManagingPrizes(false); }}>
+            {/* Back from Manage prizes returns to the wheel; it used to close the whole dialog. */}
+            <Button variant="outline" onClick={() => { if (managingPrizes && !result) { setManagingPrizes(false); return; } onClose(); setResult(null); setRotation(0); setManagingPrizes(false); }} data-testid="brucey-wheel-back">
               {result ? "Close" : managingPrizes ? "Back" : "Cancel"}
             </Button>
             {!result && !managingPrizes && (
@@ -812,6 +813,51 @@ function BruceyWheelDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// A wheel prize's emoji (Woody, 2026-11-16: "need to fix changing the emoji
+// when adding spin the wheel prizes"): pick one from the grid, or type or
+// paste any other. The same picker changes the emoji of a prize already on
+// the wheel. No emoji shows 🏅 on the wheel.
+const PRIZE_EMOJIS = ["🏆", "🥇", "🏅", "🎁", "🎉", "🍾", "🥂", "🍷", "🍺", "🍸", "☕", "🍰", "🍕", "🍔", "🍣", "🥐",
+  "🍫", "🍦", "🌴", "🏖️", "✈️", "🚗", "🎟️", "🎬", "🎮", "🎧", "⛳", "🏋️", "💆", "🛍️", "💷", "📚"];
+function PrizeEmojiPicker({ value, onChange, disabled = false, testId, className }: {
+  value: string | null; onChange: (emoji: string | null) => void; disabled?: boolean; testId: string; className: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const choose = (emoji: string | null) => { onChange(emoji); setOpen(false); setTyped(""); };
+  return (
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setTyped(""); }}>
+      <PopoverTrigger asChild>
+        <button type="button" disabled={disabled} className={className} title="Choose the prize's emoji" aria-label="Choose the prize's emoji" data-testid={testId}>
+          <span className={value ? undefined : "opacity-40"}>{value || "🏅"}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[252px] p-2">
+        <div className="grid grid-cols-8 gap-0.5">
+          {PRIZE_EMOJIS.map(e => (
+            <button key={e} type="button" onClick={() => choose(e)}
+              className={`h-7 w-7 rounded text-lg leading-none hover:bg-muted ${value === e ? "bg-muted ring-1 ring-ring" : ""}`}
+              data-testid={`${testId}-choice-${e}`}>{e}</button>
+          ))}
+        </div>
+        <div className="mt-2 flex items-center gap-1.5">
+          <input
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && typed.trim()) { e.preventDefault(); choose(typed.trim()); } }}
+            placeholder="Or type or paste one"
+            maxLength={16}
+            className="h-8 min-w-0 flex-1 rounded border bg-background px-2 text-sm"
+            data-testid={`${testId}-typed`}
+          />
+          <Button type="button" size="sm" className="h-8" disabled={!typed.trim()} onClick={() => choose(typed.trim())} data-testid={`${testId}-use`}>Use</Button>
+        </div>
+        {value && <button type="button" className="mt-1.5 text-xs text-muted-foreground hover:underline" onClick={() => choose(null)}>No emoji (the wheel shows 🏅)</button>}
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -831,16 +877,10 @@ function PrizeManager({
   const valueNum = value.trim() === "" ? null : Number(value);
   const overCap = valueNum !== null && (!Number.isFinite(valueNum) || valueNum > BRUCE_BONUS_PRIZE_CAP_GBP);
 
+  // The app's own request (the sign-in token as well as the cookie): with the
+  // cookie alone these were refused wherever the app signs in by token.
   const addMutation = useMutation({
-    mutationFn: async () => {
-      const r = await fetch("/api/hr/brucey-prizes", {
-        method: "POST", credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ label: label.trim(), emoji: emoji.trim() || null, valueGbp: valueNum }),
-      });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Add failed");
-      return r.json();
-    },
+    mutationFn: async () => (await apiRequest("POST", "/api/hr/brucey-prizes", { label: label.trim(), emoji: emoji.trim() || null, valueGbp: valueNum })).json(),
     onSuccess: () => {
       setLabel(""); setEmoji(""); setValue("");
       queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-prizes"] });
@@ -849,12 +889,17 @@ function PrizeManager({
     onError: (e: any) => toast({ title: "Add failed", description: e?.message, variant: "destructive" }),
   });
 
-  const removeMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const r = await fetch(`/api/hr/brucey-prizes/${id}`, { method: "DELETE", credentials: "include" });
-      if (!r.ok) throw new Error("Remove failed");
-      return r.json();
+  const emojiMutation = useMutation({
+    mutationFn: async ({ id, emoji: next }: { id: string; emoji: string | null }) => (await apiRequest("PATCH", `/api/hr/brucey-prizes/${id}`, { emoji: next })).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-prizes"] });
+      toast({ title: "Emoji changed" });
     },
+    onError: (e: any) => toast({ title: "The emoji was not changed", description: e?.message, variant: "destructive" }),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (id: string) => (await apiRequest("DELETE", `/api/hr/brucey-prizes/${id}`)).json(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-prizes"] });
       toast({ title: "Prize removed" });
@@ -874,7 +919,13 @@ function PrizeManager({
         )}
         {tierPrizes.map(p => (
           <div key={p.id} className="flex items-center gap-2 rounded border bg-card px-2 py-1.5 text-sm">
-            <span className="text-lg w-6 text-center">{p.emoji || "🏅"}</span>
+            <PrizeEmojiPicker
+              value={p.emoji}
+              onChange={(next) => { if (next !== p.emoji) emojiMutation.mutate({ id: p.id, emoji: next }); }}
+              disabled={emojiMutation.isPending}
+              className="h-7 w-7 shrink-0 rounded text-lg leading-none hover:bg-muted"
+              testId={`button-prize-emoji-${p.id}`}
+            />
             <span className="flex-1">{p.label}</span>
             {p.value_gbp != null && <span className="text-xs font-mono text-muted-foreground">£{Number(p.value_gbp)}</span>}
             <Button
@@ -896,12 +947,11 @@ function PrizeManager({
       <div className="flex flex-wrap gap-2 items-end pt-2 border-t">
         <div className="w-14">
           <label className="text-[10px] text-muted-foreground">Emoji</label>
-          <input
-            value={emoji}
-            onChange={(e) => setEmoji(e.target.value)}
-            placeholder="🍾"
-            className="w-full h-9 rounded border bg-background px-2 text-center text-lg"
-            data-testid="input-prize-emoji"
+          <PrizeEmojiPicker
+            value={emoji.trim() || null}
+            onChange={(next) => setEmoji(next ?? "")}
+            className="w-full h-9 rounded border bg-background px-2 text-center text-lg hover:bg-muted"
+            testId="button-prize-emoji"
           />
         </div>
         <div className="flex-1">
@@ -1634,16 +1684,21 @@ export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: s
   return (
     <div className="space-y-4 pb-6">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* The two boards share the column's spare height so the column
-            ends level with the org chart (Woody, 2026-10-28: "always end
-            level with the main HR board so looks ordered"). */}
+        {/* Both columns end level (Woody, 2026-10-28: "always end level with
+            the main HR board so looks ordered"; again 2026-11-17: "fix this
+            so they line up at the bottom"). Each board keeps its own height
+            and only shares spare height when the Teams card is the taller
+            side (flex-auto: flex-1 made the two boards equal, so Hunger
+            Games was stretched to the Brucey Bonus board's height and the
+            column ran far past the Teams card). When this column is the
+            taller side, the Teams card stretches to its foot. */}
         <div className="lg:col-span-1 flex flex-col gap-4">
           {currentUser && <YouPanel user={currentUser} onSelectPerson={onSelectPerson} showTasks={false} />}
-          {PERKS_ENABLED && <BruceBonusBoard isAdmin={isAdmin} allStaff={allStaff} selfId={currentUser?.id} onSelectPerson={onSelectPerson} className="lg:flex-1" />}
-          <HungerGamesStrip onSelectPerson={onSelectPerson} className="lg:flex-1" />
+          {PERKS_ENABLED && <BruceBonusBoard isAdmin={isAdmin} allStaff={allStaff} selfId={currentUser?.id} onSelectPerson={onSelectPerson} className="lg:flex-auto" />}
+          <HungerGamesStrip onSelectPerson={onSelectPerson} className="lg:flex-auto" />
         </div>
-        <div className="lg:col-span-2 space-y-4">
-          <OrganigramSection allStaff={allStaff} isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
+        <div className="lg:col-span-2 flex flex-col gap-4">
+          <OrganigramSection allStaff={allStaff} isAdmin={isAdmin} onSelectPerson={onSelectPerson} className="lg:flex-1" />
         </div>
       </div>
     </div>

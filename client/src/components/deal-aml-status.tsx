@@ -1,11 +1,14 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, TrendingUp, TrendingDown, FolderOpen } from "lucide-react";
+import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, TrendingUp, TrendingDown, FolderOpen, Flag } from "lucide-react";
 import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
 import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
+import { ClientChecksForParty, SendClientChecksButton } from "@/components/kyc-client-checks";
 import { legacyToCode } from "@shared/deal-status";
+import type { KycRedFlag } from "@shared/kyc-red-flags";
+import { precheckDay, type PrecheckCardLine } from "@shared/kyc-prechecks";
 import { getAuthHeaders, queryClient, apiRequest } from "@/lib/queryClient";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -32,12 +35,152 @@ export interface DealAmlStatus {
   allApproved: boolean;
   canInvoice: boolean;
   missing: string[];
+  // In-app AML is on: the deal offers client checks as well as KYC4U.
+  inAppAml?: boolean;
+  // What sends a party to KYC4U (BGP staff only; null for anyone else).
+  redFlags?: { parties: Record<string, KycRedFlag[]>; deal: KycRedFlag[]; unchecked: string[] } | null;
+  // BGP's checks before asking, per party (BGP staff only).
+  prechecks?: Record<string, PartyPrecheck> | null;
+}
+
+export interface PartyPrecheck {
+  state: "done" | "running" | "none" | "cap" | "off" | "waiting";
+  startedAt: string | null;
+  ranAt: string | null;
+  lines: PrecheckCardLine[];
+  errors: string[];
+}
+
+// What BGP checked before anyone was asked anything (Woody, 2026-11-17: "we
+// need to do everyhting we can before we ask questions on someone"). It
+// starts by itself when the card opens; Run again starts it afresh.
+function PartyPrechecks({ dealId, data, companyId }: { dealId: string; data: DealAmlStatus; companyId: string }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const view = data.prechecks?.[companyId];
+  const again = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/kyc/deal/${dealId}/prechecks`, { companyId })).json(),
+    onSuccess: (r: any) => {
+      const state = r?.started?.[companyId];
+      if (state === "cap") toast({ title: "Not run", description: "Today's limit for these checks is used up. They run again tomorrow." });
+      else if (state === "off") toast({ title: "Not run", description: "These checks are switched off." });
+      queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
+    },
+    onError: (e: any) => toast({ title: "Not run", description: String(e?.message || e), variant: "destructive" }),
+  });
+  if (!view || view.state === "off") return null;
+  const running = view.state === "running" || again.isPending;
+  const attention = view.lines.filter(l => l.state === "attention").length;
+  const icon = (l: PrecheckCardLine) => l.state === "ok" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+    : l.state === "attention" ? <Flag className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+    : l.state === "not_run" ? <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+    : <AlertCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />;
+  return (
+    <div className="rounded-md border border-border bg-card p-2.5 text-xs space-y-1.5" data-testid={`kyc-prechecks-${companyId}`}>
+      <div className="flex items-center gap-2">
+        <span className="font-semibold uppercase tracking-wider text-muted-foreground text-[11px]">Checked before asking</span>
+        {view.ranAt && !running && <span className="text-[11px] text-muted-foreground">{precheckDay(view.ranAt)}</span>}
+        {view.lines.length > 0 && !running && (
+          <span className="text-[11px]" data-testid={`kyc-prechecks-summary-${companyId}`}>{attention ? `${attention} to review` : "nothing to review"}</span>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          {view.lines.length > 0 && (
+            <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-[11px]" onClick={() => setOpen(o => !o)} data-testid={`kyc-prechecks-toggle-${companyId}`}>
+              {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}{open ? "Hide" : "Show"}
+            </Button>
+          )}
+          <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-[11px]" disabled={running} onClick={() => again.mutate()} data-testid={`kyc-prechecks-again-${companyId}`}>
+            Run again
+          </Button>
+        </div>
+      </div>
+      {running && (
+        <p className="flex items-center gap-1.5 text-muted-foreground" data-testid={`kyc-prechecks-running-${companyId}`}>
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />Reading Companies House, screening the sanctions lists and searching the web for public roles and adverse media. This takes a minute or two.
+        </p>
+      )}
+      {!running && view.state === "cap" && <p className="text-muted-foreground">Today's limit for these checks is used up: they run when the card is next opened tomorrow.</p>}
+      {!running && view.state === "waiting" && <p className="text-muted-foreground">The last run did not finish. It is tried again shortly, or press Run again.</p>}
+      {!running && !view.lines.length && view.state === "none" && <p className="text-muted-foreground">Not run yet.</p>}
+      {(open || (attention > 0 && !running)) && view.lines.length > 0 && (
+        <ul className="space-y-1.5" data-testid={`kyc-prechecks-lines-${companyId}`}>
+          {view.lines.filter(l => open || l.state === "attention").map(l => (
+            <li key={l.key} className="flex items-start gap-1.5">
+              {icon(l)}
+              <div className="min-w-0">
+                <div className="text-foreground">{l.label}</div>
+                {l.detail && <div className="text-muted-foreground break-words">{l.detail}</div>}
+                {l.links.map(link => (
+                  <a key={link.url} href={link.url} target="_blank" rel="noreferrer" className="block underline underline-offset-2 text-muted-foreground hover:text-foreground break-words">{link.label}</a>
+                ))}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {open && view.errors.length > 0 && (
+        <p className="text-muted-foreground" data-testid={`kyc-prechecks-errors-${companyId}`}>Could not be read: {view.errors.join("; ")}.</p>
+      )}
+    </div>
+  );
+}
+
+// A red flag sends the party to KYC4U (Woody, 2026-11-17: "basically we do
+// the normal checks expected and if there is a red flag then we get KYC4U").
+function RedFlagList({ flags, title, step, testId }: { flags: KycRedFlag[]; title: string; step: string; testId: string }) {
+  if (!flags.length) return null;
+  return (
+    <div className="rounded-md border border-red-300 bg-red-50 p-2.5 text-xs text-red-900" data-testid={testId}>
+      <div className="flex items-center gap-1.5 text-sm font-semibold"><Flag className="w-3.5 h-3.5 shrink-0" />{title}</div>
+      <ul className="mt-1.5 list-disc space-y-1 pl-4">
+        {flags.map((f, i) => (
+          <li key={`${f.kind}-${i}`}>
+            {f.label}{f.detail ? `: ${f.detail}` : ""} <span className="text-red-800/70">({f.source})</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1.5">{step}</p>
+    </div>
+  );
+}
+
+function PartyRedFlags({ data, companyId }: { data: DealAmlStatus; companyId: string }) {
+  return (
+    <RedFlagList
+      flags={data.redFlags?.parties[companyId] || []}
+      title="Red flag: raise with KYC4U"
+      step="Press Request KYC4U check below: the red flags are already in its note."
+      testId={`kyc-red-flags-${companyId}`}
+    />
+  );
+}
+
+function DealRedFlags({ data }: { data: DealAmlStatus }) {
+  const unchecked = data.redFlags?.unchecked || [];
+  return (
+    <>
+      <RedFlagList
+        flags={data.redFlags?.deal || []}
+        title="Red flag on the deal record"
+        step="It is not tied to one party: Request KYC4U check on the party it concerns carries it in the note."
+        testId="kyc-red-flags-deal"
+      />
+      {unchecked.length > 0 && (
+        <p className="text-xs text-muted-foreground" data-testid="kyc-red-flags-unchecked">
+          Red flags could not be checked against: {unchecked.join(", ")}.
+        </p>
+      )}
+    </>
+  );
 }
 
 export function useDealAmlStatus(dealId: string, enabled = true) {
   return useQuery<DealAmlStatus>({
     enabled,
     queryKey: ["/api/kyc/deal", dealId, "status"],
+    // While BGP's checks before asking run, read again every few seconds;
+    // otherwise every 30, as every other query does.
+    refetchInterval: (q) => Object.values((q.state.data as DealAmlStatus | undefined)?.prechecks || {}).some(p => p.state === "running") ? 5000 : 30_000,
     queryFn: async () => {
       const res = await fetch(`/api/kyc/deal/${dealId}/status`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load AML status");
@@ -68,11 +211,22 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
           <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-md text-sm" data-testid="deal-aml-status-incomplete">
             <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
             <span>
-              {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — set the parties on the deal record, then raise each with KYC4U.
+              {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — set the parties on the deal record, then {data.inAppAml ? "send each one the client checks" : "raise each with KYC4U"}.
             </span>
           </div>
+          <DealRedFlags data={data} />
           {data.counterparties.map(cp => (
-            <Kyc4uRequestButton key={cp.id} dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
+            <div key={cp.id} className="space-y-2">
+              <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
+              <PartyRedFlags data={data} companyId={cp.id} />
+              {data.inAppAml && (
+                <>
+                  <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={cp.name} />
+                  <ClientChecksForParty dealId={dealId} companyId={cp.id} />
+                </>
+              )}
+              <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
+            </div>
           ))}
         </CardContent>
       </Card>
@@ -99,6 +253,8 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
             </Badge>
           )}
         </div>
+
+        <DealRedFlags data={data} />
 
         <div className="grid sm:grid-cols-2 gap-2">
           {data.counterparties.map(cp => {
@@ -134,7 +290,15 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                     )}
                   </div>
                 </div>
-                <div className="mt-2">
+                <div className="mt-2 space-y-2">
+                  <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
+                  <PartyRedFlags data={data} companyId={cp.id} />
+                  {data.inAppAml && (
+                    <>
+                      <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={cp.name} className="w-full justify-center" />
+                      <ClientChecksForParty dealId={dealId} companyId={cp.id} />
+                    </>
+                  )}
                   <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
                 </div>
               </div>
@@ -150,7 +314,9 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
               <span className="font-medium">{dealStatus && ["INV", "COM"].includes(legacyToCode(dealStatus) || "") ? "AML sign-off still outstanding" : "AML approval needed"}</span> for {data.missing.join(", ")}.
-              KYC4U are BGP's MLRO — raise each party with Request KYC4U check above; their approval clears it here after the next sync.
+              {data.inAppAml
+                ? <>Send each party's contact the client checks above, and raise a difficult one with KYC4U. The MLRO's sign-off clears it here.</>
+                : <>KYC4U are BGP's MLRO — raise each party with Request KYC4U check above; their approval clears it here after the next sync.</>}
             </div>
           </div>
         )}
@@ -443,116 +609,8 @@ export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: str
         )}
       </div>
 
-      {/* Tokenised upload links — admin issues, customer uses, polled */}
-      <UploadLinksPanel dealId={dealId} dealName={dealName} />
-
       {/* MLRO Report PDF — download or save to SharePoint */}
       <MlroReportButtons dealId={dealId} />
-    </div>
-  );
-}
-
-function UploadLinksPanel({ dealId, dealName }: { dealId: string; dealName: string }) {
-  const { toast } = useToast();
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ contactEmail: "", contactName: "", customNote: "", sendEmail: true });
-
-  const { data: links = [] } = useQuery<any[]>({
-    queryKey: ["/api/aml/deal", dealId, "upload-links"],
-    queryFn: () => fetch(`/api/aml/deal/${dealId}/upload-links`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.ok ? r.json() : []),
-  });
-
-  const issue = useMutation({
-    mutationFn: async () => {
-      const r = await apiRequest("POST", `/api/aml/deal/${dealId}/upload-link`, form);
-      return r.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/aml/deal", dealId, "upload-links"] });
-      setOpen(false);
-      setForm({ contactEmail: "", contactName: "", customNote: "", sendEmail: true });
-      const note = data?.emailResult?.ok ? "Email sent." : data?.emailResult?.error ? `Email failed: ${data.emailResult.error}` : "Link created (no email sent).";
-      toast({ title: "KYC link issued", description: note });
-    },
-    onError: (e: any) => toast({ title: "Failed", description: e?.message?.slice(0, 200), variant: "destructive" }),
-  });
-
-  const revoke = useMutation({
-    mutationFn: async (token: string) => apiRequest("DELETE", `/api/aml/upload-link/${token}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/aml/deal", dealId, "upload-links"] }),
-  });
-
-  return (
-    <div className="rounded-md border p-2.5">
-      <div className="flex flex-wrap items-center justify-between gap-y-1.5 mb-1.5">
-        <div className="flex items-center gap-2">
-          <Send className="w-4 h-4 text-muted-foreground" />
-          <span className="text-xs font-semibold uppercase tracking-wide whitespace-nowrap">Client upload links</span>
-          <Badge variant="outline" className="text-[10px]">{links.length}</Badge>
-        </div>
-        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid="button-request-kyc">
-          <Mail className="w-3 h-3 mr-1" /> Request docs from client
-        </Button>
-      </div>
-      {links.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground italic">No links issued yet. Click above to email a customer a self-service upload page.</p>
-      ) : (
-        <div className="space-y-1">
-          {links.map((l) => {
-            const expired = new Date(l.expires_at) < new Date();
-            const status = l.revoked_at ? "revoked" : expired ? "expired" : l.last_used_at ? "used" : "pending";
-            return (
-              <div key={l.token} className="flex items-center gap-2 rounded border p-2 text-xs">
-                <Badge variant="outline" className={`text-[10px] capitalize ${status === "used" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : status === "expired" ? "bg-red-50 text-red-700 border-red-200" : status === "revoked" ? "bg-muted" : "bg-amber-50 text-amber-700 border-amber-200"}`}>{status}</Badge>
-                <span className="font-medium truncate max-w-[160px]">{l.contact_email || "—"}</span>
-                <span className="text-muted-foreground">expires {new Date(l.expires_at).toLocaleDateString("en-GB")}</span>
-                {l.use_count > 0 && <span className="text-muted-foreground">· {l.use_count} upload{l.use_count === 1 ? "" : "s"}</span>}
-                <div className="ml-auto flex items-center gap-1">
-                  <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => { navigator.clipboard.writeText(l.url); toast({ title: "Link copied" }); }} title="Copy link">
-                    <Copy className="w-3 h-3" />
-                  </Button>
-                  {!l.revoked_at && !expired && (
-                    <Button size="sm" variant="ghost" className="h-6 px-1.5 text-muted-foreground hover:text-destructive" onClick={() => revoke.mutate(l.token)} title="Revoke">
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Request KYC documents</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><Label>Contact name</Label><Input value={form.contactName} onChange={e => setForm(f => ({ ...f, contactName: e.target.value }))} placeholder="Jane Smith" /></div>
-              <div className="space-y-1.5"><Label>Contact email</Label><Input type="email" value={form.contactEmail} onChange={e => setForm(f => ({ ...f, contactEmail: e.target.value }))} placeholder="jane@example.com" /></div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Custom note (optional)</Label>
-              <Textarea rows={3} value={form.customNote} onChange={e => setForm(f => ({ ...f, customNote: e.target.value }))} placeholder="Any specific docs you want to call out…" />
-            </div>
-            <div className="flex items-center gap-2 text-sm">
-              <input id="send-email-cb" type="checkbox" checked={form.sendEmail} onChange={e => setForm(f => ({ ...f, sendEmail: e.target.checked }))} className="h-4 w-4" />
-              <Label htmlFor="send-email-cb" className="cursor-pointer">Email the link to {form.contactEmail || "the contact"} now</Label>
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              Email goes from the BGP AML mailbox with a 14-day link to the secure upload page.
-              Replies with attachments are auto-ingested and analysed.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={() => issue.mutate()} disabled={issue.isPending}>
-              {issue.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Send className="w-4 h-4 mr-1.5" />}
-              Issue & {form.sendEmail ? "send" : "copy link"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

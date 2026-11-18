@@ -4,7 +4,7 @@
 //   node --import tsx --test server/requirement-honest-use.test.ts
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { requirementReason, requirementClientVisible, REQUIREMENT_STATE_WEIGHT } from "@shared/requirement-live";
+import { requirementReason, requirementClientVisible, requirementJointAgentVisible, REQUIREMENT_STATE_WEIGHT } from "@shared/requirement-live";
 import { unitCandidates, type CentreEvidence } from "./target-tenant-engine";
 import { groupOverlaps, reconfirmLine, overlapReportText, overlapSource } from "./requirement-overlaps";
 import { clientScoreLabel, clientScoreView } from "./hunter-score";
@@ -17,7 +17,7 @@ const pipnet = (extra: Record<string, any> = {}) => ({ status: "Active", origin:
 describe("the dated reason other screens show", () => {
   it("names a requirement by what it is and its date, never as live", () => {
     const live = requirementReason(confirmed(9), TODAY);
-    assert.deepEqual([live.state, live.weight, live.text, live.short, live.clientText], ["live", 1, "requirement confirmed 3 Nov", "confirmed 3 Nov", null]);
+    assert.deepEqual([live.state, live.weight, live.text, live.short, live.clientText], ["live", 1, "requirement confirmed 3 Nov", "confirmed 3 Nov", "requirement"]);
     const lapsed = requirementReason(confirmed(150), TODAY);
     assert.deepEqual([lapsed.state, lapsed.weight, lapsed.text], ["to_confirm", 0.5, "requirement last confirmed 15 Jun"]);
     const listing = requirementReason(pipnet(), TODAY);
@@ -38,17 +38,30 @@ describe("the dated reason other screens show", () => {
     }
   });
 
-  it("gives a client login the source and month of a PIPnet listing and nothing else", () => {
+  // Every requirement is open to a client login since 17 November 2026
+  // (Woody: "keep all requirements open for clients and access to amend and
+  // add"): it reads what each one is and its own date, never its state or
+  // whether, when or by whom BGP confirmed it. A joint agent keeps the old
+  // rule: a PIPnet listing by source and month, and nothing else.
+  it("gives a client login what each requirement is and its own date, and a joint agent PIPnet listings only", () => {
     // A PIPnet listing a BGP person has confirmed: staff read the confirmation, a client reads the listing.
     const both = requirementReason(confirmed(9, { origin: "pipnet", sources: ["PIPnet"], lastListedAt: new Date("2026-09-03T00:00:00Z") }), TODAY);
-    assert.deepEqual([both.state, both.text, both.clientText], ["live", "requirement confirmed 3 Nov", "PIPnet listing from Sep"]);
+    assert.deepEqual([both.state, both.text, both.clientText, both.listingText], ["live", "requirement confirmed 3 Nov", "PIPnet listing from Sep", "PIPnet listing from Sep"]);
     assert.equal(requirementReason({ status: "Active", sources: ["PIPnet"] }, TODAY).clientText, "PIPnet listing");
     assert.equal(requirementReason({ status: "Active", sources: ["PIPnet"], requirementDate: "03/09/2026" }, TODAY).clientText, "PIPnet listing from Sep");
-    // BGP's hand-entered rows, Requirement List rows and chat-logged rows are not a client's to see.
+    // BGP's hand-entered rows, Requirement List rows and chat-logged rows are a client's to see now, by their own date.
+    assert.equal(requirementReason(confirmed(9, { requirementDate: "2026-10-30" }), TODAY).clientText, "requirement dated 30 Oct");
+    assert.equal(requirementReason({ status: "Active", origin: "bgp", sources: ["ChatBGP"], createdAt: daysAgo(4) }, TODAY).clientText, "requirement added 8 Nov");
+    assert.equal(requirementReason({ status: "Active", origin: "trl", sources: ["TRL"] }, TODAY).clientText, "The Requirement List listing");
     for (const row of [confirmed(9), { status: "Active", origin: "trl", sources: ["TRL"] }, { status: "Active", origin: "bgp", sources: ["ChatBGP"] }]) {
-      assert.equal(requirementClientVisible(row), false);
-      assert.equal(requirementReason(row, TODAY).clientText, null);
+      assert.equal(requirementClientVisible(row), true);
+      assert.equal(requirementJointAgentVisible(row), false);
+      assert.equal(requirementReason(row, TODAY).listingText, null);
+      assert.doesNotMatch(requirementReason(row, TODAY).clientText, /confirm|live|emily/i);
     }
+    // A requirement a client login added is the client's, and BGP reads it as one nobody at BGP has confirmed.
+    const added = requirementReason({ status: "Active", origin: "client", sources: ["Landsec"], requirementDate: "2026-11-10" }, TODAY);
+    assert.deepEqual([added.state, added.text, added.clientText], ["to_confirm", "client requirement dated 10 Nov, not confirmed", "requirement dated 10 Nov"]);
     assert.deepEqual(REQUIREMENT_STATE_WEIGHT, { live: 1, to_confirm: 0.5, background: 0.2, closed: 0 });
   });
 });
@@ -64,7 +77,7 @@ describe("target engine candidates", () => {
   });
   const unit = { id: "u1", unit_name: "Unit 12 restaurant", sqft: 2000, use_class: "Restaurant" };
 
-  it("scales the fitting requirement by state and keeps BGP's own requirements BGP-only", () => {
+  it("scales the fitting requirement by state; its line is shareable, its state BGP-only", () => {
     const out = unitCandidates(evidence(false, [
       brand("live", "Live Brand", confirmed(9)),
       brand("stale", "Stale Brand", confirmed(150)),
@@ -73,16 +86,20 @@ describe("target engine candidates", () => {
     ]), unit);
     const by = Object.fromEntries(out.map(c => [c.name, c]));
     assert.deepEqual([by["Live Brand"].score, by["Stale Brand"].score, by["Listing Brand"].score, by["Both Brand"].score], [35, 18, 7, 35]);
-    // A hand-entered requirement is evidence the landlord never reads.
-    assert.deepEqual([by["Live Brand"].evidence, by["Live Brand"].internal], [[], ["requirement confirmed 3 Nov, fits this unit (1500 - 3000 sq ft)"]]);
-    assert.deepEqual(by["Stale Brand"].internal, ["requirement last confirmed 15 Jun, fits this unit (1500 - 3000 sq ft)"]);
+    // Every requirement is open to the landlord's logins since 17 November
+    // 2026: a hand-entered one is shareable by what it is and its own date;
+    // whether and when BGP confirmed it stays internal.
+    assert.deepEqual([by["Live Brand"].evidence, by["Live Brand"].internal],
+      [["requirement, fits this unit (1500 - 3000 sq ft)"], ["that requirement: confirmed 3 Nov"]]);
+    assert.deepEqual(by["Stale Brand"].internal, ["that requirement: last confirmed 15 Jun"]);
     // A PIPnet listing is shareable by source and date; whether BGP confirmed it is not.
     assert.deepEqual([by["Listing Brand"].evidence, by["Listing Brand"].internal],
       [["PIPnet listing from Sep, fits this unit (1500 - 3000 sq ft)"], ["that listing: PIPnet listing from Sep, not confirmed"]]);
     assert.deepEqual([by["Both Brand"].evidence, by["Both Brand"].internal],
-      [["PIPnet listing from Sep, fits this unit (1500 - 3000 sq ft)"], ["that listing: requirement confirmed 3 Nov"]]);
+      [["PIPnet listing from Sep, fits this unit (1500 - 3000 sq ft)"], ["that listing: confirmed 3 Nov"]]);
     assert.deepEqual(out.map(c => c.name).slice(0, 2).sort(), ["Both Brand", "Live Brand"]);
     for (const c of out) assert.ok(![...c.evidence, ...c.internal].some(e => /live requirement/i.test(e)), c.name);
+    for (const c of out) assert.ok(!c.evidence.some(e => /confirm/i.test(e)), `${c.name}: a confirmation is never shareable`);
   });
 
   it("a fitting requirement still lets a brand outside the hospitality slice through, by flag not by wording", () => {
@@ -92,16 +109,16 @@ describe("target engine candidates", () => {
     assert.deepEqual(out.map(c => c.name), ["Retail Brand"]);
   });
 
-  it("a client viewer reads a PIPnet listing by source and month, with nothing internal", () => {
-    // The engine loads only PIPnet-labelled rows for a client; this is what it then says.
+  it("a client viewer reads every requirement by what it is and its date, with nothing internal", () => {
     const out = unitCandidates(evidence(true, [brand("listing", "Listing Brand", pipnet()),
       brand("both", "Both Brand", confirmed(9, { origin: "pipnet", sources: ["PIPnet"], lastListedAt: new Date("2026-09-03T00:00:00Z") }))]), unit);
     for (const c of out) {
       assert.deepEqual(c.evidence, ["PIPnet listing from Sep, fits this unit (1500 - 3000 sq ft)"]);
       assert.deepEqual(c.internal, []);
     }
-    // Defence in depth: a hand-entered row that reached a client's evidence says nothing.
-    assert.deepEqual(unitCandidates(evidence(true, [brand("own", "Own Brand", confirmed(9))]), unit), []);
+    // BGP's own requirement reaches a client by its own date, never its confirmation.
+    const [own] = unitCandidates(evidence(true, [brand("own", "Own Brand", confirmed(9, { requirementDate: "2026-10-30" }))]), unit);
+    assert.deepEqual([own.evidence, own.internal], [["requirement dated 30 Oct, fits this unit (1500 - 3000 sq ft)"], []]);
   });
 
   it("a requirement that does not fit the unit's use or place is a weak, dated line", () => {
@@ -156,10 +173,12 @@ describe("what leaves the staff side", () => {
     assert.equal(reconfirmLine({ toConfirm: 0, drafts: 0, lapsed: 0, goingStale: 0, suggestions: 0 }), null);
   });
 
-  it("gives a client login no score line about BGP's own requirements, or whether BGP confirmed a listing", () => {
-    assert.equal(clientScoreLabel("1 requirement on BGP's books, confirmed or logged by BGP in 12 months"), null);
-    assert.equal(clientScoreLabel("2 requirements on BGP's books, co…"), null);
-    assert.equal(clientScoreLabel("1 active requirement with BGP"), null);
+  // Every requirement is open to a client since 17 November 2026: it reads how
+  // many BGP holds, never whether or when BGP confirmed one.
+  it("gives a client login the count of BGP's requirements, never whether BGP confirmed one", () => {
+    assert.equal(clientScoreLabel("1 requirement on BGP's books, confirmed or logged by BGP in 12 months"), "1 requirement on BGP's books");
+    assert.equal(clientScoreLabel("2 requirements on BGP's books, co…"), "2 requirements on BGP's books");
+    assert.equal(clientScoreLabel("1 active requirement with BGP"), "1 requirement on BGP's books");
     assert.equal(clientScoreLabel("2 market listings (PIPnet / The Requirement List), not confirmed by BGP"), "2 market listings");
     assert.equal(clientScoreLabel("1 market listing (PIPnet / The R…"), "1 market listing");
     assert.equal(clientScoreLabel("Funding: raises £100m"), "Funding: raises £100m");
@@ -169,10 +188,10 @@ describe("what leaves the staff side", () => {
       { bucket: "capacity", points: 8, label: "Stock +40% YoY" },
     ], expansionFlags: ["1 requirement on BGP's books, co…", "Stock +40% YoY", "1 market listing (PIPnet / The R…"] };
     const shown = clientScoreView(result);
-    assert.deepEqual(shown.lines.map(l => l.label), ["1 market listing", "Stock +40% YoY"]);
-    assert.deepEqual(shown.expansionFlags, ["Stock +40% YoY", "1 market listing"]);
+    assert.deepEqual(shown.lines.map(l => l.label), ["1 requirement on BGP's books", "1 market listing", "Stock +40% YoY"]);
+    assert.deepEqual(shown.expansionFlags, ["1 requirement on BGP's books", "Stock +40% YoY", "1 market listing"]);
     assert.equal(shown.score, 20);
-    assert.doesNotMatch(JSON.stringify(shown), /BGP|confirmed/);
+    assert.doesNotMatch(JSON.stringify(shown), /confirm|logged/);
     assert.equal(result.lines.length, 3, "the staff result is not changed");
   });
 });

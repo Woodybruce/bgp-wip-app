@@ -19,7 +19,7 @@ import { inferCountryFromAddress } from "../shared/geo-country";
 import { nameKey } from "../shared/contact-tiers";
 import { isDismissedLandlordContact } from "../shared/landlord-contact-suggestions";
 import { TERMINAL_STATUSES } from "../shared/deal-status";
-import { requirementLive, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "../shared/requirement-live";
+import { requirementLive, requirementStateSql, requirementLiveColumnsSql } from "../shared/requirement-live";
 import { conceptStatusForSave } from "../shared/brand-stage";
 import { clientProfileCompanyView } from "../shared/tenant-categories";
 import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
@@ -384,8 +384,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // contact). The CRM Agents page already counts these as acting for the
     // brand; the brand page's Tenant rep list read only recorded
     // representations, so 47 brands with an agent (Wingstop among them)
-    // showed none (Woody, 2026-11-13). A client gets them only from the
-    // requirements it may read: PIPnet listings, or its own company's.
+    // showed none (Woody, 2026-11-13). A client reads every requirement since
+    // 17 November 2026 (Woody: "keep all requirements open for clients"), so
+    // it gets the agents on all of them that are open.
     const reqAgentsQ = pool.query(
       `SELECT DISTINCT ON (ct.id) ct.id AS contact_id, ct.name AS contact_name,
               ct.email AS contact_email,
@@ -397,9 +398,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
           AND a.merged_into_id IS NULL AND a.id <> q.company_id
           AND a.company_type ILIKE 'Agent%'
         WHERE q.company_id = $1
-          AND lower(trim(COALESCE(q.status, ''))) IN ('', 'active')
-          AND ($2::varchar IS NULL OR q.company_id = $2
-               OR 'PIPnet' = ANY(COALESCE(q.sources, '{}'::text[])))
+          -- The one live rule, as the requirements list on this page reads it:
+          -- live or to confirm for BGP staff, open for a client (never cut by
+          -- the live state, which is BGP's), never "status = active".
+          AND (CASE WHEN $2::varchar IS NULL THEN ${requirementStateSql("q")} IN ('live', 'to_confirm')
+                    ELSE ${requirementStateSql("q")} <> 'closed' END)
         ORDER BY ct.id`,
       [companyId, bpScope || null]
     );
@@ -543,8 +546,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // and "BGP requirements", so staff get the rows that are live or to
     // confirm, live first, each with its state and dated line; an
     // unconfirmed market listing is neither and stays on the Requirements
-    // page. A client login gets only what its Requirements list shows it
-    // (PIPnet listings, or its own company's rows) and never the state.
+    // page. A client login gets every requirement on the brand that is not
+    // closed (all are open to it since 17 November 2026), newest first, and
+    // never the state.
     // crm_requirements_leasing stores size/use/locations as text[] arrays
     // (no size_min/size_max/budget/use_class/location_notes columns exist).
     const requirementsQ = pool.query(
@@ -553,11 +557,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
          FROM crm_requirements_leasing r
         WHERE r.company_id = $1
           AND ${bpScope
-            ? `(${requirementClientVisibleSql("r")} OR r.company_id = $2) AND ${requirementStateSql("r")} <> 'closed'`
+            ? `${requirementStateSql("r")} <> 'closed'`
             : `${requirementStateSql("r")} IN ('live', 'to_confirm')`}
         ORDER BY ${bpScope ? "r.created_at DESC NULLS LAST" : `(${requirementStateSql("r")} = 'live') DESC, r.updated_at DESC NULLS LAST`}
         LIMIT 10`,
-      bpScope ? [companyId, bpScope] : [companyId]
+      [companyId]
     ).then(q => ({ rows: q.rows.map((r: any) => {
       const row = { id: r.id, name: r.name, use: r.use, size: r.size, requirement_locations: r.requirement_locations, status: r.status, created_at: r.created_at, updated_at: r.updated_at };
       // A confirmation moves updated_at and the live-first order: neither goes to a client login.
@@ -1568,10 +1572,13 @@ router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Res
       const { resolveCompanyScope } = await import("./company-scope");
       if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Retained fact review is available in the staff view." });
     }
-    // "On hold" is BGP's own flag: a client login never sets it.
-    if (req.body && ("concept_status" in req.body || "conceptStatus" in req.body)) {
+    // "On hold" and the Super Brand star are BGP's own flags: a client login
+    // never sets either.
+    if (req.body && ["concept_status", "conceptStatus", "hunter_flag", "hunterFlag"].some(key => key in req.body)) {
       const { resolveCompanyScope, isClientRequestUser } = await import("./company-scope");
-      if ((await resolveCompanyScope(req)) || (await isClientRequestUser(req))) { delete req.body.concept_status; delete req.body.conceptStatus; }
+      if ((await resolveCompanyScope(req)) || (await isClientRequestUser(req))) {
+        delete req.body.concept_status; delete req.body.conceptStatus; delete req.body.hunter_flag; delete req.body.hunterFlag;
+      }
     }
     res.json(await updateBrandRecord(companyId, req.body || {}, (req.session as any)?.userId || (req as any).tokenUserId || (req as any).user?.id || null));
   } catch (err: any) { res.status(err.status || 400).json({ error: err.message }); }
