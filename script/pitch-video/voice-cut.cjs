@@ -17,7 +17,7 @@
 // (`caps`), and where a quiet sound goes (`sfx`: a pop, a chime, a rush of air).
 //
 //   REC=<recording.mp4> CUT=<cutlist.json> OUT_DIR=<folder with the clips and film.log> \
-//     AVATAR_ART=<folder> [HERO_VOICE=<wav>] [INTRO=<phone clip> INTRO_TEXT=<its words> INTRO_TRIM=<from,to>] [ONLY=properties,unit] [REDO=hots] node script/pitch-video/voice-cut.cjs [out.mp4]
+//     AVATAR_ART=<folder> [HERO_VOICE=<wav>] [VOICE=plain] [INTRO=<phone clip> INTRO_TEXT=<its words> INTRO_TRIM=<from,to>] [ONLY=properties,unit] [REDO=hots] node script/pitch-video/voice-cut.cjs [out.mp4]
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
@@ -83,7 +83,11 @@ const CHAIN = "equalizer=f=140:t=q:w=1:g=2,equalizer=f=300:t=q:w=1.2:g=-2.5,equa
 // (a call recording is thin), evened out, and brought to one loudness.
 const voice = path.join(tmp, "voice.wav");
 if (!fs.existsSync(voice) || fs.statSync(voice).mtimeMs < fs.statSync(REC).mtimeMs) {
-  ff(["-i", REC, "-vn", "-af", `highpass=f=80,afftdn=nf=-30,${CHAIN}`, "-ac", "2", voice]);
+  // VOICE=plain: a recording made close to a good microphone needs no lift, only evening out.
+  const clean = process.env.VOICE === "plain"
+    ? "highpass=f=80,afftdn=nf=-40,acompressor=threshold=-21dB:ratio=2.4:attack=8:release=140:makeup=2,loudnorm=I=-16:TP=-1.5:LRA=9,aresample=48000"
+    : `highpass=f=80,afftdn=nf=-30,${CHAIN}`;
+  ff(["-i", REC, "-vn", "-map", "0:a:0", "-af", clean, "-ac", "2", voice]);
 }
 // A line's audio on its own. Each stretch goes where the cut list puts it
 // (`starts`), or they run on from one another after `lead`.

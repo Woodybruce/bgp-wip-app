@@ -180,7 +180,8 @@ async function replayLogos(context) {
       }
       const body = fs.readFileSync(file);
       if (!body.length) return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
-      return route.fulfill({ status: 200, contentType: fs.readFileSync(file + ".type", "utf8"), body });
+      // Kept by the browser for the session, so a grid of logos seen once is drawn at once the next time.
+      return route.fulfill({ status: 200, contentType: fs.readFileSync(file + ".type", "utf8"), headers: { "cache-control": "private, max-age=3600" }, body });
     } catch { return route.fulfill({ status: 404, contentType: "application/json", body: "{}" }); }
   });
 }
@@ -273,42 +274,65 @@ const SCENES = {
   // with hundreds of other brands"). The count and the directory, then Add brand: the app answers that Flat
   // Iron is already in the CRM, and its page opens from there. Nothing is created.
   async brands(s) {
-    // The directory is read once before the cut starts, so it is there the moment its pill is pressed on film.
-    await s.goto("/brands?tab=explorer", 6000);
+    // Everything the cut shows is read once before it starts (the brand's page, the directory, the
+    // Food & Drink market view), so nothing is seen loading on film.
+    await s.goto(`/companies/${FLAT_IRON}`, 3000);
+    await s.goto("/brands?tab=explorer", 5000);
+    await s.page.locator('button:has-text("Food & Drink")').first().click();
+    await s.wait(3500);
+    // Back to All Brands (pressing a tile again takes it off), so the cut opens on the whole directory.
+    if (await s.page.locator('button:has-text("All Food & Drink")').count()) await s.page.locator('button:has-text("Food & Drink")').first().click();
+    await s.wait(1200);
+    if (await s.page.locator('button:has-text("All Food & Drink")').count()) throw new Error("brands: the directory did not go back to All Brands");
     await s.page.locator('button:has-text("Overview")').first().click();
     await s.wait(1800);
+    // The page under the pointer, moved evenly: the wheel is slow and uneven over a grid of this many logos.
+    const glide = (dy, ms) => s.page.evaluate(([x, y, dy, ms]) => new Promise(done => {
+      let el = document.elementFromPoint(x, y);
+      while (el && !(el.scrollHeight > el.clientHeight + 50 && /(auto|scroll)/.test(getComputedStyle(el).overflowY))) el = el.parentElement;
+      el = el || document.scrollingElement;
+      const y0 = el.scrollTop, t0 = performance.now();
+      const step = now => { const k = Math.min(1, (now - t0) / ms), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; el.scrollTop = y0 + dy * e; if (k < 1) requestAnimationFrame(step); else done(); };
+      requestAnimationFrame(step);
+    }), [s.x, s.y, dy, ms]);
     await s.start();
     await s.wait(500);
     await s.over('text=/categorised brands/i', 700);
     await s.wait(1100);
-    await s.click('button:has-text("Brand Explorer")', { before: 250, after: 1500, ms: 700 });
-    await s.over('text=/^[0-9],[0-9]{3}$/ >> visible=true', 600);
+    await s.click('button:has-text("Brand Explorer")', { before: 250, after: 900, ms: 700 });
+    await s.over('text=/^[0-9],[0-9]{3}$/ >> visible=true', 500);
+    await s.wait(800);
+    // Food & Drink: its market view, then down past the first rows to the grid of brands.
+    await s.click('button:has-text("Food & Drink")', { before: 250, after: 1800, ms: 700 });
+    await s.moveTo(820, 520, 500);
+    await glide(1372, 1300);
     await s.wait(900);
-    await s.moveTo(820, 520, 600);
-    await s.scroll(900, 2200);
-    await s.wait(500);
-    await s.scroll(-900, 1100);
+    await glide(700, 2600);
+    await s.wait(600);
+    await glide(-2072, 1100);
+    await s.wait(300);
     await s.click('[data-testid="client-add-brand"]', { before: 300, after: 900, ms: 800 });
     await s.click('[data-testid="client-add-brand-search"]', { before: 150, after: 250, ms: 400 });
     await s.type("Flat Iron", 120);
-    await s.wait(1700);
+    await s.wait(1400);
     await s.over('text=/already in your CRM/', 600);
-    await s.wait(1500);
+    await s.wait(1300);
     await s.click(`[data-testid="client-open-brand-${FLAT_IRON}"]`, { before: 300, after: 600, ms: 500 });
     await s.page.waitForURL(new RegExp(`/companies/${FLAT_IRON}`), { timeout: 20000 });
-    try { await s.page.waitForLoadState("networkidle", { timeout: 20000 }); } catch {}
-    await s.wait(1800);
+    await s.moveTo(1150, 330, 350);     // off the conversation line, which opens its prompts under a resting pointer
+    await s.page.locator('text=/Backed by/ >> visible=true').first().waitFor({ state: "visible", timeout: 20000 });
+    await s.wait(1500);
     await s.over('text=/Backed by/ >> visible=true', 800);
-    await s.wait(1600);
-    await s.click('button:has-text("Stores & menu")', { before: 250, after: 3200, ms: 700 });
+    await s.wait(1300);
+    await s.click('button:has-text("Stores & menu")', { before: 250, after: 2500, ms: 700 });
     await s.moveTo(760, 640, 700);
     await s.wait(900);
     await s.click('button:has-text("Expansion")', { before: 250, after: 1500, ms: 700 });
     await s.over('text=/Store count/i >> visible=true', 700);
-    await s.wait(1700);
+    await s.wait(1400);
     await s.click('button:has-text("People & checks")', { before: 250, after: 1300, ms: 700 });
     await s.over('text=Tom Byng >> visible=true', 700);
-    await s.wait(2200);
+    await s.wait(1900);
   },
 
   // 7. The Targeting Brief: the Landsec leasing manager agrees it.
