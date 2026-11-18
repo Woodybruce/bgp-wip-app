@@ -158,7 +158,7 @@ const CHECKLIST_PLAN = [
   { who: "jonny", done: true },
   { who: "will", done: false },
   { who: "millie", done: false },
-  { who: "jonny", done: false },
+  { who: "will", done: false },      // the review the deal waits on is the senior asset manager's
 ];
 
 // ---- Plumbing ---------------------------------------------------------------
@@ -510,7 +510,7 @@ async function phaseRecommendation() {
     step(true, `issued by ${ws.issuedByName}${ws.emailReason ? `  [no email sent: ${ws.emailReason}]` : ""}`);
   } else step(false, `issued by ${ws.issuedByName}`);
   ws = await must("jonny", "GET", `/api/unit-recommendations/${UNIT}`);
-  log(`  check (as Jonny Rushton): stage ${ws.stage}; version ${ws.version}; ${ws.terms.tenant}, £${ws.terms.rentPa} a year, ${ws.terms.termYears} years; net effective £${ws.measure.nerPa}; ${ws.measure.headlineVsErvPct}% of ERV; deciders ${ws.deciders.map(d => `${d.name} ${d.decision || "not decided"}`).join(", ")}; Mark can decide: ${ws.viewer.canDecide}`);
+  log(`  check (as Jonny Rushton): stage ${ws.stage}; version ${ws.version}; ${ws.terms.tenant}, £${ws.terms.rentPa} a year, ${ws.terms.termYears} years; net effective £${ws.measure.nerPa}; ${ws.measure.headlineVsErvPct}% of ERV; deciders ${ws.deciders.map(d => `${d.name} ${d.decision || "not decided"}`).join(", ")}; Jonny can decide: ${ws.viewer.canDecide}`);
 }
 
 // ---- 8. solicitors ----------------------------------------------------------
