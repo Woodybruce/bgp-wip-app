@@ -22,6 +22,7 @@ const BLUEWATER = "23b98b43-c5a4-4c16-9eaa-a674f7139749";
 const BK_ROW = "b553225f-f020-4845-a86c-c67fabe6128f";
 const BK_UNIT = "c0868396-f74b-4661-83e1-ebf7c6bcb062";
 const JERSEY_MIKES = "226e6ac9-a1e2-4a7c-8210-e35d87f2df0d";
+const FLAT_IRON = "13d9eed1-1ccb-4b5e-b023-c2714eb3ea9b";
 const LEASING = "jonny.rushton@landsec.com";   // Jonny Rushton, Portfolio Leasing Manager: the login the Landsec scenes are filmed as
 const BK_DEAL = "8f3b56ee-65dc-4d8e-87da-1ae9c5b02bfe";
 // Jonny Rushton as a person on the unit's Targeting Brief (the staging script
@@ -266,6 +267,48 @@ const SCENES = {
     await s.wait(500);
     await s.scroll(300, 1600);
     await s.wait(1500);
+  },
+  // The brands a Landsec login is given (Woody, 18 November 2026: "it gives access to brands ... say add
+  // Flat Iron and then show it populating the brand page ... of course Flat Iron is already on there along
+  // with hundreds of other brands"). The count and the directory, then Add brand: the app answers that Flat
+  // Iron is already in the CRM, and its page opens from there. Nothing is created.
+  async brands(s) {
+    // The directory is read once before the cut starts, so it is there the moment its pill is pressed on film.
+    await s.goto("/brands?tab=explorer", 6000);
+    await s.page.locator('button:has-text("Overview")').first().click();
+    await s.wait(1800);
+    await s.start();
+    await s.wait(500);
+    await s.over('text=/categorised brands/i', 700);
+    await s.wait(1100);
+    await s.click('button:has-text("Brand Explorer")', { before: 250, after: 1500, ms: 700 });
+    await s.over('text=/^[0-9],[0-9]{3}$/ >> visible=true', 600);
+    await s.wait(900);
+    await s.moveTo(820, 520, 600);
+    await s.scroll(900, 2200);
+    await s.wait(500);
+    await s.scroll(-900, 1100);
+    await s.click('[data-testid="client-add-brand"]', { before: 300, after: 900, ms: 800 });
+    await s.click('[data-testid="client-add-brand-search"]', { before: 150, after: 250, ms: 400 });
+    await s.type("Flat Iron", 120);
+    await s.wait(1700);
+    await s.over('text=/already in your CRM/', 600);
+    await s.wait(1500);
+    await s.click(`[data-testid="client-open-brand-${FLAT_IRON}"]`, { before: 300, after: 600, ms: 500 });
+    await s.page.waitForURL(new RegExp(`/companies/${FLAT_IRON}`), { timeout: 20000 });
+    try { await s.page.waitForLoadState("networkidle", { timeout: 20000 }); } catch {}
+    await s.wait(1800);
+    await s.over('text=/Backed by/ >> visible=true', 800);
+    await s.wait(1600);
+    await s.click('button:has-text("Stores & menu")', { before: 250, after: 3200, ms: 700 });
+    await s.moveTo(760, 640, 700);
+    await s.wait(900);
+    await s.click('button:has-text("Expansion")', { before: 250, after: 1500, ms: 700 });
+    await s.over('text=/Store count/i >> visible=true', 700);
+    await s.wait(1700);
+    await s.click('button:has-text("People & checks")', { before: 250, after: 1300, ms: 700 });
+    await s.over('text=Tom Byng >> visible=true', 700);
+    await s.wait(2200);
   },
 
   // 7. The Targeting Brief: the Landsec leasing manager agrees it.
