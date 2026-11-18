@@ -2990,6 +2990,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
               tenantId:    (oldDeal as any).tenantId,
               vendorId:    (oldDeal as any).vendorId,
               purchaserId: (oldDeal as any).purchaserId,
+              dealId:      (oldDeal as any).id,
             };
             const amlResult = await checkCounterpartyAml(parties);
             const { amlGateOutcome, recordAmlGateWarning, AML_HELD_FOR_CLIENT } = await import("./deal-gates");
@@ -3826,6 +3827,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
             const made = await checkCounterpartyAml({
               landlordId: dealScope || (req.body as any).landlordId || null, tenantId: (req.body as any).tenantId,
               vendorId: (req.body as any).vendorId, purchaserId: (req.body as any).purchaserId,
+              landlordTradingEntityId: (req.body as any).landlordTradingEntityId ?? null, tenantTradingEntityId: (req.body as any).tenantTradingEntityId ?? null,
+              vendorTradingEntityId: (req.body as any).vendorTradingEntityId ?? null, purchaserTradingEntityId: (req.body as any).purchaserTradingEntityId ?? null,
             });
             const outcome = amlGateOutcome(made);
             if (outcome.block) {
@@ -4083,13 +4086,19 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           // the same save counts. Reading only the stored ones let a rejected
           // tenant through when the tenant and the status were set together
           // (review, 2026-11-13).
-          const partyAfter = (key: "landlordId" | "tenantId" | "vendorId" | "purchaserId") =>
+          const partyAfter = (key: "landlordId" | "tenantId" | "vendorId" | "purchaserId" | "landlordTradingEntityId" | "tenantTradingEntityId" | "vendorTradingEntityId" | "purchaserTradingEntityId") =>
             (req.body as any)[key] !== undefined ? (req.body as any)[key] : (oldDeal as any)?.[key];
           const parties = {
             landlordId:  partyAfter("landlordId"),
             tenantId:    partyAfter("tenantId"),
             vendorId:    partyAfter("vendorId"),
             purchaserId: partyAfter("purchaserId"),
+            // The company that signs for each, as the save leaves it (one
+            // under another brand is not counted: the gate checks).
+            landlordTradingEntityId:  partyAfter("landlordTradingEntityId") ?? null,
+            tenantTradingEntityId:    partyAfter("tenantTradingEntityId") ?? null,
+            vendorTradingEntityId:    partyAfter("vendorTradingEntityId") ?? null,
+            purchaserTradingEntityId: partyAfter("purchaserTradingEntityId") ?? null,
           };
           const amlResult = await checkCounterpartyAml(parties);
           const outcome = amlGateOutcome(amlResult);
@@ -4220,6 +4229,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
             tenantId:    (deal as any).tenantId,
             vendorId:    (deal as any).vendorId,
             purchaserId: (deal as any).purchaserId,
+            landlordTradingEntityId:  (deal as any).landlordTradingEntityId ?? null,
+            tenantTradingEntityId:    (deal as any).tenantTradingEntityId ?? null,
+            vendorTradingEntityId:    (deal as any).vendorTradingEntityId ?? null,
+            purchaserTradingEntityId: (deal as any).purchaserTradingEntityId ?? null,
           });
           if (amlResult.hasCounterparties && amlResult.notReady.length === 0) {
             await storage.updateCrmDeal(deal.id, {

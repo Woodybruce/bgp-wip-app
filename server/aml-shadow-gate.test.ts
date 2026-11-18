@@ -10,9 +10,9 @@
  *  - the mirror case (brand unapproved, linked entity approved) →
  *    'newly_passing';
  *  - expired linked-entity approval blocks the proposed gate;
- *  - the live gate module is byte-identical — no crm_deal_entities
- *    reference anywhere in deal-gates.ts (grep assertion), and its call
- *    sites are untouched (this delivery adds none);
+ *  - the live gate never reads crm_deal_entities (grep assertion). Since
+ *    18 November 2026 it reads the company that signs from crm_deals and
+ *    its approval from crm_entity_kyc (shared/party-kyc.ts);
  *  - report rows sort changed-first for the GET endpoint.
  *
  * currentGate is a spy (the real checkCounterpartyAml runs in prod);
@@ -173,11 +173,16 @@ describe("checkCounterpartyAmlShadow", () => {
   });
 });
 
-describe("the live gate is untouched", () => {
-  it("deal-gates.ts has no entity-link awareness (grep assertion)", () => {
+describe("the live gate", () => {
+  // Since 18 November 2026 (step 2 of docs/deal-page-review-2026-11-18.md)
+  // the live gate reads the company that signs from crm_deals.<role>_
+  // trading_entity_id and its approval from crm_entity_kyc. crm_deal_entities
+  // is still a shadow table nothing writes: the gate never reads it.
+  it("reads the company that signs from the deal, never crm_deal_entities", () => {
     const source = readFileSync(new URL("./deal-gates.ts", import.meta.url), "utf8");
     assert.equal(source.includes("crm_deal_entities"), false, "the live gate must not read crm_deal_entities");
-    assert.equal(source.includes("crm_entity_kyc"), false, "the live gate must not read crm_entity_kyc");
+    assert.ok(source.includes("crm_entity_kyc"), "the live gate reads the company that signs's own check");
+    assert.ok(source.includes("_trading_entity_id"), "the live gate reads the company that signs from the deal");
   });
 });
 

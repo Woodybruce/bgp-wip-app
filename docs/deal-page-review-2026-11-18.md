@@ -316,6 +316,12 @@ Each step ships on its own.
 2. **AML on the contracting company**: approval on the company, BGP sign-off,
    Add KYC4U result, the same box in Kick off AML. The client checks change
    built on 18 November (`fd140668`, not yet live) goes out with this or before.
+   **Built on 18 November 2026** (Woody: "Ok go ahead with your suggestions I
+   will do the requests"), with KYC4U's Connect button and its approval link
+   for KYC4U's IT admin back, and KYC4U's documents copied by the sync: see
+   "Approval on the company that signs, BGP sign-off, KYC4U results" in
+   CLAUDE.md. Woody's to do: send KYC4U's IT admin the approval link (My BGP →
+   KYC4U pill), then press Connect KYC4U.
 3. **The timeline and the clock**: the stage strip and the events, days at
    stage and waiting on for every letting, the activity pills fixed.
 4. **Negotiation, checklist and tasks on the deal**: the deal-keyed reads,

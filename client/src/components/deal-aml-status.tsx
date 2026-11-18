@@ -7,6 +7,7 @@ import { KycPanel } from "@/components/kyc-panel";
 import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { ClientChecksForParty, SendClientChecksButton } from "@/components/kyc-client-checks";
 import { PartyReadyToStart, useDealParties } from "@/components/deal-parties";
+import { PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
 import { precheckDay, type PrecheckCardLine } from "@shared/kyc-prechecks";
@@ -32,6 +33,12 @@ export interface DealAmlStatus {
     kyc_approved_by: string | null;
     isApproved: boolean;
     isExpired: boolean;
+    // Who the state is about (BGP staff only): the company that signs when
+    // the deal names one (2026-11-18), else the brand.
+    kycName?: string;
+    kycSource?: "brand" | "company" | "same_company" | "brand_rejected";
+    brandKycStatus?: string | null;
+    signsAs?: string | null;
   }>;
   allApproved: boolean;
   canInvoice: boolean;
@@ -43,6 +50,9 @@ export interface DealAmlStatus {
   redFlags?: { parties: Record<string, KycRedFlag[]>; deal: KycRedFlag[]; unchecked: string[] } | null;
   // BGP's checks before asking, per party (BGP staff only).
   prechecks?: Record<string, PartyPrecheck> | null;
+  // BGP's sign-off and KYC4U's result (BGP staff only): whether the person
+  // may decide, and per party whether BGP may sign it off now.
+  decisions?: { canDecide: boolean; mlroAppointed: boolean; parties: Record<string, { blocked: string | null; needsNote: boolean }> } | null;
 }
 
 export interface PartyPrecheck {
@@ -223,7 +233,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
           <DealRedFlags data={data} />
           {data.counterparties.map(cp => (
             <div key={cp.id} className="space-y-2">
-              {staffView && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
+              {staffView && !(cp.isApproved && !cp.isExpired) && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
               <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
               <PartyRedFlags data={data} companyId={cp.id} />
               {data.clientChecks && (
@@ -233,6 +243,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                 </>
               )}
               <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
+              <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={cp.kycName || cp.name} approved={cp.isApproved && !cp.isExpired} />
             </div>
           ))}
         </CardContent>
@@ -283,12 +294,18 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                     <Link href={`/companies/${cp.id}`} className="font-medium text-sm hover:underline block truncate">
                       {cp.name}
                     </Link>
+                    {cp.signsAs && (
+                      <div className="text-[11px] text-muted-foreground mt-0.5 truncate" title={`Checks on ${cp.signsAs}, the company that signs`} data-testid={`counterparty-signs-as-${cp.id}`}>
+                        Checks on <span className="text-foreground">{cp.signsAs}</span>, the company that signs
+                      </div>
+                    )}
                     <div className="text-[11px] text-muted-foreground mt-0.5">
                       {status === "approved" ? `Approved${cp.kyc_approved_by ? ` by ${cp.kyc_approved_by}` : ""}` :
                        status === "expired" ? "Expired — re-check needed" :
-                       status === "rejected" ? "Rejected" :
+                       status === "rejected" ? (cp.kycSource === "brand_rejected" ? "Rejected (the brand)" : "Rejected") :
                        status === "in_review" ? "In review" :
-                       status === "not_found" ? (parties?.parties.find(p => p.brand.id === cp.id)?.company ? "Brand not on Companies House: the checks read the company that signs" : "Not on Companies House — manual KYC needed") : "No KYC yet"}
+                       status === "not_found" ? (parties?.parties.find(p => p.brand.id === cp.id)?.company ? "Brand not on Companies House: the checks read the company that signs" : "Not on Companies House — manual KYC needed") :
+                       cp.kycSource === "company" && cp.brandKycStatus === "approved" ? `No checks on ${cp.kycName || "the company that signs"} yet: ${cp.name} is approved, but it is a different company` : "No KYC yet"}
                     </div>
                     {cp.kyc_expires_at && (
                       <div className="text-[11px] text-muted-foreground">
@@ -298,7 +315,8 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                   </div>
                 </div>
                 <div className="mt-2 space-y-2">
-                  {staffView && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
+                  {/* What the checks still need is moot once the party is approved. */}
+                  {staffView && status !== "approved" && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
                   <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
                   <PartyRedFlags data={data} companyId={cp.id} />
                   {data.clientChecks && (
@@ -308,6 +326,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                     </>
                   )}
                   <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
+                  <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={cp.kycName || cp.name} approved={status === "approved"} />
                 </div>
               </div>
             );
@@ -323,8 +342,8 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
             <div>
               <span className="font-medium">{dealStatus && ["INV", "COM"].includes(legacyToCode(dealStatus) || "") ? "AML sign-off still outstanding" : "AML approval needed"}</span> for {data.missing.join(", ")}.{" "}
               {data.clientChecks
-                ? <>Send each party's contact the client checks above; a party with a red flag goes to KYC4U. A party clears here when KYC4U, BGP's MLRO, signs it off (after the next sync).</>
-                : <>KYC4U are BGP's MLRO — raise each party with Request KYC4U check above; their approval clears it here after the next sync.</>}
+                ? <>Send each party's contact the client checks above; a party with a red flag goes to KYC4U. A party clears here when BGP signs it off, or when KYC4U, BGP's MLRO, approves it (their result added here, or after the next sync).</>
+                : <>KYC4U are BGP's MLRO — raise each party with Request KYC4U check above; their approval clears it here once their result is added or synced. A routine party can be signed off by BGP.</>}
             </div>
           </div>
         )}

@@ -46,7 +46,7 @@ test('only BGP staff signed in as themselves start or see a run', () => {
   const body = route.slice(0, route.indexOf('router.post('));
   assert.match(body, /const staff = \(await contactViewer\(req\)\)\.staff;/);
   assert.match(body, /const prechecks = staff\s*\?\s*await \(await import\("\.\/kyc-prechecks"\)\)\.dealPrechecks/);
-  assert.match(body, /prechecks,\s*\}\);/);
+  assert.match(body, /prechecks,\s*decisions,\s*\}\);/);
   const again = checks.slice(checks.indexOf('router.post("/api/kyc/deal/:id/prechecks"'));
   assert.match(again, /if \(!\(await contactViewer\(req\)\)\.staff\) return res\.status\(403\)/);
   assert.match(again, /That company is not a party to this deal/);

@@ -149,6 +149,7 @@ import { dealNotePatch, noteTenant } from "@/lib/deal-note";
 import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { SendClientChecksButton } from "@/components/kyc-client-checks";
 import { PartyReadyToStart } from "@/components/deal-parties";
+import { PartyDecisions } from "@/components/deal-party-aml";
 import { useDealAmlStatus } from "@/components/deal-aml-status";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
 import { JointAgencyWidget, JointAgencyRegisterDialog, jointAgencyMissing, jointAgencyPayload, EMPTY_JOINT_AGENCY, type JointAgencyState } from "@/components/joint-agency-aml";
@@ -3603,6 +3604,11 @@ export function DealFormDialog({
                         anything missing before the checks can start
                         (2026-11-18), filled in place. */}
                     <PartyReadyToStart dealId={amlStep.dealId} companyId={p.id} />
+                    {/* BGP's sign-off and KYC4U's result, for the MLRO (or
+                        an admin while none is appointed): a party KYC4U has
+                        already approved is recorded here (2026-11-18). */}
+                    <PartyDecisions dealId={amlStep.dealId} data={amlStepStatus} companyId={p.id} role={p.role} partyName={p.name}
+                      approved={!!amlStepStatus?.counterparties.find(c => c.id === p.id && c.isApproved && !c.isExpired)} compact />
                   </div>
                 );
               })}

@@ -8551,6 +8551,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         tenantId: body.tenantId || (existingDeal as any)?.tenantId || null,
         vendorId: (existingDeal as any)?.vendorId || null,
         purchaserId: (existingDeal as any)?.purchaserId || null,
+        dealId: (existingDeal as any)?.id || null,
       };
       const namesNewParty = !!existingDeal && (
         partiesToBe.tenantId !== ((existingDeal as any).tenantId || null)
@@ -8685,6 +8686,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             tenantId: (deal as any).tenantId,
             vendorId: (deal as any).vendorId,
             purchaserId: (deal as any).purchaserId,
+            dealId: (deal as any).id,
           };
           const result = await checkCounterpartyAml(parties);
           const msg = formatAmlWarning(result);

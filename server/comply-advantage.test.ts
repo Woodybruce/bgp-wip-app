@@ -352,6 +352,41 @@ test("an account on Mesh's newer pipeline lists its configurations at /v3", asyn
   assert.deepEqual(m.calls.filter(c => !isToken(c)).map(c => c.path), ["/v2/entity-screening/configurations", "/v3/entity-screening/configurations"]);
 });
 
+test("the check says what each configuration screens and how closely", async () => {
+  // A newer (match threshold) configuration, as Mesh's v3 list gives it.
+  assert.equal(ca.describeMeshConfiguration({
+    name: "chat bgp", results_limit: 50,
+    source_collections: [
+      { match_threshold: 0.5, method: "RISKS", risks: [{ taxonomy: "r_sanctions_exposure.r_direct_sanctions_exposure", source_types: [] }] },
+      { name: "PEPs", match_threshold: 0.6, risks: [{ taxonomy: "r_political_exposure", source_types: [] }],
+        exclusion_filters: [{ key: "FILTER_ATTRIBUTE_YEAR_OF_BIRTH", mismatch: { tolerance: "P1Y" } }] },
+    ],
+  }), "sanctions exposure: match threshold 50; PEPs: match threshold 60 (leaves out year of birth mismatch); up to 50 results");
+  // An older (fuzziness) configuration, as Mesh's v2 list gives it.
+  assert.equal(ca.describeMeshConfiguration({
+    name: "Default", country_filters: ["GB"],
+    source_collections: [{ name: "Sanctions", fuzziness: 0.5, aml_types: ["sanction"], options: ["remove_deceased"], source_identifiers: [], description: "" }],
+  }), "Sanctions: fuzziness 50% (options remove_deceased); countries GB");
+  assert.equal(ca.describeMeshConfiguration({ name: "Empty" }), "");
+  assert.equal(ca.describeMeshConfiguration(null), "");
+
+  ca.resetComplyAdvantageState();
+  const m = mesh(c => {
+    if (isToken(c)) return TOKEN;
+    if (c.path === "/v2/entity-screening/configurations") return { status: 404, body: { title: "No configurations found" } };
+    if (c.path === "/v3/entity-screening/configurations") {
+      return { status: 200, body: { configurations: [{ configuration_identifier: "cfg-b", version: 1, configuration: {
+        name: "chat bgp", is_archived: false, source_collections: [{ match_threshold: 0.5, risks: [{ taxonomy: "r_adverse_media", source_types: [] }] }],
+      } }] } };
+    }
+    return { status: 500 };
+  });
+  const check = await ca.checkComplyAdvantage(m.deps);
+  assert.equal(check.configurations[0].settings, "adverse media: match threshold 50");
+  assert.match(check.message, /1 screening configuration \(chat bgp: adverse media: match threshold 50\)/);
+  assert.ok(m.calls.every(c => c.method === "GET" || isToken(c)), "only reads");
+});
+
 test("without keys nothing is screened and nothing is called", async () => {
   ca.resetComplyAdvantageState();
   const m = mesh(() => TOKEN, {});

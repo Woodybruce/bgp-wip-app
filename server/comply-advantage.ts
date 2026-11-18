@@ -496,9 +496,60 @@ export interface MeshCheck {
   ok: boolean;
   credentials: "api" | "legacy" | null;
   message: string;
-  configurations: Array<{ identifier: string; name: string; archived: boolean }>;
+  configurations: Array<{ identifier: string; name: string; archived: boolean; settings?: string }>;
   screeningConfigId: string | null;
   screeningConfigFound: boolean | null;
+}
+
+const FILTER_WORDS: Record<string, string> = {
+  FILTER_ATTRIBUTE_YEAR_OF_BIRTH: "year of birth",
+  FILTER_ATTRIBUTE_COUNTRY: "country",
+  FILTER_ATTRIBUTE_LAST_ACTIVE_DATE: "last active date",
+};
+
+/**
+ * What a screening configuration screens and how closely, in a line (Woody,
+ * 18 November 2026, after setting one up in Mesh: "did 50 broad? that ok?
+ * can you check"). Mesh lists two shapes: an older configuration sets a
+ * fuzziness per collection, a newer one a match threshold (only hits scoring
+ * at or above it come back, so a lower one returns more). Both are 0 to 1 in
+ * the API and 0 to 100 on Mesh's own screens, which is how they are shown.
+ */
+export function describeMeshConfiguration(configuration: any): string {
+  const cols: any[] = Array.isArray(configuration?.source_collections) ? configuration.source_collections : [];
+  const scale = (v: unknown): number | null => {
+    if (v === null || v === undefined || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.round(n <= 1 ? n * 100 : n) : null;
+  };
+  const words = (t: unknown) => String(t || "").split(".")[0].replace(/^[a-z]_/, "").replace(/_/g, " ").trim();
+  const filterWords = (filters: unknown): string[] => (Array.isArray(filters) ? filters : []).map((f: any) => {
+    const what = FILTER_WORDS[String(f?.key || "")] || String(f?.key || "").replace(/^FILTER_ATTRIBUTE_/, "").replace(/_/g, " ").toLowerCase();
+    const how = f?.mismatch ? "mismatch" : f?.absent ? "missing" : f?.older_than ? `older than ${f.older_than?.threshold || "a set time"}` : "";
+    return `${what} ${how}`.trim();
+  }).filter(Boolean);
+  const parts: string[] = [];
+  for (const c of cols.slice(0, 12)) {
+    const risks = [...new Set((Array.isArray(c?.risks) ? c.risks : []).map((r: any) => words(r?.taxonomy)).filter(Boolean))];
+    const aml = Array.isArray(c?.aml_types) ? c.aml_types.slice(0, 4).map(String) : [];
+    const label = String(c?.name || "").trim() || risks.join(", ") || aml.join(", ") || "a collection";
+    const threshold = scale(c?.match_threshold);
+    const fuzziness = scale(c?.fuzziness);
+    const level = threshold !== null ? `match threshold ${threshold}` : fuzziness !== null ? `fuzziness ${fuzziness}%` : "";
+    const extras = [
+      ...filterWords(c?.exclusion_filters).map(w => `leaves out ${w}`),
+      ...(Array.isArray(c?.options) && c.options.length ? [`options ${c.options.slice(0, 6).join(", ")}`] : []),
+    ];
+    parts.push(`${label}${level ? `: ${level}` : ""}${extras.length ? ` (${extras.join("; ")})` : ""}`);
+  }
+  if (Array.isArray(configuration?.configuration_options) && configuration.configuration_options.length) {
+    parts.push(`options ${configuration.configuration_options.slice(0, 6).join(", ")}`);
+  }
+  if (Array.isArray(configuration?.country_filters) && configuration.country_filters.length) {
+    parts.push(`countries ${configuration.country_filters.slice(0, 8).join(", ")}`);
+  }
+  if (configuration?.results_limit) parts.push(`up to ${configuration.results_limit} results`);
+  return parts.join("; ");
 }
 
 export async function checkComplyAdvantage(deps: MeshDeps = defaultDeps()): Promise<MeshCheck> {
@@ -516,11 +567,15 @@ export async function checkComplyAdvantage(deps: MeshDeps = defaultDeps()): Prom
     // Mesh lists configurations at two addresses: /v2 and, for accounts on
     // its newer data pipeline, /v3. The first answered "none" on live on
     // 18 November 2026, so an empty or missing /v2 list reads /v3 as well.
-    const readList = (call: CallResult) => (Array.isArray(call.data?.configurations) ? call.data.configurations : []).map((c: any) => ({
-      identifier: String(c?.configuration_identifier || ""),
-      name: String(c?.configuration?.name || c?.configuration?.description || "Unnamed"),
-      archived: !!c?.configuration?.is_archived,
-    })).filter((c: any) => c.identifier);
+    const readList = (call: CallResult) => (Array.isArray(call.data?.configurations) ? call.data.configurations : []).map((c: any) => {
+      const settings = describeMeshConfiguration(c?.configuration);
+      return {
+        identifier: String(c?.configuration_identifier || ""),
+        name: String(c?.configuration?.name || c?.configuration?.description || "Unnamed"),
+        archived: !!c?.configuration?.is_archived,
+        ...(settings ? { settings } : {}),
+      };
+    }).filter((c: any) => c.identifier);
     const v2 = await meshCall("GET", "/v2/entity-screening/configurations", undefined, deps);
     if (v2.status !== 200 && v2.status !== 404) {
       const err = meshFailure(v2, "read the screening configurations");
@@ -537,7 +592,8 @@ export async function checkComplyAdvantage(deps: MeshDeps = defaultDeps()): Prom
     const which = screeningConfigId
       ? (found ? "the screening configuration set on Railway is one of them" : "the screening configuration set on Railway is not one of them")
       : "none is named on Railway, so Mesh picks one";
-    return { ...base, ok: found !== false, configurations, screeningConfigFound: found, message: `Signed in with ${how}. ${live.length} screening configuration${live.length === 1 ? "" : "s"} (${live.map((c: any) => c.name).join(", ") || "none live"}); ${which}` };
+    const named = live.map((c: any) => (c.settings ? `${c.name}: ${c.settings}` : c.name));
+    return { ...base, ok: found !== false, configurations, screeningConfigFound: found, message: `Signed in with ${how}. ${live.length} screening configuration${live.length === 1 ? "" : "s"} (${named.join(" | ") || "none live"}); ${which}` };
   } catch (e: any) {
     return { ...base, ok: true, message: `Signed in with ${how}, but the screening configurations could not be read: ${e?.message || "unknown"}` };
   }

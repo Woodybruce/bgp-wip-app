@@ -138,7 +138,7 @@ export async function updateTrackerAsset(id: string, body: Record<string, any>, 
     const dr = dealRow.rows[0];
     if (dr && dr.aml_check_completed !== "YES") {
       const { checkCounterpartyAml, amlGateOutcome, recordAmlGateWarning } = await import("./deal-gates");
-      const parties = { landlordId: dr.landlord_id, tenantId: dr.tenant_id, vendorId: dr.vendor_id, purchaserId: dr.purchaser_id };
+      const parties = { landlordId: dr.landlord_id, tenantId: dr.tenant_id, vendorId: dr.vendor_id, purchaserId: dr.purchaser_id, dealId: before.dealId };
       const amlResult = await checkCounterpartyAml(parties);
       const outcome = amlGateOutcome(amlResult);
       if (outcome.block) return { status: 409, body: { message: outcome.block, code: "AML_GATE_FAILED", notReady: amlResult.notReady } };

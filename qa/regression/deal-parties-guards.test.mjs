@@ -129,7 +129,9 @@ test('the deal page and the deal form carry it', () => {
   const page = read('client/src/components/deal-detail.tsx');
   for (const role of ['landlord', 'tenant', 'vendor', 'purchaser']) assert.ok(page.includes(`<DealPartyLines dealId={id} role="${role}" />`), role);
   const card = read('client/src/components/deal-aml-status.tsx');
-  assert.equal((card.match(/\{staffView && <PartyReadyToStart dealId=\{dealId\} companyId=\{cp\.id\} \/>\}/g) || []).length, 2);
+  // On both layouts of the card, hidden once the party is approved (step 2, 18 November 2026).
+  assert.ok(card.includes('{staffView && !(cp.isApproved && !cp.isExpired) && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}'));
+  assert.ok(card.includes('{staffView && status !== "approved" && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}'));
   const form = read('client/src/pages/deals.tsx');
   for (const role of ['landlord', 'tenant', 'vendor', 'purchaser']) {
     assert.ok(form.includes(`...(company ? { ${role}TradingEntityId: company.id } : {}),`), `${role} billing box sets the company`);

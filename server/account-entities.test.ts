@@ -219,6 +219,7 @@ function writePool(handlers: { entity?: any; intervalDays?: number } = {}) {
       if (/FROM aml_settings/.test(sql)) return { rows: [{ recheck_interval_days: handlers.intervalDays ?? 182 }] };
       if (/INTO crm_entity_kyc/.test(sql)) return { rows: [{ id: "kyc-1", entity_kind: params![0], entity_id: params![1] }] };
       if (/INTO aml_recheck_reminders/.test(sql)) return { rows: [] };
+      if (/UPDATE aml_recheck_reminders/.test(sql)) return { rows: [] };
       if (/INTO kyc_audit_log/.test(sql)) return { rows: [] };
       throw new Error(`unexpected SQL: ${sql}`);
     },

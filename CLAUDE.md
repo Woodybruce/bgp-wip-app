@@ -3210,8 +3210,30 @@ from Mesh's own documentation (docs.mesh.complyadvantage.com, read
   ping always ran it, the page now shows it): signs in and lists the
   screening configurations (Mesh's `/v2` list, and its `/v3` list for
   accounts on its newer pipeline when the first is empty), and says whether
-  the one named on Railway is among them. On live on 18 November 2026 the
-  API keys signed in and `/v2` listed no configuration. The old `/api/comply-advantage/probe`, which posted test
+  the one named on Railway is among them, with what each screens and how
+  closely (`describeMeshConfiguration`: per collection its risks and its
+  match threshold or fuzziness, shown 0 to 100 as Mesh's screens show them,
+  its filters and options, and the results limit). On live on 18 November
+  2026 the API keys signed in and `/v2` listed no configuration; later that
+  day Woody made **"chat bgp"** (`01a1f01a-caf3-715d-aedc-e55000f6e363`, the
+  only one, so Mesh uses it with nothing named on Railway): a match-threshold
+  configuration, one collection ("Chat") holding every risk (sanctions,
+  political exposure, terrorist financing from media and more) at **50**
+  ("Medium" on Mesh's slider; 25 is "Broad"), all three filters off (no year
+  of birth, year of birth sensitivity, country mismatch). Mesh's screen
+  offers one threshold per collection and he could only move the slider
+  (Woody, 2026-11-18: "All I can do is move the slider that's it"), so it
+  stays at 50, ComplyAdvantage's starting point for sanctions (60 for PEPs and
+  90 for everything else, from their "Recommended Match Threshold Starting
+  Points"; never below 40); more media hits to close in Mesh is the price.
+  Keep the three filters off while the app sends names only: Mesh's score
+  rises sharply with year of birth and country (their example: a common name
+  34 alone, 67 with a country, 95 with a year of birth), so a name-only
+  screen of a common name can score under 50; the free UK and US sanctions
+  lists in the checks before asking still catch exact names. Offered, not
+  built: separate collections through Mesh's API (sanctions 50, PEPs 60, the
+  rest 90), the app applying those bars to red flags, and sending year of
+  birth and country. The old `/api/comply-advantage/probe`, which posted test
   searches to seven addresses for any login, is gone.
 - Callers: BGP's checks before asking (`server/kyc-prechecks.ts`, live while
   in-app AML is off), and with in-app AML on, the KYC orchestrator, KYC
@@ -3289,10 +3311,101 @@ screens: `client/src/components/deal-parties.tsx`. Tests:
   that signs when a company filed under the party is picked or created
   (`XeroContactPicker`'s `onChange(contact, company)`); changing a party
   clears it.
-- Not built (step 2 of the review): approval on the company that signs, BGP
-  sign-off and Add KYC4U result; approval still reads the brand's
-  `kyc_status`. Not run against Companies House or Xero from a build machine;
-  checked in a browser against a local copy on 18 November 2026.
+- Not run against Companies House or Xero from a build machine; checked in a
+  browser against a local copy on 18 November 2026. Approval, BGP sign-off and
+  KYC4U's result are step 2, the next section.
+
+## Approval on the company that signs, BGP sign-off, KYC4U results (Woody, 2026-11-18)
+
+Woody, asked whether KYC4U's documents are fetched and filed from their site
+(they were not; statuses came only through the bookmark), answered "Ok go
+ahead with your suggestions I will do the requests": step 2 of
+`docs/deal-page-review-2026-11-18.md`. Do not re-litigate. Rules (pure):
+`shared/party-kyc.ts`; sign-off and KYC4U's result: `server/deal-party-aml.ts`;
+screens: `client/src/components/deal-party-aml.tsx`. Tests:
+`server/party-kyc.test.ts` (in `npm test`),
+`qa/regression/deal-party-aml-guards.test.mjs`.
+
+- **A party is approved on the company that signs** when the deal names one
+  (`partyKycState`, read by `loadPartyKyc` in `server/deal-gates.ts`): that
+  company's own record in `crm_entity_kyc` (the per-company KYC table of
+  Delivery 5), else, while it has none, the brand's state only when it is the
+  brand's own legal company (`sameLegalCompany`: the same Companies House
+  number, or the company's name is the brand's `uk_entity_name` or Companies
+  House name), else "no checks run". A company counts only when filed under
+  the party's brand. A brand the MLRO rejected blocks whatever company is
+  named. With no company that signs the party is the brand, as before. Every
+  caller of `checkCounterpartyAml` passes the deal's id or the companies in
+  the save (`signingCompanies`); `recomputeDealKycApproved` and
+  `recomputeDealsForTradingEntity` re-derive `kyc_approved`. The deal's AML
+  status reply (`GET /api/kyc/deal/:id/status`) reads the same state, and for
+  BGP staff sends `kycName`, `kycSource`, `brandKycStatus`, `signsAs` and
+  `decisions` (who may decide; per party whether BGP may sign it off now).
+  `crm_deal_entities` stays a shadow table nothing writes and the gate never
+  reads (`server/aml-shadow-gate.ts`).
+- **BGP's sign-off** (`POST /api/deals/:id/parties/:role/sign-off { note }`)
+  and **KYC4U's result** (`POST …/kyc4u-result`, multipart) are the MLRO's:
+  the nominated officer once one is appointed in AML settings, admins until
+  then (`amlActor`), BGP staff signed in as themselves; the result's route
+  checks that before multer reads a file. Sign-off is refused
+  (`signOffDenial`, in this order) for a rejected party, one already approved
+  and in date, records the red flag read could not reach, a request raised
+  with KYC4U on this deal and not yet answered (`kyc4u_drafts`, 180 days),
+  the party's or the deal's red flags, a higher-risk file (`isHigherRisk`),
+  checks before asking still running, not run, or more than 30 days old, and,
+  while the client checks are unfinished, a note under 10 characters. It
+  writes the company that signs through `approveEntityKyc` (re-check reminder
+  listed under the brand, an earlier open one for that company completed),
+  else the brand's `kyc_*` columns, reminder and KYC audit line, then a
+  `deal_audit_log` line (`aml_sign_off`) and the recompute.
+- **KYC4U's result** is Approved, Rejected or More information needed
+  (`KYC4U_RESULTS`), a date (not in the future; dated today it is timed as
+  recorded), a reference, a note and up to 10 files of 25MB. An approval needs
+  a file (KYC4U's report or email); anything else a file or a note of 10
+  characters. Files go to `kyc_documents` on the party (the company that signs
+  when set; type `kyc4u_report` unless the name says otherwise). The result is
+  a `kyc4u_requests` row (list `manual`) applied by the mirror, so a later
+  KYC4U request for the party replaces it as before; the reply says when it
+  did not take effect. **A result about a company that is not the brand's own
+  legal company has no `company_id`** (`company_id_manual` is the brand), so
+  the mirror's brand pass never applies it to the brand.
+- **The mirror's company pass** (`mirrorKyc4uCompanyStatuses`, inside
+  `mirrorKyc4uStatuses`): rows with `kyc4u_requests.trading_entity_id` (boot
+  migration) set the company's own record, approved, rejected or in review
+  (a still-valid approval kept), idempotent on `evidence.kyc4uKey`. Both
+  passes take the latest row by date, then the latest recorded. **Synced
+  rows** are matched to a company under the matched brand only on a single
+  fit by Companies House number or full name (`pickTradingEntity`) and still
+  count for the brand as they always did: unlike a result added by hand, a
+  synced approval of one of a brand's companies also approves the brand (the
+  matcher's long-standing behaviour, kept so no deal changes).
+- **Screens**: on the AML card (both layouts) and in Kick off AML, the MLRO
+  or an admin gets **Sign off** (hidden once approved, greyed with the reason
+  when refused) and **Add KYC4U result** under each party (`PartyDecisions`).
+  The card says "Checks on <company>, the company that signs", says when a
+  different company has no checks though the brand is approved, and hides
+  "Before the checks can start" once a party is approved.
+- **Connect KYC4U is back** (My BGP → KYC4U pill, admins, "Automatic sync"):
+  Connect, Sync now, Disconnect and **Copy the approval link for KYC4U's IT
+  admin** (`GET /api/kyc4u/admin-consent-link`: Microsoft's v2.0 admin
+  consent for `Sites.Read.All`, `User.Read` and `offline_access` only, never
+  `.default`, which would ask for the app's mail permissions in KYC4U's
+  tenant; it returns to `PUBLIC_APP_URL`/api/kyc4u/callback). Connect fails
+  with "Need admin approval" until KYC4U's admin approves (why it was removed
+  on 6 October 2026). Woody is sending the link.
+- **KYC4U's documents** (`copyKyc4uDocuments`, at the end of each sync):
+  request folders (`REQ… <entity>`) at a library's root or one folder down,
+  matched to a brand (and the company that signs) by the same matchers; each
+  file copied into the store as `kyc4u-doc-<hash of drive and item>-<name>`
+  and filed in `kyc_documents` once (type from its name, else its section
+  folder), on the deal its request was raised from when a draft names the
+  REQ number. At most 200 files a sync, none over 25MB; unmatched folders are
+  counted, not copied. Read only on KYC4U's side. Not run against KYC4U from
+  a build machine (it cannot be until their admin approves): tried locally
+  against a fake site on 18 November 2026.
+- Not built: the MLRO clearing a rejection from the deal (the old company
+  reject and approve routes are retired with in-app AML); step 6 of the
+  review, the AML dashboard.
 
 ## Emails come from chatbgp.app (Woody, 2026-11-17)
 

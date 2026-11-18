@@ -43,7 +43,7 @@ const redirectUri = (req: Request) => {
   return `${proto}://${host}/api/kyc4u/callback`;
 };
 
-interface Connection { cache: string; homeAccountId: string; username: string; connectedAt: string; connectedBy: string | null; lastSyncAt?: string | null; lastError?: string | null; listIds?: string[] }
+interface Connection { cache: string; homeAccountId: string; username: string; connectedAt: string; connectedBy: string | null; lastSyncAt?: string | null; lastError?: string | null; listIds?: string[]; lastDocuments?: Record<string, number> | null }
 
 async function loadConnection(): Promise<Connection | null> {
   const r = await pool.query(`SELECT value FROM system_settings WHERE key = $1`, [CACHE_KEY]);
@@ -155,20 +155,58 @@ async function companyMatcher() {
   };
 }
 
-async function upsertItem(match: (e: string | null) => string | null, list: { id: string; name: string }, item: Kyc4uItem): Promise<boolean> {
+// The company that signs a request is about (18 November 2026): a KYC4U
+// request's entity is often one of the brand's companies filed under it
+// (crm_trading_entities). Matched only under the brand the request already
+// matched, by Companies House number, else by name, and only on a single fit.
+// The request still counts for the brand as before; the KYC4U mirror's
+// company pass also files its status on that company.
+export function pickTradingEntity(
+  entities: Array<{ id: string; parentId: string; name: string; companiesHouseNumber: string | null }>,
+  brandId: string | null, entityName: string | null, nameKey: (n: string) => string,
+): string | null {
+  if (!brandId || !entityName) return null;
+  const under = entities.filter(e => e.parentId === brandId);
+  if (!under.length) return null;
+  const { chNumber, names } = entityNameCandidates(entityName);
+  const ch = (v: string | null) => String(v || "").trim().toUpperCase().padStart(8, "0");
+  if (chNumber) {
+    const byNumber = under.filter(e => e.companiesHouseNumber && ch(e.companiesHouseNumber) === chNumber);
+    if (byNumber.length === 1) return byNumber[0].id;
+  }
+  // The full name only (its first candidate): a shortened name ("Pret") is
+  // the brand, not one of its companies.
+  const full = names[0] ? nameKey(names[0]) : "";
+  if (full.length < 3) return null;
+  const byName = under.filter(e => nameKey(e.name) === full);
+  return byName.length === 1 ? byName[0].id : null;
+}
+
+interface Matchers { company: (e: string | null) => string | null; entity: (brandId: string | null, e: string | null) => string | null }
+async function requestMatchers(): Promise<Matchers> {
+  const company = await companyMatcher();
+  const { buyerNameKey } = await import("./investment-buyers");
+  const entities = (await pool.query(`SELECT id, parent_company_id, name, companies_house_number FROM crm_trading_entities`).catch(() => ({ rows: [] as any[] }))).rows
+    .map((r: any) => ({ id: String(r.id), parentId: String(r.parent_company_id || ""), name: String(r.name || ""), companiesHouseNumber: r.companies_house_number || null }));
+  return { company, entity: (brandId, e) => pickTradingEntity(entities, brandId, e, buyerNameKey) };
+}
+
+async function upsertItem(match: Matchers, list: { id: string; name: string }, item: Kyc4uItem): Promise<boolean> {
   const fields = item.fields || {};
   const title = pick(fields, [/^title$/i, /client|entity|company|customer|subject/i]);
   const status = pick(fields, [/^status$/i, /status|stage|progress|outcome/i]);
   const entity = pick(fields, [/entity|client|company|customer|subject/i, /^title$/i]);
-  const companyId = match(entity);
+  const companyId = match.company(entity);
+  const entityId = match.entity(companyId, entity);
   await pool.query(
-    `INSERT INTO kyc4u_requests (list_id, item_id, list_name, title, status, entity_name, company_id, fields, created_at_source, modified_at_source, web_url, synced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, NOW())
+    `INSERT INTO kyc4u_requests (list_id, item_id, list_name, title, status, entity_name, company_id, trading_entity_id, fields, created_at_source, modified_at_source, web_url, synced_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, NOW())
      ON CONFLICT (list_id, item_id) DO UPDATE SET list_name = EXCLUDED.list_name, title = EXCLUDED.title, status = EXCLUDED.status,
        entity_name = EXCLUDED.entity_name, company_id = COALESCE(kyc4u_requests.company_id_manual, EXCLUDED.company_id),
+       trading_entity_id = CASE WHEN kyc4u_requests.company_id_manual IS NOT NULL THEN kyc4u_requests.trading_entity_id ELSE EXCLUDED.trading_entity_id END,
        fields = EXCLUDED.fields, created_at_source = EXCLUDED.created_at_source, modified_at_source = EXCLUDED.modified_at_source,
        web_url = EXCLUDED.web_url, synced_at = NOW()`,
-    [String(list.id).slice(0, 200), String(item.id).slice(0, 200), list.name, title, status, entity, companyId, JSON.stringify(fields),
+    [String(list.id).slice(0, 200), String(item.id).slice(0, 200), list.name, title, status, entity, companyId, entityId, JSON.stringify(fields),
       validDate(item.created), validDate(item.modified), item.url || null]);
   return !!companyId;
 }
@@ -178,7 +216,7 @@ const validDate = (v: any) => { const d = v ? new Date(v) : null; return d && !i
 // KYC4U's site) or an uploaded export — no app sign-in to their tenant, so
 // their "admin approval" rule never comes into it (Woody, 2026-09-28).
 export async function ingestKyc4uLists(lists: Array<{ id: string; name: string; items: Kyc4uItem[] }>, source: string, userId: string | null) {
-  const match = await companyMatcher();
+  const match = await requestMatchers();
   let items = 0, matched = 0;
   for (const list of lists.slice(0, 50)) {
     for (const item of (list.items || []).slice(0, 20000)) {
@@ -297,7 +335,7 @@ export async function mirrorKyc4uStatuses(): Promise<{ approved: number; rejecte
         -- Rows folded from document-library folders carry a file count, not a
         -- KYC4U decision — only their request-status list can sign off.
         AND q.list_id NOT LIKE '%:requests'
-      ORDER BY q.company_id, COALESCE(q.modified_at_source, q.created_at_source, q.synced_at) DESC NULLS LAST`);
+      ORDER BY q.company_id, COALESCE(q.modified_at_source, q.created_at_source, q.synced_at) DESC NULLS LAST, q.synced_at DESC NULLS LAST`);
   let intervalDays = 182;
   try {
     const st = await pool.query("SELECT recheck_interval_days FROM aml_settings ORDER BY id LIMIT 1");
@@ -341,6 +379,18 @@ export async function mirrorKyc4uStatuses(): Promise<{ approved: number; rejecte
       await recomputeDealKycApproved(r.company_id, verdict === "approved" ? KYC4U_APPROVER : null).catch((e: any) => console.warn("[kyc4u] deal recompute failed:", e?.message));
     } catch (e: any) { console.warn(`[kyc4u] mirroring status for ${r.company_id} failed:`, e?.message); }
   }
+  // The company that signs (18 November 2026, step 2 of
+  // docs/deal-page-review-2026-11-18.md): a KYC4U result about a deal party's
+  // contracting company is filed on that company's own record (crm_entity_
+  // kyc), which the deal gate reads for a deal that names it (shared/party-
+  // kyc.ts). A row about a company that is not the brand's own legal company
+  // carries no company_id, so the brand pass above never applies it to the
+  // brand. Idempotent on evidence.kyc4uKey, as the brand pass is on
+  // kyc4u_request_key.
+  try {
+    const companies = await mirrorKyc4uCompanyStatuses();
+    out.approved += companies.approved; out.rejected += companies.rejected; out.inReview += companies.inReview;
+  } catch (e: any) { console.warn("[kyc4u] company status mirror failed:", e?.message); }
   // Requests raised from a deal: once KYC4U's grid shows a request for that
   // party created after the form was filled, link the two (Xero-style).
   try {
@@ -362,14 +412,188 @@ export async function mirrorKyc4uStatuses(): Promise<{ approved: number; rejecte
   return out;
 }
 
-export async function syncKyc4u(): Promise<{ lists: number; items: number; matched: number }> {
+async function mirrorKyc4uCompanyStatuses(): Promise<{ approved: number; rejected: number; inReview: number }> {
+  const out = { approved: 0, rejected: 0, inReview: 0 };
+  const { rows } = await pool.query(
+    `SELECT DISTINCT ON (q.trading_entity_id) q.trading_entity_id, q.list_id, q.item_id, q.status, q.entity_name, q.fields,
+            COALESCE(q.modified_at_source, q.created_at_source, q.synced_at) AS at,
+            e.name, e.parent_company_id, k.kyc_status, k.expires_at, k.evidence->>'kyc4uKey' AS kyc4u_key
+       FROM kyc4u_requests q
+       JOIN crm_trading_entities e ON e.id = q.trading_entity_id
+       LEFT JOIN crm_entity_kyc k ON k.entity_kind = 'trading_entity' AND k.entity_id = q.trading_entity_id
+      WHERE q.trading_entity_id IS NOT NULL AND q.list_id NOT LIKE '%:requests'
+      ORDER BY q.trading_entity_id, COALESCE(q.modified_at_source, q.created_at_source, q.synced_at) DESC NULLS LAST, q.synced_at DESC NULLS LAST`);
+  if (!rows.length) return out;
+  const { approveEntityKyc, rejectEntityKyc, markEntityInReview, stampEntityEvidence } = await import("./account-entities");
+  const { recomputeDealsForTradingEntity } = await import("./deal-gates");
+  for (const r of rows) {
+    const verdict = kyc4uVerdict(r.status);
+    const key = `${r.list_id}:${r.item_id}:${verdict}:${String(r.status || "").toLowerCase()}`;
+    if (r.kyc4u_key === key) continue;
+    const at = r.at ? new Date(r.at) : new Date();
+    const evidence = { kyc4uKey: key, kyc4u: { listId: r.list_id, itemId: r.item_id, status: r.status || null, at: at.toISOString() } };
+    const recorded = r.list_id === "manual" ? ` · recorded in the app by ${r.fields?.["Recorded by"] || "an admin"}${r.fields?.Note ? ` — ${r.fields.Note}` : ""}` : "";
+    try {
+      if (verdict === "approved") {
+        await approveEntityKyc("trading_entity", r.trading_entity_id, KYC4U_APPROVER, {
+          at, evidence, reminderCompanyId: r.parent_company_id,
+          notes: `Approved by KYC4U (BGP's outsourced MLRO): "${r.status}" on ${r.entity_name || r.name}${recorded}`,
+        });
+        out.approved++;
+      } else if (verdict === "rejected") {
+        await rejectEntityKyc("trading_entity", r.trading_entity_id, `KYC4U (BGP's outsourced MLRO): "${r.status}" on ${r.entity_name || r.name}${recorded}`, KYC4U_APPROVER, { at, evidence });
+        out.rejected++;
+      } else {
+        const stillValid = r.kyc_status === "approved" && r.expires_at && new Date(r.expires_at) > new Date();
+        if (stillValid) await stampEntityEvidence("trading_entity", r.trading_entity_id, evidence);
+        else await markEntityInReview("trading_entity", r.trading_entity_id, KYC4U_APPROVER, { evidence, notes: `With KYC4U: "${r.status || "no status yet"}" on ${r.entity_name || r.name}${recorded}` });
+        out.inReview++;
+      }
+      await recomputeDealsForTradingEntity(r.trading_entity_id, verdict === "approved" ? KYC4U_APPROVER : null)
+        .catch((e: any) => console.warn("[kyc4u] deal recompute for a company failed:", e?.message));
+    } catch (e: any) { console.warn(`[kyc4u] mirroring status for company ${r.trading_entity_id} failed:`, e?.message); }
+  }
+  return out;
+}
+
+// ── KYC4U's documents ───────────────────────────────────────────────────
+//
+// Each request is a folder in a document library on KYC4U's site ("REQ113355
+// Iris Ave Ltd", with numbered sections inside: "2.0 KYC Entity", "5.0
+// UBOs"). A folder whose entity matches a CRM company has its files copied
+// into the app's store and filed in kyc_documents on that company (and on
+// the company that signs when the entity is one of its companies), on the
+// deal the request was raised from when known. Once per file: the stored
+// name carries the file's id. At most KYC4U_COPY_PER_SYNC files a sync (the
+// rest follow on the next one), none over 25MB. Read only on KYC4U's side.
+
+export const KYC4U_COPY_PER_SYNC = 200;
+export const KYC4U_COPY_MAX_BYTES = 25 * 1024 * 1024;
+
+/** A request folder's reference and entity ("REQ113355  Iris Ave Ltd"), or null. */
+export function reqFolderParts(name: string): { ref: string; entity: string } | null {
+  const m = String(name || "").match(REQ_FOLDER);
+  if (!m) return null;
+  return { ref: m[1].toUpperCase(), entity: m[2].replace(/\s+/g, " ").trim() };
+}
+
+/** The document type for a KYC4U file: by its own name, else by its section folder. */
+export function kyc4uDocType(section: string, fileName: string, classify: (name: string) => string): string {
+  const byName = classify(fileName);
+  if (byName && byName !== "other") return byName;
+  const s = String(section || "").toLowerCase();
+  if (/ubo|beneficial|owner/.test(s)) return "ubo_declaration";
+  if (/fund|wealth/.test(s)) return "source_of_funds";
+  if (/entity|incorporat|certificate|company/.test(s)) return "company_cert";
+  return "kyc4u_document";
+}
+
+/** The stored name's stem for one KYC4U file: the same file is never copied twice. */
+export function kyc4uFileStem(driveId: string, itemId: string): string {
+  return `kyc4u-doc-${crypto.createHash("sha1").update(`${driveId}:${itemId}`).digest("hex").slice(0, 20)}`;
+}
+
+async function downloadFile(url: string): Promise<Buffer> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+  if (!res.ok) throw new Error(`download ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+interface CopyDeps {
+  siteId: string;
+  get: (path: string) => Promise<any>;
+  download: (url: string) => Promise<Buffer>;
+  match: Matchers;
+  limit?: number;
+}
+
+export async function copyKyc4uDocuments(deps: CopyDeps): Promise<{ copied: number; already: number; tooLarge: number; unmatched: number; failed: number; folders: number }> {
+  const out = { copied: 0, already: 0, tooLarge: 0, unmatched: 0, failed: 0, folders: 0 };
+  let budget = deps.limit ?? KYC4U_COPY_PER_SYNC;
+  const list = async (path: string): Promise<any[]> => {
+    const items: any[] = [];
+    let next: string | null = path;
+    while (next && items.length < 5000) {
+      const page: any = await deps.get(next);
+      items.push(...(page?.value || []));
+      next = page?.["@odata.nextLink"] || null;
+    }
+    return items;
+  };
+  const { saveFile } = await import("./file-storage");
+  let classify: (name: string) => string = () => "other";
+  try { classify = (await import("./kyc-pack-intake")).classifyPackFile; } catch {}
+  const safe = (n: string) => String(n || "file").replace(/[^\w.\- ]+/g, "_").replace(/\s+/g, "_").slice(-100) || "file";
+  const drives = (await deps.get(`/sites/${deps.siteId}/drives?$select=id,name,driveType`))?.value || [];
+  for (const drive of drives) {
+    if (budget <= 0) break;
+    // Request folders at the library's root, or one folder down.
+    const top = await list(`/drives/${drive.id}/root/children?$top=200`).catch(() => [] as any[]);
+    const folders: any[] = [];
+    for (const item of top) {
+      if (!item?.folder) continue;
+      if (reqFolderParts(item.name)) folders.push(item);
+      else if (folders.length < 2000) {
+        for (const inner of await list(`/drives/${drive.id}/items/${item.id}/children?$top=200`).catch(() => [] as any[])) {
+          if (inner?.folder && reqFolderParts(inner.name)) folders.push(inner);
+        }
+      }
+    }
+    for (const folder of folders) {
+      if (budget <= 0) break;
+      const parts = reqFolderParts(folder.name)!;
+      out.folders++;
+      const brandId = deps.match.company(parts.entity);
+      if (!brandId) { out.unmatched++; continue; }
+      const entityId = deps.match.entity(brandId, parts.entity);
+      const dealId = (await pool.query(`SELECT deal_id FROM kyc4u_drafts WHERE request_item_id = $1 AND deal_id IS NOT NULL ORDER BY created_at DESC LIMIT 1`, [parts.ref]).catch(() => ({ rows: [] as any[] }))).rows[0]?.deal_id || null;
+      // The folder's files, three folders deep at most (sections, and a
+      // folder named just the REQ number inside some requests).
+      const walk = async (itemId: string, section: string, depth: number): Promise<void> => {
+        for (const item of await list(`/drives/${drive.id}/items/${itemId}/children?$top=200`)) {
+          if (budget <= 0) return;
+          if (item?.folder) {
+            if (depth < 3) await walk(item.id, reqFolderParts(item.name) ? section : (String(item.name || "").replace(/^\d+(\.\d+)*\s*/, "").trim() || section), depth + 1);
+            continue;
+          }
+          if (!item?.file) continue;
+          const stem = kyc4uFileStem(drive.id, item.id);
+          const held = (await pool.query(`SELECT 1 FROM kyc_documents WHERE file_url LIKE $1 LIMIT 1`, [`/api/chat-media/${stem}-%`])).rows.length > 0;
+          if (held) { out.already++; continue; }
+          if (Number(item.size || 0) > KYC4U_COPY_MAX_BYTES) { out.tooLarge++; continue; }
+          const url = item["@microsoft.graph.downloadUrl"];
+          if (!url) { out.failed++; continue; }
+          try {
+            const buffer = await deps.download(url);
+            const stored = `${stem}-${safe(item.name)}`;
+            await saveFile(`chat-media/${stored}`, buffer, item.file?.mimeType || "application/octet-stream", item.name);
+            await pool.query(
+              `INSERT INTO kyc_documents (company_id, trading_entity_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL)`,
+              [brandId, entityId, dealId, kyc4uDocType(section, item.name, classify), `/api/chat-media/${stored}`, item.name, buffer.length,
+                item.file?.mimeType || null, `From KYC4U ${parts.ref}${parts.entity ? ` (${parts.entity})` : ""}${section ? `, ${section}` : ""}`]);
+            out.copied++;
+            budget--;
+          } catch (e: any) {
+            out.failed++;
+            console.warn(`[kyc4u] copying ${parts.ref} file failed:`, e?.message);
+          }
+        }
+      };
+      await walk(folder.id, "", 0).catch((e: any) => { out.failed++; console.warn(`[kyc4u] reading ${parts.ref} failed:`, e?.message); });
+    }
+  }
+  return out;
+}
+
+export async function syncKyc4u(): Promise<{ lists: number; items: number; matched: number; documents?: Awaited<ReturnType<typeof copyKyc4uDocuments>> | null }> {
   const auth = await token();
   if (!auth) throw new Error("KYC4U is not connected");
   try {
     const site = await graph(`/sites/${SITE_HOST}:${SITE_PATH}`, auth.token);
     const lists = (await graph(`/sites/${site.id}/lists?$select=id,displayName,list,system&$top=200`, auth.token)).value || [];
     const wanted = lists.filter((l: any) => !l.system && !l.list?.hidden && ["genericList", "issueTracking", "tasks", "events"].includes(l.list?.template || "genericList"));
-    const match = await companyMatcher();
+    const match = await requestMatchers();
     let items = 0, matched = 0;
     for (const list of wanted) {
       let next: string | null = `/sites/${site.id}/lists/${list.id}/items?$expand=fields&$top=200`;
@@ -382,10 +606,17 @@ export async function syncKyc4u(): Promise<{ lists: number; items: number; match
         next = page["@odata.nextLink"] || null;
       }
     }
-    await saveConnection({ ...auth.conn, lastSyncAt: new Date().toISOString(), lastError: null, listIds: wanted.map((l: any) => l.id) });
-    console.log(`[kyc4u] synced ${items} requests from ${wanted.length} lists (${matched} matched to CRM)`);
+    // KYC4U's documents (Woody, 18 November 2026: "Isn't the kyc4u docs auto
+    // grabbed and filed from their site or no?"): each request folder's files
+    // are copied onto the matched party's KYC record, once each.
+    let documents: Awaited<ReturnType<typeof copyKyc4uDocuments>> | null = null;
+    try {
+      documents = await copyKyc4uDocuments({ siteId: site.id, get: (path: string) => graph(path, auth.token), download: downloadFile, match });
+    } catch (e: any) { console.warn("[kyc4u] copying documents failed:", e?.message); }
+    await saveConnection({ ...auth.conn, lastSyncAt: new Date().toISOString(), lastError: null, listIds: wanted.map((l: any) => l.id), lastDocuments: documents });
+    console.log(`[kyc4u] synced ${items} requests from ${wanted.length} lists (${matched} matched to CRM)${documents ? `; documents: ${documents.copied} copied, ${documents.already} already held, ${documents.unmatched} folders not matched` : ""}`);
     await mirrorKyc4uStatuses().catch((e: any) => console.warn("[kyc4u] status mirror failed:", e?.message));
-    return { lists: wanted.length, items, matched };
+    return { lists: wanted.length, items, matched, documents };
   } catch (e: any) {
     await saveConnection({ ...auth.conn, lastError: String(e?.message || e).slice(0, 500) });
     throw e;
@@ -525,7 +756,8 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
       const lastDiag = (await pool.query(`SELECT value FROM system_settings WHERE key = 'kyc4u:last_diag'`)).rows[0]?.value || null;
       res.json({
         connected: !!conn, username: conn?.username || null, connectedAt: conn?.connectedAt || null,
-        lastSyncAt: conn?.lastSyncAt || null, lastError: conn?.lastError || null,
+        lastSyncAt: conn?.lastSyncAt || null, lastError: conn?.lastError || null, lastDocuments: conn?.lastDocuments || null,
+        connectable: !!(process.env.AZURE_CLIENT_ID && (process.env.AZURE_SECRET_V2 || process.env.AZURE_CLIENT_SECRET)),
         site: `https://${SITE_HOST}${SITE_PATH}`, requests: counts.n, matched: counts.matched, lastImport, lastDiag,
       });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
@@ -541,6 +773,21 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
       const authUrl = await msal().getAuthCodeUrl({ scopes: SCOPES, redirectUri: redirectUri(req), state, ...(me?.email ? { loginHint: me.email } : { prompt: "select_account" }) });
       res.json({ authUrl, redirectUri: redirectUri(req) });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // The link KYC4U's IT admin opens once to approve the app for their
+  // organisation (Woody, 18 November 2026: "I will do the requests"). It asks
+  // for the two permissions the sync uses, read only, never the app's other
+  // permissions (no ".default"). Microsoft brings the admin back to the
+  // callback, which says whether it was approved. Nothing secret is in it.
+  app.get("/api/kyc4u/admin-consent-link", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    const clientId = process.env.AZURE_CLIENT_ID;
+    if (!clientId) return res.status(503).json({ message: "The app's Microsoft sign-in is not set up (AZURE_CLIENT_ID)." });
+    const base = String(process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
+    const callback = `${base}/api/kyc4u/callback`;
+    const url = `https://login.microsoftonline.com/${encodeURIComponent(TENANT)}/v2.0/adminconsent?client_id=${encodeURIComponent(clientId)}`
+      + `&scope=${encodeURIComponent([...SCOPES, "offline_access"].join(" "))}&redirect_uri=${encodeURIComponent(callback)}&state=kyc4u-admin-consent`;
+    res.json({ url, redirectUri: callback, tenant: TENANT, permissions: ["Sites.Read.All (read KYC4U's site)", "User.Read (sign in)", "offline_access (keep the sync signed in)"] });
   });
 
   app.get("/api/kyc4u/callback", async (req: Request, res: Response) => {
@@ -642,8 +889,8 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
     try {
       const r = await pool.query(
         `SELECT q.list_id AS "listId", q.item_id AS "itemId", q.list_name AS "listName", q.title, q.status, q.entity_name AS "entityName",
-                q.company_id AS "companyId", c.name AS "companyName", q.modified_at_source AS "modifiedAt", q.web_url AS "webUrl", q.fields
-           FROM kyc4u_requests q LEFT JOIN crm_companies c ON c.id = q.company_id
+                COALESCE(q.company_id, q.company_id_manual) AS "companyId", c.name AS "companyName", q.modified_at_source AS "modifiedAt", q.web_url AS "webUrl", q.fields
+           FROM kyc4u_requests q LEFT JOIN crm_companies c ON c.id = COALESCE(q.company_id, q.company_id_manual)
           ORDER BY q.modified_at_source DESC NULLS LAST LIMIT 500`);
       res.json(r.rows);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
@@ -739,7 +986,9 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
       const r = await pool.query(
         `SELECT q.list_id AS "listId", q.item_id AS "itemId", q.list_name AS "listName", q.title, q.status,
                 q.entity_name AS "entityName", q.modified_at_source AS "modifiedAt", q.created_at_source AS "createdAt", q.web_url AS "webUrl"
-           FROM kyc4u_requests q WHERE q.company_id = $1
+           FROM kyc4u_requests q
+          WHERE q.company_id = $1 OR q.company_id_manual = $1
+             OR q.trading_entity_id IN (SELECT id FROM crm_trading_entities WHERE parent_company_id = $1)
           ORDER BY q.modified_at_source DESC NULLS LAST LIMIT 20`, [String(req.params.companyId)]);
       const conn = await loadConnection().catch(() => null);
       res.json({ requests: r.rows, lastSyncAt: conn?.lastSyncAt || null });
@@ -772,14 +1021,15 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
   // or new brands / entities land). Hand-set links are kept.
   app.post("/api/kyc4u/rematch", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const match = await companyMatcher();
-      const rows = (await pool.query(`SELECT list_id, item_id, entity_name, company_id FROM kyc4u_requests WHERE company_id_manual IS NULL`)).rows;
+      const match = await requestMatchers();
+      const rows = (await pool.query(`SELECT list_id, item_id, entity_name, company_id, trading_entity_id FROM kyc4u_requests WHERE company_id_manual IS NULL`)).rows;
       let matched = 0, changed = 0;
       for (const r of rows) {
-        const id = match(r.entity_name);
+        const id = match.company(r.entity_name);
+        const entityId = match.entity(id, r.entity_name);
         if (id) matched++;
-        if ((id || null) !== (r.company_id || null)) {
-          await pool.query(`UPDATE kyc4u_requests SET company_id = $3 WHERE list_id = $1 AND item_id = $2`, [r.list_id, r.item_id, id]);
+        if ((id || null) !== (r.company_id || null) || (entityId || null) !== (r.trading_entity_id || null)) {
+          await pool.query(`UPDATE kyc4u_requests SET company_id = $3, trading_entity_id = $4 WHERE list_id = $1 AND item_id = $2`, [r.list_id, r.item_id, id, entityId]);
           changed++;
         }
       }
@@ -792,7 +1042,9 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
   app.patch("/api/kyc4u/requests/:listId/:itemId", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const companyId = typeof req.body?.companyId === "string" && req.body.companyId ? req.body.companyId : null;
-      await pool.query(`UPDATE kyc4u_requests SET company_id = $3, company_id_manual = $3 WHERE list_id = $1 AND item_id = $2`, [req.params.listId, req.params.itemId, companyId]);
+      const row = (await pool.query(`SELECT entity_name FROM kyc4u_requests WHERE list_id = $1 AND item_id = $2`, [req.params.listId, req.params.itemId])).rows[0];
+      const entityId = companyId && row ? (await requestMatchers()).entity(companyId, row.entity_name) : null;
+      await pool.query(`UPDATE kyc4u_requests SET company_id = $3, company_id_manual = $3, trading_entity_id = $4 WHERE list_id = $1 AND item_id = $2`, [req.params.listId, req.params.itemId, companyId, entityId]);
       // KYC4U requests are legal entities of a brand or landlord: file the
       // entity under the company it was linked to (never a new company), so
       // the next import matches it by itself.

@@ -1355,6 +1355,10 @@ const schemaStartup = (async () => {
      )`,
     `ALTER TABLE kyc4u_drafts ADD COLUMN IF NOT EXISTS request_list_id VARCHAR, ADD COLUMN IF NOT EXISTS request_item_id VARCHAR`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc4u_request_key TEXT`,
+    // The deal party's company that signs a KYC4U result is about, when it is
+    // not the brand's own legal company (18 November 2026, step 2 of
+    // docs/deal-page-review-2026-11-18.md): read by the mirror's company pass.
+    `ALTER TABLE kyc4u_requests ADD COLUMN IF NOT EXISTS trading_entity_id VARCHAR`,
     // Digital business cards (Woody, 2026-09-28, "like blinq"): one public
     // slug per staff member, and everyone who shares their details back.
     `CREATE TABLE IF NOT EXISTS business_cards (
@@ -4259,6 +4263,7 @@ import veriffRouter from "./veriff";
 import kycRequestRouter from "./aml-portal";
 import kycPrecheckRouter from "./kyc-prechecks";
 import dealPartiesRouter from "./deal-parties";
+import dealPartyAmlRouter from "./deal-party-aml";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
 import brandDedupeRouter from "./brand-dedupe";
@@ -5613,6 +5618,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(kycPrecheckRouter);
   // Each deal party's company that signs and the person to ask (BGP staff only).
   app.use(dealPartiesRouter);
+  app.use(dealPartyAmlRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);
   app.use(brandDedupeRouter);
