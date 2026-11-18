@@ -6,8 +6,10 @@
 //   node script/pitch-video/stage-letting.cjs <phase>
 //
 // Phases, in order (each is safe to run twice):
-//   logins          Jonny Rushton = leasing manager; Will Harvey = asset manager (Bluewater)
-//   brief           the Targeting Brief, its people and target; all agree but Jonny
+//   logins          Jonny Rushton = leasing manager; Will Harvey = asset manager (Bluewater);
+//                   Kate Martin's BGP login, which the demo copy lacks
+//   brief           the Targeting Brief, its people (BGP: Millie Edwards, Emily Dumbell,
+//                   Alex Todd, Kate Martin) and target; all agree but Jonny
 //   viewing         one completed viewing by Jersey Mike's
 //   snapshot        saves the unit as it now stands, for `reset` (run it before filming)
 //   offer           the offer, a landlord counter, the tenant's reply, terms agreed
@@ -69,7 +71,10 @@ const SCHEME = "bluewater";
 const WHO = {
   admin: "victoria@brucegillinghampollard.com",
   millie: "millie@brucegillinghampollard.com",     // the lead BGP agent (Millie Edwards, Director)
-  ben: "ben@brucegillinghampollard.com",           // Ben Sykes, in support
+  // BGP's team on the letting with her (Woody, 18 November 2026: "Millie, Emily Dumbell, Alex Todd and Kate Martin").
+  emily: "emily@brucegillinghampollard.com",       // Emily Dumbell, Director, Leasing
+  alex: "alext@brucegillinghampollard.com",        // Alex Todd, Associate Director
+  kate: "kate@brucegillinghampollard.com",         // Kate Martin, Surveyor
   jonny: "jonny.rushton@landsec.com",              // the Portfolio Leasing Manager (Jonny Rushton)
   will: "will.harvey@landsec.com",                 // the Senior Asset Manager for Bluewater (Will Harvey)
   // Kept informed: Landsec logins with no Landsec role, so the full view.
@@ -247,6 +252,17 @@ async function workspaceOf(briefId, who = "millie") {
 // ---- 1. logins --------------------------------------------------------------
 async function phaseLogins() {
   log("logins");
+  // BGP's own people on the letting are BGP staff logins. The demo copy has no
+  // Kate Martin: hers is made in the demo database as a copy of Emily Dumbell's
+  // row (the app has no route that makes a staff login).
+  const [kate] = await q(`SELECT id FROM users WHERE lower(email) = $1`, [WHO.kate]);
+  if (!kate) {
+    const copied = (await q(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users'`)).map(r => r.column_name)
+      .filter(c => !["id", "username", "name", "email", "role", "phone", "profile_pic_url", "is_active", "is_admin", "dashboard_layout", "dashboard_widgets", "bio", "dob", "address", "personal_email", "start_date", "cv_url", "manager_id"].includes(c));
+    await q(`INSERT INTO users (id, username, name, email, role, is_active, ${copied.map(c => `"${c}"`).join(", ")})
+             SELECT gen_random_uuid(), $1, 'Kate Martin', $1, 'Surveyor', true, ${copied.map(c => `"${c}"`).join(", ")} FROM users WHERE lower(email) = $2`, [WHO.kate, WHO.emily]);
+    step(true, "Kate Martin (Surveyor): BGP login made");
+  } else step(false, "Kate Martin has a BGP login");
   const list = await must("admin", "GET", "/api/landsec/access");
   if (!list.schemes.some(s => s.key === SCHEME)) throw new Error(`No scheme "${SCHEME}" in the Landsec registry`);
   const find = email => list.users.find(u => String(u.email).toLowerCase() === email);
@@ -305,7 +321,7 @@ async function phaseBrief() {
   step(!!saved.termsChanged, `terms and commercials (version ${saved.version})`);
 
   const people = [
-    { who: "millie", role: "bgp_agent" }, { who: "ben", role: "bgp_agent" },
+    { who: "millie", role: "bgp_agent" }, { who: "emily", role: "bgp_agent" }, { who: "alex", role: "bgp_agent" }, { who: "kate", role: "bgp_agent" },
     { who: "jonny", role: "client_leasing" }, { who: "will", role: "senior_asset_manager" },
   ];
   let ws = await workspaceOf(brief.id);
@@ -325,7 +341,7 @@ async function phaseBrief() {
 
   // Everyone agrees as themselves, except Jonny: that is pressed on film.
   ws = await workspaceOf(brief.id);
-  for (const who of ["millie", "ben", "will"]) {
+  for (const who of ["millie", "emily", "alex", "kate", "will"]) {
     const s = await login(who);
     const person = ws.people.find(x => x.userId === s.id);
     if (person.agreedAt && person.agreedVersion === ws.brief.version) { step(false, `${s.name} has agreed the brief`); continue; }
@@ -428,7 +444,7 @@ async function phaseHots() {
       step(true, `generated from the agreed offer (version ${ws.version})`);
     } else step(false, `the draft is generated from the agreed offer (version ${ws.version})`);
     // Everyone on the brief agrees as themselves, except Will: his is pressed on film.
-    for (const who of ["millie", "ben", "jonny"]) {
+    for (const who of ["millie", "emily", "alex", "kate", "jonny"]) {
       const s = await login(who);
       if (ws.signers.find(x => x.userId === s.id)?.agreedAt) { step(false, `${s.name} has agreed the Heads of Terms`); continue; }
       ws = await must(who, "POST", `/api/unit-hots/${UNIT}/agree`, { version: ws.version });

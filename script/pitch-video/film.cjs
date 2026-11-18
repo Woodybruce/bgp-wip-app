@@ -25,14 +25,15 @@ const JERSEY_MIKES = "226e6ac9-a1e2-4a7c-8210-e35d87f2df0d";
 const FLAT_IRON = "13d9eed1-1ccb-4b5e-b023-c2714eb3ea9b";
 const LEASING = "jonny.rushton@landsec.com";   // Jonny Rushton, Portfolio Leasing Manager: the login the Landsec scenes are filmed as
 const BK_DEAL = "8f3b56ee-65dc-4d8e-87da-1ae9c5b02bfe";
-// Jonny Rushton as a person on the unit's Targeting Brief (the staging script
-// makes it; a brief made again has a new id, which LEASING_PERSON then names).
-const LEASING_PERSON = process.env.LEASING_PERSON || "56d3f740-c257-4074-a229-603022cd3555";
+// Jonny Rushton as a person on the unit's Targeting Brief. The staging script
+// makes the brief, and a brief made again gives its people new ids, so each
+// scene reads the id from the brief itself (briefPerson, below).
+const LEASING_NAME = "Jonny Rushton";
 // Will Harvey, the senior asset manager, on the same brief. Agreeing the Heads
 // of Terms and the decision on the recommendation are his, so those two scenes
 // are filmed as him.
 const ASSET = "will.harvey@landsec.com";
-const ASSET_PERSON = process.env.ASSET_PERSON || "dda4afc0-ec05-4fbf-984d-6ca4c048360f";
+const ASSET_NAME = "Will Harvey";
 
 // The phone scenes (staged by stage-phone.cjs). The Liverpool ONE unit that is
 // shared on film, and the photos added on film: PHONE_PHOTOS is a comma
@@ -41,6 +42,20 @@ const ASSET_PERSON = process.env.ASSET_PERSON || "dda4afc0-ec05-4fbf-984d-6ca4c0
 const SHARE_UNIT = "134b127e-c128-444e-9ae1-d9189b3947da";
 const PHONE_COMMENT = "Met Richard Willcox after the viewing. Jersey Mike's want the service charge budget and a second look at the frontage.";
 const PHONE_PHOTOS = (process.env.PHONE_PHOTOS || "").split(",").map(f => f.trim()).filter(Boolean);
+
+// The id of a person on the Burger King unit's Targeting Brief, read as the
+// login the scene is filmed as (before the cut starts).
+async function briefPerson(s, name) {
+  const id = await s.page.evaluate(async ({ unit, name }) => {
+    const token = localStorage.getItem("bgp_auth_token");
+    const get = async url => (await fetch(url, { credentials: "include", headers: token ? { Authorization: `Bearer ${token}` } : {} })).json();
+    const brief = await get(`/api/available-units/${unit}/brief`);
+    const ws = brief && brief.id ? await get(`/api/unit-briefs/${brief.id}/workspace`) : null;
+    return ((ws && ws.people) || []).find(p => p.name === name)?.id || null;
+  }, { unit: BK_UNIT, name });
+  if (!id) throw new Error(`${s.name}: ${name} is not on the unit's brief`);
+  return id;
+}
 
 // A BGP staff login has no client colours to wait for (Shot.goto would wait
 // out its whole allowance for them), so the phone scenes open a page here.
@@ -341,6 +356,7 @@ const SCENES = {
     // The People tab also offers "the usual team for this scheme" from the app's
     // team sheet, which is older than this cast: it is left out of the picture.
     await s.page.addStyleTag({ content: '[data-testid="brief-people-suggested"]{display:none!important}' });
+    const person = await briefPerson(s, LEASING_NAME);
     await s.page.locator(`[data-testid="row-unit-${BK_UNIT}"]`).scrollIntoViewIfNeeded().catch(() => {});
     await s.wait(800);
     await s.start();
@@ -352,7 +368,7 @@ const SCENES = {
     await s.wait(1800);
     await s.click('[data-testid="brief-tab-people"]', { after: 1800 });
     await s.wait(1500);
-    await s.click(`[data-testid="brief-person-agree-${LEASING_PERSON}"]`, { before: 700, after: 2500 });
+    await s.click(`[data-testid="brief-person-agree-${person}"]`, { before: 700, after: 2500 });
     await s.over('[data-testid="brief-approval-status"]', 800).catch(() => {});
     await s.wait(2500);
   },
@@ -380,6 +396,7 @@ const SCENES = {
   // 9a. Heads of Terms on the scheme's own form; the senior asset manager signs off.
   async hots(s) {
     await s.goto(`/deals/letting?propertyId=${BLUEWATER}`, 3000);
+    const person = await briefPerson(s, ASSET_NAME);
     await s.page.locator(`[data-testid="row-unit-${BK_UNIT}"]`).scrollIntoViewIfNeeded().catch(() => {});
     await s.wait(800);
     await s.start();
@@ -387,7 +404,7 @@ const SCENES = {
     await s.over('[data-testid="hots-draft-text"]', 800, { fy: 0.3 }).catch(() => {});
     await s.scroll(500, 3000);
     await s.wait(1500);
-    await s.click(`[data-testid="hots-agree-${ASSET_PERSON}"]`, { before: 700, after: 3000 });
+    await s.click(`[data-testid="hots-agree-${person}"]`, { before: 700, after: 3000 });
     await s.wait(1500);
   },
 
@@ -412,6 +429,7 @@ const SCENES = {
   // 10. The recommendation in Landsec's template, then the diary.
   async recommendation(s) {
     await s.goto(`/deals/letting?unit=${BK_UNIT}&recommendation=1`, 3000);
+    const person = await briefPerson(s, ASSET_NAME);
     await s.page.locator('[data-testid="recommendation-dialog"]').waitFor({ state: "visible", timeout: 20000 });
     await s.start();
     await s.over('[data-testid="recommendation-dialog"]', 800, { fy: 0.3 });
@@ -420,7 +438,7 @@ const SCENES = {
     await s.wait(1500);
     await s.scroll(600, 3000);
     await s.wait(1200);
-    await s.click(`[data-testid="recommendation-approve-${ASSET_PERSON}"]`, { before: 700, after: 3000 }).catch(() => {});
+    await s.click(`[data-testid="recommendation-approve-${person}"]`, { before: 700, after: 3000 }).catch(() => {});
     await s.wait(1200);
     await s.wait(1500);
   },
