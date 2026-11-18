@@ -46,6 +46,8 @@ function build(a) {
   const inner = document.createElement("div"); inner.className = "flip"; el.appendChild(inner);
   const img = (src, cls) => { const i = document.createElement("img"); i.src = ART + src; i.className = cls; i.style.left = `${pad * k}px`; i.style.width = `${r.w * k}px`; inner.appendChild(i); return i; };
   img(r.body, "body");
+  // `alt` is the same character drawn another way on the same canvas (the joint agent without his wings); it takes over at `swapAt`.
+  if (a.alt && RIG[a.alt]) img(RIG[a.alt].body, "alt").style.opacity = 0;
   if (r.bodyNoArm) img(r.bodyNoArm, "noarm").style.opacity = 0;
   if (r.arms) for (const [name, s] of Object.entries(r.arms)) {
     const i = document.createElement("img"); i.src = ART + s.src; i.className = `arm arm-${name}`;
@@ -102,6 +104,10 @@ function pose(el, a, t) {
     }
     const armOn = (now && k > 0.15) || (was && k < 0.5);
     el.querySelector(".noarm").style.opacity = armOn ? 1 : 0; el.querySelector(".body").style.opacity = armOn ? 0 : 1;
+  }
+  if (a.alt && a.swapAt != null) {
+    const sw = ease((t - a.swapAt) / 0.45), alt = el.querySelector(".alt");
+    if (alt) { alt.style.opacity = sw; el.querySelector(".body").style.opacity = 1 - sw; }
   }
   const headX = (el._pad + r.head.cx) * el._k;   // the head sits over the actor's x
   const inner = el.querySelector(".flip"); inner.style.transformOrigin = `${headX}px 50%`; inner.style.transform = a.flip ? "scaleX(-1)" : "";
