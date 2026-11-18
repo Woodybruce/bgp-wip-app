@@ -28,6 +28,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { BrandTidyButton, HiddenBrands } from "@/components/brand-tidy";
 import { OwnershipIntelButton } from "@/components/ownership-intel";
 import { BrandRetypeButton } from "@/components/brand-retype";
+import { PlanningSweepButton } from "@/components/planning-sweep";
 import { BrandCrmTab } from "@/components/brand-crm/brand-crm-tab";
 import { useBrand } from "@/lib/brand-context";
 import { getAuthHeaders } from "@/lib/queryClient";
@@ -1240,6 +1241,7 @@ function BrandExplorer() {
             {exUser?.isAdmin && <BrandTidyButton />}
             {exUser?.isAdmin && <OwnershipIntelButton />}
             {exUser?.isAdmin && <BrandRetypeButton />}
+            {exUser?.isAdmin && <PlanningSweepButton />}
             {targetProperties.length > 0 && (
               <select
                 value={propFilter}

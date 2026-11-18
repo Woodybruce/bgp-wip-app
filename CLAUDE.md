@@ -1047,38 +1047,86 @@ not opened to them.
     - **Planning applications and job adverts** (`server/brand-pipeline.ts`,
       rules in `shared/brand-pipeline.ts`, tables `brand_pipeline_items` /
       `brand_pipeline_checks`, job `brand-pipeline` 03:45, 60 brands a
-      night): PlanIt is searched by brand name; a record counts only when
-      the description names the brand (not as a former, existing or
-      neighbouring occupier), is about works a new occupier applies for
-      (shopfront, signage, change of use, fit-out, extraction) and is under
-      12 months old. A name too common to search (Next, Boots, The Light,
-      any single word of four letters or fewer but Pret and Itsu) is
-      skipped and says so. A tree or telecoms application (PlanIt's own
-      type, `NEVER_AN_OCCUPIER_TYPES`) never counts, and road or traffic
-      signs and "signs of" are not shop signs: a Guildford tree application
-      counted for The Light on 18 November 2026 because it said "grown to
-      the light" and "touching the road signs". Stored rows are never
-      deleted (a check only adds or refreshes them), so the card and the
-      score also leave out a stored tree or telecoms row. Job adverts come from Adzuna (`ADZUNA_APP_ID`,
-      `ADZUNA_APP_KEY`, set on Railway). The name is asked as a phrase, one
-      request a brand, and only adverts the brand itself placed are kept
-      (`advertCompanyMatches`); Adzuna's company filter is not used: it
-      knows only some employer names and refused the rest with a 400, so
-      until 18 November 2026 the jobs half failed for about nine brands in
-      ten (it worked for 15 of the first 179: Argos, Skechers, McCarthy &
-      Stone and others). Do not add a second request per brand: Adzuna's
-      free key is reported to allow about 2,500 calls a month (unconfirmed)
-      and the nightly run already makes about 1,800. A refusal is stored
-      with Adzuna's own words, never a key. The card says what each source's
-      check did (`pipelineCheckWords`, `pipelineCheckedSummary`): a check
-      that failed or was not run never reads as "none found". What it
-      finds: in the first three nights (16 to 18 November 2026, 179 brands)
-      planning named a brand twice, one of them the tree application.
-      Council descriptions rarely name the occupier, and PlanIt's Liverpool
-      register stopped at 8 July 2026 (seen 18 November). At 60 a night the
-      2,764 tenant brands take about 46 nights to go round once; a failed
-      check is tried again only after every brand never checked. Licensing
-      registers are council by council and are not read.
+      night): PlanIt is searched by brand name, a name of more than one
+      word (or with an ampersand) as a quoted phrase (unquoted, "Flat Iron"
+      matched 71 records, 3 naming it; quoted, the 3; no kept record was
+      lost by quoting); a record counts only when the description names
+      the brand (not as a former, existing or neighbouring occupier), is
+      about works a new occupier applies for (shopfront, signage, change of
+      use, fit-out, extraction), is not only replacing what is already
+      there, and is under 12 months old. A name too common to search (Next,
+      Boots, The Light, any single word of four letters or fewer but Pret
+      and Itsu) is skipped and says so. A tree or telecoms application
+      (PlanIt's own type, `NEVER_AN_OCCUPIER_TYPES`) never counts, and road
+      or traffic signs and "signs of" are not shop signs: a Guildford tree
+      application counted for The Light on 18 November 2026 because it said
+      "grown to the light" and "touching the road signs". **Replacing what
+      is there** (`replacesWhatIsThere`): replacement signs, lettersets,
+      fascias or shopfronts, or "replace existing", do not count (McDonald's
+      replacement lettersets were nine of the 21 kept for it), unless the
+      description also says arrival (change of use, fit-out, occupation by,
+      erection of) or names another business as the one being replaced
+      ("replacement for existing Tim Hortons" on a Starbucks application
+      counts). Stored rows are never deleted (a check only adds or
+      refreshes them), so the card and the score also leave out a stored
+      tree or telecoms row.
+      **PlanIt's rate limit** (found 18 November 2026; its API page:
+      "access to the API is rate limited", a 429 with Retry-After past it).
+      The nightly run asked about 26 times a minute and on 16 and 17
+      November the only planning hits were the 6th and 12th brands of their
+      nights: about the first dozen brands a night got an answer and the
+      rest were refused, and the live card read a refusal as "none found".
+      Every PlanIt request in the process now books a turn at least
+      `PLANIT_GAP_MS` (6 seconds) after the last (`planitTurn`; 37 searches
+      at that pace went through untroubled), and a 429 pushes every later
+      turn back by its Retry-After (60 seconds without one). Each caller
+      waits only so long: Check again 15 seconds, then "PlanIt asked us to
+      slow down; try again in N minutes"; the nightly run 5 minutes, then
+      it stops for the night (`stoppedEarly`) and the rest stay due; the
+      twelve-month check 15 minutes, then it pauses keeping its place. Do
+      not add a PlanIt request that skips the turn.
+      **Planning, last 12 months, for every brand** (Woody, 2026-11-18:
+      "can we do planning for the last 12 months?"): admins have **Planning,
+      12 months** on Brand Explorer (`client/src/components/planning-sweep.tsx`;
+      `GET`/`POST /api/admin/brand-pipeline/planning-sweep`, admin only).
+      **Check every brand** walks every tenant brand in id order from a
+      saved place (`system_settings.brand-planning-sweep`), planning only:
+      Adzuna is never asked. Each brand gets its records and planning
+      status as the nightly check saves them, and its job adverts are
+      marked "not checked", which brings it round to the nightly run (the
+      card says "job adverts not checked yet"). About 4 or 5 hours for the
+      2,764 brands. Stop keeps the place, Carry on resumes it, and a
+      finished run starts again; a run an admin started carries on after a
+      deploy (`resumePlanningSweep`, 75 seconds after boot), and nothing
+      starts one at boot or on a timer. The dialog lists every brand with
+      an application naming it in the window (sites, latest date, towns),
+      each opening its Expansion tab. Guard:
+      `qa/regression/brand-pipeline-planit-guards.test.mjs`.
+      What PlanIt holds, from a direct test of the rule on 18 November
+      2026 (about 45 expanding brands, 12 months): Starbucks and McDonald's
+      the most, then Costa, Greggs (eight genuine new sites, four of them
+      Greggs Pods), Burger King, Nando's and Domino's; Gail's two; Popeyes,
+      Five Guys, Pret and Taco Bell one each; nothing naming Wagamama,
+      Itsu, Wingstop, Black Sheep Coffee, Honest Burgers or Flat Iron. PlanIt hides the applicant's name ("See source"), so a record
+      is found only when the description names the brand; council
+      descriptions often do not, and PlanIt's Liverpool register stopped at
+      8 July 2026 (seen 18 November). Job adverts come from Adzuna
+      (`ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, set on Railway). The name is asked
+      as a phrase, one request a brand, and only adverts the brand itself
+      placed are kept (`advertCompanyMatches`); Adzuna's company filter is
+      not used: it knows only some employer names and refused the rest with
+      a 400, so until 18 November 2026 the jobs half failed for about nine
+      brands in ten (it worked for 15 of the first 179: Argos, Skechers,
+      McCarthy & Stone and others). Do not add a second request per brand:
+      Adzuna's free key is reported to allow about 2,500 calls a month
+      (unconfirmed) and the nightly run already makes about 1,800. A
+      refusal is stored with Adzuna's own words, never a key. The card says
+      what each source's check did (`pipelineCheckWords`,
+      `pipelineCheckedSummary`): a check that failed or was not run never
+      reads as "none found". At 60 a night the 2,764 tenant brands take
+      about 46 nights to go round once; a failed check is tried again only
+      after every brand never checked. Licensing registers are council by
+      council and are not read.
     - **Plans stated in the filed accounts** (`server/accounts-plans.ts`,
       checks in `shared/accounts-plans.ts`): openings, closures and capital
       spend planned after the year end, kept under

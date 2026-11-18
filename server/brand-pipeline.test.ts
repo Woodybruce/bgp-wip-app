@@ -26,6 +26,8 @@ const rec = (description: string, more: Record<string, unknown> = {}) => ({
 });
 const counts = (description: string, names: string[], more: Record<string, unknown> = {}) =>
   planningRecordCounts(rec(description, more), { names, now: NOW });
+// PlanIt's turn with no wait (the pace has its own tests).
+const noWait = () => api.createPlanitGate(0);
 
 // ─── Planning: the rule ──────────────────────────────────────────────────
 
@@ -117,7 +119,11 @@ test("names too common to search", () => {
     assert.equal(nameTooCommon(n), false, n);
   }
   assert.deepEqual(planningSearchTerm(["Next", "Next Retail Limited"]), { skip: TOO_COMMON_REASON });
-  assert.deepEqual(planningSearchTerm(["Gail’s  Bakery"]), { search: "Gail's Bakery" });
+  // A name of more than one word, or with an ampersand, is searched as a phrase.
+  assert.deepEqual(planningSearchTerm(["Gail’s  Bakery"]), { search: '"Gail\'s Bakery"' });
+  assert.deepEqual(planningSearchTerm(["Greggs"]), { search: "Greggs" });
+  assert.deepEqual(planningSearchTerm(["B&M"]), { search: '"B&M"' });
+  assert.deepEqual(planningSearchTerm(['Five "Guys"']), { search: '"Five Guys"' });
   assert.deepEqual(planningSearchTerm([]), { skip: TOO_COMMON_REASON });
 });
 
@@ -311,7 +317,7 @@ const PLANIT_REPLY = { total: 2, records: [
 test("without the jobs keys: planning is read and stored, the jobs API is never called", async () => {
   const net = fakeFetch({ planit: PLANIT_REPLY });
   const db = fakeDb({ c1: { name: "Wingstop" } });
-  const r = await api.refreshBrandPipeline("c1", { fetch: net.fn, db, env: {}, now: () => NOW });
+  const r = await api.refreshBrandPipeline("c1", { fetch: net.fn, db, env: {}, now: () => NOW, planitGate: noWait() });
   assert.deepEqual(r, { planning: { ok: true, found: 1 }, jobs: { configured: false, ok: false, reason: "not configured", found: 0 } });
 
   assert.equal(net.calls.length, 1);
@@ -338,7 +344,7 @@ test("with the jobs keys: one request to each source, the keys only ever go to t
     advert("13", "Head of Property", "London"),
   ] } });
   const db = fakeDb({ c1: { name: "Wingstop", trading_entities: [{ name: "Wingstop UK Ltd" }] } });
-  const r = await api.refreshBrandPipeline("c1", { fetch: net.fn, db, env: { ADZUNA_APP_ID: "the-id", ADZUNA_APP_KEY: "the-key" }, now: () => NOW });
+  const r = await api.refreshBrandPipeline("c1", { fetch: net.fn, db, env: { ADZUNA_APP_ID: "the-id", ADZUNA_APP_KEY: "the-key" }, now: () => NOW, planitGate: noWait() });
   assert.deepEqual(r, { planning: { ok: true, found: 0 }, jobs: { configured: true, ok: true, found: 2 } });
 
   assert.equal(net.calls.length, 2);
@@ -358,7 +364,7 @@ test("with the jobs keys: one request to each source, the keys only ever go to t
 test("a name too common to search is skipped: no request to the register", async () => {
   const net = fakeFetch({ planit: PLANIT_REPLY });
   const db = fakeDb({ c1: { name: "Next" } });
-  const r = await api.refreshBrandPipeline("c1", { fetch: net.fn, db, env: {}, now: () => NOW });
+  const r = await api.refreshBrandPipeline("c1", { fetch: net.fn, db, env: {}, now: () => NOW, planitGate: noWait() });
   assert.deepEqual(r.planning, { ok: false, reason: TOO_COMMON_REASON, found: 0 });
   assert.equal(net.calls.length, 0);
   assert.deepEqual(savedCheck(db)!.slice(0, 3), ["c1", `skipped: ${TOO_COMMON_REASON}`, "not configured"]);
@@ -367,7 +373,7 @@ test("a name too common to search is skipped: no request to the register", async
 test("a source that fails is reported, never thrown, and a key never reaches the reason", async () => {
   const net = fakeFetch({ planit: 503, adzuna: new Error("connect failed for https://api.adzuna.com/?app_key=the-key&app_id=the-id") });
   const db = fakeDb({ c1: { name: "Wingstop" } });
-  const r = await api.refreshBrandPipeline("c1", { fetch: net.fn, db, env: { ADZUNA_APP_ID: "the-id", ADZUNA_APP_KEY: "the-key" }, now: () => NOW });
+  const r = await api.refreshBrandPipeline("c1", { fetch: net.fn, db, env: { ADZUNA_APP_ID: "the-id", ADZUNA_APP_KEY: "the-key" }, now: () => NOW, planitGate: noWait() });
   assert.deepEqual(r.planning, { ok: false, reason: "HTTP 503", found: 0 });
   assert.equal(r.jobs.configured, true);
   assert.equal(r.jobs.ok, false);
@@ -380,7 +386,7 @@ test("a source that fails is reported, never thrown, and a key never reaches the
   assert.match(db.queries.find((q) => /INSERT INTO brand_pipeline_checks/.test(q.text))!.text, /CASE WHEN EXCLUDED\.jobs_status = 'ok' THEN EXCLUDED\.jobs_total ELSE brand_pipeline_checks\.jobs_total END/);
 
   const odd = fakeFetch({ planit: { records: "no" }, adzuna: { error: "AUTH_FAIL" } });
-  const r2 = await api.refreshBrandPipeline("c1", { fetch: odd.fn, db: fakeDb({ c1: { name: "Wingstop" } }), env: { ADZUNA_APP_ID: "a", ADZUNA_APP_KEY: "b" }, now: () => NOW });
+  const r2 = await api.refreshBrandPipeline("c1", { fetch: odd.fn, db: fakeDb({ c1: { name: "Wingstop" } }), env: { ADZUNA_APP_ID: "a", ADZUNA_APP_KEY: "b" }, now: () => NOW, planitGate: noWait() });
   assert.deepEqual(r2, { planning: { ok: true, found: 0 }, jobs: { configured: true, ok: false, reason: "unexpected reply", found: 0 } });
 });
 
@@ -405,7 +411,7 @@ test("the name is asked as a phrase, once, and only the brand's own adverts are 
     advert("23", "Head Chef - New Restaurant", "Birmingham", { company: { display_name: "Flat Iron Steak Ltd" } }),
   ] } });
   const db = fakeDb({ c1: { name: "Flat Iron", trading_entities: [{ name: "Flat Iron Steak Ltd" }] } });
-  const r = await api.refreshBrandPipeline("c1", { fetch: net.fn, db, env: { ADZUNA_APP_ID: "the-id", ADZUNA_APP_KEY: "the-key" }, now: () => NOW });
+  const r = await api.refreshBrandPipeline("c1", { fetch: net.fn, db, env: { ADZUNA_APP_ID: "the-id", ADZUNA_APP_KEY: "the-key" }, now: () => NOW, planitGate: noWait() });
   assert.deepEqual(r.jobs, { configured: true, ok: true, found: 2 });
   const asks = net.adzuna().map((c) => new URL(c).searchParams);
   assert.equal(asks.length, 1);
@@ -419,7 +425,7 @@ test("the name is asked as a phrase, once, and only the brand's own adverts are 
 test("Adzuna's own words for a refusal are kept, never a key, and nothing is asked twice", async () => {
   const bad = adzunaFetch({ status: 400, body: { exception: "BAD_REQUEST", display: "Bad what_phrase for app_key key-90fd3b" } });
   const db = fakeDb({ c1: { name: "Flat Iron" } });
-  const r = await api.refreshBrandPipeline("c1", { fetch: bad.fn, db, env: { ADZUNA_APP_ID: "id-7c41e2", ADZUNA_APP_KEY: "key-90fd3b" }, now: () => NOW });
+  const r = await api.refreshBrandPipeline("c1", { fetch: bad.fn, db, env: { ADZUNA_APP_ID: "id-7c41e2", ADZUNA_APP_KEY: "key-90fd3b" }, now: () => NOW, planitGate: noWait() });
   assert.equal(r.jobs.ok, false);
   assert.equal(r.jobs.reason, "HTTP 400: Bad what_phrase for app_key ***");
   assert.equal(bad.adzuna().length, 1);
@@ -427,13 +433,13 @@ test("Adzuna's own words for a refusal are kept, never a key, and nothing is ask
   assert.equal(/key-90fd3b|id-7c41e2/.test(JSON.stringify(savedCheck(db))), false);
 
   const auth = adzunaFetch({ status: 401, body: { exception: "AUTH_FAIL", display: "Authorisation failed" } });
-  const r2 = await api.refreshBrandPipeline("c1", { fetch: auth.fn, db: fakeDb({ c1: { name: "Flat Iron" } }), env: { ADZUNA_APP_ID: "id-7c41e2", ADZUNA_APP_KEY: "key-90fd3b" }, now: () => NOW });
+  const r2 = await api.refreshBrandPipeline("c1", { fetch: auth.fn, db: fakeDb({ c1: { name: "Flat Iron" } }), env: { ADZUNA_APP_ID: "id-7c41e2", ADZUNA_APP_KEY: "key-90fd3b" }, now: () => NOW, planitGate: noWait() });
   assert.deepEqual(r2.jobs, { configured: true, ok: false, reason: "HTTP 401: Authorisation failed", found: 0 });
   assert.equal(auth.adzuna().length, 1);
 
   // A refusal with no readable body is the status alone.
   const blank = adzunaFetch({ status: 429, body: undefined });
-  const r3 = await api.refreshBrandPipeline("c1", { fetch: blank.fn, db: fakeDb({ c1: { name: "Flat Iron" } }), env: { ADZUNA_APP_ID: "id-7c41e2", ADZUNA_APP_KEY: "key-90fd3b" }, now: () => NOW });
+  const r3 = await api.refreshBrandPipeline("c1", { fetch: blank.fn, db: fakeDb({ c1: { name: "Flat Iron" } }), env: { ADZUNA_APP_ID: "id-7c41e2", ADZUNA_APP_KEY: "key-90fd3b" }, now: () => NOW, planitGate: noWait() });
   assert.equal(r3.jobs.reason, "HTTP 429");
 });
 
@@ -464,7 +470,7 @@ test("the card says what each source's check did: none found, failed, or not run
 test("a brand that is not there: nothing is asked and nothing is written", async () => {
   const net = fakeFetch({ planit: PLANIT_REPLY });
   const db = fakeDb({});
-  const r = await api.refreshBrandPipeline("nope", { fetch: net.fn, db, env: {}, now: () => NOW });
+  const r = await api.refreshBrandPipeline("nope", { fetch: net.fn, db, env: {}, now: () => NOW, planitGate: noWait() });
   assert.deepEqual(r, { planning: { ok: false, reason: "brand not found", found: 0 }, jobs: { configured: false, ok: false, reason: "brand not found", found: 0 } });
   assert.equal(net.calls.length, 0);
   assert.equal(db.queries.some((q) => /INSERT/.test(q.text)), false);
@@ -509,7 +515,7 @@ test("the summary for a skipped brand, a brand never checked and a database with
   assert.equal(skipped.jobsTotal, null);
   assert.deepEqual(skipped.jobTowns, []);
 
-  const empty = { checkedAt: null, planning: [], jobs: [], jobsConfigured: false, jobsTotal: null, jobTowns: [], planningSkipped: null, planningProblem: null, jobsProblem: null };
+  const empty = { checkedAt: null, planning: [], jobs: [], jobsConfigured: false, jobsTotal: null, jobTowns: [], planningSkipped: null, planningProblem: null, jobsProblem: null, jobsUnchecked: false };
   assert.deepEqual(await api.pipelineSummary("c1", { env: {}, db: fakeDb({}) }), empty);
   assert.deepEqual(await api.pipelineSummary("c1", { env: {}, db: { query: async () => { throw missing(); } } }), empty);
   await assert.rejects(api.pipelineSummary("c1", { env: {}, db: { query: async () => { throw new Error("connection lost"); } } }), /connection lost/);
@@ -559,7 +565,7 @@ test("the nightly pass: tenant brands due a check, a pause between them, one fai
   console.warn = () => {};
   let out;
   try {
-    out = await api.nightlyPipelinePass(60, { fetch: net.fn, db, env: {}, now: () => NOW, sleep: async (ms) => { sleeps.push(ms); } });
+    out = await api.nightlyPipelinePass(60, { fetch: net.fn, db, env: {}, now: () => NOW, planitGate: noWait(), sleep: async (ms) => { sleeps.push(ms); } });
   } finally { console.log = log; console.warn = warn; }
   assert.deepEqual(out, { attempted: 4, planningFound: 2, jobsFound: 0, failed: 1 });
   // a asked the register, b failed, c (too common) asked nothing so d follows without a pause.
@@ -584,7 +590,238 @@ test("the nightly pass survives a database that will not answer", async () => {
   } finally { console.log = log; console.warn = warn; }
 });
 
-test("the router has the two routes and nothing else", () => {
+test("the router has its four routes and nothing else", () => {
   const routes = (api.default as any).stack.filter((l: any) => l.route).map((l: any) => `${Object.keys(l.route.methods)[0].toUpperCase()} ${l.route.path}`);
-  assert.deepEqual(routes, ["GET /api/brand/:companyId/pipeline", "POST /api/brand/:companyId/pipeline/refresh"]);
+  assert.deepEqual(routes, [
+    "GET /api/brand/:companyId/pipeline",
+    "GET /api/admin/brand-pipeline/planning-sweep",
+    "POST /api/admin/brand-pipeline/planning-sweep",
+    "POST /api/brand/:companyId/pipeline/refresh",
+  ]);
+});
+
+// ─── Replacing what is already there (18 November 2026) ─────────────────
+
+test("works that only replace an occupier's own signs are not a new site", () => {
+  for (const d of [
+    `The installation of replacement signage to include 1 no. white internally illuminated "McDonald's" letterset with white surround`,
+    `The installation of replacement white internally illuminated "McDonald's" letterset, on new grey aluminium fascia panel.`,
+    "Replacement signage to comprise 1no. white halo-illuminated McDonald's letter set",
+    "Advertisement consent for the display of a new McDonald's sign pole replacing existing sign pole",
+  ]) assert.deepEqual(planningVerdict(rec(d, { app_type: "Advertising" }), { names: ["McDonald's"], now: NOW }), { counts: false, reason: "replacing what is already there" }, d);
+  assert.equal(counts("Advertisement Consent - New building signage to replace existing 'COSTA COFFEE' sign to building face", ["Costa Coffee"], { app_type: "Advertising" }), false);
+  assert.equal(counts("Replacement of Primark building signage to new specification", ["Primark"], { app_type: "Advertising" }), false);
+});
+
+test("a brand replacing another business's signs, or moving in, still counts", () => {
+  // The Starbucks drive-thru that replaced a Tim Hortons (North Yorkshire, 2026).
+  assert.equal(counts(`Advertisement consent for 2x Starbucks wordmark signs; 3x Roundel signs; 1x "Drive Thru" sign; 1x Banner Frame (replacement for existing Tim Hortons signage)`, ["Starbucks"], { app_type: "Advertising" }), true);
+  assert.equal(counts("Installation of new fascia signage for Greggs, replacing former Barclays signage", ["Greggs"], { app_type: "Advertising" }), true);
+  // A change of use or a fit-out says arrival whatever else is replaced.
+  assert.equal(counts("Change of use to Class E bakery (Gail's) and replacement shopfront", ["Gail's"]), true);
+  assert.equal(counts("Fit-out of the unit for Five Guys including replacement shopfront and signage", ["Five Guys"]), true);
+  // New signs with no replacing are unchanged.
+  assert.equal(counts("Installation of 2no. 'Popeyes' fascia lettering", ["Popeyes"], { app_type: "Advertising" }), true);
+});
+
+// ─── PlanIt's pace (18 November 2026) ───────────────────────────────────
+
+function fakeClock() {
+  let t = 1_000_000;
+  const sleeps: number[] = [];
+  return { clock: () => t, sleep: async (ms: number) => { sleeps.push(ms); t += ms; }, sleeps, advance: (ms: number) => { t += ms; } };
+}
+
+function planitReplies(replies: { status: number; retryAfter?: string; body?: any }[]) {
+  const calls: string[] = [];
+  let i = 0;
+  const fn = (async (url: any) => {
+    calls.push(String(url));
+    const r = replies[Math.min(i++, replies.length - 1)];
+    return { ok: r.status === 200, status: r.status, headers: { get: (k: string) => (k.toLowerCase() === "retry-after" ? r.retryAfter ?? null : null) }, json: async () => r.body ?? { records: [] } };
+  }) as unknown as typeof fetch;
+  return { fn, calls };
+}
+
+test("PlanIt is asked at most once every six seconds", async () => {
+  const t = fakeClock();
+  const gate = api.createPlanitGate(6000, t.clock);
+  const net = planitReplies([{ status: 200 }]);
+  for (const id of ["a", "b", "c"]) {
+    await api.refreshBrandPipeline(id, { fetch: net.fn, db: fakeDb({ [id]: { name: "Wingstop" } }), env: {}, now: () => NOW, planitGate: gate, sleep: t.sleep });
+  }
+  assert.equal(net.calls.length, 3);
+  assert.deepEqual(t.sleeps, [6000, 6000]);
+  assert.equal(api.PLANIT_GAP_MS, 6000);
+});
+
+test("a 429 is waited out for as long as PlanIt asks, then asked once more", async () => {
+  const t = fakeClock();
+  const gate = api.createPlanitGate(6000, t.clock);
+  const net = planitReplies([{ status: 429, retryAfter: "120" }, { status: 200, body: PLANIT_REPLY }]);
+  const db = fakeDb({ c1: { name: "Wingstop" } });
+  const out = await api.nightlyPipelinePass(60, { fetch: net.fn, db: fakeDb({ c1: { name: "Wingstop" } }, (text) => (/FROM crm_companies c/.test(text) ? [{ id: "c1" }] : undefined)), env: {}, now: () => NOW, planitGate: gate, sleep: t.sleep });
+  assert.equal(net.calls.length, 2);
+  assert.ok(t.sleeps.includes(120_000), `waited ${JSON.stringify(t.sleeps)}`);
+  assert.deepEqual(out, { attempted: 1, planningFound: 1, jobsFound: 0, failed: 0 });
+  void db;
+  assert.equal(api.retryAfterMs("30"), 30_000);
+  assert.equal(api.retryAfterMs("Wed, 18 Nov 2026 12:01:00 GMT", Date.parse("Wed, 18 Nov 2026 12:00:00 GMT")), 60_000);
+  assert.equal(api.retryAfterMs(""), null);
+  assert.equal(api.retryAfterMs("soon"), null);
+});
+
+test("a person pressing Check again is told PlanIt is busy rather than kept waiting", async () => {
+  const t = fakeClock();
+  const gate = api.createPlanitGate(6000, t.clock);
+  const net = planitReplies([{ status: 429, retryAfter: "600" }]);
+  const db = fakeDb({ c1: { name: "Wingstop" } });
+  const r = await api.refreshBrandPipeline("c1", { fetch: net.fn, db, env: {}, now: () => NOW, planitGate: gate, sleep: t.sleep });
+  assert.equal(net.calls.length, 1);
+  assert.equal(r.planning.ok, false);
+  assert.equal(r.planning.limited, true);
+  assert.match(r.planning.reason!, /^PlanIt asked us to slow down; try again in 10 minutes$/);
+  assert.match(String(savedCheck(db)![1]), /^failed: PlanIt asked us to slow down/);
+  // Nobody else jumps the queue while PlanIt's wait runs.
+  const again = await api.refreshBrandPipeline("c1", { fetch: net.fn, db: fakeDb({ c1: { name: "Wingstop" } }), env: {}, now: () => NOW, planitGate: gate, sleep: t.sleep });
+  assert.equal(net.calls.length, 1);
+  assert.equal(again.planning.limited, true);
+});
+
+test("the nightly run stops for the night when PlanIt keeps refusing, leaving the rest due", async () => {
+  const t = fakeClock();
+  const gate = api.createPlanitGate(6000, t.clock);
+  const net = planitReplies([{ status: 429, retryAfter: "60" }, { status: 429, retryAfter: "60" }]);
+  const db = fakeDb({ a: { name: "Wingstop" }, b: { name: "Greggs" } }, (text) => (/FROM crm_companies c/.test(text) ? [{ id: "a" }, { id: "b" }] : undefined));
+  const log = console.log; const lines: string[] = [];
+  console.log = (...x: any[]) => { lines.push(x.join(" ")); };
+  let out;
+  try { out = await api.nightlyPipelinePass(60, { fetch: net.fn, db, env: {}, now: () => NOW, planitGate: gate, sleep: t.sleep }); }
+  finally { console.log = log; }
+  assert.equal(out!.attempted, 1);
+  assert.match(out!.stoppedEarly!, /^PlanIt asked us to slow down/);
+  assert.equal(net.calls.length, 2);
+  assert.match(lines.at(-1)!, /stopped early: PlanIt asked us to slow down/);
+});
+
+test("a brand whose planning was checked on its own comes round for its job adverts", async () => {
+  const db = fakeDb({}, (text) => (/FROM crm_companies c/.test(text) ? [] : undefined));
+  await api.nightlyPipelinePass(60, { db, env: { ADZUNA_APP_ID: "a", ADZUNA_APP_KEY: "b" }, now: () => NOW, planitGate: noWait() });
+  const pick = db.queries.find((q) => /FROM crm_companies c/.test(q.text))!;
+  assert.match(pick.text, /\(\$2::boolean AND k\.jobs_status IN \('not configured', 'not checked'\)\)/);
+  assert.deepEqual(pick.params, [60, true]);
+  const s = await api.pipelineSummary("c1", { env: { ADZUNA_APP_ID: "a", ADZUNA_APP_KEY: "b" }, now: () => NOW, db: fakeDb({}, (text) =>
+    /FROM brand_pipeline_checks/.test(text) ? [{ checked_at: "2026-11-18T11:25:19Z", planning_status: "ok", jobs_status: "not checked", jobs_total: null, jobs_by_town: null }] : undefined) });
+  assert.equal(s.jobsUnchecked, true);
+  assert.equal(s.jobsProblem, null);
+  assert.equal(pipelineCheckWords(s).jobs, "job adverts not checked yet");
+  assert.equal(pipelineCheckedSummary(s, "18 Nov 2026"), "Planning registers checked 18 Nov 2026");
+});
+
+// ─── Twelve months of planning for every brand (18 November 2026) ───────
+
+function sweepDb(brands: { id: string; name: string }[]) {
+  let state: any = null;
+  const checks: any[][] = [];
+  const items: any[] = [];
+  const db = {
+    query: async (text: string, params: any[] = []) => {
+      if (/SELECT value FROM system_settings/.test(text)) return { rows: state ? [{ value: JSON.parse(JSON.stringify(state)) }] : [] };
+      if (/INSERT INTO system_settings/.test(text)) { state = JSON.parse(params[1]); return { rows: [] }; }
+      if (/UPDATE system_settings SET value/.test(text)) {
+        if (state && state.status === "running" && state.runId === params[2]) { state = JSON.parse(params[1]); return { rows: [{ key: params[0] }] }; }
+        return { rows: [] };
+      }
+      if (/SELECT count\(\*\)::int AS n FROM crm_companies c/.test(text)) return { rows: [{ n: brands.length }] };
+      if (/SELECT c\.id, c\.name, c\.trading_entities FROM crm_companies c/.test(text)) {
+        const next = brands.filter((b) => params[0] == null || b.id > params[0]).sort((a, b) => a.id.localeCompare(b.id))[0];
+        return { rows: next ? [{ ...next, trading_entities: null }] : [] };
+      }
+      if (/INSERT INTO brand_pipeline_items/.test(text)) { items.push(...JSON.parse(params[1])); return { rows: [] }; }
+      if (/INSERT INTO brand_pipeline_checks/.test(text)) { checks.push(params); return { rows: [] }; }
+      return { rows: [] };
+    },
+  };
+  return { db, checks, items, state: () => state, setState: (s: any) => { state = s; } };
+}
+
+test("the twelve-month check asks PlanIt about every brand, planning only, and says what it found", async () => {
+  const store = sweepDb([{ id: "b2", name: "Greggs" }, { id: "b1", name: "Wingstop" }, { id: "b3", name: "Next" }]);
+  const net = fakeFetch({ planit: PLANIT_REPLY, adzuna: { results: [] } });
+  const deps = { fetch: net.fn, db: store.db, env: { ADZUNA_APP_ID: "a", ADZUNA_APP_KEY: "b" }, now: () => NOW, planitGate: noWait() };
+  const log = console.log; console.log = () => {};
+  try {
+    const started = await api.startPlanningSweep("Woody Bruce", deps);
+    assert.equal(started.status, "running");
+    assert.equal(started.total, 3);
+    await api.currentPlanningSweepRun();
+  } finally { console.log = log; }
+  const s = store.state();
+  assert.equal(s.status, "done");
+  assert.equal(s.startedBy, "Woody Bruce");
+  assert.deepEqual([s.processed, s.withRecords, s.records, s.skipped, s.failed, s.afterId], [3, 1, 1, 1, 0, "b3"]);
+  // PlanIt only: Adzuna is never asked, and in id order.
+  assert.equal(net.calls.length, 2);
+  assert.equal(net.calls.some((c) => c.url.includes("adzuna")), false);
+  assert.match(net.calls[0].url, /search=Wingstop/);
+  // Its job adverts are left "not checked", which brings the brand round to the nightly run.
+  assert.deepEqual(store.checks.map((c) => [c[0], c[1], c[2]]), [["b1", "ok", "not checked"], ["b2", "ok", "not checked"], ["b3", `skipped: ${TOO_COMMON_REASON}`, "not checked"]]);
+});
+
+test("Stop keeps the place, Start carries on from it, and a finished check starts again", async () => {
+  const store = sweepDb([{ id: "a1", name: "Wingstop" }, { id: "a2", name: "Greggs" }, { id: "a3", name: "Popeyes" }]);
+  store.setState({ status: "stopped", runId: "old", startedAt: "2026-11-18T10:00:00.000Z", startedBy: "Woody Bruce", finishedAt: "2026-11-18T11:00:00.000Z", afterId: "a1", total: 3, processed: 1, withRecords: 0, records: 0, skipped: 0, failed: 0, lastError: "PlanIt asked us to slow down; try again in 20 minutes" });
+  const net = fakeFetch({ planit: { records: [] } });
+  const deps = { fetch: net.fn, db: store.db, env: {}, now: () => NOW, planitGate: noWait() };
+  const log = console.log; console.log = () => {};
+  try {
+    const resumed = await api.startPlanningSweep("Someone Else", deps);
+    assert.equal(resumed.startedAt, "2026-11-18T10:00:00.000Z");
+    assert.equal(resumed.startedBy, "Woody Bruce");
+    assert.equal(resumed.lastError, null);
+    await api.currentPlanningSweepRun();
+    assert.equal(net.calls.length, 2);
+    assert.deepEqual([store.state().status, store.state().processed], ["done", 3]);
+    // Done: Start begins again from the first brand.
+    const fresh = await api.startPlanningSweep("Someone Else", deps);
+    assert.deepEqual([fresh.processed, fresh.afterId, fresh.startedBy], [0, null, "Someone Else"]);
+    await api.currentPlanningSweepRun();
+  } finally { console.log = log; }
+  // A Stop is never written over by a run still going.
+  const running = { ...store.state(), status: "running", runId: "r1" };
+  store.setState(running);
+  const stopped = await api.stopPlanningSweep({ db: store.db });
+  assert.equal(stopped!.status, "stopped");
+  assert.equal(store.state().status, "stopped");
+});
+
+test("the twelve-month check pauses, keeping its place, when PlanIt keeps refusing", async () => {
+  const store = sweepDb([{ id: "a1", name: "Wingstop" }, { id: "a2", name: "Greggs" }]);
+  const t = fakeClock();
+  const net = planitReplies([{ status: 429, retryAfter: "3600" }]);
+  const deps = { fetch: net.fn, db: store.db, env: {}, now: () => NOW, planitGate: api.createPlanitGate(6000, t.clock), sleep: t.sleep };
+  const warn = console.warn; console.warn = () => {};
+  try {
+    await api.startPlanningSweep(null, deps);
+    await api.currentPlanningSweepRun();
+  } finally { console.warn = warn; }
+  const s = store.state();
+  assert.equal(s.status, "stopped");
+  assert.equal(s.afterId, null);
+  assert.equal(s.processed, 0);
+  assert.match(s.lastError, /^PlanIt asked us to slow down; try again in 60 minutes$/);
+  assert.equal(store.checks.length, 0);
+});
+
+test("the admin view lists every brand with an application in the window, leaving out tree and telecoms rows", async () => {
+  const db = fakeDb({}, (text) => {
+    if (/SELECT value FROM system_settings/.test(text)) return [];
+    if (/SELECT count\(\*\)::int AS n FROM crm_companies c/.test(text)) return [{ n: 2764 }];
+    if (/FROM brand_pipeline_items i/.test(text)) return [{ id: "g", name: "Greggs", applications: 8, sites: 8, latest: "2026-07-22", towns: ["London", "Stafford"] }];
+  });
+  const view = await api.planningSweepView({ db, now: () => NOW });
+  assert.deepEqual(view, { sweep: null, gapSeconds: 6, brandCount: 2764, findings: [{ id: "g", name: "Greggs", applications: 8, sites: 8, latest: "2026-07-22", towns: ["London", "Stafford"] }] });
+  const q = db.queries.find((x) => /FROM brand_pipeline_items i/.test(x.text))!;
+  assert.match(q.text, /lower\(trim\(COALESCE\(i\.detail->>'type', ''\)\)\) NOT IN \('trees', 'telecoms'\)/);
+  assert.deepEqual(q.params, ["2025-11-15"]);
 });

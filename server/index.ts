@@ -6523,6 +6523,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         setTimeout(() => startAutoTurnoverResearch(), 30000);
         // A directory-wide website sweep survives deploys: pick it back up.
         setTimeout(() => { import("./brand-website-sweep").then(m => m.resumeWebsiteSweep()).catch(() => {}); }, 60000);
+        // The twelve-month planning check an admin started carries on too; it never starts by itself.
+        setTimeout(() => { import("./brand-pipeline").then(m => m.resumePlanningSweep()).catch(() => {}); }, 75000);
         // One-off (2026-09-23): tenants on BGP deals with no Companies House
         // entity get re-resolved now that deal records (HOTs, fee emails) are
         // a source — they would otherwise wait a month in the parked queue.

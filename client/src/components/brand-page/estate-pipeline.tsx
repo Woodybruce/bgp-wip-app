@@ -23,7 +23,7 @@ interface PipelineItem { kind: "planning" | "job_new_opening" | "job_property_ro
 interface PipelineSummary {
   checkedAt: string | null; planning: PipelineItem[]; jobs: PipelineItem[]; jobsConfigured: boolean; jobsTotal: number | null;
   jobTowns: { town: string; adverts: number }[]; planningSkipped: string | null;
-  planningProblem?: string | null; jobsProblem?: string | null;
+  planningProblem?: string | null; jobsProblem?: string | null; jobsUnchecked?: boolean;
 }
 export interface StatedPlans {
   period: string | null; mode?: "text" | "scan"; none?: boolean; failed?: number;
