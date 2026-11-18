@@ -2325,7 +2325,8 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   Bluewater was updated on 18 November 2026 from Landsec's own account
   (Mark Warne's feedback): Will Harvey senior asset manager
   (`seniorAssetManagers`, suggested on a brief in that role), Jonny Rushton
-  leasing, Millie Edwards first for BGP, and Gemma Casey, Rebecca "Becs"
+  leasing, BGP's team Millie Edwards, Emily Dumbell, Alex Todd and Kate
+  Martin (Woody, the same day), and Gemma Casey, Rebecca "Becs"
   Blenkinsop and Mark Warne kept informed (`informed`: listed with the team,
   never suggested as someone who agrees a brief). Every other scheme is
   still the February sheet; an entry confirmed since carries `checked`. The

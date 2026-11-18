@@ -44,7 +44,8 @@ export const LANDSEC_SCHEME_TEAMS: LandsecSchemeTeam[] = [
     assetManagers: ["Will Harvey", "Gemma Casey", "Alice Wilkins"],
     leasing: ["Jonny Rushton", "Rebecca Blenkinsop", ...RETAIL_LEASING.filter(n => n !== "Jonny Rushton")],
     informed: ["Gemma Casey", "Rebecca Blenkinsop", "Mark Warne"],
-    bgpLead: ["Millie Edwards", "Emily Dumbell"], bgpSupport: ["Lucy Gardiner", "Rob Barnes"], jointAgents: JOINT_FOUR,
+    // BGP's Bluewater team as Woody gave it on 18 November 2026: "Millie, Emily Dumbell, Alex Todd and Kate Martin".
+    bgpLead: ["Millie Edwards", "Emily Dumbell"], bgpSupport: ["Alex Todd", "Kate Martin"], jointAgents: JOINT_FOUR,
   },
   { key: "liverpool-one", match: /liverpool\s*(one|1)\b/i, assetManagers: ["Rob Deacon", "Nick Cywinski"], leasing: RETAIL_LEASING, bgpLead: ["Lucy Gardiner", "Emily Dumbell"], bgpSupport: ["Rob Barnes", "Luke Donohoe"], jointAgents: ["Sammy Jones", "David Bell"] },
   { key: "buchanan-galleries", match: /buchanan/i, assetManagers: ["Charlie Griffiths", "Ben Doughty", "Colin Kennedy"], leasing: RETAIL_LEASING, bgpLead: ["Victoria Broadhead"], bgpSupport: [], jointAgents: ["James Godfrey", "Alex Culverwell"] },

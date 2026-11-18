@@ -9,7 +9,7 @@ test("Bluewater suggests the people who agree a brief, in their roles", () => {
   assert.deepEqual(names("senior_asset_manager"), ["Will Harvey"]);
   assert.deepEqual(names("asset_manager"), ["Alice Wilkins"]);
   assert.equal(names("client_leasing")[0], "Jonny Rushton");
-  assert.equal(names("bgp_agent")[0], "Millie Edwards");
+  assert.deepEqual(names("bgp_agent"), ["Millie Edwards", "Emily Dumbell", "Alex Todd", "Kate Martin"]);
   assert.equal(s.filter(p => p.name === "Will Harvey").length, 1);
 });
 
