@@ -3071,8 +3071,11 @@ Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
   (`dealPrechecks` from `GET /api/kyc/deal/:id/status`, which returns
   `prechecks`; the Kick off AML step after New Deal or a handover reads the
   same status, so a run starts the moment a deal is saved); on **Run again** (`POST /api/kyc/deal/:id/prechecks`, BGP
-  staff only, one party or all); and from KYC4U's prefill (`kyc4uPrefill`
-  starts one if needed and waits up to 20 seconds). Never on a timer or at
+  staff only, one party or all; until 18 November 2026 the retired-AML
+  switch in `server/index.ts` answered it 410 while in-app AML was off, so
+  its exception now names `status` and `prechecks`); and from KYC4U's
+  prefill (`kyc4uPrefill` starts one if needed and waits up to 20 seconds).
+  Never on a timer or at
   boot. A daily allowance (`KYC_PRECHECK_DAILY_CAP`, default 40 runs, 0 =
   off) and `KYC_PRECHECKS=off` stop it. A run is in memory while it goes: a
   restart loses it and the next view starts it again.
@@ -3179,8 +3182,10 @@ from Mesh's own documentation (docs.mesh.complyadvantage.com, read
   (admins) and the ComplyAdvantage card of **Test Apollo / Xero / CH /
   ComplyAdvantage** on Subscriptions & APIs (`/subscriptions`, Admin; the
   ping always ran it, the page now shows it): signs in and lists the
-  screening configurations, and says whether the one named on Railway is
-  among them. The old `/api/comply-advantage/probe`, which posted test
+  screening configurations (Mesh's `/v2` list, and its `/v3` list for
+  accounts on its newer pipeline when the first is empty), and says whether
+  the one named on Railway is among them. On live on 18 November 2026 the
+  API keys signed in and `/v2` listed no configuration. The old `/api/comply-advantage/probe`, which posted test
   searches to seven addresses for any login, is gone.
 - Callers: BGP's checks before asking (`server/kyc-prechecks.ts`, live while
   in-app AML is off), and with in-app AML on, the KYC orchestrator, KYC

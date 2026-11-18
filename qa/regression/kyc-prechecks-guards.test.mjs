@@ -30,6 +30,17 @@ test('a run never starts on a timer: only a deal view, Run again or a KYC4U requ
   assert.match(checks, /KYC_PRECHECKS \|\| ""\)\.trim\(\)\.toLowerCase\(\) !== "off"/);
 });
 
+test('Run again works while in-app AML is off (it answered 410 until 18 November 2026)', () => {
+  const line = index.split('\n').find(l => l.includes('/^\\/api\\/kyc\\/(?!deal'));
+  assert.ok(line, 'the retired switch still names the /api/kyc/ exception');
+  const literal = line.trim().replace(/,$/, '');
+  const retired = new RegExp(literal.slice(1, literal.lastIndexOf('/')));
+  assert.equal(retired.test('/api/kyc/deal/d1/prechecks'), false, "the card's Run again");
+  assert.equal(retired.test('/api/kyc/deal/d1/status'), false, 'the card itself');
+  assert.equal(retired.test('/api/kyc/deal/d1/cdd'), true, 'the rest of /api/kyc/ stays retired');
+  assert.match(card, /apiRequest\("POST", `\/api\/kyc\/deal\/\$\{dealId\}\/prechecks`/);
+});
+
 test('only BGP staff signed in as themselves start or see a run', () => {
   const route = compliance.slice(compliance.indexOf('"/api/kyc/deal/:id/status"'));
   const body = route.slice(0, route.indexOf('router.post('));

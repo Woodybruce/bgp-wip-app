@@ -513,17 +513,25 @@ export async function checkComplyAdvantage(deps: MeshDeps = defaultDeps()): Prom
     return { ...base, ok: false, message: `Signing in with ${how} failed: ${e?.message || "unknown"}` };
   }
   try {
-    const call = await meshCall("GET", "/v2/entity-screening/configurations", undefined, deps);
-    if (call.status === 404) return { ...base, ok: true, screeningConfigFound: screeningConfigId ? false : null, message: `Signed in with ${how}. Mesh holds no screening configurations yet: make one in Mesh (Settings > Screening Configurations) before screening` };
-    if (call.status !== 200) {
-      const err = meshFailure(call, "read the screening configurations");
-      return { ...base, ok: true, message: `Signed in with ${how}, but ${err.message}` };
-    }
-    const configurations = (Array.isArray(call.data?.configurations) ? call.data.configurations : []).map((c: any) => ({
+    // Mesh lists configurations at two addresses: /v2 and, for accounts on
+    // its newer data pipeline, /v3. The first answered "none" on live on
+    // 18 November 2026, so an empty or missing /v2 list reads /v3 as well.
+    const readList = (call: CallResult) => (Array.isArray(call.data?.configurations) ? call.data.configurations : []).map((c: any) => ({
       identifier: String(c?.configuration_identifier || ""),
       name: String(c?.configuration?.name || c?.configuration?.description || "Unnamed"),
       archived: !!c?.configuration?.is_archived,
     })).filter((c: any) => c.identifier);
+    const v2 = await meshCall("GET", "/v2/entity-screening/configurations", undefined, deps);
+    if (v2.status !== 200 && v2.status !== 404) {
+      const err = meshFailure(v2, "read the screening configurations");
+      return { ...base, ok: true, message: `Signed in with ${how}, but ${err.message}` };
+    }
+    let configurations: MeshCheck["configurations"] = v2.status === 200 ? readList(v2) : [];
+    if (!configurations.length) {
+      const v3 = await meshCall("GET", "/v3/entity-screening/configurations", undefined, deps);
+      if (v3.status === 200) configurations = readList(v3);
+    }
+    if (!configurations.length) return { ...base, ok: true, screeningConfigFound: screeningConfigId ? false : null, message: `Signed in with ${how}. Mesh holds no screening configurations yet: make one in Mesh (Settings > Screening Configurations) before screening` };
     const live = configurations.filter((c: any) => !c.archived);
     const found = screeningConfigId ? configurations.some((c: any) => c.identifier === screeningConfigId) : null;
     const which = screeningConfigId

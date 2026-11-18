@@ -5059,10 +5059,13 @@ app.use("/api/branding/assets", express.static(
   // addresses the test page's real identity check needs (Woody, 2026-11-17):
   // Veriff's decision webhook (Veriff signs it; the handler checks the
   // signature) and the admin-only diagnostic that reads Veriff's answer.
+  // And BGP's checks before asking (server/kyc-prechecks.ts), which run with
+  // the switch off: the card's Run again (/api/kyc/deal/:id/prechecks)
+  // answered 410 until 18 November 2026.
   const RETIRED_AML = [
     /^\/api\/(aml|kyc-clouseau|sanctions|comply-advantage)(\/|$)/,
     /^\/api\/veriff(?!\/(webhook|diagnostic)$)(\/|$)/,
-    /^\/api\/kyc\/(?!deal\/[^/]+\/status$)/,
+    /^\/api\/kyc\/(?!deal\/[^/]+\/(?:status|prechecks)$)/,
     /^\/api\/accounts\/[^/]+\/entity-checks/,
     /^\/api\/entities\/[^/]+\/[^/]+\/kyc(\/|$)/,
     /^\/api\/companies-house\/(property-kyc|batch-rekyc)(\/|$)/,

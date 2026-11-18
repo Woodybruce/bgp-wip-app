@@ -336,6 +336,22 @@ test("the connection check reads the screening configurations and creates nothin
   assert.match(unset.message, /COMPLY_ADVANTAGE_ACCESS_KEY/);
 });
 
+test("an account on Mesh's newer pipeline lists its configurations at /v3", async () => {
+  ca.resetComplyAdvantageState();
+  const m = mesh(c => {
+    if (isToken(c)) return TOKEN;
+    if (c.path === "/v2/entity-screening/configurations") return { status: 404, body: { title: "No configurations found" } };
+    if (c.path === "/v3/entity-screening/configurations") {
+      return { status: 200, body: { configurations: [{ configuration_identifier: "cfg-v3", version: 2, configuration: { name: "Onboarding", is_archived: false } }] } };
+    }
+    return { status: 500 };
+  });
+  const check = await ca.checkComplyAdvantage(m.deps);
+  assert.deepEqual(check.configurations, [{ identifier: "cfg-v3", name: "Onboarding", archived: false }]);
+  assert.match(check.message, /1 screening configuration \(Onboarding\); none is named on Railway, so Mesh picks one/);
+  assert.deepEqual(m.calls.filter(c => !isToken(c)).map(c => c.path), ["/v2/entity-screening/configurations", "/v3/entity-screening/configurations"]);
+});
+
 test("without keys nothing is screened and nothing is called", async () => {
   ca.resetComplyAdvantageState();
   const m = mesh(() => TOKEN, {});
