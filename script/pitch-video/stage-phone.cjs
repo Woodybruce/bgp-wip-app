@@ -15,7 +15,11 @@
 //            company's own record is left as it was.
 //   rep      ETCH. recorded as Jersey Mike's tenant rep, Richard the named contact
 //   unit     quoting rent and service charge on the Liverpool ONE unit (made-up figures)
-//   all      the three above
+//   people   Jersey Mike's chief executive, Satnam Leihal, as a contact at the
+//            brand, with BGP's own note on his record
+//   meeting  a meeting with Jersey Mike's on the brand's record: Woody Bruce,
+//            Jonny Rushton of Landsec, Richard Willcox and Satnam Leihal
+//   all      the five above
 // Also:
 //   status   prints what is there (reads only)
 //   reset    takes back what FILMING the scenes leaves behind, so they can be
@@ -43,7 +47,7 @@ const BLUEWATER = "23b98b43-c5a4-4c16-9eaa-a674f7139749";
 const BK_UNIT = "c0868396-f74b-4661-83e1-ebf7c6bcb062";        // L057 Bluewater - Lower Level
 const SHARE_UNIT = "134b127e-c128-444e-9ae1-d9189b3947da";     // P7, Leisure, Liverpool ONE
 
-const STAGER = "charlotte@brucegillinghampollard.com";         // Charlotte Roberts, the lead BGP agent
+const STAGER = "millie@brucegillinghampollard.com";            // Millie Edwards, the lead BGP agent
 const FILMED_AS = "md";                                        // the login the phone scenes are filmed as
 
 // The agent firm and the person, as the firm's own website gives them
@@ -65,6 +69,18 @@ const AGENT = {
 };
 // What the earlier run staged against the wrong firm.
 const WRONG = { firm: /^etch group$/i, name: /^richard wil+cox$/i, phone: "020 7946 0143" };
+
+// The brand's chief executive, a contact at the brand itself. The note is
+// BGP's own (a contact's notes are never sent to a client login).
+const CEO = { name: "Satnam Leihal", role: "CEO", notes: "Knows Mark Warne and Jonny Rushton at Landsec outside this instruction." };
+// The meeting, a few working days before the staged viewing (stage-letting.cjs
+// holds the viewing four days back from the day it is staged).
+const MEETING = {
+  subject: "Meeting with Jersey Mike's",
+  preview: "Attendees: Woody Bruce (BGP), Jonny Rushton (Landsec), Richard Willcox (ETCH.) and Satnam Leihal (Jersey Mike's CEO). Introduction to Bluewater and the lower level food units.",
+  loggedBy: "md",          // Woody Bruce was there
+  daysBeforeViewing: 5,
+};
 
 // Made-up quoting terms for the unit that is shared on film.
 const QUOTING = { askingRent: 180000, serviceChargePa: 42000 };
@@ -173,7 +189,34 @@ const PHASES = {
     step(true, `${u.unit_name}: quoting rent £${QUOTING.askingRent.toLocaleString("en-GB")} and service charge £${QUOTING.serviceChargePa.toLocaleString("en-GB")} a year (made up)`);
   },
 
-  async all() { for (const p of ["agent", "rep", "unit"]) { log(`${p}:`); await PHASES[p](); } },
+  async people() {
+    const [have] = await q(`SELECT id, role, notes FROM crm_contacts WHERE company_id = $1 AND lower(name) = lower($2) ORDER BY created_at LIMIT 1`, [BRAND.id, CEO.name]);
+    if (!have) {
+      await must(STAGER, "POST", "/api/crm/contacts", { name: CEO.name, role: CEO.role, notes: CEO.notes, companyId: BRAND.id, companyName: BRAND.name });
+      step(true, `${CEO.name}, ${CEO.role}, added at ${BRAND.name} with BGP's note`);
+    } else if (have.role !== CEO.role || have.notes !== CEO.notes) {
+      await must(STAGER, "PUT", `/api/crm/contacts/${have.id}`, { role: CEO.role, notes: CEO.notes });
+      step(true, `${CEO.name}'s job title and note put right`);
+    } else step(false, `${CEO.name}, ${CEO.role}, is a contact at ${BRAND.name}`);
+  },
+
+  async meeting() {
+    const [ceo] = await q(`SELECT id FROM crm_contacts WHERE company_id = $1 AND lower(name) = lower($2) ORDER BY created_at LIMIT 1`, [BRAND.id, CEO.name]);
+    if (!ceo) throw new Error("Run the people phase first");
+    const [have] = await q(`SELECT id, interaction_date FROM crm_interactions WHERE company_id = $1 AND type = 'meeting' AND subject = $2 LIMIT 1`, [BRAND.id, MEETING.subject]);
+    if (have) return step(false, `the meeting is on ${BRAND.name}'s record (${new Date(have.interaction_date).toISOString().slice(0, 10)})`);
+    // A few days before the viewing; never a weekend.
+    const [v] = await q(`SELECT viewing_date FROM unit_viewings WHERE unit_id = $1 AND deleted_at IS NULL ORDER BY viewing_date LIMIT 1`, [BK_UNIT]);
+    let day = new Date(`${v ? String(v.viewing_date).slice(0, 10) : new Date().toISOString().slice(0, 10)}T10:30:00.000Z`);
+    day = new Date(day.getTime() - MEETING.daysBeforeViewing * 86400000);
+    while ([0, 6].includes(day.getUTCDay())) day = new Date(day.getTime() - 86400000);
+    const made = await must(MEETING.loggedBy, "POST", "/api/interactions/log", { type: "meeting", direction: "outbound", contactId: ceo.id, companyId: BRAND.id, subject: MEETING.subject, preview: MEETING.preview, interactionDate: day.toISOString() });
+    // A login that signs in with a saved token is not named on the line it logs: name him in the demo database.
+    await q(`UPDATE crm_interactions SET bgp_user = (SELECT u.name FROM users u JOIN auth_tokens t ON t.user_id = u.id WHERE t.token = $2) WHERE id = $1 AND bgp_user IS NULL`, [made.id, tokenFor(MEETING.loggedBy)]);
+    step(true, `"${MEETING.subject}" logged for ${day.toISOString().slice(0, 10)} (${made.id})`);
+  },
+
+  async all() { for (const p of ["agent", "rep", "unit", "people", "meeting"]) { log(`${p}:`); await PHASES[p](); } },
 
   async status() {
     const f = await firm();
@@ -184,6 +227,10 @@ const PHASES = {
     log(`  ${BRAND.name} is represented by: ${reps.map(r => `${r.contact || "nobody named"} of ${r.firm || "no firm"} (${r.agent_type})`).join("; ") || "nobody"}`);
     const [u] = await q(`SELECT unit_name, asking_rent, service_charge_pa FROM available_units WHERE id = $1`, [SHARE_UNIT]);
     log(`  share unit: ${u ? `${u.unit_name}, rent ${u.asking_rent ?? "none"}, service charge ${u.service_charge_pa ?? "none"}` : "missing"}`);
+    const [ceo] = await q(`SELECT name, role, notes FROM crm_contacts WHERE company_id = $1 AND lower(name) = lower($2) LIMIT 1`, [BRAND.id, CEO.name]);
+    log(`  chief executive: ${ceo ? `${ceo.name}, ${ceo.role}; note: ${ceo.notes || "none"}` : "none"}`);
+    const [mt] = await q(`SELECT subject, interaction_date, bgp_user FROM crm_interactions WHERE company_id = $1 AND type = 'meeting' AND subject = $2 LIMIT 1`, [BRAND.id, MEETING.subject]);
+    log(`  meeting: ${mt ? `${mt.subject}, ${new Date(mt.interaction_date).toISOString().slice(0, 10)}, logged by ${mt.bgp_user || "nobody named"}` : "none"}`);
     const left = await leftByFilming();
     log(`  left by filming: ${left.comments.length} comment(s), ${left.photos.length} photo(s), ${left.shares.length} share(s)`);
   },

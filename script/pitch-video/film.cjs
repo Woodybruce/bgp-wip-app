@@ -22,10 +22,16 @@ const BLUEWATER = "23b98b43-c5a4-4c16-9eaa-a674f7139749";
 const BK_ROW = "b553225f-f020-4845-a86c-c67fabe6128f";
 const BK_UNIT = "c0868396-f74b-4661-83e1-ebf7c6bcb062";
 const JERSEY_MIKES = "226e6ac9-a1e2-4a7c-8210-e35d87f2df0d";
-const LEASING = "mark.warne@landsec.com";
+const LEASING = "jonny.rushton@landsec.com";   // Jonny Rushton, Portfolio Leasing Manager: the login the Landsec scenes are filmed as
 const BK_DEAL = "8f3b56ee-65dc-4d8e-87da-1ae9c5b02bfe";
-// Mark Warne as a person on the unit's Targeting Brief (the staging script makes it).
-const MARK_PERSON = process.env.MARK_PERSON || "6dc4bf3b-6ac3-43fe-ab7b-bd542bae5401";
+// Jonny Rushton as a person on the unit's Targeting Brief (the staging script
+// makes it; a brief made again has a new id, which LEASING_PERSON then names).
+const LEASING_PERSON = process.env.LEASING_PERSON || "56d3f740-c257-4074-a229-603022cd3555";
+// Will Harvey, the senior asset manager, on the same brief. Agreeing the Heads
+// of Terms and the decision on the recommendation are his, so those two scenes
+// are filmed as him.
+const ASSET = "will.harvey@landsec.com";
+const ASSET_PERSON = process.env.ASSET_PERSON || "dda4afc0-ec05-4fbf-984d-6ca4c048360f";
 
 // The phone scenes (staged by stage-phone.cjs). The Liverpool ONE unit that is
 // shared on film, and the photos added on film: PHONE_PHOTOS is a comma
@@ -242,21 +248,31 @@ const SCENES = {
   },
 
   // 6. Jersey Mike's: the brand page and its Expansion score.
+  // Its agent (the Tenant rep line) and its chief executive (Key contacts) are
+  // passed over on the way, under People & checks.
   async brand(s) {
     await s.goto(`/companies/${JERSEY_MIKES}`, 3000);
     await s.start();
+    await s.wait(600);
+    await s.over('text=/Entering UK/', 600);
+    await s.wait(400);
+    await s.click('button:has-text("People & checks")', { before: 250, after: 1100, ms: 700 });
+    await s.over('text=Richard Willcox', 700);
+    await s.wait(1300);
+    await s.over('text=Satnam Leihal', 600);
+    await s.wait(1100);
+    await s.click('button:has-text("Expansion")', { before: 250, after: 1800 });
+    await s.wait(500);
+    await s.scroll(300, 1600);
     await s.wait(1500);
-    await s.over('text=/Entering UK/', 800);
-    await s.wait(1200);
-    await s.click('button:has-text("Expansion")', { after: 2500 });
-    await s.wait(1500);
-    await s.scroll(300, 2000);
-    await s.wait(2500);
   },
 
   // 7. The Targeting Brief: the Landsec leasing manager agrees it.
   async brief(s) {
     await s.goto(`/deals/letting?propertyId=${BLUEWATER}`, 3000);
+    // The People tab also offers "the usual team for this scheme" from the app's
+    // team sheet, which is older than this cast: it is left out of the picture.
+    await s.page.addStyleTag({ content: '[data-testid="brief-people-suggested"]{display:none!important}' });
     await s.page.locator(`[data-testid="row-unit-${BK_UNIT}"]`).scrollIntoViewIfNeeded().catch(() => {});
     await s.wait(800);
     await s.start();
@@ -268,7 +284,7 @@ const SCENES = {
     await s.wait(1800);
     await s.click('[data-testid="brief-tab-people"]', { after: 1800 });
     await s.wait(1500);
-    await s.click(`[data-testid="brief-person-agree-${MARK_PERSON}"]`, { before: 700, after: 2500 });
+    await s.click(`[data-testid="brief-person-agree-${LEASING_PERSON}"]`, { before: 700, after: 2500 });
     await s.over('[data-testid="brief-approval-status"]', 800).catch(() => {});
     await s.wait(2500);
   },
@@ -293,7 +309,7 @@ const SCENES = {
     await s.wait(1500);
   },
 
-  // 9a. Heads of Terms on the scheme's own form; the leasing manager signs off.
+  // 9a. Heads of Terms on the scheme's own form; the senior asset manager signs off.
   async hots(s) {
     await s.goto(`/deals/letting?propertyId=${BLUEWATER}`, 3000);
     await s.page.locator(`[data-testid="row-unit-${BK_UNIT}"]`).scrollIntoViewIfNeeded().catch(() => {});
@@ -303,7 +319,7 @@ const SCENES = {
     await s.over('[data-testid="hots-draft-text"]', 800, { fy: 0.3 }).catch(() => {});
     await s.scroll(500, 3000);
     await s.wait(1500);
-    await s.click(`[data-testid="hots-agree-${MARK_PERSON}"]`, { before: 700, after: 3000 });
+    await s.click(`[data-testid="hots-agree-${ASSET_PERSON}"]`, { before: 700, after: 3000 });
     await s.wait(1500);
   },
 
@@ -336,7 +352,7 @@ const SCENES = {
     await s.wait(1500);
     await s.scroll(600, 3000);
     await s.wait(1200);
-    await s.click(`[data-testid="recommendation-approve-${MARK_PERSON}"]`, { before: 700, after: 3000 }).catch(() => {});
+    await s.click(`[data-testid="recommendation-approve-${ASSET_PERSON}"]`, { before: 700, after: 3000 }).catch(() => {});
     await s.wait(1200);
     await s.wait(1500);
   },
@@ -348,6 +364,21 @@ const SCENES = {
     await s.wait(800);
     await s.moveTo(1180, 420, 1000);
     await s.wait(4500);
+  },
+
+  // 10d. The people kept informed (a Landsec login that signs nothing): she
+  // reads the conversation, where two of them have commented, and the task she
+  // set for BGP's lead agent is on her Tasks page under Assigned by me.
+  async informed(s) {
+    await s.goto(`/properties/${BLUEWATER}`, 3500);
+    await s.start();
+    await s.wait(700);
+    await s.moveTo(1180, 440, 900);
+    await s.wait(3600);
+    await s.goto("/tasks", 2500);
+    await s.click('[data-testid="filter-assigned-by-me"]', { before: 400, after: 1500 });
+    await s.over('text=/fit-out programme/', 900, { fx: 0.3 });
+    await s.wait(3200);
   },
 
   // 1b. The phone: the same app in the hand (filmed at phone size).
@@ -546,7 +577,13 @@ const SCENES = {
 const SCENE_SETUP = {
   phone: { phone: true },
   agent: { user: "david.bell@jointagent.demo" },
-  phoneAsk: { phone: true, user: "mark.warne@landsec.com" },
+  phoneAsk: { phone: true, user: LEASING },
+  informed: { user: "becs.blenkinsop@landsec.com" },
+  // The offer is typed by BGP's lead agent in the Landsec workspace (the staging
+  // script switches her to it first: stage-letting.cjs viewas Landsec).
+  offer: { user: "millie@brucegillinghampollard.com" },
+  hots: { user: ASSET },
+  recommendation: { user: ASSET },
   phoneCall: { phone: true, user: "md" },
   phoneComment: { phone: true, user: "md" },
   phonePhotos: { phone: true, user: "md" },
