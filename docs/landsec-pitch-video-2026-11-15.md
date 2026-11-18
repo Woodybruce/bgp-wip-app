@@ -176,6 +176,22 @@ place, band-limited and levelled to sit with the call audio, with the length
 of the recording kept exactly so every later time in the cut list still
 holds. `REC` may be that audio file; only a camera scene needs the picture.
 
+### The re-cut (18 November 2026)
+
+Landsec's feedback changed the cast (the recording sheet has it) and Woody
+recorded the whole voice again on his phone, with additions of his own. The
+demo copy was recast and every app scene filmed again (plus `informed` and
+`brands`), Bluewater in the copy was brought level with live and given the
+BGP take Woody refreshed on live that day, and the cut list is now built by
+FINDING his words in the transcript (a forward-only search, so a retake is
+taken by skipping his "I'll say that again"), not from hand-counted word
+positions. Check each scene by transcribing the finished cut: the transcript
+missed one "I'll say that again", which got into the first render. `VOICE=plain`
+to `voice-cut.cjs` is for a clean phone recording (no lift, only evening
+out). People with no drawing are an initials roundel: no face is invented
+for a real person. The joint agent keeps his own place near the end on his
+own schemes and is not on the Bluewater letting.
+
 ## Two versions
 
 - **Room cut**, about 2 minutes 45. Woody can pause it and talk.
