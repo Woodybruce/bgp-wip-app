@@ -192,6 +192,15 @@ out). People with no drawing are an initials roundel: no face is invented
 for a real person. The joint agent keeps his own place near the end on his
 own schemes and is not on the Bluewater letting.
 
+Later on 18 November Woody took his own opening clip off the film ("cut out
+my real life intro, I can do that in the pitch"), so it starts on the drawn
+Woody, and re-recorded the weak sentence of the close: "Increase transaction
+speed, reduce voids. Allow your team to focus on the future, not admin." in
+place of "our time goes on brands and deals, not on chasing updates". A line
+recorded afterwards is added after the END of the main recording (level
+matched), so no earlier time in the cut list moves, and the scene's stretches
+are then no longer in recording order.
+
 ## Two versions
 
 - **Room cut**, about 2 minutes 45. Woody can pause it and talk.
