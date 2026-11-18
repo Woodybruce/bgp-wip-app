@@ -18,6 +18,7 @@ const require = createRequire(import.meta.url);
 const express = require('express');
 const { find, evaluate, ts } = require('./source-harness.cjs');
 const { routedApiPath, restrictedLandsecApiRule, RESTRICTED_LANDSEC_ROLES, jointAgentApiDenied } = await import('../../shared/landsec.ts');
+const { KYC_CLIENT_CHECK_ROUTES, clientChecksSwitchOn } = await import('../../shared/kyc-request.ts');
 
 const INDEX = 'server/index.ts';
 const declaration = name => find(INDEX, n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText() === name));
@@ -48,7 +49,9 @@ evaluate(['CLIENT_ALLOWED_API', 'CLIENT_ALLOWED_WRITES', 'CLIENT_BLOCKED_SUBPATH
       : null),
   }),
 });
-evaluate(declaration('RETIRED_AML') + '\n' + retiredSource, { routedApiPath, process: { env: {} }, app: { use: (_, fn) => { retired = fn; } } });
+// The switch's environment: in-app AML off, the client checks' own switch as each test sets it.
+const retiredEnv = {};
+evaluate(declaration('RETIRED_AML') + '\n' + retiredSource, { routedApiPath, KYC_CLIENT_CHECK_ROUTES, clientChecksSwitchOn, process: { env: retiredEnv }, app: { use: (_, fn) => { retired = fn; } } });
 // The front door: the first thing the app mounts.
 const frontDoorSource = find(INDEX, n => ts.isFunctionDeclaration(n) && n.name?.text === 'refuseAmbiguousRequestLine');
 const { frontDoor } = evaluate(frontDoorSource + '\nexports.frontDoor = refuseAmbiguousRequestLine;');
@@ -245,4 +248,20 @@ test('the retired-AML switch reads every spelling of a retired address as that a
   // diagnostic, which the test page's real identity check needs (2026-11-17).
   for (const open of ['/api/veriff/webhook', '/api/Veriff/Webhook', '/api/veriff/diagnostic']) assert.equal((await send(open)).status, 200, open);
   for (const shut of ['/api/veriff', '/api/veriff/sessions', '/api/Veriff/Sessions', '/api/veriff/webhook/x', '/api/veriff/diagnostics', '/api/veriff/sessions/s1/report']) assert.equal((await send(shut)).status, 410, shut);
+  // BGP's checks before asking run with in-app AML off: the card's Run again (2026-11-18).
+  assert.equal((await send('/api/kyc/deal/d1/prechecks')).status, 200);
+});
+
+test('the client checks follow their own switch while the rest of in-app AML stays retired', async () => {
+  as(null, false);
+  const open = ['/api/aml/deal/d1/client-checks', '/api/AML/Deal/d1/Client-Checks', '/api/aml/client-checks/tok123', '/api/aml/client-checks/tok123/remind', '/api/aml/poll-mailbox'];
+  const shut = ['/api/aml/status', '/api/aml/deal/d1/client-checks/x', '/api/aml/client-checks', '/api/aml/client-checks/tok/remind/x', '/api/aml/deal/d1/cdd', '/api/aml/poll-mailbox/x'];
+  try {
+    for (const target of open) assert.equal((await send(target)).status, 200, `${target}, client checks on by default`);
+    for (const target of shut) assert.equal((await send(target)).status, 410, target);
+    retiredEnv.KYC_CLIENT_CHECKS = 'off';
+    for (const target of open) assert.equal((await send(target)).status, 410, `${target}, KYC_CLIENT_CHECKS=off`);
+  } finally {
+    delete retiredEnv.KYC_CLIENT_CHECKS;
+  }
 });

@@ -1,9 +1,10 @@
-// Client checks on a deal (in-app AML): send a party's contact one email
-// asking for an identity check and documents, and follow what they have
-// done. The server is server/aml-portal.ts; the email's words, which the
-// preview here draws with the same function the server sends, are in
-// shared/kyc-request.ts. Shown only while in-app AML is on (inAppAml on the
-// deal's KYC status); otherwise KYC4U does the checks.
+// Client checks on a deal: send a party's contact one email asking for an
+// identity check and documents, and follow what they have done. The server
+// is server/aml-portal.ts; the email's words, which the preview here draws
+// with the same function the server sends, are in shared/kyc-request.ts.
+// Shown while the client checks are on (clientChecks on the deal's KYC
+// status: their own switch since 18 November 2026, not in-app AML's);
+// otherwise KYC4U does the checks.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Clock, Copy, Eye, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileText } from "lucide-react";

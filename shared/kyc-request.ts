@@ -493,6 +493,18 @@ export function kycFinishedEmail(ctx: {
 export const KYC_RED_FLAG_RULE = "The routine checks are done in the app. A red flag goes to KYC4U, BGP's MLRO service, for enhanced checks before the deal goes ahead.";
 export const KYC_RED_FLAG_STEP = "Open the deal's AML card and press Request KYC4U check on this party: the red flags are already in the request's note.";
 
+// The client checks run on their own switch (Woody, 18 November 2026,
+// choosing "client checks only"): on unless KYC_CLIENT_CHECKS is "off",
+// whether or not the old in-app AML (IN_APP_AML_ENABLED) is on. These are
+// the staff addresses the retired-AML switch lets through for them; the
+// client's own page (/api/kyc-upload/<token>) was never behind it.
+export const clientChecksSwitchOn = (value: string | null | undefined): boolean => String(value ?? "").trim().toLowerCase() !== "off";
+export const KYC_CLIENT_CHECK_ROUTES: readonly RegExp[] = [
+  /^\/api\/aml\/deal\/[^/]+\/client-checks$/,
+  /^\/api\/aml\/client-checks\/[^/]+(?:\/remind)?$/,
+  /^\/api\/aml\/poll-mailbox$/,
+];
+
 function redFlagBox(flags: KycRedFlag[]): string {
   const items = flags.map(f => `<li style="margin:0 0 6px">${escHtml(f.label)}${f.detail ? `: ${escHtml(f.detail)}` : ""} <span style="color:${MUTED}">(${escHtml(f.source)})</span></li>`).join("");
   return `<div style="margin:16px 0;padding:12px 16px;border-left:3px solid #b91c1c;background:#fef2f2;font-size:14px;color:${INK}"><strong>Red flag: raise with KYC4U.</strong><ul style="margin:8px 0 8px 18px;padding:0">${items}</ul>${escHtml(KYC_RED_FLAG_STEP)}</div>`;

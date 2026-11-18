@@ -61,5 +61,5 @@ test('the deal card shows each party its red flags beside Request KYC4U check; t
   assert.equal((card.match(/<DealRedFlags data=\{data\} \/>/g) || []).length, 2);
   assert.match(card, /Red flags could not be checked against/);
   assert.match(deals, /const flags = amlStepStatus\?\.redFlags\?\.parties\[p\.id\] \|\| \[\];/);
-  assert.match(deals, /\{amlInApp && !flags\.length\s*\? <SendClientChecksButton/);
+  assert.match(deals, /\{clientChecks && !flags\.length\s*\? <SendClientChecksButton/);
 });

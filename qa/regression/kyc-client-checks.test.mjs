@@ -101,7 +101,8 @@ test("replies are filed only from the address the request went to, with its refe
   assert.match(poll, /receivedDateTime ge \$\{since\} and hasAttachments eq true/, "Microsoft sorts only on a property the filter names first");
   assert.match(index, /pollKycMailbox\(\)/, "the reader runs on a timer");
   assert.match(index, /key: "kyc-client-reminders"/, "reminders run");
-  assert.match(portal, /if \(!inAppAmlOn\(\)\) return \{ sent: 0/, "reminders do nothing while in-app AML is off");
+  assert.match(portal, /if \(!clientChecksOn\(\)\) return \{ sent: 0/, "reminders do nothing while the client checks are switched off");
+  assert.match(index, /if \(!clientChecksSwitchOn\(process\.env\.KYC_CLIENT_CHECKS\)\) return;\s*import\("\.\/aml-portal"\)\.then\(m => m\.pollKycMailbox\(\)\)/, "the reply reader follows the client checks' own switch");
 });
 
 test("the orchestrator no longer starts an identity check for every contact on a company", () => {
@@ -155,4 +156,25 @@ test("a test page runs a real Veriff check when Veriff is set up, capped as a cl
   assert.match(route, /: "The identity check couldn't be started just now\. Please try again in a few minutes\." \}\);/);
   // The diagnostic asks Veriff for a real session: admins only.
   assert.match(veriff, /veriffRouter\.get\("\/api\/veriff\/diagnostic", requireAuth, requireAdmin,/);
+});
+
+test("the client checks run on their own switch, not the old in-app AML one (Woody, 18 November 2026: \"client checks only\")", () => {
+  const rules = readFileSync(new URL("../../shared/kyc-request.ts", import.meta.url), "utf8");
+  const compliance = readFileSync(new URL("../../server/aml-compliance.ts", import.meta.url), "utf8");
+  const card = readFileSync(new URL("../../client/src/components/deal-aml-status.tsx", import.meta.url), "utf8");
+  const deals = readFileSync(new URL("../../client/src/pages/deals.tsx", import.meta.url), "utf8");
+  assert.match(rules, /export const clientChecksSwitchOn = \(value: string \| null \| undefined\): boolean => String\(value \?\? ""\)\.trim\(\)\.toLowerCase\(\) !== "off";/);
+  assert.match(portal, /export const clientChecksOn = \(\) => clientChecksSwitchOn\(process\.env\.KYC_CLIENT_CHECKS\);/);
+  assert.doesNotMatch(portal, /inAppAmlOn|IN_APP_AML_ENABLED/, "nothing in the client checks waits on the old switch");
+  // Sending and reminding stop when the switch is off; reading what was sent does not.
+  for (const route of ['"/api/aml/deal/:id/client-checks", signedIn, async (req: Request, res: Response) => {\n  try {\n    const me', '"/api/aml/client-checks/:token/remind"']) {
+    const at = portal.indexOf(route);
+    assert.ok(at > 0, route);
+    assert.match(portal.slice(at, at + 400), /if \(!clientChecksOn\(\)\) return res\.status\(410\)/, route);
+  }
+  assert.match(compliance, /clientChecks: clientChecksSwitchOn\(process\.env\.KYC_CLIENT_CHECKS\),/);
+  assert.equal((card.match(/\{data\.clientChecks && \(/g) || []).length, 2, "both card layouts offer Send client checks on the client checks' switch");
+  assert.doesNotMatch(card, /data\.inAppAml/);
+  assert.match(deals, /const clientChecks = !!amlStepStatus\?\.clientChecks;/);
+  assert.doesNotMatch(deals, /amlInApp|inAppAml/);
 });

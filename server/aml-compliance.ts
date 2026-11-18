@@ -10,6 +10,7 @@ import { saveFile } from "./file-storage";
 import { recomputeDealKycApproved } from "./deal-gates";
 import { requireMlro } from "./aml-authority";
 import { CLOSED_STATUSES, TERMINAL_STATUSES, statusSpellingsFor } from "@shared/deal-status";
+import { clientChecksSwitchOn } from "@shared/kyc-request";
 
 const router = Router();
 
@@ -1468,9 +1469,12 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
       allApproved,
       canInvoice: allApproved,
       missing,
-      // Whether the deal's screens offer the in-app client checks, or only
-      // KYC4U (IN_APP_AML_ENABLED, the one switch).
+      // Whether the old in-app AML is on (IN_APP_AML_ENABLED), and whether
+      // the deal's screens offer the client checks, which follow their own
+      // switch since 18 November 2026 (KYC_CLIENT_CHECKS; Woody: "client
+      // checks only").
       inAppAml: !!process.env.IN_APP_AML_ENABLED,
+      clientChecks: clientChecksSwitchOn(process.env.KYC_CLIENT_CHECKS),
       redFlags,
       prechecks,
     });

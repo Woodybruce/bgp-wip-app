@@ -4172,6 +4172,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
 void schemaStartup.catch(() => finishCrmEngagementSchema(false));
 import { routedApiPath } from "@shared/landsec";
+import { KYC_CLIENT_CHECK_ROUTES, clientChecksSwitchOn } from "@shared/kyc-request";
 import { setupMicrosoftRoutes } from "./microsoft";
 import { setupWhatsAppRoutes } from "./whatsapp";
 import { setupChatBGPRoutes } from "./chatbgp";
@@ -5061,7 +5062,10 @@ app.use("/api/branding/assets", express.static(
   // signature) and the admin-only diagnostic that reads Veriff's answer.
   // And BGP's checks before asking (server/kyc-prechecks.ts), which run with
   // the switch off: the card's Run again (/api/kyc/deal/:id/prechecks)
-  // answered 410 until 18 November 2026.
+  // answered 410 until 18 November 2026. And the client checks' staff
+  // addresses (KYC_CLIENT_CHECK_ROUTES), which follow their own switch
+  // since 18 November 2026 (Woody: "client checks only"; KYC_CLIENT_CHECKS
+  // =off stops them): the rest of /api/aml/ stays retired.
   const RETIRED_AML = [
     /^\/api\/(aml|kyc-clouseau|sanctions|comply-advantage)(\/|$)/,
     /^\/api\/veriff(?!\/(webhook|diagnostic)$)(\/|$)/,
@@ -5077,6 +5081,7 @@ app.use("/api/branding/assets", express.static(
     // slashes closed up: this is a list of what to refuse, so it reads
     // every spelling of a retired address as that address.
     const path = routedApiPath(req).toLowerCase().replace(/\/{2,}/g, "/");
+    if (clientChecksSwitchOn(process.env.KYC_CLIENT_CHECKS) && KYC_CLIENT_CHECK_ROUTES.some(r => r.test(path))) return next();
     if (RETIRED_AML.some(r => r.test(path))) {
       return res.status(410).json({ message: "AML/KYC is handled by KYC4U, BGP's MLRO. Raise or check a request from the deal's AML panel (Request KYC4U check)." });
     }
@@ -6735,9 +6740,10 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
           );
         }, 4 * 60 * 1000);
         // Client checks: replies with documents to the KYC mailbox, read
-        // every 15 minutes while in-app AML is on (server/aml-portal.ts).
+        // every 15 minutes while the client checks are on (their own
+        // switch since 18 November 2026; server/aml-portal.ts).
         setInterval(() => {
-          if (!process.env.IN_APP_AML_ENABLED) return;
+          if (!clientChecksSwitchOn(process.env.KYC_CLIENT_CHECKS)) return;
           import("./aml-portal").then(m => m.pollKycMailbox()).then(r => {
             if (r.filed || r.unmatched || r.warnings.length) console.log(`[kyc-mailbox] ${r.filed} filed, ${r.unmatched} left for a person${r.warnings.length ? `: ${r.warnings.slice(0, 3).join(" | ")}` : ""}`);
           }).catch(err => console.error("[kyc-mailbox] read failed:", err?.message));

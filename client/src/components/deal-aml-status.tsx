@@ -37,6 +37,7 @@ export interface DealAmlStatus {
   missing: string[];
   // In-app AML is on: the deal offers client checks as well as KYC4U.
   inAppAml?: boolean;
+  clientChecks?: boolean;
   // What sends a party to KYC4U (BGP staff only; null for anyone else).
   redFlags?: { parties: Record<string, KycRedFlag[]>; deal: KycRedFlag[]; unchecked: string[] } | null;
   // BGP's checks before asking, per party (BGP staff only).
@@ -211,7 +212,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
           <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-md text-sm" data-testid="deal-aml-status-incomplete">
             <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
             <span>
-              {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — set the parties on the deal record, then {data.inAppAml ? "send each one the client checks" : "raise each with KYC4U"}.
+              {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — set the parties on the deal record, then {data.clientChecks ? "send each one the client checks" : "raise each with KYC4U"}.
             </span>
           </div>
           <DealRedFlags data={data} />
@@ -219,7 +220,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
             <div key={cp.id} className="space-y-2">
               <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
               <PartyRedFlags data={data} companyId={cp.id} />
-              {data.inAppAml && (
+              {data.clientChecks && (
                 <>
                   <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={cp.name} />
                   <ClientChecksForParty dealId={dealId} companyId={cp.id} />
@@ -293,7 +294,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                 <div className="mt-2 space-y-2">
                   <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
                   <PartyRedFlags data={data} companyId={cp.id} />
-                  {data.inAppAml && (
+                  {data.clientChecks && (
                     <>
                       <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={cp.name} className="w-full justify-center" />
                       <ClientChecksForParty dealId={dealId} companyId={cp.id} />
@@ -313,9 +314,9 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
           <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-md text-sm" data-testid="deal-aml-blocker">
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <span className="font-medium">{dealStatus && ["INV", "COM"].includes(legacyToCode(dealStatus) || "") ? "AML sign-off still outstanding" : "AML approval needed"}</span> for {data.missing.join(", ")}.
-              {data.inAppAml
-                ? <>Send each party's contact the client checks above, and raise a difficult one with KYC4U. The MLRO's sign-off clears it here.</>
+              <span className="font-medium">{dealStatus && ["INV", "COM"].includes(legacyToCode(dealStatus) || "") ? "AML sign-off still outstanding" : "AML approval needed"}</span> for {data.missing.join(", ")}.{" "}
+              {data.clientChecks
+                ? <>Send each party's contact the client checks above; a party with a red flag goes to KYC4U. A party clears here when KYC4U, BGP's MLRO, signs it off (after the next sync).</>
                 : <>KYC4U are BGP's MLRO — raise each party with Request KYC4U check above; their approval clears it here after the next sync.</>}
             </div>
           </div>

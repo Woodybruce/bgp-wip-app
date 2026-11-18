@@ -28,7 +28,7 @@ import { pool } from "./db";
 import { graphRequest, sendFromFirstMailbox, senderOrder, type EmailAttachment } from "./shared-mailbox";
 import {
   KYC_DOCS, KYC_LOGO_CID, KYC_MAX_FILE_MB, KYC_MAX_FILES_PER_REQUEST, KYC_REF_ALPHABET,
-  KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, defaultKycDocs, isKycDocKey, isKycOwnersAnswer, isKycPepAnswer, kycDocDetail, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycOwnersWords, kycPepWords,
+  KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, clientChecksSwitchOn, defaultKycDocs, isKycDocKey, isKycOwnersAnswer, isKycPepAnswer, kycDocDetail, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycOwnersWords, kycPepWords,
   kycRedFlagEmail, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycUploadAllowed, kycWhatsAppHref, kycWhatsAppText,
   type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycOwnersReply, type KycPartyKind, type KycPortalView, type KycProgress,
 } from "@shared/kyc-request";
@@ -45,7 +45,11 @@ const REMINDER_DAYS = [3, 7];
 const MAX_ID_SESSIONS = 3;
 const FILED = "BGP-KYC-Filed", UNMATCHED = "BGP-KYC-Unmatched", OLD_FILED = "BGP-AML-Processed";
 
-export const inAppAmlOn = () => !!process.env.IN_APP_AML_ENABLED;
+// The client checks follow their own switch, not the old in-app AML one
+// (Woody, 18 November 2026: "client checks only"): KYC_CLIENT_CHECKS=off
+// stops sending, reminders and the reply reader.
+export const clientChecksOn = () => clientChecksSwitchOn(process.env.KYC_CLIENT_CHECKS);
+const CHECKS_OFF = "The client checks are switched off (KYC_CLIENT_CHECKS on Railway).";
 export const kycLinkFor = (token: string) => `${LINK_BASE}/kyc-upload/${token}`;
 const dealLinkFor = (dealId: string) => `${LINK_BASE}/deals/${encodeURIComponent(dealId)}`;
 
@@ -525,7 +529,7 @@ export function reminderDue(row: Pick<TokenRow, "revoked_at" | "completed_at" | 
 }
 
 export async function sendKycReminders(now = new Date()): Promise<{ sent: number; failed: number; skipped: number }> {
-  if (!inAppAmlOn()) return { sent: 0, failed: 0, skipped: 0 };
+  if (!clientChecksOn()) return { sent: 0, failed: 0, skipped: 0 };
   const rows = (await pool.query(
     `SELECT * FROM kyc_upload_tokens
       WHERE request IS NOT NULL AND is_test IS NOT TRUE AND revoked_at IS NULL AND completed_at IS NULL
@@ -768,6 +772,7 @@ kycRequestRouter.post("/api/aml/deal/:id/client-checks", signedIn, async (req: R
   try {
     const me = await staffMe(req);
     if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    if (!clientChecksOn()) return res.status(410).json({ message: CHECKS_OFF });
     const parsed = clientCheckBody.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message || "Check the form and try again" });
     const result = await createClientCheck(String(req.params.id), parsed.data, me);
@@ -780,6 +785,7 @@ kycRequestRouter.post("/api/aml/deal/:id/client-checks", signedIn, async (req: R
 kycRequestRouter.post("/api/aml/client-checks/:token/remind", signedIn, async (req: Request, res: Response) => {
   try {
     if (!(await staffMe(req))) return res.status(403).json({ message: STAFF_ONLY });
+    if (!clientChecksOn()) return res.status(410).json({ message: CHECKS_OFF });
     const row = await tokenRow(String(req.params.token));
     if (!row || !row.request || row.is_test) return res.status(404).json({ message: "Request not found" });
     if (closedReason(row) || row.completed_at) return res.status(409).json({ message: "That request is finished, cancelled or has run out. Send a new one." });
@@ -1000,7 +1006,7 @@ kycRequestRouter.get("/api/admin/kyc-emails", adminOnly, async (req: Request, re
       mailbox: KYC_MAILBOX,
       // The addresses after the KYC mailbox, in the order they are tried.
       fallback: senderOrder([KYC_MAILBOX], Number.POSITIVE_INFINITY).slice(1).join(", then "),
-      inAppAml: inAppAmlOn(),
+      clientChecks: clientChecksOn(),
       veriff: veriffConfigured(),
       previews: kycPreviews(agent).map(p => ({ ...p, html: withLogo(p.html) })),
     });

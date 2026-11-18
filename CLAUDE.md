@@ -2553,9 +2553,11 @@ same day, never live). Do not re-litigate. Tests:
   deal with no party closes as before. It cannot send the request by itself
   until KYC4U agrees to take requests some other way, or the in-app checks
   (`IN_APP_AML_ENABLED`, ComplyAdvantage and Veriff) are switched back on.
-  While in-app AML is on, each button is **Send client checks** instead
-  (`amlInApp`, read from `inAppAml` on `GET /api/kyc/deal/:id/status`); see
-  "Client checks" below.
+  While the client checks are on (their own switch since 18 November 2026,
+  on unless `KYC_CLIENT_CHECKS=off`), each button is **Send client checks**
+  instead (`clientChecks`, read from `clientChecks` on
+  `GET /api/kyc/deal/:id/status`), and a party with a red flag keeps the
+  KYC4U request; see "Client checks" below.
 - **Create billing entity** (`server/billing-entity.ts`,
   `POST /api/billing-entities { brandId, companyNumber }`, `brandId` the
   landlord or brand, BGP staff signed in as themselves;
@@ -2794,9 +2796,23 @@ it was built ages ago and wasnt working properly"; "not that clear or user
 friendly"; then "check this all against HMRC guidance" and "FCA and bank of
 England Guidance". The in-app request an agent sends a party's contact, the
 client's own page, reminders, replies by email, and the admin's test send.
-It is part of in-app AML, so the agent's side shows only while
-`IN_APP_AML_ENABLED` is on; the client's page and the admin's test work
-either way. Server `server/aml-portal.ts`; every email's words and the
+**It runs on its own switch** (Woody, 18 November 2026, shown that the
+deal card offered only KYC4U on live, chose "client checks only"): on
+unless `KYC_CLIENT_CHECKS=off`, whether or not the old in-app AML
+(`IN_APP_AML_ENABLED`) is on. One rule, `clientChecksSwitchOn` in
+`shared/kyc-request.ts` (`clientChecksOn` in `server/aml-portal.ts`): the
+retired-AML switch lets the staff addresses in `KYC_CLIENT_CHECK_ROUTES`
+through (the deal's client checks, remind, cancel, the admin's mailbox read;
+the rest of `/api/aml/` stays retired), sending and reminding answer 410
+while it is off, the reminders and the KYC mailbox reader follow it, and the
+deal card, Kick off AML and the admin card read `clientChecks`. The old
+in-app AML stays off on live: no screening of every party when a deal is
+made or moves to HOTs or Solicitors, no re-screens, no old checklist
+screens. A party still clears the card's "AML approval needed" only when
+its `kyc_status` reads approved, which with in-app AML off only KYC4U's
+sync writes. Until 18 November the agent's side showed only while in-app
+AML was on, which it is not on live. The client's page and the admin's test
+work either way. Server `server/aml-portal.ts`; every email's words and the
 page's rules `shared/kyc-request.ts`; client page
 `client/src/pages/kyc-upload.tsx` (public, `/kyc-upload/:token`); agent
 dialog and request rows `client/src/components/kyc-client-checks.tsx` (on
@@ -2814,7 +2830,7 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   on the party, with the checklist items it evidences ticked for the MLRO to
   confirm, the KYC pack's rule); the reminder and the reply reader never ran
   (reminders daily 10:00, `kyc-client-reminders`; the KYC mailbox read every
-  15 minutes; both only while in-app AML is on); the agents were never
+  15 minutes; both only while the client checks are on); the agents were never
   copied (the deal's agents, `internal_agent_ids` / names and the fee split,
   never BGP House, BGP addresses only, plus the sender); the links pointed at
   app.brucegillinghampollard.com (now `PUBLIC_APP_URL`, default chatbgp.app);
@@ -2946,9 +2962,10 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   an MLRO rejection blocks. Do not add a hold at exchange or completion.
 - **The gates**: `/api/kyc-upload/*` is no longer on the retired-AML list and
   passes the client gateway (the token is the only key, and no live token
-  exists while in-app AML is off except an admin's test). Every other client
-  checks route is under `/api/aml/` (retired while off) and is BGP staff
-  only (`contactViewer`).
+  exists while the client checks are off except an admin's test). Every
+  other client checks route is under `/api/aml/`, let through the retired
+  switch by `KYC_CLIENT_CHECK_ROUTES` while the client checks are on, and is
+  BGP staff only (`contactViewer`).
 - **How BGP runs AML** (Woody, 2026-11-17: "basically we do the normal
   checks expected and if there is a red flag then we get KYC4U"): the
   client checks and screening in the app for the routine checks; a red flag

@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
 interface Preview { kind: string; title: string; to: string; subject: string; html: string }
-interface KycEmails { mailbox: string; fallback: string; inAppAml: boolean; veriff: boolean; previews: Preview[] }
+interface KycEmails { mailbox: string; fallback: string; clientChecks: boolean; veriff: boolean; previews: Preview[] }
 
 // The preview each test sends (the individual request is seen, not sent:
 // the company one tests the same page).
@@ -72,7 +72,7 @@ export function KycEmailsAdmin() {
         <>
           <dl className="grid sm:grid-cols-3 gap-2 text-xs">
             <div className="rounded-md bg-muted/60 p-2"><dt className="text-muted-foreground">Sent from</dt><dd className="font-medium break-all">{data.mailbox}</dd><dd className="text-muted-foreground">or {data.fallback} if Microsoft won't send as it</dd></div>
-            <div className="rounded-md bg-muted/60 p-2"><dt className="text-muted-foreground">In-app checks</dt><dd className="font-medium">{data.inAppAml ? "On" : "Off: deals use KYC4U"}</dd><dd className="text-muted-foreground">Tests work either way</dd></div>
+            <div className="rounded-md bg-muted/60 p-2"><dt className="text-muted-foreground">Client checks</dt><dd className="font-medium">{data.clientChecks ? "On" : "Off: deals use KYC4U"}</dd><dd className="text-muted-foreground">Tests work either way</dd></div>
             <div className="rounded-md bg-muted/60 p-2"><dt className="text-muted-foreground">Online ID check (Veriff)</dt><dd className="font-medium">{data.veriff ? "Set up" : "Not set up"}</dd><dd className="text-muted-foreground">{data.veriff ? "Clients verify on their phone. A test page runs a real check too, charged as usual." : "Photo ID is asked for as a document"}</dd></div>
           </dl>
           <ul className="divide-y rounded-md border">
