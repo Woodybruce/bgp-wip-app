@@ -49,6 +49,149 @@ decided that day:
   long ChatBGP text slide. The deck names the platform ChatBGP, so the film
   does too. About 2 minutes 45.
 
+## The film is about the upgrade (Woody, 16 November 2026)
+
+Woody, on the first cut to his voice: "they already have access to the app
+and we've upgraded it". Landsec use the app today, so the film does not
+introduce something new: it shows the upgraded version, with its Landsec
+lean. His recorded intro says so in his own words ("we've upgraded and built
+for you our app, which we use internally, and given it a Landsec lean ...
+for them to see the upgrades that we've made"), and it replaces the scripted
+opening below. Keep "we've upgraded" in any cut, and do not word a caption
+or a card as if Landsec were seeing the app for the first time.
+
+The cut to his voice is made by `script/pitch-video/voice-cut.cjs` from his
+recording and a cut list (which stretches of the recording belong to each
+scene, false starts and long pauses left out). His words are the script now;
+the table below is the earlier written version. He also rewrote the close:
+"We'd love to run it with you" was "too cheesy", and his close ends on
+joining up the deal process so everyone can follow and comment.
+
+## Presenters and the ending (Woody, 16 November 2026)
+
+Woody, on the first voice cut: the placeholder character was "way too
+basic"; he wants his avatar "more engaged and active on the screens", an
+avatar of Charlotte Roberts "as BGP leasing lead" and one of Mark Warne "as
+leasing lead for Landsec on Bluewater", and an ending where he flies off as a
+superhero past a bat-signal-style light carrying the BGP logo, with a deeper
+voice saying "Welcome to ChatBGP, your superhero app".
+
+- **The look** (Woody, 16 November, on the first hand-drawn set: "these
+  avatars are shit ... look like South Park and unflattering. I should be
+  very handsome and Charlotte too"; "remove my glasses"; and, shown a flat
+  comic-style drawing against a film-style render, "this is better I
+  think"). The cast are clean comic illustrations made with the Gamma image
+  generator from a description of each person's appearance only: no names
+  and no photographs were sent to it. Charlotte is drawn polished and
+  glamorous; she is not drawn "sexy" (a real colleague in a client film:
+  her look is hers to choose).
+- **The rig**: `script/pitch-video/avatars.html` lays a small rig over each
+  drawing and `avatar-render.cjs` photographs it frame by frame. Woody's
+  mouth follows the loudness of his voice, eyes blink, bodies sway; he has
+  three forearms cut from his pose drawings (pointing, thumbs up, waving)
+  that swing from the elbow, so his face never changes between gestures. The
+  cut list says when each gesture happens, timed to his words. Charlotte and
+  Mark do not speak; they appear with a name tag where the film is about
+  them, and **dance when the Heads of Terms are signed** (Woody: "charlotte
+  and mark should do some dancing when the HOTs are agreed").
+- The drawings and their `rig.json` are kept outside the repo and passed as
+  `AVATAR_ART`. `avatar-key.py` takes a drawing off its white background and
+  `avatar-rig.py <folder>` builds the rig (the forearms, and where each
+  mouth and eye is, read off the drawings by hand: a new drawing needs its
+  figures put in that file).
+- **Charlotte, Mark and David should each see the film before it goes to
+  Landsec**: it is their likeness, and Mark is the client.
+- Woody turns into his avatar at the end of the intro (his last picture
+  shrinks into the corner as the drawing pops up). David Bell's arrival is a
+  drawn scene: he flies in on wings and they hug.
+- The ending is an original caped hero flying up through a searchlight that
+  carries the BGP wordmark. It is deliberately not the Batman
+  costume or emblem (another company's character, in a commercial pitch).
+- The ending's line is a stock voice pitched down, because Woody has not
+  recorded it. When he does, pass his take as `HERO_VOICE` and it is used in
+  its place.
+- Eye contact at the start: the opening fades up over the glance down. The
+  recording is read from the screen throughout, which a cut cannot change.
+
+### The opening and the sound (Woody, 16 November 2026)
+
+Woody: "its probably easier if I quickly transform into the avatar ...
+introducing Charlotte and Mark as examples but fixing the voice over. I could
+just do the initial intro ... I'm on a viewing at Nova Victoria so perhaps we
+should ask my better more efficient self to do it." So the film opens on his
+own phone clip (`INTRO=<clip>` to `voice-cut.cjs`, cut to where he speaks,
+his voice cleaned as the rest is; `INTRO_TEXT` is its caption), his last
+picture folds up into the drawn Woody (`photo` on a drawn scene), and the
+drawn Woody says the rest of the opening: the things he lists pop up as
+labels (`cards`) and tick when he reaches AI, Charlotte arrives as the agent
+and Mark as the client. Until the clip is in, "Hi, guys" from the Teams
+recording stands in.
+
+The sound, the same day ("consider the sound ... clean up some of the
+fails"): the hesitations in the opening are cut out of the voice (found by
+transcribing with the fillers kept, then placed against the loudness of the
+recording; the cut list holds the times); each sentence of a line is placed
+in its scene (`starts`), so a scene that outlasts its line has its quiet
+between sentences and not all at the end; captions follow the sentence being
+spoken (`caps`); and quiet made sounds (`sfx`: pop, chime, rush of air) mark
+the turn into the drawing, an arrival and the dance. Nobody has listened to
+the result on a build machine: each cut is checked by transcribing it again,
+which finds a clipped or stray word but not a rough join.
+
+The close is drawn too (Woody, the same day: "can you do the end too so it's
+not me on camera?"): the drawn Woody says his close over labels (14 schemes,
+Brands, Deals, one joined-up deal process), Charlotte, Mark and David join him
+on "everyone", and the hero ending follows. Its hesitations are cut the same
+way. Two of the first cuts there took a real word ("schemes", "help") in
+place of the "er" beside it, and the transcript check caught both: always
+transcribe a scene again after changing its cuts.
+
+Woody's phone clip from Nova arrived the same evening (480 by 360, a
+messaging copy: ask for the original file). His words: "Hi guys. I'm here to
+tell you about ChatBGP, but unfortunately I'm in Nova, doing one of Victoria's
+viewings for her. So maybe we allow my better, more prepared and aware self to
+do it for me instead." He said the app's name wrongly in it ("it should say
+chat BGP"), so one cut has the word replaced with his own "ChatBGP" from the
+Teams recording, over a little of the clip's own street noise, and one keeps
+the clip as he said it. Speech-to-text cannot tell the two words apart, so
+which to use is his ear's call; a retake is the clean fix. The avatar's
+opening is his short version (about 24 seconds), cut from the same recording.
+
+Later the same evening he sent a second clip with the name said correctly,
+which replaced the first (no patched word): "... Victoria has made me do one
+of her viewings down in Nova, I'm afraid. So perhaps I'll hand this over to my
+more able and capable self. Big Wood." The drawn presenter is called **Big
+Wood** (his name tag in the opening and the close). Woody also asked for: the
+drawn Woody's hair "a bit blonder" (the drawings are recoloured outside the
+repo: hair found by flood fill, the flying hero's too); a phone in his hand
+for "it all goes with you" (a `phone` forearm, the open hand with a phone
+drawn over it, held up through the phone scenes); and two lines out of the
+voice, "So, we've upgraded a little" ("its covered with the next bit") and
+"Anyway, Mark," so the first app scene opens on "This is ChatBGP".
+
+"This is ChatBGP" at the head of the first app scene is a re-take (Woody
+said the wrong name on the Teams call and sent a four-second phone clip of
+the line): its sound is laid into a copy of the recording's audio at the same
+place, band-limited and levelled to sit with the call audio, with the length
+of the recording kept exactly so every later time in the cut list still
+holds. `REC` may be that audio file; only a camera scene needs the picture.
+
+### The re-cut (18 November 2026)
+
+Landsec's feedback changed the cast (the recording sheet has it) and Woody
+recorded the whole voice again on his phone, with additions of his own. The
+demo copy was recast and every app scene filmed again (plus `informed` and
+`brands`), Bluewater in the copy was brought level with live and given the
+BGP take Woody refreshed on live that day, and the cut list is now built by
+FINDING his words in the transcript (a forward-only search, so a retake is
+taken by skipping his "I'll say that again"), not from hand-counted word
+positions. Check each scene by transcribing the finished cut: the transcript
+missed one "I'll say that again", which got into the first render. `VOICE=plain`
+to `voice-cut.cjs` is for a clean phone recording (no lift, only evening
+out). People with no drawing are an initials roundel: no face is invented
+for a real person. The joint agent keeps his own place near the end on his
+own schemes and is not on the Bluewater letting.
+
 ## Two versions
 
 - **Room cut**, about 2 minutes 45. Woody can pause it and talk.
@@ -73,7 +216,7 @@ Voice lines are what Woody reads. About 420 words, roughly 3 minutes 20.
 | 9b | The deal checklist with a name against each step, then Deals showing "waiting on". | "From Heads of Terms the asset team takes over, with a name against every step. At any moment you can see what the deal is waiting on, and who." |
 | 10a | The transaction recommendation in Landsec's template. Mark approves. | "The recommendation arrives in your own template, with Net Effective Rent worked out against ERV and the brief." |
 | 10b | The calendar; the property conversation; a phone shot. | "Viewings, meetings and tasks sit in one place. So does the conversation on each property, for you and for every agent on the instruction." |
-| 12a | David Bell flies in on fairy wings to meet the character. They hug. | "You also asked how we work with the other agents on the panel. Here comes one now. This is David Bell. We call him Tinker Bell. And yes, we do like him." |
+| 12a | David Bell flies in on fairy wings to meet the character. They hug. | "You also asked how we work with the other agents on the panel. Here comes one now. This is David Bell. And yes, we do like him." |
 | 12b | David Bell's own login: one scheme (Liverpool ONE), its property page, a message in the conversation, his tracker. | "David gets his own login, with his schemes and nothing else. The same tracker, the same checklist, the same conversation. So you see one version of every deal, whoever did the work." |
 | 13 | Woody walking, phone in hand. His iPhone screen: the app opens on ChatBGP ("Good evening, Mark") and he asks it a question. Then quick cuts: calling Jersey Mike's agent (Richard Wilcox, Etch) from his page; a comment on the Burger King unit after the viewing; the Argyll Street opening photos added to Jersey Mike's; a Liverpool ONE unit sent to Richard. | "And it all goes with you. Open it, and ask it a question. Call the brand's agent from his page. Log the viewing before you're back at your desk. Add the photos from the opening. And send him a unit on another scheme, there and then." |
 | 14 | Woody, still walking, looks up from the phone. End card. | "That is one unit at one scheme. It runs the same way across all fourteen, so our time goes on brands and deals, not on chasing updates. We'd love to run it with you." |
@@ -82,8 +225,10 @@ The order (Woody, 15 November): start at the desk, and finish on Woody walking
 with the phone, with the phone screens cut quickly because by then the viewer
 knows the app.
 
-Woody asked for the phone screens, the joint agent, David Bell as "Tinker
-Bell" and the hug on 15 November. In the rough cut scene 12a is a plain
+Woody asked for the phone screens, the joint agent, David Bell flying in on
+fairy wings and the hug on 15 November. On 16 November he took the "Tinker
+Bell" name out of the voice: the wings are enough, and nothing on screen
+says it. In the rough cut scene 12a is a plain
 placeholder animation (two simple figures, not likenesses); the real
 character art comes from the avatar service or an illustrator. David Bell is
 the joint agent at Liverpool ONE, at Starka (Woody, 15 November, who also

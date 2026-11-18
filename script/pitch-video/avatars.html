@@ -1,0 +1,216 @@
+<!doctype html>
+<!-- The presenters for the Landsec pitch film. Each is a drawing (made outside
+     the repo, see the film notes) with a small rig on top: the speaker's mouth
+     opens with the voice, eyes blink, the body sways, and the presenter has
+     three forearms cut from his pose drawings (pointing, thumbs up, waving)
+     that swing from the elbow. One page draws one frame at a time on a clear
+     background for avatar-render.cjs to photograph. Nothing moves by itself:
+     every frame is worked out from its time, so a render is the same each run.
+     The scene file carries `rig` (rig.json) and `art` (the folder of drawings).
+     A drawn scene can also carry `cards` (labels that pop up as he names
+     things) and `photo` (the last picture of the real Woody, which folds up
+     into the drawn one). -->
+<html><head><meta charset="utf-8"><style>
+html,body{margin:0;background:transparent;overflow:hidden}
+#stage{position:relative;width:1920px;height:1080px;overflow:hidden;font-family:"DejaVu Sans",Arial,sans-serif}
+.actor{position:absolute;bottom:0;filter:drop-shadow(0 8px 14px rgba(0,0,0,.35))}
+.actor img,.actor svg{position:absolute;left:0;top:0;display:block}
+.flip{position:absolute;inset:0}
+.tag{position:absolute;bottom:14px;transform:translateX(-50%);white-space:nowrap;background:#6E0C25;color:#fff;border-radius:999px;padding:7px 18px 8px;font-size:21px;font-weight:700;box-shadow:0 3px 10px rgba(0,0,0,.35);z-index:5}
+.tag small{display:block;font-weight:400;font-size:.72em;opacity:.92;text-align:center;margin-top:1px}
+.tag.landsec{background:#1f3a5f}
+.tag.other{background:#46464c}
+.card{position:absolute;white-space:nowrap;background:#fff;color:#6E0C25;border:2px solid #eadfce;border-radius:18px;padding:16px 30px 18px;font-size:38px;font-weight:700;box-shadow:0 10px 24px rgba(60,30,20,.22)}
+.card.done{background:#6E0C25;color:#fff;border-color:#6E0C25}
+.card.done::before{content:"✓  ";color:#FC9F8D}
+.card.big{background:#6E0C25;color:#fff;border:none;font-size:92px;padding:22px 56px 28px;border-radius:26px}
+.card.navy{background:#1f3a5f;color:#fff;border:none}
+#photo{position:absolute;left:0;top:0;width:1920px;height:1080px;object-fit:cover;z-index:20}
+#flash{position:absolute;inset:0;background:#fff;z-index:21;opacity:0}
+</style></head><body><div id="stage"></div><script>
+const NS = "http://www.w3.org/2000/svg";
+const lerp = (a, b, k) => a + (b - a) * k;
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const ease = k => { k = clamp(k); return k * k * (3 - 2 * k); };
+const back = k => { k = clamp(k); const c = 1.7; return 1 + (c + 1) * Math.pow(k - 1, 3) + c * Math.pow(k - 1, 2); };
+const HEAD = 205;   // every head is drawn this tall at scale 1, so the cast match
+let SCENE = null, RIG = null, ART = "", FX = null; const ELS = [], CARDS = [];
+
+// Which forearm a pose uses, and how far it is turned (degrees; 0 is as drawn).
+const ARM = { point: ["point", 0], present: ["point", 24], thumb: ["thumb", 0], wave: ["wave", 0], phone: ["phone", 6] };   // phone: the open hand with a phone in it, held up
+
+function build(a) {
+  const r = RIG[a.char], k = HEAD / (r.head.chin - r.head.top), pad = r.arms ? 560 : 0;   // room at the side for a raised arm
+  const el = document.createElement("div"); el.className = "actor";
+  el.style.width = `${(r.w + pad) * k}px`; el.style.height = `${r.h * k}px`;
+  const inner = document.createElement("div"); inner.className = "flip"; el.appendChild(inner);
+  const img = (src, cls) => { const i = document.createElement("img"); i.src = ART + src; i.className = cls; i.style.left = `${pad * k}px`; i.style.width = `${r.w * k}px`; inner.appendChild(i); return i; };
+  img(r.body, "body");
+  if (r.bodyNoArm) img(r.bodyNoArm, "noarm").style.opacity = 0;
+  if (r.arms) for (const [name, s] of Object.entries(r.arms)) {
+    const i = document.createElement("img"); i.src = ART + s.src; i.className = `arm arm-${name}`;
+    i.style.width = `${s.w * k}px`; i.style.left = `${(pad + r.elbow[0] - s.pivot[0]) * k}px`; i.style.top = `${(r.elbow[1] - s.pivot[1]) * k}px`;
+    i.style.transformOrigin = `${s.pivot[0] * k}px ${s.pivot[1] * k}px`; i.style.opacity = 0; inner.appendChild(i);
+  }
+  if (r.mouth) {
+    const svg = document.createElementNS(NS, "svg"); svg.setAttribute("viewBox", `0 0 ${r.w} ${r.h}`); svg.style.left = `${pad * k}px`; svg.style.width = `${r.w * k}px`; svg.style.height = `${r.h * k}px`;
+    svg.innerHTML = `<g class="mouth"></g><g class="lids"></g>`; inner.appendChild(svg);
+  }
+  if (a.tag) { const tag = document.createElement("div"); tag.className = `tag${a.char === "mark" || a.org === "landsec" ? " landsec" : a.org === "other" ? " other" : ""}`; tag.innerHTML = `${a.tag}${a.role ? `<small>${a.role}</small>` : ""}`; tag.style.fontSize = `${(a.tagSize || 21) / a.scale}px`; el.appendChild(tag); }
+  el._k = k; el._pad = pad; el._r = r;
+  return el;
+}
+
+function face(el, a, t, m) {
+  const r = el._r; if (!r.mouth) return;
+  const g = el.querySelector(".mouth"), { x, y, w } = r.mouth;
+  if (!a.speak || m < 0.07) g.innerHTML = "";   // at rest the drawing's own smile shows
+  else {
+    // An open smile: a dark mouth with a row of top teeth, and bottom teeth showing as it opens wide. No tongue.
+    const h = w * (0.14 + 0.36 * m), top = y - w * 0.07, th = Math.min(h * 0.62, w * 0.17);
+    g.innerHTML = `<ellipse cx="${x}" cy="${y + w * 0.06}" rx="${w * 0.66}" ry="${w * 0.36}" fill="${r.skin}"/>
+      <path d="M${x - w * 0.46} ${top} Q${x} ${top + w * 0.1} ${x + w * 0.46} ${top} Q${x + w * 0.3} ${top + h * 1.5} ${x} ${top + h * 1.55} Q${x - w * 0.3} ${top + h * 1.5} ${x - w * 0.46} ${top}Z" fill="#3d1513" stroke="#2a0f0c" stroke-width="${w * 0.03}" stroke-linejoin="round"/>
+      <path d="M${x - w * 0.39} ${top + w * 0.03} Q${x} ${top + w * 0.115} ${x + w * 0.39} ${top + w * 0.03} L${x + w * 0.34} ${top + w * 0.03 + th} Q${x} ${top + w * 0.105 + th} ${x - w * 0.34} ${top + w * 0.03 + th}Z" fill="#fff"/>
+      ${m > 0.55 ? `<path d="M${x - w * 0.2} ${top + h * 1.34} Q${x} ${top + h * 1.2} ${x + w * 0.2} ${top + h * 1.34} Q${x} ${top + h * 1.5} ${x - w * 0.2} ${top + h * 1.34}Z" fill="#f4f1ec"/>` : ""}`;
+  }
+  // Blink about every four seconds, at a different moment for each character.
+  const bt = (t + (a.x % 7) * 0.61) % 4.3, blink = bt < 0.16 ? 1 - Math.abs(bt - 0.08) / 0.08 : 0;
+  el.querySelector(".lids").innerHTML = blink > 0.25 ? r.eyes.map(([ex, ey]) => `<ellipse cx="${ex}" cy="${ey - r.eyeW * 0.04}" rx="${r.eyeW * 0.64}" ry="${r.eyeW * 0.36}" fill="${r.lid}"/><path d="M${ex - r.eyeW * 0.5} ${ey + r.eyeW * 0.06} Q${ex} ${ey + r.eyeW * 0.22} ${ex + r.eyeW * 0.5} ${ey + r.eyeW * 0.06}" stroke="#2a1a14" stroke-width="${r.eyeW * 0.08}" fill="none" stroke-linecap="round"/>`).join("") : "";
+}
+
+// One actor at one moment. `a` is the actor from the scene file, `t` the time in seconds.
+function pose(el, a, t) {
+  const r = el._r, cues = a.cues || [];
+  let cur = { t: -9, pose: "rest" }, prev = { t: -19, pose: "rest" };
+  for (const q of cues) if (q.t <= t) { prev = cur; cur = q; }
+  const k = ease((t - cur.t) / 0.32), m = a.speak && SCENE.mouth ? (SCENE.mouth[Math.min(SCENE.mouth.length - 1, Math.round(t * SCENE.fps))] || 0) : 0;
+  face(el, a, t, m);
+  if (r.arms) {
+    // The gesture forearm swings up from the elbow; the one it replaces drops away.
+    const now = ARM[cur.pose], was = ARM[prev.pose], flip = a.flip ? -1 : 1;
+    let aimed = 0;
+    if (now && cur.target) {     // turn a pointing arm a little toward the place on screen
+      // As drawn the arm points up and about 25 degrees out to the side; turn it the rest of the way.
+      const out = Math.atan2((a.x - cur.target[0]) * flip, 760 - cur.target[1]) * 180 / Math.PI;
+      aimed = clamp(-(out - 25), -42, 28);
+    }
+    for (const name of Object.keys(r.arms)) {
+      const img = el.querySelector(`.arm-${name}`); let op = 0, rot = 0;
+      if (now && now[0] === name) { op = k > 0.15 ? 1 : 0; rot = lerp(70, now[1] + aimed, back(k)) + (cur.pose === "wave" ? Math.sin(t * 11) * 9 * k : Math.sin(t * 2.2) * 1.5); }
+      else if (was && was[0] === name && k < 0.5 && !(now && now[0] === name)) { op = 1; rot = lerp(was[1], 75, ease(k * 2)); }
+      img.style.opacity = op; img.style.transform = `rotate(${rot.toFixed(2)}deg)`;
+    }
+    const armOn = (now && k > 0.15) || (was && k < 0.5);
+    el.querySelector(".noarm").style.opacity = armOn ? 1 : 0; el.querySelector(".body").style.opacity = armOn ? 0 : 1;
+  }
+  const headX = (el._pad + r.head.cx) * el._k;   // the head sits over the actor's x
+  const inner = el.querySelector(".flip"); inner.style.transformOrigin = `${headX}px 50%`; inner.style.transform = a.flip ? "scaleX(-1)" : "";
+  const dance = cur.pose === "dance" ? k : prev.pose === "dance" ? 1 - k : 0, beat = t * 9 + (a.x % 3);
+  const cheer = (cur.pose === "thumb" || cur.pose === "wave") && !r.arms ? Math.max(0, 1 - (t - cur.t) / 0.9) : 0;   // a hop for the ones with no gesture arm
+  const sway = Math.sin(t * 0.9 + a.x) * 1.1 + m * Math.sin(t * 6.1) * 1.4, bob = Math.sin(t * 1.7 + a.x) * 2 - m * 3;
+  const mx = Math.sin(beat / 2) * 26 * dance, my = -Math.abs(Math.sin(beat)) * 30 * dance - Math.abs(Math.sin((t - cur.t) * 9)) * 26 * cheer + bob;
+  const rotAll = sway + Math.sin(beat / 2) * 9 * dance;
+  const tag = el.querySelector(".tag"); if (tag) tag.style.left = `${headX}px`;
+  el.style.transformOrigin = `${headX}px 100%`;
+  if (a.path) {
+    // A flight: places to be at given times (x across the screen, y up from the bottom edge).
+    const ks = a.path; let i = 0; while (i < ks.length - 2 && t > ks[i + 1].t) i++;
+    const A0 = ks[i], B0 = ks[Math.min(ks.length - 1, i + 1)], kk = ease((t - A0.t) / Math.max(0.001, B0.t - A0.t));
+    const px = lerp(A0.x, B0.x, kk), py = lerp(A0.y, B0.y, kk) + Math.sin(t * 5) * lerp(A0.hover || 0, B0.hover || 0, kk), sc = lerp(A0.scale ?? a.scale, B0.scale ?? a.scale, kk), rot = lerp(A0.rot || 0, B0.rot || 0, kk);
+    el.style.left = `${px - headX}px`; el.style.bottom = `${py}px`;
+    el.style.transform = `translate(${mx.toFixed(1)}px, ${my.toFixed(1)}px) scale(${sc}) rotate(${(rot + rotAll).toFixed(2)}deg)`; el.style.opacity = t >= a.from ? 1 : 0;
+    if (tag) tag.style.opacity = a.tag && t >= (a.tagAt ?? a.from) ? 1 : 0;
+    return;
+  }
+  // Sliding in and out from below the frame.
+  const inK = back((t - a.from) / 0.5), outK = a.to != null ? ease((t - a.to) / 0.4) : 0, shown = t >= a.from ? inK * (1 - outK) : 0;
+  el.style.left = `${a.x - headX}px`;
+  el.style.transform = a.pop ? `translate(${mx.toFixed(1)}px, ${my.toFixed(1)}px) scale(${(a.scale * shown).toFixed(4)}) rotate(${rotAll.toFixed(2)}deg)`
+    : `translateY(${((1 - shown) * 112).toFixed(2)}%) translate(${mx.toFixed(1)}px, ${my.toFixed(1)}px) scale(${a.scale}) rotate(${rotAll.toFixed(2)}deg)`;
+  el.style.opacity = shown > 0.02 ? 1 : 0;
+  if (tag) tag.style.opacity = a.tag && t >= a.from + 0.3 && t <= a.from + (a.tagFor || 4.5) ? 1 : 0;
+}
+
+// The closing scene: the BGP signal on the night sky, and the hero flying up through it and away.
+function heroScene(stage, scene, t) {
+  if (!stage.dataset.hero) {
+    stage.dataset.hero = "1";
+    const blocks = [[0, 760, 150, 320], [140, 690, 120, 390], [250, 800, 170, 280], [410, 720, 110, 360], [520, 640, 150, 440], [660, 780, 130, 300], [1250, 770, 140, 310], [1380, 660, 150, 420], [1520, 740, 120, 340], [1630, 800, 160, 280], [1780, 700, 140, 380]];
+    let seed = 7, windows = "", stars = ""; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (const [x, y, w] of blocks) for (let wy = y + 22; wy < 1060; wy += 34) for (let wx = x + 14; wx < x + w - 16; wx += 26) if (rnd() > 0.55) windows += `<rect x="${wx}" y="${wy}" width="12" height="16" fill="#FDE9A8" opacity="${(0.35 + rnd() * 0.5).toFixed(2)}"/>`;
+    for (let i = 0; i < 90; i++) stars += `<circle cx="${(rnd() * 1920).toFixed(0)}" cy="${(rnd() * 600).toFixed(0)}" r="${(0.8 + rnd() * 1.6).toFixed(1)}" fill="#fff" data-p="${(rnd() * 6).toFixed(2)}"/>`;
+    const sky = `<defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#090b1c"/><stop offset=".7" stop-color="#1b1f44"/><stop offset="1" stop-color="#3a2a4e"/></linearGradient>
+      <radialGradient id="glow"><stop offset="0" stop-color="#fff7d6" stop-opacity=".95"/><stop offset=".72" stop-color="#ffe9a3" stop-opacity=".8"/><stop offset="1" stop-color="#ffe9a3" stop-opacity="0"/></radialGradient>
+      <linearGradient id="beam" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#fff3bf" stop-opacity=".55"/><stop offset="1" stop-color="#fff3bf" stop-opacity=".1"/></linearGradient></defs>
+      <rect width="1920" height="1080" fill="url(#sky)"/><g id="stars">${stars}</g>
+      <g fill="#2a2f5c" opacity=".8"><ellipse cx="760" cy="300" rx="330" ry="70"/><ellipse cx="1180" cy="250" rx="300" ry="60"/><ellipse cx="960" cy="380" rx="420" ry="60"/></g>
+      <polygon id="beamShape" points="930,930 990,930 1230,300 690,300" fill="url(#beam)"/>
+      <g id="signal"><ellipse cx="960" cy="290" rx="290" ry="200" fill="url(#glow)"/><image href="${scene.logo}" x="760" y="150" width="400" height="280" preserveAspectRatio="xMidYMid meet"/></g>`;
+    const city = `<g fill="#0c0e1d">${blocks.map(([x, y, w, h]) => `<rect x="${x}" y="${y}" width="${w}" height="${h}"/>`).join("")}<rect x="800" y="930" width="320" height="150"/><rect x="930" y="900" width="60" height="34" rx="6"/></g>${windows}`;
+    const svg = inner => `<svg xmlns="${NS}" width="1920" height="1080" viewBox="0 0 1920 1080" style="position:absolute;inset:0">${inner}</svg>`;
+    // Sky and signal, then the hero, then the rooftops in front of him, then the words.
+    stage.innerHTML = svg(sky) + `<img id="hero" src="${ART + RIG.hero.body}" style="position:absolute;width:520px">` + svg(city)
+      + svg(`<g id="title" opacity="0"><text x="960" y="650" text-anchor="middle" font-family="DejaVu Sans, Arial" font-weight="800" font-size="96" fill="#fff">ChatBGP</text><text x="960" y="724" text-anchor="middle" font-family="DejaVu Sans, Arial" font-size="42" fill="#FC9F8D">your superhero app</text></g>`);
+  }
+  stage.querySelectorAll("#stars circle").forEach(s => s.setAttribute("opacity", (0.45 + 0.5 * Math.sin(t * 2 + +s.dataset.p)).toFixed(2)));
+  const on = ease((t - 0.3) / 0.8);
+  stage.querySelector("#beamShape").setAttribute("opacity", (on * (0.85 + 0.15 * Math.sin(t * 9))).toFixed(2));
+  stage.querySelector("#signal").setAttribute("opacity", on.toFixed(2));
+  // He rises from behind the roof, hangs in the light, then goes.
+  const fly0 = scene.flyAt, rise = ease((t - 1.0) / 1.1), f = clamp((t - fly0) / 1.5), fe = f * f * f;
+  const x = lerp(700, 2300, fe), y = lerp(lerp(1000, 430, rise), -700, fe) + Math.sin(t * 2.4) * 10 * (1 - f), sc = lerp(1, 0.55, f);
+  const hero = stage.querySelector("#hero");
+  hero.style.left = `${x}px`; hero.style.top = `${y}px`; hero.style.transform = `scale(${sc}) rotate(${(Math.sin(t * 1.9) * 2.5 * (1 - f)).toFixed(2)}deg)`; hero.style.opacity = t > 0.9 ? 1 : 0;
+  hero.style.filter = "drop-shadow(0 0 22px rgba(255,233,163,.45))";
+  stage.querySelector("#title").setAttribute("opacity", ease((t - (fly0 + 0.8)) / 0.7).toFixed(2));
+}
+
+window.setup = async scene => {
+  SCENE = scene; RIG = scene.rig; ART = scene.art;
+  const stage = document.getElementById("stage"); stage.innerHTML = ""; delete stage.dataset.hero; ELS.length = 0; CARDS.length = 0;
+  stage.style.background = scene.bg || "transparent";
+  if (scene.mode !== "hero") {
+    for (const c of scene.cards || []) { const el = document.createElement("div"); el.className = `card ${c.kind || ""}`; el.textContent = c.text; stage.appendChild(el); CARDS.push([el, c]); }
+    for (const a of scene.actors || []) { const el = build(a); stage.appendChild(el); ELS.push([el, a]); }
+    if (scene.photo) stage.insertAdjacentHTML("beforeend", `<img id="photo" src="${scene.photo.src}"><div id="flash"></div>`);
+    const svg = document.createElementNS(NS, "svg"); svg.setAttribute("width", 1920); svg.setAttribute("height", 1080); svg.style.cssText = "position:absolute;inset:0;pointer-events:none";
+    FX = document.createElementNS(NS, "g"); svg.appendChild(FX); stage.appendChild(svg);
+  } else heroScene(stage, scene, 0);
+  // Every drawing must be in before the first frame is photographed.
+  await Promise.all([...stage.querySelectorAll("img")].map(i => i.complete && i.naturalWidth ? null : new Promise((res, rej) => { i.onload = res; i.onerror = () => rej(new Error("missing drawing " + i.src)); })));
+  return true;
+};
+window.frame = i => {
+  const t = i / SCENE.fps, stage = document.getElementById("stage");
+  if (SCENE.mode === "hero") { heroScene(stage, SCENE, t); return true; }
+  for (const [el, a] of ELS) pose(el, a, t);
+  // Labels pop up askew as he names each thing, and straighten (and tick) at `tidyAt`.
+  for (const [el, c] of CARDS) {
+    const shown = t >= c.t ? back((t - c.t) / 0.4) * (1 - (c.to != null ? ease((t - c.to) / 0.35) : 0)) : 0, tidy = c.tidyAt != null ? ease((t - c.tidyAt) / 0.5) : 0;
+    el.style.left = `${c.x}px`; el.style.top = `${c.y + Math.sin(t * 1.4 + c.x) * 4}px`; el.style.opacity = shown > 0.02 ? 1 : 0;
+    el.style.transform = `translate(-50%, -50%) rotate(${((c.rot || 0) * (1 - tidy)).toFixed(2)}deg) scale(${(shown * (1 + 0.12 * Math.sin(Math.PI * tidy))).toFixed(3)})`;
+    el.classList.toggle("done", tidy > 0.5);
+  }
+  // Where he turns into the drawing: his picture closes to a circle, spins down onto the spot, and goes in a flash.
+  if (SCENE.photo) {
+    const p = SCENE.photo, k = ease((t - p.at) / p.secs), img = stage.querySelector("#photo"), end = p.at + p.secs;
+    img.style.clipPath = `circle(${lerp(1110, 430, clamp(k * 2.2)).toFixed(0)}px at 50% 50%)`;
+    img.style.transform = `translate(${((p.x - 960) * k).toFixed(1)}px, ${((p.y - 540) * k).toFixed(1)}px) rotate(${(k * k * 360).toFixed(1)}deg) scale(${lerp(1, 0.16, k).toFixed(4)})`;
+    img.style.display = t < end - 0.08 ? "" : "none";
+    stage.querySelector("#flash").style.opacity = (0.92 * clamp(1 - Math.abs(t - end) / 0.24)).toFixed(3);
+  }
+  // Stars where a character pops in, hearts and notes where the scene asks for them.
+  let fx = "";
+  for (const b of SCENE.bursts || []) {
+    const k = (t - b.t) / (b.secs || 0.9); if (k < 0 || k > 1) continue;
+    for (let j = 0; j < (b.n || 9); j++) {
+      const ang = j * 2.399 + b.x, r = (40 + (j * 37 % 90)) * ease(k) * (b.spread || 1), x = b.x + Math.cos(ang) * r, y = b.y + Math.sin(ang) * r - (b.kind ? k * 110 : 0), sz = (b.kind ? 34 : 24) * (1 - k * 0.45), op = (1 - k).toFixed(2);
+      fx += b.kind === "heart" ? `<path transform="translate(${x.toFixed(0)} ${y.toFixed(0)}) scale(${(sz / 24).toFixed(2)})" d="M0 8 C-14 -6 -6 -16 0 -6 C6 -16 14 -6 0 8Z" fill="#E5536B" opacity="${op}"/>`
+        : b.kind === "note" ? `<text x="${x.toFixed(0)}" y="${y.toFixed(0)}" font-size="${(sz * 1.5).toFixed(0)}" fill="${j % 2 ? "#6E0C25" : "#1f3a5f"}" opacity="${op}" font-family="DejaVu Sans">${j % 2 ? "♪" : "♫"}</text>`
+        : `<path transform="translate(${x.toFixed(0)} ${y.toFixed(0)}) scale(${(sz / 20).toFixed(2)}) rotate(${(k * 90 + j * 40).toFixed(0)})" d="M0 -10 L3 -3 L10 0 L3 3 L0 10 L-3 3 L-10 0 L-3 -3Z" fill="#FFD76A" stroke="#C98A12" stroke-width="1" opacity="${op}"/>`;
+    }
+  }
+  FX.innerHTML = fx;
+  return true;
+};
+</script></body></html>

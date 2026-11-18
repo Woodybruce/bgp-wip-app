@@ -6,16 +6,28 @@
 //   node script/pitch-video/stage-letting.cjs <phase>
 //
 // Phases, in order (each is safe to run twice):
-//   logins          Mark Warne = leasing manager; Rob Hardie = asset manager (Bluewater)
-//   brief           the Targeting Brief, its people and target; all agree but Mark
+//   logins          Jonny Rushton = leasing manager; Will Harvey = asset manager (Bluewater);
+//                   Kate Martin's BGP login, which the demo copy lacks
+//   brief           the Targeting Brief, its people (BGP: Millie Edwards, Emily Dumbell,
+//                   Alex Todd, Kate Martin) and target; all agree but Jonny
 //   viewing         one completed viewing by Jersey Mike's
 //   snapshot        saves the unit as it now stands, for `reset` (run it before filming)
 //   offer           the offer, a landlord counter, the tenant's reply, terms agreed
-//   hots            standard HOTs, generated from the agreed offer; all agree but Mark
-//   issue           Mark agrees, HOTs issued (unit to HOTs), deal checklist started
-//   recommendation  drafted and issued by Charlotte; the Landsec decision is left open
+//   hots            standard HOTs, generated from the agreed offer; all agree but Will
+//                   (agreeing the terms sits with the senior asset manager and Millie:
+//                   his sign-off is the one pressed on film)
+//   issue           Will agrees, HOTs issued (unit to HOTs), deal checklist started
+//   recommendation  drafted and issued by Millie; Jonny approves; Will's decision is left open
+//   informed        the three Landsec people who are kept informed (Gemma Casey,
+//                   Becs Blenkinsop, Mark Warne: logins with no Landsec role),
+//                   their two comments in the property's conversation and the
+//                   task one of them adds for Millie
 //   solicitors      final HOTs uploaded, deal converted to Solicitors
 // Also:
+//   viewas <team|own>  the lead BGP agent's view, through the app's own switch:
+//                   `viewas Landsec` before the offer is filmed (she types it in
+//                   the Landsec workspace), `viewas own` straight after. Every
+//                   other phase needs her on her own view.
 //   status          prints where the unit stands (reads only)
 //   reset           puts the unit back as it was at `snapshot` (see below)
 //   tidy            removes the demo server's "could not email" line from the
@@ -58,13 +70,19 @@ const SCHEME = "bluewater";
 
 const WHO = {
   admin: "victoria@brucegillinghampollard.com",
-  emily: "charlotte@brucegillinghampollard.com",   // the lead BGP agent (Charlotte Roberts)
-  lucy: "millie@brucegillinghampollard.com",                        // Millie Wilson
-  ben: "ben@brucegillinghampollard.com",           // Ben Sykes, in support
-  mark: "mark.warne@landsec.com",
-  gemma: "rob.hardie@landsec.com",                 // the Bluewater asset manager (Rob Hardie)
+  millie: "millie@brucegillinghampollard.com",     // the lead BGP agent (Millie Edwards, Director)
+  // BGP's team on the letting with her (Woody, 18 November 2026: "Millie, Emily Dumbell, Alex Todd and Kate Martin").
+  emily: "emily@brucegillinghampollard.com",       // Emily Dumbell, Director, Leasing
+  alex: "alext@brucegillinghampollard.com",        // Alex Todd, Associate Director
+  kate: "kate@brucegillinghampollard.com",         // Kate Martin, Surveyor
+  jonny: "jonny.rushton@landsec.com",              // the Portfolio Leasing Manager (Jonny Rushton)
+  will: "will.harvey@landsec.com",                 // the Senior Asset Manager for Bluewater (Will Harvey)
+  // Kept informed: Landsec logins with no Landsec role, so the full view.
+  gemma: "gemma.casey@landsec.com",                // Senior Asset Director
+  becs: "becs.blenkinsop@landsec.com",             // Senior Leasing Manager (Retail)
+  markw: "mark.warne@landsec.com",                 // Commercial Director
 };
-const GEMMA_NAME = "Rob Hardie";
+const WILL_NAME = "Will Harvey";
 
 // A viewing is confirmed only with a contact at the brand, and the demo holds
 // none for Jersey Mike's. This is a team, not an invented person.
@@ -98,7 +116,7 @@ const BRIEF = {
 const VIEWING = {
   time: "11:00", outcome: "Interested",
   notes: "Walked the unit and the lower mall with the Jersey Mike's property team. They liked the frontage and asked for the service charge budget.",
-  attendees: "Charlotte Roberts (BGP), Jersey Mike's UK property team",
+  attendees: "Millie Edwards (BGP), Jersey Mike's UK property team",
 };
 
 // The note that is typed on film, and the terms it reads as.
@@ -141,11 +159,11 @@ const RECOMMENDATION = {
 // and whether it is ticked. The fifth is the first open required item, so it
 // is what the deal is waiting on.
 const CHECKLIST_PLAN = [
-  { who: "emily", done: true },
-  { who: "mark", done: true },
-  { who: "gemma", done: false },
-  { who: "emily", done: false },
-  { who: "mark", done: false },
+  { who: "millie", done: true },
+  { who: "jonny", done: true },
+  { who: "will", done: false },
+  { who: "millie", done: false },
+  { who: "will", done: false },      // the review the deal waits on is the senior asset manager's
 ];
 
 // ---- Plumbing ---------------------------------------------------------------
@@ -224,45 +242,56 @@ const isBrand = o => o.companyId === BRAND.id || /jersey\s*mike/i.test(String(o.
 const sameTerm = (a, b) => (a === null || a === undefined || a === "" ? "" : String(a).trim()) === (b === null || b === undefined || b === "" ? "" : String(b).trim());
 
 async function briefOf() {
-  const b = await must("emily", "GET", `/api/available-units/${UNIT}/brief`);
+  const b = await must("millie", "GET", `/api/available-units/${UNIT}/brief`);
   return b && b.id ? b : null;
 }
-async function workspaceOf(briefId, who = "emily") {
+async function workspaceOf(briefId, who = "millie") {
   return must(who, "GET", `/api/unit-briefs/${briefId}/workspace`);
 }
 
 // ---- 1. logins --------------------------------------------------------------
 async function phaseLogins() {
   log("logins");
+  // BGP's own people on the letting are BGP staff logins. The demo copy has no
+  // Kate Martin: hers is made in the demo database as a copy of Emily Dumbell's
+  // row (the app has no route that makes a staff login).
+  const [kate] = await q(`SELECT id FROM users WHERE lower(email) = $1`, [WHO.kate]);
+  if (!kate) {
+    const copied = (await q(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users'`)).map(r => r.column_name)
+      .filter(c => !["id", "username", "name", "email", "role", "phone", "profile_pic_url", "is_active", "is_admin", "dashboard_layout", "dashboard_widgets", "bio", "dob", "address", "personal_email", "start_date", "cv_url", "manager_id"].includes(c));
+    await q(`INSERT INTO users (id, username, name, email, role, is_active, ${copied.map(c => `"${c}"`).join(", ")})
+             SELECT gen_random_uuid(), $1, 'Kate Martin', $1, 'Surveyor', true, ${copied.map(c => `"${c}"`).join(", ")} FROM users WHERE lower(email) = $2`, [WHO.kate, WHO.emily]);
+    step(true, "Kate Martin (Surveyor): BGP login made");
+  } else step(false, "Kate Martin has a BGP login");
   const list = await must("admin", "GET", "/api/landsec/access");
   if (!list.schemes.some(s => s.key === SCHEME)) throw new Error(`No scheme "${SCHEME}" in the Landsec registry`);
   const find = email => list.users.find(u => String(u.email).toLowerCase() === email);
 
-  const mark = find(WHO.mark);
-  if (!mark) throw new Error("Mark Warne's login is not a Landsec client login in this demo");
-  if (mark.role !== "leasing_manager") {
-    await must("admin", "POST", "/api/landsec/access", { email: WHO.mark, role: "leasing_manager" });
-    step(true, "Mark Warne is a Landsec leasing manager");
-  } else step(false, "Mark Warne is a Landsec leasing manager");
+  const jonny = find(WHO.jonny);
+  if (!jonny) throw new Error("Jonny Rushton's login is not a Landsec client login in this demo");
+  if (jonny.role !== "leasing_manager") {
+    await must("admin", "POST", "/api/landsec/access", { email: WHO.jonny, role: "leasing_manager" });
+    step(true, "Jonny Rushton is a Landsec leasing manager");
+  } else step(false, "Jonny Rushton is a Landsec leasing manager");
 
-  const gemma = find(WHO.gemma);
-  const gemmaRight = gemma && gemma.role === "asset_manager" && (gemma.schemes || []).length === 1 && gemma.schemes[0] === SCHEME && gemma.active;
-  if (!gemmaRight) {
+  const will = find(WHO.will);
+  const willRight = will && will.role === "asset_manager" && (will.schemes || []).length === 1 && will.schemes[0] === SCHEME && will.active;
+  if (!willRight) {
     // A new login is created with the shared demo password by the route itself.
     await must("admin", "POST", "/api/landsec/access", {
-      email: WHO.gemma, name: GEMMA_NAME, role: "asset_manager", schemes: [SCHEME], ...(gemma ? {} : { password: demoPassword() }),
+      email: WHO.will, name: WILL_NAME, role: "asset_manager", schemes: [SCHEME], ...(will ? {} : { password: demoPassword() }),
     });
-    step(true, `${GEMMA_NAME} is a Landsec asset manager for Bluewater${gemma ? "" : " (login created)"}`);
-  } else step(false, `${GEMMA_NAME} is a Landsec asset manager for Bluewater`);
+    step(true, `${WILL_NAME} is a Landsec asset manager for Bluewater${will ? "" : " (login created)"}`);
+  } else step(false, `${WILL_NAME} is a Landsec asset manager for Bluewater`);
 
   // A new login is signed in once with the shared password, to prove it works.
   // A refusal here (the sign-in limit) does not undo the login that was made.
-  if (!gemma && TOKENS_FILE) {
-    await passwordLogin(WHO.gemma).then(() => log(`  check: ${GEMMA_NAME} signs in with the shared demo password`), e => log(`  sign-in not checked: ${e.message}`));
+  if (!will && TOKENS_FILE) {
+    await passwordLogin(WHO.will).then(() => log(`  check: ${WILL_NAME} signs in with the shared demo password`), e => log(`  sign-in not checked: ${e.message}`));
   }
   // Check: the panel shows the roles, and each login is answered as itself.
   const after = await must("admin", "GET", "/api/landsec/access");
-  for (const who of ["mark", "gemma"]) {
+  for (const who of ["jonny", "will"]) {
     const s = await login(who);
     const row = after.users.find(u => u.id === s.id);
     const me = await must(who, "GET", "/api/auth/me");
@@ -282,37 +311,37 @@ async function phaseBrief() {
     const [t] = await q(`SELECT coalesce(nullif(trim(unit_number), ''), premises) AS unit_name, property_id FROM tenancy_schedule_units WHERE id = $1`, [TENANCY]);
     const sameUnit = u && t && t.property_id === PROPERTY && String(t.unit_name || "").trim().toLowerCase() === String(u.unit_name || "").trim().toLowerCase()
       && (!u.tenancy_unit_id || u.tenancy_unit_id === TENANCY);
-    const started = await must("emily", "POST", "/api/unit-briefs/start", sameUnit ? { tenancyUnitId: TENANCY, title: BRIEF.title } : { trackerUnitId: UNIT, title: BRIEF.title });
+    const started = await must("millie", "POST", "/api/unit-briefs/start", sameUnit ? { tenancyUnitId: TENANCY, title: BRIEF.title } : { trackerUnitId: UNIT, title: BRIEF.title });
     if (started.unit?.id !== UNIT) throw new Error(`Add brief answered with another unit (${started.unit?.id}). Stop and look at the tracker.`);
-    step(true, `brief started by Charlotte Roberts${sameUnit ? ", unit picked from the tenancy schedule" : ""} (deal #${started.dealRef})`);
+    step(true, `brief started by Millie Edwards${sameUnit ? ", unit picked from the tenancy schedule" : ""} (deal #${started.dealRef})`);
     brief = await briefOf();
   } else step(false, "the unit has its brief");
 
-  const saved = await must("emily", "PATCH", `/api/unit-briefs/${brief.id}`, { ...BRIEF.fields, commercials: BRIEF.commercials });
+  const saved = await must("millie", "PATCH", `/api/unit-briefs/${brief.id}`, { ...BRIEF.fields, commercials: BRIEF.commercials });
   step(!!saved.termsChanged, `terms and commercials (version ${saved.version})`);
 
   const people = [
-    { who: "emily", role: "bgp_agent" }, { who: "lucy", role: "bgp_agent" }, { who: "ben", role: "bgp_agent" },
-    { who: "mark", role: "client_leasing" }, { who: "gemma", role: "asset_manager" },
+    { who: "millie", role: "bgp_agent" }, { who: "emily", role: "bgp_agent" }, { who: "alex", role: "bgp_agent" }, { who: "kate", role: "bgp_agent" },
+    { who: "jonny", role: "client_leasing" }, { who: "will", role: "senior_asset_manager" },
   ];
   let ws = await workspaceOf(brief.id);
   for (const p of people) {
     const s = await login(p.who);
     if (ws.people.some(x => x.userId === s.id)) { step(false, `${s.name} is on the brief`); continue; }
-    await must("emily", "POST", `/api/unit-briefs/${brief.id}/people`, { role: p.role, userId: s.id });
+    await must("millie", "POST", `/api/unit-briefs/${brief.id}/people`, { role: p.role, userId: s.id });
     step(true, `${s.name} added to the brief`);
   }
 
   const withTargets = await briefOf();
   if ((withTargets.targets || []).some(t => t.companyId === BRAND.id || /jersey\s*mike/i.test(t.operatorName))) step(false, `${BRAND.name} is a target`);
   else {
-    await must("emily", "POST", `/api/unit-briefs/${brief.id}/targets`, { ...BRIEF.target, agentUserIds: [await idOf("emily")] });
+    await must("millie", "POST", `/api/unit-briefs/${brief.id}/targets`, { ...BRIEF.target, agentUserIds: [await idOf("millie")] });
     step(true, `${BRAND.name} added as a priority A target`);
   }
 
-  // Everyone agrees as themselves, except Mark: that is pressed on film.
+  // Everyone agrees as themselves, except Jonny: that is pressed on film.
   ws = await workspaceOf(brief.id);
-  for (const who of ["emily", "lucy", "ben", "gemma"]) {
+  for (const who of ["millie", "emily", "alex", "kate", "will"]) {
     const s = await login(who);
     const person = ws.people.find(x => x.userId === s.id);
     if (person.agreedAt && person.agreedVersion === ws.brief.version) { step(false, `${s.name} has agreed the brief`); continue; }
@@ -320,39 +349,39 @@ async function phaseBrief() {
     step(true, `${s.name} agreed the brief`);
   }
 
-  ws = await workspaceOf(brief.id, "mark");
+  ws = await workspaceOf(brief.id, "jonny");
   const mark = ws.people.find(x => x.userId === ws.viewer.userId);
-  log(`  check (as Mark Warne): ${ws.approval.label}; version ${ws.brief.version}; Mark ${mark?.agreedAt && mark.agreedVersion === ws.brief.version ? "HAS agreed" : "has not agreed yet"}; quoting rent £${ws.brief.commercials.quotingRentPa}; people ${ws.people.map(p => p.name).join(", ")}`);
+  log(`  check (as Jonny Rushton): ${ws.approval.label}; version ${ws.brief.version}; Jonny ${mark?.agreedAt && mark.agreedVersion === ws.brief.version ? "HAS agreed" : "has not agreed yet"}; quoting rent £${ws.brief.commercials.quotingRentPa}; people ${ws.people.map(p => p.name).join(", ")}`);
 }
 
 // ---- 3. viewing -------------------------------------------------------------
 async function brandContactId() {
   const have = await q(`SELECT id FROM crm_contacts WHERE company_id = $1 AND lower(name) = lower($2) LIMIT 1`, [BRAND.id, BRAND_CONTACT.name]);
   if (have[0]) return { id: have[0].id, made: false };
-  const made = await must("emily", "POST", "/api/crm/contacts", { name: BRAND_CONTACT.name, role: BRAND_CONTACT.role, companyId: BRAND.id });
+  const made = await must("millie", "POST", "/api/crm/contacts", { name: BRAND_CONTACT.name, role: BRAND_CONTACT.role, companyId: BRAND.id });
   return { id: made.id, made: true };
 }
 async function phaseViewing() {
   log("viewing");
   const contact = await brandContactId();
   step(contact.made, `contact at ${BRAND.name}: ${BRAND_CONTACT.name}`);
-  const have = (await must("emily", "GET", `/api/available-units/${UNIT}/viewings`)).filter(isBrand);
+  const have = (await must("millie", "GET", `/api/available-units/${UNIT}/viewings`)).filter(isBrand);
   if (have.length) step(false, `${BRAND.name} viewing on ${have[0].viewingDate}`);
   else {
     const date = weekdayOnOrBefore(addDays(todayLondon(), -4));
-    await must("emily", "POST", `/api/available-units/${UNIT}/viewings`, {
+    await must("millie", "POST", `/api/available-units/${UNIT}/viewings`, {
       companyId: BRAND.id, contactId: contact.id, viewingDate: date, viewingTime: VIEWING.time,
       outcome: VIEWING.outcome, notes: VIEWING.notes, attendees: VIEWING.attendees,
     });
     step(true, `completed viewing by ${BRAND.name} on ${date}`);
   }
-  const seen = (await must("mark", "GET", `/api/available-units/${UNIT}/viewings`)).filter(isBrand);
-  for (const v of seen) log(`  check (as Mark Warne): ${v.companyName}, ${v.viewingDate} ${v.viewingTime || ""}, ${v.status}, outcome ${v.outcome}, details ${v.detailsConfirmedAt ? "confirmed" : "NOT confirmed"}`);
+  const seen = (await must("jonny", "GET", `/api/available-units/${UNIT}/viewings`)).filter(isBrand);
+  for (const v of seen) log(`  check (as Jonny Rushton): ${v.companyName}, ${v.viewingDate} ${v.viewingTime || ""}, ${v.status}, outcome ${v.outcome}, details ${v.detailsConfirmedAt ? "confirmed" : "NOT confirmed"}`);
 }
 
 // ---- 4. offer ---------------------------------------------------------------
 async function brandOffer() {
-  const offers = (await must("emily", "GET", `/api/available-units/${UNIT}/offers`)).filter(isBrand).filter(o => !["Rejected", "Withdrawn", "Closed"].includes(o.status));
+  const offers = (await must("millie", "GET", `/api/available-units/${UNIT}/offers`)).filter(isBrand).filter(o => !["Rejected", "Withdrawn", "Closed"].includes(o.status));
   return offers[offers.length - 1] || null;
 }
 async function phaseOffer() {
@@ -362,24 +391,24 @@ async function phaseOffer() {
   let offer = await brandOffer();
   if (!offer) {
     const contact = await brandContactId();
-    offer = await must("emily", "POST", `/api/available-units/${UNIT}/offers`, {
+    offer = await must("millie", "POST", `/api/available-units/${UNIT}/offers`, {
       companyId: BRAND.id, companyName: BRAND.name, contactId: contact.id, contactName: BRAND_CONTACT.name,
       offerDate: addDays(today, -2), ...FIRST_OFFER, comments: OFFER_NOTE,
     });
-    step(true, `first offer logged by Charlotte Roberts: £${FIRST_OFFER.rentPa} a year, ${FIRST_OFFER.turnoverRentPct}% turnover, ${FIRST_OFFER.rentFreeMonths} months rent free, ${FIRST_OFFER.termYears} years`);
+    step(true, `first offer logged by Millie Edwards: £${FIRST_OFFER.rentPa} a year, ${FIRST_OFFER.turnoverRentPct}% turnover, ${FIRST_OFFER.rentFreeMonths} months rent free, ${FIRST_OFFER.termYears} years`);
   } else step(false, `an offer from ${offer.companyName} is on the unit (${offer.status})`);
 
-  let neg = await must("emily", "GET", `/api/unit-offers/${offer.id}/negotiation`);
+  let neg = await must("millie", "GET", `/api/unit-offers/${offer.id}/negotiation`);
   if (neg.offer.status !== "Agreed") {
     const first = neg.rounds[0]?.roundDate || today;
     const counterDate = first >= addDays(today, -1) ? today : addDays(today, -1);
     if (neg.rounds.length === 1) {
       const { party, note, ...terms } = COUNTER;
-      neg = await must("emily", "POST", `/api/unit-offers/${offer.id}/rounds`, { party, roundDate: counterDate, note, ...terms });
+      neg = await must("millie", "POST", `/api/unit-offers/${offer.id}/rounds`, { party, roundDate: counterDate, note, ...terms });
       step(true, `landlord counter: £${COUNTER.rentPa} a year, ${COUNTER.rentFreeMonths} months rent free`);
       // The screen offers this move when a unit still at Marketing gets its first counter.
       if (neg.suggestStatus === "NEG" && !process.env.STAGE_SKIP_NEG) {
-        const moved = await must("emily", "PATCH", `/api/available-units/${UNIT}`, { marketingStatus: "NEG" });
+        const moved = await must("millie", "PATCH", `/api/available-units/${UNIT}`, { marketingStatus: "NEG" });
         step(true, `unit moved to Negotiating${moved.mirrorWarning ? ` (${moved.mirrorWarning})` : ""}`);
       }
     } else step(false, `the negotiation has ${neg.rounds.length} positions`);
@@ -387,23 +416,23 @@ async function phaseOffer() {
     const { party, note, ...terms } = AGREED;
     const atAgreed = Object.keys(terms).every(k => sameTerm(neg.offer[k], terms[k]));
     if (!atAgreed) {
-      neg = await must("emily", "POST", `/api/unit-offers/${offer.id}/rounds`, { party, roundDate: today, note, ...terms });
+      neg = await must("millie", "POST", `/api/unit-offers/${offer.id}/rounds`, { party, roundDate: today, note, ...terms });
       step(true, `tenant's reply: £${AGREED.rentPa} a year, ${AGREED.rentFreeMonths} months rent free, ${AGREED.breakOption.toLowerCase()}`);
     } else step(false, "the offer already stands at the agreed terms");
-    neg = await must("emily", "POST", `/api/unit-offers/${offer.id}/status`, { status: "Agreed" });
+    neg = await must("millie", "POST", `/api/unit-offers/${offer.id}/status`, { status: "Agreed" });
     step(true, "terms agreed");
   } else step(false, "terms are agreed");
 
-  neg = await must("mark", "GET", `/api/unit-offers/${offer.id}/negotiation`);
-  log(`  check (as Mark Warne): ${neg.offer.companyName}, ${neg.offer.status}, £${neg.offer.rentPa} a year, ${neg.offer.turnoverRentPct}% turnover, ${neg.offer.rentFreeMonths} months rent free, ${neg.offer.termYears} years, ${neg.offer.breakOption}; ${neg.rounds.length} positions (${neg.rounds.map(r => `${r.party} £${r.rentPa}`).join(" > ")})`);
+  neg = await must("jonny", "GET", `/api/unit-offers/${offer.id}/negotiation`);
+  log(`  check (as Jonny Rushton): ${neg.offer.companyName}, ${neg.offer.status}, £${neg.offer.rentPa} a year, ${neg.offer.turnoverRentPct}% turnover, ${neg.offer.rentFreeMonths} months rent free, ${neg.offer.termYears} years, ${neg.offer.breakOption}; ${neg.rounds.length} positions (${neg.rounds.map(r => `${r.party} £${r.rentPa}`).join(" > ")})`);
 }
 
 // ---- 5. hots ----------------------------------------------------------------
 async function phaseHots() {
   log("hots");
-  let ws = await must("emily", "GET", `/api/unit-hots/${UNIT}`);
+  let ws = await must("millie", "GET", `/api/unit-hots/${UNIT}`);
   if (!ws.template.text) {
-    ws = await must("emily", "POST", `/api/unit-hots/${UNIT}/template/standard`, {});
+    ws = await must("millie", "POST", `/api/unit-hots/${UNIT}/template/standard`, {});
     step(true, `standard Heads of Terms created: ${ws.template.standardName}`);
   } else step(false, `the property has its standard Heads of Terms: ${ws.template.standardName || "its own text"}`);
   if (ws.template.schemeStandardName && ws.template.standardName !== ws.template.schemeStandardName) log(`  note: the scheme's own form is "${ws.template.schemeStandardName}" but the property's standard is "${ws.template.standardName || "its own text"}"`);
@@ -411,58 +440,58 @@ async function phaseHots() {
   if (ws.stage === "issued" || ws.stage === "final") step(false, `Heads of Terms are already ${ws.stage}`);
   else {
     if (!ws.content || !ws.agreedOffer || ws.offer?.id !== ws.agreedOffer.id || ws.offerOutOfStep) {
-      ws = await must("emily", "POST", `/api/unit-hots/${UNIT}/generate`, ws.content ? { replace: true } : {});
+      ws = await must("millie", "POST", `/api/unit-hots/${UNIT}/generate`, ws.content ? { replace: true } : {});
       step(true, `generated from the agreed offer (version ${ws.version})`);
     } else step(false, `the draft is generated from the agreed offer (version ${ws.version})`);
-    // Everyone on the brief agrees as themselves, except Mark.
-    for (const who of ["emily", "lucy", "ben", "gemma"]) {
+    // Everyone on the brief agrees as themselves, except Will: his is pressed on film.
+    for (const who of ["millie", "emily", "alex", "kate", "jonny"]) {
       const s = await login(who);
       if (ws.signers.find(x => x.userId === s.id)?.agreedAt) { step(false, `${s.name} has agreed the Heads of Terms`); continue; }
       ws = await must(who, "POST", `/api/unit-hots/${UNIT}/agree`, { version: ws.version });
       step(true, `${s.name} agreed the Heads of Terms`);
     }
   }
-  ws = await must("mark", "GET", `/api/unit-hots/${UNIT}`);
+  ws = await must("jonny", "GET", `/api/unit-hots/${UNIT}`);
   const made = ws.events.filter(e => e.kind === "generated").pop();
-  log(`  check (as Mark Warne): stage ${ws.stage}; version ${ws.version}; agreed ${ws.approval.agreed} of ${ws.approval.total} (${ws.signers.map(s => `${s.name} ${s.agreedAt ? "yes" : "no"}`).join(", ")}); blanks left in the draft: ${ws.gaps.length}`);
+  log(`  check (as Jonny Rushton): stage ${ws.stage}; version ${ws.version}; agreed ${ws.approval.agreed} of ${ws.approval.total} (${ws.signers.map(s => `${s.name} ${s.agreedAt ? "yes" : "no"}`).join(", ")}); blanks left in the draft: ${ws.gaps.length}`);
   if (made) log(`  history: ${made.authorName} ${made.body}`);
 }
 
 // ---- 6. issue ---------------------------------------------------------------
 async function phaseIssue() {
   log("issue");
-  // The brief comes first: by now Mark has agreed it on film. If not, he does here.
+  // The brief comes first: by now Jonny has agreed it on film. If not, he does here.
   const brief = await briefOf();
-  let bws = await workspaceOf(brief.id, "mark");
+  let bws = await workspaceOf(brief.id, "jonny");
   const me = bws.people.find(x => x.userId === bws.viewer.userId);
   if (!(me.agreedAt && me.agreedVersion === bws.brief.version)) {
-    await must("mark", "POST", `/api/unit-briefs/people/${me.id}/agree`, { version: bws.brief.version });
-    step(true, "Mark Warne agreed the brief (it had not been pressed on film)");
-  } else step(false, "Mark Warne has agreed the brief");
+    await must("jonny", "POST", `/api/unit-briefs/people/${me.id}/agree`, { version: bws.brief.version });
+    step(true, "Jonny Rushton agreed the brief (it had not been pressed on film)");
+  } else step(false, "Jonny Rushton has agreed the brief");
 
-  let ws = await must("mark", "GET", `/api/unit-hots/${UNIT}`);
+  let ws = await must("will", "GET", `/api/unit-hots/${UNIT}`);
   if (ws.stage === "issued" || ws.stage === "final") step(false, `Heads of Terms are ${ws.stage}`);
   else {
     if (!ws.signers.find(x => x.isMe)?.agreedAt) {
-      ws = await must("mark", "POST", `/api/unit-hots/${UNIT}/agree`, { version: ws.version });
-      step(true, "Mark Warne agreed the Heads of Terms");
-    } else step(false, "Mark Warne has agreed the Heads of Terms");
-    ws = await must("emily", "POST", `/api/unit-hots/${UNIT}/issue`, {});
+      ws = await must("will", "POST", `/api/unit-hots/${UNIT}/agree`, { version: ws.version });
+      step(true, "Will Harvey agreed the Heads of Terms (it had not been pressed on film)");
+    } else step(false, "Will Harvey has agreed the Heads of Terms");
+    ws = await must("millie", "POST", `/api/unit-hots/${UNIT}/issue`, {});
     step(true, `Heads of Terms issued by ${ws.issuedByName}; unit is now ${ws.unit.marketingStatus}${ws.statusWarning ? ` (${ws.statusWarning})` : ""}`);
   }
 
-  // The deal checklist: opened by Emily (which starts it), then who has what.
-  let list = (await must("emily", "GET", `/api/deal-checklists/unit/${UNIT}`)).checklist;
+  // The deal checklist: opened by Millie (which starts it), then who has what.
+  let list = (await must("millie", "GET", `/api/deal-checklists/unit/${UNIT}`)).checklist;
   if (!list.responsible) {
-    list = await must("emily", "PUT", `/api/deal-checklists/${list.id}/responsible`, { personKey: `user:${await idOf("emily")}` });
-    step(true, "Charlotte Roberts is responsible for the letting");
+    list = await must("millie", "PUT", `/api/deal-checklists/${list.id}/responsible`, { personKey: `user:${await idOf("millie")}` });
+    step(true, "Millie Edwards is responsible for the letting");
   } else step(false, `${list.responsible.name} is responsible for the letting`);
   for (let i = 0; i < CHECKLIST_PLAN.length; i++) {
     const plan = CHECKLIST_PLAN[i];
     let item = list.items[i];
     const s = await login(plan.who);
     if (!item.assignee) {
-      list = await must("emily", "PUT", `/api/deal-checklists/items/${item.id}/assignee`, { personKey: `user:${s.id}` });
+      list = await must("millie", "PUT", `/api/deal-checklists/items/${item.id}/assignee`, { personKey: `user:${s.id}` });
       step(true, `${s.name}: ${item.label}${list.emailed === false && list.emailError ? "  [no email sent: " + list.emailError + "]" : ""}`);
       item = list.items.find(x => x.id === item.id);
     } else step(false, `${item.assignee.name}: ${item.label}`);
@@ -471,16 +500,16 @@ async function phaseIssue() {
       step(true, `ticked by ${s.name}`);
     }
   }
-  list = (await must("mark", "GET", `/api/deal-checklists/unit/${UNIT}`)).checklist;
-  log(`  check (as Mark Warne): checklist at stage ${list.stage}; ${list.items.filter(i => i.doneAt).length} of ${list.items.length} done; ${list.items.filter(i => i.assignee).length} with a responsible person; waiting: ${JSON.stringify(list.waiting)}`);
+  list = (await must("jonny", "GET", `/api/deal-checklists/unit/${UNIT}`)).checklist;
+  log(`  check (as Jonny Rushton): checklist at stage ${list.stage}; ${list.items.filter(i => i.doneAt).length} of ${list.items.length} done; ${list.items.filter(i => i.assignee).length} with a responsible person; waiting: ${JSON.stringify(list.waiting)}`);
 }
 
 // ---- 7. recommendation ------------------------------------------------------
 async function phaseRecommendation() {
   log("recommendation");
-  let ws = await must("emily", "GET", `/api/unit-recommendations/${UNIT}`);
+  let ws = await must("millie", "GET", `/api/unit-recommendations/${UNIT}`);
   if (!ws.id) {
-    ws = await must("emily", "POST", `/api/unit-recommendations/${UNIT}/start`, {});
+    ws = await must("millie", "POST", `/api/unit-recommendations/${UNIT}/start`, {});
     step(true, "started from the agreed offer");
   } else step(false, "the recommendation is started");
   const want = RECOMMENDATION;
@@ -488,33 +517,40 @@ async function phaseRecommendation() {
     && Object.keys(want.commentary).every(k => sameTerm(ws.commentary[k], want.commentary[k]))
     && ws.recommendation === want.recommendation && sameTerm(ws.summary, want.summary);
   if (!same) {
-    ws = await must("emily", "PUT", `/api/unit-recommendations/${UNIT}/content`, { baseVersion: ws.version, terms: want.terms, commentary: want.commentary, recommendation: want.recommendation, summary: want.summary });
+    ws = await must("millie", "PUT", `/api/unit-recommendations/${UNIT}/content`, { baseVersion: ws.version, terms: want.terms, commentary: want.commentary, recommendation: want.recommendation, summary: want.summary });
     step(true, "terms, commentary, recommendation and summary written");
   } else step(false, "terms, commentary, recommendation and summary are written");
   if (ws.missing.length) log(`  still missing: ${ws.missing.join("; ")}`);
   if (!(ws.issuedAt && ws.issuedVersion === ws.version)) {
-    ws = await must("emily", "POST", `/api/unit-recommendations/${UNIT}/issue`, {});
+    ws = await must("millie", "POST", `/api/unit-recommendations/${UNIT}/issue`, {});
     step(true, `issued by ${ws.issuedByName}${ws.emailReason ? `  [no email sent: ${ws.emailReason}]` : ""}`);
   } else step(false, `issued by ${ws.issuedByName}`);
-  ws = await must("mark", "GET", `/api/unit-recommendations/${UNIT}`);
-  log(`  check (as Mark Warne): stage ${ws.stage}; version ${ws.version}; ${ws.terms.tenant}, £${ws.terms.rentPa} a year, ${ws.terms.termYears} years; net effective £${ws.measure.nerPa}; ${ws.measure.headlineVsErvPct}% of ERV; deciders ${ws.deciders.map(d => `${d.name} ${d.decision || "not decided"}`).join(", ")}; Mark can decide: ${ws.viewer.canDecide}`);
+  // The leasing manager approves here. The senior asset manager's decision, the
+  // one that settles it, is left open: it is pressed on film.
+  ws = await must("jonny", "GET", `/api/unit-recommendations/${UNIT}`);
+  if (!ws.deciders.find(d => d.isMe)?.decision) {
+    ws = await must("jonny", "POST", `/api/unit-recommendations/${UNIT}/decide`, { decision: "approved", version: ws.version });
+    step(true, "Jonny Rushton approved the recommendation");
+  } else step(false, "Jonny Rushton has given his decision");
+  ws = await must("jonny", "GET", `/api/unit-recommendations/${UNIT}`);
+  log(`  check (as Jonny Rushton): stage ${ws.stage}; version ${ws.version}; ${ws.terms.tenant}, £${ws.terms.rentPa} a year, ${ws.terms.termYears} years; net effective £${ws.measure.nerPa}; ${ws.measure.headlineVsErvPct}% of ERV; deciders ${ws.deciders.map(d => `${d.name} ${d.decision || "not decided"}`).join(", ")}; Jonny can decide: ${ws.viewer.canDecide}`);
 }
 
 // ---- 8. solicitors ----------------------------------------------------------
 async function phaseSolicitors() {
   log("solicitors");
-  let ws = await must("emily", "GET", `/api/unit-hots/${UNIT}`);
+  let ws = await must("millie", "GET", `/api/unit-hots/${UNIT}`);
   if (ws.conversion) { step(false, `already converted (deal #${ws.conversion.dealRef})`); }
   else {
     if (!ws.finalFile) {
       // The final agreed Heads of Terms: the issued draft, as the app prints it.
-      const pdf = await must("emily", "GET", `/api/unit-hots/${UNIT}/download`, undefined, { buffer: true });
+      const pdf = await must("millie", "GET", `/api/unit-hots/${UNIT}/download`, undefined, { buffer: true });
       const form = new FormData();
       form.append("file", new Blob([pdf], { type: "application/pdf" }), "Final agreed Heads of Terms, L057 Bluewater.pdf");
-      ws = await must("emily", "POST", `/api/unit-hots/${UNIT}/final`, undefined, { form });
+      ws = await must("millie", "POST", `/api/unit-hots/${UNIT}/final`, undefined, { form });
       step(true, `final agreed Heads of Terms uploaded: ${ws.finalFile.fileName}`);
     } else step(false, `final agreed Heads of Terms on file: ${ws.finalFile.fileName}`);
-    const r = await call("emily", "POST", `/api/unit-hots/${UNIT}/convert`, {});
+    const r = await call("millie", "POST", `/api/unit-hots/${UNIT}/convert`, {});
     if (!r.ok) {
       log(`  REFUSED (${r.status}${r.body?.code ? `, ${r.body.code}` : ""}): ${r.body?.message}`);
       process.exitCode = 2;
@@ -524,8 +560,79 @@ async function phaseSolicitors() {
     if (r.body.aml && !r.body.aml.ok) log(`  AML: ${r.body.aml.message}`);
     if (r.body.statusWarning) log(`  warning: ${r.body.statusWarning}`);
   }
-  ws = await must("mark", "GET", `/api/unit-hots/${UNIT}`);
-  log(`  check (as Mark Warne): unit ${ws.unit.marketingStatus}; HOTs stage ${ws.stage}; converted ${ws.conversion ? "yes" : "no"}`);
+  ws = await must("jonny", "GET", `/api/unit-hots/${UNIT}`);
+  log(`  check (as Jonny Rushton): unit ${ws.unit.marketingStatus}; HOTs stage ${ws.stage}; converted ${ws.conversion ? "yes" : "no"}`);
+}
+
+// ---- informed ---------------------------------------------------------------
+// Three Landsec people are kept informed: they see everything live, comment and
+// add tasks, and sign nothing. Each is a Landsec login with NO Landsec role
+// (so the full view). The logins panel always gives a login a role, so the
+// two that do not exist are made in the demo database as copies of the
+// leasing manager's row (the app's own start-up list already holds Mark
+// Warne's login and makes it when it is missing); what they say and add goes
+// through the app's API.
+const INFORMED = [
+  { who: "gemma", name: "Gemma Casey", title: "Senior Asset Director",
+    comment: `@[L057 Bluewater - Lower Level](tag:unit/${UNIT}) Thanks all. Jersey Mike's would be a first for Bluewater. Please keep the rent free inside the brief.` },
+  { who: "markw", name: "Mark Warne", title: "Commercial Director",
+    comment: "Good progress. I am following this one. Tell me if you need anything from me to get to Heads of Terms." },
+  { who: "becs", name: "Becs Blenkinsop", title: "Senior Leasing Manager (Retail)" },
+];
+const INFORMED_TASK = {
+  title: "Send Becs the Jersey Mike's fit-out programme for L057 before Heads of Terms are issued",
+  description: "Added by Becs Blenkinsop from the Bluewater conversation.",
+};
+async function phaseInformed() {
+  log("informed");
+  const [model] = await q(`SELECT id FROM users WHERE lower(email) = $1`, [WHO.jonny]);
+  if (!model) throw new Error("The leasing manager's login is missing (run logins first)");
+  const copied = (await q(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users'`)).map(r => r.column_name)
+    .filter(c => !["id", "username", "name", "email", "profile_pic_url", "is_active", "phone", "dashboard_layout", "dashboard_widgets"].includes(c));
+  for (const p of INFORMED) {
+    const email = WHO[p.who];
+    const [have] = await q(`SELECT id, name, is_active FROM users WHERE lower(email) = $1`, [email]);
+    if (!have) {
+      await q(`INSERT INTO users (id, username, name, email, is_active, ${copied.map(c => `"${c}"`).join(", ")})
+               SELECT gen_random_uuid(), $1, $2, $1, true, ${copied.map(c => `"${c}"`).join(", ")} FROM users WHERE id = $3`, [email, p.name, model.id]);
+      step(true, `${p.name} (${p.title}): login made`);
+    } else if (have.is_active === false || have.name !== p.name) {
+      await q(`UPDATE users SET is_active = true, name = $2 WHERE id = $1`, [have.id, p.name]);
+      step(true, `${p.name} (${p.title}): login switched on`);
+    } else step(false, `${p.name} (${p.title}) has a login`);
+    const gone = await q(`DELETE FROM landsec_access WHERE user_id = (SELECT id FROM users WHERE lower(email) = $1) RETURNING id`, [email]);
+    if (gone.length) step(true, `${p.name}: Landsec role removed (kept informed, full view)`);
+  }
+  // Their comments, in the property's one conversation.
+  for (const p of INFORMED.filter(x => x.comment)) {
+    const s = await login(p.who);
+    const { threadId } = await must(p.who, "POST", `/api/chat/threads/record/property/${PROPERTY}`, {});
+    const [said] = await q(`SELECT id FROM chat_messages WHERE thread_id = $1 AND user_id = $2 AND content = $3`, [threadId, s.id, p.comment]);
+    if (said) { step(false, `${p.name} has commented`); continue; }
+    await must(p.who, "POST", `/api/chat/threads/${threadId}/messages`, { content: p.comment });
+    step(true, `${p.name} commented in the Bluewater conversation`);
+  }
+  // A task one of them sets for the lead BGP agent, on the letting.
+  const becs = await login("becs"), millieId = await idOf("millie");
+  const [task] = await q(`SELECT id FROM user_tasks WHERE assigned_by_user_id = $1 AND user_id = $2 AND title = $3`, [becs.id, millieId, INFORMED_TASK.title]);
+  if (task) step(false, "Becs Blenkinsop's task for Millie Edwards is set");
+  else {
+    await must("becs", "POST", "/api/tasks", { ...INFORMED_TASK, assigneeUserId: millieId, linkedPropertyId: PROPERTY, linkedDealId: DEAL, priority: "high", dueDate: addDays(todayLondon(), 5) });
+    step(true, `Becs Blenkinsop set a task for Millie Edwards: ${INFORMED_TASK.title}`);
+  }
+  for (const p of INFORMED) {
+    const me = await must(p.who, "GET", "/api/auth/me");
+    const role = await q(`SELECT landsec_role FROM landsec_access WHERE user_id = $1`, [(await login(p.who)).id]);
+    log(`  check: ${me.name || me.user?.name} is signed in; Landsec role ${role[0]?.landsec_role || "none (full view)"}`);
+  }
+}
+
+// ---- viewas -----------------------------------------------------------------
+async function phaseViewAs() {
+  const team = process.argv[3];
+  if (!team) throw new Error("viewas <team|own>");
+  const r = await must("millie", "POST", "/api/auth/active-team", { team: team === "own" ? null : team });
+  log(`viewas: Millie Edwards is on ${r.activeTeam || "her own view"}${r.viewingAsClient ? " (viewing as the client)" : ""}`);
 }
 
 // ---- status -----------------------------------------------------------------
@@ -672,7 +779,7 @@ async function phaseFingerprint(file) {
 
 const PHASES = {
   logins: phaseLogins, brief: phaseBrief, viewing: phaseViewing, snapshot: phaseSnapshot, offer: phaseOffer, hots: phaseHots,
-  issue: phaseIssue, recommendation: phaseRecommendation, solicitors: phaseSolicitors, status: phaseStatus, reset: phaseReset, tidy: phaseTidy,
+  issue: phaseIssue, recommendation: phaseRecommendation, solicitors: phaseSolicitors, informed: phaseInformed, viewas: phaseViewAs, status: phaseStatus, reset: phaseReset, tidy: phaseTidy,
   fingerprint: () => phaseFingerprint(process.argv[3]),
 };
 

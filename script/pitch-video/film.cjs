@@ -22,10 +22,18 @@ const BLUEWATER = "23b98b43-c5a4-4c16-9eaa-a674f7139749";
 const BK_ROW = "b553225f-f020-4845-a86c-c67fabe6128f";
 const BK_UNIT = "c0868396-f74b-4661-83e1-ebf7c6bcb062";
 const JERSEY_MIKES = "226e6ac9-a1e2-4a7c-8210-e35d87f2df0d";
-const LEASING = "mark.warne@landsec.com";
+const FLAT_IRON = "13d9eed1-1ccb-4b5e-b023-c2714eb3ea9b";
+const LEASING = "jonny.rushton@landsec.com";   // Jonny Rushton, Portfolio Leasing Manager: the login the Landsec scenes are filmed as
 const BK_DEAL = "8f3b56ee-65dc-4d8e-87da-1ae9c5b02bfe";
-// Mark Warne as a person on the unit's Targeting Brief (the staging script makes it).
-const MARK_PERSON = process.env.MARK_PERSON || "6dc4bf3b-6ac3-43fe-ab7b-bd542bae5401";
+// Jonny Rushton as a person on the unit's Targeting Brief. The staging script
+// makes the brief, and a brief made again gives its people new ids, so each
+// scene reads the id from the brief itself (briefPerson, below).
+const LEASING_NAME = "Jonny Rushton";
+// Will Harvey, the senior asset manager, on the same brief. Agreeing the Heads
+// of Terms and the decision on the recommendation are his, so those two scenes
+// are filmed as him.
+const ASSET = "will.harvey@landsec.com";
+const ASSET_NAME = "Will Harvey";
 
 // The phone scenes (staged by stage-phone.cjs). The Liverpool ONE unit that is
 // shared on film, and the photos added on film: PHONE_PHOTOS is a comma
@@ -34,6 +42,20 @@ const MARK_PERSON = process.env.MARK_PERSON || "6dc4bf3b-6ac3-43fe-ab7b-bd542bae
 const SHARE_UNIT = "134b127e-c128-444e-9ae1-d9189b3947da";
 const PHONE_COMMENT = "Met Richard Willcox after the viewing. Jersey Mike's want the service charge budget and a second look at the frontage.";
 const PHONE_PHOTOS = (process.env.PHONE_PHOTOS || "").split(",").map(f => f.trim()).filter(Boolean);
+
+// The id of a person on the Burger King unit's Targeting Brief, read as the
+// login the scene is filmed as (before the cut starts).
+async function briefPerson(s, name) {
+  const id = await s.page.evaluate(async ({ unit, name }) => {
+    const token = localStorage.getItem("bgp_auth_token");
+    const get = async url => (await fetch(url, { credentials: "include", headers: token ? { Authorization: `Bearer ${token}` } : {} })).json();
+    const brief = await get(`/api/available-units/${unit}/brief`);
+    const ws = brief && brief.id ? await get(`/api/unit-briefs/${brief.id}/workspace`) : null;
+    return ((ws && ws.people) || []).find(p => p.name === name)?.id || null;
+  }, { unit: BK_UNIT, name });
+  if (!id) throw new Error(`${s.name}: ${name} is not on the unit's brief`);
+  return id;
+}
 
 // A BGP staff login has no client colours to wait for (Shot.goto would wait
 // out its whole allowance for them), so the phone scenes open a page here.
@@ -173,7 +195,8 @@ async function replayLogos(context) {
       }
       const body = fs.readFileSync(file);
       if (!body.length) return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
-      return route.fulfill({ status: 200, contentType: fs.readFileSync(file + ".type", "utf8"), body });
+      // Kept by the browser for the session, so a grid of logos seen once is drawn at once the next time.
+      return route.fulfill({ status: 200, contentType: fs.readFileSync(file + ".type", "utf8"), headers: { "cache-control": "private, max-age=3600" }, body });
     } catch { return route.fulfill({ status: 404, contentType: "application/json", body: "{}" }); }
   });
 }
@@ -242,21 +265,98 @@ const SCENES = {
   },
 
   // 6. Jersey Mike's: the brand page and its Expansion score.
+  // Its agent (the Tenant rep line) and its chief executive (Key contacts) are
+  // passed over on the way, under People & checks.
   async brand(s) {
     await s.goto(`/companies/${JERSEY_MIKES}`, 3000);
     await s.start();
+    await s.wait(600);
+    await s.over('text=/Entering UK/', 600);
+    await s.wait(400);
+    await s.click('button:has-text("People & checks")', { before: 250, after: 1100, ms: 700 });
+    // (The Overview stays in the page, hidden, and names him in its Activity card: point at the one that shows.)
+    await s.over('text=Richard Willcox >> visible=true', 700);
+    await s.wait(1300);
+    await s.over('text=Satnam Leihal >> visible=true', 600);
+    await s.wait(1100);
+    await s.click('button:has-text("Expansion")', { before: 250, after: 1800 });
+    await s.wait(500);
+    await s.scroll(300, 1600);
     await s.wait(1500);
-    await s.over('text=/Entering UK/', 800);
+  },
+  // The brands a Landsec login is given (Woody, 18 November 2026: "it gives access to brands ... say add
+  // Flat Iron and then show it populating the brand page ... of course Flat Iron is already on there along
+  // with hundreds of other brands"). The count and the directory, then Add brand: the app answers that Flat
+  // Iron is already in the CRM, and its page opens from there. Nothing is created.
+  async brands(s) {
+    // Everything the cut shows is read once before it starts (the brand's page, the directory, the
+    // Food & Drink market view), so nothing is seen loading on film.
+    await s.goto(`/companies/${FLAT_IRON}`, 3000);
+    await s.goto("/brands?tab=explorer", 5000);
+    await s.page.locator('button:has-text("Food & Drink")').first().click();
+    await s.wait(3500);
+    // Back to All Brands (pressing a tile again takes it off), so the cut opens on the whole directory.
+    if (await s.page.locator('button:has-text("All Food & Drink")').count()) await s.page.locator('button:has-text("Food & Drink")').first().click();
     await s.wait(1200);
-    await s.click('button:has-text("Expansion")', { after: 2500 });
+    if (await s.page.locator('button:has-text("All Food & Drink")').count()) throw new Error("brands: the directory did not go back to All Brands");
+    await s.page.locator('button:has-text("Overview")').first().click();
+    await s.wait(1800);
+    // The page under the pointer, moved evenly: the wheel is slow and uneven over a grid of this many logos.
+    const glide = (dy, ms) => s.page.evaluate(([x, y, dy, ms]) => new Promise(done => {
+      let el = document.elementFromPoint(x, y);
+      while (el && !(el.scrollHeight > el.clientHeight + 50 && /(auto|scroll)/.test(getComputedStyle(el).overflowY))) el = el.parentElement;
+      el = el || document.scrollingElement;
+      const y0 = el.scrollTop, t0 = performance.now();
+      const step = now => { const k = Math.min(1, (now - t0) / ms), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; el.scrollTop = y0 + dy * e; if (k < 1) requestAnimationFrame(step); else done(); };
+      requestAnimationFrame(step);
+    }), [s.x, s.y, dy, ms]);
+    await s.start();
+    await s.wait(500);
+    await s.over('text=/categorised brands/i', 700);
+    await s.wait(1100);
+    await s.click('button:has-text("Brand Explorer")', { before: 250, after: 900, ms: 700 });
+    await s.over('text=/^[0-9],[0-9]{3}$/ >> visible=true', 500);
+    await s.wait(800);
+    // Food & Drink: its market view, then down past the first rows to the grid of brands.
+    await s.click('button:has-text("Food & Drink")', { before: 250, after: 1800, ms: 700 });
+    await s.moveTo(820, 520, 500);
+    await glide(1372, 1300);
+    await s.wait(900);
+    await glide(700, 2600);
+    await s.wait(600);
+    await glide(-2072, 1100);
+    await s.wait(300);
+    await s.click('[data-testid="client-add-brand"]', { before: 300, after: 900, ms: 800 });
+    await s.click('[data-testid="client-add-brand-search"]', { before: 150, after: 250, ms: 400 });
+    await s.type("Flat Iron", 120);
+    await s.wait(1400);
+    await s.over('text=/already in your CRM/', 600);
+    await s.wait(1300);
+    await s.click(`[data-testid="client-open-brand-${FLAT_IRON}"]`, { before: 300, after: 600, ms: 500 });
+    await s.page.waitForURL(new RegExp(`/companies/${FLAT_IRON}`), { timeout: 20000 });
+    await s.moveTo(1150, 330, 350);     // off the conversation line, which opens its prompts under a resting pointer
+    await s.page.locator('text=/Backed by/ >> visible=true').first().waitFor({ state: "visible", timeout: 20000 });
     await s.wait(1500);
-    await s.scroll(300, 2000);
-    await s.wait(2500);
+    await s.over('text=/Backed by/ >> visible=true', 800);
+    await s.wait(1300);
+    await s.click('button:has-text("Stores & menu")', { before: 250, after: 2500, ms: 700 });
+    await s.moveTo(760, 640, 700);
+    await s.wait(900);
+    await s.click('button:has-text("Expansion")', { before: 250, after: 1500, ms: 700 });
+    await s.over('text=/Store count/i >> visible=true', 700);
+    await s.wait(1400);
+    await s.click('button:has-text("People & checks")', { before: 250, after: 1300, ms: 700 });
+    await s.over('text=Tom Byng >> visible=true', 700);
+    await s.wait(1900);
   },
 
   // 7. The Targeting Brief: the Landsec leasing manager agrees it.
   async brief(s) {
     await s.goto(`/deals/letting?propertyId=${BLUEWATER}`, 3000);
+    // The People tab also offers "the usual team for this scheme" from the app's
+    // team sheet, which is older than this cast: it is left out of the picture.
+    await s.page.addStyleTag({ content: '[data-testid="brief-people-suggested"]{display:none!important}' });
+    const person = await briefPerson(s, LEASING_NAME);
     await s.page.locator(`[data-testid="row-unit-${BK_UNIT}"]`).scrollIntoViewIfNeeded().catch(() => {});
     await s.wait(800);
     await s.start();
@@ -268,7 +368,7 @@ const SCENES = {
     await s.wait(1800);
     await s.click('[data-testid="brief-tab-people"]', { after: 1800 });
     await s.wait(1500);
-    await s.click(`[data-testid="brief-person-agree-${MARK_PERSON}"]`, { before: 700, after: 2500 });
+    await s.click(`[data-testid="brief-person-agree-${person}"]`, { before: 700, after: 2500 });
     await s.over('[data-testid="brief-approval-status"]', 800).catch(() => {});
     await s.wait(2500);
   },
@@ -293,9 +393,10 @@ const SCENES = {
     await s.wait(1500);
   },
 
-  // 9a. Heads of Terms on the scheme's own form; the leasing manager signs off.
+  // 9a. Heads of Terms on the scheme's own form; the senior asset manager signs off.
   async hots(s) {
     await s.goto(`/deals/letting?propertyId=${BLUEWATER}`, 3000);
+    const person = await briefPerson(s, ASSET_NAME);
     await s.page.locator(`[data-testid="row-unit-${BK_UNIT}"]`).scrollIntoViewIfNeeded().catch(() => {});
     await s.wait(800);
     await s.start();
@@ -303,7 +404,7 @@ const SCENES = {
     await s.over('[data-testid="hots-draft-text"]', 800, { fy: 0.3 }).catch(() => {});
     await s.scroll(500, 3000);
     await s.wait(1500);
-    await s.click(`[data-testid="hots-agree-${MARK_PERSON}"]`, { before: 700, after: 3000 });
+    await s.click(`[data-testid="hots-agree-${person}"]`, { before: 700, after: 3000 });
     await s.wait(1500);
   },
 
@@ -328,6 +429,7 @@ const SCENES = {
   // 10. The recommendation in Landsec's template, then the diary.
   async recommendation(s) {
     await s.goto(`/deals/letting?unit=${BK_UNIT}&recommendation=1`, 3000);
+    const person = await briefPerson(s, ASSET_NAME);
     await s.page.locator('[data-testid="recommendation-dialog"]').waitFor({ state: "visible", timeout: 20000 });
     await s.start();
     await s.over('[data-testid="recommendation-dialog"]', 800, { fy: 0.3 });
@@ -336,7 +438,7 @@ const SCENES = {
     await s.wait(1500);
     await s.scroll(600, 3000);
     await s.wait(1200);
-    await s.click(`[data-testid="recommendation-approve-${MARK_PERSON}"]`, { before: 700, after: 3000 }).catch(() => {});
+    await s.click(`[data-testid="recommendation-approve-${person}"]`, { before: 700, after: 3000 }).catch(() => {});
     await s.wait(1200);
     await s.wait(1500);
   },
@@ -348,6 +450,21 @@ const SCENES = {
     await s.wait(800);
     await s.moveTo(1180, 420, 1000);
     await s.wait(4500);
+  },
+
+  // 10d. The people kept informed (a Landsec login that signs nothing): she
+  // reads the conversation, where two of them have commented, and the task she
+  // set for BGP's lead agent is on her Tasks page under Assigned by me.
+  async informed(s) {
+    await s.goto(`/properties/${BLUEWATER}`, 3500);
+    await s.start();
+    await s.wait(700);
+    await s.moveTo(1180, 440, 900);
+    await s.wait(3600);
+    await s.goto("/tasks", 2500);
+    await s.click('[data-testid="filter-assigned-by-me"]', { before: 400, after: 1500 });
+    await s.over('text=/fit-out programme/', 900, { fx: 0.3 });
+    await s.wait(3200);
   },
 
   // 1b. The phone: the same app in the hand (filmed at phone size).
@@ -546,7 +663,13 @@ const SCENES = {
 const SCENE_SETUP = {
   phone: { phone: true },
   agent: { user: "david.bell@jointagent.demo" },
-  phoneAsk: { phone: true, user: "mark.warne@landsec.com" },
+  phoneAsk: { phone: true, user: LEASING },
+  informed: { user: "becs.blenkinsop@landsec.com" },
+  // The offer is typed by BGP's lead agent in the Landsec workspace (the staging
+  // script switches her to it first: stage-letting.cjs viewas Landsec).
+  offer: { user: "millie@brucegillinghampollard.com" },
+  hots: { user: ASSET },
+  recommendation: { user: ASSET },
   phoneCall: { phone: true, user: "md" },
   phoneComment: { phone: true, user: "md" },
   phonePhotos: { phone: true, user: "md" },

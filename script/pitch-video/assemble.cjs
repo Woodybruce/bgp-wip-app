@@ -31,7 +31,7 @@ const ORDER = [
   { clip: "recommendation", mark: true, max: 31, voice: "The recommendation arrives in your own template, with Net Effective Rent worked out against ERV and the brief." },
   { clip: "calendar", speed: 1, voice: "Viewings, meetings and tasks sit in one place." },
   { clip: "conversation", speed: 1, voice: "So does the conversation on each property, for you and for every agent on the instruction." },
-  { clip: "tinker", speed: 1, voice: "You also asked how we work with the other agents on the panel. Here comes one now. This is David Bell. We call him Tinker Bell. And yes, we do like him." },
+  { clip: "tinker", speed: 1, voice: "You also asked how we work with the other agents on the panel. Here comes one now. This is David Bell. And yes, we do like him." },
   { clip: "agent", voice: "David gets his own login, with his schemes and nothing else. The same tracker, the same checklist, the same conversation. So you see one version of every deal, whoever did the work." },
   { card: "13  Woody walking, phone in hand", note: "To be filmed", secs: 3,
     voice: "And it all goes with you." },
@@ -41,7 +41,7 @@ const ORDER = [
   { clip: "phonePhotos", phone: true, speed: 2.6, voice: "Add the photos from the opening." },
   { clip: "phoneShare", phone: true, speed: 2.8, voice: "And send him a unit on another scheme, there and then." },
   { card: "14  Woody closes, still walking", note: "To be filmed: he looks up from the phone", secs: 7,
-    voice: "That is one unit at one scheme. It runs the same way across all fourteen, so our time goes on brands and deals, not on chasing updates. We'd love to run it with you." },
+    voice: "That's it. It runs the same way across all fourteen schemes, so our time goes on brands and deals, not on chasing updates. We think this will help join up the deal process, and allow everyone to come along the journey, make comments and interact as we go through every element of the leasing process." },
 ];
 
 const log = fs.existsSync(path.join(OUT, "film.log")) ? fs.readFileSync(path.join(OUT, "film.log"), "utf8") : "";
