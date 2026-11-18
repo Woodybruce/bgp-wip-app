@@ -257,9 +257,10 @@ const SCENES = {
     await s.over('text=/Entering UK/', 600);
     await s.wait(400);
     await s.click('button:has-text("People & checks")', { before: 250, after: 1100, ms: 700 });
-    await s.over('text=Richard Willcox', 700);
+    // (The Overview stays in the page, hidden, and names him in its Activity card: point at the one that shows.)
+    await s.over('text=Richard Willcox >> visible=true', 700);
     await s.wait(1300);
-    await s.over('text=Satnam Leihal', 600);
+    await s.over('text=Satnam Leihal >> visible=true', 600);
     await s.wait(1100);
     await s.click('button:has-text("Expansion")', { before: 250, after: 1800 });
     await s.wait(500);

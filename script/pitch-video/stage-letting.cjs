@@ -15,7 +15,7 @@
 //                   (agreeing the terms sits with the senior asset manager and Millie:
 //                   his sign-off is the one pressed on film)
 //   issue           Will agrees, HOTs issued (unit to HOTs), deal checklist started
-//   recommendation  drafted and issued by Millie; the Landsec decision is left open
+//   recommendation  drafted and issued by Millie; Jonny approves; Will's decision is left open
 //   informed        the three Landsec people who are kept informed (Gemma Casey,
 //                   Becs Blenkinsop, Mark Warne: logins with no Landsec role),
 //                   their two comments in the property's conversation and the
@@ -509,6 +509,13 @@ async function phaseRecommendation() {
     ws = await must("millie", "POST", `/api/unit-recommendations/${UNIT}/issue`, {});
     step(true, `issued by ${ws.issuedByName}${ws.emailReason ? `  [no email sent: ${ws.emailReason}]` : ""}`);
   } else step(false, `issued by ${ws.issuedByName}`);
+  // The leasing manager approves here. The senior asset manager's decision, the
+  // one that settles it, is left open: it is pressed on film.
+  ws = await must("jonny", "GET", `/api/unit-recommendations/${UNIT}`);
+  if (!ws.deciders.find(d => d.isMe)?.decision) {
+    ws = await must("jonny", "POST", `/api/unit-recommendations/${UNIT}/decide`, { decision: "approved", version: ws.version });
+    step(true, "Jonny Rushton approved the recommendation");
+  } else step(false, "Jonny Rushton has given his decision");
   ws = await must("jonny", "GET", `/api/unit-recommendations/${UNIT}`);
   log(`  check (as Jonny Rushton): stage ${ws.stage}; version ${ws.version}; ${ws.terms.tenant}, £${ws.terms.rentPa} a year, ${ws.terms.termYears} years; net effective £${ws.measure.nerPa}; ${ws.measure.headlineVsErvPct}% of ERV; deciders ${ws.deciders.map(d => `${d.name} ${d.decision || "not decided"}`).join(", ")}; Jonny can decide: ${ws.viewer.canDecide}`);
 }
