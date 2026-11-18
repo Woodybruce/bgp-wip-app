@@ -22,7 +22,7 @@ export const AML_STAGE_LABEL: Record<AmlStage, string> = {
   expired: "Expired",
 };
 
-export type AmlBucket = "todo" | "in_progress" | "done" | "expiring" | "not_due";
+export type AmlBucket = "todo" | "in_progress" | "done" | "expiring" | "not_due" | "closed";
 
 export const AML_BUCKETS: Array<{ key: AmlBucket; label: string }> = [
   { key: "todo", label: "To do" },
@@ -30,6 +30,9 @@ export const AML_BUCKETS: Array<{ key: AmlBucket; label: string }> = [
   { key: "done", label: "Done" },
   { key: "expiring", label: "Expiring" },
   { key: "not_due", label: "Not due yet" },
+  // A completed or invoiced deal whose party was never approved or rejected:
+  // a past gap for the MLRO to see, not work on the To do list.
+  { key: "closed", label: "Closed, not checked" },
 ];
 
 /** An approval this close to its re-check date is Expiring. */
@@ -45,6 +48,11 @@ export interface AmlPartyFacts {
   clientSentAt: string | Date | null;  // the latest client checks request on this deal (not cancelled)
   clientFinishedAt: string | Date | null;
   kyc4uOpen: boolean;                  // raised with KYC4U on this deal and not answered
+  // KYC4U's own latest status for the party (the company that signs when its
+  // state is read from it, else the brand) reads as still with them. An
+  // "in review" left by the in-app AML retired in October 2026 is not:
+  // on live on 18 November 2026, 552 of 615 such parties had no KYC4U request.
+  kyc4uInReview: boolean;
 }
 
 const time = (v: string | Date | null | undefined): number | null => {
@@ -62,7 +70,7 @@ export function amlStage(f: AmlPartyFacts, now: Date = new Date()): AmlStage {
     if (until !== null && until - now.getTime() <= AML_EXPIRING_DAYS * 86400000) return "expiring";
     return "approved";
   }
-  if (f.kyc4uOpen || f.kyc.status === "in_review") return "with_kyc4u";
+  if (f.kyc4uOpen || (f.kyc.status === "in_review" && f.kyc4uInReview)) return "with_kyc4u";
   if (time(f.clientFinishedAt) !== null) return "client_finished";
   if (time(f.clientSentAt) !== null) return "client_sent";
   const pre = time(f.precheckAt);
@@ -80,8 +88,17 @@ export function amlDue(role: string, dealStatus: string | null): boolean {
   return FROM_HOTS.has(legacyToCode(dealStatus || "") || "");
 }
 
-export function amlBucket(stage: AmlStage, due: boolean): AmlBucket {
+/** The deal has completed or been invoiced. */
+export function amlDealClosed(dealStatus: string | null): boolean {
+  const code = legacyToCode(dealStatus || "") || "";
+  return code === "COM" || code === "INV";
+}
+
+export function amlBucket(stage: AmlStage, due: boolean, closed = false): AmlBucket {
   if (stage === "approved" || stage === "rejected") return "done";
+  // On a closed deal a party approved at the time stays Done, however long
+  // ago; one never decided is a gap of its own.
+  if (closed) return stage === "expiring" || stage === "expired" ? "done" : "closed";
   if (stage === "expiring" || stage === "expired") return "expiring";
   if (stage === "client_sent" || stage === "client_finished" || stage === "with_kyc4u") return "in_progress";
   return due ? "todo" : "not_due";
@@ -134,7 +151,7 @@ export interface AmlDashboardRow {
 
 /** The pills' counts, from the rows shown. */
 export function bucketCounts(rows: Pick<AmlDashboardRow, "bucket">[]): Record<AmlBucket, number> {
-  const out: Record<AmlBucket, number> = { todo: 0, in_progress: 0, done: 0, expiring: 0, not_due: 0 };
+  const out: Record<AmlBucket, number> = { todo: 0, in_progress: 0, done: 0, expiring: 0, not_due: 0, closed: 0 };
   for (const r of rows) out[r.bucket]++;
   return out;
 }

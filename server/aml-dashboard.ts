@@ -18,7 +18,7 @@ import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, isDealPartyRole } from "@shared/deal-parties";
 import { CLOSED_STATUSES, TERMINAL_STATUSES, dealLeftTrackerSql, statusSpellingsFor } from "@shared/deal-status";
-import { amlBucket, amlDue, amlStage, amlWaitingOn, daysSince, type AmlDashboardRow } from "@shared/aml-dashboard";
+import { amlBucket, amlDealClosed, amlDue, amlStage, amlWaitingOn, daysSince, type AmlDashboardRow } from "@shared/aml-dashboard";
 import { dealRedFlags, partyRedFlags } from "@shared/kyc-red-flags";
 import { isPrecheckResult } from "@shared/kyc-prechecks";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
@@ -70,7 +70,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   };
   const none: any[] = [];
   const { loadPartyKyc } = await import("./deal-gates");
-  const [states, companies, investigations, prechecks, tokens, idChecks, drafts, agentUsers] = await Promise.all([
+  const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers] = await Promise.all([
     loadPartyKyc(pool, parties.map(p => ({ role: p.key, brandId: p.brandId, entityId: p.entityId }))),
     read("KYC records", async () => (await pool.query(
       `SELECT id, aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds])).rows, none),
@@ -95,6 +95,19 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
          FROM kyc4u_drafts d LEFT JOIN kyc4u_requests q ON q.list_id = d.request_list_id AND q.item_id = d.request_item_id
         WHERE d.deal_id = ANY($1::varchar[]) AND d.status IN ('queued', 'filled', 'submitted')
           AND d.created_at > now() - interval '180 days'`, [dealIds])).rows, none),
+    // KYC4U's own latest status for each brand and each company that signs,
+    // the KYC4U mirror's reading (the latest row by date, then the latest recorded).
+    read("KYC4U statuses", async () => (await pool.query(
+      `SELECT * FROM (
+         SELECT DISTINCT ON (company_id) 'brand' AS kind, company_id AS id, status FROM kyc4u_requests
+          WHERE company_id = ANY($1::varchar[]) AND list_id NOT LIKE '%:requests'
+          ORDER BY company_id, COALESCE(modified_at_source, created_at_source, synced_at) DESC NULLS LAST, synced_at DESC NULLS LAST) b
+       UNION ALL
+       SELECT * FROM (
+         SELECT DISTINCT ON (trading_entity_id) 'company' AS kind, trading_entity_id AS id, status FROM kyc4u_requests
+          WHERE trading_entity_id = ANY($2::varchar[]) AND list_id NOT LIKE '%:requests'
+          ORDER BY trading_entity_id, COALESCE(modified_at_source, created_at_source, synced_at) DESC NULLS LAST, synced_at DESC NULLS LAST) e`,
+      [brandIds, [...new Set(parties.map(p => p.entityId).filter((x): x is string => !!x))]])).rows, none),
     read("the deals' agents", async () => {
       const ids = [...new Set(deals.flatMap((d: any) => Array.isArray(d.internal_agent_ids) ? d.internal_agent_ids : []).filter(Boolean))];
       return ids.length ? (await pool.query(`SELECT id, name FROM users WHERE id = ANY($1::varchar[])`, [ids])).rows : none;
@@ -128,11 +141,15 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     }).map(f => f.label);
     const openDrafts = drafts.filter((d: any) => String(d.deal_id) === String(p.deal.id) && d.company_id === p.brandId);
     const kyc4uOpen = openDrafts.some((d: any) => !d.request_item_id || kyc4uVerdict(d.request_status) === "in_review");
+    const kyc4uLast = state.source === "company"
+      ? kyc4uLatest.find((k: any) => k.kind === "company" && k.id === p.entityId)
+      : kyc4uLatest.find((k: any) => k.kind === "brand" && k.id === p.brandId);
+    const kyc4uInReview = !!kyc4uLast && kyc4uVerdict(kyc4uLast.status) === "in_review";
     const finished = live.map((t: any) => t.completed_at).filter(Boolean).sort().pop() || null;
     const sent = live.map((t: any) => t.created_at).filter(Boolean).sort().pop() || null;
     const stage = amlStage({
       role: p.role, dealStatus: p.deal.status, kyc: { status: state.status, expiresAt: state.expiresAt },
-      precheckAt: pre?.conducted_at || null, clientSentAt: sent, clientFinishedAt: finished, kyc4uOpen,
+      precheckAt: pre?.conducted_at || null, clientSentAt: sent, clientFinishedAt: finished, kyc4uOpen, kyc4uInReview,
     }, now);
     const due = amlDue(p.role, p.deal.status);
     const allFlags = [...flags, ...(dealFlags.get(String(p.deal.id)) || [])];
@@ -151,7 +168,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       brandName: state.brandName,
       signsAs: state.source === "company" || state.source === "same_company" ? state.name : null,
       stage,
-      bucket: amlBucket(stage, due),
+      bucket: amlBucket(stage, due, amlDealClosed(p.deal.status)),
       due,
       redFlags: allFlags,
       waitingOn: amlWaitingOn(stage, allFlags.length),

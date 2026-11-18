@@ -3436,13 +3436,22 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
 - **One stage rule** (`amlStage`): a decision first (rejected; approved,
   Expiring within `AML_EXPIRING_DAYS` (30) of its re-check date, Expired past
   it), then with KYC4U (a request raised on this deal and not answered, or the
-  party in review), client finished, client checks sent (a request not
-  cancelled), BGP checked (checks before asking in the last 30 days), else not
-  started. **HMRC's timing** (`amlDue`, from `KYC_TIMING`): a landlord or
+  party in review AND KYC4U's own latest status for it, on the company that
+  signs or the brand, still reading as with them: `kyc4uInReview`), client
+  finished, client checks sent (a request not cancelled), BGP checked (checks
+  before asking in the last 30 days), else not started. A bare `in_review`
+  is not with KYC4U: on live on 18 November 2026, 552 of the 615 parties
+  first shown as With KYC4U had no KYC4U request at all (169 of them
+  Landsec's, 65 Hammerson's), their status left by the in-app AML retired in
+  October. **HMRC's timing** (`amlDue`, from `KYC_TIMING`): a landlord or
   seller on any live deal, a tenant or buyer from Heads of Terms. **Pills**
   (`amlBucket`): To do (due, not started or only BGP checked), In progress
   (client sent or finished, with KYC4U), Done (approved or rejected), Expiring
-  (expiring or expired), Not due yet. **Waiting on** (`amlWaitingOn`) and the
+  (expiring or expired), Not due yet, and **Closed, not checked**
+  (`amlDealClosed`: a completed or invoiced deal whose party was never
+  approved or rejected; a party approved at the time stays Done). Closed
+  deals were 271 of the 769 parties To do on live on 18 November 2026: a past
+  gap for the MLRO, not work on the To do list. **Waiting on** (`amlWaitingOn`) and the
   days since anything moved (`daysSince`: the checks, the requests, KYC4U
   drafts, the approval). Mine = the deal's `internal_agent_ids` or names.
 - **The page**: the pills with counts, All / Mine, a search (`rowMatches`), a

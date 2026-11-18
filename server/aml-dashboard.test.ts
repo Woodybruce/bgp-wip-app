@@ -4,14 +4,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  amlBucket, amlDue, amlStage, amlWaitingOn, bucketCounts, daysSince, rowMatches,
+  amlBucket, amlDealClosed, amlDue, amlStage, amlWaitingOn, bucketCounts, daysSince, rowMatches,
   type AmlDashboardRow, type AmlPartyFacts,
 } from "../shared/aml-dashboard";
 
 const now = new Date("2026-11-18T12:00:00Z");
 const facts = (over: Partial<AmlPartyFacts> = {}): AmlPartyFacts => ({
   role: "tenant", dealStatus: "NEG", kyc: { status: null, expiresAt: null },
-  precheckAt: null, clientSentAt: null, clientFinishedAt: null, kyc4uOpen: false, ...over,
+  precheckAt: null, clientSentAt: null, clientFinishedAt: null, kyc4uOpen: false, kyc4uInReview: false, ...over,
 });
 
 test("a party's stage: a decision first, then the furthest step on the way", () => {
@@ -22,7 +22,11 @@ test("a party's stage: a decision first, then the furthest step on the way", () 
   assert.equal(amlStage(facts({ precheckAt: "2026-11-10", clientSentAt: "2026-11-12" }), now), "client_sent");
   assert.equal(amlStage(facts({ clientSentAt: "2026-11-12", clientFinishedAt: "2026-11-14" }), now), "client_finished");
   assert.equal(amlStage(facts({ clientFinishedAt: "2026-11-14", kyc4uOpen: true }), now), "with_kyc4u");
-  assert.equal(amlStage(facts({ kyc: { status: "in_review", expiresAt: null } }), now), "with_kyc4u");
+  assert.equal(amlStage(facts({ kyc: { status: "in_review", expiresAt: null }, kyc4uInReview: true }), now), "with_kyc4u");
+  // An "in review" with nothing at KYC4U (left by the in-app AML retired in
+  // October 2026) is not with KYC4U: the party falls to its furthest real step.
+  assert.equal(amlStage(facts({ kyc: { status: "in_review", expiresAt: null } }), now), "not_started");
+  assert.equal(amlStage(facts({ kyc: { status: "in_review", expiresAt: null }, precheckAt: "2026-11-10" }), now), "bgp_checked");
   assert.equal(amlStage(facts({ kyc4uOpen: true, kyc: { status: "approved", expiresAt: "2027-05-01" } }), now), "approved");
   assert.equal(amlStage(facts({ kyc: { status: "approved", expiresAt: "2026-12-01" } }), now), "expiring");
   assert.equal(amlStage(facts({ kyc: { status: "approved", expiresAt: "2026-11-01" } }), now), "expired");
@@ -53,7 +57,17 @@ test("the pills", () => {
   assert.equal(amlBucket("rejected", false), "done");
   assert.equal(amlBucket("expiring", true), "expiring");
   assert.equal(amlBucket("expired", true), "expiring");
-  assert.deepEqual(bucketCounts([{ bucket: "todo" }, { bucket: "todo" }, { bucket: "done" }]), { todo: 2, in_progress: 0, done: 1, expiring: 0, not_due: 0 });
+  assert.deepEqual(bucketCounts([{ bucket: "todo" }, { bucket: "todo" }, { bucket: "done" }, { bucket: "closed" }]), { todo: 2, in_progress: 0, done: 1, expiring: 0, not_due: 0, closed: 1 });
+  // A completed or invoiced deal: a party never decided is Closed, not checked;
+  // one approved at the time stays Done, even with the approval since run out.
+  assert.ok(amlDealClosed("COM") && amlDealClosed("INV") && amlDealClosed("Invoiced"));
+  assert.ok(!amlDealClosed("SOL") && !amlDealClosed("EXC") && !amlDealClosed(null));
+  assert.equal(amlBucket("not_started", true, true), "closed");
+  assert.equal(amlBucket("client_sent", true, true), "closed");
+  assert.equal(amlBucket("with_kyc4u", true, true), "closed");
+  assert.equal(amlBucket("approved", true, true), "done");
+  assert.equal(amlBucket("expired", true, true), "done");
+  assert.equal(amlBucket("rejected", true, true), "done");
 });
 
 test("who a party waits on", () => {

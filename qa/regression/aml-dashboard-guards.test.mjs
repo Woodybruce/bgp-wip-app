@@ -40,6 +40,13 @@ test('each party is read the deal card\'s way', () => {
   assert.match(feed, /partyRedFlags\(\{/);
   assert.match(feed, /dealRedFlags\(deal\)/);
   assert.match(feed, /SCREENED_INVESTIGATION_SQL/);
+  // With KYC4U only on KYC4U's own word: a request raised on the deal, or
+  // KYC4U's latest status for the party (never a bare in_review).
+  assert.match(feed, /FROM kyc4u_requests\s+WHERE company_id = ANY/);
+  assert.match(feed, /kyc4uInReview = !!kyc4uLast && kyc4uVerdict\(kyc4uLast\.status\) === "in_review"/);
+  assert.match(read('shared/aml-dashboard.ts'), /f\.kyc\.status === "in_review" && f\.kyc4uInReview/);
+  // A closed deal's undecided parties are their own pill, never To do.
+  assert.match(feed, /bucket: amlBucket\(stage, due, amlDealClosed\(p\.deal\.status\)\)/);
   // An investment deal only from Solicitors, as everywhere off the Investment Tracker.
   assert.match(feed, /dealLeftTrackerSql\("d"\)/);
   // It reads; it never writes.
