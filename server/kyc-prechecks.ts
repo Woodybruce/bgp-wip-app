@@ -482,13 +482,17 @@ async function searchWeb(subject: Subject): Promise<WebSearchLine> {
 
 // ── ComplyAdvantage ─────────────────────────────────────────────────────────
 //
-// Its login locks the account after repeated failures, so a refusal is
-// remembered against the keys it was given and not tried again for a day,
-// or until different keys are set (Woody: used "once unblocked and given
-// fresh keys").
+// Mesh, signed in with API credentials (server/comply-advantage.ts). A
+// refused sign-in is remembered against the keys it was given and not tried
+// again for a day, or until different keys are set: the older username and
+// password login locks the account after repeated failures (Woody: used
+// "once unblocked and given fresh keys").
 
 const caKeysHash = (): string => crypto.createHash("sha256")
-  .update(`${process.env.COMPLY_ADVANTAGE_USERNAME || ""}|${process.env.COMPLY_ADVANTAGE_REALM || ""}|${process.env.COMPLY_ADVANTAGE_PASSWORD || ""}`)
+  .update([
+    process.env.COMPLY_ADVANTAGE_ACCESS_KEY, process.env.COMPLY_ADVANTAGE_SECRET,
+    process.env.COMPLY_ADVANTAGE_USERNAME, process.env.COMPLY_ADVANTAGE_REALM, process.env.COMPLY_ADVANTAGE_PASSWORD,
+  ].map(v => v || "").join("|"))
   .digest("hex").slice(0, 16);
 
 async function caRefusal(): Promise<{ at: string; message: string } | null> {
@@ -510,21 +514,23 @@ async function screenComplyAdvantage(subjects: Subject[]): Promise<KycPrecheckRe
   const refused = await caRefusal();
   if (refused) return { ran: false, lines: [], skipped: `ComplyAdvantage refused BGP's login on ${shortDate(refused.at)} (${refused.message}); it is tried again when new keys are set, or after a day` };
   try {
-    const results = await withTimeout(screenNames(subjects.map(s => ({ name: s.name, role: s.role }))), 120_000, "ComplyAdvantage");
+    const results = await withTimeout(screenNames(subjects.map(s => ({
+      name: s.name, role: s.role, kind: s.person ? "person" as const : "company" as const, birthYear: s.dobYear,
+    }))), 120_000, "ComplyAdvantage");
     const lines: ProviderLine[] = results.map(r => ({
       name: r.name, status: r.status === "error" ? "error" : r.status === "clear" ? "clear" : "possible",
-      types: [...new Set((r.matches || []).map(m => String(m.matchType || "")).filter(Boolean))], detail: r.error ? clean(r.error, 160) : null,
+      types: [...new Set((r.matches || []).map(m => String(m.matchType || "")).filter(Boolean))],
+      detail: r.error ? clean(r.error, 160)
+        : r.setAside ? `${r.setAside} matched profile${r.setAside === 1 ? "" : "s"} set aside: a different date of birth` : null,
     }));
     if (lines.length && lines.every(l => l.status === "error")) {
       const message = lines[0].detail || "every screen failed";
-      if (/40[13]|429|auth/i.test(message)) await noteCaRefusal(message);
+      if (results.some(r => r.errorKind === "sign_in")) await noteCaRefusal(message);
       return { ran: false, lines: [], skipped: `ComplyAdvantage did not screen anyone (${message})` };
     }
     return { ran: true, lines, skipped: null };
   } catch (e: any) {
-    const message = words(e);
-    if (/auth|40[13]|429|blocked/i.test(message)) await noteCaRefusal(message);
-    return { ran: false, lines: [], skipped: `ComplyAdvantage did not answer (${message})` };
+    return { ran: false, lines: [], skipped: `ComplyAdvantage did not answer (${words(e)})` };
   }
 }
 

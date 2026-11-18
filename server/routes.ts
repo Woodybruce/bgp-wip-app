@@ -4410,18 +4410,16 @@ export async function registerRoutes(
     }
   });
 
-  // ComplyAdvantage diagnostic — probes several candidate search-endpoint
-  // URLs and reports which return non-405 responses. The current `/v2/searches`
-  // path 405s every time at nginx level; this helps pinpoint the new path
-  // without guessing.
-  app.get("/api/comply-advantage/probe", requireAuth, async (req, res) => {
+  // ComplyAdvantage Mesh connection check (admins; 2026-11-18): signs in and
+  // reads the screening configurations, so it creates nothing in Mesh and
+  // costs no screen. Outside /api/comply-advantage on purpose: BGP's checks
+  // before asking use ComplyAdvantage while in-app AML is retired.
+  app.get("/api/admin/comply-advantage/check", requireAuth, requireAdmin, async (_req, res) => {
     try {
-      const { probeComplyAdvantage } = await import("./comply-advantage");
-      const testName = String(req.query.name || "John Smith");
-      const results = await probeComplyAdvantage(testName);
-      res.json({ probed: results.length, results });
+      const { checkComplyAdvantage } = await import("./comply-advantage");
+      res.json(await checkComplyAdvantage());
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ ok: false, message: err?.message || "The check failed" });
     }
   });
 

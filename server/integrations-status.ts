@@ -60,9 +60,12 @@ const KEYS: KeyDef[] = [
   // KYC / AML
   { name: "VERIFF_API_KEY", label: "Veriff API Key", group: "KYC", fallbacks: ["VERIFF_PUBLIC_KEY", "VERIFF_KEY", "VERIFF_INTEGRATION_ID"] },
   { name: "VERIFF_SECRET", label: "Veriff Secret", group: "KYC", fallbacks: ["VERIFF_PRIVATE_KEY", "VERIFF_SHARED_SECRET"] },
-  { name: "COMPLY_ADVANTAGE_USERNAME", label: "ComplyAdvantage Username", group: "KYC" },
-  { name: "COMPLY_ADVANTAGE_PASSWORD", label: "ComplyAdvantage Password", group: "KYC" },
-  { name: "COMPLY_ADVANTAGE_REALM", label: "ComplyAdvantage Realm", group: "KYC" },
+  { name: "COMPLY_ADVANTAGE_ACCESS_KEY", label: "ComplyAdvantage Mesh API access key", group: "KYC" },
+  { name: "COMPLY_ADVANTAGE_SECRET", label: "ComplyAdvantage Mesh API secret", group: "KYC" },
+  { name: "COMPLY_ADVANTAGE_SCREENING_CONFIG_ID", label: "ComplyAdvantage screening configuration (optional)", group: "KYC" },
+  { name: "COMPLY_ADVANTAGE_USERNAME", label: "ComplyAdvantage Username (older login, used without API keys)", group: "KYC" },
+  { name: "COMPLY_ADVANTAGE_PASSWORD", label: "ComplyAdvantage Password (older login)", group: "KYC" },
+  { name: "COMPLY_ADVANTAGE_REALM", label: "ComplyAdvantage Realm (older login)", group: "KYC" },
 
   // Web search / research
   { name: "PERPLEXITY_API_KEY", label: "Perplexity", group: "Research", fallbacks: ["PERPLEXITY_API", "PERPLEXITY API", "PERPLEXITY"] },

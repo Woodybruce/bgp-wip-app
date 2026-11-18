@@ -3049,10 +3049,13 @@ Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
   ordinary disputes or a past insolvency); a finding is kept only when its
   link is on a site the search actually read (`checkWebAnswer`), and anything
   said without one is only counted. ComplyAdvantage: used when its keys are
-  set; a refused login is remembered against a hash of the keys
-  (`system_settings.kyc_precheck_ca_refusal`) and not tried again for a day
-  or until different keys are set, because repeated logins keep its account
-  locked. ComplyAdvantage was blocked (429) on 17 November 2026.
+  set, through the Mesh client (next section), with each subject sent as a
+  person or a company and a person's year of birth; a refused sign-in (and
+  only that: `errorKind === "sign_in"`) is remembered against a hash of the
+  keys (`system_settings.kyc_precheck_ca_refusal`) and not tried again for a
+  day or until different keys are set, because the older login's repeated
+  failures keep its account locked. ComplyAdvantage was blocked (429) on
+  17 November 2026.
 - **Stored** as a `kyc_investigations` row (`result.kind = 'precheck'`, with
   `sanctionsScreening` so it counts as a screening; `sanctions_match` true,
   false, or null when the lists could not be loaded), a `kyc_audit_log` line
@@ -3119,6 +3122,73 @@ Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
   Companies House record itself, sanctions screening of officers' other
   appointments, a check that a listed market abroad is equivalent, and reading
   trusts, partnerships or charities as anything but a company.
+
+## ComplyAdvantage Mesh (Woody, 2026-11-18)
+
+Woody: "need to get the API for comply back up and running". The client
+(`server/comply-advantage.ts`, tests `server/comply-advantage.test.ts`, in
+`npm test`) had never screened anyone: it posted to `/v2/searches`, an older
+ComplyAdvantage address Mesh does not have (it answered 405), and signed in
+with the username and password whose failures locked the account. Rebuilt
+from Mesh's own documentation (docs.mesh.complyadvantage.com, read
+18 November 2026):
+
+- **Sign-in**: API credentials, `COMPLY_ADVANTAGE_ACCESS_KEY` and
+  `COMPLY_ADVANTAGE_SECRET` (made in Mesh: Settings > Access Management > API
+  Credentials), exchanged at `POST /v3/token`, Mesh's recommended way. The
+  token lasts a day with no refresh; a new one is taken an hour early. The
+  older `COMPLY_ADVANTAGE_USERNAME` / `PASSWORD` / `REALM` (`POST /v2/token`)
+  is used only when no API credentials are set. A refused sign-in (400, 401,
+  403 or 429) pauses every sign-in with those keys: 15 minutes, an hour for
+  the older login's 429 lockout, 5 minutes for API keys' 429 (Mesh's ordinary
+  rate limit). New keys start afresh at once.
+- **Screening**: `POST /v2/workflows/sync/create-and-screen?last_sync_step=ALERTING`.
+  A person goes as `person.full_name` (a register's "DOE, Jane" turned round,
+  a leading Mr or Mrs dropped), a company as `company.legal_name`, a subject
+  of unknown kind as Mesh's `undefined.name` (`subjectKind`: the caller's
+  kind, else a corporate word, else a person's role). Ongoing monitoring is
+  off (`monitoring.entity_screening.enabled: false`): the app screens again
+  when it needs to. `COMPLY_ADVANTAGE_SCREENING_CONFIG_ID` names the screening
+  configuration (optional; without it Mesh chooses).
+- **One Mesh customer per name per London day** (`meshExternalId`:
+  `bgp-<p|c|u>-<hash of kind, name, year of birth>-<yyyymmdd>`), never a CRM
+  id. The same name the same day answers 409 or the first screen's result;
+  a 409 reads the workflow its body names (`GET /v2/workflows/:id`), else the
+  name is screened under a fresh record. **Every screen is a customer record
+  and a search on BGP's Mesh contract, and every hit opens a case in Mesh**
+  for someone to close there; nothing in the app closes it.
+- **The answer**: `step_details["customer-screening"].step_output`:
+  `NO_PROFILES` is clear, `HAS_PROFILES` a possible match with Mesh's
+  `aml_types` read as sanctions, pep, adverse_media, warning or
+  fitness_probity (`amlKind`). A hit's matched profiles are read from its
+  alerts (`GET /v2/alerts/:id/risks`, up to two alerts): one match per kind
+  per profile, with the matched name, the list or source name, and the score
+  only when it is between 0 and 1 (Mesh does not document its scale, and the
+  KYC screens read 0.9 and above as strong). A person's profile whose every
+  date of birth is more than a year from the subject's is set aside
+  (`setAside`), the free lists' rule; all set aside is clear. A screen Mesh
+  skipped (risk rated prohibited) or did not finish is an error, never
+  clear; profiles that cannot be read fall back to the `aml_types`.
+- **Calls**: four screens at a time; a refused token is replaced once, a 429
+  waited out twice (Retry-After), a server error retried once. A 403 (the
+  login lacks "Create and screen customers"), 404 or 405 stops the batch and
+  pauses screening for 10 minutes. `screenNames` never throws: a screen that
+  did not run is an `error` line with `errorKind`.
+- **Connection check** (reads only, creates nothing in Mesh):
+  `checkComplyAdvantage`, behind `GET /api/admin/comply-advantage/check`
+  (admins) and the ComplyAdvantage card of **Test Apollo / Xero / CH /
+  ComplyAdvantage** on Subscriptions & APIs (`/subscriptions`, Admin; the
+  ping always ran it, the page now shows it): signs in and lists the
+  screening configurations, and says whether the one named on Railway is
+  among them. The old `/api/comply-advantage/probe`, which posted test
+  searches to seven addresses for any login, is gone.
+- Callers: BGP's checks before asking (`server/kyc-prechecks.ts`, live while
+  in-app AML is off), and with in-app AML on, the KYC orchestrator, KYC
+  Clouseau and the weekly re-screen job. Not run against Mesh from a build
+  machine (no keys here): the first real answer comes once API credentials
+  are on Railway. Not built: closing Mesh cases from the app, Mesh's
+  webhooks, passing a date of birth or country to Mesh (a partial date may
+  be refused; the year is used to set profiles aside instead).
 
 ## Emails come from chatbgp.app (Woody, 2026-11-17)
 
