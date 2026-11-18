@@ -103,7 +103,7 @@ function lineAudio(item, file, secs, lead) {
 const SFX = {
   pop: v => `aevalsrc='${(0.22 * v).toFixed(3)}*sin(2*PI*(620-1500*t)*t)*exp(-30*t)':d=0.16:s=48000`,
   chime: v => `aevalsrc='${(0.11 * v).toFixed(3)}*(sin(2*PI*1319*t)*exp(-6*t)+gt(t,0.09)*sin(2*PI*1568*(t-0.09))*exp(-6*(t-0.09))+gt(t,0.18)*sin(2*PI*2093*(t-0.18))*exp(-5*(t-0.18)))':d=1.3:s=48000`,
-  whoosh: v => `anoisesrc=d=0.8:c=pink:a=${(0.3 * v).toFixed(3)}:r=48000,bandpass=f=1100:w=900,afade=t=in:d=0.35,afade=t=out:st=0.35:d=0.45`,
+  whoosh: v => `anoisesrc=d=0.8:c=pink:a=${(0.3 * v).toFixed(3)}:r=48000,bandpass=f=1100:w=900,volume=26dB,afade=t=in:d=0.35,afade=t=out:st=0.35:d=0.45`,
 };
 function withSounds(item, wav, secs) {
   const list = (item.sfx || []).filter(x => SFX[x.kind] && x.t >= 0 && x.t < secs);
@@ -185,8 +185,8 @@ function mouthOf(file, secs) {
       const mouth = heroVoice && fs.existsSync(heroVoice) ? (() => { const padded = path.join(tmp, "hero-voice.wav"); ff(["-i", heroVoice, "-af", "adelay=1700|1700,apad", "-t", String(secs), "-ar", "48000", "-ac", "2", padded]); return mouthOf(padded, secs); })() : [];
       if (stage) await stage.render({ ...cast, mode: "hero", full: true, fps: FPS, secs, logo, mouth, flyAt: item.flyAt }, pic);
       else ff(["-f", "lavfi", "-i", `color=c=0x0b0d1e:s=1920x1080:r=${FPS}:d=${secs}`, ...OUTV, pic]);
-      // A rush of air as he goes, made from filtered noise.
-      const whoosh = `anoisesrc=d=1.6:c=pink:a=0.5,bandpass=f=900:w=700,afade=t=in:d=0.5,afade=t=out:st=0.7:d=0.9,adelay=${Math.round(item.flyAt * 1000 - 200)}|${Math.round(item.flyAt * 1000 - 200)},apad[w]`;
+      // A rush of air as he goes, made from filtered noise (lifted 26dB: band-passed noise is very quiet), and a chime as the title lands.
+      const whoosh = `anoisesrc=d=1.6:c=pink:a=0.5,bandpass=f=900:w=700,volume=26dB,afade=t=in:d=0.5,afade=t=out:st=0.7:d=0.9,adelay=${Math.round(item.flyAt * 1000 - 200)}|${Math.round(item.flyAt * 1000 - 200)},apad[w0];${SFX.chime(0.8)},aformat=channel_layouts=stereo,adelay=${Math.round(item.flyAt * 1000 + 800)}:all=1,apad[w1];[w0][w1]amix=inputs=2:normalize=0[w]`;
       const voiceIn = mouth.length ? ["-i", path.join(tmp, "hero-voice.wav")] : ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"];
       ff(["-i", pic, ...voiceIn, "-filter_complex", `[0:v]${["fade=t=in:d=0.5", `fade=t=out:st=${(secs - 0.7).toFixed(2)}:d=0.7`, ...captions(item.text, 4.2, { delay: 1.7, y0: 990 })].join(",")}[v];${whoosh};[1:a][w]amix=inputs=2:duration=first:normalize=0[a]`,
         "-map", "[v]", "-map", "[a]", "-t", String(secs), ...OUTV, ...OUTA, file]);
