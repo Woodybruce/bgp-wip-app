@@ -422,8 +422,21 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
   if (!company) throw Object.assign(new Error("Company not found"), { status: 404 });
   const deal = dealId ? (await pool.query(
     `SELECT d.id, d.name, d.deal_ref, d.deal_type, d.target_date, d.internal_agent, d.internal_agent_ids, d.client_contact_id,
-            d.joint_agent_id, d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id, p.name AS property_name, p.address AS property_address
+            d.joint_agent_id, d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id,
+            d.landlord_contact_id, d.tenant_contact_id, d.vendor_contact_id, d.purchaser_contact_id,
+            d.landlord_trading_entity_id, d.tenant_trading_entity_id, d.vendor_trading_entity_id, d.purchaser_trading_entity_id,
+            p.name AS property_name, p.address AS property_address
        FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id WHERE d.id = $1`, [dealId])).rows[0] : null;
+  // The party on the deal: the role asked for, else the one this company
+  // is; with the company that signs for it and the person to ask
+  // (server/deal-parties.ts).
+  const partyRole = (["landlord", "tenant", "vendor", "purchaser"] as const).find(r => r === role && deal?.[`${r}_id`] === companyId)
+    || (["landlord", "tenant", "vendor", "purchaser"] as const).find(r => deal?.[`${r}_id`] === companyId) || null;
+  const entity = partyRole && deal?.[`${partyRole}_trading_entity_id`] ? (await pool.query(
+    `SELECT id, name, companies_house_number FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [deal[`${partyRole}_trading_entity_id`], companyId])).rows[0] || null : null;
+  const entityId: string | null = entity ? String(entity.id) : null;
+  const partyPerson = partyRole && deal?.[`${partyRole}_contact_id`] ? (await pool.query(
+    `SELECT name, role, email, COALESCE(NULLIF(phone_mobile, ''), NULLIF(phone, '')) AS mobile FROM crm_contacts WHERE id = $1`, [deal[`${partyRole}_contact_id`]])).rows[0] || null : null;
   const addr = (() => {
     const a = deal?.property_address;
     if (!a) return deal?.property_name || "";
@@ -435,7 +448,7 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
   const clientRole = dt === "Sale" ? "vendor" : dt === "Purchase" ? "purchaser"
     : /Lease Acquisition|Lease Disposal/.test(dt) ? "tenant" : "landlord";
   const isClient = !role || role === clientRole;
-  const contact = deal?.client_contact_id ? (await pool.query(`SELECT name, role, email FROM crm_contacts WHERE id = $1`, [deal.client_contact_id])).rows[0] : null;
+  const contact = partyPerson || (deal?.client_contact_id ? (await pool.query(`SELECT name, role, email FROM crm_contacts WHERE id = $1`, [deal.client_contact_id])).rows[0] : null);
   const agentIds: string[] = Array.isArray(deal?.internal_agent_ids) ? deal.internal_agent_ids : [];
   const agents = agentIds.length ? (await pool.query(`SELECT email FROM users WHERE id = ANY($1::varchar[]) AND email IS NOT NULL`, [agentIds])).rows : [];
   const me = (await pool.query(`SELECT email FROM users WHERE id = $1`, [userId])).rows[0];
@@ -451,23 +464,27 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
   let precheckState: "done" | "running" | "none" = "none";
   try {
     const checks = await import("./kyc-prechecks");
-    await checks.startPrecheck(companyId, { dealId: dealId || null, userId });
-    precheck = (await checks.awaitPrecheck(companyId, 20_000)) || await checks.latestPrecheck(companyId);
-    precheckState = checks.precheckRunning(companyId) ? "running" : precheck ? "done" : "none";
+    await checks.startPrecheck(companyId, { dealId: dealId || null, userId, entityId });
+    precheck = (await checks.awaitPrecheck(companyId, 20_000, entityId)) || await checks.latestPrecheck(companyId, entityId);
+    precheckState = checks.precheckRunning(companyId, entityId) ? "running" : precheck ? "done" : "none";
   } catch (e: any) {
     console.warn(`[kyc4u] BGP's checks before asking for ${companyId}: ${e?.message}`);
   }
+  // With a company that signs, its own documents and the brand's general
+  // ones; never those of another company under the same brand.
   const docs = (await pool.query(
-    `SELECT id, doc_type, file_name, file_size FROM kyc_documents WHERE company_id = $1 AND deleted_at IS NULL ORDER BY uploaded_at DESC LIMIT 20`, [companyId])).rows;
+    `SELECT id, doc_type, file_name, file_size FROM kyc_documents
+      WHERE company_id = $1 AND deleted_at IS NULL AND ($2::varchar IS NULL OR trading_entity_id IS NULL OR trading_entity_id = $2)
+      ORDER BY uploaded_at DESC LIMIT 20`, [companyId, entityId])).rows;
   // The red flags that send this party to KYC4U go in the note (Woody,
   // 2026-11-17: "if there is a red flag then we get KYC4U").
-  const flags = dealId ? await loadDealRedFlags(dealId, [companyId]).catch(() => null) : null;
+  const flags = dealId ? await loadDealRedFlags(dealId, [companyId], entityId ? { [companyId]: entityId } : {}).catch(() => null) : null;
   const flagNote = flags ? redFlagNote(flags.parties[companyId] || [], flags.deal) : "";
   const checkedNote = precheckNote(precheck?.result || null, precheckState);
   return {
     fields: {
       partyType: isClient ? "Client" : "Counterparty",
-      partyName: company.uk_entity_name || company.name,
+      partyName: entity?.name || company.uk_entity_name || company.name,
       propertyAddress: addr,
       requestType: "",
       metFaceToFace: "",
@@ -478,7 +495,10 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
       feeEarnerEmails: feeEarners.join("; "),
       clientEmails: isClient && contact?.email ? contact.email : "",
       expectedCompletion: deal?.target_date ? new Date(deal.target_date).toISOString().slice(0, 10) : "",
-      note: [deal ? `BGP deal ${deal.deal_ref ? "#" + deal.deal_ref + " " : ""}${deal.name || ""}`.trim() : "", dt ? `Deal type: ${dt}` : "", role ? `Role: ${role}${isClient ? " (BGP's client)" : " (counterparty)"}` : "", flagNote, checkedNote].filter(Boolean).join("\n").slice(0, 4000),
+      note: [deal ? `BGP deal ${deal.deal_ref ? "#" + deal.deal_ref + " " : ""}${deal.name || ""}`.trim() : "", dt ? `Deal type: ${dt}` : "", role ? `Role: ${role}${isClient ? " (BGP's client)" : " (counterparty)"}` : "",
+        entity ? `Contracting company: ${entity.name}${entity.companies_house_number ? ` (Companies House ${entity.companies_house_number})` : ""}, trading as ${company.name}` : "",
+        !isClient && partyPerson ? `Person to ask: ${[partyPerson.name, partyPerson.email, partyPerson.mobile].filter(Boolean).join(", ")}` : "",
+        flagNote, checkedNote].filter(Boolean).join("\n").slice(0, 4000),
     },
     docs,
   };

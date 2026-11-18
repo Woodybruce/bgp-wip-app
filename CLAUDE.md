@@ -3212,6 +3212,79 @@ from Mesh's own documentation (docs.mesh.complyadvantage.com, read
   webhooks, passing a date of birth or country to Mesh (a partial date may
   be refused; the year is used to set profiles aside instead).
 
+## The company that signs and who to ask (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
+
+Woody, on the deal page: "most importantly adding the billing entities so can
+AML. Also when doing that if the AML hasnt started need the ability to add in
+all the info so it can start such as email phone numbers etc". He answered
+"go" to step 1 of the review, which included its new columns (decision 1).
+Rules: `shared/deal-parties.ts`; reads and writes: `server/deal-parties.ts`;
+screens: `client/src/components/deal-parties.tsx`. Tests:
+`server/deal-parties.test.ts` (in `npm test`),
+`qa/regression/deal-parties-guards.test.mjs`.
+
+- **The company that signs** for a party is a `crm_trading_entities` row
+  filed under the party's brand, stored on the deal as
+  `<role>_trading_entity_id` (landlord, tenant, vendor, purchaser; boot
+  MIGRATIONS, nullable). It is NOT `<role>_entity_id`, the Xero billing
+  contact made from it. A deal with none set (every deal before 18 November
+  2026) reads the brand as before. Every deal save goes through
+  `checkPartyCompanies` (`createDeal` and `updateDeal` in
+  `server/letting-service.ts`): a company sent for a party that is not filed
+  under it is refused (400, `PartyCompanyRefusal`), and one the deal carried
+  that no longer sits under its party (the party changed) is cleared. A
+  client login neither reads nor writes the four fields
+  (`CLIENT_HIDDEN_DEAL_AML`); a joint agent is sent neither them nor the Xero
+  billing contacts (`JOINT_AGENT_HIDDEN_DEAL_FIELDS`).
+- **The person to ask** is `<role>_contact_id`, a contact filed under the
+  brand; with none set, the deal's client contact when that person is filed
+  under the brand. A person typed (the party box's Add someone, or Someone
+  else in Send client checks) is saved to the CRM under the brand by
+  `findOrAddPartyPerson`: someone already there with that email is used and
+  gains blank fields only; a new contact carries a note saying why it was
+  added. Someone else in the client checks also becomes the party's person
+  when the deal names nobody.
+- **What is missing** (`partyGaps`): a company party with no company set and
+  a brand with no Companies House number needs the company that signs; every
+  party needs a person to ask, with an email. An individual's date of birth
+  and address are the client checks' to gather, not asked here.
+- **Routes** (BGP staff signed in as themselves; `/api/deals/` is on no client
+  gateway list): `GET /api/deals/:id/parties` (each party's brand, the company
+  set, what to offer, the brand's companies, the Xero contact, the person,
+  the brand's people, the gaps), `PUT /api/deals/:id/parties/:role`
+  (`companyId`, `personId`, `xero`: set, or clear with null),
+  `POST /api/deals/:id/parties/:role/person`. Each change is a
+  `deal_audit_log` line. The offer when none is set: the company on the
+  unit's lease (the schedule row's `tenant_entity_id`, for the tenant, only
+  when filed under it), else the brand's one main company, else its only one.
+- **The AML records say which company they are about**: `trading_entity_id`
+  on `kyc_investigations`, `kyc_documents` and `kyc_upload_tokens` (the audit
+  log's `entity_kind` / `entity_id` already existed). BGP's checks before
+  asking run on the company that signs when the deal names one (keyed by
+  brand and company; read by its own Companies House number; its accounts
+  from its own filing history through `pickLatestAccountsFiling`; the
+  brand-page lookup, which writes the brand's number, never runs for it).
+  The red flags read that company's screening. The client checks name it as
+  the party and file the client's uploads on it. KYC4U's request names it as
+  the party, adds "Contracting company" (and, for a counterparty, the person
+  to ask) to the note, and lists its documents and the brand's general ones,
+  never another company's. The brand's own screens read only the brand's rows
+  (`trading_entity_id IS NULL`: the CDD form, the orchestrator's PSC read, the
+  brand page's Experian read).
+- **Screens**: the deal page's Parties card, under each party, has Signs as,
+  Billed to and Ask, and what is still needed; Fill in or Change opens the
+  party box (the company: a suggestion, Use, Find it at Companies House; Bill
+  to it in Xero; Who to ask: pick, or Add someone). The KYC card and the Kick
+  off AML step show "Before the checks can start" per party
+  (`PartyReadyToStart`). The deal form's billing entity boxes set the company
+  that signs when a company filed under the party is picked or created
+  (`XeroContactPicker`'s `onChange(contact, company)`); changing a party
+  clears it.
+- Not built (step 2 of the review): approval on the company that signs, BGP
+  sign-off and Add KYC4U result; approval still reads the brand's
+  `kyc_status`. Not run against Companies House or Xero from a build machine;
+  checked in a browser against a local copy on 18 November 2026.
+
 ## Emails come from chatbgp.app (Woody, 2026-11-17)
 
 Woody: "just use chatbgp.app for all emails now". Every email the app sends

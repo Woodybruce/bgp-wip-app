@@ -786,6 +786,9 @@ export async function createDeal(input: Record<string, any>, ctx: LettingCtx): P
   // On an estate with schemes, the scheme decides who invoices go to: its
   // landlord entity and inbox fill whatever the deal left blank.
   if (!ctx.scope) Object.assign(parsed, await (await import("./property-schemes")).schemeDealDefaults(db, parsed));
+  // The company that signs for a party is one filed under that party
+  // (server/deal-parties.ts): anything else is refused.
+  await (await import("./deal-parties")).checkPartyCompanies(db, parsed as Record<string, any>, body);
 
   const letting = isLettingType(parsed.dealType);
   // No unplaced letting deals: a letting must have a property and a unit.
@@ -851,6 +854,10 @@ export async function updateDeal(id: string, patch: Record<string, any>, ctx: Le
   const db = q(ctx);
   const before = await storage.getCrmDeal(id);
   const body = await normaliseDealBody(db, patch, before?.propertyId ?? null);
+  // A company sent for a party must be filed under it; one the deal carried
+  // that no longer sits under its party (the party changed) is cleared.
+  const changed = Object.fromEntries(Object.entries(body).filter(([k, v]) => (before as Record<string, any> | undefined)?.[k] !== v));
+  Object.assign(body, await (await import("./deal-parties")).checkPartyCompanies(db, { ...(before || {}), ...body }, changed));
   const deal = await storage.updateCrmDeal(id, body as any);
 
   const audit: LettingAudit = { dealId: id, propertyUnitId: deal.unitId ?? null, tenancyUnitId: deal.tenancyUnitId ?? null, created: [], adopted: [] };

@@ -1202,6 +1202,9 @@ export function setupCrmRoutes(app: Express) {
     "amlIdVerified", "amlIdVerifiedAt", "amlIdVerifiedBy", "amlIdDocType", "amlAddressVerified", "amlAddressDocType",
     "amlSarFiled", "amlSarReference", "amlSarFiledAt", "amlComplianceNotes", "amlChecklist", "amlSofAnalysis", "amlAiTriage", "amlMarketData",
     "mlrScope", "mlrScopeReason", "mlrScopeAssessedAt", "mlrScopeAssessedBy", "kycApprovedAt", "kycApprovedBy",
+    // The company that signs for each party (2026-11-18): BGP sets it, from
+    // the deal page's parties; a client neither reads nor writes it.
+    "landlordTradingEntityId", "tenantTradingEntityId", "vendorTradingEntityId", "purchaserTradingEntityId",
   ] as const;
   const clientNeverSetsOnDeal = (body: any) => { if (body && typeof body === "object") for (const f of CLIENT_HIDDEN_DEAL_AML) delete body[f]; };
   const stripDealFees = <T extends Record<string, any>>(d: T): T => ({
@@ -4651,7 +4654,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // fee terms and AML working included; review, 2026-11-13).
       const saved = editScope ? stripDealFees(deal as any) : deal;
       res.json(mirrorWarning || poWarning ? { ...saved, ...(mirrorWarning ? { mirrorWarning } : {}), ...(poWarning ? { poWarning } : {}) } : saved);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) { res.status(e?.name === "PartyCompanyRefusal" ? 400 : 500).json({ error: e.message, message: e.message }); }
   });
   // Audit fields whose change history must stay invisible to scoped
   // clients — the same families stripDealFees hides on the deal itself

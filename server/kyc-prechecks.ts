@@ -16,7 +16,11 @@
 //   ComplyAdvantage: when it has keys and its login is not refused.
 //
 // A run is stored as a kyc_investigations row (result.kind "precheck"), so
-// the readers that already take the party's latest screening see it. It
+// the readers that already take the party's latest screening see it. Since
+// 18 November 2026 a deal party can name the company that signs for it (a
+// crm_trading_entities row under the brand, server/deal-parties.ts): the run
+// is then about that company, read by its own Companies House number, and
+// its row and documents carry trading_entity_id. A brand-level run has none. It
 // starts when a BGP person opens the deal's AML card and the party has no
 // pre-check from the last 30 days, or when someone presses Run again. It
 // never runs on a timer. Nothing it finds decides anything: it becomes red
@@ -54,9 +58,11 @@ export function precheckDailyCap(): number {
 
 export interface StoredPrecheck { id: number; ranAt: string; result: KycPrecheckResult }
 
+// Keyed by the party: the brand, and the company that signs when one is set.
 const running = new Map<string, { startedAt: string; promise: Promise<StoredPrecheck | null> }>();
 // A run that failed outright is not started again by a page view for a while.
 const backoff = new Map<string, number>();
+const partyKey = (companyId: string, entityId?: string | null): string => entityId ? `${companyId}|${entityId}` : companyId;
 
 const clean = (value: unknown, max = 200): string => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 const padNumber = (n: string): string => { const s = n.replace(/\s+/g, "").toUpperCase(); return /^\d+$/.test(s) ? s.padStart(8, "0") : s; };
@@ -87,24 +93,24 @@ async function inBatches<T, R>(items: T[], size: number, run: (item: T) => Promi
 
 // ── Reading ─────────────────────────────────────────────────────────────────
 
-export async function latestPrecheck(companyId: string): Promise<StoredPrecheck | null> {
+export async function latestPrecheck(companyId: string, entityId: string | null = null): Promise<StoredPrecheck | null> {
   const row = (await pool.query(
     `SELECT id, conducted_at, result FROM kyc_investigations
-      WHERE crm_company_id = $1 AND result->>'kind' = 'precheck'
-      ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
+      WHERE crm_company_id = $1 AND result->>'kind' = 'precheck' AND trading_entity_id IS NOT DISTINCT FROM $2
+      ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId, entityId || null])).rows[0];
   if (!row || !isPrecheckResult(row.result)) return null;
   return { id: Number(row.id), ranAt: new Date(row.conducted_at || row.result.ranAt).toISOString(), result: row.result };
 }
 
-export const precheckRunning = (companyId: string): { startedAt: string } | null => {
-  const r = running.get(companyId);
+export const precheckRunning = (companyId: string, entityId: string | null = null): { startedAt: string } | null => {
+  const r = running.get(partyKey(companyId, entityId));
   return r ? { startedAt: r.startedAt } : null;
 };
 
 // Waits for a run already going, up to `ms`; null when there is none or it
 // is still going.
-export async function awaitPrecheck(companyId: string, ms: number): Promise<StoredPrecheck | null> {
-  const r = running.get(companyId);
+export async function awaitPrecheck(companyId: string, ms: number, entityId: string | null = null): Promise<StoredPrecheck | null> {
+  const r = running.get(partyKey(companyId, entityId));
   if (!r) return null;
   return Promise.race([r.promise.catch(() => null), new Promise<null>(resolve => setTimeout(() => resolve(null), ms))]);
 }
@@ -114,25 +120,27 @@ const isFresh = (stored: StoredPrecheck | null, now = Date.now()) =>
 
 export type PrecheckStart = "started" | "running" | "fresh" | "cap" | "off" | "waiting";
 
-export async function startPrecheck(companyId: string, opts: { dealId?: string | null; userId?: string | null; force?: boolean }): Promise<PrecheckStart> {
+export async function startPrecheck(companyId: string, opts: { dealId?: string | null; userId?: string | null; force?: boolean; entityId?: string | null }): Promise<PrecheckStart> {
   if (!prechecksOn()) return "off";
-  if (running.has(companyId)) return "running";
+  const entityId = opts.entityId || null;
+  const key = partyKey(companyId, entityId);
+  if (running.has(key)) return "running";
   if (!opts.force) {
-    if ((backoff.get(companyId) || 0) > Date.now()) return "waiting";
-    if (isFresh(await latestPrecheck(companyId).catch(() => null))) return "fresh";
+    if ((backoff.get(key) || 0) > Date.now()) return "waiting";
+    if (isFresh(await latestPrecheck(companyId, entityId).catch(() => null))) return "fresh";
   }
   const { claimDailyRead } = await import("./requirement-feeds");
   if (!(await claimDailyRead(USAGE_KEY, precheckDailyCap()))) return "cap";
-  if (running.has(companyId)) return "running";
+  if (running.has(key)) return "running";
   const startedAt = new Date().toISOString();
-  const promise = runPrecheck(companyId, opts)
+  const promise = runPrecheck(companyId, { ...opts, entityId })
     .catch((e: any) => {
-      console.warn(`[kyc-prechecks] ${companyId} failed: ${e?.message}`);
-      backoff.set(companyId, Date.now() + 15 * 60_000);
+      console.warn(`[kyc-prechecks] ${key} failed: ${e?.message}`);
+      backoff.set(key, Date.now() + 15 * 60_000);
       return null;
     })
-    .finally(() => running.delete(companyId));
-  running.set(companyId, { startedAt, promise });
+    .finally(() => running.delete(key));
+  running.set(key, { startedAt, promise });
   return "started";
 }
 
@@ -177,7 +185,7 @@ const docIdOf = (item: any): string | null => {
 // Companies House document id, so a second run finds it rather than adding
 // another copy.
 async function fileChDocument(input: {
-  companyId: string; dealId: string | null; docId: string; kind: PrecheckDocument["kind"]; title: string;
+  companyId: string; entityId: string | null; dealId: string | null; docId: string; kind: PrecheckDocument["kind"]; title: string;
   bytes?: () => Promise<Buffer>;
 }): Promise<string> {
   const fileName = `kyc-ch-${input.companyId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40)}-${input.docId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80)}.pdf`;
@@ -190,9 +198,9 @@ async function fileChDocument(input: {
   await saveFile(`chat-media/${fileName}`, data, "application/pdf", `${input.title}.pdf`);
   const docType = input.kind === "incorporation" ? "company_cert" : input.kind === "accounts" ? "company_accounts" : "confirmation_statement";
   const row = (await pool.query(
-    `INSERT INTO kyc_documents (company_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
-     VALUES ($1, $2, $3, $4, $5, $6, 'application/pdf', $7, NULL) RETURNING id`,
-    [input.companyId, input.dealId, docType, url, `${input.title}.pdf`, data.length,
+    `INSERT INTO kyc_documents (company_id, trading_entity_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'application/pdf', $8, NULL) RETURNING id`,
+    [input.companyId, input.entityId, input.dealId, docType, url, `${input.title}.pdf`, data.length,
       `Downloaded from Companies House by BGP's checks before asking (Companies House document ${input.docId}).`])).rows[0];
   return String(row.id);
 }
@@ -202,37 +210,61 @@ const shortDate = (iso: string | null | undefined): string => {
   return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" }) : "";
 };
 
-async function documentsFor(n: string, companyId: string, dealId: string | null, companyName: string, errors: string[]): Promise<{ documents: PrecheckDocument[]; accountsType: string | null }> {
+async function documentsFor(n: string, companyId: string, entityId: string | null, dealId: string | null, companyName: string, profile: any, errors: string[]): Promise<{ documents: PrecheckDocument[]; accountsType: string | null }> {
   const documents: PrecheckDocument[] = [];
   let accountsType: string | null = null;
 
   // The latest accounts: the filing the profile names as the latest, chosen
   // the way the accounts reader chooses it, then a copy on the KYC record.
-  try {
-    const { fetchLatestAccountsForCompany } = await import("./ch-accounts");
-    const outcome = await withTimeout(fetchLatestAccountsForCompany(companyId), 60_000, "The accounts download");
-    if (outcome.status === "skipped") {
-      documents.push({ kind: "accounts", title: "Latest accounts", filedOn: null, madeUpTo: null, kycDocumentId: null, error: outcome.reason.replace(/_/g, " ") });
-    } else {
-      const row = (await pool.query(`SELECT last_accounts_storage_key FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
-      const madeUpTo = outcome.madeUpTo || null;
-      const title = `${companyName} accounts made up to ${shortDate(madeUpTo) || madeUpTo || "the latest date"}`;
-      const kycDocumentId = await fileChDocument({
-        companyId, dealId, docId: outcome.docId, kind: "accounts", title,
-        bytes: async () => {
-          const { getFile } = await import("./file-storage");
-          const stored = row?.last_accounts_storage_key ? await getFile(row.last_accounts_storage_key) : null;
-          return stored?.data || downloadChDocument(outcome.docId);
-        },
-      });
-      documents.push({ kind: "accounts", title, filedOn: null, madeUpTo, kycDocumentId, error: null });
+  // For the company that signs (not the brand), read straight from its
+  // filing history: the brand's stored accounts are the brand's.
+  if (entityId) {
+    try {
+      const history = await ch(`/company/${n}/filing-history?category=accounts&items_per_page=25`);
+      const { pickLatestAccountsFiling } = await import("./ch-accounts");
+      const item = pickLatestAccountsFiling(history?.items || [], profile?.accounts?.last_accounts?.made_up_to || null);
+      const docId = item ? docIdOf(item) : null;
+      if (!item || !docId) {
+        documents.push({ kind: "accounts", title: "Latest accounts", filedOn: item?.date || null, madeUpTo: null, kycDocumentId: null, error: item ? "Companies House holds no copy to download (filed on paper)" : "no annual accounts filed" });
+      } else {
+        const madeUpTo = item.description_values?.made_up_date || null;
+        const title = `${companyName} accounts made up to ${shortDate(madeUpTo) || madeUpTo || "the latest date"}`;
+        const kycDocumentId = await fileChDocument({ companyId, entityId, dealId, docId, kind: "accounts", title });
+        documents.push({ kind: "accounts", title, filedOn: item.date || null, madeUpTo, kycDocumentId, error: null });
+      }
+      accountsType = item && String(item.description || "").startsWith("accounts-with-accounts-type-")
+        ? String(item.description).replace("accounts-with-accounts-type-", "").replace(/-/g, " ") : null;
+    } catch (e: any) {
+      documents.push({ kind: "accounts", title: "Latest accounts", filedOn: null, madeUpTo: null, kycDocumentId: null, error: words(e) });
+      errors.push(`Latest accounts: ${words(e)}`);
     }
-    const history = await ch(`/company/${n}/filing-history?category=accounts&items_per_page=10`).catch(() => null);
-    const latest = (history?.items || []).find((i: any) => String(i?.description || "").startsWith("accounts-with-accounts-type-"));
-    accountsType = latest ? String(latest.description).replace("accounts-with-accounts-type-", "").replace(/-/g, " ") : null;
-  } catch (e: any) {
-    documents.push({ kind: "accounts", title: "Latest accounts", filedOn: null, madeUpTo: null, kycDocumentId: null, error: words(e) });
-    errors.push(`Latest accounts: ${words(e)}`);
+  } else {
+    try {
+      const { fetchLatestAccountsForCompany } = await import("./ch-accounts");
+      const outcome = await withTimeout(fetchLatestAccountsForCompany(companyId), 60_000, "The accounts download");
+      if (outcome.status === "skipped") {
+        documents.push({ kind: "accounts", title: "Latest accounts", filedOn: null, madeUpTo: null, kycDocumentId: null, error: outcome.reason.replace(/_/g, " ") });
+      } else {
+        const row = (await pool.query(`SELECT last_accounts_storage_key FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+        const madeUpTo = outcome.madeUpTo || null;
+        const title = `${companyName} accounts made up to ${shortDate(madeUpTo) || madeUpTo || "the latest date"}`;
+        const kycDocumentId = await fileChDocument({
+          companyId, entityId: null, dealId, docId: outcome.docId, kind: "accounts", title,
+          bytes: async () => {
+            const { getFile } = await import("./file-storage");
+            const stored = row?.last_accounts_storage_key ? await getFile(row.last_accounts_storage_key) : null;
+            return stored?.data || downloadChDocument(outcome.docId);
+          },
+        });
+        documents.push({ kind: "accounts", title, filedOn: null, madeUpTo, kycDocumentId, error: null });
+      }
+      const history = await ch(`/company/${n}/filing-history?category=accounts&items_per_page=10`).catch(() => null);
+      const latest = (history?.items || []).find((i: any) => String(i?.description || "").startsWith("accounts-with-accounts-type-"));
+      accountsType = latest ? String(latest.description).replace("accounts-with-accounts-type-", "").replace(/-/g, " ") : null;
+    } catch (e: any) {
+      documents.push({ kind: "accounts", title: "Latest accounts", filedOn: null, madeUpTo: null, kycDocumentId: null, error: words(e) });
+      errors.push(`Latest accounts: ${words(e)}`);
+    }
   }
 
   // The latest confirmation statement (it lists the shareholders of a
@@ -257,7 +289,7 @@ async function documentsFor(n: string, companyId: string, dealId: string | null,
         documents.push({ kind, title, filedOn: item.date || null, madeUpTo: null, kycDocumentId: null, error: "Companies House holds no copy to download (filed on paper)" });
         continue;
       }
-      const kycDocumentId = await fileChDocument({ companyId, dealId, docId, kind, title });
+      const kycDocumentId = await fileChDocument({ companyId, entityId, dealId, docId, kind, title });
       documents.push({ kind, title, filedOn: item.date || null, madeUpTo: item.description_values?.made_up_date || null, kycDocumentId, error: null });
     } catch (e: any) {
       documents.push({ kind, title: kind === "incorporation" ? "Certificate of incorporation" : "Confirmation statement", filedOn: null, madeUpTo: null, kycDocumentId: null, error: words(e) });
@@ -290,7 +322,7 @@ async function listedParent(owners: RegisterOwner[]): Promise<PrecheckListing | 
   return null;
 }
 
-async function readCompaniesHouse(number: string, companyId: string, dealId: string | null, errors: string[]): Promise<{ data: NonNullable<KycPrecheckResult["companiesHouse"]>; raw: { profile: any; officers: any[]; pscs: any[] } }> {
+async function readCompaniesHouse(number: string, companyId: string, entityId: string | null, dealId: string | null, errors: string[]): Promise<{ data: NonNullable<KycPrecheckResult["companiesHouse"]>; raw: { profile: any; officers: any[]; pscs: any[] } }> {
   const n = padNumber(number);
   const profile = await ch(`/company/${n}`);
   if (!profile?.company_name) throw new Error(`${n} was not found at Companies House`);
@@ -386,7 +418,7 @@ async function readCompaniesHouse(number: string, companyId: string, dealId: str
   }
 
   const companyName = clean(profile.company_name, 160);
-  const { documents, accountsType } = await documentsFor(n, companyId, dealId, companyName, errors);
+  const { documents, accountsType } = await documentsFor(n, companyId, entityId, dealId, companyName, profile, errors);
 
   const office = profile.registered_office_address || {};
   return {
@@ -553,20 +585,27 @@ async function dealContactName(dealId: string | null | undefined, companyId: str
 // owner) and "DOE, Jane" (a director) are one entry.
 const subjectKey = (s: Pick<Subject, "name" | "person">) => `${s.person ? "p" : "c"}:${nameTokens(s.name, !s.person).sort().join(" ")}`;
 
-export async function runPrecheck(companyId: string, opts: { dealId?: string | null; userId?: string | null } = {}): Promise<StoredPrecheck | null> {
+export async function runPrecheck(companyId: string, opts: { dealId?: string | null; userId?: string | null; entityId?: string | null } = {}): Promise<StoredPrecheck | null> {
   const company = (await pool.query(
     `SELECT id, name, uk_entity_name, companies_house_number, aml_subject_type, kyc_checked_at FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
   if (!company) return null;
+  // The company that signs for the party, when the deal names one: always
+  // one filed under the brand.
+  const entity = opts.entityId ? (await pool.query(
+    `SELECT id, name, companies_house_number FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [opts.entityId, companyId])).rows[0] || null : null;
+  if (opts.entityId && !entity) return null;
+  const entityId: string | null = entity ? String(entity.id) : null;
   const errors: string[] = [];
   const dealId = opts.dealId || null;
-  const subjectKind: KycPartyKind = String(company.aml_subject_type || "").toLowerCase() === "individual" ? "individual" : "company";
+  const subjectKind: KycPartyKind = !entity && String(company.aml_subject_type || "").toLowerCase() === "individual" ? "individual" : "company";
   const contactName = await dealContactName(dealId, companyId);
-  let number = clean(company.companies_house_number, 20);
+  let number = clean(entity ? entity.companies_house_number : company.companies_house_number, 20);
   let notAtCompaniesHouse: string | null = subjectKind === "individual" ? "A private individual: there is no company record to read." : null;
 
-  // A company with no number: the brand-page lookup finds it (its website,
-  // then the exact name), at most once a week.
-  if (!number && subjectKind === "company" && process.env.COMPANIES_HOUSE_API_KEY) {
+  // A brand with no number: the brand-page lookup finds it (its website,
+  // then the exact name), at most once a week. Never for the company that
+  // signs: that lookup writes to the brand.
+  if (!number && !entity && subjectKind === "company" && process.env.COMPANIES_HOUSE_API_KEY) {
     const lastLooked = company.kyc_checked_at ? Date.parse(company.kyc_checked_at) : 0;
     if (!lastLooked || lastLooked < Date.now() - 7 * 86400000) {
       try {
@@ -580,14 +619,16 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     }
   }
   if (!number && subjectKind === "company") {
-    notAtCompaniesHouse ||= "No Companies House number on the record and none found for the name. If it is registered outside the UK, the client is asked for an extract from its own register.";
+    notAtCompaniesHouse ||= entity
+      ? `No Companies House number on ${clean(entity.name, 160)}. If it is registered outside the UK, the client is asked for an extract from its own register.`
+      : "No Companies House number on the record and none found for the name. If it is registered outside the UK, the client is asked for an extract from its own register.";
   }
 
   let companiesHouse: KycPrecheckResult["companiesHouse"] = null;
   let raw: { profile: any; officers: any[]; pscs: any[] } | null = null;
   if (number) {
     try {
-      const read = await readCompaniesHouse(number, companyId, dealId, errors);
+      const read = await readCompaniesHouse(number, companyId, entityId, dealId, errors);
       companiesHouse = read.data;
       raw = read.raw;
     } catch (e: any) {
@@ -598,7 +639,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
 
   // Who is screened: the company, every officer and owner, the companies and
   // people up the chain, and the contact the deal names.
-  const partyName = companiesHouse?.name || clean(company.uk_entity_name, 160) || clean(company.name, 160);
+  const partyName = companiesHouse?.name || (entity ? clean(entity.name, 160) : clean(company.uk_entity_name, 160) || clean(company.name, 160));
   const subjects: Subject[] = [];
   // One entry per person or company: a second sighting (the deal's contact is
   // also a director) adds its role, a date of birth the first lacked, and its
@@ -647,7 +688,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
 
   const result: KycPrecheckResult = {
     kind: "precheck", version: KYC_PRECHECK_VERSION, ranAt: new Date().toISOString(),
-    party: { companyId, name: partyName, subjectKind, contactName },
+    party: { companyId, name: partyName, subjectKind, contactName, ...(entityId ? { entityId } : {}) },
     companiesHouse, notAtCompaniesHouse, sanctions, web, complyAdvantage, errors,
   };
 
@@ -666,18 +707,18 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     matches: l.outcome === "possible" ? l.matches.map(m => ({ matchType: "sanctions", source: m.source === "UK" ? "UK Sanctions List" : "US OFAC", sanctionedName: m.name, regime: m.regime })) : [],
   })) : null;
   const inserted = (await pool.query(
-    `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, risk_level, risk_score, sanctions_match, result, conducted_by, notes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, conducted_at`,
-    [subjectKind, partyName, companiesHouse?.number || null, companyId, risk.level, risk.score, precheckSanctionsMatch(result),
+    `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, trading_entity_id, risk_level, risk_score, sanctions_match, result, conducted_by, notes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, conducted_at`,
+    [subjectKind, partyName, companiesHouse?.number || null, companyId, entityId, risk.level, risk.score, precheckSanctionsMatch(result),
       JSON.stringify({ ...result, sanctionsScreening }), opts.userId || null, "BGP's checks before asking"])).rows[0];
   const summary = [
     companiesHouse ? `Companies House ${companiesHouse.number} read, ${companiesHouse.documents.filter(d => d.kycDocumentId).length} documents filed` : notAtCompaniesHouse,
     sanctions.ran ? `${sanctions.lines.length} names screened, ${sanctions.lines.filter(l => l.outcome === "possible").length} possible matches` : "sanctions not screened",
     web.ran ? `${web.lines.filter(l => l.ran).length} web searches, ${web.lines.reduce((n, l) => n + l.findings.length, 0)} findings` : "no web search",
   ].filter(Boolean).join("; ");
-  await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'precheck', $2, $3)`,
-    [companyId, opts.userId || "ChatBGP", `BGP's checks before asking: ${summary}`]).catch(() => {});
-  backoff.delete(companyId);
+  await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'precheck', $2, $3, $4, $5)`,
+    [companyId, opts.userId || "ChatBGP", `BGP's checks before asking${entity ? ` on ${partyName}` : ""}: ${summary}`, entityId ? "trading_entity" : null, entityId]).catch(() => {});
+  backoff.delete(partyKey(companyId, entityId));
   console.log(`[kyc-prechecks] ${partyName}: ${summary}`);
   return { id: Number(inserted.id), ranAt: new Date(inserted.conducted_at || result.ranAt).toISOString(), result };
 }
@@ -692,23 +733,27 @@ export interface PartyPrecheckView {
   errors: string[];
 }
 
-// The deal's parties: each one's latest pre-check, and a run started for any
-// party with none from the last 30 days (when `autoStart`).
-export async function dealPrechecks(dealId: string, companyIds: string[], opts: { userId: string | null; autoStart: boolean }): Promise<Record<string, PartyPrecheckView>> {
+// The deal's parties: each one's latest pre-check (on the company that signs
+// for it when the deal names one), and a run started for any party with none
+// from the last 30 days (when `autoStart`). Keyed by the party's brand.
+export async function dealPrechecks(dealId: string, parties: Array<{ companyId: string; entityId?: string | null }>, opts: { userId: string | null; autoStart: boolean }): Promise<Record<string, PartyPrecheckView>> {
   const out: Record<string, PartyPrecheckView> = {};
-  for (const companyId of [...new Set(companyIds.filter(Boolean))]) {
-    let stored = await latestPrecheck(companyId).catch(() => null);
+  for (const { companyId, entityId: givenEntity } of parties) {
+    if (!companyId || out[companyId]) continue;
+    const entityId = givenEntity || null;
+    const key = partyKey(companyId, entityId);
+    let stored = await latestPrecheck(companyId, entityId).catch(() => null);
     let state: PartyPrecheckView["state"] = stored ? "done" : "none";
     if (opts.autoStart && !isFresh(stored)) {
-      const started = await startPrecheck(companyId, { dealId, userId: opts.userId }).catch(() => "waiting" as const);
+      const started = await startPrecheck(companyId, { dealId, userId: opts.userId, entityId }).catch(() => "waiting" as const);
       if (started === "started" || started === "running") state = "running";
       else if (!stored && (started === "cap" || started === "off" || started === "waiting")) state = started;
-    } else if (running.has(companyId)) {
+    } else if (running.has(key)) {
       state = "running";
     }
     out[companyId] = {
       state,
-      startedAt: running.get(companyId)?.startedAt || null,
+      startedAt: running.get(key)?.startedAt || null,
       ranAt: stored?.ranAt || null,
       lines: stored ? precheckCardLines(stored.result) : [],
       errors: stored?.result.errors.slice(0, 6) || [],
@@ -719,8 +764,8 @@ export async function dealPrechecks(dealId: string, companyIds: string[], opts: 
 
 // The input to "what is still to ask" for one party (the client checks
 // dialog and the request both read it).
-export async function partyAskInput(companyId: string): Promise<{ input: PrecheckAskInput | null; precheckId: number | null; ranAt: string | null }> {
-  const stored = await latestPrecheck(companyId).catch(() => null);
+export async function partyAskInput(companyId: string, entityId: string | null = null): Promise<{ input: PrecheckAskInput | null; precheckId: number | null; ranAt: string | null }> {
+  const stored = await latestPrecheck(companyId, entityId).catch(() => null);
   return { input: askInputFrom(stored?.result || null), precheckId: stored?.id ?? null, ranAt: stored?.ranAt ?? null };
 }
 
@@ -741,8 +786,9 @@ router.post("/api/kyc/deal/:id/prechecks", async (req: Request, res: Response) =
     const parties = [d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id].filter(Boolean) as string[];
     const wanted = typeof req.body?.companyId === "string" ? [req.body.companyId] : parties;
     if (wanted.some(id => !parties.includes(id))) return res.status(400).json({ message: "That company is not a party to this deal" });
+    const signs = await (await import("./deal-parties")).dealPartyCompanies(pool, d.id);
     const started: Record<string, PrecheckStart> = {};
-    for (const id of wanted) started[id] = await startPrecheck(id, { dealId: d.id, userId, force: true });
+    for (const id of wanted) started[id] = await startPrecheck(id, { dealId: d.id, userId, force: true, entityId: signs[id] || null });
     res.json({ started });
   } catch (err: any) {
     res.status(500).json({ message: err?.message || "Could not start the checks" });

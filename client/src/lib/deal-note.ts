@@ -17,6 +17,8 @@ export interface DealNoteForm {
   tenantId: string;
   tenantEntityId: string;
   tenantEntityName: string;
+  // The company that signs for the tenant: a new tenant clears it too.
+  tenantTradingEntityId?: string;
   rentPa: string;
   leaseLength: string;
   rentFree: string;
@@ -80,7 +82,7 @@ export function dealNotePatch(form: DealNoteForm, reading: LettingNoteReading, t
     const tenant = noteTenant(reading, tenants);
     if (tenant) {
       brandHint = null;
-      if (String(tenant.id) !== form.tenantId) Object.assign(patch, { tenantId: String(tenant.id), tenantEntityId: "", tenantEntityName: "" });
+      if (String(tenant.id) !== form.tenantId) Object.assign(patch, { tenantId: String(tenant.id), tenantEntityId: "", tenantEntityName: "", tenantTradingEntityId: "" });
     } else {
       brandHint = words(f.brandName) || null;
     }

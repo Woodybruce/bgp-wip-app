@@ -17,7 +17,9 @@ export interface DealRedFlags {
   unchecked: string[];
 }
 
-export async function loadDealRedFlags(dealId: string, companyIds: string[]): Promise<DealRedFlags> {
+// `signs`: the company that signs for a party (by brand id), when the deal
+// names one: its screening is read, not the brand's (server/deal-parties.ts).
+export async function loadDealRedFlags(dealId: string, companyIds: string[], signs: Record<string, string> = {}): Promise<DealRedFlags> {
   const ids = [...new Set(companyIds.filter(Boolean))];
   const unchecked: string[] = [];
   async function read<T>(what: string, query: () => Promise<T>, empty: T): Promise<T> {
@@ -34,14 +36,15 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[]): Pr
     `SELECT id, aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason FROM crm_companies WHERE id = ANY($1::varchar[])`, [ids])).rows, none) : none;
   // The latest record that screened anyone: a Companies House lookup that
   // screened nothing (the nightly refresh) never reads as "no match".
+  // One row per brand and company: the party's own is picked below.
   const investigations = ids.length ? await read("screening records", async () => (await pool.query(
-    `SELECT DISTINCT ON (crm_company_id) crm_company_id, id, sanctions_match, conducted_at, (result->>'kind' = 'precheck') AS precheck
+    `SELECT DISTINCT ON (crm_company_id, trading_entity_id) crm_company_id, trading_entity_id, id, sanctions_match, conducted_at, (result->>'kind' = 'precheck') AS precheck
        FROM kyc_investigations WHERE crm_company_id = ANY($1::varchar[]) AND ${SCREENED_INVESTIGATION_SQL}
-      ORDER BY crm_company_id, conducted_at DESC NULLS LAST, id DESC`, [ids])).rows, none) : none;
+      ORDER BY crm_company_id, trading_entity_id, conducted_at DESC NULLS LAST, id DESC`, [ids])).rows, none) : none;
   const prechecks = ids.length ? await read("BGP's checks before asking", async () => (await pool.query(
-    `SELECT DISTINCT ON (crm_company_id) crm_company_id, id, result
+    `SELECT DISTINCT ON (crm_company_id, trading_entity_id) crm_company_id, trading_entity_id, id, result
        FROM kyc_investigations WHERE crm_company_id = ANY($1::varchar[]) AND result->>'kind' = 'precheck'
-      ORDER BY crm_company_id, conducted_at DESC NULLS LAST, id DESC`, [ids])).rows, none) : none;
+      ORDER BY crm_company_id, trading_entity_id, conducted_at DESC NULLS LAST, id DESC`, [ids])).rows, none) : none;
   const requests = ids.length ? await read("client checks", async () => (await pool.query(
     `SELECT company_id, request FROM kyc_upload_tokens
       WHERE deal_id = $1 AND company_id = ANY($2::varchar[]) AND is_test IS NOT TRUE AND request IS NOT NULL
@@ -56,8 +59,9 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[]): Pr
 
   const parties: Record<string, KycRedFlag[]> = {};
   for (const id of ids) {
-    const latest = investigations.find((i: any) => i.crm_company_id === id) || null;
-    const pre = prechecks.find((p: any) => p.crm_company_id === id && isPrecheckResult(p.result)) || null;
+    const own = (r: any) => r.crm_company_id === id && (r.trading_entity_id || null) === (signs[id] || null);
+    const latest = investigations.find(own) || null;
+    const pre = prechecks.find((p: any) => own(p) && isPrecheckResult(p.result)) || null;
     parties[id] = partyRedFlags({
       company: companies.find((c: any) => c.id === id) || null,
       latestInvestigation: latest ? { sanctions_match: latest.sanctions_match, conducted_at: latest.conducted_at, precheck: !!latest.precheck } : null,
@@ -96,14 +100,14 @@ const ALERTED: KycRedFlagKind[] = ["client_pep", "id_declined"];
 // it) about each red flag the request has not alerted yet, and remembers it.
 export async function alertRedFlags(token: string): Promise<{ sent: number }> {
   const row = (await pool.query(
-    `SELECT token, deal_id, company_id, contact_name, contact_email, request, is_test FROM kyc_upload_tokens WHERE token = $1`, [token])).rows[0];
+    `SELECT token, deal_id, company_id, trading_entity_id, contact_name, contact_email, request, is_test FROM kyc_upload_tokens WHERE token = $1`, [token])).rows[0];
   const request = row?.request;
   if (!row || !request?.ref) return { sent: 0 };
   let flags: KycRedFlag[];
   if (row.is_test || !row.company_id) {
     flags = partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null, ownersAnswer: request.ownersAnswer || null }], idChecks: await requestIdChecks(request.veriffSessionIds) });
   } else {
-    flags = (await loadDealRedFlags(row.deal_id, [row.company_id])).parties[row.company_id] || [];
+    flags = (await loadDealRedFlags(row.deal_id, [row.company_id], row.trading_entity_id ? { [row.company_id]: row.trading_entity_id } : {})).parties[row.company_id] || [];
   }
   const done: string[] = Array.isArray(request.redFlagAlerts) ? request.redFlagAlerts : [];
   const fresh = flags.filter(f => ALERTED.includes(f.kind) && !done.includes(redFlagAlertKey(f)));

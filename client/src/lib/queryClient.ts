@@ -246,6 +246,10 @@ export function invalidateDealCaches(dealId?: string) {
   if (dealId) {
     queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
     queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "timeline"] });
+    // Each party's company that signs and person to ask, and the AML card
+    // that reads them (a change of party changes both).
+    queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "parties"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
   }
 }
 

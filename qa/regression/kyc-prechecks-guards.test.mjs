@@ -102,7 +102,8 @@ test('a Companies House lookup that screened nobody never reads as "no match"', 
 test("KYC4U's request waits a little for the run and carries what it found", () => {
   const prefill = kyc4u.slice(kyc4u.indexOf('export async function kyc4uPrefill'), kyc4u.indexOf('export const KYC4U_DRAFT_KEYS'));
   assert.match(prefill, /await checks\.startPrecheck\(companyId/);
-  assert.match(prefill, /checks\.awaitPrecheck\(companyId, 20_000\)/);
+  // On the company that signs for the party when the deal names one (2026-11-18).
+  assert.match(prefill, /checks\.awaitPrecheck\(companyId, 20_000, entityId\)/);
   // The run goes before the documents and red flags are read, so both count it.
   assert.ok(prefill.indexOf('awaitPrecheck') < prefill.indexOf('FROM kyc_documents'));
   assert.ok(prefill.indexOf('awaitPrecheck') < prefill.indexOf('loadDealRedFlags('));

@@ -16,15 +16,21 @@ import { getAuthHeaders } from "@/lib/queryClient";
 import type { XeroContact } from "@/components/xero-contact-picker";
 
 type ChHit = { companyNumber: string; title: string; companyStatus?: string | null; addressSnippet?: string | null };
+// The company as saved under the brand (crm_trading_entities): the deal
+// records it as the company that signs for the party (2026-11-18).
+export type SavedCompany = { id: string; name: string; companiesHouseNumber: string | null };
 // Companies House statuses that cannot be billed (the server refuses them too).
 const CLOSED = new Set(["dissolved", "converted-closed", "removed", "closed"]);
 
-export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQuery, onCreated, testIdPrefix = "billing-entity" }: {
+export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQuery, onCreated, onSavedWithoutXero, testIdPrefix = "billing-entity" }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   brand: { id: string; name: string };
   initialQuery: string;
-  onCreated: (contact: XeroContact) => void;
+  onCreated: (contact: XeroContact, company: SavedCompany | null) => void;
+  // Given, a company saved under the brand counts even when Xero made no
+  // contact (the deal's parties need the company; billing can follow).
+  onSavedWithoutXero?: (company: SavedCompany, reason: string) => void;
   testIdPrefix?: string;
 }) {
   const { toast } = useToast();
@@ -61,12 +67,17 @@ export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQu
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) { setProblem(body?.message || "The billing entity could not be made. Try again."); return; }
+      const company: SavedCompany | null = body?.entity?.id ? { id: String(body.entity.id), name: String(body.entity.name || hit.title), companiesHouseNumber: body.entity.companiesHouseNumber || hit.companyNumber } : null;
       if (body?.contact?.ContactID) {
-        onCreated(body.contact as XeroContact);
+        onCreated(body.contact as XeroContact, company);
         toast({
           title: body.xeroCreated ? "Billing entity created" : "Billing entity linked",
           description: `${body.contact.Name}: saved under ${brand.name}${body.xeroCreated ? " and added to Xero" : ", and already in Xero"}.`,
         });
+        onOpenChange(false);
+      } else if (company && onSavedWithoutXero) {
+        onSavedWithoutXero(company, body?.xeroError || "The Xero contact was not made.");
+        toast({ title: "Company saved", description: `${company.name} is saved under ${brand.name}. Not in Xero: ${body?.xeroError || "the Xero contact was not made."}` });
         onOpenChange(false);
       } else {
         // The company is saved under the brand; the Xero step said why it did not happen.

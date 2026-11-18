@@ -94,6 +94,7 @@ import { PropertyFoldersPanel } from "@/pages/properties";
 import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { AIActivityCard, pickTouchDates } from "@/components/ai-activity-card";
 import { DealAmlStatusCard, useDealAmlStatus } from "@/components/deal-aml-status";
+import { DealPartyLines } from "@/components/deal-parties";
 import { JointAgencyNoteCard } from "@/components/joint-agency-aml";
 import { DealClockCard, useIsLandsecView, useLandsecClocks, isRestrictedLandsecRole } from "@/components/landsec/deal-clock";
 import { CompanyChip } from "@/components/company-chip";
@@ -1065,6 +1066,9 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 onCreate={(name) => createCounterparty("landlordId", "Landlord", name)}
                 placeholder="Link landlord"
               />
+              {/* The company that signs and the person to ask (BGP staff;
+                  this branch is never drawn for a client login). */}
+              {deal.landlordId && <DealPartyLines dealId={id} role="landlord" />}
             </div>
             )}
             {(!partiesInvestment || deal.tenantId) && (
@@ -1078,6 +1082,9 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 onCreate={(name) => createCounterparty("tenantId", "Tenant", name)}
                 placeholder="Link tenant"
               />
+              {/* The company that signs and the person to ask (BGP staff;
+                  this branch is never drawn for a client login). */}
+              {deal.tenantId && <DealPartyLines dealId={id} role="tenant" />}
             </div>
             )}
             {(partiesInvestment || deal.vendorId) && (
@@ -1091,6 +1098,9 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 onCreate={(name) => createCounterparty("vendorId", "Vendor", name)}
                 placeholder="Link vendor"
               />
+              {/* The company that signs and the person to ask (BGP staff;
+                  this branch is never drawn for a client login). */}
+              {deal.vendorId && <DealPartyLines dealId={id} role="vendor" />}
             </div>
             )}
             {(partiesInvestment || deal.purchaserId) && (
@@ -1104,6 +1114,9 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 onCreate={(name) => createCounterparty("purchaserId", "Purchaser", name)}
                 placeholder="Link purchaser"
               />
+              {/* The company that signs and the person to ask (BGP staff;
+                  this branch is never drawn for a client login). */}
+              {deal.purchaserId && <DealPartyLines dealId={id} role="purchaser" />}
             </div>
             )}
             </>); })()}

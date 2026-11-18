@@ -305,7 +305,7 @@ test('a reading fills the rent, the lease terms and the capital contribution; an
 
 test('the tenant is taken only when the picker lists it, by id or one exact name; an offer\'s date is never the target date', () => {
   const byId = dealNotePatch(FORM, reading({ brandName: "Jersey Mike's", brandId: 'b1' }), TENANTS);
-  assert.deepEqual(byId.patch, { tenantId: 'b1', tenantEntityId: '', tenantEntityName: '' });
+  assert.deepEqual(byId.patch, { tenantId: 'b1', tenantEntityId: '', tenantEntityName: '', tenantTradingEntityId: '' });
   assert.equal(byId.brandHint, null);
   const unknown = dealNotePatch(FORM, reading({ brandName: 'Dishoom' }), TENANTS);
   assert.ok(!('tenantId' in unknown.patch));

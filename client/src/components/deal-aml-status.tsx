@@ -6,6 +6,7 @@ import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
 import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { ClientChecksForParty, SendClientChecksButton } from "@/components/kyc-client-checks";
+import { PartyReadyToStart, useDealParties } from "@/components/deal-parties";
 import { legacyToCode } from "@shared/deal-status";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
 import { precheckDay, type PrecheckCardLine } from "@shared/kyc-prechecks";
@@ -193,6 +194,10 @@ export function useDealAmlStatus(dealId: string, enabled = true) {
 export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; dealStatus?: string | null }) {
   const { data, isLoading } = useDealAmlStatus(dealId);
   const [expanded, setExpanded] = useState<string | null>(null);
+  // BGP's own reads (the checks before asking) come only to BGP staff: the
+  // party lines follow them.
+  const staffView = !!data?.prechecks;
+  const { data: parties } = useDealParties(dealId, staffView);
 
   if (isLoading) return (
     <Card><CardContent className="py-4 flex justify-center"><Loader2 className="w-4 h-4 animate-spin" /></CardContent></Card>
@@ -218,6 +223,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
           <DealRedFlags data={data} />
           {data.counterparties.map(cp => (
             <div key={cp.id} className="space-y-2">
+              {staffView && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
               <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
               <PartyRedFlags data={data} companyId={cp.id} />
               {data.clientChecks && (
@@ -282,7 +288,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                        status === "expired" ? "Expired — re-check needed" :
                        status === "rejected" ? "Rejected" :
                        status === "in_review" ? "In review" :
-                       status === "not_found" ? "Not on Companies House — manual KYC needed" : "No KYC yet"}
+                       status === "not_found" ? (parties?.parties.find(p => p.brand.id === cp.id)?.company ? "Brand not on Companies House: the checks read the company that signs" : "Not on Companies House — manual KYC needed") : "No KYC yet"}
                     </div>
                     {cp.kyc_expires_at && (
                       <div className="text-[11px] text-muted-foreground">
@@ -292,6 +298,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                   </div>
                 </div>
                 <div className="mt-2 space-y-2">
+                  {staffView && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
                   <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
                   <PartyRedFlags data={data} companyId={cp.id} />
                   {data.clientChecks && (

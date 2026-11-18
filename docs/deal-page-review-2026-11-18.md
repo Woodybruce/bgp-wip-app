@@ -311,6 +311,8 @@ Each step ships on its own.
    them: checks before asking use the company's Companies House number, the
    client checks go to the saved person, the KYC4U request is filled from both.
    "Ready to start" lists what is missing and fills it in place.
+   **Built on 18 November 2026** (Woody: "go"): see "The company that signs
+   and who to ask" in CLAUDE.md.
 2. **AML on the contracting company**: approval on the company, BGP sign-off,
    Add KYC4U result, the same box in Kick off AML. The client checks change
    built on 18 November (`fd140668`, not yet live) goes out with this or before.

@@ -2364,6 +2364,17 @@ const schemaStartup = (async () => {
     `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS reminders_sent INTEGER DEFAULT 0`,
     `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS last_reminded_at TIMESTAMP`,
     `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS is_test BOOLEAN DEFAULT false`,
+    // Each deal party's contracting company, and the AML records that are
+    // about it (Woody, 2026-11-18: "go", on the deal page review). Additive
+    // and nullable: a null reads the brand, as every deal before did.
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS landlord_trading_entity_id VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS tenant_trading_entity_id VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS vendor_trading_entity_id VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS purchaser_trading_entity_id VARCHAR`,
+    `ALTER TABLE kyc_investigations ADD COLUMN IF NOT EXISTS trading_entity_id VARCHAR`,
+    `ALTER TABLE kyc_documents ADD COLUMN IF NOT EXISTS trading_entity_id VARCHAR`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS trading_entity_id VARCHAR`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_investigations_trading_entity ON kyc_investigations(trading_entity_id) WHERE trading_entity_id IS NOT NULL`,
     `ALTER TABLE kyc_upload_files ADD COLUMN IF NOT EXISTS doc_type TEXT`,
     `ALTER TABLE kyc_upload_files ADD COLUMN IF NOT EXISTS kyc_document_id VARCHAR`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_mlro_report_url TEXT`,
@@ -4247,6 +4258,7 @@ import wpListingsSyncRouter, { startWpListingsSync } from "./wp-listings-sync";
 import veriffRouter from "./veriff";
 import kycRequestRouter from "./aml-portal";
 import kycPrecheckRouter from "./kyc-prechecks";
+import dealPartiesRouter from "./deal-parties";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
 import brandDedupeRouter from "./brand-dedupe";
@@ -5599,6 +5611,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(kycRequestRouter);
   // BGP's checks before asking: Run again on the deal's AML card (BGP staff only).
   app.use(kycPrecheckRouter);
+  // Each deal party's company that signs and the person to ask (BGP staff only).
+  app.use(dealPartiesRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);
   app.use(brandDedupeRouter);

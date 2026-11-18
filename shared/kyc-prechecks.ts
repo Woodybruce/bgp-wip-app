@@ -347,7 +347,9 @@ export interface KycPrecheckResult {
   kind: "precheck";
   version: number;
   ranAt: string;
-  party: { companyId: string; name: string; subjectKind: KycPartyKind; contactName: string | null };
+  // entityId: the company that signs for the party (crm_trading_entities),
+  // when the run was about it rather than the brand (since 18 November 2026).
+  party: { companyId: string; name: string; subjectKind: KycPartyKind; contactName: string | null; entityId?: string | null };
   companiesHouse: null | {
     number: string;
     name: string;

@@ -148,6 +148,7 @@ import { hotsCall } from "@/components/unit-hots/hots-api";
 import { dealNotePatch, noteTenant } from "@/lib/deal-note";
 import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { SendClientChecksButton } from "@/components/kyc-client-checks";
+import { PartyReadyToStart } from "@/components/deal-parties";
 import { useDealAmlStatus } from "@/components/deal-aml-status";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
 import { JointAgencyWidget, JointAgencyRegisterDialog, jointAgencyMissing, jointAgencyPayload, EMPTY_JOINT_AGENCY, type JointAgencyState } from "@/components/joint-agency-aml";
@@ -530,6 +531,13 @@ interface DealFormData {
   vendorEntityName: string;
   purchaserEntityId: string;
   purchaserEntityName: string;
+  // The company that signs for each party (a company filed under it, not the
+  // Xero contact): set when a billing entity is picked from the companies
+  // filed under the party, or created from Companies House (2026-11-18).
+  landlordTradingEntityId: string;
+  tenantTradingEntityId: string;
+  vendorTradingEntityId: string;
+  purchaserTradingEntityId: string;
 }
 
 const emptyForm: DealFormData = {
@@ -593,6 +601,10 @@ const emptyForm: DealFormData = {
   vendorEntityName: "",
   purchaserEntityId: "",
   purchaserEntityName: "",
+  landlordTradingEntityId: "",
+  tenantTradingEntityId: "",
+  vendorTradingEntityId: "",
+  purchaserTradingEntityId: "",
 };
 
 function dealToForm(deal: CrmDeal): DealFormData {
@@ -657,6 +669,10 @@ function dealToForm(deal: CrmDeal): DealFormData {
     vendorEntityName: (deal as any).vendorEntityName || "",
     purchaserEntityId: (deal as any).purchaserEntityId || "",
     purchaserEntityName: (deal as any).purchaserEntityName || "",
+    landlordTradingEntityId: (deal as any).landlordTradingEntityId || "",
+    tenantTradingEntityId: (deal as any).tenantTradingEntityId || "",
+    vendorTradingEntityId: (deal as any).vendorTradingEntityId || "",
+    purchaserTradingEntityId: (deal as any).purchaserTradingEntityId || "",
   };
 }
 
@@ -728,6 +744,10 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     vendorEntityName: form.vendorEntityName || null,
     purchaserEntityId: form.purchaserEntityId || null,
     purchaserEntityName: form.purchaserEntityName || null,
+    landlordTradingEntityId: form.landlordTradingEntityId || null,
+    tenantTradingEntityId: form.tenantTradingEntityId || null,
+    vendorTradingEntityId: form.vendorTradingEntityId || null,
+    purchaserTradingEntityId: form.purchaserTradingEntityId || null,
   };
   if (changeReason) payload.changeReason = changeReason;
   return payload;
@@ -2404,7 +2424,7 @@ function SimplifiedCreateBody({
               setForm((p: any) => ({
                 ...p,
                 propertyId: "", unitId: "",
-                tenantId: "", tenantEntityId: "", tenantEntityName: "",
+                tenantId: "", tenantEntityId: "", tenantEntityName: "", tenantTradingEntityId: "",
                 ...(nameAutoFilled ? { name: "" } : {}),
               }));
               return;
@@ -2527,7 +2547,7 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search landlords…"
               value={form.landlordId}
               items={toComboItems(landlordOptions)}
-              onChange={(v) => { set("landlordId", v); set("landlordEntityId", ""); applyAutoName({ ...form, landlordId: v }); }}
+              onChange={(v) => { set("landlordId", v); set("landlordEntityId", ""); set("landlordTradingEntityId", ""); applyAutoName({ ...form, landlordId: v }); }}
               onCreate={createLandlord}
               createLabel="landlord"
             />
@@ -2538,11 +2558,12 @@ function SimplifiedCreateBody({
                   testIdPrefix="deal-landlord-entity"
                   value={form.landlordEntityId || null}
                   cachedName={form.landlordEntityName}
-                  onChange={(c) => {
+                  onChange={(c, company) => {
                     setForm((prev: any) => ({
                       ...prev,
                       landlordEntityId: c?.ContactID || "",
                       landlordEntityName: c?.Name || "",
+                      ...(company ? { landlordTradingEntityId: company.id } : {}),
                     }));
                   }}
                   createFor={{ id: form.landlordId, name: partyName(form.landlordId, "the landlord") }}
@@ -2560,7 +2581,7 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search tenants…"
               value={form.tenantId}
               items={toComboItems(tenantOptions)}
-              onChange={(v) => { set("tenantId", v); set("tenantEntityId", ""); applyAutoName({ ...form, tenantId: v }); }}
+              onChange={(v) => { set("tenantId", v); set("tenantEntityId", ""); set("tenantTradingEntityId", ""); applyAutoName({ ...form, tenantId: v }); }}
               onCreate={createTenant}
               createLabel="tenant"
             />
@@ -2580,11 +2601,12 @@ function SimplifiedCreateBody({
                   testIdPrefix="deal-tenant-entity"
                   value={form.tenantEntityId || null}
                   cachedName={form.tenantEntityName}
-                  onChange={(c) => {
+                  onChange={(c, company) => {
                     setForm((prev: any) => ({
                       ...prev,
                       tenantEntityId: c?.ContactID || "",
                       tenantEntityName: c?.Name || "",
+                      ...(company ? { tenantTradingEntityId: company.id } : {}),
                     }));
                   }}
                   createFor={{ id: form.tenantId, name: partyName(form.tenantId, "the tenant") }}
@@ -2606,7 +2628,7 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search vendors…"
               value={form.vendorId}
               items={toComboItems(vendorOptions)}
-              onChange={(v) => { set("vendorId", v); set("vendorEntityId", ""); applyAutoName({ ...form, vendorId: v }); }}
+              onChange={(v) => { set("vendorId", v); set("vendorEntityId", ""); set("vendorTradingEntityId", ""); applyAutoName({ ...form, vendorId: v }); }}
               onCreate={createVendor}
               createLabel="vendor"
             />
@@ -2617,11 +2639,12 @@ function SimplifiedCreateBody({
                   testIdPrefix="deal-vendor-entity"
                   value={form.vendorEntityId || null}
                   cachedName={form.vendorEntityName}
-                  onChange={(c) => {
+                  onChange={(c, company) => {
                     setForm((prev: any) => ({
                       ...prev,
                       vendorEntityId: c?.ContactID || "",
                       vendorEntityName: c?.Name || "",
+                      ...(company ? { vendorTradingEntityId: company.id } : {}),
                     }));
                   }}
                   createFor={{ id: form.vendorId, name: partyName(form.vendorId, "the vendor") }}
@@ -2638,7 +2661,7 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search purchasers…"
               value={form.purchaserId}
               items={toComboItems(purchaserOptions)}
-              onChange={(v) => { set("purchaserId", v); set("purchaserEntityId", ""); applyAutoName({ ...form, purchaserId: v }); }}
+              onChange={(v) => { set("purchaserId", v); set("purchaserEntityId", ""); set("purchaserTradingEntityId", ""); applyAutoName({ ...form, purchaserId: v }); }}
               onCreate={createPurchaser}
               createLabel="purchaser"
             />
@@ -2649,11 +2672,12 @@ function SimplifiedCreateBody({
                   testIdPrefix="deal-purchaser-entity"
                   value={form.purchaserEntityId || null}
                   cachedName={form.purchaserEntityName}
-                  onChange={(c) => {
+                  onChange={(c, company) => {
                     setForm((prev: any) => ({
                       ...prev,
                       purchaserEntityId: c?.ContactID || "",
                       purchaserEntityName: c?.Name || "",
+                      ...(company ? { purchaserTradingEntityId: company.id } : {}),
                     }));
                   }}
                   createFor={{ id: form.purchaserId, name: partyName(form.purchaserId, "the purchaser") }}
@@ -2934,7 +2958,7 @@ export function handoverForm(deal: CrmDeal | null | undefined, h: DealHandover, 
   if (!f.name) f.name = [h.unit.propertyName, h.unit.unitName].filter(Boolean).join(" – ");
   if (h.kind === "hots" && h.defaults) {
     const d = h.defaults;
-    if (d.tenantCompanyId && d.tenantCompanyId !== f.tenantId) { f.tenantId = d.tenantCompanyId; f.tenantEntityId = ""; f.tenantEntityName = ""; }
+    if (d.tenantCompanyId && d.tenantCompanyId !== f.tenantId) { f.tenantId = d.tenantCompanyId; f.tenantEntityId = ""; f.tenantEntityName = ""; f.tenantTradingEntityId = ""; }
     if (d.rentPa != null) f.rentPa = String(d.rentPa);
     if (d.leaseLengthYears != null) f.leaseLength = String(d.leaseLengthYears);
     if (d.rentFreeMonths != null) f.rentFree = String(d.rentFreeMonths);
@@ -3575,6 +3599,10 @@ export function DealFormDialog({
                         Red flag: {flags.map(f => f.label).join("; ")}. Raise it with KYC4U: the red flags go in the request's note.
                       </p>
                     )}
+                    {/* The company that signs and the person to ask, and
+                        anything missing before the checks can start
+                        (2026-11-18), filled in place. */}
+                    <PartyReadyToStart dealId={amlStep.dealId} companyId={p.id} />
                   </div>
                 );
               })}

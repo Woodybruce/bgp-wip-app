@@ -941,6 +941,14 @@ export const crmDeals = pgTable("crm_deals", {
   vendorEntityName: text("vendor_entity_name"),
   purchaserEntityId: varchar("purchaser_entity_id"),
   purchaserEntityName: text("purchaser_entity_name"),
+  // The company that signs for each party: a crm_trading_entities row under
+  // the party's brand (Woody, 2026-11-18, the deal page review: "adding the
+  // billing entities so can AML"). Not the Xero contacts above. Null on every
+  // deal before then: AML reads the brand, as it always did.
+  landlordTradingEntityId: varchar("landlord_trading_entity_id"),
+  tenantTradingEntityId: varchar("tenant_trading_entity_id"),
+  vendorTradingEntityId: varchar("vendor_trading_entity_id"),
+  purchaserTradingEntityId: varchar("purchaser_trading_entity_id"),
   vendorAgentId: varchar("vendor_agent_id"),
   vendorAgentContactId: varchar("vendor_agent_contact_id"),
   acquisitionAgentId: varchar("acquisition_agent_id"),
@@ -2648,6 +2656,9 @@ export const kycDocuments = pgTable("kyc_documents", {
   // source_of_funds, source_of_wealth, ubo_declaration, company_cert,
   // bank_statement, onfido_report, other
   docType: text("doc_type").notNull(),
+  // The party's contracting company (crm_trading_entities) when the document
+  // is about it rather than the brand (2026-11-18). Null = the brand.
+  tradingEntityId: varchar("trading_entity_id"),
   fileUrl: text("file_url").notNull(),
   fileName: text("file_name").notNull(),
   fileSize: integer("file_size"),
@@ -2897,6 +2908,9 @@ export const kycInvestigations = pgTable("kyc_investigations", {
   subjectName: text("subject_name").notNull(),
   companyNumber: text("company_number"),
   crmCompanyId: varchar("crm_company_id"),
+  // The deal party's contracting company the run was about (2026-11-18).
+  // Null = the brand itself.
+  tradingEntityId: varchar("trading_entity_id"),
   officerName: text("officer_name"),
   riskLevel: text("risk_level"), // low | medium | high | critical
   riskScore: integer("risk_score"),

@@ -598,6 +598,11 @@ export const JOINT_AGENT_HIDDEN_DEAL_FIELDS = [
   "kyc_approved", "kyc_approved_at", "kyc_approved_by", "aml_check_completed", "aml_checklist",
   "mlr_scope", "mlr_scope_reason", "mlr_scope_assessed_at", "mlr_scope_assessed_by", "aml_mlro_report_url",
   "aml_sof_analysis", "aml_ai_triage", "aml_market_data", "solicitor_notes",
+  // Each party's Xero billing contact, and the company that signs for it
+  // (2026-11-18): BGP's billing and AML records.
+  "landlord_entity_id", "landlord_entity_name", "tenant_entity_id", "tenant_entity_name",
+  "vendor_entity_id", "vendor_entity_name", "purchaser_entity_id", "purchaser_entity_name",
+  "landlord_trading_entity_id", "tenant_trading_entity_id", "vendor_trading_entity_id", "purchaser_trading_entity_id",
 ] as const;
 
 const snakeToCamel = (s: string) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
