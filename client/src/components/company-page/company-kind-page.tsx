@@ -23,7 +23,12 @@ type Built = { top: React.ReactNode; sections: CompanySection[]; foot?: React.Re
 // history entry: it is never a step for Back. A section is drawn the first
 // time it is opened and then kept, so its lists and maps keep their state.
 // Mount it with key={companyId}: another company starts on its first section.
-export function CompanyKindPage({ testId, children }: { testId: string; children: (select: (key: string) => void) => Built }) {
+// The deal page uses the same frame (18 November 2026) with its own test ids
+// and, on a phone, its pills in one scrolling row (sectionTestPrefix,
+// scrollOnPhone); the company pages leave both as they were.
+export function CompanyKindPage({ testId, children, sectionTestPrefix = "company-section", scrollOnPhone = false }: {
+  testId: string; children: (select: (key: string) => void) => Built; sectionTestPrefix?: string; scrollOnPhone?: boolean;
+}) {
   const [asked, setAsked] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("section") || "");
   const [opened, setOpened] = useState<string[]>([]);
   const select = (key: string) => {
@@ -38,9 +43,9 @@ export function CompanyKindPage({ testId, children }: { testId: string; children
   return (
     <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid={testId}>
       {top}
-      <div className="sticky top-0 z-20 -mx-1 px-1 py-2 flex flex-wrap items-center gap-1.5 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85" data-testid="company-sections">
+      <div className={`sticky top-0 z-20 -mx-1 px-1 py-2 flex items-center gap-1.5 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85 ${scrollOnPhone ? "flex-nowrap overflow-x-auto [&>*]:shrink-0 md:flex-wrap md:overflow-visible" : "flex-wrap"}`} data-testid={`${sectionTestPrefix}s`}>
         {sections.map(section => (
-          <Pill key={section.key} active={section.key === current} aria-pressed={section.key === current} onClick={() => select(section.key)} data-testid={`company-section-${section.key}`}>
+          <Pill key={section.key} active={section.key === current} aria-pressed={section.key === current} onClick={() => select(section.key)} data-testid={`${sectionTestPrefix}-${section.key}`}>
             {section.label}{section.count ? <span className="font-mono tabular-nums">{section.count.toLocaleString("en-GB")}</span> : null}
           </Pill>
         ))}

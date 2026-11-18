@@ -118,4 +118,35 @@ router.get("/api/chat/threads/record/unit-comments", requireAuth, async (req: Re
   }
 });
 
+// The deal page's conversation line (18 November 2026): how many messages in
+// the property's shared conversation tag the deal or its Letting Tracker unit,
+// and the latest. Read for a property the caller may open; it never joins the
+// conversation (opening the box does).
+router.get("/api/chat/threads/record/deal-comments", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const propertyId = String(req.query.propertyId || "").trim();
+    const dealId = String(req.query.dealId || "").trim();
+    const unitId = String(req.query.unitId || "").trim();
+    const id = /^[A-Za-z0-9_-]{1,80}$/;
+    if (!id.test(propertyId) || !id.test(dealId) || (unitId && !id.test(unitId))) return res.status(400).json({ message: "Name the property and the deal" });
+    if (await propertyReadBlocked(req, propertyId)) return res.status(403).json({ message: "Not available for this account" });
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n,
+              (array_agg(m.content ORDER BY m.created_at DESC))[1] AS last_content,
+              (array_agg(u.name ORDER BY m.created_at DESC))[1] AS last_sender,
+              max(m.created_at) AS last_at
+         FROM chat_threads t
+         JOIN chat_messages m ON m.thread_id = t.id AND m.role = 'user'
+         LEFT JOIN users u ON u.id = m.user_id
+        WHERE t.created_by = $1 AND t.linked_type = 'property' AND t.linked_id = $2
+          AND (strpos(m.content, $3) > 0 OR ($4 <> '' AND strpos(m.content, $4) > 0))`,
+      [RECORD_THREAD_CREATOR, propertyId, `(tag:deal/${dealId})`, unitId ? `(tag:unit/${unitId})` : ""]);
+    const r = rows[0];
+    res.json({ count: r?.n || 0, last: r?.n ? { text: String(r.last_content || ""), sender: r.last_sender || null, at: new Date(r.last_at).toISOString() } : null });
+  } catch (error: any) {
+    console.error("[record-conversation deal-comments]", error?.message);
+    res.status(500).json({ message: "The conversation could not be read" });
+  }
+});
+
 export default router;

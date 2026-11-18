@@ -255,9 +255,11 @@ The deal clock is drawn from one file,
 `client/src/components/landsec/deal-clock.tsx` (stage chip, days at stage,
 waiting on, depends on, Net Effective Rent, brief check), fed by
 `GET /api/landsec/deals`. For a Landsec viewer the Deals page, its board and
-phone cards, the deal page and the Letting Tracker join that feed by deal id
+phone cards and the Letting Tracker join that feed by deal id
 (`docs/landsec-menu-plan-2026-11-12.md`, part 4); the unit page and the older
-Lettings page use the same components. Stuck is Negotiating, HOTs or
+Lettings page use the same components. The deal page draws the same pieces
+for every letting, whoever views it, from its own read (`clockForDeal`,
+`GET /api/crm/deals/:id/page`; see "The deal page" below). Stuck is Negotiating, HOTs or
 Solicitors for 30 days, never Marketing (`landsecIsStuck`); with no rent free
 or capital recorded there is no pass or fail (`landsecBriefCheck`); a deal
 the viewer cannot see is "another deal" (`dependsOnFor`). Change a rule
@@ -636,9 +638,15 @@ CRM, Chat (`JOINT_AGENT_MENU` in `shared/landsec-menu.ts`). No Brands.
   `property-detail.tsx`) leaves out Ask ChatBGP, the layout controls,
   weekly focus, news, risk register, brand gap, BGP commentary, research,
   files, contacts, compliance, activity, tagged conversations and the
-  available units card. The deal page (`jointAgent` in `deal-detail.tsx`)
-  leaves out Image Studio, Edit, the Brand tab and profiles, files,
-  comments and history. Deals has no New Deal, and an inline change says
+  available units card. The deal page (`jointAgent` in `deal-detail.tsx`;
+  rebuilt 18 November 2026, see "The deal page" below) leaves out Edit,
+  Image Studio, Document, Delete, brand profiles, the property's folder and
+  the change log (History); it reads the stage strip, the clock (and sets
+  who the deal is waiting on, as at its tracker), the timeline less BGP's
+  AML and invoicing lines, the negotiation, the checklist and its own
+  tasks, the parties' names, the unit's files and the property's shared
+  conversation cut to the deal. (Until then this line said files, comments
+  and history were left out while the code showed them.) Deals has no New Deal, and an inline change says
   "read only" (`jointAgentDeals` in `deals.tsx`). Editing deals or the
   schedule from these pages is not built.
 - Its chat is unchanged (the section "Chat for a joint agent" below), and its
@@ -3093,7 +3101,10 @@ Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
   concern, an owner registered offshore) and lines in KYC4U's note
   (`precheckNote`).
 - **When it runs**: when a BGP person (signed in as themselves) opens the
-  deal's AML card and the party has no run from the last 30 days
+  deal's AML card and the party has no run from the last 30 days (on the
+  deal page that is the **Parties & AML** pill: since 18 November 2026
+  nothing else on the page reads the AML status; before, the page read it
+  on every open)
   (`dealPrechecks` from `GET /api/kyc/deal/:id/status`, which returns
   `prechecks`; the Kick off AML step after New Deal or a handover reads the
   same status, so a run starts the moment a deal is saved); on **Run again** (`POST /api/kyc/deal/:id/prechecks`, BGP
@@ -3464,6 +3475,117 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
 - Checked in a browser against a local copy on 18 November 2026 (desktop and
   an iPhone profile). Not built: the stage on the deal page's own card (it
   shows the state, not this chain), and a count of To do on the side bar.
+
+## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
+
+Woody, on the deal page: "Needs a chat box too no and how the negotiations
+have evolved etc then the tasks list for the deal? Responsibility etc?",
+"need full time line of deal tracking from marketing to completion", "bring
+up to the same level as Landsec". He answered "Yep go ahead" to steps 3, 4,
+5 and 7 of the review with its two suggestions: the chat box is the
+property's shared conversation cut to the deal, and the clock is on every
+letting with waiting-on settable by BGP staff on any letting. Do not
+re-litigate. Rules (pure): `shared/deal-page.ts`; reads:
+`server/deal-page.ts`; page: `client/src/components/deal-detail.tsx` with
+its parts in `client/src/components/deal-page/`. Tests:
+`server/deal-page.test.ts` (in `npm test`),
+`qa/regression/deal-page-guards.test.mjs`.
+
+- **The frame**: `CompanyKindPage` (the landlord and brand pages' frame),
+  one section at a time in `?section=`, the same page for every login and
+  cut on the server. Its two new options (`sectionTestPrefix`,
+  `scrollOnPhone`: the pills in one scrolling row on a phone) leave the
+  company pages as they were. The right rail and the phone's own pills are
+  gone: every card they held is in a pill. **Header line**: Deal, type and
+  Ref #, the name, the stage chip, days at stage (settable), **Waiting on**,
+  property, counterparty, target date, "<unit> on the Letting Tracker"
+  (`trackerUnitHref`), the tenancy chip, then **Edit** and one **More** menu
+  (Image Studio, Document, Delete). A joint agent has no Edit, Image Studio
+  or Delete. Then the **stage strip**, then the **Conversation** line.
+- **The stage strip** (`buildStageStrip`): Marketing → Negotiating → HOTs →
+  Solicitors → Exchanged → Completed → Invoiced (an investment deal from
+  Solicitors, Jack's rule), each step's day reached, days there and who
+  moved it, from the deal's status moves in `deal_audit_log` (refused moves
+  left out by `statusLineIsMoveSql`; a bulk-stamped move is unconfirmed, the
+  days-at-stage rule) and its own dates (instructed, exchanged, completed;
+  invoiced for BGP staff). The stage it is at takes `resolveStageSince`'s
+  date, so the strip and days at stage never disagree. A deal on the Letting
+  Tracker reads as a letting whatever it is typed (Marketing, not Available).
+- **The reads**, keyed by the deal and writing nothing:
+  `GET /api/crm/deals/:id/page` (names, stage, strip, clock, the letting,
+  the checklist, tasks) and `GET /api/crm/deals/:id/timeline`. Who may read
+  is who may open the deal (`viewerFor`, as `GET /api/crm/deals/:id`); the
+  letting's pieces only for a caller who may open the unit's brief
+  (`briefAccess`). The tracker unit is the row that points at the deal,
+  else (a letting) the row on its unit, which a deal keeps after the unit is
+  re-marketed: then `current` is false, its own checklist and recommendation
+  show read only, its offers and the unit's events are the ones in its
+  window (`lettingWindow`: from the deal, when an earlier letting on the unit
+  came before it, to the deal that replaced it), and the unit's own dialogs
+  are not offered. The page sends the names it draws with (`namesFor`), so
+  it no longer downloads the whole company, contact, property and property
+  unit lists on every open: the party pickers, linked contacts and the edit
+  dialogs load them when opened. A joint agent is sent company names with
+  no ids, a contact's name on an offer only on its own offer, and no folder
+  links or unit record; it reaches the two reads through
+  `JOINT_AGENT_DEAL_PAGE` (GET only).
+- **The clock for every letting**: `clockWriterFor` in
+  `server/landsec-unit.ts` is the one rule for who writes a deal's clock
+  (the waiting-on, and the date a deal reached its stage): a Landsec login,
+  or BGP staff, at the deal's scheme as before (`unitAccess`), and BGP staff
+  signed in as themselves (`contactViewer`) on any letting (`isLettingType`,
+  or a deal with a Letting Tracker row). The clock route
+  (`PUT /api/landsec/deal/:id/clock`), its waiting-options and the
+  checklist's "Deal is waiting on this" (`mayWriteClock`, `clockOpenAt`) all
+  ask it; "depends on" names any deal for BGP staff (`dependsOnFor` with
+  `visible` null: only a deal that has gone is hidden). `clockForDeal` reads
+  one deal's clock by the feed's own rules; a closed deal waits on no one.
+  The old Landsec-only `DealClockCard` is gone.
+- **The pills** (`dealPageSections`): Overview (the deal clock, **Owed now**
+  (`owedItems`), the dates and terms cards, a client's BGP fee, the activity
+  feed), Timeline, Negotiation (a deal with a tracker unit: offers with every
+  position, Heads of Terms, the recommendation, the brief, viewings),
+  Checklist & tasks ("Tasks" without a unit: waiting on, the checklist by
+  stage with who is responsible, and every task linked to the deal:
+  `user_tasks.linked_deal_id` less the checklist's own; BGP staff read every
+  one, anyone else its own; **Add a task**), Parties & AML ("Parties" for a
+  client login; the AML card is read only here, so BGP's paid checks before
+  asking start only when this pill is opened), Fees & invoicing (BGP staff),
+  Files (the unit's files; the property folder for BGP staff) and History
+  (the change log; not a joint agent). The letting's dialogs
+  (`letting-dialogs.tsx`) open only when asked, and the unit's own ones only
+  on its current letting.
+- **The timeline** (`buildDealTimeline`): added, instructed, stage moves,
+  the brief agreed, viewings, each offer position and terms agreed, the
+  Heads of Terms steps (`unit_hots_events`), the recommendation, checklist
+  items done, exchange and completion, and for BGP staff only
+  (`STAFF_ONLY_EVENTS`) the AML lines (`aml_sign_off`, `kyc4u_result`, the
+  KYC approval and AML check changes, client checks sent and finished, KYC4U
+  requests) and invoices. A client check's token is never selected. Each
+  event opens what is behind it. It replaces `GET /api/deals/:dealId/timeline`
+  and the old `DealTimeline` (both deleted).
+- **The conversation** (`deal-conversation.tsx`): the property's one shared
+  thread (`server/record-conversation.ts`), cut to the messages that tag the
+  deal or its tracker unit; a message written there is tagged with both, so
+  it shows in the property's conversation and as the unit's Letting Tracker
+  comment. Opening the box joins the thread (as on the property page); the
+  closed line reads only `GET /api/chat/threads/record/deal-comments`
+  (`propertyReadBlocked`, never joins; a joint agent's gateway does not open
+  it, so its line shows no count). A joint agent tags the deal only while it
+  is live. The old Comments box (`crm_deals.comments`) is read only as
+  **Earlier notes on the deal**; its POST route stays for other callers.
+- **The activity feed on a deal** leaves out the deal's own moves (they are
+  on the Timeline) and never links back to the deal it is on; its filter
+  pills show only when they would change something.
+- Also fixed: the unit editor on the heading opened with blank address
+  fields (the unit list route does not send them), so Save blanked the
+  unit's address; it now starts from the unit record (`names.unit`).
+- Checked in a browser against a local copy on 18 November 2026 (staff on
+  desktop and an iPhone profile, the Landsec client login). Not built: the
+  deal clock columns on the Deals list for every letting (they are still the
+  Landsec view's); a client login adds a task to its own list only from the
+  deal page; brand profiles have no pill of their own (they are folded under
+  Parties, as the old Brand tab's cards).
 
 ## Emails come from chatbgp.app (Woody, 2026-11-17)
 

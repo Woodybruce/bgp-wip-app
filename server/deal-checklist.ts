@@ -732,21 +732,24 @@ async function alongside(db: Db, what: string, fn: () => Promise<void>): Promise
 }
 
 // May this caller write the deal clock of this deal? The same check the
-// clock's own route makes (unitAccess in server/landsec-unit.ts): a Landsec
-// scheme, and for a joint agent one of its own.
+// clock's own route makes (clockWriterFor in server/landsec-unit.ts): a
+// Landsec scheme, and for a joint agent one of its own; or BGP staff signed
+// in as themselves on any letting (18 November 2026).
 async function mayWriteClock(req: Request, dealId: string | null | undefined): Promise<boolean> {
   if (!dealId) return false;
-  const propertyId = (await pool.query(`SELECT property_id FROM crm_deals WHERE id = $1`, [dealId])).rows[0]?.property_id;
-  if (!propertyId) return false;
-  const { unitAccess } = await import("./landsec-unit");
-  return !!(await unitAccess(req, propertyId));
+  const deal = (await pool.query(`SELECT id, property_id, deal_type FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
+  if (!deal) return false;
+  const { clockWriterFor } = await import("./landsec-unit");
+  return !!(await clockWriterFor(req, deal));
 }
 
-// Is this property one of the Landsec schemes, for a caller who has already
-// passed briefAccess on it? That is who the clock route lets write: the
-// checklist offers "Deal is waiting on this" to them. The route itself checks
-// again with mayWriteClock.
+// Does the clock route let this caller write, for a caller who has already
+// passed briefAccess on the unit? BGP staff signed in as themselves on any
+// letting (the unit's deal is one), else a Landsec login at one of the
+// schemes: the checklist offers "Deal is waiting on this" to them. The route
+// itself checks again with mayWriteClock.
 async function clockOpenAt(access: Access, propertyId: string | null | undefined): Promise<boolean> {
+  if (access.isStaff && !access.scope) return true;
   if (!propertyId) return false;
   try {
     const { landsecCompanyId, isLandsecCompany, resolveLandsecPortfolio } = await import("./landsec-schemes");
@@ -1326,7 +1329,7 @@ export function setupDealChecklistRoutes(app: Express) {
       if (!ctx) return;
       const { checklist, unit, access, item } = ctx;
       if (!unit.deal_id) return res.status(409).json({ message: "This unit has no deal yet, so there is nothing to set as waiting" });
-      if (!(await mayWriteClock(req, unit.deal_id))) return res.status(403).json({ message: "Who a deal is waiting on can be set only at a Landsec scheme you work on" });
+      if (!(await mayWriteClock(req, unit.deal_id))) return res.status(403).json({ message: "Who a deal is waiting on is set by BGP staff, or by a Landsec login at the deal's scheme" });
       if (item.done_at) return res.status(400).json({ message: "This item is done, so the deal is not waiting on it" });
       if (lettingClosed(unit.deal_status, unit.marketing_status)) return res.status(409).json({ message: "This letting has closed, so the deal is not waiting on anything" });
       const loaded = (await loadWaitingChecklists(pool, "c.id", [checklist.id]))[0] || null;

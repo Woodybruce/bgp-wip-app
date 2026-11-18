@@ -4237,6 +4237,7 @@ import { setupLettingSuggestionRoutes } from "./letting-suggestions";
 import { setupUnitHotsRoutes } from "./unit-hots";
 import { setupUnitShareRoutes } from "./unit-share";
 import { setupDealChecklistRoutes } from "./deal-checklist";
+import { setupDealPageRoutes } from "./deal-page";
 import { setupUnitRecommendationRoutes } from "./unit-recommendation";
 import { setupLandsecBrandCaseRoutes } from "./landsec-brand-case";
 import { setupBrandCrmPlanRoutes } from "./brand-scheme-plan";
@@ -5564,6 +5565,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   (await import("./billing-entity")).setupBillingEntityRoutes(app);
   setupUnitShareRoutes(app);
   setupDealChecklistRoutes(app);
+  setupDealPageRoutes(app);
   setupUnitRecommendationRoutes(app);
   setupLandsecBrandCaseRoutes(app);
   setupBrandCrmPlanRoutes(app);

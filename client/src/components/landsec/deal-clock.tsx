@@ -89,7 +89,9 @@ export function refreshWaitingOn({ checklists = true }: { checklists?: boolean }
   queryClient.invalidateQueries({
     predicate: q => {
       const k = typeof q.queryKey[0] === "string" ? (q.queryKey[0] as string) : "";
-      return k.startsWith("/api/landsec/unit/") || k === "/api/landsec/deal" || k.startsWith("/api/tasks") || (checklists && k.startsWith("/api/deal-checklists"));
+      // The deal page's own reads (server/deal-page.ts) carry the clock too.
+      const dealPage = k === "/api/crm/deals" && (q.queryKey[2] === "page" || q.queryKey[2] === "timeline");
+      return dealPage || k.startsWith("/api/landsec/unit/") || k === "/api/landsec/deal" || k.startsWith("/api/tasks") || (checklists && k.startsWith("/api/deal-checklists"));
     },
   });
 }
@@ -766,9 +768,10 @@ export function ClockDash({ title, testId }: { title: string; testId?: string })
   return <span className="text-muted-foreground/60" title={title} data-testid={testId}>—</span>;
 }
 
-// The clock line as the unit page and the deal page show it: stage, who, days
-// at this stage, Net Effective Rent, the brief check, then who it is waiting
-// on. One component, so the two pages cannot drift.
+// The clock line as the unit page shows it: stage, who, days at this stage,
+// Net Effective Rent, the brief check, then who it is waiting on. The deal
+// page draws the same pieces (DaysAtStage, NerFigure, BriefCheck, WaitingOn)
+// for every letting from its own read (server/deal-page.ts).
 export function DealClockLine({ stage, code, name, days, stageConfirmed, stageSet, since, canSetStage, ner, incentivesRecorded, brief, briefCheck, jointAgent, unit, clock, dealId, waitingDays, schemeDeals, onSave, saving, testId, waitingTestId, label, linkDeals = true }: {
   stage: string | null; code: DealStatusCode | null; name?: string | null; days: number | null;
   // Days at stage: whether the date is confirmed, the date set by hand, the
@@ -796,28 +799,5 @@ export function DealClockLine({ stage, code, name, days, stageConfirmed, stageSe
       </div>
       <WaitingOn clock={clock} dealId={dealId} waitingDays={waitingDays} schemeDeals={schemeDeals} onSave={onSave} saving={saving} testId={waitingTestId} linkDeals={linkDeals} />
     </div>
-  );
-}
-
-// The deal page's clock, for a Landsec viewer. Renders nothing for anyone
-// else, and nothing for a deal that is not live on a scheme property.
-export function DealClockCard({ dealId }: { dealId: string }) {
-  const landsec = useIsLandsecView();
-  const { byId, data } = useLandsecClocks(landsec);
-  const save = useSaveDealClock();
-  const d = byId.get(dealId);
-  if (!landsec || !d) return null;
-  const unitLabel = [d.scheme?.name, d.unit].filter(Boolean).join(" · ");
-  return (
-    <DealClockLine
-      testId="deal-clock-card" waitingTestId="deal-clock-waiting" label="Deal clock"
-      stage={d.code ? DEAL_STATUS_LABELS[d.code] : null} code={d.code} days={d.days}
-      stageConfirmed={d.stageConfirmed} stageSet={d.stageSet} since={d.since} canSetStage={data?.canSetStage}
-      ner={d.ner} incentivesRecorded={d.incentivesRecorded} brief={d.brief} briefCheck={d.briefCheck} jointAgent={d.jointAgent}
-      unit={unitLabel ? { href: d.unitId ? `/landsec/unit/${d.unitId}` : null, label: d.unitId ? `Unit page: ${unitLabel}` : unitLabel } : null}
-      clock={d.clock} dealId={dealId} waitingDays={d.waitingDays} schemeDeals={schemeDealsFor(data, d)}
-      onSave={patch => save.mutate({ dealId, patch })} saving={save.isPending}
-      linkDeals
-    />
   );
 }

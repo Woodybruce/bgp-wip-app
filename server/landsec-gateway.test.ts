@@ -288,6 +288,13 @@ const REAL_PAGES: Row[] = [
   ["DELETE", `/api/crm/deals/${X}`, "deny"],
   ["GET", `/api/crm/deals/${X}/audit`, "deny"],
   ["GET", `/api/crm/deals/${X}/related-emails`, "deny"],
+  // The deal page's own reads (18 November 2026): read only; the change log stays closed.
+  ["GET", `/api/crm/deals/${X}/page`, "allow"],
+  ["GET", `/api/crm/deals/${X}/timeline`, "allow"],
+  ["POST", `/api/crm/deals/${X}/page`, "deny"],
+  ["PUT", `/api/crm/deals/${X}/timeline`, "deny"],
+  ["GET", `/api/crm/deals/${X}/audit-log`, "deny"],
+  ["GET", `/api/crm/deals/not-an-id/page`, "deny"],
   ["GET", "/api/crm/deals/wip-badges", "deny"],
   ["GET", "/api/crm/deals/po-numbers", "deny"],
   ["GET", "/api/crm/properties/by-name/bluewater", "deny"],

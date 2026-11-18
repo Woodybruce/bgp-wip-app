@@ -71,6 +71,13 @@ test("depends on: a deal on a property the viewer can see is named and linked; n
   assert.deepEqual(api.dependsOnFor({ depends_on_deal_id: null }, visible), { dependsOnDealId: null, dependsOn: null, dependsOnHidden: false });
 });
 
+test("depends on, for BGP staff on any letting (18 November 2026): every deal is named; only one that has gone is hidden", () => {
+  assert.deepEqual(
+    api.dependsOnFor({ depends_on_deal_id: "d9", dep_ref: 412, dep_name: "Nando's", dep_unit: "Unit 12", dep_property_id: "p-anywhere" }, null),
+    { dependsOnDealId: "d9", dependsOn: { id: "d9", ref: 412, name: "Nando's", unit: "Unit 12" }, dependsOnHidden: false });
+  assert.deepEqual(api.dependsOnFor({ depends_on_deal_id: "d9" }, null), { dependsOnDealId: null, dependsOn: null, dependsOnHidden: true });
+});
+
 test("the floor is the Targeting Brief's first, else the older Agreed brief's", () => {
   assert.equal(api.nerFloorOf({ nerFloorPa: 95000 }, 80000), 95000);
   assert.equal(api.nerFloorOf({ nerFloorPa: "95000" }, null), 95000);
