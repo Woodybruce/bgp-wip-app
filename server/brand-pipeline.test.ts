@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import {
   TOO_COMMON_REASON, advertCompanyMatches, advertTown, brandNames, classifyAdvert, jobRowsFrom,
   nameTooCommon, normCompany, planningRecordCounts, planningRowsFrom, planningSearchTerm,
-  planningSiteKey, planningTown, planningVerdict,
+  pipelineCheckWords, pipelineCheckedSummary, planningSiteKey, planningTown, planningVerdict,
 } from "../shared/brand-pipeline";
 
 let api: typeof import("./brand-pipeline");
@@ -68,6 +68,20 @@ test("the description must be about commercial premises", () => {
     "Replacement air conditioning units at Greggs premises",
     "Tables and chairs outside Greggs, with new signage",
   ]) assert.equal(counts(d, ["Greggs"]), false, d);
+  // Road signs and "signs of" are not a shop's signs; a shop's still count.
+  assert.equal(counts("Relocation of two road signs to serve the new Five Guys", ["Five Guys"]), false);
+  assert.equal(counts("Boundary wall at Five Guys shows signs of movement: rebuild", ["Five Guys"]), false);
+  assert.equal(counts("Two illuminated fascia signs for Five Guys", ["Five Guys"]), true);
+  assert.equal(counts("Display of signs for Five Guys", ["Five Guys"]), true);
+  // A tree or telecoms application never brings an occupier. The Guildford
+  // tree application that passed on the live register (18 November 2026)
+  // named "the light", "the Ivy" and "the road signs".
+  const trees = "T1 Cypress - To section fell to ground level. Reason - The tree is growing under the canopy of larger trees and has grown to the light. T3 Tulip Tree - To crown thin by 20% and remove the Ivy. T13 Goat Willow - the stems are arching over touching the road signs and pavement.";
+  assert.deepEqual(planningVerdict(rec(trees, { app_type: "Trees" }), { names: ["The Ivy"], now: NOW }), { counts: false, reason: "not about commercial premises" });
+  assert.equal(counts("Fell one tree to make room for new Five Guys fascia signs", ["Five Guys"], { app_type: "Trees" }), false);
+  assert.equal(counts("Rooftop mast and equipment cabinet with signage for Five Guys", ["Five Guys"], { app_type: "Telecoms" }), false);
+  assert.equal(counts("Fell one tree to make room for new Five Guys fascia signs", ["Five Guys"], { app_type: "Full" }), true);
+  assert.equal(counts("Two illuminated fascia signs for Five Guys", ["Five Guys"], { app_type: "Advertising" }), true);
 });
 
 test("dated within 12 months, and dated at all", () => {
@@ -95,7 +109,7 @@ test("the last, the present or the neighbouring occupier is not an arrival", () 
 test("names too common to search", () => {
   for (const n of ["Next", "Boots", "Reserved", "Mango", "Office", "Leon", "LEON", "Wasabi", "Joe", "Honest", "Space", "Mint", "Oak",
     "Jigsaw", "Monsoon", "Oasis", "Coast", "Whistles", "Gap", "Evans", "Burton", "Dune", "Three", "EE", "O2", "Cook", "Paul",
-    "Tortilla", "Côte", "Bill's", "The Range", "Zara", "KFC"]) {
+    "Tortilla", "Côte", "Bill's", "The Range", "The Light", "Zara", "KFC"]) {
     assert.equal(nameTooCommon(n), true, n);
   }
   for (const n of ["Schuh", "Itsu", "Pret", "Flight Club", "White Stuff", "Zizzi", "Seasalt", "Phase Eight", "Reiss", "Clarks",
@@ -332,8 +346,8 @@ test("with the jobs keys: one request to each source, the keys only ever go to t
   assert.equal(/the-id|the-key/.test(planit.url), false);
   const jobs = new URL(net.calls.find((c) => c.url.includes("adzuna.com"))!.url);
   assert.equal(jobs.origin + jobs.pathname, "https://api.adzuna.com/v1/api/jobs/gb/search/1");
-  assert.deepEqual([jobs.searchParams.get("app_id"), jobs.searchParams.get("app_key"), jobs.searchParams.get("company"), jobs.searchParams.get("max_days_old"), jobs.searchParams.get("results_per_page"), jobs.searchParams.get("content-type")],
-    ["the-id", "the-key", "Wingstop", "60", "50", "application/json"]);
+  assert.deepEqual([jobs.searchParams.get("app_id"), jobs.searchParams.get("app_key"), jobs.searchParams.get("what_phrase"), jobs.searchParams.get("company"), jobs.searchParams.get("max_days_old"), jobs.searchParams.get("results_per_page"), jobs.searchParams.get("content-type")],
+    ["the-id", "the-key", "Wingstop", null, "60", "50", "application/json"]);
 
   assert.deepEqual(savedRows(db).map((x: any) => [x.kind, x.item_key, x.town]), [["job_new_opening", "11", "Reading"], ["job_property_role", "13", "London"]]);
   const check = savedCheck(db)!;
@@ -368,6 +382,83 @@ test("a source that fails is reported, never thrown, and a key never reaches the
   const odd = fakeFetch({ planit: { records: "no" }, adzuna: { error: "AUTH_FAIL" } });
   const r2 = await api.refreshBrandPipeline("c1", { fetch: odd.fn, db: fakeDb({ c1: { name: "Wingstop" } }), env: { ADZUNA_APP_ID: "a", ADZUNA_APP_KEY: "b" }, now: () => NOW });
   assert.deepEqual(r2, { planning: { ok: true, found: 0 }, jobs: { configured: true, ok: false, reason: "unexpected reply", found: 0 } });
+});
+
+// Adzuna's company filter takes only the employer names it knows and refused
+// every brand with a 400 once the keys were set (18 November 2026), so the
+// name is asked as a phrase and only the brand's own adverts are kept.
+function adzunaFetch(answer: { status: number; body: any }) {
+  const calls: string[] = [];
+  const fn = (async (url: any) => {
+    const u = String(url);
+    calls.push(u);
+    if (u.includes("planit.org.uk")) return { ok: true, status: 200, json: async () => ({ records: [], total: null }) };
+    return { ok: answer.status === 200, status: answer.status, json: async () => answer.body };
+  }) as unknown as typeof fetch;
+  return { fn, calls, adzuna: () => calls.filter((c) => c.includes("adzuna.com")) };
+}
+
+test("the name is asked as a phrase, once, and only the brand's own adverts are kept", async () => {
+  const net = adzunaFetch({ status: 200, body: { count: 3, results: [
+    advert("21", "General Manager - New Opening", "Liverpool", { company: { display_name: "Flat Iron" } }),
+    advert("22", "Stylist wanted: flat iron and blow dry skills", "Leeds", { company: { display_name: "Hair Ltd" } }),
+    advert("23", "Head Chef - New Restaurant", "Birmingham", { company: { display_name: "Flat Iron Steak Ltd" } }),
+  ] } });
+  const db = fakeDb({ c1: { name: "Flat Iron", trading_entities: [{ name: "Flat Iron Steak Ltd" }] } });
+  const r = await api.refreshBrandPipeline("c1", { fetch: net.fn, db, env: { ADZUNA_APP_ID: "the-id", ADZUNA_APP_KEY: "the-key" }, now: () => NOW });
+  assert.deepEqual(r.jobs, { configured: true, ok: true, found: 2 });
+  const asks = net.adzuna().map((c) => new URL(c).searchParams);
+  assert.equal(asks.length, 1);
+  assert.deepEqual([asks[0].get("what_phrase"), asks[0].get("company"), asks[0].get("max_days_old")], ["Flat Iron", null, "60"]);
+  // The hairdresser's advert that only mentions the words is not kept, and
+  // with other firms on the page only the brand's own adverts are counted.
+  assert.deepEqual(savedRows(db).map((x: any) => [x.kind, x.item_key, x.town]), [["job_new_opening", "21", "Liverpool"], ["job_new_opening", "23", "Birmingham"]]);
+  assert.deepEqual(savedCheck(db)!.slice(1, 4), ["ok", "ok", 2]);
+});
+
+test("Adzuna's own words for a refusal are kept, never a key, and nothing is asked twice", async () => {
+  const bad = adzunaFetch({ status: 400, body: { exception: "BAD_REQUEST", display: "Bad what_phrase for app_key key-90fd3b" } });
+  const db = fakeDb({ c1: { name: "Flat Iron" } });
+  const r = await api.refreshBrandPipeline("c1", { fetch: bad.fn, db, env: { ADZUNA_APP_ID: "id-7c41e2", ADZUNA_APP_KEY: "key-90fd3b" }, now: () => NOW });
+  assert.equal(r.jobs.ok, false);
+  assert.equal(r.jobs.reason, "HTTP 400: Bad what_phrase for app_key ***");
+  assert.equal(bad.adzuna().length, 1);
+  assert.match(String(savedCheck(db)![2]), /^failed: HTTP 400: Bad what_phrase/);
+  assert.equal(/key-90fd3b|id-7c41e2/.test(JSON.stringify(savedCheck(db))), false);
+
+  const auth = adzunaFetch({ status: 401, body: { exception: "AUTH_FAIL", display: "Authorisation failed" } });
+  const r2 = await api.refreshBrandPipeline("c1", { fetch: auth.fn, db: fakeDb({ c1: { name: "Flat Iron" } }), env: { ADZUNA_APP_ID: "id-7c41e2", ADZUNA_APP_KEY: "key-90fd3b" }, now: () => NOW });
+  assert.deepEqual(r2.jobs, { configured: true, ok: false, reason: "HTTP 401: Authorisation failed", found: 0 });
+  assert.equal(auth.adzuna().length, 1);
+
+  // A refusal with no readable body is the status alone.
+  const blank = adzunaFetch({ status: 429, body: undefined });
+  const r3 = await api.refreshBrandPipeline("c1", { fetch: blank.fn, db: fakeDb({ c1: { name: "Flat Iron" } }), env: { ADZUNA_APP_ID: "id-7c41e2", ADZUNA_APP_KEY: "key-90fd3b" }, now: () => NOW });
+  assert.equal(r3.jobs.reason, "HTTP 429");
+});
+
+test("a check that failed is said as failed in the summary, never as none found", async () => {
+  const s = await api.pipelineSummary("c1", { env: { ADZUNA_APP_ID: "a", ADZUNA_APP_KEY: "b" }, now: () => NOW, db: fakeDb({}, (text) =>
+    /FROM brand_pipeline_checks/.test(text) ? [{ checked_at: "2026-11-18T11:25:19Z", planning_status: "failed: HTTP 503", jobs_status: "failed: HTTP 400: Invalid company", jobs_total: null, jobs_by_town: null }] : undefined) });
+  assert.equal(s.planningProblem, "HTTP 503");
+  assert.equal(s.jobsProblem, "HTTP 400: Invalid company");
+  assert.equal(s.planningSkipped, null);
+  const ok = await api.pipelineSummary("c1", { env: {}, now: () => NOW, db: fakeDb({}, (text) =>
+    /FROM brand_pipeline_checks/.test(text) ? [{ checked_at: "2026-11-18T11:25:19Z", planning_status: "ok", jobs_status: "not configured", jobs_total: null, jobs_by_town: null }] : undefined) });
+  assert.deepEqual([ok.planningProblem, ok.jobsProblem], [null, null]);
+});
+
+test("the card says what each source's check did: none found, failed, or not run", () => {
+  const ran = { jobsConfigured: true, planningSkipped: null, planningProblem: null, jobsProblem: null };
+  assert.deepEqual(pipelineCheckWords(ran), { planning: "no planning applications naming it in 12 months", jobs: "no new-opening or property job adverts in 60 days" });
+  assert.equal(pipelineCheckedSummary(ran, "18 Nov 2026"), "Planning registers and job adverts checked 18 Nov 2026");
+  const failed = { ...ran, jobsProblem: "HTTP 400: Invalid company" };
+  assert.equal(pipelineCheckWords(failed).jobs, "job adverts could not be checked (HTTP 400: Invalid company)");
+  assert.equal(pipelineCheckedSummary(failed, "18 Nov 2026"), "Planning registers checked 18 Nov 2026");
+  const off = { ...ran, jobsConfigured: false, planningProblem: "HTTP 503" };
+  assert.deepEqual(pipelineCheckWords(off), { planning: "planning register could not be read (HTTP 503)", jobs: "job adverts not switched on (they need an Adzuna key)" });
+  assert.equal(pipelineCheckedSummary(off, "18 Nov 2026"), "Checked 18 Nov 2026; neither source could be read");
+  assert.equal(pipelineCheckWords({ ...ran, planningSkipped: TOO_COMMON_REASON }).planning, `planning not searched (${TOO_COMMON_REASON})`);
 });
 
 test("a brand that is not there: nothing is asked and nothing is written", async () => {
@@ -406,6 +497,8 @@ test("the summary", async () => {
   assert.deepEqual(jobsQ.params, ["c1", "2026-09-16"]);
   assert.match(planningQ.text, /LIMIT 40/);
   assert.match(jobsQ.text, /LIMIT 40/);
+  // A tree or telecoms application stored before the rule is left out.
+  assert.match(planningQ.text, /AND lower\(trim\(COALESCE\(detail->>'type', ''\)\)\) NOT IN \('trees', 'telecoms'\)/);
 });
 
 test("the summary for a skipped brand, a brand never checked and a database with no tables", async () => {
@@ -416,7 +509,7 @@ test("the summary for a skipped brand, a brand never checked and a database with
   assert.equal(skipped.jobsTotal, null);
   assert.deepEqual(skipped.jobTowns, []);
 
-  const empty = { checkedAt: null, planning: [], jobs: [], jobsConfigured: false, jobsTotal: null, jobTowns: [], planningSkipped: null };
+  const empty = { checkedAt: null, planning: [], jobs: [], jobsConfigured: false, jobsTotal: null, jobTowns: [], planningSkipped: null, planningProblem: null, jobsProblem: null };
   assert.deepEqual(await api.pipelineSummary("c1", { env: {}, db: fakeDb({}) }), empty);
   assert.deepEqual(await api.pipelineSummary("c1", { env: {}, db: { query: async () => { throw missing(); } } }), empty);
   await assert.rejects(api.pipelineSummary("c1", { env: {}, db: { query: async () => { throw new Error("connection lost"); } } }), /connection lost/);
@@ -447,6 +540,8 @@ test("evidence counts sites, not applications, and never throws", async () => {
     newOpeningJobs: 3, propertyRoles: 1, jobTowns: ["Leeds", "York"],
   });
   assert.deepEqual(db.queries[0].params, ["c1", "2025-11-15", "2026-09-16"]);
+  // The score leaves out a stored tree or telecoms application, as the card does.
+  assert.match(db.queries[0].text, /kind = 'planning' AND item_date >= \$2::date AND lower\(trim\(COALESCE\(detail->>'type', ''\)\)\) NOT IN \('trees', 'telecoms'\)/);
 });
 
 // ─── Nightly ─────────────────────────────────────────────────────────────

@@ -1051,11 +1051,34 @@ not opened to them.
       the description names the brand (not as a former, existing or
       neighbouring occupier), is about works a new occupier applies for
       (shopfront, signage, change of use, fit-out, extraction) and is under
-      12 months old. A name too common to search (Next, Boots, any single
-      word of four letters or fewer but Pret and Itsu) is skipped and says
-      so. Job adverts come from Adzuna and are OFF until `ADZUNA_APP_ID` and
-      `ADZUNA_APP_KEY` are set; that half has never been run against
-      Adzuna. Licensing registers are council by council and are not read.
+      12 months old. A name too common to search (Next, Boots, The Light,
+      any single word of four letters or fewer but Pret and Itsu) is
+      skipped and says so. A tree or telecoms application (PlanIt's own
+      type, `NEVER_AN_OCCUPIER_TYPES`) never counts, and road or traffic
+      signs and "signs of" are not shop signs: a Guildford tree application
+      counted for The Light on 18 November 2026 because it said "grown to
+      the light" and "touching the road signs". Stored rows are never
+      deleted (a check only adds or refreshes them), so the card and the
+      score also leave out a stored tree or telecoms row. Job adverts come from Adzuna (`ADZUNA_APP_ID`,
+      `ADZUNA_APP_KEY`, set on Railway). The name is asked as a phrase, one
+      request a brand, and only adverts the brand itself placed are kept
+      (`advertCompanyMatches`); Adzuna's company filter is not used: it
+      knows only some employer names and refused the rest with a 400, so
+      until 18 November 2026 the jobs half failed for about nine brands in
+      ten (it worked for 15 of the first 179: Argos, Skechers, McCarthy &
+      Stone and others). Do not add a second request per brand: Adzuna's
+      free key is reported to allow about 2,500 calls a month (unconfirmed)
+      and the nightly run already makes about 1,800. A refusal is stored
+      with Adzuna's own words, never a key. The card says what each source's
+      check did (`pipelineCheckWords`, `pipelineCheckedSummary`): a check
+      that failed or was not run never reads as "none found". What it
+      finds: in the first three nights (16 to 18 November 2026, 179 brands)
+      planning named a brand twice, one of them the tree application.
+      Council descriptions rarely name the occupier, and PlanIt's Liverpool
+      register stopped at 8 July 2026 (seen 18 November). At 60 a night the
+      2,764 tenant brands take about 46 nights to go round once; a failed
+      check is tried again only after every brand never checked. Licensing
+      registers are council by council and are not read.
     - **Plans stated in the filed accounts** (`server/accounts-plans.ts`,
       checks in `shared/accounts-plans.ts`): openings, closures and capital
       spend planned after the year end, kept under
@@ -1081,7 +1104,12 @@ not opened to them.
     cards, **Store count** and **Sites on the way**
     (`client/src/components/brand-page/estate-pipeline.tsx`), lead the
     evidence column above Signals; a client login reads them (public data)
-    and only BGP staff can ask for a fresh count or check.
+    and only BGP staff can ask for a fresh count or check. The Competitor
+    set goes under whichever column is shorter, measured without it
+    (`BalancedPair` in `client/src/components/brand-page/balanced-pair.tsx`;
+    Woody, 2026-11-18, on Flat Iron's page: "can you fix this gap?"); on one
+    column it stays under the score card, and no card is stretched to fill
+    a gap. Guard: `qa/regression/brand-expansion-columns.test.mjs`.
   - **People & checks is a matched pair** (Woody, 2026-11-13: "same
     height"). On two columns Key contacts and Company checks are one height
     while both are at rest; a card marked `data-own-height` (opened with

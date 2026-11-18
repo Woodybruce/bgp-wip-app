@@ -38,6 +38,36 @@ export interface PipelineSummary {
   jobsTotal: number | null;
   jobTowns: { town: string; adverts: number }[];
   planningSkipped: string | null;
+  // Why the last check of each source failed, when it did.
+  planningProblem: string | null;
+  jobsProblem: string | null;
+}
+
+// What the last check really did, source by source, for the card: a check
+// that failed or was not run never reads as "none found" (Woody, 2026-11-18,
+// asking whether the planning and jobs check was "actually working properly":
+// the job adverts had failed on every brand since the key was set, and the
+// card said none were found).
+type CheckFacts = Pick<PipelineSummary, "jobsConfigured" | "planningSkipped"> & { planningProblem?: string | null; jobsProblem?: string | null };
+
+export function pipelineCheckWords(data: CheckFacts): { planning: string; jobs: string } {
+  const planning = data.planningSkipped ? `planning not searched (${data.planningSkipped})`
+    : data.planningProblem ? `planning register could not be read (${data.planningProblem})`
+    : "no planning applications naming it in 12 months";
+  const jobs = !data.jobsConfigured ? "job adverts not switched on (they need an Adzuna key)"
+    : data.jobsProblem ? `job adverts could not be checked (${data.jobsProblem})`
+    : "no new-opening or property job adverts in 60 days";
+  return { planning, jobs };
+}
+
+// "Planning registers and job adverts checked 18 Nov 2026", naming only the
+// sources whose check worked.
+export function pipelineCheckedSummary(data: CheckFacts, when: string): string {
+  const worked = [
+    !data.planningSkipped && !data.planningProblem ? "planning registers" : "",
+    data.jobsConfigured && !data.jobsProblem ? "job adverts" : "",
+  ].filter(Boolean).join(" and ");
+  return worked ? `${worked[0].toUpperCase()}${worked.slice(1)} checked ${when}` : `Checked ${when}; neither source could be read`;
 }
 
 // A row as it is stored: the item, its key in the source and a little detail.
@@ -104,7 +134,7 @@ const COMMON_NAMES = new Set([
   "whistles", "gap", "evans", "burton", "dune", "three", "ee", "o2", "cook",
   "paul", "tortilla", "cote", "bills", "apple", "orange", "shell", "subway",
   "iceland", "range", "works", "giraffe", "ask", "quiz", "revolution", "toast",
-  "weekday", "tiger", "rituals", "browns", "gym", "new look",
+  "weekday", "tiger", "rituals", "browns", "gym", "new look", "light",
 ]);
 // Four letters or fewer, but nobody writes them by accident.
 const SHORT_NAMES_SEARCHED = new Set(["pret", "itsu"]);
@@ -181,6 +211,18 @@ const COMMERCIAL = new RegExp(
   ].join("|") + ")\\b",
 );
 
+// Signs that are not a shop's: road and traffic signs, and "signs of" decay
+// or movement. A tree application in Guildford passed as shop works on the
+// live register (18 November 2026) because its stems were "touching the road
+// signs".
+const NOT_SHOP_SIGNS = /\b(?:road|traffic|street|highway) signs?\b|\bsigns? of\b/g;
+
+// Application types that never bring an occupier, whatever the description
+// says (PlanIt's own classes). The stored rows are read through the same
+// list, so a row kept before the rule leaves the card and the score.
+export const NEVER_AN_OCCUPIER_TYPES = ["trees", "telecoms"] as const;
+const NEVER_AN_OCCUPIER = new RegExp(`^(?:${NEVER_AN_OCCUPIER_TYPES.join("|")})$`, "i");
+
 // The brand as the last or the neighbouring occupier, or as the shop that is
 // already there: not a site it is taking.
 const NOT_ARRIVING = new RegExp(
@@ -244,8 +286,9 @@ export function planningVerdict(rec: PlanningRecord, rule: NameRule): PlanningVe
   if (!named) {
     return { counts: false, reason: onlyAsNeighbour ? "brand named only as a former, existing or neighbouring occupier" : "brand not named in the description" };
   }
-  const about = normText(rec.description);
-  if (!COMMERCIAL.test(about) || /\b(renewal of|pavement licen[cs]e|tables and chairs)\b/.test(about)) return { counts: false, reason: "not about commercial premises" };
+  const about = normText(rec.description).replace(NOT_SHOP_SIGNS, " ");
+  if (NEVER_AN_OCCUPIER.test(String(rec.app_type ?? "").trim()) || !COMMERCIAL.test(about)
+    || /\b(renewal of|pavement licen[cs]e|tables and chairs)\b/.test(about)) return { counts: false, reason: "not about commercial premises" };
   return { counts: true };
 }
 

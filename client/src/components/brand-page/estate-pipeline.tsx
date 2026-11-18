@@ -10,6 +10,7 @@ import { ExternalLink, MapPin, Store } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { BrandCard, BrandBlockHeading, BrandQuietLine, ShowAll, brandCardAction, useCap } from "./brand-card";
+import { pipelineCheckWords, pipelineCheckedSummary } from "@shared/brand-pipeline";
 
 type Site = { label: string; town: string; url: string | null };
 interface StoreCountSummary {
@@ -22,6 +23,7 @@ interface PipelineItem { kind: "planning" | "job_new_opening" | "job_property_ro
 interface PipelineSummary {
   checkedAt: string | null; planning: PipelineItem[]; jobs: PipelineItem[]; jobsConfigured: boolean; jobsTotal: number | null;
   jobTowns: { town: string; adverts: number }[]; planningSkipped: string | null;
+  planningProblem?: string | null; jobsProblem?: string | null;
 }
 export interface StatedPlans {
   period: string | null; mode?: "text" | "scan"; none?: boolean; failed?: number;
@@ -150,9 +152,10 @@ function PipelineCard({ companyId, staff, plans }: { companyId: string; staff: b
   const action = staff ? <button type="button" className={brandCardAction} disabled={recheck.isPending} onClick={() => recheck.mutate()} data-testid="button-pipeline-refresh">{recheck.isPending ? "Checking…" : data?.checkedAt ? "Check again" : "Check now"}</button> : null;
   if (!planning.length && !jobs.length && !stated) {
     if (!staff) return null;
+    const said = data ? pipelineCheckWords(data) : null;
     return (
       <BrandQuietLine testId="brand-pipeline-empty">
-        {data?.checkedAt ? `No planning applications or new-opening adverts found${data.planningSkipped ? ` (planning: ${data.planningSkipped})` : ""}, checked ${day(data.checkedAt)}` : "Planning applications and job adverts not checked yet"} · {action}
+        {data?.checkedAt && said ? `${said.planning[0].toUpperCase()}${said.planning.slice(1)}; ${said.jobs}. Checked ${day(data.checkedAt)}` : "Planning applications and job adverts not checked yet"} · {action}
       </BrandQuietLine>
     );
   }
@@ -162,7 +165,7 @@ function PipelineCard({ companyId, staff, plans }: { companyId: string; staff: b
       testId="brand-pipeline"
       title={<><MapPin className="w-3.5 h-3.5" /> Sites on the way</>}
       action={action}
-      summary={data?.checkedAt ? `Planning registers${data.jobsConfigured ? " and job adverts" : ""} checked ${day(data.checkedAt)}` : undefined}
+      summary={data?.checkedAt ? pipelineCheckedSummary(data, day(data.checkedAt)) : undefined}
     >
       <div className="space-y-3">
         {stated && (
@@ -187,7 +190,9 @@ function PipelineCard({ companyId, staff, plans }: { companyId: string; staff: b
           </p>
         )}
         {staff && data && !data.jobsConfigured && <p className="text-[11px] text-muted-foreground">Job adverts are not switched on yet (they need an Adzuna key).</p>}
+        {staff && data?.jobsConfigured && data.jobsProblem && <p className="text-[11px] text-muted-foreground" data-testid="brand-pipeline-jobs-problem">Job adverts could not be checked: {data.jobsProblem}.</p>}
         {staff && data?.planningSkipped && <p className="text-[11px] text-muted-foreground">Planning not searched: {data.planningSkipped}.</p>}
+        {staff && data?.planningProblem && <p className="text-[11px] text-muted-foreground" data-testid="brand-pipeline-planning-problem">The planning register could not be read: {data.planningProblem}.</p>}
       </div>
     </BrandCard>
   );

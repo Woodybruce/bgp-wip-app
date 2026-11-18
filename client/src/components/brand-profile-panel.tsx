@@ -86,6 +86,7 @@ import { AccountEntitiesPanel } from "@/components/account-entities-panel";
 import { daysSinceContact, latestPastContact } from "@shared/last-contact";
 import { rolloutBadge } from "@shared/rollout-badge";
 import { EstatePipelineCards, type StatedPlans } from "@/components/brand-page/estate-pipeline";
+import { BalancedPair } from "@/components/brand-page/balanced-pair";
 
 interface BrandProfile {
   identity?: { status: "verified" | "review"; domain: string | null };
@@ -3649,11 +3650,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     // client login with nothing to show.
     const measuredCards = <EstatePipelineCards companyId={companyId} staff={staff} plans={((c as any).companies_house_data?.latestAccountsPlans as StatedPlans | undefined) || null} />;
     const expansionCards = scoreCard && evidenceCount > 0 ? (
-      <div className={pair} data-testid="brand-expansion-cards">
-        {/* The competitor set sits under the score card, so the two columns end together (Signals is the long card). With no signals it is the right-hand card. */}
-        <div className={stack}>{scoreCard}{signalsCard && hasCompetitors && competitorPanel}</div>
-        <div className={stack} data-testid="brand-expansion-evidence">{measuredCards}{signalsCard}{!signalsCard && hasCompetitors && competitorPanel}</div>
-      </div>
+      // The competitor set goes under whichever column is shorter, so the two
+      // end together (Woody, 2026-11-18: "can you fix this gap?"). With no
+      // signals it is the right-hand card.
+      <BalancedPair
+        pairClass={pair} stackClass={stack} testId="brand-expansion-cards" rightTestId="brand-expansion-evidence"
+        left={scoreCard}
+        right={<>{measuredCards}{signalsCard}{!signalsCard && hasCompetitors && competitorPanel}</>}
+        floater={signalsCard && hasCompetitors ? competitorPanel : null}
+      />
     ) : scoreCard || evidenceCount > 0 ? (
       <div className={evidenceCount === 2 ? pair : stack} data-testid="brand-expansion-cards">{scoreCard}{scoreCard && measuredCards}{signalsCard}{hasCompetitors && competitorPanel}</div>
     ) : null;

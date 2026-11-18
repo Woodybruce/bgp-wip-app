@@ -24,7 +24,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import {
-  JOBS_WINDOW_DAYS, PLANNING_WINDOW_DAYS, TOO_COMMON_REASON,
+  JOBS_WINDOW_DAYS, NEVER_AN_OCCUPIER_TYPES, PLANNING_WINDOW_DAYS, TOO_COMMON_REASON,
   brandNames, jobRowsFrom, planningRowsFrom, planningSearchTerm, planningSiteKey, normText,
   type PipelineItem, type PipelineRow, type PipelineSummary,
 } from "@shared/brand-pipeline";
@@ -162,16 +162,34 @@ async function readPlanning(names: string[], deps: PipelineDeps): Promise<{ ok: 
 
 interface JobsOutcome { configured: boolean; ok: boolean; reason?: string; rows: PipelineRow[]; total: number | null; byTown: { town: string; adverts: number }[]; asked: boolean }
 
+// Adzuna says why it refused a request in the body ({ exception, display }).
+// The words go into the stored status, never a key.
+async function adzunaRefusal(res: { status: number; json(): Promise<any> }, secrets: string[]): Promise<string> {
+  let words = "";
+  try {
+    const body: any = await res.json();
+    words = String(body?.display || body?.exception || "").replace(/\s+/g, " ").trim().slice(0, 120);
+  } catch { /* no readable body */ }
+  for (const s of secrets) if (s) words = words.split(s).join("***");
+  return `HTTP ${res.status}${words ? `: ${words}` : ""}`;
+}
+
 async function readJobs(names: string[], deps: PipelineDeps): Promise<JobsOutcome> {
   const keys = jobsKeys(deps.env ?? process.env);
   if (!keys) return { configured: false, ok: false, reason: NOT_CONFIGURED, rows: [], total: null, byTown: [], asked: false };
   const none = { configured: true, ok: false, rows: [], total: null, byTown: [], asked: true };
   const now = deps.now?.() ?? new Date();
+  // The brand's name is asked as a phrase and only the adverts the brand
+  // itself placed are kept (advertCompanyMatches). Adzuna's company filter is
+  // not used: it takes only the employer names Adzuna knows (its documentation
+  // calls them canonical and publishes no list) and refused every brand with a
+  // 400 once the keys were set (seen live on 18 November 2026). One request a
+  // brand; a refusal is stored with Adzuna's own words.
   const params = new URLSearchParams({
     app_id: keys.id,
     app_key: keys.key,
     results_per_page: "50",
-    company: names[0].replace(/\s+/g, " ").trim().slice(0, 80),
+    what_phrase: names[0].replace(/\s+/g, " ").trim().slice(0, 80),
     max_days_old: String(JOBS_WINDOW_DAYS),
     "content-type": "application/json",
   });
@@ -180,7 +198,7 @@ async function readJobs(names: string[], deps: PipelineDeps): Promise<JobsOutcom
       signal: AbortSignal.timeout(TIMEOUT_MS),
       headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
     });
-    if (!res.ok) return { ...none, reason: `HTTP ${res.status}` };
+    if (!res.ok) return { ...none, reason: await adzunaRefusal(res, [keys.key, keys.id]) };
     const data: any = await res.json();
     if (!data || typeof data !== "object" || !Array.isArray(data.results)) return { ...none, reason: "unexpected reply" };
     const read = jobRowsFrom(data, { names, now });
@@ -253,19 +271,22 @@ function townCounts(v: unknown): { town: string; adverts: number }[] {
 }
 
 const ITEM_COLUMNS = `kind, title, town, authority, address, to_char(item_date, 'YYYY-MM-DD') AS item_date, url, detail->>'state' AS state`;
+// A tree or telecoms application stored before 18 November 2026 (one counted
+// for The Light) is left out by both readers, as a new check leaves it out.
+const OCCUPIER_TYPE_SQL = `lower(trim(COALESCE(detail->>'type', ''))) NOT IN (${NEVER_AN_OCCUPIER_TYPES.map((t) => `'${t}'`).join(", ")})`;
 
 export async function pipelineSummary(companyId: string, deps: PipelineDeps = {}): Promise<PipelineSummary> {
   const db = deps.db ?? pool;
   const now = deps.now?.() ?? new Date();
   const summary: PipelineSummary = {
     checkedAt: null, planning: [], jobs: [], jobsConfigured: !!jobsKeys(deps.env ?? process.env),
-    jobsTotal: null, jobTowns: [], planningSkipped: null,
+    jobsTotal: null, jobTowns: [], planningSkipped: null, planningProblem: null, jobsProblem: null,
   };
   try {
     const [planning, jobs, check] = await Promise.all([
       db.query(
         `SELECT ${ITEM_COLUMNS} FROM brand_pipeline_items
-          WHERE brand_company_id = $1 AND kind = 'planning' AND item_date >= $2::date
+          WHERE brand_company_id = $1 AND kind = 'planning' AND item_date >= $2::date AND ${OCCUPIER_TYPE_SQL}
           ORDER BY item_date DESC, id DESC LIMIT 40`,
         [companyId, dayBefore(now, PLANNING_WINDOW_DAYS)]),
       db.query(
@@ -289,6 +310,10 @@ export async function pipelineSummary(companyId: string, deps: PipelineDeps = {}
       summary.jobTowns = townCounts(c.jobs_by_town);
       const skipped = /^skipped:\s*(.+)$/.exec(String(c.planning_status || ""));
       summary.planningSkipped = skipped ? skipped[1] : null;
+      // A check that failed is said as such, never as "none found".
+      const failedAs = (status: unknown) => /^failed:\s*(.+)$/.exec(String(status || ""))?.[1] ?? null;
+      summary.planningProblem = failedAs(c.planning_status);
+      summary.jobsProblem = failedAs(c.jobs_status);
     }
   } catch (e: any) {
     // Before the tables exist there is simply nothing to show.
@@ -317,7 +342,7 @@ export async function pipelineEvidence(companyId: string, deps: PipelineDeps = {
       `SELECT kind, title, town, authority, address, to_char(item_date, 'YYYY-MM-DD') AS item_date, detail->>'postcode' AS postcode
          FROM brand_pipeline_items
         WHERE brand_company_id = $1
-          AND ((kind = 'planning' AND item_date >= $2::date)
+          AND ((kind = 'planning' AND item_date >= $2::date AND ${OCCUPIER_TYPE_SQL})
             OR (kind IN ('job_new_opening', 'job_property_role') AND COALESCE(item_date, last_seen_at::date) >= $3::date))
         ORDER BY item_date DESC NULLS LAST, id DESC
         LIMIT 1000`,
