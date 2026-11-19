@@ -978,6 +978,24 @@ not opened to them.
   is admin-only and takes only hidden brands nothing points at (no signal, no
   contacts, no property link, no KYC file, no history). Add a new "this
   brand matters" source as a signal there, never by hand-editing archived_at.
+- **Select and Delete on Brand Explorer** (Woody, 2026-11-19: "On the brands
+  lists / logo icons can you put a select and delete button so I can bulk
+  delete them"). Admins have **Select** beside Tidy brands (not under
+  Hidden): a card then ticks instead of opening the brand, and a bar over
+  the grid has Select all (at most 500), Clear, **Delete** (type the number
+  to confirm) and Done (`BrandSelectBar` in
+  `client/src/components/brand-tidy.tsx`). `POST
+  /api/admin/brand-relevance/bulk-delete` (admin only; `bulkDeletePlan`,
+  `brandTies` in `server/brand-relevance.ts`) runs every signal again and
+  refuses if any cannot be checked; a ticked brand that no other record
+  points at is deleted for good (`storage.deleteCrmCompany`), live or
+  hidden; one that something points at is hidden instead ("Hidden by
+  hand") and the reply names what it is tied to; one already hidden stays
+  hidden. Being new or flagged (`HAND_DELETE_IGNORES`: added in the last 90
+  days, the Super Brand star or a pipeline stage) keeps a brand from the
+  sweep but not from a person's own choice. The `merged` signal (another
+  record merged into it) was added the same day and also blocks the Hidden
+  list's Delete for good. Test: `qa/regression/brand-crm-guards.test.mjs`.
 - **CRM plan for brands**: the planning records (`server/crm-engagement.ts`)
   take tenant brands as plan companies (`PLAN_COMPANY_PREDICATE`), and since
   2026-11-12 they are read as two separate views: the Landlord CRM

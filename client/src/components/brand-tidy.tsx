@@ -121,6 +121,96 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: "am
   );
 }
 
+// Select and Delete on Brand Explorer (Woody, 2026-11-19: "put a select and
+// delete button so I can bulk delete them"): the bar over the grid while an
+// admin is ticking brands. The server deletes for good a ticked brand that
+// nothing points at and hides one that something does, saying what it is tied
+// to (POST /api/admin/brand-relevance/bulk-delete).
+export const BULK_DELETE_MAX = 500;
+type BulkBrand = { id: string; name: string; ties?: string[] };
+interface BulkResult { deleted: BulkBrand[]; hidden: BulkBrand[]; staysHidden: BulkBrand[]; notBrands: number; failed: BulkBrand[] }
+const brandsWord = (n: number) => `${n.toLocaleString("en-GB")} brand${n === 1 ? "" : "s"}`;
+
+function BulkList({ brands, testId }: { brands: BulkBrand[]; testId: string }) {
+  return (
+    <div className="max-h-44 overflow-y-auto rounded-md border divide-y" data-testid={testId}>
+      {brands.map(b => (
+        <div key={b.id} className="px-2 py-1 text-xs">
+          <span className="font-medium">{b.name}</span>
+          {b.ties?.length ? <span className="text-muted-foreground">: {b.ties.join("; ")}</span> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function BrandSelectBar({ picked, onPick, shownIds, onDone }: { picked: Set<string>; onPick: (next: Set<string>) => void; shownIds: string[]; onDone: () => void }) {
+  const { toast } = useToast();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirm, setConfirm] = useState("");
+  const [result, setResult] = useState<BulkResult | null>(null);
+  const n = picked.size;
+  const remove = useMutation({
+    mutationFn: async (ids: string[]): Promise<BulkResult> => (await apiRequest("POST", "/api/admin/brand-relevance/bulk-delete", { ids })).json(),
+    onSuccess: (r) => { setResult(r); setConfirmOpen(false); setConfirm(""); onPick(new Set()); invalidateBrandLists(); },
+    onError: (e: any) => toast({ title: "Nothing was deleted", description: errorText(e), variant: "destructive" }),
+  });
+  const close = () => { setConfirmOpen(false); setConfirm(""); setResult(null); };
+  const firstShown = shownIds.slice(0, BULK_DELETE_MAX);
+  return (
+    <div className="sticky top-0 z-20 flex items-center gap-2 flex-wrap rounded-lg border bg-background/95 backdrop-blur px-3 py-2 shadow-sm" data-testid="brand-select-bar">
+      <span className="text-sm font-medium tabular-nums" data-testid="brand-select-count">{n.toLocaleString("en-GB")} selected</span>
+      <span className="text-xs text-muted-foreground">{n >= BULK_DELETE_MAX ? `${BULK_DELETE_MAX} is the most at once.` : "Click a brand to tick it."}</span>
+      <div className="flex items-center gap-1.5 ml-auto flex-wrap">
+        <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!firstShown.length} onClick={() => onPick(new Set(firstShown))} data-testid="brand-select-all">
+          {firstShown.length < shownIds.length ? `Select the first ${firstShown.length.toLocaleString("en-GB")}` : `Select all ${firstShown.length.toLocaleString("en-GB")}`}
+        </Button>
+        <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!n} onClick={() => onPick(new Set())} data-testid="brand-select-clear">Clear</Button>
+        <Button variant="destructive" size="sm" className="h-7 text-xs" disabled={!n || remove.isPending} onClick={() => setConfirmOpen(true)} data-testid="brand-bulk-delete">
+          <Trash2 className="w-3 h-3 mr-1" /> {n ? `Delete ${n.toLocaleString("en-GB")}` : "Delete"}
+        </Button>
+        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onDone} data-testid="brand-select-done">Done</Button>
+      </div>
+      {(confirmOpen || result) && (
+        <Dialog open onOpenChange={o => { if (!o) close(); }}>
+          <DialogContent className="max-w-md">
+            {result ? (
+              <div className="space-y-3" data-testid="brand-bulk-result">
+                <DialogHeader><DialogTitle>{result.deleted.length ? `${brandsWord(result.deleted.length)} deleted` : "Nothing deleted"}</DialogTitle></DialogHeader>
+                {result.deleted.length > 0 && <BulkList brands={result.deleted} testId="brand-bulk-deleted" />}
+                {result.hidden.length > 0 && (
+                  <>
+                    <p className="text-sm text-muted-foreground">{brandsWord(result.hidden.length)} hidden instead, because something in the app points at {result.hidden.length === 1 ? "it" : "them"}. They are off the lists and keep their records; unhide them under Hidden.</p>
+                    <BulkList brands={result.hidden} testId="brand-bulk-hidden" />
+                  </>
+                )}
+                {result.staysHidden.length > 0 && <p className="text-sm text-muted-foreground">{brandsWord(result.staysHidden.length)} already hidden and kept on file: {result.staysHidden.map(b => b.name).join(", ")}.</p>}
+                {result.failed.length > 0 && <p className="text-sm text-destructive">{brandsWord(result.failed.length)} could not be deleted: {result.failed.map(b => b.name).join(", ")}. Try again.</p>}
+                {result.notBrands > 0 && <p className="text-sm text-muted-foreground">{result.notBrands} {result.notBrands === 1 ? "record was" : "records were"} not a brand and left alone.</p>}
+                <div className="flex justify-end"><Button size="sm" onClick={close} data-testid="brand-bulk-close">Close</Button></div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <DialogHeader><DialogTitle>Delete {brandsWord(n)}</DialogTitle></DialogHeader>
+                <p className="text-sm text-muted-foreground">
+                  A brand that nothing else in the app points at is deleted for good and cannot be brought back. A brand with a deal, a schedule, contacts, a requirement, an interaction, a property link, a KYC file or any other history is hidden instead: it leaves the lists and keeps its records, and you can unhide it under Hidden.
+                </p>
+                <div className="flex items-center justify-end gap-2">
+                  <Input value={confirm} onChange={e => setConfirm(e.target.value)} placeholder={`Type ${n} to confirm`} className="h-8 text-sm max-w-[12rem]" autoFocus data-testid="brand-bulk-confirm" />
+                  <Button variant="outline" size="sm" onClick={close}>Cancel</Button>
+                  <Button size="sm" variant="destructive" disabled={!n || confirm.trim() !== String(n) || remove.isPending} onClick={() => remove.mutate([...picked])} data-testid="brand-bulk-apply">
+                    {remove.isPending ? "Deleting…" : `Delete ${n.toLocaleString("en-GB")}`}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+
 interface HiddenBrand { id: string; name: string; companyType: string | null; archivedAt: string; reason: string | null; deletable: boolean }
 
 // The hidden list, shown in place of the brand grid under the Hidden pill.
