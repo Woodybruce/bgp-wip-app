@@ -2325,6 +2325,22 @@ untouched when it is off, and
     status (`property-plan-scan-status.tsx`: Scanning…, Scan again, Save N
     scanned outlines) in place of Review scan; the older apply route
     (`applyPropertyPlanScan`) is kept for cached clients.
+  - **Draw a unit** (Woody, 2026-11-19: "the plan on the property page has
+    lost the ability to draw a unit and allocate to the tenancy schedule
+    where the scan hasn't worked. we had that in the lease advisory version
+    works well"). The Plans window's Trace and Draw tools did not come across
+    on 16 November. The button beside Edit plan (everyone who may amend the
+    plan) works outline first, as the lease advisory plans do: corners and
+    Finish, or Click inside it instead (the walls traced; an outline already
+    under the click is taken), then **Choose the unit** (`RowPicker` over the
+    schedule units with no outline on that floor, those the schedule puts on
+    that floor first, a grey outline's possible units first) saves it linked,
+    and **Save it grey** saves it unlinked (`status_override` "unlinked", as a
+    grey scan outline is). The bar then waits for the next unit until Done.
+    It saves through the routes Find it on the plan uses (`POST
+    /api/plans/:id/units`, the outline PATCH, a proposal's accept) and never
+    writes the schedule. The empty plan, a failed scan and a scan that found
+    nothing point at it. Guard: `qa/regression/plan-draw-unit.test.mjs`.
 - **Cropping a plan** (Woody, 2026-11-16: "ability to crop the page when
   loading up"). Rules and tests: `shared/plan-crop.ts`,
   `shared/plan-crop.test.ts` (in `npm test`). `POST /api/plans/:planId/crop`

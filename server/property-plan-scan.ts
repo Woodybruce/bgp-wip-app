@@ -112,6 +112,6 @@ export async function scanPropertyPlanImage(image: Buffer, options: ScheduleOpti
     + (failures ? ` ${failures} sections could not be read; this scan is incomplete.` : "")
     + (untraced ? ` ${untraced} detections had no reliable boundary and were left out.` : "")
     + (covered ? " Areas with existing outlines were kept unchanged." : "")
-    + (!candidates.length ? " Open a unit and use Find it on the plan to outline it." : "");
+    + (!candidates.length ? " Use Draw a unit above the plan to outline each unit and choose it on the tenancy schedule." : "");
   return { candidates, message };
 }

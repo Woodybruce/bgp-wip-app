@@ -12,6 +12,10 @@
 // plan: a grey outline opens its own panel (link it, remove it), a unit's
 // panel changes, unlinks or removes its outline, and "Find it on the plan"
 // draws a unit that is not there yet (click inside it, or draw its corners).
+// Where the scan missed units, "Draw a unit" above the plan works the other
+// way round, as the lease advisory plans do (Woody, 2026-11-19: "draw a unit
+// and allocate to the tenancy schedule where the scan hasn't worked"): draw
+// the outline first, then choose its unit on the schedule, or save it grey.
 //
 // The page shapes itself to the building: no units, a setup card; one unit and
 // no plan, that unit's panel is the page; several units and no plan, the list;
@@ -19,7 +23,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Crop, FileText, Loader2, Pencil, ScanLine, Trash2, Undo2 } from "lucide-react";
+import { Crop, FileText, Loader2, PenTool, Pencil, ScanLine, Trash2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -34,7 +38,7 @@ import { PlanCropDialog, usePlanCrop } from "@/components/property-plan-crop";
 import type { PropertyPlan } from "@/components/property-plan-types";
 import { pointInPolygon } from "@shared/plan-geometry";
 import type { PropertyPlanPolygon } from "@shared/property-plan-scan";
-import { planMatchCounts } from "@shared/property-plan-match";
+import { planMatchCounts, sameFloor } from "@shared/property-plan-match";
 import { UNIT_STATE_HEX, unitStateKey, unitStateLabel, type PropertyUnit, type UnitFilter, type UnitStateKey } from "@shared/property-units";
 import { plainError, unitDisplayLabel, usePlanMatchActions, usePlanMatchBoard, usePropertyUnits } from "./use-property-page";
 import { CONTEXT_HEX, PROPOSAL_HEX, UnitStateLegend } from "./unit-state";
@@ -49,8 +53,12 @@ export interface PropertyPageViewer { staff: boolean; landsecView: boolean; rest
 
 // Finding a unit that is not on the plan: click inside it (the outline under
 // the click is taken, else the walls around it are traced), or draw it corner
-// by corner. Nothing is saved until Save outline.
-type Finding = { rowId: string; step: "click" | "tracing" | "confirm" | "corners" | "saving"; error: string | null };
+// by corner. Nothing is saved until Save outline. "Find it on the plan" starts
+// from a schedule unit (rowId); "Draw a unit" starts from the plan (rowId
+// null): its unit is chosen once the outline is there, or it is saved grey,
+// and the bar then waits for the next unit (saved says what was just saved).
+// how is the way the outline is being made, which Try again goes back to.
+type Finding = { rowId: string | null; step: "click" | "tracing" | "confirm" | "corners" | "saving"; how: "click" | "corners"; error: string | null; saved?: string | null };
 // What the click produced, waiting for a yes: a scan outline not yet saved, a
 // saved outline (grey, or another unit's, which Save moves to this unit), or
 // an outline traced or drawn.
@@ -280,11 +288,20 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
     setSelectedOutlineId(null);
     // On a phone the unit's sheet covers the plan.
     if (isMobile) setSelectedUnitId(null);
-    setFinding({ rowId, step: "click", error: null });
+    setFinding({ rowId, step: "click", how: "click", error: null });
+  };
+  // "Draw a unit": the outline first, then its unit. Corner by corner, as the
+  // lease advisory plans draw, with clicking inside it to find its walls a press away.
+  const startDrawing = () => {
+    pickTurn.current++;
+    setPreview(null); setCorners([]);
+    setSelectedOutlineId(null); setSelectedUnitId(null);
+    setFinding({ rowId: null, step: "corners", how: "corners", error: null, saved: null });
   };
   const cancelFinding = () => { pickTurn.current++; setFinding(null); setPreview(null); setCorners([]); };
-  const retryFinding = () => { pickTurn.current++; setPreview(null); setCorners([]); setFinding(f => (f ? { ...f, step: "click", error: null } : f)); };
-  const drawCorners = () => { pickTurn.current++; setPreview(null); setCorners([]); setFinding(f => (f ? { ...f, step: "corners", error: null } : f)); };
+  const retryFinding = () => { pickTurn.current++; setPreview(null); setCorners([]); setFinding(f => (f ? { ...f, step: f.how, error: null } : f)); };
+  const drawCorners = () => { pickTurn.current++; setPreview(null); setCorners([]); setFinding(f => (f ? { ...f, step: "corners", how: "corners", error: null } : f)); };
+  const clickInside = () => { pickTurn.current++; setPreview(null); setCorners([]); setFinding(f => (f ? { ...f, step: "click", how: "click", error: null } : f)); };
   const onPick = async (point: { x: number; y: number }) => {
     if (!finding || !board.data) return;
     if (finding.step === "corners") { setCorners(list => [...list, [point.x, point.y]]); return; }
@@ -317,9 +334,12 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
     setCorners([]);
     setFinding({ ...finding, step: "confirm", error: null });
   };
-  const saveFinding = async () => {
+  // Saves the outline on screen for its unit: the one Find it on the plan
+  // started from, the one chosen after Draw a unit, or none (grey).
+  const saveFinding = async (chosenRowId?: string | null) => {
     if (!finding || !preview || finding.step !== "confirm") return;
-    const rowId = finding.rowId, label = rowLabel(rowId);
+    const rowId = chosenRowId === undefined ? finding.rowId : chosenRowId;
+    const label = rowId ? rowLabel(rowId) : null;
     setFinding({ ...finding, step: "saving", error: null });
     try {
       if (preview.kind === "proposal") {
@@ -330,8 +350,11 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
       } else {
         await actions.saveTraced({ polygon: preview.polygon, imageKey: preview.imageKey, scheduleRowId: rowId, label });
       }
-      setFinding(null); setPreview(null);
-      toast({ title: `${label} is on the plan` });
+      const done = label ? `${label} is on the plan` : "Outline saved, not linked to a unit";
+      setPreview(null); setCorners([]);
+      // Drawing from the plan carries on with the next unit; Done ends it.
+      if (finding.rowId === null) setFinding({ ...finding, step: finding.how, error: null, saved: done });
+      else { setFinding(null); toast({ title: done }); }
     } catch (error) {
       setFinding(f => (f ? { ...f, step: "confirm", error: plainError(error) } : f));
     }
@@ -498,7 +521,20 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   const floor = board.data ? planMatchCounts(board.data) : null;
   const unsaved = board.data?.proposals.length || 0;
   const waitingElsewhere = plans.filter(p => p.id !== plan.id && p.proposals > 0);
-  const findingName = finding ? rowLabel(finding.rowId) : "";
+  // Find it on the plan names its unit; Draw a unit has none until the outline is there.
+  const findingName = finding?.rowId ? rowLabel(finding.rowId) : "";
+  const drawingFromPlan = !!finding && finding.rowId === null;
+  // The units the outline drawn could be: every schedule unit not drawn on
+  // this floor, those the schedule puts on this floor first; for an outline
+  // already on the plan, the ones its printed number or name could be.
+  const drawnOutline = preview?.kind === "outline" ? board.data?.outlines.find(o => o.id === preview.outlineId) || null : null;
+  const drawnProposal = preview?.kind === "proposal" ? board.data?.proposals.find(p => p.id === preview.candidateId) || null : null;
+  const thisFloorIds = freeRows.filter(row => sameFloor(row.floor, plan.floor)).map(row => row.id);
+  const choosable = drawnOutline?.possibleRowIds.length
+    ? { ids: drawnOutline.possibleRowIds, heading: "Possible" }
+    : drawnProposal && (drawnProposal.suggestedRowId || drawnProposal.possibleRowIds.length)
+      ? { ids: [drawnProposal.suggestedRowId, ...drawnProposal.possibleRowIds].filter((id): id is string => !!id), heading: "Possible" }
+      : thisFloorIds.length && thisFloorIds.length < freeRows.length ? { ids: thisFloorIds, heading: `On ${plan.floor}` } : null;
 
   const scanPlan = async () => {
     try {
@@ -534,6 +570,13 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
     try { await openOriginalPlanPdf(plan.id); } catch (error) { toast({ variant: "destructive", title: "Could not open the PDF", description: plainError(error) }); }
   };
   // The plan's own tools: scan, rename, crop, the original PDF, delete.
+  // Draw a unit the scan missed, then choose its unit on the schedule.
+  const drawButton = canEdit && (
+    <Button type="button" variant={drawingFromPlan ? "default" : "outline"} size="sm" className="h-7 gap-1.5 text-xs" aria-pressed={drawingFromPlan}
+      disabled={!board.data} onClick={() => (drawingFromPlan ? cancelFinding() : startDrawing())} data-testid="property-plan-draw-unit">
+      <PenTool className="w-3.5 h-3.5" />{drawingFromPlan ? "Drawing a unit" : "Draw a unit"}
+    </Button>
+  );
   const planMenu = canEdit && (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -559,21 +602,43 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
       <p role="status" className="flex min-w-[12rem] flex-1 items-center gap-1.5">
         {(finding.step === "tracing" || finding.step === "saving") && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />}
         <span>
-          {finding.step === "click" && <>Click inside <span className="font-medium">{findingName}</span> on the plan: the outline under the click is taken, or its walls are found.</>}
+          {finding.saved && (finding.step === "click" || finding.step === "corners") && <span className="font-medium" data-testid="plan-draw-saved">{finding.saved}. </span>}
+          {finding.step === "click" && (drawingFromPlan
+            ? <>Click inside {finding.saved ? "the next" : "a"} unit on the plan: its walls are found.</>
+            : <>Click inside <span className="font-medium">{findingName}</span> on the plan: the outline under the click is taken, or its walls are found.</>)}
           {finding.step === "tracing" && "Finding the walls…"}
-          {finding.step === "corners" && <>Click each corner of <span className="font-medium">{findingName}</span> in turn ({plural(corners.length, "corner")}), then Finish.</>}
-          {finding.step === "confirm" && (preview?.kind === "outline" && preview.fromRowId
-            ? <>This outline is {rowLabel(preview.fromRowId)} now. Save moves it to <span className="font-medium">{findingName}</span>.</>
-            : <>Is the highlighted outline <span className="font-medium">{findingName}</span>? Click elsewhere to pick again.</>)}
+          {finding.step === "corners" && (drawingFromPlan
+            ? <>Click each corner of {finding.saved ? "the next" : "the"} unit in turn ({plural(corners.length, "corner")}), then Finish.</>
+            : <>Click each corner of <span className="font-medium">{findingName}</span> in turn ({plural(corners.length, "corner")}), then Finish.</>)}
+          {finding.step === "confirm" && (drawingFromPlan
+            ? (preview?.kind === "outline"
+              ? (preview.fromRowId
+                ? <>This outline is {rowLabel(preview.fromRowId)} now. Choose another unit to move it, or click elsewhere to pick again.</>
+                : <>This outline is on the plan, not linked to a unit. Choose its unit, or click elsewhere to pick again.</>)
+              : <>Which unit on the tenancy schedule is the highlighted outline? Choose it, or save it grey to link later.</>)
+            : preview?.kind === "outline" && preview.fromRowId
+              ? <>This outline is {rowLabel(preview.fromRowId)} now. Save moves it to <span className="font-medium">{findingName}</span>.</>
+              : <>Is the highlighted outline <span className="font-medium">{findingName}</span>? Click elsewhere to pick again.</>)}
           {finding.step === "saving" && "Saving…"}
         </span>
       </p>
-      {finding.step === "confirm" && <Button type="button" size="sm" className="h-7 text-xs" disabled={actions.busy} onClick={saveFinding} data-testid="plan-find-save">Save outline</Button>}
-      {finding.step === "confirm" && <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={retryFinding} data-testid="plan-find-retry">Try again</Button>}
+      {finding.step === "confirm" && !drawingFromPlan && <Button type="button" size="sm" className="h-7 text-xs" disabled={actions.busy} onClick={() => void saveFinding()} data-testid="plan-find-save">Save outline</Button>}
+      {finding.step === "confirm" && drawingFromPlan && (
+        <RowPicker label="Choose the unit" rows={freeRows} possibleIds={choosable?.ids} possibleHeading={choosable?.heading} primary
+          disabled={actions.busy} onChoose={rowId => void saveFinding(rowId)} testId="plan-draw-choose" />
+      )}
+      {finding.step === "confirm" && drawingFromPlan && preview?.kind !== "outline" && (
+        <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={actions.busy} onClick={() => void saveFinding(null)} data-testid="plan-draw-save-grey">Save it grey</Button>
+      )}
+      {finding.step === "confirm" && <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={retryFinding} data-testid="plan-find-retry">{drawingFromPlan ? "Draw again" : "Try again"}</Button>}
       {finding.step === "click" && <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={drawCorners} data-testid="plan-find-corners">Draw its corners instead</Button>}
       {finding.step === "corners" && <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={!corners.length} onClick={() => setCorners(list => list.slice(0, -1))} data-testid="plan-find-undo-corner">Undo corner</Button>}
       {finding.step === "corners" && <Button type="button" size="sm" className="h-7 text-xs" disabled={corners.length < 3} onClick={finishCorners} data-testid="plan-find-finish">Finish</Button>}
-      {finding.step !== "saving" && <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={cancelFinding} data-testid="plan-find-cancel">Cancel</Button>}
+      {finding.step === "corners" && <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={clickInside} data-testid="plan-find-click-inside">Click inside it instead</Button>}
+      {finding.step !== "saving" && <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={cancelFinding} data-testid="plan-find-cancel">{finding.saved ? "Done" : "Cancel"}</Button>}
+      {finding.step === "confirm" && drawingFromPlan && preview?.kind !== "outline" && (
+        <p className="basis-full text-muted-foreground">Not on the tenancy schedule yet? Save it grey, add the unit on the Tenancy schedule tab, then click the grey outline to link it.</p>
+      )}
       {finding.error && <p className="basis-full text-destructive" role="alert">{finding.error}</p>}
     </div>
   );
@@ -609,7 +674,9 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
     )}
     {scan?.status === "failed" && (
       <p className="text-xs text-muted-foreground" role="alert" data-testid="property-plan-scan-failed">
-        The last scan of {plan.floor} could not finish. {scan.message}{canScan && <> <button type="button" className="text-primary hover:underline" disabled={actions.busy} onClick={() => void scanPlan()}>Scan again</button></>}
+        The last scan of {plan.floor} could not finish. {scan.message}{" "}
+        {canScan ? <><button type="button" className="text-primary hover:underline" disabled={actions.busy} onClick={() => void scanPlan()}>Scan again</button>, or draw</> : "Draw"} the units it missed with{" "}
+        <button type="button" className="text-primary hover:underline" onClick={startDrawing} data-testid="property-plan-scan-failed-draw">Draw a unit</button>.
       </p>
     )}
     {unsaved > 0 && scan?.status === "ready" && (
@@ -636,7 +703,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
             planId={plan.id} imageKey={board.data?.plan.imageKey ?? null} floor={plan.floor} width={board.data?.plan.width ?? null} height={board.data?.plan.height ?? null}
             shapes={shapes} selectedId={selectedShapeId} hoverId={hoverShapeId}
             onSelect={selectShape} focusId={focus?.id || null} focusKey={focus?.key || 0} onFocused={clearFocus}
-            pick={finding && finding.step !== "saving" ? { hint: finding.step === "corners" ? `Click the corners of ${findingName}` : `Click inside ${findingName}`, busy: finding.step === "tracing", onPick } : null}
+            pick={finding && finding.step !== "saving" ? { hint: finding.step === "corners" ? `Click the corners of ${findingName || "the unit"}` : `Click inside ${findingName || "the unit"}`, busy: finding.step === "tracing", onPick } : null}
             preview={preview?.polygon || null}
             corners={finding?.step === "corners" ? corners : null}
             className="h-[46vh] lg:h-[calc(100vh-400px)] min-h-[320px] lg:min-h-[440px]"
@@ -650,7 +717,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
           )}
           {unsaved > 0 && <span className="inline-flex items-center gap-1.5"><span aria-hidden className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: PROPOSAL_HEX }} />Found by the scan, not saved <Num n={unsaved} /></span>}
           {floor && floor.linked === 0 && unlinked.length === 0 && unsaved === 0 && scan?.status !== "running" && (
-            <span>Nothing is drawn on {plan.floor} yet.{canScan ? " Scan it from Edit plan, or open a unit and use Find it on the plan." : " Open a unit and use Find it on the plan."}</span>
+            <span>Nothing is drawn on {plan.floor} yet.{canScan ? " Scan it from Edit plan, or use Draw a unit." : " Use Draw a unit to outline each unit."}</span>
           )}
         </UnitStateLegend>
       </div>
@@ -688,5 +755,5 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
         description: [result.removed ? `${plural(result.removed, "loose outline")} outside the crop removed.` : null, result.scanning ? "Scanning the cropped plan for units." : null, "Edit plan, Restore the whole page puts it back."].filter(Boolean).join(" "),
       })} />
     )}
-  </>, planMenu);
+  </>, <>{drawButton}{planMenu}</>);
 }

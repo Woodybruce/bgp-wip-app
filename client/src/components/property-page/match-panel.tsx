@@ -61,11 +61,14 @@ const wordsMatch = (_value: string, search: string, keywords?: string[]) => {
 };
 
 // The schedule units an outline can be linked to: every row with no outline
-// on this floor yet, the ones its printed number or name could be first.
-export function RowPicker({ label, rows, possibleIds, disabled, onChoose, testId }: {
+// on this floor yet, the ones its printed number or name could be first (or,
+// for an outline drawn by hand, the ones the schedule puts on this floor).
+export function RowPicker({ label, rows, possibleIds, possibleHeading = "Possible", primary = false, disabled, onChoose, testId }: {
   label: string;
   rows: PlanRow[];
   possibleIds?: string[];
+  possibleHeading?: string;
+  primary?: boolean;               // the step's main action, drawn as a filled button
   disabled: boolean;
   onChoose: (rowId: string) => void;
   testId: string;
@@ -87,7 +90,7 @@ export function RowPicker({ label, rows, possibleIds, disabled, onChoose, testId
         <CommandInput placeholder="Search unit, tenant or floor…" />
         <CommandList className="max-h-[260px]">
           <CommandEmpty>{rows.length ? "No units match." : "Every schedule unit has an outline on this floor."}</CommandEmpty>
-          {possible.length > 0 && <CommandGroup heading="Possible">{possible.map(item)}</CommandGroup>}
+          {possible.length > 0 && <CommandGroup heading={possibleHeading}>{possible.map(item)}</CommandGroup>}
           {others.length > 0 && <CommandGroup heading={possible.length ? "Other schedule units" : undefined}>{others.map(item)}</CommandGroup>}
         </CommandList>
       </Command>
@@ -96,7 +99,7 @@ export function RowPicker({ label, rows, possibleIds, disabled, onChoose, testId
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button ref={trigger} type="button" size="sm" variant="outline" disabled={disabled} data-testid={testId}>{label}</Button>
+        <Button ref={trigger} type="button" size="sm" variant={primary ? "default" : "outline"} className={primary ? "h-7 text-xs" : undefined} disabled={disabled} data-testid={testId}>{label}</Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[min(22rem,calc(100vw-2rem))] p-0">
         {open && list()}

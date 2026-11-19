@@ -77,7 +77,8 @@ export interface PlanMatchActions {
   removeOutline: (outlineId: string) => Promise<void>;
   // Find the walls around a point on the plan. Nothing is saved until saveTraced.
   trace: (point: { x: number; y: number }) => Promise<{ polygon: PropertyPlanPolygon; imageKey: string }>;
-  saveTraced: (input: { polygon: PropertyPlanPolygon; imageKey: string; scheduleRowId: string | null; label: string }) => Promise<{ id: string }>;
+  // Save an outline traced or drawn by hand: on a schedule row, or grey (marked unlinked on purpose, as a grey scan outline is).
+  saveTraced: (input: { polygon: PropertyPlanPolygon; imageKey: string; scheduleRowId: string | null; label: string | null }) => Promise<{ id: string }>;
   startScan: () => Promise<void>;
 }
 
@@ -112,7 +113,7 @@ export function usePlanMatchActions(propertyId: string, planId: string | null): 
     relink: async (outlineId, scheduleRowId) => { await run("PATCH", `/api/plan-units/${encodeURIComponent(outlineId)}`, { tenancy_unit_id: scheduleRowId, unit_id: null, status_override: scheduleRowId ? null : "unlinked" }); },
     removeOutline: async outlineId => { await run("DELETE", `/api/plan-units/${encodeURIComponent(outlineId)}`); },
     trace: point => run("POST", `${plan}/trace-unit`, point, false),
-    saveTraced: input => run("POST", `${plan}/units`, { polygon: input.polygon, imageKey: input.imageKey, tenancy_unit_id: input.scheduleRowId, label: input.label }),
+    saveTraced: input => run("POST", `${plan}/units`, { polygon: input.polygon, imageKey: input.imageKey, tenancy_unit_id: input.scheduleRowId, label: input.label, status_override: input.scheduleRowId ? null : "unlinked" }),
     startScan: async () => { await run("POST", `${plan}/scan`, {}); },
   };
 }
