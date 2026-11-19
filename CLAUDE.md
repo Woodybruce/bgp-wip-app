@@ -2545,6 +2545,43 @@ client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
   two-signature "Agreed brief" card on that page (`landsec_units.brief_*`)
   is still there and still feeds the NER floor check: retiring it in favour
   of this brief is Woody's call.
+- **Describe the brief in your own words** (Woody, 2026-11-19: "brief form
+  needs our type and populate tool"). A box at the top of the Brief tab
+  (`client/src/components/unit-brief/brief-note-fill.tsx`): the person types
+  the brief or pastes the client's email, presses Fill the brief, and the
+  Brief boxes (title, client, objective, location, criteria, priority
+  categories, instruction, success measures, the three dates and both
+  deliverables, targets and priority A wanted) and the Commercials fill. It
+  only fills the form: the dialog's Save is the only save, and the read-back
+  lists what was filled and what could not be placed, with the reason.
+  `POST /api/unit-briefs/read-note` (`server/unit-brief-workspace.ts`) is
+  keyed by the unit, so it works before the brief exists, and is open to
+  whoever may change the brief (`briefAccess`, then `canEditTerms`: BGP
+  staff, a client login on its own properties, a joint agent on its schemes;
+  both gateways already open `/api/unit-briefs/`). The reader
+  (`server/brief-note-reader.ts`) is Anthropic only, called directly, one
+  forced-tool call a read, capped a day (`BRIEF_NOTE_READER_DAILY_CAP`,
+  default 300, 0 = off), and is sent only the note, the boxes, the unit's
+  category list, today's date and the unit and scheme names. Every value is
+  checked against the note before it fills (`shared/brief-note.ts`, tests
+  `server/brief-note.test.ts` in `npm test`): a text box takes a span of the
+  note or wording that is at least 80% the note's own; a date, a count and
+  every figure come with the words they were read from; money is a year's
+  (a figure the words make a month's or a square foot's is listed back,
+  never filled); rent free must stand in months, the lease in years, turnover
+  rent as a percentage; a priority category must be on the unit's list
+  (Landsec's agency brief list at a Landsec scheme) and asked for in the
+  note, and is added to those already chosen. The older Draft with AI and
+  Upload the client's brief stay as they were (no literal checks: they fill
+  for review). Guard: `qa/regression/brief-note-fill.test.mjs`.
+- **The figures at the top of the Brief tab are buttons** (Woody, same day:
+  "the pills at the top are not clickable"). The six section pills already
+  switched sections: pressed in a browser on live, as Woody, on deal #4213's
+  brief from the deal page, each one did. What did nothing were the figures
+  under them, so Targets, Priority A, Meetings and Inspections now open the
+  Targets section showing those targets ("Showing … Show all"), a deadline
+  figure goes to its date box, and the sign-off chip by the title opens
+  People & sign-off.
 
 ## Offer to Solicitors on the Letting Tracker (Woody, 2026-11-12)
 
