@@ -23,6 +23,7 @@ The standard run has no database, so these are skipped, each with its reason, un
 | `account-leasing-postgres.test.mjs` | `ACCOUNT_LEASING_DATABASE_URL` | A local disposable database. The test works in a throwaway schema and drops it. |
 | `aml-retention-postgres.test.mjs` | `AML_RETENTION_DATABASE_URL` | The same. |
 | `crm-engagement-postgres.test.mjs`, `crm-engagement-kind.test.mjs` (one test) | `CRM_ENGAGEMENT_DATABASE_URL` | The same. |
+| `email-offer-cleanup.test.mjs` (three tests) | `EMAIL_OFFER_CLEANUP_DATABASE_URL` | The same. |
 | `landlord-contact-activity.test.mjs` (one test) | `LANDLORD_CONTACT_ACTIVITY_DATABASE_URL` | The same. |
 | `team-event-privacy.test.mjs` (one test) | `TEAM_EVENT_PRIVACY_DATABASE_URL` | The same. |
 | `record-thread-links.test.mjs` (one test) | `RECORD_THREAD_DATABASE_URL` | The same. |

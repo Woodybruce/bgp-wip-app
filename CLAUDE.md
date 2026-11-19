@@ -1983,6 +1983,58 @@ appendix `docs/letting-cleanup-technical-appendix.md`):
   and wiring `actingForFromType` (Lease Disposal / Sub-Letting → tenant
   side) — both wait on his review of the integrity report's lists.
 
+## The 14 August email import's offers (Woody, 2026-11-19)
+
+Asked about the 83 offers on 4 Cathedral Walk, Woody chose "1": an admin
+Preview then Apply that clears the offers the one-off email import of
+14 August 2026 left on the Letting Tracker. Do not re-litigate. That import
+(`backfillActivityFromInteractions` in `server/viewing-sync.ts`, called from
+nowhere since) replayed three months of stored emails and wrote an
+unconfirmed offer for every email that mentioned an offer and could be pinned
+on a tracker unit: 970 of the 1,037 offers on live on 19 November 2026, on 31
+units (186 on one, 80 on 4 Cathedral Walk), all Pending with no terms, 673
+credited to no company, 256 to Landsec and 10 to BGP. None had been touched.
+
+- **The rule** is `shared/email-offer-cleanup.ts` (tests
+  `server/email-offer-cleanup.test.ts`, in `npm test`). An import row is an
+  email offer carrying the import's key `int_<interaction id>` (only the
+  import wrote it; the live inbox sweep writes `conv_` or `msg_`). It is
+  cleared only while nothing a person does shows on it: status Pending, no
+  confirmation, no agreement, no term, the import's comment word for word, no
+  viewing, `updated_at` empty, no negotiation round but the blank round 1 the
+  log writes when it is opened (`ensureRounds`), not the unit's Heads of
+  Terms offer, on no recommendation, not logged from a comment. Each failure
+  is a reason the row is **Kept**. A row credited to a tenant brand (company
+  type starting "Tenant") shows as that brand's offer on the Brand CRM, so it
+  is listed apart as **Credited to a brand** and ticked one by one (11 on
+  live, Krispy Kreme, Choux Bun, Fat Face and Asda among them).
+- **The tool** is `server/email-offer-cleanup.ts`, admin only
+  (`POST /api/admin/email-offer-cleanup`, `…/undo`, `GET …/runs`), mounted
+  from `server/index.ts`; never at boot or on a timer. Preview records the
+  ids it may clear (`system_settings.email_offer_cleanup:dry_run`). Apply
+  takes the ids the same admin ticked on that preview, within the hour, one
+  unit at a time in a transaction: the negotiation log's lock on each offer
+  (`unit_offer:<id>`, as `lockOffer`), the rows locked and read again, and
+  only those still untouched deleted with their rounds, each written whole
+  to `investment_comp_migration_log` (batch `email-offer-cleanup-<time>`) by
+  the statement that deletes it. Undo puts back every row of a batch whose
+  unit is still on the tracker and whose id and email key are still free.
+  Runs are kept in `email_offer_cleanup:runs`.
+- **The screen** is Settings → Letting integrity → Backfills → **Offers from
+  the 14 August email import** (`client/src/components/email-offer-cleanup.tsx`):
+  Preview, the three pills, a tick per unit (To clear) or per offer
+  (Credited to a brand), Apply with APPLY typed, Undo under Recent runs.
+- Guards: `qa/regression/email-offer-cleanup.test.mjs` (its three real-SQL
+  tests need `EMAIL_OFFER_CLEANUP_DATABASE_URL`, which the workflow sets).
+  The one-off import must stay uncalled: running it again would write the
+  rows back.
+- Not built, each waiting on Woody: the 49 interest lines the same import
+  left on 15 units (`unit_interest`, notes starting "Backfilled from synced
+  email:"); the live inbox sweep crediting an offer to the company of
+  whoever sent the email rather than the brand the subject names (TfL on
+  arches, Screwfix Direct on a House of Wizard offer).
+- Not yet applied on live: an admin presses Preview, then Apply.
+
 ## Property page rebuild (Woody, 2026-11-13) — docs/property-page-rebuild-2026-11-13.md
 
 Woody: "everything revolves around the leasing plan and the tenancy schedule",

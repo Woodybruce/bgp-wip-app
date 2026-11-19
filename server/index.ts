@@ -5589,6 +5589,9 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // Undo of the 26 Oct backing-deal sweep (Preview → Apply, admin).
   const { registerLettingSweepUndoRoutes } = await import("./letting-sweep-undo");
   registerLettingSweepUndoRoutes(app);
+  // The 14 August email import's untouched offers (Preview → Apply → Undo, admin).
+  const { registerEmailOfferCleanupRoutes } = await import("./email-offer-cleanup");
+  registerEmailOfferCleanupRoutes(app, { pool, requireAuth, requireAdmin });
   registerDemeterRoutes(app);
   registerRetailContextPlanRoutes(app);
   registerMapLayerRoutes(app);
