@@ -59,9 +59,10 @@ test("what is asked for by default: photo ID only without the online check; owne
 });
 
 test("HMRC: the documents asked for are the ones its guidance names", () => {
-  assert.match(KYC_DOCS.photo_id.detail, /passport, photocard driving licence or national identity card/);
-  assert.match(KYC_DOCS.photo_id.detail, /Certified to be a true copy of the original seen by me/, "a copy, not the original, is certified (AMLG11400 14.4)");
-  assert.match(KYC_DOCS.proof_of_address.detail, /utility bill, bank or building society statement, or mortgage statement/);
+  // HMRC's documents and BGP's AML policy (Issue 2, appendix 4.10 and 3.9, 19 November 2026).
+  assert.match(KYC_DOCS.photo_id.detail, /passport, photocard driving licence, national identity card, or firearms or shotgun certificate/);
+  assert.match(KYC_DOCS.photo_id.detail, /I have met the person concerned and confirm the likeness to the photo ID provided/, "a copy, not the original, is certified (AMLG11400 14.4), in the policy's words");
+  assert.match(KYC_DOCS.proof_of_address.detail, /utility bill, bank or building society statement, council tax bill or mortgage statement dated in the last three months/);
   assert.match(KYC_DOCS.ownership.detail, /more than 25%/);
   assert.doesNotMatch(KYC_DOCS.ownership.detail, /25% or more/);
   assert.match(KYC_DOCS.ownership.detail, /controls the company in another way/);

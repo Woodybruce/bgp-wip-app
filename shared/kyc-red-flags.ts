@@ -2,8 +2,9 @@
 // 17 November 2026: "basically we do the normal checks expected and if there
 // is a red flag then we get KYC4U", then "yes build the red flag handoff to
 // KYC4U". Every flag is read from a record the app already holds; nothing
-// here decides anything. The agent raises the party with KYC4U, BGP's MLRO
-// service, and KYC4U decides.
+// here decides anything. The agent raises the party with KYC4U, BGP's
+// outsourced KYC provider, and the Nominated Officer or the Deputy records
+// KYC4U's result (BGP's AML policy, Issue 2).
 //
 // Not a flag on purpose: the MLRO's rejection (it already blocks the deal)
 // and a client who has not replied (chase them). Adverse media is a flag
@@ -12,6 +13,7 @@
 
 import type { KycAnswers, KycOwnersReply } from "./kyc-request";
 import { flagKeyPart, precheckRedFlags, type KycPrecheckResult } from "./kyc-prechecks";
+import { policyFactorFlags, superPrimeFlag } from "./aml-policy";
 
 export type KycRedFlagKind =
   | "client_pep"
@@ -31,7 +33,15 @@ export type KycRedFlagKind =
   | "ownership_unclear"
   | "offshore_owner"
   // The client says the owners Companies House lists are not right.
-  | "owners_differ";
+  | "owners_differ"
+  // Higher-risk factors BGP's AML policy and risk assessment name (Issue 2,
+  // 19 November 2026; shared/aml-policy.ts).
+  | "policy_trust"
+  | "policy_pooled"
+  | "policy_country"
+  | "policy_cbi"
+  | "policy_sector"
+  | "super_prime";
 
 // One line of what is behind a flag (Woody, 19 November 2026: "We also need
 // to see the detail of the red flag").
@@ -54,6 +64,10 @@ export interface KycRedFlag {
   key: string;
   evidence: string[];
   facts?: KycFlagFact[];
+  // A higher-risk factor the AML policy names (a trust, a high-risk country,
+  // a sector, a super-prime sale), not a finding about the party. It counts
+  // as a red flag does (enhanced due diligence); the screens list it apart.
+  factor?: boolean;
 }
 
 // ── Setting a flag aside ────────────────────────────────────────────────────
@@ -106,6 +120,10 @@ export interface PartyRedFlagFacts {
     aml_risk_level?: string | null;
     aml_edd_required?: boolean | null;
     aml_edd_reason?: string | null;
+    // BGP's type for the brand and the kind of subject: the policy's sector
+    // and trust factors read them.
+    company_type?: string | null;
+    aml_subject_type?: string | null;
   } | null;
   // The party's latest screening record only: a later clear one clears it.
   // precheck: that record is BGP's checks before asking, whose own lines say
@@ -131,6 +149,12 @@ export interface DealRedFlagFacts {
   aml_edd_reason?: string | null;
   aml_edd_completed_at?: string | Date | null;
   aml_sof_analysis?: { items?: Array<{ documentType?: string | null; declaredSourceMatchesDocument?: boolean | null; generatedAt?: string | null }> } | null;
+  // For the super-prime factor: the deal's type, teams, price and the
+  // property's postcode.
+  deal_type?: string | null;
+  team?: string[] | string | null;
+  pricing?: number | string | null;
+  postcode?: string | null;
 }
 
 const iso = (value: string | Date | null | undefined): string | null => {
@@ -237,6 +261,7 @@ export function partyRedFlags(facts: PartyRedFlagFacts): KycRedFlag[] {
       key: "record:edd", evidence: [`reason:${keyPart(facts.company.aml_edd_reason)}`], facts: history });
   }
   if (facts.precheck?.result) flags.push(...precheckRedFlags(facts.precheck.result, { sanctionsCurrent: facts.precheck.current }));
+  flags.push(...policyFactorFlags({ precheck: facts.precheck?.result || null, companyType: facts.company?.company_type, subjectType: facts.company?.aml_subject_type }));
   return flags;
 }
 
@@ -264,17 +289,22 @@ export function dealRedFlags(deal: DealRedFlagFacts | null): KycRedFlag[] {
       evidence: mismatched.map(i => `doc:${keyPart(i.documentType)}:${iso(i.generatedAt) || ""}`),
     });
   }
+  const superPrime = superPrimeFlag({ dealType: deal.deal_type, team: deal.team, pricing: deal.pricing, postcode: deal.postcode });
+  if (superPrime) flags.push(superPrime);
   return flags;
 }
 
 export const redFlagLine = (f: KycRedFlag): string => `${f.label}${f.detail ? ` (${f.detail})` : ""}. Source: ${f.source}.`;
 
-// The lines KYC4U's request note carries.
+// The lines KYC4U's request note carries: the red flags, then the higher-
+// risk factors BGP's AML policy names.
 export function redFlagNote(party: KycRedFlag[], deal: KycRedFlag[]): string {
   if (!party.length && !deal.length) return "";
-  const lines = ["Red flags from BGP's checks:"];
-  for (const f of party) lines.push(`- ${redFlagLine(f)}`);
-  for (const f of deal) lines.push(`- On the deal record: ${redFlagLine(f)}`);
+  const lines: string[] = [];
+  const found = [...party.filter(f => !f.factor).map(f => `- ${redFlagLine(f)}`), ...deal.filter(f => !f.factor).map(f => `- On the deal record: ${redFlagLine(f)}`)];
+  const factors = [...party.filter(f => f.factor).map(f => `- ${redFlagLine(f)}`), ...deal.filter(f => f.factor).map(f => `- On the deal: ${redFlagLine(f)}`)];
+  if (found.length) lines.push("Red flags from BGP's checks:", ...found);
+  if (factors.length) lines.push(...(found.length ? [""] : []), "Higher-risk factors in BGP's AML policy (enhanced due diligence):", ...factors);
   return lines.join("\n");
 }
 

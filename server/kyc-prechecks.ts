@@ -386,6 +386,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
     country: clean(p.identification?.country_registered || p.identification?.place_registered || p.address?.country, 80) || null,
     registrationNumber: clean(p.identification?.registration_number, 40) || null,
     nationality: clean(p.nationality, 60) || null,
+    residence: clean(p.country_of_residence, 80) || null,
     dob: dobOf(p.date_of_birth),
   }));
   const statements = rawStatements.slice(0, 10).map((s: any) => ({ statement: clean(s.statement, 120), words: statementWords(s.statement), concern: statementIsConcern(s.statement), notifiedOn: s.notified_on || null }));

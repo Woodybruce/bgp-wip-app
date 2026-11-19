@@ -91,7 +91,8 @@ test('a flag set aside counts nowhere: the deal card, KYC4U, the sign-off, the d
   assert.match(flags, /const split = applyFlagReviews\(all, reviewsForParty\(reviews, id, signs\[id\] \|\| null\)\);\s*parties\[id\] = split\.live;/);
   assert.match(flags, /const dealSplit = applyFlagReviews\(dealRedFlags\(deal\), reviewsForDeal\(reviews, dealId\)\);/);
   const board = read('server/aml-dashboard.ts');
-  assert.match(board, /reviewsForParty\(reviews, p\.brandId, p\.entityId\)\)\.live\.map/);
+  // The flags that count also decide the party's level (BGP's AML policy, 19 November 2026).
+  assert.match(board, /reviewsForParty\(reviews, p\.brandId, p\.entityId\)\)\.live;\n    const flags = live\.map\(f => f\.label\);/);
   assert.match(board, /applyFlagReviews\(dealRedFlags\(deal\), reviewsForDeal\(reviews, String\(deal\.id\)\)\)\.live/);
   // A record field whose flag is set aside does not make the file higher risk.
   const aml = read('server/deal-party-aml.ts');

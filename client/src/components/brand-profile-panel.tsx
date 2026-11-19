@@ -5381,7 +5381,7 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
         <More className={`${brandPage ? "min-w-0 empty:hidden" : "border-t border-border pt-2 mt-auto"}`} data-testid={brandPage ? "brand-checks-more" : "landlord-checks-details"} onToggle={brandPage ? undefined : (event: any) => setDetailsOpen(event.currentTarget.open)}>
           {!brandPage && <summary className="cursor-pointer text-xs font-medium text-primary py-1.5">{detailsOpen ? "Show less" : "Show more"}</summary>}
           {(!brandPage || detailsOpen) && <div className="pt-2 space-y-3">
-            {!isClientViewer && !brandPage && <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">Open KYC4U</Link>}
+            {!isClientViewer && !brandPage && <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's outsourced KYC provider">Open KYC4U</Link>}
             {/* A brand's page with an entity: the checks run are on the card at rest; this is the staff's entity edit. */}
             {!(brandPage && !noEntity && isClientViewer) && <BrandComplianceCard companyId={companyId} company={company} embedded landlord={landlord} brandPage={brandPage} part={brandPage && !noEntity ? "entity" : undefined} />}
             {facts && <CompanyFactsRows company={company} report={covenant.data} headingClass={subHeading} />}
@@ -5418,7 +5418,7 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
             {!isClientViewer && brandPage && (
               <section className="border-t border-border pt-3 space-y-1.5 [&_p]:text-[13px] [&_li]:text-[13px]" aria-label="KYC4U" data-testid="brand-checks-kyc4u">
                 <Kyc4uStatusStrip companyId={companyId} />
-                <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">Open KYC4U</Link>
+                <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's outsourced KYC provider">Open KYC4U</Link>
               </section>
             )}
           </div>}
@@ -5770,7 +5770,7 @@ export function BrandComplianceCard({
           <Link
             href="/kyc-clouseau"
             className="text-[11px] text-primary hover:underline inline-flex items-center gap-0.5"
-            title="KYC4U — BGP's MLRO"
+            title="KYC4U — BGP's outsourced KYC provider"
           >
             KYC4U <ChevronRight className="w-2.5 h-2.5" />
           </Link>

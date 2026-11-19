@@ -35,7 +35,7 @@ import { actorNameOf, isJointAgent, offersLoggedBy } from "./unit-negotiation";
 import { BRIEF_PERSON_ROLES, briefRoleLabel, normaliseCommercials, parseMoney } from "@shared/unit-brief";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import {
-  HOTS_TOKENS, STANDARD_HOTS_TEMPLATE, fillHotsTemplate, hotsGapsIn,
+  HOTS_TOKENS, STANDARD_HOTS_TEMPLATE, STANDARD_HOTS_TEMPLATE_37, fillHotsTemplate, hotsGapsIn,
   type HotsConversion, type HotsConvertDefaults, type HotsEvent, type HotsSigner, type HotsStage, type HotsValues, type HotsWorkspace,
 } from "@shared/unit-hots";
 import { SCHEME_HOTS_STANDARDS, fillSchemeHots, isBracketTemplate, schemeHotsStandardFor, type SchemeHotsValues } from "@shared/hots-standards";
@@ -403,7 +403,12 @@ function builtInStandard(unit: any): { isStandard: boolean; standardName: string
   const scheme = schemeHotsStandardFor(unit.property_name, unit.landlord_name);
   const matched = SCHEME_HOTS_STANDARDS.find(x => x.text === current) || null;
   const isBgp = current === STANDARD_HOTS_TEMPLATE;
-  return { isStandard: isBgp || !!matched, standardName: matched ? matched.name : isBgp ? "BGP standard, 37 clauses" : null, schemeStandardName: scheme?.name || null };
+  const isBgp37 = current === STANDARD_HOTS_TEMPLATE_37;
+  return {
+    isStandard: isBgp || isBgp37 || !!matched,
+    standardName: matched ? matched.name : isBgp ? "BGP standard, 38 clauses (with the AML clause)" : isBgp37 ? "BGP standard, 37 clauses (before the AML clause)" : null,
+    schemeStandardName: scheme?.name || null,
+  };
 }
 
 // The agreed figures in the shape a scheme's own form is filled from.

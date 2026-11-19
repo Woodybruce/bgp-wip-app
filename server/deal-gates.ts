@@ -101,14 +101,29 @@ export async function checkCounterpartyAml(deal: AmlGateInput): Promise<AmlGateR
 
   const signs = await signingCompanies(deal);
   const states = await loadPartyKyc(pool, pairs.map(p => ({ role: p.role, brandId: p.parentId, entityId: signs[p.role] })));
+  // A party the Nominated Officer or the Deputy marked Not required on this
+  // deal (BGP's AML policy: the other side of a deal a joint agent
+  // negotiated) needs nothing, unless it was rejected.
+  const exempt = deal.dealId ? await notRequiredOn(String(deal.dealId), deal) : new Set<string>();
   const notReady: AmlNotReady[] = [];
   for (const p of pairs) {
     const state = states[p.role];
     const verdict = kycVerdict(state);
-    if (!verdict.approved) notReady.push({ name: state.name || `(unknown ${p.role})`, reason: verdict.reason || "no checks run", role: p.role });
+    if (verdict.approved) continue;
+    if (exempt.has(p.role) && state.status !== "rejected") continue;
+    notReady.push({ name: state.name || `(unknown ${p.role})`, reason: verdict.reason || "no checks run", role: p.role });
   }
 
   return { hasCounterparties: true, notReady };
+}
+
+async function notRequiredOn(dealId: string, deal: AmlGateInput): Promise<Set<string>> {
+  try {
+    const { notRequiredRoles } = await import("./aml-policy");
+    return await notRequiredRoles(pool, dealId, { landlord: deal.landlordId, tenant: deal.tenantId, vendor: deal.vendorId, purchaser: deal.purchaserId });
+  } catch {
+    return new Set<string>();
+  }
 }
 
 /**
@@ -130,9 +145,21 @@ export function amlGateOutcome(result: AmlGateResult): { block: string | null; w
 }
 
 /** Record a let-through warning: deal audit event + MLRO queue item per outstanding company. */
-export async function recordAmlGateWarning(dealId: string, deal: AmlGateInput, result: AmlGateResult, ctx: { targetStatus: string; actorId?: string | null; actorName?: string | null }): Promise<void> {
+export async function recordAmlGateWarning(dealId: string, deal: AmlGateInput, given: AmlGateResult, ctx: { targetStatus: string; actorId?: string | null; actorName?: string | null }): Promise<void> {
+  // A caller that read the gate without the deal's id did not see its Not
+  // required markers: they are left out here.
+  const exempt = await notRequiredOn(dealId, deal);
+  const result: AmlGateResult = { ...given, notReady: given.notReady.filter(c => !(exempt.has(c.role) && c.reason !== "rejected")) };
   const warning = formatAmlWarning(result);
   if (!warning) return;
+  // BGP's AML policy: checks are finished before contracts exchange or a
+  // lease completes. A move into Exchanged or Completed still goes through
+  // (Woody, 19 November 2026: "Warn, and email Jack and Victoria").
+  const { legacyToCode } = await import("../shared/deal-status");
+  const code = legacyToCode(ctx.targetStatus);
+  if (code === "EXC" || code === "COM") {
+    await alertOfficersOfOutstandingChecks(dealId, code, result, ctx).catch((e: any) => console.warn("[aml-gate] officers not told", dealId, e?.message));
+  }
   // One warning per deal/target/hour: the endpoint gate and the mirror
   // backstop both run this on the same edit, and that must not double the
   // audit trail.
@@ -157,6 +184,35 @@ export async function recordAmlGateWarning(dealId: string, deal: AmlGateInput, r
       [dealId, companyId, c.name, `Deal moved to ${ctx.targetStatus} with CDD outstanding (${c.reason}) — MLRO to complete before exchange`])
       .catch((e: any) => console.error("[aml-gate] reminder not recorded for deal", dealId, e?.message));
   }
+}
+
+// Emails the Nominated Officer and the Deputy, once per deal and stage, that
+// it moved on with a party's checks not finished.
+async function alertOfficersOfOutstandingChecks(dealId: string, code: "EXC" | "COM", result: AmlGateResult, ctx: { actorName?: string | null }): Promise<void> {
+  const already = (await pool.query(
+    `SELECT 1 FROM deal_events WHERE deal_id = $1 AND event_type = 'aml_officer_alert' AND payload::jsonb ->> 'code' = $2 LIMIT 1`, [dealId, code])).rows.length > 0;
+  if (already) return;
+  const { amlOfficerEmails } = await import("./aml-authority");
+  const to = await amlOfficerEmails();
+  if (!to.length) return;
+  const deal = (await pool.query(`SELECT name, deal_ref FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
+  const { amlOutstandingAtCompletionEmail } = await import("../shared/kyc-request");
+  const link = `${(process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "")}/deals/${encodeURIComponent(dealId)}?section=parties`;
+  const { sendKycEmail } = await import("./aml-portal");
+  const sent = await sendKycEmail({
+    to,
+    build: (from) => amlOutstandingAtCompletionEmail({
+      dealName: deal?.name || "A deal", dealRef: deal?.deal_ref ?? null, stage: code === "EXC" ? "Exchanged" : "Completed",
+      movedBy: ctx.actorName || null, parties: result.notReady.map(c => ({ name: c.name, role: c.role, reason: c.reason })), link, sentFrom: from,
+    }),
+  });
+  if (!sent.ok) {
+    console.warn(`[aml-gate] the officers were not emailed about ${dealId} at ${code}: ${sent.error}`);
+    return;
+  }
+  await pool.query(
+    `INSERT INTO deal_events (deal_id, event_type, payload, actor_name) VALUES ($1, 'aml_officer_alert', $2, $3)`,
+    [dealId, JSON.stringify({ code, to, from: sent.from, parties: result.notReady }), ctx.actorName || null]);
 }
 
 export function formatAmlWarning(result: AmlGateResult): string | null {
@@ -200,6 +256,7 @@ async function recomputeDeals(deals: any[], approvedBy?: string | null): Promise
   let changed = 0;
   for (const d of deals as any[]) {
     const result = await checkCounterpartyAml({
+      dealId: d.id,
       landlordId: d.landlord_id,
       tenantId: d.tenant_id,
       vendorId: d.vendor_id,

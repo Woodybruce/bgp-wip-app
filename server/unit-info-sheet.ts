@@ -8,6 +8,7 @@
 // a small co-brand in the header when the company has one (Woody,
 // 2026-10-13: "make it better with logo"). Output lands back in the
 // unit's Files so the trail of what was issued lives on the unit.
+import { AML_MARKETING_NOTICE } from "@shared/aml-policy";
 import { Router, type Request, type Response } from "express";
 import crypto from "crypto";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
@@ -399,6 +400,13 @@ export async function buildUnitParticularsPdf(input: ParticularsInput): Promise<
   last.drawLine({ start: { x: MARGIN, y: ph - 104 }, end: { x: pw - MARGIN, y: ph - 104 }, thickness: 1, color: BORDEAUX });
   let my = ph - 124;
   for (const l of wrapText(MISREP, font, 8.5, pw - MARGIN * 2)) {
+    last.drawText(l, { x: MARGIN, y: my, size: 8.5, font, color: grey });
+    my -= 12;
+  }
+  // BGP's AML policy (Issue 2, 3.8): marketing tells every party what the
+  // checks will need.
+  my -= 8;
+  for (const l of wrapText(AML_MARKETING_NOTICE, font, 8.5, pw - MARGIN * 2)) {
     last.drawText(l, { x: MARGIN, y: my, size: 8.5, font, color: grey });
     my -= 12;
   }

@@ -342,6 +342,15 @@ async function buildAll() {
         console.log(`copied server/assets/${f} to dist/server/assets/`);
       }
     }
+    // BGP's AML policy and risk assessment, staff-only downloads
+    // (GET /api/aml-policy/documents/:key, server/aml-policy.ts)
+    if (existsSync("server/assets/aml-policy")) {
+      await mkdir(outputPath("server/assets/aml-policy"), { recursive: true });
+      for (const f of readdirSync("server/assets/aml-policy")) {
+        await copyFile(`server/assets/aml-policy/${f}`, outputPath(`server/assets/aml-policy/${f}`));
+        console.log(`copied server/assets/aml-policy/${f} to dist/server/assets/aml-policy/`);
+      }
+    }
     // Staff-only shared pages served by GET /api/share/:slug (server/index.ts)
     if (existsSync("server/assets/share")) {
       await mkdir(outputPath("server/assets/share"), { recursive: true });

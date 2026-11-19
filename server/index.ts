@@ -3039,6 +3039,27 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     )`,
     `CREATE INDEX IF NOT EXISTS kyc_flag_reviews_company_idx ON kyc_flag_reviews (company_id) WHERE restored_at IS NULL`,
     `CREATE INDEX IF NOT EXISTS kyc_flag_reviews_deal_idx ON kyc_flag_reviews (deal_id) WHERE restored_at IS NULL`,
+    // A deal party marked "Not required" by the Nominated Officer or the
+    // Deputy (Woody, 19 November 2026: BGP's AML policy, the other side of a
+    // deal a joint agent negotiated, or one where no deal was done): one row
+    // per decision for that party (company_id, its brand at the time),
+    // undone_at when it is taken off. server/deal-party-aml.ts writes it.
+    `CREATE TABLE IF NOT EXISTS kyc_party_exemptions (
+      id serial PRIMARY KEY,
+      deal_id varchar NOT NULL,
+      role text NOT NULL,
+      company_id varchar NOT NULL,
+      trading_entity_id varchar,
+      reason text NOT NULL,
+      comment text NOT NULL,
+      set_by varchar,
+      set_by_name text,
+      set_at timestamptz NOT NULL DEFAULT now(),
+      undone_at timestamptz,
+      undone_by varchar,
+      undone_by_name text
+    )`,
+    `CREATE INDEX IF NOT EXISTS kyc_party_exemptions_deal_idx ON kyc_party_exemptions (deal_id) WHERE undone_at IS NULL`,
     // Deal contracting entities + shadow gate comparison log:
     `CREATE TABLE IF NOT EXISTS crm_deal_entities (
       id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -4289,6 +4310,7 @@ import kycPrecheckRouter from "./kyc-prechecks";
 import dealPartiesRouter from "./deal-parties";
 import dealPartyAmlRouter from "./deal-party-aml";
 import amlDashboardRouter from "./aml-dashboard";
+import amlPolicyRouter from "./aml-policy";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
 import brandDedupeRouter from "./brand-dedupe";
@@ -5127,7 +5149,7 @@ app.use("/api/branding/assets", express.static(
     const path = routedApiPath(req).toLowerCase().replace(/\/{2,}/g, "/");
     if (clientChecksSwitchOn(process.env.KYC_CLIENT_CHECKS) && KYC_CLIENT_CHECK_ROUTES.some(r => r.test(path))) return next();
     if (RETIRED_AML.some(r => r.test(path))) {
-      return res.status(410).json({ message: "AML/KYC is handled by KYC4U, BGP's MLRO. Raise or check a request from the deal's AML panel (Request KYC4U check)." });
+      return res.status(410).json({ message: "This part of the old in-app AML is switched off. AML runs from the deal's Parties & AML: BGP's checks before asking, the client checks, and KYC4U, BGP's outsourced KYC provider (Request KYC4U check)." });
     }
     next();
   });
@@ -5654,6 +5676,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(dealPartiesRouter);
   app.use(dealPartyAmlRouter);
   app.use(amlDashboardRouter);
+  app.use(amlPolicyRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);
   app.use(brandDedupeRouter);

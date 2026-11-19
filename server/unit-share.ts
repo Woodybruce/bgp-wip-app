@@ -25,6 +25,7 @@ import { getAppToken } from "./shared-mailbox";
 import { contentDispositionFor } from "./utils/http-headers";
 import { briefAccess } from "./unit-brief-workspace";
 import { BRIEF_COMMERCIAL_FIELDS, normaliseCommercials, isPlainObject } from "@shared/unit-brief";
+import { AML_MARKETING_NOTICE } from "@shared/aml-policy";
 import {
   A4, MARGIN, BORDEAUX, INK, CREAM, BLUSH, STONE, NECTAR, WHITE, MISREP,
   wordmarkBytes, wrapText, appendFileToPdf, fetchLogoBytes, fmtMoney, fmtSqft,
@@ -871,6 +872,12 @@ async function buildPack(src: ShareSource, sel: PackSelection, sender: Sender, r
   last.drawLine({ start: { x: MARGIN, y: ph - 104 }, end: { x: pw - MARGIN, y: ph - 104 }, thickness: 1, color: BORDEAUX });
   let my = ph - 124;
   for (const l of wrapText(MISREP, font, 8.5, contentW)) {
+    last.drawText(l, { x: MARGIN, y: my, size: 8.5, font, color: grey });
+    my -= 12;
+  }
+  // BGP's AML policy (Issue 2, 3.8).
+  my -= 8;
+  for (const l of wrapText(AML_MARKETING_NOTICE, font, 8.5, contentW)) {
     last.drawText(l, { x: MARGIN, y: my, size: 8.5, font, color: grey });
     my -= 12;
   }

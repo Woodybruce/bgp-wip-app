@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Pill, PillCount } from "@/components/ui/pill";
 import { DealAmlStatusCard } from "@/components/deal-aml-status";
+import { AmlPolicyPanel } from "@/components/aml-policy-panel";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { AML_BUCKETS, AML_STAGE_LABEL, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow, type AmlStage } from "@shared/aml-dashboard";
@@ -34,7 +35,21 @@ const STAGE_TONE: Record<AmlStage, string> = {
   rejected: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
   expiring: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
   expired: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
+  not_required: "bg-muted text-muted-foreground",
 };
+
+// The level of due diligence BGP's AML policy gives the party.
+const LEVEL_WORDS: Record<AmlDashboardRow["level"], string> = { simplified: "Simplified", standard: "Standard", enhanced: "Enhanced" };
+const LEVEL_TONE: Record<AmlDashboardRow["level"], string> = {
+  simplified: "text-muted-foreground",
+  standard: "text-foreground",
+  enhanced: "text-red-700 dark:text-red-300 font-medium",
+};
+function LevelCell({ row }: { row: AmlDashboardRow }) {
+  // Marked Not required: no checks are needed, so no level applies.
+  if (row.stage === "not_required") return <span className="text-muted-foreground" title={row.levelWhy.join("\n")} data-testid={`aml-level-${row.key}`}>—</span>;
+  return <span className={`whitespace-nowrap ${LEVEL_TONE[row.level]}`} title={row.levelWhy.join("\n")} data-testid={`aml-level-${row.key}`}>{LEVEL_WORDS[row.level]}</span>;
+}
 
 const roleWords = (role: string) => (isDealPartyRole(role) ? DEAL_PARTY_LABEL[role] : role);
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : "");
@@ -165,6 +180,8 @@ export default function AmlDashboard() {
         <p className="text-sm text-muted-foreground">Every party on a live deal: BGP's checks, the client checks, KYC4U and approvals. A party is To do once HMRC expects its checks: a landlord or seller on any live deal, a tenant or buyer from Heads of Terms.</p>
       </div>
 
+      <AmlPolicyPanel />
+
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Where the checks stand">
           {AML_BUCKETS.map(b => (
@@ -203,6 +220,7 @@ export default function AmlDashboard() {
                 <div className="flex items-start justify-between gap-2"><PartyCell row={r} /><StageChip row={r} /></div>
                 <div className="text-xs"><DealCell row={r} /></div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                  <LevelCell row={r} />
                   <span><span className="text-muted-foreground">Waiting on</span> {r.waitingOn}</span>
                   <span className="text-muted-foreground">{moved(r.movedDays)}</span>
                 </div>
@@ -219,6 +237,7 @@ export default function AmlDashboard() {
                 <th className="text-left font-medium px-3 py-2">Party</th>
                 <th className="text-left font-medium px-3 py-2">Deal</th>
                 <th className="text-left font-medium px-3 py-2">Stage</th>
+                <th className="text-left font-medium px-3 py-2">Due diligence</th>
                 <th className="text-left font-medium px-3 py-2">Red flags</th>
                 <th className="text-left font-medium px-3 py-2">Waiting on</th>
                 <th className="text-right font-medium px-3 py-2">Last moved</th>
@@ -231,6 +250,7 @@ export default function AmlDashboard() {
                   <td className="px-3 py-2 max-w-[260px]"><PartyCell row={r} /></td>
                   <td className="px-3 py-2 max-w-[300px]"><DealCell row={r} /></td>
                   <td className="px-3 py-2"><StageChip row={r} /></td>
+                  <td className="px-3 py-2"><LevelCell row={r} /></td>
                   <td className="px-3 py-2 max-w-[220px] truncate"><Flags row={r} /></td>
                   <td className="px-3 py-2 whitespace-nowrap">{r.waitingOn}</td>
                   <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{moved(r.movedDays)}</td>

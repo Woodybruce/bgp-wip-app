@@ -597,7 +597,7 @@ function EntityReview({
       <p className="text-[11px] text-muted-foreground">
         {bucket === "current"
           ? `Approved${kyc?.approvedBy ? ` by ${kyc.approvedBy}` : ""}${kyc?.nextReviewAt ? ` — re-check due ${fmtDate(kyc.nextReviewAt)}` : ""}.`
-          : "KYC is run by KYC4U, BGP's MLRO — raise a request from the deal's AML panel."}
+          : "KYC runs from the deal's Parties & AML: BGP's checks, the client checks, and KYC4U, BGP's outsourced KYC provider."}
       </p>
     </div>
   );

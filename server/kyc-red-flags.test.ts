@@ -121,7 +121,7 @@ test("the alert to the agents: what was found, what to do, nothing sent to the c
   assert.match(email.html, /Red flag: raise Example &amp; Co Ltd with KYC4U/);
   assert.match(email.html, /Said yes to the question about public roles: &lt;b&gt;MP&lt;\/b&gt; <span style="color:#6b6b6b">\(Client checks, ref 7K2Q9M\)<\/span>/);
   assert.doesNotMatch(email.html, /<b>MP<\/b>/);
-  assert.match(email.html, /A red flag goes to KYC4U, BGP&#39;s MLRO service/);
+  assert.match(email.html, /goes to KYC4U, BGP&#39;s outsourced KYC provider, for enhanced due diligence/);
   assert.match(email.html, /Request KYC4U check/);
   assert.match(email.html, /href="https:\/\/chatbgp\.app\/deals\/abc"/);
   assert.match(email.html, /Nothing has been sent to the client or to KYC4U/);

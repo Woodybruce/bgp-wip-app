@@ -1,0 +1,518 @@
+// BGP's Anti-Money Laundering Policy and Firm-Wide Risk Assessment, Issue 2
+// (November 2026), as the rules the app applies. Woody, 19 November 2026:
+// "can you consider these and add into the AML as required", and, asked,
+// the same day:
+//   - the deal's agents sign off a standard-risk party; the Nominated
+//     Officer or the Deputy decides an enhanced one (the risk assessment:
+//     "The completed checks are then reviewed and approved by the relevant
+//     fee earners. Higher risk clients are referred to the Nominated or
+//     Deputy Nominated Officer");
+//   - restaurants and bars are a factor to weigh, not enhanced due
+//     diligence; the risk assessment's own list of cash-intensive businesses
+//     (plus casinos, nightclubs, mining and dual-use manufacturers) is;
+//   - a deal that exchanges or completes with checks outstanding still moves,
+//     and the Nominated Officer and the Deputy are emailed;
+//   - the other side of a deal can be marked "Not required" (a joint agent
+//     negotiated it, or no deal was done), by the Nominated Officer or the
+//     Deputy only.
+// Pure rules: the server reads the records (server/aml-policy.ts,
+// server/kyc-red-flags.ts, server/deal-party-aml.ts).
+
+import type { KycRedFlag } from "./kyc-red-flags";
+import type { KycPrecheckResult } from "./kyc-prechecks";
+import { isInvestmentDeal } from "./deal-status";
+import { ALL_LETTING_TYPES, TENANT_REP_TYPES } from "./letting-rules";
+
+// ── The documents ───────────────────────────────────────────────────────────
+
+export interface AmlPolicyDocument { key: string; title: string; issue: number; date: string; file: string }
+
+// Kept with every earlier issue (policy M: policies and the risk assessment
+// are kept for five years from their review, older versions included). A new
+// issue is a new entry and a new file; never overwrite an old one.
+export const AML_POLICY_DOCUMENTS: readonly AmlPolicyDocument[] = [
+  { key: "policy-issue-2", title: "Anti-Money Laundering Policy", issue: 2, date: "November 2026", file: "bgp-aml-policy-issue-2.docx" },
+  { key: "risk-assessment-issue-2", title: "Firm-Wide Anti-Money Laundering Risk Assessment", issue: 2, date: "November 2026", file: "bgp-firm-wide-aml-risk-assessment-issue-2.docx" },
+];
+export const amlPolicyDocument = (key: unknown): AmlPolicyDocument | null =>
+  AML_POLICY_DOCUMENTS.find(d => d.key === String(key ?? "")) || null;
+
+// ── The officers (policy C.b and D) ─────────────────────────────────────────
+
+// Who the policy names. The app holds who is set (AML settings); these are
+// only what "Use the policy's officers" looks for.
+export const POLICY_OFFICER_NAMES = { nominated: "Jack Barratt", deputy: "Victoria Broadhead" } as const;
+
+export interface AmlOfficer { id: string | null; name: string | null; email: string | null }
+export interface AmlOfficers { nominated: AmlOfficer | null; deputy: AmlOfficer | null }
+export type AmlOfficerRole = "nominated" | "deputy" | "admin";
+
+const lower = (v: unknown): string => String(v ?? "").trim().toLowerCase();
+const isOfficer = (o: AmlOfficer | null, user: { id?: string | null; email?: string | null }): boolean =>
+  !!o && ((!!o.id && !!user.id && o.id === user.id) || (!!o.email && lower(o.email) === lower(user.email)));
+
+/**
+ * The AML role of a signed-in user: the Nominated Officer, the Deputy, or an
+ * admin acting while no Nominated Officer is set (the gap stays visible: every
+ * refusal says none is set). Null for anyone else.
+ */
+export function amlOfficerRole(user: { id?: string | null; email?: string | null } | null, officers: AmlOfficers, isAdmin: boolean): { role: AmlOfficerRole | null; appointed: boolean } {
+  const appointed = !!(officers.nominated && (officers.nominated.id || officers.nominated.email));
+  if (!user) return { role: null, appointed };
+  if (isOfficer(officers.nominated, user)) return { role: "nominated", appointed };
+  if (isOfficer(officers.deputy, user)) return { role: "deputy", appointed };
+  if (!appointed && isAdmin) return { role: "admin", appointed };
+  return { role: null, appointed };
+}
+
+/** "the Nominated Officer (Jack Barratt) or the Deputy (Victoria Broadhead)", as set. */
+export function officerWords(officers: AmlOfficers): string {
+  const n = officers.nominated?.name, d = officers.deputy?.name;
+  if (!officers.nominated) return "an admin, until a Nominated Officer is set in the AML policy panel";
+  return `the Nominated Officer${n ? ` (${n})` : ""}${officers.deputy ? ` or the Deputy${d ? ` (${d})` : ""}` : ""}`;
+}
+
+// ── Levels of due diligence (policy F.a) and re-checks (policy H.a) ─────────
+
+export type DueDiligenceLevel = "simplified" | "standard" | "enhanced";
+export const DUE_DILIGENCE_LABEL: Record<DueDiligenceLevel, string> = {
+  simplified: "Simplified due diligence",
+  standard: "Standard due diligence",
+  enhanced: "Enhanced due diligence",
+};
+
+// Standard risk (simplified or standard) 3 years; high risk or sanctions
+// (enhanced) 1 year.
+export const RECHECK_YEARS: Record<DueDiligenceLevel, number> = { simplified: 3, standard: 3, enhanced: 1 };
+
+export function recheckDate(level: DueDiligenceLevel, from: Date = new Date()): Date {
+  const d = new Date(from.getTime());
+  d.setUTCFullYear(d.getUTCFullYear() + RECHECK_YEARS[level]);
+  return d;
+}
+
+export interface PartyDueDiligence {
+  level: DueDiligenceLevel;
+  // Why, in plain words: the simplified basis, or the enhanced reasons.
+  why: string[];
+  // Factors the risk assessment says to weigh that do not by themselves
+  // need enhanced due diligence (restaurants and bars, car parks).
+  toWeigh: string[];
+  recheckYears: number;
+}
+
+/**
+ * The level for a party: enhanced when any red flag or higher-risk factor
+ * counts (one set aside with a comment does not), simplified when the policy's
+ * basis for it holds and nothing makes it enhanced, otherwise standard.
+ */
+export function dueDiligenceLevel(input: {
+  partyFlags: Array<Pick<KycRedFlag, "label" | "factor">>;
+  dealFlags: Array<Pick<KycRedFlag, "label" | "factor">>;
+  simplifiedBasis: string | null;
+  toWeigh?: string[];
+}): PartyDueDiligence {
+  const all = [...input.partyFlags, ...input.dealFlags.map(f => ({ ...f, label: `On the deal: ${f.label}` }))];
+  if (all.length) {
+    return { level: "enhanced", why: all.map(f => f.label), toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.enhanced };
+  }
+  if (input.simplifiedBasis) {
+    return { level: "simplified", why: [input.simplifiedBasis], toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.simplified };
+  }
+  return { level: "standard", why: ["No higher-risk factor found: identify and verify the beneficial owners."], toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.standard };
+}
+
+// ── Which checks a deal needs (policy A) ────────────────────────────────────
+
+export type AmlRegime = "full" | "sanctions_only" | "advisory";
+export const LETTING_AML_MONTHLY_RENT = 10_000;
+
+/**
+ * Sales and purchases: full checks on every party. Lettings of a month or
+ * more at £10,000 a month or more: full checks (MLR 2017). Lettings under
+ * that: sanctions checks on every party (SAML 2018), the owners identified and
+ * screened, not verified. Rent not recorded: full checks. Advisory work (rent
+ * reviews, dilapidations, service charge) is not agency work.
+ */
+export function amlRegime(deal: { dealType?: string | null; team?: string[] | string | null; rentPa?: number | string | null }): { regime: AmlRegime; why: string } {
+  const type = String(deal.dealType || "").trim();
+  if (isInvestmentDeal(type, deal.team ?? null)) return { regime: "full", why: "A sale or purchase: full checks on every party (MLR 2017)." };
+  if (/^(rent review|dilapidations|service charge)$/i.test(type)) {
+    return { regime: "advisory", why: `${type} is advisory work, not estate or letting agency: the policy's checks are for sales, purchases and lettings.` };
+  }
+  const letting = ALL_LETTING_TYPES.includes(type) || (TENANT_REP_TYPES as readonly string[]).includes(type) || /^(lease renewal|regear)$/i.test(type);
+  if (!letting) return { regime: "full", why: "Full checks on every party (MLR 2017)." };
+  const rent = Number(deal.rentPa);
+  if (!Number.isFinite(rent) || rent <= 0) return { regime: "full", why: "A letting with no rent recorded: full checks until the rent shows it is under £10,000 a month." };
+  if (rent / 12 >= LETTING_AML_MONTHLY_RENT) return { regime: "full", why: `A letting at £${Math.round(rent / 12).toLocaleString("en-GB")} a month: full checks on every party (MLR 2017, £10,000 a month or more).` };
+  return { regime: "sanctions_only", why: `A letting at £${Math.round(rent / 12).toLocaleString("en-GB")} a month: sanctions checks on every party (SAML 2018). The owners are identified and screened, not verified, and no client documents are needed.` };
+}
+
+// ── Countries (risk assessment: geography; policy appendix 3.2) ─────────────
+
+// The UK's high-risk third countries are FATF's two lists as they stand
+// (MLR 2017 reg 33(3), since SI 2024/69): enhanced due diligence is required
+// by law. FATF reviews them each February, June and October: update these
+// lists and the date after each plenary.
+export const FATF_LISTS_AS_OF = "30 October 2026";
+const FATF_CALL_FOR_ACTION = ["Iran", "North Korea", "Myanmar"];
+const FATF_INCREASED_MONITORING = [
+  "Angola", "Bolivia", "Bosnia and Herzegovina", "Cameroon", "Haiti", "Iraq", "Kenya", "Kuwait", "Laos", "Lebanon",
+  "Nepal", "Papua New Guinea", "South Sudan", "Syria", "Venezuela", "Vietnam", "British Virgin Islands", "Yemen",
+];
+// The risk assessment's Eurasia and Africa row: countries the UK authorities
+// link to overseas corruption and fraud laundered through UK property.
+const FWRA_EURASIA_AFRICA = [
+  "Russia", "Belarus", "Kazakhstan", "Kyrgyzstan", "Ukraine", "Tajikistan", "Turkmenistan", "Uzbekistan",
+  "Azerbaijan", "Georgia", "Armenia", "Angola", "Ghana", "Nigeria", "China", "Pakistan",
+];
+// Countries that sell citizenship by investment (the risk assessment:
+// "Where UBOs are citizens of a country that has a CBI scheme, enhanced due
+// diligence will be applied").
+const CBI_COUNTRIES = [
+  "Antigua and Barbuda", "Dominica", "Grenada", "Saint Kitts and Nevis", "Saint Lucia", "Vanuatu",
+  "Turkey", "Egypt", "Jordan", "Cambodia", "Nauru", "Sao Tome and Principe",
+];
+
+// What the registers write for each country: names, and nationalities as a
+// person's record gives them. "Dominican" is left out (it is also the
+// Dominican Republic's).
+const COUNTRY_WORDS: Record<string, string[]> = {
+  "Iran": ["iran", "islamic republic of iran", "iran, islamic republic of", "iranian"],
+  "North Korea": ["north korea", "dprk", "democratic people's republic of korea", "korea, democratic people's republic of", "north korean"],
+  "Myanmar": ["myanmar", "burma", "burmese"],
+  "Angola": ["angola", "angolan"],
+  "Bolivia": ["bolivia", "plurinational state of bolivia", "bolivian"],
+  "Bosnia and Herzegovina": ["bosnia and herzegovina", "bosnia", "bosnian", "bosnian and herzegovinian"],
+  "Cameroon": ["cameroon", "cameroonian"],
+  "Haiti": ["haiti", "haitian"],
+  "Iraq": ["iraq", "iraqi"],
+  "Kenya": ["kenya", "kenyan"],
+  "Kuwait": ["kuwait", "kuwaiti"],
+  "Laos": ["laos", "lao pdr", "lao people's democratic republic", "lao", "laotian"],
+  "Lebanon": ["lebanon", "lebanese"],
+  "Nepal": ["nepal", "nepalese", "nepali"],
+  "Papua New Guinea": ["papua new guinea", "papua new guinean"],
+  "South Sudan": ["south sudan", "south sudanese"],
+  "Syria": ["syria", "syrian arab republic", "syrian"],
+  "Venezuela": ["venezuela", "bolivarian republic of venezuela", "venezuelan"],
+  "Vietnam": ["vietnam", "viet nam", "vietnamese"],
+  "British Virgin Islands": ["british virgin islands", "virgin islands, british", "virgin islands (british)", "bvi", "tortola"],
+  "Yemen": ["yemen", "yemeni"],
+  "Russia": ["russia", "russian federation", "russian"],
+  "Belarus": ["belarus", "belarusian", "belarussian"],
+  "Kazakhstan": ["kazakhstan", "kazakh", "kazakhstani"],
+  "Kyrgyzstan": ["kyrgyzstan", "kyrgyz republic", "kyrgyz", "kyrgyzstani"],
+  "Ukraine": ["ukraine", "ukrainian"],
+  "Tajikistan": ["tajikistan", "tajik", "tajikistani"],
+  "Turkmenistan": ["turkmenistan", "turkmen"],
+  "Uzbekistan": ["uzbekistan", "uzbek", "uzbekistani"],
+  "Azerbaijan": ["azerbaijan", "azerbaijani", "azeri"],
+  "Georgia": ["georgia", "georgian"],
+  "Armenia": ["armenia", "armenian"],
+  "Ghana": ["ghana", "ghanaian"],
+  "Nigeria": ["nigeria", "nigerian"],
+  "China": ["china", "people's republic of china", "prc", "chinese"],
+  "Pakistan": ["pakistan", "pakistani"],
+  "Antigua and Barbuda": ["antigua and barbuda", "antigua", "antiguan", "barbudan", "antiguan and barbudan"],
+  "Dominica": ["dominica", "commonwealth of dominica"],
+  "Grenada": ["grenada", "grenadian"],
+  "Saint Kitts and Nevis": ["saint kitts and nevis", "st kitts and nevis", "st. kitts and nevis", "kittitian", "nevisian", "kittitian and nevisian"],
+  "Saint Lucia": ["saint lucia", "st lucia", "st. lucia", "saint lucian", "st lucian"],
+  "Vanuatu": ["vanuatu", "ni-vanuatu", "vanuatuan"],
+  "Turkey": ["turkey", "turkiye", "republic of turkiye", "turkish"],
+  "Egypt": ["egypt", "egyptian"],
+  "Jordan": ["jordan", "jordanian"],
+  "Cambodia": ["cambodia", "cambodian"],
+  "Nauru": ["nauru", "nauruan"],
+  "Sao Tome and Principe": ["sao tome and principe", "sao tomean", "santomean"],
+};
+
+const norm = (v: unknown): string => String(v ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+  .replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim();
+
+/** The country a register's words name: the whole text, or any part of it between commas or slashes. */
+export function countryOf(text: unknown): string | null {
+  const whole = norm(text);
+  if (!whole) return null;
+  const parts = [whole, ...whole.split(/[,/;()]/).map(p => p.trim()).filter(Boolean)];
+  for (const [country, words] of Object.entries(COUNTRY_WORDS)) {
+    if (parts.some(p => words.includes(p))) return country;
+  }
+  return null;
+}
+
+export type CountryRisk = "fatf_call_for_action" | "fatf_increased_monitoring" | "fwra_eurasia_africa";
+export function countryRisk(country: string | null): CountryRisk | null {
+  if (!country) return null;
+  if (FATF_CALL_FOR_ACTION.includes(country)) return "fatf_call_for_action";
+  if (FATF_INCREASED_MONITORING.includes(country)) return "fatf_increased_monitoring";
+  if (FWRA_EURASIA_AFRICA.includes(country)) return "fwra_eurasia_africa";
+  return null;
+}
+export const sellsCitizenship = (country: string | null): boolean => !!country && CBI_COUNTRIES.includes(country);
+
+const COUNTRY_RISK_WORDS: Record<CountryRisk, string> = {
+  fatf_call_for_action: `on FATF's call for action list (${FATF_LISTS_AS_OF}): enhanced due diligence is required by law (MLR 2017 reg 33)`,
+  fatf_increased_monitoring: `on FATF's increased monitoring list (${FATF_LISTS_AS_OF}): a high-risk third country, so enhanced due diligence is required by law (MLR 2017 reg 33)`,
+  fwra_eurasia_africa: "named in BGP's risk assessment among the countries linked to corruption and fraud laundered through UK property: refer it to the Nominated Officer",
+};
+
+// ── Business sectors (policy appendix 3.1 and 3.6.3; risk assessment) ───────
+
+interface SectorRule { key: string; label: string; enhanced: boolean; sic?: (code: string) => boolean; words?: RegExp }
+
+const DUAL_USE_SIC = new Set([
+  "20110", "20120", "20130", "20140", "20150", "20160", "20170", "20200", "20510", "20590", "20600",
+  "24460", "25400", "26110", "26120", "26511", "26512", "26513", "26514", "30300", "30400",
+]);
+const isDualUseSic = (c: string) => DUAL_USE_SIC.has(c) || (/^28\d{3}$/.test(c) && c !== "28230");
+
+const SECTOR_RULES: readonly SectorRule[] = [
+  { key: "gambling", label: "Gambling (casinos, betting, bingo)", enhanced: true, sic: c => c === "92000", words: /\b(casinos?|betting|bookmakers?|bingo)\b/i },
+  { key: "nightclub", label: "Nightclubs", enhanced: true, words: /\bnight ?clubs?\b/i },
+  { key: "hair_beauty", label: "Hairdressers, barbers, nail bars, tanning and beauty salons", enhanced: true, sic: c => c === "96020",
+    words: /\b(barbers?|barbershops?|hair ?dress(?:er|ers|ing)|hair salons?|nail (?:bars?|salons?)|tanning|beauty (?:salons?|parlou?rs?))\b/i },
+  { key: "car_wash", label: "Car washes", enhanced: true, words: /\b(car ?wash(?:es)?|valeting)\b/i },
+  { key: "vape", label: "Vape shops", enhanced: true, words: /\b(vapes?|vaping|e-?cig(?:arette)?s?)\b/i },
+  { key: "candy", label: "American candy shops", enhanced: true, words: /\b(american (?:candy|sweets)|candy (?:shops?|stores?))\b/i },
+  { key: "convenience", label: "Convenience stores", enhanced: true, words: /\b(convenience (?:stores?|shops?)|mini ?markets?|food (?:&|and) wine)\b/i },
+  { key: "extractive", label: "Mining, quarrying, oil and gas", enhanced: true, sic: c => /^0[5-9]\d{3}$/.test(c) },
+  { key: "dual_use", label: "Makes dual-use goods (machinery, chemicals, electronic components, carbon fibre): a proliferation financing risk", enhanced: true, sic: isDualUseSic },
+  // To weigh, not enhanced (Woody, 19 November 2026).
+  { key: "food_drink", label: "Restaurants, bars and pubs: cash-intensive, weigh how much is taken in cash", enhanced: false,
+    sic: c => ["56101", "56102", "56103", "56301", "56302"].includes(c), words: /\b(restaurants?|bars?|pubs?|caf[eé]s?|quick service|casual dining|fine dining|takeaways?)\b/i },
+  { key: "gaming", label: "Gaming venues: check they take no gambling stakes", enhanced: false, words: /\bgaming\b/i },
+  { key: "car_park", label: "Car parks: cash-intensive", enhanced: false, words: /\bcar ?parks?\b/i },
+];
+
+/** The sector rules a party meets, from its Companies House SIC codes and BGP's type for the brand. */
+export function sectorMatches(input: { sicCodes?: string[] | null; companyType?: string | null }): Array<{ key: string; label: string; enhanced: boolean; via: string }> {
+  const sic = (input.sicCodes || []).map(c => String(c).trim()).filter(Boolean);
+  // Accents off, so "Café" meets the same words as "Cafe".
+  const type = String(input.companyType || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/^tenant\s*-\s*/i, "").trim();
+  const out: Array<{ key: string; label: string; enhanced: boolean; via: string }> = [];
+  for (const rule of SECTOR_RULES) {
+    const code = rule.sic ? sic.find(rule.sic) : undefined;
+    const byType = !code && rule.words && type ? rule.words.test(type) : false;
+    if (code) out.push({ key: rule.key, label: rule.label, enhanced: rule.enhanced, via: `SIC ${code}` });
+    else if (byType) out.push({ key: rule.key, label: rule.label, enhanced: rule.enhanced, via: `BGP's type: ${type}` });
+  }
+  return out;
+}
+
+// ── Higher-risk factors as flags ────────────────────────────────────────────
+
+export const POLICY_SOURCE = "BGP's AML policy and risk assessment (Issue 2)";
+const keyPart = (v: unknown) => norm(v).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "x";
+const POOLED_TYPES = new Set(["limited-partnership"]);
+const ICVC_TYPES = new Set(["investment-company-with-variable-capital", "icvc-securities", "icvc-warrant", "icvc-umbrella"]);
+
+/**
+ * The policy's higher-risk factors a party meets, read from BGP's checks
+ * before asking (the Companies House record) and BGP's type for the brand.
+ * Each is a flag with `factor` set: it sends the party to enhanced due
+ * diligence (KYC4U, then the Nominated Officer or the Deputy) as a red flag
+ * does, and can be set aside with a comment where it does not apply.
+ */
+export function policyFactorFlags(input: { precheck?: KycPrecheckResult | null; companyType?: string | null; subjectType?: string | null }): KycRedFlag[] {
+  const flags: KycRedFlag[] = [];
+  const ch = input.precheck?.companiesHouse || null;
+  const at = input.precheck?.ranAt || null;
+  const base = { source: POLICY_SOURCE, at, factor: true as const };
+
+  // A trust in the ownership (risk assessment: "Any property transaction
+  // involving a trust should be treated as higher risk").
+  const trustOwners = [
+    ...(ch?.owners || []).filter(o => o.controls.some(c => /trust/i.test(c)) || /\btrustees?\b/i.test(o.name)).map(o => o.name),
+    ...(ch?.peopleUpChain || []).filter(p => p.controls.some(c => /trust/i.test(c))).map(p => p.name),
+  ];
+  if (trustOwners.length || /trust/i.test(String(input.subjectType || ""))) {
+    const names = [...new Set(trustOwners)];
+    flags.push({
+      ...base, kind: "policy_trust",
+      label: names.length ? `A trust in the ownership: ${names.slice(0, 3).join(", ")}${names.length > 3 ? ` and ${names.length - 3} more` : ""}` : "The party is a trust",
+      detail: "Ask for the trust deed, the settlor, trustees, any protector and beneficiaries of 25% or more, and its Trust Registration Service entry (policy 4.7).",
+      key: "policy:trust", evidence: names.length ? names.map(n => `owner:${keyPart(n)}`) : ["party:trust"],
+      facts: names.map(n => ({ label: "Held for a trust", value: n })),
+    });
+  }
+
+  // A limited partnership: a pooled vehicle, enhanced unless listed or regulated.
+  if (ch?.type && POOLED_TYPES.has(ch.type) && !ch.listing) {
+    flags.push({
+      ...base, kind: "policy_pooled",
+      label: `A limited partnership (${ch.name})`,
+      detail: "Risk assessment: a pooled investment vehicle that is neither listed nor regulated is higher risk. Identify the general partner, the manager and investors of 25% or more; set this aside with a comment if its manager is FCA-regulated.",
+      key: "policy:pooled", evidence: [`company:${keyPart(ch.number)}`],
+      facts: [{ label: "Register", value: `${ch.name} (${ch.number}), ${ch.type.replace(/-/g, " ")}` }],
+    });
+  }
+
+  // Countries: the party's own registered office, and its owners'.
+  const seen = new Set<string>();
+  const addCountry = (who: string, how: string, raw: unknown) => {
+    const country = countryOf(raw);
+    const risk = countryRisk(country);
+    if (!country || !risk) return;
+    const id = `${keyPart(who)}:${keyPart(country)}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    flags.push({
+      ...base, kind: "policy_country",
+      label: `${who}: ${how} ${country}`,
+      detail: `${country} is ${COUNTRY_RISK_WORDS[risk]}.`,
+      key: `policy:country:${keyPart(country)}`, evidence: [`who:${id}`],
+      facts: [{ label: country, value: COUNTRY_RISK_WORDS[risk] }],
+    });
+  };
+  if (ch?.registeredOffice) {
+    const parts = String(ch.registeredOffice).split(",").map(s => s.trim()).filter(Boolean);
+    if (parts.length) addCountry(ch.name, "registered in", parts[parts.length - 1]);
+  }
+  for (const o of ch?.owners || []) {
+    if (o.kind === "individual") {
+      addCountry(o.name, "a national of", o.nationality);
+      addCountry(o.name, "lives in", o.residence);
+    } else {
+      addCountry(o.name, "registered in", o.country);
+    }
+  }
+  // Owners who are citizens of a country that sells citizenship.
+  for (const o of (ch?.owners || []).filter(x => x.kind === "individual")) {
+    const country = countryOf(o.nationality);
+    if (!sellsCitizenship(country)) continue;
+    flags.push({
+      ...base, kind: "policy_cbi",
+      label: `${o.name}: a national of ${country}, which sells citizenship by investment`,
+      detail: "Risk assessment: an owner from a country with a citizenship by investment scheme gets enhanced due diligence, to check it does not hide a sanctioned person.",
+      key: `policy:cbi:${keyPart(country)}`, evidence: [`owner:${keyPart(o.name)}`],
+      facts: [{ label: "Nationality on the register", value: String(o.nationality || country) }],
+    });
+  }
+
+  // Business sectors the risk assessment names as higher risk.
+  for (const s of sectorMatches({ sicCodes: ch?.sicCodes || [], companyType: input.companyType }).filter(m => m.enhanced)) {
+    flags.push({
+      ...base, kind: "policy_sector",
+      label: s.label,
+      detail: "Policy 3.6.3 and the risk assessment: an industry with an increased risk of being used for crime needs enhanced due diligence.",
+      key: `policy:sector:${s.key}`, evidence: [`via:${keyPart(s.via)}`],
+      facts: [{ label: "Read from", value: s.via }],
+    });
+  }
+  return flags;
+}
+
+/** Factors the risk assessment says to weigh that are not enhanced by themselves. */
+export function policyFactorsToWeigh(input: { precheck?: KycPrecheckResult | null; companyType?: string | null }): string[] {
+  return sectorMatches({ sicCodes: input.precheck?.companiesHouse?.sicCodes || [], companyType: input.companyType })
+    .filter(m => !m.enhanced).map(m => `${m.label} (${m.via})`);
+}
+
+const PUBLIC_BODY = /\b(council|london borough of|royal borough of|city of london corporation|greater london authority|transport for london|combined authority|nhs|ministry of|department (?:for|of)|homes england|police and crime commissioner|fire and rescue authority)\b/i;
+
+/** The policy's basis for simplified due diligence, when the records show one. */
+export function simplifiedBasis(input: { precheck?: KycPrecheckResult | null; partyName?: string | null }): string | null {
+  const ch = input.precheck?.companiesHouse || null;
+  const listing = ch?.listing || null;
+  if (listing) {
+    if (listing.viaParent) return `Owned through ${listing.company}, a company listed on a regulated market: simplified due diligence (policy 4.2), the chain confirmed by KYC4U.`;
+    if (listing.market === "other_regulated" || listing.market === "listed_market") return `Listed on a market outside the UK and EU: simplified due diligence when that market is equivalent to the London Stock Exchange (policy 4.2).`;
+    return `Listed on a regulated market: simplified due diligence, no beneficial owners to verify (policy 4.2, MLR 2017 reg 28(5)).`;
+  }
+  if (ch?.type && ICVC_TYPES.has(ch.type)) return "An open-ended investment company authorised by the FCA: simplified due diligence (policy 4.1).";
+  const name = String(input.partyName || ch?.name || "");
+  if (!ch && PUBLIC_BODY.test(name)) return "A UK public body, by its name: simplified due diligence once that is confirmed (policy 4.3).";
+  return null;
+}
+
+// ── Super-prime sales (risk assessment: transactions, high value) ───────────
+
+// £5 million or more in London and the South East counties the risk
+// assessment names (Berkshire, Buckinghamshire, East Sussex, Hampshire, the
+// Isle of Wight, Kent, Oxfordshire, Surrey, West Sussex); more than £1
+// million anywhere else. Read from the postcode: areas that cross a boundary
+// are read district by district.
+const LONDON_SOUTH_EAST_AREAS = new Set([
+  "E", "EC", "N", "NW", "SE", "SW", "W", "WC", "BR", "CR", "DA", "HA", "KT", "SM", "TW", "UB",
+  "BN", "CT", "GU", "ME", "OX", "PO", "RG", "RH", "SL", "SO", "TN",
+]);
+const SPLIT_DISTRICTS: Record<string, (n: number) => boolean> = {
+  EN: n => n >= 1 && n <= 5,                 // Enfield and Barnet (London); EN6 to EN11 Hertfordshire and Essex
+  IG: n => (n >= 1 && n <= 6) || n === 8 || n === 11, // Redbridge and Barking (London); IG7, IG9, IG10 Essex
+  RM: n => n >= 1 && n <= 14,                // Havering, Barking and Dagenham (London); RM15 to RM20 Essex and Thurrock
+  HP: n => n >= 5 && n !== 23,               // Buckinghamshire; HP1 to HP4 and HP23 Hertfordshire
+  MK: n => n <= 19 || n === 46,              // Milton Keynes (Buckinghamshire); MK40 to MK45 Bedfordshire
+  SP: n => n === 6 || n === 10 || n === 11,  // Fordingbridge and Andover (Hampshire); the rest Wiltshire and Dorset
+};
+export const SUPER_PRIME_SOUTH_EAST = 5_000_000;
+export const SUPER_PRIME_ELSEWHERE = 1_000_000;
+
+export function inLondonOrSouthEast(postcode: string | null | undefined): boolean | null {
+  const m = /^([A-Z]{1,2})(\d{1,2})[A-Z]?\s*\d[A-Z]{2}$/.exec(String(postcode || "").toUpperCase().replace(/\s+/g, " ").trim())
+    || /^([A-Z]{1,2})(\d{1,2})[A-Z]?$/.exec(String(postcode || "").toUpperCase().trim());
+  if (!m) return null;
+  const area = m[1], district = Number(m[2]);
+  if (SPLIT_DISTRICTS[area]) return SPLIT_DISTRICTS[area](district);
+  return LONDON_SOUTH_EAST_AREAS.has(area);
+}
+
+/** A sale or purchase over HMRC's super-prime value, as a flag on the deal. */
+export function superPrimeFlag(deal: { dealType?: string | null; team?: string[] | string | null; pricing?: number | string | null; postcode?: string | null }): KycRedFlag | null {
+  if (!isInvestmentDeal(deal.dealType ?? null, deal.team ?? null)) return null;
+  const price = Number(deal.pricing);
+  if (!Number.isFinite(price) || price <= 0) return null;
+  const southEast = inLondonOrSouthEast(deal.postcode);
+  const over = southEast ? price >= SUPER_PRIME_SOUTH_EAST : price > SUPER_PRIME_ELSEWHERE;
+  if (!over) return null;
+  const where = southEast === true ? "London or the South East (£5m or more)" : southEast === false ? "outside London and the South East (over £1m)" : "where the property's region is not known, so the £1m line is used";
+  const money = price >= 1_000_000 ? `£${(price / 1_000_000).toLocaleString("en-GB", { maximumFractionDigits: 2 })}m` : `£${Math.round(price).toLocaleString("en-GB")}`;
+  return {
+    kind: "super_prime", factor: true,
+    label: `Super-prime sale: ${money}, ${where}`,
+    detail: "Risk assessment: a deal above HMRC's super-prime value is high risk, with enhanced due diligence on the parties' background, the intended use and the business case.",
+    source: POLICY_SOURCE, at: null,
+    key: "deal:super_prime", evidence: [`price:${Math.round(price)}`, `postcode:${keyPart(deal.postcode || "unknown")}`],
+    facts: [{ label: "Price", value: money }, { label: "Property postcode", value: deal.postcode || "not recorded" }],
+  };
+}
+
+// ── Not required: the other side of a deal (policy G note; F.f) ─────────────
+
+export const NOT_REQUIRED_REASONS = {
+  joint_agent: "A joint agent found and negotiated the deal with this party, so BGP has no business relationship with it",
+  no_deal: "No deal was done with this party",
+} as const;
+export type NotRequiredReason = keyof typeof NOT_REQUIRED_REASONS;
+export const NOT_REQUIRED_COMMENT_MIN = 10;
+
+export function notRequiredInput(body: unknown): { reason: NotRequiredReason; comment: string } | { problem: string } {
+  const b = (body || {}) as Record<string, unknown>;
+  const reason = String(b.reason || "");
+  if (!Object.prototype.hasOwnProperty.call(NOT_REQUIRED_REASONS, reason)) return { problem: "Choose why no checks are needed on this party." };
+  const comment = String(b.comment ?? "").replace(/\s+/g, " ").trim().slice(0, 1000);
+  if (comment.length < NOT_REQUIRED_COMMENT_MIN) return { problem: `Say what happened (at least ${NOT_REQUIRED_COMMENT_MIN} characters): it is kept on the deal.` };
+  return { reason: reason as NotRequiredReason, comment };
+}
+
+export interface PartyNotRequired { id: number; reason: NotRequiredReason; reasonWords: string; comment: string; by: string | null; at: string | null }
+
+// ── Heads of terms and marketing (policy 3.8) ───────────────────────────────
+
+// "Heads of terms and marketing collateral will include references to the
+// obligations for all parties to provide appropriate levels of information to
+// complete due diligence and source of funds checks."
+export const AML_HOTS_CLAUSE = "Bruce Gillingham Pollard is required by the Money Laundering, Terrorist Financing and Transfer of Funds (Information on the Payer) Regulations 2017 and the Sanctions and Anti-Money Laundering Act 2018 to complete customer due diligence and sanctions checks on every party before the transaction completes. Each party will promptly provide the identification, ownership and source of funds information requested.";
+export const AML_MARKETING_NOTICE = "Anti-money laundering. Under the Money Laundering Regulations 2017 and the Sanctions and Anti-Money Laundering Act 2018, Bruce Gillingham Pollard checks every party to a transaction. The successful purchaser or tenant will be asked for identification, details of who owns or controls it and where its funds come from before the deal completes.";
+
+// ── Sign-off: who may (Woody's answer) ──────────────────────────────────────
+
+/** A deal's agent: their login is on the deal, or their name is. */
+export function isDealAgent(user: { id: string; name?: string | null }, deal: { internal_agent_ids?: unknown; internal_agent?: unknown }): boolean {
+  const ids = Array.isArray(deal.internal_agent_ids) ? deal.internal_agent_ids.map(String) : [];
+  if (ids.includes(String(user.id))) return true;
+  const name = lower(user.name);
+  const names = Array.isArray(deal.internal_agent) ? deal.internal_agent.map(lower) : [];
+  return !!name && names.includes(name);
+}

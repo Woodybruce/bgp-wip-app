@@ -9,6 +9,8 @@
 // themselves happens outside the app; the FINAL agreed HOTs are uploaded and
 // the deal moves to Solicitors.
 
+import { AML_HOTS_CLAUSE } from "./aml-policy";
+
 export const HOTS_TOKENS = [
   { token: "PROPERTY", meaning: "Property or scheme name" },
   { token: "UNIT", meaning: "Unit name" },
@@ -79,8 +81,12 @@ export function hotsGapsIn(text: string): string[] {
 // The standard set of HOTs behind "Create standard HOTs". The clause list
 // follows the heads of terms BGP issues for Landsec (37 clauses, the 2025
 // Deptford form on the share drive); the deal-specific figures are tokens.
-// A property's own standard replaces this once uploaded or edited.
-export const STANDARD_HOTS_TEMPLATE = `HEADS OF TERMS
+// A property's own standard replaces this once uploaded or edited. Since 19
+// November 2026 it has a 38th clause, the anti-money laundering obligations
+// BGP's AML policy (Issue 2, 3.8) puts in every set of heads of terms; a
+// property that copied the 37-clause text keeps it and still reads as BGP's
+// standard (STANDARD_HOTS_TEMPLATE_37).
+export const STANDARD_HOTS_TEMPLATE_37 = `HEADS OF TERMS
 Subject to Contract
 
 {UNIT}, {PROPERTY}
@@ -215,6 +221,11 @@ Rates payable are estimated at {RATES} per annum.
 It is acknowledged that in agreeing these heads of terms, the parties have had regard to the provisions of the Code for Leasing Business Premises in England & Wales.
 `;
 
+export const STANDARD_HOTS_TEMPLATE = STANDARD_HOTS_TEMPLATE_37.replace(
+  "\n\nIt is acknowledged that",
+  `\n\n38. Anti-money laundering\n${AML_HOTS_CLAUSE}\n\nIt is acknowledged that`,
+);
+
 export type HotsStage = "no_template" | "no_draft" | "draft" | "agreed" | "issued" | "final";
 
 export interface HotsSigner {
@@ -299,3 +310,4 @@ export interface HotsConversion {
   aml: { ok: boolean; message: string | null; neutral?: boolean };
   statusWarning?: string | null;
 }
+

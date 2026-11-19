@@ -410,6 +410,10 @@ export interface EntityDecisionOptions {
   evidence?: Record<string, unknown> | null;
   notes?: string | null;
   reminderCompanyId?: string | null;
+  // Years until the re-check, set by the AML policy's level for the party
+  // (shared/aml-policy.ts: 3, or 1 when enhanced). Without it the AML
+  // settings' interval applies, as before.
+  recheckYears?: number | null;
 }
 
 export async function approveEntityKyc(
@@ -422,12 +426,21 @@ export async function approveEntityKyc(
   const entity = await loadEntityRow(q, kind, id);
   if (!entity) return { status: 404, body: { error: "Entity not found" } };
 
-  // MLR 2017 Reg 28: the cadence is the MLRO's configurable
-  // recheck_interval_days (default 182 ≈ the historic 6-month policy).
-  const intervalDays = await recheckIntervalDays(q);
+  // MLR 2017 Reg 28: the AML policy's re-check for the party's level when
+  // the caller gives one, else the configurable recheck_interval_days
+  // (default 182 ≈ the historic 6-month policy).
+  const years = Number(deps.recheckYears);
   const at = deps.at && !isNaN(deps.at.getTime()) ? deps.at : new Date();
   const expiresAt = new Date(at);
-  expiresAt.setDate(expiresAt.getDate() + intervalDays);
+  let cycle: string;
+  if (Number.isInteger(years) && years > 0 && years <= 5) {
+    expiresAt.setUTCFullYear(expiresAt.getUTCFullYear() + years);
+    cycle = `${years}-year cycle, AML policy`;
+  } else {
+    const intervalDays = await recheckIntervalDays(q);
+    expiresAt.setDate(expiresAt.getDate() + intervalDays);
+    cycle = `${intervalDays}-day cycle`;
+  }
 
   const { rows } = await q.query(
     `INSERT INTO crm_entity_kyc (entity_kind, entity_id, kyc_status, checked_at, approved_by, approved_at,
@@ -441,7 +454,7 @@ export async function approveEntityKyc(
     [kind, id, actorName, expiresAt, at, JSON.stringify(deps.evidence || {})],
   );
   await entityAudit(q, kind, id, "entity_kyc_approved", actorName,
-    `${deps.notes ? `${deps.notes} · ` : ""}Re-check due ${expiresAt.toISOString().slice(0, 10)} (${intervalDays}-day cycle)`);
+    `${deps.notes ? `${deps.notes} · ` : ""}Re-check due ${expiresAt.toISOString().slice(0, 10)} (${cycle})`);
   try {
     // A fresh approval replaces this entity's earlier periodic re-check.
     await q.query(
@@ -452,7 +465,7 @@ export async function approveEntityKyc(
     await q.query(
       `INSERT INTO aml_recheck_reminders (company_id, entity_name, recheck_type, due_date, notes)
        VALUES ($1, $2, 'periodic_cdd', $3, $4)`,
-      [deps.reminderCompanyId || id, entity.name, expiresAt, `Auto-generated on entity KYC approval (${kind}) — ${intervalDays}-day re-check`],
+      [deps.reminderCompanyId || id, entity.name, expiresAt, `Auto-generated on entity KYC approval (${kind}) — ${cycle} re-check`],
     );
   } catch (e: any) {
     console.warn("[entity-kyc-approve] reminder insert failed:", e?.message);

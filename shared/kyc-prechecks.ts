@@ -11,7 +11,8 @@
 // Pure: what a result means, what is still to ask, the red flags, the lines
 // KYC4U's note carries and the lines the deal's AML card shows.
 // server/kyc-prechecks.ts gathers the facts. Nothing here decides anything:
-// KYC4U, BGP's MLRO, does.
+// the deal's agents, the Nominated Officer and the Deputy do, with KYC4U
+// (BGP's outsourced KYC provider) for enhanced due diligence.
 
 import { defaultKycDocs, type KycDocKey, type KycPartyKind } from "./kyc-request";
 import type { KycFlagFact, KycRedFlag } from "./kyc-red-flags";
@@ -96,6 +97,9 @@ export interface RegisterOwner {
   country?: string | null;
   registrationNumber?: string | null;
   nationality?: string | null;
+  // An individual owner's country of residence, as the register gives it
+  // (read since 19 November 2026: the AML policy's geography factors).
+  residence?: string | null;
   dob?: { month?: number | null; year?: number | null } | null;
 }
 

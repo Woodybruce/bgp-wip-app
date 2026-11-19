@@ -206,7 +206,7 @@ async function runAction(job: JobRow): Promise<{ status: "ok" | "error"; output:
       return { status: "ok", output: `digest posted to thread ${threadId}` };
     }
     if (job.action_kind === "aml_rescreen" && !process.env.IN_APP_AML_ENABLED) {
-      return { status: "ok", output: "skipped — in-app AML retired; KYC4U (BGP's MLRO) does ongoing monitoring" };
+      return { status: "ok", output: "skipped — in-app AML retired; re-checks follow each approval's date (AML policy: 3 years standard, 1 year enhanced)" };
     }
     if (job.action_kind === "aml_rescreen") {
       // Ongoing AML monitoring — re-screens every subject KYC'd in the last

@@ -11,6 +11,7 @@ import {
 } from "@shared/kyc-red-flags";
 import { kycRedFlagEmail, kycReplyAddresses } from "@shared/kyc-request";
 import { isPrecheckResult } from "@shared/kyc-prechecks";
+import { dueDiligenceLevel, policyFactorsToWeigh, simplifiedBasis, type PartyDueDiligence } from "@shared/aml-policy";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
@@ -24,6 +25,9 @@ export interface DealRedFlags {
   dealSetAside: SetAsideFlag[];
   // A record that could not be read: the screens say so, never "no red flags".
   unchecked: string[];
+  // Each party's level of due diligence under BGP's AML policy (Issue 2),
+  // from the flags that count (shared/aml-policy.ts).
+  levels: Record<string, PartyDueDiligence>;
 }
 
 // ── Flags set aside (Woody, 19 November 2026) ──────────────────────────────
@@ -93,7 +97,7 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
   }
   const none: any[] = [];
   const companies = ids.length ? await read("KYC records", async () => (await pool.query(
-    `SELECT id, aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason, aml_subject_type FROM crm_companies WHERE id = ANY($1::varchar[])`, [ids])).rows, none) : none;
+    `SELECT id, name, company_type, aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason, aml_subject_type FROM crm_companies WHERE id = ANY($1::varchar[])`, [ids])).rows, none) : none;
   const reviews = await read("flags set aside", () => loadFlagReviews(pool, ids, [dealId]), [] as FlagReviewRow[]);
   const history = ids.length ? await read("the KYC records' history", () => loadRecordHistory(pool, ids), {} as Record<string, NonNullable<PartyRedFlagFacts["recordHistory"]>>) : {};
   // The latest record that screened anyone: a Companies House lookup that
@@ -116,11 +120,14 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
       WHERE company_id = ANY($1::varchar[]) AND lower(COALESCE(status, '')) = 'declined'
       ORDER BY received_at DESC NULLS LAST`, [ids])).rows, none) : none;
   const deal = await read("the deal's AML fields", async () => (await pool.query(
-    `SELECT aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason, aml_edd_completed_at, aml_sof_analysis
-       FROM crm_deals WHERE id = $1`, [dealId])).rows[0] || null, null as any);
+    `SELECT d.aml_pep_status, d.aml_risk_level, d.aml_edd_required, d.aml_edd_reason, d.aml_edd_completed_at, d.aml_sof_analysis,
+            d.deal_type, d.team, d.pricing, p.postcode
+       FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id WHERE d.id = $1`, [dealId])).rows[0] || null, null as any);
+  const dealSplit = applyFlagReviews(dealRedFlags(deal), reviewsForDeal(reviews, dealId));
 
   const parties: Record<string, KycRedFlag[]> = {};
   const setAside: Record<string, SetAsideFlag[]> = {};
+  const levels: Record<string, PartyDueDiligence> = {};
   for (const id of ids) {
     const own = (r: any) => r.crm_company_id === id && (r.trading_entity_id || null) === (signs[id] || null);
     const latest = investigations.find(own) || null;
@@ -141,9 +148,13 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
     const split = applyFlagReviews(all, reviewsForParty(reviews, id, signs[id] || null));
     parties[id] = split.live;
     setAside[id] = split.setAside;
+    levels[id] = dueDiligenceLevel({
+      partyFlags: split.live, dealFlags: dealSplit.live,
+      simplifiedBasis: simplifiedBasis({ precheck: pre?.result || null, partyName: companyRow?.name || null }),
+      toWeigh: policyFactorsToWeigh({ precheck: pre?.result || null, companyType: companyRow?.company_type || null }),
+    });
   }
-  const dealSplit = applyFlagReviews(dealRedFlags(deal), reviewsForDeal(reviews, dealId));
-  return { parties, deal: dealSplit.live, setAside, dealSetAside: dealSplit.setAside, unchecked };
+  return { parties, deal: dealSplit.live, setAside, dealSetAside: dealSplit.setAside, unchecked, levels };
 }
 
 // ── Setting a flag aside, and putting it back ──────────────────────────────
@@ -235,7 +246,10 @@ export async function alertRedFlags(token: string): Promise<{ sent: number }> {
   const done: string[] = Array.isArray(request.redFlagAlerts) ? request.redFlagAlerts : [];
   const fresh = flags.filter(f => ALERTED.includes(f.kind) && !done.includes(redFlagAlertKey(f)));
   if (!fresh.length) return { sent: 0 };
-  const to = kycReplyAddresses(row, request.cc);
+  // BGP's AML policy: a higher-risk finding is escalated to the Nominated
+  // Officer, so the officers are copied with the agents (never on a test).
+  const officers = row.is_test ? [] : await (await import("./aml-authority")).amlOfficerEmails().catch(() => [] as string[]);
+  const to = [...new Set([...kycReplyAddresses(row, request.cc), ...officers])];
   const { sendKycEmail } = await import("./aml-portal");
   const linkBase = (process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
   const sent = await sendKycEmail({
