@@ -3036,15 +3036,17 @@ re-litigate.
     title; Headlines; Letting activity by scheme (stacked bar); by brief
     category (only when something is recorded); Live lettings today (by
     stage, and by scheme); Target tenants (the figures, the targets by stage
-    and by scheme) and Target tenants: furthest on (a grid over up to three
-    slides); Occupancy today (each scheme's units as a share); Lease roll
+    and by scheme) and Target tenants: in play (a grid over up to three
+    slides: the targets not yet let lead, furthest on first, then the
+    brands let, `inPlayFirst`; a Next step or Requirement column no row has
+    a word in is not printed, `columnsWithWords`); Occupancy today (each scheme's units as a share); Lease roll
     (expiries and breaks, ten years from this one); Rental growth; Deal
     speed; the Market report slides; How the figures are counted.
   - **Asset profile** (`asset-profile`, one scheme, as recorded today):
     title; At a glance (figures, occupancy by units and by sq ft, trading
     units by brief category); Lease roll; Live lettings (by stage, with a
     short table continued over further slides); Target tenants (one slide:
-    the scheme's targets by stage and the ones furthest on).
+    the scheme's targets by stage and the grid, in play first).
   - **Leasing activity** (`leasing-activity-pdf`): title; Live lettings
     (figures and a stacked bar by scheme); Viewings held (by month and by
     scheme, by the board report's own test `viewingHeld`); then the lettings

@@ -74,7 +74,7 @@ test("the board deck: its slides, in order, with every section's industry figure
   sound(deck);
   assert.deepEqual(deckOutline(deck), [
     "Landsec Hospitality & Leisure", "Headlines", "Letting activity by scheme", "Letting activity by brief category", "Live lettings today",
-    "Target tenants", "Target tenants: furthest on", "Occupancy today", "Lease roll", "Rental growth", "Deal speed", "Market report", "Market report: by section", "How the figures are counted",
+    "Target tenants", "Target tenants: in play", "Occupancy today", "Lease roll", "Rental growth", "Deal speed", "Market report", "Market report: by section", "How the figures are counted",
   ]);
   const at = (title: string) => deck.slides.find(s => s.title === title)!;
   assert.equal(deck.slides[0].layout, "title");
@@ -134,7 +134,7 @@ test("the board deck never draws an empty chart: a figure that is not held is a 
   if (speedTiles.kind === "tiles") assert.equal(speedTiles.tiles[0].value, "None measured");
   assert.equal(deck.slides.find(s => s.title === "Lease roll")!.rows[0].blocks[0].kind, "card");
   assert.equal(deck.slides.find(s => s.title === "Target tenants")!.rows[0].blocks[0].kind, "card", "a plan that could not be read is said, not drawn");
-  assert.ok(!deckOutline(deck).includes("Target tenants: furthest on"));
+  assert.ok(!deckOutline(deck).includes("Target tenants: in play"));
   // Nothing dated at all: no chart of activity, and no category slide.
   const quiet = boardDeck(boardInput({}, []));
   sound(quiet);
@@ -162,7 +162,7 @@ test("target tenants: the figures, the targets by stage and by scheme, and the t
   assert.match(first.caveat || "", /1 target has no dated record\./);
   assert.deepEqual(first.rules, ["How targets is counted, in full."]);
   // The grid: furthest on first; the stage is a strip of eight steps with the word beside it.
-  const grid = deck.slides.find(s => s.title === "Target tenants: furthest on")!.rows[0].blocks[0] as DeckTable;
+  const grid = deck.slides.find(s => s.title === "Target tenants: in play")!.rows[0].blocks[0] as DeckTable;
   assert.deepEqual(grid.columns.map(c => c.header), ["Brand", "Category", "Scheme and unit", "Stage", "Last activity in the period", "Next step", "Requirement"]);
   assert.equal(grid.columns[3].steps, 8);
   assert.deepEqual(grid.rows, [
@@ -170,17 +170,26 @@ test("target tenants: the figures, the targets by stage and by scheme, and the t
     ["Gail's", "", "Trinity Leeds", "3:Approached", "None in the period", "", ""],
     ["Sushidog", "", "Bluewater, EVL02", "1:Wanted", "None in the period", "", ""],
   ]);
+  // Targets still in play lead and the brands already let follow; a column no row has a word in is not printed.
+  const mixed = boardDeck(boardInput({ targets: targetTenants([
+    target({ brand: "Let One", stage: "let" }), target({ brand: "Viewed One", stage: "viewed" }), target({ brand: "Sols One", stage: "solicitors" }),
+  ], period, "2026-11-19") }));
+  sound(mixed);
+  const mixedGrid = mixed.slides.find(s => s.title === "Target tenants: in play")!.rows[0].blocks[0] as DeckTable;
+  assert.deepEqual(mixedGrid.rows.map(r => r[0]), ["Sols One", "Viewed One", "Let One"]);
+  assert.deepEqual(mixedGrid.columns.map(c => c.header), ["Brand", "Category", "Scheme and unit", "Stage", "Last activity in the period"]);
+  assert.ok(mixedGrid.rows.every(r => r.length === mixedGrid.columns.length));
   // Many targets: twelve a slide, three slides, and the rest counted in the line at the foot.
   const many = boardDeck(boardInput({ targets: targetTenants(Array.from({ length: 40 }, (_, i) => target({ brand: `Brand ${String(i).padStart(2, "0")}`, stage: "viewed" })), period, "2026-11-19") }));
   sound(many);
-  const grids = many.slides.filter(s => s.title.startsWith("Target tenants: furthest on"));
+  const grids = many.slides.filter(s => s.title.startsWith("Target tenants: in play"));
   assert.deepEqual(grids.map(s => (s.rows[0].blocks[0] as DeckTable).rows.length), [12, 12, 12]);
   assert.match(grids[2].caveat || "", /4 more targets are not listed\./);
   // No target at all: the figures read nought, the charts are cards, and there is no grid.
   const none = boardDeck(boardInput({ targets: targetTenants([], period, "2026-11-19") }));
   sound(none);
   assert.deepEqual(none.slides.find(s => s.title === "Target tenants")!.rows[1].blocks.map(b => b.kind), ["card", "card"]);
-  assert.ok(!deckOutline(none).includes("Target tenants: furthest on"));
+  assert.ok(!deckOutline(none).includes("Target tenants: in play"));
 });
 
 test("the market report: saved words sit beside the stories, carry on over further slides, and a section with neither has no slide of its own", () => {

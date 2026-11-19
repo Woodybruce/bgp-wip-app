@@ -120,6 +120,18 @@ const targetCaveat = (t: TargetTenants, shown: number, periodLabel: string): str
   t.undated ? `${plural(t.undated, "target has", "targets have")} no dated record.` : "",
   t.rows.length > shown ? `${count(t.rows.length - shown)} more ${t.rows.length - shown === 1 ? "target is" : "targets are"} not listed.` : "",
 ].filter(Boolean).join(" ");
+/**
+ * The grid's order: the targets still in play (not yet let) lead, furthest on first, and the brands already let follow.
+ * A board reads what is moving before what is done. The order within each half is the counting rule's own.
+ */
+export function inPlayFirst(rows: TargetRow[]): TargetRow[] {
+  const let_ = TARGET_STAGES.length;
+  return [...rows.filter(r => r.step < let_), ...rows.filter(r => r.step >= let_)];
+}
+/** A column marked optional is left out when no row shown has a word in it: an empty column is not printed. */
+export function columnsWithWords<R>(all: Array<{ column: DeckColumn; cell: (r: R) => string; optional?: boolean }>, rows: R[]) {
+  return all.filter(c => !c.optional || rows.some(r => c.cell(r).trim() !== ""));
+}
 const NO_PLAN: DeckBlock = { kind: "card", title: "The Brand CRM plan could not be read", lines: ["The target tenants are not in this copy. Make the deck again in a moment."] };
 
 /** The board report's target section: the figures and two charts, then the targets furthest on over one or two slides. */
@@ -148,18 +160,22 @@ function targetSlides(t: TargetTenants | null, o: { periodLabel: string; schemes
   if (t.rows.length === 0) return slides;
   // The grid: about twelve a slide, three slides at most.
   const perSlide = Math.min(12, tableRowsThatFit(freeHeight(true)));
-  const shown = t.rows.slice(0, perSlide * 3);
-  const columns: DeckColumn[] = [
-    { header: "Brand", width: 1.9 }, { header: "Category", width: 2.1 }, { header: "Scheme and unit", width: 2.8 }, { header: "Stage", width: 2.3, steps: TARGET_STAGES.length },
-    { header: "Last activity in the period", width: 2.6 }, { header: "Next step", width: 1.75 }, { header: "Requirement", width: 1.25 },
+  const shown = inPlayFirst(t.rows).slice(0, perSlide * 3);
+  const all: Array<{ column: DeckColumn; cell: (r: TargetRow) => string; optional?: boolean }> = [
+    { column: { header: "Brand", width: 1.9 }, cell: r => r.brand },
+    { column: { header: "Category", width: 2.1 }, cell: r => landsecCategoryLabel(r.category) || "" },
+    { column: { header: "Scheme and unit", width: 2.8 }, cell: r => [schemeName(r.scheme), r.unit].filter(Boolean).join(", ") },
+    { column: { header: "Stage", width: 2.3, steps: TARGET_STAGES.length }, cell: r => stepsCell(r.step, r.stageLabel) },
+    { column: { header: "Last activity in the period", width: 2.6 }, cell: r => lastWords(r) },
+    { column: { header: "Next step", width: 1.75 }, cell: r => nextWords(r), optional: true },
+    { column: { header: "Requirement", width: 1.25 }, cell: r => (r.requirementHeld ? "Held" : ""), optional: true },
   ];
+  const kept = columnsWithWords(all, shown);
   const cut = pagesEven(shown, perSlide);
   cut.forEach((page, i) => slides.push({
-    layout: "content", title: i === 0 ? "Target tenants: furthest on" : "Target tenants: furthest on (continued)",
-    subtitle: ["Furthest stage first, then the latest dated activity", cut.length > 1 ? `${i + 1} of ${cut.length}` : ""].filter(Boolean).join(" · "),
-    rows: [{ blocks: [{ kind: "table", columns, rows: page.map(r => [
-      r.brand, landsecCategoryLabel(r.category) || "", [schemeName(r.scheme), r.unit].filter(Boolean).join(", "), stepsCell(r.step, r.stageLabel), lastWords(r), nextWords(r), r.requirementHeld ? "Held" : "",
-    ]) }] }],
+    layout: "content", title: i === 0 ? "Target tenants: in play" : "Target tenants: in play (continued)",
+    subtitle: ["Targets still in play first, furthest on at the top, then those let", cut.length > 1 ? `${i + 1} of ${cut.length}` : ""].filter(Boolean).join(" · "),
+    rows: [{ blocks: [{ kind: "table", columns: kept.map(c => c.column), rows: page.map(r => kept.map(c => c.cell(r))) }] }],
     caveat: targetCaveat(t, shown.length, o.periodLabel),
   }));
   return slides;
@@ -170,16 +186,20 @@ function assetTargetSlide(t: TargetTenants | null, scheme: string, periodLabel: 
   const title = "Target tenants";
   if (!t) return { layout: "content", title, subtitle: scheme, rows: [{ blocks: [NO_PLAN] }] };
   const fit = Math.min(12, tableRowsThatFit(freeHeight(true), true));
-  const shown = t.rows.slice(0, fit);
-  const columns: DeckColumn[] = [
-    { header: "Brand", width: 1.6 }, { header: "Unit", width: 2.2 }, { header: "Stage", width: 2.1, steps: TARGET_STAGES.length }, { header: "Last activity in the period", width: 2.4 }, { header: "Next step", width: 1.5 },
-  ];
+  const shown = inPlayFirst(t.rows).slice(0, fit);
+  const kept = columnsWithWords<TargetRow>([
+    { column: { header: "Brand", width: 1.6 }, cell: r => r.brand },
+    { column: { header: "Unit", width: 2.2 }, cell: r => r.unit || "No unit yet" },
+    { column: { header: "Stage", width: 2.1, steps: TARGET_STAGES.length }, cell: r => stepsCell(r.step, r.stageLabel) },
+    { column: { header: "Last activity in the period", width: 2.4 }, cell: r => lastWords(r) },
+    { column: { header: "Next step", width: 1.5 }, cell: r => nextWords(r), optional: true },
+  ], shown);
   return {
     layout: "content", title, subtitle: `${plural(t.inPlay, "target brand", "target brands")} in play at ${scheme} · activity in ${periodLabel}`,
     rows: [{
       widths: [1, 3],
       blocks: [targetStageChart(t), shown.length
-        ? { kind: "table", title: "Furthest on", columns, rows: shown.map(r => [r.brand, r.unit || "No unit yet", stepsCell(r.step, r.stageLabel), lastWords(r), nextWords(r)]) }
+        ? { kind: "table", title: "In play first, then let", columns: kept.map(c => c.column), rows: shown.map(r => kept.map(c => c.cell(r))) }
         : { kind: "card", title: "No target brand is in play at this scheme", lines: ["Nothing to list."] }],
     }],
     caveat: targetCaveat(t, shown.length, periodLabel),
