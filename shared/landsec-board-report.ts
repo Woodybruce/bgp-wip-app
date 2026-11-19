@@ -24,6 +24,7 @@
 import { inReportPeriod, type ReportPeriod } from "./landsec-reports";
 import { LANDSEC_CATEGORIES, LANDSEC_CATEGORY_GROUPS, type LandsecCategoryOrOther } from "./landsec";
 import { BRAND_STAGE_LABELS, brandStageRank, type BrandStage } from "./brand-stage";
+import { MIN_GAP_DAYS } from "./store-count";
 
 export const BOARD_REPORT_TITLE = "Landsec Hospitality & Leisure: board report";
 
@@ -345,6 +346,135 @@ export function brandEngagement(lines: BoardBrandLine[], period: ReportPeriod): 
     byStage: BOARD_BRAND_STAGES.map(stage => ({ stage, label: BRAND_STAGE_LABELS[stage], brands: counts.get(stage) || 0 })),
     otherStages, newlyInPlay, undated, furthestByScheme,
   };
+}
+
+// ── The industry in the period ───────────────────────────────────────────
+//
+// Woody, 2026-11-19: "what abiut marklet reports and insigts of the industry
+// generally?" A page of figures under each market report section, counted
+// from what the app already holds about brands across the whole directory
+// (not only the brands at these schemes): dated public signals, the brands'
+// own store counts, planning applications that name a brand, job adverts and
+// requirements added. Public records only, and figures, not prose. It holds
+// no footfall, sales, turnover, consumer spending or rental index: the app
+// holds none, so none is shown or implied.
+
+/** A dated public signal about a brand. `source` is its link; only its site name is ever printed. */
+export interface IndustrySignal { brandId: string; brand: string; category: LandsecCategoryOrOther | null; type: string; headline: string; source: string | null; date: string | null; magnitude?: string | null }
+/** One good count of a brand's stores on its own website. `basis` names the list counted, so only like is compared with like. */
+export interface IndustrySnapshot { brandId: string; category: LandsecCategoryOrOther | null; day: string; basis: string; count: number }
+export interface IndustryPipelineItem { brandId: string; category: LandsecCategoryOrOther | null; kind: "planning" | "job"; day: string | null }
+/** A leasing requirement added to the app. `brandId` null: not tied to a brand record. */
+export interface IndustryRequirement { brandId: string | null; category: LandsecCategoryOrOther | null; day: string | null }
+
+/** What was read. A list that could not be read is null, and its figures say "not available". */
+export interface IndustryInput {
+  signals: IndustrySignal[] | null;
+  snapshots: IndustrySnapshot[] | null;
+  pipeline: IndustryPipelineItem[] | null;
+  requirements: IndustryRequirement[] | null;
+}
+
+export interface IndustryFigures {
+  /** Brands with at least one opening story, and with at least one closure, CVA or administration story, dated in the period. */
+  signals: { opening: number; closure: number; net: number; stories: number } | null;
+  /** Net change in stores, for the brands with two good counts of the same list at least 20 days apart, the later one in the period. */
+  stores: { brands: number; net: number; up: number; down: number } | null;
+  planning: { applications: number; brands: number } | null;
+  jobs: { adverts: number; brands: number } | null;
+  requirements: { added: number; brands: number; noBrand: number } | null;
+  headlines: Array<{ date: string | null; brand: string; headline: string; site: string }>;
+}
+
+const groupOfCategory = (category: LandsecCategoryOrOther | null): string | null => LANDSEC_CATEGORIES.find(c => c.key === category)?.group || null;
+/** A row is in a section when the section is the overall one, or the brand's category is in the section's group. */
+const inSection = (category: LandsecCategoryOrOther | null, group: string | null): boolean => !group || groupOfCategory(category) === group;
+export const siteName = (url: string | null | undefined): string => { try { return new URL(String(url)).hostname.replace(/^www\./, ""); } catch { return ""; } };
+
+/** One brand's net change in stores over the period: the latest good count before the period's end, against the latest count of the same list on or before its first day (else the earliest inside it). Null without two counts at least 20 days apart. */
+export function storeChange(snapshots: Array<Pick<IndustrySnapshot, "day" | "basis" | "count">>, period: ReportPeriod): number | null {
+  const sorted = snapshots.filter(s => s.day && s.day.slice(0, 10) < period.end).sort((a, b) => a.day.localeCompare(b.day));
+  const after = sorted[sorted.length - 1];
+  if (!after || after.day.slice(0, 10) < period.start) return null;
+  const same = sorted.filter(s => s.basis === after.basis && s !== after);
+  const before = same.filter(s => s.day.slice(0, 10) <= period.start).pop() || same[0];
+  const gap = before ? daysBetween(before.day, after.day) : null;
+  if (!before || gap == null || gap < MIN_GAP_DAYS) return null;
+  return after.count - before.count;
+}
+
+const STORY_RANK: Record<string, number> = { closure: 0, opening: 0, funding: 1, sector_move: 1, exec_change: 2 };
+const SIZE_RANK: Record<string, number> = { large: 0, medium: 1 };
+
+/** Up to ten stories for a section: a link is needed (its site is the source named), a rumour is never one, one headline once, at most two a brand. */
+export function industryHeadlines(signals: IndustrySignal[], max = 10): IndustryFigures["headlines"] {
+  const rank = (s: IndustrySignal) => [STORY_RANK[s.type] ?? 3, SIZE_RANK[String(s.magnitude || "")] ?? 2];
+  const sorted = signals.filter(s => s.headline.trim() && siteName(s.source) && s.type !== "rumour").sort((a, b) => {
+    const [ta, ma] = rank(a), [tb, mb] = rank(b);
+    return ta - tb || ma - mb || String(b.date || "").localeCompare(String(a.date || "")) || a.brand.localeCompare(b.brand);
+  });
+  const seen = new Set<string>(), perBrand = new Map<string, number>();
+  const out: IndustryFigures["headlines"] = [];
+  for (const s of sorted) {
+    const mark = s.headline.trim().toLowerCase();
+    if (seen.has(mark) || (perBrand.get(s.brandId) || 0) >= 2 || out.length >= max) continue;
+    seen.add(mark); perBrand.set(s.brandId, (perBrand.get(s.brandId) || 0) + 1);
+    out.push({ date: s.date ? s.date.slice(0, 10) : null, brand: s.brand, headline: s.headline.trim().slice(0, 200), site: siteName(s.source) });
+  }
+  return out;
+}
+
+/** One section's figures (group null: every brand). Everything is counted by its London day in the period. */
+export function industryFigures(input: IndustryInput, group: string | null, period: ReportPeriod): IndustryFigures {
+  const brands = <T extends { brandId: string | null }>(rows: T[]): number => new Set(rows.map(r => r.brandId).filter(Boolean)).size;
+  const dated = <T extends { category: LandsecCategoryOrOther | null }>(rows: T[], day: (r: T) => string | null): T[] => rows.filter(r => inSection(r.category, group) && inReportPeriod(day(r), period));
+
+  const signals = input.signals ? dated(input.signals, s => s.date) : null;
+  const opening = signals ? brands(signals.filter(s => s.type === "opening")) : 0, closure = signals ? brands(signals.filter(s => s.type === "closure")) : 0;
+
+  let stores: IndustryFigures["stores"] = null;
+  if (input.snapshots) {
+    const byBrand = new Map<string, IndustrySnapshot[]>();
+    for (const s of input.snapshots) if (inSection(s.category, group)) byBrand.set(s.brandId, [...(byBrand.get(s.brandId) || []), s]);
+    stores = { brands: 0, net: 0, up: 0, down: 0 };
+    for (const list of byBrand.values()) {
+      const change = storeChange(list, period);
+      if (change == null) continue;
+      stores.brands += 1; stores.net += change;
+      if (change > 0) stores.up += 1; else if (change < 0) stores.down += 1;
+    }
+  }
+
+  const pipeline = input.pipeline ? dated(input.pipeline, p => p.day) : null;
+  const planning = pipeline ? pipeline.filter(p => p.kind === "planning") : null, jobs = pipeline ? pipeline.filter(p => p.kind === "job") : null;
+  const requirements = input.requirements ? input.requirements.filter(r => inReportPeriod(r.day, period)) : null;
+  const branded = requirements ? requirements.filter(r => r.brandId && inSection(r.category, group)) : null;
+
+  return {
+    signals: signals ? { opening, closure, net: opening - closure, stories: signals.length } : null,
+    stores,
+    planning: planning ? { applications: planning.length, brands: brands(planning) } : null,
+    jobs: jobs ? { adverts: jobs.length, brands: brands(jobs) } : null,
+    requirements: branded ? { added: branded.length, brands: brands(branded), noBrand: group ? 0 : requirements!.filter(r => !r.brandId).length } : null,
+    headlines: signals ? industryHeadlines(signals) : [],
+  };
+}
+
+/** What the page is counted from and what it does not hold: printed under every section's figures. */
+export const INDUSTRY_COUNTED = "Counted across every brand on the app, not only the brands at these schemes, from public records the app holds: dated news stories about a brand that carry a link (opening, and closure, CVA or administration), the brand's own website store count where the app has two good counts of the same list, planning applications that name the brand, job adverts, and leasing requirements added in the period. A brand is in a category by its type. It holds no footfall, sales, turnover, consumer spending or rental index: the app holds none.";
+
+const signed = (n: number): string => `${n > 0 ? "+" : ""}${n}`;
+/** The figures as plain sentences: for the Excel sheet and the draft's FACTS. */
+export function industryLines(f: IndustryFigures, title: string): string[] {
+  const of = title === "Overall" ? "across all brands" : `in ${title}`;
+  return [
+    f.signals ? `Brands with an opening story ${of}: ${f.signals.opening}; with a closure, CVA or administration story: ${f.signals.closure}; net ${signed(f.signals.net)} (${f.signals.stories} dated ${f.signals.stories === 1 ? "story" : "stories"}).` : `Opening and closure stories ${of}: not available.`,
+    !f.stores ? `Store counts ${of}: not available.` : f.stores.brands === 0 ? `Store counts ${of}: no brand has two good counts of its own website's store list for the period.`
+      : `Net change in stores ${of}, counted on the brands' own websites: ${signed(f.stores.net)} across ${f.stores.brands} ${f.stores.brands === 1 ? "brand" : "brands"} with two good counts (${f.stores.up} up, ${f.stores.down} down).`,
+    f.planning ? `Planning applications naming a brand ${of}: ${f.planning.applications}, for ${f.planning.brands} ${f.planning.brands === 1 ? "brand" : "brands"}.` : `Planning applications ${of}: not available.`,
+    f.jobs ? `Job adverts for new openings or property roles ${of}: ${f.jobs.adverts}, for ${f.jobs.brands} ${f.jobs.brands === 1 ? "brand" : "brands"}.` : `Job adverts ${of}: not available.`,
+    f.requirements ? `Leasing requirements added to the app ${of}: ${f.requirements.added}, for ${f.requirements.brands} ${f.requirements.brands === 1 ? "brand" : "brands"}${f.requirements.noBrand ? `; ${f.requirements.noBrand} more ${f.requirements.noBrand === 1 ? "is" : "are"} not tied to a brand record` : ""}.` : `Leasing requirements ${of}: not available.`,
+  ];
 }
 
 // ── The market report ────────────────────────────────────────────────────

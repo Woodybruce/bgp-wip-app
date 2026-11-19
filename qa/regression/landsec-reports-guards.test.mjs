@@ -194,6 +194,60 @@ test('the market report: every route asks who is calling first, drafting is BGP 
   assert.match(index, /\n\s*setupLandsecBoardMarketRoutes\(app\);/);
 });
 
+// Woody, 2026-11-19: "what abiut marklet reports and insigts of the industry generally?", then "yes do that as suggested".
+test('the industry figures: four public reads across the brand directory, none of BGP\'s own, each allowed to fail', () => {
+  const industry = code(read('server/landsec-board-industry.ts'));
+  const tokens = new Set();
+  for (const id of industry.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []) {
+    tokens.add(id.toLowerCase());
+    for (const part of id.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().split('_')) if (part) tokens.add(part);
+  }
+  const named = NEVER_NAMED.filter(word => tokens.has(word));
+  assert.deepEqual(named, [], `server/landsec-board-industry.ts names: ${named.join(', ')}`);
+  const sql = Array.from(industry.matchAll(/db\.query\(\s*`([\s\S]*?)`/g)).map(m => m[1]);
+  assert.equal(sql.length, 4, 'signals, store counts, planning and jobs, requirements: no query per brand');
+  assert.doesNotMatch(industry, /for \([^)]*\)\s*\{[^}]*await db\.query/, 'never a query inside a loop');
+  const tables = new Set();
+  for (const text of sql) for (const m of text.matchAll(/\b(?:FROM|JOIN)\s+([a-z_]+)/gi)) tables.add(m[1].toLowerCase());
+  assert.deepEqual(Array.from(tables).sort(), ['brand_pipeline_items', 'brand_signals', 'brand_store_counts', 'crm_companies', 'crm_requirements_leasing']);
+  for (const text of sql) {
+    assert.doesNotMatch(text, /SELECT\s+\*|\b[a-z]\.\*/i, 'named columns only');
+    assert.doesNotMatch(text, /\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE)\b/i, 'it writes nothing');
+    assert.match(text, /\$\{BRAND\}/, 'every read is held to brands on the directory');
+    // Nothing of BGP's own: no star, no hold, no owner, no score, no confirmation, no remark.
+    assert.doesNotMatch(text, /hunter|concept_status|bgp_|confirmed|origin|sources|score|description|ai_generated/i);
+  }
+  assert.match(industry, /const BRAND = `c\.company_type ILIKE 'tenant%' AND c\.archived_at IS NULL AND c\.merged_into_id IS NULL`;/, 'a hidden brand is left out');
+  assert.match(industry, /isJunkBrand\(\{ name: row\.name, companyType: row\.company_type \}\) \? null/, 'a junk brand is left out');
+  // A signal is its kind, headline, link and date: never the body of a story. And never a rumour or one with no link.
+  const signals = sql.find(text => text.includes('brand_signals'));
+  assert.doesNotMatch(signals, /s\.detail|s\.sentiment|s\.dedupe/);
+  assert.match(signals, /s\.source ~\* '\^https\?:\/\/'/);
+  assert.match(signals, /COALESCE\(s\.signal_type, ''\) <> 'rumour' AND COALESCE\(s\.confidence, ''\) <> 'rumour'/);
+  // A requirement is a count: the brand it is tied to and the day it was added.
+  assert.match(sql.find(text => text.includes('crm_requirements_leasing')), /SELECT r\.company_id, c\.id AS brand_id, c\.name, c\.company_type, r\.created_at\s+FROM/);
+  // Only good store counts, and no tree or telecoms application (the Expansion card's own exclusion).
+  assert.match(sql.find(text => text.includes('brand_store_counts')), /n\.error IS NULL/);
+  assert.match(industry, /NOT IN \(\$\{NEVER_AN_OCCUPIER_TYPES\.map\(t => `'\$\{t\}'`\)\.join\(", "\)\}\)/);
+  // Each read fails on its own to "not available".
+  assert.equal((industry.match(/attempt\("/g) || []).length, 4);
+  assert.match(industry, /try \{ return await run\(\); \} catch \(e: any\) \{ console\.warn\(.*\); return null; \}/);
+  assert.doesNotMatch(industry, /anthropic|perplexity|openai|fetch\(/i, 'counted from what the app holds: no outside call');
+  // Staff-only libraries are not used.
+  assert.doesNotMatch(industry, /knowledge_base|investment_research|insights|newsletter/i);
+  // The counting, and the line saying what it does not hold, are the shared file's.
+  const shared = read('shared/landsec-board-report.ts');
+  assert.match(shared, /It holds no footfall, sales, turnover, consumer spending or rental index: the app holds none\./);
+  assert.match(board, /industry: BOARD_MARKET_SECTIONS\.map\(s => \(\{ key: s\.key, title: s\.title, figures: industryFigures\(industryRows, s\.group, ctx\.period\) \}\)\),/);
+  // In the PDF the figures print under every section; the words only where a person saved them.
+  const part = board.slice(board.indexOf('for (const s of BOARD_MARKET_SECTIONS) {'), board.indexOf('pdf.heading("About this report")'));
+  assert.match(part, /if \(m\?\.text\) \{/);
+  assert.ok(part.indexOf('pdf.figures([') > part.indexOf('if (m?.text) {') && part.includes('INDUSTRY_COUNTED'));
+  assert.doesNotMatch(part.slice(part.indexOf('const f = data.industry')), /m\?\.text|saved/, 'the figures do not wait on saved words');
+  // A printed story is its date, brand, headline and site.
+  assert.match(part, /f\.headlines\.map\(h => \[shortDay\(h\.date\), h\.brand, h\.headline, h\.site\]\)/);
+});
+
 // Woody, 2026-11-19: "also can you use the bluewater colours and juts have the landsec logo", "not BGP".
 test('the Landsec reports carry Landsec\'s logo and the Landsec report palette: never BGP\'s wordmark or BGP\'s colours', async () => {
   const { LANDSEC_REPORT_PALETTE } = await import('../../shared/landsec-reports.ts');

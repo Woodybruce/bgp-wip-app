@@ -2,8 +2,9 @@
 // together to provide overall analysis for him to present each quarter").
 //
 // One box per section, for the months and schemes picked on the Reports page.
-// What is saved here is what the board report prints; a section with nothing
-// saved is left out of the PDF. BGP staff can ask for a draft to start from:
+// What is saved here is the words the board report prints; a section with
+// nothing saved prints no words (its industry figures, which the app counts,
+// print either way). BGP staff can ask for a draft to start from:
 // a draft only fills the box, and nothing prints until a person saves it.
 // Who may read, save and draft is decided on the server
 // (server/landsec-board-market.ts): this dialog only asks.
@@ -54,7 +55,7 @@ export function BoardMarketEditor({ open, onOpenChange, from, to, schemes }: {
       await apiRequest("PUT", "/api/landsec/reports/board-report/market", { ...scope, key, text, loadedAt });
       await queryClient.invalidateQueries({ queryKey: [url] });
       setBoxes(prev => { const next = { ...prev }; delete next[key]; return next; });
-      toast({ title: cleanMarketText(text) ? `${title} saved` : `${title} cleared`, description: cleanMarketText(text) ? "It will print in the board report." : "It will not print in the board report." });
+      toast({ title: cleanMarketText(text) ? `${title} saved` : `${title} cleared`, description: cleanMarketText(text) ? "It will print in the board report." : "No words will print for this section." });
     } catch (e) {
       toast({ title: `${title} was not saved`, description: (e as Error).message, variant: "destructive" });
       queryClient.invalidateQueries({ queryKey: [url] });
@@ -79,7 +80,7 @@ export function BoardMarketEditor({ open, onOpenChange, from, to, schemes }: {
           <DialogTitle className="text-lg font-semibold">Market report</DialogTitle>
           <DialogDescription className="text-sm text-muted-foreground" data-testid="board-market-scope">
             {data ? <>{data.period.label} · <span className="font-mono tabular-nums">{data.schemes.length}</span> {data.schemes.length === 1 ? "scheme" : "schemes"}. </> : null}
-            What you save prints in the board report. A section with nothing saved is left out.
+            What you save prints in the board report, above the industry figures the app counts for each section. A section with nothing saved prints its figures and no words.
           </DialogDescription>
         </DialogHeader>
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4 sm:px-6">
@@ -100,7 +101,7 @@ export function BoardMarketEditor({ open, onOpenChange, from, to, schemes }: {
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
                   <label htmlFor={`board-market-text-${section.key}`} className={MICRO_LABEL}>{section.title}</label>
                   <p className="text-[11px] text-muted-foreground" data-testid={`board-market-saved-${section.key}`}>
-                    {section.saved ? savedLine(section.saved) : "Nothing saved: this section will not print"}
+                    {section.saved ? savedLine(section.saved) : "Nothing saved: no words will print for this section"}
                   </p>
                 </div>
                 <Textarea

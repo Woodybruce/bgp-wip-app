@@ -129,6 +129,10 @@ test("the facts a draft is written from are the pack's own lines, cut to the sec
     activity: boardActivity({ deals, viewings: [], offers: [] }, Q, "2026-11-19"), growth: rentalGrowth(deals, Q), speed: dealSpeed(deals, Q),
     brandLines: lines, engagement: brandEngagement(lines, Q),
     brands: new Map([["c1", { name: "Wingstop", category: "cafe_qsr" }], ["c2", { name: "Hollywood Bowl", category: "competitive_socialising" }], ["c3", { name: "A landlord", category: null }]]),
+    industry: [
+      { key: "overall", title: "Overall", figures: { signals: { opening: 4, closure: 1, net: 3, stories: 9 }, stores: null, planning: { applications: 6, brands: 2 }, jobs: null, requirements: { added: 5, brands: 4, noBrand: 0 }, headlines: [] } },
+      { key: "leisure", title: "Leisure", figures: { signals: { opening: 1, closure: 1, net: 0, stories: 2 }, stores: { brands: 0, net: 0, up: 0, down: 0 }, planning: null, jobs: null, requirements: null, headlines: [] } },
+    ],
   };
   const overall = boardFacts(data, null);
   assert.equal(overall[0], "All schemes in the period: lettings exchanged or completed 2, Heads of Terms agreed 2, new instructions 2, viewings held 0, offers received 0.");
@@ -142,6 +146,13 @@ test("the facts a draft is written from are the pack's own lines, cut to the sec
   assert.ok(leisure.includes("Hollywood Bowl at Bluewater exchanged or completed: agreed rent -20.0% against the previous passing rent."));
   assert.ok(leisure.includes("Hollywood Bowl is at Let at Bluewater."));
   assert.ok(!leisure.some(l => /Wingstop/.test(l)), "another group's brand is not in this section's facts");
+  // The industry figures the pack prints go in as facts; a figure that is not available is not a fact.
+  assert.ok(overall.includes("Brands with an opening story across all brands: 4; with a closure, CVA or administration story: 1; net +3 (9 dated stories)."));
+  assert.ok(overall.includes("Planning applications naming a brand across all brands: 6, for 2 brands."));
+  assert.ok(!overall.some(l => /not available/.test(l)));
+  assert.ok(leisure.includes("Brands with an opening story in Leisure: 1; with a closure, CVA or administration story: 1; net 0 (2 dated stories)."));
+  assert.ok(leisure.some(l => /^Store counts in Leisure: no brand has two good counts/.test(l)));
+  assert.ok(!boardFacts(data, "Hospitality").some(l => /opening story/.test(l)), "a section with no figures read adds none");
   assert.deepEqual(Array.from(boardBrandsIn(data, "Hospitality").values()), ["Wingstop"]);
   assert.equal(boardBrandsIn(data, null).size, 3);
   // Every figure has its line saying how it is counted.

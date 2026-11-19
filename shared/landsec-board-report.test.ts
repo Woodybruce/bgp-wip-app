@@ -6,7 +6,8 @@ import { parseReportPeriod } from "./landsec-reports";
 import {
   average, boardActivity, boardMarketSection, boardMarketSettingsKey, boardSchemeSet, boardWhen, brandEngagement, categoryRows, cleanMarketDraft, cleanMarketText,
   daysBetween, dealSpeed, draftFiguresNotSent, marketDraftPrompt, median, rentalGrowth, BOARD_MARKET_MAX, BOARD_MARKET_SECTIONS,
-  type BoardBrandLine, type BoardDeal,
+  industryFigures, industryHeadlines, industryLines, siteName, storeChange, INDUSTRY_COUNTED,
+  type BoardBrandLine, type BoardDeal, type IndustryInput, type IndustrySignal,
 } from "./landsec-board-report";
 
 const period = (from: string, to: string) => {
@@ -237,4 +238,87 @@ test("a draft is made plain before a person edits it, and its unknown figures ar
   const material = "FACTS\n- 3 lettings exchanged or completed\n- Average against ERV: +4.8%\n- 12500 sq ft";
   assert.deepEqual(draftFiguresNotSent(text, material), ["9%"]);
   assert.deepEqual(draftFiguresNotSent("Two or 3 operators and £95,000 a year.", "rent 95000"), []);
+});
+
+// ── The industry in the period ───────────────────────────────────────────
+
+const sig = (over: Partial<IndustrySignal>): IndustrySignal => ({ brandId: "b1", brand: "Wingstop", category: "cafe_qsr", type: "opening", headline: "Wingstop opens in Leeds", source: "https://www.propelinfo.com/a", date: "2026-09-01", ...over });
+
+test("store change: two good counts of the same list, the later one in the period, at least 20 days apart", () => {
+  const snap = (day: string, count: number, basis = "sitemap|/stores|uk") => ({ day, basis, count });
+  assert.equal(storeChange([snap("2026-07-20", 100), snap("2026-10-15", 108)], Q), 8, "the count before the period against the latest in it");
+  assert.equal(storeChange([snap("2026-06-01", 90), snap("2026-07-30", 100), snap("2026-09-01", 104), snap("2026-10-15", 97)], Q), -3, "the latest count on or before the first day is the start");
+  assert.equal(storeChange([snap("2026-08-10", 50), snap("2026-10-20", 55)], Q), 5, "with none before the period, the earliest inside it");
+  assert.equal(storeChange([snap("2026-10-01", 50), snap("2026-10-15", 55)], Q), null, "fewer than 20 days apart");
+  assert.equal(storeChange([snap("2026-07-20", 100)], Q), null, "one count is not a change");
+  assert.equal(storeChange([snap("2026-07-01", 100), snap("2026-07-25", 104)], Q), null, "no count in the period");
+  assert.equal(storeChange([snap("2026-07-20", 100, "website_list||"), snap("2026-10-15", 108)], Q), null, "a different list is not compared");
+  assert.equal(storeChange([snap("2026-07-20", 100), snap("2026-10-15", 108), snap("2026-11-03", 300)], Q), 8, "a count after the period is not used");
+});
+
+test("industry figures: brands counted once, by section, by London day, and a list that was not read is not available", () => {
+  const input: IndustryInput = {
+    signals: [
+      sig({}), sig({ headline: "Wingstop signs in Hull", date: "2026-10-31" }),                                    // one brand, two opening stories
+      sig({ brandId: "b2", brand: "Bowl Co", category: "competitive_socialising", type: "closure", headline: "Bowl Co enters administration" }),
+      sig({ brandId: "b3", brand: "Other Co", category: "other", type: "opening", headline: "Other Co opens" }),
+      sig({ brandId: "b4", brand: "Late Co", type: "opening", headline: "Late", date: "2026-11-01" }),            // after the period
+      sig({ brandId: "b5", brand: "News Co", type: "news", headline: "News Co trading update" }),
+    ],
+    snapshots: [
+      { brandId: "b1", category: "cafe_qsr", day: "2026-07-20", basis: "s", count: 60 }, { brandId: "b1", category: "cafe_qsr", day: "2026-10-20", basis: "s", count: 66 },
+      { brandId: "b2", category: "competitive_socialising", day: "2026-07-20", basis: "s", count: 40 }, { brandId: "b2", category: "competitive_socialising", day: "2026-10-20", basis: "s", count: 37 },
+      { brandId: "b5", category: "cafe_qsr", day: "2026-10-20", basis: "s", count: 9 },
+    ],
+    pipeline: [
+      { brandId: "b1", category: "cafe_qsr", kind: "planning", day: "2026-08-01" }, { brandId: "b1", category: "cafe_qsr", kind: "planning", day: "2026-10-31" },
+      { brandId: "b1", category: "cafe_qsr", kind: "planning", day: "2026-07-31" }, { brandId: "b2", category: "competitive_socialising", kind: "job", day: "2026-09-09" },
+      { brandId: "b9", category: "cafe_qsr", kind: "planning", day: null },
+    ],
+    requirements: [
+      { brandId: "b1", category: "cafe_qsr", day: "2026-09-01" }, { brandId: "b1", category: "cafe_qsr", day: "2026-09-02" }, { brandId: "b2", category: "competitive_socialising", day: "2026-08-01" },
+      { brandId: null, category: null, day: "2026-08-05" }, { brandId: "b1", category: "cafe_qsr", day: "2026-11-02" },
+    ],
+  };
+  const all = industryFigures(input, null, Q);
+  assert.deepEqual(all.signals, { opening: 2, closure: 1, net: 1, stories: 5 });
+  assert.deepEqual(all.stores, { brands: 2, net: 3, up: 1, down: 1 });
+  assert.deepEqual(all.planning, { applications: 2, brands: 1 });
+  assert.deepEqual(all.jobs, { adverts: 1, brands: 1 });
+  assert.deepEqual(all.requirements, { added: 3, brands: 2, noBrand: 1 });
+  const hospitality = industryFigures(input, "Hospitality", Q);
+  assert.deepEqual(hospitality.signals, { opening: 1, closure: 0, net: 1, stories: 3 });
+  assert.deepEqual(hospitality.stores, { brands: 1, net: 6, up: 1, down: 0 });
+  assert.deepEqual(hospitality.requirements, { added: 2, brands: 1, noBrand: 0 });
+  const leisure = industryFigures(input, "Leisure", Q);
+  assert.deepEqual([leisure.signals!.opening, leisure.signals!.closure, leisure.signals!.net], [0, 1, -1]);
+  assert.deepEqual(leisure.jobs, { adverts: 1, brands: 1 });
+  assert.deepEqual(industryFigures(input, "London retail", Q).signals, { opening: 0, closure: 0, net: 0, stories: 0 });
+  // A list that could not be read is "not available", never a zero.
+  const none = industryFigures({ signals: null, snapshots: null, pipeline: null, requirements: null }, null, Q);
+  assert.deepEqual([none.signals, none.stores, none.planning, none.jobs, none.requirements, none.headlines], [null, null, null, null, null, []]);
+  assert.deepEqual(industryLines(none, "Overall").map(l => /not available\.$/.test(l)), [true, true, true, true, true]);
+  const lines = industryLines(all, "Overall");
+  assert.equal(lines[0], "Brands with an opening story across all brands: 2; with a closure, CVA or administration story: 1; net +1 (5 dated stories).");
+  assert.equal(lines[1], "Net change in stores across all brands, counted on the brands' own websites: +3 across 2 brands with two good counts (1 up, 1 down).");
+  assert.equal(lines[4], "Leasing requirements added to the app across all brands: 3, for 2 brands; 1 more is not tied to a brand record.");
+  assert.match(industryLines(industryFigures({ ...input, snapshots: [] }, "Leisure", Q), "Leisure")[1], /no brand has two good counts/);
+  assert.match(INDUSTRY_COUNTED, /It holds no footfall, sales, turnover, consumer spending or rental index: the app holds none\.$/);
+});
+
+test("headline stories: a headline, its source's site and its date only; ten at most, two a brand, no rumour, nothing without a link", () => {
+  const many = Array.from({ length: 14 }, (_, i) => sig({ brandId: `x${i}`, brand: `Brand ${String(i).padStart(2, "0")}`, type: "news", headline: `Story ${i}`, date: `2026-09-${String(i + 1).padStart(2, "0")}` }));
+  const out = industryHeadlines([
+    ...many,
+    sig({ brandId: "c", brand: "Closer", type: "closure", headline: "Closer to shut 12 sites", source: "https://www.thecaterer.com/x?y=1", magnitude: "large" }),
+    sig({ brandId: "w", headline: "One" }), sig({ brandId: "w", headline: "Two", date: "2026-09-02" }), sig({ brandId: "w", headline: "Three", date: "2026-09-03" }),
+    sig({ brandId: "r", type: "rumour", headline: "A rumour" }), sig({ brandId: "n", headline: "No link", source: "manual" }), sig({ brandId: "d", headline: "one" }),
+  ]);
+  assert.equal(out.length, 10);
+  assert.deepEqual(out[0], { date: "2026-09-01", brand: "Closer", headline: "Closer to shut 12 sites", site: "thecaterer.com" });
+  assert.deepEqual(Object.keys(out[0]).sort(), ["brand", "date", "headline", "site"]);
+  assert.equal(out.filter(h => ["One", "Two", "Three"].includes(h.headline)).length, 2, "at most two a brand");
+  assert.ok(!out.some(h => /rumour|No link/.test(h.headline)));
+  assert.ok(!out.some(h => /https?:/.test(h.site)));
+  assert.equal(siteName("not a link"), "");
 });

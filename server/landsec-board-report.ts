@@ -34,6 +34,7 @@ import { listLeasingViewings } from "./leasing-viewings";
 import { brandGrid, loadPlan, planSchemes, type PlanViewer } from "./brand-scheme-plan";
 import { clientBrandSliceSql } from "./company-scope";
 import { loadBoardMarket } from "./landsec-board-market";
+import { industryInput } from "./landsec-board-industry";
 import {
   brandOf, clockFor, count, dealDatesFor, longDay, money, pdfDocument, shortDay, stageLabel, unitsFor, workbookOf,
   type Ctx, type PdfCol, type ReportScheme, type Sheet,
@@ -44,8 +45,8 @@ import { reportDay, type LandsecReportDef } from "@shared/landsec-reports";
 import { londonDay } from "@shared/stage-since";
 import { BRAND_STAGE_LABELS } from "@shared/brand-stage";
 import {
-  BOARD_MARKET_SECTIONS, BOARD_REPORT_TITLE, boardActivity, brandEngagement, categoryRows, dealSpeed, rentalGrowth,
-  type BoardActivity, type BoardBrandLine, type BoardCounts, type BoardDeal, type BoardMarket, type BoardOffer, type BoardViewing, type BrandEngagement, type DealSpeed, type RentalGrowth, type SpeedStat,
+  BOARD_MARKET_SECTIONS, BOARD_REPORT_TITLE, INDUSTRY_COUNTED, boardActivity, brandEngagement, categoryRows, dealSpeed, industryFigures, industryLines, rentalGrowth,
+  type BoardActivity, type BoardMarketKey, type IndustryFigures, type BoardBrandLine, type BoardCounts, type BoardDeal, type BoardMarket, type BoardOffer, type BoardViewing, type BrandEngagement, type DealSpeed, type RentalGrowth, type SpeedStat,
 } from "@shared/landsec-board-report";
 
 // ── What the pack is worked out from ─────────────────────────────────────
@@ -69,6 +70,8 @@ export interface BoardData {
   engagement: BrandEngagement | null;
   /** Brands trading at the schemes or on the plan there, by company id: for the market report's public signals. */
   brands: Map<string, { name: string; category: LandsecCategoryOrOther | null }>;
+  /** The industry in the period, one set of figures per market report section, counted across the whole brand directory. */
+  industry: Array<{ key: BoardMarketKey; title: string; figures: IndustryFigures }>;
 }
 
 const uniq = <T,>(list: T[]): T[] => Array.from(new Set(list));
@@ -127,12 +130,13 @@ export async function boardData(ctx: Ctx, viewer: LandsecViewer): Promise<BoardD
   for (const s of ctx.schemes) for (const p of s.properties) schemeOfProperty.set(p.id, s);
   const propertyIds = Array.from(schemeOfProperty.keys());
 
-  const [units, clock, dates, viewingRows, offerRows, plan] = await Promise.all([
+  const [units, clock, dates, viewingRows, offerRows, plan, industryRows] = await Promise.all([
     unitsFor(ctx), clockFor(ctx), dealDatesFor(ctx),
     // Read as a Landsec login reads the viewings list, whoever asks.
     listLeasingViewings({ companyId: viewer.companyId, propertyIds: new Set(propertyIds), jointAgent: false }),
     offersAt(propertyIds),
     brandLinesFor(ctx, viewer).catch((e: any) => { console.warn(`[landsec-board-report] brand plan: ${e?.message}`); return null; }),
+    industryInput(ctx.period),
   ]);
 
   const unitOf = new Map<string, PropertyUnit>();
@@ -193,6 +197,7 @@ export async function boardData(ctx: Ctx, viewer: LandsecViewer): Promise<BoardD
     brandLines: plan ? plan.lines : null,
     engagement: plan ? brandEngagement(plan.lines, ctx.period) : null,
     brands,
+    industry: BOARD_MARKET_SECTIONS.map(s => ({ key: s.key, title: s.title, figures: industryFigures(industryRows, s.group, ctx.period) })),
   };
 }
 
@@ -272,6 +277,9 @@ export function boardFacts(data: BoardData, group: string | null, schemeNames: M
     const far = lines.filter(l => ["negotiating", "hots", "solicitors", "let"].includes(l.stage)).slice(0, 15);
     for (const l of far) out.push(`${l.brand} is at ${BRAND_STAGE_LABELS[l.stage]} at ${name(l.scheme)}.`);
   }
+  // The industry figures the pack prints under this section.
+  const industry = data.industry.find(s => (BOARD_MARKET_SECTIONS.find(m => m.key === s.key)?.group || null) === group);
+  if (industry) out.push(...industryLines(industry.figures, industry.title).filter(line => !/not available\.$/.test(line)));
   return out;
 }
 
@@ -380,14 +388,32 @@ export async function boardReportPdf(ctx: Ctx, viewer: LandsecViewer): Promise<B
     pdf.para(BOARD_COUNTED.brands, true);
   }
 
-  // 6. The market report: only what a person saved.
+  // 6. The market report. The words are only what a person saved; the
+  // industry figures under each section are data, and print either way.
   const saved = BOARD_MARKET_SECTIONS.filter(s => market[s.key]?.text);
-  if (saved.length) pdf.pageBreak(260);
-  for (const s of saved) {
-    const m = market[s.key]!;
+  const signed = (n: number) => `${n > 0 ? "+" : ""}${count(n)}`;
+  pdf.pageBreak(300);
+  for (const s of BOARD_MARKET_SECTIONS) {
+    const m = market[s.key];
+    pdf.pageBreak(230);
     pdf.heading(s.key === "overall" ? "Market report" : `Market report: ${s.title}`);
-    for (const paragraph of m.text.split(/\n+/).filter(Boolean)) { pdf.para(paragraph); pdf.gap(4); }
-    pdf.para(`Saved by ${m.savedBy} (${m.savedByFirm})${m.savedAt ? ` on ${longDay(new Date(m.savedAt))}` : ""}.`, true);
+    if (m?.text) {
+      for (const paragraph of m.text.split(/\n+/).filter(Boolean)) { pdf.para(paragraph); pdf.gap(4); }
+      pdf.para(`Saved by ${m.savedBy} (${m.savedByFirm})${m.savedAt ? ` on ${longDay(new Date(m.savedAt))}` : ""}.`, true);
+      pdf.gap(6);
+    }
+    const f = data.industry.find(i => i.key === s.key)?.figures;
+    if (!f) continue;
+    pdf.para(s.key === "overall" ? "The industry this period, across every brand on the app" : `The industry this period: ${s.title}`);
+    pdf.figures([
+      ["Brands opening", f.signals ? count(f.signals.opening) : "Not available"], ["Brands closing", f.signals ? count(f.signals.closure) : "Not available"],
+      ["Net store change", !f.stores ? "Not available" : f.stores.brands ? signed(f.stores.net) : "No counts"], ["Planning apps", f.planning ? count(f.planning.applications) : "Not available"],
+    ]);
+    for (const line of industryLines(f, s.title)) pdf.para(line, true);
+    pdf.gap(4);
+    pdf.table([{ header: "Date", width: 13 }, { header: "Brand", width: 20 }, { header: "Story (headline only)", width: 47 }, { header: "Source", width: 20 }],
+      f.headlines.map(h => [shortDay(h.date), h.brand, h.headline, h.site]), "No dated story with a link is recorded for the period.");
+    pdf.para(s.key === "overall" ? INDUSTRY_COUNTED : "Counted as set out under the overall section: public records only, with no footfall, sales, turnover, spending or rental index.", true);
   }
 
   // About.
@@ -395,8 +421,9 @@ export async function boardReportPdf(ctx: Ctx, viewer: LandsecViewer): Promise<B
   pdf.para(`Period: ${ctx.period.label}. Made by ${ctx.madeBy} on ${longDay(ctx.madeAt)}.`);
   pdf.para("It holds what is recorded in ChatBGP on the day it was made. A letting Landsec did without BGP is in it only if it is on the app. Nothing in it is estimated: a figure the app does not hold is shown as not held and left out of the averages.");
   pdf.para(saved.length
-    ? `The market report is written by BGP and Landsec. Printed here: ${saved.map(s => s.title).join(", ")}. A section with nothing saved is not printed.`
-    : "The market report is written by BGP and Landsec. Nothing has been saved for this period and these schemes, so none is printed.");
+    ? `The words of the market report are written by BGP and Landsec. Printed here: ${saved.map(s => s.title).join(", ")}. A section with nothing saved prints no words.`
+    : "The words of the market report are written by BGP and Landsec. Nothing has been saved for this period and these schemes, so no words are printed.");
+  pdf.para("The industry figures under each market report section are counted by the app from public records, for every section, whether or not words are saved.");
   pdf.para("The figures behind every table are in the Board report figures workbook, from the same page.", true);
   return Buffer.from(await pdf.bytes());
 }
@@ -530,7 +557,20 @@ export async function boardReportWorkbook(def: LandsecReportDef, ctx: Ctx, viewe
     caption: "Written by BGP and Landsec. Only the sections that have been saved for this period and these schemes are here.",
   };
 
-  return workbookOf(def, ctx, [headlines, byScheme, byCategory, growth, speed, brands, marketSheet], [
+  const industrySheet: Sheet = {
+    name: "Industry",
+    columns: [{ header: "Section", key: "section", width: 24 }, { header: "The industry this period", key: "line", width: 150 }],
+    rows: data.industry.flatMap(i => industryLines(i.figures, i.title).map(line => ({ section: i.title, line }))),
+    caption: INDUSTRY_COUNTED,
+  };
+  const headlineSheet: Sheet = {
+    name: "Industry headlines",
+    columns: [{ header: "Section", key: "section", width: 24 }, { header: "Date", key: "date", width: 13, kind: "date" }, { header: "Brand", key: "brand", width: 26 }, { header: "Headline", key: "headline", width: 90 }, { header: "Source", key: "site", width: 26 }],
+    rows: data.industry.flatMap(i => i.figures.headlines.map(h => ({ section: i.title, date: h.date, brand: h.brand, headline: h.headline, site: h.site }))),
+    caption: "Up to ten dated stories a section: the headline, the site it came from and its date. Never the text of a story.",
+  };
+
+  return workbookOf(def, ctx, [headlines, byScheme, byCategory, growth, speed, brands, marketSheet, industrySheet, headlineSheet], [
     ["What it holds", "What is recorded in ChatBGP. A letting Landsec did without BGP is in it only if it is on the app. A figure the app does not hold is left blank and left out of the averages."],
     ["Dates", [BOARD_COUNTED.bulk, leftOutWords(a)].filter(Boolean).join(" ")],
   ]);

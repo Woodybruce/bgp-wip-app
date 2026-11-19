@@ -2,10 +2,11 @@
 // provide a market report in each subsection"; "this is Me and Mark working
 // together to provide overall analysis for him to present each quarter").
 //
-// WRITTEN BY PEOPLE. One box per section (Overall, and one per brief-category
-// group). What is saved is what the board report prints; a section with
-// nothing saved is not printed, and a draft is never printed until a person
-// has saved it.
+// THE WORDS ARE WRITTEN BY PEOPLE. One box per section (Overall, and one per
+// brief-category group). What is saved is the words the board report prints;
+// a section with nothing saved prints no words, and a draft is never printed
+// until a person has saved it. (The industry figures under each section are
+// counted by the app, server/landsec-board-industry.ts, and print either way.)
 //
 //  - Stored with no schema change: one JSON value in system_settings per
 //    period and set of schemes (boardMarketSettingsKey), with who saved each
@@ -260,7 +261,11 @@ export function setupLandsecBoardMarketRoutes(app: Express) {
         marketSignals(brands, period).catch(() => [] as MarketSignal[]),
         marketResearch(period, own, section.group ? new Set(Array.from(brands.values()).map(n => n.toLowerCase())) : null).catch(() => [] as MarketResearch[]),
       ]);
-      res.json(await draftMarketSection({ section, periodLabel: period.label, schemes: schemes.map(s => s.name), facts: boardFacts(data, section.group), signals, research }));
+      // The headline stories the pack prints for this section (headline, site and date only) go in with the schemes' own brands' signals.
+      const printed = (data.industry.find(i => i.key === section.key)?.figures.headlines || []).map((h): MarketSignal => ({ date: h.date, brand: h.brand, kind: "story", headline: h.headline, source: `https://${h.site}` }));
+      const known = new Set(signals.map(s => s.headline.toLowerCase()));
+      const stories = [...signals, ...printed.filter(h => !known.has(h.headline.toLowerCase()))].slice(0, 36);
+      res.json(await draftMarketSection({ section, periodLabel: period.label, schemes: schemes.map(s => s.name), facts: boardFacts(data, section.group), signals: stories, research }));
     } catch (e: any) { fail(res, e, "The draft could not be made."); }
   });
 }

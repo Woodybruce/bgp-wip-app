@@ -3058,11 +3058,147 @@ who runs reports, "yes landsec and BGP". Do not re-litigate.
   colour.
 - **Not built**: budgets (the app holds none, the Portfolio card says so, and
   no sheet is invented); Landsec's own in-house lettings, which are in a
-  report only when they are on the app; the quarterly board pack and the
-  market report by subsection, which come next (add them to the registry);
-  a notes or comments column on any report (left out on purpose);
-  scheduling or emailing a report. ERV and passing rent are whatever the
-  unit feed gives the viewer.
+  report only when they are on the app; a notes or comments column on any
+  report (left out on purpose); scheduling or emailing a report. ERV and
+  passing rent are whatever the unit feed gives the viewer.
+
+### The board report (Woody, 2026-11-19)
+
+Woody, after the same call with Mark Warne: "we can use the app to provide a
+market report in each subsection and board level reports to analyse activity
+across all schemes and report Brand engagements, letting activity, summary of
+the quarterly business review can generate report with the rental growth,
+deal speed"; "Idea is this is Me and Mark working together to provide overall
+analysis for him to present each quarter"; on the period, "quarters just have
+ability to pick one or several months". Asked about the industry generally
+("what abiut marklet reports and insigts of the industry generally?"), he
+answered "yes do that as suggested" to a page of figures per market section.
+Do not re-litigate.
+
+- **What it is.** The tenth report, the **Board report** card that leads the
+  Reports page: **Export PDF** ("Landsec Hospitality & Leisure: board report,
+  <period>", the document Mark presents), **Export Excel** (the figures
+  behind it: About, Headlines, By scheme, By category, Rental growth, Deal
+  speed, Brand engagements, Market report, Industry, Industry headlines) and
+  **Market report** (the editor). Two registry entries, `board-report` and
+  `board-report-figures`, marked `card: "board"`, which the page draws as one
+  card. Same access as every report (`reportViewer`: BGP staff and Landsec
+  logins, a scheme-limited login its own schemes, a joint agent refused at
+  both gateway lists and in the handler).
+- **The rules are one shared file, `shared/landsec-board-report.ts`** (tests
+  `shared/landsec-board-report.test.ts`, in `npm test`): which day an event
+  counts on, what is left out, rental growth, deal speed, brands by stage,
+  the industry counts, and the market report's sections, limits and draft
+  checks. `server/landsec-board-report.ts` gathers the rows (`boardData`) and
+  lays out the PDF and the workbook; change a rule in the shared file with a
+  test, never in the builder.
+- **How each figure is counted** (the PDF prints these lines under the
+  figures, `BOARD_COUNTED`):
+  - Lettings exchanged or completed: the exchange or completion day falls in
+    the period, each letting once; the date on the deal, else the day its
+    status was first moved in its history.
+  - Heads of Terms agreed: the day Heads of Terms were issued in the app
+    (the tracker row's date, only while that row is the deal's own), else
+    the first move to HOTs.
+  - New instructions: the instructed date typed on the deal, else the day
+    the letting was added to the app.
+  - Viewings held: dated in the period and not after today, leaving out
+    cancelled, no-show and not-a-leasing-viewing entries.
+  - Offers received: dated in the period and logged or confirmed by a
+    person. An offer found in the inbox that nobody confirmed is not counted
+    (the 14 August import's rows are of that kind), and the workbook says how
+    many were left out.
+  - Units occupied and vacant, live lettings by stage and brand stages are
+    **as recorded today**: the app keeps no occupancy by date, and the pack
+    says so. It does not claim the position on the period's last day.
+  - **A date the app cannot stand behind is never counted**: a status change
+    stamped on 5 or more other deals in the same minute (the days-at-stage
+    rule, `STAGE_BULK_PEERS`), or a letting added in a bulk load with no
+    instructed date. It is left out and the pack says how many were.
+  - Rental growth: for each letting that exchanged or completed in the
+    period, the rent on the deal against the unit's passing rent and its ERV
+    as the unit feed gives them. A comparison is made only where both of its
+    figures are held; the pack says how many lettings had each and how many
+    had neither. **Once the schedule row names the new tenant its passing
+    rent is the new rent, so the previous rent is treated as not held**: the
+    app keeps no history of a unit's passing rent. Never estimate one.
+  - Deal speed: whole days between two confirmed days, median and average.
+    Instruction is the instructed date, else the first move to Marketing;
+    the day a deal was added to the app is never the start. A letting with a
+    day missing, not confirmed or out of order is left out and counted.
+  - Brand engagements: the Brand CRM plan read **as a Landsec login reads
+    it, whoever asks** (`brandGrid` and `loadPlan` with a Landsec viewer and
+    the Landsec brand slice): brands by furthest stage (Approached to Let),
+    brands whose earliest dated record at these schemes falls in the period,
+    the brands furthest on at each scheme. Never BGP's unticked Wanted
+    lines, notes, lead or aim.
+- **The one read of deal dates was extended, not copied** (`dealDatesFor` in
+  `server/landsec-reports.ts`): the tenant's type (for its brief category),
+  the unit's schedule and tracker row ids, the day the deal was added and
+  how many other deals were added that minute, and its first move to
+  Marketing, HOTs, Exchanged and Completed with how many deals each minute
+  stamped. The board report's own queries are two (offers by day and whether
+  a person logged them; brand names with their type).
+- **The market report's words are written by people**
+  (`server/landsec-board-market.ts`, editor
+  `client/src/components/landsec/board-market-editor.tsx`). One box per
+  section: Overall, Hospitality, Leisure, Cinema & entertainment, London
+  retail. Stored with no schema change: one JSON value in `system_settings`
+  per period and set of schemes (`landsec_board_report:<from>:<to>:<hash of
+  the sorted scheme keys>`), each section with its text, who saved it, BGP
+  or Landsec, and when. BGP staff and Landsec logins read and save
+  (`GET`/`PUT /api/landsec/reports/board-report/market`; the PUT is on
+  `CLIENT_ALLOWED_WRITES`); a save over somebody else's newer text is refused
+  (409) so two people do not lose each other's words; empty text clears a
+  section. **Only saved words print; a draft never prints by itself.**
+- **Draft** (`POST …/market/draft`) is for BGP staff signed in as themselves
+  only (`contactViewer`). Anthropic, called directly, one call a section,
+  capped a day (`LANDSEC_BOARD_DRAFT_DAILY_CAP`, default 40, 0 = off). It is
+  sent the lines the pack already prints for a Landsec login (`boardFacts`),
+  dated public brand signals with a link (never a rumour, never the body of
+  a story), and dated research on the benchmark centres that are not
+  Landsec's own, and is told to write nothing else. The reply is made plain,
+  web addresses are taken out, and any figure in it that was not in what it
+  was sent is listed beside the box for the person to check. It only fills
+  the box: Save is the one write. It has not been run against Anthropic from
+  a build machine (no key): the prompt builder, the order of checks and the
+  reply clean-up are tested with a stub (`server/landsec-board-report.test.ts`).
+- **The industry this period** (`server/landsec-board-industry.ts`, counted
+  by `industryFigures`): under each market section, whether or not words are
+  saved, figures counted across EVERY brand on the app (not only the brands
+  at the schemes), by the brief category of the brand's type: brands with an
+  opening story and with a closure, CVA or administration story (signals
+  that carry a link, never a rumour), the net change in stores on the
+  brands' own websites (only where a brand has two good counts of the same
+  list at least 20 days apart, the later one in the period, and it says how
+  many brands that covers), planning applications naming a brand (no tree or
+  telecoms application), job adverts, leasing requirements added (a count
+  only), and up to ten headline stories (headline, source site and date:
+  never the text of a story, which is the publisher's). Hidden and junk
+  brands are left out. Four queries whatever the number of brands; each may
+  fail to "not available" without failing the pack. **It holds no footfall,
+  sales, turnover, consumer spending or rental index: the app holds none,
+  and the pack says so. Never invent or imply one.** Nothing of BGP's own is
+  read, and the staff-only Investment Research library and Insights cards
+  are not used.
+- **Guards**: `qa/regression/landsec-reports-guards.test.mjs` holds the
+  board builder and the industry read to the same never-named words as the
+  other builders, pins their tables and query counts, the Landsec reading of
+  the brand plan, the market routes' access and the draft's limits. The
+  gateway test covers a joint agent on every board address.
+- Checked on 19 November 2026 against a seeded copy of the smoke fixture
+  (Bluewater, Aug to Oct 2026): every headline, category, rental growth,
+  deal speed and industry figure matched the figures worked out by hand
+  from the seed, including a letting exchanged at 23:30 UTC on 31 July
+  (1 August in London, counted) and one stamped in a bulk update (left out).
+- **Not built**: occupancy, vacancy or brand stages as they stood on the
+  period's last day (no history is kept); a previous rent once the schedule
+  shows the new tenant; a comparison with the quarter before; charts; net
+  effective rent in rental growth (it compares the rent on the deal); a
+  palette per scheme; the market report for a single category rather than a
+  group; anything from footfall or sales. Store counts began on 15 November
+  2026, so a period before then has no store change to show. Google News
+  links show "news.google.com" as the source site, not the publisher.
 
 ## Client checks: the in-app KYC request (Woody, 2026-11-17)
 

@@ -139,9 +139,9 @@ export const LANDSEC_REPORTS: readonly LandsecReportDef[] = [
   // quarter, and the figures behind it. Its rules are shared/landsec-board-report.ts.
   {
     key: "board-report", title: "Board report", format: "pdf", schemes: "schemes", card: "board",
-    description: "The document to present: headlines, letting activity by scheme and by brief category, rental growth, deal speed, brand engagements and the market report.",
+    description: "The document to present: headlines, letting activity by scheme and by brief category, rental growth, deal speed, brand engagements and the market report, with the industry's figures for the period under each market section.",
     period: "Lettings, Heads of Terms, new instructions, viewings and offers dated in the period. Occupancy, live lettings and brand stages are as recorded today.",
-    note: "It holds what is recorded in ChatBGP. A letting Landsec did without BGP is in it only if it is on the app. A market report section prints only once it has been saved.",
+    note: "It holds what is recorded in ChatBGP. A letting Landsec did without BGP is in it only if it is on the app. The market report's words print only once someone has saved them; the industry figures under each section are counted by the app and always print.",
   },
   {
     key: "board-report-figures", title: "Board report figures", format: "xlsx", schemes: "schemes", card: "board",
