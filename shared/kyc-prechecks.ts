@@ -271,6 +271,8 @@ export interface WebFinding {
 export interface WebSearchLine {
   name: string;
   role: string;
+  // A person, not a company (lines before 19 November 2026 leave it out).
+  person?: boolean;
   ran: boolean;
   error?: string | null;
   publicRole: WebStatus;
@@ -354,6 +356,11 @@ export interface ProviderMatch {
   score: number | null;
   profileId: string | null;
   media: Array<{ title: string; url: string | null; date: string | null }>;
+  // The profile's recorded birth year is within a year of the person's
+  // (null when either is not known). Since 19 November 2026.
+  birthYearAgrees?: boolean | null;
+  // ComplyAdvantage said it matched but its profiles could not be read.
+  unread?: boolean;
 }
 export interface ProviderLine {
   name: string;
@@ -659,6 +666,68 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: { kind: KycPar
   return { docs, notAsked, confirmOwners, ownerNames };
 }
 
+// ── Which screening matches are red flags (Woody, 19 November 2026) ─────────
+// A match on a bare name too often finds someone else of the same name: the
+// checks before asking flagged every officer of BGP's own companies. Woody
+// chose "Tighten":
+//   - a sanctions or warning-list match stays a red flag, whatever its score;
+//   - a public-role (PEP) match is one only when the profile's birth year
+//     agrees with the person's, or ComplyAdvantage scores it 60% or more;
+//   - adverse media and every other kind only when the birth year agrees, or
+//     the score is 90% or more (ComplyAdvantage's own starting points);
+//   - a profile ComplyAdvantage matched but whose details could not be read
+//     stays a red flag: there is nothing to judge it by;
+//   - every other match is a possible namesake to check: listed on the card
+//     and in KYC4U's note, never a red flag;
+//   - a web result the search marks "may be about someone else of the same
+//     name" is listed the same way, not flagged.
+export const PROVIDER_FLAG_BARS = { pep: 0.6, other: 0.9 } as const;
+const ALWAYS_FLAG_KIND = /sanction|warning/;
+
+export function providerMatchFlags(m: ProviderMatch): boolean {
+  if (ALWAYS_FLAG_KIND.test(String(m.kind || ""))) return true;
+  // A match from before this rule with no profile behind it could not be read.
+  if (m.unread ?? !m.profileId) return true;
+  if (m.birthYearAgrees === true) return true;
+  return m.score != null && m.score >= (m.kind === "pep" ? PROVIDER_FLAG_BARS.pep : PROVIDER_FLAG_BARS.other);
+}
+
+/** A ComplyAdvantage line's matches, split into red flags and possible namesakes. */
+export function splitProviderMatches(line: ProviderLine): { flagged: ProviderMatch[]; namesakes: ProviderMatch[]; unjudged: boolean } {
+  if (line.status !== "possible") return { flagged: [], namesakes: [], unjudged: false };
+  const matches = line.matches || [];
+  // An older check kept only the kinds of profile matched: nothing to judge, so it stays a flag.
+  if (!matches.length) return { flagged: [], namesakes: [], unjudged: true };
+  return { flagged: matches.filter(providerMatchFlags), namesakes: matches.filter(m => !providerMatchFlags(m)), unjudged: false };
+}
+
+const CORPORATE_NAME = /\b(limited|ltd|llp|plc|lp|inc|corp|corporation|company|holdings|group|partnership|trust|estates)\b/i;
+/** A web line about a company, not a person (older lines are read from the name). */
+export const webLineIsCompany = (line: Pick<WebSearchLine, "name" | "person">): boolean =>
+  line.person === false || (line.person === undefined && CORPORATE_NAME.test(line.name));
+
+export interface PrecheckNamesake { name: string; via: "ComplyAdvantage" | "web search"; what: string; url: string | null }
+
+/** The possible namesakes of a run: matches below the bars and web results that may be about someone else. */
+export function precheckNamesakes(result: Pick<KycPrecheckResult, "complyAdvantage" | "web">): PrecheckNamesake[] {
+  const out: PrecheckNamesake[] = [];
+  for (const line of result.complyAdvantage.lines) {
+    for (const m of splitProviderMatches(line).namesakes) {
+      out.push({
+        name: line.name, via: "ComplyAdvantage", url: null,
+        what: [providerKindWords(m.kind), m.name && m.name !== line.name ? `profile "${m.name}"` : "", m.source || "",
+          m.score != null ? `match ${Math.round(m.score * 100)}%` : "no match score", m.birthYearAgrees === false ? "birth year differs" : ""].filter(Boolean).join(", "),
+      });
+    }
+  }
+  for (const line of result.web.lines) {
+    for (const f of line.findings.filter(x => x.unsureIdentity)) {
+      out.push({ name: line.name, via: "web search", url: f.url, what: `${f.kind === "public_role" ? (webLineIsCompany(line) ? "ownership by the state or a public figure" : "public role") : "adverse media"}: ${f.summary}` });
+    }
+  }
+  return out;
+}
+
 // ── Red flags ───────────────────────────────────────────────────────────────
 
 // Secrecy and high-risk places a corporate owner can be registered in: a
@@ -693,8 +762,12 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
         })),
       });
     }
-    for (const line of result.complyAdvantage.lines.filter(l => l.status === "possible")) {
-      const matches = line.matches || [];
+    for (const line of result.complyAdvantage.lines) {
+      // Only the matches over the bars (providerMatchFlags); the rest are possible namesakes.
+      const { flagged, namesakes, unjudged } = splitProviderMatches(line);
+      if (!flagged.length && !unjudged) continue;
+      const matches = flagged;
+      const types = unjudged ? line.types : [...new Set(flagged.map(m => m.kind).filter(Boolean))];
       const profiles = [...new Set(matches.map(m => m.profileId).filter((p): p is string => !!p))];
       const facts: KycFlagFact[] = matches.map(m => ({
         label: `Matched profile: ${providerKindWords(m.kind)}`,
@@ -705,34 +778,39 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
         facts.push({ label: "Kinds of profile matched", value: line.types.map(providerKindWords).join(", ") || "not given" });
         facts.push({ label: "Profiles", value: "This check kept only the kinds of profile ComplyAdvantage matched, not the profiles themselves. Run the check again to see them here, or look the name up in ComplyAdvantage Mesh." });
       }
+      if (namesakes.length) facts.push({ label: "Also matched, below the bars", value: `${namesakes.length} possible namesake${namesakes.length === 1 ? "" : "s"}, listed under Checked before asking` });
       if (line.customerId) facts.push({ label: "ComplyAdvantage customer", value: line.customerId });
       flags.push({
         kind: "provider_screen",
         label: `ComplyAdvantage match for ${line.name}`,
-        detail: line.types.map(providerKindWords).join(", ") || line.detail,
+        detail: types.map(providerKindWords).join(", ") || line.detail,
         source: `${source}: ComplyAdvantage`,
         at,
         key: `ca:${k(line.name)}`,
-        evidence: [...line.types.map(t => `type:${t}`), ...profiles.map(p => `profile:${p}`)].sort(),
+        evidence: [...types.map(t => `type:${t}`), ...profiles.map(p => `profile:${p}`)].sort(),
         facts,
       });
     }
   }
   for (const line of result.web.lines) {
-    for (const f of line.findings) {
+    for (const kind of ["public_role", "adverse_media"] as const) {
+      const sure = line.findings.filter(f => f.kind === kind && !f.unsureIdentity);
+      if (!sure.length) continue;
+      // For a company the search asks whether the state or a public figure owns or controls it.
+      const label = kind === "adverse_media" ? `Adverse media about ${line.name}`
+        : webLineIsCompany(line) ? `Possibly owned or controlled by the state or a public figure: ${line.name}` : `Possible public role for ${line.name}`;
       flags.push({
-        kind: f.kind === "public_role" ? "web_pep" : "web_adverse",
-        label: f.kind === "public_role" ? `Possible public role for ${line.name}` : `Adverse media about ${line.name}`,
-        detail: `${f.summary}${f.unsureIdentity ? " (the source may be about someone else of the same name)" : ""}`,
-        source: `${source}: web search, ${f.source} ${f.url}`,
-        at: f.date || at,
-        key: `web:${f.kind}:${k(line.name)}`,
-        evidence: [`url:${f.url}`],
-        facts: [
+        kind: kind === "public_role" ? "web_pep" : "web_adverse",
+        label,
+        detail: sure.map(f => f.summary).join(" "),
+        source: `${source}: web search, ${sure.map(f => `${f.source} ${f.url}`).join("; ")}`,
+        at: sure.map(f => f.date).find(Boolean) || at,
+        key: `web:${kind}:${k(line.name)}`,
+        evidence: [...new Set(sure.map(f => `url:${f.url}`))].sort(),
+        facts: sure.flatMap(f => [
           { label: "What the source says", value: f.summary },
           { label: "Source", value: [f.source, f.date].filter(Boolean).join(", ") || f.url, url: f.url },
-          ...(f.unsureIdentity ? [{ label: "Identity", value: "The source may be about someone else of the same name." }] : []),
-        ],
+        ]),
       });
     }
   }
@@ -840,11 +918,13 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
     lines.push(`- Public roles and adverse media: not searched (${result.web.skipped}).`);
   }
   if (result.complyAdvantage.ran) {
-    const hits = result.complyAdvantage.lines.filter(l => l.status === "possible");
-    lines.push(`- ComplyAdvantage: ${hits.length ? `matches for ${hits.map(l => l.name).join(", ")}` : "no matches"}.`);
+    const hits = result.complyAdvantage.lines.filter(l => { const sp = splitProviderMatches(l); return sp.flagged.length > 0 || sp.unjudged; });
+    lines.push(`- ComplyAdvantage: ${hits.length ? `matches for ${hits.map(l => l.name).join(", ")}` : "no matches over its bars"}.`);
   } else if (result.complyAdvantage.skipped) {
     lines.push(`- ComplyAdvantage: not used (${result.complyAdvantage.skipped}).`);
   }
+  const namesakes = precheckNamesakes(result);
+  if (namesakes.length) lines.push(`- Possible namesakes, not treated as red flags (below ComplyAdvantage's bars, or web results that may be about someone else): ${namesakes.slice(0, 6).map(n => `${n.name}: ${n.what}`).join("; ")}${namesakes.length > 6 ? `; and ${namesakes.length - 6} more` : ""}.`);
   return lines.join("\n").slice(0, 2800);
 }
 
@@ -917,7 +997,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
   }
   if (result.web.ran) {
     const searched = result.web.lines.filter(l => l.ran);
-    const findings = searched.flatMap(l => l.findings.map(f => ({ l, f })));
+    const findings = searched.flatMap(l => l.findings.filter(f => !f.unsureIdentity).map(f => ({ l, f })));
     const failed = result.web.lines.filter(l => !l.ran);
     out.push({
       key: "web", label: `Public roles and adverse media: ${searched.length} searched, ${findings.length ? `${findings.length} to review` : "nothing found"}`,
@@ -929,10 +1009,20 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
     out.push({ key: "web", label: "Public roles and adverse media: not searched", state: "not_run", detail: result.web.skipped, links: [] });
   }
   if (result.complyAdvantage.ran) {
-    const hits = result.complyAdvantage.lines.filter(l => l.status === "possible");
-    out.push({ key: "comply_advantage", label: `ComplyAdvantage: ${hits.length ? `${hits.length} to review` : "no matches"}`, state: hits.length ? "attention" : "ok", detail: hits.map(l => `${l.name}: ${l.types.map(providerKindWords).join(", ")}`).join("; ") || null, links: [] });
+    const hits = result.complyAdvantage.lines.map(l => ({ l, sp: splitProviderMatches(l) })).filter(({ sp }) => sp.flagged.length > 0 || sp.unjudged);
+    out.push({ key: "comply_advantage", label: `ComplyAdvantage: ${hits.length ? `${hits.length} to review` : "no matches over its bars"}`, state: hits.length ? "attention" : "ok",
+      detail: hits.map(({ l, sp }) => `${l.name}: ${(sp.unjudged ? l.types : [...new Set(sp.flagged.map(m => m.kind))]).map(providerKindWords).join(", ")}`).join("; ") || null, links: [] });
   } else if (result.complyAdvantage.skipped) {
     out.push({ key: "comply_advantage", label: "ComplyAdvantage: not used", state: "not_run", detail: result.complyAdvantage.skipped, links: [] });
+  }
+  // Possible namesakes: listed to look at, never a red flag (Woody, 19 November 2026).
+  const namesakes = precheckNamesakes(result);
+  if (namesakes.length) {
+    out.push({
+      key: "namesakes", label: `Possible namesakes to check: ${namesakes.length}`, state: "info",
+      detail: `Matches below ComplyAdvantage's bars (60% for a public role, 90% for anything else, unless the birth year agrees) and web results that may be about someone else of the same name. Not red flags. ${namesakes.filter(n => !n.url).slice(0, 8).map(n => `${n.name}: ${n.what}`).join("; ")}`.trim(),
+      links: namesakes.filter(n => n.url).slice(0, 8).map(n => ({ label: `${n.name}: ${n.what}`.slice(0, 140), url: n.url! })),
+    });
   }
   return out;
 }

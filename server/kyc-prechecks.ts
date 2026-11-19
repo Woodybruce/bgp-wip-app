@@ -467,7 +467,13 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
 
 // ── Sanctions ───────────────────────────────────────────────────────────────
 
-interface Subject { name: string; role: string; person: boolean; dobYear: number | null; context: string }
+interface Subject { name: string; role: string; person: boolean; dobYear: number | null; context: string; dobMonth?: number | null; nationality?: string | null }
+
+// A UK nationality as Companies House words it, as the code Mesh takes (Woody,
+// 19 November 2026: send the birth year "and UK"). Any other nationality is
+// left out rather than guessed.
+const UK_NATIONALITY = /^(british|english|scottish|welsh|northern irish|united kingdom|uk|great britain|citizen of the united kingdom)$/i;
+export const meshNationality = (n: string | null | undefined): string | null => (UK_NATIONALITY.test(String(n || "").trim()) ? "GB" : null);
 
 async function screenSubjects(subjects: Subject[]): Promise<KycPrecheckResult["sanctions"]> {
   try {
@@ -523,7 +529,7 @@ const WEB_SCHEMA = {
 };
 
 async function searchWeb(subject: Subject): Promise<WebSearchLine> {
-  const base: WebSearchLine = { name: subject.name, role: subject.role, ran: false, publicRole: "none_found", adverseMedia: "none_found", findings: [], unsourced: 0 };
+  const base: WebSearchLine = { name: subject.name, role: subject.role, person: subject.person, ran: false, publicRole: "none_found", adverseMedia: "none_found", findings: [], unsourced: 0 };
   try {
     const { askPerplexity } = await import("./perplexity");
     const prompt = `${subject.person ? "Person" : "Company"}: ${subject.name.replace(/[<>]/g, " ")}\nContext: ${subject.context.replace(/[<>]/g, " ")}\n\nReturn the JSON object now.`;
@@ -575,6 +581,7 @@ async function screenComplyAdvantage(subjects: Subject[]): Promise<KycPrecheckRe
   try {
     const results = await withTimeout(screenNames(subjects.map(s => ({
       name: s.name, role: s.role, kind: s.person ? "person" as const : "company" as const, birthYear: s.dobYear,
+      birthMonth: s.dobMonth ?? null, nationality: s.person ? meshNationality(s.nationality) : null,
     }))), 120_000, "ComplyAdvantage");
     const lines: ProviderLine[] = results.map(r => ({
       name: r.name, status: r.status === "error" ? "error" : r.status === "clear" ? "clear" : "possible",
@@ -588,6 +595,7 @@ async function screenComplyAdvantage(subjects: Subject[]): Promise<KycPrecheckRe
         return {
           name: clean(m.name, 200), kind: clean(m.matchType, 40), source: m.listName ? clean(m.listName, 160) : null,
           score: typeof m.score === "number" ? m.score : null, profileId: d.profileId ? clean(d.profileId, 80) : null,
+          birthYearAgrees: typeof d.birthYearAgrees === "boolean" ? d.birthYearAgrees : null, unread: !!d.unread,
           media: (Array.isArray(d.media) ? d.media : []).slice(0, 3).map((x: any) => ({ title: clean(x?.title, 200), url: x?.url ? clean(x.url, 500) : null, date: x?.date ? clean(x.date, 20) : null })),
         };
       }),
@@ -688,7 +696,8 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     const seen = subjects.find(x => subjectKey(x) === subjectKey(s));
     if (!seen) { subjects.push(s); return; }
     if (!seen.role.split(", ").includes(s.role)) seen.role = `${seen.role}, ${s.role}`;
-    if (!seen.dobYear && s.dobYear) seen.dobYear = s.dobYear;
+    if (!seen.dobYear && s.dobYear) { seen.dobYear = s.dobYear; seen.dobMonth = s.dobMonth ?? null; }
+    if (!seen.nationality && s.nationality) seen.nationality = s.nationality;
     if (s.context.length > seen.context.length) seen.context = s.context;
   };
   const where = companiesHouse ? `${companiesHouse.name} (Companies House ${companiesHouse.number})` : partyName;
@@ -700,13 +709,13 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   if (contactName) add({ name: contactName, role: "the deal's contact", person: true, dobYear: null, context: `the contact for ${where} in a UK property deal` });
   for (const o of companiesHouse?.owners || []) {
     const person = o.kind === "individual";
-    add({ name: o.name, role: person ? "owner" : "owning company", person, dobYear: o.dob?.year || null,
+    add({ name: o.name, role: person ? "owner" : "owning company", person, dobYear: o.dob?.year || null, dobMonth: o.dob?.month || null, nationality: person ? o.nationality || null : null,
       context: `${person ? "person" : "company"} with significant control of ${where}${o.dob?.year ? `, born ${o.dob.month ? `${o.dob.month}/` : ""}${o.dob.year}` : ""}${o.nationality ? `, ${o.nationality}` : ""}${o.country ? `, ${o.country}` : ""}` });
   }
   for (const p of companiesHouse?.peopleUpChain || []) add({ name: p.name, role: `owner of ${p.foundAt}`, person: true, dobYear: null, context: `person with significant control of ${p.foundAt}, which owns ${where}` });
   for (const o of companiesHouse?.officers || []) {
     const person = !/corporate/i.test(o.role);
-    add({ name: o.name, role: o.role.replace(/-/g, " "), person, dobYear: o.dob?.year || null,
+    add({ name: o.name, role: o.role.replace(/-/g, " "), person, dobYear: o.dob?.year || null, dobMonth: o.dob?.month || null, nationality: person ? o.nationality || null : null,
       context: `${o.role.replace(/-/g, " ")} of ${where}${o.dob?.year ? `, born ${o.dob.month ? `${o.dob.month}/` : ""}${o.dob.year}` : ""}${o.nationality ? `, ${o.nationality}` : ""}` });
   }
   for (const c of companiesHouse?.chain || []) add({ name: c.name, role: "company up the ownership chain", person: false, dobYear: null, context: `UK company ${c.number}, in the ownership chain of ${where}` });

@@ -196,10 +196,60 @@ test("HAS_PROFILES reads the alert's matched profiles: one match per kind", asyn
   assert.equal(r.matches[0].name, "Ivan Example");
 });
 
-test("a score outside 0 to 1 is not passed on as one", () => {
-  const { matches } = ca.matchesFromRisks([risk({ name: "A", types: ["ADVERSE-MEDIA-V2-FRAUD-LINKED"], score: 87 })], { name: "A" }, null);
-  assert.equal(matches[0].matchType, "adverse_media");
-  assert.equal(matches[0].score, undefined);
+test("a score is read on Mesh's 0 to 100 scale, or as a fraction; anything else is not passed on", () => {
+  const read = (score: number) => ca.matchesFromRisks([risk({ name: "A", types: ["ADVERSE-MEDIA-V2-FRAUD-LINKED"], score })], { name: "A" }, null).matches[0];
+  assert.equal(read(87).matchType, "adverse_media");
+  assert.equal(read(87).score, 0.87, "Mesh's screens score 0 to 100 (19 November 2026)");
+  assert.equal(read(0.42).score, 0.42);
+  assert.equal(read(250).score, undefined);
+  assert.equal(read(-1).score, undefined);
+});
+
+test("each profile says whether its birth year agrees with the person's", () => {
+  const near = ca.matchesFromRisks([risk({ name: "Jane Doe", types: ["PEP_CLASS_2"], dob: ["1984-05-01"] })], { name: "Jane Doe", birthYear: 1985 }, "person");
+  assert.equal(near.matches[0].details.birthYearAgrees, true);
+  const unknown = ca.matchesFromRisks([risk({ name: "Jane Doe", types: ["PEP_CLASS_2"] })], { name: "Jane Doe", birthYear: 1985 }, "person");
+  assert.equal(unknown.matches[0].details.birthYearAgrees, null, "no date on the profile: not known");
+  const noYear = ca.matchesFromRisks([risk({ name: "Jane Doe", types: ["PEP_CLASS_2"], dob: ["1984"] })], { name: "Jane Doe" }, "person");
+  assert.equal(noYear.matches[0].details.birthYearAgrees, null, "no birth year for the person: not known");
+});
+
+test("a person goes to Mesh with their birth month and year and a UK nationality; Mesh refusing them screens the bare name", async () => {
+  ca.resetComplyAdvantageState();
+  assert.deepEqual(ca.meshPersonDetails({ name: "Jane Doe", birthYear: 1985, birthMonth: 4, nationality: "GB" }), { date_of_birth: { year: 1985, month: 4, day: null }, nationality: ["GB"] });
+  assert.deepEqual(ca.meshPersonDetails({ name: "Jane Doe", birthYear: 1985, birthMonth: 13, nationality: "British" }), { date_of_birth: { year: 1985, month: null, day: null } });
+  assert.deepEqual(ca.meshPersonDetails({ name: "Jane Doe" }), {});
+  const body = ca.meshScreenBody({ name: "Jane Doe", kind: "person", birthYear: 1985, nationality: "GB" }, "x");
+  assert.deepEqual(body.customer.person, { full_name: "Jane Doe", date_of_birth: { year: 1985, month: null, day: null }, nationality: ["GB"] });
+  assert.deepEqual(ca.meshScreenBody({ name: "Jane Doe", kind: "person", birthYear: 1985 }, "x", null, { bare: true }).customer.person, { full_name: "Jane Doe" });
+  assert.deepEqual(ca.meshScreenBody({ name: "Acme Limited", kind: "company", birthYear: 1985 }, "x").customer.company, { legal_name: "Acme Limited" });
+  // Mesh refuses the details: the same screen goes again on the name alone, and the next one starts bare.
+  const m = mesh(c => {
+    if (isToken(c)) return TOKEN;
+    if (isScreen(c)) return c.body.customer.person?.date_of_birth ? { status: 400, body: { message: "date_of_birth.day is required" } } : workflow({ screening_result: "NO_PROFILES" });
+    return { status: 404 };
+  });
+  const [r] = await ca.screenNames([{ name: "Jane Doe", kind: "person", birthYear: 1985, nationality: "GB" }], m.deps);
+  assert.equal(r.status, "clear");
+  const screens = m.calls.filter(isScreen);
+  assert.equal(screens.length, 2);
+  assert.ok(screens[0].body.customer.person.date_of_birth && !screens[1].body.customer.person.date_of_birth);
+  assert.equal(ca.meshRefusedDetailsRecently(NOW + 1000), true);
+  await ca.screenNames([{ name: "John Roe", kind: "person", birthYear: 1970 }], m.deps);
+  assert.ok(!m.calls.filter(isScreen).at(-1)!.body.customer.person.date_of_birth, "the next screen starts bare");
+  ca.resetComplyAdvantageState();
+});
+
+test("a hit whose profiles cannot be read is marked unread", async () => {
+  ca.resetComplyAdvantageState();
+  const m = mesh(c => {
+    if (isToken(c)) return TOKEN;
+    if (isScreen(c)) return workflow({ screening_result: "HAS_PROFILES", aml_types: ["PEP_CLASS_2"] }, ["a1"]);
+    return { status: 500, body: {} };
+  });
+  const [r] = await ca.screenNames([{ name: "John Smith", kind: "person" }], m.deps);
+  assert.equal(r.status, "potential_match");
+  assert.equal(r.matches[0].details?.unread, true);
 });
 
 test("a profile whose every date of birth is over a year out is set aside", async () => {

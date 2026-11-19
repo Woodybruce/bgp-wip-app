@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   askInputFrom, checkWebAnswer, companyNamesMatch, controlWords, isOffshoreCountry, isRegisterDirector, listingFromExemptions,
-  ownerControlLine, ownerKind, personNamesMatch, precheckAsks, precheckCardLines, precheckNote, precheckRedFlags,
+  ownerControlLine, ownerKind, personNamesMatch, precheckAsks, precheckCardLines, precheckNamesakes, precheckNote, precheckRedFlags, providerMatchFlags,
   precheckSanctionsMatch, sanctionsLine, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput,
   precheckCompany, precheckUnfinished,
@@ -199,13 +199,13 @@ test("a clean run raises no red flags; findings raise them with their source", (
     },
     sanctions: { ran: true, lists: ["the UK Sanctions List"], lines: [{ name: "Jane DOE", role: "owner", outcome: "possible", matches: [{ ...entry({ name: "Jane DOE" }), why: "The name matches the listing." }] }], error: null },
     web: { ran: true, lines: [{ name: "Jane Doe", role: "owner", ran: true, publicRole: "found", adverseMedia: "none_found", unsourced: 0,
-      findings: [{ kind: "public_role", summary: "Member of the Ruritanian parliament", url: "https://parliament.example/jane", source: "Parliament", date: null, category: null, unsureIdentity: true }] }], skipped: null },
+      findings: [{ kind: "public_role", summary: "Member of the Ruritanian parliament", url: "https://parliament.example/jane", source: "Parliament", date: null, category: null, unsureIdentity: false }] }], skipped: null },
   });
   const kinds = precheckRedFlags(flagged, { sanctionsCurrent: true }).map(f => f.kind);
   assert.deepEqual(kinds.sort(), ["company_status", "disqualified", "insolvency", "offshore_owner", "ownership_unclear", "sanctions", "web_pep"].sort());
   const pep = precheckRedFlags(flagged, { sanctionsCurrent: true }).find(f => f.kind === "web_pep")!;
   assert.match(pep.source, /parliament\.example\/jane/);
-  assert.match(pep.detail!, /someone else of the same name/);
+  assert.equal(pep.label, "Possible public role for Jane Doe");
   // A later screening replaces the run's sanctions lines.
   assert.ok(!precheckRedFlags(flagged, { sanctionsCurrent: false }).some(f => f.kind === "sanctions"));
 });
@@ -353,4 +353,69 @@ test("ComplyAdvantage's matched profiles are the flag's facts and its evidence",
   assert.ok(ca.facts!.some(f => /Acme Ltd/.test(f.value) && /91%/.test(f.value)));
   assert.ok(ca.facts!.some(f => f.label === "Article" && f.url === "https://news.example/acme"));
   assert.ok(ca.facts!.some(f => f.value === "bgp-c-1"));
+});
+
+// Woody, 19 November 2026 ("Tighten"): a bare-name match too often finds someone else of the same name.
+const caLine = (name: string, matches: any[]) => ({ name, status: "possible" as const, types: [...new Set(matches.map(m => m.kind))], detail: null, matches });
+const caMatch = (over: Record<string, any>) => ({ name: "Jane Doe", kind: "pep", source: null, score: null, profileId: "p1", media: [], ...over });
+
+test("which ComplyAdvantage matches are red flags: sanctions always, the rest over the bars or on an agreeing birth year", () => {
+  assert.equal(providerMatchFlags(caMatch({ kind: "sanctions", score: 0.1 })), true, "sanctions, whatever the score");
+  assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: null })), true, "a warning list, whatever the score");
+  assert.equal(providerMatchFlags(caMatch({ kind: "pep", score: 0.59 })), false);
+  assert.equal(providerMatchFlags(caMatch({ kind: "pep", score: 0.6 })), true, "60% for a public role");
+  assert.equal(providerMatchFlags(caMatch({ kind: "adverse_media", score: 0.89 })), false);
+  assert.equal(providerMatchFlags(caMatch({ kind: "adverse_media", score: 0.9 })), true, "90% for anything else");
+  assert.equal(providerMatchFlags(caMatch({ kind: "fitness_probity", score: 0.75 })), false);
+  assert.equal(providerMatchFlags(caMatch({ kind: "adverse_media", score: null })), false, "no score and no birth year: a possible namesake");
+  assert.equal(providerMatchFlags(caMatch({ kind: "adverse_media", score: 0.2, birthYearAgrees: true })), true, "the birth year agrees");
+  assert.equal(providerMatchFlags(caMatch({ kind: "pep", unread: true, profileId: null })), true, "profiles that could not be read stay a flag");
+  assert.equal(providerMatchFlags(caMatch({ kind: "pep", profileId: null })), true, "an older match with no profile behind it");
+});
+
+test("possible namesakes are listed on the card and in KYC4U's note, never as red flags", () => {
+  const run = result({
+    complyAdvantage: { ran: true, skipped: null, lines: [
+      caLine("BARRATT, Jack", [caMatch({ name: "Jack Barratt", kind: "adverse_media", score: null, profileId: "p-jb" })]),
+      caLine("ROBERTS, Charlotte", [caMatch({ name: "Charlotte Roberts", kind: "pep", score: 0.92, profileId: "p-cr" })]),
+      { name: "Old Line", status: "possible", types: ["pep"], detail: null },
+    ] },
+    web: { ran: true, skipped: null, lines: [
+      { name: "BARRATT, Jack", role: "director", person: true, ran: true, publicRole: "none_found", adverseMedia: "possible", unsourced: 0,
+        findings: [{ kind: "adverse_media", summary: "A footballer of the same name was banned", url: "https://news.example/jb", source: "News", date: null, category: null, unsureIdentity: true }] },
+    ] },
+  });
+  const flags = precheckRedFlags(run, { sanctionsCurrent: true });
+  const labels = flags.map(f => f.label);
+  assert.ok(labels.includes("ComplyAdvantage match for ROBERTS, Charlotte"), "a public role at 92%");
+  assert.ok(labels.includes("ComplyAdvantage match for Old Line"), "an older check kept only the kinds: still a flag");
+  assert.ok(!labels.some(l => /BARRATT/.test(l)), "a namesake is never a red flag");
+  const namesakes = precheckNamesakes(run);
+  assert.deepEqual(namesakes.map(n => [n.name, n.via]), [["BARRATT, Jack", "ComplyAdvantage"], ["BARRATT, Jack", "web search"]]);
+  assert.match(namesakes[0].what, /adverse media, profile "Jack Barratt", no match score/);
+  const card = precheckCardLines(run).find(l => l.key === "namesakes")!;
+  assert.equal(card.label, "Possible namesakes to check: 2");
+  assert.equal(card.state, "info");
+  assert.deepEqual(card.links.map(l => l.url), ["https://news.example/jb"]);
+  const ca = precheckCardLines(run).find(l => l.key === "comply_advantage")!;
+  assert.equal(ca.label, "ComplyAdvantage: 2 to review");
+  assert.match(precheckNote(run, "done"), /Possible namesakes, not treated as red flags/);
+});
+
+test("web results: one flag per person and kind with every source, and a company's public role worded as ownership", () => {
+  const f = (summary: string, url: string, unsureIdentity = false) => ({ kind: "public_role" as const, summary, url, source: "Site", date: null, category: null, unsureIdentity });
+  const run = result({
+    web: { ran: true, skipped: null, lines: [
+      { name: "BRUCE GILLINGHAM POLLARD LIMITED", role: "the company", person: false, ran: true, publicRole: "possible", adverseMedia: "none_found", unsourced: 0,
+        findings: [f("Advises a public body", "https://a.example/1"), f("Listed with a council", "https://b.example/2")] },
+      { name: "Acme Holdings Limited", role: "the company", ran: true, publicRole: "possible", adverseMedia: "none_found", unsourced: 0,
+        findings: [f("A state fund holds shares", "https://c.example/3")] },
+    ] },
+  });
+  const web = precheckRedFlags(run, { sanctionsCurrent: true }).filter(x => x.kind === "web_pep");
+  assert.equal(web.length, 2, "one flag for the two sources about the same company");
+  assert.equal(web[0].label, "Possibly owned or controlled by the state or a public figure: BRUCE GILLINGHAM POLLARD LIMITED");
+  assert.deepEqual(web[0].evidence, ["url:https://a.example/1", "url:https://b.example/2"]);
+  assert.equal(web[0].facts.filter(x => x.label === "Source").length, 2);
+  assert.match(web[1].label, /^Possibly owned or controlled by the state or a public figure: Acme Holdings Limited$/, "an older line is read from the name");
 });

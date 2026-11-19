@@ -1,0 +1,53 @@
+// Which screening matches are red flags (Woody, 19 November 2026, asked why
+// ComplyAdvantage "red flags everything", chose "Tighten"): a bare-name match
+// too often finds someone else of the same name. Sanctions and warning lists
+// stay red flags whatever the score; a public role needs the birth year to
+// agree or 60%; anything else the birth year or 90%; the rest are possible
+// namesakes, listed and never flagged. A person goes to Mesh with their birth
+// month and year and a UK nationality, and the bare name when Mesh refuses
+// them. Source guards; the rules are tested in server/kyc-prechecks.test.ts
+// and server/comply-advantage.test.ts.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+const read = (p) => readFileSync(p, 'utf8');
+
+test('the bars: sanctions and warning lists always, a public role at 60%, anything else at 90%, an agreeing birth year always', () => {
+  const rules = read('shared/kyc-prechecks.ts');
+  assert.match(rules, /export const PROVIDER_FLAG_BARS = \{ pep: 0\.6, other: 0\.9 \} as const;/);
+  assert.match(rules, /const ALWAYS_FLAG_KIND = \/sanction\|warning\/;/);
+  const fn = rules.slice(rules.indexOf('export function providerMatchFlags'), rules.indexOf('/** A ComplyAdvantage line'));
+  assert.match(fn, /if \(ALWAYS_FLAG_KIND\.test\(String\(m\.kind \|\| ""\)\)\) return true;/);
+  assert.match(fn, /if \(m\.unread \?\? !m\.profileId\) return true;/);
+  assert.match(fn, /if \(m\.birthYearAgrees === true\) return true;/);
+  // The red flags, the card and KYC4U's note all split the matches the same way.
+  for (const where of ['export function precheckRedFlags', 'export function precheckCardLines', 'export function precheckNote']) {
+    const at = rules.indexOf(where);
+    assert.ok(at > 0, where);
+    assert.ok(rules.slice(at, at + 9000).includes('splitProviderMatches('), `${where} splits the matches by the bars`);
+  }
+});
+
+test('web results: "may be someone else" is listed, not flagged; one flag per person and kind; a company is worded as ownership', () => {
+  const rules = read('shared/kyc-prechecks.ts');
+  assert.match(rules, /const sure = line\.findings\.filter\(f => f\.kind === kind && !f\.unsureIdentity\);/);
+  assert.match(rules, /Possibly owned or controlled by the state or a public figure: \$\{line\.name\}/);
+  assert.match(rules, /const findings = searched\.flatMap\(l => l\.findings\.filter\(f => !f\.unsureIdentity\)/);
+  assert.match(rules, /key: "namesakes", label: `Possible namesakes to check: \$\{namesakes\.length\}`, state: "info"/);
+  assert.match(read('server/kyc-prechecks.ts'), /person: subject\.person, ran: false/);
+});
+
+test('a person goes to Mesh with their birth month, year and a UK nationality, and the bare name when Mesh refuses them', () => {
+  const ca = read('server/comply-advantage.ts');
+  assert.match(ca, /out\.date_of_birth = \{ year, month: /);
+  assert.match(ca, /if \(s\.nationality && \/\^\[A-Z\]\{2\}\$\/\.test\(s\.nationality\)\) out\.nationality = \[s\.nationality\];/);
+  assert.match(ca, /if \(!bare && \(call\.status === 400 \|\| call\.status === 422\)\) \{/);
+  assert.match(ca, /noteMeshRefusedDetails\(deps\.now\(\)\);/);
+  // Mesh's screens score 0 to 100.
+  assert.match(ca, /\(raw <= 1 \? raw : raw <= 100 \? raw \/ 100 : undefined\)/);
+  const pre = read('server/kyc-prechecks.ts');
+  assert.match(pre, /birthMonth: s\.dobMonth \?\? null, nationality: s\.person \? meshNationality\(s\.nationality\) : null,/);
+  assert.match(pre, /const UK_NATIONALITY = \/\^\(british\|/);
+  assert.match(pre, /birthYearAgrees: typeof d\.birthYearAgrees === "boolean" \? d\.birthYearAgrees : null, unread: !!d\.unread,/);
+});

@@ -147,7 +147,10 @@ function PartyPrechecks({ dealId, data, companyId }: { dealId: string; data: Dea
         <span className="font-semibold uppercase tracking-wider text-muted-foreground text-[11px]">Checked before asking</span>
         {view.ranAt && !running && <span className="text-[11px] text-muted-foreground">{precheckDay(view.ranAt)}</span>}
         {view.lines.length > 0 && !running && (
-          <span className="text-[11px]" data-testid={`kyc-prechecks-summary-${companyId}`}>{attention ? `${attention} to review` : "nothing to review"}</span>
+          <span className="text-[11px]" data-testid={`kyc-prechecks-summary-${companyId}`}>{attention ? `${attention} to review` : "nothing to review"}
+            {/* Possible namesakes are listed (Show), never red flags (Woody, 19 November 2026). */}
+            {view.lines.some(l => l.key === "namesakes") && <span className="text-muted-foreground"> · {view.lines.find(l => l.key === "namesakes")!.label.toLowerCase()}</span>}
+          </span>
         )}
         <div className="ml-auto flex items-center gap-1">
           {view.lines.length > 0 && (

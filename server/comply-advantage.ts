@@ -70,10 +70,14 @@ let cachedToken: { value: string; expiresAt: number; key: string } | null = null
 let signInPause: { until: number; reason: string; key: string } | null = null;
 let screenPause: { until: number; reason: string } | null = null;
 
+// When Mesh refused a person's birth date or nationality (see screenOne).
+let meshRefusedDetailsAt = 0;
+
 export function resetComplyAdvantageState(): void {
   cachedToken = null;
   signInPause = null;
   screenPause = null;
+  meshRefusedDetailsAt = 0;
 }
 
 // Which credentials a token or a pause belongs to: new keys on Railway start
@@ -156,6 +160,11 @@ export interface ScreenSubject {
   role?: string;
   kind?: MeshSubjectKind;
   birthYear?: number | null;
+  // Since 19 November 2026 (Woody: "Tighten"): sent to Mesh with a person, so
+  // its score can tell the person from someone else of the same name.
+  birthMonth?: number | null;
+  // ISO 3166 alpha-2 nationality, such as "GB".
+  nationality?: string | null;
 }
 
 const CORPORATE_WORDS = /\b(limited|ltd|plc|llp|l\.l\.p|inc|incorporated|corp|corporation|gmbh|s\.?a\.?r\.?l|b\.?v|n\.?v|s\.?p\.?a|holdings?|group|trust|partnership|lp|fund|properties|estates|investments|capital|ventures|foundation)\b/i;
@@ -198,11 +207,26 @@ export function meshExternalId(s: ScreenSubject, kind: MeshSubjectKind | null, n
   return `bgp-${kind ? kind[0] : "u"}-${hash}-${londonDay(nowMs)}`;
 }
 
-export function meshScreenBody(s: ScreenSubject, externalId: string, screeningConfigId?: string | null): Record<string, any> {
+// A person's birth year (and month, when known) and nationality go with the
+// name: Mesh's person takes date_of_birth as { day, month, year }, each
+// nullable, and nationality as alpha-2 codes. `bare` leaves them out (Mesh
+// refused them once: meshRefusedDetails).
+export function meshPersonDetails(s: ScreenSubject): Record<string, any> {
+  const out: Record<string, any> = {};
+  const year = Number(s.birthYear);
+  if (Number.isInteger(year) && year > 1900 && year <= new Date().getUTCFullYear()) {
+    const month = Number(s.birthMonth);
+    out.date_of_birth = { year, month: Number.isInteger(month) && month >= 1 && month <= 12 ? month : null, day: null };
+  }
+  if (s.nationality && /^[A-Z]{2}$/.test(s.nationality)) out.nationality = [s.nationality];
+  return out;
+}
+
+export function meshScreenBody(s: ScreenSubject, externalId: string, screeningConfigId?: string | null, opts: { bare?: boolean } = {}): Record<string, any> {
   const kind = subjectKind(s);
   const name = meshName(s, kind);
   const customer: Record<string, any> = { external_identifier: externalId };
-  if (kind === "person") customer.person = { full_name: name };
+  if (kind === "person") customer.person = { full_name: name, ...(opts.bare ? {} : meshPersonDetails(s)) };
   else if (kind === "company") customer.company = { legal_name: name };
   else customer.undefined = { name };
   const body: Record<string, any> = { customer, monitoring: { entity_screening: { enabled: false } } };
@@ -306,8 +330,11 @@ export function matchesFromRisks(risks: any[], subject: ScreenSubject, kind: Mes
       setAside++;
       continue;
     }
+    // Mesh's screens show scores 0 to 100; a score given as a fraction is kept as it is.
     const raw = Number(profile.match_score);
-    const score = Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : undefined;
+    const score = Number.isFinite(raw) && raw >= 0 ? (raw <= 1 ? raw : raw <= 100 ? raw / 100 : undefined) : undefined;
+    const birthYearAgrees = kind === "person" && subject.birthYear && dobYears.length
+      ? dobYears.some(y => Math.abs(y - Number(subject.birthYear)) <= 1) : null;
     const kinds = kindsOf(indicators.aml_types);
     for (const k of kinds.length ? kinds : ["warning"]) {
       matches.push({
@@ -321,6 +348,7 @@ export function matchesFromRisks(risks: any[], subject: ScreenSubject, kind: Mes
           matchTypes: Array.isArray(profile.match_types) ? profile.match_types : [],
           decision: risk.decision || null,
           datesOfBirth: dobYears,
+          birthYearAgrees,
           kinds,
           media: k === "adverse_media" ? mediaItems(indicators.media) : [],
         },
@@ -409,15 +437,30 @@ async function readRisks(alertIds: string[], deps: MeshDeps): Promise<{ risks: a
   return { risks, complete };
 }
 
+// When Mesh refused a person's birth date or nationality, the next day's
+// screens send the bare name (kept in memory; a restart tries again).
+export const meshRefusedDetailsRecently = (nowMs: number): boolean => meshRefusedDetailsAt > 0 && nowMs - meshRefusedDetailsAt < 86_400_000;
+export function noteMeshRefusedDetails(nowMs: number): void { meshRefusedDetailsAt = nowMs; }
+export function forgetMeshRefusedDetails(): void { meshRefusedDetailsAt = 0; }
+
 async function screenOne(subject: ScreenSubject, deps: MeshDeps): Promise<ScreeningResult> {
   const base = { name: subject.name, role: subject.role };
   const kind = subjectKind(subject);
   const configId = deps.env.COMPLY_ADVANTAGE_SCREENING_CONFIG_ID?.trim() || null;
   let externalId = meshExternalId(subject, kind, deps.now());
   let state: any = null;
-  for (let attempt = 0; attempt < 2 && !state; attempt++) {
-    const call = await meshCall("POST", "/v2/workflows/sync/create-and-screen?last_sync_step=ALERTING", meshScreenBody(subject, externalId, configId), deps);
+  // A person's birth date and nationality go with the name unless Mesh has
+  // refused them in the last day: then, and on a refusal now, the bare name.
+  let bare = kind !== "person" || Object.keys(meshPersonDetails(subject)).length === 0 || meshRefusedDetailsRecently(deps.now());
+  for (let attempt = 0; attempt < 3 && !state; attempt++) {
+    const call = await meshCall("POST", "/v2/workflows/sync/create-and-screen?last_sync_step=ALERTING", meshScreenBody(subject, externalId, configId, { bare }), deps);
     if (call.status === 200 || call.status === 201) { state = call.data; break; }
+    if (!bare && (call.status === 400 || call.status === 422)) {
+      console.warn(`[ComplyAdvantage] Mesh refused a birth date or nationality (${call.status}); screening on the name alone`);
+      noteMeshRefusedDetails(deps.now());
+      bare = true;
+      continue;
+    }
     if (call.status !== 409) throw meshFailure(call, "create and screen customers");
     // The name was screened already today (or is being screened now): read
     // that screen's answer, else screen it under a fresh record.
@@ -432,7 +475,8 @@ async function screenOne(subject: ScreenSubject, deps: MeshDeps): Promise<Screen
   const screen = readScreen(state);
   if (screen.outcome === "unfinished") return { ...base, status: "error", matches: [], error: screen.reason || "Mesh's screen did not finish", errorKind: "unfinished", customerId: screen.customerId };
   if (screen.outcome === "clear") return { ...base, status: "clear", matches: [], customerId: screen.customerId };
-  const fallback = (): ScreeningMatch[] => (screen.kinds.length ? screen.kinds : ["warning"]).map(k => ({ name: subject.name, matchType: k }));
+  // The profiles behind a hit could not be read: kinds only, marked unread (nothing to judge them by).
+  const fallback = (): ScreeningMatch[] => (screen.kinds.length ? screen.kinds : ["warning"]).map(k => ({ name: subject.name, matchType: k, details: { unread: true } }));
   try {
     const { risks, complete } = await readRisks(screen.alertIds, deps);
     const { matches, setAside } = matchesFromRisks(risks, subject, kind);

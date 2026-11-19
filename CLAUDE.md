@@ -3365,8 +3365,10 @@ from Mesh's own documentation (docs.mesh.complyadvantage.com, read
   fitness_probity (`amlKind`). A hit's matched profiles are read from its
   alerts (`GET /v2/alerts/:id/risks`, up to two alerts): one match per kind
   per profile, with the matched name, the list or source name, and the score
-  only when it is between 0 and 1 (Mesh does not document its scale, and the
-  KYC screens read 0.9 and above as strong). A person's profile whose every
+  (Mesh does not document its scale; since 19 November 2026 a score of 1 to
+  100 is read as a percentage, as Mesh's screens show it, a fraction as it
+  is, anything else is dropped), and whether the profile's birth year agrees
+  with the person's (`birthYearAgrees`). A person's profile whose every
   date of birth is more than a year from the subject's is set aside
   (`setAside`), the free lists' rule; all set aside is clear. A screen Mesh
   skipped (risk rated prohibited) or did not finish is an error, never
@@ -3403,11 +3405,12 @@ from Mesh's own documentation (docs.mesh.complyadvantage.com, read
   rises sharply with year of birth and country (their example: a common name
   34 alone, 67 with a country, 95 with a year of birth), so a name-only
   screen of a common name can score under 50; the free UK and US sanctions
-  lists in the checks before asking still catch exact names. Offered, not
-  built: separate collections through Mesh's API (sanctions 50, PEPs 60, the
-  rest 90), the app applying those bars to red flags, and sending year of
-  birth and country. The old `/api/comply-advantage/probe`, which posted test
-  searches to seven addresses for any login, is gone.
+  lists in the checks before asking still catch exact names. Since 19
+  November 2026 the app sends a person's birth month and year and a UK
+  nationality, and applies the bars to red flags itself (next section). Not
+  built: separate collections through Mesh's API. The old
+  `/api/comply-advantage/probe`, which posted test searches to seven
+  addresses for any login, is gone.
 - Callers: BGP's checks before asking (`server/kyc-prechecks.ts`, live while
   in-app AML is off), and with in-app AML on, the KYC orchestrator, KYC
   Clouseau and the weekly re-screen job. Not run against Mesh from a build
@@ -3743,6 +3746,51 @@ Guards: `qa/regression/aml-box-company-and-flags.test.mjs`; unit tests in
   aside. Not run against Companies House or ComplyAdvantage from a build
   machine (no keys here): the queue and the profile detail are first seen on
   live.
+
+## Which screening matches are red flags (Woody, 2026-11-19)
+
+Woody, on deal #4491 (BGP's own two companies, every officer red-flagged):
+"why is complyadvantage red flagging everything?". The app sent Mesh a bare
+name and turned every hit into a red flag, so common names (Jack Barratt,
+Charlotte Roberts, David Bruce) matched namesakes in ComplyAdvantage's PEP
+and adverse-media data; the web search added flags for results it marked
+"may be someone else", one per source, and worded a company's ownership
+question as a "public role". Asked, he chose **"Tighten"**. Do not
+re-litigate. Rules: `shared/kyc-prechecks.ts` (`providerMatchFlags`,
+`splitProviderMatches`, `precheckNamesakes`, `PROVIDER_FLAG_BARS`); tests
+`server/kyc-prechecks.test.ts`, `server/comply-advantage.test.ts` (both in
+`npm test`), `qa/regression/kyc-screening-bars.test.mjs`.
+
+- **A ComplyAdvantage match is a red flag** when it is a sanctions or
+  warning-list match (whatever the score); when the profile's birth year is
+  within a year of the person's; when ComplyAdvantage scores it at least 60%
+  for a public role (PEP) or 90% for anything else (adverse media, fitness
+  and probity: ComplyAdvantage's own starting points); or when its profiles
+  could not be read (`unread`, or an older match with no profile id: nothing
+  to judge it by). An older check that kept only the kinds of profile stays
+  a flag. **Every other match is a possible namesake to check**: listed on
+  the AML card ("Possible namesakes to check: N", under Show, with the count
+  beside the summary) and in KYC4U's note, never a red flag, never in the
+  sign-off's red flags or Kick off AML's KYC4U switch. The split is worked
+  out when the flags are read, so stored checks change without a re-run.
+- **Web results**: one flag per person and kind, with every source inside
+  it (evidence is every source's address); a result the search marks "may
+  be about someone else of the same name" is a possible namesake, not a
+  flag; for a company the public-role question reads "Possibly owned or
+  controlled by the state or a public figure" (`webLineIsCompany`: the
+  line's `person`, or a corporate word in an older line's name).
+- **What goes to Mesh**: a person's birth month and year
+  (`date_of_birth: { year, month, day: null }`) and nationality `GB` when
+  Companies House records a UK nationality (`meshNationality`; any other is
+  left out, never guessed); a company its name alone. Mesh's docs make each
+  date part nullable without saying a partial date is accepted, so a 400 or
+  422 to a body with them screens the same name again bare, and for the next
+  day every screen goes bare (`meshRefusedDetailsRecently`, in memory). Not
+  run against Mesh from a build machine: the first screen on live shows
+  whether Mesh takes the partial date.
+- A flag set aside before this change keeps its review only while its key
+  and evidence still match (`applyFlagReviews`); a web flag that now holds
+  several sources needs one set-aside covering them.
 
 ## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
 
