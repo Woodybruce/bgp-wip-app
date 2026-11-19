@@ -1,0 +1,405 @@
+# Leasing requirements board review, 19 November 2026
+
+Woody, 19 November 2026: "Can you look at the leasing requirements board it's
+old and I think isn't that well set up or linked to the rest of the app?"
+
+The board is the **Requirements** pill on Brands (`/brands?tab=requirements`,
+`client/src/pages/requirements.tsx`, Leasing view). I looked at it on live as
+BGP staff on a computer and a phone, read every requirement row through the
+read-only test login, and read the code. Nothing was changed or sent. Nothing
+here is built until Woody approves.
+
+The 12 November work (`docs/requirements-review-2026-11-12.md`) fixed what a
+requirement **means**: who confirmed it and when, and the rule that a machine
+only ever suggests. It left the board's **shape** as it was: a wide
+spreadsheet of rows with an editor in every cell. This review is about that
+shape and its links.
+
+## The short answer
+
+The board is a feed of PIPnet listings laid out as an old spreadsheet.
+
+- Of 211 requirements on live, 210 are PIPnet imports that nobody at BGP has
+  confirmed. One was made by BGP. None has ever been closed.
+- It opens on 58 suggestions, not on requirements.
+- The row runs to 17 columns. Three of them are empty on every row, and two
+  more repeat what the row already says.
+- A requirement has no page of its own. You can edit it, but you cannot open
+  it.
+- What the row links to is thin. The units that fit open the property, not the
+  unit. Discuss starts a new chat each time you press it. The brand's
+  expansion score, Super Brand star, Brand CRM stage, viewings and offers are
+  not on the row at all.
+- "Fit your units 199" means size alone. 199 of the 211 requirements fit,
+  averaging 36 units each out of 153 on the market. The rule the rest of the
+  app uses gives 140 requirements with a fit, averaging 5 units each.
+- It downloads the whole CRM every time it opens: about 3.4 MB compressed. On
+  top of that, a news list takes 10 seconds to answer.
+
+The proposal: a board of the brands that want space, with the brand's context
+on each row. A requirement panel that opens from anywhere in the app with
+`?requirementId=`. One fit rule, with each fit opening the unit. A feed that
+loads only what the board shows. Six decisions for Woody are at the end.
+
+## What the board is today (live, 19 November 2026)
+
+**The rows.** 211 leasing requirements, every one with status Active.
+
+| | Rows |
+|---|---|
+| PIPnet imports (no `origin`, source PIPnet) | 210 |
+| Made by BGP (`origin = 'bgp'`) | 1 |
+| Confirmed by a named person | 1 |
+| Closed (past, archived or satisfied) | 0 |
+| Linked to a brand | 210 |
+| An agent contact (the agent PIPnet lists) | 206 |
+| A BGP owner | 1 |
+| A principal contact at the brand | 0 |
+| A deal | 0 |
+| Map locations | 0 |
+| Typed places (`requirement_locations`) | 70 |
+| A size | 202 |
+| A use | 173 |
+| A requirement type (high street, shopping centre ...) | 117 |
+| A group (F&B, Retail, Fitness & Wellness, Leisure) | 83 |
+| Comments | 158 |
+| A landlord pack (a one-page PDF) | 210 |
+
+No brand has more than one requirement: the PIPnet import keeps one row per
+brand.
+
+**How old they are.** The board counts a market listing's age from the day
+PIPnet listed it. The median is 119 days. 99 were listed within the last 90
+days, and 52 more than six months ago. 149 rows were imported before 12
+November, when the import started stamping its own listing date. For those
+149, the only date is PIPnet's original requirement date, so a listing PIPnet
+still carries cannot be told apart from one it dropped.
+
+**The lists.** To confirm 58 (all 58 are suggestions: 48 from news, 10 from
+emails; no requirement rows), Live 1, Going stale 0, In the news 550, Market
+listings 210, Closed 0. The board opens on To confirm, which is the
+suggestions tray. Below the lists come a row of filters (Fit your units 199,
+Last 90 days 99, Retail 20, F&B 33, Fitness & Wellness 18, Leisure 12,
+Other 128, Source, Sort), two demand cards, and then the list.
+
+**The units the board fits against.** 153 units on the Letting Tracker are
+marketing (AVA 138, NEG 15). Of these, 115 have a size, 38 do not, and 96 have
+no use class at all.
+
+## Findings
+
+### It opens on the wrong thing
+
+1. **The first screen is the suggestions tray.** It shows 58 news and email
+   suggestions, each with Confirm and Wrong brand buttons. No requirement is
+   on the first screen on a computer, and none is above the fold on a phone.
+   The tray is BGP's work list, and it is worth having. But it is not "who
+   wants space". The 12 November design made it the To confirm list because
+   suggestions and unconfirmed drafts would sit there together. On live, To
+   confirm holds suggestions only.
+
+2. **"76 open requirements" is not the number of open requirements.** It sits
+   under "Most-wanted size: 1,000–3,000 sq ft". It is the number of
+   requirements in that size band (`demand.topBand`, `requirements.tsx` about
+   line 1248), but it reads as a total. There are 211.
+
+### The row is a spreadsheet
+
+3. **17 columns, wider than the screen.** The columns are Name, State, BGP
+   owner, Dated, Status, Use, Requirement Type, Size, Req. Locations, Fits,
+   Map Locations, Principal Contact, Agent Contact, Deal, Landlord Pack,
+   Comments and Actions (`LeasingSection`, from line 2796). On a 1440px screen
+   the table stops at Use. Every other column sits off to the right. Most
+   cells are editors in place: a brand picker, a contact picker, multi-selects
+   for use, type and size, a date, a map. This is how the board was set up as
+   a Monday.com-style sheet.
+
+4. **Three columns are empty on every row:** Principal Contact (0 rows), Deal
+   (0) and Map Locations (0). The property chips under Map Locations come from
+   somewhere else (finding 9).
+
+5. **Two columns repeat what the row already says.** Status reads Active on
+   all 211 rows, next to the State chip ("Market listing"), so each row shows
+   two statuses that disagree in kind. Dated repeats the "listed on PIPnet
+   13 Oct" line that already sits under the State chip.
+
+6. **A requirement has no page.** Nothing opens a requirement to read it.
+   `?requirementId=` opens the edit form for staff (`requirementId`, line 337)
+   and a search for a client login. The evidence drawer
+   (`RequirementEvidenceDrawer`, `client/src/components/requirement-centre.tsx`)
+   is the only read-only view. It holds the evidence lines and nothing about
+   the brand.
+
+### What the row links to
+
+7. **The units that fit open the property, not the unit.** A fit opens
+   `/properties/:id` (line 3210). The app has helpers for opening the unit
+   itself (`client/src/lib/unit-links.ts`: `propertyUnitHref` for the unit on
+   the property page, `trackerUnitHref` for its tracker row), but the board
+   does not use them.
+
+8. **"+N more" cannot be clicked, and "+ brief" only appears on hover.** "+N
+   more" (line 3237) is plain text. "+ brief", which adds the brand to the
+   unit's Targeting Brief, is hidden until the mouse is over it
+   (`opacity-0 group-hover`), so on a phone nobody can see it. The full list
+   of fits is behind the row's Find matching units button, which opens a
+   second dialog with its own rule (finding 12).
+
+9. **A second "match" on the same row, by a different rule.** Under Map
+   Locations, up to three property chips show. They come from
+   `propertyMatchMap` (line 676), which checks the requirement's typed places
+   against the name and address of **every** property record in the CRM,
+   whoever owns it and whether or not BGP is letting it. So a row can show
+   fits from one rule and property chips from another, and the two do not
+   agree.
+
+10. **Discuss starts a new conversation every time.** Discuss posts a new
+    chat thread titled "<brand> — requirement", with ChatBGP in it, and moves
+    you there (`discussRequirement`, line 577). Pressed twice, it makes two
+    threads. Neither is linked to the brand or the requirement. The brand's
+    own conversation, the one on the brand page, is not used.
+
+11. **Most of what the app knows about the brand is not on the row.** The
+    brand's name opens its page, and the agent opens the contact page. That is
+    all. The row does not show:
+    - the Expansion score and its band;
+    - the Super Brand star;
+    - the brand's BGP team;
+    - its stage at a scheme on the Brand CRM;
+    - its viewings and offers on the Letting Tracker;
+    - its store count and sites on the way;
+    - its latest news;
+    - its CRM plan;
+    - a link to the PIPnet listing (`external_requirement_id` is on 62 rows,
+      but the board does not use it).
+
+    The board does have a "Recent viewing evidence" card, but it only shows
+    while its viewing filter is on, and it sits above the list, not on each
+    row.
+
+### The fits
+
+12. **Five rules for whether a requirement fits a unit**, counting only the
+    ones that touch this board.
+
+    - **The board's Fits column** (`GET /api/crm/requirements-leasing/matches`,
+      `server/crm.ts` line 5621): a unit with a size fits on size alone. A unit
+      with no size fits on use or place.
+    - **`requirementFitsUnit`** (`shared/requirement-fit.ts`): size **and** use
+      or place. A unit with no size needs both use and place. Space fits on
+      landlord pages (`server/account-teams.ts`) and the target engine
+      (`server/target-tenant-engine.ts`) use it. Its comment says "same rules
+      as the requirements Fits column", which is not true.
+    - **`requirementUseFits`**: size and use class. A unit with no use class
+      counts as fitting. The board's Find matching units dialog
+      (`/api/requirements/matches/:id`, `server/routes.ts`), the tracker's
+      Find matching requirements and Brand Gap's lists
+      (`server/property-gap-analysis.ts`) use it.
+    - **The Brand CRM's chip** (`requirementChip`, `shared/brand-stage.ts`):
+      size and place, with regions, and no use.
+    - **The property chips** (finding 9): place words against every property.
+
+    CLAUDE.md counts six matchers across the app. The AI brand suggestions
+    and ChatBGP's own reading are the other two.
+
+    On the live data:
+
+    | Rule | Requirements with a fit | Units per requirement, on average |
+    |---|---|---|
+    | The board (size alone) | 199 of 211 | 35.7 |
+    | Size and use class (`requirementUseFits`) | 198 | 26.3 |
+    | Size and use or place (`requirementFitsUnit`) | 140 | 5.2 |
+
+    When a requirement "fits" a quarter of the market, the fit tells you
+    nothing. Izzy Home Store fits 90 units on the board, 63 on size and use
+    class, and 10 on the shared rule. City Slots fits 81, 53 and 4. The single
+    fit rule has waited on Woody since 12 November.
+
+13. **The units are as much the problem as the rule.** 96 of the 153
+    marketing units have no use class, and 38 have no size. A use test cannot
+    do its work on a unit with no use. So whichever rule is chosen, those
+    units need a use class and a size before fits are honest.
+
+### Speed
+
+14. **It downloads the whole CRM on every open.** The page fetches every
+    company (1.37 MB compressed), every contact (1.37 MB), every deal
+    (0.25 MB), every property (0.21 MB) and every viewing (0.21 MB). That is
+    about 3.4 MB compressed, mostly for the pickers inside the cells. The deal
+    page did the same until 18 November, and it now loads its pickers only
+    when they are opened.
+
+15. **In the news takes 10 seconds and loads even when nobody opens it.**
+    `GET /api/requirement-centre/expanding` answered in 10.3 seconds on live.
+    The page asks for it on every staff open (`expandingQuery`, line 544),
+    whichever list is showing.
+
+## Where the rest of the app meets requirements
+
+Being mapped (19 November 2026): every screen, report and ChatBGP tool that
+names a requirement, and where each one sends you. This section follows.
+
+## Proposal
+
+The rules of 12 and 17 November stay exactly as they are. A machine only
+suggests, and a named BGP person confirms. Nothing ages a row on a timer. A
+requirement's state is read, never stored. Client logins read, add and amend
+every requirement, but never see its state, its owner or who confirmed it.
+Joint agents see none. Everything below is reading and layout. The only
+writes are the ones the board already makes.
+
+### 1. A board of brands that want space
+
+One row per brand. The data already holds one requirement per brand.
+
+On a computer the row needs about eight columns, which fit the screen with no
+sideways scroll:
+
+| Column | What it shows |
+|---|---|
+| Brand | Logo, name and the Super Brand star. Opens the brand page. |
+| Wants | Size, use and places in one line, with the requirement type under it. |
+| State | One chip and one date: "Listed on PIPnet 13 Oct", "Confirmed by Emily 3 Nov". No Status column and no Dated column. |
+| Fits | How many units fit by the one rule (section 3). The best one names the unit and opens it. |
+| Agent | The named person and their firm, with call and email icons. Opens the contact. |
+| BGP | The requirement's owner. If it has none, the brand's BGP team, greyed (decision 5). |
+| Expansion | The score and its band, as on Brand Hunter. |
+| Last contact | From `shared/last-contact.ts`, as on the CRM lists. |
+
+On a phone the same row becomes a card, and the list comes first.
+
+Editing moves into the requirement panel (section 2). That removes the
+pickers from the row, and with them the need to download the whole CRM.
+
+The list pills become: **Open** (the default), **BGP's own**, **Market
+listings**, **Suggestions 58**, **In the news**, **Closed**, with Everyone /
+Mine. The filters go into one Filters popover, as on the Investment Tracker.
+The two demand cards become one line ("Most wanted: 1,000–3,000 sq ft (76 of
+211) · London, Marylebone, Covent Garden"), or are dropped.
+
+### 2. A requirement panel that opens from anywhere
+
+Pressing a row opens a panel beside the list. Its address is
+`?requirementId=`, so every link in the app that names a requirement lands on
+it. Today those links open the edit form.
+
+The panel shows:
+
+- **The head:** the brand, its star, the state and its evidence line, and
+  Confirm or Still live. Then Edit, and More (Close as satisfied, Not live,
+  Delete for admins).
+- **What it wants:** size, use, type, places, comments, the source, and the
+  PIPnet listing.
+- **Who:** the agent (with call and email, and their firm's page), the BGP
+  owner, and the principal contact at the brand.
+- **Where it fits:** every unit by the one rule, each with the reason ("size
+  fits · Restaurant · Leeds"). Each one opens the unit (`propertyUnitHref` or
+  `trackerUnitHref`). Each has **Add as target** (the unit's Targeting Brief,
+  as "+ brief" does today, but visible) and **Want at this scheme** (the Brand
+  CRM's Wanted line).
+- **The brand:**
+  - Expansion score, store count, sites on the way and the latest signals,
+    drawn from the brand page's own cards;
+  - its stage at each scheme on the Brand CRM;
+  - its viewings and offers on the Letting Tracker in the last 12 months;
+  - its deals;
+  - its landlord pack.
+- **Evidence:** the evidence drawer's lines, and Add evidence.
+- **Conversation:** the brand's own conversation, the same thread as on the
+  brand page, in place of Discuss's new thread each time.
+- **CRM:** the brand's plan card, with Start strategy.
+
+A client login sees what it wants, the agent, the brand link and the fits
+against its own units. It does not see the state, the owner, the evidence or
+the CRM plan, so the cut stays as `requirementClientCopy` and
+`requirementReason().clientText` make it today.
+
+### 3. One fit rule, and each fit opens the unit
+
+The board's Fits column, Find matching units, the tracker's Find matching
+requirements, Brand Gap, space fits and the target engine all use one
+function. The Brand CRM chip keeps its wording ("Size fits, no places") but
+uses the same rule underneath. Each fit says why it fits. The property chips
+(finding 9) go.
+
+Which rule is decision 2. Alongside it, a data card lists the marketing units
+with no use class (96) or no size (38) for someone to fill in. Nothing is
+written automatically.
+
+### 4. Load only what the board shows
+
+One feed route, in the style of `server/crm-hub.ts`, sends the board's rows
+in a fixed number of queries. Each row carries the brand's name and logo, the
+star, the Expansion score, the BGP team, the agent's name, the fits and the
+last contact. The pickers load when the panel's Edit opens. In the news loads
+only when its pill is opened, and its 10-second query gets looked at.
+
+### 5. Every link in the app opens the panel
+
+Every place that names a requirement opens the panel with `?requirementId=`:
+
+- the brand page's requirements card;
+- Brand Gap's targets;
+- the Letting Tracker's matching requirements;
+- ChatBGP's receipts;
+- the contact page;
+- the landlord chat;
+- the dashboard widget.
+
+The section above lists every such place.
+
+## Build order
+
+1. **Feed and fit rule (server):** the board feed, and the chosen fit rule in
+   `shared/requirement-fit.ts` with tests, used by every caller (finding 12).
+   The client cut and the joint agent rule carry over unchanged.
+2. **The panel:** read, then edit, with the brand's cards, fits, evidence,
+   conversation and CRM plan.
+3. **The board:** the new row on a computer and a phone, the pills, the
+   Filters popover, and the corrected demand line.
+4. **Links in:** every caller opens the panel. Update `server/chatbgp-app-map.ts`
+   and the requirements section of CLAUDE.md.
+5. **The unit data card**, if Woody wants it (decision 2).
+
+Each step is checked in a browser against a local copy before it is
+committed. Nothing is pushed until Woody says push.
+
+## Decisions for Woody
+
+1. **One row per brand, or one row per requirement?** I recommend one row per
+   brand. The data already holds one requirement per brand, and BGP works
+   brand by brand. A brand with a second requirement would show both inside
+   its row.
+
+2. **The fit rule.**
+   - (a) Size **and** use or place. This is the rule most of the app already
+     uses: 140 requirements with a fit, about 5 units each.
+   - (b) Size and use class, with place only used to rank: 198 with a fit,
+     about 26 units each until the 96 units get a use class.
+   - (c) Size alone, as the board does today: 199 with a fit, about 36 units
+     each.
+
+   I recommend (a), together with the unit data card, so the use test has
+   something to work with.
+
+3. **What the board opens on.** I recommend Open: BGP's own first, then
+   market listings, newest listing first. Suggestions would become their own
+   pill, with the count.
+
+4. **Old market listings.** 52 listings are more than six months old. For 149
+   of them, the board cannot tell whether PIPnet still carries them. I
+   recommend a market listing that PIPnet has not listed for six months shows
+   under Older. This would be worked out when the board is read, with nothing
+   written to the database. Today an unconfirmed import stays under Market
+   listings at any age.
+
+5. **The owner.** 210 of 211 requirements have no BGP owner. I recommend that
+   when a requirement has no owner, the board shows the brand's BGP team as
+   the owner, greyed and marked "via the brand". This would also be worked
+   out on read, with nothing written. Handing owners out from the brand's team
+   is on the 12 November "not built, waiting on Woody" list.
+
+6. **In the news (550 brands).** These are brands in the press with nothing on
+   BGP's books. I recommend it stays a pill on the board but loads only when
+   opened. The alternative is moving it to Brand Hunter as a filter, since it
+   is a prospecting list.
