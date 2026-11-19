@@ -4105,7 +4105,7 @@ export default function AvailableUnitsPage() {
                     </Button>
                     {/^(agreed|accepted)$/i.test(o.status || "") && offersUnit && (
                       <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => { const u = offersUnit; setOffersUnit(null); setNegotiationOfferId(null); setAddOfferOpen(false); setRecommendationUnit(u); }} data-testid={`offer-recommendation-${o.id}`}>
-                        Transaction recommendation
+                        Approval pack
                       </Button>
                     )}
                     {offersUnit && negotiationOfferId !== o.id && <span className="text-[11px] text-muted-foreground"><NegotiationSummary unitId={offersUnit.id} offerId={o.id} /></span>}

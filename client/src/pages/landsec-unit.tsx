@@ -202,7 +202,7 @@ export default function LandsecUnit() {
           )}
           {trackerId && <Button variant="outline" size="sm" onClick={() => setHotsOpen(true)} data-testid="landsec-unit-open-hots">Heads of Terms</Button>}
           {trackerId && <Button variant="outline" size="sm" onClick={() => setChecklistOpen(true)} data-testid="landsec-unit-open-checklist">Deal checklist</Button>}
-          {trackerId && <Button variant="outline" size="sm" onClick={() => setRecommendationOpen(true)} data-testid="landsec-unit-open-recommendation">Recommendation</Button>}
+          {trackerId && <Button variant="outline" size="sm" onClick={() => setRecommendationOpen(true)} data-testid="landsec-unit-open-recommendation">Approval pack</Button>}
           {!restricted && <Link href={`/properties/${unit.propertyId}`}><Button variant="outline" size="sm">Property record</Button></Link>}
         </div>
       </div>

@@ -231,7 +231,7 @@ export function RecommendationComparables({ rows, canEdit, api, onChange }: {
               {picker?.loading && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}Add from this scheme
             </Button>
           </div>
-          {full && <p className="text-xs text-muted-foreground" data-testid="recommendation-comparables-full">A recommendation holds {COMPARABLES_MAX} comparables at most. Remove one to add another.</p>}
+          {full && <p className="text-xs text-muted-foreground" data-testid="recommendation-comparables-full">An approval pack holds {COMPARABLES_MAX} comparables at most. Remove one to add another.</p>}
         </div>
       )}
 
@@ -299,7 +299,7 @@ export function RecommendationComparables({ rows, canEdit, api, onChange }: {
             <Button type="button" variant="ghost" size="sm" onClick={() => setForm(null)} data-testid="recommendation-comparable-cancel">Cancel</Button>
             <Button type="submit" variant="outline" size="sm" data-testid="recommendation-comparable-submit">{form.id ? "Update the row" : "Add the row"}</Button>
           </div>
-          <p className="text-xs text-muted-foreground">The row is kept when you save the recommendation.</p>
+          <p className="text-xs text-muted-foreground">The row is kept when you save the approval pack.</p>
         </form>
       )}
     </section>

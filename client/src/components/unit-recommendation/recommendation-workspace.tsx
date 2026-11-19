@@ -1,7 +1,7 @@
 // The letting transaction recommendation on a Letting Tracker unit (Woody,
 // 2026-11-12: "we also need to provide letting transaction recommendation
 // once the HOTs are issued to a tenant"). One dialog: the agents (BGP, and
-// the joint agent on the scheme) write the recommendation in the form the client asked for (the transaction, how it
+// the joint agent on the scheme) write the approval pack in the form the client asked for (the transaction, how it
 // measures against the brief, how the bid moved, comparable evidence and
 // commentary) and issue it once the Heads of Terms have gone to the tenant,
 // and the client's leasing and asset managers decide.
@@ -149,11 +149,11 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
   const setComparables = (rows: RecommendationComparable[]) => setDraft(d => (d ? { ...d, comparables: rows } : d));
 
   // ── Start, save, refresh ────────────────────────────────────────────
-  const start = () => run("start", "The recommendation was not started", async () => {
+  const start = () => run("start", "The approval pack was not started", async () => {
     const next = await hotsCall<RecommendationWorkspace>("POST", `${api}/start`, {});
     put(next);
     adopt(next);
-    toast({ title: "Recommendation started", description: "The terms are filled from the agreed offer. Check them, then write the commentary." });
+    toast({ title: "Approval pack started", description: "The terms are filled from the agreed offer. Check them, then write the commentary." });
   });
   const save = async () => {
     if (busy || !base || !draft || !dirty || !ws) return;
@@ -194,7 +194,7 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
   };
   const refresh = () => {
     if (!ws) return;
-    if (ws.issuedAt && !window.confirm("Refresh the terms from the agreed offer? If a term changes, the recommendation goes back to the client for decision.")) return;
+    if (ws.issuedAt && !window.confirm("Refresh the terms from the agreed offer? If a term changes, the approval pack goes back to the client for decision.")) return;
     run("refresh", "The terms were not refreshed", async () => {
       const next = await hotsCall<RecommendationWorkspace & { refreshed?: boolean }>("POST", `${api}/refresh`, {});
       put(next);
@@ -206,7 +206,7 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
     if (busy || !ws) return;
     setBusy("pdf");
     try {
-      await downloadWithAuth(`${api}/pdf`, `Recommendation - ${ws.unit.unitName}.pdf`);
+      await downloadWithAuth(`${api}/pdf`, `Approval pack - ${ws.unit.unitName}.pdf`);
     } catch (e) {
       toast({ title: "The PDF could not be downloaded", description: (e as Error).message, variant: "destructive" });
     } finally {
@@ -238,18 +238,18 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
     const client = ws.unit.clientName || "the client";
     const names = ws.deciders.map(d => d.name);
     const who = names.length ? `${listNames(names)} ${names.length === 1 ? "is" : "are"} emailed and asked to decide.` : "Nobody from the client is on the Targeting Brief, so nobody is emailed or asked to decide.";
-    if (!window.confirm(`Issue ${ws.issuedAt ? `version ${ws.version} of the recommendation` : "the recommendation"} to ${client}?\n\n${who}`)) return;
-    run("issue", "The recommendation was not issued", async () => {
+    if (!window.confirm(`Issue ${ws.issuedAt ? `version ${ws.version} of the approval pack` : "the approval pack"} to ${client}?\n\n${who}`)) return;
+    run("issue", "The approval pack was not issued", async () => {
       const next = await hotsCall<IssueAnswer>("POST", `${api}/issue`, {});
       put(next);
       if (next.emailFailed.length) toast({ title: "Issued, but not everyone was emailed", description: `Not emailed: ${listNames(next.emailFailed)}. ${next.emailReason || ""} Tell them yourself.` });
-      else toast({ title: "Recommendation issued", description: next.emailed ? `${count(next.emailed, "person", "people")} emailed.` : undefined });
+      else toast({ title: "Approval pack issued", description: next.emailed ? `${count(next.emailed, "person", "people")} emailed.` : undefined });
     });
   };
   const decide = (d: RecommendationDecider, decision: RecommendationDecision, comment: string) => {
     if (!ws) return;
     const word = decision === "approved" ? "approved" : decision === "query" ? "raised a query on" : "declined";
-    if (!d.isMe && !window.confirm(`Record that ${d.name} has ${word} version ${ws.version} of the recommendation? The record will show that you recorded it.`)) return;
+    if (!d.isMe && !window.confirm(`Record that ${d.name} has ${word} version ${ws.version} of the approval pack? The record will show that you recorded it.`)) return;
     run(`decide:${d.briefPersonId}`, "The decision was not recorded", async () => {
       put(await hotsCall<RecommendationWorkspace>("POST", `${api}/decide`, {
         version: ws.version, decision, ...(comment.trim() ? { comment: comment.trim() } : {}), ...(d.isMe ? {} : { briefPersonId: d.briefPersonId }),
@@ -263,10 +263,10 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
     <DialogHeader className="space-y-1 text-left">
       <DialogTitle className="flex items-start gap-2 pr-8 text-left">
         <ClipboardCheck className="mt-0.5 h-4 w-4 shrink-0" />
-        <span className="min-w-0 break-words">Transaction recommendation: {ws?.unit.unitName || unit.unitName}</span>
+        <span className="min-w-0 break-words">Deal analysis and letting approval pack: {ws?.unit.unitName || unit.unitName}</span>
       </DialogTitle>
       <DialogDescription className="text-left">
-        {ws ? [ws.unit.propertyName, ws.unit.clientName, ws.unit.dealRef !== null ? `Deal #${ws.unit.dealRef}` : ""].filter(Boolean).join(" · ") || "Letting Tracker unit" : "Loading the recommendation"}
+        {ws ? [ws.unit.propertyName, ws.unit.clientName, ws.unit.dealRef !== null ? `Deal #${ws.unit.dealRef}` : ""].filter(Boolean).join(" · ") || "Letting Tracker unit" : "Loading the approval pack"}
       </DialogDescription>
     </DialogHeader>
   );
@@ -278,7 +278,7 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
         {query.isError ? (
           <div className="space-y-3 rounded-lg border border-dashed p-6 text-center" data-testid="recommendation-load-error">
             <CircleAlert className="mx-auto h-6 w-6 text-muted-foreground" />
-            <p className="text-sm">{query.error?.message || "The recommendation could not be loaded."}</p>
+            <p className="text-sm">{query.error?.message || "The approval pack could not be loaded."}</p>
             {query.error?.status !== 403 && query.error?.status !== 404 && (
               <Button type="button" variant="outline" size="sm" onClick={() => query.refetch()} data-testid="recommendation-retry">Try again</Button>
             )}
@@ -306,7 +306,7 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
   const waiting = ws.deciders.filter(d => d.decision !== "approved").map(d => d.name);
   const decliners = ws.deciders.filter(d => d.decision === "declined").map(d => d.name);
   const statusLine =
-    !started ? (ws.ready.agreedOffer ? "Not started. An offer has agreed terms, so the recommendation can be written." : "Not started. The recommendation is written once an offer has agreed terms.")
+    !started ? (ws.ready.agreedOffer ? "Not started. An offer has agreed terms, so the approval pack can be written." : "Not started. The approval pack is written once an offer has agreed terms.")
     : stage === "draft" ? `Draft. Not yet issued to ${client}.`
     : stage === "approved" ? `Approved by ${approval.total === 1 ? ws.deciders[0].name : `all ${approval.total} decision-makers`} on ${fmtDate(ws.decidedAt)}.`
     : stage === "declined" ? `${listNames(decliners)} declined version ${ws.version}.`
@@ -407,7 +407,7 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
             <Textarea id={`recommendation-decision-comment-${id}`} value={open.comment} onChange={e => setDeciding({ ...open, comment: e.target.value })} className="min-h-[72px]" data-testid={`recommendation-decision-comment-${id}`} />
             <div className="flex flex-wrap items-center gap-2">
               <Button type="button" size="sm" variant="outline" disabled={!!busy || !!commentError} onClick={() => decide(d, open.decision, open.comment)} data-testid={`recommendation-decision-send-${id}`}>
-                {working && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}{open.decision === "query" ? "Send the query" : "Decline the recommendation"}
+                {working && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}{open.decision === "query" ? "Send the query" : "Decline the approval pack"}
               </Button>
               {commentError && <span className="text-xs text-muted-foreground" data-testid={`recommendation-decision-comment-hint-${id}`}>{commentError}</span>}
             </div>
@@ -459,12 +459,12 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
           <div className="space-y-3 rounded-lg border border-dashed p-5 text-center" data-testid="recommendation-not-started">
             <ClipboardCheck className="mx-auto h-6 w-6 text-muted-foreground" />
             {!viewer.canEdit ? (
-              <p className="text-sm text-muted-foreground" data-testid="recommendation-not-written">The agents have not written the recommendation for this letting yet.</p>
+              <p className="text-sm text-muted-foreground" data-testid="recommendation-not-written">The agents have not written the approval pack for this letting yet.</p>
             ) : ws.ready.agreedOffer ? (
               <>
-                <p className="text-sm">The recommendation starts from the agreed offer. The terms are filled in for you to check, then you write the commentary.</p>
+                <p className="text-sm">The approval pack starts from the agreed offer. The terms are filled in for you to check, then you write the commentary.</p>
                 <Button type="button" disabled={!!busy} onClick={start} className="h-auto min-h-9 whitespace-normal py-2" data-testid="recommendation-start">
-                  {busy === "start" && <Loader2 className="mr-1 h-3.5 w-3.5 shrink-0 animate-spin" />}Start the recommendation from {ws.offer?.companyName ? `${ws.offer.companyName}'s` : "the"} agreed terms
+                  {busy === "start" && <Loader2 className="mr-1 h-3.5 w-3.5 shrink-0 animate-spin" />}Start the approval pack from {ws.offer?.companyName ? `${ws.offer.companyName}'s` : "the"} agreed terms
                 </Button>
               </>
             ) : (
@@ -656,7 +656,7 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
                   )}
                   {!ws.ready.hotsIssued && (
                     <div className="flex flex-wrap items-center gap-2" data-testid="recommendation-hots-not-issued">
-                      <p className={cn("text-xs", TONE_WARN)}>The Heads of Terms have not been issued to the tenant yet. The recommendation goes to the client after they have.</p>
+                      <p className={cn("text-xs", TONE_WARN)}>The Heads of Terms have not been issued to the tenant yet. The approval pack goes to the client after they have.</p>
                       {onOpenHots && <Button type="button" variant="outline" size="sm" onClick={onOpenHots} data-testid="recommendation-open-hots">Open Heads of Terms</Button>}
                     </div>
                   )}
@@ -699,7 +699,7 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
                 </ul>
               )}
               {issued && !viewer.isStaff && !canRecord && !myRow && (
-                <p className="text-xs text-muted-foreground" data-testid="recommendation-read-only-note">You can read the recommendation. The decision is made by the client's people listed on the Targeting Brief.</p>
+                <p className="text-xs text-muted-foreground" data-testid="recommendation-read-only-note">You can read the approval pack. The decision is made by the client's people listed on the Targeting Brief.</p>
               )}
             </section>
 
@@ -714,14 +714,14 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
         <div className="shrink-0 space-y-2 border-t bg-background px-4 py-2.5 sm:px-6" data-testid="recommendation-save-bar">
           {stale && (
             <div className="flex flex-wrap items-center gap-2" role="alert" data-testid="recommendation-stale">
-              <p className={cn("min-w-0 flex-1 text-xs", TONE_WARN)}>Someone else changed the recommendation while you were editing. What you typed is still here, but it cannot be saved over theirs.</p>
+              <p className={cn("min-w-0 flex-1 text-xs", TONE_WARN)}>Someone else changed the approval pack while you were editing. What you typed is still here, but it cannot be saved over theirs.</p>
               <Button type="button" variant="outline" size="sm" onClick={loadLatest} data-testid="recommendation-load-latest">Load the latest</Button>
             </div>
           )}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
               <p className="text-sm font-medium">Unsaved changes</p>
-              {issued && <p className="text-xs text-muted-foreground" data-testid="recommendation-save-warning">Saving a change sends the recommendation back for decision.</p>}
+              {issued && <p className="text-xs text-muted-foreground" data-testid="recommendation-save-warning">Saving a change sends the approval pack back for decision.</p>}
               {showErrors && Object.keys(errors).length > 0 && <p className={cn("text-xs", TONE_BAD)} role="alert" data-testid="recommendation-save-errors">Correct the marked boxes, then save.</p>}
             </div>
             <div className="flex shrink-0 gap-2">

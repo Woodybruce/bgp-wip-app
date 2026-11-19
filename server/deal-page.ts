@@ -505,8 +505,8 @@ export async function buildDealTimeline(ctx: DealContext): Promise<DealEvent[]> 
     push({ id: `hots:${h.id}`, at: at(h.created_at), kind: "hots", title, detail: text(h.body) || null, by: text(h.author_name) || null, open: { to: "hots" } });
   }
   for (const r of rec.rows) {
-    push({ id: `rec-issued:${r.id}`, at: at(r.issued_at), kind: "recommendation", title: "Recommendation issued", by: text(r.issued_by_name) || null, open: { to: "recommendation" } });
-    push({ id: `rec-decided:${r.id}`, at: at(r.decided_at), kind: "recommendation", title: "Recommendation approved by the client", open: { to: "recommendation" } });
+    push({ id: `rec-issued:${r.id}`, at: at(r.issued_at), kind: "recommendation", title: "Approval pack issued", by: text(r.issued_by_name) || null, open: { to: "recommendation" } });
+    push({ id: `rec-decided:${r.id}`, at: at(r.decided_at), kind: "recommendation", title: "Approval pack approved by the client", open: { to: "recommendation" } });
   }
   for (const t of ticks.rows) {
     push({ id: `checklist:${t.id}`, at: at(t.done_at), kind: "checklist", title: `Done: ${text(t.label)}`, by: text(t.done_by_name) || null, open: { to: "checklist" } });

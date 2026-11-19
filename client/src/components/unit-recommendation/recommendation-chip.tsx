@@ -6,10 +6,10 @@ import { ClipboardCheck } from "lucide-react";
 import type { RecommendationSummary } from "@shared/unit-recommendation";
 
 export function recommendationChipLabel(summary: RecommendationSummary): { label: string; tone: "approved" | "waiting" | "declined" | "quiet" } {
-  if (summary.stage === "approved") return { label: "Recommendation approved", tone: "approved" };
-  if (summary.stage === "declined") return { label: "Recommendation declined", tone: "declined" };
-  if (summary.stage === "issued") return { label: `Recommendation ${summary.approved}/${summary.total}`, tone: "waiting" };
-  return { label: "Recommendation draft", tone: "quiet" };
+  if (summary.stage === "approved") return { label: "Approval pack approved", tone: "approved" };
+  if (summary.stage === "declined") return { label: "Approval pack declined", tone: "declined" };
+  if (summary.stage === "issued") return { label: `Approval pack ${summary.approved}/${summary.total}`, tone: "waiting" };
+  return { label: "Approval pack draft", tone: "quiet" };
 }
 
 export function RecommendationChip({ summary, onClick, testId }: { summary: RecommendationSummary | null | undefined; onClick: () => void; testId?: string }) {
@@ -24,7 +24,7 @@ export function RecommendationChip({ summary, onClick, testId }: { summary: Reco
       type="button"
       data-no-min-touch
       onClick={onClick}
-      title="Open the transaction recommendation"
+      title="Open the deal analysis and letting approval pack"
       className={`inline-flex items-center gap-1 rounded-full border px-2 py-px text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap leading-none ${cls}`}
       data-testid={testId}
     >

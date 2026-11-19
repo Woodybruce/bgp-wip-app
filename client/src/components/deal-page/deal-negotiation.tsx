@@ -62,7 +62,7 @@ export function DealNegotiation({ letting, trackerHref, onOpen }: {
     <div className="grid grid-cols-1 gap-3 min-w-0" data-testid="deal-negotiation">
       {!live && (
         <div className={cn(sectionCard, "text-sm")} data-testid="deal-letting-earlier">
-          This unit has been marketed again since this deal. Below are this letting's own offers and recommendation; the unit's Heads of Terms, brief and checklist now belong to the new letting.
+          This unit has been marketed again since this deal. Below are this letting's own offers and approval pack; the unit's Heads of Terms, brief and checklist now belong to the new letting.
           {letting.currentDealId && <> <Link href={`/deals/${letting.currentDealId}`} className="text-primary hover:underline">Open the current letting</Link>.</>}
         </div>
       )}
@@ -88,9 +88,9 @@ export function DealNegotiation({ letting, trackerHref, onOpen }: {
           {live && <Button variant="outline" size="sm" className="mt-2 h-7 text-xs" onClick={() => onOpen({ to: "hots" })} data-testid="deal-open-hots">Open Heads of Terms</Button>}
         </div>
         <div className={sectionCard} data-testid="deal-recommendation">
-          <h3 className={heading}>Transaction recommendation</h3>
+          <h3 className={heading}>Deal analysis and letting approval pack</h3>
           <p className="mt-1 text-sm">{recLine}</p>
-          {live && <Button variant="outline" size="sm" className="mt-2 h-7 text-xs" onClick={() => onOpen({ to: "recommendation" })} data-testid="deal-open-recommendation">Open the recommendation</Button>}
+          {live && <Button variant="outline" size="sm" className="mt-2 h-7 text-xs" onClick={() => onOpen({ to: "recommendation" })} data-testid="deal-open-recommendation">Open the approval pack</Button>}
         </div>
         <div className={sectionCard} data-testid="deal-brief">
           <h3 className={heading}>Targeting Brief</h3>

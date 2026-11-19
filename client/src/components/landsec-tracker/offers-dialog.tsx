@@ -311,7 +311,7 @@ export function OffersDialog({ unit, startAdding, seed, onSeedSaved, onClose, on
                     {negotiationId === o.id ? "Hide the negotiation" : "Negotiation"}
                   </Button>
                   {isAgreed(o.status) && (
-                    <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={onOpenRecommendation} data-testid={`ja-offer-recommendation-${o.id}`}>Transaction recommendation</Button>
+                    <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={onOpenRecommendation} data-testid={`ja-offer-recommendation-${o.id}`}>Approval pack</Button>
                   )}
                   {negotiationId !== o.id && <span className="text-[11px] text-muted-foreground"><NegotiationSummary unitId={unitId} offerId={o.id} /></span>}
                 </div>

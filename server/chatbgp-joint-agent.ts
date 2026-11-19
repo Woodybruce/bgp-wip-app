@@ -223,7 +223,7 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
-    name: "ja_get_recommendation", description: "The transaction recommendation on a unit at your schemes: terms, commentary, the measure, its status and the decisions.", idArg: "unitId",
+    name: "ja_get_recommendation", description: "The deal analysis and letting approval pack (the agents' recommendation to the client, once called the transaction recommendation) on a unit at your schemes: terms, commentary, the measure, its status and the decisions.", idArg: "unitId",
     path: id => `/api/unit-recommendations/${id}`,
     spec: {
       unit: { ...(UNIT_HEAD as object), clientName: P } as Spec, stage: P, ready: fields("agreedOffer", "hotsIssued"), offer: { companyName: P, offerDate: P, rentPa: P }, version: P, terms: fields(...RECOMMENDATION_TERM_FIELDS.map(f => f.key)),
@@ -300,9 +300,9 @@ export const JOINT_AGENT_TOOLS: ReadonlyArray<any> = Object.freeze(TOOLS.map(t =
 })));
 export const JOINT_AGENT_TOOL_NAMES: ReadonlySet<string> = new Set(TOOLS.map(t => t.name));
 
-export const JOINT_AGENT_TOOL_REFUSAL = "This chat can only read your own schemes: their units, briefs, viewings, offers, Heads of Terms, checklists, recommendations, deals, tasks and Brand CRM lines.";
+export const JOINT_AGENT_TOOL_REFUSAL = "This chat can only read your own schemes: their units, briefs, viewings, offers, Heads of Terms, checklists, approval packs, deals, tasks and Brand CRM lines.";
 export const JOINT_AGENT_UNVERIFIED = "Your account could not be verified. Please try again.";
-export const JOINT_AGENT_SHARED_TOOL_REFUSAL = "In this conversation ChatBGP reads only the schemes every joint agent here shares: their units, briefs, viewings, offers, Heads of Terms, checklists, recommendations and deals.";
+export const JOINT_AGENT_SHARED_TOOL_REFUSAL = "In this conversation ChatBGP reads only the schemes every joint agent here shares: their units, briefs, viewings, offers, Heads of Terms, checklists, approval packs and deals.";
 
 // Null only for one of the fixed names.
 export function jointAgentToolRefusal(name: unknown): string | null {
@@ -412,7 +412,7 @@ export async function jointAgentToolGate(name: string, args: any, req: Request, 
 export const JOINT_AGENT_SYSTEM_PROMPT = `You are ChatBGP, the assistant in the Bruce Gillingham Pollard app, talking with a joint agent: a person at another agency who works with BGP on letting units at particular Landsec schemes.
 
 What you can do here:
-- Answer questions about the schemes on this person's login, using the tools whose names start "ja_". They read the same pages this person sees: units, Targeting Briefs, target brands, enquiries, viewings, offers and the negotiation log, Heads of Terms, deal checklists, transaction recommendations, the deal clock, their tasks and the Brand CRM lines.
+- Answer questions about the schemes on this person's login, using the tools whose names start "ja_". They read the same pages this person sees: units, Targeting Briefs, target brands, enquiries, viewings, offers and the negotiation log, Heads of Terms, deal checklists, deal analysis and letting approval packs (once called transaction recommendations), the deal clock, their tasks and the Brand CRM lines.
 - Answer general questions from your own knowledge.
 
 Rules:
@@ -425,7 +425,7 @@ Rules:
 Where things are in the app, for this person:
 - Properties (/): their schemes.
 - Deals (/landsec/deals): the deal clock for live deals at their schemes.
-- Tracker (/landsec/tracker): the Letting Tracker for their schemes. A unit's brief, enquiries, viewings, offers, Heads of Terms, checklist and recommendation open from its row.
+- Tracker (/landsec/tracker): the Letting Tracker for their schemes. A unit's brief, enquiries, viewings, offers, Heads of Terms, checklist and approval pack open from its row.
 - Viewings (/landsec/viewings): the viewings calendar.
 - Tasks (/landsec/tasks): their own task list.
 - Brand CRM (/landsec/brand-crm): brands against their schemes, and the shared diary.
@@ -479,7 +479,7 @@ export interface JointAgentChatDeps extends JointAgentRunDeps {
 const PROGRESS: Record<string, string> = {
   ja_my_schemes: "Reading your schemes...", ja_list_units: "Reading your tracker...", ja_get_unit: "Reading the unit...", ja_list_deals: "Reading your deals...",
   ja_get_brief: "Reading the brief...", ja_get_offers: "Reading the offers...", ja_get_negotiation: "Reading the negotiation...", ja_get_heads_of_terms: "Reading the Heads of Terms...",
-  ja_get_deal_checklist: "Reading the checklist...", ja_get_recommendation: "Reading the recommendation...", ja_list_viewings: "Reading the viewings...",
+  ja_get_deal_checklist: "Reading the checklist...", ja_get_recommendation: "Reading the approval pack...", ja_list_viewings: "Reading the viewings...",
   ja_my_tasks: "Reading your tasks...", ja_brand_crm_lines: "Reading the Brand CRM...", ja_diary: "Reading the diary...",
 };
 

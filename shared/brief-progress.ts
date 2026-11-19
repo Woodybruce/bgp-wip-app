@@ -75,7 +75,7 @@ const NEXT: Record<BriefProgressStep["key"], string> = {
   onBrief: "move the offer up to the brief's terms",
   terms: "agree the terms",
   hots: "issue Heads of Terms",
-  clientApproval: "get the client's decision on the transaction recommendation",
+  clientApproval: "get the client's decision on the approval pack",
   solicitors: "instruct solicitors",
   exchanged: "exchange",
   completed: "complete the lease",
@@ -164,9 +164,9 @@ export function briefProgress(input: BriefProgressInput): BriefProgress {
     const rec = input.recommendation;
     const approved = rec.stage === "approved";
     add("clientApproval", "Client approved the transaction", approved || stageAt(code, "SOL"),
-      approved ? "Recommendation approved" : rec.stage === "declined" ? "Recommendation declined"
-        : rec.stage === "issued" ? `Recommendation with the client, ${rec.approved} of ${rec.total} approved`
-        : stageAt(code, "SOL") ? "Not recorded on the recommendation" : "Recommendation in draft",
+      approved ? "Approval pack approved" : rec.stage === "declined" ? "Approval pack declined"
+        : rec.stage === "issued" ? `Approval pack with the client, ${rec.approved} of ${rec.total} approved`
+        : stageAt(code, "SOL") ? "Not recorded on the approval pack" : "Approval pack in draft",
       !approved && stageAt(code, "SOL"));
   }
   add("solicitors", "With solicitors", stageAt(code, "SOL"), stageAt(code, "SOL") ? "Instructed" : "Not yet");

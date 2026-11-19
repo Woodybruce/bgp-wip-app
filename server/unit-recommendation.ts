@@ -483,7 +483,7 @@ function parsePatch(body: any): { ok: true; patch: Patch } | { ok: false; messag
     const terms: RecommendationTerms = {};
     for (const [key, raw] of Object.entries(body.terms)) {
       const f = RECOMMENDATION_TERM_FIELDS.find(x => x.key === key);
-      if (!f) return bad(`"${key}" is not one of the recommendation's terms`);
+      if (!f) return bad(`"${key}" is not one of the approval pack's terms`);
       if (f.kind === "money") {
         const n = parseMoney(raw);
         if (n === undefined || (n !== null && n < 0)) return bad(`${f.label} must be an amount in pounds, like 95000 or £95,000`);
@@ -518,7 +518,7 @@ function parsePatch(body: any): { ok: true; patch: Patch } | { ok: false; messag
   }
   if (body?.comparables !== undefined) {
     if (!Array.isArray(body.comparables)) return bad("The comparables must be a list");
-    if (body.comparables.length > COMPARABLES_MAX) return bad(`A recommendation holds at most ${COMPARABLES_MAX} comparables. Remove one before adding another.`);
+    if (body.comparables.length > COMPARABLES_MAX) return bad(`An approval pack holds at most ${COMPARABLES_MAX} comparables. Remove one before adding another.`);
     const rows: RecommendationComparable[] = [];
     for (let i = 0; i < body.comparables.length; i++) {
       const r = parseComparable(body.comparables[i], i + 1);
@@ -684,15 +684,15 @@ export function recommendationEmail(
     : person.way === "landsec_unit" ? `${appBaseUrl()}/landsec/unit/${encodeURIComponent(ws.unit.id)}?recommendation=1` : null;
   const table = rows.map(([k, v]) => `<tr><td style="padding:2px 16px 2px 0;vertical-align:top"><strong>${esc(k)}</strong></td><td style="padding:2px 0">${esc(v)}</td></tr>`).join("");
   const lead = reissue
-    ? `${from} has changed the letting transaction recommendation for ${place} and issued it again (version ${ws.version}). A decision given on the earlier version no longer counts.`
-    : `${from} has issued the letting transaction recommendation for ${place}. It is waiting for your decision.`;
+    ? `${from} has changed the deal analysis and letting approval pack for ${place} and issued it again (version ${ws.version}). A decision given on the earlier version no longer counts.`
+    : `${from} has issued the deal analysis and letting approval pack for ${place}. It is waiting for your decision.`;
   return {
-    subject: `${reissue ? "Changed recommendation" : "Recommendation"} for your decision: ${place}${hasText(t.tenant) ? ` (${oneLine(t.tenant)})` : ""}`,
+    subject: `${reissue ? "Changed approval pack" : "Approval pack"} for your decision: ${place}${hasText(t.tenant) ? ` (${oneLine(t.tenant)})` : ""}`,
     html: `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5">
 <p>Hello ${esc(person.name.split(" ")[0] || person.name)},</p>
 <p>${esc(lead)}</p>
 <table style="border-collapse:collapse;font-size:14px">${table}</table>
-${link ? `<p><a href="${esc(link)}">Open the recommendation</a></p>
+${link ? `<p><a href="${esc(link)}">Open the approval pack</a></p>
 <p>Open it to approve it, raise a query or decline it.</p>` : `<p>Reply to ${esc(who)} with your decision and ${issuerFirm === null ? "BGP" : "they"} will record it.</p>`}
 <p>Subject to contract.</p>
 </div>`,
@@ -700,7 +700,7 @@ ${link ? `<p><a href="${esc(link)}">Open the recommendation</a></p>
 }
 
 // ── Help me write it ─────────────────────────────────────────────────────
-const DRAFT_SYSTEM = `You help a surveyor at Bruce Gillingham Pollard (BGP), a UK retail and leisure leasing agency, write one section of a letting transaction recommendation to the landlord client. The client's leasing manager and asset manager read it and decide whether to proceed.
+const DRAFT_SYSTEM = `You help a surveyor at Bruce Gillingham Pollard (BGP), a UK retail and leisure leasing agency, write one section of a deal analysis and letting approval pack, the agents' recommendation on a letting to the landlord client. The client's leasing manager and asset manager read it and decide whether to proceed.
 
 Rules:
 - British English. Short factual sentences. Figures first, then what they mean.
@@ -805,7 +805,7 @@ async function buildRecommendationPdf(ws: RecommendationWorkspace, logoUrl: stri
   const unitName = oneLine(pdfSafe(ws.unit.unitName));
   const propertyName = oneLine(pdfSafe(ws.unit.propertyName));
   const today = longDate(new Date());
-  doc.setTitle(`Letting transaction recommendation: ${unitName}${propertyName ? `, ${propertyName}` : ""}`);
+  doc.setTitle(`Deal analysis and letting approval pack: ${unitName}${propertyName ? `, ${propertyName}` : ""}`);
   doc.setAuthor("Bruce Gillingham Pollard");
 
   const markLight = wordmarkBytes("light"), markDark = wordmarkBytes("dark");
@@ -832,7 +832,7 @@ async function buildRecommendationPdf(ws: RecommendationWorkspace, logoUrl: stri
   const newPage = () => {
     page = doc.addPage(A4);
     drawMark(page, logoDark, MARGIN, ph - 50, 16);
-    drawLabel(page, "Letting transaction recommendation", pw - MARGIN, ph - 46, 7.5, STONE, "right");
+    drawLabel(page, "Deal analysis and letting approval pack", pw - MARGIN, ph - 46, 7.5, STONE, "right");
     y = ph - 84;
   };
   const room = (h: number) => { if (y - h < FOOT) newPage(); };
@@ -931,7 +931,7 @@ async function buildRecommendationPdf(ws: RecommendationWorkspace, logoUrl: stri
     } catch {/* no co-brand */}
   }
   y = ph - bandH - 26;
-  drawLabel(page, "Letting transaction recommendation", MARGIN, y - 8, 8.5, STONE);
+  drawLabel(page, "Deal analysis and letting approval pack", MARGIN, y - 8, 8.5, STONE);
   y -= 22;
   for (const l of wrapBlock(unitName, serif, 23, contentW).slice(0, 2)) { page.drawText(l, { x: MARGIN, y: y - 23, size: 23, font: serif, color: BORDEAUX }); y -= 28; }
   if (propertyName) { for (const l of wrapBlock(propertyName, font, 12, contentW).slice(0, 2)) { page.drawText(l, { x: MARGIN, y: y - 12, size: 12, font, color: INK }); y -= 16; } }
@@ -1059,7 +1059,7 @@ const fail = (res: Response, e: any, fallback: string) => {
   console.error("[unit-recommendation]", e?.message);
   if (!res.headersSent) res.status(500).json({ message: e?.message || fallback });
 };
-const NOT_STARTED = { message: "The agents have not started the recommendation for this letting yet.", code: "NOT_STARTED" };
+const NOT_STARTED = { message: "The agents have not started the approval pack for this letting yet.", code: "NOT_STARTED" };
 
 // Remove a unit's recommendations, their decisions and history (called when the unit is deleted).
 export async function deleteUnitRecommendations(unitId: string, db: Db = pool): Promise<void> {
@@ -1110,7 +1110,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
         out[r.unit_id] = { stage, approved: issued ? r.approved : 0, total: r.total, issuedAt: iso(r.issued_at) };
       }
       res.json(out);
-    } catch (e: any) { fail(res, e, "Failed to load the recommendations"); }
+    } catch (e: any) { fail(res, e, "Failed to load the approval packs"); }
   });
 
   // Everything the dialog shows.
@@ -1119,7 +1119,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       res.json(await buildWorkspace(ctx.unit.id, ctx.access));
-    } catch (e: any) { fail(res, e, "Failed to load the recommendation"); }
+    } catch (e: any) { fail(res, e, "Failed to load the approval pack"); }
   });
 
   // Start it from the agreed offer. Two starts at once make one recommendation.
@@ -1128,7 +1128,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!canWrite(access)) return res.status(403).json({ message: "BGP and the joint agent write the recommendation" });
+      if (!canWrite(access)) return res.status(403).json({ message: "BGP and the joint agent write the approval pack" });
       await withUnitLock(ctx.unit.id, async () => {
         const unit = await loadUnit(ctx.unit.id);
         if (!unit) return void res.status(404).json({ message: "That unit is not on the tracker" });
@@ -1142,10 +1142,10 @@ export function setupUnitRecommendationRoutes(app: Express) {
            VALUES ($1, $2, $3, 1, $4::jsonb, '[]'::jsonb, '{}'::jsonb, $5, $6, $6)
            ON CONFLICT (unit_id, COALESCE(deal_id, '')) DO NOTHING RETURNING id`,
           [unit.id, unit.deal_id || null, offer.id, JSON.stringify(terms), access.userId, access.name])).rows[0];
-        if (made) await logEvent(made.id, access, people, "started", `started the recommendation from ${offer.company_name || "the tenant"}${/['\u2019]s$/i.test(String(offer.company_name || "the tenant")) ? "" : "'s"} agreed offer of ${shortDate(offer.offer_date)}`, 1);
+        if (made) await logEvent(made.id, access, people, "started", `started the approval pack from ${offer.company_name || "the tenant"}${/['\u2019]s$/i.test(String(offer.company_name || "the tenant")) ? "" : "'s"} agreed offer of ${shortDate(offer.offer_date)}`, 1);
         res.json(await buildWorkspace(unit.id, access));
       });
-    } catch (e: any) { fail(res, e, "Failed to start the recommendation"); }
+    } catch (e: any) { fail(res, e, "Failed to start the approval pack"); }
   });
 
   // Save the terms, the comparables, the commentary, the recommendation and
@@ -1155,7 +1155,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!canWrite(access)) return res.status(403).json({ message: "BGP and the joint agent write the recommendation" });
+      if (!canWrite(access)) return res.status(403).json({ message: "BGP and the joint agent write the approval pack" });
       const baseVersion = Number(req.body?.baseVersion);
       if (!Number.isInteger(baseVersion)) return res.status(400).json({ message: "Say which version you were editing (baseVersion)" });
       const parsed = parsePatch(req.body);
@@ -1169,12 +1169,12 @@ export function setupUnitRecommendationRoutes(app: Express) {
         const rec = await loadRec(unit);
         if (!rec) return void res.status(409).json(NOT_STARTED);
         if (baseVersion !== rec.version) {
-          return void res.status(409).json({ message: "Someone else changed the recommendation while you were editing. Load the latest version, then make your changes again.", code: "STALE", workspace: await buildWorkspace(unit.id, access) });
+          return void res.status(409).json({ message: "Someone else changed the approval pack while you were editing. Load the latest version, then make your changes again.", code: "STALE", workspace: await buildWorkspace(unit.id, access) });
         }
         await writeChange(rec, unit, applyPatch(storedOf(rec), parsed.patch), access, null);
         res.json(await buildWorkspace(unit.id, access));
       });
-    } catch (e: any) { fail(res, e, "Failed to save the recommendation"); }
+    } catch (e: any) { fail(res, e, "Failed to save the approval pack"); }
   });
 
   // Re-read the terms the agreed offer gives. What a person wrote stays.
@@ -1183,7 +1183,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!canWrite(access)) return res.status(403).json({ message: "BGP and the joint agent write the recommendation" });
+      if (!canWrite(access)) return res.status(403).json({ message: "BGP and the joint agent write the approval pack" });
       await withUnitLock(ctx.unit.id, async () => {
         const unit = await loadUnit(ctx.unit.id);
         if (!unit) return void res.status(404).json({ message: "That unit is not on the tracker" });
@@ -1202,7 +1202,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
         if (rec.offer_id !== offer.id) await pool.query(`UPDATE unit_recommendations SET offer_id = $2 WHERE id = $1`, [rec.id, offer.id]);
         res.json({ ...(await buildWorkspace(unit.id, access)), refreshed: changed });
       });
-    } catch (e: any) { fail(res, e, "Failed to refresh the recommendation"); }
+    } catch (e: any) { fail(res, e, "Failed to refresh the approval pack"); }
   });
 
   // Lettings already in the app at the same property, to copy into a
@@ -1271,7 +1271,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { unit, access } = ctx;
-      if (!canWrite(access)) return res.status(403).json({ message: "BGP and the joint agent write the recommendation" });
+      if (!canWrite(access)) return res.status(403).json({ message: "BGP and the joint agent write the approval pack" });
       const section = req.body?.section;
       if (typeof section !== "string" || (section !== "summary" && !RECOMMENDATION_COMMENTARY.some(c => c.key === section))) {
         return res.status(400).json({ message: "Say which section to draft: the summary or one of the commentary headings" });
@@ -1305,7 +1305,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!access.agentControl) return res.status(403).json({ message: "The agents issue the recommendation to the client: BGP, or the joint agent on the scheme" });
+      if (!access.agentControl) return res.status(403).json({ message: "The agents issue the approval pack to the client: BGP, or the joint agent on the scheme" });
       const refuse = (status: number, body: Record<string, unknown>): null => { res.status(status).json(body); return null; };
       const issued = await withUnitLock(ctx.unit.id, async (): Promise<{ rec: any; unit: any; reissue: boolean } | null> => {
         const unit = await loadUnit(ctx.unit.id);
@@ -1317,7 +1317,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
           return refuse(200, { ...(await buildWorkspace(unit.id, access)), emailed: 0, emailFailed: [], emailReason: null, alreadyIssued: true });
         }
         if (!hotsIssued(unit)) {
-          return refuse(409, { message: "The Heads of Terms have not been issued to the tenant yet. Issue them first, then issue the recommendation.", code: "HOTS_NOT_ISSUED" });
+          return refuse(409, { message: "The Heads of Terms have not been issued to the tenant yet. Issue them first, then issue the approval pack.", code: "HOTS_NOT_ISSUED" });
         }
         const missing = recommendationMissing(storedOf(rec));
         if (missing.length) {
@@ -1329,7 +1329,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
           [rec.id, access.userId, access.name]);
         const { people } = await briefAndPeople(unit.id);
         await logEvent(rec.id, access, people, "issued",
-          `${reissue ? `issued version ${rec.version} of the recommendation` : "issued the recommendation"} to ${unit.landlord_name || "the client"}${decidersOf(people).length ? "" : ". Nobody from the client is on the brief to decide it"}`, rec.version);
+          `${reissue ? `issued version ${rec.version} of the approval pack` : "issued the approval pack"} to ${unit.landlord_name || "the client"}${decidersOf(people).length ? "" : ". Nobody from the client is on the brief to decide it"}`, rec.version);
         await refreshDecided(rec.id, unit.id);
         return { rec, unit, reissue };
       });
@@ -1355,7 +1355,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
           `could not email ${listNames(failed.map(r => r.name))}: ${reasons.length === 1 ? reasons[0] : failed.map(r => `${r.name}, ${r.reason}`).join("; ")}. Tell them yourself`, rec.version);
       }
       res.json({ ...(failed.length ? await buildWorkspace(unit.id, access) : ws), emailed: results.length - failed.length, emailFailed: failed.map(r => r.name), emailReason });
-    } catch (e: any) { fail(res, e, "Failed to issue the recommendation"); }
+    } catch (e: any) { fail(res, e, "Failed to issue the approval pack"); }
   });
 
   // Decide: approve, raise a query or decline, on the current version. A
@@ -1377,7 +1377,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       if (b.comment !== undefined && b.comment !== null && typeof b.comment !== "string") return res.status(400).json({ message: "The comment must be text" });
       const comment = typeof b.comment === "string" ? tidy(b.comment) : "";
       if (comment.length > DECISION_COMMENT_MAX) return res.status(400).json({ message: `The comment is too long (${plainNum(comment.length)} characters). The limit is ${plainNum(DECISION_COMMENT_MAX)}.` });
-      if (decision !== "approved" && !comment) return res.status(400).json({ message: decision === "query" ? "Say what the query is" : "Say why the recommendation is declined" });
+      if (decision !== "approved" && !comment) return res.status(400).json({ message: decision === "query" ? "Say what the query is" : "Say why the approval pack is declined" });
       await withUnitLock(ctx.unit.id, async () => {
         const unit = await loadUnit(ctx.unit.id);
         if (!unit) return void res.status(404).json({ message: "That unit is not on the tracker" });
@@ -1389,15 +1389,15 @@ export function setupUnitRecommendationRoutes(app: Express) {
         if (!person) {
           return void (briefPersonId
             ? res.status(400).json({ message: "That person is not one of the client's decision-makers on this unit's Targeting Brief" })
-            : res.status(403).json({ message: "You are not listed on this unit's Targeting Brief as a decision-maker for the client, so you can read the recommendation but not decide it." }));
+            : res.status(403).json({ message: "You are not listed on this unit's Targeting Brief as a decision-maker for the client, so you can read the approval pack but not decide it." }));
         }
         const isSelf = isSelfPerson(person, access);
-        if (isSelf && isJointAgent(access)) return void res.status(403).json({ message: "The client's leasing and asset managers decide the recommendation. A joint agent records a decision only for one of them who has no login." });
+        if (isSelf && isJointAgent(access)) return void res.status(403).json({ message: "The client's leasing and asset managers decide the approval pack. A joint agent records a decision only for one of them who has no login." });
         if (!isSelf && !access.agentControl) return void res.status(403).json({ message: `Only ${person.name} can decide as ${person.name}` });
         if (!isSelf && person.user_id) return void res.status(403).json({ message: `${person.name} has a login and decides for themselves` });
-        if (!rec.issued_at) return void res.status(409).json({ message: "The recommendation has not been issued yet, so there is nothing to decide.", code: "NOT_ISSUED" });
+        if (!rec.issued_at) return void res.status(409).json({ message: "The approval pack has not been issued yet, so there is nothing to decide.", code: "NOT_ISSUED" });
         const seen = Number(b.version);
-        if (!Number.isInteger(seen) || seen !== rec.version) return void res.status(409).json({ message: "The recommendation changed. Read the latest version before deciding.", code: "STALE" });
+        if (!Number.isInteger(seen) || seen !== rec.version) return void res.status(409).json({ message: "The approval pack changed. Read the latest version before deciding.", code: "STALE" });
         const was = (await pool.query(`SELECT version, decision, comment FROM unit_recommendation_decisions WHERE recommendation_id = $1 AND brief_person_id = $2`, [rec.id, person.id])).rows[0] || null;
         const stored = comment || null;
         // The same decision again on the same version keeps the first date.
@@ -1409,7 +1409,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
                 SET version = EXCLUDED.version, decision = EXCLUDED.decision, comment = EXCLUDED.comment, decided_at = EXCLUDED.decided_at,
                     decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name`,
             [rec.id, person.id, rec.version, decision, stored, access.userId, access.name]);
-          const said = decision === "approved" ? "approved the recommendation" : decision === "query" ? "raised a query" : "declined the recommendation";
+          const said = decision === "approved" ? "approved the approval pack" : decision === "query" ? "raised a query" : "declined the approval pack";
           const changedMind = !!was && was.version === rec.version && was.decision !== decision;
           const body = isSelf
             ? `${changedMind ? `changed their decision from "${decisionLabel(was.decision)}" to "${decisionLabel(decision)}"` : said}${stored ? `: ${stored}` : ""}`
@@ -1431,11 +1431,11 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const { unit, access } = ctx;
       const ws = await buildWorkspace(unit.id, access);
       if (!ws.id) {
-        return res.status(404).json({ message: "There is no recommendation for this letting yet" });
+        return res.status(404).json({ message: "There is no approval pack for this letting yet" });
       }
       const { bytes } = await buildRecommendationPdf(ws, unit.landlord_logo_url || null);
       const clean = (s: string) => s.normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9 ._&'()-]/g, " ").replace(/\s+/g, " ").trim();
-      const name = `Recommendation - ${clean([unit.unit_name, unit.property_name || ""].join(" ")).slice(0, 110).trim() || "Unit"}.pdf`;
+      const name = `Approval pack - ${clean([unit.unit_name, unit.property_name || ""].join(" ")).slice(0, 110).trim() || "Unit"}.pdf`;
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Length", String(bytes.length));
       res.setHeader("Content-Disposition", contentDispositionFor(name, req.query.view === "1" ? "inline" : "attachment"));
