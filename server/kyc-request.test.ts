@@ -50,9 +50,10 @@ test("the steps follow the request: the identity check, each document, then the 
 });
 
 test("what is asked for by default: photo ID only without the online check; ownership and authority for a company; the money from whoever pays", () => {
-  assert.deepEqual(defaultKycDocs("company", "tenant", true), ["ownership", "owner_ids", "authority", "source_of_funds"]);
-  assert.deepEqual(defaultKycDocs("company", "tenant", false), ["photo_id", "ownership", "owner_ids", "authority", "source_of_funds"]);
-  assert.deepEqual(defaultKycDocs("company", "landlord", true), ["ownership", "owner_ids", "authority"]);
+  // The person dealing with us for a company sends their own proof of address (19 November 2026).
+  assert.deepEqual(defaultKycDocs("company", "tenant", true), ["proof_of_address", "ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(defaultKycDocs("company", "tenant", false), ["photo_id", "proof_of_address", "ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(defaultKycDocs("company", "landlord", true), ["proof_of_address", "ownership", "owner_ids", "authority"]);
   assert.deepEqual(defaultKycDocs("individual", "purchaser", true), ["proof_of_address", "source_of_funds"]);
   assert.ok(defaultKycDocs("individual", "landlord", false).includes("photo_id"));
   assert.ok(isKycDocKey("owner_ids") && isKycDocKey("authority") && !isKycDocKey("passport"));
@@ -242,6 +243,33 @@ test("the client checks' own switch: on unless KYC_CLIENT_CHECKS is off, and the
   assert.equal(clientChecksSwitchOn(" OFF "), false);
   assert.equal(clientChecksSwitchOn("off"), false);
   const through = (path: string) => KYC_CLIENT_CHECK_ROUTES.some(r => r.test(path));
-  for (const path of ["/api/aml/deal/d1/client-checks", "/api/aml/client-checks/tok", "/api/aml/client-checks/tok/remind", "/api/aml/poll-mailbox"]) assert.equal(through(path), true, path);
-  for (const path of ["/api/aml/status", "/api/aml/deal/d1/cdd", "/api/aml/client-checks", "/api/aml/client-checks/tok/remind/x", "/api/kyc-upload/tok"]) assert.equal(through(path), false, path);
+  for (const path of ["/api/aml/deal/d1/client-checks", "/api/aml/deal/d1/client-checks/people", "/api/aml/client-checks/tok", "/api/aml/client-checks/tok/remind", "/api/aml/poll-mailbox"]) assert.equal(through(path), true, path);
+  for (const path of ["/api/aml/status", "/api/aml/deal/d1/cdd", "/api/aml/client-checks", "/api/aml/client-checks/tok/remind/x", "/api/kyc-upload/tok", "/api/aml/deal/d1/client-checks/people/x"]) assert.equal(through(path), false, path);
+});
+
+// ── 19 November 2026: each owner's own link ─────────────────────────────────
+
+test("the person acting is asked to pass each owner their own link, by name", () => {
+  const steps = kycSteps({ needsIdCheck: true, docs: ["proof_of_address", "authority"], askPep: true, kind: "company", ownLinksFor: ["Woody Bruce", "Huseyn Mirhadiyev"] });
+  assert.deepEqual(steps.map(s => s.title), ["A quick identity check", "Pass each owner their own link", "Proof of address", "Confirmation you can act for the company", "One question about public roles"]);
+  assert.match(steps[1].detail, /^Woody Bruce and Huseyn Mirhadiyev each do their own identity check and send a proof of address/);
+  const reminder = kycReminderEmail({ ...ctx({ docs: ["proof_of_address"], ownLinksFor: ["Huseyn Mirhadiyev"] }), progress: { idDone: true, docsDone: [], ownersLinked: false } });
+  const left = reminder.html.indexOf("Still needed");
+  assert.ok(reminder.html.indexOf("Pass each owner their own link") > left);
+});
+
+test("an owner's own request says why they are asked, and the agents hear who still owes what", () => {
+  const { html } = kycRequestEmail(ctx({ recipientName: "Huseyn Mirhadiyev", partyName: "BRUCE GILLINGHAM POLLARD LIMITED", kind: "individual",
+    docs: ["proof_of_address"], person: { roles: ["owner"] } }));
+  assert.match(html, /Companies House lists you as someone who owns or controls BRUCE GILLINGHAM POLLARD LIMITED/);
+  assert.match(html, /about five minutes/);
+  assert.doesNotMatch(html, /We're working with you on/);
+  const finished = kycFinishedEmail({ recipientName: "Huseyn Mirhadiyev", partyName: "BRUCE GILLINGHAM POLLARD LIMITED", dealName: "12 Example Street", ref: "H2K9QP",
+    dealLink: "https://chatbgp.app/deals/d1", idState: "approved", files: [], missing: [], sentFrom: "kyc@chatbgp.app", person: { roles: ["owner"] } });
+  assert.match(finished.html, /as an owner of BRUCE GILLINGHAM POLLARD LIMITED/);
+  const acting = kycFinishedEmail({ recipientName: "Jack Barratt", partyName: "BRUCE GILLINGHAM POLLARD LIMITED", dealName: "12 Example Street", ref: "7MJEGT",
+    dealLink: "https://chatbgp.app/deals/d1", idState: "approved", files: [], missing: [], sentFrom: "kyc@chatbgp.app", kind: "company",
+    peopleOutstanding: ["Huseyn Mirhadiyev: identity check and proof of address (link emailed)"] });
+  assert.match(acting.html, /Still to come from the people to check for BRUCE GILLINGHAM POLLARD LIMITED/);
+  assert.match(acting.html, /Huseyn Mirhadiyev: identity check and proof of address \(link emailed\)/);
 });

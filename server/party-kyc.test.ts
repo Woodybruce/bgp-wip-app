@@ -154,3 +154,9 @@ test("KYC4U's request folders and documents", () => {
   assert.notEqual(kyc4uFileStem("d1", "i1"), kyc4uFileStem("d1", "i2"));
   assert.match(kyc4uFileStem("d1", "i1"), /^kyc4u-doc-[0-9a-f]{20}$/);
 });
+
+test("the sign-off names the people still to send something (19 November 2026)", () => {
+  const denial = signOffDenial(facts({ clientChecksFinished: false, clientChecksOutstanding: ["Huseyn Mirhadiyev: identity check and proof of address"] }));
+  assert.match(denial || "", /still to come: Huseyn Mirhadiyev: identity check and proof of address/);
+  assert.equal(signOffDenial(facts({ clientChecksFinished: false, clientChecksOutstanding: ["Huseyn Mirhadiyev: proof of address"], note: "Owner verified by KYC4U on another deal" })), null);
+});

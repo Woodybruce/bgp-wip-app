@@ -473,7 +473,7 @@ function PartyActions({ dealId, data, cp, wide }: { dealId: string; data: DealAm
       {data.clientChecks && (
         <>
           <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={cp.kycName || cp.name} className={wide ? "w-full justify-center" : undefined} />
-          <ClientChecksForParty dealId={dealId} companyId={cp.id} />
+          <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={data.regime?.regime === "sanctions_only"} notRequired={!!cp.notRequired} />
         </>
       )}
       <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.kycName || cp.name} />

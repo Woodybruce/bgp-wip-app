@@ -87,7 +87,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
          FROM kyc_investigations WHERE crm_company_id = ANY($1::varchar[]) AND result->>'kind' = 'precheck'
         ORDER BY crm_company_id, trading_entity_id, conducted_at DESC NULLS LAST, id DESC`, [brandIds])).rows, none),
     read("client checks", async () => (await pool.query(
-      `SELECT deal_id, company_id, request, created_at, completed_at, last_used_at, revoked_at FROM kyc_upload_tokens
+      `SELECT deal_id, company_id, request, created_at, completed_at, last_used_at, revoked_at, expires_at FROM kyc_upload_tokens
         WHERE deal_id = ANY($1::varchar[]) AND is_test IS NOT TRUE AND request IS NOT NULL
         ORDER BY created_at DESC`, [dealIds])).rows, none),
     read("identity checks", async () => (await pool.query(
@@ -144,7 +144,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       company: companyRow,
       latestInvestigation: latest ? { sanctions_match: latest.sanctions_match, conducted_at: latest.conducted_at, precheck: !!latest.precheck } : null,
       precheck: pre ? { result: pre.result, current: !!latest && String(latest.id) === String(pre.id) } : null,
-      requests: partyTokens.map((t: any) => ({ ref: t.request?.ref || "", answers: t.request?.answers || null, ownersAnswer: t.request?.ownersAnswer || null })),
+      requests: partyTokens.map((t: any) => ({ ref: t.request?.ref || "", answers: t.request?.answers || null, ownersAnswer: t.request?.ownersAnswer || null, person: t.request?.person?.name || null })),
       idChecks: idChecks.filter((s: any) => s.company_id === p.brandId).map((s: any) => ({
         status: s.status, decision_reason: s.decision_reason, received_at: s.received_at,
         name: [s.first_name, s.last_name].filter(Boolean).join(" ") || null,
@@ -161,7 +161,10 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       ? kyc4uLatest.find((k: any) => k.kind === "company" && k.id === p.entityId)
       : kyc4uLatest.find((k: any) => k.kind === "brand" && k.id === p.brandId);
     const kyc4uInReview = !!kyc4uLast && kyc4uVerdict(kyc4uLast.status) === "in_review";
-    const finished = liveTokens.map((t: any) => t.completed_at).filter(Boolean).sort().pop() || null;
+    // The party's checks are finished when the request to the person acting
+    // is, and no person's own request (19 November 2026) is still open.
+    const personOpen = liveTokens.some((t: any) => t.request?.person && !t.completed_at && new Date(t.expires_at).getTime() > now.getTime());
+    const finished = personOpen ? null : liveTokens.filter((t: any) => !t.request?.person).map((t: any) => t.completed_at).filter(Boolean).sort().pop() || null;
     const sent = liveTokens.map((t: any) => t.created_at).filter(Boolean).sort().pop() || null;
     const stage = amlStage({
       role: p.role, dealStatus: p.deal.status, kyc: { status: state.status, expiresAt: state.expiresAt },

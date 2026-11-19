@@ -119,7 +119,7 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
   const flags = known.redFlags ?? await (await import("./kyc-red-flags"))
     .loadDealRedFlags(party.dealId, [party.brandId], party.entityId ? { [party.brandId]: party.entityId } : {});
   const held = (await db.query(
-    `SELECT aml_risk_level, aml_edd_required, aml_pep_status, aml_cdd_form FROM crm_companies WHERE id = $1`, [party.brandId])).rows[0] || null;
+    `SELECT aml_risk_level, aml_edd_required, aml_pep_status, aml_cdd_form, aml_subject_type FROM crm_companies WHERE id = $1`, [party.brandId])).rows[0] || null;
   // A record field whose flag the MLRO set aside with a comment does not make
   // the file higher risk either (the old automatic screening's marks).
   const aside = new Set((flags?.setAside?.[party.brandId] || []).map((x: any) => String(x?.flag?.key || "")));
@@ -136,11 +136,23 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
     const stored = await latestPrecheck(party.brandId, party.entityId).catch(() => null);
     precheck = { ranAt: stored?.ranAt || null, running: !!precheckRunning(party.brandId, party.entityId) };
   }
-  const finished = (await db.query(
+  // The request to the person acting finished, and every person to check
+  // has sent what they owe (Woody, 19 November 2026: the owners and the
+  // person acting each do their own identity check and proof of address).
+  // A person's own request finishing is not the party's checks finishing.
+  const mainFinished = (await db.query(
     `SELECT 1 FROM kyc_upload_tokens
       WHERE deal_id = $1 AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3
-        AND completed_at IS NOT NULL AND COALESCE(is_test, false) = false LIMIT 1`,
+        AND completed_at IS NOT NULL AND COALESCE(is_test, false) = false
+        AND COALESCE(jsonb_typeof(request->'person'), 'null') <> 'object' LIMIT 1`,
     [party.dealId, party.brandId, party.entityId]).catch(() => ({ rows: [] as any[] }))).rows.length > 0;
+  const kind = !party.entityId && String(held?.aml_subject_type || "").toLowerCase() === "individual" ? "individual" : "company";
+  const people = await import("./kyc-people")
+    .then(async m => m.partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind }, await m.dealPeopleRequests(party.dealId, db)))
+    .catch(() => null);
+  // People that could not be read count as outstanding: a note is asked for.
+  const outstanding = people ? people.outstanding : ["the people to check could not be read"];
+  const finished = mainFinished && !outstanding.length;
   return {
     rejected: party.state.status === "rejected",
     current: verdict.approved ? { by: party.state.approvedBy, until: party.state.expiresAt ? new Date(party.state.expiresAt).toISOString() : null } : null,
@@ -152,16 +164,18 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
     precheck: precheck.ranAt ? { ranAt: precheck.ranAt } : null,
     precheckRunning: precheck.running,
     clientChecksFinished: finished,
+    clientChecksOutstanding: mainFinished ? outstanding : [],
     sanctionsOnly: party.regime === "sanctions_only",
     level: flags?.levels?.[party.brandId] || null,
   };
 }
 
 /** For the deal's AML card: may the party be signed off now, and is a note needed. */
-export function signOffView(facts: Omit<SignOffFacts, "note">): { blocked: string | null; needsNote: boolean } {
+export function signOffView(facts: Omit<SignOffFacts, "note">): { blocked: string | null; needsNote: boolean; outstanding: string[] } {
   return {
     blocked: signOffDenial({ ...facts, note: "x".repeat(SIGN_OFF_NOTE_MIN) }),
     needsNote: !facts.clientChecksFinished && !facts.sanctionsOnly,
+    outstanding: facts.sanctionsOnly ? [] : facts.clientChecksOutstanding || [],
   };
 }
 
@@ -261,7 +275,7 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
       DUE_DILIGENCE_LABEL[level].toLowerCase(),
       party.regime === "sanctions_only" ? "sanctions checks only (a letting under £10,000 a month)" : null,
       facts.precheck ? `BGP's checks before asking ${facts.precheck.ranAt.slice(0, 10)}` : null,
-      party.regime === "sanctions_only" ? null : facts.clientChecksFinished ? "client checks finished" : "client checks not finished",
+      party.regime === "sanctions_only" ? null : facts.clientChecksFinished ? "client checks finished" : `client checks not finished${facts.clientChecksOutstanding?.length ? ` (still to come: ${facts.clientChecksOutstanding.join("; ")})` : ""}`,
       note ? `note: ${note}` : null,
     ].filter(Boolean).join("; ");
     const who = me.as === "agent" ? `${me.name} (agent on the deal)` : `${me.name}${me.officerRole === "nominated" ? " (Nominated Officer)" : me.officerRole === "deputy" ? " (Deputy Nominated Officer)" : ""}`;

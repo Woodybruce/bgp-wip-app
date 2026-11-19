@@ -87,7 +87,9 @@ export interface SignOffFacts {
   higherRisk: boolean;           // the brand's file reads as higher risk (high risk, EDD, a PEP result)
   precheck: { ranAt: string } | null;
   precheckRunning: boolean;
-  clientChecksFinished: boolean; // a client checks request for this party on this deal was finished
+  clientChecksFinished: boolean; // the request to the person acting was finished and every person to check has sent what they owe
+  // With the request finished: the people still to send something (19 November 2026).
+  clientChecksOutstanding?: string[];
   // A letting under £10,000 a month: sanctions checks only (AML policy A), so
   // the client checks are not needed and no note stands in for them.
   sanctionsOnly?: boolean;
@@ -114,7 +116,9 @@ export function signOffDenial(f: SignOffFacts): string | null {
     return `BGP's checks before asking are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again on the card first.`;
   }
   if (!f.clientChecksFinished && !f.sanctionsOnly && text(f.note).length < SIGN_OFF_NOTE_MIN) {
-    return "The client checks are not finished for this party: say what you relied on instead (at least a sentence).";
+    return f.clientChecksOutstanding?.length
+      ? `The client checks are not finished for this party (still to come: ${f.clientChecksOutstanding.join("; ")}): say what you relied on instead (at least a sentence).`
+      : "The client checks are not finished for this party: say what you relied on instead (at least a sentence).";
   }
   return null;
 }
