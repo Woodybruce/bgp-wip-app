@@ -3957,10 +3957,124 @@ their sanctions result only". Do not re-litigate. Rules (pure):
   (`clientChecksOutstanding`), and the AML dashboard keeps the party at
   Client checks sent while a person's own request is open. A public-roles yes
   on a person's own request is a red flag of its own, with their name.
+- **With the AML policy** (merged the same evening, next section): on a
+  letting under £10,000 a month (sanctions checks only, `amlRegime`) the list
+  shows each person's roles and sanctions result and asks no one for
+  anything, and the sign-off owes nothing (`outstanding` is empty when
+  `sanctionsOnly`); a party marked Not required gets no list.
 - Checked in a browser against a local copy shaped like #4491 on
   19 November 2026. Not run against Veriff or Microsoft from a build machine.
   Not built: adding a person by hand (an owner the register does not name),
   and asking each owner the source of funds.
+
+## BGP's AML policy and risk assessment, Issue 2 (Woody, 2026-11-19)
+
+Woody uploaded BGP's Anti-Money Laundering Policy and Firm-Wide Anti-Money
+Laundering Risk Assessment (both Issue 2, November 2026): "can you consider
+these and add into the AML as required", then "can we have that as a
+download". Asked, he chose (do not re-litigate): a standard-risk party is
+signed off by the deal's agents and an enhanced one by the Nominated Officer
+or the Deputy; restaurants and bars are a factor to weigh, not enhanced; a
+deal that exchanges or completes with checks outstanding still moves and the
+officers are emailed; the other side of a deal can be marked Not required, by
+the officers only. Rules: `shared/aml-policy.ts`; routes:
+`server/aml-policy.ts`. Tests: `server/aml-policy.test.ts` (in `npm test`),
+`qa/regression/aml-policy-guards.test.mjs`.
+
+- **The officers** (policy C.b): Jack Barratt is the Nominated Officer
+  (MLRO) and Victoria Broadhead the Deputy. The Nominated Officer is on
+  `aml_settings` as before; the Deputy is `system_settings.aml_deputy_officer`.
+  Both decide (`amlOfficerRole`, `amlActor().officerRole`); admins act only
+  while no Nominated Officer is set. An admin sets them on the AML
+  dashboard's policy panel (**Use the policy's officers**, or **Change**;
+  `PUT /api/aml-policy/officers`, `POST …/officers/from-policy`). Not set on
+  live by a build machine: an admin presses the button. **KYC4U is BGP's
+  outsourced KYC provider, not its MLRO**: this supersedes "KYC4U is BGP's
+  MLRO" (Woody, 2026-10-05) and "the MLRO's ... admins until then" wherever
+  either appears in this file; the screens and ChatBGP say so.
+- **The documents as downloads**: `server/assets/aml-policy/` (copied by the
+  build), listed in `AML_POLICY_DOCUMENTS`, served to BGP staff signed in as
+  themselves at `GET /api/aml-policy/documents/:key` (outside the retired
+  `/api/aml/`, on no client list), the buttons on the policy panel (Deals →
+  AML). A new issue is a new entry and a new file: never overwrite an old one
+  (policy M keeps older versions for five years).
+- **Levels** (policy F.a): each party is Simplified, Standard or Enhanced
+  (`dueDiligenceLevel`): enhanced on any red flag or higher-risk factor that
+  counts (set aside with a comment, it does not); simplified on a basis
+  (`simplifiedBasis`: listed on a regulated market or owned through one, an
+  FCA-authorised ICVC, a UK public body by its name with no Companies House
+  record); otherwise standard. Worked out in `loadDealRedFlags` (`levels`) and
+  the AML dashboard (`level`, `levelWhy`); shown on the deal card
+  (`PartyLevel`) and the dashboard's **Due diligence** column.
+- **Higher-risk factors** (`policyFactorFlags`, flags with `factor: true`):
+  a trust in the ownership (PSC natures of control "as trust", or a trustee
+  owner); an unlisted limited partnership; the registered office or an owner
+  in a FATF-listed country (call for action or increased monitoring: the UK's
+  high-risk third countries since SI 2024/69, so enhanced due diligence by
+  law) or in the risk assessment's Eurasia and Africa list; an owner who is a
+  national of a country selling citizenship; a sector the risk assessment
+  names (SIC code or BGP's type: gambling, nightclubs, hairdressers, barbers,
+  nail, tanning and beauty salons, car washes, vape shops, American candy
+  shops, convenience stores, mining and oil and gas, dual-use manufacturing);
+  and on the deal a super-prime sale (`superPrimeFlag`: an investment deal's
+  price £5m or more in London and the South East by postcode, over £1m
+  elsewhere). They count as red flags do (KYC4U, then the officers), can be
+  set aside with a comment where they do not apply, and are listed apart, in
+  amber, on the card and in KYC4U's note. Restaurants, bars, pubs, gaming
+  venues and car parks are only "to weigh" (`policyFactorsToWeigh`). FATF's
+  lists are those of 30 October 2026 (`FATF_LISTS_AS_OF`; FATF's site refused
+  automated reads, so they were read from four agreeing reports): **update
+  them after each plenary** (February, June, October). An owner's country of
+  residence is read since this day (`RegisterOwner.residence`).
+- **Sign-off** (`signOffActor`): the officers, or an agent on the deal
+  (`isDealAgent`: `internal_agent_ids` or the name), only on a standard or
+  simplified party (`signOffDenial` still refuses any flag or factor). KYC4U's
+  result, red flags set aside and Not required stay with the officers
+  (`decider`).
+- **Re-checks** (policy H.a, `RECHECK_YEARS`): 3 years simplified or
+  standard, 1 year enhanced. A sign-off writes 3 years; KYC4U's result added
+  in the app writes the party's level at the time ("Re-check years" on its
+  request row); a result synced from KYC4U's own list carries no level and
+  gets 1 year (`kyc4uRecheckYears`). `approveEntityKyc` takes `recheckYears`;
+  `recheck_interval_days` applies only to callers that give none.
+- **Lettings under £10,000 a month** (policy A, `amlRegime`): sanctions
+  checks only; the card says so and a sign-off needs no client checks or note
+  (`SignOffFacts.sanctionsOnly`). Rent not recorded reads as full checks.
+  Rent review, dilapidations and service charge deals read as advisory (a
+  card line only; the dashboard still lists them).
+- **Not required** (policy G and F.f): `kyc_party_exemptions` (boot
+  migration), one live row per deal and role, for the party it was set for;
+  reason `joint_agent` or `no_deal` and a comment (`notRequiredInput`).
+  `POST /api/deals/:id/parties/:role/not-required` and `…/undo`, officers
+  only. The gate (`checkCounterpartyAml` with the deal's id;
+  `recordAmlGateWarning` filters again), the deal's `kyc_approved`
+  (`recomputeDeals` passes the id), the status feed (`allApproved`, `missing`,
+  `notRequired`) and the dashboard (stage `not_required`, bucket Done) read
+  it. A rejected party is never exempt.
+- **Escalations**: a move to Exchanged or Completed with a party not
+  approved records the warning as before and emails the officers once per
+  deal and stage (`alertOfficersOfOutstandingChecks`, `deal_events`
+  `aml_officer_alert`, `amlOutstandingAtCompletionEmail` through
+  `sendKycEmail`). No block was added: the 17 November "gating remain as is"
+  stands. The red-flag alert copies the officers (never on a test). A
+  sanctions flag on the card says to tell the Nominated Officer: an OFSI
+  report and legal advice follow (policy J and 3.10).
+- **Wording**: BGP's standard heads of terms gained clause 38,
+  Anti-money laundering (`AML_HOTS_CLAUSE`; `STANDARD_HOTS_TEMPLATE_37` is
+  kept so a property's copied 37-clause text still reads as BGP's standard).
+  The info sheet, the Share with a brand PDF and bgp.uk.com's particulars
+  print `AML_MARKETING_NOTICE` (the marketing site needs its own redeploy).
+  Landsec's four scheme forms were not changed (they are Landsec's own):
+  adding the clause there is Woody's call. The client checks ask for the
+  documents the policy lists (firearms or shotgun certificate, council tax
+  bill, an address dated in the last three months, the certification words of
+  policy 3.9, a structure chart).
+- Not built, each Woody's call: a record of an OFSI report; checking a joint
+  or sub-agent's HMRC registration (policy B and C); training records (policy
+  L); internal suspicion reports (the old `aml_internal_reports` routes are
+  retired); a Register of Overseas Entities check; EU sanctions list
+  screening; the FCA register for simplified due diligence; deleting records
+  five years on.
 
 ## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
 

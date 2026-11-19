@@ -131,9 +131,10 @@ test('the deal page and the deal form carry it', () => {
   assert.ok(page.includes('{slot.value && <DealPartyLines dealId={id} role={slot.role} />}'));
   for (const role of ['landlord', 'tenant', 'vendor', 'purchaser']) assert.ok(page.includes(`role: "${role}" as const`), role);
   const card = read('client/src/components/deal-aml-status.tsx');
-  // On both layouts of the card, hidden once the party is approved (step 2, 18 November 2026).
-  assert.ok(card.includes('{staffView && !(cp.isApproved && !cp.isExpired) && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}'));
-  assert.ok(card.includes('{staffView && status !== "approved" && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}'));
+  // On both layouts of the card, hidden once the party is approved (step 2, 18 November 2026)
+  // or marked Not required (BGP's AML policy, 19 November 2026).
+  assert.ok(card.includes('{staffView && !(cp.isApproved && !cp.isExpired) && !cp.notRequired && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}'));
+  assert.ok(card.includes('{staffView && status !== "approved" && status !== "not_required" && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}'));
   const form = read('client/src/pages/deals.tsx');
   for (const role of ['landlord', 'tenant', 'vendor', 'purchaser']) {
     assert.ok(form.includes(`...(company ? { ${role}TradingEntityId: company.id } : {}),`), `${role} billing box sets the company`);

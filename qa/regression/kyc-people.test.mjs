@@ -55,14 +55,19 @@ test("a party's checks are finished only when every person to check has sent wha
   assert.match(signOff, /const outstanding = people \? people\.outstanding : \["the people to check could not be read"\];/);
   assert.match(signOff, /const finished = mainFinished && !outstanding\.length;/);
   const dashboard = read('server/aml-dashboard.ts');
-  assert.match(dashboard, /const personOpen = live\.some\(\(t: any\) => t\.request\?\.person && !t\.completed_at/);
-  assert.match(dashboard, /const finished = personOpen \? null : live\.filter\(\(t: any\) => !t\.request\?\.person\)/);
+  assert.match(dashboard, /const personOpen = liveTokens\.some\(\(t: any\) => t\.request\?\.person && !t\.completed_at/);
+  assert.match(dashboard, /const finished = personOpen \? null : liveTokens\.filter\(\(t: any\) => !t\.request\?\.person\)/);
+  // A letting under £10,000 a month (BGP's AML policy A) needs no note and owes nothing.
+  assert.match(signOff, /outstanding: facts\.sanctionsOnly \? \[\] : facts\.clientChecksOutstanding \|\| \[\],/);
 });
 
 test('the deal card lists the people to check first, and their own requests only under them', () => {
   const card = read('client/src/components/kyc-client-checks.tsx');
   assert.match(card, /const list = data\.requests\.filter\(r => r\.companyId === companyId && !r\.person\);/);
-  assert.match(card, /\{party && people && people\.basis !== "individual" && <PeopleToCheck dealId=\{dealId\} data=\{data\} party=\{party\} people=\{people\} \/>\}/);
+  assert.match(card, /\{party && people && people\.basis !== "individual" && !notRequired && <PeopleToCheck dealId=\{dealId\} data=\{data\} party=\{party\} people=\{people\} sanctionsOnly=\{!!sanctionsOnly\} \/>\}/);
+  // Under sanctions checks only, nobody is asked for an identity check or a proof of address.
+  assert.match(card, /data-testid=\{`people-sanctions-only-\$\{party\.companyId\}`\}/);
+  assert.match(read('client/src/components/deal-aml-status.tsx'), /<ClientChecksForParty dealId=\{dealId\} companyId=\{cp\.id\} sanctionsOnly=\{data\.regime\?\.regime === "sanctions_only"\} notRequired=\{!!cp\.notRequired\} \/>/);
   assert.match(card, /data-testid=\{`people-to-check-\$\{party\.companyId\}`\}/);
   assert.match(card, /Directors, no ID needed/);
   const page = read('client/src/pages/kyc-upload.tsx');

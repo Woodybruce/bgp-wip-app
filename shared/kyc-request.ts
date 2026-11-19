@@ -41,14 +41,15 @@ export const KYC_DOC_KEYS: KycDocKey[] = ["photo_id", "proof_of_address", "sourc
 export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docType: string }> = {
   photo_id: {
     title: "Photo ID (a certified copy)",
-    detail: "Your passport, photocard driving licence or national identity card, in date. As we have not seen the original, please send a certified copy: a copy signed by a solicitor, accountant or bank officer with the words \"Certified to be a true copy of the original seen by me\", the date, and their name, occupation, address and phone number. Or show the original to your agent.",
+    detail: "Your passport, photocard driving licence, national identity card, or firearms or shotgun certificate, in date. As we have not met you to see the original, please send a copy certified by a practising solicitor or accountant who has met you, with the words \"I have met the person concerned and confirm the likeness to the photo ID provided\", their name and signature, the date, their professional body, and their firm's name and registered office. Or show the original to your agent.",
     docType: "passport",
   },
-  // BGP's AML policy (Issue 2, "Individuals") also lists a local authority
-  // tax demand: a council tax bill is yearly, so this year's.
+  // BGP's AML policy (Issue 2, "Individuals"): a utility bill, bank statement
+  // or local authority tax demand, not more than three months old; certified
+  // when the person lives outside the UK.
   proof_of_address: {
     title: "Proof of address",
-    detail: "A utility bill, bank or building society statement, or mortgage statement from the last three months, or this year's council tax bill, showing your name and home address.",
+    detail: "A utility bill, bank or building society statement, council tax bill or mortgage statement dated in the last three months, showing your name and home address. If you live outside the UK, send a copy certified \"as a true copy of the original\" by a practising solicitor or accountant, with their name, signature, the date, their professional body and their firm.",
     docType: "proof_of_address",
   },
   source_of_funds: {
@@ -58,12 +59,12 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
   },
   ownership: {
     title: "Who owns the company",
-    detail: "A chart or list of everyone who owns or controls more than 25% of the company's shares or votes, directly or through other companies, and anyone who controls the company in another way.",
+    detail: "A structure chart up to the people at the top: everyone who owns or controls more than 25% of the company's shares or votes, directly or through other companies, and anyone who controls the company in another way.",
     docType: "ubo_declaration",
   },
   owner_ids: {
     title: "ID for each of those owners",
-    detail: "For each person on that list: a passport, photocard driving licence or national identity card, and a proof of address from the last three months. Clear copies are fine to start with; we may ask for certified copies.",
+    detail: "For each person on that list: a passport, photocard driving licence, national identity card or firearms certificate, and a proof of address (a utility bill, bank statement or council tax bill) dated in the last three months. Clear copies are fine to start with; owners who live outside the UK send certified copies, and we may ask for them from others.",
     docType: "passport",
   },
   authority: {
@@ -73,7 +74,7 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
   },
   company_documents: {
     title: "Company documents",
-    detail: "Only if the company is registered outside the UK: an extract from its official company register showing it is registered, and a list of its directors.",
+    detail: "Only if the company is registered outside the UK: an extract from its official company register showing it is registered, a list of its directors, and its UK registration number if it is registered at Companies House as an overseas company or an overseas entity.",
     docType: "company_cert",
   },
   other: {
@@ -554,7 +555,7 @@ export function kycFinishedEmail(ctx: {
 
 // How BGP handles a red flag (Woody, 17 November 2026: "basically we do the
 // normal checks expected and if there is a red flag then we get KYC4U").
-export const KYC_RED_FLAG_RULE = "The routine checks are done in the app. A red flag goes to KYC4U, BGP's MLRO service, for enhanced checks before the deal goes ahead.";
+export const KYC_RED_FLAG_RULE = "The routine checks are done in the app. A red flag, or a higher-risk factor in BGP's AML policy, goes to KYC4U, BGP's outsourced KYC provider, for enhanced due diligence, and the Nominated Officer or the Deputy approves the result before the deal goes ahead.";
 export const KYC_RED_FLAG_STEP = "Open the deal's AML card and press Request KYC4U check on this party: the red flags are already in the request's note.";
 
 // The client checks run on their own switch (Woody, 18 November 2026,
@@ -601,6 +602,36 @@ export function kycRedFlagEmail(ctx: {
   return {
     subject: `${ctx.test ? "[Test] " : ""}Red flag on ${ctx.dealName}: raise ${ctx.partyName} with KYC4U (ref ${ctx.ref})`,
     html: frame("Red flag", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the deal's agents receive"),
+  };
+}
+
+// BGP's AML policy (Issue 2, section 3.7): checks are finished before a
+// binding contract, at exchange or lease completion. A deal that moves to
+// Exchanged or Completed with a party not approved still moves (Woody, 19
+// November 2026: "Warn, and email Jack and Victoria"); the Nominated Officer
+// and the Deputy get this, once per deal and stage.
+export function amlOutstandingAtCompletionEmail(ctx: {
+  dealName: string;
+  dealRef: number | null;
+  stage: "Exchanged" | "Completed";
+  movedBy: string | null;
+  parties: Array<{ name: string; role: string; reason: string }>;
+  link: string;
+  sentFrom: string;
+}): { subject: string; html: string } {
+  const roleWord = (r: string) => r === "landlord" ? "Landlord" : r === "tenant" ? "Tenant" : r === "vendor" ? "Seller" : r === "purchaser" ? "Buyer" : r;
+  const inner = [
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:#b91c1c">${escHtml(ctx.dealName)} moved to ${escHtml(ctx.stage)} with checks outstanding</h1>`,
+    p(`${ctx.dealRef != null ? `Deal #${escHtml(ctx.dealRef)}` : "The deal"} was moved to <strong>${escHtml(ctx.stage)}</strong>${ctx.movedBy ? ` by ${escHtml(ctx.movedBy)}` : ""}. BGP's AML policy says the checks are finished before contracts exchange or a lease completes.`),
+    h2("Not approved"),
+    `<ul style="margin:0 0 14px 18px;padding:0">${ctx.parties.map(c => `<li style="margin:0 0 6px">${escHtml(roleWord(c.role))}: <strong>${escHtml(c.name)}</strong> <span style="color:${MUTED}">(${escHtml(c.reason)})</span></li>`).join("")}</ul>`,
+    h2("What to do"),
+    p("Open the deal's Parties & AML and decide each party: sign it off, add KYC4U's result, or, for the other side of a deal a joint agent negotiated, mark it Not required. If anything is suspicious, it is reported to the National Crime Agency, and nobody tells the client."),
+    button("Open the deal's AML", ctx.link),
+  ].join("\n");
+  return {
+    subject: `AML: ${ctx.dealName} moved to ${ctx.stage} with checks outstanding`,
+    html: frame("AML checks outstanding", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP to BGP's Nominated Officer and Deputy.`, false, "the Nominated Officer and the Deputy receive"),
   };
 }
 

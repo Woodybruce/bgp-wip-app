@@ -1,12 +1,16 @@
 // BGP's sign-off and KYC4U's result on a deal party (Woody, 18 November
 // 2026: step 2 of docs/deal-page-review-2026-11-18.md, "Ok go ahead with
-// your suggestions I will do the requests"). The MLRO's, or an admin's while
-// no MLRO is appointed: the server (server/deal-party-aml.ts) refuses anyone
-// else, and the deal's AML status says who may (`decisions`). Each acts on
-// the company that signs when the deal names one, else on the brand.
+// your suggestions I will do the requests"). Since 19 November 2026 (BGP's
+// AML policy, Issue 2, and Woody's answers): a standard or simplified party
+// is signed off by an agent on the deal, the Nominated Officer or the Deputy;
+// KYC4U's result and "Not required" are the Nominated Officer's or the
+// Deputy's (an admin's until a Nominated Officer is set). The server
+// (server/deal-party-aml.ts) refuses anyone else, and the deal's AML status
+// says who may (`decisions`). Each acts on the company that signs when the
+// deal names one, else on the brand.
 import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { BadgeCheck, FileUp, Loader2 } from "lucide-react";
+import { BadgeCheck, CircleSlash, FileUp, Loader2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { KYC4U_RESULTS, KYC4U_RESULT_MAX_FILES, SIGN_OFF_NOTE_MIN, type Kyc4uResultKey } from "@shared/party-kyc";
+import { DUE_DILIGENCE_LABEL, NOT_REQUIRED_COMMENT_MIN, NOT_REQUIRED_REASONS, type NotRequiredReason } from "@shared/aml-policy";
 import type { DealAmlStatus } from "@/components/deal-aml-status";
 
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "").replace(/^\{"message":"(.*)"(,.*)?\}$/, "$1");
@@ -29,7 +34,7 @@ function refreshAfterDecision(dealId: string) {
 
 const todayLondon = () => new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
 
-function SignOffDialog({ dealId, role, partyName, needsNote, onClose }: { dealId: string; role: string; partyName: string; needsNote: boolean; onClose: () => void }) {
+function SignOffDialog({ dealId, role, partyName, needsNote, levelWords, onClose }: { dealId: string; role: string; partyName: string; needsNote: boolean; levelWords: string | null; onClose: () => void }) {
   const { toast } = useToast();
   const [note, setNote] = useState("");
   const short = needsNote && note.trim().length < SIGN_OFF_NOTE_MIN;
@@ -48,7 +53,7 @@ function SignOffDialog({ dealId, role, partyName, needsNote, onClose }: { dealId
         <DialogHeader>
           <DialogTitle>Sign off {partyName}</DialogTitle>
           <DialogDescription>
-            BGP approves this party for the re-check period, and the deal's AML gate reads it as approved. A party with a red flag goes to KYC4U instead.
+            {levelWords ? `${levelWords}. ` : ""}BGP approves this party until its re-check date (3 years, BGP's AML policy), and the deal's AML gate reads it as approved. A party needing enhanced due diligence goes to KYC4U instead.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-1.5">
@@ -110,7 +115,7 @@ function Kyc4uResultDialog({ dealId, role, partyName, onClose }: { dealId: strin
         <DialogHeader>
           <DialogTitle>Add KYC4U's result</DialogTitle>
           <DialogDescription>
-            For {partyName}. KYC4U are BGP's MLRO: their result decides the party, and a later KYC4U request for it replaces this one.
+            For {partyName}. KYC4U are BGP's outsourced KYC provider: you record their result as the Nominated Officer or the Deputy, and a later KYC4U request for the party replaces this one. An approval lasts 1 year when the party needs enhanced due diligence, otherwise 3.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -165,36 +170,115 @@ function Kyc4uResultDialog({ dealId, role, partyName, onClose }: { dealId: strin
   );
 }
 
-// Under a party on the AML card (and in Kick off AML): Sign off and Add
-// KYC4U result, for whoever may decide. `approved`: the party is approved
-// and in date, so the reason it cannot be signed off again is not shown.
-export function PartyDecisions({ dealId, data, companyId, role, partyName, approved, compact }: {
-  dealId: string; data: DealAmlStatus | undefined; companyId: string; role: string; partyName: string; approved?: boolean; compact?: boolean;
+// "Not required" (BGP's AML policy, G and F.f): the other side of a deal a
+// joint agent found and negotiated, or one where no deal was done.
+function NotRequiredDialog({ dealId, role, partyName, onClose }: { dealId: string; role: string; partyName: string; onClose: () => void }) {
+  const { toast } = useToast();
+  const [reason, setReason] = useState<NotRequiredReason | "">("");
+  const [comment, setComment] = useState("");
+  const missing = !reason ? "Choose why." : comment.trim().length < NOT_REQUIRED_COMMENT_MIN ? "Say what happened (at least a sentence)." : null;
+  const save = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/not-required`, { reason, comment: comment.trim() })).json(),
+    onSuccess: () => { refreshAfterDecision(dealId); toast({ title: "Marked Not required", description: `${partyName} needs no checks on this deal.` }); onClose(); },
+    onError: (e: any) => toast({ title: "Not marked", description: plain(e), variant: "destructive" }),
+  });
+  return (
+    <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md" data-testid={`aml-not-required-dialog-${role}`}>
+        <DialogHeader>
+          <DialogTitle>No checks needed on {partyName}?</DialogTitle>
+          <DialogDescription>
+            BGP's AML policy: no checks are needed on the other side of a deal when a joint agent found and negotiated it, or when no deal is done. Never for BGP's own client. It stays on the deal with your name and the reason.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Why</Label>
+            <Select value={reason} onValueChange={v => setReason(v as NotRequiredReason)}>
+              <SelectTrigger data-testid={`aml-not-required-reason-${role}`}><SelectValue placeholder="Choose" /></SelectTrigger>
+              <SelectContent>
+                {(Object.keys(NOT_REQUIRED_REASONS) as NotRequiredReason[]).map(k => <SelectItem key={k} value={k}>{NOT_REQUIRED_REASONS[k]}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`aml-not-required-comment-${role}`}>What happened</Label>
+            <Textarea id={`aml-not-required-comment-${role}`} value={comment} onChange={e => setComment(e.target.value)} rows={3} maxLength={1000}
+              placeholder="For example: Savills found the tenant and ran the negotiation; BGP acted for the landlord only"
+              data-testid={`aml-not-required-comment-${role}`} />
+          </div>
+          {missing && <p className="text-[11px] text-muted-foreground">{missing}</p>}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+          <Button type="button" disabled={!!missing || save.isPending} onClick={() => save.mutate()} data-testid={`aml-not-required-save-${role}`}>
+            {save.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}Mark Not required
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Under a party on the AML card (and in Kick off AML): Sign off for whoever
+// may sign it off (an agent on the deal, the Nominated Officer or the
+// Deputy), and Add KYC4U result and Not required for the officers.
+// `approved`: the party is approved and in date, so the reason it cannot be
+// signed off again is not shown. `notRequired`: marked so; the officers can
+// take the marker off.
+export function PartyDecisions({ dealId, data, companyId, role, partyName, approved, compact, notRequired }: {
+  dealId: string; data: DealAmlStatus | undefined; companyId: string; role: string; partyName: string; approved?: boolean; compact?: boolean; notRequired?: boolean;
 }) {
-  const [open, setOpen] = useState<"sign-off" | "kyc4u" | null>(null);
+  const { toast } = useToast();
+  const [open, setOpen] = useState<"sign-off" | "kyc4u" | "not-required" | null>(null);
+  const undo = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/not-required/undo`, {})).json(),
+    onSuccess: () => { refreshAfterDecision(dealId); toast({ title: "Taken off", description: `${partyName} needs its checks again.` }); },
+    onError: (e: any) => toast({ title: "Not taken off", description: plain(e), variant: "destructive" }),
+  });
   const decisions = data?.decisions;
-  if (!decisions?.canDecide) return null;
+  const canSignOff = !!(decisions?.canSignOff ?? decisions?.canDecide);
+  if (!decisions || (!decisions.canDecide && !canSignOff)) return null;
+  if (notRequired) {
+    return decisions.canDecide ? (
+      <div className="flex flex-wrap gap-1.5" data-testid={`aml-decisions-${role}`}>
+        <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={undo.isPending} onClick={() => undo.mutate()} data-testid={`aml-not-required-undo-${role}`}>
+          <Undo2 className="w-3.5 h-3.5 mr-1" />Take off Not required
+        </Button>
+      </div>
+    ) : null;
+  }
   const view = decisions.parties[companyId];
-  // null: BGP may sign it off now (so never `??`, which would read null as missing).
+  // null: it may be signed off now (so never `??`, which would read null as missing).
   const blocked = view ? view.blocked : "This party could not be read.";
+  const level = data?.redFlags?.levels?.[companyId];
   return (
     <div className="space-y-1" data-testid={`aml-decisions-${role}`}>
       <div className="flex flex-wrap gap-1.5">
-        {!approved && (
+        {!approved && canSignOff && (
           <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={!!blocked} title={blocked || undefined}
             onClick={() => setOpen("sign-off")} data-testid={`aml-sign-off-${role}`}>
             <BadgeCheck className="w-3.5 h-3.5 mr-1" />Sign off
           </Button>
         )}
-        <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setOpen("kyc4u")} data-testid={`aml-kyc4u-result-${role}`}>
-          <FileUp className="w-3.5 h-3.5 mr-1" />Add KYC4U result
-        </Button>
+        {decisions.canDecide && (
+          <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setOpen("kyc4u")} data-testid={`aml-kyc4u-result-${role}`}>
+            <FileUp className="w-3.5 h-3.5 mr-1" />Add KYC4U result
+          </Button>
+        )}
+        {decisions.canDecide && !approved && (
+          <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setOpen("not-required")} data-testid={`aml-not-required-${role}`}>
+            <CircleSlash className="w-3.5 h-3.5 mr-1" />Not required
+          </Button>
+        )}
       </div>
-      {!approved && !compact && blocked && (
+      {!approved && !compact && blocked && canSignOff && (
         <p className="text-[11px] text-muted-foreground" data-testid={`aml-sign-off-blocked-${role}`}>Sign off: {blocked}</p>
       )}
-      {open === "sign-off" && <SignOffDialog dealId={dealId} role={role} partyName={partyName} needsNote={!!view?.needsNote} onClose={() => setOpen(null)} />}
+      {open === "sign-off" && <SignOffDialog dealId={dealId} role={role} partyName={partyName} needsNote={!!view?.needsNote}
+        levelWords={level && level.level !== "enhanced" ? DUE_DILIGENCE_LABEL[level.level] : null} onClose={() => setOpen(null)} />}
       {open === "kyc4u" && <Kyc4uResultDialog dealId={dealId} role={role} partyName={partyName} onClose={() => setOpen(null)} />}
+      {open === "not-required" && <NotRequiredDialog dealId={dealId} role={role} partyName={partyName} onClose={() => setOpen(null)} />}
     </div>
   );
 }

@@ -11,6 +11,7 @@ import { PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
 import { FLAG_REVIEW_COMMENT_MIN, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
 import { precheckDay, type PrecheckCardLine, type PrecheckCompany } from "@shared/kyc-prechecks";
+import { DUE_DILIGENCE_LABEL, type AmlRegime, type PartyDueDiligence } from "@shared/aml-policy";
 import { getAuthHeaders, queryClient, apiRequest } from "@/lib/queryClient";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,9 @@ export interface DealAmlStatus {
     kycSource?: "brand" | "company" | "same_company" | "brand_rejected";
     brandKycStatus?: string | null;
     signsAs?: string | null;
+    // Marked Not required on this deal by the Nominated Officer or the
+    // Deputy (BGP's AML policy, 19 November 2026).
+    notRequired?: { reason?: string; reasonWords: string; comment?: string; by?: string | null; at?: string | null } | null;
   }>;
   allApproved: boolean;
   canInvoice: boolean;
@@ -51,12 +55,21 @@ export interface DealAmlStatus {
     parties: Record<string, KycRedFlag[]>; deal: KycRedFlag[]; unchecked: string[];
     // Set aside by the MLRO with a comment: listed, no longer counted.
     setAside?: Record<string, SetAsideFlag[]>; dealSetAside?: SetAsideFlag[];
+    // Each party's level of due diligence under BGP's AML policy.
+    levels?: Record<string, PartyDueDiligence>;
   } | null;
   // BGP's checks before asking, per party (BGP staff only).
   prechecks?: Record<string, PartyPrecheck> | null;
   // BGP's sign-off and KYC4U's result (BGP staff only): whether the person
-  // may decide, and per party whether BGP may sign it off now.
-  decisions?: { canDecide: boolean; mlroAppointed: boolean; parties: Record<string, { blocked: string | null; needsNote: boolean }> } | null;
+  // may decide (the Nominated Officer or the Deputy) or sign off (they, and
+  // the deal's agents), and per party whether it may be signed off now.
+  decisions?: {
+    canDecide: boolean; canSignOff?: boolean; mlroAppointed: boolean;
+    officers?: { nominated: string | null; deputy: string | null }; officerWords?: string;
+    parties: Record<string, { blocked: string | null; needsNote: boolean }>;
+  } | null;
+  // Which checks the deal needs under BGP's AML policy (BGP staff only).
+  regime?: { regime: AmlRegime; why: string } | null;
 }
 
 export interface PartyPrecheck {
@@ -261,9 +274,11 @@ function SetAsideDialog({ dealId, role, flag, onClose }: { dealId: string; role:
   );
 }
 
-function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, testId }: {
+function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, testId, whoDecides, factors }: {
   dealId: string; role: string | null; flags: KycRedFlag[]; setAside: SetAsideFlag[]; canDecide: boolean;
-  title: string; step: string; testId: string;
+  title: string; step: string; testId: string; whoDecides?: string;
+  // The policy's higher-risk factors: amber, not red, and worded as factors.
+  factors?: boolean;
 }) {
   const { toast } = useToast();
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -278,7 +293,7 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
   return (
     <div className="space-y-1.5" data-testid={testId}>
       {flags.length > 0 && (
-        <div className="rounded-md border border-red-300 bg-red-50 p-2.5 text-xs text-red-900 dark:bg-red-950/20 dark:text-red-200" data-testid={`${testId}-live`}>
+        <div className={`rounded-md border p-2.5 text-xs ${factors ? "border-amber-300 bg-amber-50 text-amber-950 dark:bg-amber-950/20 dark:text-amber-100" : "border-red-300 bg-red-50 text-red-900 dark:bg-red-950/20 dark:text-red-200"}`} data-testid={`${testId}-live`}>
           <div className="flex items-center gap-1.5 text-sm font-semibold"><Flag className="w-3.5 h-3.5 shrink-0" />{title}</div>
           <ul className="mt-1.5 space-y-1.5">
             {flags.map((f, i) => {
@@ -287,10 +302,13 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
               return (
                 <li key={id} className="space-y-0.5" data-testid={`kyc-flag-${f.key}`}>
                   <div className="flex items-start gap-1.5">
-                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-red-600" />
+                    <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${factors ? "bg-amber-600" : "bg-red-600"}`} />
                     <div className="min-w-0 flex-1">
                       <div className="font-medium">{f.label}</div>
-                      {f.detail && <div className="text-red-800/80 dark:text-red-200/80 break-words">{f.detail}</div>}
+                      {f.detail && <div className={`${factors ? "text-amber-900/80 dark:text-amber-100/80" : "text-red-800/80 dark:text-red-200/80"} break-words`}>{f.detail}</div>}
+                      {f.kind === "sanctions" || (f.kind === "provider_screen" && /sanction/i.test(f.label)) ? (
+                        <div className="mt-0.5 font-medium" data-testid={`kyc-flag-ofsi-${f.key}`}>If it is a true match: tell the Nominated Officer now. It is reported to OFSI as soon as practicable, and legal advice is taken before BGP acts further (AML policy J and 3.10).</div>
+                      ) : null}
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
                         <button type="button" className="inline-flex items-center gap-0.5 underline-offset-2 hover:underline" onClick={() => setOpenKey(open ? null : id)} data-testid={`kyc-flag-detail-${f.key}`}>
                           {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}{open ? "Hide detail" : "Detail"}
@@ -306,14 +324,14 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
               );
             })}
           </ul>
-          <p className="mt-1.5">{step}{canDecide ? " Or, if one is not a concern, set it aside with a comment." : " The MLRO, or an admin until one is appointed, can set one aside with a comment."}</p>
+          <p className="mt-1.5">{step}{canDecide ? " Or, if one does not apply, set it aside with a comment." : ` ${whoDecides ? whoDecides.charAt(0).toUpperCase() + whoDecides.slice(1) : "The Nominated Officer or the Deputy"} can set one aside with a comment.`}</p>
         </div>
       )}
       {setAside.length > 0 && (
         <div className="rounded-md border border-border bg-muted/30 p-2 text-xs" data-testid={`${testId}-aside`}>
           <button type="button" className="flex w-full items-center gap-1 text-left text-muted-foreground hover:text-foreground" onClick={() => setAsideOpen(o => !o)}>
             {asideOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            {setAside.length} red flag{setAside.length === 1 ? "" : "s"} set aside
+            {setAside.length} {factors ? "factor" : "red flag"}{setAside.length === 1 ? "" : "s"} set aside
           </button>
           {asideOpen && (
             <ul className="mt-1.5 space-y-1.5">
@@ -336,18 +354,68 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
 }
 
 function PartyRedFlags({ dealId, data, companyId, role }: { dealId: string; data: DealAmlStatus; companyId: string; role: string }) {
+  const flags = data.redFlags?.parties[companyId] || [];
+  const aside = data.redFlags?.setAside?.[companyId] || [];
+  const who = data.decisions?.officerWords;
   return (
-    <RedFlagList
-      dealId={dealId}
-      role={role}
-      flags={data.redFlags?.parties[companyId] || []}
-      setAside={data.redFlags?.setAside?.[companyId] || []}
-      canDecide={!!data.decisions?.canDecide}
-      title="Red flag: raise with KYC4U"
-      step="Press Request KYC4U check below: the red flags are already in its note."
-      testId={`kyc-red-flags-${companyId}`}
-    />
+    <>
+      <RedFlagList
+        dealId={dealId}
+        role={role}
+        flags={flags.filter(f => !f.factor)}
+        setAside={aside.filter(a => !a.flag.factor)}
+        canDecide={!!data.decisions?.canDecide}
+        whoDecides={who}
+        title="Red flag: raise with KYC4U"
+        step="Press Request KYC4U check below: the red flags are already in its note."
+        testId={`kyc-red-flags-${companyId}`}
+      />
+      <RedFlagList
+        dealId={dealId}
+        role={role}
+        factors
+        flags={flags.filter(f => f.factor)}
+        setAside={aside.filter(a => a.flag.factor)}
+        canDecide={!!data.decisions?.canDecide}
+        whoDecides={who}
+        title="Enhanced due diligence: higher-risk factors in BGP's AML policy"
+        step="Press Request KYC4U check below: the factors are in its note, and the Nominated Officer or the Deputy approves the result."
+        testId={`kyc-policy-factors-${companyId}`}
+      />
+    </>
   );
+}
+
+// The party's level of due diligence under BGP's AML policy, and why.
+function PartyLevel({ data, companyId }: { data: DealAmlStatus; companyId: string }) {
+  const level = data.redFlags?.levels?.[companyId];
+  if (!level) return null;
+  const tone = level.level === "enhanced" ? "text-amber-800 dark:text-amber-200" : "text-foreground";
+  return (
+    <div className="rounded-md border border-border bg-muted/20 p-2 text-xs space-y-0.5" data-testid={`aml-level-${companyId}`}>
+      <div><span className={`font-semibold ${tone}`}>{DUE_DILIGENCE_LABEL[level.level]}</span><span className="text-muted-foreground"> · approval lasts {level.recheckYears} year{level.recheckYears === 1 ? "" : "s"}</span></div>
+      {level.level !== "enhanced" && <div className="text-muted-foreground">{level.why[0]}</div>}
+      {level.toWeigh.length > 0 && <div className="text-muted-foreground" data-testid={`aml-level-weigh-${companyId}`}>To weigh: {level.toWeigh.join("; ")}</div>}
+    </div>
+  );
+}
+
+// A party marked Not required (the other side of a deal a joint agent
+// negotiated, or where no deal was done).
+function PartyNotRequiredBox({ cp }: { cp: DealAmlStatus["counterparties"][number] }) {
+  if (!cp.notRequired) return null;
+  const n = cp.notRequired;
+  return (
+    <div className="rounded-md border border-border bg-muted/30 p-2 text-xs" data-testid={`aml-not-required-${cp.id}`}>
+      <div className="font-semibold">Not required</div>
+      <div className="text-muted-foreground">{n.reasonWords}{n.comment ? `: “${n.comment}”` : ""}{n.by ? ` (${n.by}${n.at ? `, ${precheckDay(n.at)}` : ""})` : ""}</div>
+    </div>
+  );
+}
+
+function DealRegime({ data }: { data: DealAmlStatus }) {
+  if (!data.regime || data.regime.regime === "full") return null;
+  return <p className="text-xs text-muted-foreground" data-testid="aml-regime">{data.regime.why}</p>;
 }
 
 function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus }) {
@@ -357,12 +425,25 @@ function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus })
       <RedFlagList
         dealId={dealId}
         role={null}
-        flags={data.redFlags?.deal || []}
-        setAside={data.redFlags?.dealSetAside || []}
+        flags={(data.redFlags?.deal || []).filter(f => !f.factor)}
+        setAside={(data.redFlags?.dealSetAside || []).filter(a => !a.flag.factor)}
         canDecide={!!data.decisions?.canDecide}
+        whoDecides={data.decisions?.officerWords}
         title="Red flag on the deal record"
         step="It is not tied to one party: Request KYC4U check on the party it concerns carries it in the note."
         testId="kyc-red-flags-deal"
+      />
+      <RedFlagList
+        dealId={dealId}
+        role={null}
+        factors
+        flags={(data.redFlags?.deal || []).filter(f => f.factor)}
+        setAside={(data.redFlags?.dealSetAside || []).filter(a => a.flag.factor)}
+        canDecide={!!data.decisions?.canDecide}
+        whoDecides={data.decisions?.officerWords}
+        title="Enhanced due diligence on the deal: a higher-risk factor in BGP's AML policy"
+        step="It applies to every party: Request KYC4U check carries it in the note, and the Nominated Officer or the Deputy approves the result."
+        testId="kyc-policy-factors-deal"
       />
       {unchecked.length > 0 && (
         <p className="text-xs text-muted-foreground" data-testid="kyc-red-flags-unchecked">
@@ -384,7 +465,7 @@ function PartyActions({ dealId, data, cp, wide }: { dealId: string; data: DealAm
       {data.clientChecks && (
         <>
           <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={cp.kycName || cp.name} className={wide ? "w-full justify-center" : undefined} />
-          <ClientChecksForParty dealId={dealId} companyId={cp.id} />
+          <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={data.regime?.regime === "sanctions_only"} notRequired={!!cp.notRequired} />
         </>
       )}
       <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.kycName || cp.name} />
@@ -436,15 +517,18 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
               {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — set the parties on the deal record, then {data.clientChecks ? "send each one the client checks" : "raise each with KYC4U"}.
             </span>
           </div>
+          <DealRegime data={data} />
           <DealRedFlags dealId={dealId} data={data} />
           {data.counterparties.map(cp => (
             <div key={cp.id} className="space-y-2">
-              {staffView && !(cp.isApproved && !cp.isExpired) && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
+              <PartyNotRequiredBox cp={cp} />
+              {staffView && !(cp.isApproved && !cp.isExpired) && !cp.notRequired && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
               <PartyCompanyFacts data={data} companyId={cp.id} />
               <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
+              {!cp.notRequired && <PartyLevel data={data} companyId={cp.id} />}
               <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} />
-              <PartyActions dealId={dealId} data={data} cp={cp} />
-              <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={cp.kycName || cp.name} approved={cp.isApproved && !cp.isExpired} />
+              {!cp.notRequired && <PartyActions dealId={dealId} data={data} cp={cp} />}
+              <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={cp.kycName || cp.name} approved={cp.isApproved && !cp.isExpired} notRequired={!!cp.notRequired} />
             </div>
           ))}
         </CardContent>
@@ -473,18 +557,21 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
           )}
         </div>
 
+        <DealRegime data={data} />
         <DealRedFlags dealId={dealId} data={data} />
 
         {/* grid-cols-1, not a bare grid: an implicit column grows to its
             widest line, which pushed both boxes past a phone's width. */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {data.counterparties.map(cp => {
-            const status = cp.isApproved && !cp.isExpired ? "approved" : cp.isExpired ? "expired" : cp.kyc_status || "pending";
+            const status = cp.isApproved && !cp.isExpired ? "approved" : cp.notRequired ? "not_required" : cp.isExpired ? "expired" : cp.kyc_status || "pending";
             const colour = status === "approved" ? "border-emerald-300 bg-emerald-50/50" :
+                          status === "not_required" ? "border-border bg-muted/20" :
                           status === "expired" ? "border-red-300 bg-red-50/50" :
                           status === "rejected" ? "border-red-300 bg-red-50/50" :
                           "border-amber-300 bg-amber-50/30";
             const icon = status === "approved" ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> :
+                        status === "not_required" ? <CheckCircle2 className="w-4 h-4 text-muted-foreground" /> :
                         status === "expired" ? <Clock className="w-4 h-4 text-red-600" /> :
                         <AlertCircle className="w-4 h-4 text-amber-600" />;
             const isOpen = expanded === cp.id;
@@ -504,6 +591,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                     )}
                     <div className="text-[11px] text-muted-foreground mt-0.5">
                       {status === "approved" ? `Approved${cp.kyc_approved_by ? ` by ${cp.kyc_approved_by}` : ""}` :
+                       status === "not_required" ? "Not required: no checks needed on this party" :
                        status === "expired" ? "Expired — re-check needed" :
                        status === "rejected" ? (cp.kycSource === "brand_rejected" ? "Rejected (the brand)" : "Rejected") :
                        status === "in_review" ? "In review" :
@@ -519,12 +607,14 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                 </div>
                 <div className="mt-2 space-y-2">
                   {/* What the checks still need is moot once the party is approved. */}
-                  {staffView && status !== "approved" && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
+                  <PartyNotRequiredBox cp={cp} />
+                  {staffView && status !== "approved" && status !== "not_required" && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
                   <PartyCompanyFacts data={data} companyId={cp.id} />
                   <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
+                  {status !== "not_required" && <PartyLevel data={data} companyId={cp.id} />}
                   <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} />
-                  <PartyActions dealId={dealId} data={data} cp={cp} wide />
-                  <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={cp.kycName || cp.name} approved={status === "approved"} />
+                  {status !== "not_required" && <PartyActions dealId={dealId} data={data} cp={cp} wide />}
+                  <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={cp.kycName || cp.name} approved={status === "approved"} notRequired={!!cp.notRequired} />
                 </div>
               </div>
             );
@@ -540,8 +630,8 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
             <div>
               <span className="font-medium">{dealStatus && ["INV", "COM"].includes(legacyToCode(dealStatus) || "") ? "AML sign-off still outstanding" : "AML approval needed"}</span> for {data.missing.join(", ")}.{" "}
               {data.clientChecks
-                ? <>Send each party's contact the client checks above; a party with a red flag goes to KYC4U. A party clears here when BGP signs it off, or when KYC4U, BGP's MLRO, approves it (their result added here, or after the next sync).</>
-                : <>KYC4U are BGP's MLRO — raise each party with Request KYC4U check above; their approval clears it here once their result is added or synced. A routine party can be signed off by BGP.</>}
+                ? <>Send each party's contact the client checks above; a party needing enhanced due diligence goes to KYC4U, BGP's outsourced KYC provider. A party clears here when an agent on the deal, the Nominated Officer or the Deputy signs it off, or when KYC4U approves it (their result added here by the Nominated Officer or the Deputy, or after the next sync).</>
+                : <>Raise each party with Request KYC4U check above (KYC4U are BGP's outsourced KYC provider); their approval clears it here once their result is added or synced. A standard party can be signed off by an agent on the deal, the Nominated Officer or the Deputy.</>}
             </div>
           </div>
         )}

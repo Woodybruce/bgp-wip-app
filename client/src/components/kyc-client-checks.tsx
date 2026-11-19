@@ -217,7 +217,10 @@ export function ClientCheckRow({ dealId, request }: { dealId: string; request: C
 
 // The requests sent for one party on the deal: the people to check, each
 // with their own link, then the requests to the person acting.
-export function ClientChecksForParty({ dealId, companyId }: { dealId: string; companyId: string }) {
+// sanctionsOnly: a letting under £10,000 a month (BGP's AML policy A), where
+// the owners are identified and screened, not verified. notRequired: the
+// officers marked the party Not required on this deal (policy G).
+export function ClientChecksForParty({ dealId, companyId, sanctionsOnly, notRequired }: { dealId: string; companyId: string; sanctionsOnly?: boolean; notRequired?: boolean }) {
   const { data } = useClientChecks(dealId);
   if (!data) return null;
   const list = data.requests.filter(r => r.companyId === companyId && !r.person);
@@ -225,7 +228,7 @@ export function ClientChecksForParty({ dealId, companyId }: { dealId: string; co
   const people = data.people?.[companyId] || null;
   return (
     <>
-      {party && people && people.basis !== "individual" && <PeopleToCheck dealId={dealId} data={data} party={party} people={people} />}
+      {party && people && people.basis !== "individual" && !notRequired && <PeopleToCheck dealId={dealId} data={data} party={party} people={people} sanctionsOnly={!!sanctionsOnly} />}
       {list.length > 0 && <div className="space-y-1.5">{list.map(r => <ClientCheckRow key={r.token} dealId={dealId} request={r} />)}</div>}
     </>
   );
@@ -259,7 +262,22 @@ function Tick({ ok }: { ok: boolean }) {
   return ok ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> : <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
 }
 
-function PeopleToCheck({ dealId, data, party, people }: { dealId: string; data: ClientChecks; party: Party; people: PartyPeople }) {
+function PeopleToCheck({ dealId, data, party, people, sanctionsOnly }: { dealId: string; data: ClientChecks; party: Party; people: PartyPeople; sanctionsOnly: boolean }) {
+  if (sanctionsOnly) {
+    const everyone = [...people.people.map(p => ({ name: p.name, roles: p.roles, sanctions: p.sanctions })), ...people.directors.map(d => ({ name: d.name, roles: ["director" as const], sanctions: d.sanctions }))];
+    if (!everyone.length) return null;
+    return (
+      <div className="rounded-md border bg-background p-2.5 text-xs space-y-1.5" data-testid={`people-to-check-${party.companyId}`}>
+        <div className="flex items-center gap-1.5"><UserRound className="w-3.5 h-3.5 text-muted-foreground" /><span className="font-semibold text-sm">People to check</span></div>
+        <p className="text-muted-foreground" data-testid={`people-sanctions-only-${party.companyId}`}>A letting under £10,000 a month: sanctions checks only (BGP's AML policy A). The owners and directors are identified and screened, not verified, so no one needs to send an identity check or a proof of address.</p>
+        <ul className="space-y-0.5">
+          {everyone.map(p => (
+            <li key={p.name}>{p.name} <span className="text-muted-foreground">({p.roles.map(r => ROLE_WORDS[r].toLowerCase()).join(", ")})</span> <span className={SANCTIONS_WORDS[p.sanctions].cls}>{SANCTIONS_WORDS[p.sanctions].text}</span></li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
   const left = people.people.filter(p => p.outstanding.length).length;
   return (
     <div className="rounded-md border bg-background p-2.5 text-xs space-y-2" data-testid={`people-to-check-${party.companyId}`}>

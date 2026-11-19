@@ -294,6 +294,15 @@ async function rememberEntity(listId: string, itemId: string, companyId: string)
 // Pull every generic list on the site (the ViewRequestStatus grid reads one
 // of them; system lists are skipped), upsert the items, and match each to a
 // CRM company by its client / entity name when exactly one fits.
+// The re-check a KYC4U approval carries (BGP's AML policy, Issue 2, 19
+// November 2026): the years the app recorded with a result added in the app
+// (the party's level then: 1 enhanced, 3 otherwise); 1 for a result from
+// KYC4U's own list, which carries no level (KYC4U takes the enhanced cases).
+export function kyc4uRecheckYears(fields: any): number {
+  const n = Number(fields?.["Re-check years"]);
+  return Number.isInteger(n) && n >= 1 && n <= 5 ? n : 1;
+}
+
 // ── KYC4U is BGP's MLRO (Woody, 2026-10-05) ────────────────────────────
 // "KYC4U are the MLRO, we pay for that service … once they approve, that's
 // the MLRO sign-off." Their request grid is the source of truth: after
@@ -336,12 +345,6 @@ export async function mirrorKyc4uStatuses(): Promise<{ approved: number; rejecte
         -- KYC4U decision — only their request-status list can sign off.
         AND q.list_id NOT LIKE '%:requests'
       ORDER BY q.company_id, COALESCE(q.modified_at_source, q.created_at_source, q.synced_at) DESC NULLS LAST, q.synced_at DESC NULLS LAST`);
-  let intervalDays = 182;
-  try {
-    const st = await pool.query("SELECT recheck_interval_days FROM aml_settings ORDER BY id LIMIT 1");
-    const n = parseInt(st.rows[0]?.recheck_interval_days, 10);
-    if (Number.isFinite(n) && n > 0) intervalDays = n;
-  } catch {}
   const { recomputeDealKycApproved } = await import("./deal-gates");
   const audit = (companyId: string, action: string, notes: string) =>
     pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, $2, $3, $4)`, [companyId, action, KYC4U_APPROVER, notes]).catch(() => {});
@@ -353,19 +356,21 @@ export async function mirrorKyc4uStatuses(): Promise<{ approved: number; rejecte
     const stillValid = r.kyc_status === "approved" && r.kyc_expires_at && new Date(r.kyc_expires_at) > new Date();
     try {
       if (verdict === "approved") {
-        const expires = new Date(at); expires.setDate(expires.getDate() + intervalDays);
+        // BGP's AML policy (Issue 2): the re-check follows the party's level.
+        const years = kyc4uRecheckYears(r.fields);
+        const expires = new Date(at); expires.setUTCFullYear(expires.getUTCFullYear() + years);
         await pool.query(
           `UPDATE crm_companies SET kyc_status = 'approved', kyc_checked_at = $2, kyc_approved_by = $3, kyc_expires_at = $4,
                   kyc4u_request_key = $5, updated_at = NOW() WHERE id = $1`, [r.company_id, at, KYC4U_APPROVER, expires, key]);
         await pool.query(`UPDATE aml_recheck_reminders SET completed_at = NOW(), completed_by = $2 WHERE company_id = $1 AND completed_at IS NULL`, [r.company_id, KYC4U_APPROVER]).catch(() => {});
         await pool.query(`INSERT INTO aml_recheck_reminders (company_id, entity_name, recheck_type, due_date, notes) VALUES ($1, $2, 'periodic_cdd', $3, $4)`,
-          [r.company_id, r.name, expires, `KYC4U approval — ${intervalDays}-day re-check`]).catch(() => {});
-        await audit(r.company_id, "kyc_approved", `Approved by KYC4U (BGP's outsourced MLRO): "${r.status}" on ${r.entity_name || "their request"}${r.list_id === "manual" ? ` · recorded in the app by ${r.fields?.["Recorded by"] || "an admin"}${r.fields?.Note ? ` — ${r.fields.Note}` : ""}` : ""} · re-check due ${expires.toISOString().slice(0, 10)}`);
+          [r.company_id, r.name, expires, `KYC4U approval — ${years}-year re-check (AML policy)`]).catch(() => {});
+        await audit(r.company_id, "kyc_approved", `Approved by KYC4U (BGP's outsourced KYC provider): "${r.status}" on ${r.entity_name || "their request"}${r.list_id === "manual" ? ` · recorded in the app by ${r.fields?.["Recorded by"] || "an admin"}${r.fields?.Note ? ` — ${r.fields.Note}` : ""}` : ""} · re-check due ${expires.toISOString().slice(0, 10)} (${years}-year cycle, AML policy)`);
         out.approved++;
       } else if (verdict === "rejected") {
         await pool.query(`UPDATE crm_companies SET kyc_status = 'rejected', kyc_checked_at = $2, kyc_approved_by = $3, kyc4u_request_key = $4, updated_at = NOW() WHERE id = $1`,
           [r.company_id, at, KYC4U_APPROVER, key]);
-        await audit(r.company_id, "kyc_rejected", `KYC4U (BGP's outsourced MLRO): "${r.status}" on ${r.entity_name || "their request"}`);
+        await audit(r.company_id, "kyc_rejected", `KYC4U (BGP's outsourced KYC provider): "${r.status}" on ${r.entity_name || "their request"}`);
         out.rejected++;
       } else {
         if (stillValid) {
@@ -436,12 +441,12 @@ async function mirrorKyc4uCompanyStatuses(): Promise<{ approved: number; rejecte
     try {
       if (verdict === "approved") {
         await approveEntityKyc("trading_entity", r.trading_entity_id, KYC4U_APPROVER, {
-          at, evidence, reminderCompanyId: r.parent_company_id,
-          notes: `Approved by KYC4U (BGP's outsourced MLRO): "${r.status}" on ${r.entity_name || r.name}${recorded}`,
+          at, evidence, reminderCompanyId: r.parent_company_id, recheckYears: kyc4uRecheckYears(r.fields),
+          notes: `Approved by KYC4U (BGP's outsourced KYC provider): "${r.status}" on ${r.entity_name || r.name}${recorded}`,
         });
         out.approved++;
       } else if (verdict === "rejected") {
-        await rejectEntityKyc("trading_entity", r.trading_entity_id, `KYC4U (BGP's outsourced MLRO): "${r.status}" on ${r.entity_name || r.name}${recorded}`, KYC4U_APPROVER, { at, evidence });
+        await rejectEntityKyc("trading_entity", r.trading_entity_id, `KYC4U (BGP's outsourced KYC provider): "${r.status}" on ${r.entity_name || r.name}${recorded}`, KYC4U_APPROVER, { at, evidence });
         out.rejected++;
       } else {
         const stillValid = r.kyc_status === "approved" && r.expires_at && new Date(r.expires_at) > new Date();

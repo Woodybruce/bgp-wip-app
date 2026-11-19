@@ -66,9 +66,13 @@ export function kycVerdict(state: KycFacts, now: Date = new Date()): { approved:
 // ── BGP sign-off ────────────────────────────────────────────────────────────
 //
 // Woody, 17 November 2026: "basically we do the normal checks expected and if
-// there is a red flag then we get KYC4U". A routine party is signed off by BGP
-// (admins, or the nominated officer once one is appointed) for the re-check
-// period, on the company that signs when the deal names one.
+// there is a red flag then we get KYC4U". A routine party is signed off for
+// the re-check period, on the company that signs when the deal names one.
+// Since 19 November 2026 (BGP's AML policy, Issue 2, and Woody's answer) a
+// standard or simplified party is signed off by the deal's agents, the
+// Nominated Officer or the Deputy; an enhanced one goes to KYC4U and the
+// officers record KYC4U's result. Approvals last 3 years, or 1 year for an
+// enhanced party (shared/aml-policy.ts).
 
 export const SIGN_OFF_PRECHECK_DAYS = 30;
 export const SIGN_OFF_NOTE_MIN = 10;
@@ -86,6 +90,9 @@ export interface SignOffFacts {
   clientChecksFinished: boolean; // the request to the person acting was finished and every person to check has sent what they owe
   // With the request finished: the people still to send something (19 November 2026).
   clientChecksOutstanding?: string[];
+  // A letting under £10,000 a month: sanctions checks only (AML policy A), so
+  // the client checks are not needed and no note stands in for them.
+  sanctionsOnly?: boolean;
   note: string;
   now?: Date;
 }
@@ -93,22 +100,22 @@ export interface SignOffFacts {
 /** Why BGP may not sign the party off, or null when it may. */
 export function signOffDenial(f: SignOffFacts): string | null {
   const now = f.now ?? new Date();
-  if (f.rejected) return "This party was rejected by the MLRO or KYC4U: only the MLRO can clear it.";
+  if (f.rejected) return "This party was rejected by the Nominated Officer or KYC4U: only the Nominated Officer or the Deputy can clear it.";
   if (f.current) {
     const until = f.current.until ? new Date(f.current.until) : null;
     return `Already approved${f.current.by ? ` by ${f.current.by}` : ""}${until && !isNaN(until.getTime()) ? ` until ${until.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" })}` : ""}.`;
   }
   if (f.unchecked.length) return `Red flags could not be checked against ${f.unchecked.join(", ")}. Try again in a moment.`;
   if (f.withKyc4u) return "This party was raised with KYC4U on this deal: add KYC4U's result when it comes back.";
-  if (f.redFlags > 0) return "This party has a red flag: raise it with KYC4U, then add KYC4U's result.";
-  if (f.dealRedFlags > 0) return "The deal record has a red flag: raise it with KYC4U, then add KYC4U's result.";
+  if (f.redFlags > 0) return "This party needs enhanced due diligence (a red flag or a higher-risk factor in the AML policy): raise it with KYC4U; the Nominated Officer or the Deputy adds KYC4U's result.";
+  if (f.dealRedFlags > 0) return "The deal needs enhanced due diligence (a red flag or a higher-risk factor on the deal record): raise it with KYC4U; the Nominated Officer or the Deputy adds KYC4U's result.";
   if (f.higherRisk) return "This is a higher-risk file (high risk, enhanced due diligence or a public role): it goes to KYC4U.";
   if (f.precheckRunning) return "BGP's checks before asking are still running. Sign off once they finish.";
   if (!f.precheck) return "BGP's checks before asking have not run for this party. Press Run again on the card first.";
   if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) {
     return `BGP's checks before asking are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again on the card first.`;
   }
-  if (!f.clientChecksFinished && text(f.note).length < SIGN_OFF_NOTE_MIN) {
+  if (!f.clientChecksFinished && !f.sanctionsOnly && text(f.note).length < SIGN_OFF_NOTE_MIN) {
     return f.clientChecksOutstanding?.length
       ? `The client checks are not finished for this party (still to come: ${f.clientChecksOutstanding.join("; ")}): say what you relied on instead (at least a sentence).`
       : "The client checks are not finished for this party: say what you relied on instead (at least a sentence).";

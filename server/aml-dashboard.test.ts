@@ -79,7 +79,8 @@ test("who a party waits on", () => {
   assert.equal(amlWaitingOn("client_finished", 1), "BGP: raise it with KYC4U");
   assert.equal(amlWaitingOn("with_kyc4u", 1), "KYC4U");
   assert.equal(amlWaitingOn("approved", 0), "Nobody");
-  assert.equal(amlWaitingOn("rejected", 0), "The MLRO");
+  assert.equal(amlWaitingOn("rejected", 0), "The Nominated Officer");
+  assert.equal(amlWaitingOn("not_required", 0), "Nobody");
   assert.equal(amlWaitingOn("expired", 0), "BGP: check it again");
 });
 

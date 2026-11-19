@@ -32,7 +32,9 @@ test("KYC4U's request note carries the red flags", () => {
 
 test('the alert goes to the agents on the request (the admin on a test), never the client, once per flag', () => {
   const fn = flagsServer.slice(flagsServer.indexOf('export async function alertRedFlags'), flagsServer.indexOf('export async function alertRedFlagsForSession'));
-  assert.match(fn, /const to = kycReplyAddresses\(row, request\.cc\);/);
+  // With the Nominated Officer and the Deputy (BGP's AML policy, 19 November 2026), never on a test.
+  assert.match(fn, /const officers = row\.is_test \? \[\] : await \(await import\("\.\/aml-authority"\)\)\.amlOfficerEmails\(\)/);
+  assert.match(fn, /const to = \[\.\.\.new Set\(\[\.\.\.kycReplyAddresses\(row, request\.cc\), \.\.\.officers\]\)\];/);
   assert.match(fn, /sendKycEmail\(\{\s*to,\s*build:/);
   assert.doesNotMatch(fn, /cc:/);
   assert.match(fn, /ALERTED\.includes\(f\.kind\) && !done\.includes\(redFlagAlertKey\(f\)\)/);

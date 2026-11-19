@@ -1411,7 +1411,7 @@ router.get("/api/kyc/board/deals", requireAuth, async (_req: Request, res: Respo
 router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Response) => {
   try {
     const dealRow = await pool.query(
-      `SELECT id, name, deal_type, landlord_id, tenant_id, vendor_id, purchaser_id,
+      `SELECT id, name, deal_type, team, rent_pa, internal_agent_ids, internal_agent, landlord_id, tenant_id, vendor_id, purchaser_id,
               client_contact_id, kyc_approved
        FROM crm_deals WHERE id = $1`,
       [req.params.id]
@@ -1457,8 +1457,19 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
       });
     }
 
-    const allApproved = counterparties.length >= 2 && counterparties.every(c => c.isApproved && !c.isExpired);
-    const missing = counterparties.filter(c => !c.isApproved || c.isExpired).map(c => staff ? (states[c.role]?.name || c.name) : c.name);
+    // Parties the Nominated Officer or the Deputy marked Not required on this
+    // deal (BGP's AML policy): they need nothing, unless rejected.
+    const { loadNotRequired } = await import("./aml-policy");
+    const marks = await loadNotRequired(pool, [String(d.id)]).catch(() => new Map());
+    for (const c of counterparties) {
+      const mark = marks.get(`${d.id}:${c.role}`);
+      c.notRequired = mark && mark.companyId === String(c.id) && c.kyc_status !== "rejected"
+        ? (staff ? { reason: mark.reason, reasonWords: mark.reasonWords, comment: mark.comment, by: mark.by, at: mark.at } : { reasonWords: "No checks needed on this party" })
+        : null;
+    }
+    const settled = (c: any) => (c.isApproved && !c.isExpired) || !!c.notRequired;
+    const allApproved = counterparties.length >= 2 && counterparties.every(settled);
+    const missing = counterparties.filter(c => !settled(c)).map(c => staff ? (states[c.role]?.name || c.name) : c.name);
     // BGP's checks before asking (Woody, 2026-11-17: "we need to do
     // everyhting we can before we ask questions on someone"): each party's
     // latest, and a run started for any party with none from the last 30
@@ -1483,10 +1494,10 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
     // BGP's sign-off and KYC4U's result on each party (step 2, 18 November
     // 2026): whether the person asking may decide, and per party whether BGP
     // may sign it off now and why not. BGP staff only.
-    let decisions: { canDecide: boolean; mlroAppointed: boolean; parties: Record<string, { blocked: string | null; needsNote: boolean }> } | null = null;
+    let decisions: (Awaited<ReturnType<typeof import("./deal-party-aml")["canDecideAml"]>> & { parties: Record<string, { blocked: string | null; needsNote: boolean }> }) | null = null;
     if (staff) {
       const aml = await import("./deal-party-aml");
-      const who = await aml.canDecideAml(req);
+      const who = await aml.canDecideAml(req, d);
       const parties: Record<string, { blocked: string | null; needsNote: boolean }> = {};
       for (const c of counterparties) {
         try {
@@ -1519,6 +1530,8 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
       redFlags,
       prechecks,
       decisions,
+      // Which checks the deal needs under BGP's AML policy (BGP staff only).
+      regime: staff ? (await import("@shared/aml-policy")).amlRegime({ dealType: d.deal_type, team: d.team, rentPa: d.rent_pa }) : null,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

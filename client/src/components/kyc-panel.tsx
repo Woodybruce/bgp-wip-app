@@ -10,7 +10,7 @@ export function KycPanel({ companyId, dealId, role, partyName }: { companyId: st
     <div className="space-y-3" data-testid="kyc-panel">
       <Kyc4uStatusStrip companyId={companyId} />
       {partyName && <Kyc4uRequestButton dealId={dealId} companyId={companyId} role={role} partyName={partyName} />}
-      <p className="text-xs text-muted-foreground">KYC4U run all AML/KYC checks as BGP's MLRO. Their approval is the sign-off; it shows here after the next sync.</p>
+      <p className="text-xs text-muted-foreground">KYC4U are BGP's outsourced KYC provider. Their approval shows here after the next sync; on a deal, the Nominated Officer or the Deputy records their result.</p>
     </div>
   );
 }

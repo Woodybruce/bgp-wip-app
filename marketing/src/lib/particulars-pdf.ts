@@ -152,7 +152,8 @@ export async function downloadParticulars(listing: Listing) {
   );
   doc.setFontSize(6.5);
   doc.text(
-    "Misrepresentation Act 1967: these particulars are for guidance only and do not constitute an offer or contract. All figures quoted are exclusive of VAT.",
+    // BGP's AML policy (Issue 2, 3.8): marketing tells every party what the checks will need.
+    "Misrepresentation Act 1967: these particulars are for guidance only and do not constitute an offer or contract. All figures quoted are exclusive of VAT. Anti-money laundering: under the Money Laundering Regulations 2017 the successful party will be asked for identification, ownership and source of funds information.",
     W / 2,
     820,
     { align: "center", maxWidth: CW },

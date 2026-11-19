@@ -351,7 +351,7 @@ function Kyc4uSignoffButton({ companyId }: { companyId: string }) {
     onSuccess: () => {
       setOpen(false); setNote("");
       queryClient.invalidateQueries();
-      toast({ title: "KYC4U sign-off recorded", description: "Approved by KYC4U (MLRO) — the company's deals update now." });
+      toast({ title: "KYC4U sign-off recorded", description: "Approved by KYC4U, BGP's outsourced KYC provider — the company's deals update now." });
     },
     onError: (e: any) => toast({ title: "Couldn't record it", description: e?.message, variant: "destructive" }),
   });
@@ -362,7 +362,7 @@ function Kyc4uSignoffButton({ companyId }: { companyId: string }) {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Record KYC4U sign-off</DialogTitle>
-            <DialogDescription>Only when KYC4U have signed this company off (e.g. by email) and it isn't on their request status page yet. It shows as Approved by KYC4U (MLRO), noted with your name.</DialogDescription>
+            <DialogDescription>Only when KYC4U have signed this company off (e.g. by email) and it isn't on their request status page yet. It shows as Approved by KYC4U, noted with your name.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <label className="block text-sm">Signed off on<Input type="date" value={date} onChange={e => setDate(e.target.value)} className="mt-1" /></label>

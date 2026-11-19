@@ -1,12 +1,19 @@
 // BGP's sign-off on a deal party, and KYC4U's result added by hand (Woody,
 // 18 November 2026: step 2 of docs/deal-page-review-2026-11-18.md, "Ok go
 // ahead with your suggestions I will do the requests"). The rules are
-// shared/party-kyc.ts. Both decide a party's AML, so both are the MLRO's
-// (MLR 2017 reg 21): the nominated officer once one is appointed in AML
-// settings, admins until then (amlActor), signed in as themselves.
+// shared/party-kyc.ts and shared/aml-policy.ts.
 //
-//   POST /api/deals/:id/parties/:role/sign-off      { note }: BGP signs the party off for the re-check period
-//   POST /api/deals/:id/parties/:role/kyc4u-result  multipart: verdict, date, reference, note, files[]
+// Who decides (BGP's AML policy, Issue 2; Woody, 19 November 2026): a
+// standard or simplified party is signed off by the deal's agents, the
+// Nominated Officer or the Deputy; KYC4U's result, a red flag set aside, and
+// a party marked Not required are the Nominated Officer's or the Deputy's
+// (admins until a Nominated Officer is set: amlActor), signed in as
+// themselves.
+//
+//   POST /api/deals/:id/parties/:role/sign-off            { note }: signs the party off for the policy's re-check period
+//   POST /api/deals/:id/parties/:role/kyc4u-result        multipart: verdict, date, reference, note, files[]
+//   POST /api/deals/:id/parties/:role/not-required        { reason, comment }: no checks needed on this party
+//   POST /api/deals/:id/parties/:role/not-required/undo   takes the marker off
 //
 // Each acts on the company that signs when the deal names one (its own
 // crm_entity_kyc record), else on the brand (crm_companies.kyc_*), and
@@ -28,6 +35,10 @@ import {
   isKyc4uResultKey, kyc4uResultDate, kycVerdict, sameLegalCompany, signOffDenial,
   type PartyKycState, type SignOffFacts,
 } from "@shared/party-kyc";
+import {
+  DUE_DILIGENCE_LABEL, NOT_REQUIRED_REASONS, RECHECK_YEARS, amlRegime, isDealAgent, notRequiredInput, officerWords,
+  type AmlOfficers, type AmlRegime, type PartyDueDiligence,
+} from "@shared/aml-policy";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -43,13 +54,16 @@ export interface AmlParty {
   entityName: string | null;
   sameCompany: boolean;      // that company is the brand's own legal company
   state: PartyKycState;
+  regime: AmlRegime;         // which checks the deal needs (AML policy A)
+  agents: { ids: string[]; names: string[] }; // the deal's agents (internal_agent_ids / internal_agent)
 }
 
 /** One party of a deal, with its AML state read the gate's way (loadPartyKyc). */
 export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole): Promise<AmlParty | null> {
   const col = DEAL_PARTY_COLUMNS[role];
   const deal = (await db.query(
-    `SELECT id, name, ${col.brand} AS brand_id, ${col.company} AS entity_id FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
+    `SELECT id, name, ${col.brand} AS brand_id, ${col.company} AS entity_id, deal_type, team, rent_pa, internal_agent_ids, internal_agent
+       FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
   if (!deal?.brand_id) return null;
   const entity = deal.entity_id ? (await db.query(
     `SELECT e.id, e.name, e.companies_house_number, c.name AS brand_name, c.companies_house_number AS brand_number,
@@ -67,6 +81,11 @@ export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole):
     brandId: String(deal.brand_id), brandName: state.brandName,
     entityId: entity ? String(entity.id) : null, entityName: entity ? text(entity.name) : null,
     sameCompany, state,
+    regime: amlRegime({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }).regime,
+    agents: {
+      ids: Array.isArray(deal.internal_agent_ids) ? deal.internal_agent_ids.filter(Boolean).map(String) : [],
+      names: Array.isArray(deal.internal_agent) ? deal.internal_agent.map(text).filter(Boolean) : [],
+    },
   };
 }
 
@@ -86,12 +105,16 @@ async function raisedWithKyc4u(db: Db, party: AmlParty): Promise<boolean> {
 }
 
 export interface KnownFacts {
-  redFlags?: { parties: Record<string, unknown[]>; deal: unknown[]; unchecked: string[]; setAside?: Record<string, Array<{ flag: { key: string } }>> } | null;
+  redFlags?: {
+    parties: Record<string, unknown[]>; deal: unknown[]; unchecked: string[];
+    setAside?: Record<string, Array<{ flag: { key: string } }>>;
+    levels?: Record<string, PartyDueDiligence>;
+  } | null;
   precheck?: { ranAt: string | null; running: boolean } | null;
 }
 
-/** What BGP's sign-off rule needs, read from the records (the note aside). */
-export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = {}): Promise<Omit<SignOffFacts, "note">> {
+/** What BGP's sign-off rule needs, read from the records (the note aside), and the party's level under the policy. */
+export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = {}): Promise<Omit<SignOffFacts, "note"> & { level: PartyDueDiligence | null }> {
   const verdict = kycVerdict(party.state);
   const flags = known.redFlags ?? await (await import("./kyc-red-flags"))
     .loadDealRedFlags(party.dealId, [party.brandId], party.entityId ? { [party.brandId]: party.entityId } : {});
@@ -142,38 +165,66 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
     precheckRunning: precheck.running,
     clientChecksFinished: finished,
     clientChecksOutstanding: mainFinished ? outstanding : [],
+    sanctionsOnly: party.regime === "sanctions_only",
+    level: flags?.levels?.[party.brandId] || null,
   };
 }
 
-/** For the deal's AML card: may BGP sign the party off now, and is a note needed. */
+/** For the deal's AML card: may the party be signed off now, and is a note needed. */
 export function signOffView(facts: Omit<SignOffFacts, "note">): { blocked: string | null; needsNote: boolean; outstanding: string[] } {
   return {
     blocked: signOffDenial({ ...facts, note: "x".repeat(SIGN_OFF_NOTE_MIN) }),
-    needsNote: !facts.clientChecksFinished,
-    outstanding: facts.clientChecksOutstanding || [],
+    needsNote: !facts.clientChecksFinished && !facts.sanctionsOnly,
+    outstanding: facts.sanctionsOnly ? [] : facts.clientChecksOutstanding || [],
   };
 }
 
-async function decider(req: Request): Promise<{ id: string; name: string; mlroAppointed: boolean } | { refusal: string; status: number }> {
+type Decider = { id: string; name: string; mlroAppointed: boolean; as: "officer" | "agent"; officerRole: string | null };
+
+// The Nominated Officer or the Deputy (admins until a Nominated Officer is set).
+async function decider(req: Request): Promise<Decider | { refusal: string; status: number }> {
   const userId = (req as any).session?.userId || (req as any).tokenUserId;
   if (!userId) return { refusal: "Not signed in.", status: 401 };
   const { contactViewer } = await import("./contact-viewer");
   if (!(await contactViewer(req)).staff) return { refusal: "BGP staff only, signed in as themselves.", status: 403 };
-  const { amlActor } = await import("./aml-authority");
+  const { amlActor, officerRefusal } = await import("./aml-authority");
   const actor = await amlActor(req);
-  if (!actor.isMlro) {
-    return { refusal: actor.mlroAppointed ? "Only the MLRO (nominated officer) can decide a party's AML." : "Only an admin can decide a party's AML until an MLRO is appointed in AML settings.", status: 403 };
-  }
-  return { id: String(userId), name: text(actor.name) || text(actor.email) || "an admin", mlroAppointed: actor.mlroAppointed };
+  if (!actor.isMlro) return { refusal: officerRefusal(actor, "decide this"), status: 403 };
+  return { id: String(userId), name: text(actor.name) || text(actor.email) || "an admin", mlroAppointed: actor.mlroAppointed, as: "officer", officerRole: actor.officerRole };
 }
 
-/** May the person asking decide AML (sign off, add KYC4U's result)? */
-export async function canDecideAml(req: Request): Promise<{ canDecide: boolean; mlroAppointed: boolean }> {
-  const d = await decider(req).catch(() => null);
-  if (d && "id" in d) return { canDecide: true, mlroAppointed: d.mlroAppointed };
+// Who may sign a standard or simplified party off: the officers, or one of the
+// deal's agents (the AML policy: fee earners approve standard checks).
+async function signOffActor(req: Request, party: AmlParty): Promise<Decider | { refusal: string; status: number }> {
+  const officer = await decider(req);
+  if ("id" in officer) return officer;
+  if (officer.status === 401) return officer;
+  const userId = String((req as any).session?.userId || (req as any).tokenUserId || "");
+  const { contactViewer } = await import("./contact-viewer");
+  if (!userId || !(await contactViewer(req)).staff) return officer;
+  const me = (await pool.query(`SELECT id, name, email FROM users WHERE id = $1 AND COALESCE(is_active, true) = true`, [userId])).rows[0];
+  if (me && isDealAgent({ id: String(me.id), name: me.name }, { internal_agent_ids: party.agents.ids, internal_agent: party.agents.names })) {
+    const { amlActor } = await import("./aml-authority");
+    const actor = await amlActor(req);
+    return { id: String(me.id), name: text(me.name) || text(me.email), mlroAppointed: actor.mlroAppointed, as: "agent", officerRole: null };
+  }
+  return { refusal: "Only an agent on this deal, the Nominated Officer or the Deputy can sign this party off.", status: 403 };
+}
+
+/** What the person asking may do on a deal's AML: decide (the officers), sign off (the officers and the deal's agents). */
+export async function canDecideAml(req: Request, deal?: { internal_agent_ids?: unknown; internal_agent?: unknown } | null): Promise<{
+  canDecide: boolean; canSignOff: boolean; mlroAppointed: boolean; officers: { nominated: string | null; deputy: string | null }; officerWords: string;
+}> {
   const { amlActor } = await import("./aml-authority");
   const actor = await amlActor(req).catch(() => null);
-  return { canDecide: false, mlroAppointed: !!actor?.mlroAppointed };
+  const officers: AmlOfficers = actor?.officers || { nominated: null, deputy: null };
+  const names = { nominated: officers.nominated?.name || null, deputy: officers.deputy?.name || null };
+  const d = await decider(req).catch(() => null);
+  if (d && "id" in d) return { canDecide: true, canSignOff: true, mlroAppointed: d.mlroAppointed, officers: names, officerWords: officerWords(officers) };
+  const { contactViewer } = await import("./contact-viewer");
+  const staff = await contactViewer(req).then(v => v.staff).catch(() => false);
+  const agent = !!(staff && actor?.id && deal && isDealAgent({ id: String(actor.id), name: actor.name }, deal));
+  return { canDecide: false, canSignOff: agent, mlroAppointed: !!actor?.mlroAppointed, officers: names, officerWords: officerWords(officers) };
 }
 
 async function dealAudit(dealId: string, field: string, oldValue: string | null, newValue: string, reason: string, me: { id: string; name: string }) {
@@ -185,20 +236,19 @@ async function dealAudit(dealId: string, field: string, oldValue: string | null,
 const partyName = (p: AmlParty) => p.entityName || p.brandName;
 
 // The brand's own approval: the columns the company approval writes, the
-// re-check reminder on the AML settings cycle, the KYC audit line.
-async function approveBrand(party: AmlParty, by: { name: string }, line: string): Promise<Date> {
-  const { recheckIntervalDays } = await import("./account-entities");
-  const days = await recheckIntervalDays(pool);
+// re-check reminder on the AML policy's cycle for the party's level, the KYC
+// audit line.
+async function approveBrand(party: AmlParty, by: { name: string }, line: string, years: number): Promise<Date> {
   const expires = new Date();
-  expires.setDate(expires.getDate() + days);
+  expires.setUTCFullYear(expires.getUTCFullYear() + years);
   await pool.query(
     `UPDATE crm_companies SET kyc_status = 'approved', kyc_checked_at = NOW(), kyc_approved_by = $2, kyc_expires_at = $3, updated_at = NOW() WHERE id = $1`,
     [party.brandId, by.name, expires]);
   await pool.query(`UPDATE aml_recheck_reminders SET completed_at = NOW(), completed_by = $2 WHERE company_id = $1 AND completed_at IS NULL`, [party.brandId, by.name]).catch(() => {});
   await pool.query(`INSERT INTO aml_recheck_reminders (company_id, entity_name, recheck_type, due_date, notes) VALUES ($1, $2, 'periodic_cdd', $3, $4)`,
-    [party.brandId, party.brandName, expires, `BGP sign-off on ${party.dealName} — ${days}-day re-check`]).catch(() => {});
+    [party.brandId, party.brandName, expires, `BGP sign-off on ${party.dealName} — ${years}-year re-check (AML policy)`]).catch(() => {});
   await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'kyc_approved', $2, $3)`,
-    [party.brandId, by.name, `${line} · re-check due ${expires.toISOString().slice(0, 10)} (${days}-day cycle)`]).catch(() => {});
+    [party.brandId, by.name, `${line} · re-check due ${expires.toISOString().slice(0, 10)} (${years}-year cycle, AML policy)`]).catch(() => {});
   return expires;
 }
 
@@ -206,40 +256,47 @@ const router = Router();
 
 router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: Response) => {
   try {
-    const me = await decider(req);
-    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
     const role = String(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
     const party = await loadAmlParty(pool, String(req.params.id), role);
     if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    const me = await signOffActor(req, party);
+    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
     const note = text(req.body?.note).slice(0, 1000);
     const facts = await signOffFacts(pool, party);
     const denial = signOffDenial({ ...facts, note });
     if (denial) return res.status(409).json({ message: denial, code: "SIGN_OFF_REFUSED" });
+    // A party with nothing that counts reads standard or simplified (an
+    // enhanced one is refused above); its approval lasts the policy's 3 years.
+    const level = facts.level && facts.level.level !== "enhanced" ? facts.level.level : "standard";
+    const years = RECHECK_YEARS[level];
 
     const relied = [
+      DUE_DILIGENCE_LABEL[level].toLowerCase(),
+      party.regime === "sanctions_only" ? "sanctions checks only (a letting under £10,000 a month)" : null,
       facts.precheck ? `BGP's checks before asking ${facts.precheck.ranAt.slice(0, 10)}` : null,
-      facts.clientChecksFinished ? "client checks finished" : `client checks not finished${facts.clientChecksOutstanding?.length ? ` (still to come: ${facts.clientChecksOutstanding.join("; ")})` : ""}`,
+      party.regime === "sanctions_only" ? null : facts.clientChecksFinished ? "client checks finished" : `client checks not finished${facts.clientChecksOutstanding?.length ? ` (still to come: ${facts.clientChecksOutstanding.join("; ")})` : ""}`,
       note ? `note: ${note}` : null,
     ].filter(Boolean).join("; ");
-    const line = `BGP sign-off on ${party.dealName} (${DEAL_PARTY_LABEL[role].toLowerCase()}) by ${me.name}: ${relied}`;
+    const who = me.as === "agent" ? `${me.name} (agent on the deal)` : `${me.name}${me.officerRole === "nominated" ? " (Nominated Officer)" : me.officerRole === "deputy" ? " (Deputy Nominated Officer)" : ""}`;
+    const line = `BGP sign-off on ${party.dealName} (${DEAL_PARTY_LABEL[role].toLowerCase()}) by ${who}: ${relied}`;
     const before = party.state.status || "no checks";
     if (party.entityId) {
       const { approveEntityKyc } = await import("./account-entities");
       const r = await approveEntityKyc("trading_entity", party.entityId, me.name, {
-        reminderCompanyId: party.brandId, notes: line,
-        evidence: { bgpSignOff: { by: me.name, userId: me.id, at: new Date().toISOString(), dealId: party.dealId, role, note: note || null,
-          precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } },
+        reminderCompanyId: party.brandId, notes: line, recheckYears: years,
+        evidence: { bgpSignOff: { by: me.name, userId: me.id, as: me.as, at: new Date().toISOString(), dealId: party.dealId, role, note: note || null,
+          level, regime: party.regime, precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } },
       });
       if (r.status !== 200) return res.status(r.status).json({ message: "The company that signs was not found." });
       const { recomputeDealsForTradingEntity } = await import("./deal-gates");
       await recomputeDealsForTradingEntity(party.entityId, me.name).catch((e: any) => console.warn("[deal-party-aml] deal recompute failed:", e?.message));
     } else {
-      await approveBrand(party, me, line);
+      await approveBrand(party, me, line, years);
       const { recomputeDealKycApproved } = await import("./deal-gates");
       await recomputeDealKycApproved(party.brandId, me.name).catch((e: any) => console.warn("[deal-party-aml] deal recompute failed:", e?.message));
     }
-    await dealAudit(party.dealId, "aml_sign_off", before, `approved by ${me.name}`, `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${relied}`, me);
+    await dealAudit(party.dealId, "aml_sign_off", before, `approved by ${who}`, `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${relied} · re-check in ${years} year${years === 1 ? "" : "s"}`, me);
     const after = await loadAmlParty(pool, party.dealId, role);
     res.json({ ok: true, state: after?.state || null });
   } catch (err: any) {
@@ -351,6 +408,12 @@ router.post("/api/deals/:id/parties/:role/kyc4u-result", deciderFirst, takeFiles
     if (verdict !== "approved" && !files.length && note.length < SIGN_OFF_NOTE_MIN) return res.status(400).json({ message: "Attach KYC4U's email or say what they said." });
     const party = await loadAmlParty(pool, String(req.params.id), role);
     if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    // The re-check the approval carries: the policy's years for the party's
+    // level now (1 when it needs enhanced due diligence, else 3).
+    const flagsNow = await (await import("./kyc-red-flags"))
+      .loadDealRedFlags(party.dealId, [party.brandId], party.entityId ? { [party.brandId]: party.entityId } : {}).catch(() => null);
+    const levelNow = flagsNow?.levels?.[party.brandId]?.level || "enhanced";
+    const recheckYears = RECHECK_YEARS[levelNow];
 
     // The files, filed on the party's KYC record (the company that signs when set).
     const { saveFile } = await import("./file-storage");
@@ -378,7 +441,8 @@ router.post("/api/deals/:id/parties/:role/kyc4u-result", deciderFirst, takeFiles
        VALUES ('manual', $1, 'Recorded in the app', $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $9, NOW())`,
       [itemId, `${reference || "KYC4U result"} ${partyName(party)}`.trim(), label, partyName(party),
         party.entityId && !party.sameCompany ? null : party.brandId, party.brandId, party.entityId,
-        JSON.stringify({ "Recorded by": me.name, Note: note || null, Reference: reference || null, Deal: party.dealName, Files: files.length }), on]);
+        JSON.stringify({ "Recorded by": me.name, Note: note || null, Reference: reference || null, Deal: party.dealName, Files: files.length,
+          "Due diligence": DUE_DILIGENCE_LABEL[levelNow], "Re-check years": recheckYears }), on]);
     // A request prepared on this deal and sent to KYC4U is answered by it.
     await pool.query(
       `UPDATE kyc4u_drafts SET request_list_id = 'manual', request_item_id = $3, status = 'submitted'
@@ -401,6 +465,70 @@ router.post("/api/deals/:id/parties/:role/kyc4u-result", deciderFirst, takeFiles
   } catch (err: any) {
     console.error("[deal-party-aml] KYC4U result failed:", err?.message);
     res.status(500).json({ message: "KYC4U's result could not be saved." });
+  }
+});
+
+// A party marked Not required (Woody, 19 November 2026; BGP's AML policy, G
+// and F.f): no checks are needed on the other side of a deal a joint agent
+// found and negotiated, or when no deal was done with it. The Nominated
+// Officer or the Deputy marks it, with why. It stays on the deal with who and
+// when, holds only while that party is on the role, and the party then needs
+// nothing: the AML gate, the deal's approval and the AML dashboard read it
+// (server/aml-policy.ts, loadNotRequired).
+router.post("/api/deals/:id/parties/:role/not-required", async (req: Request, res: Response) => {
+  try {
+    const me = await decider(req);
+    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
+    const said = notRequiredInput(req.body);
+    if ("problem" in said) return res.status(400).json({ message: said.problem });
+    const party = await loadAmlParty(pool, String(req.params.id), role);
+    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    await pool.query(
+      `UPDATE kyc_party_exemptions SET undone_at = now(), undone_by = $3, undone_by_name = $4 WHERE deal_id = $1 AND role = $2 AND undone_at IS NULL`,
+      [party.dealId, role, me.id, me.name]);
+    await pool.query(
+      `INSERT INTO kyc_party_exemptions (deal_id, role, company_id, trading_entity_id, reason, comment, set_by, set_by_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [party.dealId, role, party.brandId, party.entityId, said.reason, said.comment, me.id, me.name]);
+    await pool.query(
+      `INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'party_not_required', $2, $3, $4, $5)`,
+      [party.brandId, me.name, `Not required on ${party.dealName} (${DEAL_PARTY_LABEL[role].toLowerCase()}), marked by ${me.name}: ${NOT_REQUIRED_REASONS[said.reason]}. ${said.comment}`,
+        party.entityId ? "trading_entity" : null, party.entityId]).catch(() => {});
+    await dealAudit(party.dealId, "aml_not_required", party.state.status || "no checks", `not required, marked by ${me.name}`,
+      `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${NOT_REQUIRED_REASONS[said.reason]} · ${said.comment}`, me);
+    const { recomputeDealKycApproved } = await import("./deal-gates");
+    await recomputeDealKycApproved(party.brandId, me.name).catch((e: any) => console.warn("[deal-party-aml] deal recompute failed:", e?.message));
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error("[deal-party-aml] not required failed:", err?.message);
+    res.status(500).json({ message: "The party could not be marked Not required." });
+  }
+});
+
+router.post("/api/deals/:id/parties/:role/not-required/undo", async (req: Request, res: Response) => {
+  try {
+    const me = await decider(req);
+    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
+    const undone = (await pool.query(
+      `UPDATE kyc_party_exemptions SET undone_at = now(), undone_by = $3, undone_by_name = $4
+        WHERE deal_id = $1 AND role = $2 AND undone_at IS NULL RETURNING company_id, reason`,
+      [String(req.params.id), role, me.id, me.name])).rows;
+    if (!undone.length) return res.status(409).json({ message: "This party is not marked Not required. Reload the box." });
+    const companyId = String(undone[0].company_id);
+    await pool.query(
+      `INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'party_not_required_undone', $2, $3)`,
+      [companyId, me.name, `Not required taken off by ${me.name} (${DEAL_PARTY_LABEL[role].toLowerCase()} on deal ${String(req.params.id)}): the checks are needed again`]).catch(() => {});
+    await dealAudit(String(req.params.id), "aml_not_required", "not required", `taken off by ${me.name}`, `${DEAL_PARTY_LABEL[role]}: the checks are needed again`, me);
+    const { recomputeDealKycApproved } = await import("./deal-gates");
+    await recomputeDealKycApproved(companyId, me.name).catch((e: any) => console.warn("[deal-party-aml] deal recompute failed:", e?.message));
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error("[deal-party-aml] not required undo failed:", err?.message);
+    res.status(500).json({ message: "The marker could not be taken off." });
   }
 });
 

@@ -8,7 +8,7 @@
 
 import { legacyToCode } from "./deal-status";
 
-export type AmlStage = "not_started" | "bgp_checked" | "client_sent" | "client_finished" | "with_kyc4u" | "approved" | "rejected" | "expiring" | "expired";
+export type AmlStage = "not_started" | "bgp_checked" | "client_sent" | "client_finished" | "with_kyc4u" | "approved" | "rejected" | "expiring" | "expired" | "not_required";
 
 export const AML_STAGE_LABEL: Record<AmlStage, string> = {
   not_started: "Not started",
@@ -20,6 +20,9 @@ export const AML_STAGE_LABEL: Record<AmlStage, string> = {
   rejected: "Rejected",
   expiring: "Expiring",
   expired: "Expired",
+  // Marked by the Nominated Officer or the Deputy (BGP's AML policy: the
+  // other side of a deal a joint agent negotiated, or no deal done).
+  not_required: "Not required",
 };
 
 export type AmlBucket = "todo" | "in_progress" | "done" | "expiring" | "not_due" | "closed";
@@ -53,6 +56,8 @@ export interface AmlPartyFacts {
   // "in review" left by the in-app AML retired in October 2026 is not:
   // on live on 18 November 2026, 552 of 615 such parties had no KYC4U request.
   kyc4uInReview: boolean;
+  // Marked Not required on this deal by the Nominated Officer or the Deputy.
+  notRequired?: boolean;
 }
 
 const time = (v: string | Date | null | undefined): number | null => {
@@ -64,6 +69,7 @@ const time = (v: string | Date | null | undefined): number | null => {
 /** Where a party has got to. A decision first, then the furthest step on the way. */
 export function amlStage(f: AmlPartyFacts, now: Date = new Date()): AmlStage {
   if (f.kyc.status === "rejected") return "rejected";
+  if (f.notRequired) return "not_required";
   if (f.kyc.status === "approved") {
     const until = time(f.kyc.expiresAt);
     if (until !== null && until < now.getTime()) return "expired";
@@ -95,7 +101,7 @@ export function amlDealClosed(dealStatus: string | null): boolean {
 }
 
 export function amlBucket(stage: AmlStage, due: boolean, closed = false): AmlBucket {
-  if (stage === "approved" || stage === "rejected") return "done";
+  if (stage === "approved" || stage === "rejected" || stage === "not_required") return "done";
   // On a closed deal a party approved at the time stays Done, however long
   // ago; one never decided is a gap of its own.
   if (closed) return stage === "expiring" || stage === "expired" ? "done" : "closed";
@@ -113,7 +119,8 @@ export function amlWaitingOn(stage: AmlStage, redFlags: number): string {
     case "client_finished": return redFlags ? "BGP: raise it with KYC4U" : "BGP: sign off";
     case "with_kyc4u": return "KYC4U";
     case "approved": return "Nobody";
-    case "rejected": return "The MLRO";
+    case "not_required": return "Nobody";
+    case "rejected": return "The Nominated Officer";
     case "expiring":
     case "expired": return "BGP: check it again";
   }
@@ -137,6 +144,10 @@ export interface AmlDashboardRow {
   brandId: string;
   brandName: string;
   signsAs: string | null;              // the company that signs, when the deal names one
+  // The level of due diligence BGP's AML policy gives the party (Issue 2),
+  // and why: the flags and higher-risk factors that count, or the basis.
+  level: "simplified" | "standard" | "enhanced";
+  levelWhy: string[];
   stage: AmlStage;
   bucket: AmlBucket;
   due: boolean;
