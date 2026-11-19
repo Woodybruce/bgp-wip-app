@@ -2957,7 +2957,11 @@ need to improve / rename into Deal analysis and letting approval pack, this
 can be generated for all approvals based on their template", and the reports
 Landsec takes from VTS should come from the app. Asked, he answered "go
 ahead"; "quarters just have ability to pick one or several months"; and on
-who runs reports, "yes landsec and BGP". Do not re-litigate.
+who runs reports, "yes landsec and BGP". On the first populated samples (nine
+reports, seven of them Excel workbooks) he said: "we dont need complicated
+excels just visual PDF which can also be power point". So the reports to
+present are slide decks, and the Excel workbooks sit under a fold. Do not
+re-litigate.
 
 - **The name.** The Transaction recommendation is the **Deal analysis and
   letting approval pack** on every screen, email and document a person reads,
@@ -2994,11 +2998,15 @@ who runs reports, "yes landsec and BGP". Do not re-litigate.
   2026"). `inReportPeriod` judges a date by its London day. `LANDSEC_REPORTS`
   is every report (key, title, description, format, whether it takes the
   ticked schemes or one scheme, how it uses the period, what it does not
-  hold). **A new report is one more entry there and one more `case` in
-  `buildLandsecReport`**; the page draws whatever the registry holds.
+  hold, and `deck: true` for a report to present). **A new report is one
+  more entry there and one more `case` in `buildLandsecReport`**; the page
+  draws whatever the registry holds. `shortReportDay` writes a day as
+  "2 Sep 2026" (always a three-letter month) and `reportMonths` lists a
+  period's months.
 - **The builders** are `server/landsec-reports.ts` (`GET /api/landsec/reports`
   for the page, `GET /api/landsec/reports/:key?from=&to=&schemes=` for a
-  file). Every route resolves the caller with `landsecViewer()`: BGP staff
+  file; a deck also takes `&format=pptx` for the PowerPoint, and that format
+  on anything but a deck is a 400). Every route resolves the caller with `landsecViewer()`: BGP staff
   get all 14 schemes, a Landsec login the schemes ticked on it
   (`reportSchemesFor`); a scheme asked for only narrows that
   (`pickSchemes`, tests `server/landsec-reports.test.ts`, in `npm test`). GET
@@ -3019,28 +3027,115 @@ who runs reports, "yes landsec and BGP". Do not re-litigate.
   `qa/regression/landsec-reports-guards.test.mjs` fails if one of those field
   names appears in the builders, if a row is spread, if a query reads another
   table, or if the access checks move.
-- **The nine reports**: Tenancy schedule (Excel: Summary and a sheet per
-  scheme), Leasing activity (Excel) and Leasing activity (formatted) (PDF):
-  the clock feed's live deals plus the deals that changed stage in the period
-  and have since closed, with a "Stage date confirmed" column that reads No where
-  the app greys the days at stage; Space activity (Excel: lease roll by expiry and break
-  year, and each lease event with any letting on the unit); Tour activity
-  (Excel: viewings dated in the period); Requirements (Excel: open
-  requirements; not held by scheme, so the ticks do not cut it); Comps
-  (Excel: every comparable at the schemes, those completed in the period
-  marked; a typed date is read as a date only when it is a full date); Asset
-  profile (PDF, one scheme: facts, occupancy, trading units by brief
-  category, lease roll by year, live lettings by stage); Portfolio (one Excel
-  workbook: Assets, Deals, Spaces, Tenants, Lease terms and options). Every
-  workbook opens on an **About** sheet (period, how the period is used,
-  schemes, who made it and when, that it holds what is recorded in ChatBGP).
-  Excel is exceljs, as the Finance board pack; the PDFs are pdf-lib.
+- **The reports to present are decks: one slide model, two files** (Woody,
+  2026-11-19: "we dont need complicated excels just visual PDF which can also
+  be power point"). Three decks, each 16:9 slides with charts and big figures
+  first and short tables only where a chart cannot say it, each downloading
+  as a **PDF** or as a **PowerPoint** of the SAME slides:
+  - **Board report** (`board-report`, the ticked schemes and the period):
+    title; Headlines; Letting activity by scheme (stacked bar); by brief
+    category (only when something is recorded); Live lettings today (by
+    stage, and by scheme); Target tenants (the figures, the targets by stage
+    and by scheme) and Target tenants: furthest on (a grid over up to three
+    slides); Occupancy today (each scheme's units as a share); Lease roll
+    (expiries and breaks, ten years from this one); Rental growth; Deal
+    speed; the Market report slides; How the figures are counted.
+  - **Asset profile** (`asset-profile`, one scheme, as recorded today):
+    title; At a glance (figures, occupancy by units and by sq ft, trading
+    units by brief category); Lease roll; Live lettings (by stage, with a
+    short table continued over further slides); Target tenants (one slide:
+    the scheme's targets by stage and the ones furthest on).
+  - **Leasing activity** (`leasing-activity-pdf`): title; Live lettings
+    (figures and a stacked bar by scheme); Viewings held (by month and by
+    scheme, by the board report's own test `viewingHeld`); then the lettings
+    scheme by scheme in one table over as many slides as it needs.
+  - **A long run of units that are only being marketed is counted on the
+    chart and not listed** (more than twelve, in the asset profile and in
+    leasing activity): the slide says so, and the Excel export lists them.
+  - **The slide model is `shared/landsec-deck.ts`**: a deck is data (slides of
+    rows of blocks: tiles, a chart with its series, a table, a plain card,
+    words), and that file also decides where a block sits (`layoutSlide`),
+    how many table rows fit, how big a figure is written, that a cell is one
+    line (`fitCell`) and what colour a series is (`DECK_SERIES`: occupied is
+    always navy, vacant grey, Marketing pale, Negotiating blue, HOTs gold,
+    Solicitors navy, expiries navy, breaks gold). **What is on each slide is
+    `shared/landsec-decks.ts`** (`boardDeck`, `assetDeck`, `activityDeck`:
+    pure, they count nothing new and only lay out figures already worked
+    out). `server/landsec-decks.ts` gathers (no query of its own: the
+    reports' reads and the pages' feeds). Tests: `shared/landsec-deck.test.ts`,
+    `shared/landsec-decks.test.ts`, `server/landsec-deck-render.test.ts` (all
+    in `npm test`).
+  - **Two renderers draw the same Deck**: `server/landsec-deck-pdf.ts`
+    (pdf-lib, the charts drawn by hand) and `server/landsec-deck-pptx.ts`
+    (pptxgenjs, with NATIVE PowerPoint charts and tables so Landsec can edit
+    them; the label colour inside a stacked bar is set per series in the
+    chart's XML afterwards, because pptxgenjs gives a chart one). Both place
+    blocks by `layoutSlide`, so they cannot drift; neither knows what a
+    letting or a scheme is. A change to a slide is made in the composer or
+    the model, never in one renderer.
+  - **Target tenants** (Woody, 2026-11-19: "should be a section on leasing
+    activity on target tenants"). One section in the board deck (it replaced
+    the Brand engagements and Brands furthest on slides, which said the same
+    thing) and one slide in the asset profile. Read ONLY from the Brand CRM
+    plan **as a Landsec login reads it, whoever asks** (`brandLinesFor` in
+    `server/landsec-board-report.ts`, the read the brand engagement figures
+    already used): never an unticked Wanted line, BGP's notes, the lead, the
+    aim, internal evidence or a name-only match. A target is a brand with a
+    line between Wanted and Let, counted once at its furthest such line
+    (`targetTenants` in `shared/landsec-board-report.ts`, `TARGET_STAGES`).
+    The figures: targets in play; new in the period; reached their present
+    stage in the period (Approached or beyond); approached, viewed and made
+    an offer in the period. **"In the period" is counted only from the
+    plan's dated records** (`targetEvent` reads an evidence line by its
+    source and the plan's own label: a viewing held, a viewing booked or
+    interest logged, an offer, heads of terms, a letting's stage date; being
+    named on a target list, a Wanted line or a brand case is not an event),
+    dated in the period and not after today; a target with no dated record
+    is counted as undated and is in none of them. Charts: targets by
+    furthest stage (eight bars) and by scheme (stacked in four bands). The
+    grid: brand, brief category, scheme and unit, the stage as a strip of
+    eight steps (`steps` on a table column, `stepsCell`: drawn as small
+    squares in the PDF and as a run of square characters in the PowerPoint,
+    so it stays editable), the latest dated activity in the period, the next
+    step and who has it, and "Held" where a requirement is held, each only as
+    the Landsec reading of the plan sends it. Twelve a slide, three slides at
+    most; the line at the foot says how many more there are. The plan keeps
+    no history of stages, so "moved forward a stage" is "reached its present
+    stage in the period". The leasing activity deck has no targets (its
+    table is the lettings).
+  - **Never an empty chart, never an estimate.** A chart with nothing to draw
+    is replaced by a plain card that says why (`chartOrCard`); a figure the
+    app does not hold reads "Not held" (rental growth names what each letting
+    is missing) or "None measured".
+  - **The line under a slide** (`caveat`) says in one or two lines how its
+    figures are counted; the rule in full (`rules`) goes in the PowerPoint's
+    slide notes, and the board deck prints every rule on its last slide(s).
+- **Data exports (Excel)** are kept, under one fold at the foot of the
+  Reports page, closed until pressed (Woody does not want them leading):
+  Board report figures, Tenancy schedule (Summary and a sheet per scheme),
+  Leasing activity (the clock feed's live deals plus the deals that changed
+  stage in the period and have since closed, with a "Stage date confirmed"
+  column that reads No where the app greys the days at stage), Space activity
+  (lease roll by expiry and break year, and each lease event), Tour activity
+  (viewings dated in the period), Requirements (open requirements; not held
+  by scheme, so the ticks do not cut it), Comps (every comparable at the
+  schemes; a typed date is read as a date only when it is a full date) and
+  Portfolio (Assets, Deals, Spaces, Tenants, Lease terms and options). Every
+  workbook opens on an **About** sheet. Excel is exceljs. Their routes and
+  keys are unchanged.
+- **The page** (`client/src/pages/landsec-reports.tsx`): the period and the
+  scheme ticks, then **Reports to present** (the three deck cards, each with
+  **PDF** and **PowerPoint**; the board card also has **Market report**, the
+  asset profile its scheme picker), then the fold.
 - **Landsec's logo and the Landsec report palette, not BGP's** (Woody,
   2026-11-19: "also can you use the bluewater colours and juts have the
-  landsec logo", "not BGP"). Every Landsec report PDF (Leasing activity
-  (formatted), Asset profile, the board report) has a navy band with
-  Landsec's logo and no BGP wordmark; the workbooks' header rows and titles
-  take the same colours. `LANDSEC_REPORT_PALETTE` in
+  landsec logo", "not BGP"). Every deck opens on a navy slide with
+  Landsec's logo, carries the small dark logo on every other slide, and has
+  no BGP wordmark; the workbooks' header rows and titles take the same
+  colours. The chart colours (`DECK_COLOURS`) are the palette's navy, gold
+  and pale blue, a mid blue mixed from navy and pale blue, and one grey
+  mixed from the sand and the muted text: no colour is written in a
+  renderer. `LANDSEC_REPORT_PALETTE` in
   `shared/landsec-reports.ts` is the ONE place the colours are written (navy
   #082862, pale blue #dbe5fe, sand #eeeae4, gold #c0b283, text #141414, muted
   #525252, read that day from bluewater.co.uk's own stylesheet); it is used
@@ -3048,9 +3143,10 @@ who runs reports, "yes landsec and BGP". Do not re-litigate.
   is NOT built (it would be one more entry beside it). The logo is
   `server/assets/landsec-logo-light.png` (white, on the band) and
   `landsec-logo-dark.png` (on the later pages), made from Landsec's website
-  footer logo, read by `landsecLogoBytes` from `server/assets` or
+  footer logo, read by `landsecLogoBytes` (`server/landsec-report-logo.ts`)
+  from `server/assets` or
   `dist/server/assets` (both are on the copy list in `script/build.ts`); if
-  a file cannot be read the page has no logo, and none is ever typeset or
+  a file cannot be read the slide has no logo, and none is ever typeset or
   swapped for BGP's. The line at the foot ("Made in ChatBGP on ... by ...")
   stays: it is words. This is the Landsec reports only: the approval pack
   PDF, the info sheet and every other BGP document keep `BGP_BRAND`. The
@@ -3059,7 +3155,13 @@ who runs reports, "yes landsec and BGP". Do not re-litigate.
 - **Not built**: budgets (the app holds none, the Portfolio card says so, and
   no sheet is invented); Landsec's own in-house lettings, which are in a
   report only when they are on the app; a notes or comments column on any
-  report (left out on purpose); scheduling or emailing a report. ERV and
+  report (left out on purpose); scheduling or emailing a report; a deck for
+  Tour activity, Space activity, Requirements, Comps, the Tenancy schedule or
+  Portfolio (what is visual in them is on the three decks: the lease roll,
+  viewings by month and scheme, requirements added by section); a palette
+  per scheme; a comparison with the period before; a deck opened in real
+  PowerPoint by anyone at BGP (the PowerPoint was checked by converting it
+  with LibreOffice on a build machine and looking at every slide). ERV and
   passing rent are whatever the unit feed gives the viewer.
 
 ### The board report (Woody, 2026-11-19)
@@ -3075,25 +3177,26 @@ ability to pick one or several months". Asked about the industry generally
 answered "yes do that as suggested" to a page of figures per market section.
 Do not re-litigate.
 
-- **What it is.** The tenth report, the **Board report** card that leads the
-  Reports page: **Export PDF** ("Landsec Hospitality & Leisure: board report,
-  <period>", the document Mark presents), **Export Excel** (the figures
-  behind it: About, Headlines, By scheme, By category, Rental growth, Deal
-  speed, Brand engagements, Market report, Industry, Industry headlines) and
-  **Market report** (the editor). Two registry entries, `board-report` and
-  `board-report-figures`, marked `card: "board"`, which the page draws as one
-  card. Same access as every report (`reportViewer`: BGP staff and Landsec
-  logins, a scheme-limited login its own schemes, a joint agent refused at
-  both gateway lists and in the handler).
+- **What it is.** The **Board report** deck (above), the first card on the
+  Reports page: **PDF** and **PowerPoint** ("Landsec Hospitality & Leisure",
+  "Board report, <period>": the deck Mark presents), **Market report** (the
+  editor), and under the Excel fold **Board report figures** (About,
+  Headlines, By scheme, By category, Rental growth, Deal speed, Brand
+  engagements, Target tenants, Market report, Industry, Industry headlines). Two registry
+  entries, `board-report` (the deck) and `board-report-figures`. Same access
+  as every report (`reportViewer`: BGP staff and Landsec logins, a
+  scheme-limited login its own schemes, a joint agent refused at both
+  gateway lists and in the handler).
 - **The rules are one shared file, `shared/landsec-board-report.ts`** (tests
   `shared/landsec-board-report.test.ts`, in `npm test`): which day an event
   counts on, what is left out, rental growth, deal speed, brands by stage,
   the industry counts, and the market report's sections, limits and draft
   checks. `server/landsec-board-report.ts` gathers the rows (`boardData`) and
-  lays out the PDF and the workbook; change a rule in the shared file with a
-  test, never in the builder.
-- **How each figure is counted** (the PDF prints these lines under the
-  figures, `BOARD_COUNTED`):
+  builds the workbook; the deck's slides are laid out from the same figures
+  by `boardDeck`. Change a rule in the shared file with a test, never in the
+  builder or on a slide.
+- **How each figure is counted** (`BOARD_COUNTED`: in full on the deck's last
+  slide and in each slide's PowerPoint notes, in short under each slide):
   - Lettings exchanged or completed: the exchange or completion day falls in
     the period, each letting once; the date on the deal, else the day its
     status was first moved in its history.
@@ -3150,7 +3253,9 @@ Do not re-litigate.
   (`GET`/`PUT /api/landsec/reports/board-report/market`; the PUT is on
   `CLIENT_ALLOWED_WRITES`); a save over somebody else's newer text is refused
   (409) so two people do not lose each other's words; empty text clears a
-  section. **Only saved words print; a draft never prints by itself.**
+  section. **Only saved words go on a slide; a draft never does by itself.** Saved
+  words sit beside the section's stories and carry on over further slides
+  when they are long (`pageWords`), with "Written by <name> (<firm>)".
 - **Draft** (`POST …/market/draft`) is for BGP staff signed in as themselves
   only (`contactViewer`). Anthropic, called directly, one call a section,
   capped a day (`LANDSEC_BOARD_DRAFT_DAILY_CAP`, default 40, 0 = off). It is
@@ -3164,8 +3269,11 @@ Do not re-litigate.
   a build machine (no key): the prompt builder, the order of checks and the
   reply clean-up are tested with a stub (`server/landsec-board-report.test.ts`).
 - **The industry this period** (`server/landsec-board-industry.ts`, counted
-  by `industryFigures`): under each market section, whether or not words are
-  saved, figures counted across EVERY brand on the app (not only the brands
+  by `industryFigures`): on the market slides, whether or not words are
+  saved: the overall slide's tiles and stories, then **Market report: by
+  section** with every section's figures side by side; a section has a slide
+  of its own only when it has saved words or a story to show (a slide of
+  noughts is not made). The figures are counted across EVERY brand on the app (not only the brands
   at the schemes), by the brief category of the brand's type: brands with an
   opening story and with a closure, CVA or administration story (signals
   that carry a link, never a rumour), the net change in stores on the
@@ -3173,8 +3281,10 @@ Do not re-litigate.
   list at least 20 days apart, the later one in the period, and it says how
   many brands that covers), planning applications naming a brand (no tree or
   telecoms application), job adverts, leasing requirements added (a count
-  only), and up to ten headline stories (headline, source site and date:
-  never the text of a story, which is the publisher's). Hidden and junk
+  only), and up to ten headline stories (headline, source and date:
+  never the text of a story, which is the publisher's; a Google News link
+  names the publisher from the end of its headline, `storySource`, never
+  "news.google.com"). Hidden and junk
   brands are left out. Four queries whatever the number of brands; each may
   fail to "not available" without failing the pack. **It holds no footfall,
   sales, turnover, consumer spending or rental index: the app holds none,
@@ -3182,8 +3292,9 @@ Do not re-litigate.
   read, and the staff-only Investment Research library and Insights cards
   are not used.
 - **Guards**: `qa/regression/landsec-reports-guards.test.mjs` holds the
-  board builder and the industry read to the same never-named words as the
-  other builders, pins their tables and query counts, the Landsec reading of
+  board builder, the industry read, the slide model, the composers, the
+  gathering and both renderers to the same never-named words as the
+  other builders (the decks have no query, no outside call and no timer), pins their tables and query counts, the Landsec reading of
   the brand plan, the market routes' access and the draft's limits. The
   gateway test covers a joint agent on every board address.
 - Checked on 19 November 2026 against a seeded copy of the smoke fixture
@@ -3193,12 +3304,13 @@ Do not re-litigate.
   (1 August in London, counted) and one stamped in a bulk update (left out).
 - **Not built**: occupancy, vacancy or brand stages as they stood on the
   period's last day (no history is kept); a previous rent once the schedule
-  shows the new tenant; a comparison with the quarter before; charts; net
+  shows the new tenant; a comparison with the quarter before; net
   effective rent in rental growth (it compares the rent on the deal); a
   palette per scheme; the market report for a single category rather than a
   group; anything from footfall or sales. Store counts began on 15 November
-  2026, so a period before then has no store change to show. Google News
-  links show "news.google.com" as the source site, not the publisher.
+  2026, so a period before then has no store change to show. A Google News
+  headline whose publisher's own name holds " - " ("News 12 - Hudson
+  Valley") is cut at the last one, so the source reads "Hudson Valley".
 
 ## Client checks: the in-app KYC request (Woody, 2026-11-17)
 
