@@ -28,11 +28,12 @@ import { pool } from "./db";
 import { graphRequest, sendFromFirstMailbox, senderOrder, type EmailAttachment } from "./shared-mailbox";
 import {
   KYC_DOCS, KYC_LOGO_CID, KYC_MAX_FILE_MB, KYC_MAX_FILES_PER_REQUEST, KYC_REF_ALPHABET,
-  KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, clientChecksSwitchOn, defaultKycDocs, isKycDocKey, isKycOwnersAnswer, isKycPepAnswer, kycDocDetail, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycOwnersWords, kycPepWords,
+  KYC_OWNERS_QUESTION, KYC_OWNER_LINKS_TITLE, KYC_PEP_QUESTION, clientChecksSwitchOn, defaultKycDocs, isKycDocKey, isKycOwnersAnswer, isKycPepAnswer, kycDocDetail, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycOwnersWords, kycPepWords, kycPersonRoleWords,
   kycRedFlagEmail, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycUploadAllowed, kycWhatsAppHref, kycWhatsAppText,
-  type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycOwnersReply, type KycPartyKind, type KycPortalView, type KycProgress,
+  type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycOwnersReply, type KycPartyKind, type KycPortalView, type KycProgress, type KycRequestPerson,
 } from "@shared/kyc-request";
-import { idCheckIsThePerson, precheckAsks, verifiedPersonName } from "@shared/kyc-prechecks";
+import { idCheckIsThePerson, personNamesMatch, precheckAsks, verifiedPersonName } from "@shared/kyc-prechecks";
+import { personRequestAsks, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
 
 export const KYC_MAILBOX = (process.env.KYC_MAILBOX || process.env.BGP_AML_MAILBOX || "kyc@chatbgp.app").trim();
@@ -87,6 +88,16 @@ export interface KycRequestDetails {
   ownersAnswer?: KycOwnersReply | null;
   notAsked?: Array<{ key: KycDocKey; reason: string }>;
   precheckId?: number | null;
+  // A person's own request (Woody, 19 November 2026: "the owners and the
+  // person acting, each with their own Veriff link and a proof-of-address
+  // upload"): who it is for. Absent on the request to the person acting.
+  person?: KycRequestPerson | null;
+  // On the request to the person acting: the owners they are asked to pass
+  // a link of their own to (shared/kyc-people.ts keys and names).
+  ownLinksFor?: Array<{ key: string; name: string }>;
+  // A person's own request emailed from the person acting's page: when, so
+  // one page cannot send it more than a few times.
+  clientSends?: string[];
 }
 
 interface TokenRow {
@@ -291,6 +302,23 @@ async function uploadedFiles(token: string): Promise<UploadedFile[]> {
   }));
 }
 
+// The people on the deal's party who have a link of their own (a person's
+// own request, not cancelled), by their key in shared/kyc-people.ts.
+async function linkedPeople(row: TokenRow): Promise<Set<string>> {
+  const r = await pool.query(
+    `SELECT request->'person'->>'key' AS key FROM kyc_upload_tokens
+      WHERE deal_id = $1 AND company_id IS NOT DISTINCT FROM $2 AND jsonb_typeof(request->'person') = 'object'
+        AND revoked_at IS NULL AND is_test IS NOT TRUE`, [row.deal_id, row.company_id]);
+  return new Set(r.rows.map((x: any) => x.key).filter(Boolean));
+}
+
+// The people to check for the request's party (a company's request only).
+async function partyPeopleForRow(row: TokenRow): Promise<PartyPeople | null> {
+  if (!row.company_id || row.is_test || row.request?.kind !== "company") return null;
+  const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
+  return partyPeopleFor({ companyId: row.company_id, entityId: row.trading_entity_id, kind: "company" }, await dealPeopleRequests(row.deal_id));
+}
+
 async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycProgress & { idState: KycIdState | null; idPerson: KycIdPerson | null; files: UploadedFile[] }> {
   const request = row.request!;
   const list = files || await uploadedFiles(row.token);
@@ -302,7 +330,9 @@ async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycPro
   const ownersAnswered = !request.confirmOwners?.length || !!request.ownersAnswer;
   // Someone else's identity check is not the client's.
   const idDone = (idState === "approved" || idState === "submitted") && idPerson?.isThePerson !== false;
-  return { idDone, docsDone, pepAnswered, ownersAnswered, idState, idPerson, files: list };
+  const ownersLinked = !request.ownLinksFor?.length
+    || await linkedPeople(row).then(keys => request.ownLinksFor!.every(o => keys.has(o.key))).catch(() => false);
+  return { idDone, docsDone, pepAnswered, ownersAnswered, ownersLinked, idState, idPerson, files: list };
 }
 
 export async function portalView(row: TokenRow): Promise<KycPortalView> {
@@ -322,6 +352,20 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
     idCheck = { state, canStart, real, ...(otherPerson ? { verifiedName: progress.idPerson!.verifiedName, otherPerson: true } : {}) };
   }
   const requested = new Set(request.docs);
+  // The owners other than the person acting, each with a link of their own
+  // (Woody, 19 November 2026). Read live, so an owner the register gains
+  // later is listed too.
+  let people: KycPortalView["people"] = null;
+  if (!request.person) {
+    const found = await partyPeopleForRow(row).catch(() => null);
+    const owners = (found?.people || []).filter(p => p.roles.includes("owner") && !personNamesMatch(p.name, row.contact_name || ""));
+    if (owners.length) {
+      people = owners.map(p => {
+        const ownLink = !!p.own && !p.own.isMain;
+        return { key: p.key, name: p.name, detail: p.ownerDetail, done: !p.outstanding.length, linked: ownLink || !p.outstanding.length, emailedAt: ownLink ? p.own!.sentAt : null };
+      });
+    }
+  }
   return {
     test: !!row.is_test,
     ref: request.ref,
@@ -338,6 +382,8 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
       files: progress.files.filter(f => f.docKey === key).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
     })),
     otherFiles: progress.files.filter(f => !f.docKey || !requested.has(f.docKey)).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
+    person: request.person ? { roles: request.person.roles, words: kycPersonRoleWords(request.person.roles, request.partyName) } : null,
+    people,
     note: request.note,
     agents: request.agents,
     finishedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
@@ -435,6 +481,16 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(party.companyId, party.entityId)).catch(() => null);
   const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName: input.name });
   const confirmOwners = input.kind === "company" && !docs.includes("ownership") && asks.confirmOwners?.length ? asks.confirmOwners : null;
+  // The owners other than the person asked, who each get a link of their own
+  // (19 November 2026): the person asked can pass them on from their page.
+  let ownLinksFor: Array<{ key: string; name: string }> = [];
+  if (input.kind === "company" && !docs.includes("owner_ids")) {
+    const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
+    const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: "company" }, await dealPeopleRequests(dealId)).catch(() => null);
+    ownLinksFor = (people?.people || [])
+      .filter(p => p.roles.includes("owner") && p.outstanding.length && !(p.own && !p.own.isMain) && !personNamesMatch(p.name, input.name))
+      .map(p => ({ key: p.key, name: p.name }));
+  }
 
   const agents = await dealAgents(dealId);
   const agentList: KycAgent[] = agents.map(a => ({ name: a.name, email: a.email, phone: a.phone }));
@@ -456,6 +512,7 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
     openedAt: null, veriffSessionIds: [], idCheckNote, askPep: true, answers: null,
     confirmOwners, ownerNames: docs.includes("owner_ids") ? asks.ownerNames : [], ownersAnswer: null,
     notAsked: asks.notAsked.filter(n => !docs.includes(n.key)), precheckId: pre?.precheckId ?? null,
+    ownLinksFor,
   };
   // Someone typed rather than picked is saved to the CRM under the brand
   // (Woody, 2026-11-18: "need the ability to add in all the info"), and
@@ -501,7 +558,7 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
     build: sentFrom => kycRequestEmail({
       recipientName: input.name, partyName: party.name, kind: input.kind, dealName: found.deal.name, ref, link, expiresAt,
       needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, agents: agentList, sentFrom, askPep: true,
-      confirmOwners: request.confirmOwners, ownerNames: request.ownerNames,
+      confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownLinksFor: ownLinksFor.map(o => o.name),
     }),
   });
   request.sentFrom = sent.from;
@@ -511,6 +568,137 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_checks_sent', $2, $3)`,
     [party.companyId, me.name || me.id, `${sent.ok ? "Sent" : "Not sent"} to ${input.name} <${email}> for ${found.deal.name} (ref ${ref})${sent.ok ? `, from ${sent.from}, copied to ${cc.join(", ") || "nobody"}` : `: ${sent.error}`}`]).catch(() => {});
   return { token, ref, link, sent, idCheck: request.needsIdCheck, idCheckNote: request.idCheckNote, cc };
+}
+
+// ── A person's own request ──────────────────────────────────────────────────
+//
+// Woody, 19 November 2026, agreeing "a list of people to check for each
+// party: the owners and the person acting, each with their own Veriff link
+// and a proof-of-address upload". Each person on the party's list
+// (shared/kyc-people.ts) can be given a link of their own: by BGP staff from
+// the deal's AML card, or by the person acting from their own page (owners
+// only). It asks only what is still outstanding for them. The identity check
+// starts when they press the button on their page, not before.
+
+export const personCheckBody = z.object({
+  companyId: z.string().min(1).max(200),
+  key: z.string().min(1).max(300),
+  email: z.string().trim().max(200).nullish(),
+  mobile: z.string().trim().max(40).nullish(),
+  send: z.boolean(),
+  note: z.string().max(2000).nullish(),
+}).strict();
+
+type PersonAsker =
+  | { agent: { id: string; name: string | null; email: string | null; phone: string | null } }
+  | { client: TokenRow };
+
+const CLIENT_SENDS_A_DAY = 3;
+const CLIENT_SEND_GAP_MS = 2 * 60 * 1000;
+
+export async function createPersonCheck(dealId: string, input: z.infer<typeof personCheckBody>, by: PersonAsker): Promise<{
+  token: string; ref: string; link: string; sent: KycSendResult | null; created: boolean; person: string;
+}> {
+  const found = await dealParties(dealId);
+  if (!found) throw Object.assign(new Error("Deal not found"), { status: 404 });
+  const party = found.parties.find(p => p.companyId === input.companyId);
+  if (!party) throw Object.assign(new Error("That company is not a party to this deal."), { status: 400 });
+  if (party.kind !== "company" || !party.entityId) {
+    throw Object.assign(new Error("Set the company that signs on the deal first: the people to check are read from its register."), { status: 409 });
+  }
+  const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
+  const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: "company" }, await dealPeopleRequests(dealId));
+  const person: KycPartyPerson | undefined = people.people.find(p => p.key === input.key);
+  if (!person) throw Object.assign(new Error(`That person is not on the list of people to check for ${party.name}.`), { status: 404 });
+  const main = "client" in by ? by.client : null;
+  if (main) {
+    if (!person.roles.includes("owner")) throw Object.assign(new Error("Only the owners' links are passed on from this page."), { status: 400 });
+    if (personNamesMatch(person.name, main.contact_name || "")) throw Object.assign(new Error("Your own checks are on this page."), { status: 400 });
+  }
+  const email = cleanEmail(input.email);
+  if (input.send && !isEmail(email)) throw Object.assign(new Error(`Enter a valid email address for ${person.name}.`), { status: 400 });
+
+  const veriff = veriffConfigured();
+  const asks = personRequestAsks(person, veriff);
+  const held = person.own && !person.own.isMain ? await tokenRow(person.own.token) : null;
+  let row = held && !held.completed_at && !closedReason(held) ? held : null;
+  if (!row && !asks.needsIdCheck && !asks.docs.length) throw Object.assign(new Error(`Nothing is outstanding for ${person.name}.`), { status: 409 });
+
+  let created = false;
+  if (!row) {
+    const agents = main ? main.request!.agents : (await dealAgents(dealId)).map(a => ({ name: a.name, email: a.email, phone: a.phone }));
+    const me = "agent" in by ? by.agent : null;
+    if (me && !agents.length && me.name) agents.push({ name: me.name, email: me.email, phone: me.phone });
+    const cc = main ? main.request!.cc
+      : [...new Set([...(await dealAgents(dealId)).map(a => cleanEmail(a.email)), cleanEmail(me?.email)].filter(e => e.endsWith(STAFF_DOMAIN)))];
+    const token = crypto.randomBytes(32).toString("base64url");
+    const ref = await newRef();
+    const request: KycRequestDetails = {
+      ref, kind: "individual", role: party.role, partyName: party.name, dealName: found.deal.name,
+      needsIdCheck: asks.needsIdCheck, docs: asks.docs, note: input.note?.trim() || null, mobile: input.mobile?.trim() || null,
+      agents, cc, sentBy: main ? { id: null, name: main.contact_name } : { id: me!.id, name: me!.name },
+      sentFrom: null, sentAt: null, sendError: null, openedAt: null, veriffSessionIds: [],
+      idCheckNote: !veriff && asks.docs.includes("photo_id") ? "The online identity check is not set up, so photo ID is asked for as a document instead." : null,
+      askPep: true, answers: null,
+      person: { key: person.key, name: person.name, roles: person.roles, detail: person.ownerDetail },
+    };
+    await pool.query(
+      `INSERT INTO kyc_upload_tokens (token, deal_id, contact_email, contact_name, created_by, expires_at, company_id, contact_id, request, is_test, trading_entity_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, false, $9)`,
+      [token, dealId, email || null, person.name, me ? me.id : main!.created_by, new Date(Date.now() + TOKEN_TTL_DAYS * 86400000),
+        party.companyId, JSON.stringify(request), party.entityId],
+    );
+    row = (await tokenRow(token))!;
+    created = true;
+  }
+
+  let sent: KycSendResult | null = null;
+  if (input.send) {
+    const request = row.request!;
+    if (main) {
+      const recent = (request.clientSends || []).filter(t => Date.now() - Date.parse(t) < 86400000);
+      if (recent.length >= CLIENT_SENDS_A_DAY) throw Object.assign(new Error("That link has been emailed three times today. Copy it and send it yourself, or ask your agent."), { status: 429 });
+      const last = recent[recent.length - 1];
+      if (last && Date.now() - Date.parse(last) < CLIENT_SEND_GAP_MS) throw Object.assign(new Error("Just sent. Give it a couple of minutes before sending it again."), { status: 429 });
+      request.clientSends = [...recent, new Date().toISOString()];
+    }
+    if (email !== cleanEmail(row.contact_email)) {
+      await pool.query(`UPDATE kyc_upload_tokens SET contact_email = $2 WHERE token = $1`, [row.token, email]);
+      row.contact_email = email;
+    }
+    if (input.mobile?.trim()) request.mobile = input.mobile.trim();
+    // Someone BGP staff email is saved to the CRM under the brand, as the
+    // person asked on the main request is. A client's typing is not.
+    if (!main && !row.contact_id) {
+      try {
+        const { findOrAddPartyPerson } = await import("./deal-parties");
+        const added = await findOrAddPartyPerson(pool, party.companyId, { name: person.name, email, mobile: request.mobile, jobTitle: null },
+          `Added by ${("agent" in by && by.agent.name) || "BGP"} when sending ${person.name} their identity check for ${found.deal.name}, as ${kycPersonRoleWords(person.roles, party.name)}.`);
+        await pool.query(`UPDATE kyc_upload_tokens SET contact_id = $2 WHERE token = $1`, [row.token, added.id]);
+        row.contact_id = added.id;
+      } catch (e: any) {
+        console.warn(`[kyc-request] ${person.name} was not saved to the CRM: ${e?.message}`);
+      }
+    }
+    const link = kycLinkFor(row.token);
+    sent = await sendKycEmail({
+      to: [email], cc: request.cc,
+      build: sentFrom => kycRequestEmail({
+        recipientName: person.name, partyName: party.name, kind: "individual", dealName: found.deal.name, ref: request.ref, link, expiresAt: row!.expires_at,
+        needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, agents: request.agents, sentFrom, askPep: true,
+        person: { roles: person.roles },
+      }),
+    });
+    request.sentFrom = sent.from;
+    if (sent.ok) request.sentAt = new Date().toISOString();
+    request.sendError = sent.ok ? (sent.fellBack ? `Sent from ${sent.from}: Microsoft would not send as ${KYC_MAILBOX}` : null) : sent.error;
+    await saveRequest(row.token, request);
+  }
+  const who = main ? `${main.contact_name || "the client"} (from their page, ref ${main.request!.ref})` : (("agent" in by && by.agent.name) || "BGP");
+  await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, $2, $3, $4)`,
+    [party.companyId, input.send ? "client_checks_sent" : "client_checks_link", who,
+      `${person.name}'s own checks, as ${kycPersonRoleWords(person.roles, party.name)}, for ${found.deal.name} (ref ${row.request!.ref}): ${input.send ? (sent?.ok ? `emailed to ${email} from ${sent.from}` : `not emailed: ${sent?.error}`) : "link given"}`]).catch(() => {});
+  return { token: row.token, ref: row.request!.ref, link: kycLinkFor(row.token), sent, created, person: person.name };
 }
 
 // ── What the agents see on the deal ─────────────────────────────────────────
@@ -543,7 +731,16 @@ export async function clientChecksForDeal(dealId: string) {
       askPep: !!request.askPep, pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null,
       owners: request.confirmOwners?.length ? { list: request.confirmOwners, answer: request.ownersAnswer?.answer ?? null, detail: request.ownersAnswer?.detail ?? null } : null,
       notAsked: request.notAsked || [],
-      docs: request.docs.map(key => ({ key, title: KYC_DOCS[key].title, done: progress.docsDone.includes(key) })),
+      person: request.person ? { key: request.person.key, name: request.person.name, roles: request.person.roles } : null,
+      ownLinksFor: (request.ownLinksFor || []).map(o => o.name),
+      // The old single step for every owner's ID: files there do not say
+      // whose they are (Woody, 19 November 2026), so it is never ticked here.
+      docs: request.docs.map(key => {
+        const names = request.ownerNames || [];
+        if (key !== "owner_ids" || !names.length) return { key, title: KYC_DOCS[key].title, done: progress.docsDone.includes(key), note: null as string | null };
+        const count = progress.files.filter(f => f.docKey === "owner_ids").length;
+        return { key, title: KYC_DOCS[key].title, done: false, note: count ? `${count} file${count === 1 ? "" : "s"} for ${names.length} owner${names.length === 1 ? "" : "s"}: whose is not known. Each owner's own check is under People to check.` : null };
+      }),
       files: progress.files, remindersSent: row.reminders_sent || 0,
       link,
       whatsapp: request.mobile ? kycWhatsAppHref(request.mobile, kycWhatsAppText({ recipientName: row.contact_name, dealName: request.dealName, link, expiresAt: row.expires_at, senderName: request.sentBy.name })) : null,
@@ -565,7 +762,8 @@ async function sendReminder(row: TokenRow): Promise<KycSendResult> {
       recipientName: row.contact_name, partyName: request.partyName, kind: request.kind, dealName: request.dealName,
       ref: request.ref, link, expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: request.docs,
       agents: request.agents, sentFrom, progress, test: !!row.is_test, askPep: !!request.askPep,
-      confirmOwners: request.confirmOwners, ownerNames: request.ownerNames,
+      confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownLinksFor: (request.ownLinksFor || []).map(o => o.name),
+      person: request.person ? { roles: request.person.roles } : null,
     }),
   });
   if (sent.ok) await pool.query(`UPDATE kyc_upload_tokens SET reminders_sent = COALESCE(reminders_sent, 0) + 1, last_reminded_at = now() WHERE token = $1`, [row.token]);
@@ -593,7 +791,7 @@ export async function sendKycReminders(now = new Date()): Promise<{ sent: number
   for (const row of rows) {
     if (!reminderDue(row, now)) continue;
     const progress = await progressOf(row);
-    if ((!row.request!.needsIdCheck || progress.idDone) && progress.docsDone.length === row.request!.docs.length && progress.pepAnswered && progress.ownersAnswered) { skipped++; continue; }
+    if ((!row.request!.needsIdCheck || progress.idDone) && progress.docsDone.length === row.request!.docs.length && progress.pepAnswered && progress.ownersAnswered && progress.ownersLinked !== false) { skipped++; continue; }
     const result = await sendReminder(row);
     if (result.ok) sent++; else { failed++; console.warn(`[kyc] reminder for ${row.request!.ref} failed: ${result.error}`); }
   }
@@ -692,15 +890,20 @@ async function finishRequest(row: TokenRow): Promise<void> {
   const missing = [
     ...(request.needsIdCheck && !progress.idDone ? [otherPerson ? `${row.contact_name || "The client"}'s own identity check` : "Identity check"] : []),
     ...(progress.ownersAnswered ? [] : [KYC_OWNERS_QUESTION.title]),
+    ...(progress.ownersLinked === false ? [KYC_OWNER_LINKS_TITLE] : []),
     ...request.docs.filter(key => !progress.docsDone.includes(key)).map(key => KYC_DOCS[key].title),
     ...(progress.pepAnswered ? [] : [KYC_PEP_QUESTION.title]),
   ];
   // The agents hear it; on a test, the admin who sent it.
   const to = kycReplyAddresses(row, request.cc);
+  // The other people to check for the party, with what is still to come.
+  const peopleOutstanding = request.person ? [] : await partyPeopleForRow(row)
+    .then(found => (found?.people || []).filter(p => p.outstanding.length && !personNamesMatch(p.name, row.contact_name || "")).map(p => `${p.name}: ${p.outstanding.join(" and ")}${p.own && !p.own.isMain ? (p.own.sentAt ? " (link emailed)" : " (link given)") : ""}`))
+    .catch(() => []);
   const { loadDealRedFlags, requestIdChecks } = await import("./kyc-red-flags");
   const { partyRedFlags } = await import("@shared/kyc-red-flags");
   const redFlags = row.is_test || !row.company_id
-    ? partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null, ownersAnswer: request.ownersAnswer || null }], idChecks: await requestIdChecks(request.veriffSessionIds) })
+    ? partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null, ownersAnswer: request.ownersAnswer || null, person: request.person?.name || null }], idChecks: await requestIdChecks(request.veriffSessionIds) })
     : await loadDealRedFlags(row.deal_id, [row.company_id], row.trading_entity_id ? { [row.company_id]: row.trading_entity_id } : {}).then(r => r.parties[row.company_id!] || []).catch(() => []);
   const sent = await sendKycEmail({
     to,
@@ -710,6 +913,8 @@ async function finishRequest(row: TokenRow): Promise<void> {
       files: progress.files.map(f => ({ name: f.name, docKey: f.docKey })), missing, sentFrom, test: !!row.is_test,
       kind: request.kind, ...(request.askPep ? { pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null } : {}),
       redFlags, owners: request.confirmOwners?.length ? { list: request.confirmOwners, reply: request.ownersAnswer || null } : null,
+      person: request.person ? { roles: request.person.roles } : null,
+      peopleOutstanding,
     }),
   });
   if (!sent.ok) console.warn(`[kyc] the finished note for ${request.ref} was not sent: ${sent.error}`);
@@ -806,6 +1011,13 @@ kycRequestRouter.get("/api/aml/deal/:id/client-checks", signedIn, async (req: Re
     if (!found) return res.status(404).json({ message: "Deal not found" });
     const agents = await dealAgents(dealId);
     const veriff = veriffConfigured();
+    // The people to check per party (19 November 2026).
+    const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
+    const peopleRequests = await dealPeopleRequests(dealId).catch(() => null);
+    const people: Record<string, PartyPeople | null> = {};
+    for (const p of found.parties) {
+      people[p.companyId] = peopleRequests ? await partyPeopleFor({ companyId: p.companyId, entityId: p.entityId, kind: p.kind }, peopleRequests).catch(() => null) : null;
+    }
     res.json({
       dealName: found.deal.name,
       mailbox: KYC_MAILBOX,
@@ -818,9 +1030,24 @@ kycRequestRouter.get("/api/aml/deal/:id/client-checks", signedIn, async (req: Re
         return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null };
       })),
       requests: await clientChecksForDeal(dealId),
+      people,
     });
   } catch (err: any) {
     res.status(500).json({ message: err?.message || "Could not load the client checks" });
+  }
+});
+
+// A person's own link: given (send false) or emailed (send true), by BGP staff.
+kycRequestRouter.post("/api/aml/deal/:id/client-checks/people", signedIn, async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    if (!clientChecksOn()) return res.status(410).json({ message: CHECKS_OFF });
+    const parsed = personCheckBody.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message || "Check the form and try again" });
+    res.json(await createPersonCheck(String(req.params.id), parsed.data, { agent: me }));
+  } catch (err: any) {
+    res.status(err?.status || 500).json({ message: err?.message || "Could not make their link" });
   }
 });
 
@@ -1003,6 +1230,29 @@ kycRequestRouter.post("/api/kyc-upload/:token/owners", async (req: Request, res:
     res.json(await portalView((await tokenRow(row.token))!));
   } catch (err: any) {
     res.status(500).json({ message: "Something went wrong. Please try again." });
+  }
+});
+
+// The person acting gives an owner their own link: shown to copy, or emailed
+// to the address they type (a few times a day at most). Owners only, never
+// themselves; the link asks only what is still outstanding for that owner.
+kycRequestRouter.post("/api/kyc-upload/:token/people", async (req: Request, res: Response) => {
+  try {
+    const row = await openRow(req, res);
+    if (!row) return;
+    const request = row.request!;
+    if (row.is_test || request.person || request.kind !== "company" || !row.company_id) {
+      return res.status(400).json({ message: "There's no one to pass a link to from this page." });
+    }
+    if (!clientChecksOn()) return res.status(409).json({ message: "Please ask your contact at Bruce Gillingham Pollard to send it." });
+    const key = String(req.body?.key || "").slice(0, 300);
+    const email = String(req.body?.email || "").trim().slice(0, 200);
+    const result = await createPersonCheck(row.deal_id, { companyId: row.company_id, key, email: email || null, send: !!email }, { client: row });
+    if (result.sent && !result.sent.ok) return res.status(502).json({ message: "The email didn't go. Copy the link and send it yourself, or try again later.", link: result.link });
+    res.json({ link: result.link, emailed: !!result.sent?.ok, view: await portalView((await tokenRow(row.token))!) });
+  } catch (err: any) {
+    const status = Number(err?.status) || 500;
+    res.status(status).json({ message: status < 500 ? err.message : "Something went wrong. Please try again." });
   }
 });
 

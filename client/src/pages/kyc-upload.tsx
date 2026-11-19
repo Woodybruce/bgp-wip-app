@@ -5,9 +5,9 @@
 // shared/kyc-request.ts.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "wouter";
-import { AlertCircle, CheckCircle2, ChevronDown, FileText, Loader2, Lock, Mail, Phone, ShieldCheck, Upload } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown, Copy, FileText, Loader2, Lock, Mail, Phone, ShieldCheck, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { KYC_DATA_USE, KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_UPLOAD_EXTENSIONS, KYC_WHY_WE_ASK, kycLongDate, kycPepWords, type KycAgent, type KycDocKey, type KycOwnersAnswer, type KycPepAnswer, type KycPortalView } from "@shared/kyc-request";
+import { KYC_DATA_USE, KYC_OWNER_LINKS_TITLE, KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_UPLOAD_EXTENSIONS, KYC_WHY_WE_ASK, kycLongDate, kycPepWords, type KycAgent, type KycDocKey, type KycOwnersAnswer, type KycPepAnswer, type KycPortalView } from "@shared/kyc-request";
 
 type Loaded =
   | { state: "loading" }
@@ -237,6 +237,97 @@ function OwnersCard({ n, owners, onSave }: {
   );
 }
 
+// The owners the person acting passes a link of their own to (Woody, 19
+// November 2026: each owner does their own identity check and proof of
+// address). Copy a link, or have it emailed; it asks the owner only what is
+// still outstanding for them.
+function OwnerLinksCard({ n, token, people, onView }: {
+  n: number; token: string; people: NonNullable<KycPortalView["people"]>; onView: (view: KycPortalView) => void;
+}) {
+  const done = people.every(p => p.linked);
+  return (
+    <div className={`rounded-lg border p-4 ${done ? "border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/10" : ""}`} data-testid="kyc-owner-links">
+      <div className="flex gap-3">
+        <StepNumber n={n} done={done} />
+        <div className="min-w-0 flex-1">
+          <h3 className="font-semibold text-base leading-snug">{KYC_OWNER_LINKS_TITLE}</h3>
+          <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
+            Each person who owns or controls the company does their own identity check and sends a proof of address, on a page of their own. Copy their link and send it to them, or give us their email address and we'll send it.
+          </p>
+          <ul className="mt-3 space-y-3">
+            {people.map(person => <OwnerLinkRow key={person.key} token={token} person={person} onView={onView} />)}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OwnerLinkRow({ token, person, onView }: { token: string; person: NonNullable<KycPortalView["people"]>[number]; onView: (view: KycPortalView) => void }) {
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const ask = async (withEmail: boolean) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/kyc-upload/${encodeURIComponent(token)}/people`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: person.key, email: withEmail ? email.trim() : null }),
+      });
+      const body = await readJson(res);
+      if (body.link) setLink(body.link);
+      if (!res.ok) { setMessage(body.message || "That didn't work. Please try again."); return; }
+      if (body.view) onView(body.view);
+      if (withEmail) { setMessage(`Sent to ${email.trim()}.`); setEmail(""); }
+    } catch {
+      setMessage("That didn't work. Please check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const copy = async () => {
+    if (!link) return;
+    try { await navigator.clipboard.writeText(link); setCopied(true); } catch { setCopied(false); }
+  };
+  return (
+    <li className="rounded-md border p-3" data-testid={`kyc-owner-${person.key.replace(/\s+/g, "-")}`}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-semibold">{person.name}</span>
+        {person.done
+          ? <span className="inline-flex items-center gap-1 text-sm text-emerald-700"><CheckCircle2 className="w-4 h-4" />Done</span>
+          : person.emailedAt ? <span className="text-sm text-muted-foreground">Link emailed {new Date(person.emailedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+          : person.linked ? <span className="text-sm text-muted-foreground">Link given</span> : null}
+      </div>
+      {person.detail && <p className="mt-0.5 text-xs text-muted-foreground">{person.detail[0].toUpperCase() + person.detail.slice(1)}</p>}
+      {!person.done && (
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Their email address"
+              className="w-full min-w-0 rounded-md border bg-background px-3 py-2 text-sm sm:flex-1" data-testid={`kyc-owner-email-${person.key.replace(/\s+/g, "-")}`} />
+            <Button type="button" disabled={busy || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())} onClick={() => ask(true)} className="bg-[#6E0C25] hover:bg-[#5a0a1f] text-white">
+              {busy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Mail className="w-4 h-4 mr-2" />}Email it
+            </Button>
+          </div>
+          {link ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input readOnly value={link} onFocus={e => e.currentTarget.select()} className="min-w-0 flex-1 rounded-md border bg-muted/40 px-3 py-2 text-xs" data-testid={`kyc-owner-link-${person.key.replace(/\s+/g, "-")}`} />
+              <Button type="button" variant="outline" onClick={copy}><Copy className="w-4 h-4 mr-2" />{copied ? "Copied" : "Copy"}</Button>
+            </div>
+          ) : (
+            <button type="button" className="text-sm underline text-muted-foreground hover:text-foreground" disabled={busy} onClick={() => ask(false)}>
+              Or get their link to send yourself
+            </button>
+          )}
+          {message && <p className="text-sm text-muted-foreground">{message}</p>}
+        </div>
+      )}
+    </li>
+  );
+}
+
 const ID_COPY: Record<string, { line: string; button: string | null }> = {
   not_started: { line: "On your phone or computer: a photo of your passport, driving licence or identity card and a short selfie. It takes about two minutes.", button: "Start the identity check" },
   started: { line: "You've started the identity check. Pick up where you left off.", button: "Continue the identity check" },
@@ -305,11 +396,13 @@ export default function KycUploadPage() {
   const idDone = !!view.idCheck && !idOther && (view.idCheck.state === "approved" || view.idCheck.state === "submitted");
   const answered = !!view.question?.pep;
   const ownersDone = !!view.owners?.answer;
-  const total = view.docs.length + (view.idCheck ? 1 : 0) + (view.question ? 1 : 0) + (view.owners ? 1 : 0);
-  const done = view.docs.filter(d => d.files.length).length + (idDone ? 1 : 0) + (view.question && answered ? 1 : 0) + (view.owners && ownersDone ? 1 : 0);
+  const linksDone = !!view.people?.every(p => p.linked);
+  const total = view.docs.length + (view.idCheck ? 1 : 0) + (view.question ? 1 : 0) + (view.owners ? 1 : 0) + (view.people?.length ? 1 : 0);
+  const done = view.docs.filter(d => d.files.length).length + (idDone ? 1 : 0) + (view.question && answered ? 1 : 0) + (view.owners && ownersDone ? 1 : 0) + (view.people?.length && linksDone ? 1 : 0);
   const outstanding = [
     ...(view.idCheck && !idDone ? ["the identity check"] : []),
     ...(view.owners && !ownersDone ? ["confirming who owns the company"] : []),
+    ...(view.people?.length && !linksDone ? ["each owner's own link"] : []),
     ...view.docs.filter(d => !d.files.length).map(d => d.title.toLowerCase()),
     ...(view.question && !answered ? ["the question about public roles"] : []),
   ];
@@ -413,11 +506,20 @@ export default function KycUploadPage() {
 
       <p className="text-base">Hello{firstName(view.recipientName) ? ` ${firstName(view.recipientName)}` : ""},</p>
       <h1 className="mt-2 text-2xl font-bold leading-tight text-[#6E0C25] dark:text-[#e8a3b3]">Your identity checks for {view.dealName}</h1>
-      <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-        Before the deal can go ahead, the law requires us to confirm who we are dealing with
-        {view.kind === "company" ? <> for <strong className="text-foreground">{view.partyName}</strong></> : null}. This page is just for you, and it should take about ten minutes.
-        {view.kind === "company" ? " We read the company's details from Companies House ourselves, so you don't need to send anything filed there." : ""}
-      </p>
+      {view.person ? (
+        <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="kyc-person-intro">
+          {view.person.roles.includes("owner")
+            ? <>Companies House lists you as someone who owns or controls <strong className="text-foreground">{view.partyName}</strong>, which is a party to {view.dealName}. Before the deal can go ahead, the law requires us to confirm your identity too.</>
+            : <>You are {view.person.words}. Before the deal can go ahead, the law requires us to confirm your identity.</>}
+          {" "}This page is just for you, and it should take about five minutes.
+        </p>
+      ) : (
+        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+          Before the deal can go ahead, the law requires us to confirm who we are dealing with
+          {view.kind === "company" ? <> for <strong className="text-foreground">{view.partyName}</strong></> : null}. This page is just for you, and it should take about ten minutes.
+          {view.kind === "company" ? " We read the company's details from Companies House ourselves, so you don't need to send anything filed there." : ""}
+        </p>
+      )}
 
       <div className="mt-5" data-testid="kyc-progress">
         <div className="flex items-center justify-between text-sm"><span className="font-medium">{done} of {total} done</span><span className="text-muted-foreground">Works until {kycLongDate(view.expiresAt)}</span></div>
@@ -464,6 +566,11 @@ export default function KycUploadPage() {
         {view.owners && (() => {
           step++;
           return <OwnersCard n={step} owners={view.owners} onSave={saveOwners} />;
+        })()}
+
+        {view.people && view.people.length > 0 && (() => {
+          step++;
+          return <OwnerLinksCard n={step} token={token} people={view.people} onView={setView} />;
         })()}
 
         {view.docs.map(doc => {

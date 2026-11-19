@@ -185,6 +185,19 @@ function levenshtein(a: string, b: string): number {
 const sameToken = (a: string, b: string) => a === b || (a.length >= 5 && b.length >= 5 && levenshtein(a, b) <= 1);
 const covers = (outer: string[], inner: string[]) => inner.every(t => outer.some(o => sameToken(o, t)));
 
+const DISPLAY_TITLE = /^(mr|mrs|ms|miss|mx|dr|sir|dame|lord|lady|prof|professor|rev|revd)\.?\s+/i;
+
+/** A name as people write it: "BRUCE, David" is "David Bruce", "Mr Woody Bruce" is "Woody Bruce", "jack barrat" is "Jack Barrat". */
+export function personDisplayName(raw: string): string {
+  let name = String(raw || "").replace(/\s+/g, " ").trim();
+  const comma = /^([^,]+),\s*(.+)$/.exec(name);
+  if (comma) name = `${comma[2]} ${comma[1]}`;
+  name = name.replace(DISPLAY_TITLE, "");
+  return name.split(" ").map(word => word === word.toUpperCase() || word === word.toLowerCase()
+    ? word.toLowerCase().replace(/(^|[-'’])([a-z])/g, (_m, sep: string, ch: string) => sep + ch.toUpperCase())
+    : word).join(" ");
+}
+
 // One name holds every word of the other (two words at least), in any
 // order: "SMITH, John David" and "John Smith".
 export function personNamesMatch(a: string, b: string): boolean {
@@ -750,6 +763,13 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: { kind: KycPar
     ];
     ownerNames = [...new Set(people)];
     drop("ownership", `Companies House lists ${input.owners.length === 1 ? "its owner" : `its ${input.owners.length} owners`}: the client is asked to confirm the list instead.`);
+    // Each owner the register names does their own identity check and sends
+    // their own proof of address, on a link of their own (Woody, 19 November
+    // 2026: one upload step for every owner ticked itself on the first file).
+    // The person acting is one of the owners when their name is on the list.
+    const others = ownerNames.filter(n => !(ctx.contactName && personNamesMatch(ctx.contactName, n)));
+    if (others.length) drop("owner_ids", `Each owner gets a link of their own for their identity check and proof of address: ${others.map(personDisplayName).join(", ")}. Send them from People to check on the deal's AML card, or the client passes them on from their page.`);
+    else drop("owner_ids", "The person you are asking is the only owner the register names: their own identity check and proof of address cover it.");
   }
 
   if (isRegisterDirector(ctx.contactName, input.directors)) {

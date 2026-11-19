@@ -3893,6 +3893,75 @@ Jack's link). Guards: `qa/regression/kyc-id-person.test.mjs`.
   the file, with what it was sent as and the date; anything else (HEIC, PDF,
   Word) stays a line with its name.
 
+## People to check: each owner's own link (Woody, 2026-11-19)
+
+Woody, the same evening on deal #4491: "so it looks signed off but doesnt
+show all the other directors at this stage that need to get signed off?" and
+"i didnt add huseyns details or david bruce just huseynes passprot and
+nothing for david so cant be ok": the one "ID for each of those owners" step
+ticked itself on the first file. He agreed the proposal: "a list of people
+to check for each party: the owners and the person acting, each with their
+own Veriff link and a proof-of-address upload; the directors shown with
+their sanctions result only". Do not re-litigate. Rules (pure):
+`shared/kyc-people.ts`; reads: `server/kyc-people.ts`; requests and routes:
+`server/aml-portal.ts`. Tests: `server/kyc-people.test.ts` (in `npm test`),
+`qa/regression/kyc-people.test.mjs`.
+
+- **Who** (`partyPeople`): the owners the register names (people with
+  significant control and the people found up the ownership chain, MLR 2017
+  reg 5) and the person dealing with us for the company (the recipient of a
+  request to it, not cancelled; reg 28(10)). One person is one row however
+  the register spells them (`personNamesMatch`; the register's spelling wins,
+  `personDisplayName`). A listed company has no owners to identify (reg
+  28(5)): the person acting only. Directors who are neither are listed with
+  their sanctions result only, no ID. A private individual's own request
+  covers them (no list). With no company that signs, or no register read,
+  the owners are not known (`not_read`).
+- **What each sends**: an identity check (Veriff) and a proof of address from
+  the last three months (BGP's AML policy, Issue 2, "Individuals": one proof
+  of identity, one of residential address; the policy lists a photocard
+  driving licence for identity only, so it never stands for the address).
+  The proof of address wording now names this year's council tax bill too
+  (the policy's "local authority tax demand").
+- **Evidence**: an identity check is a person's when the name Veriff read is
+  theirs and, when both are known, the date of birth agrees with the
+  register's month and year (`dobAgrees`), on any request on the deal (Woody's
+  check on Jack's link counts for Woody, "on the link sent to Jack Barrat
+  (7MJEGT)", and not for Jack); one whose name was not read counts for the
+  person its link was for. A passed check on a cancelled request still counts;
+  a check under way only on a live link of their own. A proof of address
+  counts only on the person's own request for this party. Files on the old
+  owners' step say nobody's name: listed apart as "whose is not known", and
+  that step is never ticked on the deal card when the owners are named.
+- **Their own link** (`createPersonCheck`): a request with `request.person`
+  (key, name, roles, how they own it), kind individual, asking only what is
+  still outstanding for them (`personRequestAsks`); no Veriff session until
+  they press the button. BGP staff make it on the deal card's People to
+  check (`POST /api/aml/deal/:id/client-checks/people`, on
+  `KYC_CLIENT_CHECK_ROUTES`; Send them a link: email it, saving the person to
+  the CRM under the brand, or Just make the link). The person acting passes
+  an owner theirs from their own page (`POST /api/kyc-upload/:token/people`:
+  owners only, never themselves, the request to the person acting only;
+  email at most three times a day and not twice in two minutes; nothing a
+  client types goes into the CRM). The email and page say why an owner is
+  asked ("Companies House lists you as someone who owns or controls …").
+- **The request to the person acting**: when the register names the owners
+  it no longer asks for "ID for each of those owners" (`precheckAsks` drops
+  it and says why); it asks the person acting for their own proof of address
+  (`defaultKycDocs`), and a step "Pass each owner their own link" lists the
+  owners who still owe something (`ownLinksFor`), done when each has a link.
+  The agents' Finished note lists who still owes what.
+- **Finished**: a party's client checks are finished only when the request to
+  the person acting is and every person to check has sent what they owe; the
+  sign-off asks for a note otherwise and names who
+  (`clientChecksOutstanding`), and the AML dashboard keeps the party at
+  Client checks sent while a person's own request is open. A public-roles yes
+  on a person's own request is a red flag of its own, with their name.
+- Checked in a browser against a local copy shaped like #4491 on
+  19 November 2026. Not run against Veriff or Microsoft from a build machine.
+  Not built: adding a person by hand (an owner the register does not name),
+  and asking each owner the source of funds.
+
 ## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
 
 Woody, on the deal page: "Needs a chat box too no and how the negotiations

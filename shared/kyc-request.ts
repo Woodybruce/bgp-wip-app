@@ -10,6 +10,22 @@ import type { KycRedFlag } from "./kyc-red-flags";
 export type KycDocKey = "photo_id" | "proof_of_address" | "source_of_funds" | "ownership" | "owner_ids" | "authority" | "company_documents" | "other";
 export type KycPartyKind = "individual" | "company";
 
+// A request of a person's own (Woody, 19 November 2026, agreeing "a list of
+// people to check for each party: the owners and the person acting, each with
+// their own Veriff link and a proof-of-address upload; the directors shown
+// with their sanctions result only"). Set on the request when it is for one
+// of the people a company's checks are about, not for the company itself.
+export type KycPersonRole = "owner" | "acting" | "director";
+export interface KycRequestPerson {
+  key: string;
+  name: string;
+  roles: KycPersonRole[];
+  // How they own or control the company, as the register gives it.
+  detail?: string | null;
+}
+export const kycPersonRoleWords = (roles: KycPersonRole[], partyName: string): string =>
+  roles.includes("owner") ? `an owner of ${partyName}` : roles.includes("acting") ? `the person dealing with us for ${partyName}` : `a director of ${partyName}`;
+
 export const KYC_DOC_KEYS: KycDocKey[] = ["photo_id", "proof_of_address", "source_of_funds", "ownership", "owner_ids", "authority", "company_documents", "other"];
 
 // docType is what the file is filed as on the client's KYC record, the
@@ -28,9 +44,11 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
     detail: "Your passport, photocard driving licence or national identity card, in date. As we have not seen the original, please send a certified copy: a copy signed by a solicitor, accountant or bank officer with the words \"Certified to be a true copy of the original seen by me\", the date, and their name, occupation, address and phone number. Or show the original to your agent.",
     docType: "passport",
   },
+  // BGP's AML policy (Issue 2, "Individuals") also lists a local authority
+  // tax demand: a council tax bill is yearly, so this year's.
   proof_of_address: {
     title: "Proof of address",
-    detail: "A utility bill, bank or building society statement, or mortgage statement from the last three months, showing your name and home address.",
+    detail: "A utility bill, bank or building society statement, or mortgage statement from the last three months, or this year's council tax bill, showing your name and home address.",
     docType: "proof_of_address",
   },
   source_of_funds: {
@@ -70,14 +88,17 @@ export const isKycDocKey = (value: unknown): value is KycDocKey => typeof value 
 // What a request asks for unless the agent changes it. Photo ID is asked
 // for as a document only when there is no online identity check. A company
 // is checked at Companies House by the app, so only what is not filed there
-// is asked for, with the dealing person's authority to act. Where the money
+// is asked for, with the dealing person's authority to act. The person
+// dealing with us for a company sends their own proof of address too (since
+// 19 November 2026: they are one of the people to check, BGP's policy asks an
+// individual for one proof of identity and one of address). Where the money
 // comes from is asked of whoever pays: a buyer, and a tenant (HMRC's letting
 // guidance, AMLG2300 section 21: "all customers making a payment").
 export function defaultKycDocs(kind: KycPartyKind, role: string | null | undefined, idCheck: boolean): KycDocKey[] {
   const docs: KycDocKey[] = [];
   if (!idCheck) docs.push("photo_id");
   if (kind === "individual") docs.push("proof_of_address");
-  else docs.push("ownership", "owner_ids", "authority");
+  else docs.push("proof_of_address", "ownership", "owner_ids", "authority");
   if (["purchaser", "tenant"].includes(String(role || "").toLowerCase())) docs.push("source_of_funds");
   return docs;
 }
@@ -196,6 +217,10 @@ export interface KycEmailContext {
   confirmOwners?: Array<{ name: string; detail: string }> | null;
   // The people whose ID is asked for, where the register names them.
   ownerNames?: string[] | null;
+  // A person's own request: who they are to the company (19 November 2026).
+  person?: { roles: KycPersonRole[] } | null;
+  // The owners the person acting is asked to pass a link of their own to.
+  ownLinksFor?: string[] | null;
 }
 
 // Who hears back from a request (the agents' Finished note, a red-flag
@@ -268,7 +293,15 @@ export function kycDocDetail(key: KycDocKey, ownerNames?: string[] | null): stri
   return KYC_DOCS.owner_ids.detail.replace("For each person on that list", `For ${who}`);
 }
 
-export function kycSteps(ctx: Pick<KycEmailContext, "needsIdCheck" | "docs" | "askPep" | "confirmOwners" | "ownerNames"> & { kind?: KycPartyKind }): Array<{ title: string; detail: string }> {
+// The owners' own links (19 November 2026): each owner does their own
+// identity check and sends their own proof of address, on a page of their own.
+export const KYC_OWNER_LINKS_TITLE = "Pass each owner their own link";
+export const kycOwnerLinksDetail = (names: string[]): string => {
+  const who = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `${who} ${names.length === 1 ? "does their" : "each do their"} own identity check and send${names.length === 1 ? "s" : ""} a proof of address, on a page of their own. Your page has a link for ${names.length === 1 ? "them" : "each of them"}, or give us ${names.length === 1 ? "their email address" : "their email addresses"} there and we'll send it.`;
+};
+
+export function kycSteps(ctx: Pick<KycEmailContext, "needsIdCheck" | "docs" | "askPep" | "confirmOwners" | "ownerNames" | "ownLinksFor"> & { kind?: KycPartyKind }): Array<{ title: string; detail: string }> {
   const steps: Array<{ title: string; detail: string }> = [];
   if (ctx.needsIdCheck) {
     steps.push({ title: "A quick identity check", detail: "On your phone or computer: a photo of your passport, driving licence or identity card and a short selfie. It takes about two minutes." });
@@ -276,6 +309,7 @@ export function kycSteps(ctx: Pick<KycEmailContext, "needsIdCheck" | "docs" | "a
   // The owners to confirm come before the owners' IDs, which refer to them.
   const owners = ctx.confirmOwners?.length ? { title: KYC_OWNERS_QUESTION.title, detail: KYC_OWNERS_QUESTION.step } : null;
   if (owners) steps.push(owners);
+  if (ctx.ownLinksFor?.length) steps.push({ title: KYC_OWNER_LINKS_TITLE, detail: kycOwnerLinksDetail(ctx.ownLinksFor) });
   for (const key of ctx.docs) steps.push({ title: KYC_DOCS[key].title, detail: kycDocDetail(key, ctx.ownerNames) });
   if (ctx.askPep) {
     steps.push({ title: KYC_PEP_QUESTION.title, detail: ctx.kind === "individual"
@@ -358,13 +392,19 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
   const forWhom = ctx.kind === "company"
     ? ` That includes you, as the person dealing with us for <strong>${escHtml(ctx.partyName)}</strong>, and the people who own the company.`
     : "";
+  // A person's own request: an owner may not know the deal at all.
+  const opening = ctx.person?.roles.includes("owner")
+    ? `<strong>${escHtml(ctx.partyName)}</strong> is a party to <strong>${escHtml(ctx.dealName)}</strong>, which we are working on. Companies House lists you as someone who owns or controls ${escHtml(ctx.partyName)}, so before the deal can go ahead the law requires us to confirm your identity too.`
+    : ctx.person
+      ? `You are dealing with us for <strong>${escHtml(ctx.partyName)}</strong> on <strong>${escHtml(ctx.dealName)}</strong>, so before the deal can go ahead the law requires us to confirm your identity.`
+      : `We're working with you on <strong>${escHtml(ctx.dealName)}</strong>. Before the deal can go ahead, the law requires us to confirm who we are dealing with.${forWhom}`;
   const companiesHouse = ctx.kind === "company"
     ? p("We read the company's details from Companies House ourselves, so you don't need to send anything that is filed there.", `font-size:14px;color:${BODY}`)
     : "";
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Identity checks for ${escHtml(ctx.dealName)}</h1>`,
     p(greeting(ctx.recipientName)),
-    p(`We're working with you on <strong>${escHtml(ctx.dealName)}</strong>. Before the deal can go ahead, the law requires us to confirm who we are dealing with.${forWhom}${ctx.docs.includes("photo_id") ? "" : " It should take about ten minutes."}`),
+    p(`${opening}${ctx.docs.includes("photo_id") ? "" : ` It should take about ${ctx.person ? "five" : "ten"} minutes.`}`),
     h2("What we need from you"),
     stepsList(steps),
     companiesHouse,
@@ -386,6 +426,8 @@ export interface KycProgress {
   pepAnswered?: boolean;
   // The owners on the register have been confirmed or corrected.
   ownersAnswered?: boolean;
+  // Every owner the person acting was asked to pass a link to has one.
+  ownersLinked?: boolean;
 }
 
 // The reminder: what is done, what is still needed, the same button.
@@ -394,6 +436,7 @@ export function kycReminderEmail(ctx: KycEmailContext & { progress: KycProgress 
   const left: string[] = [];
   if (ctx.needsIdCheck) (ctx.progress.idDone ? done : left).push("Identity check");
   if (ctx.confirmOwners?.length) (ctx.progress.ownersAnswered ? done : left).push(KYC_OWNERS_QUESTION.title);
+  if (ctx.ownLinksFor?.length) (ctx.progress.ownersLinked ? done : left).push(KYC_OWNER_LINKS_TITLE);
   for (const key of ctx.docs) (ctx.progress.docsDone.includes(key) ? done : left).push(KYC_DOCS[key].title);
   if (ctx.askPep) (ctx.progress.pepAnswered ? done : left).push(KYC_PEP_QUESTION.title);
   const list = (items: string[], mark: string, colour: string) => items.map(item => `<tr><td style="width:24px;vertical-align:top;padding:3px 0;font-family:${FONT};font-size:15px;font-weight:bold;color:${colour}">${mark}</td><td style="padding:3px 0;font-family:${FONT};font-size:15px;color:${INK}">${escHtml(item)}</td></tr>`).join("");
@@ -456,6 +499,10 @@ export function kycFinishedEmail(ctx: {
   redFlags?: KycRedFlag[];
   // The owners on the register the client was asked to confirm, and the reply.
   owners?: { list: Array<{ name: string; detail: string }>; reply: KycOwnersReply | null } | null;
+  // A person's own request (19 November 2026): who they are to the company.
+  person?: { roles: KycPersonRole[] } | null;
+  // The party's people to check with something still outstanding.
+  peopleOutstanding?: string[];
 }): { subject: string; html: string } {
   const who = ctx.recipientName || ctx.partyName;
   // Someone else passed the identity check on this link (Woody, 19 November
@@ -472,7 +519,9 @@ export function kycFinishedEmail(ctx: {
   const fileRows = ctx.files.map(f => `<tr><td style="padding:3px 12px 3px 0;font-family:${FONT};font-size:14px;color:${INK}">${escHtml(f.name)}</td><td style="padding:3px 0;font-family:${FONT};font-size:13px;color:${MUTED}">${escHtml(f.docKey ? KYC_DOCS[f.docKey].title : "Sent by email")}</td></tr>`).join("");
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:${ACCENT}">${someoneElse ? `The checks sent to ${escHtml(who)} were finished` : `${escHtml(who)} has finished their checks`}</h1>`,
-    p(`For <strong>${escHtml(ctx.dealName)}</strong>${ctx.recipientName && ctx.partyName !== ctx.recipientName ? `, on behalf of <strong>${escHtml(ctx.partyName)}</strong>` : ""}.`),
+    p(ctx.person
+      ? `For <strong>${escHtml(ctx.dealName)}</strong>, as ${escHtml(kycPersonRoleWords(ctx.person.roles, ctx.partyName))}.`
+      : `For <strong>${escHtml(ctx.dealName)}</strong>${ctx.recipientName && ctx.partyName !== ctx.recipientName ? `, on behalf of <strong>${escHtml(ctx.partyName)}</strong>` : ""}.`),
     idLine ? p(escHtml(idLine)) : "",
     someoneElse
       ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>${escHtml(who)} has not done their own identity check.</strong> The check on this link was ${escHtml(someoneElse)}'s. Send ${escHtml(who)} a new request from the deal's AML card, or, if ${escHtml(someoneElse)} can act for ${escHtml(ctx.partyName)}, record why on the deal.</div>`
@@ -488,6 +537,9 @@ export function kycFinishedEmail(ctx: {
       ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>A difference from the register.</strong> The client says the owners Companies House lists are not right. Find out who the owners are, and report the difference to Companies House (HMRC, AMLG11400 14.8).</div>`
       : "",
     ctx.redFlags?.length ? redFlagBox(ctx.redFlags) : "",
+    ctx.peopleOutstanding?.length
+      ? h2(`Still to come from the people to check for ${ctx.partyName}`) + `<ul style="margin:4px 0 14px 18px;padding:0;font-size:14px;color:${INK}">${ctx.peopleOutstanding.map(line => `<li style="margin:0 0 4px">${escHtml(line)}</li>`).join("")}</ul>`
+      : "",
     ctx.kind === "company" && !ctx.owners?.list.length ? p("Check the owners they list against the PSC register at Companies House. A difference must be reported to Companies House (HMRC, AMLG11400 14.8).", `font-size:13px;color:${BODY}`) : "",
     button("Open the deal's AML", ctx.dealLink),
     p("The files are on the client's KYC record. Review them and sign off in the app as usual.", `font-size:13px;color:${MUTED}`),
@@ -513,6 +565,8 @@ export const KYC_RED_FLAG_STEP = "Open the deal's AML card and press Request KYC
 export const clientChecksSwitchOn = (value: string | null | undefined): boolean => String(value ?? "").trim().toLowerCase() !== "off";
 export const KYC_CLIENT_CHECK_ROUTES: readonly RegExp[] = [
   /^\/api\/aml\/deal\/[^/]+\/client-checks$/,
+  // A person's own link (19 November 2026).
+  /^\/api\/aml\/deal\/[^/]+\/client-checks\/people$/,
   /^\/api\/aml\/client-checks\/[^/]+(?:\/remind)?$/,
   /^\/api\/aml\/poll-mailbox$/,
 ];
@@ -588,6 +642,11 @@ export interface KycPortalView {
   owners: { list: Array<{ name: string; detail: string }>; answer: KycOwnersAnswer | null; detail: string | null } | null;
   docs: Array<{ key: KycDocKey; title: string; detail: string; files: Array<{ name: string; uploadedAt: string }> }>;
   otherFiles: Array<{ name: string; uploadedAt: string }>;
+  // A person's own request (19 November 2026): who they are to the company.
+  person?: { roles: KycPersonRole[]; words: string } | null;
+  // The owners the person acting passes a link of their own to: done when
+  // they have nothing left to send, linked when they have a link.
+  people?: Array<{ key: string; name: string; detail: string | null; done: boolean; linked: boolean; emailedAt: string | null }> | null;
   note: string | null;
   agents: KycAgent[];
   finishedAt: string | null;

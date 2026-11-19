@@ -132,7 +132,7 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
       recordHistory: history[id] || [],
       latestInvestigation: latest ? { sanctions_match: latest.sanctions_match, conducted_at: latest.conducted_at, precheck: !!latest.precheck } : null,
       precheck: pre ? { result: pre.result, current: !!latest && String(latest.id) === String(pre.id) } : null,
-      requests: requests.filter((r: any) => r.company_id === id).map((r: any) => ({ ref: r.request?.ref || "", answers: r.request?.answers || null, ownersAnswer: r.request?.ownersAnswer || null })),
+      requests: requests.filter((r: any) => r.company_id === id).map((r: any) => ({ ref: r.request?.ref || "", answers: r.request?.answers || null, ownersAnswer: r.request?.ownersAnswer || null, person: r.request?.person?.name || null })),
       idChecks: idChecks.filter((s: any) => s.company_id === id).map((s: any) => ({
         status: s.status, decision_reason: s.decision_reason, received_at: s.received_at,
         name: [s.first_name, s.last_name].filter(Boolean).join(" ") || null,
@@ -228,7 +228,7 @@ export async function alertRedFlags(token: string): Promise<{ sent: number }> {
   if (!row || !request?.ref) return { sent: 0 };
   let flags: KycRedFlag[];
   if (row.is_test || !row.company_id) {
-    flags = partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null, ownersAnswer: request.ownersAnswer || null }], idChecks: await requestIdChecks(request.veriffSessionIds) });
+    flags = partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null, ownersAnswer: request.ownersAnswer || null, person: request.person?.name || null }], idChecks: await requestIdChecks(request.veriffSessionIds) });
   } else {
     flags = (await loadDealRedFlags(row.deal_id, [row.company_id], row.trading_entity_id ? { [row.company_id]: row.trading_entity_id } : {})).parties[row.company_id] || [];
   }

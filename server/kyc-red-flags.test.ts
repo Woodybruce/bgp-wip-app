@@ -191,3 +191,15 @@ test("every flag carries a key and its evidence", () => {
   // A deal record flag never shares a key with a party's.
   assert.ok(all.filter(f => f.source === "Deal record").every(f => f.key.startsWith("deal:")));
 });
+
+test("each person's own yes is a red flag of its own, with their name (19 November 2026)", () => {
+  const flags = partyRedFlags(facts({ requests: [
+    { ref: "H2K9QP", answers: { pep: "yes", pepDetail: "Minister in Azerbaijan until 2024", answeredAt: null }, person: "Huseyn Mirhadiyev" },
+    { ref: "D4VB7C", answers: { pep: "unsure", pepDetail: null, answeredAt: null }, person: "David Bruce" },
+    { ref: "7MJEGT", answers: { pep: "no", pepDetail: null, answeredAt: null } },
+  ] }));
+  assert.deepEqual(flags.filter(f => f.kind === "client_pep").map(f => f.label), [
+    "Huseyn Mirhadiyev said yes to the question about public roles",
+    "David Bruce was not sure about the question about public roles",
+  ]);
+});

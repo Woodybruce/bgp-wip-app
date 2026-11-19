@@ -115,7 +115,8 @@ export interface PartyRedFlagFacts {
   // screening (a later screening replaces their sanctions lines).
   precheck?: { result: KycPrecheckResult; current: boolean } | null;
   // The client checks sent on this deal to this party (tests left out).
-  requests: Array<{ ref: string; answers?: KycAnswers | null; ownersAnswer?: KycOwnersReply | null }>;
+  // person: the name on a person's own request (19 November 2026).
+  requests: Array<{ ref: string; answers?: KycAnswers | null; ownersAnswer?: KycOwnersReply | null; person?: string | null }>;
   // The party's identity checks.
   idChecks: Array<{ status: string | null; decision_reason?: string | null; received_at?: string | Date | null; name?: string | null }>;
   // The KYC record's own history about its risk, PEP and enhanced due
@@ -175,12 +176,15 @@ export function pepStatusLabel(status: string | null | undefined): string | null
 
 export function partyRedFlags(facts: PartyRedFlagFacts): KycRedFlag[] {
   const flags: KycRedFlag[] = [];
-  // The client's own answer, the latest request that has one.
+  // The client's own answer, the latest request that has one; and each
+  // person's own answer on their own request (19 November 2026).
   const answered = facts.requests.filter(r => r.answers?.pep && r.answers.pep !== "no");
-  for (const r of answered.slice(0, 1)) {
+  const firstPer = answered.filter((r, i) => answered.findIndex(x => (x.person || null) === (r.person || null)) === i);
+  for (const r of firstPer) {
+    const said = r.answers!.pep === "yes" ? "said yes to the question about public roles" : "was not sure about the question about public roles";
     flags.push({
       kind: "client_pep",
-      label: r.answers!.pep === "yes" ? "Said yes to the question about public roles" : "Not sure about the question about public roles",
+      label: r.person ? `${r.person} ${said}` : r.answers!.pep === "yes" ? "Said yes to the question about public roles" : "Not sure about the question about public roles",
       detail: words(r.answers!.pepDetail),
       source: `Client checks, ref ${r.ref}`,
       at: iso(r.answers!.answeredAt),

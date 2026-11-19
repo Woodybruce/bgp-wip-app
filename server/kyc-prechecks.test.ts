@@ -111,7 +111,7 @@ const input = (over: Partial<PrecheckAskInput> = {}): PrecheckAskInput => ({
 test("a listed company is not asked for an owners chart or owner IDs", () => {
   const asks = precheckAsks(input({ listing: { market: "uk_regulated", since: "2016-06-30", company: "BIG PLC", companyNumber: "00000001", viaParent: false } }),
     { kind: "company", role: "tenant", idCheck: true, contactName: null, today: TODAY });
-  assert.deepEqual(asks.docs, ["authority", "source_of_funds"]);
+  assert.deepEqual(asks.docs, ["proof_of_address", "authority", "source_of_funds"]);
   assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids"]);
   assert.match(asks.notAsked[0].reason, /UK regulated market.*since 2016-06-30.*reg 28\(5\)/);
   assert.equal(asks.confirmOwners, null);
@@ -131,8 +131,11 @@ test("owners on the register are confirmed, not drawn; a director is not asked f
     peopleUpChain: [{ name: "John SMITH", foundAt: "HOLDCO LIMITED", controls: [] }],
     directors: ["DOE, Jane"],
   }), { kind: "company", role: "landlord", idCheck: true, contactName: "Jane Doe", today: TODAY });
-  assert.deepEqual(asks.docs, ["owner_ids"]);
-  assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "authority"]);
+  // Each owner has a link of their own (19 November 2026): the one asked is an
+  // owner, so only the other owner is named.
+  assert.deepEqual(asks.docs, ["proof_of_address"]);
+  assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids", "authority"]);
+  assert.match(asks.notAsked[1].reason, /^Each owner gets a link of their own for their identity check and proof of address: John Smith\./);
   assert.deepEqual(asks.confirmOwners, [
     { name: "Jane DOE", detail: "more than 50% and up to 75% of the shares" },
     { name: "HOLDCO LIMITED", detail: "more than 25% and up to 50% of the shares" },
@@ -154,7 +157,7 @@ test("a tenant company's recent accounts on file stand for where the money comes
 });
 
 test("with nothing found, or for a private individual, the usual list is asked", () => {
-  assert.deepEqual(precheckAsks(null, { kind: "company", role: "tenant", idCheck: true, contactName: null }).docs, ["ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(precheckAsks(null, { kind: "company", role: "tenant", idCheck: true, contactName: null }).docs, ["proof_of_address", "ownership", "owner_ids", "authority", "source_of_funds"]);
   assert.deepEqual(precheckAsks(input({ subjectKind: "individual", ukRegistered: false }), { kind: "individual", role: "purchaser", idCheck: false, contactName: null }).docs, ["photo_id", "proof_of_address", "source_of_funds"]);
   // Not at Companies House: the overseas register extract is asked for.
   assert.ok(precheckAsks(input({ ukRegistered: false }), { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY }).docs.includes("company_documents"));

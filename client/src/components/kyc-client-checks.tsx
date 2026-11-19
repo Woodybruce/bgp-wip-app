@@ -7,7 +7,7 @@
 // otherwise KYC4U does the checks.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CheckCircle2, Clock, Copy, Eye, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileText } from "lucide-react";
+import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileText, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,8 @@ import {
   type KycDocKey, type KycIdState, type KycOwnersAnswer, type KycPartyKind, type KycPepAnswer,
 } from "@shared/kyc-request";
 import { precheckAsks, precheckDay, type PrecheckAskInput } from "@shared/kyc-prechecks";
+import { PARTY_PEOPLE_BASIS_WORDS, personRequestAsks, type KycPartyPerson, type PartyPeople, type PersonIdState, type PersonSanctions } from "@shared/kyc-people";
+import type { KycPersonRole } from "@shared/kyc-request";
 
 interface PartyContact { id: string; name: string; email: string | null; mobile: string | null }
 interface Party {
@@ -44,11 +46,19 @@ export interface ClientCheckRequest {
   askPep: boolean; pep: KycPepAnswer | null; pepDetail: string | null;
   owners: { list: Array<{ name: string; detail: string }>; answer: KycOwnersAnswer | null; detail: string | null } | null;
   notAsked: Array<{ key: KycDocKey; reason: string }>;
-  docs: Array<{ key: KycDocKey; title: string; done: boolean }>;
+  // A person's own request (19 November 2026): who it is for.
+  person?: { key: string; name: string; roles: KycPersonRole[] } | null;
+  ownLinksFor?: string[];
+  // note: why a step is not ticked (the old owners' step's files say nobody's name).
+  docs: Array<{ key: KycDocKey; title: string; done: boolean; note?: string | null }>;
   files: Array<{ name: string; docKey: KycDocKey | null; uploadedAt: string; url: string | null }>;
   remindersSent: number; link: string; whatsapp: string | null; canRemind: boolean;
 }
-interface ClientChecks { dealName: string; mailbox: string; veriff: boolean; agents: Array<{ name: string; email: string }>; parties: Party[]; requests: ClientCheckRequest[] }
+interface ClientChecks {
+  dealName: string; mailbox: string; veriff: boolean; agents: Array<{ name: string; email: string }>; parties: Party[]; requests: ClientCheckRequest[];
+  // The people to check per party (null when they could not be read).
+  people?: Record<string, PartyPeople | null>;
+}
 
 const plain = (e: any) => String(e?.message || e || "").replace(/^\d{3}:\s*/, "");
 const shortDate = (iso: string | null) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "";
@@ -126,8 +136,8 @@ export function ClientCheckRow({ dealId, request }: { dealId: string; request: C
           </li>
         ))}
         {request.docs.map(d => (
-          <li key={d.key} className="flex items-center gap-1">
-            {d.done ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : <Clock className="w-3.5 h-3.5 text-muted-foreground" />}{d.title}
+          <li key={d.key} className={`flex items-center gap-1 ${d.note ? "text-amber-800" : ""}`} title={d.note || undefined} data-testid={`client-check-doc-${request.ref}-${d.key}`}>
+            {d.done ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : d.note ? <AlertCircle className="w-3.5 h-3.5 text-amber-600" /> : <Clock className="w-3.5 h-3.5 text-muted-foreground" />}{d.title}
           </li>
         ))}
       </ul>
@@ -148,6 +158,7 @@ export function ClientCheckRow({ dealId, request }: { dealId: string; request: C
           {request.recipientName || "The person it was for"} has not done their own identity check: the one on this link was {request.idVerifiedName || "someone else"}'s. Send them a new request, or record on the deal why {request.idVerifiedName || "that person"} can act for {request.partyName}.
         </p>
       )}
+      {request.docs.filter(d => d.note).map(d => <p key={`note-${d.key}`} className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900">{d.title}: {d.note}</p>)}
       {request.idCheckNote && <p className="text-muted-foreground italic">{request.idCheckNote}</p>}
       {request.files.length > 0 && (
         <div className="space-y-1.5">
@@ -204,12 +215,217 @@ export function ClientCheckRow({ dealId, request }: { dealId: string; request: C
   );
 }
 
-// The requests sent for one party on the deal.
+// The requests sent for one party on the deal: the people to check, each
+// with their own link, then the requests to the person acting.
 export function ClientChecksForParty({ dealId, companyId }: { dealId: string; companyId: string }) {
   const { data } = useClientChecks(dealId);
-  const list = (data?.requests || []).filter(r => r.companyId === companyId);
-  if (!list.length) return null;
-  return <div className="space-y-1.5">{list.map(r => <ClientCheckRow key={r.token} dealId={dealId} request={r} />)}</div>;
+  if (!data) return null;
+  const list = data.requests.filter(r => r.companyId === companyId && !r.person);
+  const party = data.parties.find(p => p.companyId === companyId) || null;
+  const people = data.people?.[companyId] || null;
+  return (
+    <>
+      {party && people && people.basis !== "individual" && <PeopleToCheck dealId={dealId} data={data} party={party} people={people} />}
+      {list.length > 0 && <div className="space-y-1.5">{list.map(r => <ClientCheckRow key={r.token} dealId={dealId} request={r} />)}</div>}
+    </>
+  );
+}
+
+// ── The people to check (Woody, 19 November 2026) ──────────────────────────
+// "a list of people to check for each party: the owners and the person
+// acting, each with their own Veriff link and a proof-of-address upload; the
+// directors shown with their sanctions result only".
+
+const ROLE_WORDS: Record<KycPersonRole, string> = { owner: "Owner", acting: "Dealing with us", director: "Director" };
+
+const ID_STATE_WORDS: Record<PersonIdState, string> = {
+  passed: "Identity check passed",
+  waiting: "Identity check done, waiting for Veriff's result",
+  document: "Photo ID sent, for the MLRO to check",
+  started: "Identity check started",
+  retry: "Identity check: asked to try again",
+  restart: "Identity check needs starting again",
+  not_started: "Identity check not done",
+};
+
+const SANCTIONS_WORDS: Record<PersonSanctions, { text: string; cls: string }> = {
+  clear: { text: "Sanctions: no match", cls: "text-muted-foreground" },
+  discounted: { text: "Sanctions: a namesake, set aside on the date of birth", cls: "text-muted-foreground" },
+  possible: { text: "Sanctions: possible match", cls: "text-red-700 font-medium" },
+  not_screened: { text: "Sanctions: not screened yet", cls: "text-muted-foreground" },
+};
+
+function Tick({ ok }: { ok: boolean }) {
+  return ok ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> : <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
+}
+
+function PeopleToCheck({ dealId, data, party, people }: { dealId: string; data: ClientChecks; party: Party; people: PartyPeople }) {
+  const left = people.people.filter(p => p.outstanding.length).length;
+  return (
+    <div className="rounded-md border bg-background p-2.5 text-xs space-y-2" data-testid={`people-to-check-${party.companyId}`}>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <UserRound className="w-3.5 h-3.5 text-muted-foreground" />
+        <span className="font-semibold text-sm">People to check</span>
+        {people.people.length > 0 && (
+          <span className={`${pillMetrics} ${left ? "bg-amber-50 text-amber-800 border border-amber-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"}`}>
+            {left ? `Waiting on ${left} of ${people.people.length}` : "All sent"}
+          </span>
+        )}
+      </div>
+      <p className="text-muted-foreground">{PARTY_PEOPLE_BASIS_WORDS[people.basis]} Each gets a link of their own: an identity check (Veriff) and a proof of address from the last three months.</p>
+      {people.people.map(person => <PersonRow key={person.key} dealId={dealId} data={data} party={party} person={person} />)}
+      {people.directors.length > 0 && (
+        <p className="text-muted-foreground" data-testid={`people-directors-${party.companyId}`}>
+          <span className="font-medium text-foreground">Directors, no ID needed</span> (screened against the UK and US sanctions lists only):{" "}
+          {people.directors.map((d, i) => (
+            <span key={d.name}>{i ? "; " : ""}{d.name} <span className={SANCTIONS_WORDS[d.sanctions].cls}>({SANCTIONS_WORDS[d.sanctions].text.replace("Sanctions: ", "")})</span></span>
+          ))}.
+        </p>
+      )}
+      {people.loose.map(l => (
+        <p key={l.ref} className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900" data-testid={`people-loose-${l.ref}`}>
+          {l.files} file{l.files === 1 ? " was" : "s were"} sent on {l.ref} as "ID for each of those owners"{l.names.length ? ` (${l.names.join(", ")})` : ""}: they don't say whose they are, so they count for nobody above. Open them on that request below.
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function PersonRow({ dealId, data, party, person }: { dealId: string; data: ClientChecks; party: Party; person: KycPartyPerson }) {
+  const [open, setOpen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const ownRequest = person.own && !person.own.isMain ? data.requests.find(r => r.token === person.own!.token) || null : null;
+  const idOk = person.id.state === "passed" || person.id.state === "waiting" || person.id.state === "document";
+  return (
+    <div className="rounded border px-2 py-1.5 space-y-1" data-testid={`person-${person.key.replace(/\s+/g, "-")}`}>
+      <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+        <span className="font-medium text-sm">{person.name}</span>
+        {person.roles.map(r => <span key={r} className={`${pillMetrics} bg-muted text-muted-foreground border border-border`}>{ROLE_WORDS[r]}</span>)}
+        {person.born && <span className="text-muted-foreground">born {person.born}</span>}
+      </div>
+      {person.ownerDetail && <p className="text-muted-foreground">{person.ownerDetail[0].toUpperCase() + person.ownerDetail.slice(1)}</p>}
+      <ul className="space-y-0.5">
+        <li className="flex items-start gap-1" data-testid={`person-id-${person.key.replace(/\s+/g, "-")}`}>
+          <Tick ok={idOk} />
+          <span>
+            {ID_STATE_WORDS[person.id.state]}
+            {person.id.elsewhere ? <span className="text-muted-foreground"> {person.id.elsewhere}</span> : null}
+            {!idOk && person.id.someoneElse ? <span className="text-amber-800"> (the check on their link was {person.id.someoneElse}'s)</span> : null}
+            {!idOk && person.id.asked ? <span className="text-muted-foreground"> · asked</span> : null}
+          </span>
+        </li>
+        <li className="flex items-start gap-1">
+          <Tick ok={person.address.done} />
+          <span>{person.address.done ? `Proof of address sent (${person.address.ref})` : "Proof of address not sent"}{!person.address.done && person.address.asked ? <span className="text-muted-foreground"> · asked</span> : null}</span>
+        </li>
+        <li className={SANCTIONS_WORDS[person.sanctions].cls}>{SANCTIONS_WORDS[person.sanctions].text}</li>
+      </ul>
+      <div className="flex flex-wrap items-center gap-1">
+        {ownRequest && (
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setOpen(v => !v)} data-testid={`person-link-toggle-${person.own!.ref}`}>
+            <ChevronDown className={`w-3 h-3 mr-1 transition-transform ${open ? "rotate-180" : ""}`} />
+            Their link ({person.own!.ref}){ownRequest.sentAt ? ` · emailed ${shortDate(ownRequest.sentAt)}` : " · not emailed"}
+          </Button>
+        )}
+        {person.own?.isMain && <span className="text-muted-foreground">On the request to them ({person.own.ref}), below.</span>}
+        {(person.canSend || (ownRequest && !ownRequest.sentAt && ownRequest.status !== "finished")) && (
+          <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setSending(true)} data-testid={`person-send-${person.key.replace(/\s+/g, "-")}`}>
+            <Send className="w-3 h-3 mr-1" />{person.canSend ? "Send them a link" : "Email their link"}
+          </Button>
+        )}
+      </div>
+      {open && ownRequest && <ClientCheckRow dealId={dealId} request={ownRequest} />}
+      {sending && <PersonLinkDialog dealId={dealId} data={data} party={party} person={person} onClose={() => setSending(false)} />}
+    </div>
+  );
+}
+
+// A person's own link: emailed to them, or given to copy and pass on.
+function PersonLinkDialog({ dealId, data, party, person, onClose }: { dealId: string; data: ClientChecks; party: Party; person: KycPartyPerson; onClose: () => void }) {
+  const { toast } = useToast();
+  const known = party.contacts.find(c => c.email && c.name.trim().toLowerCase().split(/\s+/).every(w => person.name.toLowerCase().includes(w))) || null;
+  const [email, setEmail] = useState(known?.email || "");
+  const [mobile, setMobile] = useState(known?.mobile || "");
+  const [note, setNote] = useState("");
+  const [preview, setPreview] = useState(false);
+  const [done, setDone] = useState<null | { link: string; emailed: boolean; error: string | null }>(null);
+  const asks = personRequestAsks(person, data.veriff);
+  const what = [...(asks.needsIdCheck ? ["the identity check"] : []), ...asks.docs.map(k => KYC_DOCS[k].title.toLowerCase()), KYC_PEP_QUESTION.title.toLowerCase()];
+  const previewHtml = useMemo(() => {
+    if (!preview) return "";
+    const { html } = kycRequestEmail({
+      recipientName: person.name, partyName: party.name, kind: "individual", dealName: data.dealName, ref: "SAMPLE",
+      link: "https://chatbgp.app/kyc-upload/their-link", expiresAt: new Date(Date.now() + 14 * 86400000),
+      needsIdCheck: asks.needsIdCheck, docs: asks.docs, note, agents: data.agents.map(a => ({ name: a.name, email: a.email, phone: null })),
+      sentFrom: data.mailbox, askPep: true, person: { roles: person.roles },
+    });
+    return html.split(`cid:${KYC_LOGO_CID}`).join("/bgp-logo.png");
+  }, [preview, person, party, data, asks.needsIdCheck, asks.docs, note]);
+  const make = useMutation({
+    mutationFn: async (send: boolean) => {
+      const res = await apiRequest("POST", `/api/aml/deal/${dealId}/client-checks/people`, {
+        companyId: party.companyId, key: person.key, email: send ? email.trim() : null, mobile: mobile.trim() || null, send, note: note.trim() || null,
+      });
+      return res.json();
+    },
+    onSuccess: (r: any, send) => {
+      queryClient.invalidateQueries({ queryKey: keyFor(dealId) });
+      setDone({ link: r.link, emailed: send && !!r.sent?.ok, error: send && !r.sent?.ok ? r.sent?.error || "The email was not sent" : null });
+    },
+    onError: (e) => toast({ title: "Not done", description: plain(e), variant: "destructive" }),
+  });
+  const canEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && !make.isPending;
+  return (
+    <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid="person-link-dialog">
+        <DialogHeader>
+          <DialogTitle>{done ? (done.error ? "Not emailed" : done.emailed ? "Sent" : "Their link") : `${person.name}'s own checks`}</DialogTitle>
+          {!done && <DialogDescription>A page of their own for {party.name}: they are asked for {what.join(", ")}. Nothing they have already done is asked again.</DialogDescription>}
+        </DialogHeader>
+        {done ? (
+          <div className="space-y-3 text-sm">
+            {done.error && <p className="flex items-start gap-2 text-red-700"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />The email didn't go: {done.error}. Copy the link below and send it yourself.</p>}
+            {done.emailed && <p className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-600 shrink-0" />Sent to <strong>{person.name}</strong> ({email.trim()}), copied to the deal's agents.</p>}
+            <div className="flex gap-2">
+              <Input readOnly value={done.link} onFocus={e => e.currentTarget.select()} data-testid="person-link-value" />
+              <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(done.link); toast({ title: "Link copied", description: `It's personal to ${person.name}: send it only to them.` }); }}><Copy className="w-3.5 h-3.5 mr-1.5" />Copy</Button>
+            </div>
+            <p className="text-muted-foreground">Their progress shows under People to check. They get reminders after three and seven days if anything is still missing.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {person.ownerDetail && <p className="text-xs text-muted-foreground">{person.name}: {person.ownerDetail}.</p>}
+            <div className="space-y-1.5">
+              <Label>Their email</Label>
+              <Input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Their email, to send it to them" data-testid="person-link-email" />
+              <Input value={mobile} onChange={e => setMobile(e.target.value)} placeholder="Their mobile (optional, for WhatsApp)" />
+              <p className="text-[11px] text-muted-foreground">An email you type is saved to the CRM under {party.brandName || party.name}. No email? Make the link and pass it on yourself.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>A note from you (optional)</Label>
+              <Textarea rows={2} value={note} onChange={e => setNote(e.target.value)} placeholder="Shown in the email and on their page" />
+            </div>
+            <Button type="button" variant="ghost" size="sm" className="px-0 h-auto text-xs" onClick={() => setPreview(v => !v)}>
+              <Eye className="w-3.5 h-3.5 mr-1" />{preview ? "Hide the email" : "See the email"}
+            </Button>
+            {preview && <iframe title="Email preview" srcDoc={previewHtml} className="w-full h-[420px] rounded border bg-white" sandbox="" />}
+          </div>
+        )}
+        <DialogFooter>
+          {done ? <Button onClick={onClose}>Done</Button> : (
+            <>
+              <Button variant="outline" onClick={() => make.mutate(false)} disabled={make.isPending} data-testid="person-link-make">
+                <Link2 className="w-4 h-4 mr-1.5" />Just make the link
+              </Button>
+              <Button onClick={() => make.mutate(true)} disabled={!canEmail} data-testid="person-link-send">
+                {make.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Send className="w-4 h-4 mr-1.5" />}Email it to them
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 // "Send client checks" for one party: pick the person, choose what to ask

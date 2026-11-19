@@ -1,0 +1,69 @@
+// The people a party's checks are about, read from the records (the rule is
+// shared/kyc-people.ts; Woody, 19 November 2026). One read of the deal's
+// client checks requests, their files and their identity checks serves every
+// party: an identity check passed on someone else's link still counts for
+// the person it was.
+
+import { pool } from "./db";
+import { partyPeople, verifiedPersonDob, type PartyPeople, type PeopleRequest } from "@shared/kyc-people";
+import { verifiedPersonName } from "@shared/kyc-prechecks";
+import { isKycDocKey, kycIdStateFor, type KycPartyKind, type KycRequestPerson } from "@shared/kyc-request";
+
+type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
+
+/** Every client checks request on the deal (tests left out), as the people rule reads them. */
+export async function dealPeopleRequests(dealId: string, db: Db = pool): Promise<PeopleRequest[]> {
+  const rows = (await db.query(
+    `SELECT token, company_id, contact_name, request, revoked_at, expires_at, completed_at
+       FROM kyc_upload_tokens WHERE deal_id = $1 AND request IS NOT NULL AND is_test IS NOT TRUE ORDER BY created_at`, [dealId])).rows;
+  if (!rows.length) return [];
+  const tokens = rows.map((r: any) => r.token);
+  const files = (await db.query(
+    `SELECT f.token, f.original_filename, f.doc_type, f.uploaded_at, d.file_url
+       FROM kyc_upload_files f LEFT JOIN kyc_documents d ON d.id::text = f.kyc_document_id
+      WHERE f.token = ANY($1::varchar[]) ORDER BY f.uploaded_at`, [tokens])).rows;
+  const sessionIds = [...new Set(rows.flatMap((r: any) => Array.isArray(r.request?.veriffSessionIds) ? r.request.veriffSessionIds : []))];
+  const sessions = sessionIds.length ? (await db.query(
+    `SELECT session_id, status, verdict_person FROM veriff_sessions WHERE session_id = ANY($1::varchar[])`, [sessionIds])).rows : [];
+  const now = Date.now();
+  return rows.map((r: any): PeopleRequest => {
+    const request = r.request || {};
+    const person: KycRequestPerson | null = request.person && typeof request.person.name === "string" ? request.person : null;
+    return {
+      token: r.token,
+      ref: String(request.ref || ""),
+      companyId: r.company_id || null,
+      recipientName: r.contact_name || null,
+      person: person ? { key: String(person.key || ""), name: person.name, roles: Array.isArray(person.roles) ? person.roles : [] } : null,
+      cancelled: !!r.revoked_at,
+      expired: new Date(r.expires_at).getTime() < now,
+      finished: !!r.completed_at,
+      sentAt: typeof request.sentAt === "string" ? request.sentAt : null,
+      needsIdCheck: !!request.needsIdCheck,
+      docs: (Array.isArray(request.docs) ? request.docs : []).filter(isKycDocKey),
+      ownerNames: Array.isArray(request.ownerNames) ? request.ownerNames.filter((n: unknown) => typeof n === "string") : [],
+      idChecks: (Array.isArray(request.veriffSessionIds) ? request.veriffSessionIds : [])
+        .map((id: string) => sessions.find((s: any) => s.session_id === id))
+        .filter(Boolean)
+        .map((s: any) => ({ state: kycIdStateFor(s.status), verifiedName: verifiedPersonName(s.verdict_person), verifiedDob: verifiedPersonDob(s.verdict_person) })),
+      files: files.filter((f: any) => f.token === r.token).map((f: any) => ({
+        name: f.original_filename, docKey: isKycDocKey(f.doc_type) ? f.doc_type : null,
+        uploadedAt: new Date(f.uploaded_at).toISOString(), url: f.file_url || null,
+      })),
+    };
+  });
+}
+
+/**
+ * The people to check for one party. A company is read from BGP's checks
+ * before asking on the company that signs; with none named there is no
+ * register to read (the checks wait for it).
+ */
+export async function partyPeopleFor(party: { companyId: string; entityId: string | null; kind: KycPartyKind }, requests: PeopleRequest[]): Promise<PartyPeople> {
+  let precheck: Parameters<typeof partyPeople>[0]["precheck"] = null;
+  if (party.kind === "company" && party.entityId) {
+    const { latestPrecheck } = await import("./kyc-prechecks");
+    precheck = (await latestPrecheck(party.companyId, party.entityId).catch(() => null))?.result || null;
+  }
+  return partyPeople({ companyId: party.companyId, kind: party.kind, precheck, requests });
+}
