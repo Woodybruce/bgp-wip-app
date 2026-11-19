@@ -157,7 +157,7 @@ WITH ev(company_id, property_id, spine_id, tracker_id, lsu_id, deal_id, src, st,
            (SELECT au.id FROM available_units au WHERE ev.lsu_id IS NOT NULL AND au.leasing_schedule_unit_id = ev.lsu_id ORDER BY au.updated_at DESC NULLS LAST LIMIT 1)) AS tracker2
     FROM ev LEFT JOIN au_of_unit aou ON aou.k = ev.spine_id
 ), k AS (
-  SELECT r.*, au.unit_name AS tracker_unit, au.sqft AS tracker_sqft, au.deal_id AS tracker_deal_id, au.leasing_schedule_unit_id AS tracker_lsu,
+  SELECT r.*, au.unit_name AS tracker_unit, au.use_class AS tracker_use_class, au.sqft AS tracker_sqft, au.deal_id AS tracker_deal_id, au.leasing_schedule_unit_id AS tracker_lsu,
          au.property_id AS tracker_property_id,
          COALESCE(r.spine_id, au.tenancy_unit_id,
            uot.id,
@@ -173,7 +173,7 @@ SELECT k.company_id, COALESCE(k.property_id, k.tracker_property_id, ts.property_
        p.address::text AS property_address, p.postcode AS property_postcode,
        k.spine, k.tracker2 AS tracker_id, COALESCE(k.lsu_id, k.tracker_lsu) AS lsu_id, k.deal_id, k.tracker_deal_id, k.src, k.st, k.at, k.x,
        ts.premises, ts.unit_number, ts.status AS unit_status, ts.tenant_name AS occupier, ts.lease_expiry::text AS lease_expiry,
-       COALESCE(ts.nia_sqft, ts.gia_sqft, k.tracker_sqft, ls.sqft) AS sqft, k.tracker_unit, ls.unit_name AS lsu_unit
+       COALESCE(ts.nia_sqft, ts.gia_sqft, k.tracker_sqft, ls.sqft) AS sqft, k.tracker_unit, k.tracker_use_class, ls.unit_name AS lsu_unit
   FROM k
   LEFT JOIN tenancy_schedule_units ts ON ts.id = k.spine
   LEFT JOIN leasing_schedule_units ls ON ls.id = COALESCE(k.lsu_id, k.tracker_lsu)
@@ -231,6 +231,8 @@ interface Ev {
 
 interface UnitInfo {
   label: string; sqft: number | null; occupier: string | null; leaseExpiry: string | null; trackerId: string | null; trackerDealId: string | null;
+  // The tracker row's use class and name: the fit rule's use test.
+  useClass: string | null; unitName: string | null;
 }
 
 interface PropertyInfo { name: string; text: string }
@@ -377,6 +379,8 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
         leaseExpiry: known?.leaseExpiry ?? isoDay(r.lease_expiry),
         trackerId: known?.trackerId ?? r.tracker_id ?? null,
         trackerDealId: known?.trackerDealId ?? r.tracker_deal_id ?? null,
+        useClass: known?.useClass ?? r.tracker_use_class ?? null,
+        unitName: known?.unitName ?? r.tracker_unit ?? null,
       });
     }
     const base = { companyId: String(r.company_id), propertyId: String(r.property_id), unitKey, spine: r.spine || null, trackerId: r.tracker_id || null, trackerDealId: r.tracker_deal_id || null, x };
@@ -440,15 +444,18 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
   const pinnedUnits = pinnedUnitIds.length === 0 ? [] : await guarded("Units named on Wanted lines and brand cases", async () => (await q.query(
     `/* brand-plan:pinned-units */ SELECT t.id, t.property_id, t.premises, t.unit_number, t.tenant_name, t.lease_expiry::text AS lease_expiry,
             COALESCE(t.nia_sqft, t.gia_sqft) AS sqft,
-            (SELECT au.id FROM available_units au WHERE au.tenancy_unit_id = t.id ORDER BY au.updated_at DESC NULLS LAST LIMIT 1) AS tracker_id,
-            (SELECT au.deal_id FROM available_units au WHERE au.tenancy_unit_id = t.id ORDER BY au.updated_at DESC NULLS LAST LIMIT 1) AS tracker_deal_id
-       FROM tenancy_schedule_units t WHERE t.id = ANY($1)`, [pinnedUnitIds])).rows, [] as any[]);
+            au.id AS tracker_id, au.deal_id AS tracker_deal_id, au.use_class AS tracker_use_class, au.unit_name AS tracker_unit
+       FROM tenancy_schedule_units t
+       LEFT JOIN LATERAL (SELECT a.id, a.deal_id, a.use_class, a.unit_name FROM available_units a
+                           WHERE a.tenancy_unit_id = t.id ORDER BY a.updated_at DESC NULLS LAST LIMIT 1) au ON true
+      WHERE t.id = ANY($1)`, [pinnedUnitIds])).rows, [] as any[]);
   const pinnedProperty = new Map<string, string>();
   for (const t of pinnedUnits) {
     pinnedProperty.set(t.id, t.property_id);
     units.set(t.id, {
       label: t.premises || t.unit_number || "Unit", sqft: t.sqft != null && Number(t.sqft) > 0 ? Number(t.sqft) : null, occupier: t.tenant_name || null,
       leaseExpiry: isoDay(t.lease_expiry), trackerId: t.tracker_id || null, trackerDealId: t.tracker_deal_id || null,
+      useClass: t.tracker_use_class || null, unitName: t.tracker_unit || null,
     });
   }
   const wishById = new Map<string, any>();
@@ -458,7 +465,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
 
   for (const w of wishRows) {
     const unitKey = w.tenancy_unit_id ? String(w.tenancy_unit_id) : w.unit_label ? `wish:${w.id}` : "none";
-    if (unitKey.startsWith("wish:")) units.set(unitKey, { label: String(w.unit_label), sqft: null, occupier: null, leaseExpiry: null, trackerId: null, trackerDealId: null });
+    if (unitKey.startsWith("wish:")) units.set(unitKey, { label: String(w.unit_label), sqft: null, occupier: null, leaseExpiry: null, trackerId: null, trackerDealId: null, useClass: null, unitName: null });
     const info = units.get(unitKey);
     wishById.set(w.id, w);
     evs.push({
@@ -635,14 +642,15 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
     // Requirement chip: the brand's live requirements against this place.
     const reqs = requirements.get(g.companyId) || [];
     const linked = uniq(g.evs.map(ev => ev.x?.requirementId).filter((id): id is string => !!id));
-    const chipReqs: ChipRequirement[] = reqs.map((r: any) => ({ id: r.id, size: r.size, locations: r.requirement_locations, dealId: r.deal_id }));
+    const chipReqs: ChipRequirement[] = reqs.map((r: any) => ({ id: r.id, size: r.size, use: r.use, locations: r.requirement_locations, dealId: r.deal_id }));
     const chip = requirementChip(chipReqs, {
       regions: scheme ? scheme.regions : null,
       text: [scheme?.name, scheme?.town, property?.text].filter(Boolean).join(" "),
-      sqft: info?.sqft ?? null, dealId, linkedRequirementIds: linked,
+      sqft: info?.sqft ?? null, useClass: info?.useClass ?? null, unitName: info?.unitName ?? null, dealId, linkedRequirementIds: linked,
     });
     const chipReq = chip.requirementId ? reqs.find((r: any) => r.id === chip.requirementId) : null;
-    if (chipReq && requirementDetailHidden(chipReq, viewer)) { chip.requirementId = null; chip.range = null; }
+    // The why names the requirement's places, so it goes with the detail.
+    if (chipReq && requirementDetailHidden(chipReq, viewer)) { chip.requirementId = null; chip.range = null; chip.why = null; }
 
     // Next step: the earliest dated thing first, else whoever the deal waits on.
     const dated: NonNullable<PlanRow["nextStep"]>[] = [];

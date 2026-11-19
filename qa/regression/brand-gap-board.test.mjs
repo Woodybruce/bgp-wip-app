@@ -59,12 +59,15 @@ test('junk records are never offered as a gap', () => {
 // Audit, 2026-11-17: a unit holds a planning class (E(b), A3) and a
 // requirement a use (Restaurant). Compared as text, every requirement that
 // named a use was dropped; the route-level case is in scheme-positioning.test.mjs.
-test('the requirement list and Fits here read a unit\'s class against the requirement\'s use through one rule', () => {
+// Since 19 November 2026 both read the one fit rule (requirementFit: size and
+// use or place; with no size to compare, both) against the marketing units here.
+test('the requirement list and Fits here read each marketing unit through the one fit rule', () => {
   const gap = read('server/property-gap-analysis.ts');
   assert.doesNotMatch(gap, /use_class = ANY\(r\.use\)/);
-  assert.match(gap, /fitsHere\.set\(key, unitsHere\.some\(u => requirementUseFits\(use, u\)\)\)/);
-  assert.match(gap, /open\.rows\.filter\(\(r: any\) => useFitsHere\(r\.use\)\)/);
-  assert.match(gap, /requirementUseFits\(held\?\.use, u\)/);
+  assert.doesNotMatch(gap, /requirementUseFits|parseReqSize/);
+  assert.match(gap, /const fitsAUnitHere = \(r: any\) => marketingHere\.some\(u => requirementFit\(r, \{ sqft: u\.sqft, use_class: u\.use_class, unit_name: u\.unit_name, property_text: placeHere \}\)\.fits\);/);
+  assert.match(gap, /open\.rows\.filter\(\(r: any\) => fitsAUnitHere\(r\)\)/);
+  assert.match(gap, /requirementFit\(held, \{ sqft: u\.sqft, use_class: u\.use_class, unit_name: u\.unit_name, property_text: placeHere \}\)/);
 });
 
 test('the requirements list under More is the scheme\'s categories, without junk', () => {

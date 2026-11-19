@@ -810,3 +810,71 @@ export function RequirementEvidenceDrawer({ requirement, onClose, isMobile, navi
     </Sheet>
   );
 }
+
+// ── Units the fit rule cannot judge ─────────────────────────────────────
+// Decision 2 of docs/requirements-board-review-2026-11-19.md: the one fit rule
+// (size and use or a named place) needs each unit's use class and size. This
+// card lists the units on the market missing either, each opening its Letting
+// Tracker row for someone to fill in. It reads only; nothing is written.
+type UnitGap = { id: string; unitName: string; propertyId: string | null; propertyName: string | null; scheduleRowId: string | null; status: string | null; missing: Array<"use" | "size"> };
+type UnitGaps = { onMarket: number; noUse: number; noSize: number; units: UnitGap[] };
+const GAP_WORDS: Record<"use" | "size", string> = { use: "No use class", size: "No size" };
+
+export function UnitFitGapsCard({ navigate }: { navigate: (to: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [only, setOnly] = useState<"all" | "use" | "size">("all");
+  const { data, isError } = useQuery<UnitGaps>({ queryKey: ["/api/requirement-centre/unit-gaps"], staleTime: 60_000 });
+  if (isError) return <p role="status" className="text-[11px] text-muted-foreground" data-testid="unit-fit-gaps-error">The units missing a use class or a size could not be loaded.</p>;
+  if (!data || data.units.length === 0) return null;
+  const shown = only === "all" ? data.units : data.units.filter(u => u.missing.includes(only));
+  const groups = new Map<string, { name: string; units: UnitGap[] }>();
+  for (const u of shown) {
+    const key = u.propertyId || "none";
+    const g = groups.get(key) || { name: u.propertyName || "No property", units: [] };
+    g.units.push(u);
+    groups.set(key, g);
+  }
+  return (
+    <>
+      <p className="text-[11px] text-muted-foreground" data-testid="unit-fit-gaps">
+        Of {data.onMarket.toLocaleString("en-GB")} units on the market, {countLabel(data.noUse, "has", "have")} no use class and {data.noSize.toLocaleString("en-GB")} no size, so fits cannot be judged on those.{" "}
+        <button type="button" className="text-primary hover:underline" onClick={() => setOpen(true)} data-testid="unit-fit-gaps-open">Show the units</button>
+      </p>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto" data-testid="unit-fit-gaps-dialog">
+          <DialogHeader>
+            <DialogTitle>Units to fill in</DialogTitle>
+            <DialogDescription>
+              A requirement fits a unit on its size and its use or a place it names. These units on the market have no use class or no size,
+              so fits cannot be judged on those. Each opens its row on the Letting Tracker. Nothing is filled in for you.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Show">
+            <Pill active={only === "all"} onClick={() => setOnly("all")} data-testid="unit-fit-gaps-all">All {data.units.length.toLocaleString("en-GB")}</Pill>
+            <Pill active={only === "use"} onClick={() => setOnly("use")} data-testid="unit-fit-gaps-use">No use class {data.noUse.toLocaleString("en-GB")}</Pill>
+            <Pill active={only === "size"} onClick={() => setOnly("size")} data-testid="unit-fit-gaps-size">No size {data.noSize.toLocaleString("en-GB")}</Pill>
+          </div>
+          <div className="space-y-3">
+            {Array.from(groups.values()).map(g => (
+              <div key={g.name}>
+                <p className={microLabel}>{g.name}</p>
+                <ul className="mt-1 divide-y divide-border rounded-md border border-border">
+                  {g.units.map(u => (
+                    <li key={u.id}>
+                      <button type="button" className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-muted/50"
+                        onClick={() => { setOpen(false); navigate(`/available?unitId=${encodeURIComponent(u.id)}${u.propertyId ? `&propertyId=${encodeURIComponent(u.propertyId)}` : ""}`); }}
+                        data-testid={`unit-fit-gap-${u.id}`}>
+                        <span className="min-w-0 truncate text-sm">{u.unitName}</span>
+                        <span className="flex shrink-0 gap-1">{u.missing.map(m => <span key={m} className={chip}>{GAP_WORDS[m]}</span>)}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}

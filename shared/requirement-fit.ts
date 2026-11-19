@@ -1,5 +1,5 @@
-// Requirement ↔ unit fit rules, shared by the requirements "Fits" column
-// (server/crm.ts) and the landlord Team view (server/account-teams.ts).
+// Requirement ↔ unit fit rules. Every screen that says a leasing requirement
+// fits a unit asks requirementFit below (the one fit rule, 19 November 2026).
 // A requirement's size text ("1,500-3,000 sq ft", "2000+", "4000") becomes a
 // tolerance-widened range; use hints pair requirement uses with unit names /
 // use classes.
@@ -104,8 +104,9 @@ const sameClass = (a: string, b: string) => a === b || (a === "e" && b.startsWit
 // Does a requirement's use line up with a unit? A side with no use stated
 // fits (on size alone, where the caller checks size). Otherwise the unit's
 // use class is one the requirement lists, or lines up by USE_HINTS, or its
-// planning class takes one of the requirement's uses. Brand Gap's lists and
-// the Match dialogs on the Requirements page and the Letting Tracker.
+// planning class takes one of the requirement's uses. Only the investment
+// Match dialog reads this lenient form now; a leasing fit goes through
+// requirementFit, whose use test (requirementUseLinesUp) needs both sides.
 export function requirementUseFits(uses: readonly unknown[] | null | undefined, unit: { use_class?: string | null; unit_name?: string | null }): boolean {
   const wanted = (Array.isArray(uses) ? uses : []).map(u => String(u ?? "").trim()).filter(Boolean);
   const useClass = String(unit.use_class ?? "").trim();
@@ -120,19 +121,106 @@ export function requirementUseFits(uses: readonly unknown[] | null | undefined, 
   });
 }
 
-// A live leasing requirement fits a unit when the unit's size sits in the
-// requirement's range and its use or location lines up too; a unit with no
-// recorded size needs both. Same rules as the requirements "Fits" column.
+// The one fit rule (Woody, 2026-11-19, decision 2 of
+// docs/requirements-board-review-2026-11-19.md: "size and use or place").
+// A requirement fits a unit when the unit's size sits in the requirement's
+// (tolerance-widened) range AND its use lines up or it is at a place the
+// requirement names. With no size to judge (the unit's or the requirement's),
+// it needs both the use and the place. A use test needs a use on both sides:
+// a unit with no use class fits only on its place (the requirements board
+// lists those units for someone to fill in; nothing is written for them).
+// Every screen that says a requirement fits a unit asks this: the board's
+// Fits column and Match dialogs, the Letting Tracker's matching requirements
+// and brand suggestions, Brand Gap, space fits, the target engine, suggested
+// pitches and the Brand CRM's chip.
+
+// Names too broad to place a unit by.
+const VAGUE_PLACES = /^(london|greater london|central london(?: \(zone 1\))?|uk|england|nationwide|national)$/i;
+
+// The first place the requirement names that the unit's property name or
+// address holds, as the requirement spells it.
+export function requirementPlaceIn(locations: readonly unknown[] | null | undefined, propertyText: string | null | undefined): string | null {
+  const text = String(propertyText || "").toLowerCase();
+  if (!text.trim()) return null;
+  for (const raw of Array.isArray(locations) ? locations : []) {
+    const place = String(raw ?? "").trim();
+    if (place.length > 2 && !VAGUE_PLACES.test(place) && text.includes(place.toLowerCase())) return place;
+  }
+  return null;
+}
+
+// Does the unit's use line up with a use the requirement names? Both sides
+// need one: the same words, USE_HINTS on the unit's class and name, or the
+// unit's planning class taking one of the requirement's uses.
+export function requirementUseLinesUp(uses: readonly unknown[] | null | undefined, unit: { use_class?: string | null; unit_name?: string | null }): boolean {
+  const wanted = (Array.isArray(uses) ? uses : []).map(u => String(u ?? "").trim()).filter(Boolean);
+  const useClass = String(unit.use_class ?? "").trim();
+  const name = String(unit.unit_name ?? "").trim();
+  if (!wanted.length || (!useClass && !name)) return false;
+  if (useClass && wanted.some(w => w.toLowerCase() === useClass.toLowerCase())) return true;
+  const said = wanted.join(" ");
+  if (USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(said) && unitRe.test(`${useClass} ${name}`))) return true;
+  if (!useClass) return false;
+  const classes = planningClasses(useClass);
+  return wanted.some(w => {
+    const named = planningClasses(w);
+    return classes.some(c => named.some(n => sameClass(c, n)) || (CLASS_USES[c] || OTHER_USE).test(w));
+  });
+}
+
+export type RequirementFit = {
+  fits: boolean;
+  size: "fits" | "outside" | "unknown";   // unknown: the unit or the requirement gives no size
+  use: boolean;
+  place: string | null;
+  why: string;                             // "Size and use fit, at Bluewater"
+};
+
+export function requirementFit(
+  req: { size?: string[] | string | null; use?: readonly unknown[] | null; requirement_locations?: readonly unknown[] | null },
+  unit: { sqft?: number | string | null; use_class?: string | null; unit_name?: string | null; property_text: string },
+): RequirementFit {
+  const range = parseReqSize(req.size ?? null);
+  const sqft = Number(unit.sqft) || 0;
+  const size: RequirementFit["size"] = !range || !sqft ? "unknown" : sqft >= range.min && sqft <= range.max ? "fits" : "outside";
+  const use = requirementUseLinesUp(req.use, unit);
+  const place = requirementPlaceIn(req.requirement_locations, unit.property_text);
+  const fits = size === "fits" ? use || !!place : size === "unknown" ? use && !!place : false;
+  const at = place ? `, at ${place}` : "";
+  const why = size === "outside" ? "Outside their size range"
+    : size === "fits"
+      ? (use ? `Size and use fit${at}` : place ? `Size fits${at}` : "Size fits, but neither the use nor the place lines up")
+      : (use && place ? `Use fits${at}; no size to compare` : "No size to compare, and the use and place do not both line up");
+  return { fits, size, use, place, why };
+}
+
+// How sure a fit is, for ordering a list of them: a size that fits counts
+// twice, a use or a named place once each. Every list of fits sorts by this,
+// then the smaller unit first, so the board's Fits column and its Match
+// dialog put the same units first.
+export function fitScore(fit: Pick<RequirementFit, "size" | "use" | "place">): number {
+  return (fit.size === "fits" ? 2 : 0) + (fit.use ? 1 : 0) + (fit.place ? 1 : 0);
+}
+
+// The units a requirement is matched against on the requirements board (its
+// Fits column and Match dialog): those on the market on the Letting Tracker,
+// Marketing or Negotiating. A unit at Heads of Terms or Solicitors is taken.
+export const FIT_POOL_STATUSES = ["AVA", "NEG"] as const;
+
+// What a unit on the market is missing for the fit rule to judge it: a use
+// class, a size, or both. The requirements board lists these units for
+// someone to fill in on the Letting Tracker; nothing is written for them.
+export type UnitFitGap = "use" | "size";
+export function unitFitGaps(unit: { sqft?: number | string | null; use_class?: string | null }): UnitFitGap[] {
+  const gaps: UnitFitGap[] = [];
+  if (!String(unit.use_class ?? "").trim()) gaps.push("use");
+  if (!(Number(unit.sqft) > 0)) gaps.push("size");
+  return gaps;
+}
+
+// The older shape (the unit's name and use class as one text). Kept for its
+// callers' tests; new code calls requirementFit with the class on its own.
 export function requirementFitsUnit(req: { size?: string[] | string | null; use?: string[] | null; requirement_locations?: string[] | null },
   unit: { sqft?: number | null; unit_text: string; property_text: string }): boolean {
-  const range = parseReqSize(req.size ?? null);
-  const uses = (req.use || []).join(" ");
-  const useHint = !!uses && USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(uses) && unitRe.test(unit.unit_text));
-  const locs = (req.requirement_locations || []).map(l => String(l || "").toLowerCase())
-    .filter(l => l.length > 2 && !/^(london|greater london|central london \(zone 1\))$/i.test(l));
-  const text = unit.property_text.toLowerCase();
-  const locationHit = locs.some(l => text.includes(l));
-  const sqft = Number(unit.sqft) || 0;
-  if (sqft) return !!range && sqft >= range.min && sqft <= range.max && (useHint || locationHit);
-  return useHint && locationHit;
+  return requirementFit(req, { sqft: unit.sqft, unit_name: unit.unit_text, use_class: null, property_text: unit.property_text }).fits;
 }

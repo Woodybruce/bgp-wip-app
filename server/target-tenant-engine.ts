@@ -27,7 +27,7 @@
 // BGP-internal evidence. A Landsec joint agent, another agency, is given
 // PIPnet listings only.
 import type { Request } from "express";
-import { requirementFitsUnit, parseReqSize } from "@shared/requirement-fit";
+import { requirementFit, parseReqSize } from "@shared/requirement-fit";
 import { requirementReason, requirementStateSql, requirementJointAgentVisibleSql, requirementLiveColumnsSql, type RequirementReason, type RequirementViewer } from "@shared/requirement-live";
 import { isClientCrmCategory } from "@shared/tenant-categories";
 import { brandTier, isHotelGroup, POSITIONING_PROFILES, type BrandTier, type SchemePositioning } from "@shared/scheme-positioning";
@@ -255,7 +255,9 @@ export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Se
     // to confirm, 7 background.
     let fitsRequirement = false;
     for (const r of b.requirements) {
-      if (requirementFitsUnit(r, { sqft, unit_text: unitText || "f&b", property_text: propertyText })) {
+      // The one fit rule (requirementFit, Woody 2026-11-19): size and use or
+      // place; with no size to compare, both.
+      if (requirementFit(r, { sqft, use_class: unit.use_class ?? null, unit_name: unitText || "f&b", property_text: propertyText }).fits) {
         const size = Array.isArray(r.size) ? r.size.join(", ") : r.size;
         const fits = `fits this unit${size ? ` (${size})` : ""}`;
         evidence.unshift(`${r.reason.clientText}, ${fits}`);

@@ -9,7 +9,7 @@ const { UK_CENTRES, TOP_25_CENTRES, peerCentresFor, benchmarkCentresFor, centreA
 const { propertyResearchContext } = await import('../../shared/property-research.ts');
 const { isClientCrmCategory } = await import('../../shared/tenant-categories.ts');
 const requirementLive = await import('../../shared/requirement-live.ts');
-const { parseReqSize, requirementUseFits } = await import('../../shared/requirement-fit.ts');
+const { requirementFit } = await import('../../shared/requirement-fit.ts');
 const { isJunkBrand } = await import('../../shared/junk-brand.ts');
 const { isTrackerLiveStatus } = await import('../../shared/letting-rules.ts');
 const { BRAND_STAGE_LABELS, furthestStage } = await import('../../shared/brand-stage.ts');
@@ -118,8 +118,9 @@ const store = (brand, at, extra = {}) => ({ brand_company_id: brand.id, store_na
   brand_name: brand.name, domain: null, rollout_status: null, company_type: brand.companyType, store_count: brand.storeCount || 10, brand_group_id: null, industry: brand.industry || null, fnb_sector: null });
 const withId = (key, id) => ({ ...BRANDS[key], id });
 
-// The tracker rows at the property: a requirement is read against their use classes.
-const DEFAULT_UNITS = [{ id: 'u-1', unit_name: 'Unit 1', sqft: null, marketing_status: 'AVA', use_class: null }];
+// The tracker rows at the property: a requirement fits one by the one fit
+// rule (requirementFit: size and use or place; with no size to compare, both).
+const DEFAULT_UNITS = [{ id: 'u-1', unit_name: 'Unit 1', sqft: 1200, marketing_status: 'AVA', use_class: 'E(a)' }];
 
 function runGapRoute(positioning, requirements = {}, units = DEFAULT_UNITS) {
   const brands = { kfc: withId('kfc', 'kfc'), fiveGuys: withId('fiveGuys', 'fg'), rolex: withId('rolex', 'rolex'), goldsmiths: withId('goldsmiths', 'gold'), gaucho: withId('gaucho', 'gaucho'), grind: withId('grind', 'grind'), ihg: withId('ihg', 'ihg'), next: withId('next', 'next') };
@@ -145,7 +146,7 @@ function runGapRoute(positioning, requirements = {}, units = DEFAULT_UNITS) {
   let handler;
   const context = propertyResearchContext({ assetClass: 'Retail', propertyView: 'centre', positioning, positioningSource: 'tag' });
   const bindings = {
-    ...positioningModule, ...centres, isClientCrmCategory, ...requirementLive, parseReqSize, requirementUseFits, isJunkBrand, isTrackerLiveStatus, BRAND_STAGE_LABELS, furthestStage,
+    ...positioningModule, ...centres, isClientCrmCategory, ...requirementLive, requirementFit, isJunkBrand, isTrackerLiveStatus, BRAND_STAGE_LABELS, furthestStage,
     router: { get: (_url, _auth, callback) => { handler = callback; } }, requireAuth() {},
     readPropertyResearchContext: async () => context, researchCacheMatches: async () => false,
     resolvePropertyLocation: async () => ({ ok: true, ...REX, postcode: 'EC3V 3LR', name: 'Royal Exchange' }),
@@ -182,9 +183,11 @@ test('brand-gaps route: a luxury arcade compares with luxury peers on luxury bra
 
 test('brand-gaps route: only a requirement confirmed within 90 days is flagged live; a listing is named and dated', async () => {
   const recent = new Date(Date.now() - 5 * 86400000).toISOString();
+  // Both fit the shop here on size and use.
+  const fit = { size: ['1,000-1,500 sq ft'], use: ['Retail'] };
   const { code, body } = await runGapRoute('luxury', {
-    rolex: { origin: 'bgp', last_confirmed_at: recent, last_confirmed_by: 'u-emily', last_confirmed_by_name: 'Emily Stone', confirmed_how: 'call' },
-    gold: { origin: 'pipnet', sources: ['PIPnet'], last_listed_at: recent, last_listed_source: 'PIPnet' },
+    rolex: { ...fit, origin: 'bgp', last_confirmed_at: recent, last_confirmed_by: 'u-emily', last_confirmed_by_name: 'Emily Stone', confirmed_how: 'call' },
+    gold: { ...fit, origin: 'pipnet', sources: ['PIPnet'], last_listed_at: recent, last_listed_source: 'PIPnet' },
   });
   assert.equal(code, 200, JSON.stringify(body));
   const gap = name => body.peerGaps.find(b => b.brand_name === name);
@@ -214,7 +217,8 @@ test('brand-gaps route: the same scheme read as mainstream keeps the hospitality
 
 // Audit, 2026-11-17: units hold planning classes and requirements uses, and
 // the route compared the two as text, so every requirement naming a use was
-// dropped from the list, Targets' Requirement and Fits here.
+// dropped from the list, Targets' Requirement and Fits here. Since
+// 19 November 2026 the one fit rule decides, each fit with why.
 test('brand-gaps route: a Restaurant requirement fits the E(b) and A3 units, not a shop or a withdrawn unit', async () => {
   const units = [
     { id: 'u-eb', unit_name: 'Unit 2', sqft: 1500, marketing_status: 'AVA', use_class: 'E(b)' },
@@ -230,6 +234,7 @@ test('brand-gaps route: a Restaurant requirement fits the E(b) and A3 units, not
   assert.deepEqual(body.matchingRequirements.map(r => r.company_id), ['kfc'], 'a Gym requirement fits no unit here');
   const kfc = body.targets.find(t => t.brand_name === 'KFC');
   assert.deepEqual(kfc.units.map(u => u.id), ['u-eb', 'u-a3']);
+  assert.deepEqual(kfc.units.map(u => u.why), ['Size and use fit', 'Size and use fit']);
   assert.match(kfc.requirement_note, /requirement/);
   assert.equal(body.targets.find(t => t.brand_name === 'Five Guys').requirement_note, null);
   assert.deepEqual(body.marketingUnits.map(u => u.id), ['u-eb', 'u-a3', 'u-shop'], 'only units live on the tracker');

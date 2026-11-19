@@ -1,5 +1,5 @@
 import { BGP_TEAM_NAMES } from "@shared/teams";
-import { parseReqSize, pitchFitWords, spreadAcrossCentres, USE_HINTS } from "@shared/requirement-fit";
+import { FIT_POOL_STATUSES, fitScore, parseReqSize, pitchFitWords, requirementFit, spreadAcrossCentres, USE_HINTS } from "@shared/requirement-fit";
 import { formatSizeList } from "@shared/format-size";
 import type { Express, Request } from "express";
 import multer from "./utils/upload";
@@ -5428,16 +5428,26 @@ Return a JSON object with these fields (use null for any field you cannot find):
         // The requirement's size range is binding: Nando's (2,500–4,500)
         // was pitched a 17,201 sq ft unit on use alone (Woody, 2026-09-28).
         if (range && sq != null && (sq > range.max * 1.6 || sq < range.min * 0.5)) continue;
-        if (range && sq != null && sq >= range.min && sq <= range.max) {
-          // The row already shows the unit's size; say the requirement
-          // plainly ("1,500–3,500 sq ft", not "1500-3500 ft2"), through the
-          // one size rule the screens use (a size list split at its
-          // thousands commas read "5, 000 - 10, 000 sq ft").
-          const reqSize = formatSizeList(liveReq.size);
-          // "Fits" only inside the range as stated and at a place the
-          // requirement names; inside the tolerance it is "Close to".
-          const words = pitchFitWords(liveReq, { sqft: sq, property_text: `${u.property_name || ""} ${placeText}` }) || "Close to";
-          suggestions.push({ ...row, reason: `${words} their ${reqSize} requirement: ${scope ? liveReq.reason.clientText : liveReq.reason.short}`, sizeFit: 2, useFit: 1, peers });
+        // The one fit rule (requirementFit, Woody 2026-11-19): the size in the
+        // requirement's range and the use or a place it names; with no size
+        // to compare, both. A unit in range that lines up on neither is no
+        // requirement fit (it can still be pitched on the brand's format below).
+        const fit = liveReq ? requirementFit(liveReq, { sqft: sq, use_class: u.use_class, unit_name: u.unit_name, property_text: `${u.property_name || ""} ${placeText}` }) : null;
+        if (fit?.fits) {
+          const said = scope ? liveReq.reason.clientText : liveReq.reason.short;
+          if (fit.size === "fits") {
+            // The row already shows the unit's size; say the requirement
+            // plainly ("1,500–3,500 sq ft", not "1500-3500 ft2"), through the
+            // one size rule the screens use (a size list split at its
+            // thousands commas read "5, 000 - 10, 000 sq ft").
+            const reqSize = formatSizeList(liveReq.size);
+            // "Fits" only inside the range as stated and at a place the
+            // requirement names; inside the tolerance it is "Close to".
+            const words = pitchFitWords(liveReq, { sqft: sq, property_text: `${u.property_name || ""} ${placeText}` }) || "Close to";
+            suggestions.push({ ...row, reason: `${words} their ${reqSize} requirement: ${said}`, sizeFit: 2, useFit: 1, peers });
+          } else {
+            suggestions.push({ ...row, reason: `${fit.why}: ${said}`, sizeFit: 1, useFit: 1, peers });
+          }
           continue;
         }
         if (typical && sq != null && (sq < typical * 0.6 || sq > typical * 1.6)) continue;
@@ -5507,21 +5517,15 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const candidates: any[] = [];
       for (const r of reqRows.rows) {
         const why = requirementReason(r);
-        const range = parseReqSize(r.size);
-        const uses = (r.use || []).join(" ");
-        const useHint = USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(uses) && unitRe.test(unitText));
-        const locs = (r.requirement_locations || []).map((l: string) => l.toLowerCase()).filter((l: string) => l.length > 2);
-        const locationHit = locs.some((l: string) => propText.includes(l));
-        let sizeFit = false;
-        if (sqft != null && range) sizeFit = sqft >= range.min && sqft <= range.max;
-        // A requirement qualifies when the size genuinely fits, or (when
-        // either side lacks a size) the use/location lines up.
-        if (!(sizeFit || ((sqft == null || !range) && (useHint || locationHit)))) continue;
+        // The one fit rule (requirementFit): size and use or place; with no
+        // size to compare, both.
+        const fit = requirementFit(r, { sqft, use_class: unit.use_class, unit_name: unit.unit_name, property_text: propText });
+        if (!fit.fits) continue;
         candidates.push({
           companyId: r.company_id, name: r.name, source: "requirement",
           requirementId: r.id, size: Array.isArray(r.size) ? r.size.join(", ") : r.size,
           use: (r.use || []).join(", "), agent: r.agent_name || null,
-          requirementDate: r.requirement_date, sizeFit, useHint, locationHit,
+          requirementDate: r.requirement_date, sizeFit: fit.size === "fits", useHint: fit.use, locationHit: !!fit.place, fitWhy: fit.why,
           ...(scopeCompanyId
             ? { requirementLabel: why.importOnly ? "market listing" : "requirement", requirementReason: why.clientText }
             : { requirementState: why.state, requirementLabel: why.pressReported ? "press-reported" : why.state === "live" ? "confirmed requirement" : why.state === "to_confirm" ? "requirement to confirm" : "unconfirmed listing", requirementReason: why.text }),
@@ -5621,15 +5625,20 @@ Return a JSON object with these fields (use null for any field you cannot find):
   app.get("/api/crm/requirements-leasing/matches", requireAuth, async (req, res) => {
     try {
       const scopeCompanyId = await resolveCompanyScope(req);
+      // The unit's own schedule row, by the stored ties only (never by name),
+      // so a fit opens the unit on its property page.
       const unitRows = await pool.query(
         `SELECT au.id, au.unit_name, au.sqft, au.use_class,
-                p.id AS property_id, p.name AS property_name, p.address::text AS address
+                p.id AS property_id, p.name AS property_name, p.address::text AS address,
+                COALESCE(au.tenancy_unit_id::text,
+                  (SELECT ts.id::text FROM tenancy_schedule_units ts
+                    WHERE ts.letting_tracker_unit_id = au.id AND ts.property_id = au.property_id LIMIT 1)) AS schedule_row_id
            FROM available_units au
            JOIN crm_properties p ON p.id = au.property_id
-          WHERE au.marketing_status IN ('AVA','NEG')
+          WHERE au.marketing_status = ANY($2::text[])
             AND ($1::text IS NULL OR p.landlord_id = $1
                  OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${schemeLimitSql("p.id")}`,
-        [scopeCompanyId]
+        [scopeCompanyId, [...FIT_POOL_STATUSES]]
       );
       // A client login gets fits for every requirement its list shows, which
       // since 17 November 2026 is every requirement (Woody: "keep all
@@ -5639,44 +5648,27 @@ Return a JSON object with these fields (use null for any field you cannot find):
         `SELECT id, size, use, requirement_locations FROM crm_requirements_leasing
           WHERE (status IS NULL OR status = 'Active')`
       );
+      // The one fit rule (requirementFit): size and use or place; with no
+      // size to compare, both. Each fit says why.
       const matches: Record<string, { count: number; top: any[] }> = {};
       for (const r of reqRows.rows) {
-        const range = parseReqSize(r.size);
-        if (!range) continue;
-        const uses = (r.use || []).join(" ");
-        const locs = (r.requirement_locations || [])
-          .map((l: string) => l.toLowerCase())
-          .filter((l: string) => l.length > 2 && !/^(london|greater london|central london \(zone 1\))$/i.test(l));
         const hits: any[] = [];
         for (const u of unitRows.rows) {
-          const unitText = `${u.unit_name || ""} ${u.use_class || ""}`;
-          const useHint = USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(uses) && unitRe.test(unitText));
-          const propText = `${u.property_name || ""} ${u.address || ""}`.toLowerCase();
-          const locationHit = locs.some((l: string) => propText.includes(l));
-          if (u.sqft != null) {
-            // Size-verified fit: the area must sit inside the requirement's
-            // (tolerance-widened) range.
-            const sqft = Number(u.sqft);
-            if (!(sqft >= range.min && sqft <= range.max)) continue;
-            hits.push({
-              unitId: u.id, unitName: u.unit_name, sqft, sizeUnknown: false,
-              propertyId: u.property_id, propertyName: u.property_name,
-              useHint, locationHit, score: 2 + (useHint ? 1 : 0) + (locationHit ? 1 : 0),
-            });
-          } else if (useHint || locationHit) {
-            // No recorded area (most of the tracker) — still a candidate
-            // when the use or location lines up, ranked below every
-            // size-verified fit and flagged so the UI can say "size?".
-            hits.push({
-              unitId: u.id, unitName: u.unit_name, sqft: null, sizeUnknown: true,
-              propertyId: u.property_id, propertyName: u.property_name,
-              useHint, locationHit, score: (useHint ? 1 : 0) + (locationHit ? 1 : 0) - 1,
-            });
-          }
+          const fit = requirementFit(r, { sqft: u.sqft, use_class: u.use_class, unit_name: u.unit_name, property_text: `${u.property_name || ""} ${u.address || ""}` });
+          if (!fit.fits) continue;
+          hits.push({
+            // sizeUnknown is the unit's own size not being recorded; a
+            // requirement with no size says so in the reason instead.
+            unitId: u.id, unitName: u.unit_name, sqft: u.sqft == null ? null : Number(u.sqft), sizeUnknown: !(Number(u.sqft) > 0),
+            propertyId: u.property_id, propertyName: u.property_name, scheduleRowId: u.schedule_row_id || null,
+            useHint: fit.use, locationHit: !!fit.place, why: fit.why, score: fitScore(fit),
+          });
         }
         if (!hits.length) continue;
-        hits.sort((a, b) => b.score - a.score || a.sqft - b.sqft);
-        matches[r.id] = { count: hits.length, top: hits.slice(0, 5) };
+        hits.sort((a, b) => b.score - a.score || (a.sqft ?? Infinity) - (b.sqft ?? Infinity));
+        // Staff see five and open the rest in the Match dialog; a client login
+        // (its own units only, no Match dialog) is sent up to twenty to open in place.
+        matches[r.id] = { count: hits.length, top: hits.slice(0, scopeCompanyId ? 20 : 5) };
       }
       res.json({ unitPool: unitRows.rows.length, matches });
     } catch (e: any) { res.status(500).json({ error: e.message }); }

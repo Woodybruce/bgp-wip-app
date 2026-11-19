@@ -180,7 +180,7 @@ test("a Landsec login sees its schemes only and nothing of BGP's own, and its st
   // all requirements open for clients"): the chip carries the requirement, and
   // its age runs from the day it was added, never the last edit a
   // confirmation moves.
-  assert.deepEqual(unitRow.requirement, { chip: "linked", requirementId: "req-private", unitSqft: 2000, range: { min: 1200, max: 3600 } });
+  assert.deepEqual(unitRow.requirement, { chip: "linked", requirementId: "req-private", unitSqft: 2000, range: { min: 1200, max: 3600 }, why: null });
   assert.deepEqual(plan.requirements, [{ id: "req-private", summary: "1,500–3,000 sq ft · Restaurant · South East, North West", ageDays: 42, source: "BGP", detailHidden: false }]);
   assert.equal(staff.requirements[0].ageDays, 2, "staff read the last edit");
   assert.deepEqual(plan.askedNoTarget, [
@@ -196,8 +196,10 @@ test("a Landsec login sees its schemes only and nothing of BGP's own, and its st
 });
 
 test("requirement detail reaches a client for every requirement, and a joint agent for none", async () => {
+  // The unit's Letting Tracker row is a restaurant unit: the chip reads the
+  // one fit rule (size and use or a named place) with that use class.
   const db = fakeDb(baseAnswers({
-    evidence: [ev({ ...unit("ts-1", "Unit L104"), src: "target_list" })],
+    evidence: [ev({ ...unit("ts-1", "Unit L104", { tracker_use_class: "E(b)" }), src: "target_list" })],
     requirements: [
       { id: "req-pip", company_id: BRAND, name: "JM", size: ["1,500-3,000 sq ft"], use: ["Restaurant"], requirement_locations: ["South East", "North West"], status: null, sources: ["PIPnet"], deal_id: null, at: "2026-11-02T12:00:00Z", added_at: "2026-11-02T12:00:00Z" },
       { id: "req-bgp", company_id: BRAND, name: "JM", size: ["900"], use: null, requirement_locations: ["Scotland"], status: "Active", sources: null, deal_id: null, at: "2026-11-11T00:00:00Z", added_at: "2026-10-01T00:00:00Z" },
@@ -209,7 +211,13 @@ test("requirement detail reaches a client for every requirement, and a joint age
     // BGP's own requirement too (17 November 2026), aged from the day it was added.
     { id: "req-bgp", summary: "900 · Scotland", ageDays: 42, source: null, detailHidden: false },
   ]);
-  assert.deepEqual(plan.rows[0].requirement, { chip: "fits", requirementId: "req-pip", unitSqft: 2000, range: { min: 1200, max: 3600 } });
+  assert.deepEqual(plan.rows[0].requirement, { chip: "fits", requirementId: "req-pip", unitSqft: 2000, range: { min: 1200, max: 3600 }, why: "Size and use fit" });
+  // With no use class on the unit, a size and a region are not a fit.
+  const noUse = (await api.brandPlan(fakeDb(baseAnswers({
+    evidence: [ev({ ...unit("ts-1", "Unit L104"), src: "target_list" })],
+    requirements: [{ id: "req-pip", company_id: BRAND, name: "JM", size: ["1,500-3,000 sq ft"], use: ["Restaurant"], requirement_locations: ["South East"], status: null, sources: ["PIPnet"], deal_id: null, at: "2026-11-02T12:00:00Z", added_at: "2026-11-02T12:00:00Z" }],
+  })), BRAND, LANDSEC_FULL, SCHEMES, NOW))!;
+  assert.equal(noUse.rows[0].requirement.chip, "size_fits_area_only");
   // Asked for, no target yet: from the places of every requirement it reads, and only schemes with no line.
   assert.deepEqual(plan.askedNoTarget, [
     { place: "South East", schemes: [{ key: "gunwharf-quays", name: "Gunwharf Quays" }] },
@@ -225,6 +233,9 @@ test("requirement detail reaches a client for every requirement, and a joint age
     requirements: [{ id: "req-bgp", company_id: BRAND, name: "JM", size: ["900"], use: null, requirement_locations: ["Scotland"], status: "Active", sources: null, deal_id: null, at: "2026-11-11T00:00:00Z", added_at: "2026-10-01T00:00:00Z" }],
   })), BRAND, JOINT_AGENT, SCHEMES, NOW))!;
   assert.deepEqual(ja.requirements, [{ id: "held-1", summary: "Requirement held", ageDays: null, source: null, detailHidden: true }]);
+  // Nor the reason a unit fits, which names the requirement's places.
+  assert.ok(ja.rows.length > 0);
+  for (const row of ja.rows) { assert.equal(row.requirement.requirementId, null); assert.equal(row.requirement.why ?? null, null); }
 });
 
 // An asset manager is a full Landsec login (Woody, 2026-11-13: "asset

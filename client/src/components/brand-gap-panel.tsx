@@ -329,7 +329,8 @@ type GapTarget = {
   competing_at: string[]; top_count: number; top_centres: string[]; local_km: number | null;
   rollout_status: string | null; expanding: boolean; expanding_note: string | null; score: number | null;
   has_live_requirement?: boolean; requirement_note?: string | null;
-  units: Array<{ id: string; name: string; sqft: number | null }>;
+  // The marketing units here its requirement fits by the one fit rule, each with why.
+  units: Array<{ id: string; name: string; sqft: number | null; why?: string }>;
   stage: string | null; stage_label: string | null; stage_unit: string | null; ruled_out: boolean;
 };
 type CompetingCard = {
@@ -397,7 +398,9 @@ function TargetDetail({ target, onClose, propertyId, propertyName, units, canWan
               {t.expanding_note && <span className="block text-xs text-muted-foreground mt-0.5">{t.expanding_note}</span>}
             </GapLine>
             <GapLine label="Requirement">{t.requirement_note || "None held"}</GapLine>
-            <GapLine label="Fits here">{t.units.length ? t.units.map(u => `${u.name}${u.sqft ? ` (${u.sqft.toLocaleString()} sq ft)` : ""}`).join(", ") : t.requirement_note ? "No marketing unit in its size range" : "No size to compare"}</GapLine>
+            <GapLine label="Fits here">{t.units.length
+              ? t.units.map(u => <span key={u.id} className="block">{u.name}{u.sqft ? ` (${u.sqft.toLocaleString("en-GB")} sq ft)` : ""}{u.why && <span className="text-xs text-muted-foreground"> · {u.why}</span>}</span>)
+              : "No requirement of theirs fits a unit being marketed here"}</GapLine>
             <GapLine label="At this scheme">{t.stage_label ? `${t.stage_label}${t.stage_unit ? ` · ${t.stage_unit}` : ""}` : t.ruled_out ? "Not proceeding" : "Not in play yet"}</GapLine>
           </div>
           {units.length > 0 && (
@@ -504,7 +507,7 @@ function TargetsTable({ targets, onOpen, landsec }: { targets: GapTarget[]; onOp
                 {(t.expanding || t.rollout_status === "scaling" || t.rollout_status === "entering_uk") && <span className="text-muted-foreground">{t.score ? " · " : ""}{t.rollout_status === "entering_uk" ? "entering UK" : t.rollout_status === "scaling" ? "scaling" : "expanding"}</span>}
                 {!t.score && !t.expanding && t.rollout_status !== "scaling" && t.rollout_status !== "entering_uk" && <span className="text-muted-foreground/60">—</span>}
               </span>
-              <span className="text-xs min-w-0 truncate" title={t.requirement_note || undefined}>
+              <span className="text-xs min-w-0 truncate" title={[t.requirement_note, ...t.units.map(u => u.why ? `${u.name}: ${u.why}` : "")].filter(Boolean).join(" · ") || undefined}>
                 {t.units.length > 0 ? <span className="font-medium">Fits {t.units.map(u => u.name).join(", ")}</span>
                   : t.requirement_note ? <span className="text-muted-foreground">{t.requirement_note}</span>
                   : <span className="text-muted-foreground/60">—</span>}
@@ -662,7 +665,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
             <div className="rounded-md border border-border bg-muted/40 p-2">
               <div className="text-[11px] mb-1 flex items-center gap-1 font-medium">
                 <FileText className="w-3 h-3 text-primary" />
-                Requirements whose use fits a unit here ({data.matchingRequirements.length})
+                Requirements that fit a unit being marketed here ({data.matchingRequirements.length})
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-0.5">
                 {data.matchingRequirements.slice(0, 12).map(r => (

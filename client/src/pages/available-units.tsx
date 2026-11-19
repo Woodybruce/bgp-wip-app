@@ -1,5 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { propertyUnitHref } from "@/lib/unit-links";
+import { Link } from "wouter";
+import { formatSizeList } from "@shared/format-size";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { LeasingViewings, type LeasingViewing } from "@/components/leasing-viewings";
 import { landsecCrmEntries, landsecMeetings } from "@/components/landsec/landsec-meetings";
@@ -4318,7 +4320,7 @@ export default function AvailableUnitsPage() {
 // {SERVICE_CHARGE}, {RATES}, {AREA}, {LANDLORD}); the text is negotiated
 // inline and exported as a PDF for the solicitors.
 function UnitMatchesDialog({ unit, onClose }: { unit: AvailableUnit | null; onClose: () => void }) {
-  const { data: matches = [], isLoading } = useQuery<any[]>({
+  const { data: matches = [], isLoading, isError } = useQuery<any[]>({
     queryKey: ["/api/available-units/matches", unit?.id],
     queryFn: async () => {
       if (!unit?.id) return [];
@@ -4326,44 +4328,59 @@ function UnitMatchesDialog({ unit, onClose }: { unit: AvailableUnit | null; onCl
         credentials: "include",
         headers: getAuthHeaders(),
       });
-      if (!res.ok) return [];
+      if (!res.ok) throw new Error(String(res.status));
       return res.json();
     },
     enabled: !!unit?.id,
   });
+  // The one fit rule (shared/requirement-fit.ts): the unit's size in the
+  // requirement's range and its use or a place the requirement names; with
+  // no size to compare, both. Why nothing fits, from what the unit holds.
+  const noUse = !unit?.useClass && !unit?.unitName;
+  const emptyWhy = !unit?.sqft && noUse
+    ? "This unit has no size or use class recorded, so no requirement can be judged against it."
+    : !unit?.sqft
+      ? "This unit has no size recorded, so a requirement needs both its use and a place it names to fit."
+      : !unit?.useClass
+        ? "This unit has no use class recorded, so a requirement fits only on its size and a place it names."
+        : "No open requirement fits its size with its use or a place it names.";
 
   return (
     <Dialog open={!!unit} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Matching Requirements</DialogTitle>
+          <DialogTitle>Requirements that fit</DialogTitle>
           <DialogDescription>
-            Requirements matching "{unit?.unitName}" by use class and location
+            Open requirements that fit "{unit?.unitName}": its size and its use or a place they name, or with no size to compare, both.
           </DialogDescription>
         </DialogHeader>
         <ScrollArea className="max-h-[400px]">
           {isLoading ? (
             <div className="space-y-2 p-2">{[1,2,3].map(i => <Skeleton key={i} className="h-12 w-full" />)}</div>
+          ) : isError ? (
+            <p role="status" className="py-8 text-center text-sm text-muted-foreground">The requirements could not be loaded.</p>
           ) : matches.length === 0 ? (
-            <div className="py-8 text-center">
-              <p className="text-sm text-muted-foreground">No matching requirements found</p>
-              <p className="text-xs text-muted-foreground mt-1">No requirements currently match this unit's criteria</p>
+            <div className="py-8 text-center" data-testid="match-reqs-empty">
+              <p className="text-sm text-muted-foreground">No requirement fits</p>
+              <p className="text-xs text-muted-foreground mt-1">{emptyWhy}</p>
             </div>
           ) : (
             <div className="space-y-1 p-1">
               {matches.map((req: any) => (
-                <div key={req.id} className="flex items-center justify-between p-3 rounded-md border hover:bg-muted/50 transition-colors" data-testid={`match-req-${req.id}`}>
+                <Link key={req.id} href={`/requirements?requirementId=${encodeURIComponent(req.id)}`} onClick={onClose}
+                  className="flex items-center justify-between p-3 rounded-md border hover:bg-muted/50 transition-colors" data-testid={`match-req-${req.id}`}>
                   <div className="min-w-0">
                     <p className="text-sm font-medium">{req.name}</p>
-                    <p className="text-xs text-muted-foreground">{req.company_name || "Unknown"} · {(req.use || []).join(", ") || "Any use"}</p>
+                    <p className="text-xs text-muted-foreground">{req.company_name || "Unknown"} · {(req.use || []).join(", ") || "No use given"}</p>
                     {req.requirement_locations && req.requirement_locations.length > 0 && <p className="text-[10px] text-muted-foreground">{req.requirement_locations.join(", ")}</p>}
+                    {req.fit_why && <p className="text-[11px] text-muted-foreground" data-testid={`match-req-why-${req.id}`}>{req.fit_why}</p>}
                   </div>
                   <div className="text-right shrink-0 ml-2">
-                    {req.size && req.size.length > 0 && <p className="text-xs font-medium">{req.size.join(", ")}</p>}
-                    <Badge variant="outline" className="text-[9px] mt-0.5" title={req.date_label || undefined}>{req.state_label || req.status || "Active"}</Badge>
+                    {req.size && req.size.length > 0 && <p className="text-xs font-medium">{formatSizeList(req.size)}</p>}
+                    {req.state_label && <Badge variant="outline" className="text-[9px] mt-0.5" title={req.date_label || undefined}>{req.state_label}</Badge>}
                     {req.date_label && <p className="text-[10px] text-muted-foreground" data-testid={`match-req-date-${req.id}`}>{req.date_label}</p>}
                   </div>
-                </div>
+                </Link>
               ))}
             </div>
           )}

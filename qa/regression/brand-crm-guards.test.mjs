@@ -266,7 +266,8 @@ test('a client is never sent a dismissed contact suggestion; it reads every requ
   assert.match(pitchRequirements, /FROM crm_requirements_leasing r\s+WHERE r\.company_id = \$1 AND \$\{requirementStateSql\("r"\)\} <> 'closed'\s+ORDER BY/);
   assert.doesNotMatch(pitchRequirements, /requirementClientVisibleSql|PIPnet/);
   // A client reads a pitch's requirement by what it is and its own date, never its state.
-  assert.match(pitches, /requirement: \$\{scope \? liveReq\.reason\.clientText : liveReq\.reason\.short\}/);
+  assert.match(pitches, /const said = scope \? liveReq\.reason\.clientText : liveReq\.reason\.short;/);
+  assert.match(pitches, /requirement: \$\{said\}/);
 });
 
 // ── "On hold" (crm_companies.concept_status) ─────────────────────────────

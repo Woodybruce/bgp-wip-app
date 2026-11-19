@@ -58,6 +58,10 @@ import { buildUserIdColorMap } from "@/lib/agent-colors";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import type { CrmRequirementsLeasing, CrmRequirementsInvestment, CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schema";
+import { propertyUnitHref, trackerUnitHref, type UnitLinkViewer } from "@/lib/unit-links";
+import { useIsLandsecView } from "@/components/landsec/deal-clock";
+import { LETTING_STATUS_LABELS } from "@shared/letting-rules";
+import { legacyToCode } from "@shared/deal-status";
 import { Link } from "wouter";
 import { RefreshCw } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -72,7 +76,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { FilterDropdown } from "@/components/wip-filter-dropdown";
-import { SuggestionTray, RequirementEvidenceDrawer, type SuggestionList } from "@/components/requirement-centre";
+import { SuggestionTray, RequirementEvidenceDrawer, UnitFitGapsCard, type SuggestionList } from "@/components/requirement-centre";
 import { PipnetCatchupDialog } from "@/components/pipnet-catchup";
 import {
   requirementLive, requirementGoingStale, requirementDaysLeft, requirementListKey, requirementSourceLabels, formatRequirementDay,
@@ -370,6 +374,10 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
   // the form without the BGP owner. Until the login is known the page keeps
   // to that reduced shape.
   const clientShape = !reqUser || isClientView || !!reqUser.companyScopeId;
+  // Where a fit opens the unit: its row on the property page, else its row on
+  // the login's own Letting Tracker (client/src/lib/unit-links.ts).
+  const landsecView = useIsLandsecView();
+  const unitViewer = useMemo<UnitLinkViewer>(() => ({ staff: !clientShape, landsecView, restricted: false }), [clientShape, landsecView]);
   // Still live, owners and In the news are BGP staff routes.
   const canUseCentre = !!reqUser && !clientShape && STAFF_EMAIL.test(String(reqUser.email || "").trim());
   const meId: string | null = reqUser?.id || null;
@@ -666,10 +674,6 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
     queryKey: ["/api/crm/deals"],
   });
 
-  const { data: crmProperties = [] } = useQuery<CrmProperty[]>({
-    queryKey: ["/api/crm/properties"],
-  });
-
   const { data: users = [] } = useQuery<{ id: string; name: string; email: string; role: string; department: string; team: string | null }[]>({
     queryKey: ["/api/users"],
   });
@@ -686,23 +690,6 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
     return new Set(users.filter(u => u.team?.toLowerCase().includes(tf)).map(u => u.id));
   }, [teamFilter, users]);
 
-  const propertyMatchMap = useMemo(() => {
-    const map = new Map<string, CrmProperty[]>();
-    if (!crmProperties.length) return map;
-    items.forEach(req => {
-      const locs = Array.isArray(req.requirementLocations) ? req.requirementLocations : [];
-      if (!locs.length) return;
-      const locsLc = locs.map(l => l.toLowerCase());
-      const matches = crmProperties.filter(p => {
-        const addr = p.address as any;
-        const addrStr = addr ? [addr.formatted, addr.street, addr.city, addr.area, addr.text, typeof addr === "string" ? addr : ""].filter(Boolean).join(" ").toLowerCase() : "";
-        const pName = (p.name || "").toLowerCase();
-        return locsLc.some(loc => addrStr.includes(loc) || pName.includes(loc));
-      });
-      if (matches.length > 0) map.set(req.id, matches);
-    });
-    return map;
-  }, [items, crmProperties]);
 
   const companyMap = useMemo(() => {
     const map = new Map<string, CrmCompany>();
@@ -1270,6 +1257,10 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
         </div>
       )}
 
+      {/* The units the fit rule cannot judge (no use class or no size), for
+          someone to fill in on the Letting Tracker. BGP staff only. */}
+      {canUseCentre && activeList !== "news" && <UnitFitGapsCard navigate={navigate} />}
+
       {/* The To confirm tray: suggestions from chat, viewings, deals,
           meetings and news, each answered by a person in one tap. BGP staff
           only; a suggestion is not a requirement until a person confirms it. */}
@@ -1374,16 +1365,19 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
                     </Button>
                   )}
                   {/* Match was desktop-only, stranding the "N fit your units"
-                      KPI on phones (UX #29). */}
-                  <button
-                    type="button"
-                    onClick={() => setMatchItem(item)}
-                    className="inline-flex items-center gap-1.5 text-xs font-medium text-primary"
-                    data-testid={`mobile-match-${item.id}`}
-                  >
-                    <Target className="w-3.5 h-3.5" />
-                    Match
-                  </button>
+                      KPI on phones (UX #29). Its route is BGP's: a client
+                      login was shown an empty list. */}
+                  {!clientShape && (
+                    <button
+                      type="button"
+                      onClick={() => setMatchItem(item)}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-primary"
+                      data-testid={`mobile-match-${item.id}`}
+                    >
+                      <Target className="w-3.5 h-3.5" />
+                      Match
+                    </button>
+                  )}
                   {clientShape && pack?.url && (
                     <a
                       href={pack.url}
@@ -1458,7 +1452,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
         inlineUpdate={inlineUpdate}
         onEdit={setEditItem}
         onDelete={setDeleteItem}
-        onMatch={setMatchItem}
+        onMatch={clientShape ? undefined : setMatchItem}
         fitsMap={fitsMap}
         onDiscuss={discussRequirement}
         discussingId={discussingId}
@@ -1468,7 +1462,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
         filterOptions={leasingFilterOptions}
         onToggleFilter={toggleColumnFilter}
         colorMap={userIdColorMap}
-        propertyMatchMap={propertyMatchMap}
+        unitViewer={unitViewer}
         liveMap={liveMap}
         readOnly={clientShape}
         canEdit={!!reqUser}
@@ -1633,6 +1627,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
       <RequirementMatchesDialog
         requirement={matchItem}
         onClose={() => setMatchItem(null)}
+        unitViewer={unitViewer}
       />
 
       <NewBrandDialog
@@ -2049,8 +2044,8 @@ function NewBrandDialog({ open, onOpenChange, isClientView }: { open: boolean; o
   );
 }
 
-function RequirementMatchesDialog({ requirement, onClose }: { requirement: any | null; onClose: () => void }) {
-  const { data: matches = [], isLoading } = useQuery<any[]>({
+function RequirementMatchesDialog({ requirement, onClose, unitViewer }: { requirement: any | null; onClose: () => void; unitViewer: UnitLinkViewer }) {
+  const { data: matches = [], isLoading, isError } = useQuery<any[]>({
     queryKey: ["/api/requirements/matches", requirement?.id],
     queryFn: async () => {
       if (!requirement?.id) return [];
@@ -2058,45 +2053,68 @@ function RequirementMatchesDialog({ requirement, onClose }: { requirement: any |
         credentials: "include",
         headers: getAuthHeaders(),
       });
-      if (!res.ok) return [];
+      if (!res.ok) throw new Error(String(res.status));
       return res.json();
     },
     enabled: !!requirement?.id,
   });
+  const list = (v: unknown) => (Array.isArray(v) ? v : v ? [v] : []).map(x => String(x ?? "").trim()).filter(Boolean);
+  const hasSize = list(requirement?.size).length > 0;
+  const hasUse = list(requirement?.use).length > 0;
+  const hasPlaces = list(requirement?.requirementLocations).length > 0;
+  const total = Number(matches[0]?.fit_count) || matches.length;
+  // Why nothing fits, from what the requirement gives (the one fit rule:
+  // size and use or a named place; with no size to compare, both).
+  const emptyWhy = !hasSize && !(hasUse && hasPlaces)
+    ? "It gives no size, so a unit needs both its use and a place it names to fit, and it does not give both."
+    : !hasUse && !hasPlaces
+      ? "It gives a size but no use or places, so no unit can fit on size alone."
+      : "No unit on the market fits its size with its use or a place it names. Units with no use class or no size recorded cannot fit on those.";
 
   return (
     <Dialog open={!!requirement} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Matching Available Units</DialogTitle>
+          <DialogTitle>Units that fit</DialogTitle>
           <DialogDescription>
-            Units matching "{requirement?.name}" by use class and location
+            Units on the market that fit "{requirement?.name}": the size and the use or a place it names, or with no size to compare, both.
+            {total > matches.length && ` The ${matches.length} surest of ${total.toLocaleString("en-GB")}.`}
           </DialogDescription>
         </DialogHeader>
         <ScrollArea className="max-h-[400px]">
           {isLoading ? (
             <div className="space-y-2 p-2">{[1,2,3].map(i => <Skeleton key={i} className="h-12 w-full" />)}</div>
+          ) : isError ? (
+            <p role="status" className="py-8 text-center text-sm text-muted-foreground">The units could not be loaded.</p>
           ) : matches.length === 0 ? (
-            <div className="py-8 text-center">
-              <p className="text-sm text-muted-foreground">No matching units found</p>
-              <p className="text-xs text-muted-foreground mt-1">Try broadening the requirement criteria</p>
+            <div className="py-8 text-center" data-testid="match-units-empty">
+              <p className="text-sm text-muted-foreground">No unit fits</p>
+              <p className="text-xs text-muted-foreground mt-1">{emptyWhy}</p>
             </div>
           ) : (
             <div className="space-y-1 p-1">
-              {matches.map((unit: any) => (
-                <div key={unit.id} className="flex items-center justify-between p-3 rounded-md border hover:bg-muted/50 transition-colors" data-testid={`match-unit-${unit.id}`}>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">{unit.unit_name}</p>
-                    <p className="text-xs text-muted-foreground">{unit.property_name || ""} · {useClassLabel(unit.use_class)}</p>
-                    {unit.location && <p className="text-[10px] text-muted-foreground">{unit.location}</p>}
-                  </div>
-                  <div className="text-right shrink-0 ml-2">
-                    {unit.sqft && <p className="text-xs font-medium">{Number(unit.sqft).toLocaleString()} sqft</p>}
-                    {unit.asking_rent && <p className="text-[10px] text-muted-foreground">£{Number(unit.asking_rent).toLocaleString()} psf</p>}
-                    <Badge variant="outline" className="text-[9px] mt-0.5">{unit.marketing_status || "Available"}</Badge>
-                  </div>
-                </div>
-              ))}
+              {matches.map((unit: any) => {
+                const href = propertyUnitHref(unit.property_id, unit.schedule_row_id) || trackerUnitHref(unit.id, unit.property_id, unitViewer) || (unit.property_id ? `/properties/${unit.property_id}` : null);
+                const body = (
+                  <>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">{unit.unit_name}</p>
+                      <p className="text-xs text-muted-foreground">{unit.property_name || ""}{unit.use_class ? ` · ${useClassLabel(unit.use_class)}` : " · no use class recorded"}</p>
+                      {unit.fit_why && <p className="text-[11px] text-muted-foreground" data-testid={`match-unit-why-${unit.id}`}>{unit.fit_why}</p>}
+                    </div>
+                    <div className="text-right shrink-0 ml-2">
+                      {unit.sqft ? <p className="text-xs font-medium font-mono tabular-nums">{Number(unit.sqft).toLocaleString("en-GB")} sq ft</p> : <p className="text-xs text-muted-foreground">Size not recorded</p>}
+                      {unit.asking_rent && <p className="text-[10px] text-muted-foreground font-mono tabular-nums">£{Number(unit.asking_rent).toLocaleString("en-GB")} pa</p>}
+                      <Badge variant="outline" className="text-[9px] mt-0.5">{(() => { const code = legacyToCode(unit.marketing_status); return code ? LETTING_STATUS_LABELS[code] : unit.marketing_status || "Marketing"; })()}</Badge>
+                    </div>
+                  </>
+                );
+                return href ? (
+                  <Link key={unit.id} href={href} onClick={onClose} className="flex items-center justify-between p-3 rounded-md border hover:bg-muted/50 transition-colors" data-testid={`match-unit-${unit.id}`}>{body}</Link>
+                ) : (
+                  <div key={unit.id} className="flex items-center justify-between p-3 rounded-md border" data-testid={`match-unit-${unit.id}`}>{body}</div>
+                );
+              })}
             </div>
           )}
         </ScrollArea>
@@ -2826,7 +2844,7 @@ function LeasingSection({
   filterOptions,
   onToggleFilter,
   colorMap,
-  propertyMatchMap = new Map(),
+  unitViewer = { staff: false, landsecView: false, restricted: false },
   liveMap,
   readOnly,
   canEdit,
@@ -2863,7 +2881,7 @@ function LeasingSection({
   filterOptions?: { status: string[]; use: string[]; requirementType: string[]; size: string[]; requirementLocations: string[] };
   onToggleFilter?: (col: string, value: string) => void;
   colorMap?: Record<string, string>;
-  propertyMatchMap?: Map<string, CrmProperty[]>;
+  unitViewer?: UnitLinkViewer;
   /** The state and honest date line of every row (shared/requirement-live.ts). */
   liveMap: Map<string, RequirementLive>;
   /** A client login: no state, owner, inline editing or delete, and nothing to click that it cannot save. */
@@ -2880,6 +2898,8 @@ function LeasingSection({
   /** BGP staff: opens the evidence drawer. */
   onEvidence?: (item: CrmRequirementsLeasing) => void;
 }) {
+  // Rows whose Fits list is opened in place (a client login; staff open the Match dialog).
+  const [openFits, setOpenFits] = useState<Set<string>>(new Set());
   const plain = (text: string | null | undefined) => (
     text ? <span className="text-xs">{text}</span> : <span className="text-xs text-muted-foreground">—</span>
   );
@@ -3206,35 +3226,52 @@ function LeasingSection({
                     </TableCell>
                     <TableCell className="px-1.5 py-1" data-testid={`cell-fits-${item.id}`}>
                       {(() => {
+                        // The one fit rule (shared/requirement-fit.ts): each fit
+                        // opens the unit itself and says why it fits.
                         const fit = fitsMap[item.id];
                         if (!fit?.count) return <span className="text-[10px] text-muted-foreground">—</span>;
+                        const shown = openFits.has(item.id) ? fit.top : fit.top.slice(0, 2);
+                        const unseen = fit.count - shown.length;
                         return (
                           <div className="space-y-0.5">
-                            {fit.top.slice(0, 2).map((m: any) => (
-                              <div key={m.unitId} className="flex items-center gap-1 group/fit">
-                                <button
-                                  className="text-[11px] text-primary hover:underline truncate max-w-[150px] text-left"
-                                  onClick={() => navigate(`/properties/${m.propertyId}`)}
-                                  title={`${m.unitName} · ${m.propertyName} · ${m.sizeUnknown ? "size not recorded" : Number(m.sqft).toLocaleString() + " sq ft"}${m.locationHit ? " · location match" : ""}`}
-                                >
-                                  {m.unitName} · {m.propertyName}
-                                </button>
-                                <span className="text-[9px] text-muted-foreground tabular-nums shrink-0">{m.sizeUnknown ? "size?" : Number(m.sqft).toLocaleString()}</span>
-                                {onBrief && (
-                                  <button
-                                    className="text-[9px] text-primary hover:underline opacity-0 group-hover/fit:opacity-100 shrink-0"
-                                    onClick={() => onBrief(m, item)}
-                                    title="Add this brand to the unit's targeting brief"
-                                    data-testid={`button-brief-${item.id}-${m.unitId}`}
-                                  >
-                                    + brief
-                                  </button>
-                                )}
-                              </div>
+                            {shown.map((m: any) => {
+                              const href = propertyUnitHref(m.propertyId, m.scheduleRowId) || trackerUnitHref(m.unitId, m.propertyId, unitViewer) || `/properties/${m.propertyId}`;
+                              const size = m.sizeUnknown ? "size not recorded" : `${Number(m.sqft).toLocaleString("en-GB")} sq ft`;
+                              return (
+                                <div key={m.unitId} className="min-w-0">
+                                  <div className="flex items-center gap-1 min-w-0">
+                                    <Link href={href} className="text-[11px] text-primary hover:underline truncate max-w-[150px]"
+                                      title={`${m.unitName} · ${m.propertyName} · ${size}`} data-testid={`fit-unit-${item.id}-${m.unitId}`}>
+                                      {m.unitName} · {m.propertyName}
+                                    </Link>
+                                    <span className="text-[9px] text-muted-foreground font-mono tabular-nums shrink-0">{m.sizeUnknown ? "size?" : Number(m.sqft).toLocaleString("en-GB")}</span>
+                                    {onBrief && (
+                                      <button
+                                        className="text-[9px] text-primary hover:underline shrink-0"
+                                        onClick={() => onBrief(m, item)}
+                                        title="Add this brand to the unit's targeting brief"
+                                        data-testid={`button-brief-${item.id}-${m.unitId}`}
+                                      >
+                                        + brief
+                                      </button>
+                                    )}
+                                  </div>
+                                  {m.why && <p className="text-[9px] text-muted-foreground truncate max-w-[200px]" title={m.why} data-testid={`fit-why-${item.id}-${m.unitId}`}>{m.why}</p>}
+                                </div>
+                              );
+                            })}
+                            {unseen > 0 && (onMatch || shown.length < fit.top.length ? (
+                              <button
+                                type="button"
+                                className="text-[9px] text-primary hover:underline"
+                                onClick={() => (onMatch ? onMatch(item) : setOpenFits(prev => new Set(prev).add(item.id)))}
+                                data-testid={`fits-more-${item.id}`}
+                              >
+                                +{unseen.toLocaleString("en-GB")} more
+                              </button>
+                            ) : (
+                              <span className="text-[9px] text-muted-foreground" title={`Only the first ${fit.top.length} are listed here`}>+{unseen.toLocaleString("en-GB")} more</span>
                             ))}
-                            {fit.count > 2 && (
-                              <span className="text-[9px] text-muted-foreground">+{fit.count - 2} more</span>
-                            )}
                           </div>
                         );
                       })()}
@@ -3247,17 +3284,6 @@ function LeasingSection({
                         onSave={(data) => inlineUpdate(item.id, { locationData: data })}
                         navigate={navigate}
                       />
-                      )}
-                      {propertyMatchMap.has(item.id) && (
-                        <div className="flex flex-wrap gap-0.5 mt-1">
-                          {propertyMatchMap.get(item.id)!.slice(0, 3).map(p => (
-                            <Link key={p.id} href={`/properties/${p.id}`}>
-                              <Badge variant="outline" className="text-[8px] gap-0.5 cursor-pointer hover:bg-muted" data-testid={`req-prop-match-${item.id}-${p.id}`}>
-                                <Building2 className="w-2 h-2 text-muted-foreground" />{p.name}
-                              </Badge>
-                            </Link>
-                          ))}
-                        </div>
                       )}
                     </TableCell>
                     <TableCell className="px-1.5 py-1">

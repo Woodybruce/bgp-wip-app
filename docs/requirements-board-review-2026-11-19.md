@@ -669,6 +669,16 @@ The phone shell's Reqs list and the three unmounted panels are deleted.
    code removed.
 7. **The unit data card**, if Woody wants it (decision 2).
 
+**Built on 19 November 2026** (decision 2 answered "carry on", taken as (a)
+with the data card): the fit rule half of step 2 and step 7. Every place in
+finding 12 asks `requirementFit`; each fit says why and opens the unit; the
+property chips (finding 9) are gone; the board's "+N more" opens the full
+list and "+ brief" shows without hovering (finding 8); the Brand CRM chip
+kept its wording, with one new state for a size and a region with no use
+("Size fits, in their area, use not matched"); BGP staff get the units to
+fill in. CLAUDE.md, "One fit rule", has the detail. The board feed, the
+panel and the new layout are still to come.
+
 Each step updates `server/chatbgp-app-map.ts` and the requirements section of
 CLAUDE.md where it changes what a screen shows.
 

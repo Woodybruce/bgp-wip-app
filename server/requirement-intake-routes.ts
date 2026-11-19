@@ -25,6 +25,7 @@ import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { resolveCompanyScope } from "./company-scope";
 import { CONFIRMED_HOW } from "@shared/requirement-live";
+import { FIT_POOL_STATUSES, unitFitGaps } from "@shared/requirement-fit";
 import {
   IntakeError, pgIntakeStore, confirm, checkPeople, attach, dismiss, markSatisfied, markNotLive, setSuggestionBrand, stillLive, setOwner,
   listSuggestions, suggestionCounts, requirementEvidence, EVIDENCE_KINDS, type Actor, type IntakeStore,
@@ -113,6 +114,30 @@ const requirementOut = (r: Record<string, any> | null) => r && ({
   origin: r.origin, bgpContactUserId: r.bgp_contact_user_id, bgpContactUserIds: r.bgp_contact_user_ids, requirementDate: r.requirement_date, updatedAt: r.updated_at,
 });
 
+// Marketing units missing a use class or a size, by property then unit, with
+// each unit's schedule row (stored ties only) so the list opens the unit.
+export async function unitGapsList(db: { query: (text: string, values?: any[]) => Promise<{ rows: any[] }> }) {
+  const rows = (await db.query(
+    `/* requirement-centre:unit-gaps */ SELECT au.id, au.unit_name, au.sqft, au.use_class, au.marketing_status, au.property_id, p.name AS property_name,
+            COALESCE(au.tenancy_unit_id::text,
+              (SELECT ts.id::text FROM tenancy_schedule_units ts
+                WHERE ts.letting_tracker_unit_id = au.id AND ts.property_id = au.property_id LIMIT 1)) AS schedule_row_id
+       FROM available_units au
+       LEFT JOIN crm_properties p ON p.id = au.property_id
+      WHERE au.marketing_status = ANY($1::text[])
+      ORDER BY p.name NULLS LAST, au.unit_name`, [[...FIT_POOL_STATUSES]])).rows;
+  const units = rows.map(r => ({
+    id: String(r.id), unitName: r.unit_name || "Unit", propertyId: r.property_id || null, propertyName: r.property_name || null,
+    scheduleRowId: r.schedule_row_id || null, status: r.marketing_status || null, missing: unitFitGaps(r),
+  })).filter(u => u.missing.length > 0);
+  return {
+    onMarket: rows.length,
+    noUse: units.filter(u => u.missing.includes("use")).length,
+    noSize: units.filter(u => u.missing.includes("size")).length,
+    units,
+  };
+}
+
 export function registerRequirementIntakeRoutes(app: Express) {
   app.get("/api/requirement-suggestions", requireAuth, handle(async req => {
     const q = req.query;
@@ -179,6 +204,10 @@ export function registerRequirementIntakeRoutes(app: Express) {
     const body = dismissFromNewsBody.parse(req.body || {});
     return inTransaction(store => dismissFromNews(store, body, actor));
   }));
+
+  // The units on the market the fit rule cannot judge properly: no use class,
+  // no size, or neither. A list for someone to fill in; it writes nothing.
+  app.get("/api/requirement-centre/unit-gaps", requireAuth, handle(async () => unitGapsList(pool)));
 
   app.get("/api/requirement-centre/requirements/:id/evidence", requireAuth, handle(async req =>
     requirementEvidence(pgIntakeStore(pool), String(req.params.id))));

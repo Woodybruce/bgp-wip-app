@@ -87,6 +87,10 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
                   {s.requirementReason && (
                     <p className="text-[11px] text-muted-foreground truncate" title={s.requirementReason} data-testid={`text-requirement-reason-${i}`}>{s.requirementReason}</p>
                   )}
+                  {/* Why the requirement fits, by the one fit rule (shared/requirement-fit.ts). */}
+                  {s.fitWhy && (
+                    <p className="text-[11px] text-muted-foreground truncate" title={s.fitWhy} data-testid={`text-fit-why-${i}`}>{s.fitWhy}</p>
+                  )}
                   {s.evidence?.length > 0 && (
                     <p className="text-[11px] text-muted-foreground truncate" title={s.evidence.join(" · ")}>{s.evidence.slice(0, 2).join(" · ")}</p>
                   )}

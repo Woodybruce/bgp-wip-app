@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseReqSize, pitchFitWords, requirementFitsUnit, requirementUseFits, spreadAcrossCentres } from '../../shared/requirement-fit.ts';
+import { createRequire } from 'node:module';
+import {
+  FIT_POOL_STATUSES, fitScore, parseReqSize, pitchFitWords, requirementFit, requirementFitsUnit, requirementPlaceIn, requirementUseFits,
+  requirementUseLinesUp, spreadAcrossCentres, unitFitGaps,
+} from '../../shared/requirement-fit.ts';
+const require = createRequire(import.meta.url);
+const { find, evaluate, ts } = require('./source-harness.cjs');
+const read = file => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8');
 
 test('requirement size text becomes a tolerance-widened range', () => {
   assert.deepEqual(parseReqSize(['1,500-3,000 sq ft']), { min: 1200, max: 3600 });
@@ -110,4 +117,171 @@ test('suggested pitches take the best unit at each centre before a second unit a
   const route = crm.slice(crm.indexOf('app.get("/api/brands/:id/suggested-pitches"'), crm.indexOf('app.get("/api/available-units/:id/brand-suggestions"'));
   assert.match(route, /spreadAcrossCentres\(suggestions, s => String\(s\.property_id\)\)\.slice\(0, 6\)/);
   assert.doesNotMatch(route, /suggestions: suggestions\.slice\(0, 6\)/);
+});
+
+// ── The one fit rule (Woody, 2026-11-19) ─────────────────────────────────
+// Decision 2 of docs/requirements-board-review-2026-11-19.md: "size and use
+// or place". Before it there were nine ways to decide a fit, and two of them
+// disagreed on the same row of the requirements board.
+const KENT = 'Bluewater Shopping Centre Greenhithe Kent DA9 9ST';
+
+test('the one fit rule: the size and the use or a named place; with no size to compare, both', () => {
+  const restaurant = { size: ['1,500-3,000 sq ft'], use: ['Restaurant'], requirement_locations: null };
+  const at = (sqft, use_class, unit_name = 'Unit 4', property_text = KENT) => ({ sqft, use_class, unit_name, property_text });
+  assert.deepEqual(requirementFit(restaurant, at(2000, 'E(b)')), { fits: true, size: 'fits', use: true, place: null, why: 'Size and use fit' });
+  // Size alone is never enough, and a unit with no use class cannot line up on use.
+  assert.equal(requirementFit(restaurant, at(2000, 'E(a)')).fits, false);
+  assert.equal(requirementFit(restaurant, at(2000, null)).fits, false);
+  assert.equal(requirementFit(restaurant, at(2000, null)).why, 'Size fits, but neither the use nor the place lines up');
+  // The unit's name can carry the use, as USE_HINTS reads it.
+  assert.equal(requirementFit(restaurant, at(2000, null, 'Restaurant unit 4')).fits, true);
+  // Outside the range never fits.
+  assert.deepEqual(requirementFit(restaurant, at(9000, 'E(b)')), { fits: false, size: 'outside', use: true, place: null, why: 'Outside their size range' });
+  // A named place stands in for the use, and the reason names it.
+  const placed = { size: ['1,500-3,000 sq ft'], use: null, requirement_locations: ['Leeds', 'Kent'] };
+  assert.deepEqual(requirementFit(placed, at(2000, null)), { fits: true, size: 'fits', use: false, place: 'Kent', why: 'Size fits, at Kent' });
+  assert.equal(requirementFit({ ...placed, use: ['Restaurant'] }, at(2000, 'E(b)')).why, 'Size and use fit, at Kent');
+  // With no size to compare (the unit's or the requirement's), both are needed.
+  const noSize = { size: null, use: ['Restaurant'], requirement_locations: ['Kent'] };
+  assert.equal(requirementFit(noSize, at(9000, 'E(b)')).fits, true);
+  assert.equal(requirementFit(noSize, at(9000, 'E(b)')).why, 'Use fits, at Kent; no size to compare');
+  assert.equal(requirementFit(noSize, at(2000, null)).fits, false);
+  assert.equal(requirementFit({ ...restaurant, requirement_locations: ['Kent'] }, at(null, 'E(b)')).fits, true);
+  assert.equal(requirementFit(restaurant, at(null, 'E(b)')).fits, false, 'no unit size and no place');
+  assert.equal(requirementFit(restaurant, at(null, 'E(b)')).size, 'unknown');
+  // The older shape keeps its callers' answers.
+  assert.equal(requirementFitsUnit(restaurant, { sqft: 2000, unit_text: 'Unit 12 F&B', property_text: KENT }), true);
+});
+
+test('a use needs stating on both sides, and London, a region or "national" places nothing', () => {
+  assert.equal(requirementUseLinesUp(['Restaurant'], { use_class: 'A3' }), true);
+  assert.equal(requirementUseLinesUp(['Gym'], { use_class: 'E(d)' }), true);
+  assert.equal(requirementUseLinesUp(['Retail'], { use_class: 'E(b)', unit_name: 'Coffee Shop' }), false);
+  // Unlike requirementUseFits (the investment dialog's rule), a missing side never lines up.
+  assert.equal(requirementUseFits(null, { use_class: 'E(b)' }), true);
+  assert.equal(requirementUseLinesUp(null, { use_class: 'E(b)' }), false);
+  assert.equal(requirementUseLinesUp(['Restaurant'], { use_class: null, unit_name: null }), false);
+  assert.equal(requirementUseLinesUp(['Restaurant'], { use_class: '  ', unit_name: 'Unit 9' }), false);
+  for (const vague of ['London', 'Greater London', 'Central London (Zone 1)', 'UK', 'England', 'National', 'Nationwide']) {
+    assert.equal(requirementPlaceIn([vague], 'One New Change London EC4 UK England national'), null, vague);
+  }
+  assert.equal(requirementPlaceIn(['Manchester', 'Greenhithe'], KENT), 'Greenhithe');
+  assert.equal(requirementPlaceIn(['Bath'], 'Bathgate Road'), 'Bath', 'a place is matched as text in the name or address');
+  assert.equal(requirementPlaceIn(['Ox'], 'Oxford'), null, 'two letters are too short to place a unit');
+  assert.equal(requirementPlaceIn(['Kent'], ''), null);
+});
+
+test('fits are ordered one way, and the board matches over the units on the market', () => {
+  assert.equal(fitScore({ size: 'fits', use: true, place: 'Kent' }), 4);
+  assert.equal(fitScore({ size: 'fits', use: true, place: null }), 3);
+  assert.equal(fitScore({ size: 'unknown', use: true, place: 'Kent' }), 2);
+  assert.deepEqual([...FIT_POOL_STATUSES], ['AVA', 'NEG']);
+});
+
+test('a unit on the market is listed for filling in when it has no use class or no size', () => {
+  assert.deepEqual(unitFitGaps({ sqft: 2000, use_class: 'E(b)' }), []);
+  assert.deepEqual(unitFitGaps({ sqft: null, use_class: 'E(b)' }), ['size']);
+  assert.deepEqual(unitFitGaps({ sqft: '0', use_class: ' ' }), ['use', 'size']);
+  assert.deepEqual(unitFitGaps({ sqft: '1200', use_class: null }), ['use']);
+});
+
+test('every screen that says a requirement fits a unit asks requirementFit', () => {
+  const crm = read('server/crm.ts');
+  const fitsColumn = crm.slice(crm.indexOf('app.get("/api/crm/requirements-leasing/matches"'));
+  const fitsRoute = fitsColumn.slice(0, fitsColumn.indexOf('\n  app.'));
+  assert.match(fitsRoute, /requirementFit\(r, \{ sqft: u\.sqft, use_class: u\.use_class, unit_name: u\.unit_name, property_text:/);
+  assert.match(fitsRoute, /au\.marketing_status = ANY\(\$2::text\[\]\)/);
+  assert.match(fitsRoute, /\[scopeCompanyId, \[\.\.\.FIT_POOL_STATUSES\]\]/);
+  assert.match(fitsRoute, /scheduleRowId: u\.schedule_row_id \|\| null/);
+  assert.match(fitsRoute, /why: fit\.why, score: fitScore\(fit\)/);
+  // "size?" is the unit's own size missing, never a requirement that gives none.
+  assert.match(fitsRoute, /sizeUnknown: !\(Number\(u\.sqft\) > 0\)/);
+  assert.doesNotMatch(fitsRoute, /USE_HINTS|parseReqSize/);
+  const suggestions = crm.slice(crm.indexOf('app.get("/api/available-units/:id/brand-suggestions"'), crm.indexOf('app.get("/api/crm/requirements-leasing/matches"'));
+  assert.match(suggestions, /const fit = requirementFit\(r, \{ sqft, use_class: unit\.use_class, unit_name: unit\.unit_name, property_text: propText \}\);\s+if \(!fit\.fits\) continue;/);
+  assert.match(suggestions, /fitWhy: fit\.why/);
+  const pitches = crm.slice(crm.indexOf('app.get("/api/brands/:id/suggested-pitches"'), crm.indexOf('app.get("/api/available-units/:id/brand-suggestions"'));
+  assert.match(pitches, /const fit = liveReq \? requirementFit\(liveReq, \{ sqft: sq, use_class: u\.use_class, unit_name: u\.unit_name, property_text:/);
+  assert.match(pitches, /if \(fit\?\.fits\) \{/);
+
+  const server = read('server/routes.ts');
+  const unitsFor = server.slice(server.indexOf('app.get("/api/requirements/matches/:requirementId"'), server.indexOf('app.get("/api/available-units/matches/:unitId"'));
+  assert.match(unitsFor, /WHERE au\.marketing_status = ANY\(\$1::text\[\]\)/);
+  assert.match(unitsFor, /requirementFit\(requirement, \{ sqft: u\.sqft, use_class: u\.use_class, unit_name: u\.unit_name, property_text: placeText\(u\) \}\)/);
+  assert.match(unitsFor, /fitScore\(b\.fit\) - fitScore\(a\.fit\)/);
+  assert.match(unitsFor, /fit_why: fit\.why, fit_count: fits\.length/);
+  const requirementsFor = server.slice(server.indexOf('app.get("/api/available-units/matches/:unitId"')).slice(0, 6000);
+  assert.match(requirementsFor, /requirementFit\(r, \{ sqft: unit\.sqft, use_class: unit\.use_class, unit_name: unit\.unit_name, property_text: unitPlaceText \}\)/);
+  assert.match(requirementsFor, /fit_why: fitWhy\.get\(String\(r\.id\)\) \|\| null/);
+
+  for (const file of ['server/account-teams.ts', 'server/target-tenant-engine.ts', 'server/property-gap-analysis.ts']) {
+    const text = read(file);
+    assert.match(text, /requirementFit\(/, file);
+    assert.doesNotMatch(text, /requirementFitsUnit\(|requirementUseFits\(/, file);
+  }
+  // The Brand CRM chip reads the rule with the unit's use and the requirement's.
+  const chip = find('shared/brand-stage.ts', n => ts.isFunctionDeclaration(n) && n.name?.text === 'chipFor');
+  assert.match(chip, /const fit = requirementFit\(\{ size: req\.size \?\? null, use: req\.use \?\? null, requirement_locations: places \}/);
+  assert.match(chip, /if \(fit\.fits\) return \{ chip: "fits"/);
+  const plan = read('server/brand-scheme-plan.ts');
+  assert.match(plan, /\(\{ id: r\.id, size: r\.size, use: r\.use, locations: r\.requirement_locations, dealId: r\.deal_id \}\)/);
+  assert.match(plan, /useClass: info\?\.useClass \?\? null, unitName: info\?\.unitName \?\? null/);
+  assert.match(plan, /au\.use_class AS tracker_use_class/);
+  // A joint agent is not told the requirement's places through the reason.
+  assert.match(plan, /chip\.requirementId = null; chip\.range = null; chip\.why = null;/);
+});
+
+test('the board: each fit opens the unit and says why; the property chips are gone; the Match dialog is BGP\'s', () => {
+  const page = read('client/src/pages/requirements.tsx');
+  assert.doesNotMatch(page, /propertyMatchMap|req-prop-match-/);
+  assert.match(page, /const href = propertyUnitHref\(m\.propertyId, m\.scheduleRowId\) \|\| trackerUnitHref\(m\.unitId, m\.propertyId, unitViewer\)/);
+  assert.match(page, /data-testid=\{`fit-why-\$\{item\.id\}-\$\{m\.unitId\}`\}/);
+  assert.match(page, /data-testid=\{`fits-more-\$\{item\.id\}`\}/);
+  // "+ brief" is no longer shown on hover only (nobody can hover on a phone).
+  assert.doesNotMatch(page, /opacity-0 group-hover\/fit:opacity-100/);
+  // The Match dialog's route is on no client gateway list, so the button is staff only.
+  assert.match(page, /onMatch=\{clientShape \? undefined : setMatchItem\}/);
+  assert.match(page, /\{!clientShape && \(\s+<button[\s\S]{0,300}data-testid=\{`mobile-match-\$\{item\.id\}`\}/);
+  const dialog = find('client/src/pages/requirements.tsx', n => ts.isFunctionDeclaration(n) && n.name?.text === 'RequirementMatchesDialog');
+  assert.match(dialog, /unit\.fit_why/);
+  assert.match(dialog, /data-testid="match-units-empty"/);
+  assert.match(dialog, /propertyUnitHref\(unit\.property_id, unit\.schedule_row_id\)/);
+  const tracker = find('client/src/pages/available-units.tsx', n => ts.isFunctionDeclaration(n) && n.name?.text === 'UnitMatchesDialog');
+  assert.match(tracker, /req\.fit_why/);
+  assert.match(tracker, /href=\{`\/requirements\?requirementId=\$\{encodeURIComponent\(req\.id\)\}`\}/);
+  assert.match(tracker, /data-testid="match-reqs-empty"/);
+  assert.match(read('client/src/components/suggest-targets-dialog.tsx'), /s\.fitWhy/);
+  assert.match(read('client/src/components/brand-crm/scheme-plan-card.tsx'), /chip === "fits" && why/);
+});
+
+test('the units to fill in: BGP staff only, read from the units on the market, and nothing is written', async () => {
+  const intake = read('server/requirement-intake-routes.ts');
+  assert.match(intake, /app\.get\("\/api\/requirement-centre\/unit-gaps", requireAuth, handle\(async \(\) => unitGapsList\(pool\)\)\);/);
+  // handle() asks staffActor first: a client login or staff viewing as one is refused.
+  assert.match(intake, /res\.json\(await run\(req, await staffActor\(req\)\)\);/);
+  const body = find('server/requirement-intake-routes.ts', n => ts.isFunctionDeclaration(n) && n.name?.text === 'unitGapsList');
+  assert.doesNotMatch(body, /INSERT|UPDATE|DELETE/i);
+  const queries = [];
+  const { unitGapsList } = evaluate(body, { FIT_POOL_STATUSES, unitFitGaps });
+  const out = await unitGapsList({ query: async (text, values) => {
+    queries.push({ text, values });
+    return { rows: [
+      { id: 'a', unit_name: 'Unit 1', sqft: 2000, use_class: 'E(b)', property_id: 'p1', property_name: 'Bluewater', schedule_row_id: 'ts1', marketing_status: 'AVA' },
+      { id: 'b', unit_name: 'Unit 2', sqft: null, use_class: 'E(b)', property_id: 'p1', property_name: 'Bluewater', schedule_row_id: null, marketing_status: 'AVA' },
+      { id: 'c', unit_name: 'Unit 3', sqft: 900, use_class: null, property_id: 'p2', property_name: 'Trinity', schedule_row_id: null, marketing_status: 'NEG' },
+      { id: 'd', unit_name: null, sqft: 0, use_class: '', property_id: null, property_name: null, schedule_row_id: null, marketing_status: 'NEG' },
+    ] };
+  } });
+  assert.deepEqual(JSON.parse(JSON.stringify(queries[0].values)), [['AVA', 'NEG']]);
+  assert.match(queries[0].text, /au\.marketing_status = ANY\(\$1::text\[\]\)/);
+  assert.deepEqual(JSON.parse(JSON.stringify(out)), {
+    onMarket: 4, noUse: 2, noSize: 2,
+    units: [
+      { id: 'b', unitName: 'Unit 2', propertyId: 'p1', propertyName: 'Bluewater', scheduleRowId: null, status: 'AVA', missing: ['size'] },
+      { id: 'c', unitName: 'Unit 3', propertyId: 'p2', propertyName: 'Trinity', scheduleRowId: null, status: 'NEG', missing: ['use'] },
+      { id: 'd', unitName: 'Unit', propertyId: null, propertyName: null, scheduleRowId: null, status: 'NEG', missing: ['use', 'size'] },
+    ],
+  });
+  // The board shows the card to BGP staff only.
+  assert.match(read('client/src/pages/requirements.tsx'), /\{canUseCentre && activeList !== "news" && <UnitFitGapsCard navigate=\{navigate\} \/>\}/);
 });

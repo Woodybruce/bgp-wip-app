@@ -11,7 +11,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { resolveAccountView, type Querier } from "./account-resolver";
-import { requirementFitsUnit } from "@shared/requirement-fit";
+import { requirementFit } from "@shared/requirement-fit";
 import { requirementReason, requirementStateSql, requirementLiveColumnsSql } from "@shared/requirement-live";
 import { DEAL_AGENT_ROLES, roleFromAgentType } from "@shared/agent-roles";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
@@ -61,11 +61,14 @@ export async function spaceFitsFor(q: Querier, propertyIds: string[]) {
     UNION SELECT DISTINCT company_id FROM tenant_rep_searches
       WHERE company_id IS NOT NULL AND COALESCE(status, '') NOT IN ('Complete','Completed','Archived','Lost','On Hold')`, [])).map((r: any) => r.id));
   const space = [
-    ...units.map((u: any) => ({ id: u.id, kind: "marketing" as const, propertyId: u.property_id, propertyName: u.property_name, unitName: u.unit_name, sqft: u.sqft, askingRent: u.asking_rent, status: u.marketing_status, text: u.property_text, unitText: `${u.unit_name || ""} ${u.use_class || ""}` })),
-    ...scheduleVacancies.map((u: any) => ({ id: u.id, kind: "schedule" as const, propertyId: u.property_id, propertyName: u.property_name, unitName: u.unit_name, sqft: u.sqft, askingRent: null, status: u.status, text: u.property_text, unitText: u.unit_name || "" })),
-  ].map(({ text, unitText, ...u }) => {
-    const fits = requirementsOpen.filter((r: any) => requirementFitsUnit(r, { sqft: u.sqft, unit_text: unitText, property_text: text }))
-      .map((r: any) => ({ requirementId: r.id, companyId: r.company_id, name: r.brand_name, bgpClient: bgpClients.has(r.company_id), state: r.reason.state, reason: r.reason.text, weight: r.reason.weight }))
+    ...units.map((u: any) => ({ id: u.id, kind: "marketing" as const, propertyId: u.property_id, propertyName: u.property_name, unitName: u.unit_name, sqft: u.sqft, askingRent: u.asking_rent, status: u.marketing_status, text: u.property_text, useClass: u.use_class || null })),
+    ...scheduleVacancies.map((u: any) => ({ id: u.id, kind: "schedule" as const, propertyId: u.property_id, propertyName: u.property_name, unitName: u.unit_name, sqft: u.sqft, askingRent: null, status: u.status, text: u.property_text, useClass: null })),
+  ].map(({ text, useClass, ...u }) => {
+    // The one fit rule (requirementFit): size and use or place; with no size to compare, both.
+    const fits = requirementsOpen
+      .map((r: any) => ({ r, fit: requirementFit(r, { sqft: u.sqft, use_class: useClass, unit_name: u.unitName, property_text: text }) }))
+      .filter(({ fit }: any) => fit.fits)
+      .map(({ r, fit }: any) => ({ requirementId: r.id, companyId: r.company_id, name: r.brand_name, bgpClient: bgpClients.has(r.company_id), state: r.reason.state, reason: r.reason.text, why: fit.why, weight: r.reason.weight }))
       .sort((a: any, b: any) => Number(b.bgpClient) - Number(a.bgpClient) || b.weight - a.weight)
       .map(({ weight, ...f }: any) => f);
     const seen = new Set<string>();

@@ -20,7 +20,7 @@ import { suggestPropertyView } from "../shared/property-view";
 import { UK_CENTRES, haversineKm, siteRadiusKm, peerCentresFor, benchmarkCentresFor } from "../shared/uk-centres";
 import { propertyResearchContext, PROPERTY_RESEARCH_USE_PATTERN, PROPERTY_RESEARCH_CENTRE_PATTERN, type PropertyResearchContext } from "../shared/property-research";
 import { isArchivedTenancy } from "../shared/tenancy-schedule-display";
-import { parseReqSize, requirementUseFits } from "../shared/requirement-fit";
+import { requirementFit } from "../shared/requirement-fit";
 import { isJunkBrand } from "../shared/junk-brand";
 import { isTrackerLiveStatus } from "../shared/letting-rules";
 import { BRAND_STAGE_LABELS, furthestStage, type BrandStage } from "../shared/brand-stage";
@@ -548,26 +548,25 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     // keeps the old rule: PIPnet listings only, by source and month.
     // `listing` is the line every viewer may read, a joint agent included
     // (a PIPnet listing, listingText): the cached commentary below quotes it.
-    // A unit holds a planning class (E(b), A3) and a requirement a use
-    // (Restaurant), so the two are lined up by requirementUseFits on the open
-    // requirements' uses: compared as text in SQL, every requirement that
-    // named a use was dropped (audit, 2026-11-17).
+    // A requirement is listed when it fits one of the marketing units here
+    // by the one fit rule (requirementFit, Woody 2026-11-19: size and use or
+    // place; with no size to compare, both), the unit's planning class (E(b),
+    // A3) read as the requirement's uses (Restaurant).
     const reqToday = new Date();
     const reqViewer = gapScope ? await (await import("./landsec-access")).requirementViewer(req) : "staff";
     const unitsHere: any[] = await pool.query(
       `SELECT id, unit_name, sqft, marketing_status, use_class FROM available_units WHERE property_id = $1`, [propertyId]
     ).then(r => r.rows).catch(() => [] as any[]);
-    // Requirements share a handful of use lists: each list is read against the units once.
-    const fitsHere = new Map<string, boolean>();
-    const useFitsHere = (use: any) => {
-      const key = JSON.stringify(use ?? null);
-      if (!fitsHere.has(key)) fitsHere.set(key, unitsHere.some(u => requirementUseFits(use, u)));
-      return fitsHere.get(key);
-    };
+    // The property's name, address and postcode: the place half of the rule.
+    const placeHere: string = await pool.query(
+      `SELECT COALESCE(name, '') || ' ' || COALESCE(address::text, '') || ' ' || COALESCE(postcode, '') AS place FROM crm_properties WHERE id = $1`, [propertyId]
+    ).then(r => String(r.rows[0]?.place || location.name || "")).catch(() => String(location.name || ""));
+    const marketingHere: any[] = unitsHere.filter((u: any) => isTrackerLiveStatus(u.marketing_status));
+    const fitsAUnitHere = (r: any) => marketingHere.some(u => requirementFit(r, { sqft: u.sqft, use_class: u.use_class, unit_name: u.unit_name, property_text: placeHere }).fits);
     const matchingRequirements = await pool.query(
-      `SELECT r.id, r.use FROM crm_requirements_leasing r
+      `SELECT r.id, r.size, r.use, r.requirement_locations FROM crm_requirements_leasing r
         WHERE ${requirementStateSql("r")} <> 'closed'${reqViewer === "joint_agent" ? ` AND ${requirementJointAgentVisibleSql("r")}` : ""}`
-    ).then(open => open.rows.filter((r: any) => useFitsHere(r.use)).map((r: any) => String(r.id))
+    ).then(open => open.rows.filter((r: any) => fitsAUnitHere(r)).map((r: any) => String(r.id))
     ).then(ids => ids.length ? pool.query(
       `SELECT r.id, r.name, r.use, r.size, r.requirement_locations,
               r.company_id, c.name AS company_name, c.domain, c.company_type, c.industry, c.description AS company_description,
@@ -790,17 +789,15 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       const { splitSubScores } = await import("./hunter-score");
       for (const row of scored) scoreOf.set(String(row.brand_company_id), splitSubScores(row.sub_scores)?.expansion ?? (Number(row.hunter_score) || 0));
     }
-    // The marketing units here, for a requirement's size to be read against.
-    const marketing: any[] = unitsHere.filter((u: any) => isTrackerLiveStatus(u.marketing_status));
+    // The marketing units here a brand's requirement fits, by the one fit
+    // rule, each with why.
     const fitUnits = (id: any) => {
       const held = reqByCompany.get(String(id));
-      const range = parseReqSize(held?.size ?? null);
-      if (!range) return [];
-      // Size in range, and the use lines up where both sides state one: the
-      // unit's planning class read as the requirement's uses, which the
-      // words in USE_HINTS alone never matched.
-      return marketing.filter(u => Number(u.sqft) >= range.min && Number(u.sqft) <= range.max && requirementUseFits(held?.use, u)).slice(0, 3)
-        .map(u => ({ id: String(u.id), name: String(u.unit_name || "Unit"), sqft: Number(u.sqft) || null }));
+      if (!held) return [];
+      return marketingHere
+        .map(u => ({ u, fit: requirementFit(held, { sqft: u.sqft, use_class: u.use_class, unit_name: u.unit_name, property_text: placeHere }) }))
+        .filter(({ fit }) => fit.fits).slice(0, 3)
+        .map(({ u, fit }) => ({ id: String(u.id), name: String(u.unit_name || "Unit"), sqft: Number(u.sqft) || null, why: fit.why }));
     };
     // Where each brand already stands at this scheme, by the Brand CRM's own
     // stage rule. A reading that fails leaves the column empty.
@@ -870,7 +867,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       competingCards,
       sisterSchemes,
       targets,
-      marketingUnits: marketing.map(u => ({ id: String(u.id), name: String(u.unit_name || "Unit"), sqft: Number(u.sqft) || null })),
+      marketingUnits: marketingHere.map(u => ({ id: String(u.id), name: String(u.unit_name || "Unit"), sqft: Number(u.sqft) || null })),
       canWant: !gapScope,
       competitorGaps: sliced(competitorGaps).map(publish),
       localMarket: sliced(localMarket).map(publish),
@@ -971,7 +968,7 @@ ${fmtList(g.peerGaps || [], 6)}
 Sector coverage (${luxury ? profile.categories : "hospitality/F&B/wellness/leisure"}):
 ${sectorLines}
 
-Market listings of brand requirements whose use matches an available unit (a listing shows appetite at its date; nobody has confirmed it is still current): ${(g.matchingRequirements || []).filter((r: any) => r.listing).map((r: any) => `${r.company_name || r.name} (${r.listing})`).slice(0, 10).join(", ") || "none"}
+Market listings of brand requirements that fit an available unit on size and use or place (a listing shows appetite at its date; nobody has confirmed it is still current): ${(g.matchingRequirements || []).filter((r: any) => r.listing).map((r: any) => `${r.company_name || r.name} (${r.listing})`).slice(0, 10).join(", ") || "none"}
 ${(() => {
   // Cached Perplexity expansion sweep (live-intel route) — fold confirmed
   // expanders into the read so "actionable now" reflects live market intent,

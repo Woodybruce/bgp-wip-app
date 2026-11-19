@@ -77,11 +77,13 @@ export function stageLine(row: PlanRow): string {
 export const showsRequirement = (row: PlanRow) => row.requirement.chip !== "no_requirement" && (row.requirement.chip === "linked" || (row.stage !== "let" && row.stage !== "trading"));
 
 export function RequirementCell({ row }: { row: PlanRow }) {
-  const { chip, unitSqft, range } = row.requirement;
+  const { chip, unitSqft, range, why } = row.requirement;
   if (!showsRequirement(row)) return dash;
   return <div className="min-w-0 space-y-0.5">
     {/* The wording wraps inside the pill where the column is narrow: cut off, it read "LINKED TO THEIR REQUIRE...". */}
-    <span className={`${pillMetrics} ${pillInactive} max-w-full !whitespace-normal !leading-tight text-left`} title={REQ_CHIP_LABELS[chip]}>{REQ_CHIP_LABELS[chip]}</span>
+    <span className={`${pillMetrics} ${pillInactive} max-w-full !whitespace-normal !leading-tight text-left`} title={why ? `${REQ_CHIP_LABELS[chip]}: ${why}` : REQ_CHIP_LABELS[chip]}>{REQ_CHIP_LABELS[chip]}</span>
+    {/* Each fit says why, on the one fit rule (shared/requirement-fit.ts). */}
+    {chip === "fits" && why && <p className="text-xs text-muted-foreground" data-testid="scheme-plan-fit-why">{why}</p>}
     {(chip === "place_fits_size_out" || chip === "size_out_no_places") && unitSqft != null && range && <p className="text-xs text-muted-foreground" data-testid="scheme-plan-size-detail"><span className="font-mono tabular-nums">{whole(unitSqft)}</span> sq ft, outside the <span className="font-mono tabular-nums">{whole(range.min)}</span> to <span className="font-mono tabular-nums">{whole(range.max)}</span> we allow around the size they asked for</p>}
   </div>;
 }

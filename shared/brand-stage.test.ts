@@ -203,7 +203,13 @@ const london: ChipPlace = { regions: ["London"], text: "One New Change London EC
 
 test("requirement chip: every key", () => {
   assert.equal(requirementChip([], bluewater(2000)).chip, "no_requirement");
-  assert.equal(requirementChip([{ id: "r1", size: ["1,500-3,000 sq ft"], locations: ["South East"] }], bluewater(2000)).chip, "fits");
+  // A region is too broad to place a unit by (the one fit rule): size and
+  // region with no use that lines up is not a fit.
+  assert.equal(requirementChip([{ id: "r1", size: ["1,500-3,000 sq ft"], locations: ["South East"] }], bluewater(2000)).chip, "size_fits_area_only");
+  // With the use lining up it fits.
+  const fit = requirementChip([{ id: "r1", size: ["1,500-3,000 sq ft"], use: ["Restaurant"], locations: ["South East"] }], bluewater(2000, { useClass: "E(b)" }));
+  assert.equal(fit.chip, "fits");
+  assert.equal(fit.why, "Size and use fit");
   assert.equal(requirementChip([{ id: "r1", size: ["1,500-3,000 sq ft"], locations: ["South East"] }], bluewater(null)).chip, "place_fits_size_unknown");
   const out = requirementChip([{ id: "r1", size: ["1,500-3,000 sq ft"], locations: ["South East"] }], bluewater(9000));
   assert.equal(out.chip, "place_fits_size_out");
@@ -213,8 +219,10 @@ test("requirement chip: every key", () => {
   assert.equal(requirementChip([{ id: "r1", size: ["1,500-3,000 sq ft"], locations: ["Scotland", "North West"] }], bluewater(2000)).chip, "not_on_list");
   // Region chips cannot be judged for a property outside the scheme registry.
   assert.equal(requirementChip([{ id: "r1", size: ["2000"], locations: ["Midlands"] }], { regions: null, text: "Bullring Birmingham B5 4BU", sqft: 2000 }).chip, "place_unknown");
-  // A named place still matches such a property by its address.
-  assert.equal(requirementChip([{ id: "r1", size: ["2000"], locations: ["Birmingham"] }], { regions: null, text: "Bullring Birmingham B5 4BU", sqft: 2000 }).chip, "fits");
+  // A named place still matches such a property by its address, and with the size it fits.
+  const named = requirementChip([{ id: "r1", size: ["2000"], locations: ["Birmingham"] }], { regions: null, text: "Bullring Birmingham B5 4BU", sqft: 2000 });
+  assert.equal(named.chip, "fits");
+  assert.equal(named.why, "Size fits, at Birmingham");
   // Linked: a viewing or a Wanted line pins the requirement, or the requirement's deal is this line's deal.
   assert.equal(requirementChip([{ id: "r1", size: ["500"], locations: ["Scotland"] }], bluewater(9000, { linkedRequirementIds: ["r1"] })).chip, "linked");
   assert.equal(requirementChip([{ id: "r1", locations: ["Scotland"], dealId: "d1" }], bluewater(9000, { dealId: "d1" })).chip, "linked");
@@ -226,15 +234,17 @@ test("requirement chip: regions and named places", () => {
   assert.equal(placeFits("national", { regions: null, text: "" }), true);
   assert.equal(placeFits("Kent", bluewater(null)), true);          // the town
   assert.equal(placeFits("Wales", bluewater(null)), false);
-  // "London" is kept as a region here (requirementFitsUnit discards it).
-  assert.equal(requirementChip([{ id: "r1", size: ["2000"], locations: ["London"] }], london).chip, "fits");
+  // "London" and "National" are read as regions for the wording, never as a
+  // named place for the fit (the fit rule discards them).
+  assert.equal(requirementChip([{ id: "r1", size: ["2000"], locations: ["London"] }], london).chip, "size_fits_area_only");
   assert.equal(requirementChip([{ id: "r1", size: ["2000"], locations: ["London"] }], bluewater(2000)).chip, "not_on_list");
-  assert.equal(requirementChip([{ id: "r1", size: ["2000"], locations: ["National"] }], london).chip, "fits");
+  assert.equal(requirementChip([{ id: "r1", size: ["2000"], locations: ["National"] }], london).chip, "size_fits_area_only");
+  assert.equal(requirementChip([{ id: "r1", size: ["2000"], use: ["Cafe"], locations: ["London"] }], { ...london, useClass: "E(b)" }).chip, "fits");
 });
 
 test("requirement chip: known size-parsing quirks stay visible", () => {
   // "Under 500 sq ft" reads as a single figure: 300 to 800.
-  const under = requirementChip([{ id: "r1", size: ["Under 500 sq ft"], locations: ["South East"] }], bluewater(700));
+  const under = requirementChip([{ id: "r1", size: ["Under 500 sq ft"], locations: ["Kent"] }], bluewater(700));
   assert.equal(under.chip, "fits");
   assert.deepEqual(under.range, { min: 300, max: 800 });
   // A second size band is ignored: only the first range is tested.
@@ -254,11 +264,35 @@ test("requirement chip: known size-parsing quirks stay visible", () => {
 test("requirement chip: the best of several live requirements, with the one that produced it", () => {
   const best = requirementChip([
     { id: "far", size: ["2000"], locations: ["Scotland"] },
-    { id: "near", size: ["1,500-3,000"], locations: ["South East"] },
+    { id: "near", size: ["1,500-3,000"], locations: ["Bluewater"] },
     { id: "big", size: ["10000"], locations: ["South East"] },
   ], bluewater(2000));
   assert.equal(best.chip, "fits");
   assert.equal(best.requirementId, "near");
+});
+
+test("requirement chip: on the one fit rule (size and use or a named place; with no size, both)", () => {
+  const restaurant = { id: "r1", size: ["1,500-3,000 sq ft"], use: ["Restaurant"] };
+  // No places given: the size and the use fit, so it fits.
+  assert.equal(requirementChip([{ ...restaurant, locations: [] }], bluewater(2000, { useClass: "E(b)" })).chip, "fits");
+  // The same unit with no use class: only the size can be said.
+  assert.equal(requirementChip([{ ...restaurant, locations: [] }], bluewater(2000)).chip, "size_fits_no_places");
+  // A use that does not line up is not a fit either.
+  assert.equal(requirementChip([{ ...restaurant, locations: [] }], bluewater(2000, { useClass: "B8" })).chip, "size_fits_no_places");
+  // The unit's name can carry the use, as on every other screen.
+  assert.equal(requirementChip([{ ...restaurant, locations: [] }], bluewater(2000, { unitName: "Restaurant 4" })).chip, "fits");
+  // A fit by size and use at a place not on their list fits by the rule, and says so.
+  const away = requirementChip([{ ...restaurant, locations: ["Scotland"] }], bluewater(2000, { useClass: "E(b)" }));
+  assert.equal(away.chip, "fits");
+  assert.equal(away.why, "Size and use fit; not on their list of places");
+  // With no unit size, the use and a named place must both line up.
+  assert.equal(requirementChip([{ ...restaurant, locations: ["Kent"] }], bluewater(null, { useClass: "E(b)" })).chip, "fits");
+  assert.equal(requirementChip([{ ...restaurant, locations: ["Kent"] }], bluewater(null)).chip, "place_fits_size_unknown");
+  assert.equal(requirementChip([{ ...restaurant, locations: ["South East"] }], bluewater(null, { useClass: "E(b)" })).chip, "place_fits_size_unknown");
+  // Outside the size range never fits, whatever the use and place.
+  assert.equal(requirementChip([{ ...restaurant, locations: ["Kent"] }], bluewater(9000, { useClass: "E(b)" })).chip, "place_fits_size_out");
+  // A linked requirement says nothing about the fit.
+  assert.equal(requirementChip([{ ...restaurant, locations: [] }], bluewater(2000, { linkedRequirementIds: ["r1"] })).why, null);
 });
 
 test("asked for, no target yet", () => {

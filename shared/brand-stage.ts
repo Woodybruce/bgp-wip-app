@@ -9,7 +9,7 @@
 // node imports here.
 import { legacyToCode, type DealStatusCode } from "./deal-status";
 import { isLettingType, LETTING_STATUS_LABELS, TENANT_REP_TYPES } from "./letting-rules";
-import { parseReqSize } from "./requirement-fit";
+import { parseReqSize, requirementFit } from "./requirement-fit";
 import type { LandsecCategoryOrOther } from "./landsec";
 
 // ── Stages ───────────────────────────────────────────────────────────────
@@ -304,12 +304,20 @@ export function furthestStage(stages: BrandStage[]): BrandStage | null {
 }
 
 // ── Requirement chip ─────────────────────────────────────────────────────
-export type ReqChip = "linked" | "fits" | "place_fits_size_unknown" | "place_fits_size_out" | "size_fits_no_places" | "size_unknown_no_places" | "size_out_no_places"
+// The chip describes a requirement at one place in the Brand CRM's words, on
+// the one fit rule (requirementFit in shared/requirement-fit.ts, decision 2 of
+// docs/requirements-board-review-2026-11-19.md): "Fits their requirement"
+// only when that rule says the unit fits (size and use or a named place, or
+// with no size both). A scheme's region ("South East", "London", "National")
+// is too broad to place a unit by, as everywhere else, so a size and a region
+// with no use that lines up is "Size fits, in their area, use not matched".
+export type ReqChip = "linked" | "fits" | "size_fits_area_only" | "place_fits_size_unknown" | "place_fits_size_out" | "size_fits_no_places" | "size_unknown_no_places" | "size_out_no_places"
   | "not_on_list" | "place_unknown" | "held_no_detail" | "no_requirement";
 
 export const REQ_CHIP_LABELS: Record<ReqChip, string> = {
   linked: "Linked to their requirement",
   fits: "Fits their requirement",
+  size_fits_area_only: "Size fits, in their area, use not matched",
   place_fits_size_unknown: "Place fits, size not known",
   place_fits_size_out: "Place fits, size outside their range",
   size_fits_no_places: "Size fits, no places given",
@@ -328,6 +336,7 @@ export const REQUIREMENT_REGIONS = ["East Anglia", "Ireland", "London", "Midland
 export interface ChipRequirement {
   id: string;
   size?: string[] | string | null;
+  use?: readonly unknown[] | null;
   locations?: string[] | null;
   dealId?: string | null;
 }
@@ -339,6 +348,10 @@ export interface ChipPlace {
   // Scheme name, town, property name, address and postcode, in one string.
   text: string;
   sqft: number | null;
+  // The unit's use class and name, from its Letting Tracker row: what the
+  // fit rule's use test reads on every other screen.
+  useClass?: string | null;
+  unitName?: string | null;
   dealId?: string | null;
   linkedRequirementIds?: string[];   // from a viewing on the unit or a Wanted line
 }
@@ -348,9 +361,12 @@ export interface ChipResult {
   requirementId: string | null;
   unitSqft: number | null;
   range: { min: number; max: number } | null;
+  // Why it fits, or what is missing ("Size and use fit", "Size fits, at
+  // Bluewater"); null for a linked or absent requirement.
+  why?: string | null;
 }
 
-const CHIP_ORDER: ReqChip[] = ["linked", "fits", "size_fits_no_places", "place_fits_size_unknown", "place_fits_size_out", "size_unknown_no_places", "size_out_no_places",
+const CHIP_ORDER: ReqChip[] = ["linked", "fits", "size_fits_area_only", "size_fits_no_places", "place_fits_size_unknown", "place_fits_size_out", "size_unknown_no_places", "size_out_no_places",
   "place_unknown", "not_on_list", "held_no_detail", "no_requirement"];
 const isRegionChip = (place: string) => (REQUIREMENT_REGIONS as readonly string[]).some(r => r.toLowerCase() === place.toLowerCase());
 const placesOf = (req: ChipRequirement) => (req.locations || []).map(l => String(l ?? "").trim()).filter(Boolean);
@@ -361,7 +377,8 @@ export function placeFits(place: string, at: Pick<ChipPlace, "regions" | "text">
   if (!p) return false;
   if (p === "national") return true;
   if ((at.regions || []).some(r => r.toLowerCase() === p)) return true;
-  // Unlike requirementFitsUnit, "London" is kept: it is a region chip here.
+  // Unlike the fit rule's place test, "London" is kept: it is a region chip
+  // here, read for the chip's wording, never for "Fits their requirement".
   return p.length > 2 && at.text.toLowerCase().includes(p);
 }
 
@@ -369,28 +386,33 @@ function chipFor(req: ChipRequirement, place: ChipPlace): ChipResult {
   const sqft = place.sqft && place.sqft > 0 ? place.sqft : null;
   const range = parseReqSize(req.size ?? null);
   const base = { requirementId: req.id, unitSqft: sqft, range };
-  if ((place.linkedRequirementIds || []).includes(req.id) || (!!req.dealId && req.dealId === place.dealId)) return { chip: "linked", ...base };
+  if ((place.linkedRequirementIds || []).includes(req.id) || (!!req.dealId && req.dealId === place.dealId)) return { chip: "linked", ...base, why: null };
   const places = placesOf(req);
-  const sizeKnown = sqft !== null && range !== null;
-  const sizeFits = sizeKnown && sqft! >= range!.min && sqft! <= range!.max;
+  const onList = places.some(p => placeFits(p, place));
+  const fit = requirementFit({ size: req.size ?? null, use: req.use ?? null, requirement_locations: places },
+    { sqft, use_class: place.useClass ?? null, unit_name: place.unitName ?? null, property_text: place.text });
+  // A fit by size and use where the brand names places and this is not one of
+  // them still fits by the rule; the line says so.
+  if (fit.fits) return { chip: "fits", ...base, why: places.length && !onList ? `${fit.why}; not on their list of places` : fit.why };
+  const why = fit.why;
   if (places.length === 0) {
-    // No places given (the usual PIPnet case): only the size can be judged,
-    // and the chip never says the place was checked.
-    if (range === null) return { chip: "held_no_detail", ...base };
-    return { chip: sizeFits ? "size_fits_no_places" : sizeKnown ? "size_out_no_places" : "size_unknown_no_places", ...base };
+    // No places given (the usual PIPnet case): only the size and the use can
+    // be judged, and the chip never says the place was checked.
+    if (range === null) return { chip: "held_no_detail", ...base, why };
+    return { chip: fit.size === "fits" ? "size_fits_no_places" : fit.size === "outside" ? "size_out_no_places" : "size_unknown_no_places", ...base, why };
   }
-  if (places.some(p => placeFits(p, place))) {
-    return { chip: sizeFits ? "fits" : sizeKnown ? "place_fits_size_out" : "place_fits_size_unknown", ...base };
+  if (onList) {
+    return { chip: fit.size === "fits" ? "size_fits_area_only" : fit.size === "outside" ? "place_fits_size_out" : "place_fits_size_unknown", ...base, why };
   }
   // Region chips cannot be judged for a property outside the scheme registry.
-  if (place.regions === null && places.some(isRegionChip)) return { chip: "place_unknown", ...base };
-  return { chip: "not_on_list", ...base };
+  if (place.regions === null && places.some(isRegionChip)) return { chip: "place_unknown", ...base, why };
+  return { chip: "not_on_list", ...base, why };
 }
 
 /** The best chip across the brand's live requirements, with the requirement that produced it. */
 export function requirementChip(requirements: ChipRequirement[], place: ChipPlace): ChipResult {
   const sqft = place.sqft && place.sqft > 0 ? place.sqft : null;
-  let best: ChipResult = { chip: "no_requirement", requirementId: null, unitSqft: sqft, range: null };
+  let best: ChipResult = { chip: "no_requirement", requirementId: null, unitSqft: sqft, range: null, why: null };
   for (const req of requirements) {
     const got = chipFor(req, place);
     if (CHIP_ORDER.indexOf(got.chip) < CHIP_ORDER.indexOf(best.chip)) best = got;

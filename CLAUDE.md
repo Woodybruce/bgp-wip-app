@@ -1795,10 +1795,13 @@ Asked the four questions, he answered "Yes to all".
   chips and the targets, and the centre's box leaves them out of who trades
   there. They still count as occupiers on the scheme. A real brand caught by
   the rule goes on `KEEP` there, with a test.
-- A requirement fits a marketing unit on size AND use: the unit's use class
-  is one the requirement lists, or lines up by `USE_HINTS`; a side with no
-  use stated fits on size alone.
-- "Requirements whose use fits a unit" (under More) lists only brands the
+- A requirement fits a marketing unit by the one fit rule (`requirementFit`,
+  19 November 2026; see the Requirements centre section): size and use, or
+  size and a place it names; with no size to compare, both. Targets' Fits
+  here gives each unit's reason, and a requirement is "held" on a target
+  only when it fits a unit being marketed here.
+- "Requirements that fit a unit being marketed here" (under More; "whose use
+  fits a unit" until 19 November 2026) lists only brands the
   board would offer as a gap: a linked brand record, in the scheme's
   categories (`fitsPositioning`), not junk. The property conversation works
   for a joint agent on its own schemes and on a shared centre page.
@@ -4171,6 +4174,59 @@ In the news loaded only when opened; market listings on the brand page with
 Confirm). Read it before changing the board, the fit rules or a requirement
 link.
 
+**One fit rule (Woody, 2026-11-19, decision 2: "size and use or place").**
+`requirementFit` in `shared/requirement-fit.ts` is the only judge of whether
+a leasing requirement fits a unit: the unit's size in the requirement's
+(tolerance-widened) range AND its use lining up (`requirementUseLinesUp`: a
+use on both sides, by the class-to-use map, `USE_HINTS` on the class and the
+unit's name, or the same words) or a place the requirement names in the
+property's name or address (`requirementPlaceIn`: London, Greater London,
+Central London, UK, England, national and nationwide place nothing); with no
+size to compare (the unit's or the requirement's), the use AND the place.
+Each answer carries `why` ("Size and use fit", "Size fits, at Bluewater",
+"Use fits, at Kent; no size to compare"). Lists of fits sort by `fitScore`
+then the smaller unit. Do not write a second fit test on a screen.
+- **Where it decides**: the board's Fits column
+  (`/api/crm/requirements-leasing/matches`) and its Match dialog
+  (`/api/requirements/matches/:id`), both over the units on the market
+  (`FIT_POOL_STATUSES`: AVA and NEG, in SQL) in the same order; the Letting
+  Tracker's Find matching requirements and AI targets' requirement
+  candidates; Brand Gap's list under More and Targets' Fits here; a
+  landlord's space fits (`server/account-teams.ts`); the target engine; a
+  brand's suggested pitches (a unit is pitched on a requirement only when it
+  fits; "Fits", "Size fits" and "Close to" keep their wording); and the Brand
+  CRM chip (`chipFor` in `shared/brand-stage.ts`, fed the tracker row's use
+  class and name through `UnitInfo`). The chip's wording stayed; "Fits their
+  requirement" now means the rule fits, and the one new key,
+  `size_fits_area_only` ("Size fits, in their area, use not matched"), is a
+  size and a region with no use that lines up (it read "Fits" before).
+  The chip's `why` is cleared with its requirement id for a joint agent.
+  The investment Match dialog keeps `requirementUseFits` (the lenient form).
+- **Each fit opens the unit and says why**: the Fits cell links each unit to
+  its schedule row on the property page (`propertyUnitHref` with the
+  `scheduleRowId` the route reads by stored ties), else its tracker row
+  (`trackerUnitHref`), with the reason under it; "+ brief" is no longer
+  hover-only; **+N more** opens the Match dialog for staff and, for a client
+  login (no Match dialog: `/api/requirements/` is on no client gateway list,
+  so its button is staff only now), shows the rest in place (a client is
+  sent up to 20 fits a requirement, staff 5). Both dialogs show each fit's
+  reason, link the unit or the requirement, and say why nothing fits.
+- **The property chips under Map Locations are gone** (finding 9: every CRM
+  property whose name or address held a typed place), and with them the
+  board's download of the whole property list.
+- **Units to fill in** (`UnitFitGapsCard` in
+  `client/src/components/requirement-centre.tsx`; `unitFitGaps`;
+  `GET /api/requirement-centre/unit-gaps`, `unitGapsList` in
+  `server/requirement-intake-routes.ts`, behind `staffActor`): BGP staff see
+  "Of N units on the market, N have no use class and N no size" on the board
+  with Show the units, each opening its Letting Tracker row. It reads only.
+- Tests: `qa/regression/requirement-fit.test.mjs` (the rule and a guard on
+  every caller), `requirement-match-dialogs.test.mjs`,
+  `scheme-positioning.test.mjs`, `brand-gap-board.test.mjs`,
+  `shared/brand-stage.test.ts`. Not changed by it: ChatBGP never had a fit
+  test of its own; the Fits column still reads requirements with
+  `status = 'Active'` (one meaning of live is step 4 of the review).
+
 The PIPnet import saw no listing from 15 to 19 November 2026. The login
 worked, but every PIPnet search goes through ScraperAPI, and that account was
 out of credits (100,073 of 100,000). Woody topped it up on 19 November, giving
@@ -4618,9 +4674,8 @@ nothing new" under NOT built.
     section). Until then client logins were given nothing new here, and
     slice-limited listings and a share marker (review, Across the app 4)
     waited on him; neither is needed now.
-  - **The single fit rule.** The six matchers still disagree (Fits column,
-    Match dialog, Brand Gap, AI matching, ChatBGP, target engine); he has to
-    choose the rule (size alone, or size plus use or place).
+  - **The single fit rule.** Answered on 19 November 2026 ("size and use
+    or place"): built, see "One fit rule" above.
   - **Brand-first cards**, more than one imported search per brand and
     numeric size fields (a schema change that was not in the approval).
   - Also not built: owners handed out from the brand's BGP team, the Monday
@@ -4684,6 +4739,8 @@ nothing new" under NOT built.
     alone). The Match dialog offers only units live on the tracker. The
     Fits column, account space fits and the target engine still match use
     by words (OR a place): part of the single fit rule, Woody's call.
+    (Superseded on 19 November 2026 by the one fit rule, above: every one of
+    them asks `requirementFit`, which needs a use on both sides.)
   - **Imports fold into open rows only** (`listingTarget` in
     `shared/requirement-live.ts`): by the listing's own link first, then
     the brand, newest first, never a closed row. A listing whose own row a
@@ -4694,7 +4751,7 @@ nothing new" under NOT built.
   - Guards: `qa/regression/requirements-app-links.test.mjs`,
     `requirement-client-leaks.test.mjs`, `requirement-match-dialogs.test.mjs`,
     `requirement-import-matching.test.mjs`.
-  - Left for Woody: the single fit rule; what a full Landsec login reads on
+  - Left for Woody: what a full Landsec login reads on
     a brand (the take still carries BGP's deal history, and the activity
     take BGP's investment requirements and board lots); ChatBGP's
     `sql_write` can still insert a requirement row with any sources (every

@@ -10538,30 +10538,49 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const params: any[] = [];
       let paramIndex = 1;
 
-      if (Array.isArray(requirement.requirement_locations) && requirement.requirement_locations.length > 0) {
-        const locClauses = requirement.requirement_locations.map((_: any, i: number) => {
-          params.push(`%${requirement.requirement_locations[i]}%`);
-          return `au.location ILIKE $${paramIndex++}`;
-        });
-        conditions.push(`(${locClauses.join(" OR ")})`);
+      const { requirementFit, requirementUseFits } = await import("@shared/requirement-fit");
+      if (reqType === "investment") {
+        const { isTrackerLiveStatus } = await import("@shared/letting-rules");
+        // An investment requirement keeps its own match: its places in SQL,
+        // then its uses against the unit's planning class.
+        if (Array.isArray(requirement.requirement_locations) && requirement.requirement_locations.length > 0) {
+          const locClauses = requirement.requirement_locations.map((_: any, i: number) => {
+            params.push(`%${requirement.requirement_locations[i]}%`);
+            return `au.location ILIKE $${paramIndex++}`;
+          });
+          conditions.push(`(${locClauses.join(" OR ")})`);
+        }
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+        const invested = await pool.query(`
+          SELECT au.*, p.name as property_name, p.address as property_address
+          FROM available_units au
+          LEFT JOIN crm_properties p ON au.property_id = p.id
+          ${whereClause}
+          ORDER BY au.created_at DESC
+        `, params);
+        return res.json(invested.rows.filter((u: any) => isTrackerLiveStatus(u.marketing_status) && requirementUseFits(requirement.use, u)).slice(0, 20));
       }
-
-      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-      const query = `
-        SELECT au.*, p.name as property_name, p.address as property_address
+      // A leasing requirement: the one fit rule (requirementFit, Woody
+      // 2026-11-19: size and use or place; with no size to compare, both)
+      // over the same units as the board's Fits column (on the market on the
+      // Letting Tracker), in the same order, each with why it fits and its
+      // schedule row (stored ties only) so it opens the unit.
+      const { FIT_POOL_STATUSES, fitScore } = await import("@shared/requirement-fit");
+      const matches = await pool.query(`
+        SELECT au.*, p.name as property_name, p.address as property_address,
+               COALESCE(au.tenancy_unit_id::text,
+                 (SELECT ts.id::text FROM tenancy_schedule_units ts
+                   WHERE ts.letting_tracker_unit_id = au.id AND ts.property_id = au.property_id LIMIT 1)) AS schedule_row_id
         FROM available_units au
         LEFT JOIN crm_properties p ON au.property_id = p.id
-        ${whereClause}
-        ORDER BY au.created_at DESC
-      `;
-      const matches = await pool.query(query, params);
-      // Only units live on the Letting Tracker (Brand Gap's rule for the
-      // marketing units), and the unit's planning class (E(b), A3) read
-      // against the requirement's uses (Restaurant): compared as text in SQL,
-      // the dialog was empty for every requirement that names a use.
-      const { requirementUseFits } = await import("@shared/requirement-fit");
-      const { isTrackerLiveStatus } = await import("@shared/letting-rules");
-      res.json(matches.rows.filter((u: any) => isTrackerLiveStatus(u.marketing_status) && requirementUseFits(requirement.use, u)).slice(0, 20));
+        WHERE au.marketing_status = ANY($1::text[])
+      `, [[...FIT_POOL_STATUSES]]);
+      const placeText = (u: any) => `${u.property_name || ""} ${typeof u.property_address === "string" ? u.property_address : JSON.stringify(u.property_address ?? "")} ${u.location || ""}`;
+      const fits = matches.rows
+        .map((u: any) => ({ u, fit: requirementFit(requirement, { sqft: u.sqft, use_class: u.use_class, unit_name: u.unit_name, property_text: placeText(u) }) }))
+        .filter(({ fit }: any) => fit.fits)
+        .sort((a: any, b: any) => (fitScore(b.fit) - fitScore(a.fit)) || ((Number(a.u.sqft) || Infinity) - (Number(b.u.sqft) || Infinity)));
+      res.json(fits.slice(0, 20).map(({ u, fit }: any) => ({ ...u, fit_why: fit.why, fit_count: fits.length })));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -10580,13 +10599,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const conditions: string[] = [];
       const params: any[] = [];
-      let paramIndex = 1;
-
-      if (unit.location) {
-        conditions.push(`r.requirement_locations IS NOT NULL AND array_length(r.requirement_locations, 1) > 0 AND EXISTS (SELECT 1 FROM unnest(r.requirement_locations) loc WHERE $${paramIndex} ILIKE '%' || loc || '%' OR loc ILIKE '%' || $${paramIndex} || '%')`);
-        params.push(unit.location);
-        paramIndex++;
-      }
+      // The unit's property name and address, for the place half of the one fit rule.
+      const unitPlace = (await pool.query(`SELECT name, address::text AS address FROM crm_properties WHERE id = $1`, [unit.property_id ?? unit.propertyId ?? null])).rows[0] || {};
+      const unitPlaceText = `${unitPlace.name || ""} ${unitPlace.address || ""} ${unit.location || ""}`;
 
       // The one live rule: closed requirements are not matches, and the
       // best-evidenced come first. Staff get each row's state and dated line.
@@ -10599,13 +10614,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       conditions.push(`${requirementStateSql("r")} <> 'closed'`);
       const whereClause = `WHERE ${conditions.join(" AND ")}`;
       const orderBy = `ORDER BY ${matchScope ? "" : `(CASE ${requirementStateSql("r")} WHEN 'live' THEN 0 WHEN 'to_confirm' THEN 1 ELSE 2 END), `}r.created_at DESC`;
-      // The unit's planning class (E(b), A3) read against each requirement's
-      // uses (Restaurant): compared as text in SQL, a unit with a use class
-      // matched only rows holding that raw text. The uses are read first, then
-      // the first 20 that fit are fetched whole, in the same order.
-      const { requirementUseFits } = await import("@shared/requirement-fit");
-      const candidates = await pool.query(`SELECT r.id, r.use FROM crm_requirements_leasing r ${whereClause} ${orderBy}`, params);
-      const ids: string[] = candidates.rows.filter((r: any) => requirementUseFits(r.use, unit)).slice(0, 20).map((r: any) => String(r.id));
+      // The one fit rule (requirementFit, Woody 2026-11-19: size and use or
+      // place; with no size to compare, both). The requirements are read
+      // first, then the first 20 that fit are fetched whole, in the same order.
+      const { requirementFit } = await import("@shared/requirement-fit");
+      const candidates = await pool.query(`SELECT r.id, r.size, r.use, r.requirement_locations FROM crm_requirements_leasing r ${whereClause} ${orderBy}`, params);
+      const fitWhy = new Map<string, string>();
+      for (const r of candidates.rows) {
+        const fit = requirementFit(r, { sqft: unit.sqft, use_class: unit.use_class, unit_name: unit.unit_name, property_text: unitPlaceText });
+        if (fit.fits) fitWhy.set(String(r.id), fit.why);
+        if (fitWhy.size >= 20) break;
+      }
+      const ids: string[] = [...fitWhy.keys()];
       const query = `
         SELECT r.*, c.name as company_name, c.company_type as company_type
         FROM crm_requirements_leasing r
@@ -10613,7 +10633,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         WHERE r.id = ANY($1::text[])
       `;
       const fetched: any[] = ids.length ? (await pool.query(query, [ids])).rows : [];
-      const matches = { rows: ids.map(id => fetched.find((r: any) => String(r.id) === id)).filter(Boolean) };
+      const matches = { rows: ids.map(id => fetched.find((r: any) => String(r.id) === id)).filter(Boolean).map((r: any) => ({ ...r, fit_why: fitWhy.get(String(r.id)) || null })) };
       if (!matchScope) {
         return res.json(matches.rows.map((r: any) => { const live = requirementLive(r); return { ...r, state: live.state, state_label: live.stateLabel, date_label: live.dateLabel }; }));
       }
