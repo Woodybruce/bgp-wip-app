@@ -113,6 +113,8 @@ const OPEN_ON_THE_SHARED_LIST: Row[] = [
   ["GET", `/api/available-units/${U}/brief`, "allow"],
   ["POST", `/api/available-units/${U}/brief`, "allow"],
   ["POST", `/api/available-units/${U}/brief/draft-ai`, "allow"],
+  // Describe the brief in your own words (2026-11-19): the handler checks briefAccess.
+  ["POST", "/api/unit-briefs/read-note", "allow"],
   ["GET", `/api/available-units/${U}/files`, "allow"],
   ["POST", `/api/available-units/${U}/files`, "allow"],
   ["PATCH", `/api/available-units/files/${X}`, "allow"],

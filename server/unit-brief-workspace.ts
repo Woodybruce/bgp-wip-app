@@ -574,6 +574,43 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
     }
   });
 
+  // Type or paste the brief, and the dialog's boxes fill (Woody, 2026-11-19:
+  // "brief form needs our type and populate tool"). Keyed by the unit, so it
+  // works before the brief exists. Whoever may change the brief may use it
+  // (briefAccess and canEditTerms, as the save above). It reads the note and
+  // returns what it found, checked against the note: it never saves
+  // (server/brief-note-reader.ts, shared/brief-note.ts).
+  app.post("/api/unit-briefs/read-note", requireAuth, async (req, res) => {
+    try {
+      const unitId = typeof req.body?.unitId === "string" ? req.body.unitId : "";
+      const text = req.body?.text;
+      if (!unitId || typeof text !== "string") return res.status(400).json({ message: "Send the unit and the note" });
+      const unit = (await pool.query(
+        `SELECT au.id, au.unit_name, au.property_id, p.name AS property_name, lc.name AS landlord_name
+           FROM available_units au LEFT JOIN crm_properties p ON p.id = au.property_id LEFT JOIN crm_companies lc ON lc.id = p.landlord_id
+          WHERE au.id = $1`, [unitId])).rows[0];
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      const access = await briefAccess(req, unit.property_id);
+      if (!access) return res.status(403).json({ message: "This brief is outside your access" });
+      if (!access.canEditTerms) return res.status(403).json({ message: "Your login can comment on and agree the brief, not change it" });
+      // The categories the brief's picker offers: Landsec's agency brief list
+      // at one of its schemes (the workspace read's test), else BGP's taxonomy.
+      const { schemeForPropertyName } = await import("./landsec-schemes");
+      const landsecScheme = !!schemeForPropertyName(unit.property_name) && /land\s?sec/i.test(String(unit.landlord_name || ""));
+      const taxonomy: readonly string[] = landsecScheme ? (await import("@shared/landsec")).LANDSEC_BRIEF_CATEGORIES : (await import("@shared/tenant-categories")).TENANT_CATEGORIES;
+      const { readBriefNote, BriefNoteReaderError } = await import("./brief-note-reader");
+      try {
+        res.json(await readBriefNote({ text, unitName: unit.unit_name, propertyName: unit.property_name, taxonomy, landsecCategories: landsecScheme }));
+      } catch (e) {
+        if (e instanceof BriefNoteReaderError) return res.status(e.status).json({ message: e.message });
+        throw e;
+      }
+    } catch (e: any) {
+      console.error("[unit-brief read-note]", e?.message);
+      res.status(500).json({ message: "The note could not be read. Fill the brief in by hand." });
+    }
+  });
+
   // Who can be added: BGP staff, the client's people, and agent firms.
   app.get("/api/unit-briefs/:id/people-candidates", requireAuth, async (req, res) => {
     try {

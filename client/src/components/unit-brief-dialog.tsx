@@ -25,7 +25,9 @@ import { BriefPeoplePanel } from "@/components/unit-brief/brief-people";
 import { landsecTeamSuggestions } from "@shared/landsec-personnel";
 import { BriefFilesPanel } from "@/components/unit-brief/brief-files";
 import { BriefCommentsPanel } from "@/components/unit-brief/brief-comments";
+import { BriefNoteFill } from "@/components/unit-brief/brief-note-fill";
 import type { SuggestedBriefPerson } from "@/components/unit-brief/types";
+import type { BriefNoteReading } from "@shared/brief-note";
 
 type BriefWithTargets = UnitBrief & { targets: UnitTargetOperator[] };
 
@@ -39,34 +41,45 @@ function daysUntil(dateStr: string | null | undefined): number | null {
   return Math.ceil((d.getTime() - Date.now()) / 86400000);
 }
 
-function DeadlineChip({ label, date }: { label: string; date: string | null | undefined }) {
+// The figures at the top of the Brief tab are buttons (Woody, 2026-11-19,
+// "the pills at the top are not clickable"): each opens what it counts.
+const tileButton = "border rounded-lg p-2 text-center w-full transition-colors hover:border-foreground/40 hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+function DeadlineChip({ label, date, onClick, testId }: { label: string; date: string | null | undefined; onClick: () => void; testId: string }) {
   const days = daysUntil(date);
   if (days === null) return null;
   const overdue = days < 0;
   const close = days >= 0 && days <= 3;
   return (
-    <div className={`border rounded-lg p-2 text-center ${overdue ? "border-red-400 bg-red-50 dark:bg-red-950/30" : close ? "border-amber-400 bg-amber-50 dark:bg-amber-950/30" : ""}`}>
+    <button type="button" onClick={onClick} title={`Go to ${label}`} data-testid={testId} className={`${tileButton} ${overdue ? "border-red-400 bg-red-50 dark:bg-red-950/30" : close ? "border-amber-400 bg-amber-50 dark:bg-amber-950/30" : ""}`}>
       <p className={`text-lg font-bold ${overdue ? "text-red-600" : close ? "text-amber-600" : ""}`}>
         {overdue ? `${Math.abs(days)}d over` : `${days}d`}
       </p>
       <p className="text-[10px] text-muted-foreground">{label}</p>
-    </div>
+    </button>
   );
 }
 
-function Kpi({ value, target, label }: { value: number; target?: number | null; label: string }) {
+function Kpi({ value, target, label, onClick, testId }: { value: number; target?: number | null; label: string; onClick: () => void; testId: string }) {
   const met = target != null && value >= target;
   return (
-    <div className={`border rounded-lg p-2 text-center ${met ? "border-green-400" : ""}`}>
+    <button type="button" onClick={onClick} title={`Show ${label.toLowerCase()} on Targets`} data-testid={testId} className={`${tileButton} ${met ? "border-green-400" : ""}`}>
       <p className={`text-lg font-bold ${met ? "text-green-600" : ""}`}>
         {value}{target != null ? <span className="text-xs text-muted-foreground font-normal">/{target}</span> : null}
       </p>
       <p className="text-[10px] text-muted-foreground">{label}</p>
-    </div>
+    </button>
   );
 }
 
 type BriefTab = "brief" | "commercials" | "people" | "targets" | "files" | "comments";
+// Which targets the Targets tab shows, from the figure pressed on the Brief tab.
+type TargetsFilter = "all" | "priorityA" | "met" | "inspected";
+const TARGETS_FILTER_WORDS: Record<Exclude<TargetsFilter, "all">, string> = {
+  priorityA: "the priority A targets",
+  met: "the targets met so far",
+  inspected: "the targets that have inspected",
+};
 
 const TEXT_FIELDS = ["title", "clientCompany", "objective", "locationContext", "targetCriteria", "priorityCategories", "agentInstruction", "successMeasures", "instructedDate", "deadline1Date", "deadline1Deliverables", "deadline2Date", "deadline2Deliverables"] as const;
 
@@ -93,8 +106,10 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
   const [commercials, setCommercials] = useState<CommercialsDraft | null>(null);
   const [pendingTargets, setPendingTargets] = useState<any[]>([]);
   const [suggestedPeople, setSuggestedPeople] = useState<SuggestedBriefPerson[]>([]);
+  const [targetsFilter, setTargetsFilter] = useState<TargetsFilter>("all");
+  const openTargets = (filter: TargetsFilter) => { setTargetsFilter(filter); setTab("targets"); };
 
-  useEffect(() => { if (open) setTab(initialTab || "brief"); }, [open, unit?.id, initialTab]);
+  useEffect(() => { if (open) { setTab(initialTab || "brief"); setTargetsFilter("all"); } }, [open, unit?.id, initialTab]);
   useEffect(() => { if (open && initialSuggestedPeople?.length) setSuggestedPeople(initialSuggestedPeople); }, [open, unit?.id, initialSuggestedPeople]);
 
   const briefKey = ["/api/available-units", unit?.id, "brief"];
@@ -233,6 +248,19 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
     }
   };
 
+  // What "Describe the brief in your own words" read, already checked against
+  // the note on the server: into the form for review, never saved until the
+  // person presses Save. Categories are added to those already chosen.
+  const applyNote = (r: BriefNoteReading) => {
+    const next: Record<string, string> = { ...r.fields };
+    if (r.categories.length) {
+      const known: readonly string[] = r.landsecCategories ? LANDSEC_BRIEF_CATEGORIES : TENANT_CATEGORIES;
+      next.priorityCategories = Array.from(new Set([...splitCategories(f("priorityCategories"), known), ...r.categories])).join(", ");
+    }
+    if (Object.keys(next).length) setForm(p => ({ ...p, ...next }));
+    if (Object.keys(r.commercials).length) setCommercials(p => ({ ...(p || savedCommercials), ...r.commercials }));
+  };
+
   const handleExtract = async (file: File) => {
     setExtracting(true);
     try {
@@ -293,6 +321,23 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
   const priorityA = targets.filter(t => t.priority === "A").length;
   const meetings = targets.filter(t => MET_STATUSES.has(t.status || "")).length;
   const inspections = targets.filter(t => INSPECTED_STATUSES.has(t.status || "")).length;
+  const shownTargets = targetsFilter === "priorityA" ? targets.filter(t => t.priority === "A")
+    : targetsFilter === "met" ? targets.filter(t => MET_STATUSES.has(t.status || ""))
+    : targetsFilter === "inspected" ? targets.filter(t => INSPECTED_STATUSES.has(t.status || ""))
+    : targets;
+  const targetsFilterLine = targetsFilter !== "all" && (
+    <p className="text-xs text-muted-foreground" data-testid="brief-targets-filter">
+      Showing {TARGETS_FILTER_WORDS[targetsFilter]}: {shownTargets.length} of {targets.length}.{" "}
+      <button type="button" className="text-primary hover:underline" onClick={() => setTargetsFilter("all")} data-testid="brief-targets-show-all">Show all</button>
+    </p>
+  );
+  // A deadline figure goes to its box on the Brief tab.
+  const goToField = (id: string) => {
+    const el = document.getElementById(id) as HTMLInputElement | null;
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.focus({ preventScroll: true });
+  };
   const approval = ws?.approval;
   const approvalTone = approval?.state === "agreed" ? "border-emerald-600/60 text-emerald-700 dark:text-emerald-400" : approval?.state === "awaiting" || approval?.state === "draft" ? "border-amber-500/60 text-amber-700 dark:text-amber-400" : "border-border text-muted-foreground";
   const commentCount = ws?.comments.filter(c => c.kind === "comment").length || 0;
@@ -312,9 +357,9 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
             <Target className="h-4 w-4 shrink-0" />
             <span>Targeting Brief · {unit?.unitName}</span>
             {approval && (
-              <span className={`rounded-full border px-2 py-px text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap ${approvalTone}`} data-testid="brief-approval-status">
+              <button type="button" onClick={() => setTab("people")} title="Open People & sign-off" className={`rounded-full border px-2 py-px text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap hover:bg-muted/60 ${approvalTone}`} data-testid="brief-approval-status">
                 {approval.label}{approval.state === "agreed" && ws?.brief.agreedAt ? ` · ${new Date(ws.brief.agreedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}
-              </span>
+              </button>
             )}
           </DialogTitle>
           <DialogDescription>
@@ -334,13 +379,14 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
               <Pill active={tab === "brief"} onClick={() => setTab("brief")} data-testid="brief-tab-brief">Brief</Pill>
               <Pill active={tab === "commercials"} onClick={() => setTab("commercials")} data-testid="brief-tab-commercials">Commercials</Pill>
               <Pill active={tab === "people"} onClick={() => setTab("people")} data-testid="brief-tab-people">People &amp; sign-off{approval && approval.total > 0 ? <PillCount n={approval.agreed} active={tab === "people"} /> : null}{approval && approval.total > 0 ? <span className="font-mono">/{approval.total}</span> : null}</Pill>
-              <Pill active={tab === "targets"} onClick={() => setTab("targets")} data-testid="brief-tab-targets">Targets<PillCount n={targets.length + pendingTargets.length} active={tab === "targets"} /></Pill>
+              <Pill active={tab === "targets"} onClick={() => openTargets("all")} data-testid="brief-tab-targets">Targets<PillCount n={targets.length + pendingTargets.length} active={tab === "targets"} /></Pill>
               <Pill active={tab === "files"} onClick={() => setTab("files")} data-testid="brief-tab-files">Plans &amp; files<PillCount n={fileCount} active={tab === "files"} /></Pill>
               <Pill active={tab === "comments"} onClick={() => setTab("comments")} data-testid="brief-tab-comments">Comments<PillCount n={commentCount} active={tab === "comments"} /></Pill>
             </div>
 
             {tab === "brief" && (
               <div className="space-y-4">
+                {!readOnly && unit && <BriefNoteFill unitId={unit.id} saveWord={brief ? "Save changes" : "Create brief"} onRead={applyNote} />}
                 {!readOnly && (
                   <div className="flex items-center gap-2 flex-wrap">
                     <input ref={fileInputRef} type="file" accept=".pdf,.docx,.doc" className="hidden" onChange={e => { const file = e.target.files?.[0]; if (file) handleExtract(file); }} />
@@ -363,12 +409,12 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
 
                 {brief && (
                   <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                    <Kpi value={targets.length} target={brief.minTargets} label="Targets" />
-                    <Kpi value={priorityA} target={brief.priorityTargets} label="Priority A" />
-                    <Kpi value={meetings} label="Meetings" />
-                    <Kpi value={inspections} label="Inspections" />
-                    <DeadlineChip label="Deadline 1" date={brief.deadline1Date} />
-                    <DeadlineChip label="Deadline 2" date={brief.deadline2Date} />
+                    <Kpi value={targets.length} target={brief.minTargets} label="Targets" onClick={() => openTargets("all")} testId="brief-kpi-targets" />
+                    <Kpi value={priorityA} target={brief.priorityTargets} label="Priority A" onClick={() => openTargets("priorityA")} testId="brief-kpi-priority-a" />
+                    <Kpi value={meetings} label="Meetings" onClick={() => openTargets("met")} testId="brief-kpi-meetings" />
+                    <Kpi value={inspections} label="Inspections" onClick={() => openTargets("inspected")} testId="brief-kpi-inspections" />
+                    <DeadlineChip label="Deadline 1" date={brief.deadline1Date} onClick={() => goToField("brief-field-deadline1")} testId="brief-kpi-deadline1" />
+                    <DeadlineChip label="Deadline 2" date={brief.deadline2Date} onClick={() => goToField("brief-field-deadline2")} testId="brief-kpi-deadline2" />
                   </div>
                 )}
 
@@ -419,11 +465,11 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <Label className="text-xs">Deadline 1</Label>
-                      <Input type="date" value={f("deadline1Date")} onChange={e => setF("deadline1Date", e.target.value)} />
+                      <Input type="date" id="brief-field-deadline1" value={f("deadline1Date")} onChange={e => setF("deadline1Date", e.target.value)} />
                     </div>
                     <div>
                       <Label className="text-xs">Deadline 2</Label>
-                      <Input type="date" value={f("deadline2Date")} onChange={e => setF("deadline2Date", e.target.value)} />
+                      <Input type="date" id="brief-field-deadline2" value={f("deadline2Date")} onChange={e => setF("deadline2Date", e.target.value)} />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -471,10 +517,11 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
                   suggestedLabel={suggestedPeople.length ? undefined : "The usual team for this scheme"} />
               : needsBrief("People and sign-off"))}
 
+            {tab === "targets" && readOnly && targetsFilterLine}
             {tab === "targets" && readOnly && (
-              targets.length === 0 ? <p className="text-sm text-muted-foreground">No target operators have been added yet.</p> : (
+              shownTargets.length === 0 ? <p className="text-sm text-muted-foreground">{targets.length === 0 ? "No target operators have been added yet." : "None of the targets is in this list yet."}</p> : (
                 <ul className="rounded-lg border divide-y text-sm" data-testid="brief-targets-readonly">
-                  {targets.map(t => (
+                  {shownTargets.map(t => (
                     <li key={t.id} className="px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                       <span className="font-medium min-w-0 truncate">{t.operatorName}</span>
                       {t.priority && <span className="text-[11px] font-semibold text-muted-foreground">Priority {t.priority}</span>}
@@ -487,10 +534,11 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
             )}
             {tab === "targets" && !readOnly && (
               <div className="space-y-3">
+                {targetsFilterLine}
                 {/* Adding the first target creates the brief with whatever
                     is filled in so far (UX #30). */}
                 <TargetOperatorsTable
-                  targets={targets}
+                  targets={shownTargets}
                   clientCompanyId={jointAgent ? null : (brief as any)?.clientCompanyId || null}
                   restricted={jointAgent}
                   ensureBriefId={async () => {
