@@ -145,6 +145,58 @@ back to 2025, and were never turned into rows. 136 of them are for brands
 already on the board. The 321 that did become rows arrived between May and
 November.
 
+**PIPnet seen from inside.** On 19 November I logged in with BGP's own account
+from a build machine, using the login Woody put in the environment. I only
+read pages and ran searches.
+
+- **What the account has:**
+  - two services, Retail property details and Retail requirements;
+  - Alerts, and a Portfolio basket for each service;
+  - four help PDFs.
+- **The requirements search** filters by:
+  - place (2,638 of them);
+  - named client (7,703 brands);
+  - agent (2,281 firms);
+  - trade type (122, from bakers to cinemas);
+  - status, Latest or Dead (requirements no longer live);
+  - document date;
+  - "include extrapolated locations";
+  - named clients only;
+  - investment;
+  - use class (A1 to A5, and sui generis).
+- **The property search** filters by:
+  - subtype: vacant possession, auction or investment;
+  - availability: available, let, not available, under offer or unknown;
+  - tenure;
+  - use class;
+  - landlord, tenant, rent, rateable value and rent review date.
+
+  On BGP's account, Let, Investment and Auction returned nothing.
+- **Every search stops at 50 pages**, about 1,000 rows. Latest, Dead,
+  available and under offer all reached that cap. A 12-month import has to be
+  split into shorter date windows to get past it.
+- **PIPnet limits how many people can be logged in at once.** After a few test
+  logins it answered "Maximum number of licensed users for your company
+  exceeded". The app never logs off (`server/pipnet.ts` has no logoff), so
+  each import holds a licence until PIPnet times the session out. While it
+  does, a colleague can be refused. And if colleagues hold every licence, the
+  import is refused instead.
+- **What the import already does with a listing:**
+  - It keeps the flyer exactly as uploaded when PIPnet serves a PDF. When it
+    serves images, it stitches them into one PDF (`downloadBrochureAsPdf`).
+  - It reads the flyer into fields.
+  - It makes the agent firm a CRM company of type Agent, matched by exact
+    name only.
+  - It files the named agent as a contact under that firm and links them to
+    the requirement.
+- **What it does not do:**
+  - It writes no tenant-rep link between the agent and the brand
+    (`brand_agent_representations`). So the CRM's Agents list does not show
+    those firms as representing anyone.
+  - It skips "[No Client Quoted]" listings, and their agents with them.
+  - It matches firms by exact name, so "CBRE" and "CBRE Ltd" become two
+    companies.
+
 **What PIPnet holds**, from the 911 requirement listings and 379 available
 properties the app has stored:
 
@@ -681,3 +733,69 @@ committed. Nothing is pushed until Woody says push.
    "Market listing, listed on PIPnet 13 Oct, not confirmed", with Confirm, so
    staff confirm the listing rather than add a second row. Client logins
    already see every requirement there, so nothing changes for them.
+
+## Sourcing requirements: Woody's brief (19 November 2026)
+
+Woody, after seeing PIPnet: "the great thing about pip is it has agents
+flyers for their clients who have requirements ... It then pulls out the info
+and puts it into fields. We want to just replicate that to include having the
+original flyer or Landlord pack as they are uploaded. We want the last 12
+months. All agents who put up a flyer should be added to our tenant rep agent
+CRM ... We also though want to add requirements from other areas such as
+across the various chats in the app, our email and also any news we think is
+appropriate .. so pip, BGP, Chatbgp and web / news propel as example are all
+the ways we should be able to source requirements".
+
+**What already exists**
+
+- **PIPnet.** Every morning at 05:30 the app reads the last 3 months, at most
+  5 pages (about 100 listings). For each listing it:
+  - opens the detail page;
+  - keeps the flyer, as uploaded when it is a PDF;
+  - reads the flyer into use, type, places, size and a summary;
+  - creates or links the brand;
+  - creates or links the agent firm and the agent;
+  - links the agent to the requirement.
+- **BGP.** Add requirement on the board.
+- **ChatBGP.** A staff member telling ChatBGP to log a requirement confirms it.
+- **The app's chats.** A staff post in a staff-only thread that tags a brand
+  raises a suggestion.
+- **Email.** A brand's or an agent's own email raises a suggestion
+  (`server/requirement-email-feed.ts`).
+- **News.** Propel and the other publisher newsletters, and the nightly brand
+  news pass, raise suggestions.
+
+Every source other than BGP and ChatBGP raises a suggestion. A person
+confirms it in the To confirm tray, the rule of 12 November.
+
+**What is missing for the brief**
+
+1. **12 months, past the 50-page cap.** This is a one-off admin catch-up that
+   searches PIPnet a few weeks at a time. The daily run stays as it is.
+2. **Agents into the tenant rep CRM.** Each agent on a flyer becomes a
+   tenant-rep link to its brand (`brand_agent_representations`, through
+   `createBrandRepresentation`). Then the brand page, the CRM's Agents list
+   and the client Agents directory all show it. Firms are matched on a tidied
+   name (Ltd, LLP, "&"), so duplicates are not made.
+3. **Agents on anonymous listings** ("[No Client Quoted]", 6 of the latest
+   20). The agent firm and contact go into the CRM even when the listing
+   names no brand.
+4. **Log off PIPnet after every run**, so the import stops holding a licence.
+5. **More reach for the other sources:**
+   - reading private chats and ChatBGP conversations (waiting on Woody since
+     12 November);
+   - going back through email already filed;
+   - "raise as a requirement" on a news story;
+   - web news beyond the publishers and the nightly pass.
+
+**Decisions for Woody**
+
+- A. Run the 12-month catch-up? PIPnet's cap means the count is not known yet
+  (at least 1,000 listings). Each flyer is read once by AI, at a cost of a few
+  pence each. The first 100 would measure the real cost before the rest.
+- B. Anonymous listings: add only their agents, or also keep each one as a
+  requirement with no brand ("client not named, via <agent>")?
+- C. Should the agent firms and contacts the import makes say "From PIPnet"
+  on the record, so the team can tell them from ones a person added?
+- D. Should PIPnet listings stay market listings until someone at BGP
+  confirms them? Today they do, by the rule of 12 November.

@@ -4002,6 +4002,23 @@ features also go through ScraperAPI (`server/utils/scraperapi.ts`). Any 401 or
 PIPnet routes have the default 45-second request limit, so the menu crawl
 (`pipnet-inspect-property-search`) cannot finish through them.
 
+**PIPnet from inside** (19 November 2026, BGP's own login, read only; the
+review has the detail). There are two services, Retail property details and
+Retail requirements. Every search stops at 50 pages (about 1,000 rows).
+
+**PIPnet limits how many people can be logged in at once** ("Maximum number of
+licensed users for your company exceeded"). The app never logs off, so each
+import holds a licence until PIPnet times the session out. Any script that
+logs in must press Logoff (`logoff.jsp`) before it ends. Never close the
+browser on an open session.
+
+Woody's sourcing brief of the same day is the last section of the review:
+- 12 months of PIPnet flyers, each original kept;
+- every agent on a flyer into the tenant rep CRM;
+- requirements also from the chats, email and news.
+
+Its four decisions are waiting on him.
+
 Woody: "the requirements page is just picking up historic requirements
 dragged from a couple of data bases. We need it to be the live requirements
 centre for brands that are expanding to include and pick up on all chats and
