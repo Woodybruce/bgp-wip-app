@@ -22,9 +22,10 @@ The board is a feed of PIPnet listings laid out as an old spreadsheet.
 - Of 211 requirements on live, 210 are PIPnet listings that nobody at BGP has
   confirmed. One was made by BGP. None is closed. Only 13 of the 210 brands
   are on any BGP deal.
-- The PIPnet import has been stopped since 15 November. The app's ScraperAPI
-  account is out of credits (100,073 of 100,000 used), and every PIPnet
-  search goes through it. The login itself still works.
+- The PIPnet import had been stopped since 15 November, because the app's
+  ScraperAPI account was out of credits (100,073 of 100,000 used). Woody
+  topped it up on 19 November. A live read since shows nothing named was
+  missed: PIPnet's newest retail requirement is dated 9 November.
 - It opens on 58 suggestions, not on requirements.
 - The row runs to 17 columns. Three of them are empty on every row, and two
   more repeat what the row already says.
@@ -125,6 +126,18 @@ the import runs at 05:30 every day. The cause was found on 19 November:
 
 No new row has come from PIPnet since 12 November. 62 existing rows were seen
 again before the credits ran out.
+
+Woody topped up ScraperAPI the same morning, which gave a new limit of
+1,000,000 requests. A live read through the app at 07:04 then showed little
+had been missed:
+
+- **PIPnet's newest retail requirement is dated 9 November.** Of the latest
+  20, the 14 that name a client are already rows on the board. The other 6
+  are "[No Client Quoted]", which the import skips on purpose
+  (`server/pipnet.ts` line 947). PIPnet carries these anonymous requirements,
+  but the board cannot hold them, because a row needs a brand.
+- **The newest 20 available units** are dated 11 November, and all 20 are
+  already stored.
 
 The 590 "active" listings in the import table are not recent ones that went
 missing. They came from a one-off import in May 2026, with PIPnet dates going
@@ -581,8 +594,8 @@ The phone shell's Reqs list and the three unmounted panels are deleted.
 
 ## Build order
 
-1. **Get the PIPnet import running again.** ScraperAPI needs topping up, or
-   its plan needs to renew (Woody's). Then check the next 05:30 run.
+1. **Check the PIPnet import runs again.** ScraperAPI was topped up on 19
+   November. Check that the next 05:30 run sees listings again.
 
    Two more things are Woody's call:
    - whether the 590 May listings should be brought in;

@@ -3993,11 +3993,14 @@ where each one links, a build plan and seven decisions. All seven decisions
 are waiting on Woody. Nothing in it is built. Read it before changing the
 board, the fit rules or a requirement link.
 
-The PIPnet import has seen no listing since 15 November 2026. The app's
-PIPnet login works, but every PIPnet search goes through ScraperAPI, and on
-19 November the account was out of credits (100,073 of 100,000 requests;
-`GET /api/app-costs` shows the count). Eight other features also go through
-ScraperAPI (`server/utils/scraperapi.ts`).
+The PIPnet import saw no listing from 15 to 19 November 2026. The login
+worked, but every PIPnet search goes through ScraperAPI, and that account was
+out of credits (100,073 of 100,000). Woody topped it up on 19 November, giving
+a new limit of 1,000,000 (`GET /api/app-costs` shows the count). Eight other
+features also go through ScraperAPI (`server/utils/scraperapi.ts`). Any 401 or
+403 pauses every ScraperAPI call in the app for 10 minutes, in memory. The
+PIPnet routes have the default 45-second request limit, so the menu crawl
+(`pipnet-inspect-property-search`) cannot finish through them.
 
 Woody: "the requirements page is just picking up historic requirements
 dragged from a couple of data bases. We need it to be the live requirements
