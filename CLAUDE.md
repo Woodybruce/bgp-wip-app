@@ -2028,11 +2028,31 @@ credited to no company, 256 to Landsec and 10 to BGP. None had been touched.
   tests need `EMAIL_OFFER_CLEANUP_DATABASE_URL`, which the workflow sets).
   The one-off import must stay uncalled: running it again would write the
   rows back.
-- Not built, each waiting on Woody: the 49 interest lines the same import
-  left on 15 units (`unit_interest`, notes starting "Backfilled from synced
-  email:"); the live inbox sweep crediting an offer to the company of
-  whoever sent the email rather than the brand the subject names (TfL on
-  arches, Screwfix Direct on a House of Wizard offer).
+- **Who the live sweep credits** (Woody, same day, "Are you fixing it?" when
+  asked whether to fix it). The inbox sweep credited an offer or interest
+  to the company of whoever was on the email whenever that company was
+  typed as a tenant: TfL (typed "Tenant") took offers on the arches,
+  Screwfix Direct a House of Wizard offer, Crisp Pizza a Fulai offer.
+  `chooseEmailBrand` in `server/viewing-matching.ts` is now the one rule
+  for the offer sweep, the interest sweep and the diary interest sync
+  (`server/viewing-sync.ts`): one directory brand named in the subject wins
+  over the people on the email (the diary matcher's own name reading,
+  `inferViewingBrand`), unless the subject names their brand too ("Gails X
+  Reiss" stays Gail's; apostrophes are ignored); with no brand named the
+  people decide as before; with neither, nothing is written. A contact is
+  kept only when it belongs to the brand credited. A company recorded as
+  the unit's property landlord (`crm_properties.landlord_id`) is never
+  credited. Replayed against the 67 live sweep offers on 19 November 2026,
+  29 subjects named another brand than the one credited (Kakure, Fulai,
+  Fuel, The 2 Twits, Chayan among them). Rows already written are not
+  changed. TfL is still typed "Tenant" in the CRM and is not the recorded
+  landlord of the arches (Places for London is), so an arch email naming
+  no CRM brand is still credited to TfL until its type is corrected.
+  Tests: `server/viewing-email-brand.test.ts` (in `npm test`) and
+  `qa/regression/email-sweep-brand.test.mjs`.
+- Not built, waiting on Woody: the 49 interest lines the same import left
+  on 15 units (`unit_interest`, notes starting "Backfilled from synced
+  email:"); re-crediting the sweep's earlier rows.
 - Not yet applied on live: an admin presses Preview, then Apply.
 
 ## Property page rebuild (Woody, 2026-11-13) — docs/property-page-rebuild-2026-11-13.md
