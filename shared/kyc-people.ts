@@ -217,8 +217,9 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     // read counts for the person its link was for.
     let id: KycPartyPerson["id"] = { state: "not_started", ref: null, elsewhere: null, someoneElse: null, asked: false };
     const rank: Record<PersonIdState, number> = { passed: 6, waiting: 5, document: 4, started: 3, retry: 2, restart: 1, not_started: 0 };
+    // A check on their own link wins over the same result on someone else's.
     const better = (state: PersonIdState, ref: string, elsewhere: string | null) => {
-      if (rank[state] > rank[id.state]) id = { ...id, state, ref, elsewhere };
+      if (rank[state] > rank[id.state] || (rank[state] === rank[id.state] && !!id.elsewhere && !elsewhere)) id = { ...id, state, ref, elsewhere };
     };
     for (const r of input.requests) {
       const isOwn = own(r);

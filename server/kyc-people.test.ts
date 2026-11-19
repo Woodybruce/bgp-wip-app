@@ -106,6 +106,16 @@ test("Woody's check on Jack's link counts for Woody, not for Jack, and a file on
   assert.deepEqual(out.loose, [{ ref: "7MJEGT", files: 2, names: ["Woody Bruce", "Huseyn Mirhadiyev"] }]);
 });
 
+test("a check on their own link wins over the same result on someone else's", () => {
+  const jacks = request({ ref: "7MJEGT", finished: true, idChecks: [{ state: "approved", verifiedName: "WOODY BRUCE", verifiedDob: null }] });
+  const own = request({ token: "t-cap", ref: "4YTTES", recipientName: "woody bruce", idChecks: [{ state: "approved", verifiedName: "WOODY BRUCE", verifiedDob: null }] });
+  const out = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [jacks, own] });
+  const woody = out.people.find(p => p.name === "Woody Bruce")!;
+  assert.equal(woody.id.state, "passed");
+  assert.equal(woody.id.ref, "4YTTES");
+  assert.equal(woody.id.elsewhere, null);
+});
+
 test("a check whose date of birth disagrees with the register is not the person's", () => {
   const main = request({ idChecks: [{ state: "approved", verifiedName: "Woody Bruce", verifiedDob: "1960-01-01" }], recipientName: "Someone Else" });
   const out = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [main] });
