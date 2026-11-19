@@ -4022,10 +4022,15 @@ review has the detail). There are two services, Retail property details and
 Retail requirements. Every search stops at 50 pages (about 1,000 rows).
 
 **PIPnet limits how many people can be logged in at once** ("Maximum number of
-licensed users for your company exceeded"). The app never logs off, so each
-import holds a licence until PIPnet times the session out. Any script that
-logs in must press Logoff (`logoff.jsp`) before it ends. Never close the
-browser on an open session.
+licensed users for your company exceeded"). Until 19 November 2026 the app
+never logged off, so each import held a licence until PIPnet timed the session
+out. Now every operation `server/pipnet.ts` exports runs inside
+`withPipnetSession`: runs that overlap share one session, and the last one to
+finish presses Logoff (`logoff.jsp`) for every session they used, including
+one dropped after a 403 or when the credentials change
+(`qa/regression/pipnet-logoff.test.mjs`). A new PIPnet operation is exported
+the same way. Any script that logs in must press Logoff before it ends. Never
+close the browser on an open session.
 
 Woody's sourcing brief of the same day is the last section of the review:
 - 12 months of PIPnet flyers, each original kept;

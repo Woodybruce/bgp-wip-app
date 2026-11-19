@@ -177,10 +177,11 @@ read pages and ran searches.
   split into shorter date windows to get past it.
 - **PIPnet limits how many people can be logged in at once.** After a few test
   logins it answered "Maximum number of licensed users for your company
-  exceeded". The app never logs off (`server/pipnet.ts` has no logoff), so
-  each import holds a licence until PIPnet times the session out. While it
-  does, a colleague can be refused. And if colleagues hold every licence, the
-  import is refused instead.
+  exceeded". The app never logged off (`server/pipnet.ts` had no logoff), so
+  each import held a licence until PIPnet timed the session out. While it
+  did, a colleague could be refused. And if colleagues hold every licence, the
+  import is refused instead. Fixed on 19 November 2026: every PIPnet
+  operation now logs off when the last run using the session finishes.
 - **What the import already does with a listing:**
   - It keeps the flyer exactly as uploaded when PIPnet serves a PDF. When it
     serves images, it stitches them into one PDF (`downloadBrochureAsPdf`).

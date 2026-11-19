@@ -169,7 +169,7 @@ async function pipFetchRetrying403(
   if (res.status !== 403) return { res, cookie };
   const page = url.replace(/^.*\//, "");
   console.warn(`[pipnet] ${page} returned HTTP 403 — resetting session and retrying once`);
-  resetSession();
+  abandonSession();
   const fresh = await login();
   const retry = await pipFetch(url, initFor(fresh));
   console.log(`[pipnet] ${page} retry after 403 → HTTP ${retry.status}`);
@@ -251,7 +251,7 @@ function parseTotalPages(html: string): number {
   return match ? parseInt(match[1], 10) : 1;
 }
 
-export async function searchPipnetRequirements(params: {
+async function searchPipnetRequirementsInner(params: {
   location?: string;
   minSize?: string;
   maxSize?: string;
@@ -352,7 +352,7 @@ function serializeFormDefaults(html: string, actionContains: string): URLSearchP
   return params;
 }
 
-export async function searchPipnetProperties(params: {
+async function searchPipnetPropertiesInner(params: {
   location?: string;
   minSize?: string;
   maxSize?: string;
@@ -476,7 +476,7 @@ async function fetchPipnetPropertyDetail(folderId: string, cookie: string): Prom
   return out;
 }
 
-export async function importPipnetProperties(params: {
+async function importPipnetPropertiesInner(params: {
   location?: string;
   minSize?: string;
   maxSize?: string;
@@ -903,7 +903,7 @@ function parseUkDate(input: string | undefined | null): Date | null {
   return isNaN(fallback.getTime()) ? null : fallback;
 }
 
-export async function importPipnetRequirements(params: {
+async function importPipnetRequirementsInner(params: {
   location?: string;
   minSize?: string;
   maxSize?: string;
@@ -1328,16 +1328,80 @@ async function promoteToCrmRequirement(
   });
 }
 
-export function resetSession() {
+// PIPnet counts concurrent logins against BGP's licence ("Maximum number of
+// licenced users for your company exceeded", seen 19 November 2026), and a
+// session that is not logged off holds a licence until PIPnet times it out.
+// Every exported operation runs inside withPipnetSession: the session is shared
+// while any of them runs, and the last one to finish logs it off, with any
+// session dropped while another operation was still using it.
+let pipnetUsers = 0;
+const staleCookies = new Set<string>();
+
+async function logoffCookie(cookie: string): Promise<void> {
+  const url = `${PIPNET_URL}/logoff.jsp`;
+  // Direct first, as login() does: PIPnet does not pin a session to the IP.
+  try {
+    const res = await fetch(url, withPipHeaders({ headers: { Cookie: cookie }, redirect: "manual", signal: AbortSignal.timeout(15000) }));
+    if (!(res.status === 403 || res.status === 406 || res.status === 429 || res.status >= 500)) return;
+    console.warn(`[pipnet] logoff: direct fetch returned HTTP ${res.status}, trying ScraperAPI`);
+  } catch (e: any) {
+    console.warn(`[pipnet] logoff: direct fetch failed (${e?.message}), trying ScraperAPI`);
+  }
+  if (!isScraperApiAvailable()) return;
+  try {
+    await new ScraperSession().fetch(url, withPipHeaders({ headers: { Cookie: cookie }, redirect: "manual" }));
+  } catch (e: any) {
+    console.warn(`[pipnet] logoff failed: ${e?.message}`);
+  }
+}
+
+function dropSession(): string | null {
+  const old = sessionCookie;
   sessionCookie = null;
   scraperSession = null;
+  return old;
+}
+
+async function withPipnetSession<T>(run: () => Promise<T>): Promise<T> {
+  pipnetUsers += 1;
+  try {
+    return await run();
+  } finally {
+    pipnetUsers -= 1;
+    if (pipnetUsers === 0) {
+      const cookies = new Set(staleCookies);
+      staleCookies.clear();
+      const current = dropSession();
+      if (current) cookies.add(current);
+      await Promise.all(Array.from(cookies).map((c) => logoffCookie(c)));
+    }
+  }
+}
+
+/** Inside an operation: drop the session (a 403, a diagnostic starting afresh)
+ *  and log it off now, or when the last operation finishes if another one is
+ *  still using it. The caller itself counts as one user. */
+function abandonSession() {
+  const old = dropSession();
+  if (!old) return;
+  if (pipnetUsers <= 1) void logoffCookie(old);
+  else staleCookies.add(old);
+}
+
+/** From outside an operation (the credentials were changed): forget the
+ *  session and log it off, now or when the operations using it finish. */
+export function resetSession() {
+  const old = dropSession();
+  if (!old) return;
+  if (pipnetUsers === 0) void logoffCookie(old);
+  else staleCookies.add(old);
 }
 
 // One-shot inspector: run a small search, find the first per-row link inside
 // the result table, fetch that page, and dump every label/value pair it can
 // find. Returns the discovered detail URL plus a flat object of fields. Used
 // purely to figure out what's actually on PIPnet's requirement detail page.
-export async function inspectPipnetDetail(): Promise<{
+async function inspectPipnetDetailInner(): Promise<{
   candidateLinks: string[];
   detailUrl: string | null;
   bounced?: boolean;
@@ -1361,7 +1425,7 @@ export async function inspectPipnetDetail(): Promise<{
   // server-side result context that reqdetails.jsp?index=N depends on, making
   // every detail return PIPnet's "unexpected error" page. We test two fetch
   // strategies so we know which one to use in the importer.
-  resetSession();
+  abandonSession();
   const cookie = await login();
   const searchBody = new URLSearchParams({
     requirementType: "ReqRetail", locationSearchEdit: "", locationListBox: "",
@@ -1477,8 +1541,8 @@ export async function inspectPipnetDetail(): Promise<{
   };
 }
 
-export async function testPipnetLogin(): Promise<{ ok: boolean; message: string; status?: number; via: string }> {
-  resetSession();
+async function testPipnetLoginInner(): Promise<{ ok: boolean; message: string; status?: number; via: string }> {
+  abandonSession();
   const via = isScraperApiAvailable() ? "ScraperAPI proxy" : "direct fetch";
   try {
     const cookie = await login();
@@ -1492,8 +1556,8 @@ export async function testPipnetLogin(): Promise<{ ok: boolean; message: string;
 // names + endpoint (they differ from the requirements form, which is why the
 // property search returns 0 rows). Also fires the current detailsfetch.jsp
 // params and reports whether they yield a result table, an error, or the form.
-export async function inspectPipnetPropertySearch(): Promise<any> {
-  resetSession();
+async function inspectPipnetPropertySearchInner(): Promise<any> {
+  abandonSession();
   const cookie = await login();
   const out: any = { formPages: [], detailsfetch: null };
 
@@ -1608,7 +1672,7 @@ export async function inspectPipnetPropertySearch(): Promise<any> {
   // folderid-only. This avoids the session-expiry artifact from all the
   // exploratory fetches above.
   try {
-    resetSession();
+    abandonSession();
     const rows = await searchPipnetProperties({});
     const href = rows.map(r => r._detailHref).find(Boolean) || null;
     const cookie2 = sessionCookie || cookie;
@@ -1636,3 +1700,13 @@ export async function inspectPipnetPropertySearch(): Promise<any> {
 
   return out;
 }
+
+// The operations other files call. Each runs inside withPipnetSession, so the
+// session is logged off when the last one using it finishes.
+export const searchPipnetRequirements = (params: Parameters<typeof searchPipnetRequirementsInner>[0]) => withPipnetSession(() => searchPipnetRequirementsInner(params));
+export const searchPipnetProperties = (params: Parameters<typeof searchPipnetPropertiesInner>[0]) => withPipnetSession(() => searchPipnetPropertiesInner(params));
+export const importPipnetRequirements = (params: Parameters<typeof importPipnetRequirementsInner>[0]) => withPipnetSession(() => importPipnetRequirementsInner(params));
+export const importPipnetProperties = (params: Parameters<typeof importPipnetPropertiesInner>[0]) => withPipnetSession(() => importPipnetPropertiesInner(params));
+export const inspectPipnetDetail = () => withPipnetSession(() => inspectPipnetDetailInner());
+export const testPipnetLogin = () => withPipnetSession(() => testPipnetLoginInner());
+export const inspectPipnetPropertySearch = () => withPipnetSession(() => inspectPipnetPropertySearchInner());
