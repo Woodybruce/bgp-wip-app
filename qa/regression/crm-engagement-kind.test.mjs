@@ -385,7 +385,8 @@ test('CRM planning splits into a landlord view and a brand view without losing o
       assert.deepEqual(landsec.actions.find(a => a.id === shared.body.id), { id: shared.body.id, title: 'Send Landsec the trading figures', notes: null, dueAt: '2026-12-10T12:00:00.000Z', status: 'todo', canEdit: false,
         ownerId: '', ownerName: 'Owner', companyId: 'wingstop', companyName: 'Wingstop', strategyId: null, eventId: null, source: null, schemeName: 'Bluewater', unitLabel: 'Unit L104', raisedBy: 'bgp' });
       assert.deepEqual([landsec.actions.find(a => a.id === unplaced.body.id).schemeName, landsec.actions.find(a => a.id === unplaced.body.id).unitLabel], [null, null]);
-      const sent = JSON.stringify(landsec.actions.filter(a => a.id !== 'a-client'));
+      // The ids are random hex (gen_random_uuid), which can spell "fee" (run 2027 failed on one): they are checked above, so they are left out of this search.
+      const sent = JSON.stringify(landsec.actions.filter(a => a.id !== 'a-client').map(({ id, ...rest }) => rest));
       for (const secret of ['fee', 'Landsec asset manager', 'p-blue', 'u-blue', 's-brand', '"owner"', '"landsec"']) assert.ok(!sent.includes(secret), secret);
 
       // Another client never receives a shared action, whatever it asks for.
