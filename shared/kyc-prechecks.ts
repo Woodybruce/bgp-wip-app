@@ -101,6 +101,10 @@ export interface RegisterOwner {
   // (read since 19 November 2026: the AML policy's geography factors).
   residence?: string | null;
   dob?: { month?: number | null; year?: number | null } | null;
+  // A registered beneficial owner of an overseas entity that the entity
+  // declared sanctioned on its latest filing (the Register of Overseas
+  // Entities' is_sanctioned, read since 19 November 2026).
+  sanctioned?: boolean | null;
 }
 
 export function ownerKind(chKind: unknown): RegisterOwnerKind {
@@ -236,15 +240,23 @@ export const isRegisterDirector = (contactName: string | null | undefined, direc
 
 // ── Sanctions ───────────────────────────────────────────────────────────────
 //
-// The lists (the UK Sanctions List and the US OFAC list) are matched on
+// The lists (the UK Sanctions List, the US OFAC list and, since 19 November
+// 2026, the EU consolidated list) are matched on
 // names, so a common name matches someone else. A listing counts as a
 // possible match when one name holds every word of the other (two words at
 // least), and is set aside only when both dates of birth are known and the
 // years are more than one apart. Everything else is "no match".
 
+export type SanctionsListCode = "UK" | "US" | "EU";
+export const SANCTIONS_LIST_NAME: Record<SanctionsListCode, string> = { UK: "UK Sanctions List", US: "US OFAC list", EU: "EU consolidated list" };
+/** A list's name in words, whatever code it was stored with. */
+export const sanctionsListName = (code: unknown): string => SANCTIONS_LIST_NAME[(code as SanctionsListCode)] || SANCTIONS_LIST_NAME.UK;
+/** The code for a list as the screening module names it. */
+export const sanctionsListCode = (source: unknown): SanctionsListCode => (source === "US-OFAC" ? "US" : source === "EU-FSF" ? "EU" : "UK");
+
 export interface ListEntry {
   name: string;
-  source: "UK" | "US";
+  source: SanctionsListCode;
   regime: string;
   designationType: string;
   dob: string;
@@ -525,7 +537,61 @@ export interface KycPrecheckResult {
   complyAdvantage: { ran: boolean; lines: ProviderLine[]; skipped: string | null };
   // Who was screened for public roles and adverse media (since 19 November 2026).
   screened?: PrecheckScreened;
+  // The Register of Overseas Entities, searched by name when the party had no
+  // UK company number (since 19 November 2026).
+  overseasEntity?: PrecheckOverseasEntity | null;
   errors: string[];
+}
+
+// ── The Register of Overseas Entities ───────────────────────────────────────
+//
+// An overseas entity that owns or buys UK land, or takes a lease of more than
+// seven years, must be on the Register of Overseas Entities (Economic Crime
+// (Transparency and Enforcement) Act 2022), and BGP's risk assessment lists
+// overseas company registrations among its reporting duties. A party with no
+// UK company number is looked for there by its name: exactly one entity of
+// that name is read as the company (its managing officers and registered
+// beneficial owners are screened like any other), and none found for a name
+// whose legal form is foreign is a factor to weigh.
+export interface PrecheckOverseasEntity {
+  searched: boolean;
+  // Found by its name (number, name and status as the register gives them).
+  number: string | null;
+  name: string | null;
+  status: string | null;
+  // Entities on the register whose names matched, when not exactly one.
+  candidates: number;
+  // The name's legal form is foreign (an S.A., GmbH, B.V., LLC and so on).
+  looksOverseas: boolean;
+  error: string | null;
+}
+
+export const isOverseasEntityNumber = (n: unknown): boolean => /^OE\d{6}$/i.test(String(n || "").trim());
+
+// A legal form that only an overseas company carries, at the end of its name.
+// "Limited" and "LP" are left out: UK companies use them too.
+const FOREIGN_LEGAL_FORM = /(?:^|[\s,(])(s\.?\s?a\.?\s?r\.?\s?l\.?|s\.?\s?[àa]\.?\s?r\.?\s?l\.?|sarl|s\.?\s?a\.?\s?s\.?|s\.?\s?p\.?\s?a\.?|s\.?\s?r\.?\s?l\.?|s\.?\s?a\.?|s\.?\s?l\.?|gmbh|gmbh\s?&\s?co\.?\s?kg|ag|kg|b\.?\s?v\.?|n\.?\s?v\.?|a\/s|aps|oyj?|sp\.?\s?z\s?o\.?\s?o\.?|kft|zrt|inc\.?|incorporated|corp\.?|corporation|l\.?\s?l\.?\s?c\.?|pty\.?(?:\s+ltd\.?)?|pte\.?(?:\s+ltd\.?)?|sdn\.?\s?bhd\.?|bhd\.?|w\.?\s?l\.?\s?l\.?|fzc|fze|fz-?llc|s\.?\s?e\.?|s\.?\s?a\.?\s+de\s+c\.?\s?v\.?|\((?:jersey|guernsey|bvi|british virgin islands|cayman|cayman islands|isle of man|luxembourg|cyprus|gibraltar|malta|bermuda|panama|delaware)\)(?:\s+(?:limited|ltd\.?))?)\s*\.?\s*$/i;
+export const looksOverseasName = (name: unknown): boolean => FOREIGN_LEGAL_FORM.test(String(name || "").trim());
+
+// A name as one key for the register search: accents, punctuation and spaces
+// gone, "&" read as "and", and a legal form at the end dropped from both
+// names, so "Acme Property" finds "ACME PROPERTY S.À R.L." and never "ACME
+// PROPERTY HOLDINGS S.À R.L.".
+const UK_LEGAL_FORM = /(?:^|[\s,])(limited|ltd\.?|plc|public limited company|llp|lp|limited partnership)\s*\.?\s*$/i;
+export function overseasNameKey(name: string): string {
+  let n = String(name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  for (let i = 0; i < 2; i++) n = n.replace(FOREIGN_LEGAL_FORM, "").replace(UK_LEGAL_FORM, "").trim();
+  return n.toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "");
+}
+
+/** Which register entry, if any, an overseas entity search found: exactly one whose name matches. */
+export function pickOverseasEntity(name: string, items: Array<{ company_number?: string; title?: string; company_type?: string; company_status?: string }>): { found: { number: string; name: string; status: string | null } | null; candidates: number } {
+  const oes = items.filter(i => isOverseasEntityNumber(i.company_number) || i.company_type === "registered-overseas-entity");
+  const key = overseasNameKey(name);
+  const matching = key ? oes.filter(i => i.title && overseasNameKey(String(i.title)) === key) : [];
+  if (matching.length !== 1) return { found: null, candidates: matching.length };
+  const m = matching[0];
+  return { found: { number: String(m.company_number).toUpperCase(), name: String(m.title), status: m.company_status || null }, candidates: 1 };
 }
 
 export const isPrecheckResult = (value: unknown): value is KycPrecheckResult =>
@@ -547,8 +613,8 @@ export function precheckUnfinished(result: Pick<KycPrecheckResult, "companiesHou
   if (result.companiesHouse) return null;
   const why = String(result.notAtCompaniesHouse || "");
   if (/^Companies House could not be read/i.test(why) && PASSING_FAILURE.test(why)) return why;
-  const finding = (result.errors || []).find(e => /^Finding the company at Companies House:/i.test(e));
-  if (finding && PASSING_FAILURE.test(finding)) return finding;
+  const finding = (result.errors || []).find(e => /^(Finding the company at Companies House|The Register of Overseas Entities):/i.test(e) && PASSING_FAILURE.test(e));
+  if (finding) return finding;
   return null;
 }
 
@@ -624,6 +690,8 @@ export interface PrecheckCompany {
   warnings: string[];
   documents: Array<{ title: string; onFile: boolean }>;
   registerUrl: string;
+  // On the Register of Overseas Entities (an OE number), in words.
+  overseasEntity?: string | null;
 }
 
 export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompany | null {
@@ -664,14 +732,18 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     warnings,
     documents: ch.documents.map(d => ({ title: d.title, onFile: !!d.kycDocumentId })),
     registerUrl: `https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(ch.number)}`,
+    overseasEntity: isOverseasEntityNumber(ch.number)
+      ? `An overseas entity on the Register of Overseas Entities${result?.overseasEntity?.number ? ", found by its name: check it is the same company" : ""}. Its home register's extract is still asked for.`
+      : null,
   };
 }
 
 // The column the readers already use (kyc_investigations.sanctions_match):
 // true for a possible match on either list or with ComplyAdvantage, false
 // when every screen ran clear, null when the lists could not be screened.
-export function precheckSanctionsMatch(result: Pick<KycPrecheckResult, "sanctions" | "complyAdvantage">): boolean | null {
-  const provider = result.complyAdvantage.lines.some(l => l.status === "possible" && l.types.some(t => /sanction|warning/.test(t)));
+export function precheckSanctionsMatch(result: Pick<KycPrecheckResult, "sanctions" | "complyAdvantage"> & { companiesHouse?: KycPrecheckResult["companiesHouse"] }): boolean | null {
+  const provider = result.complyAdvantage.lines.some(l => l.status === "possible" && l.types.some(t => /sanction|warning/.test(t)))
+    || !!result.companiesHouse?.owners.some(o => o.sanctioned);
   if (!result.sanctions.ran) return provider ? true : null;
   return provider || result.sanctions.lines.some(l => l.outcome === "possible");
 }
@@ -703,7 +775,9 @@ export function askInputFrom(result: KycPrecheckResult | null): PrecheckAskInput
   const ch = result.companiesHouse;
   return {
     subjectKind: result.party.subjectKind,
-    ukRegistered: !!ch,
+    // An overseas entity on the Register of Overseas Entities is still
+    // registered abroad: its home register's extract is asked for.
+    ukRegistered: !!ch && !isOverseasEntityNumber(ch.number),
     listing: ch?.listing || null,
     owners: ch?.owners || [],
     peopleUpChain: ch?.peopleUpChain || [],
@@ -880,13 +954,13 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
       flags.push({
         kind: "sanctions",
         label: `Possible sanctions match for ${line.name} (${line.role})`,
-        detail: m ? `${m.source === "UK" ? "UK Sanctions List" : "US OFAC list"}: ${m.name}${m.regime ? `, ${m.regime}` : ""}. ${m.why}` : null,
+        detail: m ? `${sanctionsListName(m.source)}: ${m.name}${m.regime ? `, ${m.regime}` : ""}. ${m.why}` : null,
         source: `${source}: sanctions lists`,
         at,
         key: `sanctions:${k(line.name)}`,
         evidence: line.matches.map(x => `entry:${x.source}:${k(x.name)}`).sort(),
         facts: line.matches.map(x => ({
-          label: x.source === "UK" ? "UK Sanctions List" : "US OFAC list",
+          label: sanctionsListName(x.source),
           value: [x.name, x.regime, x.designationType, x.dob ? `born ${x.dob}` : "", x.nationality].filter(Boolean).join(", ") + `. ${x.why}`,
         })),
       });
@@ -986,6 +1060,36 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
       flags.push({ kind: "offshore_owner", label: `Owned through ${o.name}, registered in ${o.country}`, detail: null, source: `${source}: Companies House`, at,
         key: `ch:offshore:${k(o.name)}`, evidence: [`country:${k(o.country)}`], facts: [{ label: "Register", value: `${ch.name} (${ch.number})`, url: `${register}/persons-with-significant-control` }] });
     }
+    // A registered beneficial owner the overseas entity itself declared
+    // sanctioned on its latest filing to the Register of Overseas Entities.
+    for (const o of ch.owners.filter(o => o.sanctioned)) {
+      flags.push({
+        kind: "sanctions",
+        label: `${o.name} is declared sanctioned on the Register of Overseas Entities`,
+        detail: `${ch.name} (${ch.number}) names ${o.name} as a registered beneficial owner and declared them sanctioned on its latest filing.`,
+        source: `${source}: Register of Overseas Entities`,
+        at,
+        key: `roe:sanctioned:${k(o.name)}`,
+        evidence: [`entity:${k(ch.number)}`],
+        facts: [{ label: "Register of Overseas Entities", value: `${ch.name} (${ch.number}): ${o.name}, declared sanctioned`, url: `${register}/persons-with-significant-control` }],
+      });
+    }
+  }
+  // No Overseas Entity ID for a company whose name reads as registered
+  // abroad: a factor to weigh, set aside where the deal does not need one.
+  const oe = result.overseasEntity;
+  if (!ch && oe?.searched && !oe.number && oe.looksOverseas) {
+    flags.push({
+      kind: "overseas_entity_missing",
+      factor: true,
+      label: `No Overseas Entity ID found for ${result.party.name}`,
+      detail: "Its name reads as a company registered outside the UK. An overseas company that owns or buys UK land, or takes a lease of more than seven years, must be on the Register of Overseas Entities: ask the client for its Overseas Entity ID, and if it has none, tell the Nominated Officer.",
+      source: `${source}: Register of Overseas Entities`,
+      at,
+      key: `roe:missing:${k(result.party.name)}`,
+      evidence: [`candidates:${oe.candidates}`],
+      facts: [{ label: "Register of Overseas Entities", value: oe.candidates ? `${oe.candidates} entities of a similar name, none of exactly this name` : "No entity of this name", url: "https://find-and-update.company-information.service.gov.uk/advanced-search" }],
+    });
   }
   return flags;
 }
@@ -1013,7 +1117,8 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
   const ch = result.companiesHouse;
   if (ch) {
     const directors = ch.officers.filter(o => /director|member/i.test(o.role)).map(o => o.name);
-    lines.push(`- Companies House: ${ch.name} (${ch.number}), ${(ch.status || "status not given").replace(/-/g, " ")}${ch.type ? `, ${ch.type.replace(/-/g, " ")}` : ""}${ch.incorporatedOn ? `, incorporated ${ch.incorporatedOn}` : ""}.${directors.length ? ` Directors: ${list(directors)}.` : ""}`);
+    const overseas = isOverseasEntityNumber(ch.number);
+    lines.push(`- ${overseas ? "Register of Overseas Entities" : "Companies House"}: ${ch.name} (${ch.number}), ${(ch.status || "status not given").replace(/-/g, " ")}${ch.type ? `, ${ch.type.replace(/-/g, " ")}` : ""}${ch.incorporatedOn ? `, incorporated ${ch.incorporatedOn}` : ""}.${directors.length ? ` Directors: ${list(directors)}.` : ""}${overseas && result.overseasEntity?.number ? " Found by its name: please confirm it is the same company." : ""}`);
     if (ch.listing) {
       lines.push(`- Listed: ${ch.listing.viaParent ? `owned through one company at each level by ${ch.listing.company}, which is` : "the company is"} ${LISTING_WORDS[ch.listing.market]} (PSC exemption${ch.listing.since ? ` since ${ch.listing.since}` : ""}). No beneficial owners asked for (MLR 2017 reg 28(5)).${ch.listing.viaParent ? " Please confirm the chain." : ""}${listingSettled(ch.listing.market) ? "" : " Please confirm the market's disclosure rules are equivalent."}`);
     } else if (ch.owners.length) {
@@ -1031,6 +1136,8 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
     if (ch.covenant?.grade) lines.push(`- Covenant: grade ${ch.covenant.grade}${ch.covenant.score != null ? ` (${ch.covenant.score}/100)` : ""}${ch.covenant.gazette.length ? `; Gazette insolvency notices: ${ch.covenant.gazette.length}` : ""}.`);
   } else if (result.notAtCompaniesHouse) {
     lines.push(`- Companies House: ${result.notAtCompaniesHouse}`);
+    const oe = result.overseasEntity;
+    if (oe?.searched) lines.push(`- Register of Overseas Entities: ${oe.error ? `not searched (${oe.error})` : oe.candidates > 1 ? `${oe.candidates} entities of a similar name, none of exactly this name` : "no entity of this name"}.`);
   }
   if (result.sanctions.ran) {
     const possible = result.sanctions.lines.filter(l => l.outcome === "possible");
@@ -1072,9 +1179,11 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
   const ch = result.companiesHouse;
   if (ch) {
     const bad = ch.status !== "active" || ch.hasInsolvencyHistory;
+    const overseas = isOverseasEntityNumber(ch.number);
     out.push({
-      key: "companies_house", label: `Companies House: ${ch.name} (${ch.number})`, state: bad ? "attention" : "ok",
-      detail: [`${(ch.status || "status not given").replace(/-/g, " ")}`, ch.incorporatedOn ? `incorporated ${ch.incorporatedOn}` : "", ch.accountsOverdue ? "accounts overdue" : "", ch.confirmationOverdue ? "confirmation statement overdue" : ""].filter(Boolean).join(", "),
+      key: "companies_house", label: `${overseas ? "Register of Overseas Entities" : "Companies House"}: ${ch.name} (${ch.number})`, state: bad ? "attention" : "ok",
+      detail: [`${(ch.status || "status not given").replace(/-/g, " ")}`, ch.incorporatedOn ? `incorporated ${ch.incorporatedOn}` : "", ch.accountsOverdue ? "accounts overdue" : "", ch.confirmationOverdue ? (overseas ? "update statement overdue" : "confirmation statement overdue") : "",
+        result.overseasEntity?.number ? "found by its name: check it is the same company" : ""].filter(Boolean).join(", "),
       links: [{ label: "Register", url: `https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(ch.number)}` }],
     });
     const docs = ch.documents;
@@ -1112,6 +1221,14 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
     });
   } else {
     out.push({ key: "companies_house", label: "Companies House", state: "info", detail: result.notAtCompaniesHouse, links: [] });
+    const oe = result.overseasEntity;
+    if (oe?.searched) {
+      out.push({
+        key: "overseas_entity", label: "Register of Overseas Entities", state: oe.looksOverseas && !oe.error ? "attention" : "info",
+        detail: oe.error ? `Not searched: ${oe.error}` : oe.candidates > 1 ? `${oe.candidates} entities of a similar name, none of exactly this name.` : "No entity of this name.",
+        links: [{ label: "Search the register", url: "https://find-and-update.company-information.service.gov.uk/advanced-search" }],
+      });
+    }
   }
   if (result.sanctions.ran) {
     const possible = result.sanctions.lines.filter(l => l.outcome === "possible");

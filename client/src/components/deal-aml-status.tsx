@@ -21,6 +21,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { RaiseReportButton } from "@/components/aml-register";
+import { DealAgentsAml } from "@/components/agent-aml";
 
 export interface DealAmlStatus {
   dealId: string;
@@ -114,6 +116,7 @@ function PartyCompanyFacts({ data, companyId }: { data: DealAmlStatus; companyId
         {c.registeredOffice && <div><dt className="inline text-muted-foreground">Registered office: </dt><dd className="inline">{c.registeredOffice}</dd></div>}
         {c.business.length > 0 && <div><dt className="inline text-muted-foreground">Business: </dt><dd className="inline">{c.business.join("; ")}</dd></div>}
         {c.listing && <div data-testid={`kyc-company-listing-${companyId}`}><dt className="inline text-muted-foreground">Listed: </dt><dd className="inline">{c.listing}. {c.listingNote}</dd></div>}
+        {c.overseasEntity && <div data-testid={`kyc-company-overseas-${companyId}`}><dt className="inline text-muted-foreground">Register of Overseas Entities: </dt><dd className="inline">{c.overseasEntity}</dd></div>}
         {directors.length > 0 && (
           <div><dt className="inline text-muted-foreground">Directors: </dt><dd className="inline">{directors.join(", ")}
             {c.directors.length > 4 && <button type="button" className="ml-1 text-primary hover:underline" onClick={() => setMore(m => !m)}>{more ? "fewer" : `and ${c.directors.length - 4} more`}</button>}
@@ -315,6 +318,11 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
                         </button>
                         {canDecide && (
                           <button type="button" className="underline-offset-2 hover:underline" onClick={() => setDialog(f)} data-testid={`kyc-flag-set-aside-${f.key}`}>Set aside</button>
+                        )}
+                        {(f.kind === "sanctions" || (f.kind === "provider_screen" && /sanction/i.test(f.label))) && (
+                          <RaiseReportButton variant="text" className="underline-offset-2 hover:underline"
+                            label={canDecide ? "Record an OFSI report" : "Tell the Nominated Officer"} kind="sanctions" dealId={dealId} role={role}
+                            seed={`${f.label}.${f.detail ? ` ${f.detail}` : ""}`} officer={canDecide} testId={`kyc-flag-ofsi-report-${f.key}`} />
                         )}
                       </div>
                       {open && <FlagFacts flag={f} />}
@@ -519,6 +527,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
           </div>
           <DealRegime data={data} />
           <DealRedFlags dealId={dealId} data={data} />
+          {staffView && <DealAgentsAml dealId={dealId} />}
           {data.counterparties.map(cp => (
             <div key={cp.id} className="space-y-2">
               <PartyNotRequiredBox cp={cp} />
@@ -531,6 +540,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
               <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={cp.kycName || cp.name} approved={cp.isApproved && !cp.isExpired} notRequired={!!cp.notRequired} />
             </div>
           ))}
+          {staffView && <DealSuspicionLine dealId={dealId} officer={!!data.decisions?.canDecide} />}
         </CardContent>
       </Card>
     );
@@ -559,6 +569,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
 
         <DealRegime data={data} />
         <DealRedFlags dealId={dealId} data={data} />
+        {staffView && <DealAgentsAml dealId={dealId} />}
 
         {/* grid-cols-1, not a bare grid: an implicit column grows to its
             widest line, which pushed both boxes past a phone's width. */}
@@ -636,8 +647,21 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
           </div>
         )}
 
+        {staffView && <DealSuspicionLine dealId={dealId} officer={!!data.decisions?.canDecide} />}
       </CardContent>
     </Card>
+  );
+}
+
+// Anything that seems wrong about the deal goes to the Nominated Officer, in
+// confidence (BGP's AML policy, I.b): never discussed with the client or
+// colleagues.
+function DealSuspicionLine({ dealId, officer }: { dealId: string; officer: boolean }) {
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-testid="deal-aml-suspicion">
+      Something about this deal seems wrong? Tell the Nominated Officer in confidence, not the client or colleagues.
+      <RaiseReportButton dealId={dealId} officer={officer} label="Report to the Nominated Officer" className="h-7 text-xs" testId="deal-aml-raise-report" />
+    </p>
   );
 }
 

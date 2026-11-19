@@ -35,6 +35,10 @@ import { installPrivateMailGraphGuard } from "./private-mail-graph";
 import { ensurePrivateMailBoundary, blockPrivateMailCopies, flushPrivateMailQuarantine } from "./private-mail-store";
 import { CRM_ENGAGEMENT_MIGRATIONS, registerCrmEngagementRoutes } from "./crm-engagement";
 import { AML_RETENTION_MIGRATIONS } from "./aml-retention";
+import { AML_REGISTER_MIGRATIONS } from "./aml-register";
+import { AML_TRAINING_MIGRATIONS } from "./aml-training";
+import { AGENT_AML_MIGRATIONS } from "./agent-aml";
+import { AML_RETENTION_LOG_MIGRATIONS } from "./aml-records-retention";
 
 // £200/day hard cap on Google Maps/Places spend (Woody, 2026-09-01) —
 // installed before anything can fire an outbound googleapis call.
@@ -348,6 +352,12 @@ const schemaStartup = (async () => {
     `CREATE TABLE IF NOT EXISTS aml_settings (id SERIAL PRIMARY KEY, nominated_officer_id VARCHAR, nominated_officer_name TEXT, nominated_officer_email TEXT, nominated_officer_appointed_at TIMESTAMP, firm_risk_assessment JSONB, firm_risk_assessment_updated_at TIMESTAMP, firm_risk_assessment_updated_by TEXT, aml_policy_notes TEXT, recheck_interval_days INTEGER DEFAULT 365, updated_at TIMESTAMP DEFAULT now())`,
     `CREATE TABLE IF NOT EXISTS aml_training_records (id SERIAL PRIMARY KEY, user_id VARCHAR NOT NULL, user_name TEXT NOT NULL, training_type TEXT NOT NULL, training_date TIMESTAMP NOT NULL, completed_at TIMESTAMP, score INTEGER, topics TEXT[], notes TEXT, certified_by TEXT, next_due_date TIMESTAMP, created_at TIMESTAMP DEFAULT now())`,
     `CREATE TABLE IF NOT EXISTS aml_recheck_reminders (id SERIAL PRIMARY KEY, deal_id VARCHAR, company_id VARCHAR, entity_name TEXT NOT NULL, recheck_type TEXT NOT NULL, due_date TIMESTAMP NOT NULL, completed_at TIMESTAMP, completed_by TEXT, notes TEXT, created_at TIMESTAMP DEFAULT now())`,
+    // The AML register, training records, agents' supervision and the
+    // five-year deletion log (Woody, 19 November 2026; additive).
+    ...AML_REGISTER_MIGRATIONS,
+    ...AML_TRAINING_MIGRATIONS,
+    ...AGENT_AML_MIGRATIONS,
+    ...AML_RETENTION_LOG_MIGRATIONS,
     // User-drawn map annotations — pins, text labels, postcode highlights.
     // Kept light: each row is one annotation; `kind` discriminates type;
     // `geometry` is a tiny GeoJSON blob for future polygons / lines /
@@ -4311,6 +4321,10 @@ import dealPartiesRouter from "./deal-parties";
 import dealPartyAmlRouter from "./deal-party-aml";
 import amlDashboardRouter from "./aml-dashboard";
 import amlPolicyRouter from "./aml-policy";
+import amlRegisterRouter from "./aml-register";
+import amlTrainingRouter from "./aml-training";
+import agentAmlRouter from "./agent-aml";
+import amlRetentionRouter from "./aml-records-retention";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
 import brandDedupeRouter from "./brand-dedupe";
@@ -5677,6 +5691,12 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(dealPartyAmlRouter);
   app.use(amlDashboardRouter);
   app.use(amlPolicyRouter);
+  // The AML register, training, agents' HMRC registration and the five-year
+  // deletion (BGP staff; the officers where each route says).
+  app.use(amlRegisterRouter);
+  app.use(amlTrainingRouter);
+  app.use(agentAmlRouter);
+  app.use(amlRetentionRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);
   app.use(brandDedupeRouter);

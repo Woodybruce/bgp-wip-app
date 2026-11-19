@@ -4002,6 +4002,113 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
   screening; the FCA register for simplified due diligence; deleting records
   five years on.
 
+## The AML register, training, agents, EU list, overseas entities and five-year deletion (Woody, 2026-11-19)
+
+Woody answered "Go ahead and build" to the list left out of the AML policy
+build: a record of OFSI reports, joint agents' HMRC registration, training
+records, internal suspicion reports, the Register of Overseas Entities, EU
+sanctions screening and deleting records after five years. Each follows the
+policy's own words (Issue 2: C.b, I.b, I.c, J, L, M, 3.10, "Working with
+joint agents"; the risk assessment's sanctions and "overseas company
+registrations"). Rules: `shared/aml-register.ts`, `shared/aml-training.ts`,
+`shared/agent-aml.ts`, `shared/aml-retention.ts`, and the overseas entity and
+EU parts of `shared/kyc-prechecks.ts`. Tests: `server/aml-records.test.ts` (in
+`npm test`), `qa/regression/aml-records-guards.test.mjs`.
+
+- **The AML register** (`server/aml-register.ts`; the old
+  `aml_internal_reports` table with additive columns: `party_role`,
+  `trading_entity_id`, `details`, `reported_at`, `updated_at`, `updated_by`;
+  the old routes under `/api/aml/` stay retired). Kinds: suspicion (to the
+  NCA, a SAR), sanctions (OFSI), PSC or overseas entities register
+  discrepancy (Companies House), trust register discrepancy (HMRC),
+  unregistered agent (HMRC). BGP staff raise a suspicion, a sanctions concern
+  or an unregistered agent (`POST /api/aml-register`); only the Nominated
+  Officer and the Deputy (admins while no Nominated Officer is set) read the
+  register and record the outcome (`GET`, `PATCH /api/aml-register/:id`):
+  reported or not and why, the authority's reference and date, for a
+  suspicion the further information asked, senior management, the consent
+  (DAML) request and the NCA's answer (`damlDates`: seven working days from
+  the first working day after the request, England and Wales bank holidays
+  to 2028 in `ENGLAND_BANK_HOLIDAYS`, add the next year's from GOV.UK; a
+  refusal's 31-day moratorium), for sanctions the funds held, legal advice
+  (needed before "continued") and what BGP did. The person who raised an
+  entry sees only that it reached the officers (`reporterView`). Tipping
+  off: no `kyc_audit_log` line is written for an entry (every BGP login reads
+  the KYC history), and the officers' email (`amlRegisterNoticeEmail`) says
+  only that a report is waiting. Screens (`client/src/components/aml-register.tsx`):
+  **Report to the Nominated Officer** on the AML dashboard and at the foot of
+  every deal's AML box; **Tell the Nominated Officer** / **Record an OFSI
+  report** beside a sanctions red flag; the **Reports** pill of the AML
+  dashboard for the officers.
+- **Not built, on purpose**: a hold that stops a deal moving while the NCA
+  decides. Every status door skips the AML gate when the officer's "AML
+  check: YES" is on the deal, so a hold means changing about eight doors:
+  Woody's call. The officers tell the team.
+- **Training** (`server/aml-training.ts`; the old `aml_training_records` table
+  with `title`, `provider`, `recorded_by`, `batch_id`). Each person confirms
+  **I have read it** for the current policy on My BGP → **AML training**
+  (once per issue, `CURRENT_POLICY_READ_TITLE`); the officers and admins see
+  everyone on the AML dashboard's **Training** pill (nothing in a year, policy
+  not confirmed) and **Record training** for one or many people (title,
+  formal or informal, date, the policy's five topics). The old online modules
+  and quiz (`aml_training_modules`) are not brought back: they teach rules
+  Issue 2 replaced.
+- **Agents and HMRC's register** (`server/agent-aml.ts`, table
+  `agent_aml_supervision`; `server/hmrc-register.ts`). HMRC publishes the
+  Supervised Business Register as one ODS file on GOV.UK whose address
+  changes: the GOV.UK content API names it; it is read as a stream (about 3
+  seconds, 24,500 estate and letting agency rows kept of 68,000; reading it
+  whole took 1.2 GB) on the first check after a start and kept seven days.
+  **Check** on an agent firm's Overview (**AML supervision**) or in a deal's
+  AML box (**Agents on this deal**: the joint, seller's, buyer's, letting and
+  acquiring agents) searches it by name (`registerMatches`) and records the
+  entry, Not on the register (how it was checked), or a professional body,
+  and whether an agreement says who does the client due diligence. Required
+  (amber until done) for a joint agent BGP shares the fee with
+  (`joint_agent_fee_pct`); for the other agents it is the policy's
+  counterparty question. HMRC's Expired status reads as not registered, and a
+  check is due again after a year. An unregistered agent offers **Tell the
+  Nominated Officer** (the register's unregistered agent kind).
+- **The EU consolidated list** (`server/sanctions-screening.ts`,
+  `parseEuSanctionsCsv`, `EU_SANCTIONS_CSV_URL` moves it): the EU's Financial
+  Sanctions Files CSV, about 6,300 entities and 24,600 names, screened beside
+  the UK and US lists in BGP's checks before asking and named as itself
+  (`sanctionsListName`, never the UK/US two-way label).
+- **The Register of Overseas Entities** (in `runPrecheck`): a company party
+  with no UK number is searched by name (`searchOverseasEntities`: the
+  advanced search filtered to the register's type, else the ordinary
+  search); exactly one entity of that exact name (`pickOverseasEntity`,
+  `overseasNameKey`) is read as the company, so its managing officers and
+  registered beneficial owners are screened. A beneficial owner the entity
+  declared sanctioned (`is_sanctioned`) is a sanctions red flag; a company
+  whose name has a foreign legal form and no entity found is the factor
+  `overseas_entity_missing` (set aside where the deal needs none). An overseas
+  entity still owes its home register's extract (`askInputFrom`). A busy
+  Companies House leaves the check unfinished.
+- **Five-year deletion** (`server/aml-records-retention.ts`, log table
+  `aml_deletion_log`): the officers only, never at boot or on a timer.
+  **Preview what is due** (the Records pill) lists: a party whose latest AML
+  record is over five years old and every deal it was on ended over five
+  years ago (none live, no open register entry: `partyRetention`); a closed
+  deal's AML fields five years after it ended; expired rows of
+  `aml_retention_archive`; training records and closed register entries over
+  five years old. Apply takes the ticked ids of the same officer's preview
+  within the hour, with DELETE typed; each item is checked again and deleted
+  in its own transaction: a party's documents and their stored files, checks,
+  client check requests and uploads, Veriff sessions, KYC4U rows and drafts,
+  flags set aside, Not required marks, KYC history, company-that-signs
+  records and re-check reminders, with the company's and its companies'
+  AML fields set back to their defaults (the company record stays); a deal's
+  AML fields and its AML history lines (the deal stays). The log holds
+  counts, never names. KYC4U keeps its own records: its next sync may copy
+  back what it still holds. Tried end to end against a copy of the app's
+  schema on 19 November 2026; on live nothing is five years old yet.
+- Also: the deal save's AML gate now passes the deal id, so a party marked
+  Not required is honoured there too.
+- Not built: a deal hold (above); deleting the KYC4U list's own rows at
+  KYC4U; the FCA register for simplified due diligence; trusts' own TRS
+  check.
+
 ## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
 
 Woody, on the deal page: "Needs a chat box too no and how the negotiations

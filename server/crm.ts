@@ -4100,6 +4100,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
             tenantTradingEntityId:    partyAfter("tenantTradingEntityId") ?? null,
             vendorTradingEntityId:    partyAfter("vendorTradingEntityId") ?? null,
             purchaserTradingEntityId: partyAfter("purchaserTradingEntityId") ?? null,
+            // The deal, so a party the officers marked Not required is not
+            // counted (the gate reads the marks by deal).
+            dealId: req.params.id,
           };
           const amlResult = await checkCounterpartyAml(parties);
           const outcome = amlGateOutcome(amlResult);

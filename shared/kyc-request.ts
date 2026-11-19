@@ -580,6 +580,22 @@ export function amlOutstandingAtCompletionEmail(ctx: {
   };
 }
 
+// A new entry in the AML register (Woody, 19 November 2026). It goes to the
+// Nominated Officer and the Deputy only and says nothing of what the entry
+// is about: a mailbox is not the place for a suspicion (tipping off).
+export function amlRegisterNoticeEmail(ctx: { raisedBy: string | null; link: string; sentFrom: string }): { subject: string; html: string } {
+  const inner = [
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3">A new report is waiting for you</h1>`,
+    p(`${ctx.raisedBy ? `${escHtml(ctx.raisedBy)} has` : "Someone has"} raised a report for the Nominated Officer in BGP's AML register. What it is about is not in this email: open it in ChatBGP (Deals, AML, Reports).`),
+    button("Open the AML register", ctx.link),
+    p("Only the Nominated Officer and the Deputy can read it.", `font-size:13px;color:${MUTED}`),
+  ].join("\n");
+  return {
+    subject: "AML: a new report is waiting for you",
+    html: frame("AML register", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP to BGP's Nominated Officer and Deputy.`, false, "the Nominated Officer and the Deputy receive"),
+  };
+}
+
 // The message an agent sends from their own WhatsApp (a wa.me link opens it
 // written out). The app does not send WhatsApp itself: WhatsApp refuses a
 // business's first message unless it is an approved template, so the old
