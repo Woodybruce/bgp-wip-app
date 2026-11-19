@@ -157,6 +157,21 @@ test("the note to the agents names the files and what was not sent", () => {
   assert.doesNotMatch(html, /Enhanced due diligence|PSC register/, "no answer or kind given, nothing said");
 });
 
+// Woody, 19 November 2026: "this is email about jack barrat but its actually after woody bruce did the check".
+test("an identity check passed by someone else on the link is reported as theirs, never the client's", () => {
+  const base = { recipientName: "jack Barrat", partyName: "BRUCE GILLINGHAM POLLARD LIMITED", dealName: "barrette does bruce cap", ref: "7MJEGT",
+    dealLink: "https://chatbgp.app/deals/d1", idState: "approved" as const, files: [], missing: ["jack Barrat's own identity check"], sentFrom: "kyc@chatbgp.app" };
+  const other = kycFinishedEmail({ ...base, idPerson: { verifiedName: "WOODY BRUCE", isThePerson: false } });
+  assert.equal(other.subject, "The checks sent to jack Barrat were finished with WOODY BRUCE's identity check, for barrette does bruce cap (ref 7MJEGT)");
+  assert.match(other.html, /The checks sent to jack Barrat were finished/);
+  assert.match(other.html, /Identity check: passed by WOODY BRUCE, not jack Barrat, who this request was for\./);
+  assert.match(other.html, /jack Barrat has not done their own identity check\./);
+  assert.doesNotMatch(other.html, /jack Barrat has finished their checks/);
+  const same = kycFinishedEmail({ ...base, missing: [], idPerson: { verifiedName: "JACK BARRATT", isThePerson: true } });
+  assert.match(same.subject, /^jack Barrat has finished their identity checks/);
+  assert.match(same.html, /Identity check: passed\./);
+});
+
 test("a yes or not sure to the question tells the agents what enhanced due diligence needs; a company gets the PSC check", () => {
   const base = { recipientName: "Jane Smith", partyName: "Example Trading Ltd", dealName: "12 Example Street", ref: "7K2Q9M",
     dealLink: "https://chatbgp.app/deals/d1", idState: "approved" as const, files: [], missing: [], sentFrom: "kyc@chatbgp.app", kind: "company" as const };

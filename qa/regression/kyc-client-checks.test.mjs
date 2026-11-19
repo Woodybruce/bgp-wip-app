@@ -138,7 +138,7 @@ test("a test page runs a real Veriff check when Veriff is set up, capped as a cl
   const view = portal.slice(portal.indexOf("export async function portalView"), portal.indexOf("const requested = new Set(request.docs);"));
   assert.match(view, /const real = !row\.is_test \|\| veriffConfigured\(\);/);
   assert.match(view, /const canStart = !real \? true/);
-  assert.match(view, /idCheck = \{ state, canStart, real \};/);
+  assert.match(view, /idCheck = \{ state, canStart, real, \.\.\.\(otherPerson \? \{ verifiedName: progress\.idPerson!\.verifiedName, otherPerson: true \} : \{\}\) \};/);
   // A test request has no company or contact, so an approval writes no party
   // record: the decision handler files a document only for one or the other.
   const veriff = read("server/veriff.ts");

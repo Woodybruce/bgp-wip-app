@@ -299,7 +299,10 @@ export default function KycUploadPage() {
 
   const view = loaded.view;
   const setView = (next: KycPortalView) => setLoaded({ state: "open", view: next });
-  const idDone = !!view.idCheck && (view.idCheck.state === "approved" || view.idCheck.state === "submitted");
+  // Someone else's identity check on this link is not this person's (Woody,
+  // 19 November 2026: an agent copied on the request did it on the link).
+  const idOther = !!view.idCheck?.otherPerson;
+  const idDone = !!view.idCheck && !idOther && (view.idCheck.state === "approved" || view.idCheck.state === "submitted");
   const answered = !!view.question?.pep;
   const ownersDone = !!view.owners?.answer;
   const total = view.docs.length + (view.idCheck ? 1 : 0) + (view.question ? 1 : 0) + (view.owners ? 1 : 0);
@@ -431,13 +434,18 @@ export default function KycUploadPage() {
       <div className="mt-6 space-y-3">
         {view.idCheck && (() => {
           step++;
-          const copy = ID_COPY[view.idCheck.state] || ID_COPY.not_started;
+          const copy = idOther ? ID_COPY.not_started : ID_COPY[view.idCheck.state] || ID_COPY.not_started;
           return (
             <div className={`rounded-lg border p-4 ${idDone ? "border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/10" : ""}`} data-testid="kyc-id-check">
               <div className="flex gap-3">
                 <StepNumber n={step} done={idDone} />
                 <div className="min-w-0 flex-1">
                   <h3 className="font-semibold text-base leading-snug">A quick identity check</h3>
+                  {idOther && (
+                    <p className="mt-1 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" data-testid="kyc-id-other">
+                      The identity check done on this page was {view.idCheck.verifiedName || "someone else"}'s. This page is for {view.recipientName || "the person we asked"}: if that is not you, please pass the link to them so they can do their own.
+                    </p>
+                  )}
                   <p className="mt-1 text-sm text-muted-foreground leading-relaxed">{copy.line}</p>
                   {copy.button && view.idCheck.canStart && (
                     <Button type="button" className="mt-3 bg-[#6E0C25] hover:bg-[#5a0a1f] text-white" disabled={idBusy} onClick={startId} data-testid="kyc-start-id">

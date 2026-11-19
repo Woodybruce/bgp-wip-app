@@ -3791,6 +3791,107 @@ re-litigate. Rules: `shared/kyc-prechecks.ts` (`providerMatchFlags`,
 - A flag set aside before this change keeps its review only while its key
   and evidence still match (`applyFlagReviews`); a web flag that now holds
   several sources needs one set-aside covering them.
+- For a person screened with a date of birth, the next section replaces
+  these bars.
+
+## Who is screened, and the date of birth decides (Woody, 2026-11-19)
+
+Woody, the same evening ("AML with jack"): "the company name comes in.. it
+checks companies house for the directors and owners which is working. At
+that point need to work out who needs to be AML/KYC comply advantage not
+picking up DOB which can get from companies house for everyone when running
+against #PEP and adverse media currently ashowing red flags for random
+people with similar names? whats the fix?" Read on live deal #4491 (BGP's
+own two companies, checked at 17:00, after "Tighten"): the red flags were
+directors who are not owners (Jack Barratt, Rupert Bentley-Smith, Charlotte
+Roberts) and the deal's contact, each on a profile with no date of birth:
+"rupert smith" (UK MPs and Lords RCA), "caroline roberts" (a Canadian
+historical leadership list), "bruce woody" (a Florida sex offenders list).
+ComplyAdvantage's score measures how much of the name matched (70% when
+every word of one name is in the other, 20% for a spelling variant), not
+whether it is the same person, so the 60% bar flagged every such name. Do
+not re-litigate. Rules: `shared/kyc-prechecks.ts` (`chooseScreened`,
+`SCREEN_BASIS_WORDS`, `screenedLine`, `providerMatchFlags(m, line)`);
+`server/kyc-prechecks.ts` (`runPrecheck`, `screenComplyAdvantage`);
+`server/comply-advantage.ts` (`meshNameParts`, `profileDobs`,
+`profileDobAgrees`, `meshRefusedDetails`); `server/companies-house.ts` (the
+chain walk keeps each owner's date of birth). Tests:
+`server/kyc-prechecks.test.ts`, `server/comply-advantage.test.ts` (both in
+`npm test`), `qa/regression/kyc-screening-bars.test.mjs`.
+
+- **Who is screened for public roles and adverse media** (ComplyAdvantage
+  and the web search; `chooseScreened`): the company (and its trading name)
+  and its beneficial owners, the people with significant control of it and
+  of each company up its ownership chain (MLR 2017 reg 5). A company listed
+  on a regulated market: the company alone (reg 28(5)). No owner who can be
+  named: the directors or LLP members stand in (reg 28(6)). A private
+  individual: themselves. Everyone the run lists, directors, the secretary
+  and the deal's contact included, is still screened against the UK and US
+  sanctions lists. The run stores who was screened (`result.screened`: the
+  basis, the people, the sanctions-only names); the AML box shows it
+  ("Screened for public roles and adverse media: ...") and KYC4U's note
+  carries it.
+- **Everyone screened goes with a date of birth**: owners, people up the
+  chain (since this day; before, the chain walk dropped it) and directors,
+  the month and year Companies House gives. Mesh's person record requires
+  `last_name` (its `ol_Person` schema; the app sent `full_name` alone, the
+  likeliest reason Mesh refused the date of birth sent with it), so every
+  person screen carries first, middle and last names (`meshNameParts`: the
+  register's "SURNAME, Forenames", else the last word; titles dropped), the
+  bare retry too. A refusal keeps Mesh's own words (`meshRefusedDetails`),
+  shown by the admin connection check (Test ComplyAdvantage on
+  Subscriptions & APIs); still in memory, a day, as before.
+- **The date of birth decides** (`providerMatchFlags(m, line)`, the line
+  carrying `person` and `dobKnown`): for a person screened with a date of
+  birth, a profile whose date of birth differs is set aside before it is
+  kept (same year and month when both give a month, else within a year: a
+  first of January reads as the year alone, `profileDobAgrees`); a profile
+  whose date of birth agrees is a red flag of any kind; a profile with no
+  date of birth is a possible namesake ("no date of birth on the profile"),
+  never a red flag; a sanctions match stays a red flag unless the dates
+  differ. A person with no date of birth keeps the bars, a warning list at
+  90% like anything else. A company, and every check from before this
+  change, keeps the earlier rule, so its flags stand until **Run again**.
+- Not run against Mesh from a build machine (no keys here): the first run on
+  live shows whether Mesh now keeps the date of birth (the customer record in
+  Mesh, or the connection check's refusal line). Not built: Mesh's own
+  year-of-birth exclusion filter (`FILTER_ATTRIBUTE_YEAR_OF_BIRTH`) on the
+  "chat bgp" configuration, which Mesh's screens did not offer Woody; its API
+  ("Update screening configuration") or ComplyAdvantage can switch it on.
+
+## Whose identity check it was (Woody, 2026-11-19)
+
+Woody: "this is email about jack barrat but its actually after woody bruce
+diod the check so its got confused jack hasnt done his yet". On deal #4491
+the request to Jack for BGP Ltd (ref 7MJEGT) went out at 16:43 with Woody
+copied; Woody opened his copy at 17:11 and passed Veriff himself; the app
+said "jack Barrat has finished their checks ... Identity check: passed" and
+filed the result as Jack's. Bruce Cap's request (4YTTES) was only sent at
+17:22. Veriff reads the name off the document (`verification.person`,
+stored as `veriff_sessions.verdict_person`); the app now sets it against the
+person the request was for (`verifiedPersonName`, `idCheckIsThePerson` in
+`shared/kyc-prechecks.ts`: every word of one name in the other, a letter's
+typo allowed in a long word, a first name alone matched within the other).
+Nothing is moved between parties (Woody asked for it to land on Bruce Cap,
+then withdrew it, then withdrew that: the records show it was done on
+Jack's link). Guards: `qa/regression/kyc-id-person.test.mjs`.
+
+- **Someone else's check is not the client's**: `progressOf` counts the
+  identity check done only when it is the person's; the deal card's request
+  row says "Identity check (passed) was WOODY BRUCE's, not jack Barrat's"
+  with an amber note (`idVerifiedName`, `idOtherPerson`); the Finished email
+  is "The checks sent to jack Barrat were finished with WOODY BRUCE's
+  identity check", lists the client's own check as not sent and says what to
+  do; the client's page says whose check it was and lets the right person
+  start their own (within the three-session cap).
+- **Veriff's approval** is filed as "Veriff verification — <verified name>
+  (on the check asked of <name>).json", on the company with no contact, and
+  ticks nothing on the checklist, when it is someone else.
+- **Photos as thumbnails** (Woody, same evening: "the letters for the photos
+  can we show them as thumb nails?"): on the deal card's request rows, a
+  JPEG, PNG, WebP or GIF the client sent shows as an 80px thumbnail opening
+  the file, with what it was sent as and the date; anything else (HEIC, PDF,
+  Word) stays a line with its name.
 
 ## BGP's AML policy and risk assessment, Issue 2 (Woody, 2026-11-19)
 

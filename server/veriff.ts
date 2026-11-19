@@ -3,6 +3,7 @@ import { Router, Request, Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
 import { pool } from "./db";
 import { kycIdCheckEmail, kycWhatsAppHref, kycWhatsAppText } from "@shared/kyc-request";
+import { idCheckIsThePerson, verifiedPersonName } from "@shared/kyc-prechecks";
 
 // Veriff Station API — https://developers.veriff.com/
 // We never echo the API key; it's read from Railway env on each request.
@@ -381,16 +382,25 @@ veriffRouter.post("/api/veriff/webhook", async (req: Request, res: Response) => 
       const row = await pool.query(`SELECT * FROM veriff_sessions WHERE session_id = $1`, [sessionId]);
       const s = row.rows[0];
       if (s && (s.company_id || s.contact_id)) {
-        const docName = `Veriff verification — ${s.first_name} ${s.last_name}.json`;
+        // Filed as the person Veriff checked (Woody, 19 November 2026: an
+        // agent copied on Jack's request passed the check on Jack's link and
+        // it was filed as Jack's). Someone else's check is not put on the
+        // contact it was asked of, and ticks nothing.
+        const asked = `${s.first_name || ""} ${s.last_name || ""}`.replace(/\s+/g, " ").trim();
+        const verified = verifiedPersonName(verdictPerson);
+        const otherPerson = idCheckIsThePerson(asked, verified) === false;
+        const docName = otherPerson
+          ? `Veriff verification — ${verified} (on the check asked of ${asked}).json`
+          : `Veriff verification — ${asked}.json`;
         const fileUrl = `/api/veriff/sessions/${sessionId}/report`;
         await pool.query(
           `INSERT INTO kyc_documents (company_id, contact_id, deal_id, doc_type, file_url, file_name, mime_type, certified_by, certified_at, notes, uploaded_by)
            VALUES ($1, $2, $3, 'onfido_report', $4, $5, 'application/json', $6, NOW(), $7, $8)`,
           [
-            s.company_id, s.contact_id, s.deal_id,
+            s.company_id, otherPerson ? null : s.contact_id, s.deal_id,
             fileUrl, docName,
             "Veriff (biometric)",
-            `Veriff sessionId ${sessionId} — approved`,
+            `Veriff sessionId ${sessionId} — approved${otherPerson ? `: the person checked was ${verified}, not ${asked}, who it was asked of` : ""}`,
             s.requested_by,
           ]
         ).catch((e) => console.warn("[veriff] kyc_documents insert failed:", e?.message));
@@ -398,7 +408,7 @@ veriffRouter.post("/api/veriff/webhook", async (req: Request, res: Response) => 
         // Auto-tick identity_verified + address_verified on the company's
         // AML checklist — lazy-import the orchestrator to avoid a circular
         // dep between veriff.ts and kyc-orchestrator.ts.
-        if (s.company_id) {
+        if (s.company_id && !otherPerson) {
           try {
             const { autoTickFromVeriff } = await import("./kyc-orchestrator");
             const ticked = await autoTickFromVeriff(s.company_id, sessionId, status);

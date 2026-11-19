@@ -32,7 +32,7 @@ import {
   kycRedFlagEmail, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycUploadAllowed, kycWhatsAppHref, kycWhatsAppText,
   type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycOwnersReply, type KycPartyKind, type KycPortalView, type KycProgress,
 } from "@shared/kyc-request";
-import { precheckAsks } from "@shared/kyc-prechecks";
+import { idCheckIsThePerson, precheckAsks, verifiedPersonName } from "@shared/kyc-prechecks";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
 
 export const KYC_MAILBOX = (process.env.KYC_MAILBOX || process.env.BGP_AML_MAILBOX || "kyc@chatbgp.app").trim();
@@ -230,11 +230,22 @@ function veriffConfigured(): boolean {
   return !!(key && secret);
 }
 
-async function latestSession(request: KycRequestDetails): Promise<{ session_id: string; status: string | null; verification_url: string | null } | null> {
+async function latestSession(request: KycRequestDetails): Promise<{ session_id: string; status: string | null; verification_url: string | null; verdict_person: unknown } | null> {
   const id = request.veriffSessionIds[request.veriffSessionIds.length - 1];
   if (!id) return null;
-  const r = await pool.query(`SELECT session_id, status, verification_url FROM veriff_sessions WHERE session_id = $1`, [id]);
+  const r = await pool.query(`SELECT session_id, status, verification_url, verdict_person FROM veriff_sessions WHERE session_id = $1`, [id]);
   return r.rows[0] || null;
+}
+
+// Who Veriff checked, set against the person the request was for (Woody,
+// 19 November 2026: "its actually after woody bruce did the check so its got
+// confused jack hasnt done his yet"). The agents are copied on the request,
+// so a copy of the client's link can be opened by someone else; a check
+// passed by another person is never reported as the client's.
+export interface KycIdPerson { verifiedName: string | null; isThePerson: boolean | null }
+function idPersonOf(row: TokenRow, session: { verdict_person: unknown } | null): KycIdPerson {
+  const verifiedName = verifiedPersonName(session?.verdict_person);
+  return { verifiedName, isThePerson: idCheckIsThePerson(row.contact_name, verifiedName) };
 }
 
 async function startIdSession(row: TokenRow, request: KycRequestDetails): Promise<{ sessionId: string; url: string }> {
@@ -280,15 +291,18 @@ async function uploadedFiles(token: string): Promise<UploadedFile[]> {
   }));
 }
 
-async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycProgress & { idState: KycIdState | null; files: UploadedFile[] }> {
+async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycProgress & { idState: KycIdState | null; idPerson: KycIdPerson | null; files: UploadedFile[] }> {
   const request = row.request!;
   const list = files || await uploadedFiles(row.token);
   const session = request.needsIdCheck ? await latestSession(request) : null;
   const idState = request.needsIdCheck ? kycIdStateFor(session?.status) : null;
+  const idPerson = request.needsIdCheck && session ? idPersonOf(row, session) : null;
   const docsDone = request.docs.filter(key => list.some(f => f.docKey === key));
   const pepAnswered = !request.askPep || !!request.answers?.pep;
   const ownersAnswered = !request.confirmOwners?.length || !!request.ownersAnswer;
-  return { idDone: idState === "approved" || idState === "submitted", docsDone, pepAnswered, ownersAnswered, idState, files: list };
+  // Someone else's identity check is not the client's.
+  const idDone = (idState === "approved" || idState === "submitted") && idPerson?.isThePerson !== false;
+  return { idDone, docsDone, pepAnswered, ownersAnswered, idState, idPerson, files: list };
 }
 
 export async function portalView(row: TokenRow): Promise<KycPortalView> {
@@ -301,10 +315,11 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
     // 2026-11-17: "can you do the test page a real identity check with
     // veriff"), under the same three-session cap as a client's.
     const real = !row.is_test || veriffConfigured();
+    const otherPerson = progress.idPerson?.isThePerson === false;
     const canStart = !real ? true
-      : state === "restart" ? request.veriffSessionIds.length < MAX_ID_SESSIONS
+      : state === "restart" || otherPerson ? request.veriffSessionIds.length < MAX_ID_SESSIONS
       : state !== "approved" && state !== "submitted";
-    idCheck = { state, canStart, real };
+    idCheck = { state, canStart, real, ...(otherPerson ? { verifiedName: progress.idPerson!.verifiedName, otherPerson: true } : {}) };
   }
   const requested = new Set(request.docs);
   return {
@@ -524,6 +539,7 @@ export async function clientChecksForDeal(dealId: string) {
       cc: request.cc, openedAt: request.openedAt, expiresAt: new Date(row.expires_at).toISOString(),
       finishedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
       status, needsIdCheck: request.needsIdCheck, idState: progress.idState, idCheckNote: request.idCheckNote,
+      idVerifiedName: progress.idPerson?.verifiedName ?? null, idOtherPerson: progress.idPerson?.isThePerson === false,
       askPep: !!request.askPep, pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null,
       owners: request.confirmOwners?.length ? { list: request.confirmOwners, answer: request.ownersAnswer?.answer ?? null, detail: request.ownersAnswer?.detail ?? null } : null,
       notAsked: request.notAsked || [],
@@ -672,8 +688,9 @@ async function finishRequest(row: TokenRow): Promise<void> {
   await pool.query(`UPDATE kyc_upload_tokens SET completed_at = now() WHERE token = $1 AND completed_at IS NULL`, [row.token]);
   const request = row.request!;
   const progress = await progressOf(row);
+  const otherPerson = progress.idPerson?.isThePerson === false;
   const missing = [
-    ...(request.needsIdCheck && !progress.idDone ? ["Identity check"] : []),
+    ...(request.needsIdCheck && !progress.idDone ? [otherPerson ? `${row.contact_name || "The client"}'s own identity check` : "Identity check"] : []),
     ...(progress.ownersAnswered ? [] : [KYC_OWNERS_QUESTION.title]),
     ...request.docs.filter(key => !progress.docsDone.includes(key)).map(key => KYC_DOCS[key].title),
     ...(progress.pepAnswered ? [] : [KYC_PEP_QUESTION.title]),
@@ -689,7 +706,7 @@ async function finishRequest(row: TokenRow): Promise<void> {
     to,
     build: sentFrom => kycFinishedEmail({
       recipientName: row.contact_name, partyName: request.partyName, dealName: request.dealName, ref: request.ref,
-      dealLink: row.is_test ? LINK_BASE : dealLinkFor(row.deal_id), idState: progress.idState,
+      dealLink: row.is_test ? LINK_BASE : dealLinkFor(row.deal_id), idState: progress.idState, idPerson: progress.idPerson,
       files: progress.files.map(f => ({ name: f.name, docKey: f.docKey })), missing, sentFrom, test: !!row.is_test,
       kind: request.kind, ...(request.askPep ? { pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null } : {}),
       redFlags, owners: request.confirmOwners?.length ? { list: request.confirmOwners, reply: request.ownersAnswer || null } : null,
@@ -698,7 +715,7 @@ async function finishRequest(row: TokenRow): Promise<void> {
   if (!sent.ok) console.warn(`[kyc] the finished note for ${request.ref} was not sent: ${sent.error}`);
   if (row.company_id && !row.is_test) {
     await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_checks_finished', $2, $3)`,
-      [row.company_id, row.contact_name || row.contact_email, `Finished, ref ${request.ref}: ${progress.files.length} file(s)${missing.length ? `; not sent: ${missing.join(", ")}` : ""}`]).catch(() => {});
+      [row.company_id, row.contact_name || row.contact_email, `Finished, ref ${request.ref}: ${progress.files.length} file(s)${otherPerson ? `; the identity check on this link was passed by ${progress.idPerson!.verifiedName}, not ${row.contact_name || "the person it was for"}` : ""}${missing.length ? `; not sent: ${missing.join(", ")}` : ""}`]).catch(() => {});
   }
 }
 
@@ -917,7 +934,8 @@ kycRequestRouter.post("/api/kyc-upload/:token/id-check", async (req: Request, re
     const session = await latestSession(request);
     const state = kycIdStateFor(session?.status);
     if (session?.verification_url && (state === "not_started" || state === "started" || state === "retry")) return res.json({ url: session.verification_url });
-    if (state === "approved" || state === "submitted") return res.status(409).json({ message: "Your identity check is done. Thank you." });
+    const otherPerson = idPersonOf(row, session).isThePerson === false;
+    if ((state === "approved" || state === "submitted") && !otherPerson) return res.status(409).json({ message: "Your identity check is done. Thank you." });
     if (session && request.veriffSessionIds.length >= MAX_ID_SESSIONS) {
       return res.status(409).json({ message: "The identity check can't be started again from here. Please contact your agent." });
     }
