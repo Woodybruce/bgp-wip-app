@@ -404,6 +404,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
             `${d.imported ?? 0} imported`,
             d.promoted ? `${d.promoted} added to requirements` : null,
             d.skippedOld ? `${d.skippedOld} older skipped` : null,
+            d.agentsOnly ? `${d.agentsOnly} agents from listings that name no client` : null,
           ].filter(Boolean).join(" · ");
           toast({ title: "PIPnet synced", description: parts || "No new requirements found" });
           return;

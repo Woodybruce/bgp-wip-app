@@ -4163,9 +4163,13 @@ with its parameters. See "The BGP side bar".)
 (`docs/requirements-board-review-2026-11-19.md`; Woody: "it's old and I think
 isn't that well set up or linked to the rest of the app"). It covers the live
 figures, the nine fit rules, the about 70 places that show a requirement and
-where each one links, a build plan and seven decisions. All seven decisions
-are waiting on Woody. Nothing in it is built. Read it before changing the
-board, the fit rules or a requirement link.
+where each one links, a build plan and seven decisions. Woody answered "carry
+on" the same day, taken as yes to the review's recommendation on each
+decision (one row per brand; size AND use-or-place; open on the open
+requirements; market listings unseen for six months under Older; group owners;
+In the news loaded only when opened; market listings on the brand page with
+Confirm). Read it before changing the board, the fit rules or a requirement
+link.
 
 The PIPnet import saw no listing from 15 to 19 November 2026. The login
 worked, but every PIPnet search goes through ScraperAPI, and that account was
@@ -4196,7 +4200,48 @@ Woody's sourcing brief of the same day is the last section of the review:
 - every agent on a flyer into the tenant rep CRM;
 - requirements also from the chats, email and news.
 
-Its four decisions are waiting on him.
+Its four decisions were answered with the same "carry on": the 12-month
+catch-up runs the first 100 to measure the cost, then the rest (A); a
+listing that names no client adds only its agent (B); what the import makes
+says "From PIPnet" (C); listings stay market listings until BGP confirms (D).
+
+**Each flyer's agent is the brand's tenant rep** (19 November 2026; Woody:
+"All agents who put up a flyer should be added to our tenant rep agent CRM").
+In `server/pipnet.ts`, the promote step finds the agent firm and the named
+agent through `upsertPipnetAgent`, then, once the listing's transaction has
+committed, `recordPipnetTenantRep` makes the brand-to-firm link through
+`createBrandRepresentation` (agent type `tenant_rep`, the agent as its
+contact, a note naming the listing). So the brand page, the CRM's Agents
+list and the client Agents directory show it. It makes one link per brand and
+firm. A link already there, current or ended by a person, is left alone. Each
+listing asks once (`_tenantRepAt` on the listing's `raw_data`, carried over
+when the import reads it again), so a link a person deletes is not put back
+by the same flyer; a new flyer naming the agent adds it again. A brand
+listing for itself (the firm's name is the brand's) has its agent filed under
+the brand and gets no link.
+- **Firms are matched on a tidied name** (`shared/pipnet-agents.ts`:
+  `agentFirmKey` drops case, punctuation, a bracketed part, a leading "The"
+  and a legal ending, and reads "&" as "and"). So "CBRE Ltd" is the CRM's
+  CBRE, where the exact-name match made a second company. `pickAgentFirm`
+  takes a company recorded as an agent firm, else one recorded as nothing
+  (which it records as an agent firm, as before), never a merged one, never a
+  brand, landlord or other kind of company that shares the name, never the
+  listing's own brand. The agent is found at the firm by email, then by name.
+  An existing record only gains blank fields.
+- **What it makes says so**: a new firm or contact has enrichment source
+  `pipnet`, which the contact page's Source reads as "From PIPnet"
+  (`sourceWords`). A new contact's first note line is "Added from PIPnet —
+  the agent on <brand>'s requirement, listed <date>".
+- **A listing that names no client** ("[No Client Quoted]") is no
+  requirement and makes no link. Its agent firm and contact still go into the
+  CRM. Its detail page is read for the agent's email and mobile, and its
+  flyer is neither downloaded nor read.
+- Tests: `server/pipnet-agents.test.ts` (in `npm test`) and
+  `qa/regression/pipnet-tenant-rep.test.mjs`, which runs the real promote
+  step. `qa/regression/requirement-import-matching.test.mjs` runs it too, so
+  a new binding in either function goes into both. Not run against PIPnet
+  from a build machine: the first links come from the 05:30 import, and the
+  older listings get theirs when the 12-month catch-up reads them again.
 
 Woody: "the requirements page is just picking up historic requirements
 dragged from a couple of data bases. We need it to be the live requirements

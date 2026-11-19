@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 const { listingTarget, importMayLabel, requirementListingUpdates } = await import('../../shared/requirement-live.ts');
+const pipnetAgents = await import('../../shared/pipnet-agents.ts');
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts, source } = require('./source-harness.cjs');
 
@@ -46,7 +47,7 @@ const TABLES = {
   crmContacts: table('crm_contacts', ['id', 'name', 'companyId']),
   externalRequirements: table('external_requirements', ['id']),
 };
-const drizzle = { eq: (col, val) => ({ eq: [col, val] }), and: (...all) => ({ and: all }), isNull: col => ({ isNull: col }), desc: col => ({ desc: col }) };
+const drizzle = { eq: (col, val) => ({ eq: [col, val] }), and: (...all) => ({ and: all }), isNull: col => ({ isNull: col }), desc: col => ({ desc: col }), ilike: (col, val) => ({ ilike: [col, val] }) };
 
 function fakeDb(requirements) {
   const writes = [];
@@ -76,8 +77,11 @@ const LISTING = { companyName: 'Pret A Manger', companyLogo: null, contactName: 
 
 function pipnet(requirements) {
   const fake = fakeDb(requirements);
-  const code = ['normaliseBrandName', 'parseUkDate', 'mapPlanningClassToBgpUse', 'promoteToCrmRequirement'].map(n => fn('server/pipnet.ts', n)).join('\n');
-  const mod = evaluate(`${code}\nexports.promote = promoteToCrmRequirement;`, { db: fake.db, ...TABLES, ...drizzle, listingTarget, importMayLabel, requirementListingUpdates });
+  // The agent firm and contact (upsertPipnetAgent) run for real; the tenant
+  // rep link, written after the transaction through its own door, is a stand-in.
+  const code = ['normaliseBrandName', 'parseUkDate', 'mapPlanningClassToBgpUse', 'promoteToCrmRequirement', 'upsertPipnetAgent'].map(n => fn('server/pipnet.ts', n)).join('\n');
+  const mod = evaluate(`${code}\nexports.promote = promoteToCrmRequirement;`, { db: fake.db, ...TABLES, ...drizzle, listingTarget, importMayLabel, requirementListingUpdates,
+    ...pipnetAgents, recordPipnetTenantRep: async () => 'skipped' });
   return { ...fake, promote: (externalId = 'ext-1') => mod.promote(externalId, LISTING) };
 }
 

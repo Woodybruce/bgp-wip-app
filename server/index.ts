@@ -6890,7 +6890,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             { key: "pipnet", due: dailyAt(5, 30), run: () =>
               import("./pipnet").then(async (m) => {
                 const reqs = await m.importPipnetRequirements({ allPages: true, monthsBack: 3, autoPromote: true }).catch((e: any) => { console.error("[pipnet-cron] requirements failed:", e?.message); return null; });
-                if (reqs) console.log(`[pipnet-cron] requirements: ${reqs.imported} imported, ${reqs.promoted} promoted`);
+                if (reqs) console.log(`[pipnet-cron] requirements: ${reqs.imported} imported, ${reqs.promoted} promoted, ${reqs.agentsOnly} agents from listings naming no client`);
                 const props = await m.importPipnetProperties({ allPages: true }).catch((e: any) => { console.error("[pipnet-cron] properties failed:", e?.message); return null; });
                 if (props) console.log(`[pipnet-cron] properties: ${props.imported} imported, ${props.withBrochure} with brochure`);
               }) },

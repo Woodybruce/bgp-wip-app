@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { externalRequirements, crmRequirementsLeasing, crmCompanies, crmContacts } from "@shared/schema";
-import { eq, and, isNull, desc } from "drizzle-orm";
+import { eq, and, isNull, desc, ilike } from "drizzle-orm";
 import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
 import { getPipnetCreds } from "./integration-credentials";
 import { saveFile } from "./file-storage";
@@ -8,6 +8,7 @@ import { randomBytes } from "crypto";
 import { parseRequirementBrochure, mergeVisionIntoRecord } from "./requirement-vision-parser";
 import { geocodeOne } from "./geocode";
 import { requirementListingUpdates, importMayLabel, listingTarget } from "@shared/requirement-live";
+import { agentFirmKey, agentFirmSearchWord, pickAgentFirm, pipnetContactNote, pipnetTenantRepNote, PIPNET_SOURCE } from "@shared/pipnet-agents";
 
 const PIPNET_DEFAULT = "https://v1.pipnet.co.uk";
 const PIPNET_URL = sanitisePipnetUrl(process.env.PIPNET_URL);
@@ -912,7 +913,7 @@ async function importPipnetRequirementsInner(params: {
   allPages?: boolean;
   monthsBack?: number;
   autoPromote?: boolean;
-}): Promise<{ imported: number; promoted: number; skippedOld: number; total: number; pages: number }> {
+}): Promise<{ imported: number; promoted: number; skippedOld: number; agentsOnly: number; total: number; pages: number }> {
   const monthsBack = params.monthsBack ?? 3;
   const autoPromote = params.autoPromote ?? true;
   const cutoff = new Date();
@@ -927,6 +928,7 @@ async function importPipnetRequirementsInner(params: {
   let imported = 0;
   let promoted = 0;
   let skippedOld = 0;
+  let agentsOnly = 0;
   let loggedHeaders = false;
 
   // Reuse the cookie the search just established — do NOT call login() here.
@@ -944,7 +946,7 @@ async function importPipnetRequirementsInner(params: {
     }
     const companyName =
       row["Client"] || row["Company"] || row["Name"] || "Unknown";
-    if (companyName === "Unknown" || companyName === "[No Client Quoted]") continue;
+    if (companyName === "Unknown") continue;
 
     const agentCompany = (row["Agent"] || row["Agency"] || row["Acting Agent"] || "").trim();
     // List view's Contact has a "(Agent)" suffix — strip it. Detail page Contact is cleaner anyway.
@@ -955,6 +957,38 @@ async function importPipnetRequirementsInner(params: {
     const parsedDate = parseUkDate(docDate);
     if (parsedDate && parsedDate < cutoff) {
       skippedOld++;
+      continue;
+    }
+
+    // A listing that names no client is no requirement (a row needs a brand)
+    // and makes no tenant rep link, but its agent still goes into the CRM
+    // (the review's decision B: agents only). The detail page gives the
+    // agent's email and mobile; the flyer is not downloaded or read.
+    if (companyName === "[No Client Quoted]") {
+      if (!agentCompany) continue;
+      let anonDetail: Awaited<ReturnType<typeof fetchPipnetDetail>> = {};
+      if (row._detailHref) {
+        try {
+          anonDetail = await fetchPipnetDetail(row._detailHref, cookie);
+          await new Promise(r => setTimeout(r, 150));
+        } catch (e: any) {
+          console.error(`[pipnet detail] ${row._detailHref}: ${e?.message}`);
+        }
+      }
+      try {
+        await db.transaction(tx => upsertPipnetAgent(tx, {
+          firmName: agentCompany,
+          contactName: (anonDetail.contactName || listContactName || "").trim() || null,
+          email: anonDetail.email || row["Email"] || row["E-Mail"] || row["E-mail"] || null,
+          phone: anonDetail.telephone || row["Tel. No"] || row["Phone"] || row["Telephone"] || row["Tel"] || null,
+          mobile: anonDetail.mobile || null,
+          brand: null,
+          listedOn: parsedDate ? parsedDate.toISOString().slice(0, 10) : null,
+        }));
+        agentsOnly++;
+      } catch (e: any) {
+        console.error(`[pipnet import] agent on an anonymous listing (${agentCompany}): ${e?.message}`);
+      }
       continue;
     }
 
@@ -1064,6 +1098,10 @@ async function importPipnetRequirementsInner(params: {
         _mobile: detail.mobile || null,
         _address: { line1: detail.address1, line2: detail.address2, town: detail.town, county: detail.county, postCode: detail.postCode },
         _visionParse: visionParse,
+        // When this listing's agent was linked to the brand as its tenant rep
+        // (or found linked already): a listing links once, so a link a person
+        // deletes is not put back by the same flyer.
+        _tenantRepAt: (existing[0]?.rawData as any)?._tenantRepAt || null,
       } as any,
       updatedAt: new Date(),
     };
@@ -1098,7 +1136,7 @@ async function importPipnetRequirementsInner(params: {
     }
   }
 
-  return { imported, promoted, skippedOld, total: results.length, pages: Math.ceil(results.length / 20) };
+  return { imported, promoted, skippedOld, agentsOnly, total: results.length, pages: Math.ceil(results.length / 20) };
 }
 
 // Coarse fallback when the vision parse didn't run (no brochure / parse failed).
@@ -1138,7 +1176,12 @@ async function promoteToCrmRequirement(
   const landlordPackUrl: string | null = item.rawData?._landlordPackUrl || null;
   const brochurePack: { url: string; name: string; pages: number } | null = item.rawData?._brochurePack || null;
   const mobile: string | null = item.rawData?._mobile || null;
-  return db.transaction(async (tx) => {
+  const listedOn = parseUkDate(item.lastUpdated || "")?.toISOString().slice(0, 10) || null;
+  // Who the listing ties together, for the tenant rep link made once the
+  // listing's own transaction has committed (a brand made in it is not
+  // visible to another connection until then).
+  let parties: { brandId: string | null; firmId: string | null; contactId: string | null } = { brandId: null, firmId: null, contactId: null };
+  const created = await db.transaction(async (tx) => {
     // Client company — the tenant looking for space (PIPnet "Client" column).
     let clientCompanyId: string | null = null;
     if (item.companyName) {
@@ -1158,73 +1201,22 @@ async function promoteToCrmRequirement(
       }
     }
 
-    // Agent company — look up by name. On create, tag companyType="Agent".
-    // On existing rows without a type, also set it — pre-PIPnet rows for
-    // Savills/CBRE/etc. otherwise never get the tag.
-    let agentCompanyId: string | null = null;
-    if (agentCompanyName) {
-      const existingAgentCo = await tx
-        .select()
-        .from(crmCompanies)
-        .where(eq(crmCompanies.name, agentCompanyName))
-        .limit(1);
-      if (existingAgentCo.length > 0) {
-        agentCompanyId = existingAgentCo[0].id;
-        if (!existingAgentCo[0].companyType) {
-          await tx
-            .update(crmCompanies)
-            .set({ companyType: "Agent" })
-            .where(eq(crmCompanies.id, existingAgentCo[0].id));
-        }
-      } else {
-        const [newAgentCo] = await tx
-          .insert(crmCompanies)
-          .values({ name: agentCompanyName, companyType: "Agent" })
-          .returning({ id: crmCompanies.id });
-        agentCompanyId = newAgentCo.id;
-      }
-    }
-
-    // Agent contact — named person at the agency. Goes into agentContactId,
-    // not principalContactId. Email + mobile + address are merged on existing
-    // rows so subsequent syncs enrich rather than duplicate.
-    let agentContactId: string | null = null;
-    if (item.contactName) {
-      const existingContact = await tx
-        .select()
-        .from(crmContacts)
-        .where(
-          and(
-            eq(crmContacts.name, item.contactName),
-            agentCompanyId ? eq(crmContacts.companyId, agentCompanyId) : isNull(crmContacts.companyId),
-          )
-        )
-        .limit(1);
-      if (existingContact.length > 0) {
-        agentContactId = existingContact[0].id;
-        const updates: Record<string, any> = {};
-        if (!existingContact[0].email && item.contactEmail) updates.email = item.contactEmail;
-        if (!existingContact[0].phone && item.contactPhone) updates.phone = item.contactPhone;
-        if (!existingContact[0].phoneMobile && mobile) updates.phoneMobile = mobile;
-        if (Object.keys(updates).length > 0) {
-          await tx.update(crmContacts).set(updates).where(eq(crmContacts.id, existingContact[0].id));
-        }
-      } else {
-        const [newContact] = await tx
-          .insert(crmContacts)
-          .values({
-            name: item.contactName,
-            companyName: agentCompanyName || null,
-            email: item.contactEmail,
-            phone: item.contactPhone,
-            phoneMobile: mobile,
-            companyId: agentCompanyId,
-            contactType: "Agent",
-          })
-          .returning({ id: crmContacts.id });
-        agentContactId = newContact.id;
-      }
-    }
+    // The agent firm and the named agent: matched on the firm's tidied name
+    // ("CBRE" and "CBRE Ltd" are one firm) and the agent's email or name at
+    // it, else made and marked as made by this import (upsertPipnetAgent).
+    const agent = await upsertPipnetAgent(tx, {
+      firmName: agentCompanyName,
+      contactName: item.contactName,
+      email: item.contactEmail,
+      phone: item.contactPhone,
+      mobile,
+      brand: item.companyName || null,
+      brandId: clientCompanyId,
+      listedOn,
+    });
+    const agentCompanyId = agent.firmId;
+    const agentContactId = agent.contactId;
+    parties = { brandId: clientCompanyId, firmId: agentCompanyId, contactId: agentContactId };
 
     // Use + Type + Comments come from the vision parse (Claude reads the
     // brochure pages and maps onto BGP's categorical options). Fall back to
@@ -1326,6 +1318,128 @@ async function promoteToCrmRequirement(
       .where(eq(externalRequirements.id, externalId));
     return true;
   });
+  // The flyer's agent acts for the brand: its tenant rep, whatever became of
+  // the requirement row (a closed row still names who the brand instructed).
+  // Once per listing (rawData._tenantRepAt): a link a person deletes is not
+  // put back by the same flyer; a new flyer naming the agent adds it again.
+  if (!item.rawData?._tenantRepAt) {
+    try {
+      const outcome = await recordPipnetTenantRep({ ...parties, brand: item.companyName, listedOn, ref: item.rawData?._detail?.requirementId || null });
+      if (outcome !== "skipped") {
+        await db.update(externalRequirements)
+          .set({ rawData: { ...(item.rawData || {}), _tenantRepAt: new Date().toISOString() } })
+          .where(eq(externalRequirements.id, externalId));
+      }
+    } catch (e: any) {
+      console.warn(`[pipnet import] tenant rep link for ${item.companyName}: ${e?.message}`);
+    }
+  }
+  return created;
+}
+
+// The agent firm and the named agent on a flyer, in the CRM. The firm is found
+// by its tidied name among companies recorded as agent firms, or recorded as
+// nothing (pickAgentFirm), else made as an agent firm. The agent is found at
+// that firm by email or by name, else made. Records the import makes say so
+// (enrichment source "pipnet", shown as "From PIPnet", and a first note line
+// on a contact); an existing record only gains what it lacks.
+async function upsertPipnetAgent(tx: any, input: {
+  firmName: string;
+  contactName: string | null;
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  brand: string | null;
+  // The listing's own brand is never its agent firm (an in-house team listing
+  // under the brand's name would otherwise retype the brand as an agent).
+  brandId?: string | null;
+  listedOn: string | null;
+}): Promise<{ firmId: string | null; contactId: string | null }> {
+  const firmName = (input.firmName || "").trim();
+  let firmId: string | null = null;
+  // A brand acting for itself: the agent is filed under the brand, and no
+  // tenant rep link is made (recordPipnetTenantRep skips a brand that is its own firm).
+  const inHouse = !!input.brandId && !!firmName && agentFirmKey(firmName) === agentFirmKey(input.brand);
+  if (inHouse) firmId = input.brandId!;
+  const word = firmName && !inHouse ? agentFirmSearchWord(firmName) : null;
+  if (word) {
+    const candidates = await tx
+      .select({ id: crmCompanies.id, name: crmCompanies.name, companyType: crmCompanies.companyType, createdAt: crmCompanies.createdAt })
+      .from(crmCompanies)
+      .where(and(isNull(crmCompanies.mergedIntoId), ilike(crmCompanies.name, `%${word}%`)))
+      .limit(500);
+    const picked = pickAgentFirm(candidates.filter((c: { id: string }) => c.id !== input.brandId), firmName);
+    if (picked) {
+      firmId = picked.firm.id;
+      if (picked.setType) await tx.update(crmCompanies).set({ companyType: "Agent" }).where(eq(crmCompanies.id, picked.firm.id));
+    } else {
+      const [made] = await tx
+        .insert(crmCompanies)
+        .values({ name: firmName, companyType: "Agent", enrichmentSource: PIPNET_SOURCE })
+        .returning({ id: crmCompanies.id });
+      firmId = made.id;
+    }
+  }
+
+  const name = (input.contactName || "").trim();
+  if (!name) return { firmId, contactId: null };
+  const email = (input.email || "").trim();
+  const people = await tx
+    .select()
+    .from(crmContacts)
+    .where(firmId ? eq(crmContacts.companyId, firmId) : isNull(crmContacts.companyId))
+    .limit(500);
+  const same = (a: string | null | undefined, b: string) => (a || "").trim().toLowerCase() === b.toLowerCase();
+  // With no firm, only the same name counts (as before); at a firm, the same email first.
+  const found = (email && firmId ? people.find((p: any) => same(p.email, email)) : undefined) || people.find((p: any) => same(p.name, name));
+  if (found) {
+    const updates: Record<string, any> = {};
+    if (!found.email && email) updates.email = email;
+    if (!found.phone && input.phone) updates.phone = input.phone;
+    if (!found.phoneMobile && input.mobile) updates.phoneMobile = input.mobile;
+    if (Object.keys(updates).length > 0) await tx.update(crmContacts).set(updates).where(eq(crmContacts.id, found.id));
+    return { firmId, contactId: found.id };
+  }
+  const [made] = await tx
+    .insert(crmContacts)
+    .values({
+      name,
+      companyName: firmName || null,
+      email: email || null,
+      phone: input.phone,
+      phoneMobile: input.mobile,
+      companyId: firmId,
+      contactType: "Agent",
+      enrichmentSource: PIPNET_SOURCE,
+      notes: pipnetContactNote(input.brand, input.listedOn),
+    })
+    .returning({ id: crmContacts.id });
+  return { firmId, contactId: made.id };
+}
+
+// Each flyer's agent is the brand's tenant rep (Woody, 2026-11-19: "All agents
+// who put up a flyer should be added to our tenant rep agent CRM"), so the
+// brand page, the CRM's Agents list and the client Agents directory show it.
+// Written through the representation door, once for a brand and firm: a link
+// already there, current or ended by a person, is left as it is. The caller
+// asks once per listing.
+async function recordPipnetTenantRep(input: { brandId: string | null; firmId: string | null; contactId: string | null; brand: string; listedOn: string | null; ref: string | null }): Promise<"made" | "held" | "skipped"> {
+  if (!input.brandId || !input.firmId || input.brandId === input.firmId) return "skipped";
+  const { pool } = await import("./db");
+  const held = await pool.query(
+    `SELECT 1 FROM brand_agent_representations WHERE brand_company_id = $1 AND agent_company_id = $2 AND agent_type = 'tenant_rep' LIMIT 1`,
+    [input.brandId, input.firmId],
+  );
+  if (held.rows.length) return "held";
+  const { createBrandRepresentation } = await import("./brand-representations");
+  await createBrandRepresentation(pool, {
+    brandCompanyId: input.brandId,
+    agentCompanyId: input.firmId,
+    primaryContactId: input.contactId,
+    agentType: "tenant_rep",
+    notes: pipnetTenantRepNote(input.brand, input.listedOn, input.ref),
+  });
+  return "made";
 }
 
 // PIPnet counts concurrent logins against BGP's licence ("Maximum number of

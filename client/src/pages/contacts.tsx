@@ -59,6 +59,7 @@ import { CompanyChip } from "@/components/company-chip";
 import { ActivitySummary } from "@/components/activity-summary";
 import { CompanyMiniChat } from "@/components/brand-profile-panel";
 import { lastContactShort } from "@shared/last-contact";
+import { sourceWords } from "@shared/pipnet-agents";
 
 function parseAlloc(val: string | string[] | null | undefined): string[] {
   if (!val) return [];
@@ -778,7 +779,7 @@ function ContactSourcePanel({ contact }: { contact: any }) {
     if (!saved || age > VERIFY_STALE_MS || employerChanged) verify.mutate(true as any);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [savedFetched, saved, contact.id, contact.companyId]);
-  const src = contact.enrichmentSource || "manual entry";
+  const src = sourceWords(contact.enrichmentSource) || "manual entry";
   const when = contact.lastEnrichedAt ? new Date(contact.lastEnrichedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
   const shown = result || saved;
   const status = shown?.status;
