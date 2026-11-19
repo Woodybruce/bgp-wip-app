@@ -2,8 +2,9 @@
 // at Landsec: "board level reports to analyse activity across all schemes and
 // report Brand engagements, letting activity, summary of the quarterly
 // business review can generate report with the rental growth, deal speed").
-// The tenth report: a PDF to present and an Excel of the figures behind it,
-// for the months and schemes picked on the Reports page.
+// A deck to present (its slides are laid out by shared/landsec-decks.ts from
+// the figures gathered here) and an Excel of the figures behind it, for the
+// months and schemes picked on the Reports page.
 //
 // The rules (which day counts, what is left out, rental growth, deal speed,
 // brands by stage) are shared/landsec-board-report.ts. This file gathers the
@@ -16,9 +17,12 @@
 //    cut for whoever asks (unitsFor).
 //  - Live lettings by stage: the deal clock feed (clockFor).
 //  - Viewings: the viewings list, read as a Landsec login reads it.
-//  - Brand engagements: the Brand CRM plan read as a Landsec login reads it
-//    (brandGrid and loadPlan with a Landsec viewer and the Landsec brand
-//    slice), whoever asks: never a line BGP has not ticked to show Landsec.
+//  - Brand engagements and target tenants: the Brand CRM plan read as a
+//    Landsec login reads it (brandGrid and loadPlan with a Landsec viewer and
+//    the Landsec brand slice), whoever asks: never a line BGP has not ticked
+//    to show Landsec. Of a line it names the scheme, the unit's label, the
+//    stage and its dates, its dated records as events, its next step and
+//    whether a requirement is held, each as that reading sends it.
 //  - Offers: the one query of its own, by named column: the offer's day, its
 //    brand, the property, and whether a person logged or confirmed it.
 //  - The market report: only the text people saved (server/landsec-board-market.ts).
@@ -36,8 +40,8 @@ import { clientBrandSliceSql } from "./company-scope";
 import { loadBoardMarket } from "./landsec-board-market";
 import { industryInput } from "./landsec-board-industry";
 import {
-  brandOf, clockFor, count, dealDatesFor, longDay, money, pdfDocument, shortDay, stageLabel, unitsFor, workbookOf,
-  type Ctx, type PdfCol, type ReportScheme, type Sheet,
+  brandOf, clockFor, count, dealDatesFor, stageLabel, unitsFor, workbookOf,
+  type Ctx, type ReportScheme, type Sheet,
 } from "./landsec-reports";
 import type { PropertyUnit } from "@shared/property-units";
 import { LANDSEC_CATEGORIES, landsecCategoryLabel, landsecCategoryOf, type LandsecCategoryOrOther } from "@shared/landsec";
@@ -45,8 +49,8 @@ import { reportDay, type LandsecReportDef } from "@shared/landsec-reports";
 import { londonDay } from "@shared/stage-since";
 import { BRAND_STAGE_LABELS } from "@shared/brand-stage";
 import {
-  BOARD_MARKET_SECTIONS, BOARD_REPORT_TITLE, INDUSTRY_COUNTED, boardActivity, brandEngagement, categoryRows, dealSpeed, industryFigures, industryLines, rentalGrowth,
-  type BoardActivity, type BoardMarketKey, type IndustryFigures, type BoardBrandLine, type BoardCounts, type BoardDeal, type BoardMarket, type BoardOffer, type BoardViewing, type BrandEngagement, type DealSpeed, type RentalGrowth, type SpeedStat,
+  BOARD_MARKET_SECTIONS, INDUSTRY_COUNTED, TARGET_EVENT_WORDS, boardActivity, brandEngagement, categoryRows, dealSpeed, industryFigures, industryLines, rentalGrowth, targetEvent, targetTenants,
+  type BoardActivity, type BoardMarketKey, type IndustryFigures, type BoardTargetLine, type TargetTenants, type BoardCounts, type BoardDeal, type BoardMarket, type BoardOffer, type BoardViewing, type BrandEngagement, type DealSpeed, type RentalGrowth,
 } from "@shared/landsec-board-report";
 
 // ── What the pack is worked out from ─────────────────────────────────────
@@ -66,8 +70,10 @@ export interface BoardData {
   speed: DealSpeed;
   schemes: BoardSchemeRow[];
   /** The Brand CRM plan's lines at the chosen schemes, as a Landsec login reads them. Null when the plan could not be read. */
-  brandLines: BoardBrandLine[] | null;
+  brandLines: BoardTargetLine[] | null;
   engagement: BrandEngagement | null;
+  /** The target tenants: the brands between Wanted and Let, and what happened with them in the period. Null with the plan. */
+  targets: TargetTenants | null;
   /** Brands trading at the schemes or on the plan there, by company id: for the market report's public signals. */
   brands: Map<string, { name: string; category: LandsecCategoryOrOther | null }>;
   /** The industry in the period, one set of figures per market report section, counted across the whole brand directory. */
@@ -99,7 +105,7 @@ async function brandTypes(ids: string[]): Promise<Map<string, { name: string; ca
 }
 
 /** The Brand CRM plan at the chosen schemes, as a Landsec login reads it, whoever asks. */
-async function brandLinesFor(ctx: Ctx, viewer: LandsecViewer): Promise<{ lines: BoardBrandLine[]; brands: Array<{ id: string; name: string; category: LandsecCategoryOrOther | null }> }> {
+export async function brandLinesFor(ctx: Ctx, viewer: LandsecViewer): Promise<{ lines: BoardTargetLine[]; brands: Array<{ id: string; name: string; category: LandsecCategoryOrOther | null }> }> {
   const all = planSchemes(await resolveLandsecPortfolio(viewer.companyId));
   const keys = new Set(ctx.schemes.map(s => s.key));
   const planViewer: PlanViewer = { kind: "landsec", clientCompanyId: viewer.companyId, schemes: keys };
@@ -107,7 +113,7 @@ async function brandLinesFor(ctx: Ctx, viewer: LandsecViewer): Promise<{ lines: 
     brandGrid(pool, planViewer, all, await clientBrandSliceSql(viewer.companyId, "c.id"), ctx.madeAt),
     loadPlan(pool, { brandIds: null, propertyIds: uniq(all.flatMap(s => s.propertyIds)), schemes: all, viewer: planViewer, now: ctx.madeAt }),
   ]);
-  const lines: BoardBrandLine[] = [];
+  const lines: BoardTargetLine[] = [];
   const brands: Array<{ id: string; name: string; category: LandsecCategoryOrOther | null }> = [];
   for (const b of grid.brands) {
     if (!b.id) continue;
@@ -116,7 +122,15 @@ async function brandLinesFor(ctx: Ctx, viewer: LandsecViewer): Promise<{ lines: 
       if (!row.scheme.key || !keys.has(row.scheme.key)) continue;
       // The earliest dated record behind the line, else the day it reached its stage.
       const days = row.evidence.map(e => reportDay(e.at)).filter((d): d is string => !!d).sort();
-      lines.push({ brand: b.name, category: b.category ?? null, scheme: row.scheme.key, unit: row.unit?.label || null, stage: row.stage, firstSeen: days[0] || reportDay(row.stageSince) });
+      // Its dated records, each as what it says happened; a record that only names a target says nothing happened.
+      const events: BoardTargetLine["events"] = [];
+      for (const e of row.evidence) { const kind = targetEvent(e.src, e.label); if (kind) events.push({ kind, day: reportDay(e.at) }); }
+      lines.push({
+        brand: b.name, category: b.category ?? null, scheme: row.scheme.key, unit: row.unit?.label || null, stage: row.stage, firstSeen: days[0] || reportDay(row.stageSince),
+        since: reportDay(row.stageSince), events,
+        next: row.nextStep ? { title: row.nextStep.title, due: reportDay(row.nextStep.dueAt), who: row.nextStep.who } : null,
+        requirementHeld: row.requirement.chip !== "no_requirement",
+      });
       listed = true;
     }
     if (listed) brands.push({ id: b.id, name: b.name, category: b.category ?? null });
@@ -196,6 +210,7 @@ export async function boardData(ctx: Ctx, viewer: LandsecViewer): Promise<BoardD
     speed: dealSpeed(deals, ctx.period),
     brandLines: plan ? plan.lines : null,
     engagement: plan ? brandEngagement(plan.lines, ctx.period) : null,
+    targets: plan ? targetTenants(plan.lines, ctx.period, today) : null,
     brands,
     industry: BOARD_MARKET_SECTIONS.map(s => ({ key: s.key, title: s.title, figures: industryFigures(industryRows, s.group, ctx.period) })),
   };
@@ -210,7 +225,7 @@ const groupOf = (category: LandsecCategoryOrOther | null): string | null => LAND
 const LIVE_STAGES = ["AVA", "NEG", "HOT", "SOL"];
 
 /** How each figure is counted, in plain words: printed under the figures and on the workbook's About sheet. */
-export const BOARD_COUNTED: Record<"lettings" | "hots" | "instructions" | "viewings" | "offers" | "occupancy" | "bulk" | "growth" | "speed" | "brands", string> = {
+export const BOARD_COUNTED: Record<"lettings" | "hots" | "instructions" | "viewings" | "offers" | "occupancy" | "bulk" | "growth" | "speed" | "brands" | "targets", string> = {
   lettings: "Lettings exchanged or completed: lettings whose exchange or completion day falls in the period, each counted once. The day is the date on the deal, else the day its status was moved in the app.",
   hots: "Heads of Terms agreed: lettings that reached the Heads of Terms stage in the period: the day Heads of Terms were issued in the app, else the day the status was moved to HOTs.",
   instructions: "New instructions: units put to market in the period: the instructed date on the deal, else the day the letting was added to the app.",
@@ -221,6 +236,7 @@ export const BOARD_COUNTED: Record<"lettings" | "hots" | "instructions" | "viewi
   growth: "Rental growth: for each letting that exchanged or completed in the period, the rent on the deal against the unit's passing rent before the letting and against its ERV, as the tenancy schedule holds them. A figure the app does not hold is never estimated: the letting is left out of that comparison. The average is the average of each letting's own change.",
   speed: "Deal speed: whole days between two confirmed days. Instruction is the instructed date on the deal, else the day its status was first moved to Marketing; the day a letting was added to the app is not used. A letting with a day missing, not confirmed or out of order is left out and counted as left out.",
   brands: "Brand engagements: the Brand CRM plan for these schemes as a Landsec login reads it today. A brand is counted once, at the furthest stage any of its lines has reached. Newly in play: the earliest dated record of the brand at these schemes falls in the period.",
+  targets: "Target tenants: the brands with a line between Wanted and Let in the Brand CRM plan for these schemes, as a Landsec login reads it today. A brand is counted once, at its furthest such line. In the period: a viewing held, an approach (interest logged or a viewing booked), an offer, or the day its furthest line reached its present stage, each only where the plan holds a dated record on a day in the period. A brand with no dated record is counted as undated and is in none of the period's figures.",
 };
 
 const leftOutWords = (a: BoardActivity): string | null => {
@@ -281,151 +297,6 @@ export function boardFacts(data: BoardData, group: string | null, schemeNames: M
   const industry = data.industry.find(s => (BOARD_MARKET_SECTIONS.find(m => m.key === s.key)?.group || null) === group);
   if (industry) out.push(...industryLines(industry.figures, industry.title).filter(line => !/not available\.$/.test(line)));
   return out;
-}
-
-// ── The PDF ──────────────────────────────────────────────────────────────
-
-const right = (header: string, width: number): PdfCol => ({ header, width, align: "right" });
-const COUNT_COLS: PdfCol[] = [right("Exchanged or completed", 20), right("HoTs agreed", 12), right("New instructions", 16), right("Viewings held", 13), right("Offers received", 15)];
-const countCells = (c: BoardCounts | undefined): string[] => [c?.lettings || 0, c?.hots || 0, c?.instructions || 0, c?.viewings || 0, c?.offers || 0].map(n => count(n));
-
-function speedSection(title: string, stat: SpeedStat): [string, string][] {
-  return [[`Median ${title}`, days(stat.median)], [`Average ${title}`, days(stat.average)]];
-}
-
-export async function boardReportPdf(ctx: Ctx, viewer: LandsecViewer): Promise<Buffer> {
-  const data = await boardData(ctx, viewer);
-  const market: BoardMarket = await loadBoardMarket(ctx.period, ctx.schemes.map(s => s.key)).catch(() => ({}));
-  const pdf = await pdfDocument(`${BOARD_REPORT_TITLE}, ${ctx.period.label}`, "", ctx, false, 15);
-  const a = data.activity, t = a.total;
-  const schemeName = new Map(ctx.schemes.map(s => [s.key, s.name]));
-  const occupied = data.schemes.reduce((n, s) => n + s.occupied, 0), vacant = data.schemes.reduce((n, s) => n + s.vacant, 0);
-  const liveNow = data.schemes.reduce((n, s) => n + LIVE_STAGES.reduce((m, code) => m + (s.live[code] || 0), 0), 0);
-
-  // 1. Headlines.
-  pdf.heading("Headlines for the period");
-  pdf.figures([
-    ["Exchanged/completed", count(t.lettings)], ["Heads of Terms", count(t.hots)], ["New instructions", count(t.instructions)], ["Viewings held", count(t.viewings)],
-    ["Offers received", count(t.offers)], ["Units occupied", count(occupied)], ["Units vacant", count(vacant)], ["Live lettings", count(liveNow)],
-  ]);
-  pdf.para(`Schemes: ${ctx.schemes.map(s => s.name).join(", ")}.`, true);
-  pdf.para(`Of the ${plural(t.lettings, "letting", "lettings")}, ${count(t.exchanged)} exchanged and ${count(t.completed)} completed in the period (a letting that did both is counted once). Of the ${plural(t.viewings, "viewing", "viewings")}, ${count(t.viewingsCompleted)} ${t.viewingsCompleted === 1 ? "is" : "are"} marked completed.`);
-  pdf.gap(4);
-  for (const key of ["lettings", "hots", "instructions", "viewings", "offers", "occupancy"] as const) pdf.para(BOARD_COUNTED[key], true);
-  pdf.para([BOARD_COUNTED.bulk, leftOutWords(a)].filter(Boolean).join(" "), true);
-
-  // 2. Letting activity.
-  pdf.pageBreak(260);
-  pdf.heading("Letting activity by scheme");
-  pdf.table([{ header: "Scheme", width: 24 }, ...COUNT_COLS], [
-    ...data.schemes.map(s => [s.name, ...countCells(a.byScheme[s.key])]),
-    ...(data.schemes.length > 1 ? [["All schemes", ...countCells(t)]] : []),
-  ], "No scheme is picked.");
-  pdf.para("Counted in the period, by the rules under the headlines.", true);
-  pdf.gap(6);
-  pdf.table([{ header: "Scheme, today", width: 24 }, right("Occupied", 13), right("Vacant", 11), ...LIVE_STAGES.map(code => right(stageLabel(code) || code, 13))], [
-    ...data.schemes.map(s => [s.name, count(s.occupied), count(s.vacant), ...LIVE_STAGES.map(code => count(s.live[code] || 0))]),
-    ...(data.schemes.length > 1 ? [["All schemes", count(occupied), count(vacant), ...LIVE_STAGES.map(code => count(data.schemes.reduce((n, s) => n + (s.live[code] || 0), 0)))]] : []),
-  ], "No scheme is picked.");
-  pdf.para("Units occupied and vacant on the tenancy schedule, and live lettings by stage as the Deals page lists them, today.", true);
-
-  pdf.heading("Letting activity by brief category");
-  pdf.table([{ header: "Category", width: 24 }, ...COUNT_COLS], categoryRows(a.byCategory).map(r => [r.label, ...countCells(r.counts)]), "Nothing is recorded in the period.");
-  pdf.para("The category is read from the brand's type, by the categories of Landsec's agency brief. A letting, viewing or offer with no brand recorded is under No brand recorded.", true);
-
-  // 3. Rental growth.
-  pdf.pageBreak(260);
-  const g = data.growth;
-  pdf.heading("Rental growth");
-  pdf.figures([["Lettings", count(g.lettings)], ["vs previous rent", pct(g.avgVsPreviousPct)], ["vs ERV", pct(g.avgVsErvPct)], ["With both figures", count(g.withBoth)]]);
-  pdf.para(g.lettings === 0
-    ? "No letting exchanged or completed in the period on a day the app can confirm."
-    : `Of the ${plural(g.lettings, "letting", "lettings")} that exchanged or completed in the period, ${count(g.withPrevious)} had an agreed rent and a previous passing rent, ${count(g.withErv)} had an agreed rent and an ERV, and ${count(g.withBoth)} had all three. ${count(g.leftOut)} ${g.leftOut === 1 ? "is" : "are"} left out of both comparisons for want of a figure.`);
-  if (g.withPrevious) pdf.para(`Against the previous passing rent: agreed rents of ${money(g.agreedForPrevious)} a year against ${money(g.previousTotal)}, ${pct(g.totalVsPreviousPct)} on the total; the average of each letting's own change is ${pct(g.avgVsPreviousPct)}.`);
-  if (g.withErv) pdf.para(`Against ERV: agreed rents of ${money(g.agreedForErv)} a year against ERVs of ${money(g.ervTotal)}, ${pct(g.totalVsErvPct)} on the total; the average of each letting's own change is ${pct(g.avgVsErvPct)}.`);
-  pdf.gap(4);
-  if (g.lettings) {
-    pdf.table([
-      { header: "Scheme", width: 15 }, { header: "Unit", width: 12 }, { header: "Brand", width: 15 }, { header: "Day", width: 11 },
-      right("Agreed pa", 11), right("Previous pa", 11), right("Change", 8), right("ERV pa", 10), right("vs ERV", 8),
-    ], g.rows.map(r => [
-      schemeName.get(r.scheme) || r.scheme, r.unit || "", r.brand || "", shortDay(r.day),
-      money(r.agreedRent) || "Not held", money(r.previousRent) || "Not held", pct(r.vsPreviousPct), money(r.erv) || "Not held", pct(r.vsErvPct),
-    ]), "");
-  }
-  pdf.para(BOARD_COUNTED.growth, true);
-
-  // 4. Deal speed.
-  pdf.pageBreak(240);
-  const sp = data.speed;
-  pdf.heading("Deal speed");
-  pdf.figures([...speedSection("to HoTs", sp.toHots), ...speedSection("to exchange", sp.toExchange)]);
-  pdf.para(`Instruction to Heads of Terms: ${plural(sp.toHots.count, "letting", "lettings")} measured of those that reached Heads of Terms in the period; ${count(sp.toHots.leftOut)} left out. Heads of Terms to exchange: ${plural(sp.toExchange.count, "letting", "lettings")} measured of those that exchanged in the period; ${count(sp.toExchange.leftOut)} left out.`);
-  pdf.gap(4);
-  const speedCols: PdfCol[] = [{ header: "Scheme", width: 20 }, { header: "Unit", width: 16 }, { header: "Brand", width: 22 }, { header: "From", width: 14 }, { header: "To", width: 14 }, right("Days", 9)];
-  const speedRows = (stat: SpeedStat) => stat.rows.map(r => [schemeName.get(r.scheme) || r.scheme, r.unit || "", r.brand || "", shortDay(r.from), shortDay(r.to), count(r.days)]);
-  if (sp.toHots.count) { pdf.para("Instruction to Heads of Terms"); pdf.table(speedCols, speedRows(sp.toHots), ""); }
-  if (sp.toExchange.count) { pdf.para("Heads of Terms to exchange"); pdf.table(speedCols, speedRows(sp.toExchange), ""); }
-  pdf.para(BOARD_COUNTED.speed, true);
-
-  // 5. Brand engagements.
-  pdf.pageBreak(260);
-  pdf.heading("Brand engagements");
-  const e = data.engagement;
-  if (!e) pdf.para("The Brand CRM plan could not be read, so this section is not in this copy.", true);
-  else {
-    pdf.figures(e.byStage.map((s): [string, string] => [s.label, count(s.brands)]));
-    pdf.para(`${plural(e.brands, "brand has", "brands have")} a line at these schemes. ${count(e.otherStages)} more ${e.otherStages === 1 ? "is" : "are"} at a stage outside these six (Wanted, Unit identified, Trading, Not proceeding or Disposing).`);
-    pdf.gap(4);
-    pdf.para("Newly in play in the period");
-    pdf.table([{ header: "Brand", width: 30 }, { header: "First dated record", width: 18 }, { header: "Schemes", width: 34 }, { header: "Furthest stage", width: 18 }],
-      e.newlyInPlay.map(n => [n.brand, shortDay(n.firstSeen), n.schemes.map(k => schemeName.get(k) || k).join(", "), n.stage]), "No brand's earliest dated record falls in the period.");
-    if (e.undated) pdf.para(`${plural(e.undated, "brand has", "brands have")} no dated record, so the report cannot say when ${e.undated === 1 ? "it" : "they"} came into play.`, true);
-    pdf.gap(4);
-    pdf.para("Furthest on at each scheme");
-    const far = ctx.schemes.flatMap(s => (e.furthestByScheme[s.key] || []).map(b => [s.name, b.brand, b.unit || "No unit yet", b.stage]));
-    pdf.table([{ header: "Scheme", width: 26 }, { header: "Brand", width: 30 }, { header: "Unit", width: 26 }, { header: "Stage", width: 18 }], far, "No brand is between Approached and Let at these schemes.");
-    pdf.para(BOARD_COUNTED.brands, true);
-  }
-
-  // 6. The market report. The words are only what a person saved; the
-  // industry figures under each section are data, and print either way.
-  const saved = BOARD_MARKET_SECTIONS.filter(s => market[s.key]?.text);
-  const signed = (n: number) => `${n > 0 ? "+" : ""}${count(n)}`;
-  pdf.pageBreak(300);
-  for (const s of BOARD_MARKET_SECTIONS) {
-    const m = market[s.key];
-    pdf.pageBreak(230);
-    pdf.heading(s.key === "overall" ? "Market report" : `Market report: ${s.title}`);
-    if (m?.text) {
-      for (const paragraph of m.text.split(/\n+/).filter(Boolean)) { pdf.para(paragraph); pdf.gap(4); }
-      pdf.para(`Saved by ${m.savedBy} (${m.savedByFirm})${m.savedAt ? ` on ${longDay(new Date(m.savedAt))}` : ""}.`, true);
-      pdf.gap(6);
-    }
-    const f = data.industry.find(i => i.key === s.key)?.figures;
-    if (!f) continue;
-    pdf.para(s.key === "overall" ? "The industry this period, across every brand on the app" : `The industry this period: ${s.title}`);
-    pdf.figures([
-      ["Brands opening", f.signals ? count(f.signals.opening) : "Not available"], ["Brands closing", f.signals ? count(f.signals.closure) : "Not available"],
-      ["Net store change", !f.stores ? "Not available" : f.stores.brands ? signed(f.stores.net) : "No counts"], ["Planning apps", f.planning ? count(f.planning.applications) : "Not available"],
-    ]);
-    for (const line of industryLines(f, s.title)) pdf.para(line, true);
-    pdf.gap(4);
-    pdf.table([{ header: "Date", width: 13 }, { header: "Brand", width: 20 }, { header: "Story (headline only)", width: 47 }, { header: "Source", width: 20 }],
-      f.headlines.map(h => [shortDay(h.date), h.brand, h.headline, h.site]), "No dated story with a link is recorded for the period.");
-    pdf.para(s.key === "overall" ? INDUSTRY_COUNTED : "Counted as set out under the overall section: public records only, with no footfall, sales, turnover, spending or rental index.", true);
-  }
-
-  // About.
-  pdf.heading("About this report");
-  pdf.para(`Period: ${ctx.period.label}. Made by ${ctx.madeBy} on ${longDay(ctx.madeAt)}.`);
-  pdf.para("It holds what is recorded in ChatBGP on the day it was made. A letting Landsec did without BGP is in it only if it is on the app. Nothing in it is estimated: a figure the app does not hold is shown as not held and left out of the averages.");
-  pdf.para(saved.length
-    ? `The words of the market report are written by BGP and Landsec. Printed here: ${saved.map(s => s.title).join(", ")}. A section with nothing saved prints no words.`
-    : "The words of the market report are written by BGP and Landsec. Nothing has been saved for this period and these schemes, so no words are printed.");
-  pdf.para("The industry figures under each market report section are counted by the app from public records, for every section, whether or not words are saved.");
-  pdf.para("The figures behind every table are in the Board report figures workbook, from the same page.", true);
-  return Buffer.from(await pdf.bytes());
 }
 
 // ── The workbook ─────────────────────────────────────────────────────────
@@ -550,6 +421,22 @@ export async function boardReportWorkbook(def: LandsecReportDef, ctx: Ctx, viewe
     caption: data.brandLines ? BOARD_COUNTED.brands : "The Brand CRM plan could not be read, so this sheet is empty.",
   };
 
+  const tt = data.targets;
+  const targetSheet: Sheet = {
+    name: "Target tenants",
+    columns: [
+      { header: "Brand", key: "brand", width: 28 }, { header: "Category", key: "category", width: 26 }, { header: "Scheme", key: "scheme", width: 24 }, { header: "Unit", key: "unit", width: 22 },
+      { header: "Furthest stage", key: "stage", width: 16 }, { header: "Step of 8", key: "step", width: 9, kind: "int" },
+      { header: "Latest dated activity in period", key: "last", width: 22 }, { header: "On", key: "lastDay", width: 13, kind: "date" },
+      { header: "Next step", key: "next", width: 34 }, { header: "With", key: "who", width: 22 }, { header: "Due", key: "due", width: 13, kind: "date" }, { header: "Requirement held", key: "held", width: 14 },
+    ],
+    rows: (tt?.rows || []).map(r => ({
+      brand: r.brand, category: landsecCategoryLabel(r.category) || "", scheme: schemeName.get(r.scheme) || r.scheme, unit: r.unit, stage: r.stageLabel, step: r.step,
+      last: r.last ? TARGET_EVENT_WORDS[r.last.kind] : "", lastDay: r.last?.day ?? null, next: r.next?.title ?? "", who: r.next?.who ?? "", due: r.next?.due ?? null, held: r.requirementHeld ? "Yes" : "",
+    })),
+    caption: tt ? BOARD_COUNTED.targets : "The Brand CRM plan could not be read, so this sheet is empty.",
+  };
+
   const marketSheet: Sheet = {
     name: "Market report",
     columns: [{ header: "Section", key: "section", width: 24 }, { header: "Text", key: "text", width: 120 }, { header: "Saved by", key: "savedBy", width: 22 }, { header: "Firm", key: "firm", width: 10 }, { header: "Saved on", key: "savedOn", width: 13, kind: "date" }],
@@ -570,7 +457,7 @@ export async function boardReportWorkbook(def: LandsecReportDef, ctx: Ctx, viewe
     caption: "Up to ten dated stories a section: the headline, the site it came from and its date. Never the text of a story.",
   };
 
-  return workbookOf(def, ctx, [headlines, byScheme, byCategory, growth, speed, brands, marketSheet, industrySheet, headlineSheet], [
+  return workbookOf(def, ctx, [headlines, byScheme, byCategory, growth, speed, brands, targetSheet, marketSheet, industrySheet, headlineSheet], [
     ["What it holds", "What is recorded in ChatBGP. A letting Landsec did without BGP is in it only if it is on the app. A figure the app does not hold is left blank and left out of the averages."],
     ["Dates", [BOARD_COUNTED.bulk, leftOutWords(a)].filter(Boolean).join(" ")],
   ]);

@@ -4,12 +4,16 @@
 // runs them: "yes landsec and BGP").
 //
 // Pick the months and the schemes once at the top; every card exports with
-// them. The list of reports and the period rule are shared/landsec-reports.ts,
-// so a report added there shows here. What a login may read is decided on the
+// them. The page leads with the reports to present, which are slide decks:
+// each downloads as a PDF or as a PowerPoint of the same slides (Woody,
+// 2026-11-19: "we dont need complicated excels just visual PDF which can also
+// be power point"). The Excel data exports are under one fold at the foot.
+// The list of reports and the period rule are shared/landsec-reports.ts, so a
+// report added there shows here. What a login may read is decided on the
 // server (server/landsec-reports.ts): this page only asks.
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, FileSpreadsheet, FileText, Loader2, PenLine } from "lucide-react";
+import { ChevronDown, Download, FileSpreadsheet, Loader2, PenLine, Presentation } from "lucide-react";
 import { Pill, PillCount, pillMetrics } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,17 +69,19 @@ export default function LandsecReports() {
     setTicked(next.size === schemes.length ? null : next);
   };
 
-  const exportReport = async (def: LandsecReportDef) => {
+  // A deck comes as a PDF, or as a PowerPoint of the same slides.
+  const exportReport = async (def: LandsecReportDef, as?: "pdf" | "pptx") => {
     if (!period) return;
     const one = def.schemes === "one";
     const keys = one ? [oneScheme] : chosen.map(s => s.key);
     const params = new URLSearchParams({ from: period.from, to: period.to });
     // All schemes ticked = none named: the server gives every scheme on the login.
     if (one || ticked) params.set("schemes", keys.join(","));
-    setBusy(def.key);
+    if (as === "pptx") params.set("format", "pptx");
+    setBusy(`${def.key}:${as || def.format}`);
     try {
       await downloadWithAuth(`/api/landsec/reports/${def.key}?${params.toString()}`,
-        landsecReportFileName(def, period, one ? schemes.find(s => s.key === oneScheme)?.name : null));
+        landsecReportFileName(def, period, one ? schemes.find(s => s.key === oneScheme)?.name : null, def.deck ? as || "pdf" : undefined));
     } catch (e) {
       toast({ title: `${def.title} could not be made`, description: (e as Error).message, variant: "destructive" });
     } finally {
@@ -104,16 +110,15 @@ export default function LandsecReports() {
   }
 
   const noneTicked = chosen.length === 0;
-  // The board report is two files (the PDF and its figures) drawn as one card at the head of the list.
-  const board = data.reports.filter(def => def.card === "board");
-  const boardPdf = board.find(def => def.format === "pdf"), boardFigures = board.find(def => def.format === "xlsx");
-  const others = data.reports.filter(def => def.card !== "board");
+  // The reports to present are decks; everything else is an Excel data export, under the fold.
+  const decks = data.reports.filter(def => def.deck);
+  const exports = data.reports.filter(def => !def.deck);
   return (
     <div className="p-4 md:p-6 space-y-5" data-testid="landsec-reports">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Reports</h1>
         <p className="mt-0.5 text-sm text-muted-foreground" data-testid="landsec-reports-summary">
-          <span className="font-mono tabular-nums">{others.length + (boardPdf ? 1 : 0)}</span> reports
+          <span className="font-mono tabular-nums">{decks.length}</span> reports to present
           {period ? <> · {period.label}</> : null}
           {schemes.length > 0 && <> · <span className="font-mono tabular-nums">{chosen.length}</span> of <span className="font-mono tabular-nums">{schemes.length}</span> schemes</>}
         </p>
@@ -166,75 +171,84 @@ export default function LandsecReports() {
             {noneTicked && <p className="text-xs text-muted-foreground" data-testid="landsec-reports-none-ticked">Tick at least one scheme to export.</p>}
           </section>
 
-          {boardPdf && (
-            <section className="space-y-2" aria-label="Board report">
-              <h2 className={SECTION_LABEL}>Board report</h2>
-              <div className="flex flex-col gap-2 rounded-lg border bg-card p-4" data-testid="landsec-report-board">
-                <div className="flex items-start justify-between gap-2">
-                  <h3 className="flex min-w-0 items-center gap-2 text-base font-semibold"><FileText className="h-4 w-4 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words">{boardPdf.title}</span></h3>
-                  <span className={FORMAT_CHIP}>PDF and Excel</span>
-                </div>
-                <p className="max-w-3xl text-sm text-muted-foreground">{boardPdf.description}</p>
-                <p className="max-w-3xl text-[11px] text-muted-foreground">{boardPdf.period}</p>
-                {boardPdf.note && <p className="max-w-3xl text-[11px] text-muted-foreground" data-testid="landsec-report-note-board">{boardPdf.note}</p>}
-                <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:flex-wrap sm:items-center">
-                  <Button type="button" size="sm" className="min-h-[44px] sm:min-h-0" disabled={!period || noneTicked || !!busy} onClick={() => exportReport(boardPdf)} data-testid="landsec-report-export-board-report">
-                    {busy === boardPdf.key ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1 h-3.5 w-3.5" />}
-                    {busy === boardPdf.key ? "Making it" : "Export PDF"}
-                  </Button>
-                  {boardFigures && (
-                    <Button type="button" variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" disabled={!period || noneTicked || !!busy} onClick={() => exportReport(boardFigures)} data-testid="landsec-report-export-board-report-figures">
-                      {busy === boardFigures.key ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="mr-1 h-3.5 w-3.5" />}
-                      {busy === boardFigures.key ? "Making it" : "Export Excel"}
-                    </Button>
-                  )}
-                  <Button type="button" variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" disabled={!period || noneTicked} onClick={() => setMarketOpen(true)} data-testid="landsec-report-board-market">
-                    <PenLine className="mr-1 h-3.5 w-3.5" />
-                    Market report
-                  </Button>
-                </div>
-              </div>
-              {period && !noneTicked && (
-                <BoardMarketEditor open={marketOpen} onOpenChange={setMarketOpen} from={period.from} to={period.to} schemes={ticked ? chosen.map(s => s.key) : null} />
-              )}
-            </section>
-          )}
-
-          <section className="space-y-2" aria-label="Reports">
-            <h2 className={SECTION_LABEL}>Reports</h2>
-            <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {others.map(def => {
+          <section className="space-y-2" aria-label="Reports to present">
+            <h2 className={SECTION_LABEL}>Reports to present</h2>
+            <ul className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+              {decks.map(def => {
                 const one = def.schemes === "one";
-                const working = busy === def.key;
                 const blocked = !period || (one ? !oneScheme : noneTicked);
-                const Icon = def.format === "pdf" ? FileText : FileSpreadsheet;
+                const board = def.card === "board";
                 return (
                   <li key={def.key} className="flex flex-col gap-2 rounded-lg border bg-card p-4" data-testid={`landsec-report-${def.key}`}>
                     <div className="flex items-start justify-between gap-2">
-                      <h3 className="flex min-w-0 items-center gap-2 text-sm font-semibold"><Icon className="h-4 w-4 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words">{def.title}</span></h3>
-                      <span className={FORMAT_CHIP}>{def.format === "pdf" ? "PDF" : "Excel"}</span>
+                      <h3 className="flex min-w-0 items-center gap-2 text-base font-semibold"><Presentation className="h-4 w-4 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words">{def.title}</span></h3>
+                      <span className={FORMAT_CHIP}>Slides</span>
                     </div>
                     <p className="text-sm text-muted-foreground">{def.description}</p>
                     <p className="text-[11px] text-muted-foreground">{def.period}</p>
                     {def.note && <p className="text-[11px] text-muted-foreground" data-testid={`landsec-report-note-${def.key}`}>{def.note}</p>}
-                    <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
+                    <div className="mt-auto flex flex-col gap-2 pt-1">
                       {one && (
                         <Select value={oneScheme} onValueChange={setOneScheme}>
-                          <SelectTrigger className="h-8 w-full text-xs sm:w-48" aria-label="Scheme" data-testid={`landsec-report-scheme-${def.key}`}><SelectValue placeholder="Pick a scheme" /></SelectTrigger>
+                          <SelectTrigger className="h-9 w-full text-xs sm:w-56" aria-label="Scheme" data-testid={`landsec-report-scheme-${def.key}`}><SelectValue placeholder="Pick a scheme" /></SelectTrigger>
                           <SelectContent>{schemes.map(s => <SelectItem key={s.key} value={s.key}>{s.name}</SelectItem>)}</SelectContent>
                         </Select>
                       )}
-                      <Button type="button" variant="outline" size="sm" disabled={blocked || !!busy} onClick={() => exportReport(def)} data-testid={`landsec-report-export-${def.key}`}>
-                        {working ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1 h-3.5 w-3.5" />}
-                        {working ? "Making it" : "Export"}
-                      </Button>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                        {(["pdf", "pptx"] as const).map(as => {
+                          const working = busy === `${def.key}:${as}`;
+                          return (
+                            <Button key={as} type="button" size="sm" variant={as === "pdf" ? "default" : "outline"} className="min-h-[44px] sm:min-h-0" disabled={blocked || !!busy}
+                              onClick={() => exportReport(def, as)} data-testid={`landsec-report-export-${def.key}-${as}`}>
+                              {working ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1 h-3.5 w-3.5" />}
+                              {working ? "Making it" : as === "pdf" ? "PDF" : "PowerPoint"}
+                            </Button>
+                          );
+                        })}
+                        {board && (
+                          <Button type="button" variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" disabled={!period || noneTicked} onClick={() => setMarketOpen(true)} data-testid="landsec-report-board-market">
+                            <PenLine className="mr-1 h-3.5 w-3.5" />
+                            Market report
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </li>
                 );
               })}
             </ul>
-            <p className="text-[11px] text-muted-foreground">Each report holds what is recorded in ChatBGP on the day it is made.</p>
+            <p className="text-[11px] text-muted-foreground">The PDF and the PowerPoint are the same slides. In the PowerPoint the charts and tables can be edited. Each holds what is recorded in ChatBGP on the day it is made.</p>
+            {period && !noneTicked && (
+              <BoardMarketEditor open={marketOpen} onOpenChange={setMarketOpen} from={period.from} to={period.to} schemes={ticked ? chosen.map(s => s.key) : null} />
+            )}
           </section>
+
+          {exports.length > 0 && (
+            <details className="group rounded-lg border bg-card" data-testid="landsec-reports-exports">
+              <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between gap-2 px-4 py-2 text-sm font-medium [&::-webkit-details-marker]:hidden" data-testid="landsec-reports-exports-toggle">
+                <span className="flex items-center gap-2"><FileSpreadsheet className="h-4 w-4 text-muted-foreground" />Data exports (Excel) <span className="font-mono text-xs tabular-nums text-muted-foreground">{exports.length}</span></span>
+                <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+              </summary>
+              <ul className="divide-y border-t">
+                {exports.map(def => {
+                  const working = busy === `${def.key}:${def.format}`;
+                  return (
+                    <li key={def.key} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between" data-testid={`landsec-report-${def.key}`}>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{def.title}</p>
+                        <p className="text-xs text-muted-foreground">{def.description}</p>
+                        <p className="text-[11px] text-muted-foreground">{def.period}{def.note ? ` ${def.note}` : ""}</p>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" className="min-h-[44px] shrink-0 sm:min-h-0" disabled={!period || noneTicked || !!busy} onClick={() => exportReport(def)} data-testid={`landsec-report-export-${def.key}`}>
+                        {working ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1 h-3.5 w-3.5" />}
+                        {working ? "Making it" : "Excel"}
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </details>
+          )}
         </>
       )}
     </div>

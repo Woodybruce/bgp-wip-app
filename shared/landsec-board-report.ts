@@ -101,6 +101,11 @@ export interface BoardOffer { scheme: string; day: string | null; logged: boolea
 
 // A viewing that did not happen, or a diary entry that is not a leasing viewing.
 const VIEWING_NOT_HELD = ["cancelled", "no_show", "not_leasing"];
+/** Whether a viewing counts as held in the period: dated in it, not later than today, and not cancelled, a no-show or a diary entry that is not a leasing viewing. */
+export function viewingHeld(v: { day: string | null; status: string | null }, period: ReportPeriod, today: string): boolean {
+  if (!v.day || !inReportPeriod(v.day, period) || v.day.slice(0, 10) > today) return false;
+  return !VIEWING_NOT_HELD.includes(String(v.status || "").toLowerCase());
+}
 
 // ── Counts ───────────────────────────────────────────────────────────────
 
@@ -157,8 +162,7 @@ export function boardActivity(input: { deals: BoardDeal[]; viewings: BoardViewin
     else if (instructed === "unconfirmed") out.leftOut.instructions += 1;
   }
   for (const v of input.viewings) {
-    if (!v.day || !inReportPeriod(v.day, period) || v.day.slice(0, 10) > today) continue;
-    if (VIEWING_NOT_HELD.includes(String(v.status || "").toLowerCase())) continue;
+    if (!viewingHeld(v, period, today)) continue;
     add(v.scheme, v.category, "viewings");
     if (String(v.status || "").toLowerCase() === "completed") add(v.scheme, v.category, "viewingsCompleted");
   }
@@ -348,6 +352,131 @@ export function brandEngagement(lines: BoardBrandLine[], period: ReportPeriod): 
   };
 }
 
+// ── Target tenants ───────────────────────────────────────────────────────
+//
+// Woody, 2026-11-19: "should be a section on leasing activity on target
+// tenants." The brands being targeted at the schemes, how far each has got,
+// and what happened with them in the period. Read ONLY from the Brand CRM
+// plan as a Landsec login reads it (the lines above): never a Wanted line BGP
+// has not ticked to show, BGP's own remarks, the lead or the aim.
+//
+// A target is a brand with a line between Wanted and Let. It is counted once,
+// at its furthest such line. "In the period" is counted only from the plan's
+// DATED records (a viewing, an offer, interest logged, heads of terms, a
+// letting's stage date): a brand with no dated record is counted as undated
+// and is in none of the period's figures.
+
+/** What one dated record of the plan says happened. */
+export type TargetEventKind = "approached" | "viewed" | "offer" | "hots" | "stage";
+export const TARGET_EVENT_WORDS: Record<TargetEventKind, string> = {
+  approached: "Approached", viewed: "Viewed", offer: "Offer made", hots: "Heads of Terms", stage: "Stage moved",
+};
+
+/**
+ * One evidence line of the plan (its source, and the plan's own label for it)
+ * as an event: a viewing held, a viewing booked or interest logged (an
+ * approach), an offer, heads of terms, or a letting's stage date. A target
+ * only named on a list, a Wanted line and a brand case say where a brand is
+ * wanted, not that something happened: null.
+ */
+export function targetEvent(src: string, label: string): TargetEventKind | null {
+  const words = String(label || "").trim().toLowerCase();
+  if (src === "viewing") return words.startsWith("viewed") ? "viewed" : "approached";
+  if (src === "interest") return "approached";
+  if (src === "offer") return /rejected|withdrawn/.test(words) ? null : "offer";
+  if (src === "hots") return "hots";
+  if (src === "deal") return "stage";
+  if (src === "tracker_target") {
+    const status = words.includes(":") ? words.slice(words.indexOf(":") + 1).trim() : "";
+    return status === "approached" || status === "meeting held" ? "approached" : status === "inspection done" ? "viewed" : null;
+  }
+  return null;
+}
+
+/** A plan line with what the target section needs: when it reached its stage, its dated events, its next step and whether a requirement is held, each as the Landsec view of the plan sends it. */
+export interface BoardTargetLine extends BoardBrandLine {
+  since: string | null;
+  events: Array<{ kind: TargetEventKind; day: string | null }>;
+  next: { title: string; due: string | null; who: string | null } | null;
+  requirementHeld: boolean;
+}
+
+export const TARGET_STAGES: BrandStage[] = ["wanted", "unit_identified", "approached", "viewed", "negotiating", "hots", "solicitors", "let"];
+/** The stages in four bands, for a chart by scheme. */
+export const TARGET_BANDS = [
+  { key: "early", label: "Wanted or unit identified", stages: ["wanted", "unit_identified"] },
+  { key: "approached", label: "Approached or viewed", stages: ["approached", "viewed"] },
+  { key: "terms", label: "Negotiating or HOTs", stages: ["negotiating", "hots"] },
+  { key: "legal", label: "Solicitors or let", stages: ["solicitors", "let"] },
+] as const satisfies ReadonlyArray<{ key: string; label: string; stages: BrandStage[] }>;
+export type TargetBandKey = (typeof TARGET_BANDS)[number]["key"];
+const bandOf = (stage: BrandStage): TargetBandKey => TARGET_BANDS.find(b => (b.stages as readonly BrandStage[]).includes(stage))!.key;
+
+export interface TargetRow {
+  brand: string; category: LandsecCategoryOrOther | null; scheme: string; unit: string | null;
+  stage: BrandStage; stageLabel: string;
+  /** How far along the eight stages: 1 (Wanted) to 8 (Let). */
+  step: number;
+  /** The latest dated event in the period, on any of the brand's target lines. */
+  last: { kind: TargetEventKind; day: string } | null;
+  next: BoardTargetLine["next"];
+  requirementHeld: boolean;
+}
+export interface TargetTenants {
+  /** Brands with a line between Wanted and Let. */
+  inPlay: number;
+  byStage: Array<{ stage: BrandStage; label: string; brands: number }>;
+  /** Per scheme key: its target brands by the band of the furthest stage each has reached THERE. */
+  byScheme: Record<string, Record<TargetBandKey, number>>;
+  /** Targets whose earliest dated record falls in the period. */
+  newly: number;
+  /** Targets whose furthest line reached its present stage (Approached or beyond) on a day in the period. */
+  movedForward: number;
+  /** Targets with a dated approach, a viewing held, and an offer, in the period. */
+  approached: number; viewed: number; offers: number;
+  /** Targets with no dated record at all: in none of the period's figures. */
+  undated: number;
+  /** One row a target, furthest on first, then the latest dated activity. */
+  rows: TargetRow[];
+}
+
+export function targetTenants(lines: BoardTargetLine[], period: ReportPeriod, today: string): TargetTenants {
+  const inPeriod = (day: string | null | undefined): day is string => !!day && inReportPeriod(day, period) && day.slice(0, 10) <= today;
+  const byBrand = new Map<string, BoardTargetLine[]>();
+  for (const l of lines) if (TARGET_STAGES.includes(l.stage)) byBrand.set(l.brand, [...(byBrand.get(l.brand) || []), l]);
+  const furthest = (list: BoardTargetLine[]): BoardTargetLine => list.slice().sort((a, b) => brandStageRank(b.stage) - brandStageRank(a.stage) || String(b.since || "").localeCompare(String(a.since || "")))[0];
+  const out: TargetTenants = {
+    inPlay: byBrand.size, byStage: TARGET_STAGES.map(stage => ({ stage, label: BRAND_STAGE_LABELS[stage], brands: 0 })), byScheme: {},
+    newly: 0, movedForward: 0, approached: 0, viewed: 0, offers: 0, undated: 0, rows: [],
+  };
+  for (const [brand, list] of byBrand) {
+    const top = furthest(list);
+    out.byStage.find(s => s.stage === top.stage)!.brands += 1;
+    for (const scheme of new Set(list.map(l => l.scheme))) {
+      const here = furthest(list.filter(l => l.scheme === scheme));
+      const bands = (out.byScheme[scheme] ||= { early: 0, approached: 0, terms: 0, legal: 0 });
+      bands[bandOf(here.stage)] += 1;
+    }
+    const events = list.flatMap(l => l.events);
+    const dated = [...list.map(l => l.firstSeen), ...list.map(l => l.since), ...events.map(e => e.day)].filter((d): d is string => !!d).sort();
+    if (dated.length === 0) out.undated += 1;
+    const first = list.map(l => l.firstSeen).filter((d): d is string => !!d).sort()[0];
+    if (inPeriod(first)) out.newly += 1;
+    if (inPeriod(top.since) && brandStageRank(top.stage) >= brandStageRank("approached")) out.movedForward += 1;
+    const recent = events.filter(e => inPeriod(e.day)).sort((a, b) => String(b.day).localeCompare(String(a.day)));
+    if (recent.some(e => e.kind === "approached")) out.approached += 1;
+    if (recent.some(e => e.kind === "viewed")) out.viewed += 1;
+    if (recent.some(e => e.kind === "offer")) out.offers += 1;
+    out.rows.push({
+      brand, category: top.category, scheme: top.scheme, unit: top.unit, stage: top.stage, stageLabel: BRAND_STAGE_LABELS[top.stage], step: TARGET_STAGES.indexOf(top.stage) + 1,
+      last: recent[0] ? { kind: recent[0].kind, day: recent[0].day!.slice(0, 10) } : null,
+      next: top.next, requirementHeld: list.some(l => l.requirementHeld),
+    });
+  }
+  out.rows.sort((a, b) => b.step - a.step || String(b.last?.day || "").localeCompare(String(a.last?.day || "")) || a.brand.localeCompare(b.brand));
+  return out;
+}
+
 // ── The industry in the period ───────────────────────────────────────────
 //
 // Woody, 2026-11-19: "what abiut marklet reports and insigts of the industry
@@ -391,6 +520,22 @@ const groupOfCategory = (category: LandsecCategoryOrOther | null): string | null
 const inSection = (category: LandsecCategoryOrOther | null, group: string | null): boolean => !group || groupOfCategory(category) === group;
 export const siteName = (url: string | null | undefined): string => { try { return new URL(String(url)).hostname.replace(/^www\./, ""); } catch { return ""; } };
 
+/**
+ * A story's headline and the source to name beside it. A Google News link is
+ * not the publisher: its headline ends " - Publisher", so that is the source
+ * and it comes off the headline. Without that ending the source reads
+ * "Google News". Any other link is named by its site.
+ */
+export function storySource(headline: string | null | undefined, url: string | null | undefined): { headline: string; site: string } {
+  const words = String(headline || "").replace(/\s+/g, " ").trim();
+  const site = siteName(url);
+  if (site !== "news.google.com") return { headline: words, site };
+  const cut = words.lastIndexOf(" - ");
+  const publisher = cut > 0 ? words.slice(cut + 3).trim() : "";
+  if (publisher && publisher.length <= 60 && cut >= 12 && !/[.!?]$/.test(publisher)) return { headline: words.slice(0, cut).trim(), site: publisher };
+  return { headline: words, site: "Google News" };
+}
+
 /** One brand's net change in stores over the period: the latest good count before the period's end, against the latest count of the same list on or before its first day (else the earliest inside it). Null without two counts at least 20 days apart. */
 export function storeChange(snapshots: Array<Pick<IndustrySnapshot, "day" | "basis" | "count">>, period: ReportPeriod): number | null {
   const sorted = snapshots.filter(s => s.day && s.day.slice(0, 10) < period.end).sort((a, b) => a.day.localeCompare(b.day));
@@ -416,10 +561,11 @@ export function industryHeadlines(signals: IndustrySignal[], max = 10): Industry
   const seen = new Set<string>(), perBrand = new Map<string, number>();
   const out: IndustryFigures["headlines"] = [];
   for (const s of sorted) {
-    const mark = s.headline.trim().toLowerCase();
-    if (seen.has(mark) || (perBrand.get(s.brandId) || 0) >= 2 || out.length >= max) continue;
+    const story = storySource(s.headline, s.source);
+    const mark = story.headline.toLowerCase();
+    if (!mark || seen.has(mark) || (perBrand.get(s.brandId) || 0) >= 2 || out.length >= max) continue;
     seen.add(mark); perBrand.set(s.brandId, (perBrand.get(s.brandId) || 0) + 1);
-    out.push({ date: s.date ? s.date.slice(0, 10) : null, brand: s.brand, headline: s.headline.trim().slice(0, 200), site: siteName(s.source) });
+    out.push({ date: s.date ? s.date.slice(0, 10) : null, brand: s.brand, headline: story.headline.slice(0, 200), site: story.site });
   }
   return out;
 }
@@ -544,7 +690,10 @@ export function marketDraftPrompt(input: MarketDraftInput): { system: string; us
     `PERIOD: ${oneLine(input.periodLabel)}`,
     `SCHEMES: ${input.schemes.map(oneLine).join(", ")}`,
     lines("FACTS", input.facts.map(oneLine).filter(Boolean)),
-    lines("SIGNALS", input.signals.map(s => `${s.date ? s.date.slice(0, 10) : "undated"} | ${oneLine(s.brand)} | ${oneLine(s.kind)} | ${oneLine(s.headline)} | source: ${site(s.source)}`)),
+    lines("SIGNALS", input.signals.map(s => {
+      const story = storySource(s.headline, s.source);
+      return `${s.date ? s.date.slice(0, 10) : "undated"} | ${oneLine(s.brand)} | ${oneLine(s.kind)} | ${oneLine(story.headline)} | source: ${oneLine(story.site)}`;
+    })),
     lines("CENTRE RESEARCH", input.research.map(r => `${r.date ? r.date.slice(0, 10) : "undated"} | ${oneLine(r.centre)} | ${oneLine(r.kind)} | ${oneLine(r.headline)} | source: ${site(r.source)}`)),
   ].join("\n\n");
   return { system, user };

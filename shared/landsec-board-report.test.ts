@@ -6,7 +6,8 @@ import { parseReportPeriod } from "./landsec-reports";
 import {
   average, boardActivity, boardMarketSection, boardMarketSettingsKey, boardSchemeSet, boardWhen, brandEngagement, categoryRows, cleanMarketDraft, cleanMarketText,
   daysBetween, dealSpeed, draftFiguresNotSent, marketDraftPrompt, median, rentalGrowth, BOARD_MARKET_MAX, BOARD_MARKET_SECTIONS,
-  industryFigures, industryHeadlines, industryLines, siteName, storeChange, INDUSTRY_COUNTED,
+  industryFigures, industryHeadlines, industryLines, siteName, storeChange, storySource, targetEvent, targetTenants, viewingHeld, INDUSTRY_COUNTED, TARGET_STAGES,
+  type BoardTargetLine,
   type BoardBrandLine, type BoardDeal, type IndustryInput, type IndustrySignal,
 } from "./landsec-board-report";
 
@@ -321,4 +322,111 @@ test("headline stories: a headline, its source's site and its date only; ten at 
   assert.ok(!out.some(h => /rumour|No link/.test(h.headline)));
   assert.ok(!out.some(h => /https?:/.test(h.site)));
   assert.equal(siteName("not a link"), "");
+});
+
+// Woody's first populated samples showed "news.google.com" as the source of every story.
+test("a Google News link names the publisher at the end of its headline, never news.google.com", () => {
+  const google = "https://news.google.com/rss/articles/CBMiabc?oc=5";
+  assert.deepEqual(storySource("Jersey Mike's opens first restaurant in the United Kingdom - ROI-NJ", google), { headline: "Jersey Mike's opens first restaurant in the United Kingdom", site: "ROI-NJ" });
+  assert.deepEqual(storySource("Flat Iron Birmingham opens on Temple Street, October 2026", google), { headline: "Flat Iron Birmingham opens on Temple Street, October 2026", site: "Google News" });
+  // Too short a headline to cut, or an ending that is a sentence: left whole.
+  assert.deepEqual(storySource("Opens - today.", google), { headline: "Opens - today.", site: "Google News" });
+  // Any other link is named by its site, and its headline is left as it is.
+  assert.deepEqual(storySource("Wingstop to open 20 sites - a big year", "https://www.propelinfo.com/story/1"), { headline: "Wingstop to open 20 sites - a big year", site: "propelinfo.com" });
+  assert.deepEqual(storySource("  Spaces   tidied ", null), { headline: "Spaces tidied", site: "" });
+  // The printed stories use it, and two links to one story are one story.
+  const out = industryHeadlines([
+    { brandId: "a", brand: "Jersey Mike's", category: null, type: "opening", headline: "Jersey Mike's opens first UK restaurant - ROI-NJ", source: google, date: "2026-09-09" },
+    { brandId: "a", brand: "Jersey Mike's", category: null, type: "opening", headline: "Jersey Mike's opens first UK restaurant", source: "https://roi-nj.com/x", date: "2026-09-08" },
+  ]);
+  assert.deepEqual(out, [{ date: "2026-09-09", brand: "Jersey Mike's", headline: "Jersey Mike's opens first UK restaurant", site: "ROI-NJ" }]);
+});
+
+test("a viewing held: dated in the period, not later than today, and not cancelled, a no-show or not a leasing viewing", () => {
+  const parsed = parseReportPeriod("2026-08", "2026-10");
+  assert.ok(parsed.ok);
+  const p = parsed.period;
+  assert.equal(viewingHeld({ day: "2026-09-02", status: "completed" }, p, "2026-11-19"), true);
+  assert.equal(viewingHeld({ day: "2026-09-02", status: null }, p, "2026-11-19"), true);
+  assert.equal(viewingHeld({ day: "2026-09-02", status: "Cancelled" }, p, "2026-11-19"), false);
+  assert.equal(viewingHeld({ day: "2026-09-02", status: "no_show" }, p, "2026-11-19"), false);
+  assert.equal(viewingHeld({ day: "2026-09-02", status: "not_leasing" }, p, "2026-11-19"), false);
+  assert.equal(viewingHeld({ day: "2026-10-30", status: "booked" }, p, "2026-10-15"), false, "booked for a later day");
+  assert.equal(viewingHeld({ day: "2026-11-01", status: "completed" }, p, "2026-11-19"), false);
+  assert.equal(viewingHeld({ day: null, status: "completed" }, p, "2026-11-19"), false);
+});
+
+// Woody, 2026-11-19: "should be a section on leasing activity on target tenants."
+test("a plan record as an event: only a dated thing that happened, read from the plan's own labels", async () => {
+  const { readEvidence } = await import("./brand-stage");
+  const event = (e: Parameters<typeof readEvidence>[0]) => { const r = readEvidence(e); return r ? targetEvent(e.src, r.label) : null; };
+  // Fed through the stage engine's own reading, so a change of its wording fails here.
+  assert.equal(event({ src: "viewing", status: "completed" }), "viewed");
+  assert.equal(event({ src: "viewing", status: "scheduled" }), "approached");
+  assert.equal(event({ src: "viewing", status: "no_show" }), "approached");
+  assert.equal(event({ src: "viewing", status: "cancelled" }), null);
+  assert.equal(event({ src: "interest" }), "approached");
+  assert.equal(event({ src: "offer", status: "Pending", detail: "landlord countered 3 Nov" }), "offer");
+  assert.equal(event({ src: "offer", status: "Agreed" }), "offer");
+  assert.equal(event({ src: "offer", status: "Rejected" }), null);
+  assert.equal(event({ src: "offer", status: "Withdrawn" }), null);
+  assert.equal(event({ src: "hots", status: "issued" }), "hots");
+  assert.equal(event({ src: "deal", status: "Solicitors", dealType: "New Letting", dealRef: 3550 }), "stage");
+  assert.equal(event({ src: "tracker_target", status: "Approached" }), "approached");
+  assert.equal(event({ src: "tracker_target", status: "Meeting held" }), "approached");
+  assert.equal(event({ src: "tracker_target", status: "Inspection done" }), "viewed");
+  // Being named as a target, a Wanted line and a brand case say where a brand is wanted, not that something happened.
+  assert.equal(event({ src: "tracker_target", status: "Identified" }), null);
+  assert.equal(event({ src: "target_list" }), null);
+  assert.equal(event({ src: "wish", hasUnit: true }), null);
+  assert.equal(event({ src: "case_unit", hasUnit: true }), null);
+  assert.equal(event({ src: "trading" }), null);
+});
+
+test("target tenants: a brand once at its furthest line between Wanted and Let, and the period counted only from dated records", () => {
+  const parsed = parseReportPeriod("2026-08", "2026-10");
+  assert.ok(parsed.ok);
+  const p = parsed.period;
+  const line = (over: Partial<BoardTargetLine>): BoardTargetLine => ({ brand: "A", category: null, scheme: "bluewater", unit: null, stage: "wanted", firstSeen: null, since: null, events: [], next: null, requirementHeld: false, ...over });
+  const t = targetTenants([
+    // Jersey Mike's: viewed and offered in the period, heads of terms on 16 October; also wanted at a second scheme.
+    line({ brand: "Jersey Mike's", unit: "L057", stage: "hots", firstSeen: "2026-09-11", since: "2026-10-16", requirementHeld: true, next: { title: "Waiting on tenant", due: null, who: "R Willcox" },
+      events: [{ kind: "viewed", day: "2026-09-11" }, { kind: "offer", day: "2026-10-02" }, { kind: "hots", day: "2026-10-16" }] }),
+    line({ brand: "Jersey Mike's", scheme: "lucent", stage: "wanted" }),
+    // Approached before the period and nothing since.
+    line({ brand: "Gail's", scheme: "lucent", stage: "approached", firstSeen: "2026-03-01", since: "2026-03-01", events: [{ kind: "approached", day: "2026-03-01" }] }),
+    // A viewing booked in the period for a day after today is not yet activity.
+    line({ brand: "Sushidog", stage: "approached", firstSeen: "2026-10-30", since: "2026-10-30", events: [{ kind: "approached", day: "2026-10-30" }] }),
+    // No dated record at all.
+    line({ brand: "Wingstop", stage: "unit_identified", unit: "U1" }),
+    // Trading here, and a target at another scheme: counted for the target line only.
+    line({ brand: "Nando's", stage: "trading", firstSeen: "2020-01-01", since: "2020-01-01" }),
+    line({ brand: "Nando's", scheme: "lucent", stage: "solicitors", firstSeen: "2026-07-01", since: "2026-07-20", events: [{ kind: "stage", day: "2026-07-20" }] }),
+    // Not proceeding, and only trading: not targets.
+    line({ brand: "Byron", stage: "not_proceeding", firstSeen: "2026-09-01", since: "2026-09-01" }),
+    line({ brand: "Costa", stage: "trading" }),
+  ], p, "2026-10-20");
+  assert.equal(t.inPlay, 5);
+  assert.deepEqual(t.byStage.map(s => [s.stage, s.brands]), [["wanted", 0], ["unit_identified", 1], ["approached", 2], ["viewed", 0], ["negotiating", 0], ["hots", 1], ["solicitors", 1], ["let", 0]]);
+  assert.deepEqual(t.byStage.map(s => s.stage), TARGET_STAGES);
+  // By scheme: a brand at each scheme it has a target line at, by the furthest stage it has reached there.
+  assert.deepEqual(t.byScheme, { bluewater: { early: 1, approached: 1, terms: 1, legal: 0 }, lucent: { early: 1, approached: 1, terms: 0, legal: 1 } });
+  assert.equal(t.newly, 1, "Jersey Mike's earliest dated record is in the period; Sushidog's is after today");
+  assert.equal(t.movedForward, 1, "reached Heads of Terms on a day in the period");
+  assert.deepEqual([t.approached, t.viewed, t.offers], [0, 1, 1]);
+  assert.equal(t.undated, 1, "Wingstop has no dated record and is in none of the period's figures");
+  // The rows: furthest on first, then the latest dated activity; each with its step of eight.
+  assert.deepEqual(t.rows.map(r => [r.brand, r.scheme, r.stageLabel, r.step, r.last?.kind ?? null, r.last?.day ?? null]), [
+    ["Nando's", "lucent", "Solicitors", 7, null, null],
+    ["Jersey Mike's", "bluewater", "HOTs", 6, "hots", "2026-10-16"],
+    ["Gail's", "lucent", "Approached", 3, null, null],
+    ["Sushidog", "bluewater", "Approached", 3, null, null],
+    ["Wingstop", "bluewater", "Unit identified", 2, null, null],
+  ]);
+  const jm = t.rows[1];
+  assert.deepEqual([jm.unit, jm.requirementHeld, jm.next], ["L057", true, { title: "Waiting on tenant", due: null, who: "R Willcox" }]);
+  // The same lines read on 31 October: the booked viewing has now happened.
+  const later = targetTenants([line({ brand: "Sushidog", stage: "approached", firstSeen: "2026-10-30", since: "2026-10-30", events: [{ kind: "approached", day: "2026-10-30" }] })], p, "2026-10-31");
+  assert.deepEqual([later.newly, later.approached, later.movedForward], [1, 1, 1]);
+  assert.deepEqual(targetTenants([], p, "2026-10-20"), { inPlay: 0, byStage: TARGET_STAGES.map(stage => ({ stage, label: t.byStage.find(s => s.stage === stage)!.label, brands: 0 })), byScheme: {}, newly: 0, movedForward: 0, approached: 0, viewed: 0, offers: 0, undated: 0, rows: [] });
 });

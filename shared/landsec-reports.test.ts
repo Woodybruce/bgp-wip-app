@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   LANDSEC_REPORTS, REPORT_MAX_MONTHS, defaultReportMonths, inReportPeriod, landsecReportByKey, landsecReportFileName,
-  londonMonth, parseReportPeriod, reportDay, reportPeriodLabel,
+  londonMonth, parseReportPeriod, reportDay, reportMonths, reportPeriodLabel, shortReportDay,
 } from "./landsec-reports";
 
 const period = (from: unknown, to: unknown, now?: Date) => {
@@ -107,6 +107,9 @@ test("the registry: the board report's two files then nine reports, unique keys,
     assert.equal(landsecReportByKey(r.key), r);
   }
   assert.deepEqual(LANDSEC_REPORTS.filter(r => r.format === "pdf").map(r => r.key), ["board-report", "leasing-activity-pdf", "asset-profile"]);
+  // The three reports to present are decks (a PDF, or a PowerPoint of the same slides); every other entry is an Excel data export.
+  assert.deepEqual(LANDSEC_REPORTS.filter(r => r.deck).map(r => [r.key, r.title]), [["board-report", "Board report"], ["leasing-activity-pdf", "Leasing activity"], ["asset-profile", "Asset profile"]]);
+  for (const r of LANDSEC_REPORTS) assert.equal(!!r.deck, r.format === "pdf", `${r.key}: a deck is a PDF, an export is Excel`);
   assert.deepEqual(LANDSEC_REPORTS.filter(r => r.schemes === "one").map(r => r.key), ["asset-profile"]);
   assert.match(landsecReportByKey("portfolio")!.note || "", /No budgets/);
   assert.equal(landsecReportByKey("budgets"), null);
@@ -118,4 +121,20 @@ test("file names", () => {
   assert.equal(landsecReportFileName(landsecReportByKey("tenancy-schedule")!, p), "Landsec Tenancy schedule - Aug to Oct 2026.xlsx");
   assert.equal(landsecReportFileName(landsecReportByKey("leasing-activity-pdf")!, p), "Landsec Leasing activity - Aug to Oct 2026.pdf");
   assert.equal(landsecReportFileName(landsecReportByKey("asset-profile")!, p, "St David's, Cardiff"), "Landsec St David's Cardiff Asset profile - Aug to Oct 2026.pdf");
+  // A deck asked for as a PowerPoint.
+  assert.equal(landsecReportFileName(landsecReportByKey("board-report")!, p, null, "pptx"), "Landsec Board report - Aug to Oct 2026.pptx");
+  assert.equal(landsecReportFileName(landsecReportByKey("asset-profile")!, p, "Bluewater", "pptx"), "Landsec Bluewater Asset profile - Aug to Oct 2026.pptx");
+  assert.equal(landsecReportFileName(landsecReportByKey("leasing-activity-pdf")!, p, null, "pdf"), "Landsec Leasing activity - Aug to Oct 2026.pdf");
+});
+
+test("a day is written with a three-letter month, and a period lists its months", () => {
+  assert.equal(shortReportDay("2026-09-02"), "2 Sep 2026");
+  assert.equal(shortReportDay("2026-06-21T10:00:00Z"), "21 Jun 2026");
+  assert.equal(shortReportDay("2026-12-31"), "31 Dec 2026");
+  assert.equal(shortReportDay(null), "");
+  assert.equal(shortReportDay("Q1 2026"), "");
+  assert.equal(shortReportDay("2026-13-01"), "");
+  assert.deepEqual(reportMonths(period("2025-11", "2026-01")), [{ ym: "2025-11", label: "Nov 2025" }, { ym: "2025-12", label: "Dec 2025" }, { ym: "2026-01", label: "Jan 2026" }]);
+  assert.deepEqual(reportMonths({ from: "2026-10", to: "2026-10" }), [{ ym: "2026-10", label: "Oct 2026" }]);
+  assert.deepEqual(reportMonths({ from: "2026-10", to: "2026-09" }), []);
 });

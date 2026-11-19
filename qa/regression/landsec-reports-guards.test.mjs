@@ -18,6 +18,19 @@ const builders = code(read(BUILDERS));
 const BOARD = 'server/landsec-board-report.ts';
 const board = code(read(BOARD));
 const market = code(read('server/landsec-board-market.ts'));
+// The decks (Woody, 2026-11-19: "we dont need complicated excels just visual PDF which can also be power point"):
+// the slide model, what is on each slide, the gathering, and the two renderers.
+const MODEL = 'shared/landsec-deck.ts', COMPOSE = 'shared/landsec-decks.ts', GATHER = 'server/landsec-decks.ts', PDF = 'server/landsec-deck-pdf.ts', PPTX = 'server/landsec-deck-pptx.ts', LOGO = 'server/landsec-report-logo.ts';
+const model = code(read(MODEL)), compose = code(read(COMPOSE)), gather = code(read(GATHER)), pdf = code(read(PDF)), pptx = code(read(PPTX)), logo = code(read(LOGO));
+const namedIn = text => {
+  const words = text.replace(/jointAgent|joint_agent/g, 'JOINTAGENT');
+  const tokens = new Set();
+  for (const id of words.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []) {
+    tokens.add(id.toLowerCase());
+    for (const part of id.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().split('_')) if (part) tokens.add(part);
+  }
+  return NEVER_NAMED.filter(word => tokens.has(word) || new RegExp(`(^|[^a-z])${word}([^a-z]|$)`, 'i').test(words.toLowerCase().replace(/[^a-z_]+/g, ' ')));
+};
 
 // Each is tried as a whole word, as a snake_case part and as a camelCase part.
 const NEVER_NAMED = [
@@ -49,6 +62,12 @@ test('the report builders never name a fee, a split, BGP notes, an internal agen
   const boardNamed = NEVER_NAMED.filter(word => boardTokens.has(word) || new RegExp(`(^|[^a-z])${word}([^a-z]|$)`, 'i').test(boardWords.toLowerCase().replace(/[^a-z_]+/g, ' ')));
   assert.deepEqual(boardNamed, [], `${BOARD} names: ${boardNamed.join(', ')}`);
   assert.doesNotMatch(board, /\.\.\.\s*(d|u|v|o|row|b|l)\b(?!\.)/, 'a deal, unit, viewing, offer or plan line is never spread: every key is named');
+  // The decks, by the same test: the slide model, what is on each slide, the gathering and both renderers.
+  for (const [file, text] of [[MODEL, model], [COMPOSE, compose], [GATHER, gather], [PDF, pdf], [LOGO, logo]]) assert.deepEqual(namedIn(text), [], `${file} names: ${namedIn(text).join(', ')}`);
+  // The PowerPoint renderer calls pptxgenjs's own addNotes to put a slide's rule under it: its one use of the word.
+  assert.deepEqual(namedIn(pptx.replace(/slide\.addNotes\(/g, 'slide.addUnder(')), [], `${PPTX} names a word it should not`);
+  assert.equal((pptx.match(/addNotes\(/g) || []).length, 1);
+  assert.doesNotMatch(gather, /\.\.\.\s*(d|u|v|r|row|s)\b(?!\.)/, 'a unit, viewing, letting or scheme row is never spread into a deck: every key is named');
   // The clock feed's row carries BGP's fee for staff. A row is never spread into a report.
   assert.doesNotMatch(builders, /\.\.\.\s*d\b/, 'a deal row is never spread: every key is named');
   assert.doesNotMatch(builders, /\.\.\.\s*(u|v|c)\b(?!\.)/, 'a unit, viewing or comparable is never spread: every key is named');
@@ -72,9 +91,21 @@ test('the queries of their own read only deal dates, company names and who is as
 
 test('units, deals, viewings, requirements and the category count come from the pages\' own feeds', () => {
   for (const feed of ['propertyReadBlocked(ctx.req, property.id)', 'loadPropertyUnits(pool, property.id)', 'unitsForViewer(feed, viewer)', 'unitViewerFor(ctx.req)',
-    'landsecDealsFeed(ctx.req)', 'listLeasingViewings({ companyId: viewer.companyId', 'requirementReason(r).clientText', 'storage.getCrmRequirementsLeasing(', 'storage.getCrmComps(', 'categoryMixByProperty(']) {
+    'landsecDealsFeed(ctx.req)', 'listLeasingViewings({ companyId: viewer.companyId', 'requirementReason(r).clientText', 'storage.getCrmRequirementsLeasing(', 'storage.getCrmComps(']) {
     assert.ok(builders.includes(feed), `the builders call ${feed}`);
   }
+  // The decks gather through the reports' own reads and the pages' feeds: no query of their own anywhere.
+  for (const feed of ['boardData(ctx, viewer)', 'unitsFor(ctx)', 'activityRows(ctx)', 'categoryMixByProperty(scheme.properties.map(p => p.id))',
+    'listLeasingViewings({ companyId: viewer.companyId, propertyIds: new Set(schemeOfProperty.keys()), jointAgent: false })', 'loadBoardMarket(ctx.period, ctx.schemes.map(s => s.key))',
+    '.filter(v => viewingHeld(v, ctx.period, today))']) {
+    assert.ok(gather.includes(feed), `the decks call ${feed}`);
+  }
+  for (const [file, text] of [[MODEL, model], [COMPOSE, compose], [GATHER, gather], [PDF, pdf], [PPTX, pptx]]) {
+    assert.doesNotMatch(text, /\.query\(|from "\.\/db"|from "\.\/storage"|\bpool\b/, `${file} reads no table itself`);
+    assert.doesNotMatch(text, /anthropic|openai|perplexity|callClaude|\bfetch\(/i, `${file} asks nothing outside the app`);
+    assert.doesNotMatch(text, /setInterval|setTimeout|cron|registerJob/i, `${file} runs only when a deck is asked for`);
+  }
+  assert.doesNotMatch(gather, /listLeasingViewings\(\s*(null|\{\s*companyId:\s*null)/);
   // Viewings are read as a Landsec login reads them, never as BGP staff (no company = every landlord's viewings).
   assert.doesNotMatch(builders, /listLeasingViewings\(\s*(null|\{\s*companyId:\s*null)/);
   // A requirement goes out as the client wording of what it is: never its state or who confirmed it.
@@ -124,10 +155,28 @@ test('the board report: the same feeds, a Landsec reading of the brand plan, and
   assert.match(board, /const planViewer: PlanViewer = \{ kind: "landsec", clientCompanyId: viewer\.companyId, schemes: keys \};/);
   assert.doesNotMatch(board, /STAFF_VIEWER|kind: "staff"|nameMatches|alsoBrandIds/);
   assert.doesNotMatch(board, /listLeasingViewings\(\s*(null|\{\s*companyId:\s*null)/);
-  // Of a plan line it names the scheme, the unit's label, the stage and its dates. Nothing else.
-  for (const never of ['.owner', '.wish', '.nextStep', '.links', '.requirement', 'notProceedingReason', '.lead', '.aim', 'onHold', 'superBrand', 'openActions', 'nextAction']) {
+  // Of a plan line it names the scheme, the unit's label, the stage and its dates, and for the target tenants its
+  // dated records as events, its next step and whether a requirement is held, each as the Landsec reading of the
+  // plan sends it (Woody, 2026-11-19: "should be a section on leasing activity on target tenants"). Nothing else.
+  for (const never of ['.owner', '.wish', '.links', '.notes', 'notProceedingReason', '.lead', '.aim', 'onHold', 'superBrand', 'openActions', 'nextAction', '.daysWaiting', '.refId', '.requirementId', '.range', '.byName']) {
     assert.ok(!board.includes(never), `the board report does not read ${never}`);
   }
+  assert.equal((board.match(/row\.nextStep/g) || []).length, 4, 'the next step is read in one place');
+  assert.match(board, /next: row\.nextStep \? \{ title: row\.nextStep\.title, due: reportDay\(row\.nextStep\.dueAt\), who: row\.nextStep\.who \} : null,/);
+  assert.deepEqual(board.match(/\.requirement\b[^,;\n]*/g), ['.requirement.chip !== "no_requirement"'], 'of a requirement, only whether one is held');
+  // An evidence line is read as an event by the shared rule, from its source and the plan's own label: its label is never printed.
+  assert.match(board, /for \(const e of row\.evidence\) \{ const kind = targetEvent\(e\.src, e\.label\); if \(kind\) events\.push\(\{ kind, day: reportDay\(e\.at\) \}\); \}/);
+  assert.equal((board.match(/e\.label/g) || []).length, 1);
+  assert.match(board, /targets: plan \? targetTenants\(plan\.lines, ctx\.period, today\) : null,/);
+  // The asset profile reads the same plan the same way, whoever asks.
+  assert.match(gather, /const plan = await brandLinesFor\(ctx, viewer\)\.catch\(/);
+  assert.match(gather, /targets: plan \? targetTenants\(plan\.lines, ctx\.period, londonDay\(ctx\.madeAt\)\) : null,/);
+  assert.doesNotMatch(gather + compose, /STAFF_VIEWER|kind: "staff"|loadPlan\(|brandGrid\(/, 'the decks never read the plan themselves');
+  // The counting is the shared rule's: a target is a brand between Wanted and Let, and the period is counted from dated records only.
+  const rules = read('shared/landsec-board-report.ts');
+  assert.match(rules, /export const TARGET_STAGES: BrandStage\[\] = \["wanted", "unit_identified", "approached", "viewed", "negotiating", "hots", "solicitors", "let"\];/);
+  assert.match(rules, /const inPeriod = \(day: string \| null \| undefined\): day is string => !!day && inReportPeriod\(day, period\) && day\.slice\(0, 10\) <= today;/);
+  assert.match(rules, /if \(dated\.length === 0\) out\.undated \+= 1;/);
   const sql = Array.from(board.matchAll(/pool\.query\(\s*`([\s\S]*?)`/g)).map(m => m[1]);
   assert.equal(sql.length, 2, 'two queries: offers by day, and brand names with their type');
   const tables = new Set();
@@ -144,8 +193,10 @@ test('the board report: the same feeds, a Landsec reading of the brand plan, and
   assert.match(board, /A letting Landsec did without BGP is in it only if it is on the app\./);
   // The rules are the shared file's: no second count here.
   assert.match(board, /activity: boardActivity\(\{ deals, viewings, offers \}, ctx\.period, today\),\s*growth: rentalGrowth\(deals, ctx\.period\),\s*speed: dealSpeed\(deals, ctx\.period\),/);
-  // The market report prints only what a person saved.
-  assert.match(board, /const saved = BOARD_MARKET_SECTIONS\.filter\(s => market\[s\.key\]\?\.text\);/);
+  // The market report's words on a slide are only what a person saved: the deck reads them from the store and writes none.
+  assert.match(compose, /const saved = input\.market\[section\.key\];/);
+  assert.match(compose, /const cut = pageWords\(saved\.text\.split\(/);
+  assert.doesNotMatch(compose + gather, /draftMarketSection|marketDraftPrompt/, 'a deck never drafts');
   assert.doesNotMatch(board, /draftMarketSection|marketDraftPrompt|anthropic/i, 'the builder never drafts');
 });
 
@@ -239,42 +290,92 @@ test('the industry figures: four public reads across the brand directory, none o
   const shared = read('shared/landsec-board-report.ts');
   assert.match(shared, /It holds no footfall, sales, turnover, consumer spending or rental index: the app holds none\./);
   assert.match(board, /industry: BOARD_MARKET_SECTIONS\.map\(s => \(\{ key: s\.key, title: s\.title, figures: industryFigures\(industryRows, s\.group, ctx\.period\) \}\)\),/);
-  // In the PDF the figures print under every section; the words only where a person saved them.
-  const part = board.slice(board.indexOf('for (const s of BOARD_MARKET_SECTIONS) {'), board.indexOf('pdf.heading("About this report")'));
-  assert.match(part, /if \(m\?\.text\) \{/);
-  assert.ok(part.indexOf('pdf.figures([') > part.indexOf('if (m?.text) {') && part.includes('INDUSTRY_COUNTED'));
-  assert.doesNotMatch(part.slice(part.indexOf('const f = data.industry')), /m\?\.text|saved/, 'the figures do not wait on saved words');
-  // A printed story is its date, brand, headline and site.
-  assert.match(part, /f\.headlines\.map\(h => \[shortDay\(h\.date\), h\.brand, h\.headline, h\.site\]\)/);
+  // In the deck every section's figures are always there (the overall slide's tiles and the by-section slide);
+  // a section has a slide of its own only when it has words or a story, and the words only where a person saved them.
+  assert.match(compose, /slides\.splice\(overallEnd \+ 1, 0, bySection\);/, 'the by-section figures always follow the overall slide');
+  assert.match(compose, /rows: parts\.map\(sec => \{\s*const f = figuresOf\(sec\.key\);/);
+  assert.match(compose, /if \(section\.key !== "overall" && !saved\?\.text && !\(f\?\.headlines \|\| \[\]\)\.length\) continue;/);
+  assert.match(compose, /if \(!saved\?\.text\) \{\s*slides\.push\(\{ layout: "content", title, subtitle, rows: \[\{ blocks: \[tiles\] \}, \{ blocks: \[storyBlock\] \}\], caveat, rules: \[INDUSTRY_COUNTED\] \}\);/, 'the figures do not wait on saved words');
+  assert.match(compose, /No footfall, sales, turnover, spending or rental index is held\./);
+  // A printed story is its date, brand, headline and source; a Google News link names the publisher.
+  assert.match(compose, /rows: stories\.map\(h => \[shortReportDay\(h\.date\), h\.brand, h\.headline, h\.site\]\)/);
+  assert.match(shared, /if \(site !== "news\.google\.com"\) return \{ headline: words, site \};/);
+  assert.match(shared, /out\.push\(\{ date: s\.date \? s\.date\.slice\(0, 10\) : null, brand: s\.brand, headline: story\.headline\.slice\(0, 200\), site: story\.site \}\);/);
 });
 
 // Woody, 2026-11-19: "also can you use the bluewater colours and juts have the landsec logo", "not BGP".
 test('the Landsec reports carry Landsec\'s logo and the Landsec report palette: never BGP\'s wordmark or BGP\'s colours', async () => {
   const { LANDSEC_REPORT_PALETTE } = await import('../../shared/landsec-reports.ts');
   assert.deepEqual(LANDSEC_REPORT_PALETTE, { navy: '#082862', paleBlue: '#dbe5fe', sand: '#eeeae4', gold: '#c0b283', text: '#141414', muted: '#525252' });
-  for (const [file, text] of [[BUILDERS, builders], [BOARD, board]]) {
-    for (const never of ['wordmarkBytes', 'BGP_WhiteHolder', 'BGP_BlackHolder', 'BGP_BRAND', 'BORDEAUX', 'NECTAR', 'BLUSH', 'CREAM', 'STONE', 'doc-engine']) assert.ok(!text.includes(never), `${file} uses ${never}`);
+  for (const [file, text] of [[BUILDERS, builders], [BOARD, board], [MODEL, model], [COMPOSE, compose], [GATHER, gather], [PDF, pdf], [PPTX, pptx], [LOGO, logo]]) {
+    for (const never of ['wordmarkBytes', 'BGP_WhiteHolder', 'BGP_BlackHolder', 'BGP_BRAND', 'BORDEAUX', 'NECTAR', 'BLUSH', 'CREAM', 'STONE', 'doc-engine', 'unit-info-sheet', 'deck-engine']) assert.ok(!text.includes(never), `${file} uses ${never}`);
     assert.doesNotMatch(text, /6e0c25|fc9f8d|fcf8f4|e4d8d3|c2baa3/i, `${file} holds one of BGP's colours`);
   }
-  // From BGP's document helpers the builders take the page size, the margin and the line wrap only.
-  assert.match(builders, /import \{ A4, MARGIN, wrapText \} from "\.\/unit-info-sheet";/);
-  // Every colour comes from the one palette, for the PDFs and the workbooks.
-  assert.match(builders, /const NAVY = colour\(LANDSEC_REPORT_PALETTE\.navy\), PALE = colour\(LANDSEC_REPORT_PALETTE\.paleBlue\), SAND = colour\(LANDSEC_REPORT_PALETTE\.sand\), GOLD = colour\(LANDSEC_REPORT_PALETTE\.gold\);/);
+  // Every colour comes from the one palette: the workbooks', the PDF's, the PowerPoint's, and the chart series (mixed from it).
   assert.match(builders, /fgColor: \{ argb: argb\(LANDSEC_REPORT_PALETTE\.navy\) \}/);
   assert.equal((builders.match(/#[0-9a-f]{6}\b/gi) || []).length + (builders.match(/argb: "FF(?!FFFFFF")/g) || []).length, 0, 'no colour but white is written into the builders');
-  assert.doesNotMatch(board, /rgb\(|#[0-9a-f]{6}\b|argb/i, 'the board report draws through the shared document, with no colour of its own');
+  assert.doesNotMatch(board + gather + compose, /rgb\(|#[0-9a-f]{6}\b|argb/i, 'the board report, the gathering and the slides hold no colour of their own');
+  assert.match(pdf, /const NAVY = colour\(LANDSEC_REPORT_PALETTE\.navy\), PALE = colour\(LANDSEC_REPORT_PALETTE\.paleBlue\), SAND = colour\(LANDSEC_REPORT_PALETTE\.sand\), GOLD = colour\(LANDSEC_REPORT_PALETTE\.gold\);/);
+  assert.match(pptx, /const NAVY = hex\(LANDSEC_REPORT_PALETTE\.navy\), PALE = hex\(LANDSEC_REPORT_PALETTE\.paleBlue\), SAND = hex\(LANDSEC_REPORT_PALETTE\.sand\), GOLD = hex\(LANDSEC_REPORT_PALETTE\.gold\);/);
+  assert.equal((pdf.match(/#[0-9a-f]{6}\b/gi) || []).length, 0, 'the PDF renderer writes no colour of its own');
+  assert.deepEqual(pptx.match(/"[0-9A-F]{6}"/g), ['"FFFFFF"'], 'the PowerPoint renderer writes no colour but white');
+  assert.equal((model.match(/#[0-9a-f]{6}\b/gi) || []).filter(c => c.toLowerCase() !== '#ffffff').length, 0, 'the chart colours are the palette, or mixed from it');
+  assert.match(model, /navy: LANDSEC_REPORT_PALETTE\.navy,\s*blue: mix\(LANDSEC_REPORT_PALETTE\.navy, LANDSEC_REPORT_PALETTE\.paleBlue, 0\.48\),\s*gold: LANDSEC_REPORT_PALETTE\.gold,\s*pale: LANDSEC_REPORT_PALETTE\.paleBlue,/);
   // The logo is Landsec's own file, read from server/assets (and from dist after a build). No file, no logo: none is typeset in its place.
-  assert.match(builders, /const file = kind === "light" \? "landsec-logo-light\.png" : "landsec-logo-dark\.png";/);
-  assert.match(builders, /const markLight = landsecLogoBytes\("light"\), markDark = landsecLogoBytes\("dark"\);/);
-  assert.match(builders, /if \(logoLight\) drawMark\(page, logoLight,/);
-  assert.doesNotMatch(builders, /label\(page, "Landsec"/, 'the word Landsec is never drawn as a logo');
+  assert.match(logo, /const file = kind === "light" \? "landsec-logo-light\.png" : "landsec-logo-dark\.png";/);
+  assert.match(pdf, /const light = landsecLogoBytes\("light"\), dark = landsecLogoBytes\("dark"\);/);
+  assert.match(pptx, /const light = landsecLogoBytes\("light"\), dark = landsecLogoBytes\("dark"\);/);
+  assert.equal((pdf.match(/doc\.embedPng\(/g) || []).length, 2, 'the PDF embeds the two logo files and no other picture');
+  assert.deepEqual(pptx.match(/slide\.addImage\(\{ data: image\((light|dark)\)/g), ['slide.addImage({ data: image(light)', 'slide.addImage({ data: image(dark)'], 'the PowerPoint places the two logo files and no other picture');
+  assert.match(pptx, /if \(light\) slide\.addImage\(/);
+  assert.match(pptx, /if \(dark\) slide\.addImage\(/);
   for (const file of ['server/assets/landsec-logo-light.png', 'server/assets/landsec-logo-dark.png']) {
     const bytes = fs.readFileSync(new URL(`../../${file}`, import.meta.url));
     assert.deepEqual(Array.from(bytes.subarray(0, 4)), [0x89, 0x50, 0x4e, 0x47], `${file} is a PNG`);
   }
   assert.match(read('script/build.ts'), /"landsec-logo-light\.png", "landsec-logo-dark\.png"/, 'the build copies both logo files to dist/server/assets');
   // The line at the foot is words, and stays.
-  assert.match(builders, /Made in ChatBGP on \$\{longDay\(ctx\.madeAt\)\} by \$\{ctx\.madeBy\}\. It holds what is recorded in ChatBGP on that day\./);
+  assert.match(gather, /`Made in ChatBGP on \$\{longDay\(ctx\.madeAt\)\} by \$\{ctx\.madeBy\}\. It holds what is recorded in ChatBGP on that day\.`/);
+  assert.match(pdf, /write\(cutTo\(deck\.footer, /);
+  assert.match(pptx, /text\(slide, deck\.footer, /);
+});
+
+// Woody, 2026-11-19, on the first populated samples: "we dont need complicated excels just visual PDF which can also be power point".
+test('the reports to present are decks: one slide model, drawn as a PDF and as a PowerPoint of the same slides', () => {
+  // The three decks are on the registry, and each is built through the one door.
+  assert.deepEqual(LANDSEC_REPORTS.filter(r => r.deck).map(r => r.key), ['board-report', 'leasing-activity-pdf', 'asset-profile']);
+  const body = builders.slice(builders.indexOf('export async function buildLandsecReport'), builders.indexOf('export function setupLandsecReportRoutes'));
+  for (const key of ['board-report', 'leasing-activity-pdf', 'asset-profile']) assert.match(body, new RegExp(`case "${key}": return deck\\(\\);`));
+  assert.match(body, /const slides = await \(await import\("\.\/landsec-decks"\)\)\.landsecDeck\(def\.key, full, viewer\);\s*return format === "pptx" \? \(await import\("\.\/landsec-deck-pptx"\)\)\.deckPptx\(slides\) : Buffer\.from\(await \(await import\("\.\/landsec-deck-pdf"\)\)\.deckPdf\(slides\)\);/, 'the same slides go to either renderer');
+  for (const key of ['board-report', 'asset-profile', 'leasing-activity-pdf']) assert.match(gather, new RegExp(`case "${key}": return `));
+  // The route: a PowerPoint only of a deck, and only one of the two formats.
+  const routes = builders.slice(builders.indexOf('export function setupLandsecReportRoutes'));
+  assert.match(routes, /const format = deckFormat\(req\.query\.format\);\s*if \(!format \|\| \(format === "pptx" && !def\.deck\)\) return res\.status\(400\)/);
+  assert.match(routes, /res\.setHeader\("Content-Type", def\.deck \? DECK_MIME\[format\] : "application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet"\);/);
+  // Both renderers draw from the one layout, and know nothing of what is on a slide.
+  for (const [file, text] of [[PDF, pdf], [PPTX, pptx]]) {
+    assert.match(text, /for \(const placed of layoutSlide\(s(lide)?\)\) \{/, `${file} places blocks by the shared layout`);
+    assert.match(text, /tileBoxes\(t, b\)/);
+    assert.match(text, /tileValueSize\(tile\.value, /);
+    assert.match(text, /fitCell\(cells\[i\] \?\? "", widths\[i\]\)/, `${file} cuts a cell to one line by the shared rule`);
+    assert.doesNotMatch(text, /from "\.\/landsec-(decks|board-[a-z]+|reports)"|from "@shared\/landsec-(decks|board-report)"|lettings|scheme/i, `${file} draws the deck it is given and nothing else`);
+  }
+  // The PowerPoint's charts and tables are native, so they can be edited: never a picture of a chart.
+  assert.match(pptx, /slide\.addChart\(pptx\.ChartType\.bar, data, \{/);
+  assert.match(pptx, /slide\.addTable\(rows, \{/);
+  assert.match(pptx, /pptx\.layout = "LAYOUT_WIDE";/);
+  // The PDF is 16:9 pages, one a slide.
+  assert.match(pdf, /const size: \[number, number\] = \[P\.w \* PT, P\.h \* PT\];/);
+  assert.match(pdf, /deck\.slides\.forEach\(\(slide, i\) => \{\s*page = doc\.addPage\(size\);/);
+  // A chart with nothing to draw is a card, by the shared rule: the composers never push a bare chart of activity.
+  assert.match(model, /return chartHasData\(chart\) \? chart : \{ kind: "card", title: empty\.title, lines: empty\.lines \};/);
+  assert.ok((compose.match(/chartOrCard\(/g) || []).length >= 12, 'every chart on a slide goes through chartOrCard');
+  for (const m of compose.matchAll(/blocks: \[(withoutEmptyCategories\([a-zA-Z]+\))\]/g)) assert.match(compose, /if \(cats\.some\(/, `${m[1]} is pushed only inside a check that it has something to draw`);
+  // A figure that is not held says so.
+  assert.match(compose, /const money = \(n: number \| null \| undefined\): string => \(n == null \? "Not held" : deckValue\(n, "money"\)\);/);
+  assert.match(compose, /title: `Not held for \$\{count\(unheld\.length\)\} of \$\{plural\(g\.lettings, "letting", "lettings"\)\}`/);
+  // The old PDF documents are gone: no second layout to drift from the decks.
+  assert.doesNotMatch(builders + board, /pdfDocument|activityPdf|assetProfilePdf|boardReportPdf|from "pdf-lib"/);
 });
 
 test('every report on the registry has a builder, and no builder is off the registry', () => {
@@ -298,10 +399,19 @@ test('the page only asks: the list and the rule come from the shared file, and i
   const page = code(read('client/src/pages/landsec-reports.tsx'));
   assert.match(page, /from "@shared\/landsec-reports";/);
   assert.match(page, /parseReportPeriod\(from, to\)/);
-  assert.match(page, /const others = data\.reports\.filter\(def => def\.card !== "board"\);/);
-  assert.match(page, /others\.map\(def =>/);
-  // The board report's card leads the list, and its editor asks only the market report's addresses.
-  assert.ok(page.indexOf('data-testid="landsec-report-board"') > 0 && page.indexOf('data-testid="landsec-report-board"') < page.indexOf('others.map(def =>'));
+  // The page leads with the decks, each with a PDF and a PowerPoint button; the Excel exports are under one fold, closed until opened.
+  assert.match(page, /const decks = data\.reports\.filter\(def => def\.deck\);\s*const exports = data\.reports\.filter\(def => !def\.deck\);/);
+  assert.match(page, /decks\.map\(def =>/);
+  assert.match(page, /\(\["pdf", "pptx"\] as const\)\.map\(as =>/);
+  assert.match(page, /\{working \? "Making it" : as === "pdf" \? "PDF" : "PowerPoint"\}/);
+  assert.match(page, /if \(as === "pptx"\) params\.set\("format", "pptx"\);/);
+  assert.match(page, /<details className="[^"]*" data-testid="landsec-reports-exports">/);
+  assert.doesNotMatch(page, /<details[^>]*\bopen\b/, 'the Excel fold is closed by default');
+  assert.match(page, /Data exports \(Excel\)/);
+  assert.ok(page.indexOf('decks.map(def =>') < page.indexOf('data-testid="landsec-reports-exports"'), 'the decks lead the page');
+  assert.ok(page.indexOf('exports.map(def =>') > page.indexOf('data-testid="landsec-reports-exports"'), 'every Excel export is inside the fold');
+  // The board report's card carries the market report's editor, which asks only the market report's addresses.
+  assert.match(page, /\{board && \(\s*<Button [^\n]*data-testid="landsec-report-board-market">/);
   const editor = code(read('client/src/components/landsec/board-market-editor.tsx'));
   const asked = Array.from(editor.matchAll(/["`](\/api\/[^"`?$]*)/g)).map(m => m[1]);
   assert.deepEqual(Array.from(new Set(asked)).sort(), ['/api/landsec/reports/board-report/market', '/api/landsec/reports/board-report/market/draft']);

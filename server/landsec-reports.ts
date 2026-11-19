@@ -2,7 +2,12 @@
 // Landsec: the reports Landsec takes from VTS should come from the app;
 // "quarters just have ability to pick one or several months"; who runs them:
 // "yes landsec and BGP"). The period rule and the list of reports are
-// shared/landsec-reports.ts; this file builds each one.
+// shared/landsec-reports.ts; this file reads the feeds, builds the Excel data
+// exports and serves every report. The three reports to present are slide
+// decks (Woody, 2026-11-19: "we dont need complicated excels just visual PDF
+// which can also be power point"): what is on their slides is
+// shared/landsec-decks.ts, gathered by server/landsec-decks.ts and drawn as a
+// PDF or a PowerPoint by server/landsec-deck-pdf.ts and -pptx.ts.
 //
 // THE RULE: THE SAME FEEDS AS THE PAGES.
 //  - Units come from the property page's unit feed (loadPropertyUnits, cut by
@@ -27,8 +32,6 @@
 // on the login). A joint agent is refused at the gateway
 // (jointAgentApiDenied) and again here.
 import type { Express, Request, Response } from "express";
-import fs from "fs";
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { storage } from "./storage";
@@ -38,20 +41,19 @@ import { resolveLandsecPortfolio } from "./landsec-schemes";
 import { propertyReadBlocked, unitViewerFor, loadPropertyUnits, unitsForViewer } from "./property-units";
 import { landsecDealsFeed } from "./landsec-unit";
 import { listLeasingViewings } from "./leasing-viewings";
-import { categoryMixByProperty, sumCategoryMixes } from "./landsec-home";
-import { A4, MARGIN, wrapText } from "./unit-info-sheet";
 import { UNIT_OCCUPANCY_LABELS, type PropertyUnit } from "@shared/property-units";
 import { statusLabelsFor } from "@shared/letting-rules";
 import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
 import { statusLineIsMoveSql } from "@shared/stage-since";
-import { LANDSEC_CATEGORIES, landsecCategoryLabel, landsecCategoryOf, type LandsecCategoryOrOther } from "@shared/landsec";
+import { landsecCategoryOf, type LandsecCategoryOrOther } from "@shared/landsec";
 import { isLettingType } from "@shared/letting-rules";
 import { STAGE_BULK_PEERS } from "@shared/stage-since";
 import { requirementReason } from "@shared/requirement-live";
 import {
-  LANDSEC_REPORT_PALETTE, LANDSEC_REPORTS, REPORT_MAX_MONTHS, defaultReportMonths, inReportPeriod, landsecReportByKey, landsecReportFileName, parseReportPeriod, reportDay,
+  LANDSEC_REPORT_PALETTE, LANDSEC_REPORTS, REPORT_MAX_MONTHS, defaultReportMonths, inReportPeriod, landsecReportByKey, landsecReportFileName, parseReportPeriod, reportDay, shortReportDay,
   type LandsecReportDef, type LandsecReportsIndex, type ReportPeriod,
 } from "@shared/landsec-reports";
+import { DECK_MIME, deckFormat, type DeckFileFormat } from "@shared/landsec-deck";
 
 // ── Who is asking, and for which schemes ─────────────────────────────────
 
@@ -115,11 +117,8 @@ const list = (v: unknown): string | null => (Array.isArray(v) ? v.map(x => Strin
 export const stageLabel = (code: string | null | undefined, dealType?: string | null): string | null =>
   code ? (statusLabelsFor(dealType ?? "New Letting") as Record<string, string>)[code] || code : null;
 export const longDay = (d: Date): string => d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" });
-export const shortDay = (day: string | null): string => {
-  if (!day) return "";
-  const d = new Date(`${day}T12:00:00Z`);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
-};
+// "2 Sep 2026": always a three-letter month.
+export const shortDay = (day: string | null): string => shortReportDay(day);
 export const money = (v: number | null | undefined): string => (v == null ? "" : `£${Math.round(v).toLocaleString("en-GB")}`);
 export const count = (v: number | null | undefined): string => (v == null ? "" : Math.round(v).toLocaleString("en-GB"));
 // A total of figures that are recorded: blank, not zero, when none is.
@@ -248,7 +247,7 @@ export function dealDatesFor(ctx: Ctx): Promise<DealDates[]> {
 
 export const brandOf = (u: PropertyUnit): string | null => text(u.tenant.companyName) || text(u.tenant.name);
 
-function unitRow(scheme: ReportScheme, u: PropertyUnit) {
+export function unitRow(scheme: ReportScheme, u: PropertyUnit) {
   return {
     scheme: scheme.name, unit: u.label, floor: u.floor, use: u.use,
     brand: brandOf(u), tradingName: text(u.tenant.name), leaseName: text(u.tenant.legalName),
@@ -258,7 +257,7 @@ function unitRow(scheme: ReportScheme, u: PropertyUnit) {
     lettingRef: u.deal?.ref ?? null, lettingTenant: text(u.deal?.tenant),
   };
 }
-type UnitRow = ReturnType<typeof unitRow>;
+export type UnitRow = ReturnType<typeof unitRow>;
 
 const BRIEF_CHECK_WORDS: Record<string, string> = { pass: "Meets the floor", fail: "Below the NER floor", unchecked: "Not checked: incentives not recorded" };
 
@@ -275,7 +274,7 @@ export interface ActivityRow {
  * (the live ones), then the deals that changed stage in the period and are
  * no longer live (exchanged on, completed, withdrawn).
  */
-async function activityRows(ctx: Ctx): Promise<ActivityRow[]> {
+export async function activityRows(ctx: Ctx): Promise<ActivityRow[]> {
   const [clock, dates, units] = await Promise.all([clockFor(ctx), dealDatesFor(ctx), unitsFor(ctx)]);
   const datesById = new Map(dates.map(d => [d.id, d]));
   const schemeOfProperty = new Map<string, ReportScheme>();
@@ -388,8 +387,8 @@ async function compRows(ctx: Ctx) {
   return out.sort((a, b) => String(a.scheme).localeCompare(String(b.scheme)) || String(b.completed || "").localeCompare(String(a.completed || "")));
 }
 
-interface RollYear { year: number; expiries: number; expirySqft: number | null; expiryRent: number | null; breaks: number; breakSqft: number | null; breakRent: number | null }
-function leaseRoll(rows: UnitRow[]): RollYear[] {
+export interface RollYear { year: number; expiries: number; expirySqft: number | null; expiryRent: number | null; breaks: number; breakSqft: number | null; breakRent: number | null }
+export function leaseRoll(rows: UnitRow[]): RollYear[] {
   const years = new Map<number, RollYear>();
   const at = (year: number) => {
     if (!years.has(year)) years.set(year, { year, expiries: 0, expirySqft: null, expiryRent: null, breaks: 0, breakSqft: null, breakRent: null });
@@ -675,302 +674,6 @@ export async function workbookOf(def: LandsecReportDef, ctx: Ctx, sheets: Sheet[
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-// ── The PDFs ─────────────────────────────────────────────────────────────
-
-// Text the standard PDF fonts can draw: anything outside Latin-1 becomes a space.
-const pdfSafe = (v: unknown): string =>
-  String(v ?? "").replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/…/g, "...").replace(/•/g, "-")
-    .replace(/\s+/g, " ").replace(/[^\x20-\x7E\xA0-\xFF]/g, " ").trim();
-
-// The Landsec report palette as PDF colours (shared/landsec-reports.ts says where it came from).
-const colour = (hex: string) => rgb(parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);
-const NAVY = colour(LANDSEC_REPORT_PALETTE.navy), PALE = colour(LANDSEC_REPORT_PALETTE.paleBlue), SAND = colour(LANDSEC_REPORT_PALETTE.sand), GOLD = colour(LANDSEC_REPORT_PALETTE.gold);
-const TEXT = colour(LANDSEC_REPORT_PALETTE.text), MUTED = colour(LANDSEC_REPORT_PALETTE.muted), WHITE = rgb(1, 1, 1);
-
-// Landsec's own logo (the mark above the word, from its website footer):
-// white for the navy band, near-black for a white page. The only logo a
-// Landsec report carries. A file that cannot be read means no logo: nothing
-// is drawn in its place and none is ever typeset.
-export function landsecLogoBytes(kind: "light" | "dark"): Uint8Array | null {
-  const file = kind === "light" ? "landsec-logo-light.png" : "landsec-logo-dark.png";
-  for (const p of [`${process.cwd()}/server/assets/${file}`, `${process.cwd()}/dist/server/assets/${file}`]) {
-    try { if (fs.existsSync(p)) return new Uint8Array(fs.readFileSync(p)); } catch {}
-  }
-  return null;
-}
-
-export interface PdfCol { header: string; width: number; align?: "left" | "right" }
-export interface Pdf {
-  heading(text: string): void;
-  /** Start a new page unless this one is still empty; with `need`, only when fewer than that many points are left on it. */
-  pageBreak(need?: number): void;
-  para(text: string, quiet?: boolean): void;
-  figures(items: Array<[string, string]>): void;
-  table(columns: PdfCol[], rows: string[][], empty: string): void;
-  gap(h: number): void;
-  bytes(): Promise<Uint8Array>;
-}
-
-/** A Landsec report as an A4 document: a navy band with Landsec's logo, then headings, figures and tables that break across pages. */
-export async function pdfDocument(title: string, subtitle: string, ctx: Ctx, landscape: boolean, titleSize = 20): Promise<Pdf> {
-  const doc = await PDFDocument.create();
-  const font = await doc.embedFont(StandardFonts.Helvetica);
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  const serif = await doc.embedFont(StandardFonts.TimesRomanBold);
-  const size: [number, number] = landscape ? [A4[1], A4[0]] : A4;
-  const [pw, ph] = size;
-  const side = landscape ? 40 : MARGIN;
-  const contentW = pw - side * 2;
-  const FOOT = 46;
-  doc.setTitle(pdfSafe(subtitle ? `${title}: ${subtitle}` : title));
-  doc.setAuthor("Bruce Gillingham Pollard");
-  const markLight = landsecLogoBytes("light"), markDark = landsecLogoBytes("dark");
-  const logoLight: PDFImage | null = markLight ? await doc.embedPng(markLight) : null;
-  const logoDark: PDFImage | null = markDark ? await doc.embedPng(markDark) : null;
-  const drawMark = (pg: PDFPage, img: PDFImage | null, x: number, y: number, h: number) => { if (img) pg.drawImage(img, { x, y, width: (img.width / img.height) * h, height: h }); };
-  const label = (pg: PDFPage, words: string, x: number, y: number, s: number, color = MUTED, align: "left" | "right" = "left") => {
-    const t = pdfSafe(words).toUpperCase();
-    const space = s * 0.14;
-    const width = bold.widthOfTextAtSize(t, s) + space * Math.max(0, t.length - 1);
-    let cx = align === "right" ? x - width : x;
-    for (const ch of t) { pg.drawText(ch, { x: cx, y, size: s, font: bold, color }); cx += bold.widthOfTextAtSize(ch, s) + space; }
-  };
-
-  // Page one: the band.
-  let page = doc.addPage(size);
-  const bandH = 92;
-  page.drawRectangle({ x: 0, y: ph - bandH, width: pw, height: bandH, color: NAVY });
-  page.drawRectangle({ x: 0, y: ph - bandH - 2, width: pw, height: 2, color: GOLD });
-  // The logo sits at the right of the band; the title and the period at the left.
-  const logoH = 58;
-  if (logoLight) drawMark(page, logoLight, pw - side - (logoLight.width / logoLight.height) * logoH, ph - bandH + (bandH - logoH) / 2, logoH);
-  const sub = pdfSafe(subtitle);
-  page.drawText(pdfSafe(title), { x: side, y: sub ? ph - 48 : ph - 54, size: titleSize, font: serif, color: WHITE });
-  if (sub) page.drawText(sub, { x: side, y: ph - 68, size: 10.5, font, color: WHITE });
-  let y = ph - bandH - 20;
-
-  let repeat: (() => void) | null = null;
-  const newPage = () => {
-    page = doc.addPage(size);
-    drawMark(page, logoDark, side, ph - 50, 28);
-    label(page, subtitle ? `${title} · ${subtitle}` : title, pw - side, ph - 36, 7, MUTED, "right");
-    y = ph - 62;
-    if (repeat) repeat();
-  };
-  const room = (h: number) => { if (y - h < FOOT) newPage(); };
-  const cut = (words: string, f: PDFFont, s: number, width: number): string[] => {
-    const out: string[] = [];
-    for (const line of wrapText(pdfSafe(words), f, s, width)) {
-      let rest = line;
-      while (f.widthOfTextAtSize(rest, s) > width && rest.length > 1) {
-        let n = rest.length - 1;
-        while (n > 1 && f.widthOfTextAtSize(rest.slice(0, n), s) > width) n--;
-        out.push(rest.slice(0, n)); rest = rest.slice(n);
-      }
-      out.push(rest);
-    }
-    return out.length ? out : [""];
-  };
-
-  const api: Pdf = {
-    gap(h) { y -= h; },
-    pageBreak(need) { if (y < ph - 140 && (need == null || y - need < FOOT)) { const hold = repeat; repeat = null; newPage(); repeat = hold; } },
-    heading(words) {
-      const hold = repeat; repeat = null;
-      room(60);
-      repeat = hold;
-      y -= 12;
-      page.drawText(pdfSafe(words), { x: side, y: y - 12, size: 12.5, font: bold, color: NAVY });
-      y -= 18;
-      page.drawLine({ start: { x: side, y }, end: { x: pw - side, y }, thickness: 0.8, color: PALE });
-      y -= 8;
-    },
-    para(words, quiet) {
-      for (const line of cut(words, font, 9.5, contentW)) {
-        room(13.5);
-        page.drawText(line, { x: side, y: y - 9.5, size: 9.5, font, color: quiet ? MUTED : TEXT });
-        y -= 13.5;
-      }
-    },
-    figures(items) {
-      if (!items.length) return;
-      const perRow = landscape ? 6 : 4;
-      for (let i = 0; i < items.length; i += perRow) {
-        const row = items.slice(i, i + perRow);
-        room(54);
-        const w = contentW / perRow;
-        row.forEach(([name, value], j) => {
-          const x = side + j * w;
-          page.drawRectangle({ x, y: y - 46, width: w - 8, height: 46, color: PALE });
-          page.drawText(pdfSafe(value) || "-", { x: x + 8, y: y - 22, size: 15, font: serif, color: NAVY });
-          label(page, name, x + 8, y - 38, 6.5, TEXT);
-        });
-        y -= 54;
-      }
-    },
-    table(columns, rows, empty) {
-      const total = columns.reduce((n, c) => n + c.width, 0);
-      const widths = columns.map(c => (c.width / total) * contentW);
-      const pad = 4, s = 8, lh = 10.5;
-      const head = () => {
-        page.drawRectangle({ x: side, y: y - 18, width: contentW, height: 18, color: NAVY });
-        let x = side;
-        columns.forEach((c, i) => {
-          const t = pdfSafe(c.header);
-          const tx = c.align === "right" ? x + widths[i] - pad - bold.widthOfTextAtSize(t, 7.5) : x + pad;
-          page.drawText(t, { x: tx, y: y - 12.5, size: 7.5, font: bold, color: WHITE });
-          x += widths[i];
-        });
-        y -= 18;
-      };
-      room(18 + lh + 8);
-      head();
-      if (rows.length === 0) {
-        page.drawText(pdfSafe(empty), { x: side + pad, y: y - 13, size: 9, font, color: MUTED });
-        y -= 22;
-        return;
-      }
-      repeat = head;
-      rows.forEach((cells, r) => {
-        const wrapped = cells.map((c, i) => cut(c, font, s, widths[i] - pad * 2).slice(0, 4));
-        const h = Math.max(...wrapped.map(w => w.length)) * lh + 6;
-        if (y - h < FOOT) newPage();
-        if (r % 2 === 1) page.drawRectangle({ x: side, y: y - h, width: contentW, height: h, color: PALE, opacity: 0.45 });
-        let x = side;
-        wrapped.forEach((linesOf, i) => {
-          linesOf.forEach((line, k) => {
-            const tx = columns[i].align === "right" ? x + widths[i] - pad - font.widthOfTextAtSize(line, s) : x + pad;
-            page.drawText(line, { x: tx, y: y - 4 - s - k * lh, size: s, font, color: TEXT });
-          });
-          x += widths[i];
-        });
-        y -= h;
-      });
-      repeat = null;
-      y -= 8;
-    },
-    async bytes() {
-      const pages = doc.getPages();
-      let foot = pdfSafe(`Made in ChatBGP on ${longDay(ctx.madeAt)} by ${ctx.madeBy}. It holds what is recorded in ChatBGP on that day.`);
-      while (foot.length > 20 && font.widthOfTextAtSize(foot, 7) > contentW - 60) foot = foot.slice(0, -1);
-      pages.forEach((pg, i) => {
-        pg.drawLine({ start: { x: side, y: 34 }, end: { x: pw - side, y: 34 }, thickness: 0.8, color: SAND });
-        pg.drawText(foot, { x: side, y: 22, size: 7, font, color: MUTED });
-        const n = `${i + 1} of ${pages.length}`;
-        pg.drawText(n, { x: pw - side - font.widthOfTextAtSize(n, 7), y: 22, size: 7, font, color: MUTED });
-      });
-      return doc.save();
-    },
-  };
-  return api;
-}
-
-async function activityPdf(ctx: Ctx): Promise<Uint8Array> {
-  const rows = await activityRows(ctx);
-  const pdf = await pdfDocument("Leasing activity", ctx.period.label, ctx, true);
-  const live = rows.filter(r => r.live === "Live");
-  const at = (code: string) => live.filter(r => r.stageCode === code).length;
-  pdf.figures([
-    ["Live lettings", count(live.length)],
-    ...["AVA", "NEG", "HOT", "SOL"].map((code): [string, string] => [stageLabel(code) || code, count(at(code))]),
-    ["Moved in period", count(rows.filter(r => r.movedInPeriod).length)],
-  ]);
-  pdf.para(`Schemes: ${ctx.schemes.map(s => s.name).join(", ")}.`, true);
-  pdf.para("Live lettings as the Deals page lists them today, then the deals that changed stage in the period and have since closed. A greyed day count in the app is marked here as not confirmed.", true);
-  const columns: PdfCol[] = [
-    { header: "Unit", width: 13 }, { header: "Brand or deal", width: 15 }, { header: "Ref", width: 5, align: "right" }, { header: "Stage", width: 10 },
-    { header: "Days at stage", width: 11 }, { header: "Waiting on", width: 15 }, { header: "Quoting pa", width: 9, align: "right" }, { header: "Deal rent pa", width: 9, align: "right" },
-    { header: "NER pa", width: 9, align: "right" }, { header: "Brief check", width: 11 }, { header: "Dates held", width: 19 },
-  ];
-  const quiet: string[] = [];
-  for (const scheme of ctx.schemes) {
-    const mine = rows.filter(r => r.scheme === scheme.name);
-    // A scheme with nothing to show is named once at the end, not given an empty table.
-    if (mine.length === 0 && ctx.schemes.length > 1) { quiet.push(scheme.name); continue; }
-    pdf.heading(scheme.name);
-    pdf.table(columns, mine.map(r => [
-      r.unit || "", r.brand || r.deal || "", r.ref != null ? String(r.ref) : "", [r.stage, r.live === "Closed" ? "(closed)" : ""].filter(Boolean).join(" "),
-      r.daysAtStage == null ? "" : `${r.daysAtStage}${r.daysDate === "No" ? " (date not confirmed)" : ""}`,
-      r.waitingOn || "", money(r.quotingRent), money(r.dealRent), money(r.ner), r.briefCheck || "",
-      [r.instructed ? `Instructed ${shortDay(r.instructed)}` : "", r.hotsIssued ? `HoTs ${shortDay(r.hotsIssued)}` : "", r.exchanged ? `Exchanged ${shortDay(r.exchanged)}` : "",
-        r.completed ? `Completed ${shortDay(r.completed)}` : "", r.movedInPeriod ? `Moved ${shortDay(r.movedInPeriod)}` : ""].filter(Boolean).join("; "),
-    ]), "No live letting, and no deal changed stage in the period.");
-  }
-  if (quiet.length) {
-    pdf.heading("Nothing to report");
-    pdf.para(`No live letting, and no deal changed stage in the period, at: ${quiet.join(", ")}.`, true);
-  }
-  return pdf.bytes();
-}
-
-async function assetProfilePdf(ctx: Ctx): Promise<Uint8Array> {
-  const scheme = ctx.schemes[0];
-  const [{ units }] = await unitsFor(ctx);
-  const rows = units.map(u => unitRow(scheme, u));
-  const pdf = await pdfDocument(scheme.name, "Asset profile", ctx, false);
-  const sqft = (list: PropertyUnit[]) => total(list.map(u => u.sqft));
-  const occupied = units.filter(u => u.occupancy === "occupied"), vacant = units.filter(u => u.occupancy === "vacant"), unknown = units.filter(u => u.occupancy === "unknown");
-  const totalSqft = sqft(units);
-  const rent = total(units.map(u => u.passingRent));
-  pdf.figures([
-    ["Units", count(units.length)], ["Occupied", count(occupied.length)], ["Vacant", count(vacant.length)],
-    ["Sq ft recorded", count(totalSqft) || "Not recorded"], ["Passing rent pa", money(rent) || "Not recorded"], ["Live lettings", count(units.filter(u => !!u.stage).length)],
-  ]);
-
-  pdf.heading("The asset");
-  pdf.table([{ header: "Fact", width: 30 }, { header: "", width: 70 }], [
-    ["Scheme", scheme.name], ["Town", scheme.town], ["Group", scheme.group],
-    ["Property records", scheme.properties.map(p => p.name).join("; ") || "None on the app"],
-    ["As at", longDay(ctx.madeAt)],
-  ], "");
-
-  pdf.heading("Occupancy");
-  const share = (n: number | null, of: number | null) => (n != null && of ? `${Math.round((n / of) * 100)}%` : "");
-  pdf.table([{ header: "", width: 34 }, { header: "Units", width: 14, align: "right" }, { header: "Share of units", width: 18, align: "right" }, { header: "Sq ft", width: 16, align: "right" }, { header: "Share of sq ft", width: 18, align: "right" }], [
-    ["Occupied", count(occupied.length), share(occupied.length, units.length), count(sqft(occupied)), share(sqft(occupied), totalSqft)],
-    ["Vacant", count(vacant.length), share(vacant.length, units.length), count(sqft(vacant)), share(sqft(vacant), totalSqft)],
-    ["Not recorded", count(unknown.length), share(unknown.length, units.length), count(sqft(unknown)), share(sqft(unknown), totalSqft)],
-  ], "");
-  if (units.length === 0) pdf.para("No units are recorded on this scheme's tenancy schedule.", true);
-
-  pdf.heading("Trading units by brief category");
-  const mixes = await categoryMixByProperty(scheme.properties.map(p => p.id)).catch(() => null);
-  if (!mixes) pdf.para("The category count could not be read.", true);
-  else {
-    const mix = sumCategoryMixes(scheme.properties.map(p => mixes.get(p.id)));
-    const lines: string[][] = [];
-    for (const c of LANDSEC_CATEGORIES) if (mix.counts[c.key]) lines.push([c.label, c.group, count(mix.counts[c.key])]);
-    if (mix.counts.other) lines.push([landsecCategoryLabel("other") || "Other", "", count(mix.counts.other)]);
-    if (mix.notLinked) lines.push(["No brand", "", count(mix.notLinked)]);
-    pdf.table([{ header: "Category", width: 46 }, { header: "Group", width: 34 }, { header: "Trading units", width: 20, align: "right" }], lines, "No trading units are recorded.");
-    if (mix.byName) pdf.para(`${count(mix.byName)} of these ${mix.byName === 1 ? "was" : "were"} matched to a brand by name.`, true);
-  }
-
-  pdf.heading("Lease roll by year");
-  pdf.table([
-    { header: "Year", width: 12 }, { header: "Expiries", width: 13, align: "right" }, { header: "Expiring sq ft", width: 17, align: "right" }, { header: "Expiring rent pa", width: 19, align: "right" },
-    { header: "Breaks", width: 11, align: "right" }, { header: "Break sq ft", width: 13, align: "right" }, { header: "Break rent pa", width: 15, align: "right" },
-  ], leaseRoll(rows).map(r => [String(r.year), count(r.expiries), count(r.expirySqft), money(r.expiryRent), count(r.breaks), count(r.breakSqft), money(r.breakRent)]),
-  "No lease expiry or break is recorded.");
-
-  pdf.heading("Live lettings by stage");
-  const lettings = units.filter(u => !!u.stage);
-  const order = ["OPP", "AVA", "NEG", "HOT", "SOL"];
-  pdf.figures(order.filter(code => code !== "OPP" || lettings.some(u => u.stage === "OPP")).map((code): [string, string] => [stageLabel(code) || code, count(lettings.filter(u => u.stage === code).length)]));
-  // A long run of units that are only being marketed is counted above and
-  // listed in the Tenancy schedule report, not here.
-  const early = lettings.filter(u => u.stage === "OPP" || u.stage === "AVA");
-  const listed = early.length > 12 ? lettings.filter(u => !early.includes(u)) : lettings;
-  if (listed.length < lettings.length) pdf.para(`${count(early.length)} units are being marketed with no negotiation yet. They are listed in the Tenancy schedule report.`, true);
-  pdf.gap(4);
-  pdf.table([{ header: "Unit", width: 22 }, { header: "In the unit now", width: 22 }, { header: "Stage", width: 14 }, { header: "Letting to", width: 20 }, { header: "Ref", width: 7, align: "right" }, { header: "Days at stage", width: 15 }],
-    listed.sort((a, b) => order.indexOf(b.stage!) - order.indexOf(a.stage!) || (b.deal?.days ?? -1) - (a.deal?.days ?? -1)).map(u => [
-      u.label, u.occupancy === "occupied" ? brandOf(u) || "" : UNIT_OCCUPANCY_LABELS[u.occupancy], stageLabel(u.stage) || "", u.deal?.tenant || "", u.deal?.ref != null ? String(u.deal.ref) : "",
-      u.deal?.days == null ? "" : `${u.deal.days}${u.deal.daysConfirmed ? "" : " (date not confirmed)"}`,
-    ]), lettings.length ? "No letting has reached negotiation." : "No letting is running at this scheme.");
-  return pdf.bytes();
-}
-
 // ── Routes ───────────────────────────────────────────────────────────────
 
 const REFUSED = { message: "Reports are for Landsec and BGP logins." };
@@ -982,20 +685,24 @@ async function nameOf(req: Request): Promise<string> {
   return text(row?.name) || "ChatBGP";
 }
 
-/** One report as a file. Exported so it can be run without a browser. */
-export async function buildLandsecReport(def: LandsecReportDef, ctx: Omit<Ctx, "cache">, viewer: LandsecViewer): Promise<Buffer> {
+/** One report as a file. A deck is a PDF unless a PowerPoint is asked for. Exported so it can be run without a browser. */
+export async function buildLandsecReport(def: LandsecReportDef, ctx: Omit<Ctx, "cache">, viewer: LandsecViewer, format: DeckFileFormat = "pdf"): Promise<Buffer> {
   const full: Ctx = { ...ctx, cache: new Map() };
+  const deck = async (): Promise<Buffer> => {
+    const slides = await (await import("./landsec-decks")).landsecDeck(def.key, full, viewer);
+    return format === "pptx" ? (await import("./landsec-deck-pptx")).deckPptx(slides) : Buffer.from(await (await import("./landsec-deck-pdf")).deckPdf(slides));
+  };
   switch (def.key) {
-    case "board-report": return (await import("./landsec-board-report")).boardReportPdf(full, viewer);
+    case "board-report": return deck();
     case "board-report-figures": return (await import("./landsec-board-report")).boardReportWorkbook(def, full, viewer);
     case "tenancy-schedule": return workbookOf(def, full, await tenancySheets(full));
     case "leasing-activity": return workbookOf(def, full, await activitySheets(full));
-    case "leasing-activity-pdf": return Buffer.from(await activityPdf(full));
+    case "leasing-activity-pdf": return deck();
     case "space-activity": return workbookOf(def, full, await spaceSheets(full));
     case "tour-activity": return workbookOf(def, full, await tourSheets(full, viewer));
     case "requirements": return workbookOf(def, full, await requirementSheets());
     case "comps": return workbookOf(def, full, await compSheets(full));
-    case "asset-profile": return Buffer.from(await assetProfilePdf(full));
+    case "asset-profile": return deck();
     case "portfolio": return workbookOf(def, full, await portfolioSheets(full));
     default: throw new Error(`No builder for report ${def.key}`);
   }
@@ -1019,7 +726,7 @@ export function setupLandsecReportRoutes(app: Express) {
     }
   });
 
-  // One report: ?from=YYYY-MM&to=YYYY-MM&schemes=key,key
+  // One report: ?from=YYYY-MM&to=YYYY-MM&schemes=key,key, and for a deck &format=pptx for the PowerPoint
   app.get("/api/landsec/reports/:key", requireAuth, async (req: Request, res: Response) => {
     try {
       const viewer = await reportViewer(req);
@@ -1031,9 +738,11 @@ export function setupLandsecReportRoutes(app: Express) {
       const schemes = pickSchemes(await reportSchemesFor(viewer), req.query.schemes);
       if (schemes.length === 0) return res.status(400).json({ message: "Pick at least one scheme." });
       if (def.schemes === "one" && schemes.length !== 1) return res.status(400).json({ message: "This report is for one scheme. Pick the scheme on its card." });
-      const file = await buildLandsecReport(def, { req, schemes, period: parsed.period, madeBy: await nameOf(req), madeAt: new Date() }, viewer);
-      const name = landsecReportFileName(def, parsed.period, def.schemes === "one" ? schemes[0].name : null);
-      res.setHeader("Content-Type", def.format === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      const format = deckFormat(req.query.format);
+      if (!format || (format === "pptx" && !def.deck)) return res.status(400).json({ message: def.deck ? "A deck comes as a PDF or a PowerPoint." : "This export has one format." });
+      const file = await buildLandsecReport(def, { req, schemes, period: parsed.period, madeBy: await nameOf(req), madeAt: new Date() }, viewer, format);
+      const name = landsecReportFileName(def, parsed.period, def.schemes === "one" ? schemes[0].name : null, def.deck ? format : undefined);
+      res.setHeader("Content-Type", def.deck ? DECK_MIME[format] : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       res.setHeader("Content-Length", String(file.length));
       res.setHeader("Content-Disposition", contentDispositionFor(name, "attachment"));
       res.setHeader("Cache-Control", "private, no-store");

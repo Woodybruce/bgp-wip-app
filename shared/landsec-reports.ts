@@ -7,8 +7,14 @@
 //  1. THE PERIOD RULE: one or several whole months, From and To inclusive.
 //  2. THE REPORT REGISTRY: every report the Reports page offers. A new report
 //     is one more entry here plus its builder in server/landsec-reports.ts.
-//     The board report is two entries (the PDF and its figures) drawn as one
-//     card; its own rules are shared/landsec-board-report.ts.
+//
+// The reports to present are DECKS (Woody, 2026-11-19, on the first populated
+// samples: "we dont need complicated excels just visual PDF which can also be
+// power point"): the Board report, the Asset profile and Leasing activity,
+// each a set of 16:9 slides that downloads as a PDF or, with ?format=pptx, as
+// a PowerPoint of the same slides (shared/landsec-deck.ts is the slide model,
+// shared/landsec-decks.ts what is on each slide). Everything else on the list
+// is an Excel data export, kept under a fold at the foot of the page.
 //
 // Pure: no database, no request. Tests: shared/landsec-reports.test.ts.
 
@@ -103,6 +109,20 @@ export function inReportPeriod(value: unknown, period: Pick<ReportPeriod, "start
   return !!day && day >= period.start && day < period.end;
 }
 
+/** A day as a report writes it: "2 Sep 2026", always a three-letter month. Empty for no day. */
+export function shortReportDay(day: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(day || ""));
+  if (!m || !MONTHS[Number(m[2]) - 1]) return "";
+  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
+}
+
+/** The months of a period, in order: [{ ym: "2026-09", label: "Sep 2026" }, ...]. */
+export function reportMonths(period: Pick<ReportPeriod, "from" | "to">): Array<{ ym: string; label: string }> {
+  const a = monthIndex(period.from), b = monthIndex(period.to);
+  if (a === null || b === null || b < a) return [];
+  return Array.from({ length: b - a + 1 }, (_, i) => ({ ym: monthOfIndex(a + i), label: `${MONTHS[(a + i) % 12]} ${Math.floor((a + i) / 12)}` }));
+}
+
 /** A calendar day, YYYY-MM-DD, of a stored date: a plain day stays as it is, a moment is read in London. */
 export function reportDay(value: unknown): string | null {
   if (value == null || value === "") return null;
@@ -123,14 +143,17 @@ export interface LandsecReportDef {
   title: string;
   /** One or two plain sentences for the card. */
   description: string;
+  /** What it downloads as. A deck is "pdf" here and is also offered as a PowerPoint. */
   format: LandsecReportFormat;
+  /** A slide deck to present: a PDF, or a PowerPoint of the same slides with ?format=pptx. */
+  deck?: true;
   /** "schemes" = every scheme ticked; "one" = one scheme, picked on the card. */
   schemes: "schemes" | "one";
   /** How the period is used, in words for the card. */
   period: string;
   /** Anything the report does not hold, said on the card. */
   note?: string;
-  /** "board" = one of the two files of the board report, which the page draws as one card at the head of the list. */
+  /** "board" = the board report and the workbook of its figures. */
   card?: "board";
 }
 
@@ -138,10 +161,10 @@ export const LANDSEC_REPORTS: readonly LandsecReportDef[] = [
   // The board report (Woody, 2026-11-19): the document Landsec presents each
   // quarter, and the figures behind it. Its rules are shared/landsec-board-report.ts.
   {
-    key: "board-report", title: "Board report", format: "pdf", schemes: "schemes", card: "board",
-    description: "The document to present: headlines, letting activity by scheme and by brief category, rental growth, deal speed, brand engagements and the market report, with the industry's figures for the period under each market section.",
-    period: "Lettings, Heads of Terms, new instructions, viewings and offers dated in the period. Occupancy, live lettings and brand stages are as recorded today.",
-    note: "It holds what is recorded in ChatBGP. A letting Landsec did without BGP is in it only if it is on the app. The market report's words print only once someone has saved them; the industry figures under each section are counted by the app and always print.",
+    key: "board-report", title: "Board report", format: "pdf", deck: true, schemes: "schemes", card: "board",
+    description: "The deck to present each quarter: headlines, letting activity by scheme, live lettings, target tenants, occupancy, the lease roll, rental growth, deal speed and the market report, a slide a section.",
+    period: "Lettings, Heads of Terms, new instructions, viewings and offers dated in the period. Occupancy, live lettings, the lease roll and brand stages are as recorded today.",
+    note: "It holds what is recorded in ChatBGP. A letting Landsec did without BGP is in it only if it is on the app. The market report's words are on a slide only once someone has saved them; the industry figures are counted by the app and are always there.",
   },
   {
     key: "board-report-figures", title: "Board report figures", format: "xlsx", schemes: "schemes", card: "board",
@@ -159,9 +182,9 @@ export const LANDSEC_REPORTS: readonly LandsecReportDef[] = [
     period: "Live lettings today, plus every deal that changed stage in the period.",
   },
   {
-    key: "leasing-activity-pdf", title: "Leasing activity (formatted)", format: "pdf", schemes: "schemes",
-    description: "The same leasing activity as a formatted document, scheme by scheme, ready to send on.",
-    period: "Live lettings today, plus every deal that changed stage in the period.",
+    key: "leasing-activity-pdf", title: "Leasing activity", format: "pdf", deck: true, schemes: "schemes",
+    description: "Live lettings by stage and by scheme, the viewings held in the period, then each scheme's lettings on a slide: unit, brand, stage, days at stage and who it is waiting on.",
+    period: "Live lettings today, plus every deal that changed stage in the period, and viewings held in the period.",
   },
   {
     key: "space-activity", title: "Space activity", format: "xlsx", schemes: "schemes",
@@ -184,8 +207,8 @@ export const LANDSEC_REPORTS: readonly LandsecReportDef[] = [
     period: "Every comparable at the schemes. Those completed in the period are marked.",
   },
   {
-    key: "asset-profile", title: "Asset profile", format: "pdf", schemes: "one",
-    description: "One scheme on a page or two: its facts, occupancy, trading units by brief category, the lease roll by year and the live lettings by stage.",
+    key: "asset-profile", title: "Asset profile", format: "pdf", deck: true, schemes: "one",
+    description: "One scheme in a few slides: its figures, occupancy, trading units by brief category, the lease roll for ten years, the live lettings by stage and its target tenants.",
     period: "As recorded today.",
   },
   {
@@ -199,12 +222,12 @@ export const LANDSEC_REPORTS: readonly LandsecReportDef[] = [
 export const landsecReportByKey = (key: unknown): LandsecReportDef | null =>
   LANDSEC_REPORTS.find(r => r.key === String(key || "")) || null;
 
-/** The file a report downloads as: "Landsec Tenancy schedule - Aug to Oct 2026.xlsx". */
-export function landsecReportFileName(def: Pick<LandsecReportDef, "title" | "format">, period: Pick<ReportPeriod, "label">, schemeName?: string | null): string {
+/** The file a report downloads as: "Landsec Tenancy schedule - Aug to Oct 2026.xlsx". A deck asked for as a PowerPoint ends ".pptx". */
+export function landsecReportFileName(def: Pick<LandsecReportDef, "title" | "format">, period: Pick<ReportPeriod, "label">, schemeName?: string | null, as?: "pdf" | "pptx"): string {
   const clean = (s: string) => s.replace(/[^A-Za-z0-9 ._&'()-]/g, " ").replace(/\s+/g, " ").trim();
   const title = clean(def.title.replace(/\s*\(formatted\)\s*$/i, ""));
   const place = schemeName ? ` ${clean(schemeName)}` : "";
-  return `Landsec${place} ${title} - ${period.label}.${def.format}`;
+  return `Landsec${place} ${title} - ${period.label}.${as || def.format}`;
 }
 
 /** What the page is sent before anything is exported (GET /api/landsec/reports). */
