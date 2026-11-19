@@ -35,11 +35,19 @@ export async function chFetch(path: string, opts: { maxWaitMs?: number; timeoutM
   return res.json();
 }
 
+// The month and year of birth the register gives a person with significant
+// control: what tells them from someone else of the same name when they are
+// screened (Woody, 19 November 2026).
+type ChainDob = { month: number | null; year: number | null } | null;
+const chainDob = (raw: any): ChainDob =>
+  raw && Number.isInteger(Number(raw.year)) ? { year: Number(raw.year), month: Number.isInteger(Number(raw.month)) ? Number(raw.month) : null } : null;
+
 type ChainPsc = {
   name: string;
   nationality?: string;
   controls?: string[];
   kind?: string;
+  dob?: ChainDob;
 };
 
 export type ChainLink = {
@@ -53,6 +61,7 @@ export type UboFinding = {
   name: string;
   nationality?: string;
   controls?: string[];
+  dob?: ChainDob;
   foundAt: string;          // company name where this individual PSC sits
   foundAtNumber: string;    // its CH number
   depth: number;            // 0 = subject, 1 = direct parent, etc.
@@ -94,7 +103,7 @@ export async function discoverUltimateParent(companyNumber: string, maxDepth = 5
       const items = (pscData.items || []).filter((p: any) => !p.ceased_on && !p.ceased);
       const individualPscs: ChainPsc[] = items
         .filter((p: any) => p.kind === "individual-person-with-significant-control" || (p.kind && !p.kind.includes("corporate") && !p.kind.includes("legal-person")))
-        .map((p: any) => ({ name: p.name, nationality: p.nationality, controls: p.natures_of_control, kind: p.kind }));
+        .map((p: any) => ({ name: p.name, nationality: p.nationality, controls: p.natures_of_control, kind: p.kind, dob: chainDob(p.date_of_birth) }));
       const corporatePscs: ChainPsc[] = items
         .filter((p: any) => p.kind === "corporate-entity-person-with-significant-control")
         .map((p: any) => ({ name: p.name, controls: p.natures_of_control, kind: p.kind }));
@@ -111,6 +120,7 @@ export async function discoverUltimateParent(companyNumber: string, maxDepth = 5
           name: ip.name,
           nationality: ip.nationality,
           controls: ip.controls,
+          dob: ip.dob ?? null,
           foundAt: depth === 0 ? "(subject)" : currentName,
           foundAtNumber: currentNumber,
           depth,

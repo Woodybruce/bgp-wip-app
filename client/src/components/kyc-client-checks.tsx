@@ -38,6 +38,9 @@ export interface ClientCheckRequest {
   openedAt: string | null; expiresAt: string; finishedAt: string | null;
   status: "not_sent" | "sent" | "opened" | "in_progress" | "finished" | "expired" | "cancelled";
   needsIdCheck: boolean; idState: KycIdState | null; idCheckNote: string | null;
+  // The name Veriff read off the document, and whether it is someone other
+  // than the person the request was for (19 November 2026).
+  idVerifiedName?: string | null; idOtherPerson?: boolean;
   askPep: boolean; pep: KycPepAnswer | null; pepDetail: string | null;
   owners: { list: Array<{ name: string; detail: string }>; answer: KycOwnersAnswer | null; detail: string | null } | null;
   notAsked: Array<{ key: KycDocKey; reason: string }>;
@@ -72,6 +75,9 @@ const STATUS: Record<ClientCheckRequest["status"], { label: string; cls: string 
   expired: { label: "Link ran out", cls: "bg-muted text-muted-foreground border border-border" },
   cancelled: { label: "Cancelled", cls: "bg-muted text-muted-foreground border border-border" },
 };
+
+// A photo a browser can show (HEIC, which most cannot, stays a file line).
+const isPhoto = (f: { name: string; url: string | null }) => !!f.url && /\.(jpe?g|png|webp|gif)$/i.test(f.name);
 
 const ID_WORDS: Record<KycIdState, string> = {
   not_started: "not started", started: "started", submitted: "done, waiting for the result",
@@ -108,12 +114,17 @@ export function ClientCheckRow({ dealId, request }: { dealId: string; request: C
         {request.finishedAt ? <> · finished {shortDate(request.finishedAt)}</> : null}
       </div>
       <ul className="flex flex-wrap gap-x-3 gap-y-0.5">
-        {request.needsIdCheck && (
+        {request.needsIdCheck && (request.idOtherPerson ? (
+          <li className="flex items-center gap-1 text-amber-800" data-testid={`client-check-id-other-${request.ref}`}>
+            <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+            Identity check ({ID_WORDS[request.idState || "not_started"]}) was <strong>{request.idVerifiedName || "someone else"}</strong>'s, not {request.recipientName || "the person it was for"}'s
+          </li>
+        ) : (
           <li className="flex items-center gap-1">
             {request.idState === "approved" || request.idState === "submitted" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : <Clock className="w-3.5 h-3.5 text-muted-foreground" />}
             Identity check: {ID_WORDS[request.idState || "not_started"]}
           </li>
-        )}
+        ))}
         {request.docs.map(d => (
           <li key={d.key} className="flex items-center gap-1">
             {d.done ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : <Clock className="w-3.5 h-3.5 text-muted-foreground" />}{d.title}
@@ -132,17 +143,39 @@ export function ClientCheckRow({ dealId, request }: { dealId: string; request: C
           {request.owners.answer === "no" && <> · Find out who the owners are and report the difference to Companies House.</>}
         </p>
       )}
+      {request.idOtherPerson && (
+        <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900">
+          {request.recipientName || "The person it was for"} has not done their own identity check: the one on this link was {request.idVerifiedName || "someone else"}'s. Send them a new request, or record on the deal why {request.idVerifiedName || "that person"} can act for {request.partyName}.
+        </p>
+      )}
       {request.idCheckNote && <p className="text-muted-foreground italic">{request.idCheckNote}</p>}
       {request.files.length > 0 && (
-        <ul className="space-y-0.5">
-          {request.files.map((f, i) => (
-            <li key={`${f.name}-${i}`} className="flex items-center gap-1.5">
-              <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-              {f.url ? <a href={f.url} target="_blank" rel="noreferrer" className="hover:underline truncate">{f.name}</a> : <span className="truncate">{f.name}</span>}
-              <span className="text-muted-foreground shrink-0">{f.docKey ? KYC_DOCS[f.docKey].title : "by email"} · {shortDate(f.uploadedAt)}</span>
-            </li>
-          ))}
-        </ul>
+        <div className="space-y-1.5">
+          {/* Photos as thumbnails (Woody, 19 November 2026: "the letters for the photos can we show them as thumb nails?"). */}
+          {request.files.some(isPhoto) && (
+            <div className="flex flex-wrap gap-2" data-testid={`client-check-thumbs-${request.ref}`}>
+              {request.files.filter(isPhoto).map((f, i) => (
+                <a key={`${f.name}-${i}`} href={f.url!} target="_blank" rel="noreferrer" title={f.name} className="group w-20 shrink-0">
+                  <img src={f.url!} alt={f.docKey ? KYC_DOCS[f.docKey].title : "Photo sent by the client"} loading="lazy"
+                    className="h-20 w-20 rounded border bg-muted object-cover group-hover:ring-2 group-hover:ring-primary/40" />
+                  <span className="block truncate text-[11px] leading-tight text-muted-foreground">{f.docKey ? KYC_DOCS[f.docKey].title : "By email"}</span>
+                  <span className="block text-[11px] leading-tight text-muted-foreground">{shortDate(f.uploadedAt)}</span>
+                </a>
+              ))}
+            </div>
+          )}
+          {request.files.some(f => !isPhoto(f)) && (
+            <ul className="space-y-0.5">
+              {request.files.filter(f => !isPhoto(f)).map((f, i) => (
+                <li key={`${f.name}-${i}`} className="flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  {f.url ? <a href={f.url} target="_blank" rel="noreferrer" className="hover:underline truncate">{f.name}</a> : <span className="truncate">{f.name}</span>}
+                  <span className="text-muted-foreground shrink-0">{f.docKey ? KYC_DOCS[f.docKey].title : "by email"} · {shortDate(f.uploadedAt)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
       {live && (
         <div className="flex flex-wrap gap-1 pt-0.5">

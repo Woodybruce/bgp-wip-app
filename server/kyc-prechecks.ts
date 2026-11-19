@@ -31,7 +31,7 @@ import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
 import {
   KYC_PRECHECK_FRESH_DAYS, KYC_PRECHECK_MAX_WEB_PEOPLE, KYC_PRECHECK_VERSION, PRECHECK_AUTO_RUNS_A_DAY, PRECHECK_RETRY_MINUTES,
-  askInputFrom, checkWebAnswer, isOffshoreCountry,
+  askInputFrom, checkWebAnswer, chooseScreened, isOffshoreCountry,
   isPrecheckResult, listingFromExemptions, nameTokens, ownerKind, personNamesMatch, precheckCardLines, precheckCompany, precheckSanctionsMatch,
   precheckUnfinished, sanctionsLine, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput, type PrecheckCardLine, type PrecheckCompany, type PrecheckDocument, type PrecheckListing,
@@ -392,12 +392,15 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
 
   // The chain of corporate owners, and the people with control at each level.
   let chain: NonNullable<KycPrecheckResult["companiesHouse"]>["chain"] = [];
-  let peopleUpChain: Array<{ name: string; foundAt: string; controls: string[] }> = [];
+  let peopleUpChain: NonNullable<KycPrecheckResult["companiesHouse"]>["peopleUpChain"] = [];
   try {
     const { discoverUltimateParent } = await import("./companies-house");
     const walk = await withTimeout(discoverUltimateParent(n), chPatient(45_000), "The ownership chain");
     chain = walk.chain.map(l => ({ name: clean(l.name, 160), number: padNumber(clean(l.number, 20)), individuals: l.individualPscs.length, companies: l.corporatePscs.length }));
-    peopleUpChain = walk.ubos.filter(u => u.depth > 0).slice(0, 12).map(u => ({ name: clean(u.name, 160), foundAt: clean(u.foundAt, 160), controls: (u.controls || []).map(c => clean(c, 120)) }));
+    peopleUpChain = walk.ubos.filter(u => u.depth > 0).slice(0, 12).map(u => ({
+      name: clean(u.name, 160), foundAt: clean(u.foundAt, 160), controls: (u.controls || []).map(c => clean(c, 120)),
+      dob: u.dob?.year ? { year: u.dob.year, month: u.dob.month ?? null } : null, nationality: clean(u.nationality, 60) || null,
+    }));
   } catch (e: any) {
     errors.push(`Ownership chain: ${words(e)}`);
   }
@@ -467,7 +470,9 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
 
 // ── Sanctions ───────────────────────────────────────────────────────────────
 
-interface Subject { name: string; role: string; person: boolean; dobYear: number | null; context: string; dobMonth?: number | null; nationality?: string | null }
+// owner: a person with significant control, of the company or of one up its
+// ownership chain (a beneficial owner, MLR 2017 reg 5).
+interface Subject { name: string; role: string; person: boolean; dobYear: number | null; context: string; dobMonth?: number | null; nationality?: string | null; owner?: boolean }
 
 // A UK nationality as Companies House words it, as the code Mesh takes (Woody,
 // 19 November 2026: send the birth year "and UK"). Any other nationality is
@@ -583,7 +588,12 @@ async function screenComplyAdvantage(subjects: Subject[]): Promise<KycPrecheckRe
       name: s.name, role: s.role, kind: s.person ? "person" as const : "company" as const, birthYear: s.dobYear,
       birthMonth: s.dobMonth ?? null, nationality: s.person ? meshNationality(s.nationality) : null,
     }))), 120_000, "ComplyAdvantage");
-    const lines: ProviderLine[] = results.map(r => ({
+    // screenNames answers in the order it was asked. Whether each was a person
+    // screened with a date of birth decides which matches are red flags
+    // (providerMatchFlags, shared/kyc-prechecks.ts).
+    const subjectOf = (name: string, i: number) => (subjects[i]?.name === name ? subjects[i] : subjects.find(s => s.name === name));
+    const lines: ProviderLine[] = results.map((r, i) => ({
+      person: !!subjectOf(r.name, i)?.person, dobKnown: !!(subjectOf(r.name, i)?.person && subjectOf(r.name, i)?.dobYear),
       name: r.name, status: r.status === "error" ? "error" : r.status === "clear" ? "clear" : "possible",
       types: [...new Set((r.matches || []).map(m => String(m.matchType || "")).filter(Boolean))],
       detail: r.error ? clean(r.error, 160)
@@ -698,6 +708,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     if (!seen.role.split(", ").includes(s.role)) seen.role = `${seen.role}, ${s.role}`;
     if (!seen.dobYear && s.dobYear) { seen.dobYear = s.dobYear; seen.dobMonth = s.dobMonth ?? null; }
     if (!seen.nationality && s.nationality) seen.nationality = s.nationality;
+    if (s.owner) seen.owner = true;
     if (s.context.length > seen.context.length) seen.context = s.context;
   };
   const where = companiesHouse ? `${companiesHouse.name} (Companies House ${companiesHouse.number})` : partyName;
@@ -709,10 +720,16 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   if (contactName) add({ name: contactName, role: "the deal's contact", person: true, dobYear: null, context: `the contact for ${where} in a UK property deal` });
   for (const o of companiesHouse?.owners || []) {
     const person = o.kind === "individual";
-    add({ name: o.name, role: person ? "owner" : "owning company", person, dobYear: o.dob?.year || null, dobMonth: o.dob?.month || null, nationality: person ? o.nationality || null : null,
+    add({ name: o.name, role: person ? "owner" : "owning company", person, owner: person, dobYear: o.dob?.year || null, dobMonth: o.dob?.month || null, nationality: person ? o.nationality || null : null,
       context: `${person ? "person" : "company"} with significant control of ${where}${o.dob?.year ? `, born ${o.dob.month ? `${o.dob.month}/` : ""}${o.dob.year}` : ""}${o.nationality ? `, ${o.nationality}` : ""}${o.country ? `, ${o.country}` : ""}` });
   }
-  for (const p of companiesHouse?.peopleUpChain || []) add({ name: p.name, role: `owner of ${p.foundAt}`, person: true, dobYear: null, context: `person with significant control of ${p.foundAt}, which owns ${where}` });
+  // The people with control of the companies up the chain are the company's
+  // beneficial owners too, each with the date of birth the register gives
+  // (since 19 November 2026: before then they went to screening on the name alone).
+  for (const p of companiesHouse?.peopleUpChain || []) {
+    add({ name: p.name, role: `owner of ${p.foundAt}`, person: true, owner: true, dobYear: p.dob?.year || null, dobMonth: p.dob?.month || null, nationality: p.nationality || null,
+      context: `person with significant control of ${p.foundAt}, which owns ${where}${p.dob?.year ? `, born ${p.dob.month ? `${p.dob.month}/` : ""}${p.dob.year}` : ""}${p.nationality ? `, ${p.nationality}` : ""}` });
+  }
   for (const o of companiesHouse?.officers || []) {
     const person = !/corporate/i.test(o.role);
     add({ name: o.name, role: o.role.replace(/-/g, " "), person, dobYear: o.dob?.year || null, dobMonth: o.dob?.month || null, nationality: person ? o.nationality || null : null,
@@ -720,24 +737,30 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   }
   for (const c of companiesHouse?.chain || []) add({ name: c.name, role: "company up the ownership chain", person: false, dobYear: null, context: `UK company ${c.number}, in the ownership chain of ${where}` });
 
+  // Who is screened for public roles and adverse media (Woody, 19 November
+  // 2026: "At that point need to work out who needs to be AML/KYC"): the
+  // company and its beneficial owners, by the one rule (chooseScreened).
+  // Everyone listed, directors and the deal's contact included, is screened
+  // against the sanctions lists.
+  const screen = chooseScreened(subjects, { individual: subjectKind === "individual", listed: !!companiesHouse?.listing, maxPeople: KYC_PRECHECK_MAX_WEB_PEOPLE });
   const [sanctions, web, complyAdvantage] = await Promise.all([
     screenSubjects(subjects),
     (async (): Promise<KycPrecheckResult["web"]> => {
       const { isPerplexityConfigured } = await import("./perplexity");
       if (!isPerplexityConfigured()) return { ran: false, lines: [], skipped: "the web search (Perplexity) is not set up" };
-      // A company secretary and nothing else is not searched.
-      const people = subjects.filter(s => s.person && s.role.split(", ").some(r => !/secretary/i.test(r))).slice(0, KYC_PRECHECK_MAX_WEB_PEOPLE);
-      const searched = [...subjects.filter(s => !s.person).slice(0, 1), ...people];
+      const searched = [...screen.full.filter(s => !s.person).slice(0, 1), ...screen.full.filter(s => s.person)];
       const lines = await inBatches(searched, 3, searchWeb);
       return { ran: lines.some(l => l.ran), lines, skipped: lines.some(l => l.ran) ? null : `the web search did not answer (${lines[0]?.error || "no one to search"})` };
     })(),
-    screenComplyAdvantage(subjects.filter(s => s.person || s.role.startsWith("the company")).slice(0, KYC_PRECHECK_MAX_WEB_PEOPLE + 1)),
+    screenComplyAdvantage(screen.full),
   ]);
 
   const result: KycPrecheckResult = {
     kind: "precheck", version: KYC_PRECHECK_VERSION, ranAt: new Date().toISOString(),
     party: { companyId, name: partyName, subjectKind, contactName, ...(entityId ? { entityId } : {}) },
-    companiesHouse, notAtCompaniesHouse, sanctions, web, complyAdvantage, errors,
+    companiesHouse, notAtCompaniesHouse, sanctions, web, complyAdvantage,
+    screened: { basis: screen.basis, people: screen.full.filter(s => s.person).map(s => s.name), sanctionsOnly: screen.sanctionsOnly.map(s => s.name) },
+    errors,
   };
 
   let risk = { level: "low", score: 0 };

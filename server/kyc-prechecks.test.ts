@@ -6,7 +6,7 @@ import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  askInputFrom, checkWebAnswer, companyNamesMatch, controlWords, isOffshoreCountry, isRegisterDirector, listingFromExemptions,
+  askInputFrom, checkWebAnswer, chooseScreened, companyNamesMatch, controlWords, idCheckIsThePerson, isOffshoreCountry, isRegisterDirector, listingFromExemptions, verifiedPersonName,
   ownerControlLine, ownerKind, personNamesMatch, precheckAsks, precheckCardLines, precheckNamesakes, precheckNote, precheckRedFlags, providerMatchFlags,
   precheckSanctionsMatch, sanctionsLine, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput,
@@ -371,6 +371,79 @@ test("which ComplyAdvantage matches are red flags: sanctions always, the rest ov
   assert.equal(providerMatchFlags(caMatch({ kind: "adverse_media", score: 0.2, birthYearAgrees: true })), true, "the birth year agrees");
   assert.equal(providerMatchFlags(caMatch({ kind: "pep", unread: true, profileId: null })), true, "profiles that could not be read stay a flag");
   assert.equal(providerMatchFlags(caMatch({ kind: "pep", profileId: null })), true, "an older match with no profile behind it");
+});
+
+// Woody, later on 19 November 2026: "comply advantage not picking up DOB which can get from companies house
+// for everyone ... red flags for random people with similar names? whats the fix?" On deal #4491 the flags
+// were 70% name matches ("rupert smith" for Rupert Bentley-Smith) with no date of birth on the profile.
+test("a person screened with their date of birth is flagged only on a profile whose date of birth agrees", () => {
+  const dated = { person: true, dobKnown: true };
+  assert.equal(providerMatchFlags(caMatch({ kind: "pep", score: 0.7 }), dated), false, "a 70% name match with no date of birth: a possible namesake");
+  assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: 0.7 }), dated), false, "a warning list the same");
+  assert.equal(providerMatchFlags(caMatch({ kind: "adverse_media", score: 1 }), dated), false, "even the whole name");
+  assert.equal(providerMatchFlags(caMatch({ kind: "pep", score: 0.2, birthYearAgrees: true }), dated), true, "the date of birth agrees");
+  assert.equal(providerMatchFlags(caMatch({ kind: "sanctions", score: 0.2 }), dated), true, "sanctions stay a red flag");
+  assert.equal(providerMatchFlags(caMatch({ kind: "pep", unread: true, profileId: null }), dated), true, "profiles that could not be read stay a flag");
+  // A person with no date of birth keeps the bars, a warning list at 90%.
+  const undated = { person: true, dobKnown: false };
+  assert.equal(providerMatchFlags(caMatch({ kind: "pep", score: 0.7 }), undated), true);
+  assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: 0.7 }), undated), false);
+  assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: 0.9 }), undated), true);
+  // A company, and a check from before this change, keep the earlier rule.
+  assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: 0.2 }), { person: false, dobKnown: false }), true);
+  assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: 0.2 })), true);
+  const run = result({ complyAdvantage: { ran: true, skipped: null, lines: [
+    { ...caLine("BENTLEY-SMITH, Rupert", [caMatch({ name: "rupert smith", kind: "pep", score: 0.7, profileId: "p-rs" })]), ...dated },
+    { ...caLine("Mr David Bruce", [caMatch({ name: "david g bruce", kind: "warning", score: 0.7, profileId: "p-db" }), caMatch({ name: "david bruce", kind: "adverse_media", score: 0.7, profileId: "p-db2", birthYearAgrees: true })]), ...dated },
+  ] } });
+  const labels = precheckRedFlags(run, { sanctionsCurrent: true }).map(f => f.label);
+  assert.deepEqual(labels, ["ComplyAdvantage match for Mr David Bruce"], "only the profile whose date of birth agrees");
+  const namesakes = precheckNamesakes(run);
+  assert.equal(namesakes.length, 2);
+  assert.match(namesakes[0].what, /no date of birth on the profile/);
+});
+
+test("whose identity check it was: the name Veriff read set against the person the request was for", () => {
+  assert.equal(verifiedPersonName({ firstName: "WOODY", lastName: "BRUCE" }), "WOODY BRUCE");
+  assert.equal(verifiedPersonName({ fullName: "Jane  Doe" }), "Jane Doe");
+  assert.equal(verifiedPersonName(null), null);
+  assert.equal(idCheckIsThePerson("jack Barrat", "WOODY BRUCE"), false);
+  assert.equal(idCheckIsThePerson("jack Barrat", "JACK BARRATT"), true, "one letter out in a long word: a typo on the deal");
+  assert.equal(idCheckIsThePerson("Charlotte Roberts", "CHARLOTTE CAROLINE ROBERTS"), true, "a middle name on the document");
+  assert.equal(idCheckIsThePerson("Jack", "JACK BARRATT"), true, "a first name alone on the request");
+  assert.equal(idCheckIsThePerson("Jack", "WOODY BRUCE"), false);
+  assert.equal(idCheckIsThePerson(null, "WOODY BRUCE"), null);
+  assert.equal(idCheckIsThePerson("jack Barrat", null), null, "no decision yet: not known");
+});
+
+test("who is screened for public roles and adverse media: the company and its beneficial owners", () => {
+  const c = (name: string, role: string, person = true, owner = false) => ({ name, role, person, owner });
+  const bgp = [
+    c("BRUCE GILLINGHAM POLLARD LIMITED", "the company", false), c("jack Barrat", "the deal's contact"),
+    c("Bgp Real Estate Limited", "owning company", false), c("Mr Woody Bruce", "owner of Thames Commercial Properties Limited, director", true, true),
+    c("Mr Huseyn Mirhadiyev", "owner of Thames Commercial Properties Limited", true, true),
+    c("BARRATT, Jack", "director"), c("ROBERTS, Charlotte Caroline", "director"), c("SMITH, Ann", "secretary"),
+  ];
+  const owners = chooseScreened(bgp, { individual: false, listed: false, maxPeople: 10 });
+  assert.equal(owners.basis, "owners");
+  assert.deepEqual(owners.full.map(s => s.name), ["BRUCE GILLINGHAM POLLARD LIMITED", "Mr Woody Bruce", "Mr Huseyn Mirhadiyev"]);
+  assert.deepEqual(owners.sanctionsOnly.map(s => s.name), ["jack Barrat", "BARRATT, Jack", "ROBERTS, Charlotte Caroline", "SMITH, Ann"]);
+  // No one to name as an owner: the directors stand in (reg 28(6)); a listed company has none to identify (reg 28(5)).
+  const noOwners = bgp.filter(s => !s.owner);
+  assert.equal(chooseScreened(noOwners, { individual: false, listed: false, maxPeople: 10 }).basis, "managers");
+  assert.deepEqual(chooseScreened(noOwners, { individual: false, listed: false, maxPeople: 10 }).full.map(s => s.name), ["BRUCE GILLINGHAM POLLARD LIMITED", "BARRATT, Jack", "ROBERTS, Charlotte Caroline"]);
+  const listed = chooseScreened(noOwners, { individual: false, listed: true, maxPeople: 10 });
+  assert.equal(listed.basis, "listed");
+  assert.deepEqual(listed.full.map(s => s.name), ["BRUCE GILLINGHAM POLLARD LIMITED"]);
+  assert.equal(chooseScreened([c("ACME LIMITED", "the company", false)], { individual: false, listed: false, maxPeople: 10 }).basis, "company");
+  const person = chooseScreened([c("Jane Doe", "the party"), c("John Roe", "the deal's contact")], { individual: true, listed: false, maxPeople: 10 });
+  assert.deepEqual([person.basis, person.full.map(s => s.name), person.sanctionsOnly.map(s => s.name)], ["individual", ["Jane Doe"], ["John Roe"]]);
+  // The card and KYC4U's note say who was screened and who for sanctions only.
+  const run = result({ screened: { basis: "owners", people: ["Mr Woody Bruce"], sanctionsOnly: ["BARRATT, Jack"] } });
+  const line = precheckCardLines(run).find(l => l.key === "who_screened")!;
+  assert.equal(line.label, "Screened for public roles and adverse media: Mr Woody Bruce");
+  assert.match(line.detail!, /beneficial owners.*Sanctions lists only: BARRATT, Jack\./);
+  assert.match(precheckNote(run, "done"), /Screened for public roles and adverse media \(ComplyAdvantage and a web search\): the company and the people who own or control it/);
 });
 
 test("possible namesakes are listed on the card and in KYC4U's note, never as red flags", () => {

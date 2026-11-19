@@ -70,14 +70,17 @@ let cachedToken: { value: string; expiresAt: number; key: string } | null = null
 let signInPause: { until: number; reason: string; key: string } | null = null;
 let screenPause: { until: number; reason: string } | null = null;
 
-// When Mesh refused a person's birth date or nationality (see screenOne).
+// When Mesh refused a person's birth date or nationality (see screenOne), and
+// Mesh's own words, which the connection check shows.
 let meshRefusedDetailsAt = 0;
+let meshRefusedDetailsWords = "";
 
 export function resetComplyAdvantageState(): void {
   cachedToken = null;
   signInPause = null;
   screenPause = null;
   meshRefusedDetailsAt = 0;
+  meshRefusedDetailsWords = "";
 }
 
 // Which credentials a token or a pause belongs to: new keys on Railway start
@@ -207,6 +210,23 @@ export function meshExternalId(s: ScreenSubject, kind: MeshSubjectKind | null, n
   return `bgp-${kind ? kind[0] : "u"}-${hash}-${londonDay(nowMs)}`;
 }
 
+// Mesh's person record needs a last name: its schema (ol_Person in
+// createCustomerAndScreenSync) requires last_name, and until 19 November 2026
+// the app sent only full_name, the likeliest reason Mesh refused the date of
+// birth sent with it (Woody: "comply advantage not picking up DOB"). The
+// register writes a director "SURNAME, Forenames"; any other name is read as
+// forenames and then a surname, a leading Mr or Mrs dropped.
+export function meshNameParts(s: ScreenSubject): { first_name?: string; middle_name?: string; last_name: string } {
+  const raw = s.name.replace(/\s+/g, " ").trim();
+  const comma = /^([^,]+),\s*(.+)$/.exec(raw);
+  const given = (comma ? comma[2] : raw).replace(HONORIFIC, "").split(" ").filter(Boolean);
+  const last = comma ? comma[1].trim() : given.pop() || raw;
+  const out: { first_name?: string; middle_name?: string; last_name: string } = { last_name: last.slice(0, 100) };
+  if (given[0]) out.first_name = given[0].slice(0, 100);
+  if (given.length > 1) out.middle_name = given.slice(1).join(" ").slice(0, 50);
+  return out;
+}
+
 // A person's birth year (and month, when known) and nationality go with the
 // name: Mesh's person takes date_of_birth as { day, month, year }, each
 // nullable, and nationality as alpha-2 codes. `bare` leaves them out (Mesh
@@ -226,7 +246,7 @@ export function meshScreenBody(s: ScreenSubject, externalId: string, screeningCo
   const kind = subjectKind(s);
   const name = meshName(s, kind);
   const customer: Record<string, any> = { external_identifier: externalId };
-  if (kind === "person") customer.person = { full_name: name, ...(opts.bare ? {} : meshPersonDetails(s)) };
+  if (kind === "person") customer.person = { full_name: name, ...meshNameParts(s), ...(opts.bare ? {} : meshPersonDetails(s)) };
   else if (kind === "company") customer.company = { legal_name: name };
   else customer.undefined = { name };
   const body: Record<string, any> = { customer, monitoring: { entity_screening: { enabled: false } } };
@@ -292,14 +312,49 @@ export interface ScreeningResult {
   riskLevel?: string;
   error?: string;
   errorKind?: MeshErrorKind;
-  // Matched profiles left out because every date of birth on them is more
-  // than a year from the subject's (the rule the free lists use).
+  // Matched profiles left out because no date of birth on them can be the
+  // subject's (profileDobAgrees).
   setAside?: number;
   customerId?: string | null;
 }
 
-const yearsIn = (values: unknown): number[] => (Array.isArray(values) ? values : [])
-  .map((d: any) => /\b(1[89]\d\d|20\d\d)\b/.exec(String(d?.value ?? d ?? ""))?.[1]).filter(Boolean).map(Number);
+// A profile's dates of birth as a year and, where it gives one, a month.
+// Mesh writes them as "1960-01-01T00:00:00.000Z" (its own documentation's
+// example); a first of January is read as the year alone, the usual stand-in
+// when only the year is known.
+export type ProfileDob = { year: number; month: number | null };
+export function profileDobs(values: unknown): ProfileDob[] {
+  const out: ProfileDob[] = [];
+  for (const d of Array.isArray(values) ? values : []) {
+    if (d && typeof d === "object" && !("value" in d) && Number.isInteger(Number((d as any).year))) {
+      const month = Number((d as any).month);
+      out.push({ year: Number((d as any).year), month: Number.isInteger(month) && month >= 1 && month <= 12 ? month : null });
+      continue;
+    }
+    const text = String((d as any)?.value ?? d ?? "");
+    const full = /\b(1[89]\d\d|20\d\d)-(\d{2})-(\d{2})/.exec(text);
+    if (full) {
+      const month = Number(full[2]);
+      out.push({ year: Number(full[1]), month: month >= 1 && month <= 12 && !(month === 1 && Number(full[3]) === 1) ? month : null });
+      continue;
+    }
+    const year = /\b(1[89]\d\d|20\d\d)\b/.exec(text);
+    if (year) out.push({ year: Number(year[1]), month: null });
+  }
+  return out;
+}
+
+/**
+ * Whether a date of birth on a profile can be the subject's: the same year and
+ * month when both give a month (Companies House gives every director's and
+ * owner's), otherwise within a year (the free sanctions lists' rule).
+ */
+export function profileDobAgrees(d: ProfileDob, subject: Pick<ScreenSubject, "birthYear" | "birthMonth">): boolean {
+  const year = Number(subject.birthYear);
+  const month = Number(subject.birthMonth);
+  if (d.month && Number.isInteger(month) && month >= 1 && month <= 12) return d.year === year && d.month === month;
+  return Math.abs(d.year - year) <= 1;
+}
 
 const sourceName = (list: unknown): string | undefined => {
   const first = (Array.isArray(list) ? list : []).find((s: any) => typeof s?.name === "string" || typeof s?.title === "string");
@@ -325,16 +380,17 @@ export function matchesFromRisks(risks: any[], subject: ScreenSubject, kind: Mes
     const profile = risk?.detail?.profile;
     if (!profile) continue;
     const indicators = profile.risk_indicators || {};
-    const dobYears = yearsIn(profile.person?.dates_of_birth);
-    if (kind === "person" && subject.birthYear && dobYears.length && dobYears.every(y => Math.abs(y - Number(subject.birthYear)) > 1)) {
+    const dobs = profileDobs(profile.person?.dates_of_birth);
+    const dobYears = dobs.map(d => d.year);
+    if (kind === "person" && subject.birthYear && dobs.length && dobs.every(d => !profileDobAgrees(d, subject))) {
       setAside++;
       continue;
     }
     // Mesh's screens show scores 0 to 100; a score given as a fraction is kept as it is.
     const raw = Number(profile.match_score);
     const score = Number.isFinite(raw) && raw >= 0 ? (raw <= 1 ? raw : raw <= 100 ? raw / 100 : undefined) : undefined;
-    const birthYearAgrees = kind === "person" && subject.birthYear && dobYears.length
-      ? dobYears.some(y => Math.abs(y - Number(subject.birthYear)) <= 1) : null;
+    const birthYearAgrees = kind === "person" && subject.birthYear && dobs.length
+      ? dobs.some(d => profileDobAgrees(d, subject)) : null;
     const kinds = kindsOf(indicators.aml_types);
     for (const k of kinds.length ? kinds : ["warning"]) {
       matches.push({
@@ -440,8 +496,11 @@ async function readRisks(alertIds: string[], deps: MeshDeps): Promise<{ risks: a
 // When Mesh refused a person's birth date or nationality, the next day's
 // screens send the bare name (kept in memory; a restart tries again).
 export const meshRefusedDetailsRecently = (nowMs: number): boolean => meshRefusedDetailsAt > 0 && nowMs - meshRefusedDetailsAt < 86_400_000;
-export function noteMeshRefusedDetails(nowMs: number): void { meshRefusedDetailsAt = nowMs; }
-export function forgetMeshRefusedDetails(): void { meshRefusedDetailsAt = 0; }
+export function noteMeshRefusedDetails(nowMs: number, words = ""): void { meshRefusedDetailsAt = nowMs; meshRefusedDetailsWords = words; }
+export function forgetMeshRefusedDetails(): void { meshRefusedDetailsAt = 0; meshRefusedDetailsWords = ""; }
+/** The last refusal in this process, with Mesh's own words: the connection check shows it. */
+export const meshRefusedDetails = (): { at: number; words: string } | null =>
+  meshRefusedDetailsAt > 0 ? { at: meshRefusedDetailsAt, words: meshRefusedDetailsWords } : null;
 
 async function screenOne(subject: ScreenSubject, deps: MeshDeps): Promise<ScreeningResult> {
   const base = { name: subject.name, role: subject.role };
@@ -456,8 +515,9 @@ async function screenOne(subject: ScreenSubject, deps: MeshDeps): Promise<Screen
     const call = await meshCall("POST", "/v2/workflows/sync/create-and-screen?last_sync_step=ALERTING", meshScreenBody(subject, externalId, configId, { bare }), deps);
     if (call.status === 200 || call.status === 201) { state = call.data; break; }
     if (!bare && (call.status === 400 || call.status === 422)) {
-      console.warn(`[ComplyAdvantage] Mesh refused a birth date or nationality (${call.status}); screening on the name alone`);
-      noteMeshRefusedDetails(deps.now());
+      const words = meshProblemWords(call.text);
+      console.warn(`[ComplyAdvantage] Mesh refused a birth date or nationality (${call.status}${words ? `: ${words}` : ""}); screening on the name alone`);
+      noteMeshRefusedDetails(deps.now(), words || `answered ${call.status}`);
       bare = true;
       continue;
     }
@@ -647,7 +707,13 @@ export async function checkComplyAdvantage(deps: MeshDeps = defaultDeps()): Prom
       ? (found ? "the screening configuration set on Railway is one of them" : "the screening configuration set on Railway is not one of them")
       : "none is named on Railway, so Mesh picks one";
     const named = live.map((c: any) => (c.settings ? `${c.name}: ${c.settings}` : c.name));
-    return { ...base, ok: found !== false, configurations, screeningConfigFound: found, message: `Signed in with ${how}. ${live.length} screening configuration${live.length === 1 ? "" : "s"} (${named.join(" | ") || "none live"}); ${which}` };
+    // Whether Mesh took the dates of birth this process sent (Woody, 19
+    // November 2026: "comply advantage not picking up DOB").
+    const refusal = meshRefusedDetails();
+    const refused = refusal
+      ? ` Mesh refused a date of birth or nationality on ${new Date(refusal.at).toLocaleString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} (${refusal.words}): screens for a day after that send the name alone; the app still sets namesakes aside on date of birth itself.`
+      : "";
+    return { ...base, ok: found !== false, configurations, screeningConfigFound: found, message: `Signed in with ${how}. ${live.length} screening configuration${live.length === 1 ? "" : "s"} (${named.join(" | ") || "none live"}); ${which}.${refused}` };
   } catch (e: any) {
     return { ...base, ok: true, message: `Signed in with ${how}, but the screening configurations could not be read: ${e?.message || "unknown"}` };
   }

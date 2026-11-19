@@ -444,6 +444,8 @@ export function kycFinishedEmail(ctx: {
   ref: string;
   dealLink: string;
   idState: KycIdState | null;
+  // Who Veriff checked, set against the person the request was for (19 November 2026).
+  idPerson?: { verifiedName: string | null; isThePerson: boolean | null } | null;
   files: KycFinishedFile[];
   missing: string[];
   sentFrom: string;
@@ -456,7 +458,12 @@ export function kycFinishedEmail(ctx: {
   owners?: { list: Array<{ name: string; detail: string }>; reply: KycOwnersReply | null } | null;
 }): { subject: string; html: string } {
   const who = ctx.recipientName || ctx.partyName;
+  // Someone else passed the identity check on this link (Woody, 19 November
+  // 2026: an agent copied on the request did it on the client's link): never
+  // reported as the client's own.
+  const someoneElse = ctx.idPerson?.isThePerson === false && (ctx.idState === "approved" || ctx.idState === "submitted") ? ctx.idPerson.verifiedName || "someone else" : null;
   const idLine = ctx.idState === null ? "" :
+    someoneElse ? `Identity check: ${ctx.idState === "approved" ? "passed" : "done"} by ${someoneElse}, not ${who}, who this request was for.` :
     ctx.idState === "approved" ? "Identity check: passed." :
     ctx.idState === "submitted" ? "Identity check: done, waiting for Veriff's result." :
     ctx.idState === "retry" ? "Identity check: Veriff asked them to try again." :
@@ -464,9 +471,12 @@ export function kycFinishedEmail(ctx: {
     "Identity check: not done yet.";
   const fileRows = ctx.files.map(f => `<tr><td style="padding:3px 12px 3px 0;font-family:${FONT};font-size:14px;color:${INK}">${escHtml(f.name)}</td><td style="padding:3px 0;font-family:${FONT};font-size:13px;color:${MUTED}">${escHtml(f.docKey ? KYC_DOCS[f.docKey].title : "Sent by email")}</td></tr>`).join("");
   const inner = [
-    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:${ACCENT}">${escHtml(who)} has finished their checks</h1>`,
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:${ACCENT}">${someoneElse ? `The checks sent to ${escHtml(who)} were finished` : `${escHtml(who)} has finished their checks`}</h1>`,
     p(`For <strong>${escHtml(ctx.dealName)}</strong>${ctx.recipientName && ctx.partyName !== ctx.recipientName ? `, on behalf of <strong>${escHtml(ctx.partyName)}</strong>` : ""}.`),
     idLine ? p(escHtml(idLine)) : "",
+    someoneElse
+      ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>${escHtml(who)} has not done their own identity check.</strong> The check on this link was ${escHtml(someoneElse)}'s. Send ${escHtml(who)} a new request from the deal's AML card, or, if ${escHtml(someoneElse)} can act for ${escHtml(ctx.partyName)}, record why on the deal.</div>`
+      : "",
     ctx.files.length ? h2(`Files received (${ctx.files.length})`) + `<table role="presentation" cellspacing="0" cellpadding="0" border="0">${fileRows}</table>` : p("No files were uploaded."),
     ctx.missing.length ? h2("Not sent") + p(escHtml(ctx.missing.join(", "))) : "",
     ctx.pep !== undefined ? h2("Public roles") + p(`${escHtml(kycPepWords(ctx.pep))}${ctx.pepDetail ? `: ${escHtml(ctx.pepDetail)}` : ""}`) : "",
@@ -483,7 +493,9 @@ export function kycFinishedEmail(ctx: {
     p("The files are on the client's KYC record. Review them and sign off in the app as usual.", `font-size:13px;color:${MUTED}`),
   ].join("\n");
   return {
-    subject: `${ctx.test ? "[Test] " : ""}${who} has finished their identity checks for ${ctx.dealName} (ref ${ctx.ref})`,
+    subject: someoneElse
+      ? `${ctx.test ? "[Test] " : ""}The checks sent to ${who} were finished with ${someoneElse}'s identity check, for ${ctx.dealName} (ref ${ctx.ref})`
+      : `${ctx.test ? "[Test] " : ""}${who} has finished their identity checks for ${ctx.dealName} (ref ${ctx.ref})`,
     html: frame("Checks finished", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the deal's agents receive"),
   };
 }
@@ -568,7 +580,9 @@ export interface KycPortalView {
   expiresAt: string;
   // real: a Veriff check runs (always on a client's request; on a test page
   // when Veriff is set up, since 17 November 2026).
-  idCheck: { state: KycIdState; canStart: boolean; real: boolean } | null;
+  // otherPerson: the check on this link was passed by someone other than the
+  // person the request was for (verifiedName is who), so theirs is still to do.
+  idCheck: { state: KycIdState; canStart: boolean; real: boolean; verifiedName?: string | null; otherPerson?: boolean } | null;
   question: { pep: KycPepAnswer | null; pepDetail: string | null } | null;
   // The owners on the register to confirm (null when not asked).
   owners: { list: Array<{ name: string; detail: string }>; answer: KycOwnersAnswer | null; detail: string | null } | null;

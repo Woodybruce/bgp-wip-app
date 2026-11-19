@@ -192,6 +192,33 @@ export function personNamesMatch(a: string, b: string): boolean {
   return (ta.length >= 2 && covers(tb, ta)) || (tb.length >= 2 && covers(ta, tb));
 }
 
+// ── Who did the identity check (Woody, 19 November 2026) ───────────────────
+// "this is email about jack barrat but its actually after woody bruce did the
+// check so its got confused jack hasnt done his yet": the agents are copied
+// on the request, Woody opened his copy of Jack's link and passed Veriff
+// himself, and the app reported it as Jack's. Veriff reads the name off the
+// document (verification.person); the app sets it against the person the
+// request was for.
+
+/** The name Veriff read off the document, or null. */
+export function verifiedPersonName(verdictPerson: unknown): string | null {
+  const vp = verdictPerson as Record<string, unknown> | null;
+  if (!vp || typeof vp !== "object") return null;
+  const parts = [vp.firstName, vp.lastName].filter((x): x is string => typeof x === "string" && !!x.trim());
+  const name = (parts.length ? parts.join(" ") : typeof vp.fullName === "string" ? vp.fullName : "").replace(/\s+/g, " ").trim();
+  return name ? name.slice(0, 160) : null;
+}
+
+/** Whether the person Veriff checked is the one the request was for: null when either name is missing. */
+export function idCheckIsThePerson(requested: string | null | undefined, verified: string | null | undefined): boolean | null {
+  if (!requested || !verified) return null;
+  const a = nameTokens(requested), b = nameTokens(verified);
+  if (!a.length || !b.length) return null;
+  if (personNamesMatch(requested, verified)) return true;
+  // A first name alone on the request: the document's name holds it.
+  return a.length === 1 && b.some(t => sameToken(t, a[0]));
+}
+
 export function companyNamesMatch(a: string, b: string): boolean {
   const ta = nameTokens(a, true), tb = nameTokens(b, true);
   if (!ta.length || !tb.length) return false;
@@ -356,8 +383,9 @@ export interface ProviderMatch {
   score: number | null;
   profileId: string | null;
   media: Array<{ title: string; url: string | null; date: string | null }>;
-  // The profile's recorded birth year is within a year of the person's
-  // (null when either is not known). Since 19 November 2026.
+  // The profile's date of birth agrees with the person's: the same year and
+  // month when both give a month, else within a year (null when either is not
+  // known). Since 19 November 2026.
   birthYearAgrees?: boolean | null;
   // ComplyAdvantage said it matched but its profiles could not be read.
   unread?: boolean;
@@ -370,7 +398,77 @@ export interface ProviderLine {
   matches?: ProviderMatch[];
   // The customer record ComplyAdvantage made for the screen.
   customerId?: string | null;
+  // Since 19 November 2026 (Woody: "red flags for random people with similar
+  // names ... whats the fix?"): whether the line is a person, and whether they
+  // were screened with a date of birth (from Companies House). Older checks
+  // have neither and keep the rule they were made under.
+  person?: boolean;
+  dobKnown?: boolean;
 }
+
+// Who ComplyAdvantage and the web search screen for public roles and adverse
+// media (Woody, 19 November 2026: "At that point need to work out who needs
+// to be AML/KYC"). MLR 2017: a company's beneficial owners are the people who
+// own or control more than 25% of it (reg 5), traced through the companies
+// above it; they are identified and screened. A company listed on a regulated
+// market has none to identify (reg 28(5)). Where no owner can be named, the
+// people who manage the company stand in for them (reg 28(6)). Everyone else
+// on the register (directors, the secretary) and the deal's contact are
+// screened against the sanctions lists only.
+export type ScreenBasis = "owners" | "managers" | "listed" | "individual" | "company";
+export interface PrecheckScreened {
+  basis: ScreenBasis;
+  // The people screened for public roles and adverse media.
+  people: string[];
+  // The people screened against the sanctions lists only.
+  sanctionsOnly: string[];
+}
+export const SCREEN_BASIS_WORDS: Record<ScreenBasis, string> = {
+  owners: "the company and the people who own or control it (its beneficial owners, found on the register and up the ownership chain)",
+  managers: "the company and its directors, standing in for the owners because none could be named (MLR 2017 reg 28(6))",
+  listed: "the company only: a company listed on a regulated market has no beneficial owners to identify (MLR 2017 reg 28(5))",
+  individual: "the person",
+  company: "the company only: no owner or director could be named from the register",
+};
+// One person or company a run screens, as the server lists them: the roles
+// they were found in ("the company", "owner", "owner of <company up the
+// chain>", "director", "secretary", "the deal's contact", "the party"), joined
+// with ", " when one person is found twice.
+export interface ScreenCandidate { name: string; role: string; person: boolean; owner?: boolean }
+
+const roles = (c: ScreenCandidate) => c.role.split(", ");
+const isManager = (c: ScreenCandidate) => c.person && roles(c).some(r => /director|member/i.test(r) && !/corporate/i.test(r));
+
+/**
+ * Who goes to ComplyAdvantage and the web search, and who to the sanctions
+ * lists only (everyone the run lists is screened against those). The company
+ * (and its trading name) and its beneficial owners; a listed company alone;
+ * the directors when no owner can be named; a private individual themselves.
+ */
+export function chooseScreened<T extends ScreenCandidate>(candidates: T[], ctx: { individual: boolean; listed: boolean; maxPeople: number }): { basis: ScreenBasis; full: T[]; sanctionsOnly: T[] } {
+  const companies = candidates.filter(c => !c.person && roles(c).some(r => r.startsWith("the company")));
+  let basis: ScreenBasis;
+  let people: T[];
+  if (ctx.individual) {
+    basis = "individual";
+    people = candidates.filter(c => c.person && roles(c).includes("the party"));
+  } else if (candidates.some(c => c.person && c.owner)) {
+    basis = "owners";
+    people = candidates.filter(c => c.person && c.owner);
+  } else if (ctx.listed) {
+    basis = "listed";
+    people = [];
+  } else {
+    people = candidates.filter(isManager);
+    basis = people.length ? "managers" : "company";
+  }
+  const full = [...companies, ...people.slice(0, ctx.maxPeople)];
+  return { basis, full, sanctionsOnly: candidates.filter(c => c.person && !full.includes(c)) };
+}
+
+/** KYC4U's note line: who was screened for public roles and adverse media, and who for sanctions only. */
+export const screenedLine = (s: PrecheckScreened): string =>
+  `Screened for public roles and adverse media (ComplyAdvantage and a web search): ${SCREEN_BASIS_WORDS[s.basis]}${s.people.length ? `: ${s.people.join(", ")}` : ""}, each person with the date of birth Companies House gives.${s.sanctionsOnly.length ? ` Sanctions lists only: ${s.sanctionsOnly.join(", ")}.` : ""}`;
 
 // ComplyAdvantage's kinds of profile, in words.
 export const PROVIDER_KIND_WORDS: Record<string, string> = {
@@ -409,7 +507,8 @@ export interface KycPrecheckResult {
     statements: Array<{ statement: string; words: string; concern: boolean; notifiedOn: string | null }>;
     listing: PrecheckListing | null;
     chain: Array<{ name: string; number: string; individuals: number; companies: number }>;
-    peopleUpChain: Array<{ name: string; foundAt: string; controls: string[] }>;
+    // The month and year of birth and nationality since 19 November 2026.
+    peopleUpChain: Array<{ name: string; foundAt: string; controls: string[]; dob?: { month?: number | null; year?: number | null } | null; nationality?: string | null }>;
     offshoreOwners: Array<{ name: string; country: string }>;
     disqualified: Array<{ officer: string; match: string; dobMatches: boolean | null; url: string | null }>;
     covenant: { grade: string | null; score: number | null; flags: Array<{ level: string; label: string; detail?: string | null }>; gazette: Array<{ title: string; published: string; link: string }> } | null;
@@ -420,6 +519,8 @@ export interface KycPrecheckResult {
   sanctions: { ran: boolean; lists: string[]; lines: SanctionsLine[]; error: string | null };
   web: { ran: boolean; lines: WebSearchLine[]; skipped: string | null };
   complyAdvantage: { ran: boolean; lines: ProviderLine[]; skipped: string | null };
+  // Who was screened for public roles and adverse media (since 19 November 2026).
+  screened?: PrecheckScreened;
   errors: string[];
 }
 
@@ -681,15 +782,38 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: { kind: KycPar
 //     and in KYC4U's note, never a red flag;
 //   - a web result the search marks "may be about someone else of the same
 //     name" is listed the same way, not flagged.
+//
+// The date of birth decides (Woody, later on 19 November 2026: "comply
+// advantage not picking up DOB which can get from companies house for
+// everyone ... currently showing red flags for random people with similar
+// names? whats the fix?"). On deal #4491 a 70% public-role match was "rupert
+// smith" for Rupert Bentley-Smith and "caroline roberts" for Charlotte
+// Caroline Roberts: ComplyAdvantage's score says how much of the name
+// matched (70% when every word of one name is in the other, 20% for a
+// spelling variant), not whether it is the same person. So for a person
+// screened with their date of birth from Companies House:
+//   - a profile whose date of birth differs is set aside before it is kept
+//     (server/comply-advantage.ts);
+//   - a profile whose date of birth agrees is a red flag, of any kind;
+//   - a profile with no date of birth is a possible namesake to check, never
+//     a red flag: nothing ties it to the person (the client's own answer to
+//     the question about public roles still covers a PEP);
+//   - a sanctions match stays a red flag unless the dates of birth differ.
+// A person screened without a date of birth keeps the bars, a warning list
+// judged as anything else (90%). A company, and any check from before this
+// change, keeps the rule above.
 export const PROVIDER_FLAG_BARS = { pep: 0.6, other: 0.9 } as const;
 const ALWAYS_FLAG_KIND = /sanction|warning/;
 
-export function providerMatchFlags(m: ProviderMatch): boolean {
-  if (ALWAYS_FLAG_KIND.test(String(m.kind || ""))) return true;
+export function providerMatchFlags(m: ProviderMatch, line?: Pick<ProviderLine, "person" | "dobKnown">): boolean {
+  const kind = String(m.kind || "");
+  const dated = line?.person === true && typeof line.dobKnown === "boolean";
+  if (dated ? /sanction/.test(kind) : ALWAYS_FLAG_KIND.test(kind)) return true;
   // A match from before this rule with no profile behind it could not be read.
   if (m.unread ?? !m.profileId) return true;
   if (m.birthYearAgrees === true) return true;
-  return m.score != null && m.score >= (m.kind === "pep" ? PROVIDER_FLAG_BARS.pep : PROVIDER_FLAG_BARS.other);
+  if (dated && line!.dobKnown) return false;
+  return m.score != null && m.score >= (kind === "pep" ? PROVIDER_FLAG_BARS.pep : PROVIDER_FLAG_BARS.other);
 }
 
 /** A ComplyAdvantage line's matches, split into red flags and possible namesakes. */
@@ -698,7 +822,7 @@ export function splitProviderMatches(line: ProviderLine): { flagged: ProviderMat
   const matches = line.matches || [];
   // An older check kept only the kinds of profile matched: nothing to judge, so it stays a flag.
   if (!matches.length) return { flagged: [], namesakes: [], unjudged: true };
-  return { flagged: matches.filter(providerMatchFlags), namesakes: matches.filter(m => !providerMatchFlags(m)), unjudged: false };
+  return { flagged: matches.filter(m => providerMatchFlags(m, line)), namesakes: matches.filter(m => !providerMatchFlags(m, line)), unjudged: false };
 }
 
 const CORPORATE_NAME = /\b(limited|ltd|llp|plc|lp|inc|corp|corporation|company|holdings|group|partnership|trust|estates)\b/i;
@@ -716,7 +840,8 @@ export function precheckNamesakes(result: Pick<KycPrecheckResult, "complyAdvanta
       out.push({
         name: line.name, via: "ComplyAdvantage", url: null,
         what: [providerKindWords(m.kind), m.name && m.name !== line.name ? `profile "${m.name}"` : "", m.source || "",
-          m.score != null ? `match ${Math.round(m.score * 100)}%` : "no match score", m.birthYearAgrees === false ? "birth year differs" : ""].filter(Boolean).join(", "),
+          m.score != null ? `match ${Math.round(m.score * 100)}%` : "no match score",
+          m.birthYearAgrees === false ? "birth year differs" : line.person && line.dobKnown && m.birthYearAgrees == null ? "no date of birth on the profile" : ""].filter(Boolean).join(", "),
       });
     }
   }
@@ -910,6 +1035,7 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
   } else {
     lines.push(`- Sanctions: not screened (${result.sanctions.error || "the lists could not be loaded"}).`);
   }
+  if (result.screened) lines.push(`- ${screenedLine(result.screened)}`);
   if (result.web.ran) {
     const searched = result.web.lines.filter(l => l.ran);
     const found = searched.flatMap(l => l.findings.map(f => `${l.name}: ${f.summary} (${f.url})`));
@@ -924,7 +1050,7 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
     lines.push(`- ComplyAdvantage: not used (${result.complyAdvantage.skipped}).`);
   }
   const namesakes = precheckNamesakes(result);
-  if (namesakes.length) lines.push(`- Possible namesakes, not treated as red flags (below ComplyAdvantage's bars, or web results that may be about someone else): ${namesakes.slice(0, 6).map(n => `${n.name}: ${n.what}`).join("; ")}${namesakes.length > 6 ? `; and ${namesakes.length - 6} more` : ""}.`);
+  if (namesakes.length) lines.push(`- Possible namesakes, not treated as red flags (ComplyAdvantage profiles with no date of birth to set against the person's, or under its bars where the person's is not known, and web results that may be about someone else): ${namesakes.slice(0, 6).map(n => `${n.name}: ${n.what}`).join("; ")}${namesakes.length > 6 ? `; and ${namesakes.length - 6} more` : ""}.`);
   return lines.join("\n").slice(0, 2800);
 }
 
@@ -995,6 +1121,14 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
   } else {
     out.push({ key: "sanctions", label: "Sanctions: not screened", state: "not_run", detail: result.sanctions.error, links: [] });
   }
+  if (result.screened) {
+    const s = result.screened;
+    out.push({
+      key: "who_screened", label: `Screened for public roles and adverse media: ${s.people.length ? list(s.people, 4) : s.basis === "individual" ? "the person" : "the company only"}`, state: "info",
+      detail: `${SCREEN_BASIS_WORDS[s.basis][0].toUpperCase()}${SCREEN_BASIS_WORDS[s.basis].slice(1)}, each person with the date of birth Companies House gives.${s.sanctionsOnly.length ? ` Sanctions lists only: ${list(s.sanctionsOnly, 6)}.` : ""}`,
+      links: [],
+    });
+  }
   if (result.web.ran) {
     const searched = result.web.lines.filter(l => l.ran);
     const findings = searched.flatMap(l => l.findings.filter(f => !f.unsureIdentity).map(f => ({ l, f })));
@@ -1020,7 +1154,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
   if (namesakes.length) {
     out.push({
       key: "namesakes", label: `Possible namesakes to check: ${namesakes.length}`, state: "info",
-      detail: `Matches below ComplyAdvantage's bars (60% for a public role, 90% for anything else, unless the birth year agrees) and web results that may be about someone else of the same name. Not red flags. ${namesakes.filter(n => !n.url).slice(0, 8).map(n => `${n.name}: ${n.what}`).join("; ")}`.trim(),
+      detail: `ComplyAdvantage profiles nothing ties to the person (no date of birth to set against the one Companies House gives, or under its bars of 60% for a public role and 90% for anything else when the person's date of birth is not known) and web results that may be about someone else of the same name. Not red flags. ${namesakes.filter(n => !n.url).slice(0, 8).map(n => `${n.name}: ${n.what}`).join("; ")}`.trim(),
       links: namesakes.filter(n => n.url).slice(0, 8).map(n => ({ label: `${n.name}: ${n.what}`.slice(0, 140), url: n.url! })),
     });
   }

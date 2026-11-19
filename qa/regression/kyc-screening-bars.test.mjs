@@ -18,7 +18,11 @@ test('the bars: sanctions and warning lists always, a public role at 60%, anythi
   assert.match(rules, /export const PROVIDER_FLAG_BARS = \{ pep: 0\.6, other: 0\.9 \} as const;/);
   assert.match(rules, /const ALWAYS_FLAG_KIND = \/sanction\|warning\/;/);
   const fn = rules.slice(rules.indexOf('export function providerMatchFlags'), rules.indexOf('/** A ComplyAdvantage line'));
-  assert.match(fn, /if \(ALWAYS_FLAG_KIND\.test\(String\(m\.kind \|\| ""\)\)\) return true;/);
+  // Since later on 19 November 2026 a person screened with their date of birth is judged by it: only sanctions
+  // whatever the score, and a profile with no date of birth is a possible namesake.
+  assert.match(fn, /if \(dated \? \/sanction\/\.test\(kind\) : ALWAYS_FLAG_KIND\.test\(kind\)\) return true;/);
+  assert.match(fn, /if \(dated && line!\.dobKnown\) return false;/);
+  assert.match(rules, /flagged: matches\.filter\(m => providerMatchFlags\(m, line\)\)/);
   assert.match(fn, /if \(m\.unread \?\? !m\.profileId\) return true;/);
   assert.match(fn, /if \(m\.birthYearAgrees === true\) return true;/);
   // The red flags, the card and KYC4U's note all split the matches the same way.
@@ -43,11 +47,26 @@ test('a person goes to Mesh with their birth month, year and a UK nationality, a
   assert.match(ca, /out\.date_of_birth = \{ year, month: /);
   assert.match(ca, /if \(s\.nationality && \/\^\[A-Z\]\{2\}\$\/\.test\(s\.nationality\)\) out\.nationality = \[s\.nationality\];/);
   assert.match(ca, /if \(!bare && \(call\.status === 400 \|\| call\.status === 422\)\) \{/);
-  assert.match(ca, /noteMeshRefusedDetails\(deps\.now\(\)\);/);
+  assert.match(ca, /noteMeshRefusedDetails\(deps\.now\(\), words \|\| `answered \$\{call\.status\}`\);/);
+  // Mesh's person record requires last_name: every person screen carries it, the bare one too.
+  assert.match(ca, /customer\.person = \{ full_name: name, \.\.\.meshNameParts\(s\), \.\.\.\(opts\.bare \? \{\} : meshPersonDetails\(s\)\) \};/);
   // Mesh's screens score 0 to 100.
   assert.match(ca, /\(raw <= 1 \? raw : raw <= 100 \? raw \/ 100 : undefined\)/);
   const pre = read('server/kyc-prechecks.ts');
   assert.match(pre, /birthMonth: s\.dobMonth \?\? null, nationality: s\.person \? meshNationality\(s\.nationality\) : null,/);
   assert.match(pre, /const UK_NATIONALITY = \/\^\(british\|/);
   assert.match(pre, /birthYearAgrees: typeof d\.birthYearAgrees === "boolean" \? d\.birthYearAgrees : null, unread: !!d\.unread,/);
+});
+
+test('only the company and its beneficial owners go to ComplyAdvantage and the web search; everyone to the sanctions lists', () => {
+  const pre = read('server/kyc-prechecks.ts');
+  assert.match(pre, /const screen = chooseScreened\(subjects, \{ individual: subjectKind === "individual", listed: !!companiesHouse\?\.listing, maxPeople: KYC_PRECHECK_MAX_WEB_PEOPLE \}\);/);
+  assert.match(pre, /screenSubjects\(subjects\),/);
+  assert.match(pre, /screenComplyAdvantage\(screen\.full\),/);
+  assert.match(pre, /const searched = \[\.\.\.screen\.full\.filter\(s => !s\.person\)\.slice\(0, 1\), \.\.\.screen\.full\.filter\(s => s\.person\)\];/);
+  // The people up the ownership chain are owners, screened with the date of birth the register gives.
+  assert.match(pre, /role: `owner of \$\{p\.foundAt\}`, person: true, owner: true, dobYear: p\.dob\?\.year \|\| null, dobMonth: p\.dob\?\.month \|\| null,/);
+  assert.match(read('server/companies-house.ts'), /dob: chainDob\(p\.date_of_birth\)/);
+  // Each ComplyAdvantage line says whether a person was screened with a date of birth.
+  assert.match(pre, /person: !!subjectOf\(r\.name, i\)\?\.person, dobKnown: !!\(subjectOf\(r\.name, i\)\?\.person && subjectOf\(r\.name, i\)\?\.dobYear\),/);
 });
