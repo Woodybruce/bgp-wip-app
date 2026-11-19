@@ -452,7 +452,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
   return (
     <Card data-testid="deal-aml-status-card">
       <CardContent className="p-4 space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <ShieldCheck className={`w-4 h-4 ${data.allApproved ? "text-emerald-600" : "text-muted-foreground"}`} />
             <h3 className="font-semibold text-sm">AML status — both counterparties</h3>
@@ -472,7 +472,9 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
 
         <DealRedFlags dealId={dealId} data={data} />
 
-        <div className="grid sm:grid-cols-2 gap-2">
+        {/* grid-cols-1, not a bare grid: an implicit column grows to its
+            widest line, which pushed both boxes past a phone's width. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {data.counterparties.map(cp => {
             const status = cp.isApproved && !cp.isExpired ? "approved" : cp.isExpired ? "expired" : cp.kyc_status || "pending";
             const colour = status === "approved" ? "border-emerald-300 bg-emerald-50/50" :
@@ -484,7 +486,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                         <AlertCircle className="w-4 h-4 text-amber-600" />;
             const isOpen = expanded === cp.id;
             return (
-              <div key={cp.id} className={`border-2 rounded-lg p-3 ${colour}`} data-testid={`counterparty-${cp.id}`}>
+              <div key={cp.id} className={`border-2 rounded-lg p-3 min-w-0 ${colour}`} data-testid={`counterparty-${cp.id}`}>
                 <div className="flex items-start gap-2">
                   {icon}
                   <div className="flex-1 min-w-0">

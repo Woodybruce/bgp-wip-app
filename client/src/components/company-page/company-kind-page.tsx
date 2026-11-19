@@ -43,7 +43,9 @@ export function CompanyKindPage({ testId, children, sectionTestPrefix = "company
   return (
     <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid={testId}>
       {top}
-      <div className={`sticky top-0 z-20 -mx-1 px-1 py-2 flex items-center gap-1.5 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85 ${scrollOnPhone ? "flex-nowrap overflow-x-auto [&>*]:shrink-0 md:flex-wrap md:overflow-visible" : "flex-wrap"}`} data-testid={`${sectionTestPrefix}s`}>
+      {/* The scrolling row on a phone keeps inside the page: the 4px bleed
+          either side made the deal page scroll sideways (19 November 2026). */}
+      <div className={`sticky top-0 z-20 py-2 flex items-center gap-1.5 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85 ${scrollOnPhone ? "flex-nowrap overflow-x-auto [&>*]:shrink-0 md:-mx-1 md:px-1 md:flex-wrap md:overflow-visible" : "-mx-1 px-1 flex-wrap"}`} data-testid={`${sectionTestPrefix}s`}>
         {sections.map(section => (
           <Pill key={section.key} active={section.key === current} aria-pressed={section.key === current} onClick={() => select(section.key)} data-testid={`${sectionTestPrefix}-${section.key}`}>
             {section.label}{section.count ? <span className="font-mono tabular-nums">{section.count.toLocaleString("en-GB")}</span> : null}
