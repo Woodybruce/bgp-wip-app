@@ -30,12 +30,23 @@ test('a run never starts on a timer: only a deal view, Run again or a KYC4U requ
   assert.match(checks, /KYC_PRECHECKS \|\| ""\)\.trim\(\)\.toLowerCase\(\) !== "off"/);
 });
 
+test('Run again works while in-app AML is off (it answered 410 until 18 November 2026)', () => {
+  const line = index.split('\n').find(l => l.includes('/^\\/api\\/kyc\\/(?!deal'));
+  assert.ok(line, 'the retired switch still names the /api/kyc/ exception');
+  const literal = line.trim().replace(/,$/, '');
+  const retired = new RegExp(literal.slice(1, literal.lastIndexOf('/')));
+  assert.equal(retired.test('/api/kyc/deal/d1/prechecks'), false, "the card's Run again");
+  assert.equal(retired.test('/api/kyc/deal/d1/status'), false, 'the card itself');
+  assert.equal(retired.test('/api/kyc/deal/d1/cdd'), true, 'the rest of /api/kyc/ stays retired');
+  assert.match(card, /apiRequest\("POST", `\/api\/kyc\/deal\/\$\{dealId\}\/prechecks`/);
+});
+
 test('only BGP staff signed in as themselves start or see a run', () => {
   const route = compliance.slice(compliance.indexOf('"/api/kyc/deal/:id/status"'));
   const body = route.slice(0, route.indexOf('router.post('));
   assert.match(body, /const staff = \(await contactViewer\(req\)\)\.staff;/);
   assert.match(body, /const prechecks = staff\s*\?\s*await \(await import\("\.\/kyc-prechecks"\)\)\.dealPrechecks/);
-  assert.match(body, /prechecks,\s*\}\);/);
+  assert.match(body, /prechecks,\s*decisions,\s*\}\);/);
   const again = checks.slice(checks.indexOf('router.post("/api/kyc/deal/:id/prechecks"'));
   assert.match(again, /if \(!\(await contactViewer\(req\)\)\.staff\) return res\.status\(403\)/);
   assert.match(again, /That company is not a party to this deal/);
@@ -91,7 +102,8 @@ test('a Companies House lookup that screened nobody never reads as "no match"', 
 test("KYC4U's request waits a little for the run and carries what it found", () => {
   const prefill = kyc4u.slice(kyc4u.indexOf('export async function kyc4uPrefill'), kyc4u.indexOf('export const KYC4U_DRAFT_KEYS'));
   assert.match(prefill, /await checks\.startPrecheck\(companyId/);
-  assert.match(prefill, /checks\.awaitPrecheck\(companyId, 20_000\)/);
+  // On the company that signs for the party when the deal names one (2026-11-18).
+  assert.match(prefill, /checks\.awaitPrecheck\(companyId, 20_000, entityId\)/);
   // The run goes before the documents and red flags are read, so both count it.
   assert.ok(prefill.indexOf('awaitPrecheck') < prefill.indexOf('FROM kyc_documents'));
   assert.ok(prefill.indexOf('awaitPrecheck') < prefill.indexOf('loadDealRedFlags('));

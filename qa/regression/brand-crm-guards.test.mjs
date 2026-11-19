@@ -539,6 +539,39 @@ test('brand tidy: when the Wanted table cannot be read, Hide and Delete refuse t
   assert.equal((await app.call('GET /api/admin/brand-relevance/archived')).body.deletable, 0);
 });
 
+test('Select and Delete on Brand Explorer: what nothing points at is deleted, the rest hidden with what it is tied to', async () => {
+  const brands = [{ id: 'junk' }, { id: 'tied' }, { id: 'new-starred' }, { id: 'tied-hidden', ...BY_HAND }, { id: 'merged-keeper' }];
+  const signals = { deal: ['tied', 'tied-hidden'], contacts: ['tied'], recent: ['new-starred'], flagged: ['new-starred'], merged: ['merged-keeper'] };
+  const app = tidy({ brands, signals });
+  const res = await app.call('POST /api/admin/brand-relevance/bulk-delete', { ids: ['junk', 'tied', 'new-starred', 'tied-hidden', 'merged-keeper', 'a-landlord', 'junk'] });
+  assert.equal(res.code, 200);
+  // New and starred only ever kept a brand from the sweep, not from a person's own choice.
+  assert.deepEqual(plain(app.deleted), ['junk', 'new-starred']);
+  assert.deepEqual(plain(res.body.deleted.map(b => b.id)), ['junk', 'new-starred']);
+  assert.deepEqual(app.updates, [{ hide: true, ids: ['tied', 'merged-keeper'] }]);
+  assert.deepEqual(plain(res.body.hidden.map(b => [b.id, b.ties])), [
+    ['tied', [app.labels('deal'), app.labels('contacts')]], ['merged-keeper', [app.labels('merged')]]]);
+  assert.deepEqual(plain(res.body.staysHidden.map(b => b.id)), ['tied-hidden']);
+  assert.equal(res.body.notBrands, 1);
+
+  for (const [body, code] of [[{}, 400], [{ ids: [] }, 400], [{ ids: Array.from({ length: 501 }, (_, i) => `b${i}`) }, 400]]) {
+    assert.equal((await app.call('POST /api/admin/brand-relevance/bulk-delete', body)).code, code);
+  }
+  // A check that cannot be made changes nothing.
+  const broken = tidy({ brands, signals: { ...signals, contacts: Object.assign(new Error('relation "crm_contacts" does not exist'), { code: '42P01' }) } });
+  const refused = await broken.call('POST /api/admin/brand-relevance/bulk-delete', { ids: ['junk'] });
+  assert.equal(refused.code, 409);
+  assert.match(refused.body.error, /Nothing was changed/);
+  assert.deepEqual([broken.updates, broken.deleted], [[], []]);
+
+  // On screen: Select is an admin's, never under Hidden, and the bar posts to the route above.
+  const hub = source('client/src/pages/brands-hub.tsx');
+  assert.match(hub, /\{exUser\?\.isAdmin && relFilter !== "archived" && \(\s*<Button variant=\{selecting \? "default" : "outline"\}/);
+  assert.match(hub, /\{selecting && relFilter !== "archived" && exUser\?\.isAdmin && \(\s*<BrandSelectBar /);
+  assert.match(source('client/src/components/brand-tidy.tsx'), /apiRequest\("POST", "\/api\/admin\/brand-relevance\/bulk-delete", \{ ids \}\)/);
+  assert.match(source(TIDY), /app\.post\("\/api\/admin\/brand-relevance\/bulk-delete", requireAuth, requireAdmin,/);
+});
+
 test("a client login is never sent BGP's AML working on a deal, and cannot write it", () => {
   const crm = source(CRM);
   // The strip as written, run on a deal row holding every column.

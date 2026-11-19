@@ -24,7 +24,8 @@ test('the deal KYC status sends red flags to BGP staff signed in as themselves o
 
 test("KYC4U's request note carries the red flags", () => {
   const prefill = kyc4u.slice(kyc4u.indexOf('export async function kyc4uPrefill'), kyc4u.indexOf('export const KYC4U_DRAFT_KEYS'));
-  assert.match(prefill, /loadDealRedFlags\(dealId, \[companyId\]\)/);
+  // The party's own flags: those of the company that signs when the deal names one (2026-11-18).
+  assert.match(prefill, /loadDealRedFlags\(dealId, \[companyId\], entityId \? \{ \[companyId\]: entityId \} : \{\}\)/);
   assert.match(prefill, /redFlagNote\(/);
   assert.match(prefill, /flagNote, checkedNote\]\.filter\(Boolean\)\.join/);
 });
@@ -50,16 +51,16 @@ test("the client's yes or not sure, and Veriff's decline, alert at once without 
 
 test('the finished note and the admin previews carry the red flags', () => {
   const finish = portal.slice(portal.indexOf('async function finishRequest'), portal.indexOf('// ── Replies with documents'));
-  assert.match(finish, /loadDealRedFlags\(row\.deal_id, \[row\.company_id\]\)/);
+  assert.match(finish, /loadDealRedFlags\(row\.deal_id, \[row\.company_id\], row\.trading_entity_id \? \{ \[row\.company_id\]: row\.trading_entity_id \} : \{\}\)/);
   assert.match(finish, /redFlags,/);
   assert.match(portal, /\{ kind: "red_flag", title: "Red flag: raise with KYC4U"/);
   assert.match(read('client/src/components/kyc-emails-admin.tsx'), /red_flag: "red_flag"/);
 });
 
 test('the deal card shows each party its red flags beside Request KYC4U check; the Kick off step sends a flagged party to KYC4U', () => {
-  assert.equal((card.match(/<PartyRedFlags data=\{data\} companyId=\{cp\.id\} \/>/g) || []).length, 2);
-  assert.equal((card.match(/<DealRedFlags data=\{data\} \/>/g) || []).length, 2);
+  assert.equal((card.match(/<PartyRedFlags dealId=\{dealId\} data=\{data\} companyId=\{cp\.id\} role=\{cp\.role\} \/>/g) || []).length, 2);
+  assert.equal((card.match(/<DealRedFlags dealId=\{dealId\} data=\{data\} \/>/g) || []).length, 2);
   assert.match(card, /Red flags could not be checked against/);
   assert.match(deals, /const flags = amlStepStatus\?\.redFlags\?\.parties\[p\.id\] \|\| \[\];/);
-  assert.match(deals, /\{amlInApp && !flags\.length\s*\? <SendClientChecksButton/);
+  assert.match(deals, /\{clientChecks && !flags\.length\s*\? <SendClientChecksButton/);
 });

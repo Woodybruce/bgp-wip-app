@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { leasingSideOnly } from "@shared/teams";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
-import { BarChart3, Store, TrendingUp, Building2, FileText } from "lucide-react";
+import { BarChart3, Store, TrendingUp, Building2, FileText, ShieldCheck } from "lucide-react";
 import { useTeam } from "@/lib/team-context";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useBrand } from "@/lib/brand-context";
@@ -16,6 +16,7 @@ const AvailableUnits = lazy(() => import("@/pages/available-units"));
 const InvestmentTracker = lazy(() => import("@/pages/investment-tracker"));
 const WipReport = lazy(() => import("@/pages/wip-report"));
 const Properties = lazy(() => import("@/pages/properties"));
+const AmlDashboard = lazy(() => import("@/pages/aml-dashboard"));
 
 function PageLoader() {
   return (
@@ -29,9 +30,9 @@ function PageLoader() {
 // Tab keys mirror the segment under /deals/* except 'deals' itself is
 // the default root tab (/deals). The 'wip' historical key was renamed
 // to 'deals' so the TabKey, label and URL all carry the same word.
-type TabKey = "deals" | "letting" | "investment" | "wip-report" | "properties";
+type TabKey = "deals" | "letting" | "investment" | "wip-report" | "properties" | "aml";
 
-const TAB_PATHS = new Set(["letting", "investment", "report", "properties", "list"]);
+const TAB_PATHS = new Set(["letting", "investment", "report", "properties", "list", "aml"]);
 
 export function getTabFromLocation(loc: string): TabKey | null {
   if (loc.startsWith("/deals/letting")) return "letting";
@@ -39,6 +40,7 @@ export function getTabFromLocation(loc: string): TabKey | null {
   if (loc.startsWith("/deals/report") || loc.startsWith("/wip-report")) return "wip-report";
   if (loc.startsWith("/deals/properties") || loc === "/properties" || loc.startsWith("/properties/")) return "properties";
   if (loc.startsWith("/deals/list")) return "deals";
+  if (loc.startsWith("/deals/aml")) return "aml";
   // Bare /deals → null so the component picks the landing tab by device:
   // WIP Report on desktop, Deals on mobile. Explicit tab URLs work on both.
   return null;
@@ -50,6 +52,7 @@ export const DEAL_TAB_ROUTES: Record<TabKey, string> = {
   letting: "/deals/letting",
   investment: "/deals/investment",
   properties: "/deals/properties",
+  aml: "/deals/aml",
 };
 
 function isDealProfile(loc: string): boolean {
@@ -87,7 +90,7 @@ export default function DealsHub() {
       // staff-only tab segments too — Deals would otherwise parse
       // "investment"/"report" as a deal id and show "Deal not found".
       setTab(t === "letting" || t === "properties" ? t : "deals");
-      if (t === "investment" || t === "wip-report") setLocation("/deals/list", { replace: true });
+      if (t === "investment" || t === "wip-report" || t === "aml") setLocation("/deals/list", { replace: true });
       return;
     }
     setTab(t || ((typeof window !== "undefined" && window.innerWidth < 768) ? "deals" : "wip-report"));
@@ -117,6 +120,10 @@ export default function DealsHub() {
     { key: "deals" as const, label: "Deals", icon: BarChart3 },
     { key: "letting" as const, label: "Letting Tracker", icon: Store },
     { key: "investment" as const, label: "Investment", icon: TrendingUp },
+    // Every party on a live deal and where its checks stand (Woody,
+    // 2026-11-18: step 6 of docs/deal-page-review-2026-11-18.md). BGP staff
+    // only: clients get only Deals, Letting Tracker and Properties below.
+    { key: "aml" as const, label: "AML", icon: ShieldCheck },
   ], [isMobile]);
 
   // A login whose every team is a leasing team or Tenant Rep has no
@@ -189,6 +196,7 @@ export default function DealsHub() {
             briefly mounted it and fired staff-only /api/wip calls (403s). */}
         {tab === "wip-report" && !dhUserLoading && !isClient && <WipReport />}
         {tab === "properties" && <Properties />}
+        {tab === "aml" && !dhUserLoading && !isClient && <AmlDashboard />}
       </Suspense>
     </div>
   );

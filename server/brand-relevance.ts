@@ -84,7 +84,65 @@ export const SIGNALS: Record<string, { label: string; sql: string; deleteOnly?: 
   anyHistory: { label: "Any requirement or interaction, at any date", deleteOnly: true, sql: `SELECT DISTINCT company_id AS id FROM crm_requirements_leasing WHERE company_id IS NOT NULL
     UNION SELECT DISTINCT company_id FROM crm_interactions WHERE company_id IS NOT NULL
     UNION SELECT DISTINCT brand_company_id FROM brand_agent_representations` },
+  // Duplicates merged into a brand point at it; deleting it would leave them pointing nowhere.
+  merged: { label: "Other records merged into it", deleteOnly: true, sql: `SELECT DISTINCT merged_into_id AS id FROM crm_companies WHERE merged_into_id IS NOT NULL` },
 };
+
+// Brand Explorer's Select and Delete (Woody, 2026-11-19: "put a select and
+// delete button so I can bulk delete them"). Of the brands an admin ticks,
+// one that no other record points at is deleted for good; one that something
+// does point at (a deal, a schedule, contacts, a requirement, an interaction,
+// a property link, a KYC file, a record merged into it, any other check
+// above) is hidden instead, as Hide does, and the reply says what it is tied
+// to. Being new or flagged (the Super Brand star, a pipeline stage) only ever
+// kept a brand from the automatic sweep, never from a person's own choice, so
+// neither stops a delete here.
+export const HAND_DELETE_IGNORES = new Set(["recent", "flagged"]);
+export const BULK_DELETE_MAX = 500;
+
+export type BulkDeletePlan = {
+  remove: Array<{ id: string; name: string }>;
+  hide: Array<{ id: string; name: string; ties: string[] }>;
+  staysHidden: Array<{ id: string; name: string; ties: string[] }>;
+  notBrands: string[];
+};
+
+export function bulkDeletePlan(ids: string[], brands: Array<{ id: string; name: string; archived_at?: unknown }>, ties: Map<string, string[]>): BulkDeletePlan {
+  const byId = new Map(brands.map(b => [String(b.id), b]));
+  const plan: BulkDeletePlan = { remove: [], hide: [], staysHidden: [], notBrands: [] };
+  for (const id of ids) {
+    const brand = byId.get(id);
+    if (!brand) { plan.notBrands.push(id); continue; }
+    const why = ties.get(id) || [];
+    if (!why.length) plan.remove.push({ id, name: brand.name });
+    else if (brand.archived_at) plan.staysHidden.push({ id, name: brand.name, ties: why });
+    else plan.hide.push({ id, name: brand.name, ties: why });
+  }
+  return plan;
+}
+
+// What each of `ids` is tied to, by the label of every check that finds it.
+async function brandTies(ids: string[]): Promise<{ ties: Map<string, string[]>; failed: string[] }> {
+  const wanted = new Set(ids);
+  const ties = new Map<string, string[]>();
+  const failed: string[] = [];
+  for (const [name, sig] of Object.entries(SIGNALS)) {
+    if (HAND_DELETE_IGNORES.has(name)) continue;
+    try {
+      for (const row of (await pool.query(sig.sql)).rows) {
+        const id = row.id ? String(row.id) : "";
+        if (!wanted.has(id)) continue;
+        const list = ties.get(id) || [];
+        if (!list.includes(sig.label)) list.push(sig.label);
+        ties.set(id, list);
+      }
+    } catch (e: any) {
+      failed.push(sig.label);
+      console.warn(`[brand-relevance] signal ${name} skipped: ${e?.message}`);
+    }
+  }
+  return { ties, failed };
+}
 
 export interface RelevanceReport {
   totalBrands: number;
@@ -233,6 +291,36 @@ export function setupBrandRelevanceRoutes(app: Express) {
       const r = await pool.query(`UPDATE crm_companies c SET archived_at = NOW(), archived_reason = $2, archived_by = $3 WHERE c.id = $1 AND ${BRAND}`, [id, HAND_REASON, userId]);
       if (!r.rowCount) return res.status(404).json({ error: "Not a brand" });
       res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e?.message || "Failed" }); }
+  });
+
+  // Select and Delete on Brand Explorer: delete for good what nothing points
+  // at, hide the rest. Every check is made again here; if any cannot be
+  // made, nothing is changed.
+  app.post("/api/admin/brand-relevance/bulk-delete", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const ids: string[] = Array.isArray(req.body?.ids) ? [...new Set<string>(req.body.ids.map(String).filter(Boolean))] : [];
+      if (!ids.length) return res.status(400).json({ error: "Tick the brands to delete." });
+      if (ids.length > BULK_DELETE_MAX) return res.status(400).json({ error: `Delete at most ${BULK_DELETE_MAX} brands at a time.` });
+      const { ties, failed } = await brandTies(ids);
+      if (failed.length) return res.status(409).json({ error: failedMessage(failed) });
+      const brands = (await pool.query(
+        `SELECT c.id, c.name, c.archived_at FROM crm_companies c WHERE c.id = ANY($1::text[]) AND ${BRAND} ORDER BY c.name`, [ids])).rows;
+      const plan = bulkDeletePlan(ids, brands, ties);
+      const userId = req.session?.userId || req.tokenUserId || null;
+      const deleted: Array<{ id: string; name: string }> = [];
+      const notDeleted: Array<{ id: string; name: string }> = [];
+      for (const brand of plan.remove) {
+        try { await storage.deleteCrmCompany(brand.id); deleted.push(brand); }
+        catch (e: any) { notDeleted.push(brand); console.warn(`[brand-relevance] bulk delete ${brand.id} failed: ${e?.message}`); }
+      }
+      if (plan.hide.length) {
+        await pool.query(
+          `UPDATE crm_companies c SET archived_at = NOW(), archived_reason = $2, archived_by = $3 WHERE c.id = ANY($1::text[]) AND c.archived_at IS NULL AND ${BRAND}`,
+          [plan.hide.map(b => b.id), HAND_REASON, userId]);
+      }
+      console.log(`[brand-relevance] bulk delete by ${userId}: ${deleted.length} deleted, ${plan.hide.length} hidden, ${plan.staysHidden.length} already hidden, ${notDeleted.length} failed`);
+      res.json({ ok: true, deleted, hidden: plan.hide, staysHidden: plan.staysHidden, notBrands: plan.notBrands.length, failed: notDeleted });
     } catch (e: any) { res.status(500).json({ error: e?.message || "Failed" }); }
   });
 

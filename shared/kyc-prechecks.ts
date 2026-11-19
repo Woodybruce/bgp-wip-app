@@ -14,7 +14,11 @@
 // KYC4U, BGP's MLRO, does.
 
 import { defaultKycDocs, type KycDocKey, type KycPartyKind } from "./kyc-request";
-import type { KycRedFlag } from "./kyc-red-flags";
+import type { KycFlagFact, KycRedFlag } from "./kyc-red-flags";
+import { companyTypeWords } from "./company-facts";
+
+// A part of a red flag's key: the same words however they are written.
+export const flagKeyPart = (value: unknown): string => String(value ?? "").toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, " ").trim().slice(0, 80);
 
 export const KYC_PRECHECK_VERSION = 1;
 // A pre-check this recent is used as it is; an older one runs again when
@@ -341,13 +345,43 @@ export interface PrecheckOfficer {
   nationality: string | null;
 }
 
-export interface ProviderLine { name: string; status: "clear" | "possible" | "error"; types: string[]; detail: string | null }
+// A profile ComplyAdvantage matched, as its alert describes it (kept since
+// 19 November 2026; earlier checks kept only the kinds).
+export interface ProviderMatch {
+  name: string;
+  kind: string;
+  source: string | null;
+  score: number | null;
+  profileId: string | null;
+  media: Array<{ title: string; url: string | null; date: string | null }>;
+}
+export interface ProviderLine {
+  name: string;
+  status: "clear" | "possible" | "error";
+  types: string[];
+  detail: string | null;
+  matches?: ProviderMatch[];
+  // The customer record ComplyAdvantage made for the screen.
+  customerId?: string | null;
+}
+
+// ComplyAdvantage's kinds of profile, in words.
+export const PROVIDER_KIND_WORDS: Record<string, string> = {
+  sanctions: "sanctions",
+  pep: "politically exposed person",
+  adverse_media: "adverse media",
+  warning: "warning list",
+  fitness_probity: "fitness and probity",
+};
+export const providerKindWords = (kind: string): string => PROVIDER_KIND_WORDS[kind] || String(kind || "").replace(/_/g, " ");
 
 export interface KycPrecheckResult {
   kind: "precheck";
   version: number;
   ranAt: string;
-  party: { companyId: string; name: string; subjectKind: KycPartyKind; contactName: string | null };
+  // entityId: the company that signs for the party (crm_trading_entities),
+  // when the run was about it rather than the brand (since 18 November 2026).
+  party: { companyId: string; name: string; subjectKind: KycPartyKind; contactName: string | null; entityId?: string | null };
   companiesHouse: null | {
     number: string;
     name: string;
@@ -384,6 +418,142 @@ export interface KycPrecheckResult {
 
 export const isPrecheckResult = (value: unknown): value is KycPrecheckResult =>
   !!value && typeof value === "object" && (value as any).kind === "precheck";
+
+// ── A check that did not finish ─────────────────────────────────────────────
+//
+// Companies House was busy (a 429) or did not answer when the check ran, so
+// the register was never read: not the company's fault, and not a result.
+// The card says so, and the check runs again when the deal's AML box is next
+// opened, PRECHECK_RETRY_MINUTES later, at most PRECHECK_AUTO_RUNS_A_DAY
+// times a day for one party (Run again always works). A number Companies
+// House does not know (a 404) is an answer, not a failure.
+export const PRECHECK_RETRY_MINUTES = 10;
+export const PRECHECK_AUTO_RUNS_A_DAY = 4;
+const PASSING_FAILURE = /\b429\b|\b50[0-9]\b|took longer than|timed? ?out|timeout|aborted|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up|network/i;
+
+export function precheckUnfinished(result: Pick<KycPrecheckResult, "companiesHouse" | "notAtCompaniesHouse" | "errors">): string | null {
+  if (result.companiesHouse) return null;
+  const why = String(result.notAtCompaniesHouse || "");
+  if (/^Companies House could not be read/i.test(why) && PASSING_FAILURE.test(why)) return why;
+  const finding = (result.errors || []).find(e => /^Finding the company at Companies House:/i.test(e));
+  if (finding && PASSING_FAILURE.test(finding)) return finding;
+  return null;
+}
+
+// ── The company, for the deal's AML box ─────────────────────────────────────
+//
+// Woody, 19 November 2026: "in this box we need to see the company info".
+// What the register says about the company the checks were about.
+
+// The Standard Industrial Classification codes BGP meets most, in words.
+// Any other code is shown as its number.
+const SIC_WORDS: Record<string, string> = {
+  "41100": "Development of building projects",
+  "41201": "Construction of commercial buildings",
+  "46190": "Agents in the sale of a variety of goods",
+  "47110": "Retail in non-specialised stores (food)",
+  "47190": "Other retail in non-specialised stores",
+  "47710": "Retail sale of clothing",
+  "47721": "Retail sale of footwear",
+  "47770": "Retail sale of watches and jewellery",
+  "47910": "Retail via mail order or the internet",
+  "55100": "Hotels and similar accommodation",
+  "56101": "Licensed restaurants",
+  "56102": "Unlicensed restaurants and cafes",
+  "56103": "Take-away food shops and mobile food stands",
+  "56210": "Event catering",
+  "56290": "Other food services",
+  "56301": "Licensed clubs",
+  "56302": "Public houses and bars",
+  "59140": "Cinemas",
+  "64201": "Holding company (agricultural)",
+  "64202": "Holding company (production)",
+  "64203": "Holding company (construction)",
+  "64204": "Holding company (distribution)",
+  "64205": "Holding company (financial services)",
+  "64209": "Activities of other holding companies",
+  "64301": "Investment trusts",
+  "64303": "Venture and development capital",
+  "64999": "Financial intermediation not elsewhere classified",
+  "68100": "Buying and selling of own real estate",
+  "68201": "Renting and operating of housing association real estate",
+  "68202": "Letting and operating of conference and exhibition centres",
+  "68209": "Other letting and operating of own or leased real estate",
+  "68310": "Real estate agencies",
+  "68320": "Management of real estate on a fee or contract basis",
+  "70100": "Activities of head offices",
+  "70229": "Management consultancy",
+  "82990": "Other business support services",
+  "93110": "Operation of sports facilities",
+  "93130": "Fitness facilities",
+  "93290": "Other amusement and recreation activities",
+  "96020": "Hairdressing and other beauty treatment",
+  "96040": "Physical well-being activities",
+  "99999": "Dormant company",
+};
+export const sicWords = (code: string): string => SIC_WORDS[String(code || "").trim()] ? `${code} ${SIC_WORDS[String(code).trim()]}` : String(code || "");
+
+export interface PrecheckCompany {
+  name: string;
+  number: string;
+  status: string;
+  type: string | null;
+  incorporatedOn: string | null;
+  registeredOffice: string | null;
+  business: string[];
+  // Listed on a market, in words, and what that means for the checks.
+  listing: string | null;
+  listingNote: string | null;
+  directors: string[];
+  owners: Array<{ name: string; control: string }>;
+  ownerNote: string | null;
+  chain: string[];
+  accounts: string | null;
+  warnings: string[];
+  documents: Array<{ title: string; onFile: boolean }>;
+  registerUrl: string;
+}
+
+export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompany | null {
+  const ch = result?.companiesHouse;
+  if (!ch) return null;
+  const status = (ch.status || "status not given").replace(/-/g, " ");
+  const listing = ch.listing
+    ? ch.listing.viaParent ? `Owned through one company at each level by ${ch.listing.company}, which is ${LISTING_WORDS[ch.listing.market]}` : `${LISTING_WORDS[ch.listing.market][0].toUpperCase()}${LISTING_WORDS[ch.listing.market].slice(1)}`
+    : null;
+  const listingNote = ch.listing
+    ? [
+        "No beneficial owners to identify (MLR 2017 reg 28(5)): the company itself is identified and verified from the register, and simplified due diligence may apply (reg 37).",
+        ch.listing.viaParent ? "KYC4U to confirm the chain." : "",
+        listingSettled(ch.listing.market) ? "" : "KYC4U to confirm the market's disclosure rules are equivalent.",
+      ].filter(Boolean).join(" ")
+    : null;
+  const warnings = [
+    ch.status && ch.status !== "active" ? `Companies House shows it as ${status}` : "",
+    ch.hasInsolvencyHistory ? `Insolvency history${ch.insolvencyCases ? ` (${ch.insolvencyCases} case${ch.insolvencyCases === 1 ? "" : "s"})` : ""}` : "",
+    ch.accountsOverdue ? "Accounts overdue at Companies House" : "",
+    ch.confirmationOverdue ? "Confirmation statement overdue" : "",
+  ].filter(Boolean);
+  return {
+    name: ch.name,
+    number: ch.number,
+    status: status[0].toUpperCase() + status.slice(1),
+    type: ch.type ? companyTypeWords(ch.type) : null,
+    incorporatedOn: ch.incorporatedOn,
+    registeredOffice: ch.registeredOffice,
+    business: (ch.sicCodes || []).map(sicWords),
+    listing,
+    listingNote,
+    directors: ch.officers.filter(o => /director|member/i.test(o.role)).map(o => o.name),
+    owners: ch.owners.map(o => ({ name: o.name, control: ownerControlLine(o) || "significant control" })),
+    ownerNote: ch.listing ? null : ch.owners.length ? null : ch.statements.length ? ch.statements.map(s => s.words).join("; ") : "No one with significant control is on the register.",
+    chain: ch.chain.map(c => `${c.name} (${c.number})`),
+    accounts: ch.lastAccountsMadeUpTo ? `Made up to ${ch.lastAccountsMadeUpTo}${ch.lastAccountsType ? `, ${ch.lastAccountsType}` : ""}` : null,
+    warnings,
+    documents: ch.documents.map(d => ({ title: d.title, onFile: !!d.kycDocumentId })),
+    registerUrl: `https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(ch.number)}`,
+  };
+}
 
 // The column the readers already use (kyc_investigations.sanctions_match):
 // true for a possible match on either list or with ComplyAdvantage, false
@@ -505,6 +675,7 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
   const flags: KycRedFlag[] = [];
   const at = result.ranAt || null;
   const source = "BGP's checks before asking";
+  const k = flagKeyPart;
   if (opts.sanctionsCurrent) {
     for (const line of result.sanctions.lines.filter(l => l.outcome === "possible")) {
       const m = line.matches[0];
@@ -514,10 +685,37 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
         detail: m ? `${m.source === "UK" ? "UK Sanctions List" : "US OFAC list"}: ${m.name}${m.regime ? `, ${m.regime}` : ""}. ${m.why}` : null,
         source: `${source}: sanctions lists`,
         at,
+        key: `sanctions:${k(line.name)}`,
+        evidence: line.matches.map(x => `entry:${x.source}:${k(x.name)}`).sort(),
+        facts: line.matches.map(x => ({
+          label: x.source === "UK" ? "UK Sanctions List" : "US OFAC list",
+          value: [x.name, x.regime, x.designationType, x.dob ? `born ${x.dob}` : "", x.nationality].filter(Boolean).join(", ") + `. ${x.why}`,
+        })),
       });
     }
     for (const line of result.complyAdvantage.lines.filter(l => l.status === "possible")) {
-      flags.push({ kind: "provider_screen", label: `ComplyAdvantage match for ${line.name}`, detail: line.types.join(", ") || line.detail, source: `${source}: ComplyAdvantage`, at });
+      const matches = line.matches || [];
+      const profiles = [...new Set(matches.map(m => m.profileId).filter((p): p is string => !!p))];
+      const facts: KycFlagFact[] = matches.map(m => ({
+        label: `Matched profile: ${providerKindWords(m.kind)}`,
+        value: [m.name, m.source ? `listed in ${m.source}` : "", m.score != null ? `match ${Math.round(m.score * 100)}%` : ""].filter(Boolean).join(" · "),
+      }));
+      for (const m of matches) for (const item of m.media.slice(0, 3)) facts.push({ label: "Article", value: [item.title, item.date].filter(Boolean).join(", ") || "an article", url: item.url });
+      if (!matches.length) {
+        facts.push({ label: "Kinds of profile matched", value: line.types.map(providerKindWords).join(", ") || "not given" });
+        facts.push({ label: "Profiles", value: "This check kept only the kinds of profile ComplyAdvantage matched, not the profiles themselves. Run the check again to see them here, or look the name up in ComplyAdvantage Mesh." });
+      }
+      if (line.customerId) facts.push({ label: "ComplyAdvantage customer", value: line.customerId });
+      flags.push({
+        kind: "provider_screen",
+        label: `ComplyAdvantage match for ${line.name}`,
+        detail: line.types.map(providerKindWords).join(", ") || line.detail,
+        source: `${source}: ComplyAdvantage`,
+        at,
+        key: `ca:${k(line.name)}`,
+        evidence: [...line.types.map(t => `type:${t}`), ...profiles.map(p => `profile:${p}`)].sort(),
+        facts,
+      });
     }
   }
   for (const line of result.web.lines) {
@@ -528,13 +726,22 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
         detail: `${f.summary}${f.unsureIdentity ? " (the source may be about someone else of the same name)" : ""}`,
         source: `${source}: web search, ${f.source} ${f.url}`,
         at: f.date || at,
+        key: `web:${f.kind}:${k(line.name)}`,
+        evidence: [`url:${f.url}`],
+        facts: [
+          { label: "What the source says", value: f.summary },
+          { label: "Source", value: [f.source, f.date].filter(Boolean).join(", ") || f.url, url: f.url },
+          ...(f.unsureIdentity ? [{ label: "Identity", value: "The source may be about someone else of the same name." }] : []),
+        ],
       });
     }
   }
   const ch = result.companiesHouse;
   if (ch) {
+    const register = `https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(ch.number)}`;
     if (ch.status && ch.status !== "active" && DISTRESS.test(ch.status)) {
-      flags.push({ kind: "company_status", label: `Companies House shows the company as ${ch.status.replace(/-/g, " ")}`, detail: null, source: `${source}: Companies House`, at });
+      flags.push({ kind: "company_status", label: `Companies House shows the company as ${ch.status.replace(/-/g, " ")}`, detail: null, source: `${source}: Companies House`, at,
+        key: "ch:status", evidence: [`status:${k(ch.status)}`], facts: [{ label: "Register", value: `${ch.name} (${ch.number})`, url: register }] });
     }
     const recentGazette = (ch.covenant?.gazette || []).filter(g => g.published && Date.parse(g.published) > Date.now() - 3 * 365 * 86400000);
     if (ch.hasInsolvencyHistory || ch.insolvencyCases > 0 || recentGazette.length) {
@@ -544,6 +751,12 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
         detail: recentGazette[0] ? `${recentGazette[0].title} (${recentGazette[0].published}) ${recentGazette[0].link}` : null,
         source: `${source}: ${recentGazette.length ? "The Gazette" : "Companies House"}`,
         at,
+        key: "ch:insolvency",
+        evidence: [`cases:${ch.insolvencyCases}`, ...recentGazette.map(g => `gazette:${g.link || k(g.title)}`)].sort(),
+        facts: [
+          ...(ch.hasInsolvencyHistory || ch.insolvencyCases ? [{ label: "Companies House", value: `Insolvency history${ch.insolvencyCases ? `, ${ch.insolvencyCases} case${ch.insolvencyCases === 1 ? "" : "s"}` : ""}`, url: `${register}/insolvency` }] : []),
+          ...recentGazette.map(g => ({ label: "The Gazette", value: `${g.title} (${g.published})`, url: g.link || null })),
+        ],
       });
     }
     for (const d of ch.disqualified.filter(d => d.dobMatches !== false)) {
@@ -553,13 +766,18 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
         detail: `Register entry: ${d.match}${d.dobMatches ? ", same date of birth" : ", name only: verify"}${d.url ? ` ${d.url}` : ""}`,
         source: `${source}: Companies House`,
         at,
+        key: `ch:disqualified:${k(d.officer)}`,
+        evidence: [`entry:${k(d.match)}`],
+        facts: [{ label: "Register entry", value: `${d.match}${d.dobMatches ? " (same date of birth)" : " (name only: check the date of birth)"}`, url: d.url }],
       });
     }
     for (const s of ch.statements.filter(s => s.concern)) {
-      flags.push({ kind: "ownership_unclear", label: s.words, detail: null, source: `${source}: Companies House PSC statement`, at: s.notifiedOn || at });
+      flags.push({ kind: "ownership_unclear", label: s.words, detail: null, source: `${source}: Companies House PSC statement`, at: s.notifiedOn || at,
+        key: `ch:psc_statement:${k(s.statement)}`, evidence: [], facts: [{ label: "Register", value: `${ch.name} (${ch.number})${s.notifiedOn ? `, notified ${s.notifiedOn}` : ""}`, url: `${register}/persons-with-significant-control` }] });
     }
     for (const o of ch.offshoreOwners) {
-      flags.push({ kind: "offshore_owner", label: `Owned through ${o.name}, registered in ${o.country}`, detail: null, source: `${source}: Companies House`, at });
+      flags.push({ kind: "offshore_owner", label: `Owned through ${o.name}, registered in ${o.country}`, detail: null, source: `${source}: Companies House`, at,
+        key: `ch:offshore:${k(o.name)}`, evidence: [`country:${k(o.country)}`], facts: [{ label: "Register", value: `${ch.name} (${ch.number})`, url: `${register}/persons-with-significant-control` }] });
     }
   }
   return flags;
@@ -712,7 +930,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
   }
   if (result.complyAdvantage.ran) {
     const hits = result.complyAdvantage.lines.filter(l => l.status === "possible");
-    out.push({ key: "comply_advantage", label: `ComplyAdvantage: ${hits.length ? `${hits.length} to review` : "no matches"}`, state: hits.length ? "attention" : "ok", detail: hits.map(l => `${l.name}: ${l.types.join(", ")}`).join("; ") || null, links: [] });
+    out.push({ key: "comply_advantage", label: `ComplyAdvantage: ${hits.length ? `${hits.length} to review` : "no matches"}`, state: hits.length ? "attention" : "ok", detail: hits.map(l => `${l.name}: ${l.types.map(providerKindWords).join(", ")}`).join("; ") || null, links: [] });
   } else if (result.complyAdvantage.skipped) {
     out.push({ key: "comply_advantage", label: "ComplyAdvantage: not used", state: "not_run", detail: result.complyAdvantage.skipped, links: [] });
   }

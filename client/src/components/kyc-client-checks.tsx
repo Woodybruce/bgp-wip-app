@@ -1,9 +1,10 @@
-// Client checks on a deal (in-app AML): send a party's contact one email
-// asking for an identity check and documents, and follow what they have
-// done. The server is server/aml-portal.ts; the email's words, which the
-// preview here draws with the same function the server sends, are in
-// shared/kyc-request.ts. Shown only while in-app AML is on (inAppAml on the
-// deal's KYC status); otherwise KYC4U does the checks.
+// Client checks on a deal: send a party's contact one email asking for an
+// identity check and documents, and follow what they have done. The server
+// is server/aml-portal.ts; the email's words, which the preview here draws
+// with the same function the server sends, are in shared/kyc-request.ts.
+// Shown while the client checks are on (clientChecks on the deal's KYC
+// status: their own switch since 18 November 2026, not in-app AML's);
+// otherwise KYC4U does the checks.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Clock, Copy, Eye, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileText } from "lucide-react";
@@ -24,7 +25,9 @@ import { precheckAsks, precheckDay, type PrecheckAskInput } from "@shared/kyc-pr
 
 interface PartyContact { id: string; name: string; email: string | null; mobile: string | null }
 interface Party {
-  companyId: string; name: string; role: string; kind: KycPartyKind; contactId: string | null; contacts: PartyContact[]; defaultDocs: KycDocKey[];
+  // name: the company that signs when the deal names one, else the brand.
+  companyId: string; name: string; brandName?: string; entityId?: string | null; entityNumber?: string | null;
+  role: string; kind: KycPartyKind; contactId: string | null; contacts: PartyContact[]; defaultDocs: KycDocKey[];
   // What BGP's checks before asking found, for "ask only what is left".
   askInput: PrecheckAskInput | null; precheckRanAt: string | null;
 }
@@ -198,6 +201,8 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
   const { toast } = useToast();
   const { data, isLoading, error } = useClientChecks(dealId);
   const party = data?.parties.find(p => p.companyId === companyId) || null;
+  // The request names the company that signs when the deal sets one.
+  const shownName = party?.name || partyName;
   const [contactId, setContactId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -272,7 +277,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
     <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto" data-testid="client-checks-dialog">
         <DialogHeader>
-          <DialogTitle>{sent ? (sent.error ? "Not sent" : "Sent") : `Send client checks to ${partyName}`}</DialogTitle>
+          <DialogTitle>{sent ? (sent.error ? "Not sent" : "Sent") : `Send client checks to ${shownName}`}</DialogTitle>
           {!sent && <DialogDescription>One email asking for an identity check and the documents you choose, with a link to a page of their own.</DialogDescription>}
         </DialogHeader>
 
@@ -317,16 +322,20 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
                 </Select>
               )}
               {usingOther && (
-                <div className="grid sm:grid-cols-2 gap-2">
-                  <Input placeholder="Their name" value={name} onChange={e => setName(e.target.value)} data-testid="input-client-check-name" />
-                  <Input type="email" placeholder="Their email" value={email} onChange={e => setEmail(e.target.value)} data-testid="input-client-check-email" />
-                </div>
+                <>
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    <Input placeholder="Their name" value={name} onChange={e => setName(e.target.value)} data-testid="input-client-check-name" />
+                    <Input type="email" placeholder="Their email" value={email} onChange={e => setEmail(e.target.value)} data-testid="input-client-check-email" />
+                  </div>
+                  <p className="text-[11px] text-muted-foreground" data-testid="client-checks-saved-to-crm">Saved to the CRM under {party.brandName || party.name}, and made the person to ask on this deal if nobody is set.</p>
+                </>
               )}
               <Input placeholder="Their mobile (optional, so you can send the link on WhatsApp)" value={mobileValue} onChange={e => setMobile(e.target.value)} />
             </div>
 
             <div className="space-y-1.5">
-              <Label>{partyName} is</Label>
+              <Label>{shownName} is</Label>
+              {party.entityId && <p className="text-[11px] text-muted-foreground">The company that signs for {party.brandName}{party.entityNumber ? ` (Companies House ${party.entityNumber})` : ""}.</p>}
               <div className="flex gap-2">
                 {(["company", "individual"] as const).map(k => (
                   <Button key={k} type="button" size="sm" variant={chosenKind === k ? "default" : "outline"} onClick={() => { setKind(k); setDocs(null); }}>
@@ -363,7 +372,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
               </div>
             )}
             {!party.askInput && (
-              <p className="text-xs text-muted-foreground" data-testid="client-checks-no-precheck">BGP's checks before asking have not finished for {partyName} yet, so everything usual is ticked. They show on the deal's AML card when done.</p>
+              <p className="text-xs text-muted-foreground" data-testid="client-checks-no-precheck">BGP's checks before asking have not finished for {shownName} yet, so everything usual is ticked. They show on the deal's AML card when done.</p>
             )}
 
             <p className="text-xs text-muted-foreground">Every request also asks {KYC_PEP_QUESTION.title.toLowerCase()} (politically exposed persons). A yes comes back to you and the MLRO.</p>
@@ -385,7 +394,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
             {preview && <iframe title="Email preview" srcDoc={previewHtml} className="w-full h-[480px] rounded border bg-white" sandbox="" data-testid="client-checks-preview" />}
           </div>
         ) : !isLoading && !error ? (
-          <p className="text-sm text-muted-foreground">{partyName} isn't a party on this deal yet. Set it on the deal first.</p>
+          <p className="text-sm text-muted-foreground">{shownName} isn't a party on this deal yet. Set it on the deal first.</p>
         ) : null}
 
         <DialogFooter>

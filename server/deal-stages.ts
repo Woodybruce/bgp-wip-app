@@ -162,6 +162,7 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
           tenantId:    c.tenant_id,
           vendorId:    c.vendor_id,
           purchaserId: c.purchaser_id,
+          dealId:      c.id,
         };
         const amlResult = await checkCounterpartyAml(parties);
         const outcome = amlGateOutcome(amlResult);

@@ -1355,6 +1355,10 @@ const schemaStartup = (async () => {
      )`,
     `ALTER TABLE kyc4u_drafts ADD COLUMN IF NOT EXISTS request_list_id VARCHAR, ADD COLUMN IF NOT EXISTS request_item_id VARCHAR`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc4u_request_key TEXT`,
+    // The deal party's company that signs a KYC4U result is about, when it is
+    // not the brand's own legal company (18 November 2026, step 2 of
+    // docs/deal-page-review-2026-11-18.md): read by the mirror's company pass.
+    `ALTER TABLE kyc4u_requests ADD COLUMN IF NOT EXISTS trading_entity_id VARCHAR`,
     // Digital business cards (Woody, 2026-09-28, "like blinq"): one public
     // slug per staff member, and everyone who shares their details back.
     `CREATE TABLE IF NOT EXISTS business_cards (
@@ -2364,6 +2368,17 @@ const schemaStartup = (async () => {
     `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS reminders_sent INTEGER DEFAULT 0`,
     `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS last_reminded_at TIMESTAMP`,
     `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS is_test BOOLEAN DEFAULT false`,
+    // Each deal party's contracting company, and the AML records that are
+    // about it (Woody, 2026-11-18: "go", on the deal page review). Additive
+    // and nullable: a null reads the brand, as every deal before did.
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS landlord_trading_entity_id VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS tenant_trading_entity_id VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS vendor_trading_entity_id VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS purchaser_trading_entity_id VARCHAR`,
+    `ALTER TABLE kyc_investigations ADD COLUMN IF NOT EXISTS trading_entity_id VARCHAR`,
+    `ALTER TABLE kyc_documents ADD COLUMN IF NOT EXISTS trading_entity_id VARCHAR`,
+    `ALTER TABLE kyc_upload_tokens ADD COLUMN IF NOT EXISTS trading_entity_id VARCHAR`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_investigations_trading_entity ON kyc_investigations(trading_entity_id) WHERE trading_entity_id IS NOT NULL`,
     `ALTER TABLE kyc_upload_files ADD COLUMN IF NOT EXISTS doc_type TEXT`,
     `ALTER TABLE kyc_upload_files ADD COLUMN IF NOT EXISTS kyc_document_id VARCHAR`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_mlro_report_url TEXT`,
@@ -3001,6 +3016,29 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_entity_kyc_entity ON crm_entity_kyc(entity_kind, entity_id)`,
     `ALTER TABLE kyc_audit_log ADD COLUMN IF NOT EXISTS entity_kind text`,
     `ALTER TABLE kyc_audit_log ADD COLUMN IF NOT EXISTS entity_id text`,
+    // Red flags the MLRO set aside with a comment (Woody, 19 November 2026:
+    // "have the option to ignore with a comment"): one row per decision,
+    // restored_at when it is put back. company_id null: a flag on the deal
+    // record (deal_id). server/kyc-red-flags.ts reads and writes it.
+    `CREATE TABLE IF NOT EXISTS kyc_flag_reviews (
+      id serial PRIMARY KEY,
+      company_id varchar,
+      trading_entity_id varchar,
+      deal_id varchar,
+      flag_key text NOT NULL,
+      flag_label text NOT NULL,
+      flag_source text,
+      evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
+      comment text NOT NULL,
+      set_aside_by varchar,
+      set_aside_by_name text,
+      set_aside_at timestamptz NOT NULL DEFAULT now(),
+      restored_at timestamptz,
+      restored_by varchar,
+      restored_by_name text
+    )`,
+    `CREATE INDEX IF NOT EXISTS kyc_flag_reviews_company_idx ON kyc_flag_reviews (company_id) WHERE restored_at IS NULL`,
+    `CREATE INDEX IF NOT EXISTS kyc_flag_reviews_deal_idx ON kyc_flag_reviews (deal_id) WHERE restored_at IS NULL`,
     // Deal contracting entities + shadow gate comparison log:
     `CREATE TABLE IF NOT EXISTS crm_deal_entities (
       id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -4172,6 +4210,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
 void schemaStartup.catch(() => finishCrmEngagementSchema(false));
 import { routedApiPath } from "@shared/landsec";
+import { KYC_CLIENT_CHECK_ROUTES, clientChecksSwitchOn } from "@shared/kyc-request";
 import { setupMicrosoftRoutes } from "./microsoft";
 import { setupWhatsAppRoutes } from "./whatsapp";
 import { setupChatBGPRoutes } from "./chatbgp";
@@ -4221,6 +4260,7 @@ import { setupLettingSuggestionRoutes } from "./letting-suggestions";
 import { setupUnitHotsRoutes } from "./unit-hots";
 import { setupUnitShareRoutes } from "./unit-share";
 import { setupDealChecklistRoutes } from "./deal-checklist";
+import { setupDealPageRoutes } from "./deal-page";
 import { setupUnitRecommendationRoutes } from "./unit-recommendation";
 import { setupLandsecBrandCaseRoutes } from "./landsec-brand-case";
 import { setupBrandCrmPlanRoutes } from "./brand-scheme-plan";
@@ -4246,6 +4286,9 @@ import wpListingsSyncRouter, { startWpListingsSync } from "./wp-listings-sync";
 import veriffRouter from "./veriff";
 import kycRequestRouter from "./aml-portal";
 import kycPrecheckRouter from "./kyc-prechecks";
+import dealPartiesRouter from "./deal-parties";
+import dealPartyAmlRouter from "./deal-party-aml";
+import amlDashboardRouter from "./aml-dashboard";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
 import brandDedupeRouter from "./brand-dedupe";
@@ -5059,10 +5102,16 @@ app.use("/api/branding/assets", express.static(
   // addresses the test page's real identity check needs (Woody, 2026-11-17):
   // Veriff's decision webhook (Veriff signs it; the handler checks the
   // signature) and the admin-only diagnostic that reads Veriff's answer.
+  // And BGP's checks before asking (server/kyc-prechecks.ts), which run with
+  // the switch off: the card's Run again (/api/kyc/deal/:id/prechecks)
+  // answered 410 until 18 November 2026. And the client checks' staff
+  // addresses (KYC_CLIENT_CHECK_ROUTES), which follow their own switch
+  // since 18 November 2026 (Woody: "client checks only"; KYC_CLIENT_CHECKS
+  // =off stops them): the rest of /api/aml/ stays retired.
   const RETIRED_AML = [
     /^\/api\/(aml|kyc-clouseau|sanctions|comply-advantage)(\/|$)/,
     /^\/api\/veriff(?!\/(webhook|diagnostic)$)(\/|$)/,
-    /^\/api\/kyc\/(?!deal\/[^/]+\/status$)/,
+    /^\/api\/kyc\/(?!deal\/[^/]+\/(?:status|prechecks)$)/,
     /^\/api\/accounts\/[^/]+\/entity-checks/,
     /^\/api\/entities\/[^/]+\/[^/]+\/kyc(\/|$)/,
     /^\/api\/companies-house\/(property-kyc|batch-rekyc)(\/|$)/,
@@ -5074,6 +5123,7 @@ app.use("/api/branding/assets", express.static(
     // slashes closed up: this is a list of what to refuse, so it reads
     // every spelling of a retired address as that address.
     const path = routedApiPath(req).toLowerCase().replace(/\/{2,}/g, "/");
+    if (clientChecksSwitchOn(process.env.KYC_CLIENT_CHECKS) && KYC_CLIENT_CHECK_ROUTES.some(r => r.test(path))) return next();
     if (RETIRED_AML.some(r => r.test(path))) {
       return res.status(410).json({ message: "AML/KYC is handled by KYC4U, BGP's MLRO. Raise or check a request from the deal's AML panel (Request KYC4U check)." });
     }
@@ -5538,6 +5588,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   (await import("./billing-entity")).setupBillingEntityRoutes(app);
   setupUnitShareRoutes(app);
   setupDealChecklistRoutes(app);
+  setupDealPageRoutes(app);
   setupUnitRecommendationRoutes(app);
   setupLandsecBrandCaseRoutes(app);
   setupBrandCrmPlanRoutes(app);
@@ -5561,6 +5612,9 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // Undo of the 26 Oct backing-deal sweep (Preview → Apply, admin).
   const { registerLettingSweepUndoRoutes } = await import("./letting-sweep-undo");
   registerLettingSweepUndoRoutes(app);
+  // The 14 August email import's untouched offers (Preview → Apply → Undo, admin).
+  const { registerEmailOfferCleanupRoutes } = await import("./email-offer-cleanup");
+  registerEmailOfferCleanupRoutes(app, { pool, requireAuth, requireAdmin });
   registerDemeterRoutes(app);
   registerRetailContextPlanRoutes(app);
   registerMapLayerRoutes(app);
@@ -5591,6 +5645,10 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(kycRequestRouter);
   // BGP's checks before asking: Run again on the deal's AML card (BGP staff only).
   app.use(kycPrecheckRouter);
+  // Each deal party's company that signs and the person to ask (BGP staff only).
+  app.use(dealPartiesRouter);
+  app.use(dealPartyAmlRouter);
+  app.use(amlDashboardRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);
   app.use(brandDedupeRouter);
@@ -6523,6 +6581,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         setTimeout(() => startAutoTurnoverResearch(), 30000);
         // A directory-wide website sweep survives deploys: pick it back up.
         setTimeout(() => { import("./brand-website-sweep").then(m => m.resumeWebsiteSweep()).catch(() => {}); }, 60000);
+        // The twelve-month planning check an admin started carries on too; it never starts by itself.
+        setTimeout(() => { import("./brand-pipeline").then(m => m.resumePlanningSweep()).catch(() => {}); }, 75000);
         // One-off (2026-09-23): tenants on BGP deals with no Companies House
         // entity get re-resolved now that deal records (HOTs, fee emails) are
         // a source — they would otherwise wait a month in the parked queue.
@@ -6730,9 +6790,10 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
           );
         }, 4 * 60 * 1000);
         // Client checks: replies with documents to the KYC mailbox, read
-        // every 15 minutes while in-app AML is on (server/aml-portal.ts).
+        // every 15 minutes while the client checks are on (their own
+        // switch since 18 November 2026; server/aml-portal.ts).
         setInterval(() => {
-          if (!process.env.IN_APP_AML_ENABLED) return;
+          if (!clientChecksSwitchOn(process.env.KYC_CLIENT_CHECKS)) return;
           import("./aml-portal").then(m => m.pollKycMailbox()).then(r => {
             if (r.filed || r.unmatched || r.warnings.length) console.log(`[kyc-mailbox] ${r.filed} filed, ${r.unmatched} left for a person${r.warnings.length ? `: ${r.warnings.slice(0, 3).join(" | ")}` : ""}`);
           }).catch(err => console.error("[kyc-mailbox] read failed:", err?.message));

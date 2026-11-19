@@ -4,6 +4,7 @@ import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  clientChecksSwitchOn, KYC_CLIENT_CHECK_ROUTES,
   KYC_DATA_USE, KYC_DOCS, KYC_LETTING_SCOPE, KYC_LOGO_CID, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_TIMING, defaultKycDocs, isKycDocKey, isKycPepAnswer,
   kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycSteps, kycUploadAllowed,
   kycWhatsAppHref, kycWhatsAppText, type KycEmailContext,
@@ -216,4 +217,15 @@ test("reminders: three days after sending, then seven; never for a finished, can
   assert.equal(reminderDue({ ...base, is_test: true }, new Date("2026-11-13T10:00:00Z")), false);
   assert.equal(reminderDue({ ...base, request: { sentAt: null } }, new Date("2026-11-13T10:00:00Z")), false);
   assert.equal(reminderDue(base, new Date("2026-11-25T10:00:00Z")), false, "the link has run out");
+});
+
+test("the client checks' own switch: on unless KYC_CLIENT_CHECKS is off, and the staff addresses it lets through", () => {
+  assert.equal(clientChecksSwitchOn(undefined), true);
+  assert.equal(clientChecksSwitchOn(""), true);
+  assert.equal(clientChecksSwitchOn("on"), true);
+  assert.equal(clientChecksSwitchOn(" OFF "), false);
+  assert.equal(clientChecksSwitchOn("off"), false);
+  const through = (path: string) => KYC_CLIENT_CHECK_ROUTES.some(r => r.test(path));
+  for (const path of ["/api/aml/deal/d1/client-checks", "/api/aml/client-checks/tok", "/api/aml/client-checks/tok/remind", "/api/aml/poll-mailbox"]) assert.equal(through(path), true, path);
+  for (const path of ["/api/aml/status", "/api/aml/deal/d1/cdd", "/api/aml/client-checks", "/api/aml/client-checks/tok/remind/x", "/api/kyc-upload/tok"]) assert.equal(through(path), false, path);
 });

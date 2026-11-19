@@ -1,150 +1,258 @@
 // ─────────────────────────────────────────────────────────────────────────
-// ComplyAdvantage Mesh API integration
+// ComplyAdvantage Mesh (rebuilt 2026-11-18; Woody: "need to get the API for
+// comply back up and running").
 //
-// Authenticates via OAuth2 (username + password + realm → bearer token),
-// then screens names against PEP, sanctions, and adverse media watchlists.
+// Sign-in: Mesh API credentials, an access key and a secret made in Mesh
+// under Settings > Access Management > API Credentials, exchanged at
+// POST /v3/token (Mesh's recommended sign-in). The older username, password
+// and realm (POST /v2/token) still work when no API credentials are set, but
+// that login locks the account after repeated failures, so any refused
+// sign-in pauses every sign-in for a while.
+//
+// Screening: POST /v2/workflows/sync/create-and-screen, Mesh's own screen.
+// Each screen is a customer record in Mesh, with ongoing monitoring off (the
+// app screens again when it needs to) and a case in Mesh for every hit. One
+// record per name per day: the same name screened again the same day reads
+// the first screen's answer. A hit's matched profiles are read from its
+// alerts. Until 18 November 2026 this file posted to /v2/searches, an old
+// ComplyAdvantage address that Mesh does not have, so no screen ever ran.
 //
 // Env vars:
-//   COMPLY_ADVANTAGE_USERNAME  — API user email
-//   COMPLY_ADVANTAGE_PASSWORD  — password
-//   COMPLY_ADVANTAGE_REALM     — case-sensitive realm from onboarding
+//   COMPLY_ADVANTAGE_ACCESS_KEY, COMPLY_ADVANTAGE_SECRET  (recommended)
+//   COMPLY_ADVANTAGE_USERNAME, COMPLY_ADVANTAGE_PASSWORD, COMPLY_ADVANTAGE_REALM  (older login)
+//   COMPLY_ADVANTAGE_SCREENING_CONFIG_ID  (optional: Settings > Screening
+//     Configurations in Mesh; without it Mesh picks the configuration)
 // ─────────────────────────────────────────────────────────────────────────
+import crypto from "crypto";
 
 const BASE_URL = "https://api.mesh.complyadvantage.com";
+const REQUEST_TIMEOUT_MS = 25_000;
+const SCREEN_CONCURRENCY = 4;
+const MAX_ALERTS_READ = 2;
+const RISKS_PAGE_SIZE = 50;
 
-let cachedToken: string | null = null;
-let tokenExpiresAt = 0;
+export interface MeshDeps {
+  fetch: (url: string, init?: any) => Promise<{ ok: boolean; status: number; headers?: { get(name: string): string | null }; text(): Promise<string> }>;
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+  env: Record<string, string | undefined>;
+}
 
-// Circuit breaker — if the API responds with a hard error (405/404/401/403)
-// during a batch, skip the remaining names rather than spamming the logs with
-// one error per contact. Resets on next process restart, or after 10 min.
-let circuitOpenUntil = 0;
-let circuitReason = "";
+const defaultDeps = (): MeshDeps => ({
+  fetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }) as any,
+  now: Date.now,
+  sleep: (ms) => new Promise(r => setTimeout(r, ms)),
+  env: process.env,
+});
 
-function getCredentials() {
-  const username = process.env.COMPLY_ADVANTAGE_USERNAME?.trim();
-  const password = process.env.COMPLY_ADVANTAGE_PASSWORD?.trim();
-  const realm = process.env.COMPLY_ADVANTAGE_REALM?.trim();
-  return { username, password, realm };
+export type MeshCredentials =
+  | { kind: "api"; accessKey: string; secret: string }
+  | { kind: "legacy"; username: string; password: string; realm: string };
+
+export function meshCredentials(env: Record<string, string | undefined> = process.env): MeshCredentials | null {
+  const accessKey = env.COMPLY_ADVANTAGE_ACCESS_KEY?.trim();
+  const secret = env.COMPLY_ADVANTAGE_SECRET?.trim();
+  if (accessKey && secret) return { kind: "api", accessKey, secret };
+  const username = env.COMPLY_ADVANTAGE_USERNAME?.trim();
+  const password = env.COMPLY_ADVANTAGE_PASSWORD?.trim();
+  const realm = env.COMPLY_ADVANTAGE_REALM?.trim();
+  if (username && password && realm) return { kind: "legacy", username, password, realm };
+  return null;
 }
 
 export function isComplyAdvantageConfigured(): boolean {
-  const { username, password, realm } = getCredentials();
-  return !!(username && password && realm);
+  return !!meshCredentials();
 }
 
-/**
- * Obtain a bearer token (cached for 23h to stay inside the 24h window).
- */
-export async function getToken(): Promise<string> {
-  if (cachedToken && Date.now() < tokenExpiresAt) return cachedToken;
-  if (Date.now() < circuitOpenUntil) {
-    throw new Error(`ComplyAdvantage auth cooling down — ${circuitReason}`);
-  }
+// ── State: the token and the two pauses ─────────────────────────────────────
 
-  const { username, password, realm } = getCredentials();
-  if (!username || !password || !realm) {
-    throw new Error("ComplyAdvantage credentials not configured");
-  }
+let cachedToken: { value: string; expiresAt: number; key: string } | null = null;
+let signInPause: { until: number; reason: string; key: string } | null = null;
+let screenPause: { until: number; reason: string } | null = null;
 
-  const res = await fetch(`${BASE_URL}/v2/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password, realm }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    // A failed LOGIN must not retry once per screen: their 429 is a
-    // brute-force lockout ("account blocked after multiple consecutive
-    // login attempts") and every retry keeps the account locked — seen
-    // live 2026-09-06 when the KYC re-screen loop held the lock closed.
-    // Bad credentials (401/403) get the same treatment, shorter.
-    if ([401, 403, 429].includes(res.status)) {
-      circuitReason = `${res.status} on /v2/token`;
-      circuitOpenUntil = Date.now() + (res.status === 429 ? 60 : 15) * 60_000;
-      console.error(`[ComplyAdvantage] Auth failed (${res.status}) — pausing login attempts for ${res.status === 429 ? 60 : 15} minutes so the account can unlock. Check COMPLY_ADVANTAGE_USERNAME/PASSWORD/REALM on Railway.`);
-    }
-    throw new Error(`ComplyAdvantage auth failed: ${res.status} ${body.slice(0, 200)}`);
-  }
-
-  const data = await res.json() as any;
-  const accessToken = data.access_token || data.token;
-  if (!accessToken) {
-    throw new Error("ComplyAdvantage auth response missing access_token");
-  }
-
-  cachedToken = accessToken;
-  // Refresh 1 hour before expiry (tokens last 24h = 86400s)
-  const expiresIn = data.expires_in || 86400;
-  tokenExpiresAt = Date.now() + (expiresIn - 3600) * 1000;
-  return accessToken;
+export function resetComplyAdvantageState(): void {
+  cachedToken = null;
+  signInPause = null;
+  screenPause = null;
 }
 
-/**
- * Ping: obtain a token to verify credentials are valid.
- */
-export async function pingComplyAdvantage(): Promise<{ ok: boolean; status?: number; message: string }> {
-  if (!isComplyAdvantageConfigured()) {
-    return { ok: false, message: "ComplyAdvantage credentials not set (need USERNAME, PASSWORD, REALM)" };
-  }
+// Which credentials a token or a pause belongs to: new keys on Railway start
+// afresh without waiting out a pause the old ones earned.
+const credentialKey = (c: MeshCredentials): string => crypto.createHash("sha256")
+  .update(c.kind === "api" ? `api|${c.accessKey}|${c.secret}` : `legacy|${c.username}|${c.realm}|${c.password}`)
+  .digest("hex").slice(0, 16);
+
+export type MeshErrorKind = "config" | "sign_in" | "permission" | "request" | "rate_limit" | "network" | "unfinished";
+
+export class ComplyAdvantageError extends Error {
+  constructor(message: string, public kind: MeshErrorKind) { super(message); }
+}
+
+// Mesh's own words from an error body, never more than a line.
+export function meshProblemWords(text: string): string {
+  let words = "";
   try {
-    const token = await getToken();
-    return { ok: true, message: `Token obtained (${token.slice(0, 8)}…)` };
-  } catch (err: any) {
-    return { ok: false, message: `ComplyAdvantage auth failed: ${err?.message || "unknown"}` };
+    const body = JSON.parse(text);
+    words = [body?.detail, body?.error_description, body?.message, body?.title, body?.error].find(v => typeof v === "string" && v.trim()) || "";
+  } catch {
+    words = /^\s*</.test(text) ? "" : text;
   }
+  return words.replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
-/**
- * Diagnostic — tries each candidate search-endpoint URL and reports what
- * comes back. Lets us pinpoint which URL the API expects without guessing.
- * Hit /api/comply-advantage/probe to see results.
- */
-export async function probeComplyAdvantage(testName = "John Smith"): Promise<Array<{ label: string; url: string; method: string; status: number | null; body: string; ms: number }>> {
-  const probes = [
-    { label: "Mesh: POST /v2/searches", url: `${BASE_URL}/v2/searches`, method: "POST" },
-    { label: "Mesh: POST /v2/screening/searches", url: `${BASE_URL}/v2/screening/searches`, method: "POST" },
-    { label: "Mesh: POST /v2/screen", url: `${BASE_URL}/v2/screen`, method: "POST" },
-    { label: "Mesh: POST /v2/search", url: `${BASE_URL}/v2/search`, method: "POST" },
-    { label: "Mesh: POST /searches", url: `${BASE_URL}/searches`, method: "POST" },
-    { label: "Legacy: POST /searches", url: `https://api.complyadvantage.com/searches`, method: "POST" },
-    { label: "Legacy v1: POST /searches", url: `https://api.complyadvantage.com/v1/searches`, method: "POST" },
-  ];
+async function readJson(res: { text(): Promise<string> }): Promise<any> {
+  const text = await res.text().catch(() => "");
+  try { return JSON.parse(text); } catch { return null; }
+}
 
-  let token: string | null = null;
-  try { token = await getToken(); } catch (e: any) {
-    return [{ label: "TOKEN AUTH", url: `${BASE_URL}/v2/token`, method: "POST", status: null, body: `Auth failed: ${e?.message}`, ms: 0 }];
+export async function getToken(deps: MeshDeps = defaultDeps()): Promise<string> {
+  const creds = meshCredentials(deps.env);
+  if (!creds) throw new ComplyAdvantageError("no ComplyAdvantage keys are set", "config");
+  const key = credentialKey(creds);
+  const now = deps.now();
+  if (cachedToken && cachedToken.key === key && now < cachedToken.expiresAt) return cachedToken.value;
+  if (signInPause && signInPause.key === key && now < signInPause.until) {
+    throw new ComplyAdvantageError(`ComplyAdvantage sign-in paused after ${signInPause.reason}`, "sign_in");
   }
-
-  const body = JSON.stringify({
-    search_term: testName,
-    fuzziness: 0.6,
-    filters: { types: ["sanction", "pep", "adverse-media", "warning"] },
-  });
-
-  const results = await Promise.all(probes.map(async (p) => {
-    const t0 = Date.now();
-    try {
-      const r = await fetch(p.url, {
-        method: p.method,
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body,
-        signal: AbortSignal.timeout(10_000),
-      });
-      const text = await r.text().catch(() => "");
-      return { label: p.label, url: p.url, method: p.method, status: r.status, body: text.slice(0, 200), ms: Date.now() - t0 };
-    } catch (e: any) {
-      return { label: p.label, url: p.url, method: p.method, status: null, body: `Error: ${e?.message}`, ms: Date.now() - t0 };
+  const path = creds.kind === "api" ? "/v3/token" : "/v2/token";
+  const body = creds.kind === "api"
+    ? { access_key: creds.accessKey, secret: creds.secret }
+    : { username: creds.username, password: creds.password, realm: creds.realm };
+  let res;
+  try {
+    res = await deps.fetch(`${BASE_URL}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  } catch (e: any) {
+    throw new ComplyAdvantageError(`ComplyAdvantage did not answer the sign-in (${String(e?.message || e).slice(0, 120)})`, "network");
+  }
+  if (!res.ok) {
+    const words = meshProblemWords(await res.text().catch(() => ""));
+    const reason = `${res.status} on ${path}${words ? `: ${words}` : ""}`;
+    // The older login's 429 is a lockout ("blocked after multiple consecutive
+    // login attempts") that every retry keeps closed (seen live 2026-09-06);
+    // API credentials' 429 is the ordinary rate limit. Bad keys pause too.
+    if ([400, 401, 403, 429].includes(res.status)) {
+      const minutes = res.status === 429 ? (creds.kind === "legacy" ? 60 : 5) : 15;
+      signInPause = { until: now + minutes * 60_000, reason, key };
+      console.error(`[ComplyAdvantage] Sign-in refused (${reason}); no sign-in for ${minutes} minutes. Check the ComplyAdvantage keys on Railway.`);
     }
-  }));
+    throw new ComplyAdvantageError(`ComplyAdvantage refused the sign-in (${reason})`, "sign_in");
+  }
+  const data = await readJson(res);
+  const token = typeof data?.access_token === "string" ? data.access_token : "";
+  if (!token) throw new ComplyAdvantageError("ComplyAdvantage's sign-in answer had no token", "sign_in");
+  const expiresIn = Number(data?.expires_in) > 0 ? Number(data.expires_in) : 86_400;
+  // Tokens last a day with no refresh: take a new one an hour early.
+  cachedToken = { value: token, expiresAt: now + Math.max(60, expiresIn - 3600) * 1000, key };
+  signInPause = null;
+  return token;
+}
 
-  return results;
+// ── The subject ─────────────────────────────────────────────────────────────
+
+export type MeshSubjectKind = "person" | "company";
+
+export interface ScreenSubject {
+  name: string;
+  role?: string;
+  kind?: MeshSubjectKind;
+  birthYear?: number | null;
+}
+
+const CORPORATE_WORDS = /\b(limited|ltd|plc|llp|l\.l\.p|inc|incorporated|corp|corporation|gmbh|s\.?a\.?r\.?l|b\.?v|n\.?v|s\.?p\.?a|holdings?|group|trust|partnership|lp|fund|properties|estates|investments|capital|ventures|foundation)\b/i;
+const PERSON_ROLES = /\b(officer|director|secretary|psc|owner|person|individual|contact|member|partner|beneficial)\b/i;
+
+// A caller that says what the subject is decides; otherwise a corporate word
+// in the name makes it a company, a person's role makes it a person, and
+// anything else goes to Mesh as a customer of no stated type.
+export function subjectKind(s: ScreenSubject): MeshSubjectKind | null {
+  if (s.kind) return s.kind;
+  if (/^company$/i.test(String(s.role || "")) || CORPORATE_WORDS.test(s.name)) return "company";
+  if (PERSON_ROLES.test(String(s.role || ""))) return "person";
+  return null;
+}
+
+const HONORIFIC = /^(mr|mrs|ms|miss|mx|dr|sir|dame|lord|lady|prof|professor|rev|revd)\.?\s+/i;
+
+// The name as Mesh should read it: a register's "DOE, Jane" becomes
+// "Jane Doe" and a leading Mr or Mrs is dropped for a person.
+export function meshName(s: ScreenSubject, kind: MeshSubjectKind | null): string {
+  let name = s.name.replace(/\s+/g, " ").trim();
+  if (kind === "person") {
+    const comma = /^([^,]+),\s*(.+)$/.exec(name);
+    if (comma) name = `${comma[2]} ${comma[1]}`;
+    name = name.replace(HONORIFIC, "");
+  }
+  return name.slice(0, 255);
+}
+
+const nameKey = (name: string) => name.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
+  .replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean).sort().join(" ");
+
+const londonDay = (ms: number) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" })
+  .format(new Date(ms)).replace(/-/g, "");
+
+// One Mesh customer per name, kind and year of birth per London day. It is
+// never a CRM id: the same director met on two deals is one screen.
+export function meshExternalId(s: ScreenSubject, kind: MeshSubjectKind | null, nowMs: number): string {
+  const hash = crypto.createHash("sha256").update(`${kind || "undefined"}|${nameKey(meshName(s, kind))}|${s.birthYear || ""}`).digest("hex").slice(0, 20);
+  return `bgp-${kind ? kind[0] : "u"}-${hash}-${londonDay(nowMs)}`;
+}
+
+export function meshScreenBody(s: ScreenSubject, externalId: string, screeningConfigId?: string | null): Record<string, any> {
+  const kind = subjectKind(s);
+  const name = meshName(s, kind);
+  const customer: Record<string, any> = { external_identifier: externalId };
+  if (kind === "person") customer.person = { full_name: name };
+  else if (kind === "company") customer.company = { legal_name: name };
+  else customer.undefined = { name };
+  const body: Record<string, any> = { customer, monitoring: { entity_screening: { enabled: false } } };
+  if (screeningConfigId) body.configuration = { screening_configuration_identifier: screeningConfigId };
+  return body;
+}
+
+// ── Reading Mesh's answer ───────────────────────────────────────────────────
+
+export type MatchKind = "sanctions" | "pep" | "adverse_media" | "warning" | "fitness_probity";
+
+// Mesh's AML types in the words the rest of the app reads.
+export function amlKind(type: string): MatchKind | string {
+  const t = String(type || "").toUpperCase();
+  if (t.startsWith("SANCTION")) return "sanctions";
+  if (t.startsWith("PEP")) return "pep";
+  if (t.includes("ADVERSE")) return "adverse_media";
+  if (t.startsWith("WARNING")) return "warning";
+  if (t.includes("FITNESS")) return "fitness_probity";
+  return t.toLowerCase();
+}
+
+const kindsOf = (types: unknown): string[] => [...new Set((Array.isArray(types) ? types : []).map(t => amlKind(String(t))).filter(Boolean))];
+
+export interface MeshScreenRead {
+  outcome: "clear" | "hits" | "unfinished";
+  kinds: string[];
+  alertIds: string[];
+  customerId: string | null;
+  reason: string | null;
+}
+
+export function readScreen(state: any): MeshScreenRead {
+  const steps = state?.step_details || {};
+  const customerId = steps["customer-creation"]?.step_output?.customer_identifier || null;
+  const screening = steps["customer-screening"] || null;
+  const status = String(screening?.status || "").toUpperCase();
+  const output = screening?.step_output || {};
+  const result = String(output.screening_result || "").toUpperCase();
+  const alertIds = (Array.isArray(steps.alerting?.step_output?.alerts) ? steps.alerting.step_output.alerts : [])
+    .map((a: any) => a?.identifier).filter((id: any) => typeof id === "string" && id);
+  if (status === "COMPLETED" && result === "NO_PROFILES") return { outcome: "clear", kinds: [], alertIds, customerId, reason: null };
+  if (status === "COMPLETED" && result === "HAS_PROFILES") return { outcome: "hits", kinds: kindsOf(output.aml_types), alertIds, customerId, reason: null };
+  if (status === "SKIPPED") return { outcome: "unfinished", kinds: [], alertIds, customerId, reason: "Mesh skipped the screen: its risk model rated the customer prohibited" };
+  return { outcome: "unfinished", kinds: [], alertIds, customerId, reason: `Mesh's screen did not finish (${status || String(state?.status || "no status")})` };
 }
 
 export interface ScreeningMatch {
   name: string;
-  matchType: string; // "sanctions" | "pep" | "adverse_media" | "warning"
+  matchType: string; // "sanctions" | "pep" | "adverse_media" | "warning" | "fitness_probity"
   listName?: string;
   score?: number;
   details?: Record<string, unknown>;
@@ -159,99 +267,353 @@ export interface ScreeningResult {
   matches: ScreeningMatch[];
   riskLevel?: string;
   error?: string;
+  errorKind?: MeshErrorKind;
+  // Matched profiles left out because every date of birth on them is more
+  // than a year from the subject's (the rule the free lists use).
+  setAside?: number;
+  customerId?: string | null;
+}
+
+const yearsIn = (values: unknown): number[] => (Array.isArray(values) ? values : [])
+  .map((d: any) => /\b(1[89]\d\d|20\d\d)\b/.exec(String(d?.value ?? d ?? ""))?.[1]).filter(Boolean).map(Number);
+
+const sourceName = (list: unknown): string | undefined => {
+  const first = (Array.isArray(list) ? list : []).find((s: any) => typeof s?.name === "string" || typeof s?.title === "string");
+  return first ? String(first.name || first.title).slice(0, 160) : undefined;
+};
+
+// A profile's media items, as far as Mesh gives them: the title, the link
+// and the date, for the deal's AML box to show (19 November 2026).
+const mediaItems = (list: unknown): Array<{ title: string; url: string | null; date: string | null }> =>
+  (Array.isArray(list) ? list : []).slice(0, 4).map((m: any) => ({
+    title: String(m?.title || m?.name || m?.snippet || "").replace(/\s+/g, " ").trim().slice(0, 200),
+    url: typeof m?.url === "string" ? m.url.slice(0, 500) : typeof m?.link === "string" ? m.link.slice(0, 500) : null,
+    date: String(m?.date || m?.publication_date || m?.published_at || m?.publishedAt || "").slice(0, 20) || null,
+  })).filter(m => m.title || m.url);
+
+// A matched profile becomes one match per kind it carries, as the old
+// search's hits did, so a profile that is both sanctioned and a PEP still
+// reads as a PEP to the screens that look for one.
+export function matchesFromRisks(risks: any[], subject: ScreenSubject, kind: MeshSubjectKind | null): { matches: ScreeningMatch[]; setAside: number } {
+  const matches: ScreeningMatch[] = [];
+  let setAside = 0;
+  for (const risk of risks) {
+    const profile = risk?.detail?.profile;
+    if (!profile) continue;
+    const indicators = profile.risk_indicators || {};
+    const dobYears = yearsIn(profile.person?.dates_of_birth);
+    if (kind === "person" && subject.birthYear && dobYears.length && dobYears.every(y => Math.abs(y - Number(subject.birthYear)) > 1)) {
+      setAside++;
+      continue;
+    }
+    const raw = Number(profile.match_score);
+    const score = Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : undefined;
+    const kinds = kindsOf(indicators.aml_types);
+    for (const k of kinds.length ? kinds : ["warning"]) {
+      matches.push({
+        name: String(profile.matching_name || subject.name).slice(0, 200),
+        matchType: k,
+        listName: k === "sanctions" ? sourceName(indicators.sanctions) : k === "pep" ? sourceName(indicators.peps)
+          : k === "adverse_media" ? sourceName(indicators.media) : sourceName(indicators.lists),
+        score,
+        details: {
+          profileId: profile.identifier || null,
+          matchTypes: Array.isArray(profile.match_types) ? profile.match_types : [],
+          decision: risk.decision || null,
+          datesOfBirth: dobYears,
+          kinds,
+          media: k === "adverse_media" ? mediaItems(indicators.media) : [],
+        },
+      });
+    }
+  }
+  return { matches, setAside };
+}
+
+// ── Calls ───────────────────────────────────────────────────────────────────
+
+const WORKFLOW_ID = /\/v2\/workflows\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+const ANY_UUID = /workflow[^0-9a-f]{0,40}([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+
+// The earlier workflow a 409 points to, when its body names one.
+export function conflictWorkflowId(text: string): string | null {
+  return WORKFLOW_ID.exec(text)?.[1] || ANY_UUID.exec(text)?.[1] || null;
+}
+
+const retryAfterMs = (res: { headers?: { get(name: string): string | null } }, fallback: number): number => {
+  const v = res.headers?.get?.("retry-after");
+  const seconds = v != null ? Number(v) : NaN;
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.min(seconds * 1000, 30_000) : fallback;
+};
+
+interface CallResult { status: number; data: any; text: string }
+
+// One authenticated call: a refused token is replaced once, a rate limit is
+// waited out twice, and a server error or dropped connection is tried again
+// once. Mesh's create-and-screen takes the same request again safely.
+async function meshCall(method: "GET" | "POST", path: string, body: unknown, deps: MeshDeps): Promise<CallResult> {
+  let token = await getToken(deps);
+  let refreshed = false, limited = 0, retried = false;
+  for (;;) {
+    let res;
+    try {
+      res = await deps.fetch(`${BASE_URL}${path}`, {
+        method,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch (e: any) {
+      if (!retried) { retried = true; await deps.sleep(1500); continue; }
+      throw new ComplyAdvantageError(`ComplyAdvantage did not answer (${String(e?.message || e).slice(0, 120)})`, "network");
+    }
+    if (res.status === 401 && !refreshed) {
+      refreshed = true;
+      cachedToken = null;
+      token = await getToken(deps);
+      continue;
+    }
+    if (res.status === 429 && limited < 2) {
+      limited++;
+      await deps.sleep(retryAfterMs(res, 2000 * limited));
+      continue;
+    }
+    if (res.status >= 500 && !retried) { retried = true; await deps.sleep(1500); continue; }
+    const text = await res.text().catch(() => "");
+    let data: any = null;
+    try { data = JSON.parse(text); } catch { /* not JSON */ }
+    return { status: res.status, data, text };
+  }
+}
+
+const meshFailure = (call: CallResult, what: string): ComplyAdvantageError => {
+  const words = meshProblemWords(call.text);
+  const tail = `${call.status}${words ? `: ${words}` : ""}`;
+  if (call.status === 401) return new ComplyAdvantageError(`ComplyAdvantage refused the sign-in (${tail})`, "sign_in");
+  if (call.status === 403) return new ComplyAdvantageError(`ComplyAdvantage's login may not ${what} (${tail})`, "permission");
+  if (call.status === 429) return new ComplyAdvantageError(`ComplyAdvantage asked us to slow down (${tail})`, "rate_limit");
+  if (call.status === 404 || call.status === 405) return new ComplyAdvantageError(`ComplyAdvantage has no such address (${tail})`, "config");
+  return new ComplyAdvantageError(`ComplyAdvantage refused to ${what} (${tail})`, "request");
+};
+
+async function readRisks(alertIds: string[], deps: MeshDeps): Promise<{ risks: any[]; complete: boolean }> {
+  const risks: any[] = [];
+  let complete = alertIds.length > 0 && alertIds.length <= MAX_ALERTS_READ;
+  for (const id of alertIds.slice(0, MAX_ALERTS_READ)) {
+    const call = await meshCall("GET", `/v2/alerts/${encodeURIComponent(id)}/risks?page_number=1&page_size=${RISKS_PAGE_SIZE}`, undefined, deps);
+    if (call.status !== 200) throw meshFailure(call, "read a hit's matched profiles");
+    const page = Array.isArray(call.data?.risks) ? call.data.risks.filter((r: any) => !r?.type || r.type === "ENTITY_SCREENING") : [];
+    risks.push(...page);
+    const total = Number(call.data?.total_count);
+    if (call.data?.next || (Number.isFinite(total) && total > page.length)) complete = false;
+  }
+  return { risks, complete };
+}
+
+async function screenOne(subject: ScreenSubject, deps: MeshDeps): Promise<ScreeningResult> {
+  const base = { name: subject.name, role: subject.role };
+  const kind = subjectKind(subject);
+  const configId = deps.env.COMPLY_ADVANTAGE_SCREENING_CONFIG_ID?.trim() || null;
+  let externalId = meshExternalId(subject, kind, deps.now());
+  let state: any = null;
+  for (let attempt = 0; attempt < 2 && !state; attempt++) {
+    const call = await meshCall("POST", "/v2/workflows/sync/create-and-screen?last_sync_step=ALERTING", meshScreenBody(subject, externalId, configId), deps);
+    if (call.status === 200 || call.status === 201) { state = call.data; break; }
+    if (call.status !== 409) throw meshFailure(call, "create and screen customers");
+    // The name was screened already today (or is being screened now): read
+    // that screen's answer, else screen it under a fresh record.
+    const earlier = conflictWorkflowId(call.text);
+    if (earlier) {
+      const read = await meshCall("GET", `/v2/workflows/${earlier}`, undefined, deps);
+      if (read.status === 200 && read.data?.step_details?.["customer-screening"]) { state = read.data; break; }
+    }
+    externalId = `${externalId}-${crypto.randomBytes(3).toString("hex")}`;
+  }
+  if (!state) throw new ComplyAdvantageError("ComplyAdvantage kept refusing a new record for this name (409)", "request");
+  const screen = readScreen(state);
+  if (screen.outcome === "unfinished") return { ...base, status: "error", matches: [], error: screen.reason || "Mesh's screen did not finish", errorKind: "unfinished", customerId: screen.customerId };
+  if (screen.outcome === "clear") return { ...base, status: "clear", matches: [], customerId: screen.customerId };
+  const fallback = (): ScreeningMatch[] => (screen.kinds.length ? screen.kinds : ["warning"]).map(k => ({ name: subject.name, matchType: k }));
+  try {
+    const { risks, complete } = await readRisks(screen.alertIds, deps);
+    const { matches, setAside } = matchesFromRisks(risks, subject, kind);
+    if (matches.length) return { ...base, status: "potential_match", matches, setAside, customerId: screen.customerId };
+    if (complete && setAside > 0) return { ...base, status: "clear", matches: [], setAside, customerId: screen.customerId };
+  } catch (e: any) {
+    console.warn(`[ComplyAdvantage] Matched profiles for a hit could not be read: ${e?.message}`);
+  }
+  return { ...base, status: "potential_match", matches: fallback(), customerId: screen.customerId };
+}
+
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  }));
+  return out;
 }
 
 /**
- * Screen a list of names against ComplyAdvantage PEP/sanctions/adverse media.
+ * Screen names against ComplyAdvantage's sanctions, PEP, warning and adverse
+ * media data. Never throws: a screen that could not run is an "error" line.
  */
-export async function screenNames(
-  names: Array<{ name: string; role?: string }>,
-): Promise<ScreeningResult[]> {
-  if (!isComplyAdvantageConfigured()) return [];
-  if (Date.now() < circuitOpenUntil) {
-    console.warn(`[ComplyAdvantage] Skipping ${names.length} screens — circuit open: ${circuitReason}`);
-    return names.map(({ name, role }) => ({ name, role, status: "error", matches: [], error: `Screening unavailable: ${circuitReason}` }));
-  }
-  const token = await getToken();
-  const results: ScreeningResult[] = [];
-
-  for (let i = 0; i < names.length; i++) {
-    const { name, role } = names[i];
-    try {
-      const res = await fetch(`${BASE_URL}/v2/searches`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          search_term: name,
-          fuzziness: 0.6,
-          filters: {
-            types: ["sanction", "pep", "adverse-media", "warning"],
-          },
-        }),
-      });
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        // 401/403/404/405 are config/endpoint problems — open the circuit so
-        // we don't spam an error per name. Reset after 10 minutes.
-        if ([401, 403, 404, 405].includes(res.status)) {
-          circuitReason = `${res.status} on /v2/searches`;
-          circuitOpenUntil = Date.now() + 10 * 60_000;
-          console.error(`[ComplyAdvantage] Opening circuit for 10min — ${circuitReason}. Body: ${body.slice(0, 200)}`);
-          for (let j = i; j < names.length; j++) {
-            results.push({ name: names[j].name, role: names[j].role, status: "error", matches: [], error: circuitReason });
-          }
-          break;
-        }
-        console.error(`[ComplyAdvantage] Screen failed for "${name}": ${res.status} ${body.slice(0, 200)}`);
-        results.push({ name, role, status: "error", matches: [], error: `HTTP ${res.status}` });
-        continue;
-      }
-
-      const data = await res.json() as any;
-      const hits = data.content?.data?.hits || data.data?.hits || data.hits || [];
-      const matches: ScreeningMatch[] = [];
-
-      for (const hit of hits) {
-        const types = hit.types || [];
-        for (const type of types) {
-          matches.push({
-            name: hit.doc?.name || hit.name || name,
-            matchType: type,
-            listName: hit.doc?.source_notes?.listing || hit.source || undefined,
-            score: hit.score || hit.match_score || undefined,
-            details: {
-              entityType: hit.doc?.entity_type,
-              fields: hit.doc?.fields,
-              sources: hit.doc?.sources,
-              aka: hit.doc?.aka,
-            },
-          });
-        }
-        if (types.length === 0) {
-          matches.push({
-            name: hit.doc?.name || hit.name || name,
-            matchType: "unknown",
-            score: hit.score || hit.match_score || undefined,
-          });
-        }
-      }
-
-      let status: "clear" | "potential_match" | "strong_match" = "clear";
-      if (matches.length > 0) {
-        const maxScore = Math.max(...matches.map(m => m.score || 0));
-        status = maxScore >= 0.9 ? "strong_match" : "potential_match";
-      }
-
-      results.push({ name, role, status, matches, riskLevel: data.content?.data?.risk_level });
-    } catch (err: any) {
-      console.error(`[ComplyAdvantage] Error screening "${name}":`, err?.message);
-      results.push({ name, role, status: "error", matches: [], error: String(err?.message || "request failed") });
+export async function screenNames(names: ScreenSubject[], deps: MeshDeps = defaultDeps()): Promise<ScreeningResult[]> {
+  if (!meshCredentials(deps.env)) return [];
+  const subjects = names.filter(n => n && typeof n.name === "string" && n.name.trim());
+  const failAll = (from: number, message: string, kind: MeshErrorKind, out: ScreeningResult[]) => {
+    for (let j = from; j < subjects.length; j++) {
+      if (!out[j]) out[j] = { name: subjects[j].name, role: subjects[j].role, status: "error", matches: [], error: message, errorKind: kind };
     }
+  };
+  const out: ScreeningResult[] = new Array(subjects.length);
+  if (screenPause && deps.now() < screenPause.until) {
+    failAll(0, `Screening paused: ${screenPause.reason}`, "config", out);
+    return out;
   }
+  try {
+    await getToken(deps);
+  } catch (e: any) {
+    failAll(0, String(e?.message || "ComplyAdvantage sign-in failed"), e?.kind || "sign_in", out);
+    return out;
+  }
+  const stop: { err: ComplyAdvantageError | null } = { err: null };
+  await mapLimit(subjects, SCREEN_CONCURRENCY, async (subject, i) => {
+    if (stop.err) return;
+    try {
+      out[i] = await screenOne(subject, deps);
+    } catch (e: any) {
+      const err = e instanceof ComplyAdvantageError ? e : new ComplyAdvantageError(String(e?.message || "request failed"), "request");
+      out[i] = { name: subject.name, role: subject.role, status: "error", matches: [], error: err.message, errorKind: err.kind };
+      // A refused sign-in, a login without the permission or an address Mesh
+      // does not have will refuse every name: stop, and pause for a while.
+      if (["sign_in", "permission", "config"].includes(err.kind) && !stop.err) {
+        stop.err = err;
+        if (err.kind !== "sign_in") screenPause = { until: deps.now() + 10 * 60_000, reason: err.message };
+        console.error(`[ComplyAdvantage] Stopping this batch: ${err.message}`);
+      }
+    }
+  });
+  if (stop.err) failAll(0, stop.err.message, stop.err.kind, out);
+  return out;
+}
 
-  return results;
+// ── Checking the connection (reads only: nothing is created in Mesh) ────────
+
+export interface MeshCheck {
+  ok: boolean;
+  credentials: "api" | "legacy" | null;
+  message: string;
+  configurations: Array<{ identifier: string; name: string; archived: boolean; settings?: string }>;
+  screeningConfigId: string | null;
+  screeningConfigFound: boolean | null;
+}
+
+const FILTER_WORDS: Record<string, string> = {
+  FILTER_ATTRIBUTE_YEAR_OF_BIRTH: "year of birth",
+  FILTER_ATTRIBUTE_COUNTRY: "country",
+  FILTER_ATTRIBUTE_LAST_ACTIVE_DATE: "last active date",
+};
+
+/**
+ * What a screening configuration screens and how closely, in a line (Woody,
+ * 18 November 2026, after setting one up in Mesh: "did 50 broad? that ok?
+ * can you check"). Mesh lists two shapes: an older configuration sets a
+ * fuzziness per collection, a newer one a match threshold (only hits scoring
+ * at or above it come back, so a lower one returns more). Both are 0 to 1 in
+ * the API and 0 to 100 on Mesh's own screens, which is how they are shown.
+ */
+export function describeMeshConfiguration(configuration: any): string {
+  const cols: any[] = Array.isArray(configuration?.source_collections) ? configuration.source_collections : [];
+  const scale = (v: unknown): number | null => {
+    if (v === null || v === undefined || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.round(n <= 1 ? n * 100 : n) : null;
+  };
+  const words = (t: unknown) => String(t || "").split(".")[0].replace(/^[a-z]_/, "").replace(/_/g, " ").trim();
+  const filterWords = (filters: unknown): string[] => (Array.isArray(filters) ? filters : []).map((f: any) => {
+    const what = FILTER_WORDS[String(f?.key || "")] || String(f?.key || "").replace(/^FILTER_ATTRIBUTE_/, "").replace(/_/g, " ").toLowerCase();
+    const how = f?.mismatch ? "mismatch" : f?.absent ? "missing" : f?.older_than ? `older than ${f.older_than?.threshold || "a set time"}` : "";
+    return `${what} ${how}`.trim();
+  }).filter(Boolean);
+  const parts: string[] = [];
+  for (const c of cols.slice(0, 12)) {
+    const risks = [...new Set((Array.isArray(c?.risks) ? c.risks : []).map((r: any) => words(r?.taxonomy)).filter(Boolean))];
+    const aml = Array.isArray(c?.aml_types) ? c.aml_types.slice(0, 4).map(String) : [];
+    const label = String(c?.name || "").trim() || risks.join(", ") || aml.join(", ") || "a collection";
+    const threshold = scale(c?.match_threshold);
+    const fuzziness = scale(c?.fuzziness);
+    const level = threshold !== null ? `match threshold ${threshold}` : fuzziness !== null ? `fuzziness ${fuzziness}%` : "";
+    const extras = [
+      ...filterWords(c?.exclusion_filters).map(w => `leaves out ${w}`),
+      ...(Array.isArray(c?.options) && c.options.length ? [`options ${c.options.slice(0, 6).join(", ")}`] : []),
+    ];
+    parts.push(`${label}${level ? `: ${level}` : ""}${extras.length ? ` (${extras.join("; ")})` : ""}`);
+  }
+  if (Array.isArray(configuration?.configuration_options) && configuration.configuration_options.length) {
+    parts.push(`options ${configuration.configuration_options.slice(0, 6).join(", ")}`);
+  }
+  if (Array.isArray(configuration?.country_filters) && configuration.country_filters.length) {
+    parts.push(`countries ${configuration.country_filters.slice(0, 8).join(", ")}`);
+  }
+  if (configuration?.results_limit) parts.push(`up to ${configuration.results_limit} results`);
+  return parts.join("; ");
+}
+
+export async function checkComplyAdvantage(deps: MeshDeps = defaultDeps()): Promise<MeshCheck> {
+  const creds = meshCredentials(deps.env);
+  const screeningConfigId = deps.env.COMPLY_ADVANTAGE_SCREENING_CONFIG_ID?.trim() || null;
+  const base = { credentials: creds?.kind ?? null, configurations: [] as MeshCheck["configurations"], screeningConfigId, screeningConfigFound: null as boolean | null };
+  if (!creds) return { ...base, ok: false, message: "No ComplyAdvantage keys are set: add COMPLY_ADVANTAGE_ACCESS_KEY and COMPLY_ADVANTAGE_SECRET (Mesh: Settings > Access Management > API Credentials)" };
+  const how = creds.kind === "api" ? "API credentials" : "the older username and password";
+  try {
+    await getToken(deps);
+  } catch (e: any) {
+    return { ...base, ok: false, message: `Signing in with ${how} failed: ${e?.message || "unknown"}` };
+  }
+  try {
+    // Mesh lists configurations at two addresses: /v2 and, for accounts on
+    // its newer data pipeline, /v3. The first answered "none" on live on
+    // 18 November 2026, so an empty or missing /v2 list reads /v3 as well.
+    const readList = (call: CallResult) => (Array.isArray(call.data?.configurations) ? call.data.configurations : []).map((c: any) => {
+      const settings = describeMeshConfiguration(c?.configuration);
+      return {
+        identifier: String(c?.configuration_identifier || ""),
+        name: String(c?.configuration?.name || c?.configuration?.description || "Unnamed"),
+        archived: !!c?.configuration?.is_archived,
+        ...(settings ? { settings } : {}),
+      };
+    }).filter((c: any) => c.identifier);
+    const v2 = await meshCall("GET", "/v2/entity-screening/configurations", undefined, deps);
+    if (v2.status !== 200 && v2.status !== 404) {
+      const err = meshFailure(v2, "read the screening configurations");
+      return { ...base, ok: true, message: `Signed in with ${how}, but ${err.message}` };
+    }
+    let configurations: MeshCheck["configurations"] = v2.status === 200 ? readList(v2) : [];
+    if (!configurations.length) {
+      const v3 = await meshCall("GET", "/v3/entity-screening/configurations", undefined, deps);
+      if (v3.status === 200) configurations = readList(v3);
+    }
+    if (!configurations.length) return { ...base, ok: true, screeningConfigFound: screeningConfigId ? false : null, message: `Signed in with ${how}. Mesh holds no screening configurations yet: make one in Mesh (Settings > Screening Configurations) before screening` };
+    const live = configurations.filter((c: any) => !c.archived);
+    const found = screeningConfigId ? configurations.some((c: any) => c.identifier === screeningConfigId) : null;
+    const which = screeningConfigId
+      ? (found ? "the screening configuration set on Railway is one of them" : "the screening configuration set on Railway is not one of them")
+      : "none is named on Railway, so Mesh picks one";
+    const named = live.map((c: any) => (c.settings ? `${c.name}: ${c.settings}` : c.name));
+    return { ...base, ok: found !== false, configurations, screeningConfigFound: found, message: `Signed in with ${how}. ${live.length} screening configuration${live.length === 1 ? "" : "s"} (${named.join(" | ") || "none live"}); ${which}` };
+  } catch (e: any) {
+    return { ...base, ok: true, message: `Signed in with ${how}, but the screening configurations could not be read: ${e?.message || "unknown"}` };
+  }
+}
+
+/**
+ * Ping for Settings → Integrations: signs in and reads the screening
+ * configurations. Creates nothing in Mesh.
+ */
+export async function pingComplyAdvantage(): Promise<{ ok: boolean; status?: number; message: string }> {
+  const check = await checkComplyAdvantage();
+  return { ok: check.ok, message: check.message };
 }

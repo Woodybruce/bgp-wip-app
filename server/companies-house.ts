@@ -5,22 +5,30 @@ import { requireAuth } from "./auth";
 import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
 import { runAllAmlChecks } from "./kyc-orchestrator";
 import { pool } from "./db";
+import { ChBusyError, chGate, chMaxWait } from "./companies-house-gate";
 
 const router = Router();
 
 const CH_API_KEY = process.env.COMPANIES_HOUSE_API_KEY;
 const CH_BASE = "https://api.company-information.service.gov.uk";
 
-export async function chFetch(path: string) {
+// Every call waits its turn in one queue for the process
+// (server/companies-house-gate.ts): Companies House allows 600 requests in
+// five minutes, and a 429 holds every caller until its window ends.
+// maxWaitMs: how long to wait for a turn (BGP's checks before asking wait
+// longer, through withChPatience); timeoutMs: the request itself.
+export async function chFetch(path: string, opts: { maxWaitMs?: number; timeoutMs?: number } = {}) {
   if (!CH_API_KEY) {
     throw new Error("Companies House API key not configured");
   }
-  const res = await fetch(`${CH_BASE}${path}`, {
+  const res = await chGate.request(() => fetch(`${CH_BASE}${path}`, {
     headers: {
       Authorization: `Basic ${Buffer.from(CH_API_KEY + ":").toString("base64")}`,
     },
-  });
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
+  }), chMaxWait(opts.maxWaitMs));
   if (!res.ok) {
+    if (res.status === 429) throw new ChBusyError(chGate.holdEndsAt() || Date.now() + 60_000, Date.now());
     const text = await res.text();
     throw new Error(`Companies House API error ${res.status}: ${text}`);
   }

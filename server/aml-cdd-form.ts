@@ -85,11 +85,11 @@ export async function prefillCddForm(companyId: string): Promise<CddForm> {
 
   // The latest run, but its ownership data from the latest run that HAD
   // PSCs — a sweep whose Companies House PSC call failed returns none.
-  const inv = (await pool.query(`SELECT result, sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
+  const inv = (await pool.query(`SELECT result, sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 AND trading_entity_id IS NULL ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
   // The sanctions reading from the latest record that screened anyone (a
   // Companies House lookup screens nothing and must not read as clear).
-  const screened = (await pool.query(`SELECT sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 AND ${SCREENED_INVESTIGATION_SQL} ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
-  const withPscs = (await pool.query(`SELECT result FROM kyc_investigations WHERE crm_company_id=$1 AND jsonb_array_length(COALESCE(result->'pscs','[]'::jsonb)) > 0 ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
+  const screened = (await pool.query(`SELECT sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 AND trading_entity_id IS NULL AND ${SCREENED_INVESTIGATION_SQL} ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
+  const withPscs = (await pool.query(`SELECT result FROM kyc_investigations WHERE crm_company_id=$1 AND trading_entity_id IS NULL AND jsonb_array_length(COALESCE(result->'pscs','[]'::jsonb)) > 0 ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
   const result = { ...(inv?.result || {}), pscs: (inv?.result?.pscs?.length ? inv.result.pscs : withPscs?.result?.pscs) || [] };
   const profile = c.companies_house_data?.profile || {};
 
@@ -158,7 +158,7 @@ export async function prefillCddForm(companyId: string): Promise<CddForm> {
 
 async function recomputeRecommendation(companyId: string, form: CddForm): Promise<CddForm> {
   const c = (await pool.query(`SELECT * FROM crm_companies WHERE id=$1`, [companyId])).rows[0];
-  const inv = (await pool.query(`SELECT sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 AND ${SCREENED_INVESTIGATION_SQL} ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
+  const inv = (await pool.query(`SELECT sanctions_match FROM kyc_investigations WHERE crm_company_id=$1 AND trading_entity_id IS NULL AND ${SCREENED_INVESTIGATION_SQL} ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId])).rows[0];
   const { outstandingAmlItems, isHigherRisk } = await import("../shared/aml-checklist");
   const higherRisk = isHigherRisk({ ...c, aml_cdd_form: form });
   const open = outstandingAmlItems(c.aml_checklist, c.aml_subject_type || (c.companies_house_number ? "company" : null), c.aml_edd_required, higherRisk).filter(i => i.id !== "mlro_review");

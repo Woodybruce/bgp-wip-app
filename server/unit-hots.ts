@@ -208,7 +208,7 @@ async function amlLineFor(dealId: string): Promise<{ deal: any; aml: { ok: boole
   if (!deal) return { deal: null, aml: { ok: false, message: "The deal could not be read." } };
   try {
     const { checkCounterpartyAml, formatAmlWarning } = await import("./deal-gates");
-    const result = await checkCounterpartyAml({ landlordId: deal.landlord_id, tenantId: deal.tenant_id, vendorId: deal.vendor_id, purchaserId: deal.purchaser_id });
+    const result = await checkCounterpartyAml({ landlordId: deal.landlord_id, tenantId: deal.tenant_id, vendorId: deal.vendor_id, purchaserId: deal.purchaser_id, dealId: deal.id });
     const message = formatAmlWarning(result);
     return { deal, aml: { ok: !message, message } };
   } catch (e: any) {
@@ -938,7 +938,7 @@ export function setupUnitHotsRoutes(app: Express) {
         const { checkCounterpartyAml, amlGateOutcome, dealStatusTransitionDenial } = await import("./deal-gates");
         if (before.aml_check_completed !== "YES") {
           const outcome = amlGateOutcome(await checkCounterpartyAml({
-            landlordId: before.landlord_id, tenantId: terms.tenantId || before.tenant_id, vendorId: before.vendor_id, purchaserId: before.purchaser_id }));
+            landlordId: before.landlord_id, tenantId: terms.tenantId || before.tenant_id, vendorId: before.vendor_id, purchaserId: before.purchaser_id, dealId: before.id }));
           if (outcome.block) return void res.status(409).json({ message: jointAgent ? AML_BLOCKED : outcome.block, code: "AML_GATE_FAILED" });
         }
 

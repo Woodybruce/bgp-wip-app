@@ -28,7 +28,7 @@ import { pool } from "./db";
 import { graphRequest, sendFromFirstMailbox, senderOrder, type EmailAttachment } from "./shared-mailbox";
 import {
   KYC_DOCS, KYC_LOGO_CID, KYC_MAX_FILE_MB, KYC_MAX_FILES_PER_REQUEST, KYC_REF_ALPHABET,
-  KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, defaultKycDocs, isKycDocKey, isKycOwnersAnswer, isKycPepAnswer, kycDocDetail, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycOwnersWords, kycPepWords,
+  KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, clientChecksSwitchOn, defaultKycDocs, isKycDocKey, isKycOwnersAnswer, isKycPepAnswer, kycDocDetail, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycOwnersWords, kycPepWords,
   kycRedFlagEmail, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycUploadAllowed, kycWhatsAppHref, kycWhatsAppText,
   type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycOwnersReply, type KycPartyKind, type KycPortalView, type KycProgress,
 } from "@shared/kyc-request";
@@ -45,7 +45,11 @@ const REMINDER_DAYS = [3, 7];
 const MAX_ID_SESSIONS = 3;
 const FILED = "BGP-KYC-Filed", UNMATCHED = "BGP-KYC-Unmatched", OLD_FILED = "BGP-AML-Processed";
 
-export const inAppAmlOn = () => !!process.env.IN_APP_AML_ENABLED;
+// The client checks follow their own switch, not the old in-app AML one
+// (Woody, 18 November 2026: "client checks only"): KYC_CLIENT_CHECKS=off
+// stops sending, reminders and the reply reader.
+export const clientChecksOn = () => clientChecksSwitchOn(process.env.KYC_CLIENT_CHECKS);
+const CHECKS_OFF = "The client checks are switched off (KYC_CLIENT_CHECKS on Railway).";
 export const kycLinkFor = (token: string) => `${LINK_BASE}/kyc-upload/${token}`;
 const dealLinkFor = (dealId: string) => `${LINK_BASE}/deals/${encodeURIComponent(dealId)}`;
 
@@ -97,6 +101,8 @@ interface TokenRow {
   last_used_at: Date | null;
   use_count: number | null;
   company_id: string | null;
+  // The company that signs for the party, when the deal names one (2026-11-18).
+  trading_entity_id: string | null;
   contact_id: string | null;
   request: KycRequestDetails | null;
   completed_at: Date | null;
@@ -338,33 +344,44 @@ export const clientCheckBody = z.object({
   note: z.string().max(2000).nullish(),
 }).strict();
 
-const PARTY_COLUMNS: Array<{ role: string; company: string; contact: string }> = [
-  { role: "landlord", company: "landlord_id", contact: "landlord_contact_id" },
-  { role: "tenant", company: "tenant_id", contact: "tenant_contact_id" },
-  { role: "vendor", company: "vendor_id", contact: "vendor_contact_id" },
-  { role: "purchaser", company: "purchaser_id", contact: "purchaser_contact_id" },
+// Each party: its brand, the company that signs for it when the deal names
+// one (server/deal-parties.ts: the request is then about that company), and
+// the person to ask (set for the party, else the deal's client contact when
+// filed under the brand).
+const PARTY_COLUMNS: Array<{ role: string; company: string; contact: string; entity: string }> = [
+  { role: "landlord", company: "landlord_id", contact: "landlord_contact_id", entity: "landlord_trading_entity_id" },
+  { role: "tenant", company: "tenant_id", contact: "tenant_contact_id", entity: "tenant_trading_entity_id" },
+  { role: "vendor", company: "vendor_id", contact: "vendor_contact_id", entity: "vendor_trading_entity_id" },
+  { role: "purchaser", company: "purchaser_id", contact: "purchaser_contact_id", entity: "purchaser_trading_entity_id" },
 ];
 
 async function dealParties(dealId: string) {
   const d = (await pool.query(
-    `SELECT id, name, landlord_id, landlord_contact_id, tenant_id, tenant_contact_id, vendor_id, vendor_contact_id, purchaser_id, purchaser_contact_id
+    `SELECT id, name, client_contact_id, landlord_id, landlord_contact_id, tenant_id, tenant_contact_id, vendor_id, vendor_contact_id, purchaser_id, purchaser_contact_id,
+            landlord_trading_entity_id, tenant_trading_entity_id, vendor_trading_entity_id, purchaser_trading_entity_id
        FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
   if (!d) return null;
-  const parties: Array<{ companyId: string; name: string; role: string; kind: KycPartyKind; contactId: string | null;
+  const parties: Array<{ companyId: string; name: string; brandName: string; role: string; kind: KycPartyKind; contactId: string | null;
+    entityId: string | null; entityNumber: string | null; personField: string;
     contacts: Array<{ id: string; name: string; email: string | null; mobile: string | null }> }> = [];
   for (const col of PARTY_COLUMNS) {
     const companyId = d[col.company];
     if (!companyId || parties.some(p => p.companyId === companyId)) continue;
     const c = (await pool.query(`SELECT id, name, aml_subject_type FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
     if (!c) continue;
+    const entity = d[col.entity] ? (await pool.query(
+      `SELECT id, name, companies_house_number FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [d[col.entity], companyId])).rows[0] || null : null;
+    const client = d.client_contact_id ? (await pool.query(`SELECT company_id FROM crm_contacts WHERE id = $1`, [d.client_contact_id])).rows[0] : null;
+    const person = d[col.contact] || (client?.company_id === companyId ? d.client_contact_id : null);
     const contacts = (await pool.query(
       `SELECT id, name, email, COALESCE(NULLIF(phone_mobile, ''), NULLIF(phone, '')) AS mobile
          FROM crm_contacts WHERE company_id = $1 AND COALESCE(email, '') <> ''
-        ORDER BY (id = $2) DESC, name LIMIT 60`, [companyId, d[col.contact] || ""])).rows;
+        ORDER BY (id = $2) DESC, name LIMIT 60`, [companyId, person || ""])).rows;
     parties.push({
-      companyId, name: c.name, role: col.role,
-      kind: String(c.aml_subject_type || "").toLowerCase() === "individual" ? "individual" : "company",
-      contactId: d[col.contact] && contacts.some((x: any) => x.id === d[col.contact]) ? d[col.contact] : null,
+      companyId, name: entity?.name || c.name, brandName: c.name, role: col.role,
+      kind: !entity && String(c.aml_subject_type || "").toLowerCase() === "individual" ? "individual" : "company",
+      contactId: person && contacts.some((x: any) => x.id === person) ? person : null,
+      entityId: entity ? String(entity.id) : null, entityNumber: entity?.companies_house_number || null, personField: col.contact,
       contacts: contacts.map((x: any) => ({ id: x.id, name: x.name, email: x.email, mobile: x.mobile || null })),
     });
   }
@@ -378,6 +395,13 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   if (!found) throw Object.assign(new Error("Deal not found"), { status: 404 });
   const party = found.parties.find(p => p.companyId === input.companyId);
   if (!party) throw Object.assign(new Error("That company is not a party to this deal. Set it on the deal first."), { status: 400 });
+  // The checks are about the company that signs, not the brand (Woody,
+  // 19 November 2026: "We must have the company taking the lease or who owns
+  // the property to be able to do a check").
+  if (input.kind === "company" && !party.entityId) {
+    const what = party.role === "tenant" ? "the company taking the lease" : party.role === "landlord" ? "the company that owns the property" : party.role === "vendor" ? "the company selling" : "the company buying";
+    throw Object.assign(new Error(`Set ${what} on the deal first: the client checks are about that company, not ${party.name}.`), { status: 409 });
+  }
   const email = cleanEmail(input.email);
   if (!isEmail(email)) throw Object.assign(new Error("Enter a valid email address for the person to ask."), { status: 400 });
   if (input.contactId && !party.contacts.some(c => c.id === input.contactId)) throw Object.assign(new Error("That contact is not at this company."), { status: 400 });
@@ -393,7 +417,7 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
 
   // What BGP's checks before asking found (the agent's ticks decide what is
   // asked; this records why the rest was not, and the owners to confirm).
-  const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(party.companyId)).catch(() => null);
+  const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(party.companyId, party.entityId)).catch(() => null);
   const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName: input.name });
   const confirmOwners = input.kind === "company" && !docs.includes("ownership") && asks.confirmOwners?.length ? asks.confirmOwners : null;
 
@@ -418,10 +442,29 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
     confirmOwners, ownerNames: docs.includes("owner_ids") ? asks.ownerNames : [], ownersAnswer: null,
     notAsked: asks.notAsked.filter(n => !docs.includes(n.key)), precheckId: pre?.precheckId ?? null,
   };
+  // Someone typed rather than picked is saved to the CRM under the brand
+  // (Woody, 2026-11-18: "need the ability to add in all the info"), and
+  // becomes the party's person to ask when the deal names nobody.
+  let contactId = input.contactId || null;
+  if (!contactId) {
+    try {
+      const { findOrAddPartyPerson } = await import("./deal-parties");
+      const added = await findOrAddPartyPerson(pool, party.companyId, { name: input.name.trim(), email, mobile: input.mobile?.trim() || null, jobTitle: null },
+        `Added by ${me.name || "BGP"} when sending the client checks for ${found.deal.name}.`);
+      contactId = added.id;
+      const set = await pool.query(`UPDATE crm_deals SET ${party.personField} = $2 WHERE id = $1 AND ${party.personField} IS NULL RETURNING id`, [dealId, contactId]);
+      if (set.rows.length) {
+        await pool.query(`INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by, changed_by_name) VALUES ($1, $2, NULL, $3, $4, $5, $6)`,
+          [dealId, party.personField, contactId, `Ask ${input.name.trim()} for the ${party.role}'s checks${added.created ? " (added to the CRM)" : ""}`, me.id, me.name]).catch(() => {});
+      }
+    } catch (e: any) {
+      console.warn(`[kyc-request] the person typed for ${party.companyId} was not saved to the CRM: ${e?.message}`);
+    }
+  }
   await pool.query(
-    `INSERT INTO kyc_upload_tokens (token, deal_id, contact_email, contact_name, created_by, expires_at, company_id, contact_id, request, is_test)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false)`,
-    [token, dealId, email, input.name.trim(), me.id, expiresAt, party.companyId, input.contactId || null, JSON.stringify(request)],
+    `INSERT INTO kyc_upload_tokens (token, deal_id, contact_email, contact_name, created_by, expires_at, company_id, contact_id, request, is_test, trading_entity_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false, $10)`,
+    [token, dealId, email, input.name.trim(), me.id, expiresAt, party.companyId, contactId, JSON.stringify(request), party.entityId],
   );
   const row = (await tokenRow(token))!;
 
@@ -525,7 +568,7 @@ export function reminderDue(row: Pick<TokenRow, "revoked_at" | "completed_at" | 
 }
 
 export async function sendKycReminders(now = new Date()): Promise<{ sent: number; failed: number; skipped: number }> {
-  if (!inAppAmlOn()) return { sent: 0, failed: 0, skipped: 0 };
+  if (!clientChecksOn()) return { sent: 0, failed: 0, skipped: 0 };
   const rows = (await pool.query(
     `SELECT * FROM kyc_upload_tokens
       WHERE request IS NOT NULL AND is_test IS NOT TRUE AND revoked_at IS NULL AND completed_at IS NULL
@@ -565,9 +608,9 @@ async function fileClientDocument(row: TokenRow, file: { name: string; mime: str
     try { docType = (await import("./kyc-pack-intake")).classifyPackFile(file.name); } catch {}
   }
   const doc = await pool.query(
-    `INSERT INTO kyc_documents (company_id, contact_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL) RETURNING id`,
-    [row.company_id, row.contact_id, row.deal_id, docType, `/api/chat-media/${safeName}`, file.name, file.buffer.length, file.mime || null,
+    `INSERT INTO kyc_documents (company_id, trading_entity_id, contact_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL) RETURNING id`,
+    [row.company_id, row.trading_entity_id || null, row.contact_id, row.deal_id, docType, `/api/chat-media/${safeName}`, file.name, file.buffer.length, file.mime || null,
       `${how} by ${row.contact_name || "the client"} <${row.contact_email || "unknown"}> (client checks ref ${request.ref}${docKey ? `, as ${KYC_DOCS[docKey].title}` : ""})`],
   );
   await pool.query(
@@ -641,7 +684,7 @@ async function finishRequest(row: TokenRow): Promise<void> {
   const { partyRedFlags } = await import("@shared/kyc-red-flags");
   const redFlags = row.is_test || !row.company_id
     ? partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null, ownersAnswer: request.ownersAnswer || null }], idChecks: await requestIdChecks(request.veriffSessionIds) })
-    : await loadDealRedFlags(row.deal_id, [row.company_id]).then(r => r.parties[row.company_id!] || []).catch(() => []);
+    : await loadDealRedFlags(row.deal_id, [row.company_id], row.trading_entity_id ? { [row.company_id]: row.trading_entity_id } : {}).then(r => r.parties[row.company_id!] || []).catch(() => []);
   const sent = await sendKycEmail({
     to,
     build: sentFrom => kycFinishedEmail({
@@ -751,8 +794,8 @@ kycRequestRouter.get("/api/aml/deal/:id/client-checks", signedIn, async (req: Re
       mailbox: KYC_MAILBOX,
       veriff,
       agents: agents.map(a => ({ name: a.name, email: a.email })),
-      parties: await Promise.all(found.parties.map(async p => {
-        const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(p.companyId)).catch(() => null);
+      parties: await Promise.all(found.parties.map(async ({ personField: _column, ...p }) => {
+        const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(p.companyId, p.entityId)).catch(() => null);
         const contact = p.contacts.find(c => c.id === p.contactId) || p.contacts[0] || null;
         const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff, contactName: contact?.name || null });
         return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null };
@@ -768,6 +811,7 @@ kycRequestRouter.post("/api/aml/deal/:id/client-checks", signedIn, async (req: R
   try {
     const me = await staffMe(req);
     if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    if (!clientChecksOn()) return res.status(410).json({ message: CHECKS_OFF });
     const parsed = clientCheckBody.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message || "Check the form and try again" });
     const result = await createClientCheck(String(req.params.id), parsed.data, me);
@@ -780,6 +824,7 @@ kycRequestRouter.post("/api/aml/deal/:id/client-checks", signedIn, async (req: R
 kycRequestRouter.post("/api/aml/client-checks/:token/remind", signedIn, async (req: Request, res: Response) => {
   try {
     if (!(await staffMe(req))) return res.status(403).json({ message: STAFF_ONLY });
+    if (!clientChecksOn()) return res.status(410).json({ message: CHECKS_OFF });
     const row = await tokenRow(String(req.params.token));
     if (!row || !row.request || row.is_test) return res.status(404).json({ message: "Request not found" });
     if (closedReason(row) || row.completed_at) return res.status(409).json({ message: "That request is finished, cancelled or has run out. Send a new one." });
@@ -958,7 +1003,7 @@ kycRequestRouter.post("/api/kyc-upload/:token/finish", async (req: Request, res:
 
 const SAMPLE = { dealName: "12 Example Street (sample)", partyName: "Example Trading Ltd", recipientName: "Jane Smith" };
 const SAMPLE_RED_FLAGS: KycRedFlag[] = [
-  { kind: "client_pep", label: "Said yes to the question about public roles", detail: "My father is a serving member of a foreign parliament.", source: "Client checks, ref 7K2Q9M", at: null },
+  { kind: "client_pep", label: "Said yes to the question about public roles", detail: "My father is a serving member of a foreign parliament.", source: "Client checks, ref 7K2Q9M", at: null, key: "client_pep:7k2q9m", evidence: ["answer:yes"] },
 ];
 
 async function adminMe(req: Request) {
@@ -1000,7 +1045,7 @@ kycRequestRouter.get("/api/admin/kyc-emails", adminOnly, async (req: Request, re
       mailbox: KYC_MAILBOX,
       // The addresses after the KYC mailbox, in the order they are tried.
       fallback: senderOrder([KYC_MAILBOX], Number.POSITIVE_INFINITY).slice(1).join(", then "),
-      inAppAml: inAppAmlOn(),
+      clientChecks: clientChecksOn(),
       veriff: veriffConfigured(),
       previews: kycPreviews(agent).map(p => ({ ...p, html: withLogo(p.html) })),
     });

@@ -10,6 +10,7 @@ import { saveFile } from "./file-storage";
 import { recomputeDealKycApproved } from "./deal-gates";
 import { requireMlro } from "./aml-authority";
 import { CLOSED_STATUSES, TERMINAL_STATUSES, statusSpellingsFor } from "@shared/deal-status";
+import { clientChecksSwitchOn } from "@shared/kyc-request";
 
 const router = Router();
 
@@ -1425,41 +1426,82 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
     if (d.vendor_id) counterpartyIds.push({ id: d.vendor_id, role: "vendor" });
     if (d.purchaser_id) counterpartyIds.push({ id: d.purchaser_id, role: "purchaser" });
 
-    const counterparties: any[] = [];
-    for (const cp of counterpartyIds) {
-      const r = await pool.query(
-        "SELECT id, name, kyc_status, kyc_expires_at, kyc_approved_by FROM crm_companies WHERE id = $1",
-        [cp.id]
-      );
-      if (r.rows[0]) {
-        counterparties.push({
-          ...r.rows[0],
-          role: cp.role,
-          isApproved: r.rows[0].kyc_status === "approved",
-          isExpired: r.rows[0].kyc_expires_at ? new Date(r.rows[0].kyc_expires_at) < new Date() : false,
-        });
-      }
-    }
-
-    const allApproved = counterparties.length >= 2 && counterparties.every(c => c.isApproved && !c.isExpired);
-    const missing = counterparties.filter(c => !c.isApproved || c.isExpired).map(c => c.name);
-
     // Red flags send a party to KYC4U (Woody, 2026-11-17). BGP staff signed
     // in as themselves only: PEP and sanctions findings are BGP's.
     const { contactViewer } = await import("./contact-viewer");
     const staff = (await contactViewer(req)).staff;
+    // The company that signs for each party, when the deal names one (Woody,
+    // 2026-11-18): the checks and red flags are about it, not the brand, and
+    // so is its approval (step 2: the gate's rule, loadPartyKyc).
+    const signs = await (await import("./deal-parties")).dealPartyCompanies(pool, d.id).catch(() => ({} as Record<string, string>));
+    const { loadPartyKyc } = await import("./deal-gates");
+    const { kycVerdict } = await import("@shared/party-kyc");
+    const states = await loadPartyKyc(pool, counterpartyIds.map(cp => ({ role: cp.role, brandId: cp.id, entityId: signs[cp.id] || null })));
+    const now = new Date();
+    const counterparties: any[] = [];
+    for (const cp of counterpartyIds) {
+      const st = states[cp.role];
+      if (!st?.brandName) continue; // the brand record is gone
+      const verdict = kycVerdict(st, now);
+      counterparties.push({
+        id: cp.id,
+        name: st.brandName,
+        role: cp.role,
+        kyc_status: st.status,
+        kyc_expires_at: st.expiresAt,
+        kyc_approved_by: st.approvedBy,
+        isApproved: st.status === "approved",
+        isExpired: st.status === "approved" && !verdict.approved,
+        // Who the state is about: the company that signs (BGP staff only).
+        ...(staff ? { kycName: st.name, kycSource: st.source, brandKycStatus: st.brandStatus ?? null, signsAs: signs[cp.id] ? st.name : null } : {}),
+      });
+    }
+
+    const allApproved = counterparties.length >= 2 && counterparties.every(c => c.isApproved && !c.isExpired);
+    const missing = counterparties.filter(c => !c.isApproved || c.isExpired).map(c => staff ? (states[c.role]?.name || c.name) : c.name);
     // BGP's checks before asking (Woody, 2026-11-17: "we need to do
     // everyhting we can before we ask questions on someone"): each party's
     // latest, and a run started for any party with none from the last 30
     // days. Before the red flags, so a run that has just finished counts.
+    // No check runs on a company party until the deal names the company that
+    // signs for it (Woody, 2026-11-19: "We must have the company taking the
+    // lease or who owns the property to be able to do a check").
+    const individuals = staff && counterparties.length
+      ? new Set((await pool.query(`SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) = 'individual'`,
+          [counterparties.map(c => c.id)]).catch(() => ({ rows: [] as any[] }))).rows.map((r: any) => String(r.id)))
+      : new Set<string>();
     const prechecks = staff
-      ? await (await import("./kyc-prechecks")).dealPrechecks(d.id, counterparties.map(c => c.id), {
+      ? await (await import("./kyc-prechecks")).dealPrechecks(d.id, counterparties.map(c => ({
+          companyId: c.id, entityId: signs[c.id] || null, needsCompany: !signs[c.id] && !individuals.has(String(c.id)),
+        })), {
           userId: (req as any).session?.userId || (req as any).tokenUserId || null, autoStart: true,
         }).catch((e: any) => { console.warn("[kyc-prechecks] deal view:", e?.message); return null; })
       : null;
     const redFlags = staff
-      ? await (await import("./kyc-red-flags")).loadDealRedFlags(d.id, counterparties.map(c => c.id))
+      ? await (await import("./kyc-red-flags")).loadDealRedFlags(d.id, counterparties.map(c => c.id), signs)
       : null;
+    // BGP's sign-off and KYC4U's result on each party (step 2, 18 November
+    // 2026): whether the person asking may decide, and per party whether BGP
+    // may sign it off now and why not. BGP staff only.
+    let decisions: { canDecide: boolean; mlroAppointed: boolean; parties: Record<string, { blocked: string | null; needsNote: boolean }> } | null = null;
+    if (staff) {
+      const aml = await import("./deal-party-aml");
+      const who = await aml.canDecideAml(req);
+      const parties: Record<string, { blocked: string | null; needsNote: boolean }> = {};
+      for (const c of counterparties) {
+        try {
+          const party = await aml.loadAmlParty(pool, d.id, c.role);
+          if (!party) continue;
+          const view = prechecks?.[c.id];
+          const facts = await aml.signOffFacts(pool, party, {
+            redFlags,
+            precheck: view ? { ranAt: view.ranAt, running: view.state === "running" } : null,
+          });
+          parties[c.id] = aml.signOffView(facts);
+        } catch (e: any) { console.warn("[deal-party-aml] sign-off view:", e?.message); }
+      }
+      decisions = { ...who, parties };
+    }
 
     res.json({
       dealId: d.id,
@@ -1468,11 +1510,15 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
       allApproved,
       canInvoice: allApproved,
       missing,
-      // Whether the deal's screens offer the in-app client checks, or only
-      // KYC4U (IN_APP_AML_ENABLED, the one switch).
+      // Whether the old in-app AML is on (IN_APP_AML_ENABLED), and whether
+      // the deal's screens offer the client checks, which follow their own
+      // switch since 18 November 2026 (KYC_CLIENT_CHECKS; Woody: "client
+      // checks only").
       inAppAml: !!process.env.IN_APP_AML_ENABLED,
+      clientChecks: clientChecksSwitchOn(process.env.KYC_CLIENT_CHECKS),
       redFlags,
       prechecks,
+      decisions,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

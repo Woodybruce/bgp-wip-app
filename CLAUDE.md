@@ -68,6 +68,15 @@ explicit permission.
   go on that list; CREATE TABLE still needs a boot statement or a listed
   file. `GET /api/admin/schema-drift` shows what's missing.
 - For UI changes, say explicitly when you haven't verified in a browser.
+- **The build sets its own memory limit** (`"build"` in `package.json`:
+  `--max-old-space-size=4096`, ahead of any `NODE_OPTIONS` the caller set, so
+  a caller's own figure still wins). The client build needs about 2.5 GB of
+  heap (it failed at 2304 MB and passed at 2560 MB on 18 November 2026) and
+  died with "JavaScript heap out of memory" wherever Node's default was
+  about 2 GB. The whole build peaks at about 3.9 GB of memory whether the
+  limit is 4096 or 8192, so the limit asks for no more than a passing build
+  already used. The in-app deploy builds inside the live container
+  (`server/auto-deploy.ts`); Railway's memory size was not checked.
 - **`npm run qa:regression` is the deploy gate** (`.github/workflows/auto-deploy.yml`):
   a red run skips the build, the smoke suites and the deploy job. Run it
   before pushing. Many of its tests cut one function or route out of the
@@ -246,9 +255,11 @@ The deal clock is drawn from one file,
 `client/src/components/landsec/deal-clock.tsx` (stage chip, days at stage,
 waiting on, depends on, Net Effective Rent, brief check), fed by
 `GET /api/landsec/deals`. For a Landsec viewer the Deals page, its board and
-phone cards, the deal page and the Letting Tracker join that feed by deal id
+phone cards and the Letting Tracker join that feed by deal id
 (`docs/landsec-menu-plan-2026-11-12.md`, part 4); the unit page and the older
-Lettings page use the same components. Stuck is Negotiating, HOTs or
+Lettings page use the same components. The deal page draws the same pieces
+for every letting, whoever views it, from its own read (`clockForDeal`,
+`GET /api/crm/deals/:id/page`; see "The deal page" below). Stuck is Negotiating, HOTs or
 Solicitors for 30 days, never Marketing (`landsecIsStuck`); with no rent free
 or capital recorded there is no pass or fail (`landsecBriefCheck`); a deal
 the viewer cannot see is "another deal" (`dependsOnFor`). Change a rule
@@ -627,9 +638,15 @@ CRM, Chat (`JOINT_AGENT_MENU` in `shared/landsec-menu.ts`). No Brands.
   `property-detail.tsx`) leaves out Ask ChatBGP, the layout controls,
   weekly focus, news, risk register, brand gap, BGP commentary, research,
   files, contacts, compliance, activity, tagged conversations and the
-  available units card. The deal page (`jointAgent` in `deal-detail.tsx`)
-  leaves out Image Studio, Edit, the Brand tab and profiles, files,
-  comments and history. Deals has no New Deal, and an inline change says
+  available units card. The deal page (`jointAgent` in `deal-detail.tsx`;
+  rebuilt 18 November 2026, see "The deal page" below) leaves out Edit,
+  Image Studio, Document, Delete, brand profiles, the property's folder and
+  the change log (History); it reads the stage strip, the clock (and sets
+  who the deal is waiting on, as at its tracker), the timeline less BGP's
+  AML and invoicing lines, the negotiation, the checklist and its own
+  tasks, the parties' names, the unit's files and the property's shared
+  conversation cut to the deal. (Until then this line said files, comments
+  and history were left out while the code showed them.) Deals has no New Deal, and an inline change says
   "read only" (`jointAgentDeals` in `deals.tsx`). Editing deals or the
   schedule from these pages is not built.
 - Its chat is unchanged (the section "Chat for a joint agent" below), and its
@@ -961,6 +978,24 @@ not opened to them.
   is admin-only and takes only hidden brands nothing points at (no signal, no
   contacts, no property link, no KYC file, no history). Add a new "this
   brand matters" source as a signal there, never by hand-editing archived_at.
+- **Select and Delete on Brand Explorer** (Woody, 2026-11-19: "On the brands
+  lists / logo icons can you put a select and delete button so I can bulk
+  delete them"). Admins have **Select** beside Tidy brands (not under
+  Hidden): a card then ticks instead of opening the brand, and a bar over
+  the grid has Select all (at most 500), Clear, **Delete** (type the number
+  to confirm) and Done (`BrandSelectBar` in
+  `client/src/components/brand-tidy.tsx`). `POST
+  /api/admin/brand-relevance/bulk-delete` (admin only; `bulkDeletePlan`,
+  `brandTies` in `server/brand-relevance.ts`) runs every signal again and
+  refuses if any cannot be checked; a ticked brand that no other record
+  points at is deleted for good (`storage.deleteCrmCompany`), live or
+  hidden; one that something points at is hidden instead ("Hidden by
+  hand") and the reply names what it is tied to; one already hidden stays
+  hidden. Being new or flagged (`HAND_DELETE_IGNORES`: added in the last 90
+  days, the Super Brand star or a pipeline stage) keeps a brand from the
+  sweep but not from a person's own choice. The `merged` signal (another
+  record merged into it) was added the same day and also blocks the Hidden
+  list's Delete for good. Test: `qa/regression/brand-crm-guards.test.mjs`.
 - **CRM plan for brands**: the planning records (`server/crm-engagement.ts`)
   take tenant brands as plan companies (`PLAN_COMPANY_PREDICATE`), and since
   2026-11-12 they are read as two separate views: the Landlord CRM
@@ -1047,15 +1082,86 @@ not opened to them.
     - **Planning applications and job adverts** (`server/brand-pipeline.ts`,
       rules in `shared/brand-pipeline.ts`, tables `brand_pipeline_items` /
       `brand_pipeline_checks`, job `brand-pipeline` 03:45, 60 brands a
-      night): PlanIt is searched by brand name; a record counts only when
-      the description names the brand (not as a former, existing or
-      neighbouring occupier), is about works a new occupier applies for
-      (shopfront, signage, change of use, fit-out, extraction) and is under
-      12 months old. A name too common to search (Next, Boots, any single
-      word of four letters or fewer but Pret and Itsu) is skipped and says
-      so. Job adverts come from Adzuna and are OFF until `ADZUNA_APP_ID` and
-      `ADZUNA_APP_KEY` are set; that half has never been run against
-      Adzuna. Licensing registers are council by council and are not read.
+      night): PlanIt is searched by brand name, a name of more than one
+      word (or with an ampersand) as a quoted phrase (unquoted, "Flat Iron"
+      matched 71 records, 3 naming it; quoted, the 3; no kept record was
+      lost by quoting); a record counts only when the description names
+      the brand (not as a former, existing or neighbouring occupier), is
+      about works a new occupier applies for (shopfront, signage, change of
+      use, fit-out, extraction), is not only replacing what is already
+      there, and is under 12 months old. A name too common to search (Next,
+      Boots, The Light, any single word of four letters or fewer but Pret
+      and Itsu) is skipped and says so. A tree or telecoms application
+      (PlanIt's own type, `NEVER_AN_OCCUPIER_TYPES`) never counts, and road
+      or traffic signs and "signs of" are not shop signs: a Guildford tree
+      application counted for The Light on 18 November 2026 because it said
+      "grown to the light" and "touching the road signs". **Replacing what
+      is there** (`replacesWhatIsThere`): replacement signs, lettersets,
+      fascias or shopfronts, or "replace existing", do not count (McDonald's
+      replacement lettersets were nine of the 21 kept for it), unless the
+      description also says arrival (change of use, fit-out, occupation by,
+      erection of) or names another business as the one being replaced
+      ("replacement for existing Tim Hortons" on a Starbucks application
+      counts). Stored rows are never deleted (a check only adds or
+      refreshes them), so the card and the score also leave out a stored
+      tree or telecoms row.
+      **PlanIt's rate limit** (found 18 November 2026; its API page:
+      "access to the API is rate limited", a 429 with Retry-After past it).
+      The nightly run asked about 26 times a minute and on 16 and 17
+      November the only planning hits were the 6th and 12th brands of their
+      nights: about the first dozen brands a night got an answer and the
+      rest were refused, and the live card read a refusal as "none found".
+      Every PlanIt request in the process now books a turn at least
+      `PLANIT_GAP_MS` (6 seconds) after the last (`planitTurn`; 37 searches
+      at that pace went through untroubled), and a 429 pushes every later
+      turn back by its Retry-After (60 seconds without one). Each caller
+      waits only so long: Check again 15 seconds, then "PlanIt asked us to
+      slow down; try again in N minutes"; the nightly run 5 minutes, then
+      it stops for the night (`stoppedEarly`) and the rest stay due; the
+      twelve-month check 15 minutes, then it pauses keeping its place. Do
+      not add a PlanIt request that skips the turn.
+      **Planning, last 12 months, for every brand** (Woody, 2026-11-18:
+      "can we do planning for the last 12 months?"): admins have **Planning,
+      12 months** on Brand Explorer (`client/src/components/planning-sweep.tsx`;
+      `GET`/`POST /api/admin/brand-pipeline/planning-sweep`, admin only).
+      **Check every brand** walks every tenant brand in id order from a
+      saved place (`system_settings.brand-planning-sweep`), planning only:
+      Adzuna is never asked. Each brand gets its records and planning
+      status as the nightly check saves them, and its job adverts are
+      marked "not checked", which brings it round to the nightly run (the
+      card says "job adverts not checked yet"). About 4 or 5 hours for the
+      2,764 brands. Stop keeps the place, Carry on resumes it, and a
+      finished run starts again; a run an admin started carries on after a
+      deploy (`resumePlanningSweep`, 75 seconds after boot), and nothing
+      starts one at boot or on a timer. The dialog lists every brand with
+      an application naming it in the window (sites, latest date, towns),
+      each opening its Expansion tab. Guard:
+      `qa/regression/brand-pipeline-planit-guards.test.mjs`.
+      What PlanIt holds, from a direct test of the rule on 18 November
+      2026 (about 45 expanding brands, 12 months): Starbucks and McDonald's
+      the most, then Costa, Greggs (eight genuine new sites, four of them
+      Greggs Pods), Burger King, Nando's and Domino's; Gail's two; Popeyes,
+      Five Guys, Pret and Taco Bell one each; nothing naming Wagamama,
+      Itsu, Wingstop, Black Sheep Coffee, Honest Burgers or Flat Iron. PlanIt hides the applicant's name ("See source"), so a record
+      is found only when the description names the brand; council
+      descriptions often do not, and PlanIt's Liverpool register stopped at
+      8 July 2026 (seen 18 November). Job adverts come from Adzuna
+      (`ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, set on Railway). The name is asked
+      as a phrase, one request a brand, and only adverts the brand itself
+      placed are kept (`advertCompanyMatches`); Adzuna's company filter is
+      not used: it knows only some employer names and refused the rest with
+      a 400, so until 18 November 2026 the jobs half failed for about nine
+      brands in ten (it worked for 15 of the first 179: Argos, Skechers,
+      McCarthy & Stone and others). Do not add a second request per brand:
+      Adzuna's free key is reported to allow about 2,500 calls a month
+      (unconfirmed) and the nightly run already makes about 1,800. A
+      refusal is stored with Adzuna's own words, never a key. The card says
+      what each source's check did (`pipelineCheckWords`,
+      `pipelineCheckedSummary`): a check that failed or was not run never
+      reads as "none found". At 60 a night the 2,764 tenant brands take
+      about 46 nights to go round once; a failed check is tried again only
+      after every brand never checked. Licensing registers are council by
+      council and are not read.
     - **Plans stated in the filed accounts** (`server/accounts-plans.ts`,
       checks in `shared/accounts-plans.ts`): openings, closures and capital
       spend planned after the year end, kept under
@@ -1081,7 +1187,12 @@ not opened to them.
     cards, **Store count** and **Sites on the way**
     (`client/src/components/brand-page/estate-pipeline.tsx`), lead the
     evidence column above Signals; a client login reads them (public data)
-    and only BGP staff can ask for a fresh count or check.
+    and only BGP staff can ask for a fresh count or check. The Competitor
+    set goes under whichever column is shorter, measured without it
+    (`BalancedPair` in `client/src/components/brand-page/balanced-pair.tsx`;
+    Woody, 2026-11-18, on Flat Iron's page: "can you fix this gap?"); on one
+    column it stays under the score card, and no card is stretched to fill
+    a gap. Guard: `qa/regression/brand-expansion-columns.test.mjs`.
   - **People & checks is a matched pair** (Woody, 2026-11-13: "same
     height"). On two columns Key contacts and Company checks are one height
     while both are at rest; a card marked `data-own-height` (opened with
@@ -1890,6 +2001,93 @@ appendix `docs/letting-cleanup-technical-appendix.md`):
   and wiring `actingForFromType` (Lease Disposal / Sub-Letting → tenant
   side) — both wait on his review of the integrity report's lists.
 
+## The 14 August email import's offers (Woody, 2026-11-19)
+
+Asked about the 83 offers on 4 Cathedral Walk, Woody chose "1": an admin
+Preview then Apply that clears the offers the one-off email import of
+14 August 2026 left on the Letting Tracker. Do not re-litigate. That import
+(`backfillActivityFromInteractions` in `server/viewing-sync.ts`, called from
+nowhere since) replayed three months of stored emails and wrote an
+unconfirmed offer for every email that mentioned an offer and could be pinned
+on a tracker unit: 970 of the 1,037 offers on live on 19 November 2026, on 31
+units (186 on one, 80 on 4 Cathedral Walk), all Pending with no terms, 673
+credited to no company, 256 to Landsec and 10 to BGP. None had been touched.
+
+- **The rule** is `shared/email-offer-cleanup.ts` (tests
+  `server/email-offer-cleanup.test.ts`, in `npm test`). An import row is an
+  email offer carrying the import's key `int_<interaction id>` (only the
+  import wrote it; the live inbox sweep writes `conv_` or `msg_`). It is
+  cleared only while nothing a person does shows on it: status Pending, no
+  confirmation, no agreement, no term, the import's comment word for word, no
+  viewing, `updated_at` empty, no negotiation round but the blank round 1 the
+  log writes when it is opened (`ensureRounds`), not the unit's Heads of
+  Terms offer, on no recommendation, not logged from a comment. Each failure
+  is a reason the row is **Kept**. A row credited to a tenant brand (company
+  type starting "Tenant") shows as that brand's offer on the Brand CRM, so it
+  is listed apart as **Credited to a brand** and ticked one by one (11 on
+  live, Krispy Kreme, Choux Bun, Fat Face and Asda among them).
+- **One offer per email thread** (Woody, 2026-11-19, on the first preview:
+  "these are actual offers but its picking up all the emails so shows hundred
+  of entries for each offer").
+  - The import wrote one row for every email in a thread. The 970 rows were
+    74 threads, up to 144 rows each. A thread is the unit plus the subject
+    without Re: or Fwd: (`threadKey`).
+  - `threadKeeper` keeps one row per thread as its offer: a row a person
+    worked on, else one credited to a brand, else the first email. Only the
+    copies are offered for clearing, and the preview lists each unit's
+    threads.
+  - **Not an offer** on a thread (a newsletter the import caught) clears its
+    kept row too (`threads` on apply).
+  - Apply leaves a thread's copies when its kept row has gone since the
+    preview. A preview made before this rule recorded no kept rows, so apply
+    refuses it.
+- **The tool** is `server/email-offer-cleanup.ts`, admin only
+  (`POST /api/admin/email-offer-cleanup`, `…/undo`, `GET …/runs`), mounted
+  from `server/index.ts`; never at boot or on a timer. Preview records the
+  ids it may clear (`system_settings.email_offer_cleanup:dry_run`). Apply
+  takes the ids the same admin ticked on that preview, within the hour, one
+  unit at a time in a transaction: the negotiation log's lock on each offer
+  (`unit_offer:<id>`, as `lockOffer`), the rows locked and read again, and
+  only those still untouched deleted with their rounds, each written whole
+  to `investment_comp_migration_log` (batch `email-offer-cleanup-<time>`) by
+  the statement that deletes it. Undo puts back every row of a batch whose
+  unit is still on the tracker and whose id and email key are still free.
+  Runs are kept in `email_offer_cleanup:runs`.
+- **The screen** is Settings → Letting integrity → Backfills → **Offers from
+  the 14 August email import** (`client/src/components/email-offer-cleanup.tsx`):
+  Preview, the three pills, a tick per unit (To clear) or per offer
+  (Credited to a brand), Apply with APPLY typed, Undo under Recent runs.
+- Guards: `qa/regression/email-offer-cleanup.test.mjs` (its three real-SQL
+  tests need `EMAIL_OFFER_CLEANUP_DATABASE_URL`, which the workflow sets).
+  The one-off import must stay uncalled: running it again would write the
+  rows back.
+- **Who the live sweep credits** (Woody, same day, "Are you fixing it?" when
+  asked whether to fix it). The inbox sweep credited an offer or interest
+  to the company of whoever was on the email whenever that company was
+  typed as a tenant: TfL (typed "Tenant") took offers on the arches,
+  Screwfix Direct a House of Wizard offer, Crisp Pizza a Fulai offer.
+  `chooseEmailBrand` in `server/viewing-matching.ts` is now the one rule
+  for the offer sweep, the interest sweep and the diary interest sync
+  (`server/viewing-sync.ts`): one directory brand named in the subject wins
+  over the people on the email (the diary matcher's own name reading,
+  `inferViewingBrand`), unless the subject names their brand too ("Gails X
+  Reiss" stays Gail's; apostrophes are ignored); with no brand named the
+  people decide as before; with neither, nothing is written. A contact is
+  kept only when it belongs to the brand credited. A company recorded as
+  the unit's property landlord (`crm_properties.landlord_id`) is never
+  credited. Replayed against the 67 live sweep offers on 19 November 2026,
+  29 subjects named another brand than the one credited (Kakure, Fulai,
+  Fuel, The 2 Twits, Chayan among them). Rows already written are not
+  changed. TfL is still typed "Tenant" in the CRM and is not the recorded
+  landlord of the arches (Places for London is), so an arch email naming
+  no CRM brand is still credited to TfL until its type is corrected.
+  Tests: `server/viewing-email-brand.test.ts` (in `npm test`) and
+  `qa/regression/email-sweep-brand.test.mjs`.
+- Not built, waiting on Woody: the 49 interest lines the same import left
+  on 15 units (`unit_interest`, notes starting "Backfilled from synced
+  email:"); re-crediting the sweep's earlier rows.
+- Not yet applied on live: an admin presses Preview, then Apply.
+
 ## Property page rebuild (Woody, 2026-11-13) — docs/property-page-rebuild-2026-11-13.md
 
 Woody: "everything revolves around the leasing plan and the tenancy schedule",
@@ -2347,6 +2545,43 @@ client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
   two-signature "Agreed brief" card on that page (`landsec_units.brief_*`)
   is still there and still feeds the NER floor check: retiring it in favour
   of this brief is Woody's call.
+- **Describe the brief in your own words** (Woody, 2026-11-19: "brief form
+  needs our type and populate tool"). A box at the top of the Brief tab
+  (`client/src/components/unit-brief/brief-note-fill.tsx`): the person types
+  the brief or pastes the client's email, presses Fill the brief, and the
+  Brief boxes (title, client, objective, location, criteria, priority
+  categories, instruction, success measures, the three dates and both
+  deliverables, targets and priority A wanted) and the Commercials fill. It
+  only fills the form: the dialog's Save is the only save, and the read-back
+  lists what was filled and what could not be placed, with the reason.
+  `POST /api/unit-briefs/read-note` (`server/unit-brief-workspace.ts`) is
+  keyed by the unit, so it works before the brief exists, and is open to
+  whoever may change the brief (`briefAccess`, then `canEditTerms`: BGP
+  staff, a client login on its own properties, a joint agent on its schemes;
+  both gateways already open `/api/unit-briefs/`). The reader
+  (`server/brief-note-reader.ts`) is Anthropic only, called directly, one
+  forced-tool call a read, capped a day (`BRIEF_NOTE_READER_DAILY_CAP`,
+  default 300, 0 = off), and is sent only the note, the boxes, the unit's
+  category list, today's date and the unit and scheme names. Every value is
+  checked against the note before it fills (`shared/brief-note.ts`, tests
+  `server/brief-note.test.ts` in `npm test`): a text box takes a span of the
+  note or wording that is at least 80% the note's own; a date, a count and
+  every figure come with the words they were read from; money is a year's
+  (a figure the words make a month's or a square foot's is listed back,
+  never filled); rent free must stand in months, the lease in years, turnover
+  rent as a percentage; a priority category must be on the unit's list
+  (Landsec's agency brief list at a Landsec scheme) and asked for in the
+  note, and is added to those already chosen. The older Draft with AI and
+  Upload the client's brief stay as they were (no literal checks: they fill
+  for review). Guard: `qa/regression/brief-note-fill.test.mjs`.
+- **The figures at the top of the Brief tab are buttons** (Woody, same day:
+  "the pills at the top are not clickable"). The six section pills already
+  switched sections: pressed in a browser on live, as Woody, on deal #4213's
+  brief from the deal page, each one did. What did nothing were the figures
+  under them, so Targets, Priority A, Meetings and Inspections now open the
+  Targets section showing those targets ("Showing … Show all"), a deadline
+  figure goes to its date box, and the sign-off chip by the title opens
+  People & sign-off.
 
 ## Offer to Solicitors on the Letting Tracker (Woody, 2026-11-12)
 
@@ -2477,9 +2712,11 @@ same day, never live). Do not re-litigate. Tests:
   deal with no party closes as before. It cannot send the request by itself
   until KYC4U agrees to take requests some other way, or the in-app checks
   (`IN_APP_AML_ENABLED`, ComplyAdvantage and Veriff) are switched back on.
-  While in-app AML is on, each button is **Send client checks** instead
-  (`amlInApp`, read from `inAppAml` on `GET /api/kyc/deal/:id/status`); see
-  "Client checks" below.
+  While the client checks are on (their own switch since 18 November 2026,
+  on unless `KYC_CLIENT_CHECKS=off`), each button is **Send client checks**
+  instead (`clientChecks`, read from `clientChecks` on
+  `GET /api/kyc/deal/:id/status`), and a party with a red flag keeps the
+  KYC4U request; see "Client checks" below.
 - **Create billing entity** (`server/billing-entity.ts`,
   `POST /api/billing-entities { brandId, companyNumber }`, `brandId` the
   landlord or brand, BGP staff signed in as themselves;
@@ -2718,9 +2955,23 @@ it was built ages ago and wasnt working properly"; "not that clear or user
 friendly"; then "check this all against HMRC guidance" and "FCA and bank of
 England Guidance". The in-app request an agent sends a party's contact, the
 client's own page, reminders, replies by email, and the admin's test send.
-It is part of in-app AML, so the agent's side shows only while
-`IN_APP_AML_ENABLED` is on; the client's page and the admin's test work
-either way. Server `server/aml-portal.ts`; every email's words and the
+**It runs on its own switch** (Woody, 18 November 2026, shown that the
+deal card offered only KYC4U on live, chose "client checks only"): on
+unless `KYC_CLIENT_CHECKS=off`, whether or not the old in-app AML
+(`IN_APP_AML_ENABLED`) is on. One rule, `clientChecksSwitchOn` in
+`shared/kyc-request.ts` (`clientChecksOn` in `server/aml-portal.ts`): the
+retired-AML switch lets the staff addresses in `KYC_CLIENT_CHECK_ROUTES`
+through (the deal's client checks, remind, cancel, the admin's mailbox read;
+the rest of `/api/aml/` stays retired), sending and reminding answer 410
+while it is off, the reminders and the KYC mailbox reader follow it, and the
+deal card, Kick off AML and the admin card read `clientChecks`. The old
+in-app AML stays off on live: no screening of every party when a deal is
+made or moves to HOTs or Solicitors, no re-screens, no old checklist
+screens. A party still clears the card's "AML approval needed" only when
+its `kyc_status` reads approved, which with in-app AML off only KYC4U's
+sync writes. Until 18 November the agent's side showed only while in-app
+AML was on, which it is not on live. The client's page and the admin's test
+work either way. Server `server/aml-portal.ts`; every email's words and the
 page's rules `shared/kyc-request.ts`; client page
 `client/src/pages/kyc-upload.tsx` (public, `/kyc-upload/:token`); agent
 dialog and request rows `client/src/components/kyc-client-checks.tsx` (on
@@ -2738,7 +2989,7 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   on the party, with the checklist items it evidences ticked for the MLRO to
   confirm, the KYC pack's rule); the reminder and the reply reader never ran
   (reminders daily 10:00, `kyc-client-reminders`; the KYC mailbox read every
-  15 minutes; both only while in-app AML is on); the agents were never
+  15 minutes; both only while the client checks are on); the agents were never
   copied (the deal's agents, `internal_agent_ids` / names and the fee split,
   never BGP House, BGP addresses only, plus the sender); the links pointed at
   app.brucegillinghampollard.com (now `PUBLIC_APP_URL`, default chatbgp.app);
@@ -2870,9 +3121,10 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   an MLRO rejection blocks. Do not add a hold at exchange or completion.
 - **The gates**: `/api/kyc-upload/*` is no longer on the retired-AML list and
   passes the client gateway (the token is the only key, and no live token
-  exists while in-app AML is off except an admin's test). Every other client
-  checks route is under `/api/aml/` (retired while off) and is BGP staff
-  only (`contactViewer`).
+  exists while the client checks are off except an admin's test). Every
+  other client checks route is under `/api/aml/`, let through the retired
+  switch by `KYC_CLIENT_CHECK_ROUTES` while the client checks are on, and is
+  BGP staff only (`contactViewer`).
 - **How BGP runs AML** (Woody, 2026-11-17: "basically we do the normal
   checks expected and if there is a red flag then we get KYC4U"): the
   client checks and screening in the app for the routine checks; a red flag
@@ -2973,10 +3225,13 @@ Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
   ordinary disputes or a past insolvency); a finding is kept only when its
   link is on a site the search actually read (`checkWebAnswer`), and anything
   said without one is only counted. ComplyAdvantage: used when its keys are
-  set; a refused login is remembered against a hash of the keys
-  (`system_settings.kyc_precheck_ca_refusal`) and not tried again for a day
-  or until different keys are set, because repeated logins keep its account
-  locked. ComplyAdvantage was blocked (429) on 17 November 2026.
+  set, through the Mesh client (next section), with each subject sent as a
+  person or a company and a person's year of birth; a refused sign-in (and
+  only that: `errorKind === "sign_in"`) is remembered against a hash of the
+  keys (`system_settings.kyc_precheck_ca_refusal`) and not tried again for a
+  day or until different keys are set, because the older login's repeated
+  failures keep its account locked. ComplyAdvantage was blocked (429) on
+  17 November 2026.
 - **Stored** as a `kyc_investigations` row (`result.kind = 'precheck'`, with
   `sanctionsScreening` so it counts as a screening; `sanctions_match` true,
   false, or null when the lists could not be loaded), a `kyc_audit_log` line
@@ -2988,12 +3243,18 @@ Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
   concern, an owner registered offshore) and lines in KYC4U's note
   (`precheckNote`).
 - **When it runs**: when a BGP person (signed in as themselves) opens the
-  deal's AML card and the party has no run from the last 30 days
+  deal's AML card and the party has no run from the last 30 days (on the
+  deal page that is the **Parties & AML** pill: since 18 November 2026
+  nothing else on the page reads the AML status; before, the page read it
+  on every open)
   (`dealPrechecks` from `GET /api/kyc/deal/:id/status`, which returns
   `prechecks`; the Kick off AML step after New Deal or a handover reads the
   same status, so a run starts the moment a deal is saved); on **Run again** (`POST /api/kyc/deal/:id/prechecks`, BGP
-  staff only, one party or all); and from KYC4U's prefill (`kyc4uPrefill`
-  starts one if needed and waits up to 20 seconds). Never on a timer or at
+  staff only, one party or all; until 18 November 2026 the retired-AML
+  switch in `server/index.ts` answered it 410 while in-app AML was off, so
+  its exception now names `status` and `prechecks`); and from KYC4U's
+  prefill (`kyc4uPrefill` starts one if needed and waits up to 20 seconds).
+  Never on a timer or at
   boot. A daily allowance (`KYC_PRECHECK_DAILY_CAP`, default 40 runs, 0 =
   off) and `KYC_PRECHECKS=off` stop it. A run is in memory while it goes: a
   restart loses it and the next view starts it again.
@@ -3043,6 +3304,536 @@ Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
   Companies House record itself, sanctions screening of officers' other
   appointments, a check that a listed market abroad is equivalent, and reading
   trusts, partnerships or charities as anything but a company.
+
+## ComplyAdvantage Mesh (Woody, 2026-11-18)
+
+Woody: "need to get the API for comply back up and running". The client
+(`server/comply-advantage.ts`, tests `server/comply-advantage.test.ts`, in
+`npm test`) had never screened anyone: it posted to `/v2/searches`, an older
+ComplyAdvantage address Mesh does not have (it answered 405), and signed in
+with the username and password whose failures locked the account. Rebuilt
+from Mesh's own documentation (docs.mesh.complyadvantage.com, read
+18 November 2026):
+
+- **Sign-in**: API credentials, `COMPLY_ADVANTAGE_ACCESS_KEY` and
+  `COMPLY_ADVANTAGE_SECRET` (made in Mesh: Settings > Access Management > API
+  Credentials), exchanged at `POST /v3/token`, Mesh's recommended way. The
+  token lasts a day with no refresh; a new one is taken an hour early. The
+  older `COMPLY_ADVANTAGE_USERNAME` / `PASSWORD` / `REALM` (`POST /v2/token`)
+  is used only when no API credentials are set. A refused sign-in (400, 401,
+  403 or 429) pauses every sign-in with those keys: 15 minutes, an hour for
+  the older login's 429 lockout, 5 minutes for API keys' 429 (Mesh's ordinary
+  rate limit). New keys start afresh at once.
+- **Screening**: `POST /v2/workflows/sync/create-and-screen?last_sync_step=ALERTING`.
+  A person goes as `person.full_name` (a register's "DOE, Jane" turned round,
+  a leading Mr or Mrs dropped), a company as `company.legal_name`, a subject
+  of unknown kind as Mesh's `undefined.name` (`subjectKind`: the caller's
+  kind, else a corporate word, else a person's role). Ongoing monitoring is
+  off (`monitoring.entity_screening.enabled: false`): the app screens again
+  when it needs to. `COMPLY_ADVANTAGE_SCREENING_CONFIG_ID` names the screening
+  configuration (optional; without it Mesh chooses).
+- **One Mesh customer per name per London day** (`meshExternalId`:
+  `bgp-<p|c|u>-<hash of kind, name, year of birth>-<yyyymmdd>`), never a CRM
+  id. The same name the same day answers 409 or the first screen's result;
+  a 409 reads the workflow its body names (`GET /v2/workflows/:id`), else the
+  name is screened under a fresh record. **Every screen is a customer record
+  and a search on BGP's Mesh contract, and every hit opens a case in Mesh**
+  for someone to close there; nothing in the app closes it.
+- **The answer**: `step_details["customer-screening"].step_output`:
+  `NO_PROFILES` is clear, `HAS_PROFILES` a possible match with Mesh's
+  `aml_types` read as sanctions, pep, adverse_media, warning or
+  fitness_probity (`amlKind`). A hit's matched profiles are read from its
+  alerts (`GET /v2/alerts/:id/risks`, up to two alerts): one match per kind
+  per profile, with the matched name, the list or source name, and the score
+  only when it is between 0 and 1 (Mesh does not document its scale, and the
+  KYC screens read 0.9 and above as strong). A person's profile whose every
+  date of birth is more than a year from the subject's is set aside
+  (`setAside`), the free lists' rule; all set aside is clear. A screen Mesh
+  skipped (risk rated prohibited) or did not finish is an error, never
+  clear; profiles that cannot be read fall back to the `aml_types`.
+- **Calls**: four screens at a time; a refused token is replaced once, a 429
+  waited out twice (Retry-After), a server error retried once. A 403 (the
+  login lacks "Create and screen customers"), 404 or 405 stops the batch and
+  pauses screening for 10 minutes. `screenNames` never throws: a screen that
+  did not run is an `error` line with `errorKind`.
+- **Connection check** (reads only, creates nothing in Mesh):
+  `checkComplyAdvantage`, behind `GET /api/admin/comply-advantage/check`
+  (admins) and the ComplyAdvantage card of **Test Apollo / Xero / CH /
+  ComplyAdvantage** on Subscriptions & APIs (`/subscriptions`, Admin; the
+  ping always ran it, the page now shows it): signs in and lists the
+  screening configurations (Mesh's `/v2` list, and its `/v3` list for
+  accounts on its newer pipeline when the first is empty), and says whether
+  the one named on Railway is among them, with what each screens and how
+  closely (`describeMeshConfiguration`: per collection its risks and its
+  match threshold or fuzziness, shown 0 to 100 as Mesh's screens show them,
+  its filters and options, and the results limit). On live on 18 November
+  2026 the API keys signed in and `/v2` listed no configuration; later that
+  day Woody made **"chat bgp"** (`01a1f01a-caf3-715d-aedc-e55000f6e363`, the
+  only one, so Mesh uses it with nothing named on Railway): a match-threshold
+  configuration, one collection ("Chat") holding every risk (sanctions,
+  political exposure, terrorist financing from media and more) at **50**
+  ("Medium" on Mesh's slider; 25 is "Broad"), all three filters off (no year
+  of birth, year of birth sensitivity, country mismatch). Mesh's screen
+  offers one threshold per collection and he could only move the slider
+  (Woody, 2026-11-18: "All I can do is move the slider that's it"), so it
+  stays at 50, ComplyAdvantage's starting point for sanctions (60 for PEPs and
+  90 for everything else, from their "Recommended Match Threshold Starting
+  Points"; never below 40); more media hits to close in Mesh is the price.
+  Keep the three filters off while the app sends names only: Mesh's score
+  rises sharply with year of birth and country (their example: a common name
+  34 alone, 67 with a country, 95 with a year of birth), so a name-only
+  screen of a common name can score under 50; the free UK and US sanctions
+  lists in the checks before asking still catch exact names. Offered, not
+  built: separate collections through Mesh's API (sanctions 50, PEPs 60, the
+  rest 90), the app applying those bars to red flags, and sending year of
+  birth and country. The old `/api/comply-advantage/probe`, which posted test
+  searches to seven addresses for any login, is gone.
+- Callers: BGP's checks before asking (`server/kyc-prechecks.ts`, live while
+  in-app AML is off), and with in-app AML on, the KYC orchestrator, KYC
+  Clouseau and the weekly re-screen job. Not run against Mesh from a build
+  machine (no keys here): the first real answer comes once API credentials
+  are on Railway. Not built: closing Mesh cases from the app, Mesh's
+  webhooks, passing a date of birth or country to Mesh (a partial date may
+  be refused; the year is used to set profiles aside instead).
+
+## The company that signs and who to ask (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
+
+Woody, on the deal page: "most importantly adding the billing entities so can
+AML. Also when doing that if the AML hasnt started need the ability to add in
+all the info so it can start such as email phone numbers etc". He answered
+"go" to step 1 of the review, which included its new columns (decision 1).
+Rules: `shared/deal-parties.ts`; reads and writes: `server/deal-parties.ts`;
+screens: `client/src/components/deal-parties.tsx`. Tests:
+`server/deal-parties.test.ts` (in `npm test`),
+`qa/regression/deal-parties-guards.test.mjs`.
+
+- **The company that signs** for a party is a `crm_trading_entities` row
+  filed under the party's brand, stored on the deal as
+  `<role>_trading_entity_id` (landlord, tenant, vendor, purchaser; boot
+  MIGRATIONS, nullable). It is NOT `<role>_entity_id`, the Xero billing
+  contact made from it. A deal with none set (every deal before 18 November
+  2026) reads the brand as before. Every deal save goes through
+  `checkPartyCompanies` (`createDeal` and `updateDeal` in
+  `server/letting-service.ts`): a company sent for a party that is not filed
+  under it is refused (400, `PartyCompanyRefusal`), and one the deal carried
+  that no longer sits under its party (the party changed) is cleared. A
+  client login neither reads nor writes the four fields
+  (`CLIENT_HIDDEN_DEAL_AML`); a joint agent is sent neither them nor the Xero
+  billing contacts (`JOINT_AGENT_HIDDEN_DEAL_FIELDS`).
+- **The person to ask** is `<role>_contact_id`, a contact filed under the
+  brand; with none set, the deal's client contact when that person is filed
+  under the brand. A person typed (the party box's Add someone, or Someone
+  else in Send client checks) is saved to the CRM under the brand by
+  `findOrAddPartyPerson`: someone already there with that email is used and
+  gains blank fields only; a new contact carries a note saying why it was
+  added. Someone else in the client checks also becomes the party's person
+  when the deal names nobody.
+- **What is missing** (`partyGaps`): a company party with no company that
+  signs set needs it, whatever the brand holds (since 19 November 2026; until
+  then a brand with a Companies House number counted, see "The AML box"
+  below); every party needs a person to ask, with an email. An individual's
+  date of birth and address are the client checks' to gather, not asked here.
+- **Routes** (BGP staff signed in as themselves; `/api/deals/` is on no client
+  gateway list): `GET /api/deals/:id/parties` (each party's brand, the company
+  set, what to offer, the brand's companies, the Xero contact, the person,
+  the brand's people, the gaps), `PUT /api/deals/:id/parties/:role`
+  (`companyId`, `personId`, `xero`: set, or clear with null),
+  `POST /api/deals/:id/parties/:role/person`. Each change is a
+  `deal_audit_log` line. The offer when none is set: the company on the
+  unit's lease (the schedule row's `tenant_entity_id`, for the tenant, only
+  when filed under it), else the brand's one main company, else its only one.
+- **The AML records say which company they are about**: `trading_entity_id`
+  on `kyc_investigations`, `kyc_documents` and `kyc_upload_tokens` (the audit
+  log's `entity_kind` / `entity_id` already existed). BGP's checks before
+  asking run on the company that signs when the deal names one (keyed by
+  brand and company; read by its own Companies House number; its accounts
+  from its own filing history through `pickLatestAccountsFiling`; the
+  brand-page lookup, which writes the brand's number, never runs for it).
+  The red flags read that company's screening. The client checks name it as
+  the party and file the client's uploads on it. KYC4U's request names it as
+  the party, adds "Contracting company" (and, for a counterparty, the person
+  to ask) to the note, and lists its documents and the brand's general ones,
+  never another company's. The brand's own screens read only the brand's rows
+  (`trading_entity_id IS NULL`: the CDD form, the orchestrator's PSC read, the
+  brand page's Experian read).
+- **Screens**: the deal page's Parties card, under each party, has Signs as,
+  Billed to and Ask, and what is still needed; Fill in or Change opens the
+  party box (the company: a suggestion, Use, Find it at Companies House; Bill
+  to it in Xero; Who to ask: pick, or Add someone). The KYC card and the Kick
+  off AML step show "Before the checks can start" per party
+  (`PartyReadyToStart`). The deal form's billing entity boxes set the company
+  that signs when a company filed under the party is picked or created
+  (`XeroContactPicker`'s `onChange(contact, company)`); changing a party
+  clears it.
+- Not run against Companies House or Xero from a build machine; checked in a
+  browser against a local copy on 18 November 2026. Approval, BGP sign-off and
+  KYC4U's result are step 2, the next section.
+
+## Approval on the company that signs, BGP sign-off, KYC4U results (Woody, 2026-11-18)
+
+Woody, asked whether KYC4U's documents are fetched and filed from their site
+(they were not; statuses came only through the bookmark), answered "Ok go
+ahead with your suggestions I will do the requests": step 2 of
+`docs/deal-page-review-2026-11-18.md`. Do not re-litigate. Rules (pure):
+`shared/party-kyc.ts`; sign-off and KYC4U's result: `server/deal-party-aml.ts`;
+screens: `client/src/components/deal-party-aml.tsx`. Tests:
+`server/party-kyc.test.ts` (in `npm test`),
+`qa/regression/deal-party-aml-guards.test.mjs`.
+
+- **A party is approved on the company that signs** when the deal names one
+  (`partyKycState`, read by `loadPartyKyc` in `server/deal-gates.ts`): that
+  company's own record in `crm_entity_kyc` (the per-company KYC table of
+  Delivery 5), else, while it has none, the brand's state only when it is the
+  brand's own legal company (`sameLegalCompany`: the same Companies House
+  number, or the company's name is the brand's `uk_entity_name` or Companies
+  House name), else "no checks run". A company counts only when filed under
+  the party's brand. A brand the MLRO rejected blocks whatever company is
+  named. With no company that signs the party is the brand, as before. Every
+  caller of `checkCounterpartyAml` passes the deal's id or the companies in
+  the save (`signingCompanies`); `recomputeDealKycApproved` and
+  `recomputeDealsForTradingEntity` re-derive `kyc_approved`. The deal's AML
+  status reply (`GET /api/kyc/deal/:id/status`) reads the same state, and for
+  BGP staff sends `kycName`, `kycSource`, `brandKycStatus`, `signsAs` and
+  `decisions` (who may decide; per party whether BGP may sign it off now).
+  `crm_deal_entities` stays a shadow table nothing writes and the gate never
+  reads (`server/aml-shadow-gate.ts`).
+- **BGP's sign-off** (`POST /api/deals/:id/parties/:role/sign-off { note }`)
+  and **KYC4U's result** (`POST …/kyc4u-result`, multipart) are the MLRO's:
+  the nominated officer once one is appointed in AML settings, admins until
+  then (`amlActor`), BGP staff signed in as themselves; the result's route
+  checks that before multer reads a file. Sign-off is refused
+  (`signOffDenial`, in this order) for a rejected party, one already approved
+  and in date, records the red flag read could not reach, a request raised
+  with KYC4U on this deal and not yet answered (`kyc4u_drafts`, 180 days),
+  the party's or the deal's red flags, a higher-risk file (`isHigherRisk`),
+  checks before asking still running, not run, or more than 30 days old, and,
+  while the client checks are unfinished, a note under 10 characters. It
+  writes the company that signs through `approveEntityKyc` (re-check reminder
+  listed under the brand, an earlier open one for that company completed),
+  else the brand's `kyc_*` columns, reminder and KYC audit line, then a
+  `deal_audit_log` line (`aml_sign_off`) and the recompute.
+- **KYC4U's result** is Approved, Rejected or More information needed
+  (`KYC4U_RESULTS`), a date (not in the future; dated today it is timed as
+  recorded), a reference, a note and up to 10 files of 25MB. An approval needs
+  a file (KYC4U's report or email); anything else a file or a note of 10
+  characters. Files go to `kyc_documents` on the party (the company that signs
+  when set; type `kyc4u_report` unless the name says otherwise). The result is
+  a `kyc4u_requests` row (list `manual`) applied by the mirror, so a later
+  KYC4U request for the party replaces it as before; the reply says when it
+  did not take effect. **A result about a company that is not the brand's own
+  legal company has no `company_id`** (`company_id_manual` is the brand), so
+  the mirror's brand pass never applies it to the brand.
+- **The mirror's company pass** (`mirrorKyc4uCompanyStatuses`, inside
+  `mirrorKyc4uStatuses`): rows with `kyc4u_requests.trading_entity_id` (boot
+  migration) set the company's own record, approved, rejected or in review
+  (a still-valid approval kept), idempotent on `evidence.kyc4uKey`. Both
+  passes take the latest row by date, then the latest recorded. **Synced
+  rows** are matched to a company under the matched brand only on a single
+  fit by Companies House number or full name (`pickTradingEntity`) and still
+  count for the brand as they always did: unlike a result added by hand, a
+  synced approval of one of a brand's companies also approves the brand (the
+  matcher's long-standing behaviour, kept so no deal changes).
+- **Screens**: on the AML card (both layouts) and in Kick off AML, the MLRO
+  or an admin gets **Sign off** (hidden once approved, greyed with the reason
+  when refused) and **Add KYC4U result** under each party (`PartyDecisions`).
+  The card says "Checks on <company>, the company that signs", says when a
+  different company has no checks though the brand is approved, and hides
+  "Before the checks can start" once a party is approved.
+- **Connect KYC4U is back** (My BGP → KYC4U pill, admins, "Automatic sync"):
+  Connect, Sync now, Disconnect and **Copy the approval link for KYC4U's IT
+  admin** (`GET /api/kyc4u/admin-consent-link`: Microsoft's v2.0 admin
+  consent for `Sites.Read.All`, `User.Read` and `offline_access` only, never
+  `.default`, which would ask for the app's mail permissions in KYC4U's
+  tenant; it returns to `PUBLIC_APP_URL`/api/kyc4u/callback). Connect fails
+  with "Need admin approval" until KYC4U's admin approves (why it was removed
+  on 6 October 2026). Woody is sending the link.
+- **KYC4U's documents** (`copyKyc4uDocuments`, at the end of each sync):
+  request folders (`REQ… <entity>`) at a library's root or one folder down,
+  matched to a brand (and the company that signs) by the same matchers; each
+  file copied into the store as `kyc4u-doc-<hash of drive and item>-<name>`
+  and filed in `kyc_documents` once (type from its name, else its section
+  folder), on the deal its request was raised from when a draft names the
+  REQ number. At most 200 files a sync, none over 25MB; unmatched folders are
+  counted, not copied. Read only on KYC4U's side. Not run against KYC4U from
+  a build machine (it cannot be until their admin approves): tried locally
+  against a fake site on 18 November 2026.
+- Not built: the MLRO clearing a rejection from the deal (the old company
+  reject and approve routes are retired with in-app AML). The AML dashboard
+  (step 6) is the next section.
+
+## The AML dashboard (Woody, 2026-11-18)
+
+Woody: "a dashboard of all AML / KYC live and finished checks ... nice and
+easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
+"go ahead with your suggestions", in the place the review proposed (decision
+5: a pill on Deals). Rules (pure): `shared/aml-dashboard.ts`; feed:
+`server/aml-dashboard.ts`; page: `client/src/pages/aml-dashboard.tsx`, the
+**AML** pill on the Deals hub (`/deals/aml`, `deals-hub.tsx`). Tests:
+`server/aml-dashboard.test.ts` (in `npm test`),
+`qa/regression/aml-dashboard-guards.test.mjs`.
+
+- **Who**: BGP staff signed in as themselves (`staffMe`, `contactViewer`) on
+  `GET /api/aml-dashboard` and `GET /api/aml-dashboard/party`. The address is
+  on no client gateway list and outside the retired-AML switch (which matches
+  `/api/aml/` only). The pill is never offered or mounted for a client login,
+  and `/deals/aml` sends one to the deal list. It reads; it writes nothing.
+- **Rows**: one per party (landlord, tenant, vendor, purchaser) of every deal
+  not withdrawn or archived, completed or invoiced ones changed in the last
+  90 days included (`AML_DASHBOARD_CLOSED_DAYS`), an investment deal only from
+  Solicitors (`dealLeftTrackerSql`), at most 2,000 deals. Each party is read
+  the deal card's way and in one batch for every deal: its state through
+  `loadPartyKyc` (the company that signs when the deal names one), its red
+  flags by `partyRedFlags` and `dealRedFlags` on the same records the card
+  reads (a deal record's flag is listed on each of its parties as "Deal:
+  …"). A record that could not be read is listed (`unchecked`), never read
+  as no red flags.
+- **One stage rule** (`amlStage`): a decision first (rejected; approved,
+  Expiring within `AML_EXPIRING_DAYS` (30) of its re-check date, Expired past
+  it), then with KYC4U (a request raised on this deal and not answered, or the
+  party in review AND KYC4U's own latest status for it, on the company that
+  signs or the brand, still reading as with them: `kyc4uInReview`), client
+  finished, client checks sent (a request not cancelled), BGP checked (checks
+  before asking in the last 30 days), else not started. A bare `in_review`
+  is not with KYC4U: on live on 18 November 2026, 552 of the 615 parties
+  first shown as With KYC4U had no KYC4U request at all (169 of them
+  Landsec's, 65 Hammerson's), their status left by the in-app AML retired in
+  October. **HMRC's timing** (`amlDue`, from `KYC_TIMING`): a landlord or
+  seller on any live deal, a tenant or buyer from Heads of Terms. **Pills**
+  (`amlBucket`): To do (due, not started or only BGP checked), In progress
+  (client sent or finished, with KYC4U), Done (approved or rejected), Expiring
+  (expiring or expired), Not due yet, and **Closed, not checked**
+  (`amlDealClosed`: a completed or invoiced deal whose party was never
+  approved or rejected; a party approved at the time stays Done). Closed
+  deals were 271 of the 769 parties To do on live on 18 November 2026: a past
+  gap for the MLRO, not work on the To do list. **Waiting on** (`amlWaitingOn`) and the
+  days since anything moved (`daysSince`: the checks, the requests, KYC4U
+  drafts, the approval). Mine = the deal's `internal_agent_ids` or names.
+- **The page**: the pills with counts, All / Mine, a search (`rowMatches`), a
+  table on a computer and cards on a phone; a row opens the party's trail:
+  the deal's own AML card (every button: checks before asking, client checks,
+  KYC4U request, Sign off, Add KYC4U result), the documents on the party's
+  KYC record and its history (the KYC audit log and the deal's AML lines).
+  The view is kept in the address (`?view=`, `?who=mine`), replaced, so a pill
+  is never a Back step. The KYC4U grid stays on the KYC4U pill of My BGP.
+- Checked in a browser against a local copy on 18 November 2026 (desktop and
+  an iPhone profile). Not built: the stage on the deal page's own card (it
+  shows the state, not this chain), and a count of To do on the side bar.
+
+## The AML box: the company, red flags in detail, set aside (Woody, 2026-11-19)
+
+Woody, on deal #4213 (T4 at Brent Cross, Hammerson the landlord), both parties
+red-flagged for KYC4U: "we havent got the actual company info? We must have
+the company taking the lease or who owns the property to be able to do a
+check. in this box we need to see the company info. We also need to see the
+detail of the redflag and have the option to ignore with a comment as comply
+advantage is picking up things that are not really a massive problem. Also
+API a problem on companies house?", then "On the deals page the landlord and
+tenant have numbers but its not clear if there is a billing company? The
+brand is different normally to the billing or contracting entity which is
+critical for the AML", and "clean up the design". Do not re-litigate.
+Guards: `qa/regression/aml-box-company-and-flags.test.mjs`; unit tests in
+`server/kyc-red-flags.test.ts`, `server/kyc-prechecks.test.ts`,
+`server/companies-house-gate.test.ts` and `server/deal-parties.test.ts`.
+
+- **No check without the company that signs.** A company party's checks
+  before asking, client checks and KYC4U request wait until the deal names
+  the company taking the lease (tenant), the one that owns the property
+  (landlord), selling or buying (`SIGNING_COMPANY_WORDS` in
+  `shared/deal-parties.ts`). The brand's own Companies House record never
+  stands in for it (it did until this day: Hammerson's checks ran on
+  HAMMERSON PLC, T4's on T4 UK FRANCHISE LTD). `dealPrechecks` gives such a
+  party the state `needs_company` and starts nothing; Run again answers
+  `needs_company`; `createClientCheck` and `kyc4uPrefill` refuse with 409;
+  `loadDealRedFlags` and the AML dashboard read no brand-level check's
+  findings for it (the brand's KYC record flags still show). An individual
+  needs no company. The brand's own registered company is offered as one
+  choice (`brandOwn` on the party view, when no company filed under the
+  brand carries its number), saved under the brand from Companies House with
+  no Xero contact (`xero: false` on `POST /api/billing-entities`; "Bill to …
+  in Xero" makes one), alongside the company on the lease, the brand's main
+  company and Find it at Companies House.
+- **The Parties card** (`DealPartiesCard` in `deal-detail.tsx`,
+  `DealPartyLines` in `deal-parties.tsx`): BGP acts for, then one box per
+  party: the brand picker, then **Company that signs**, **Billed to (Xero)**
+  and **Who to ask** as labelled rows, a missing one in amber with Use it for
+  a suggestion. The deal-level Xero contact shows only when one is held. The
+  Overview's dates and terms are one card in the page's type scale, labels in
+  sentence case ("Last contact", not "Last Interaction").
+- **Company checked** (`PartyCompanyFacts` in `deal-aml-status.tsx`, from
+  `precheckCompany` in `shared/kyc-prechecks.ts`): the company the checks
+  were about, as the register gives it: name and number with the register
+  link, type, status, incorporation, registered office, business (common SIC
+  codes in words), listed and what it means (reg 28(5), simplified due
+  diligence under reg 37), directors, owners, the chain above it, latest
+  accounts and the documents on the KYC record.
+- **Companies House's limit.** It allows a key 600 requests in five minutes
+  and answered 429 to the first call of both checks: one check makes about 50
+  calls and nothing paced them. Every `chFetch` now waits its turn in one
+  queue (`server/companies-house-gate.ts`): a burst of 60 then 1.8 a second,
+  Companies House's own count (`X-Ratelimit-Remain` / `-Reset`, which counts
+  every process on the key) with 25 kept in reserve, and a hold after a 429
+  until the window ends, then one more try. A caller waits up to 30 seconds
+  for a turn, then gets "BGP's allowance of 600 requests in five minutes is
+  used up; try again in about N minutes"; the checks before asking read the
+  register inside `withChPatience` (five minutes), and their document
+  downloads wait in the same queue. A check that could not read Companies
+  House for a passing reason (`precheckUnfinished`: a 429, a 5xx, a time-out;
+  a 404 is an answer) is not finished: the box says so, and the next view
+  runs it again after `PRECHECK_RETRY_MINUTES` (10), at most
+  `PRECHECK_AUTO_RUNS_A_DAY` (4) runs a day for one party.
+- **Each flag has a key and its evidence** (`KycRedFlag.key`, `evidence`,
+  `facts`): what it is about, the same from one run to the next (the subject
+  and the kind of finding: `ca:<name>`, `web:adverse_media:<name>`,
+  `record:high_risk`, `deal:edd` …), and what is behind it (a list entry, a
+  web address, a ComplyAdvantage profile, a status). **Detail** shows the
+  facts: the ComplyAdvantage profiles matched with their source and match
+  score and any article (kept on a check since this day; an older check says
+  it kept only the kinds), the web page, the register entry, or for a flag
+  read from the brand's KYC record its history lines (who wrote it, when:
+  T4's three were the retired in-app screening's of 23 and 24 September).
+- **Set aside with a comment** (the MLRO's, as the sign-off is: `decider` in
+  `server/deal-party-aml.ts`; admins until an MLRO is appointed).
+  `POST /api/deals/:id/red-flags/set-aside { role?, key, comment }` reads the
+  flags again and acts only on one the party has now, with the app's own
+  words (`setFlagAside`); `POST …/put-back { reviewId }` only for the deal's
+  own parties or record. Stored in `kyc_flag_reviews` (boot migration in
+  `server/index.ts`: company, company that signs, deal, the flag's key,
+  label, source and evidence, the comment, who and when, and who put it
+  back), with a `kyc_audit_log` line (`red_flag_set_aside`,
+  `red_flag_put_back`) and an `aml_red_flag` line on the deal's history. A
+  review covers a flag with the same key whose evidence it saw
+  (`applyFlagReviews`): new evidence raises it again. A flag from the brand's
+  KYC record is set aside for the brand whoever signs; any other for the
+  company that signs at the time. A set-aside flag counts nowhere (the deal
+  card, KYC4U's note, Kick off AML, the sign-off, the AML dashboard), and a
+  set-aside record field (risk, enhanced due diligence, PEP status) no longer
+  makes the file higher risk for the sign-off. The comment needs at least 10
+  characters (`FLAG_REVIEW_COMMENT_MIN`).
+- **The plc question** (Woody, the same day: "are you sure we need to AML a
+  PLC company?"): yes, but lightly. A company listed on a regulated market
+  (Hammerson plc is on the London Stock Exchange's main market) is
+  identified and verified from the register, with no beneficial owners or
+  board to identify (MLR 2017 reg 28(5)), and simplified due diligence may
+  apply (reg 37). Sanctions screening applies to everyone. The landlord on a
+  Hammerson lease is usually a subsidiary or a joint-venture vehicle, not the
+  plc: a wholly owned subsidiary is treated as listed through its chain
+  (KYC4U to confirm), a joint venture is not.
+- Not built, waiting on Woody: media hits on a listed company shown as
+  information rather than red flags; anyone but the MLRO setting a flag
+  aside. Not run against Companies House or ComplyAdvantage from a build
+  machine (no keys here): the queue and the profile detail are first seen on
+  live.
+
+## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
+
+Woody, on the deal page: "Needs a chat box too no and how the negotiations
+have evolved etc then the tasks list for the deal? Responsibility etc?",
+"need full time line of deal tracking from marketing to completion", "bring
+up to the same level as Landsec". He answered "Yep go ahead" to steps 3, 4,
+5 and 7 of the review with its two suggestions: the chat box is the
+property's shared conversation cut to the deal, and the clock is on every
+letting with waiting-on settable by BGP staff on any letting. Do not
+re-litigate. Rules (pure): `shared/deal-page.ts`; reads:
+`server/deal-page.ts`; page: `client/src/components/deal-detail.tsx` with
+its parts in `client/src/components/deal-page/`. Tests:
+`server/deal-page.test.ts` (in `npm test`),
+`qa/regression/deal-page-guards.test.mjs`.
+
+- **The frame**: `CompanyKindPage` (the landlord and brand pages' frame),
+  one section at a time in `?section=`, the same page for every login and
+  cut on the server. Its two new options (`sectionTestPrefix`,
+  `scrollOnPhone`: the pills in one scrolling row on a phone) leave the
+  company pages as they were. The right rail and the phone's own pills are
+  gone: every card they held is in a pill. **Header line**: Deal, type and
+  Ref #, the name, the stage chip, days at stage (settable), **Waiting on**,
+  property, counterparty, target date, "<unit> on the Letting Tracker"
+  (`trackerUnitHref`), the tenancy chip, then **Edit** and one **More** menu
+  (Image Studio, Document, Delete). A joint agent has no Edit, Image Studio
+  or Delete. Then the **stage strip**, then the **Conversation** line.
+- **The stage strip** (`buildStageStrip`): Marketing → Negotiating → HOTs →
+  Solicitors → Exchanged → Completed → Invoiced (an investment deal from
+  Solicitors, Jack's rule), each step's day reached, days there and who
+  moved it, from the deal's status moves in `deal_audit_log` (refused moves
+  left out by `statusLineIsMoveSql`; a bulk-stamped move is unconfirmed, the
+  days-at-stage rule) and its own dates (instructed, exchanged, completed;
+  invoiced for BGP staff). The stage it is at takes `resolveStageSince`'s
+  date, so the strip and days at stage never disagree. A deal on the Letting
+  Tracker reads as a letting whatever it is typed (Marketing, not Available).
+- **The reads**, keyed by the deal and writing nothing:
+  `GET /api/crm/deals/:id/page` (names, stage, strip, clock, the letting,
+  the checklist, tasks) and `GET /api/crm/deals/:id/timeline`. Who may read
+  is who may open the deal (`viewerFor`, as `GET /api/crm/deals/:id`); the
+  letting's pieces only for a caller who may open the unit's brief
+  (`briefAccess`). The tracker unit is the row that points at the deal,
+  else (a letting) the row on its unit, which a deal keeps after the unit is
+  re-marketed: then `current` is false, its own checklist and recommendation
+  show read only, its offers and the unit's events are the ones in its
+  window (`lettingWindow`: from the deal, when an earlier letting on the unit
+  came before it, to the deal that replaced it), and the unit's own dialogs
+  are not offered. The page sends the names it draws with (`namesFor`), so
+  it no longer downloads the whole company, contact, property and property
+  unit lists on every open: the party pickers, linked contacts and the edit
+  dialogs load them when opened. A joint agent is sent company names with
+  no ids, a contact's name on an offer only on its own offer, and no folder
+  links or unit record; it reaches the two reads through
+  `JOINT_AGENT_DEAL_PAGE` (GET only).
+- **The clock for every letting**: `clockWriterFor` in
+  `server/landsec-unit.ts` is the one rule for who writes a deal's clock
+  (the waiting-on, and the date a deal reached its stage): a Landsec login,
+  or BGP staff, at the deal's scheme as before (`unitAccess`), and BGP staff
+  signed in as themselves (`contactViewer`) on any letting (`isLettingType`,
+  or a deal with a Letting Tracker row). The clock route
+  (`PUT /api/landsec/deal/:id/clock`), its waiting-options and the
+  checklist's "Deal is waiting on this" (`mayWriteClock`, `clockOpenAt`) all
+  ask it; "depends on" names any deal for BGP staff (`dependsOnFor` with
+  `visible` null: only a deal that has gone is hidden). `clockForDeal` reads
+  one deal's clock by the feed's own rules; a closed deal waits on no one.
+  The old Landsec-only `DealClockCard` is gone.
+- **The pills** (`dealPageSections`): Overview (the deal clock, **Owed now**
+  (`owedItems`), the dates and terms cards, a client's BGP fee, the activity
+  feed), Timeline, Negotiation (a deal with a tracker unit: offers with every
+  position, Heads of Terms, the recommendation, the brief, viewings),
+  Checklist & tasks ("Tasks" without a unit: waiting on, the checklist by
+  stage with who is responsible, and every task linked to the deal:
+  `user_tasks.linked_deal_id` less the checklist's own; BGP staff read every
+  one, anyone else its own; **Add a task**), Parties & AML ("Parties" for a
+  client login; the AML card is read only here, so BGP's paid checks before
+  asking start only when this pill is opened), Fees & invoicing (BGP staff),
+  Files (the unit's files; the property folder for BGP staff) and History
+  (the change log; not a joint agent). The letting's dialogs
+  (`letting-dialogs.tsx`) open only when asked, and the unit's own ones only
+  on its current letting.
+- **The timeline** (`buildDealTimeline`): added, instructed, stage moves,
+  the brief agreed, viewings, each offer position and terms agreed, the
+  Heads of Terms steps (`unit_hots_events`), the recommendation, checklist
+  items done, exchange and completion, and for BGP staff only
+  (`STAFF_ONLY_EVENTS`) the AML lines (`aml_sign_off`, `kyc4u_result`, the
+  KYC approval and AML check changes, client checks sent and finished, KYC4U
+  requests) and invoices. A client check's token is never selected. Each
+  event opens what is behind it. It replaces `GET /api/deals/:dealId/timeline`
+  and the old `DealTimeline` (both deleted).
+- **The conversation** (`deal-conversation.tsx`): the property's one shared
+  thread (`server/record-conversation.ts`), cut to the messages that tag the
+  deal or its tracker unit; a message written there is tagged with both, so
+  it shows in the property's conversation and as the unit's Letting Tracker
+  comment. Opening the box joins the thread (as on the property page); the
+  closed line reads only `GET /api/chat/threads/record/deal-comments`
+  (`propertyReadBlocked`, never joins; a joint agent's gateway does not open
+  it, so its line shows no count). A joint agent tags the deal only while it
+  is live. The old Comments box (`crm_deals.comments`) is read only as
+  **Earlier notes on the deal**; its POST route stays for other callers.
+- **The activity feed on a deal** leaves out the deal's own moves (they are
+  on the Timeline) and never links back to the deal it is on; its filter
+  pills show only when they would change something.
+- Also fixed: the unit editor on the heading opened with blank address
+  fields (the unit list route does not send them), so Save blanked the
+  unit's address; it now starts from the unit record (`names.unit`).
+- Checked in a browser against a local copy on 18 November 2026 (staff on
+  desktop and an iPhone profile, the Landsec client login). Not built: the
+  deal clock columns on the Deals list for every letting (they are still the
+  Landsec view's); a client login adds a task to its own list only from the
+  deal page; brand profiles have no pill of their own (they are folded under
+  Parties, as the old Brand tab's cards).
 
 ## Emails come from chatbgp.app (Woody, 2026-11-17)
 
@@ -3351,6 +4142,45 @@ what was read, fills the form, and saves through the form's own route.
 (Since 17 November 2026 the page is the **Requirements** pill on Brands,
 `/brands?tab=requirements`, for every login; `/requirements` forwards there
 with its parameters. See "The BGP side bar".)
+
+**The board's shape and its links were reviewed on 19 November 2026**
+(`docs/requirements-board-review-2026-11-19.md`; Woody: "it's old and I think
+isn't that well set up or linked to the rest of the app"). It covers the live
+figures, the nine fit rules, the about 70 places that show a requirement and
+where each one links, a build plan and seven decisions. All seven decisions
+are waiting on Woody. Nothing in it is built. Read it before changing the
+board, the fit rules or a requirement link.
+
+The PIPnet import saw no listing from 15 to 19 November 2026. The login
+worked, but every PIPnet search goes through ScraperAPI, and that account was
+out of credits (100,073 of 100,000). Woody topped it up on 19 November, giving
+a new limit of 1,000,000 (`GET /api/app-costs` shows the count). Eight other
+features also go through ScraperAPI (`server/utils/scraperapi.ts`). Any 401 or
+403 pauses every ScraperAPI call in the app for 10 minutes, in memory. The
+PIPnet routes have the default 45-second request limit, so the menu crawl
+(`pipnet-inspect-property-search`) cannot finish through them.
+
+**PIPnet from inside** (19 November 2026, BGP's own login, read only; the
+review has the detail). There are two services, Retail property details and
+Retail requirements. Every search stops at 50 pages (about 1,000 rows).
+
+**PIPnet limits how many people can be logged in at once** ("Maximum number of
+licensed users for your company exceeded"). Until 19 November 2026 the app
+never logged off, so each import held a licence until PIPnet timed the session
+out. Now every operation `server/pipnet.ts` exports runs inside
+`withPipnetSession`: runs that overlap share one session, and the last one to
+finish presses Logoff (`logoff.jsp`) for every session they used, including
+one dropped after a 403 or when the credentials change
+(`qa/regression/pipnet-logoff.test.mjs`). A new PIPnet operation is exported
+the same way. Any script that logs in must press Logoff before it ends. Never
+close the browser on an open session.
+
+Woody's sourcing brief of the same day is the last section of the review:
+- 12 months of PIPnet flyers, each original kept;
+- every agent on a flyer into the tenant rep CRM;
+- requirements also from the chats, email and news.
+
+Its four decisions are waiting on him.
 
 Woody: "the requirements page is just picking up historic requirements
 dragged from a couple of data bases. We need it to be the live requirements

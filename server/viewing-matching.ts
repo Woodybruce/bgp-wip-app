@@ -178,6 +178,38 @@ export function inferViewingBrand(text: string, unknownEmails: string[], index: 
   return { brandId: brand.id, brandName: brand.name, reason: nameIds.length ? "brand_from_invitation" : "brand_from_domain" };
 }
 
+// Who an email the inbox sweep reads as an offer or interest is credited to
+// (Woody, 2026-11-19, "Are you fixing it?"). The sweep used to credit the
+// company of whoever was on the email whenever it was typed as a tenant, so
+// TfL took offers for arches and Screwfix Direct a House of Wizard offer. One
+// directory brand named in the subject now wins over the people on the email,
+// unless the subject names their brand too ("Gails X Reiss" stays Gail's).
+// With no brand named, the people decide as before; with neither, nothing is
+// credited. A contact is kept only when it belongs to the brand credited.
+export interface EmailBrand { brandId: string; brandName: string; contactId: string | null; contactName: string | null; from: "subject" | "people" }
+
+const withoutApostrophes = (value: string) => value.replace(/['’‘`]/g, "");
+export function subjectNamesBrand(subject: string, name: string | null | undefined): boolean {
+  const needle = withoutApostrophes(String(name || "").trim().replace(/\s+/g, " "));
+  return needle.length >= 3 && containsName(withoutApostrophes(subject), needle);
+}
+
+export function chooseEmailBrand(subject: string, people: ViewingBrandMatch, index: ViewingBrandIndex): EmailBrand | null {
+  const inferred = inferViewingBrand(subject, [], index);
+  const named = inferred?.reason === "brand_from_invitation" ? inferred : null;
+  const peopleNamed = !!people.brandId && subjectNamesBrand(subject, people.brandName);
+  const theirContact = { contactId: people.contactId || people.agentContactId, contactName: people.contactName };
+  const noContact = { contactId: null, contactName: null };
+  if (people.brandId && people.reasons.length === 0) {
+    if (named && named.brandId !== people.brandId && !peopleNamed) return { brandId: named.brandId, brandName: named.brandName, ...noContact, from: "subject" };
+    return { brandId: people.brandId, brandName: people.brandName || "", ...theirContact, from: "people" };
+  }
+  if (named && (named.brandId === people.brandId || !peopleNamed)) {
+    return { brandId: named.brandId, brandName: named.brandName, ...(named.brandId === people.brandId ? theirContact : noContact), from: "subject" };
+  }
+  return null;
+}
+
 // A named agent relationship outranks old, incorrectly imported employment.
 // Every attendee contributes evidence; picking the first matching email can
 // silently turn an agency, contractor or one of several brands into the tenant.

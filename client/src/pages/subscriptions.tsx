@@ -26,7 +26,7 @@ type IntegrationsStatus = {
   grouped: Record<string, IntegrationItem[]>;
 };
 type PingResult = { ok: boolean; status?: number; message: string };
-type PingResponse = { apollo: PingResult; companiesHouse: PingResult; xero: PingResult };
+type PingResponse = { apollo: PingResult; companiesHouse: PingResult; xero: PingResult; complyAdvantage?: PingResult };
 
 interface Subscription {
   name: string;
@@ -384,7 +384,7 @@ export default function Subscriptions() {
                 data-testid="button-ping-integrations"
               >
                 {pinging ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1.5" />}
-                Test Apollo / Xero / CH
+                Test Apollo / Xero / CH / ComplyAdvantage
               </Button>
               <Button
                 variant="outline"
@@ -411,12 +411,15 @@ export default function Subscriptions() {
           </div>
 
           {pingResult && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2 pt-1">
               {([
                 { label: "Apollo.io", result: pingResult.apollo, testId: "ping-apollo" },
                 { label: "Companies House", result: pingResult.companiesHouse, testId: "ping-companies-house" },
                 { label: "Xero", result: pingResult.xero, testId: "ping-xero" },
-              ] as const).map(({ label, result, testId }) => (
+                // Signs in to Mesh and reads its screening configurations:
+                // nothing is created and no screen is charged (2026-11-18).
+                ...(pingResult.complyAdvantage ? [{ label: "ComplyAdvantage", result: pingResult.complyAdvantage, testId: "ping-comply-advantage" }] : []),
+              ]).map(({ label, result, testId }) => (
                 <div
                   key={label}
                   className={`flex items-start gap-2 rounded-md border px-3 py-2 text-xs ${
@@ -436,7 +439,7 @@ export default function Subscriptions() {
                       {label}
                       {result.status ? <span className="text-muted-foreground font-normal ml-1">({result.status})</span> : null}
                     </p>
-                    <p className="text-muted-foreground leading-snug">{result.message}</p>
+                    <p className="text-muted-foreground leading-snug [overflow-wrap:anywhere]">{result.message}</p>
                     {label === "Xero" && !result.ok && (
                       <a
                         href="/api/xero/connect"

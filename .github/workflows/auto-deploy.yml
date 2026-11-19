@@ -82,6 +82,7 @@ jobs:
           ACCOUNT_LEASING_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
           AML_RETENTION_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
           CRM_ENGAGEMENT_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
+          EMAIL_OFFER_CLEANUP_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
           LANDLORD_CONTACT_ACTIVITY_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
           RECORD_THREAD_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
           TEAM_EVENT_PRIVACY_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres

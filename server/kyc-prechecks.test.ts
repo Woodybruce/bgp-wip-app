@@ -10,6 +10,7 @@ import {
   ownerControlLine, ownerKind, personNamesMatch, precheckAsks, precheckCardLines, precheckNote, precheckRedFlags,
   precheckSanctionsMatch, sanctionsLine, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput,
+  precheckCompany, precheckUnfinished,
 } from "../shared/kyc-prechecks";
 import { partyRedFlags } from "../shared/kyc-red-flags";
 import { kycFinishedEmail, kycRequestEmail, kycSteps } from "../shared/kyc-request";
@@ -277,4 +278,79 @@ test("the client is asked to confirm the owners before sending their IDs, by nam
     owners: { list: ctx.confirmOwners, reply: { answer: "no", detail: "Sold in October", answeredAt: "2026-11-17T10:00:00Z" } } });
   assert.match(finished.html, /Said the owners on the register are not right<\/strong>: Sold in October/);
   assert.match(finished.html, /report the difference to Companies House/);
+});
+
+// ── 19 November 2026: Woody on the AML box ─────────────────────────────────
+
+test("a check Companies House was too busy for is not finished; a number it does not know is an answer", () => {
+  const busy = result({ companiesHouse: null, notAtCompaniesHouse: "Companies House could not be read (Companies House API error 429:).", errors: ["Companies House: Companies House API error 429:"] });
+  assert.match(precheckUnfinished(busy)!, /429/);
+  const slow = result({ companiesHouse: null, notAtCompaniesHouse: "Companies House could not be read (Companies House took longer than 20 seconds)." });
+  assert.ok(precheckUnfinished(slow));
+  const unknown = result({ companiesHouse: null, notAtCompaniesHouse: "Companies House could not be read (Companies House API error 404: not found)." });
+  assert.equal(precheckUnfinished(unknown), null);
+  assert.equal(precheckUnfinished(result()), null);
+  const finding = result({ companiesHouse: null, notAtCompaniesHouse: "No Companies House number on the record and none found for the name.", errors: ["Finding the company at Companies House: Companies House API error 429:"] });
+  assert.match(precheckUnfinished(finding)!, /^Finding the company/);
+});
+
+test("the AML box shows what the register says about the company checked", () => {
+  const c = precheckCompany(result())!;
+  assert.equal(c.name, "ACME LIMITED");
+  assert.equal(c.type, "Private limited company");
+  assert.equal(c.status, "Active");
+  assert.deepEqual(c.business, ["68209 Other letting and operating of own or leased real estate"]);
+  assert.deepEqual(c.directors, ["DOE, Jane"]);
+  assert.deepEqual(c.owners, [{ name: "Jane DOE", control: "more than 75% of the shares" }]);
+  assert.equal(c.listing, null);
+  assert.match(c.accounts!, /2026-03-31/);
+  assert.deepEqual(c.documents.filter(d => d.onFile).map(d => d.title), ["ACME LIMITED accounts made up to 31 March 2026"]);
+  assert.match(c.registerUrl, /\/company\/01234567$/);
+  // A listed plc: no owners to identify, the company itself still verified.
+  const ch = result().companiesHouse!;
+  const plc = precheckCompany(result({ companiesHouse: { ...ch, type: "plc", owners: [], listing: { market: "uk_regulated", since: "2016-06-30", company: "ACME PLC", companyNumber: "01234567", viaParent: false } } }))!;
+  assert.equal(plc.type, "Public limited company");
+  assert.match(plc.listing!, /^Listed on a UK regulated market/);
+  assert.match(plc.listingNote!, /reg 28\(5\)/);
+  assert.match(plc.listingNote!, /simplified due diligence/);
+  assert.equal(plc.ownerNote, null);
+  assert.equal(precheckCompany(result({ companiesHouse: null })), null);
+});
+
+test("each flag from a check has a key that holds from one run to the next, and its evidence", () => {
+  const ch = result().companiesHouse!;
+  const run = (url: string) => result({
+    companiesHouse: { ...ch, status: "liquidation" },
+    web: { ran: true, lines: [{ name: "ACME LIMITED", role: "the company", ran: true, publicRole: "none_found", adverseMedia: "found", unsourced: 0,
+      findings: [{ kind: "adverse_media", summary: "Fined by a regulator", url, source: "News", date: "2025-01-02", category: null, unsureIdentity: false }] }], skipped: null },
+    complyAdvantage: { ran: true, skipped: null, lines: [{ name: "ACME LIMITED", status: "possible", types: ["adverse_media", "warning"], detail: null }] },
+  });
+  const a = precheckRedFlags(run("https://news.example/1"), { sanctionsCurrent: true });
+  const b = precheckRedFlags(run("https://news.example/2"), { sanctionsCurrent: true });
+  const web = (flags: typeof a) => flags.find(f => f.kind === "web_adverse")!;
+  assert.equal(web(a).key, web(b).key);
+  assert.deepEqual(web(a).evidence, ["url:https://news.example/1"]);
+  assert.notDeepEqual(web(a).evidence, web(b).evidence);
+  assert.ok(web(a).facts!.some(f => f.url === "https://news.example/1"));
+  const ca = a.find(f => f.kind === "provider_screen")!;
+  assert.equal(ca.key, "ca:acme limited");
+  assert.deepEqual(ca.evidence, ["type:adverse_media", "type:warning"]);
+  assert.equal(ca.detail, "adverse media, warning list");
+  // An older check kept only the kinds: the facts say so.
+  assert.ok(ca.facts!.some(f => /kept only the kinds/.test(f.value)));
+  assert.equal(a.find(f => f.kind === "company_status")!.key, "ch:status");
+});
+
+test("ComplyAdvantage's matched profiles are the flag's facts and its evidence", () => {
+  const flags = precheckRedFlags(result({
+    complyAdvantage: { ran: true, skipped: null, lines: [{
+      name: "ACME LIMITED", status: "possible", types: ["adverse_media"], detail: null, customerId: "bgp-c-1",
+      matches: [{ name: "Acme Ltd", kind: "adverse_media", source: "Adverse media", score: 0.91, profileId: "P1", media: [{ title: "Acme fined", url: "https://news.example/acme", date: "2024-05-01" }] }],
+    }] },
+  }), { sanctionsCurrent: true });
+  const ca = flags.find(f => f.kind === "provider_screen")!;
+  assert.deepEqual(ca.evidence, ["profile:P1", "type:adverse_media"]);
+  assert.ok(ca.facts!.some(f => /Acme Ltd/.test(f.value) && /91%/.test(f.value)));
+  assert.ok(ca.facts!.some(f => f.label === "Article" && f.url === "https://news.example/acme"));
+  assert.ok(ca.facts!.some(f => f.value === "bgp-c-1"));
 });

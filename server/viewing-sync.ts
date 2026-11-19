@@ -3,7 +3,7 @@
 import { pool } from "./db";
 import { createHash } from "node:crypto";
 import { viewingMissingDetails } from "@shared/viewing-workflow";
-import { isNonLeasingVisit, buildViewingBrandIndex, inferViewingBrand, isLeasingViewing, londonViewingDateTime, matchViewingBrand, matchViewingUnits, normalizeViewingEmail, parseGraphDateTime,
+import { isNonLeasingVisit, buildViewingBrandIndex, chooseEmailBrand, inferViewingBrand, isLeasingViewing, londonViewingDateTime, matchViewingBrand, matchViewingUnits, normalizeViewingEmail, parseGraphDateTime,
   propertyAliasList, type ViewingBrandIndex, type ViewingBrandLink, type ViewingBrandMatch, type ViewingContact, type ViewingProperty } from "./viewing-matching";
 
 export interface DiaryEvent {
@@ -35,17 +35,18 @@ function norm(s: string | null | undefined): string {
 
 const londonDateTime = londonViewingDateTime;
 
-interface TrackerUnit { id: string; unitName: string; propertyId: string; propertyName: string; propertyAliases?: string[] }
+interface TrackerUnit { id: string; unitName: string; propertyId: string; propertyName: string; propertyAliases?: string[]; landlordId?: string | null }
 
 async function loadTrackerUnits(): Promise<TrackerUnit[]> {
   const r = await pool.query(
-    `SELECT au.id, COALESCE(au.unit_name, '') AS unit_name, au.property_id, p.name AS property_name, p.aliases AS property_aliases
+    `SELECT au.id, COALESCE(au.unit_name, '') AS unit_name, au.property_id, p.name AS property_name, p.aliases AS property_aliases,
+            p.landlord_id
        FROM available_units au
        JOIN crm_properties p ON p.id = au.property_id`
   );
   return r.rows.map((row: any) => ({
     id: row.id, unitName: row.unit_name, propertyId: row.property_id, propertyName: row.property_name || "",
-    propertyAliases: propertyAliasList(row.property_aliases),
+    propertyAliases: propertyAliasList(row.property_aliases), landlordId: row.landlord_id ?? null,
   }));
 }
 
@@ -436,7 +437,8 @@ export async function syncDiaryInterest(events: DiaryEvent[], mailboxEmail: stri
   );
   if (candidates.length === 0) return 0;
 
-  const units = await loadTrackerUnits();
+  const context = await loadViewingMatchContext();
+  const units = context.units;
   if (units.length === 0) return 0;
   let created = 0;
 
@@ -451,13 +453,15 @@ export async function syncDiaryInterest(events: DiaryEvent[], mailboxEmail: stri
       );
       if (external.length === 0) continue;
       const emails = [...new Set(external.map(a => a.address!.toLowerCase()))];
-      const brand = await loadViewingPeople(emails);
-      if (!brand.brandId || brand.reasons.length) continue;
-      const contact = { id: brand.contactId || brand.agentContactId, name: brand.contactName,
-        company_id: brand.brandId, company_name: brand.brandName };
+      // A brand named in the subject outranks the people's own company.
+      const credited = chooseEmailBrand(event.subject || "", await loadViewingPeople(emails), context.brands);
+      if (!credited) continue;
+      const contact = { id: credited.contactId, name: credited.contactName, company_id: credited.brandId, company_name: credited.brandName };
 
       const unit = await resolveUnit(hay, units, contact.company_id);
       if (!unit) continue;
+      // The unit's own landlord is never the one bidding for it or asking about it.
+      if (unit.landlordId && unit.landlordId === contact.company_id) continue;
 
       if (contact.company_id) {
         const existing = await pool.query(
@@ -530,7 +534,8 @@ export async function syncOfferEmails(messages: InboxMessage[], mailboxEmail: st
   const candidates = messages.filter(m => looksLikeOffer(m.subject, m.bodyPreview));
   if (candidates.length === 0) return 0;
 
-  const units = await loadTrackerUnits();
+  const context = await loadViewingMatchContext();
+  const units = context.units;
   if (units.length === 0) return 0;
   let created = 0;
 
@@ -552,13 +557,15 @@ export async function syncOfferEmails(messages: InboxMessage[], mailboxEmail: st
       );
       if (external.length === 0) continue;
       const emails = [...new Set(external.map(a => a.address!.toLowerCase()))];
-      const brand = await loadViewingPeople(emails);
-      if (!brand.brandId || brand.reasons.length) continue;
-      const contact = { id: brand.contactId || brand.agentContactId, name: brand.contactName,
-        company_id: brand.brandId, company_name: brand.brandName };
+      // A brand named in the subject outranks the people's own company.
+      const credited = chooseEmailBrand(msg.subject || "", await loadViewingPeople(emails), context.brands);
+      if (!credited) continue;
+      const contact = { id: credited.contactId, name: credited.contactName, company_id: credited.brandId, company_name: credited.brandName };
 
       const unit = await resolveUnit(hay, units, contact.company_id);
       if (!unit) continue;
+      // The unit's own landlord is never the one bidding for it or asking about it.
+      if (unit.landlordId && unit.landlordId === contact.company_id) continue;
 
       // Already logged? Same unit + company with an offer in the last 60
       // days (manual or synced) means the tracker is up to date — skip.
@@ -625,7 +632,8 @@ export async function syncInterestEmails(messages: InboxMessage[], mailboxEmail:
   );
   if (candidates.length === 0) return 0;
 
-  const units = await loadTrackerUnits();
+  const context = await loadViewingMatchContext();
+  const units = context.units;
   if (units.length === 0) return 0;
   let created = 0;
 
@@ -641,13 +649,15 @@ export async function syncInterestEmails(messages: InboxMessage[], mailboxEmail:
       );
       if (external.length === 0) continue;
       const emails = [...new Set(external.map(a => a.address!.toLowerCase()))];
-      const brand = await loadViewingPeople(emails);
-      if (!brand.brandId || brand.reasons.length) continue;
-      const contact = { id: brand.contactId || brand.agentContactId, name: brand.contactName,
-        company_id: brand.brandId, company_name: brand.brandName };
+      // A brand named in the subject outranks the people's own company.
+      const credited = chooseEmailBrand(msg.subject || "", await loadViewingPeople(emails), context.brands);
+      if (!credited) continue;
+      const contact = { id: credited.contactId, name: credited.contactName, company_id: credited.brandId, company_name: credited.brandName };
 
       const unit = await resolveUnit(hay, units, contact.company_id);
       if (!unit) continue;
+      // The unit's own landlord is never the one bidding for it or asking about it.
+      if (unit.landlordId && unit.landlordId === contact.company_id) continue;
 
       // Already engaged? Any interest/viewing/offer for this company on this
       // unit in the last 90 days means the tracker already knows — skip.

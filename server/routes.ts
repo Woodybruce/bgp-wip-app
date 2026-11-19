@@ -4410,18 +4410,16 @@ export async function registerRoutes(
     }
   });
 
-  // ComplyAdvantage diagnostic — probes several candidate search-endpoint
-  // URLs and reports which return non-405 responses. The current `/v2/searches`
-  // path 405s every time at nginx level; this helps pinpoint the new path
-  // without guessing.
-  app.get("/api/comply-advantage/probe", requireAuth, async (req, res) => {
+  // ComplyAdvantage Mesh connection check (admins; 2026-11-18): signs in and
+  // reads the screening configurations, so it creates nothing in Mesh and
+  // costs no screen. Outside /api/comply-advantage on purpose: BGP's checks
+  // before asking use ComplyAdvantage while in-app AML is retired.
+  app.get("/api/admin/comply-advantage/check", requireAuth, requireAdmin, async (_req, res) => {
     try {
-      const { probeComplyAdvantage } = await import("./comply-advantage");
-      const testName = String(req.query.name || "John Smith");
-      const results = await probeComplyAdvantage(testName);
-      res.json({ probed: results.length, results });
+      const { checkComplyAdvantage } = await import("./comply-advantage");
+      res.json(await checkComplyAdvantage());
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ ok: false, message: err?.message || "The check failed" });
     }
   });
 
@@ -8553,6 +8551,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         tenantId: body.tenantId || (existingDeal as any)?.tenantId || null,
         vendorId: (existingDeal as any)?.vendorId || null,
         purchaserId: (existingDeal as any)?.purchaserId || null,
+        dealId: (existingDeal as any)?.id || null,
       };
       const namesNewParty = !!existingDeal && (
         partiesToBe.tenantId !== ((existingDeal as any).tenantId || null)
@@ -8687,6 +8686,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             tenantId: (deal as any).tenantId,
             vendorId: (deal as any).vendorId,
             purchaserId: (deal as any).purchaserId,
+            dealId: (deal as any).id,
           };
           const result = await checkCounterpartyAml(parties);
           const msg = formatAmlWarning(result);
@@ -10626,86 +10626,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.get("/api/deals/:dealId/timeline", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const { dealId } = req.params;
-      const timeline: any[] = [];
-
-      const dealRows = await pool.query(`SELECT * FROM crm_deals WHERE id = $1`, [dealId]);
-      const deal = dealRows.rows[0];
-      if (!deal) return res.status(404).json({ error: "Deal not found" });
-
-      if (deal.created_at) {
-        timeline.push({ type: "deal_created", date: deal.created_at, detail: `Deal "${deal.name}" created`, icon: "plus" });
-      }
-
-      if (deal.instructed_at) {
-        timeline.push({ type: "instructed", date: deal.instructed_at, detail: "Instructed", icon: "briefcase" });
-      }
-      if (deal.target_date) {
-        timeline.push({ type: "target", date: deal.target_date, detail: "Target date", icon: "target" });
-      }
-      if (deal.kyc_approved && (deal.kyc_approved_at || deal.updated_at)) {
-        timeline.push({ type: "kyc_approved", date: deal.kyc_approved_at || deal.updated_at, detail: `KYC approved by ${deal.kyc_approved_by || "system"}`, icon: "shield-check" });
-      }
-      if (deal.exchanged_at) {
-        timeline.push({ type: "exchanged", date: deal.exchanged_at, detail: "Exchanged", icon: "handshake" });
-      }
-      if (deal.completed_at) {
-        timeline.push({ type: "completion", date: deal.completed_at, detail: "Completed", icon: "check-circle" });
-      }
-      if (deal.invoiced_at) {
-        timeline.push({ type: "invoiced", date: deal.invoiced_at, detail: "Invoiced", icon: "receipt" });
-      }
-
-      const reqRows = await pool.query(
-        `SELECT id, name, created_at FROM crm_requirements_leasing WHERE deal_id = $1
-         UNION ALL
-         SELECT id, name, created_at FROM crm_requirements_investment WHERE deal_id = $1`,
-        [dealId]
-      );
-      for (const r of reqRows.rows) {
-        timeline.push({ type: "requirement_linked", date: r.created_at, detail: `Linked to requirement: ${r.name}`, icon: "link" });
-      }
-
-      const compRows = await pool.query(
-        `SELECT id, name, created_at FROM crm_comps WHERE deal_id = $1`, [dealId]
-      );
-      for (const comp of compRows.rows) {
-        timeline.push({ type: "comp_created", date: comp.created_at, detail: `Comp created: ${comp.name}`, icon: "bar-chart" });
-      }
-
-      const invoiceRows = await pool.query(
-        `SELECT id, invoice_number, status, created_at FROM xero_invoices WHERE deal_id = $1`, [dealId]
-      );
-      for (const inv of invoiceRows.rows) {
-        const invDetail = [inv.invoice_number, inv.status].filter(Boolean).join(" — ") || "Invoice created";
-        timeline.push({ type: "invoice", date: inv.created_at, detail: `Invoice: ${invDetail}`, icon: "receipt" });
-      }
-
-      const companyIds = [deal.landlord_id, deal.tenant_id, deal.vendor_id, deal.purchaser_id].filter(Boolean);
-      if (companyIds.length > 0) {
-        const interactionRows = await pool.query(
-          `SELECT ci.type, ci.subject, ci.interaction_date, cc.name as contact_name 
-           FROM crm_interactions ci 
-           LEFT JOIN crm_contacts cc ON ci.contact_id = cc.id
-           WHERE ci.company_id = ANY($1) 
-           ORDER BY ci.interaction_date DESC LIMIT 10`,
-          [companyIds]
-        );
-        for (const i of interactionRows.rows) {
-          timeline.push({ type: "interaction", date: i.interaction_date, detail: `${i.type}: ${i.subject || ""}${i.contact_name ? ` with ${i.contact_name}` : ""}`, icon: "message-circle" });
-        }
-      }
-
-      timeline.sort((a, b) => {
-        const ta = new Date(a.date).getTime();
-        const tb = new Date(b.date).getTime();
-        return (isNaN(tb) ? 0 : tb) - (isNaN(ta) ? 0 : ta);
-      });
-      res.json(timeline);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
-  });
+  // A deal's timeline is GET /api/crm/deals/:id/timeline (server/deal-page.ts,
+  // 18 November 2026): its stage moves, the letting's offers, Heads of Terms
+  // and checklist, and BGP's AML and invoicing lines for BGP staff.
 
   app.get("/api/properties/:propertyId/360", requireAuth, async (req: Request, res: Response) => {
     try {

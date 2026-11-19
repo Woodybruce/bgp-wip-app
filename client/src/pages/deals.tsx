@@ -148,6 +148,8 @@ import { hotsCall } from "@/components/unit-hots/hots-api";
 import { dealNotePatch, noteTenant } from "@/lib/deal-note";
 import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { SendClientChecksButton } from "@/components/kyc-client-checks";
+import { PartyReadyToStart } from "@/components/deal-parties";
+import { PartyDecisions } from "@/components/deal-party-aml";
 import { useDealAmlStatus } from "@/components/deal-aml-status";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
 import { JointAgencyWidget, JointAgencyRegisterDialog, jointAgencyMissing, jointAgencyPayload, EMPTY_JOINT_AGENCY, type JointAgencyState } from "@/components/joint-agency-aml";
@@ -530,6 +532,13 @@ interface DealFormData {
   vendorEntityName: string;
   purchaserEntityId: string;
   purchaserEntityName: string;
+  // The company that signs for each party (a company filed under it, not the
+  // Xero contact): set when a billing entity is picked from the companies
+  // filed under the party, or created from Companies House (2026-11-18).
+  landlordTradingEntityId: string;
+  tenantTradingEntityId: string;
+  vendorTradingEntityId: string;
+  purchaserTradingEntityId: string;
 }
 
 const emptyForm: DealFormData = {
@@ -593,6 +602,10 @@ const emptyForm: DealFormData = {
   vendorEntityName: "",
   purchaserEntityId: "",
   purchaserEntityName: "",
+  landlordTradingEntityId: "",
+  tenantTradingEntityId: "",
+  vendorTradingEntityId: "",
+  purchaserTradingEntityId: "",
 };
 
 function dealToForm(deal: CrmDeal): DealFormData {
@@ -657,6 +670,10 @@ function dealToForm(deal: CrmDeal): DealFormData {
     vendorEntityName: (deal as any).vendorEntityName || "",
     purchaserEntityId: (deal as any).purchaserEntityId || "",
     purchaserEntityName: (deal as any).purchaserEntityName || "",
+    landlordTradingEntityId: (deal as any).landlordTradingEntityId || "",
+    tenantTradingEntityId: (deal as any).tenantTradingEntityId || "",
+    vendorTradingEntityId: (deal as any).vendorTradingEntityId || "",
+    purchaserTradingEntityId: (deal as any).purchaserTradingEntityId || "",
   };
 }
 
@@ -728,6 +745,10 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     vendorEntityName: form.vendorEntityName || null,
     purchaserEntityId: form.purchaserEntityId || null,
     purchaserEntityName: form.purchaserEntityName || null,
+    landlordTradingEntityId: form.landlordTradingEntityId || null,
+    tenantTradingEntityId: form.tenantTradingEntityId || null,
+    vendorTradingEntityId: form.vendorTradingEntityId || null,
+    purchaserTradingEntityId: form.purchaserTradingEntityId || null,
   };
   if (changeReason) payload.changeReason = changeReason;
   return payload;
@@ -2404,7 +2425,7 @@ function SimplifiedCreateBody({
               setForm((p: any) => ({
                 ...p,
                 propertyId: "", unitId: "",
-                tenantId: "", tenantEntityId: "", tenantEntityName: "",
+                tenantId: "", tenantEntityId: "", tenantEntityName: "", tenantTradingEntityId: "",
                 ...(nameAutoFilled ? { name: "" } : {}),
               }));
               return;
@@ -2527,7 +2548,7 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search landlords…"
               value={form.landlordId}
               items={toComboItems(landlordOptions)}
-              onChange={(v) => { set("landlordId", v); set("landlordEntityId", ""); applyAutoName({ ...form, landlordId: v }); }}
+              onChange={(v) => { set("landlordId", v); set("landlordEntityId", ""); set("landlordTradingEntityId", ""); applyAutoName({ ...form, landlordId: v }); }}
               onCreate={createLandlord}
               createLabel="landlord"
             />
@@ -2538,11 +2559,12 @@ function SimplifiedCreateBody({
                   testIdPrefix="deal-landlord-entity"
                   value={form.landlordEntityId || null}
                   cachedName={form.landlordEntityName}
-                  onChange={(c) => {
+                  onChange={(c, company) => {
                     setForm((prev: any) => ({
                       ...prev,
                       landlordEntityId: c?.ContactID || "",
                       landlordEntityName: c?.Name || "",
+                      ...(company ? { landlordTradingEntityId: company.id } : {}),
                     }));
                   }}
                   createFor={{ id: form.landlordId, name: partyName(form.landlordId, "the landlord") }}
@@ -2560,7 +2582,7 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search tenants…"
               value={form.tenantId}
               items={toComboItems(tenantOptions)}
-              onChange={(v) => { set("tenantId", v); set("tenantEntityId", ""); applyAutoName({ ...form, tenantId: v }); }}
+              onChange={(v) => { set("tenantId", v); set("tenantEntityId", ""); set("tenantTradingEntityId", ""); applyAutoName({ ...form, tenantId: v }); }}
               onCreate={createTenant}
               createLabel="tenant"
             />
@@ -2580,11 +2602,12 @@ function SimplifiedCreateBody({
                   testIdPrefix="deal-tenant-entity"
                   value={form.tenantEntityId || null}
                   cachedName={form.tenantEntityName}
-                  onChange={(c) => {
+                  onChange={(c, company) => {
                     setForm((prev: any) => ({
                       ...prev,
                       tenantEntityId: c?.ContactID || "",
                       tenantEntityName: c?.Name || "",
+                      ...(company ? { tenantTradingEntityId: company.id } : {}),
                     }));
                   }}
                   createFor={{ id: form.tenantId, name: partyName(form.tenantId, "the tenant") }}
@@ -2606,7 +2629,7 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search vendors…"
               value={form.vendorId}
               items={toComboItems(vendorOptions)}
-              onChange={(v) => { set("vendorId", v); set("vendorEntityId", ""); applyAutoName({ ...form, vendorId: v }); }}
+              onChange={(v) => { set("vendorId", v); set("vendorEntityId", ""); set("vendorTradingEntityId", ""); applyAutoName({ ...form, vendorId: v }); }}
               onCreate={createVendor}
               createLabel="vendor"
             />
@@ -2617,11 +2640,12 @@ function SimplifiedCreateBody({
                   testIdPrefix="deal-vendor-entity"
                   value={form.vendorEntityId || null}
                   cachedName={form.vendorEntityName}
-                  onChange={(c) => {
+                  onChange={(c, company) => {
                     setForm((prev: any) => ({
                       ...prev,
                       vendorEntityId: c?.ContactID || "",
                       vendorEntityName: c?.Name || "",
+                      ...(company ? { vendorTradingEntityId: company.id } : {}),
                     }));
                   }}
                   createFor={{ id: form.vendorId, name: partyName(form.vendorId, "the vendor") }}
@@ -2638,7 +2662,7 @@ function SimplifiedCreateBody({
               searchPlaceholder="Search purchasers…"
               value={form.purchaserId}
               items={toComboItems(purchaserOptions)}
-              onChange={(v) => { set("purchaserId", v); set("purchaserEntityId", ""); applyAutoName({ ...form, purchaserId: v }); }}
+              onChange={(v) => { set("purchaserId", v); set("purchaserEntityId", ""); set("purchaserTradingEntityId", ""); applyAutoName({ ...form, purchaserId: v }); }}
               onCreate={createPurchaser}
               createLabel="purchaser"
             />
@@ -2649,11 +2673,12 @@ function SimplifiedCreateBody({
                   testIdPrefix="deal-purchaser-entity"
                   value={form.purchaserEntityId || null}
                   cachedName={form.purchaserEntityName}
-                  onChange={(c) => {
+                  onChange={(c, company) => {
                     setForm((prev: any) => ({
                       ...prev,
                       purchaserEntityId: c?.ContactID || "",
                       purchaserEntityName: c?.Name || "",
+                      ...(company ? { purchaserTradingEntityId: company.id } : {}),
                     }));
                   }}
                   createFor={{ id: form.purchaserId, name: partyName(form.purchaserId, "the purchaser") }}
@@ -2934,7 +2959,7 @@ export function handoverForm(deal: CrmDeal | null | undefined, h: DealHandover, 
   if (!f.name) f.name = [h.unit.propertyName, h.unit.unitName].filter(Boolean).join(" – ");
   if (h.kind === "hots" && h.defaults) {
     const d = h.defaults;
-    if (d.tenantCompanyId && d.tenantCompanyId !== f.tenantId) { f.tenantId = d.tenantCompanyId; f.tenantEntityId = ""; f.tenantEntityName = ""; }
+    if (d.tenantCompanyId && d.tenantCompanyId !== f.tenantId) { f.tenantId = d.tenantCompanyId; f.tenantEntityId = ""; f.tenantEntityName = ""; f.tenantTradingEntityId = ""; }
     if (d.rentPa != null) f.rentPa = String(d.rentPa);
     if (d.leaseLengthYears != null) f.leaseLength = String(d.leaseLengthYears);
     if (d.rentFreeMonths != null) f.rentFree = String(d.rentFreeMonths);
@@ -3076,10 +3101,12 @@ export function DealFormDialog({
   type AmlParty = { role: "landlord" | "tenant" | "vendor" | "purchaser"; label: string; id: string; name: string };
   const [amlStep, setAmlStep] = useState<{ dealId: string; dealRef: string | number | null; parties: AmlParty[] } | null>(null);
   useEffect(() => { if (!open) setAmlStep(null); }, [open]);
-  // While in-app AML is on, Kick off AML sends the client checks (one email
-  // from the KYC mailbox, the deal's agents copied); otherwise KYC4U.
+  // While the client checks are on (their own switch since 18 November
+  // 2026), Kick off AML sends them (one email from the KYC mailbox, the
+  // deal's agents copied); a party with a red flag, or every party while
+  // they are off, goes to KYC4U.
   const { data: amlStepStatus } = useDealAmlStatus(amlStep?.dealId ?? "", !!amlStep);
-  const amlInApp = !!amlStepStatus?.inAppAml;
+  const clientChecks = !!amlStepStatus?.clientChecks;
   // A handover's landlord, when the deal has none: the property's.
   const handoverLandlordId: string | null = handover
     ? ((properties.find(p => p.id === handover.unit.propertyId) as { landlordId?: string | null } | undefined)?.landlordId || null)
@@ -3542,7 +3569,7 @@ export function DealFormDialog({
         <DialogHeader>
           <DialogTitle>{amlStep ? "Kick off AML" : handover?.kind === "promote" ? "Promote to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Edit Deal" : "New Deal"}</DialogTitle>
           <DialogDescription>
-            {amlStep ? (amlInApp ? "Send each party's contact the client checks: one email, and a page of their own to do them on." : "Start the checks on each party with KYC4U.") : handover
+            {amlStep ? (clientChecks ? "Send each party's contact the client checks: one email, and a page of their own to do them on." : "Start the checks on each party with KYC4U.") : handover
               ? `${[handover.unit.propertyName || properties.find(p => p.id === handover.unit.propertyId)?.name, handover.unit.unitName].filter(Boolean).join(" — ")}. Check the deal, then save: it moves to Solicitors.`
               : isEdit ? "Update deal details below." : "Fill in the details to create a new deal."}
           </DialogDescription>
@@ -3564,7 +3591,7 @@ export function DealFormDialog({
                         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{p.label}</div>
                         <div className="text-sm font-medium break-words">{p.name}</div>
                       </div>
-                      {amlInApp && !flags.length
+                      {clientChecks && !flags.length
                         ? <SendClientChecksButton dealId={amlStep.dealId} companyId={p.id} partyName={p.name} label="Kick off AML" />
                         : <Kyc4uRequestButton dealId={amlStep.dealId} companyId={p.id} role={p.role} partyName={p.name} label="Kick off AML" />}
                     </div>
@@ -3573,12 +3600,21 @@ export function DealFormDialog({
                         Red flag: {flags.map(f => f.label).join("; ")}. Raise it with KYC4U: the red flags go in the request's note.
                       </p>
                     )}
+                    {/* The company that signs and the person to ask, and
+                        anything missing before the checks can start
+                        (2026-11-18), filled in place. */}
+                    <PartyReadyToStart dealId={amlStep.dealId} companyId={p.id} />
+                    {/* BGP's sign-off and KYC4U's result, for the MLRO (or
+                        an admin while none is appointed): a party KYC4U has
+                        already approved is recorded here (2026-11-18). */}
+                    <PartyDecisions dealId={amlStep.dealId} data={amlStepStatus} companyId={p.id} role={p.role} partyName={p.name}
+                      approved={!!amlStepStatus?.counterparties.find(c => c.id === p.id && c.isApproved && !c.isExpired)} compact />
                   </div>
                 );
               })}
             </div>
             <p className="text-[11px] text-muted-foreground">
-              {amlInApp
+              {clientChecks
                 ? "Each button opens the client checks: pick who to ask, choose what to ask for, see the email, send. It goes from the KYC mailbox with the deal's agents copied, and progress shows on the deal's AML card."
                 : "Each button fills in KYC4U's request from the deal: check it and save. Then, on KYC4U's Raise New Service Request page, click your Send to ChatBGP bookmark and press Submit there. KYC4U's answer comes back to the deal after the next sync."}
             </p>
@@ -5761,94 +5797,6 @@ function getRequiredKycParties(deal: CrmDeal, companies: CrmCompany[]): { compan
   return parties;
 }
 
-
-export function DealTimeline({ dealId }: { dealId: string }) {
-  const { data: timeline, isLoading } = useQuery<any[]>({
-    queryKey: ["/api/deals", dealId, "timeline"],
-    queryFn: async () => {
-      const res = await fetch(`/api/deals/${dealId}/timeline`, {
-        credentials: "include",
-        headers: getAuthHeaders(),
-      });
-      if (!res.ok) return [];
-      return res.json();
-    },
-  });
-
-  const iconMap: Record<string, React.ElementType> = {
-    plus: Plus,
-    "file-text": FileText,
-    "shield-check": ShieldCheck,
-    "check-circle": CheckCircle2,
-    link: Link2,
-    "bar-chart": BarChart3,
-    receipt: Receipt,
-    "message-circle": MessageCircle,
-  };
-
-  const colorMap: Record<string, string> = {
-    deal_created: "text-green-500",
-    hots_completed: "text-blue-500",
-    kyc_approved: "text-emerald-500",
-    completion: "text-green-600",
-    requirement_linked: "text-purple-500",
-    comp_created: "text-orange-500",
-    invoice: "text-amber-500",
-    interaction: "text-cyan-500",
-  };
-
-  if (isLoading) {
-    return (
-      <Card data-testid="deal-timeline">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Clock className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Deal Timeline</h3>
-          </div>
-          <div className="space-y-3">
-            {[1,2,3].map(i => <Skeleton key={i} className="h-10 w-full" />)}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (!timeline?.length) return null;
-
-  return (
-    <Card data-testid="deal-timeline">
-      <CardContent className="p-4">
-        <div className="flex items-center gap-2 mb-4">
-          <Clock className="w-4 h-4" />
-          <h3 className="text-sm font-semibold">Deal Timeline</h3>
-          <Badge variant="secondary" className="text-[10px]">{timeline.length}</Badge>
-        </div>
-        <div className="relative">
-          <div className="absolute left-3 top-0 bottom-0 w-px bg-border" />
-          <div className="space-y-3">
-            {timeline.map((event: any, idx: number) => {
-              const Icon = iconMap[event.icon] || Clock;
-              const color = colorMap[event.type] || "text-muted-foreground";
-              return (
-                <div key={idx} className="flex items-start gap-3 relative" data-testid={`timeline-event-${idx}`}>
-                  <div className="w-6 h-6 rounded-full bg-background border flex items-center justify-center shrink-0 z-10">
-                    <Icon className={`w-3 h-3 ${color}`} />
-                  </div>
-                  <div className="flex-1 min-w-0 pb-1">
-                    <p className="text-xs font-medium">{event.detail}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      {event.date && !isNaN(new Date(event.date).getTime()) ? gbDate(event.date, { day: "numeric", month: "short", year: "numeric" }) : ""}
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 export function DealAuditLog({ dealId }: { dealId: string }) {
   const [expanded, setExpanded] = useState(false);

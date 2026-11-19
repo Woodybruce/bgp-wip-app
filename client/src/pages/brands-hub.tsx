@@ -22,12 +22,14 @@ import {
   Flower2, Clapperboard, Tv, Gamepad2, Baby, Palette, PartyPopper,
   HeartPulse, Bath, Dumbbell, Tag, Wrench, Watch, Gem, Footprints,
   ShoppingCart, Crosshair, TrendingDown, Eye, Lightbulb, Target, ClipboardList,
-  Plus, Check, Loader2, Phone, Mail,
+  Plus, Check, Loader2, Phone, Mail, CheckSquare,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { BrandTidyButton, HiddenBrands } from "@/components/brand-tidy";
+import { BrandTidyButton, BrandSelectBar, BULK_DELETE_MAX, HiddenBrands } from "@/components/brand-tidy";
+import { Checkbox } from "@/components/ui/checkbox";
 import { OwnershipIntelButton } from "@/components/ownership-intel";
 import { BrandRetypeButton } from "@/components/brand-retype";
+import { PlanningSweepButton } from "@/components/planning-sweep";
 import { BrandCrmTab } from "@/components/brand-crm/brand-crm-tab";
 import { useBrand } from "@/lib/brand-context";
 import { getAuthHeaders } from "@/lib/queryClient";
@@ -846,6 +848,17 @@ function BrandExplorer() {
   const PHONE_PAGE = 30;
   const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
   useEffect(() => { setPhoneShown(PHONE_PAGE); }, [activeCat, activeSub, search, relFilter, propFilter]);
+  // Select and Delete (admins, Woody 2026-11-19): while selecting, a card
+  // ticks instead of opening the brand.
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  useEffect(() => { if (relFilter === "archived") { setSelecting(false); setPicked(new Set()); } }, [relFilter]);
+  const togglePick = (id: string) => setPicked(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else if (next.size < BULK_DELETE_MAX) next.add(id);
+    return next;
+  });
 
   const { data: allCompanies = [] } = useQuery<any[]>({
     queryKey: ["/api/crm/companies"],
@@ -1237,9 +1250,16 @@ function BrandExplorer() {
                 </Pill>
               ))}
             </div>
+            {exUser?.isAdmin && relFilter !== "archived" && (
+              <Button variant={selecting ? "default" : "outline"} size="sm" className="h-7 text-xs" aria-pressed={selecting}
+                onClick={() => { setSelecting(on => !on); setPicked(new Set()); }} data-testid="brand-select-toggle">
+                <CheckSquare className="w-3 h-3 mr-1" /> {selecting ? "Stop selecting" : "Select"}
+              </Button>
+            )}
             {exUser?.isAdmin && <BrandTidyButton />}
             {exUser?.isAdmin && <OwnershipIntelButton />}
             {exUser?.isAdmin && <BrandRetypeButton />}
+            {exUser?.isAdmin && <PlanningSweepButton />}
             {targetProperties.length > 0 && (
               <select
                 value={propFilter}
@@ -1261,15 +1281,27 @@ function BrandExplorer() {
 
       {relFilter === "archived" && exUser?.isAdmin && <HiddenBrands />}
 
+      {selecting && relFilter !== "archived" && exUser?.isAdmin && (
+        <BrandSelectBar picked={picked} onPick={setPicked} onDone={() => { setSelecting(false); setPicked(new Set()); }}
+          shownIds={(isMobileExplorer ? filtered.slice(0, phoneShown) : filtered).map((c: any) => String(c.id))} />
+      )}
+
       {/* Brand cards */}
       {relFilter !== "archived" && <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-2">
         {(isMobileExplorer ? filtered.slice(0, phoneShown) : filtered).map((c: any) => {
           const parent = c.parentCompanyId ? companyById.get(c.parentCompanyId) : null;
           const cf = isClientExplorer ? undefined : explorerFlags[c.id];
           const targetCount = (cf?.targetedAt || []).length;
+          const on = selecting && picked.has(String(c.id));
           return (
-            <div key={c.id} className="relative flex flex-col items-center gap-1.5 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-center group">
-              <Link href={`/companies/${c.id}`} className="absolute inset-0 rounded-lg" aria-label={c.name} />
+            <div key={c.id} className={`relative flex flex-col items-center gap-1.5 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-center group ${on ? "ring-2 ring-primary border-primary" : ""}`}>
+              {selecting ? (
+                <button type="button" className="absolute inset-0 z-10 rounded-lg" aria-pressed={on} aria-label={`${on ? "Untick" : "Tick"} ${c.name}`}
+                  onClick={() => togglePick(String(c.id))} data-testid={`brand-pick-${c.id}`} />
+              ) : (
+                <Link href={`/companies/${c.id}`} className="absolute inset-0 rounded-lg" aria-label={c.name} />
+              )}
+              {selecting && <Checkbox checked={on} tabIndex={-1} aria-hidden="true" className="absolute top-1.5 left-1.5 pointer-events-none" />}
               <BrandLogo name={c.name} domain={c.domain} size={36} />
               <p className="text-xs font-medium leading-tight truncate w-full group-hover:text-primary transition-colors">{c.name}</p>
               {brandCategory(c.companyType) && <p className="text-[10px] text-muted-foreground truncate w-full">{brandCategory(c.companyType)}</p>}
@@ -1293,7 +1325,9 @@ function BrandExplorer() {
                   )}
                 </div>
               )}
-              {c.parentCompanyId && (
+              {c.parentCompanyId && (selecting ? (
+                <p className="text-[10px] text-muted-foreground truncate w-full">↑ {parent?.name || "Parent co."}</p>
+              ) : (
                 <Link
                   href={`/companies/${c.parentCompanyId}`}
                   className="relative z-10 text-[10px] text-muted-foreground hover:text-primary transition-colors truncate w-full"
@@ -1302,7 +1336,7 @@ function BrandExplorer() {
                 >
                   ↑ {parent?.name || "Parent co."}
                 </Link>
-              )}
+              ))}
             </div>
           );
         })}

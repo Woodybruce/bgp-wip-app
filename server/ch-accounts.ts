@@ -67,6 +67,18 @@ function isAnnualAccountsFiling(item: any): boolean {
   return ACCOUNTS_FILING_PREFIXES.some(p => desc.startsWith(p));
 }
 
+// The filing that holds the latest annual accounts, from a company's
+// accounts filing history (newest first, as Companies House sends it).
+export function pickLatestAccountsFiling(items: any[], targetMadeUpTo: string | null): any | null {
+  // Filings that ARE annual accounts AND match the target period
+  // (description_values.made_up_date is the period-end the filing covers).
+  // Several match when a period was refiled: the newest comes first.
+  const atTarget = targetMadeUpTo ? items.find(i => isAnnualAccountsFiling(i) && i?.description_values?.made_up_date === targetMadeUpTo) : undefined;
+  // Fallback: nothing matched the period Companies House calls the latest
+  // (very rare, its metadata lagging), so the most recent annual accounts.
+  return atTarget || items.find(isAnnualAccountsFiling) || null;
+}
+
 export async function fetchLatestAccountsForCompany(companyId: string): Promise<FetchAccountsOutcome> {
   if (!CH_API_KEY) return { status: "skipped", reason: "COMPANIES_HOUSE_API_KEY not configured" };
 
@@ -94,26 +106,7 @@ export async function fetchLatestAccountsForCompany(companyId: string): Promise<
   );
   const items: any[] = history?.items || [];
 
-  // 3. Find filings that ARE annual accounts AND match the target period.
-  //    description_values.made_up_date is the period-end the filing covers.
-  const annualAccountsAtTarget = items.filter(i => {
-    if (!isAnnualAccountsFiling(i)) return false;
-    const filedPeriod = i?.description_values?.made_up_date;
-    return filedPeriod === targetMadeUpTo;
-  });
-
-  // 4. If multiple match (refile of the same period), prefer the one filed
-  //    most recently — the CH 'date' field is the filing date (date-asc'd at
-  //    that point), and items already come back date-DESC from CH.
-  let target = annualAccountsAtTarget[0];
-
-  // 5. Fallback: if nothing matched targetMadeUpTo exactly but CH said
-  //    that's the latest accounts period, take the most recent annual
-  //    accounts filing regardless of period match (very rare — usually
-  //    indicates CH metadata lag).
-  if (!target) {
-    target = items.find(isAnnualAccountsFiling);
-  }
+  const target = pickLatestAccountsFiling(items, targetMadeUpTo);
   if (!target) return { status: "skipped", reason: "no annual accounts filing found in CH history" };
 
   const docId = extractDocId(target?.links?.document_metadata);

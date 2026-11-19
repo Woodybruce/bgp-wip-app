@@ -967,7 +967,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const kycInvestigationQ = pool.query(
       `SELECT result->'experian' AS experian
          FROM kyc_investigations
-        WHERE crm_company_id = $1
+        WHERE crm_company_id = $1 AND trading_entity_id IS NULL
         ORDER BY conducted_at DESC LIMIT 1`,
       [companyId]
     );

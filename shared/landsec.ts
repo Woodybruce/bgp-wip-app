@@ -408,6 +408,10 @@ const JOINT_AGENT_CHAT_CANCEL_RUN = new RegExp(`^/api/chatbgp/threads/${UNIT_ID}
 const JOINT_AGENT_BRIEF_DRAFT = new RegExp(`^/api/available-units/${UNIT_ID}/brief/draft-ai$`);
 const JOINT_AGENT_PROPERTY = new RegExp(`^/api/crm/properties/${UNIT_ID}$`);
 const JOINT_AGENT_DEAL = new RegExp(`^/api/crm/deals/${UNIT_ID}$`);
+// The deal page's own reads (server/deal-page.ts, 18 November 2026): its
+// stage strip, clock, letting, checklist and timeline. The handlers hold a
+// joint agent to its schemes and leave out BGP's AML, invoicing and tasks.
+const JOINT_AGENT_DEAL_PAGE = new RegExp(`^/api/crm/deals/${UNIT_ID}/(page|timeline)$`);
 const JOINT_AGENT_SCHEDULE = new RegExp(`^/api/tenancy-schedule/property/${UNIT_ID}(/links)?$`);
 const JOINT_AGENT_PROPERTY_PARTS = new RegExp(`^/api/properties/${UNIT_ID}/(plans|brochures|schemes)$`);
 const JOINT_AGENT_PROPERTY_UNITS = new RegExp(`^/api/properties/${UNIT_ID}/units(/(tracker(:|%3a))?${UNIT_ID})?$`);
@@ -521,6 +525,7 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
     if (m === "GET") {
       if (p === "/api/crm/properties" || JOINT_AGENT_PROPERTY.test(p)) return "allow";
       if (p === "/api/crm/deals" || JOINT_AGENT_DEAL.test(p)) return "allow";
+      if (JOINT_AGENT_DEAL_PAGE.test(p)) return "allow";
       if (JOINT_AGENT_SCHEDULE.test(p)) return "allow";
       if (JOINT_AGENT_PROPERTY_PARTS.test(p)) return "allow";
       // The plan-led property page (Woody, 2026-11-14: "Joint agents need to
@@ -598,6 +603,11 @@ export const JOINT_AGENT_HIDDEN_DEAL_FIELDS = [
   "kyc_approved", "kyc_approved_at", "kyc_approved_by", "aml_check_completed", "aml_checklist",
   "mlr_scope", "mlr_scope_reason", "mlr_scope_assessed_at", "mlr_scope_assessed_by", "aml_mlro_report_url",
   "aml_sof_analysis", "aml_ai_triage", "aml_market_data", "solicitor_notes",
+  // Each party's Xero billing contact, and the company that signs for it
+  // (2026-11-18): BGP's billing and AML records.
+  "landlord_entity_id", "landlord_entity_name", "tenant_entity_id", "tenant_entity_name",
+  "vendor_entity_id", "vendor_entity_name", "purchaser_entity_id", "purchaser_entity_name",
+  "landlord_trading_entity_id", "tenant_trading_entity_id", "vendor_trading_entity_id", "purchaser_trading_entity_id",
 ] as const;
 
 const snakeToCamel = (s: string) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());

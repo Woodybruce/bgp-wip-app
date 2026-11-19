@@ -38,6 +38,40 @@ export interface PipelineSummary {
   jobsTotal: number | null;
   jobTowns: { town: string; adverts: number }[];
   planningSkipped: string | null;
+  // Why the last check of each source failed, when it did.
+  planningProblem: string | null;
+  jobsProblem: string | null;
+  // Planning was checked on its own (the twelve-month check) and the job
+  // adverts not yet.
+  jobsUnchecked: boolean;
+}
+
+// What the last check really did, source by source, for the card: a check
+// that failed or was not run never reads as "none found" (Woody, 2026-11-18,
+// asking whether the planning and jobs check was "actually working properly":
+// the job adverts had failed on every brand since the key was set, and the
+// card said none were found).
+type CheckFacts = Pick<PipelineSummary, "jobsConfigured" | "planningSkipped"> & { planningProblem?: string | null; jobsProblem?: string | null; jobsUnchecked?: boolean };
+
+export function pipelineCheckWords(data: CheckFacts): { planning: string; jobs: string } {
+  const planning = data.planningSkipped ? `planning not searched (${data.planningSkipped})`
+    : data.planningProblem ? `planning register could not be read (${data.planningProblem})`
+    : "no planning applications naming it in 12 months";
+  const jobs = !data.jobsConfigured ? "job adverts not switched on (they need an Adzuna key)"
+    : data.jobsUnchecked ? "job adverts not checked yet"
+    : data.jobsProblem ? `job adverts could not be checked (${data.jobsProblem})`
+    : "no new-opening or property job adverts in 60 days";
+  return { planning, jobs };
+}
+
+// "Planning registers and job adverts checked 18 Nov 2026", naming only the
+// sources whose check worked.
+export function pipelineCheckedSummary(data: CheckFacts, when: string): string {
+  const worked = [
+    !data.planningSkipped && !data.planningProblem ? "planning registers" : "",
+    data.jobsConfigured && !data.jobsProblem && !data.jobsUnchecked ? "job adverts" : "",
+  ].filter(Boolean).join(" and ");
+  return worked ? `${worked[0].toUpperCase()}${worked.slice(1)} checked ${when}` : `Checked ${when}; neither source could be read`;
 }
 
 // A row as it is stored: the item, its key in the source and a little detail.
@@ -104,7 +138,7 @@ const COMMON_NAMES = new Set([
   "whistles", "gap", "evans", "burton", "dune", "three", "ee", "o2", "cook",
   "paul", "tortilla", "cote", "bills", "apple", "orange", "shell", "subway",
   "iceland", "range", "works", "giraffe", "ask", "quiz", "revolution", "toast",
-  "weekday", "tiger", "rituals", "browns", "gym", "new look",
+  "weekday", "tiger", "rituals", "browns", "gym", "new look", "light",
 ]);
 // Four letters or fewer, but nobody writes them by accident.
 const SHORT_NAMES_SEARCHED = new Set(["pret", "itsu"]);
@@ -181,6 +215,42 @@ const COMMERCIAL = new RegExp(
   ].join("|") + ")\\b",
 );
 
+// Signs that are not a shop's: road and traffic signs, and "signs of" decay
+// or movement. A tree application in Guildford passed as shop works on the
+// live register (18 November 2026) because its stems were "touching the road
+// signs".
+const NOT_SHOP_SIGNS = /\b(?:road|traffic|street|highway) signs?\b|\bsigns? of\b/g;
+
+// Works that only replace what an occupier already has (its own signs
+// refreshed) are not a new site: McDonald's replacement lettersets made up
+// much of what was kept for it on the register (18 November 2026). A change
+// of use or a fit-out says arrival whatever else is replaced, and where the
+// works name the occupier being replaced and it is another business
+// ("replacement for existing Tim Hortons" on a Starbucks application), the
+// brand is arriving and it counts.
+const REPLACEMENT_WORKS = /\breplac(?:e|es|ed|ing|ement)\b(?:\s+[a-z0-9]+){0,5}?\s+(?:signs?|signage|letterset|letter set|lettering|fascias?|logos?|totems?|shopfronts?|shop fronts?|canopy|canopies)\b|\breplac(?:e|es|ed|ing|ement)\b(?:\s+(?:of|for))?(?:\s+the)?\s+existing\b/;
+const ARRIVAL_WORKS = /\b(?:change of use|use class|fit out|fitout|fitting out|occupation by|occupied by|to be occupied|erection of|new build|new unit)\b/;
+// Read from the description as written: a capitalised name after "existing",
+// "former" or "previous" is the occupier being replaced.
+const REPLACED_OCCUPIER = /\breplac(?:e|es|ed|ing|ement)\b(?:\s+(?:for|of))?(?:\s+the)?\s+(?:existing|former|previous)\s+['"‘’“”]?([A-Z][A-Za-z0-9'’&.-]*(?:\s+[A-Z][A-Za-z0-9'’&.-]*){0,3})/;
+
+function replacesWhatIsThere(description: string, about: string, names: string[]): boolean {
+  if (ARRIVAL_WORKS.test(about) || !REPLACEMENT_WORKS.test(about)) return false;
+  const replaced = REPLACED_OCCUPIER.exec(description);
+  if (replaced) {
+    const who = normText(replaced[1]);
+    const itself = names.some((n) => { const w = words(n).join(" "); return !!w && (who === w || who.startsWith(`${w} `)); });
+    if (!itself) return false;
+  }
+  return true;
+}
+
+// Application types that never bring an occupier, whatever the description
+// says (PlanIt's own classes). The stored rows are read through the same
+// list, so a row kept before the rule leaves the card and the score.
+export const NEVER_AN_OCCUPIER_TYPES = ["trees", "telecoms"] as const;
+const NEVER_AN_OCCUPIER = new RegExp(`^(?:${NEVER_AN_OCCUPIER_TYPES.join("|")})$`, "i");
+
 // The brand as the last or the neighbouring occupier, or as the shop that is
 // already there: not a site it is taking.
 const NOT_ARRIVING = new RegExp(
@@ -203,7 +273,7 @@ function followedBy(toks: Tok[], at: number, seqs: string[][]): boolean {
 
 export type PlanningVerdict =
   | { counts: true }
-  | { counts: false; reason: "no date" | "older than 12 months" | "brand not named in the description" | "brand named only as a former, existing or neighbouring occupier" | "not about commercial premises" };
+  | { counts: false; reason: "no date" | "older than 12 months" | "brand not named in the description" | "brand named only as a former, existing or neighbouring occupier" | "not about commercial premises" | "replacing what is already there" };
 
 function withinDays(dateText: unknown, days: number, now: Date): "ok" | "none" | "old" {
   const day = typeof dateText === "string" ? dateText.slice(0, 10) : "";
@@ -244,8 +314,10 @@ export function planningVerdict(rec: PlanningRecord, rule: NameRule): PlanningVe
   if (!named) {
     return { counts: false, reason: onlyAsNeighbour ? "brand named only as a former, existing or neighbouring occupier" : "brand not named in the description" };
   }
-  const about = normText(rec.description);
-  if (!COMMERCIAL.test(about) || /\b(renewal of|pavement licen[cs]e|tables and chairs)\b/.test(about)) return { counts: false, reason: "not about commercial premises" };
+  const about = normText(rec.description).replace(NOT_SHOP_SIGNS, " ");
+  if (NEVER_AN_OCCUPIER.test(String(rec.app_type ?? "").trim()) || !COMMERCIAL.test(about)
+    || /\b(renewal of|pavement licen[cs]e|tables and chairs)\b/.test(about)) return { counts: false, reason: "not about commercial premises" };
+  if (replacesWhatIsThere(String(rec.description ?? ""), about, rule.names)) return { counts: false, reason: "replacing what is already there" };
   return { counts: true };
 }
 
@@ -253,12 +325,17 @@ export function planningRecordCounts(rec: PlanningRecord, rule: NameRule): boole
   return planningVerdict(rec, rule).counts;
 }
 
-// The name to send to the register's full text search, or why not.
+// The name to send to the register's full text search, or why not. A name of
+// more than one word (or with an ampersand) is searched as a phrase:
+// unquoted, PlanIt matches the words anywhere ("Flat Iron" found 71 records,
+// 3 of them naming the brand; quoted, the 3), so a busy name could run past
+// the 100 records read. On 18 November 2026 no record the rule kept, for
+// seven brands, was lost by quoting.
 export function planningSearchTerm(names: string[]): { search: string } | { skip: string } {
   const name = names[0];
   if (!name || nameTooCommon(name)) return { skip: TOO_COMMON_REASON };
-  const search = name.replace(/[‘’‛ʼ`´]/g, "'").replace(/\s+/g, " ").trim().slice(0, 80);
-  return { search };
+  const clean = name.replace(/[‘’‛ʼ`´]/g, "'").replace(/["“”]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
+  return { search: /[\s&]/.test(clean) ? `"${clean}"` : clean };
 }
 
 const POSTCODE = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i;

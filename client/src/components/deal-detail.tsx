@@ -1,11 +1,9 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { usePropertyUnits } from "@/components/property-page/use-property-page";
 import { Card, CardContent } from "@/components/ui/card";
 import { ActivitySummary } from "@/components/activity-summary";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -35,26 +33,19 @@ import {
 import {
   Users,
   Building2,
-  X,
   ArrowLeft,
-  Plus,
   Pencil,
   Trash2,
   Loader2,
   Clock,
-  ExternalLink,
-  Link2,
   Image as ImageIcon,
   ChevronDown,
   ChevronRight,
   ShieldCheck,
-  History,
-  Mail,
   Calendar as CalendarIcon,
   FileText,
-  MessageSquare,
+  MoreHorizontal,
 } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { useState, useMemo, useEffect } from "react";
 import { Pill } from "@/components/ui/pill";
 import { trackRecentItem } from "@/hooks/use-recent-items";
@@ -65,39 +56,45 @@ import { apiRequest, queryClient, invalidateDealCaches, getAuthHeaders } from "@
 import { Link, useLocation } from "wouter";
 import { useGoBack } from "@/lib/go-back";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schema";
-import { buildUserColorMap, resolveDealAgents } from "@/lib/agent-colors";
+import { buildUserColorMap } from "@/lib/agent-colors";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { dealDisplayTitle } from "@/components/app-sidebar";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { MobileBrandView } from "@/components/mobile-brand-view";
-import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as STATUS_CHIP_COLORS, legacyToCode } from "@shared/deal-status";
+import { DEAL_STATUS_COLORS as STATUS_CHIP_COLORS, legacyToCode } from "@shared/deal-status";
 import { dealStatusLabel } from "@shared/letting-rules";
 import { readLastContact } from "@shared/last-contact";
-import { InlineLinkSelect, InlineText } from "@/components/inline-edit";
+import { InlineLinkSelect } from "@/components/inline-edit";
 import {
-  DEAL_STATUS_COLORS,
-  DEAL_TYPE_COLORS,
   DEAL_TEAM_COLORS,
-  DEAL_ASSET_CLASS_COLORS,
   DEAL_FEE_AGREEMENT_COLORS,
-  DEAL_AML_COLORS,
   formatCurrency,
   formatNumber,
   formatDate,
   DealFormDialog,
   FeeAllocationCard,
   XeroInvoiceSection,
-  DealTimeline,
   DealAuditLog,
 } from "@/pages/deals";
 import { PropertyFoldersPanel } from "@/pages/properties";
 import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { AIActivityCard, pickTouchDates } from "@/components/ai-activity-card";
-import { DealAmlStatusCard, useDealAmlStatus } from "@/components/deal-aml-status";
+import { DealAmlStatusCard } from "@/components/deal-aml-status";
+import { DealPartyLines } from "@/components/deal-parties";
 import { JointAgencyNoteCard } from "@/components/joint-agency-aml";
-import { DealClockCard, useIsLandsecView, useLandsecClocks, isRestrictedLandsecRole } from "@/components/landsec/deal-clock";
+import { useIsLandsecView, DaysAtStage, NerFigure, BriefCheck } from "@/components/landsec/deal-clock";
 import { CompanyChip } from "@/components/company-chip";
 import { BgpTeamGroup, type BgpTeamPerson } from "@/components/bgp-team-group";
+import { CompanyKindPage, type CompanySection } from "@/components/company-page/company-kind-page";
+import { trackerUnitHref } from "@/lib/unit-links";
+import { dealPageSections, owedItems, type DealEventOpen, type DealPageData, type DealPageNames, type DealPartyRole } from "@shared/deal-page";
+import { useDealPage, type LettingDialog } from "@/components/deal-page/use-deal-page";
+import { StageStrip } from "@/components/deal-page/stage-strip";
+import { DealTimelinePanel } from "@/components/deal-page/deal-timeline";
+import { DealNegotiation, sectionCard } from "@/components/deal-page/deal-negotiation";
+import { DealChecklistTasks, DealWaitingOn } from "@/components/deal-page/deal-checklist-tasks";
+import { DealConversation } from "@/components/deal-page/deal-conversation";
+import { LettingDialogs } from "@/components/deal-page/letting-dialogs";
 
 // Collapsible card pattern reused across the deal page for heavy panels.
 function CollapsibleCard({
@@ -134,101 +131,32 @@ function CollapsibleCard({
   );
 }
 
-// Right-sidebar collapsible row (different styling — borderless, full-width).
-function SidebarSection({
-  open,
-  onToggle,
-  icon: Icon,
-  title,
-  children,
-  testId,
-}: {
-  open: boolean;
-  onToggle: () => void;
-  icon: any;
-  title: string;
-  children: React.ReactNode;
-  testId?: string;
-}) {
-  return (
-    <div className="border-b">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors"
-        data-testid={testId}
-        aria-expanded={open}
-      >
-        <div className="flex items-center gap-2">
-          <Icon className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-semibold">{title}</span>
-        </div>
-        {open ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-      </button>
-      {open && <div className="px-4 pb-3">{children}</div>}
-    </div>
-  );
-}
-
+// The deal page (Woody, 2026-11-18; docs/deal-page-review-2026-11-18.md):
+// the landlord and brand pages' frame, one section at a time in ?section=,
+// the same page for every login and cut on the server (a client never sees
+// the fee or BGP's AML working, a joint agent sees its own schemes and no
+// brand pages). The header line carries the stage, days at stage and what
+// the deal is waiting on; the stage strip is its spine; the conversation is
+// the property's, cut to the deal. Its reads are server/deal-page.ts.
 export function DealDetail({ id, isComps = false }: { id: string; isComps?: boolean }) {
   const { toast } = useToast();
-  // Landsec view: where the deal clock strip is drawn it carries the one Net
-  // Effective Rent (Landsec's definition, and none when no incentives are
-  // recorded), so the terms card does not print a second, different figure.
   const landsecView = useIsLandsecView();
-  const landsecClocks = useLandsecClocks(landsecView && !isComps);
-  const clockHasNer = landsecView && !isComps && landsecClocks.byId.has(id);
   const [, navigate] = useLocation();
   const goBack = useGoBack(isComps ? "/comps" : "/deals");
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [unitEditOpen, setUnitEditOpen] = useState(false);
-  const [unitEditForm, setUnitEditForm] = useState({
-    propertyId: "",
-    switchToUnitId: "",
-    unitAddress: "",
-    unitPostcode: "",
-    unitUprn: "",
-    unitAddressFreeText: "",
-  });
-
-  // Heavy panels — collapsed by default to keep the page scannable.
-  const [mainSections, setMainSections] = useState<Record<string, boolean>>({
-    pathway: false,
-    planning: false,
-    kyc: true,
-    brands: false,
-    history: false,
-    timeline: false,
-    audit: false,
-    emails: false,
-    meetings: false,
-  });
-  const toggleMain = (key: string) => setMainSections(prev => ({ ...prev, [key]: !prev[key] }));
-
-  // Phone section switcher (docs/DESIGN.md §9) — the deal page runs 15+
-  // boards deep in one scroll; below md we show one section at a time,
-  // same treatment that fixed the WIP report. Desktop layout unchanged.
-  const [phoneSection, setPhoneSection] = useState<"overview" | "brand" | "compliance" | "activity" | "files">("overview");
-  const sec = (k: typeof phoneSection) => (phoneSection === k ? "" : "hidden md:block");
-
-  // Right sidebar — linked records, files, contacts.
-  const [sidebarSections, setSidebarSections] = useState<Record<string, boolean>>({
-    files: true,
-    property: true,
-    contacts: true,
-    comments: true,
-  });
-  const toggleSidebar = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
+  const [brandsOpen, setBrandsOpen] = useState(false);
+  const [dialog, setDialog] = useState<LettingDialog | null>(null);
 
   const { data: deal, isLoading } = useQuery<CrmDeal>({
     queryKey: ["/api/crm/deals", id],
   });
+  // The page's own read: stage, strip, clock, letting, checklist, tasks and
+  // the names it draws with (server/deal-page.ts).
+  const pageQuery = useDealPage(id);
+  const page = pageQuery.data;
 
-  // Client logins (e.g. Landsec) see a trimmed deal page — no BGP-internal
-  // panels (AI activity feed of staff emails, KYC/AML, Xero billing,
-  // SharePoint folders). Those endpoints 403 for clients anyway; hiding the
-  // panels stops broken cards + console noise on the deal they open.
   const { data: ddUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   // Treat the user as a client until auth/me resolves — on a hard page load
   // the panels otherwise mount for a beat and fire their (403) queries
@@ -237,17 +165,13 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // A client LOGIN never deletes; staff keep Delete even while viewing as a
   // client (Woody, 2026-10-19: Lizzie had no Delete button).
   const isClientLogin = !ddUser || ddUser.role === "Client";
-  // A joint agent (Woody, 2026-11-14) reads the deals at its own schemes:
-  // the terms, the parties' names and the deal clock. No editing, brand
-  // profiles, files, comments or history here (BGP's records); its letting
-  // work is on its own tracker.
-  // A joint agent has the deal page a Landsec login has, less the brand
-  // pages (Woody, 2026-11-14): no Brand tab and no brand profiles.
+  // A joint agent (Woody, 2026-11-14) has the deal page a Landsec login has,
+  // less the brand pages and BGP's own records: no Brand profiles, no Edit
+  // (it does not change deals here), no Image Studio, no change log.
   const jointAgent = ddUser?.landsecRole === "joint_agent";
-  // Same query the AML card runs (shared cache). When it lists both
-  // counterparties, the KYC panel drops its own party rows — the page was
-  // listing each counterparty twice (Woody, 2026-09-27).
-  const { data: amlStatus } = useDealAmlStatus(id, !isClientDeal);
+  const viewerKind: DealPageData["viewer"]["kind"] = page?.viewer.kind || (jointAgent ? "joint_agent" : isClientDeal ? "client" : "staff");
+  const staffView = viewerKind === "staff";
+
   // Older activity caches stamped the deal's last_interaction with the
   // latest cited date, upcoming meetings included — "Last Interaction 30 Dec"
   // on South Molton. When the stored date is in the future, re-derive from
@@ -260,18 +184,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     enabled: !isClientDeal && storedLastTouch.kind === "next",
     refetchInterval: false,
     retry: false,
-  });
-
-  const { data: properties = [] } = useQuery<CrmProperty[]>({
-    queryKey: ["/api/crm/properties"],
-  });
-
-  const { data: companies = [] } = useQuery<CrmCompany[]>({
-    queryKey: ["/api/crm/companies"],
-  });
-
-  const { data: contacts = [] } = useQuery<CrmContact[]>({
-    queryKey: ["/api/crm/contacts"],
   });
 
   const { data: users = [] } = useQuery<{ id: number; name: string; email: string }[]>({
@@ -332,35 +244,16 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     });
   })();
 
-  // Look up units on this deal's property so we can show breadcrumb + power
-  // the "edit unit / address" overlay on the heading.
-  const { data: propertyUnits = [] } = useQuery<Array<{
-    id: string; unitName: string; propertyId: string;
-    unitAddress?: string | null; unitPostcode?: string | null;
-    unitUprn?: string | null; unitAddressFreeText?: string | null;
-  }>>({
-    queryKey: ["/api/property-units"],
-    enabled: !isClientDeal,
-  });
-  const linkedUnit = (deal as any)?.unitId
-    ? propertyUnits.find((u) => u.id === (deal as any).unitId)
-    : null;
-  const unitPickPropertyId = (unitEditOpen && unitEditForm.propertyId) || (deal as any)?.propertyId;
-  const unitsOnThisProperty = unitPickPropertyId
-    ? propertyUnits.filter(u => u.propertyId === unitPickPropertyId)
-    : [];
   const userColorMap = useMemo(() => buildUserColorMap(users as any), [users]);
+  // BGP colleagues a task on the deal may be given to (BGP staff only).
+  const taskAssignees = useMemo(() => staffView
+    ? users.filter(u => !u.email || /@brucegillinghampollard\.com$/i.test(u.email)).map(u => ({ id: String(u.id), name: u.name })).filter(u => u.name).sort((a, b) => a.name.localeCompare(b.name))
+    : [], [users, staffView]);
 
-  useEffect(() => {
-    if (!deal || !window.location.search.includes("tab=invoice")) return;
-    const timer = setTimeout(() => {
-      const el = document.querySelector('[data-testid="xero-invoice-section"]');
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [deal?.id]);
-
-  const linkedProperty = deal?.propertyId ? properties.find((p) => p.id === deal.propertyId) : null;
+  const names: DealPageNames | null = page?.names || null;
+  const linkedProperty = names?.property || null;
+  // The deal's own unit record (BGP staff), for the heading and the unit editor.
+  const linkedUnit = names?.unit || null;
 
   // Investment deals are about the whole property, so the property name can
   // stand in for a missing deal name. A leasing deal with no linked unit must
@@ -396,10 +289,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     return !!street && !ctx.includes(street) && !ctx.includes((linkedUnit.unitName || "").toLowerCase());
   })();
   const headingIsUnit = !isInvestmentDeal && !!linkedUnit && !unitOffProperty && !unitNameIsOtherAddress;
-  // The deal's unit by the one rule (the unit feed): its tracker row, so the
-  // tracker link opens on this unit (consistency review, 14 November 2026).
-  const dealUnitFeed = usePropertyUnits(!isInvestmentDeal ? ((deal as any)?.propertyId || null) : null);
-  const feedUnit = (dealUnitFeed.data?.units || []).find(u => u.deal?.id === (deal as any)?.id) || null;
   // Header "Unit 3" over a breadcrumb / side panel "South Molton - unit 3",
   // and "10 Piccadilly Time Out Market T1" restating the property linked
   // below it: one title everywhere on the page — the unit, else the deal
@@ -409,8 +298,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const pageTitle = dealDisplayTitle({
     name: deal?.name,
     propertyName: linkedProperty?.name,
-    propertyAddress: typeof linkedProperty?.address === "string" ? linkedProperty.address : (linkedProperty?.address as any)?.formatted,
-    tenantName: deal?.tenantId ? companies.find((c) => c.id === deal.tenantId)?.name : null,
+    propertyAddress: linkedProperty?.address || undefined,
+    tenantName: names?.parties.tenant?.name || null,
     unitName: headingIsUnit ? linkedUnit!.unitName : null,
     isInvestment: isInvestmentDeal,
   });
@@ -426,92 +315,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     }
   }, [deal?.id, deal?.name, (deal as any)?.propertyName, pageTitle]);
 
-  const linkedLandlord = deal?.landlordId ? companies.find((c) => c.id === deal.landlordId) : null;
-  const linkedTenant = deal?.tenantId ? companies.find((c) => c.id === deal.tenantId) : null;
-
-  const linkedContacts = useMemo(() => {
-    if (!deal) return [];
-    // Agent PEOPLE live in *_agent_contact_id (the *_agent_id columns are
-    // firms); the firm columns stay as a fallback for older rows.
-    const d: any = deal;
-    const ids = [deal.clientContactId, d.vendorAgentContactId, d.acquisitionAgentContactId, d.purchaserAgentContactId, d.leasingAgentContactId,
-      deal.vendorAgentId, deal.acquisitionAgentId, deal.purchaserAgentId, deal.leasingAgentId].filter(Boolean);
-    return contacts.filter((c) => ids.includes(c.id));
-  }, [deal, contacts]);
-
-  // Open the unit-edit overlay, pre-filling from the currently linked unit.
-  const openUnitEdit = () => {
-    setUnitEditForm({
-      propertyId: (deal as any)?.propertyId || "",
-      switchToUnitId: linkedUnit?.id || "",
-      unitAddress: linkedUnit?.unitAddress || "",
-      unitPostcode: linkedUnit?.unitPostcode || "",
-      unitUprn: linkedUnit?.unitUprn || "",
-      unitAddressFreeText: linkedUnit?.unitAddressFreeText || "",
-    });
-    setUnitEditOpen(true);
-  };
-
-  // Save handler: writes any address-field changes to property_units, and if
-  // the user picked a different unit, points the deal's unitId at it.
-  const saveUnitEdit = useMutation({
-    mutationFn: async () => {
-      if (linkedUnit?.id) {
-        await apiRequest("PATCH", `/api/property-units/${linkedUnit.id}`, {
-          unitAddress: unitEditForm.unitAddress || null,
-          unitPostcode: unitEditForm.unitPostcode || null,
-          unitUprn: unitEditForm.unitUprn || null,
-          unitAddressFreeText: unitEditForm.unitAddressFreeText || null,
-        });
-      }
-      // A deal with no property had nowhere to pick a unit from and the
-      // save did nothing visible (Woody, 2026-10-06) — the property is
-      // set here too.
-      const dealPatch: Record<string, string> = {};
-      if (unitEditForm.propertyId && unitEditForm.propertyId !== (deal as any)?.propertyId) dealPatch.propertyId = unitEditForm.propertyId;
-      if (unitEditForm.switchToUnitId && unitEditForm.switchToUnitId !== linkedUnit?.id) dealPatch.unitId = unitEditForm.switchToUnitId;
-      if (Object.keys(dealPatch).length) await apiRequest("PUT", `/api/crm/deals/${id}`, dealPatch);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
-      invalidateDealCaches();
-      setUnitEditOpen(false);
-      toast({ title: "Saved" });
-    },
-    onError: (e: any) => toast({ title: "Couldn't save", description: e?.message, variant: "destructive" }),
-  });
-
-  const updateAgentsMutation = useMutation({
-    mutationFn: async (agents: string[]) => {
-      await apiRequest("PUT", `/api/crm/deals/${id}`, { internalAgent: agents });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", id] });
-      invalidateDealCaches();
-    },
-  });
-
-  const [sharepointDialogOpen, setSharepointDialogOpen] = useState(false);
-  const [sharepointUrlInput, setSharepointUrlInput] = useState("");
-  const [feeEditing, setFeeEditing] = useState(false);
-  const [feeInput, setFeeInput] = useState("");
-
-  const updateSharepointMutation = useMutation({
-    mutationFn: async (url: string | null) => {
-      await apiRequest("PUT", `/api/crm/deals/${id}`, { sharepointLink: url });
-    },
-    onSuccess: () => {
-      toast({ title: "SharePoint link updated" });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", id] });
-      invalidateDealCaches();
-      setSharepointDialogOpen(false);
-    },
-    onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
-  });
-
   const deleteMutation = useMutation({
     mutationFn: async () => {
       await apiRequest("DELETE", `/api/crm/deals/${id}`);
@@ -525,15 +328,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
-
-  const handleFeeSave = async () => {
-    const val = parseFloat(feeInput.replace(/[^0-9.]/g, ""));
-    if (!isNaN(val)) {
-      await apiRequest("PUT", `/api/crm/deals/${id}`, { fee: val });
-      invalidateDealCaches(id);
-    }
-    setFeeEditing(false);
-  };
 
   const handleActingForSave = async (side: "landlord" | "tenant") => {
     if (((deal as any)?.bgpActingFor || "landlord") === side) return;
@@ -604,41 +398,22 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
   const _areaBasis = deal.areaBasis || areaBasisFromAssetClass(deal.assetClass);
   const _isRetail = isRetailAssetClass(deal.assetClass);
-  // Net Effective = Headline Rent × (term − rent_free / 12) / term.
-  // Rent-free is captured in months on the deal, lease length in years.
-  // Only meaningful when all three values are present and the term is
-  // longer than the free period; otherwise hide the row rather than
-  // show a misleading zero or negative.
-  const netEffectiveRent = (() => {
-    const headline = Number(deal.rentPa) || 0;
-    const termYears = Number(deal.leaseLength) || 0;
-    const freeMonths = Number(deal.rentFree) || 0;
-    if (!headline || !termYears) return null;
-    const termMonths = termYears * 12;
-    if (freeMonths >= termMonths) return null;
-    return Math.round(headline * (termMonths - freeMonths) / termMonths);
-  })();
+  const letting = page?.letting || null;
+  const live = !!ddStatusCode && !["WIT", "COM", "INV", "ARCH"].includes(ddStatusCode);
 
   const numericFields: { label: string; value: number | string | null | undefined; format?: "currency" | "number" | "percent" }[] = [
     { label: "Pricing", value: deal.pricing, format: "currency" },
-    { label: "Headline Rent", value: deal.rentPa, format: "currency" },
-    ...(clockHasNer ? [] : [{ label: "Net Effective Rent", value: netEffectiveRent, format: "currency" as const }]),
+    { label: "Headline rent", value: deal.rentPa, format: "currency" },
     { label: "Yield", value: deal.yieldPercent, format: "percent" },
-    { label: `${_areaBasis} Area (sq ft)`, value: deal.totalAreaSqft, format: "number" },
-    { label: "Price PSF", value: deal.pricePsf, format: "currency" },
+    { label: `${_areaBasis} area (sq ft)`, value: deal.totalAreaSqft, format: "number" },
+    { label: "Price psf", value: deal.pricePsf, format: "currency" },
     ...(_isRetail ? [{ label: "Price ITZA", value: deal.priceItza, format: "currency" as const }] : []),
-    { label: "Capital Contribution", value: deal.capitalContribution, format: "currency" },
-    { label: "Rent Free (months)", value: deal.rentFree, format: "number" },
-    { label: "Lease Length (years)", value: deal.leaseLength, format: "number" },
-    { label: "Break Option (years)", value: deal.breakOption, format: "number" },
-    { label: "Rent Analysis", value: deal.rentAnalysis, format: "currency" },
+    { label: "Capital contribution", value: deal.capitalContribution, format: "currency" },
+    { label: "Rent free (months)", value: deal.rentFree, format: "number" },
+    { label: "Lease length (years)", value: deal.leaseLength, format: "number" },
+    { label: "Break option (years)", value: deal.breakOption, format: "number" },
+    { label: "Rent analysis", value: deal.rentAnalysis, format: "currency" },
   ];
-
-  const linkedLandlordName = deal.landlordId ? companies.find(c => c.id === deal.landlordId)?.name : null;
-  const linkedTenantName = deal.tenantId ? companies.find(c => c.id === deal.tenantId)?.name : null;
-  const linkedVendorName = deal.vendorId ? companies.find(c => c.id === deal.vendorId)?.name : null;
-  const linkedPurchaserName = deal.purchaserId ? companies.find(c => c.id === deal.purchaserId)?.name : null;
-  const linkedBillingName = (deal as any).xeroContactName || null;
 
   // Last = latest past date; a future stored date only ever shows as Next.
   let lastTouchValue: string | null = null;
@@ -652,116 +427,31 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   }
 
   // Deal Type + Status deliberately omitted here — they're already in the
-  // header (the orange "Deal · {type}" eyebrow + the status badge), so
-  // repeating them in this card was pure duplication.
+  // header (the "Deal · {type}" eyebrow + the status badge).
   const textFields: { label: string; value: string | null | undefined; colorMap?: Record<string, string>; href?: string }[] = [
     { label: "Team", value: Array.isArray(deal.team) ? deal.team.join(", ") : deal.team, colorMap: DEAL_TEAM_COLORS },
     { label: "Tenure", value: deal.tenureText },
-    { label: "Fee Agreement", value: deal.feeAgreement, colorMap: DEAL_FEE_AGREEMENT_COLORS },
+    { label: "Fee agreement", value: deal.feeAgreement, colorMap: DEAL_FEE_AGREEMENT_COLORS },
     { label: "Instructed", value: deal.instructedAt ? formatDate(deal.instructedAt) : null },
     { label: "Exchanged", value: deal.exchangedAt ? formatDate(deal.exchangedAt) : null },
     { label: "Completed", value: deal.completedAt ? formatDate(deal.completedAt) : null },
     { label: "Invoiced", value: deal.invoicedAt ? formatDate(deal.invoicedAt) : null },
-    { label: "Last Interaction", value: lastTouchValue },
-    { label: "Next Interaction", value: nextTouchValue },
+    { label: "Last contact", value: lastTouchValue },
+    { label: "Next contact", value: nextTouchValue },
   ];
 
-  // Files / linked records / comments / history. Rendered in the right
-  // sidebar on ≥md screens and stacked under the main column on mobile —
-  // the sidebar is display:none below md, which used to make these
-  // sections unreachable on phones.
-  const sidebarLinkPanels = (
-    <>
-      {<SidebarSection open={sidebarSections.files} onToggle={() => toggleSidebar("files")} icon={FileText} title="Files" testId="toggle-sidebar-files">
-        <div className="space-y-2" data-testid="deal-files-section">
-          {/* The deal's files live in its property's folder — render the
-              same unified Files panel (browse / upload / new folder /
-              rename / delete / share) instead of just a link. */}
-          {linkedProperty && !isClientDeal && (
-            <PropertyFoldersPanel
-              propertyName={linkedProperty.name}
-              propertyId={linkedProperty.id}
-              folderTeams={(linkedProperty as any).folderTeams}
-              sharepointFolderUrl={(linkedProperty as any).sharepointFolderUrl}
-            />
-          )}
-          {isClientDeal && (
-            <p className="text-xs text-muted-foreground italic">Documents are managed by the BGP team.</p>
-          )}
-          {!linkedProperty && !isClientDeal && (
-            <p className="text-xs text-muted-foreground italic">Link this deal to a property to see its folders.</p>
-          )}
-        </div>
-      </SidebarSection>}
+  // Investment: the purchaser or vendor; leasing: the tenant.
+  const counterpartyRole: DealPartyRole = isInvestmentDeal ? (deal.dealType === "Sale" ? "purchaser" : "vendor") : "tenant";
+  const counterpartyLabel = counterpartyRole === "purchaser" ? "Purchaser" : counterpartyRole === "vendor" ? "Vendor" : "Tenant";
+  const counterparty = names?.parties[counterpartyRole] || null;
+  const trackerHref = letting ? trackerUnitHref(letting.trackerId, letting.propertyId, { staff: staffView, landsecView, restricted: jointAgent }) : null;
+  const waitingWho = page?.clock && (page.clock.waitingOnParty || page.clock.waitingOnName);
 
-      {linkedProperty && (
-        <SidebarSection open={sidebarSections.property} onToggle={() => toggleSidebar("property")} icon={Building2} title="Linked Property" testId="toggle-sidebar-property">
-          <Link href={`/properties/${linkedProperty.id}`}>
-            <div className="p-2 rounded-md border hover-elevate cursor-pointer" data-testid="linked-property-panel">
-              <p className="text-xs font-medium">{linkedProperty.name}</p>
-              {linkedProperty.status && (
-                <Badge variant="outline" className="mt-1 text-[9px]">{linkedProperty.status}</Badge>
-              )}
-            </div>
-          </Link>
-        </SidebarSection>
-      )}
-
-      {linkedContacts.length > 0 && (
-        <SidebarSection open={sidebarSections.contacts} onToggle={() => toggleSidebar("contacts")} icon={Users} title={`Linked Contacts (${linkedContacts.length})`} testId="toggle-sidebar-contacts">
-          <div className="space-y-1.5" data-testid="linked-contacts-panel">
-            {linkedContacts.map((contact) => (
-              <Link key={contact.id} href={`/contacts/${contact.id}`}>
-                <div className="p-2 rounded-md border hover-elevate cursor-pointer">
-                  <p className="text-xs font-medium">{contact.name}</p>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {contact.role && (
-                      <span className="text-[9px] text-muted-foreground">{contact.role}</span>
-                    )}
-                    {contact.companyName && (
-                      <Badge variant="outline" className="text-[9px]">{contact.companyName}</Badge>
-                    )}
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </SidebarSection>
-      )}
-
-    </>
-  );
-
-  const sidebarActivityPanels = (
-    <>
-      <SidebarSection open={sidebarSections.comments} onToggle={() => toggleSidebar("comments")} icon={MessageSquare} title="Comments" testId="toggle-sidebar-comments">
-        <DealComments dealId={id} comments={deal.comments} />
-      </SidebarSection>
-
-      <SidebarSection open={sidebarSections.history ?? true} onToggle={() => toggleSidebar("history")} icon={History} title="History & activity" testId="toggle-sidebar-history">
-        <div className="space-y-2">
-          {/* Timeline reads /api/deals/:id/timeline, which the client gateway
-              blocks — offering the panel to clients opens an empty box over a
-              403. Clients keep the Audit log below. */}
-          {!isClientDeal && (
-          <CollapsibleCard open={mainSections.timeline} onToggle={() => toggleMain("timeline")} icon={CalendarIcon} title="Timeline" testId="toggle-deal-timeline">
-            <DealTimeline dealId={id} />
-          </CollapsibleCard>
-          )}
-          <CollapsibleCard open={mainSections.audit} onToggle={() => toggleMain("audit")} icon={History} title="Audit log" testId="toggle-deal-audit">
-            <DealAuditLog dealId={id} />
-          </CollapsibleCard>
-        </div>
-      </SidebarSection>
-    </>
-  );
-
-  const sidebarPanels = (
-    <>
-      {sidebarLinkPanels}
-      {sidebarActivityPanels}
-    </>
-  );
+  const sectionList = dealPageSections(viewerKind, { letting: !!letting });
+  const brandParties = (["tenant", "landlord"] as const)
+    .map(role => ({ role, party: names?.parties[role] || null }))
+    .filter((x): x is { role: "tenant" | "landlord"; party: { id: string; name: string; domain: string | null } } => !!x.party?.id)
+    .filter((x, i, arr) => arr.findIndex(a => a.party.id === x.party.id) === i);
 
   return (
     <div className="h-[calc(100vh-48px)] flex flex-col" data-testid={`deal-detail-${id}`}>
@@ -774,693 +464,477 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         />
       </div>
 
-      <div className="flex-1 flex min-h-0">
-        <div className="flex-1 overflow-y-auto cq-body">
-          <div className="p-4 sm:p-5 space-y-2.5">
-      <div className="flex items-center gap-2 flex-wrap">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="hidden md:inline-flex"
-          data-testid="button-back-deals"
-          onClick={goBack}
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Button>
-        {/* min-w-[16rem], not min-w-0: with basis 0 the title block "fits" at
-            any width, so the wrap never triggered and a narrow window (chat
-            panel open) crushed the heading to one word per line — the action
-            buttons must wrap below instead. */}
-        <div className="flex-1 min-w-[16rem]">
-          {(() => {
-            // Investment (Sale/Purchase) deals are about the whole property —
-            // heading = property name. Leasing deals are about a specific unit
-            // — heading = unit name, property as subtitle.
-            const isInvestment = isInvestmentDeal;
-            const headingText = pageTitle;
-            // Counterparty: Purchaser/Vendor for investment, Tenant for leasing.
-            let counterpartyId: string | null = null;
-            let counterpartyLabel = "";
-            if (isInvestment) {
-              if (deal.dealType === "Sale") { counterpartyId = (deal as any).purchaserId; counterpartyLabel = "Purchaser"; }
-              else { counterpartyId = (deal as any).vendorId; counterpartyLabel = "Vendor"; }
-            } else {
-              counterpartyId = (deal as any).tenantId;
-              counterpartyLabel = "Tenant";
-            }
-            const counterparty = counterpartyId ? companies.find((c) => c.id === counterpartyId) : null;
-            return (
-              <>
-                <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-primary mb-1" data-testid="deal-eyebrow">
-                  <span className="w-2 h-2 rounded-full bg-primary" /> Deal{deal.dealType ? ` · ${deal.dealType}` : ""}
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {headingIsUnit ? (
-                    <button
-                      onClick={openUnitEdit}
-                      className="text-xl font-bold truncate hover:underline hover:text-primary transition-colors"
-                      data-testid="text-deal-name"
-                      title={`${deal.name ? `${deal.name} — ` : ""}click to switch unit or edit unit address`}
-                    >
-                      {headingText}
-                    </button>
-                  ) : (
-                    <h1 className="text-xl font-bold truncate" data-testid="text-deal-name" title={deal.name || undefined}>{headingText}</h1>
-                  )}
-                  {deal.status && (
-                    <Badge variant="outline" className={`text-[10px] border-transparent ${STATUS_CHIP_COLORS[(legacyToCode(deal.status) || "") as keyof typeof STATUS_CHIP_COLORS] || "bg-muted text-muted-foreground"}`} data-testid="badge-deal-status">{dealStatusLabel(deal.status, deal.dealType)}</Badge>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">
-                  {linkedProperty && headingText !== linkedProperty.name && (
-                    <Link href={`/properties/${linkedProperty.id}`} className="inline-flex items-center gap-1 hover:underline hover:text-foreground" title="Open property">
-                      <Building2 className="w-3.5 h-3.5" /> {linkedProperty.name}
-                    </Link>
-                  )}
-                  {counterparty && (
-                    <CompanyChip id={jointAgent ? null : counterparty.id} name={counterparty.name} domain={(counterparty as any).domain || (counterparty as any).website || null}
-                      role={counterpartyLabel} size={16} className="hover:text-foreground" title={`Open ${counterpartyLabel.toLowerCase()}`} testId="deal-counterparty" />
-                  )}
-                  {!counterparty && (
-                    <span className="text-xs italic">{counterpartyLabel} not set</span>
-                  )}
-                  {deal.targetDate && (
-                    <span className="inline-flex items-center gap-1 text-xs" title="Target date" data-testid="deal-target-date">
-                      <CalendarIcon className="w-3.5 h-3.5" /> Target: {formatDate(deal.targetDate)}
-                    </span>
-                  )}
-                  {trackerRow && (
-                    <Link href="/deals/investment" className="text-xs hover:underline hover:text-foreground" data-testid="link-investment-board">
-                      On the {trackerRow.boardType === "Sales" ? "Sales" : "Purchases"} board →
-                    </Link>
-                  )}
-                  {(unitOffProperty || (!isInvestment && unitNameIsOtherAddress)) && !isClientDeal && (
-                    <button
-                      type="button"
-                      onClick={openUnitEdit}
-                      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
-                      title="The linked unit looks like it belongs to another building — click to pick the right unit"
-                      data-testid="chip-unit-off-property"
-                    >
-                      {unitOffProperty ? `Unit ${linkedUnit!.unitName} is on another property` : `Linked unit "${linkedUnit!.unitName}" looks like another building`}
-                    </button>
-                  )}
-                  {draftInvoiceOnInvoicedDeal && (
-                    <button
-                      type="button"
-                      onClick={() => document.querySelector('[data-testid="xero-invoice-section"]')?.scrollIntoView({ behavior: "smooth", block: "start" })}
-                      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
-                      title="The deal is marked invoiced/completed but its Xero invoice hasn't been approved yet"
-                      data-testid="chip-invoice-still-draft"
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                      Invoice still draft in Xero
-                      {draftInvoiceOnInvoicedDeal.totalAmount != null && (
-                        <span className="tabular-nums">
-                          {" "}· £{Number(draftInvoiceOnInvoicedDeal.totalAmount).toLocaleString("en-GB")}
-                          {deal.fee && Number(draftInvoiceOnInvoicedDeal.totalAmount) > Number(deal.fee) * 1.1 ? " inc. VAT" : ""}
-                        </span>
+      <div className="flex-1 overflow-y-auto cq-body min-h-0" data-testid="deal-scroll">
+        <div className="p-4 sm:p-5">
+          <CompanyKindPage key={id} testId="deal-page" sectionTestPrefix="deal-section" scrollOnPhone>
+            {(select) => {
+              const hasSection = (key: string) => sectionList.some(s => s.key === key);
+              const goTo = (key: string) => { if (hasSection(key)) select(key); };
+              // What pressing an event or a link on the page opens.
+              const openThing = (open: DealEventOpen | LettingDialog) => {
+                if ("section" in open) return goTo(open.section);
+                if (open.to === "offer") return setDialog(open);
+                if (letting?.current) return setDialog(open as LettingDialog);
+                goTo(open.to === "checklist" ? "checklist" : "negotiation");
+              };
+              const top = (
+                <div className="space-y-3 min-w-0">
+                  <div className="flex items-start gap-2 flex-wrap">
+                    <Button variant="ghost" size="icon" className="hidden md:inline-flex shrink-0" data-testid="button-back-deals" onClick={goBack}>
+                      <ArrowLeft className="w-4 h-4" />
+                    </Button>
+                    {/* min-w-[16rem], not min-w-0: with basis 0 the title block "fits" at
+                        any width, so the wrap never triggered and a narrow window (chat
+                        panel open) crushed the heading to one word per line — the action
+                        buttons must wrap below instead. */}
+                    <div className="flex-1 min-w-[16rem]">
+                      <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-primary mb-1" data-testid="deal-eyebrow">
+                        <span className="w-2 h-2 rounded-full bg-primary" /> Deal{deal.dealType ? ` · ${deal.dealType}` : ""}
+                        {(deal as any).dealRef ? <span className="font-mono tabular-nums normal-case" data-testid="deal-ref">#{(deal as any).dealRef}</span> : null}
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {headingIsUnit && !jointAgent ? (
+                          <button
+                            onClick={() => setUnitEditOpen(true)}
+                            className="text-xl font-bold truncate hover:underline hover:text-primary transition-colors"
+                            data-testid="text-deal-name"
+                            title={`${deal.name ? `${deal.name} — ` : ""}click to switch unit or edit unit address`}
+                          >
+                            {pageTitle}
+                          </button>
+                        ) : (
+                          <h1 className="text-xl font-bold truncate" data-testid="text-deal-name" title={deal.name || undefined}>{pageTitle}</h1>
+                        )}
+                        {deal.status && (
+                          <Badge variant="outline" className={`text-[10px] border-transparent ${STATUS_CHIP_COLORS[(legacyToCode(deal.status) || "") as keyof typeof STATUS_CHIP_COLORS] || "bg-muted text-muted-foreground"}`} data-testid="badge-deal-status">{dealStatusLabel(deal.status, deal.dealType)}</Badge>
+                        )}
+                        {page && page.stage.days != null && live && (
+                          <span className="text-xs" data-testid="deal-header-days">
+                            <DaysAtStage code={page.stage.code} days={page.stage.days} confirmed={page.stage.confirmed} stageSet={page.stage.set} since={page.stage.since}
+                              dealId={id} canSet={page.viewer.canSetStage} testId="deal-days-at-stage" />
+                          </span>
+                        )}
+                        {waitingWho && live && (
+                          <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => goTo("checklist")} data-testid="deal-header-waiting"
+                            title={page?.clock?.waitingNote || page?.clock?.checklistItemLabel || undefined}>
+                            Waiting on <span className="font-medium text-foreground">{page!.clock!.waitingOnParty || page!.clock!.waitingOnName}</span>
+                            {page!.clock!.waitingOnParty && page!.clock!.waitingOnName ? ` · ${page!.clock!.waitingOnName}` : ""}
+                            {page!.waitingDays != null ? <span className="font-mono tabular-nums"> · {page!.waitingDays}d</span> : null}
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">
+                        {linkedProperty && pageTitle !== linkedProperty.name && (
+                          <Link href={`/properties/${linkedProperty.id}`} className="inline-flex items-center gap-1 hover:underline hover:text-foreground" title="Open property">
+                            <Building2 className="w-3.5 h-3.5" /> {linkedProperty.name}
+                          </Link>
+                        )}
+                        {counterparty ? (
+                          <CompanyChip id={jointAgent ? null : counterparty.id} name={counterparty.name} domain={counterparty.domain}
+                            role={counterpartyLabel} size={16} className="hover:text-foreground" title={`Open ${counterpartyLabel.toLowerCase()}`} testId="deal-counterparty" />
+                        ) : page ? (
+                          <span className="text-xs italic">{counterpartyLabel} not set</span>
+                        ) : null}
+                        {deal.targetDate && (
+                          <span className="inline-flex items-center gap-1 text-xs" title="Target date" data-testid="deal-target-date">
+                            <CalendarIcon className="w-3.5 h-3.5" /> Target: {formatDate(deal.targetDate)}
+                          </span>
+                        )}
+                        {trackerRow && (
+                          <Link href="/deals/investment" className="text-xs hover:underline hover:text-foreground" data-testid="link-investment-board">
+                            On the {trackerRow.boardType === "Sales" ? "Sales" : "Purchases"} board →
+                          </Link>
+                        )}
+                        {(unitOffProperty || (!isInvestmentDeal && unitNameIsOtherAddress)) && !isClientDeal && (
+                          <button
+                            type="button"
+                            onClick={() => setUnitEditOpen(true)}
+                            className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                            title="The linked unit looks like it belongs to another building — click to pick the right unit"
+                            data-testid="chip-unit-off-property"
+                          >
+                            {unitOffProperty ? `Unit ${linkedUnit!.unitName} is on another property` : `Linked unit "${linkedUnit!.unitName}" looks like another building`}
+                          </button>
+                        )}
+                        {draftInvoiceOnInvoicedDeal && (
+                          <button
+                            type="button"
+                            onClick={() => { goTo("fees"); setTimeout(() => document.querySelector('[data-testid="xero-invoice-section"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 150); }}
+                            className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                            title="The deal is marked invoiced/completed but its Xero invoice hasn't been approved yet"
+                            data-testid="chip-invoice-still-draft"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                            Invoice still draft in Xero
+                            {draftInvoiceOnInvoicedDeal.totalAmount != null && (
+                              <span className="tabular-nums">
+                                {" "}· £{Number(draftInvoiceOnInvoicedDeal.totalAmount).toLocaleString("en-GB")}
+                                {deal.fee && Number(draftInvoiceOnInvoicedDeal.totalAmount) > Number(deal.fee) * 1.1 ? " inc. VAT" : ""}
+                              </span>
+                            )}
+                          </button>
+                        )}
+                        {letting && trackerHref && (
+                          <Link href={trackerHref} className="text-xs hover:underline hover:text-foreground" data-testid="link-back-to-tracker">
+                            {letting.unitName} on the Letting Tracker →
+                          </Link>
+                        )}
+                        {/* Spine state — green chip when the deal is linked
+                            to the canonical tenancy unit, amber when it
+                            isn't yet (so the property page doesn't see this
+                            deal on a specific row). Clicking the green chip
+                            jumps to the unit on the property's tenancy
+                            schedule. */}
+                        {linkedProperty && !isInvestmentDeal && (
+                          (deal as any).tenancyUnitId ? (
+                            <Link href={`/properties/${linkedProperty.id}#tenancy-unit-${(deal as any).tenancyUnitId}`}>
+                              <a
+                                className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                title="Linked to its unit on the property's tenancy schedule"
+                                data-testid="chip-on-tenancy-spine"
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                On tenancy schedule
+                              </a>
+                            </Link>
+                          ) : !isClientDeal ? (
+                            // Internal data-hygiene flag — hidden from client
+                            // viewers (the nightly sweep re-links automatically;
+                            // staff can still Resolve from the property page).
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700"
+                              title="This deal isn't yet linked to a tenancy schedule row. It will auto-link on the nightly sweep, or use Resolve on the property page."
+                              data-testid="chip-off-tenancy-spine"
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                              Not on tenancy schedule
+                            </span>
+                          ) : null
+                        )}
+                      </div>
+                    </div>
+                    {/* Edit and one More menu (the landlord page's header shape).
+                        A joint agent does not change deals here. */}
+                    <div className="flex items-center gap-2 flex-wrap gap-y-1.5">
+                      {!jointAgent && (
+                        <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-deal">
+                          <Pencil className="w-4 h-4 mr-2" />
+                          Edit
+                        </Button>
                       )}
-                    </button>
-                  )}
-                  {headingIsUnit && (
-                    <Link href={feedUnit?.trackerId ? `/deals/letting?unitId=${encodeURIComponent(feedUnit.trackerId)}${linkedProperty ? `&propertyId=${linkedProperty.id}` : ""}` : `/deals/letting${linkedProperty ? `?propertyId=${linkedProperty.id}` : ""}`} className="text-xs hover:underline hover:text-foreground" data-testid="link-back-to-tracker">
-                      ← Back to Letting Tracker
-                    </Link>
-                  )}
-                  {/* Spine state — green chip when the deal is linked
-                      to the canonical tenancy unit, amber when it
-                      isn't yet (so the property page doesn't see this
-                      deal on a specific row). Clicking the green chip
-                      jumps to the unit on the property's tenancy
-                      schedule. */}
-                  {linkedProperty && !isInvestment && (
-                    (deal as any).tenancyUnitId ? (
-                      <Link href={`/properties/${linkedProperty.id}#tenancy-unit-${(deal as any).tenancyUnitId}`}>
-                        <a
-                          className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                          title="Linked to its unit on the property's tenancy schedule"
-                          data-testid="chip-on-tenancy-spine"
-                        >
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                          On tenancy schedule
-                        </a>
-                      </Link>
-                    ) : !isClientDeal ? (
-                      // Internal data-hygiene flag — hidden from client
-                      // viewers (the nightly sweep re-links automatically;
-                      // staff can still Resolve from the property page).
-                      <span
-                        className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700"
-                        title="This deal isn't yet linked to a tenancy schedule row. It will auto-link on the nightly sweep, or use Resolve on the property page."
-                        data-testid="chip-off-tenancy-spine"
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                        Not on tenancy schedule
-                      </span>
-                    ) : null
-                  )}
-                </div>
-              </>
-            );
-          })()}
-        </div>
-        <div className="flex items-center gap-2 flex-wrap gap-y-1.5 w-full md:w-auto">
-          {<Link className="flex-1 md:flex-none" href={`/image-studio?property=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&address=${encodeURIComponent(linkedProperty?.address ? (typeof linkedProperty.address === 'object' && linkedProperty.address !== null ? ((linkedProperty.address as any).formatted || (linkedProperty.address as any).line1 || linkedProperty.name) : String(linkedProperty.address || linkedProperty.name)) : ((deal as any).propertyName || deal.name || ""))}&propertyId=${encodeURIComponent(deal.propertyId || "")}`}>
-            <Button variant="outline" size="sm" className="w-full md:w-auto" data-testid="button-deal-image-studio">
-              <ImageIcon className="w-4 h-4 mr-2" />
-              Image Studio
-            </Button>
-          </Link>}
-          {/* Document briefs are staff-only (the API 403s clients and the
-              route guard bounces them home) — hide the entry point. */}
-          {!isClientDeal && (
-            <Link className="flex-1 md:flex-none" href={`/document-briefs?propertyId=${encodeURIComponent(deal.propertyId || "")}&propertyName=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&postcode=${encodeURIComponent((linkedProperty as any)?.postcode || "")}`}>
-              <Button variant="outline" size="sm" className="w-full md:w-auto" data-testid="button-deal-create-document">
-                <FileText className="w-4 h-4 mr-2" />
-                Document
-              </Button>
-            </Link>
-          )}
-          {<Button variant="outline" size="sm" className="flex-1 md:flex-none" onClick={() => setEditOpen(true)} data-testid="button-edit-deal">
-            <Pencil className="w-4 h-4 mr-2" />
-            Edit
-          </Button>}
-        </div>
-      </div>
-
-      {/* One scrolling row — wrapping left "Files" alone on a second line (Woody, 2026-09-27). */}
-      <div className="flex gap-1.5 overflow-x-auto -mx-4 px-4 pb-0.5 md:hidden [&>*]:shrink-0" data-testid="deal-phone-sections">
-        <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="deal-section-overview">Overview</Pill>
-        {!jointAgent && <Pill active={phoneSection === "brand"} onClick={() => { setPhoneSection("brand"); setMainSections(prev => ({ ...prev, brands: true })); }} data-testid="deal-section-brand">Brand</Pill>}
-        {!isClientDeal && (
-          <Pill active={phoneSection === "compliance"} onClick={() => { setPhoneSection("compliance"); setMainSections(prev => ({ ...prev, kyc: true })); }} data-testid="deal-section-compliance">KYC</Pill>
-        )}
-        {<>
-        <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="deal-section-activity">Activity</Pill>
-        <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="deal-section-files">Files</Pill>
-        </>}
-      </div>
-
-      <div className={`space-y-2.5 ${sec("overview")}`}>
-      {/* Landsec view only: the deal clock (stage, days, Net Effective Rent,
-          who it is waiting on) with the link to the unit page. */}
-      {!isComps && <DealClockCard dealId={deal.id} />}
-      {textFields.some((f) => f.value) && (
-      <Card>
-        <CardContent className="p-3">
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-4 gap-y-1.5">
-            {textFields.filter((f) => f.value).map((field) => (
-              <div key={field.label} className="flex flex-col py-1">
-                <p className="text-[10px] text-muted-foreground leading-tight">{field.label}</p>
-                {field.colorMap && field.value && field.colorMap[field.value] ? (
-                  <Badge variant="outline" className="text-[9px] w-fit mt-0.5 gap-1" data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${field.colorMap[field.value]}`} />
-                    {field.value}
-                  </Badge>
-                ) : field.href ? (
-                  <Link href={field.href}>
-                    <p className="text-xs font-medium text-primary hover:underline cursor-pointer truncate" data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
-                      {field.value}
-                    </p>
-                  </Link>
-                ) : (
-                  <p className="text-xs font-medium truncate" data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
-                    {field.value}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-      )}
-
-      {/* Parties + Fee Allocation side by side to use the horizontal space. */}
-      <div className="cq-two-up">
-      <Card>
-        <CardContent className="p-4 space-y-2">
-          <div className="flex items-center gap-2 mb-1">
-            <Users className="w-4 h-4 text-muted-foreground" />
-            <h3 className="text-sm font-semibold">Parties</h3>
-          </div>
-          {/* The BGP team on the deal, the same rows as every People board
-              (Woody, 2026-11-14). Clients see who to chase; staff change the
-              agents in Fee allocation, where the split lives. */}
-          {dealBgpTeam.length > 0 && (
-            <div className="pb-2 mb-1 border-b border-border/60" data-testid="deal-bgp-team">
-              <BgpTeamGroup people={dealBgpTeam} addControl={isClientDeal ? null : <span className="text-[11px] text-muted-foreground">Change in Fee allocation</span>} />
-            </div>
-          )}
-          {/* Leasing deals show Landlord/Tenant; investment (Sale/Purchase)
-              deals show Vendor/Purchaser — the unused pair is clutter that
-              invites mis-linking (UX #19). Already-linked slots stay visible
-              either way so existing data is never hidden. */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-2">
-            {(() => { const partiesInvestment = deal.dealType === "Sale" || deal.dealType === "Purchase";
-            // UX #155 — clients get read-only party slots: staff-worded
-            // "+ Link landlord" pickers on their own deal read like the deal
-            // is set up wrong. Landlord defaults to their own company.
-            if (isClientDeal) {
-              const nameFor = (id: string | null | undefined) => id ? (companies.find(c => c.id === id)?.name || null) : null;
-              const slots: Array<[string, string | null]> = partiesInvestment
-                ? [["Vendor", nameFor(deal.vendorId)], ["Purchaser", nameFor(deal.purchaserId)]]
-                : [["Landlord", nameFor(deal.landlordId) || (ddUser as any)?.companyScopeName || null], ["Tenant", nameFor(deal.tenantId)]];
-              return (<>
-                {slots.map(([label, name]) => (
-                  <div key={label} className="flex flex-col gap-1" data-testid={`client-party-${label.toLowerCase()}`}>
-                    <p className="text-[10px] text-muted-foreground leading-tight">{label}</p>
-                    {name
-                      ? <span className="text-xs font-medium">{name}</span>
-                      : <span className="text-[11px] text-muted-foreground italic">Not set yet — your BGP team will link parties</span>}
+                      {(!jointAgent || !isClientLogin) && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="outline" size="sm" data-testid="button-deal-more"><MoreHorizontal className="w-4 h-4 mr-1" />More</Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {!jointAgent && (
+                              <DropdownMenuItem asChild data-testid="button-deal-image-studio">
+                                <Link href={`/image-studio?property=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&address=${encodeURIComponent(linkedProperty?.address || linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&propertyId=${encodeURIComponent(deal.propertyId || "")}`}>
+                                  <ImageIcon className="w-4 h-4 mr-2" />Image Studio
+                                </Link>
+                              </DropdownMenuItem>
+                            )}
+                            {/* Document briefs are staff-only (the API 403s clients and the
+                                route guard bounces them home). */}
+                            {!isClientDeal && (
+                              <DropdownMenuItem asChild data-testid="button-deal-create-document">
+                                <Link href={`/document-briefs?propertyId=${encodeURIComponent(deal.propertyId || "")}&propertyName=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&postcode=${encodeURIComponent(linkedProperty?.postcode || "")}`}>
+                                  <FileText className="w-4 h-4 mr-2" />Document
+                                </Link>
+                              </DropdownMenuItem>
+                            )}
+                            {!isClientLogin && (
+                              <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteOpen(true)} data-testid="button-delete-deal">
+                                <Trash2 className="w-4 h-4 mr-2" />Delete deal
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </div>
                   </div>
-                ))}
-              </>);
-            }
-            return (<>
-            {/* Which side BGP acts for on a leasing deal — drives instruction
-                vs related activity on the landlord and brand pages (Woody,
-                2026-09-26). Investment deals take their side from the
-                vendor / purchaser. */}
-            {!partiesInvestment && (
-            <div className="flex items-center gap-2 sm:col-span-3" data-testid="deal-bgp-acting-for">
-              <p className="text-[10px] text-muted-foreground leading-tight">BGP acting for</p>
-              <div className="flex flex-wrap gap-1">
-                {(["landlord", "tenant"] as const).map(side => (
-                  <Pill key={side} active={((deal as any).bgpActingFor || "landlord") === side} onClick={() => handleActingForSave(side)} data-testid={`deal-acting-for-${side}`}>
-                    {side === "landlord" ? "Landlord" : "Tenant"}
-                  </Pill>
-                ))}
-              </div>
-            </div>
-            )}
-            {(!partiesInvestment || deal.landlordId) && (
-            <div className="flex flex-col gap-1">
-              <p className="text-[10px] text-muted-foreground leading-tight">Landlord</p>
-              <InlineLinkSelect
-                value={deal.landlordId}
-                options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
-                href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
-                onSave={(v) => handlePartySave("landlordId", v || null)}
-                onCreate={(name) => createCounterparty("landlordId", "Landlord", name)}
-                placeholder="Link landlord"
-              />
-            </div>
-            )}
-            {(!partiesInvestment || deal.tenantId) && (
-            <div className="flex flex-col gap-1">
-              <p className="text-[10px] text-muted-foreground leading-tight">Tenant</p>
-              <InlineLinkSelect
-                value={deal.tenantId}
-                options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name }))}
-                href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
-                onSave={(v) => handlePartySave("tenantId", v || null)}
-                onCreate={(name) => createCounterparty("tenantId", "Tenant", name)}
-                placeholder="Link tenant"
-              />
-            </div>
-            )}
-            {(partiesInvestment || deal.vendorId) && (
-            <div className="flex flex-col gap-1">
-              <p className="text-[10px] text-muted-foreground leading-tight">Vendor</p>
-              <InlineLinkSelect
-                value={deal.vendorId}
-                options={companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.vendorId).map(c => ({ id: c.id, name: c.name }))}
-                href={deal.vendorId ? `/companies/${deal.vendorId}` : undefined}
-                onSave={(v) => handlePartySave("vendorId", v || null)}
-                onCreate={(name) => createCounterparty("vendorId", "Vendor", name)}
-                placeholder="Link vendor"
-              />
-            </div>
-            )}
-            {(partiesInvestment || deal.purchaserId) && (
-            <div className="flex flex-col gap-1">
-              <p className="text-[10px] text-muted-foreground leading-tight">Purchaser</p>
-              <InlineLinkSelect
-                value={deal.purchaserId}
-                options={companies.filter(c => c.companyType === "Purchaser" || c.companyType === "Investor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType === "Vendor" || c.id === deal.purchaserId).map(c => ({ id: c.id, name: c.name }))}
-                href={deal.purchaserId ? `/companies/${deal.purchaserId}` : undefined}
-                onSave={(v) => handlePartySave("purchaserId", v || null)}
-                onCreate={(name) => createCounterparty("purchaserId", "Purchaser", name)}
-                placeholder="Link purchaser"
-              />
-            </div>
-            )}
-            </>); })()}
-            {!isClientDeal && (
-            <div className="flex flex-col gap-1">
-              <p className="text-[10px] text-muted-foreground leading-tight">Xero Contact</p>
-              {(deal as any).xeroContactName ? (
-                <div className="text-xs">
-                  <span className="font-medium">{(deal as any).xeroContactName}</span>
-                  {(deal as any).xeroAccountNumber && (
-                    <span className="text-muted-foreground"> · A/C {(deal as any).xeroAccountNumber}</span>
+
+                  {page && <StageStrip strip={page.strip} />}
+
+                  <DealConversation
+                    dealId={id}
+                    dealLabel={pageTitle}
+                    dealLive={live}
+                    propertyId={deal.propertyId || null}
+                    propertyName={linkedProperty?.name || null}
+                    unit={letting ? { id: letting.trackerId, name: letting.unitName } : null}
+                    earlierNotes={(deal as any).comments}
+                    jointAgent={jointAgent}
+                  />
+                </div>
+              );
+
+              const overview = (
+                <div className="grid grid-cols-1 gap-3 min-w-0">
+                  {page && (
+                    <div className={sectionCard} data-testid="deal-clock-card">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Deal clock</span>
+                        <span className="rounded-full bg-foreground text-background px-2 py-px text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap">{page.stage.label || "No stage"}</span>
+                        {live && <DaysAtStage code={page.stage.code} days={page.stage.days} long confirmed={page.stage.confirmed} stageSet={page.stage.set} since={page.stage.since}
+                          dealId={id} canSet={page.viewer.canSetStage} testId="deal-clock-days" />}
+                        <NerFigure ner={page.ner} incentivesRecorded={page.incentivesRecorded} prefix="NER " suffix=" pa" dash={false} />
+                        {letting && (letting.briefCheck || letting.briefState) && <BriefCheck brief={letting.briefState} check={letting.briefCheck} />}
+                        {landsecView && page.viewer.landsec && (deal as any).tenancyUnitId && (
+                          <Link href={`/landsec/unit/${(deal as any).tenancyUnitId}`} className="text-primary hover:underline" data-testid="deal-clock-unit-link">Unit page</Link>
+                        )}
+                      </div>
+                      {(page.clock !== null || page.viewer.canSetWaiting) && live && (
+                        <div className="mt-1.5"><DealWaitingOn dealId={id} page={page} /></div>
+                      )}
+                    </div>
+                  )}
+                  {(() => {
+                    const owed = owedItems(page?.checklist || null);
+                    if (!owed.length) return null;
+                    return (
+                      <div className={sectionCard} data-testid="deal-owed">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-semibold">Owed now</h3>
+                          <button type="button" className="ml-auto text-xs text-primary hover:underline" onClick={() => goTo("checklist")}>The checklist</button>
+                        </div>
+                        <ul className="mt-1 space-y-0.5">
+                          {owed.map(i => (
+                            <li key={i.id} className="flex items-start gap-2 text-sm">
+                              <span className="min-w-0 flex-1">{i.label}</span>
+                              <span className={`shrink-0 text-xs ${i.overdue ? "font-medium text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>
+                                {[i.assigneeName || "nobody yet", i.dueDate ? `due ${formatDate(i.dueDate)}` : null].filter(Boolean).join(" · ")}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })()}
+                  {/* The deal's dates and terms in one card, in the page's type
+                      scale (Woody, 2026-11-19: "clean up the design ... Similar
+                      design issue on this page"). Money and areas in mono;
+                      the Net Effective Rent is the clock's. */}
+                  {(textFields.some((f) => f.value) || numericFields.some((f) => f.value != null) || [deal.gfAreaSqft, deal.ffAreaSqft, deal.basementAreaSqft, deal.itzaAreaSqft].some((v) => v != null)) && (
+                    <div className={sectionCard} data-testid="deal-terms-card">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Dates and terms</span>
+                      <dl className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-x-6 gap-y-3">
+                        {textFields.filter((f) => f.value).map((field) => {
+                          const testId = `text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`;
+                          return (
+                            <div key={field.label} className="min-w-0">
+                              <dt className="text-[11px] text-muted-foreground">{field.label}</dt>
+                              <dd className="text-sm font-medium truncate" data-testid={testId} title={field.value || undefined}>
+                                {field.colorMap && field.value && field.colorMap[field.value] ? (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <span className={`w-2 h-2 rounded-full shrink-0 ${field.colorMap[field.value]}`} />
+                                    {field.value}
+                                  </span>
+                                ) : field.value}
+                              </dd>
+                            </div>
+                          );
+                        })}
+                        {numericFields.filter((f) => f.value != null).map((field) => (
+                          <div key={field.label} className="min-w-0">
+                            <dt className="text-[11px] text-muted-foreground">{field.label}</dt>
+                            <dd className="text-sm font-mono tabular-nums font-medium" data-testid={`text-deal-${field.label.toLowerCase().replace(/[\s()\/]+/g, "-")}`}>
+                              {field.format === "currency"
+                                ? formatCurrency(field.value)
+                                : field.format === "percent"
+                                ? `${field.value}%`
+                                : formatNumber(field.value)}
+                            </dd>
+                          </div>
+                        ))}
+                        {[
+                          { label: "GF", value: deal.gfAreaSqft },
+                          { label: "FF", value: deal.ffAreaSqft },
+                          { label: "Bsmt", value: deal.basementAreaSqft },
+                          ...(_isRetail ? [{ label: "ITZA", value: deal.itzaAreaSqft }] : []),
+                        ].some(f => f.value != null) && (
+                          <div className="min-w-0 col-span-2">
+                            <dt className="text-[11px] text-muted-foreground">Floor breakdown (sq ft)</dt>
+                            <dd className="flex flex-wrap gap-x-3 gap-y-0.5 text-sm">
+                              {[
+                                { label: "GF", value: deal.gfAreaSqft },
+                                { label: "FF", value: deal.ffAreaSqft },
+                                { label: "Bsmt", value: deal.basementAreaSqft },
+                                ...(_isRetail ? [{ label: "ITZA", value: deal.itzaAreaSqft }] : []),
+                              ].filter(f => f.value != null).map(f => (
+                                <span key={f.label} className="font-mono tabular-nums">
+                                  <span className="text-[11px] text-muted-foreground mr-1">{f.label}</span>
+                                  {formatNumber(f.value)}
+                                </span>
+                              ))}
+                            </dd>
+                          </div>
+                        )}
+                      </dl>
+                    </div>
+                  )}
+                  {/* Client-facing fee view: the fee they're paying us. The
+                      internal per-agent split stays staff-only (Fees & invoicing). */}
+                  {!staffView && (deal.fee != null || deal.feePercentage != null) && (
+                    <div className={sectionCard} data-testid="deal-client-fee">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">BGP fee</span>
+                      <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-3">
+                        {deal.fee != null && (
+                          <div>
+                            <dt className="text-[11px] text-muted-foreground">Total fee</dt>
+                            <dd className="text-sm font-mono tabular-nums font-medium" data-testid="text-client-fee-total">{formatCurrency(deal.fee)}</dd>
+                          </div>
+                        )}
+                        {deal.feePercentage != null && (
+                          <div>
+                            <dt className="text-[11px] text-muted-foreground">Agency fee</dt>
+                            <dd className="text-sm font-mono tabular-nums font-medium" data-testid="text-client-fee-pct">{deal.feePercentage}%</dd>
+                          </div>
+                        )}
+                      </dl>
+                    </div>
+                  )}
+                  {/* AI-curated activity — BGP staff's emails and meetings, staff only.
+                      Deal moves are on the Timeline, not in this feed. */}
+                  {staffView && <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />}
+                  <div className={`${sectionCard} space-y-2`} data-testid="deal-activity-feed">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Emails, calls and meetings</span>
+                    <ActivitySummary dealId={id} />
+                  </div>
+                </div>
+              );
+
+              const parties = (
+                <div className="grid grid-cols-1 gap-3 min-w-0">
+                  <DealPartiesCard
+                    dealId={id} deal={deal} names={names} isClientDeal={isClientDeal} ddUser={ddUser} dealBgpTeam={dealBgpTeam}
+                    onPartySave={handlePartySave} onActingFor={handleActingForSave} onCreate={createCounterparty}
+                  />
+                  {/* KYC/AML is BGP-internal compliance — never shown to clients.
+                      Opening this section reads the AML status, which starts BGP's
+                      checks before asking for a party with none in 30 days. */}
+                  {staffView && (
+                    <div className="space-y-3" data-testid="deal-kyc">
+                      <div className="flex items-center gap-2 px-0.5">
+                        <ShieldCheck className="w-4 h-4 text-muted-foreground" />
+                        <h3 className="text-sm font-semibold">AML and KYC</h3>
+                      </div>
+                      <DealAmlStatusCard dealId={id} dealStatus={deal.status} />
+                      <JointAgencyNoteCard
+                        dealId={id}
+                        canAdd={!jointAgent}
+                        signedBy={ddUser?.name || undefined}
+                        defaults={{
+                          property: linkedProperty ? [linkedProperty.name, linkedProperty.address && linkedProperty.address !== linkedProperty.name ? linkedProperty.address : null].filter(Boolean).join(", ") : ((deal as any).propertyName || ""),
+                          client: names?.parties.landlord?.name || "",
+                          tenant: names?.parties.tenant?.name || "",
+                          rentPa: deal.rentPa ? String(deal.rentPa) : "",
+                        }}
+                      />
+                    </div>
+                  )}
+                  {!jointAgent && <LinkedContactsCard deal={deal} />}
+                  {!jointAgent && brandParties.length > 0 && (
+                    <CollapsibleCard open={brandsOpen} onToggle={() => setBrandsOpen(o => !o)} icon={Building2} title="Brand Profiles" testId="toggle-deal-brands">
+                      <div className="space-y-3">
+                        {brandParties.map(({ role, party }) => (
+                          <div key={party.id} data-testid={`deal-brand-${role}`}>
+                            <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1 flex items-center gap-1.5">
+                              <Building2 className="w-3 h-3" /> {role === "tenant" ? "Tenant" : "Landlord"}: {party.name}
+                            </p>
+                            <div className="md:hidden"><MobileBrandView companyId={party.id} embedded /></div>
+                            <div className="hidden md:block"><BrandProfilePanel companyId={party.id} /></div>
+                          </div>
+                        ))}
+                      </div>
+                    </CollapsibleCard>
                   )}
                 </div>
-              ) : (
-                <span className="text-[11px] text-muted-foreground italic">Not set — add via Edit</span>
-              )}
-            </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+              );
 
-      {/* Fee Allocation sits next to Parties. The allocated agents ARE the
-          BGP contacts, so the separate BGP Contacts card was removed —
-          edit the agents via the Fee Allocation "Edit" button.
-          BGP fees are never shown to client logins. */}
-      {!isClientDeal ? (
-      <FeeAllocationCard
-        dealId={deal.id}
-        dealFee={deal.fee}
-        headlineRent={deal.rentPa}
-        users={users.map(u => ({ id: String(u.id), name: u.name }))}
-        colorMap={userColorMap}
-      />
-      ) : (deal.fee != null || deal.feePercentage != null) ? (
-        // Client-facing fee view: the fee they're paying us. Headline rent
-        // already appears in the metrics card below, so it's not repeated
-        // here. The internal per-agent split (FeeAllocationCard) stays
-        // staff-only.
-        <Card>
-          <CardContent className="p-3">
-            <h3 className="text-[10px] text-muted-foreground font-medium uppercase tracking-widest mb-2">BGP Fee</h3>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-              {deal.fee != null && (
-                <div className="flex flex-col py-1">
-                  <p className="text-[10px] text-muted-foreground leading-tight">Total Fee</p>
-                  <p className="text-xs font-mono font-medium" data-testid="text-client-fee-total">{formatCurrency(deal.fee)}</p>
+              const fees = (
+                <div className="grid grid-cols-1 gap-3 min-w-0">
+                  <FeeAllocationCard
+                    dealId={deal.id}
+                    dealFee={deal.fee}
+                    headlineRent={deal.rentPa}
+                    users={users.map(u => ({ id: String(u.id), name: u.name }))}
+                    colorMap={userColorMap}
+                  />
+                  {((deal as any).poNumber || (deal as any).invoicingEmail || (deal as any).invoicingNotes) && (
+                    <div className={sectionCard} data-testid="deal-invoicing-details">
+                      <h3 className="text-sm font-semibold mb-1">Invoicing</h3>
+                      <div className="grid gap-1 text-sm">
+                        {(deal as any).poNumber && <p><span className="text-muted-foreground">PO number </span>{(deal as any).poNumber}</p>}
+                        {(deal as any).invoicingEmail && <p><span className="text-muted-foreground">Invoices to </span>{(deal as any).invoicingEmail}</p>}
+                        {(deal as any).invoicingNotes && <p className="whitespace-pre-wrap"><span className="text-muted-foreground">Notes </span>{(deal as any).invoicingNotes}</p>}
+                      </div>
+                    </div>
+                  )}
+                  <XeroInvoiceSection dealId={deal.id} deal={deal} />
                 </div>
-              )}
-              {deal.feePercentage != null && (
-                <div className="flex flex-col py-1">
-                  <p className="text-[10px] text-muted-foreground leading-tight">Agency Fee</p>
-                  <p className="text-xs font-mono font-medium" data-testid="text-client-fee-pct">{deal.feePercentage}%</p>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
-      </div>
+              );
 
-      {(numericFields.some((f) => f.value != null) || [deal.gfAreaSqft, deal.ffAreaSqft, deal.basementAreaSqft, deal.itzaAreaSqft].some((v) => v != null)) && (
-      <Card>
-        <CardContent className="p-3">
-          {/* Columns fit the space, not a fixed six: with ChatBGP open the
-              page is narrow and £1,233,036 ran into the next figure
-              (Woody, 2026-10-12). */}
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))] gap-x-4 gap-y-1.5">
-            {numericFields.filter((f) => f.value != null).map((field) => (
-              <div key={field.label} className="flex flex-col py-1 min-w-0">
-                <p className="text-[10px] text-muted-foreground leading-tight">{field.label}</p>
-                <p className="text-xs font-mono font-medium" data-testid={`text-deal-${field.label.toLowerCase().replace(/[\s()\/]+/g, "-")}`}>
-                  {field.format === "currency"
-                    ? formatCurrency(field.value)
-                    : field.format === "percent"
-                    ? `${field.value}%`
-                    : formatNumber(field.value)}
+              const files = (
+                <div className="grid grid-cols-1 gap-3 min-w-0" data-testid="deal-files-section">
+                  {letting && <UnitFilesCard trackerId={letting.trackerId} unitName={letting.unitName} />}
+                  <div className={sectionCard}>
+                    <h3 className="text-sm font-semibold mb-1.5">Property folder</h3>
+                    {/* The deal's files live in its property's folder — the same
+                        Files panel as the property page (browse / upload / share). */}
+                    {linkedProperty && !isClientDeal && (
+                      <PropertyFoldersPanel
+                        propertyName={linkedProperty.name}
+                        propertyId={linkedProperty.id}
+                        folderTeams={linkedProperty.folderTeams as any}
+                        sharepointFolderUrl={linkedProperty.sharepointFolderUrl as any}
+                      />
+                    )}
+                    {isClientDeal && <p className="text-xs text-muted-foreground italic">Documents are managed by the BGP team.</p>}
+                    {!linkedProperty && !isClientDeal && <p className="text-xs text-muted-foreground italic">Link this deal to a property to see its folders.</p>}
+                  </div>
+                </div>
+              );
+
+              const bodies: Record<string, React.ReactNode> = {
+                overview,
+                timeline: <DealTimelinePanel dealId={id} onOpen={openThing} />,
+                negotiation: letting ? <DealNegotiation letting={letting} trackerHref={trackerHref} onOpen={openThing} /> : null,
+                checklist: page ? <DealChecklistTasks dealId={id} page={page} onOpen={openThing} assignees={taskAssignees} canAddTask={!!ddUser} /> : <Skeleton className="h-32" />,
+                parties,
+                fees,
+                files,
+                history: <DealAuditLog dealId={id} />,
+              };
+              const sections: CompanySection[] = sectionList.map(s => ({
+                key: s.key, label: s.label, body: bodies[s.key],
+                count: s.key === "checklist" ? (page?.tasks.filter(t => !t.done).length || 0) + (page?.checklist ? page.checklist.items.filter(i => !i.done).length : 0) || null
+                  : s.key === "negotiation" ? letting?.offers.length || null : null,
+              }));
+              const foot = deal.updatedAt ? (
+                <p className="text-xs text-muted-foreground flex items-center gap-1 pt-1">
+                  <Clock className="w-3 h-3" />
+                  Last updated: {new Date(deal.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep")}
                 </p>
-              </div>
-            ))}
-            {[
-              { label: "GF", value: deal.gfAreaSqft },
-              { label: "FF", value: deal.ffAreaSqft },
-              { label: "Bsmt", value: deal.basementAreaSqft },
-              ...(_isRetail ? [{ label: "ITZA", value: deal.itzaAreaSqft }] : []),
-            ].some(f => f.value != null) && (
-              <div className="flex flex-col py-1 col-span-2">
-                <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Floor Breakdown</p>
-                <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                  {[
-                    { label: "GF", value: deal.gfAreaSqft },
-                    { label: "FF", value: deal.ffAreaSqft },
-                    { label: "Bsmt", value: deal.basementAreaSqft },
-                    ...(_isRetail ? [{ label: "ITZA", value: deal.itzaAreaSqft }] : []),
-                  ].filter(f => f.value != null).map(f => (
-                    <span key={f.label} className="text-xs font-mono">
-                      <span className="text-[9px] text-muted-foreground/70 uppercase mr-0.5">{f.label}</span>
-                      {formatNumber(f.value)}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-      )}
-
-      {!isClientDeal && <XeroInvoiceSection dealId={deal.id} deal={deal} companies={companies} />}
-
-      <Dialog open={sharepointDialogOpen} onOpenChange={setSharepointDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Link SharePoint Folder</DialogTitle>
-            <DialogDescription>
-              Paste the SharePoint URL for this deal's folder.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Input
-              placeholder="https://brucegillinghampollard.sharepoint.com/..."
-              value={sharepointUrlInput}
-              onChange={(e) => setSharepointUrlInput(e.target.value)}
-              data-testid="input-sharepoint-url"
-            />
-          </div>
-          <DialogFooter className="gap-2">
-            {deal.sharepointLink && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-destructive hover:text-destructive mr-auto"
-                onClick={() => updateSharepointMutation.mutate(null)}
-                disabled={updateSharepointMutation.isPending}
-                data-testid="button-remove-sharepoint-link"
-              >
-                Remove Link
-              </Button>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setSharepointDialogOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => updateSharepointMutation.mutate(sharepointUrlInput.trim() || null)}
-              disabled={updateSharepointMutation.isPending || !sharepointUrlInput.trim()}
-              data-testid="button-save-sharepoint-link"
-            >
-              {updateSharepointMutation.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      </div>
-
-      {/* AI-curated activity — primary comms feed (emails + meetings), shown
-          above KYC. Raw sources live in "History & activity" in the rail.
-          Hidden for clients: it surfaces BGP staff emails/meetings. */}
-      <div className={`${sec("activity")} space-y-3`}>
-        {!isClientDeal && <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />}
-        {/* The same activity list as every other page (Woody, 2026-11-15). */}
-        <Card data-testid="deal-activity-feed">
-          <CardContent className="p-3 space-y-2">
-            <h3 className="text-sm font-semibold">Emails, calls and meetings</h3>
-            <ActivitySummary dealId={id} />
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* KYC/AML is BGP-internal compliance — never shown to clients. */}
-      {!isClientDeal && (
-      <div className={sec("compliance")}>
-      <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-deal-kyc">
-        <div className="space-y-3">
-          {/* KYC4U is BGP's MLRO (2026-10-05): each party's KYC4U status and
-              the Request KYC4U check button. The in-app KYC pack is retired. */}
-          <DealAmlStatusCard dealId={id} dealStatus={deal.status} />
-          {/* The Joint Agency Lead Deal note can be added here later, not
-              only on the New deal form (Woody, 2026-11-16). Staff only. */}
-          <JointAgencyNoteCard
-            dealId={id}
-            canAdd={!jointAgent}
-            signedBy={ddUser?.name || undefined}
-            defaults={{
-              property: linkedProperty ? [linkedProperty.name, (linkedProperty as any).address && (linkedProperty as any).address !== linkedProperty.name ? (linkedProperty as any).address : null].filter(Boolean).join(", ") : ((deal as any).propertyName || ""),
-              client: linkedLandlord?.name || "",
-              tenant: linkedTenant?.name || "",
-              rentPa: deal.rentPa ? String(deal.rentPa) : "",
+              ) : null;
+              return { top, sections, foot };
             }}
-          />
+          </CompanyKindPage>
         </div>
-      </CollapsibleCard>
-      </div>
-      )}
-
-      {!jointAgent && [
-        { company: linkedTenant, role: "Tenant" },
-        { company: linkedLandlord, role: "Landlord" },
-      ]
-        .filter(({ company }) => !!company)
-        .filter(({ company }, i, arr) => arr.findIndex(a => a.company!.id === company!.id) === i).length > 0 && (
-        <div className={sec("brand")}>
-        <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Profiles" testId="toggle-deal-brands">
-          <div className="space-y-3">
-            {[
-              { company: linkedTenant, role: "Tenant" },
-              { company: linkedLandlord, role: "Landlord" },
-            ]
-              .filter(({ company }) => !!company)
-              .filter(({ company }, i, arr) => arr.findIndex(a => a.company!.id === company!.id) === i)
-              .map(({ company, role }) => (
-                <div key={company!.id} data-testid={`deal-brand-${role.toLowerCase()}`}>
-                  <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1 flex items-center gap-1.5">
-                    <Building2 className="w-3 h-3" /> {role}: {company!.name}
-                  </p>
-                  <div className="md:hidden"><MobileBrandView companyId={company!.id} embedded /></div>
-                  <div className="hidden md:block"><BrandProfilePanel companyId={company!.id} /></div>
-                </div>
-              ))}
-          </div>
-        </CollapsibleCard>
-        </div>
-      )}
-      {/* No party linked: the Brand pill otherwise lands on a blank screen
-          whose only content is the Delete Deal button. */}
-      {!jointAgent && !linkedTenant && !linkedLandlord && (
-        <div className={`md:hidden border rounded-md p-4 ${phoneSection === "brand" ? "" : "hidden"}`} data-testid="deal-brand-empty">
-          <p className="text-sm text-muted-foreground">
-            No brand linked yet — link a tenant or landlord from the Parties panel under Overview.
-          </p>
-        </div>
-      )}
-
-      {deal.updatedAt && (
-        <p className={`text-xs text-muted-foreground items-center gap-1 ${phoneSection === "overview" ? "flex" : "hidden md:flex"}`}>
-          <Clock className="w-3 h-3" />
-          Last updated: {new Date(deal.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep")}
-        </p>
-      )}
-
-      <DealFormDialog
-        open={editOpen}
-        onOpenChange={setEditOpen}
-        deal={deal}
-        properties={properties}
-        companies={companies}
-        users={users}
-      />
-
-      {/* Unit pick + unit-level address editor — opened from the heading. */}
-      <Dialog open={unitEditOpen} onOpenChange={setUnitEditOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Unit</DialogTitle>
-            <DialogDescription>
-              Set the property, switch to a different unit on it, or edit this unit's address details. The address feeds business-rates and EPC lookups.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label className="text-xs">Property</Label>
-              <PropertyCombobox
-                testId="select-unit-dialog-property"
-                placeholder="Select property or paste an address"
-                value={unitEditForm.propertyId}
-                items={properties.map((p) => ({ id: p.id, label: p.name, subLabel: p.postcode || undefined, keywords: [p.postcode || ""] }))}
-                onChange={(v) => setUnitEditForm(f => ({ ...f, propertyId: v, switchToUnitId: v === f.propertyId ? f.switchToUnitId : "" }))}
-                onCreated={() => queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] })}
-              />
-              {!(deal as any)?.propertyId && <p className="text-xs text-muted-foreground mt-1">This deal isn't linked to a property yet — pick or create one here.</p>}
-            </div>
-            <div>
-              <Label className="text-xs">Switch unit</Label>
-              <Select
-                value={unitEditForm.switchToUnitId || undefined}
-                onValueChange={(v) => setUnitEditForm(f => ({ ...f, switchToUnitId: v }))}
-              >
-                <SelectTrigger><SelectValue placeholder={unitsOnThisProperty.length ? "Pick a unit on this property" : unitPickPropertyId ? "No units on this property yet" : "Pick a property first"} /></SelectTrigger>
-                <SelectContent>
-                  {unitsOnThisProperty.map((u) => (
-                    <SelectItem key={u.id} value={u.id}>{u.unitName}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="border-t pt-3 space-y-3">
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Unit address — for "{linkedUnit?.unitName || "this unit"}"
-              </div>
-              <div>
-                <Label className="text-xs">Address line</Label>
-                <Input
-                  value={unitEditForm.unitAddress}
-                  onChange={e => setUnitEditForm(f => ({ ...f, unitAddress: e.target.value }))}
-                  placeholder="e.g. Unit 4A, Grand Central, Birmingham"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label className="text-xs">Postcode</Label>
-                  <Input
-                    value={unitEditForm.unitPostcode}
-                    onChange={e => setUnitEditForm(f => ({ ...f, unitPostcode: e.target.value }))}
-                    placeholder="B2 4AB"
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs">UPRN</Label>
-                  <Input
-                    value={unitEditForm.unitUprn}
-                    onChange={e => setUnitEditForm(f => ({ ...f, unitUprn: e.target.value }))}
-                    placeholder="200012345678"
-                  />
-                </div>
-              </div>
-              <div>
-                <Label className="text-xs">Free-text fallback <span className="text-muted-foreground">(if not on PAF)</span></Label>
-                <Input
-                  value={unitEditForm.unitAddressFreeText}
-                  onChange={e => setUnitEditForm(f => ({ ...f, unitAddressFreeText: e.target.value }))}
-                  placeholder="Kiosk 12, Market Hall ground floor"
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setUnitEditOpen(false)}>Cancel</Button>
-            <Button onClick={() => saveUnitEdit.mutate()} disabled={saveUnitEdit.isPending}>
-              {saveUnitEdit.isPending ? "Saving..." : "Save"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Below md the right sidebar is hidden — surface the same sections
-          stacked here so files/contacts/comments/history stay reachable
-          on phones. */}
-      <div className={`md:hidden border rounded-md mt-4 ${phoneSection === "files" ? "" : "hidden"}`} data-testid="deal-sidebar-mobile">
-        {sidebarLinkPanels}
-      </div>
-      <div className={`md:hidden border rounded-md mt-4 ${phoneSection === "activity" ? "" : "hidden"}`} data-testid="deal-sidebar-mobile-activity">
-        {sidebarActivityPanels}
       </div>
 
-      {!isClientLogin && (
-      <div className={`justify-start mt-6 pt-3 border-t ${phoneSection === "overview" ? "flex" : "hidden md:flex"}`}>
-        <Button variant="outline" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteOpen(true)} data-testid="button-delete-deal">
-          <Trash2 className="w-4 h-4 mr-2" />
-          Delete Deal
-        </Button>
-      </div>
+      <LettingDialogs dealId={id} letting={letting} dialog={dialog} setDialog={setDialog} />
+
+      {editOpen && <DealEditDialog deal={deal} open={editOpen} onOpenChange={setEditOpen} />}
+
+      {unitEditOpen && (
+        <UnitEditDialog
+          dealId={id}
+          deal={deal}
+          linkedUnit={linkedUnit}
+          onClose={() => setUnitEditOpen(false)}
+        />
       )}
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
@@ -1483,79 +957,327 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-          </div>
-        </div>
+    </div>
+  );
+}
 
-        {/* Right sidebar — linked records, files, comments */}
-        <div className="w-[340px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
-          <ScrollArea className="flex-1">
-            <div className="px-4 pt-4 pb-3 border-b">
-              <h3 className="text-sm font-bold leading-tight truncate" data-testid="sidebar-deal-name" title={deal.name || undefined}>{pageTitle}</h3>
-            </div>
-            {sidebarPanels}
-          </ScrollArea>
+// Parties: the BGP team, who BGP acts for, then each party as its own block:
+// the brand, and under it the company that signs, who is billed in Xero and
+// who to ask (DealPartyLines). Woody, 2026-11-19: "the landlord and tenant
+// have numbers but its not clear if there is a billing company? The brand is
+// different normally to the billing or contracting entity which is critical
+// for the AML", and "clean up the design the Land lord tenant and xero all
+// older text". A client login reads the party names from the page's own
+// read; BGP staff pick and create parties, so the company list loads when
+// this section is first opened.
+function DealPartiesCard({ dealId, deal, names, isClientDeal, ddUser, dealBgpTeam, onPartySave, onActingFor, onCreate }: {
+  dealId: string; deal: CrmDeal; names: DealPageNames | null; isClientDeal: boolean; ddUser: any; dealBgpTeam: BgpTeamPerson[];
+  onPartySave: (field: "tenantId" | "landlordId" | "vendorId" | "purchaserId", value: string | null) => Promise<void>;
+  onActingFor: (side: "landlord" | "tenant") => Promise<void>;
+  onCreate: (field: "landlordId" | "tenantId" | "vendorId" | "purchaserId", companyType: string, name: string) => Promise<void>;
+}) {
+  const { data: companies = [] } = useQuery<CrmCompany[]>({ queryKey: ["/api/crm/companies"], enabled: !isClientDeal });
+  const id = dealId;
+  const partiesInvestment = deal.dealType === "Sale" || deal.dealType === "Purchase";
+  const companyOptions = (keep: (c: CrmCompany) => boolean, current: string | null | undefined) => {
+    const list = companies.filter(c => keep(c) || c.id === current).map(c => ({ id: c.id, name: c.name }));
+    // Until the list arrives the current party still shows by name.
+    if (current && !list.some(c => c.id === current)) {
+      const known = (["landlord", "tenant", "vendor", "purchaser"] as const).map(r => names?.parties[r]).find(p => p?.id === current);
+      if (known) list.push({ id: current, name: known.name });
+    }
+    return list;
+  };
+  const sectionLabel = "text-xs font-semibold uppercase tracking-wider text-muted-foreground";
+  const actingFor = ((deal as any).bgpActingFor || "landlord") as "landlord" | "tenant";
+  // Leasing deals show Landlord/Tenant; investment (Sale/Purchase) deals show
+  // Vendor/Purchaser — the unused pair is clutter that invites mis-linking
+  // (UX #19). Already-linked slots stay visible either way so existing data
+  // is never hidden.
+  const slots: Array<{
+    role: "landlord" | "tenant" | "vendor" | "purchaser"; label: string; field: "landlordId" | "tenantId" | "vendorId" | "purchaserId";
+    value: string | null | undefined; keep: (c: CrmCompany) => boolean; createType: string;
+  }> = [
+    ...(!partiesInvestment || deal.landlordId ? [{ role: "landlord" as const, label: "Landlord", field: "landlordId" as const, value: deal.landlordId, createType: "Landlord",
+      keep: (c: CrmCompany) => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" }] : []),
+    ...(!partiesInvestment || deal.tenantId ? [{ role: "tenant" as const, label: "Tenant", field: "tenantId" as const, value: deal.tenantId, createType: "Tenant",
+      keep: (c: CrmCompany) => !!c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" }] : []),
+    ...(partiesInvestment || deal.vendorId ? [{ role: "vendor" as const, label: "Vendor", field: "vendorId" as const, value: deal.vendorId, createType: "Vendor",
+      keep: (c: CrmCompany) => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" }] : []),
+    ...(partiesInvestment || deal.purchaserId ? [{ role: "purchaser" as const, label: "Purchaser", field: "purchaserId" as const, value: deal.purchaserId, createType: "Purchaser",
+      keep: (c: CrmCompany) => c.companyType === "Purchaser" || c.companyType === "Investor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType === "Vendor" }] : []),
+  ];
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Users className="w-4 h-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">Parties</h3>
         </div>
+        {/* The BGP team on the deal, the same rows as every People board
+            (Woody, 2026-11-14). Clients see who to chase; staff change the
+            agents in Fee allocation, where the split lives. */}
+        {dealBgpTeam.length > 0 && (
+          <div className="pb-3 border-b border-border" data-testid="deal-bgp-team">
+            <BgpTeamGroup people={dealBgpTeam} addControl={isClientDeal ? null : <span className="text-[11px] text-muted-foreground">Change in Fees &amp; invoicing</span>} />
+          </div>
+        )}
+        {isClientDeal ? (
+          // UX #155 — clients get read-only party slots: staff-worded "+ Link
+          // landlord" pickers on their own deal read like the deal is set up
+          // wrong. Landlord defaults to their own company.
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {(partiesInvestment
+              ? [["Vendor", names?.parties.vendor?.name || null], ["Purchaser", names?.parties.purchaser?.name || null]]
+              : [["Landlord", names?.parties.landlord?.name || ddUser?.companyScopeName || null], ["Tenant", names?.parties.tenant?.name || null]]
+            ).map(([label, name]) => (
+              <div key={label as string} className="space-y-1" data-testid={`client-party-${String(label).toLowerCase()}`}>
+                <p className={sectionLabel}>{label}</p>
+                {name
+                  ? <p className="text-sm font-medium">{name}</p>
+                  : <p className="text-sm text-muted-foreground">Not set yet: your BGP team will link the parties.</p>}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <>
+            {/* Which side BGP acts for on a leasing deal — drives instruction
+                vs related activity on the landlord and brand pages (Woody,
+                2026-09-26). Investment deals take their side from the
+                vendor / purchaser. */}
+            {!partiesInvestment && (
+              <div className="flex flex-wrap items-center gap-2" data-testid="deal-bgp-acting-for">
+                <span className={sectionLabel}>BGP acts for</span>
+                {(["landlord", "tenant"] as const).map(side => (
+                  <Pill key={side} active={actingFor === side} onClick={() => onActingFor(side)} data-testid={`deal-acting-for-${side}`}>
+                    {side === "landlord" ? "Landlord" : "Tenant"}
+                  </Pill>
+                ))}
+              </div>
+            )}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {slots.map(slot => (
+                <div key={slot.role} className="rounded-lg border border-border p-3 space-y-2" data-testid={`deal-party-${slot.role}`}>
+                  <div className="flex items-center gap-2">
+                    <span className={sectionLabel}>{slot.label}</span>
+                    {!partiesInvestment && (slot.role === "landlord" || slot.role === "tenant") && actingFor === slot.role && (
+                      <span className="text-[11px] text-muted-foreground">· BGP's client</span>
+                    )}
+                  </div>
+                  <InlineLinkSelect
+                    value={slot.value}
+                    options={companyOptions(slot.keep, slot.value)}
+                    href={slot.value ? `/companies/${slot.value}` : undefined}
+                    onSave={(v) => onPartySave(slot.field, v || null)}
+                    onCreate={(name) => onCreate(slot.field, slot.createType, name)}
+                    placeholder={`Link ${slot.label.toLowerCase()}`}
+                  />
+                  {/* The company that signs, who is billed and who to ask
+                      (BGP staff; this branch is never drawn for a client login). */}
+                  {slot.value && <DealPartyLines dealId={id} role={slot.role} />}
+                </div>
+              ))}
+            </div>
+            {/* The deal's own invoice contact in Xero, from before each party
+                had its own billing contact: shown only when one is held. */}
+            {(deal as any).xeroContactName && (
+              <p className="text-sm" data-testid="deal-xero-contact">
+                <span className={sectionLabel}>Invoice contact (Xero)</span>{" "}
+                <span className="ml-1 font-medium">{(deal as any).xeroContactName}</span>
+                {(deal as any).xeroAccountNumber && <span className="text-muted-foreground"> · A/C <span className="font-mono tabular-nums">{(deal as any).xeroAccountNumber}</span></span>}
+              </p>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// The deal's contacts other than the parties' own: the client contact and
+// the agents' people. Read from the CRM list the login already reads, when
+// the Parties section is first opened.
+function LinkedContactsCard({ deal }: { deal: CrmDeal }) {
+  const { data: contacts = [] } = useQuery<CrmContact[]>({ queryKey: ["/api/crm/contacts"] });
+  const d: any = deal;
+  // Agent PEOPLE live in *_agent_contact_id (the *_agent_id columns are
+  // firms); the firm columns stay as a fallback for older rows.
+  const ids = [deal.clientContactId, d.vendorAgentContactId, d.acquisitionAgentContactId, d.purchaserAgentContactId, d.leasingAgentContactId,
+    deal.vendorAgentId, deal.acquisitionAgentId, deal.purchaserAgentId, deal.leasingAgentId].filter(Boolean);
+  const linked = (Array.isArray(contacts) ? contacts : []).filter(c => ids.includes(c.id));
+  if (!linked.length) return null;
+  return (
+    <div className={sectionCard} data-testid="linked-contacts-panel">
+      <h3 className="text-sm font-semibold mb-1.5">Linked contacts <span className="font-mono tabular-nums text-muted-foreground">{linked.length}</span></h3>
+      <div className="grid gap-1.5 sm:grid-cols-2">
+        {linked.map((contact) => (
+          <Link key={contact.id} href={`/contacts/${contact.id}`}>
+            <div className="p-2 rounded-md border hover-elevate cursor-pointer">
+              <p className="text-xs font-medium">{contact.name}</p>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {contact.role && <span className="text-[9px] text-muted-foreground">{contact.role}</span>}
+                {(contact as any).companyName && <Badge variant="outline" className="text-[9px]">{(contact as any).companyName}</Badge>}
+              </div>
+            </div>
+          </Link>
+        ))}
       </div>
     </div>
   );
 }
 
-// Append-only comments (UX #48). Entries live in crm_deals.comments as
-// "[stamp · author]\ntext" blocks separated by blank lines — parsed here for
-// display; anything that predates the format renders as one "Earlier note".
-function parseDealComments(blob: string | null | undefined): Array<{ meta: string | null; text: string }> {
-  if (!blob?.trim()) return [];
-  const parts = blob.split(/\n\n(?=\[[^\]\n]+ · [^\]\n]+\]\n)/);
-  return parts.map((p) => {
-    const m = p.match(/^\[([^\]\n]+ · [^\]\n]+)\]\n([\s\S]*)$/);
-    return m ? { meta: m[1], text: m[2] } : { meta: null, text: p.trim() };
-  }).filter((e) => e.text);
+// The Letting Tracker unit's own files: brochures, plans, photos and the
+// final agreed Heads of Terms, as the unit's Files list holds them.
+function UnitFilesCard({ trackerId, unitName }: { trackerId: string; unitName: string }) {
+  const { data: files = [], isLoading } = useQuery<any[]>({ queryKey: ["/api/available-units", trackerId, "files"], retry: false });
+  const label: Record<string, string> = { brochure: "Brochures", floorplan: "Floor plans", photo: "Photos", other: "Other" };
+  const groups = Object.keys(label).map(k => ({ key: k, rows: (Array.isArray(files) ? files : []).filter(f => (f.category || "other") === k) })).filter(g => g.rows.length);
+  return (
+    <div className={sectionCard} data-testid="deal-unit-files">
+      <h3 className="text-sm font-semibold mb-1.5">{unitName}: the unit's files</h3>
+      {isLoading ? <Skeleton className="h-10" />
+        : groups.length === 0 ? <p className="text-xs text-muted-foreground">No files on the unit yet.</p>
+        : (
+          <div className="space-y-2">
+            {groups.map(g => (
+              <div key={g.key}>
+                <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground mb-0.5">{label[g.key]}</p>
+                <ul className="space-y-0.5">
+                  {g.rows.map(f => (
+                    <li key={f.id} className="text-sm truncate">
+                      {f.filePath ? <a href={f.filePath} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{f.fileName}</a> : f.fileName}
+                      {f.fileType === "hots_final" ? <span className="text-xs text-muted-foreground"> · final agreed Heads of Terms</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
+    </div>
+  );
 }
 
-function DealComments({ dealId, comments }: { dealId: string; comments: string | null | undefined }) {
-  const [draft, setDraft] = useState("");
-  const [posting, setPosting] = useState(false);
-  const entries = parseDealComments(comments);
-  const post = async () => {
-    const text = draft.trim();
-    if (!text || posting) return;
-    setPosting(true);
-    try {
-      await apiRequest("POST", `/api/crm/deals/${dealId}/comments`, { text });
-      setDraft("");
+// The edit form, with the lists its pickers need loaded when it opens.
+function DealEditDialog({ deal, open, onOpenChange }: { deal: CrmDeal; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { data: properties = [] } = useQuery<CrmProperty[]>({ queryKey: ["/api/crm/properties"], enabled: open });
+  const { data: companies = [] } = useQuery<CrmCompany[]>({ queryKey: ["/api/crm/companies"], enabled: open });
+  const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"], enabled: open });
+  return <DealFormDialog open={open} onOpenChange={onOpenChange} deal={deal} properties={properties} companies={companies} users={users} />;
+}
+
+// Unit pick + unit-level address editor — opened from the heading (BGP staff).
+// It starts from the unit record's own address, so saving without a change
+// keeps it (it used to start empty and blank the address on Save).
+function UnitEditDialog({ dealId, deal, linkedUnit, onClose }: {
+  dealId: string; deal: CrmDeal; linkedUnit: DealPageNames["unit"]; onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [form, setForm] = useState({
+    propertyId: deal.propertyId || "",
+    switchToUnitId: linkedUnit?.id || "",
+    unitAddress: linkedUnit?.unitAddress || "",
+    unitPostcode: linkedUnit?.unitPostcode || "",
+    unitUprn: linkedUnit?.unitUprn || "",
+    unitAddressFreeText: linkedUnit?.unitAddressFreeText || "",
+  });
+  const { data: properties = [] } = useQuery<CrmProperty[]>({ queryKey: ["/api/crm/properties"] });
+  const pickPropertyId = form.propertyId || deal.propertyId || "";
+  const { data: unitsOnProperty = [] } = useQuery<Array<{ id: string; unitName: string; propertyId: string }>>({
+    queryKey: [`/api/property-units?propertyId=${encodeURIComponent(pickPropertyId)}`],
+    enabled: !!pickPropertyId,
+  });
+  const save = useMutation({
+    mutationFn: async () => {
+      if (linkedUnit?.id) {
+        await apiRequest("PATCH", `/api/property-units/${linkedUnit.id}`, {
+          unitAddress: form.unitAddress || null,
+          unitPostcode: form.unitPostcode || null,
+          unitUprn: form.unitUprn || null,
+          unitAddressFreeText: form.unitAddressFreeText || null,
+        });
+      }
+      // A deal with no property had nowhere to pick a unit from and the
+      // save did nothing visible (Woody, 2026-10-06) — the property is
+      // set here too.
+      const dealPatch: Record<string, string> = {};
+      if (form.propertyId && form.propertyId !== deal.propertyId) dealPatch.propertyId = form.propertyId;
+      if (form.switchToUnitId && form.switchToUnitId !== linkedUnit?.id) dealPatch.unitId = form.switchToUnitId;
+      if (Object.keys(dealPatch).length) await apiRequest("PUT", `/api/crm/deals/${dealId}`, dealPatch);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
+      queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0] || "").startsWith("/api/property-units") });
       invalidateDealCaches(dealId);
-    } finally {
-      setPosting(false);
-    }
-  };
+      onClose();
+      toast({ title: "Saved" });
+    },
+    onError: (e: any) => toast({ title: "Couldn't save", description: e?.message, variant: "destructive" }),
+  });
   return (
-    <div className="space-y-2" data-testid="deal-comments">
-      {entries.length === 0 && (
-        <p className="text-xs text-muted-foreground italic">No comments yet.</p>
-      )}
-      {entries.map((e, i) => (
-        <div key={i} className="text-xs border rounded-md p-2" data-testid={`deal-comment-${i}`}>
-          <p className="text-[10px] text-muted-foreground mb-0.5">{e.meta ?? "Earlier note"}</p>
-          <p className="whitespace-pre-wrap">{e.text}</p>
+    <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Unit</DialogTitle>
+          <DialogDescription>
+            Set the property, switch to a different unit on it, or edit this unit's address details. The address feeds business-rates and EPC lookups.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div>
+            <Label className="text-xs">Property</Label>
+            <PropertyCombobox
+              testId="select-unit-dialog-property"
+              placeholder="Select property or paste an address"
+              value={form.propertyId}
+              items={properties.map((p) => ({ id: p.id, label: p.name, subLabel: p.postcode || undefined, keywords: [p.postcode || ""] }))}
+              onChange={(v) => setForm(f => ({ ...f, propertyId: v, switchToUnitId: v === f.propertyId ? f.switchToUnitId : "" }))}
+              onCreated={() => queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] })}
+            />
+            {!deal.propertyId && <p className="text-xs text-muted-foreground mt-1">This deal isn't linked to a property yet — pick or create one here.</p>}
+          </div>
+          <div>
+            <Label className="text-xs">Switch unit</Label>
+            <Select value={form.switchToUnitId || undefined} onValueChange={(v) => setForm(f => ({ ...f, switchToUnitId: v }))}>
+              <SelectTrigger><SelectValue placeholder={unitsOnProperty.length ? "Pick a unit on this property" : pickPropertyId ? "No units on this property yet" : "Pick a property first"} /></SelectTrigger>
+              <SelectContent>
+                {unitsOnProperty.map((u) => (
+                  <SelectItem key={u.id} value={u.id}>{u.unitName}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="border-t pt-3 space-y-3">
+            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Unit address — for "{linkedUnit?.unitName || "this unit"}"
+            </div>
+            <div>
+              <Label className="text-xs">Address line</Label>
+              <Input value={form.unitAddress} onChange={e => setForm(f => ({ ...f, unitAddress: e.target.value }))} placeholder="e.g. Unit 4A, Grand Central, Birmingham" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Postcode</Label>
+                <Input value={form.unitPostcode} onChange={e => setForm(f => ({ ...f, unitPostcode: e.target.value }))} placeholder="B2 4AB" />
+              </div>
+              <div>
+                <Label className="text-xs">UPRN</Label>
+                <Input value={form.unitUprn} onChange={e => setForm(f => ({ ...f, unitUprn: e.target.value }))} placeholder="200012345678" />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Free-text fallback <span className="text-muted-foreground">(if not on PAF)</span></Label>
+              <Input value={form.unitAddressFreeText} onChange={e => setForm(f => ({ ...f, unitAddressFreeText: e.target.value }))} placeholder="Kiosk 12, Market Hall ground floor" />
+            </div>
+          </div>
         </div>
-      ))}
-      <Textarea
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        placeholder="Add a comment…"
-        className="text-xs min-h-[56px]"
-        data-testid="input-deal-comment"
-      />
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-7 text-xs"
-        onClick={post}
-        disabled={posting || !draft.trim()}
-        data-testid="btn-add-deal-comment"
-      >
-        {posting ? "Posting…" : "Add comment"}
-      </Button>
-    </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => save.mutate()} disabled={save.isPending}>
+            {save.isPending ? "Saving..." : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { KycEmailsAdmin } from "@/components/kyc-emails-admin";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Loader2, ExternalLink, Bookmark, Upload } from "lucide-react";
+import { Loader2, ExternalLink, Bookmark, Upload, Plug, Unplug, RefreshCw, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -67,7 +67,13 @@ return Promise.all(ls.map(function(l){var lib=l.BaseType===1;return all(u+"/_api
   return `javascript:${encodeURIComponent(code.replace(/\n/g, ""))}`;
 }
 
-interface Kyc4uStatus { lastImport?: { at: string; source: string; items: number; matched: number } | null; connected: boolean; username: string | null; connectedAt: string | null; lastSyncAt: string | null; lastError: string | null; site: string; requests: number; matched: number }
+interface Kyc4uStatus {
+  lastImport?: { at: string; source: string; items: number; matched: number } | null;
+  connected: boolean; username: string | null; connectedAt: string | null; lastSyncAt: string | null; lastError: string | null;
+  lastDocuments?: { copied: number; already: number; tooLarge: number; unmatched: number; failed: number; folders: number } | null;
+  connectable?: boolean;
+  site: string; requests: number; matched: number;
+}
 interface Kyc4uRequest { listId: string; itemId: string; listName: string | null; title: string | null; status: string | null; entityName: string | null; companyId: string | null; companyName: string | null; modifiedAt: string | null; webUrl: string | null }
 
 const when = (iso: string | null) => iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -108,6 +114,50 @@ export default function Kyc4uPanel() {
     queryClient.invalidateQueries({ queryKey: ["/api/kyc4u/requests"] });
   };
 
+  // Back from Microsoft: KYC4U's admin approving the app, or a Connect sign-in.
+  useEffect(() => {
+    const note = new URLSearchParams(window.location.search).get("kyc4u");
+    if (!note) return;
+    toast(note === "connected"
+      ? { title: "KYC4U connected", description: "The first sync is running: requests and their documents appear here shortly." }
+      : /has approved/.test(note)
+        ? { title: "Approved", description: note }
+        : { title: "KYC4U sign-in didn't finish", description: note, variant: "destructive" });
+    const url = new URL(window.location.href);
+    url.searchParams.delete("kyc4u");
+    window.history.replaceState(null, "", url.pathname + url.search);
+  }, []);
+
+  // Connect (Woody, 18 November 2026): it works once KYC4U's IT admin has
+  // approved the app for their organisation, through the approval link below.
+  const connect = useMutation({
+    mutationFn: async () => (await apiRequest("GET", "/api/kyc4u/connect")).json(),
+    onSuccess: (r: any) => { if (r?.authUrl) window.location.href = r.authUrl; },
+    onError: (e: any) => toast({ title: "Couldn't start the sign-in", description: e?.message, variant: "destructive" }),
+  });
+  const sync = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/kyc4u/sync")).json(),
+    onSuccess: (r: any) => {
+      refresh();
+      toast({ title: "KYC4U synced", description: `${r.items} requests · ${r.matched} matched to CRM${r.documents ? ` · ${r.documents.copied} documents copied` : ""}` });
+    },
+    onError: (e: any) => { refresh(); toast({ title: "Sync failed", description: e?.message, variant: "destructive" }); },
+  });
+  const disconnect = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/kyc4u/disconnect"),
+    onSuccess: () => { refresh(); toast({ title: "KYC4U disconnected" }); },
+  });
+  const [consent, setConsent] = useState<{ url: string; permissions: string[] } | null>(null);
+  const consentLink = useMutation({
+    mutationFn: async () => (await apiRequest("GET", "/api/kyc4u/admin-consent-link")).json(),
+    onSuccess: async (r: any) => {
+      setConsent(r);
+      try { await navigator.clipboard.writeText(r.url); toast({ title: "Approval link copied", description: "Send it to KYC4U's IT admin." }); }
+      catch { toast({ title: "Approval link ready", description: "Copy it from the box below." }); }
+    },
+    onError: (e: any) => toast({ title: "No approval link", description: e?.message, variant: "destructive" }),
+  });
+
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
     return q ? requests.filter(r => [r.title, r.entityName, r.status, r.companyName].some(v => (v || "").toLowerCase().includes(q))) : requests;
@@ -131,6 +181,59 @@ export default function Kyc4uPanel() {
         </p>
         <a href={status.site} target="_blank" rel="noopener" className="text-xs text-primary inline-flex items-center gap-1 mt-1">KYC4U site <ExternalLink className="w-3 h-3" /></a>
       </section>
+
+      {isAdmin && (
+        <section className="rounded-xl border bg-card p-4 space-y-3" data-testid="kyc4u-connect">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Automatic sync</p>
+              {status.connected ? (
+                <p className="text-sm mt-1" data-testid="kyc4u-connected">
+                  Connected as <strong>{status.username}</strong> · last sync {when(status.lastSyncAt)}
+                  {status.lastDocuments ? <> · documents: {status.lastDocuments.copied} copied, {status.lastDocuments.already} already held{status.lastDocuments.unmatched ? `, ${status.lastDocuments.unmatched} folders not matched to a company` : ""}</> : null}
+                </p>
+              ) : (
+                <p className="text-sm mt-1 text-muted-foreground" data-testid="kyc4u-not-connected">
+                  Not connected. Once connected, KYC4U's requests, their status and their documents come in every six hours, with no bookmark.
+                </p>
+              )}
+              {status.lastError && <p className="text-xs text-destructive mt-1 break-words">Last sync error: {status.lastError}</p>}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {status.connected && (
+                <Button size="sm" variant="outline" className="rounded-full" onClick={() => sync.mutate()} disabled={sync.isPending} data-testid="button-kyc4u-sync">
+                  {sync.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1.5" />}Sync now
+                </Button>
+              )}
+              <Button size="sm" className="rounded-full" onClick={() => connect.mutate()} disabled={connect.isPending || status.connectable === false} data-testid="button-kyc4u-connect">
+                <Plug className="w-4 h-4 mr-1.5" />{status.connected ? "Reconnect" : "Connect KYC4U"}
+              </Button>
+              {status.connected && (
+                <Button size="sm" variant="ghost" className="rounded-full" onClick={() => disconnect.mutate()} data-testid="button-kyc4u-disconnect">
+                  <Unplug className="w-4 h-4 mr-1.5" />Disconnect
+                </Button>
+              )}
+            </div>
+          </div>
+          {!status.connected && (
+            <div className="rounded-md border bg-muted/30 p-3 text-xs space-y-2">
+              <p>
+                Connect signs in with your BGP email, as a guest on KYC4U's site. Microsoft answers "Need admin approval" until KYC4U's IT admin approves the app once for their organisation:
+                send them the approval link. It asks only to read their site and to sign in, nothing else.
+              </p>
+              <Button size="sm" variant="outline" className="rounded-full h-7 text-xs" onClick={() => consentLink.mutate()} disabled={consentLink.isPending} data-testid="button-kyc4u-consent-link">
+                <Copy className="w-3.5 h-3.5 mr-1.5" />Copy the approval link for KYC4U's IT admin
+              </Button>
+              {consent && (
+                <div className="space-y-1" data-testid="kyc4u-consent-link">
+                  <Input readOnly value={consent.url} onFocus={e => e.currentTarget.select()} className="h-8 text-[11px] font-mono" />
+                  <p className="text-muted-foreground">It asks for: {consent.permissions.join("; ")}. Once they approve, press Connect KYC4U.</p>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
 
       {isAdmin && <KycEmailsAdmin />}
 

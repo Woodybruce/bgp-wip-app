@@ -92,8 +92,11 @@ on every brand, which stays at 25 a night).
   yield is thin: in a year, 2 for Gail's, 1 for Popeyes, 12 for Greggs and
   none for Wingstop, because most applications do not name the operator.
   Licensing registers are council by council and are not read.
-- **Job adverts by town** (idea G) are built for Adzuna and switched off
-  until its two keys are set. Not yet run against Adzuna.
+- **Job adverts by town** (idea G) are built for Adzuna. The keys were set
+  by 16 November 2026, but Adzuna's company filter refused most brand names
+  with a 400 (it worked for 15 of the first 179 brands), so on 18 November
+  the check moved to one phrase search per brand, keeping only the adverts
+  the brand itself placed.
 - **A sale of sites counts as contraction**, and **the rollout badge lapses
   after six months** (idea I).
 - **Emails are read for what brands want** (idea J): a new email from a

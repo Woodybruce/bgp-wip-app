@@ -225,7 +225,7 @@ export async function autoTickFromVeriff(
   let ownerMatch: string | null = null;
   try {
     const sess = (await pool.query(`SELECT first_name, last_name FROM veriff_sessions WHERE session_id = $1`, [sessionId])).rows[0];
-    const inv = (await pool.query(`SELECT result FROM kyc_investigations WHERE crm_company_id = $1 AND jsonb_array_length(COALESCE(result->'pscs','[]'::jsonb)) > 0 ORDER BY conducted_at DESC NULLS LAST LIMIT 1`, [companyId])).rows[0];
+    const inv = (await pool.query(`SELECT result FROM kyc_investigations WHERE crm_company_id = $1 AND trading_entity_id IS NULL AND jsonb_array_length(COALESCE(result->'pscs','[]'::jsonb)) > 0 ORDER BY conducted_at DESC NULLS LAST LIMIT 1`, [companyId])).rows[0];
     const person = `${sess?.first_name || ""} ${sess?.last_name || ""}`.toLowerCase().replace(/[^a-z ]/g, "").split(/\s+/).filter(Boolean);
     for (const p of inv?.result?.pscs || []) {
       const psc = String(p?.name || "").toLowerCase().replace(/\b(mr|mrs|ms|miss|dr|sir)\b/g, "").replace(/[^a-z ]/g, "").split(/\s+/).filter(Boolean);

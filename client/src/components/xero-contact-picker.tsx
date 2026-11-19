@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Receipt, X, Loader2, Plus } from "lucide-react";
-import { CreateBillingEntityDialog } from "@/components/billing-entity-create";
+import { CreateBillingEntityDialog, type SavedCompany } from "@/components/billing-entity-create";
 import { leaseCompaniesKey } from "@/components/lease-company-picker";
 
 export interface XeroContact {
@@ -22,7 +22,10 @@ interface Props {
   cachedName?: string | null;
   cachedAccountNumber?: string | null;
   cachedAddress?: any | null;
-  onChange: (contact: XeroContact | null) => void;
+  // `company`: the company filed under the party that the contact was made
+  // from, when the pick came from one (a filed company, or Create billing
+  // entity). The deal records it as the company that signs (2026-11-18).
+  onChange: (contact: XeroContact | null, company?: SavedCompany | null) => void;
   placeholder?: string;
   testIdPrefix?: string;
   compact?: boolean;
@@ -153,7 +156,7 @@ export function XeroContactPicker({
       const body = await r.json().catch(() => null);
       if (!r.ok) throw new Error(body?.message || `The company could not be linked (${r.status})`);
       if (body?.contact?.ContactID) {
-        onChange(body.contact);
+        onChange(body.contact, body?.entity?.id ? { id: String(body.entity.id), name: String(body.entity.name || f.name), companiesHouseNumber: body.entity.companiesHouseNumber || f.companiesHouseNumber } : { id: f.id, name: f.name, companiesHouseNumber: f.companiesHouseNumber });
         setSearch("");
         setOpen(false);
       } else {
@@ -348,7 +351,7 @@ export function XeroContactPicker({
           onOpenChange={(v) => { if (!v) setCreating(null); }}
           brand={createFor}
           initialQuery={creating}
-          onCreated={(c) => { onChange(c); setSearch(""); setCreating(null); queryClient.invalidateQueries({ queryKey: leaseCompaniesKey(createFor.id) }); }}
+          onCreated={(c, company) => { onChange(c, company); setSearch(""); setCreating(null); queryClient.invalidateQueries({ queryKey: leaseCompaniesKey(createFor.id) }); }}
           testIdPrefix={`${testIdPrefix}-billing-entity`}
         />
       )}

@@ -11,7 +11,7 @@ import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { isPropertyInScope } from "./company-scope";
 import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
-import { LETTING_STATUS_LABELS } from "@shared/letting-rules";
+import { LETTING_STATUS_LABELS, isLettingType } from "@shared/letting-rules";
 import { resolveLandsecPortfolio, schemeForPropertyName, type LandsecPortfolio, type ResolvedScheme } from "./landsec-schemes";
 import { landsecViewer, viewerCanSeeScheme, type LandsecViewer } from "./landsec-access";
 import { landsecNer, landsecBriefCheck, landsecIncentivesRecorded, landsecBriefSignerOnly, type LandsecAgreedBrief, type LandsecDealClock } from "@shared/landsec";
@@ -138,6 +138,50 @@ function dealClock(status: string | null, facts: StageFacts | undefined, fallbac
 // same") and sets it as a full Landsec login does.
 const canSetStageSince = (_viewer: LandsecViewer): boolean => true;
 
+// Who may write a deal's clock (who it is waiting on, and the date it reached
+// its stage). A Landsec login, or BGP staff, at the deal's scheme, as since 12
+// November 2026; and since 18 November 2026 BGP staff signed in as themselves
+// on any letting (Woody: "the clock for every letting"; a deal with a Letting
+// Tracker row is a letting whatever it is typed). Null: this caller may not.
+// `visible` is the property records whose deals a "depends on" may name
+// (null: any deal). The clock route and the checklist's "Deal is waiting on
+// this" both ask it.
+export const CLOCK_REFUSED = "Who this deal is waiting on is set by BGP staff, or by a Landsec login at the deal's scheme";
+export type ClockWriter =
+  | { kind: "landsec"; access: LandsecViewer & { schemeKey: string | null }; visible: Set<string> }
+  | { kind: "staff"; visible: null };
+export async function clockWriterFor(req: Request, deal: { id: string; property_id: string | null; deal_type: string | null }): Promise<ClockWriter | null> {
+  if (deal.property_id) {
+    const access = await unitAccess(req, deal.property_id);
+    if (access) return { kind: "landsec", access, visible: visiblePropertyIds(access, await resolveLandsecPortfolio(access.companyId)) };
+  }
+  const { contactViewer } = await import("./contact-viewer");
+  if (!(await contactViewer(req)).staff) return null;
+  if (isLettingType(deal.deal_type)) return { kind: "staff", visible: null };
+  const onTracker = (await pool.query(`SELECT 1 FROM available_units WHERE deal_id = $1 LIMIT 1`, [deal.id])).rows.length > 0;
+  return onTracker ? { kind: "staff", visible: null } : null;
+}
+
+// One deal's clock, for the deal page (server/deal-page.ts): the stage half
+// for any deal, by the same rule as the clock feed; the waiting-on half for a
+// live letting, read from the stored clock and the deal's checklist. A closed
+// deal is waiting on no one.
+export async function clockForDeal(
+  deal: { id: string; status: string | null; stage_entered_at?: any; created_at?: any },
+  opts: { letting: boolean; visible: Set<string> | null },
+) {
+  const code = legacyToCode(deal.status);
+  const waits = opts.letting && !!code && !CLOSED_STATUSES.includes(code);
+  const [since, clocks, checklists] = await Promise.all([
+    stageSinceFor([deal.id]),
+    waits ? clocksFor([deal.id], opts.visible) : Promise.resolve(new Map<string, WaitingClock>()),
+    waits ? waitingChecklistsForDeals([deal.id]) : Promise.resolve(new Map()),
+  ]);
+  const stage = dealClock(deal.status, since.get(deal.id), deal.stage_entered_at || deal.created_at);
+  const clock = waits ? waitingClockFor(clocks.get(deal.id) || null, checklists.get(deal.id) || null, deal.id) : null;
+  return { ...stage, clock, waitingDays: clock?.waitingSince ? daysSince(clock.waitingSince) : null };
+}
+
 // The property records a viewer can see: every record of the schemes the
 // viewer has (all 14 for BGP staff, a full Landsec login and a leasing
 // manager).
@@ -155,10 +199,12 @@ export function schemeOfProperty(portfolio: Pick<LandsecPortfolio, "schemes">, p
 
 // What a deal's "depends on" shows. A deal on a property the viewer cannot
 // see (another scheme, a record that has left the schemes, a deleted deal)
-// is sent as "another deal": no id, ref, name or unit.
-export function dependsOnFor(row: { depends_on_deal_id: string | null; dep_ref?: number | null; dep_name?: string | null; dep_unit?: string | null; dep_property_id?: string | null }, visible: Set<string>): Pick<LandsecDealClock, "dependsOnDealId" | "dependsOn" | "dependsOnHidden"> {
+// is sent as "another deal": no id, ref, name or unit. visible null is BGP
+// staff, who see every deal: only a deal that has gone is hidden then.
+export function dependsOnFor(row: { depends_on_deal_id: string | null; dep_ref?: number | null; dep_name?: string | null; dep_unit?: string | null; dep_property_id?: string | null }, visible: Set<string> | null): Pick<LandsecDealClock, "dependsOnDealId" | "dependsOn" | "dependsOnHidden"> {
   if (!row.depends_on_deal_id) return { dependsOnDealId: null, dependsOn: null, dependsOnHidden: false };
-  if (!row.dep_property_id || !visible.has(row.dep_property_id)) return { dependsOnDealId: null, dependsOn: null, dependsOnHidden: true };
+  const gone = row.dep_ref == null && !row.dep_name && !row.dep_property_id;
+  if (visible ? !row.dep_property_id || !visible.has(row.dep_property_id) : gone) return { dependsOnDealId: null, dependsOn: null, dependsOnHidden: true };
   return {
     dependsOnDealId: row.depends_on_deal_id,
     dependsOn: { id: row.depends_on_deal_id, ref: row.dep_ref ?? null, name: row.dep_name || "", unit: row.dep_unit ?? null },
@@ -166,7 +212,7 @@ export function dependsOnFor(row: { depends_on_deal_id: string | null; dep_ref?:
   };
 }
 
-async function clocksFor(dealIds: string[], visible: Set<string>): Promise<Map<string, WaitingClock>> {
+export async function clocksFor(dealIds: string[], visible: Set<string> | null): Promise<Map<string, WaitingClock>> {
   const out = new Map<string, WaitingClock>();
   if (dealIds.length === 0) return out;
   const r = await pool.query(
@@ -713,9 +759,9 @@ export function setupLandsecUnitRoutes(app: Express) {
   app.get("/api/landsec/deal/:id/waiting-options", requireAuth, async (req, res) => {
     try {
       const dealId = String(req.params.id);
-      const deal = (await pool.query(`SELECT id, property_id FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
-      if (!deal?.property_id) return res.status(404).json({ error: "Deal not found" });
-      if (!(await unitAccess(req, deal.property_id))) return res.status(403).json({ error: "Deal is outside the Landsec schemes you can see" });
+      const deal = (await pool.query(`SELECT id, property_id, deal_type FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      if (!(await clockWriterFor(req, deal))) return res.status(403).json({ error: CLOCK_REFUSED });
       res.json(await waitingOptionsForDeal(req, dealId));
     } catch (e: any) {
       res.status(500).json({ error: e?.message || "Failed to load the checklist items" });
@@ -734,17 +780,17 @@ export function setupLandsecUnitRoutes(app: Express) {
   app.put("/api/landsec/deal/:id/clock", requireAuth, async (req, res) => {
     try {
       const dealId = String(req.params.id);
-      const deal = (await pool.query(`SELECT id, property_id, status, stage_entered_at, created_at FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
-      if (!deal?.property_id) return res.status(404).json({ error: "Deal not found" });
-      const access = await unitAccess(req, deal.property_id);
-      if (!access) return res.status(403).json({ error: "Deal is outside the Landsec schemes you can see" });
+      const deal = (await pool.query(`SELECT id, property_id, deal_type, status, stage_entered_at, created_at FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const writer = await clockWriterFor(req, deal);
+      if (!writer) return res.status(403).json({ error: CLOCK_REFUSED });
       const b = req.body || {};
       // The stage date is checked before anything is written.
       const settingStage = "stageSince" in b;
       const stageCode = legacyToCode(deal.status);
       let stageSince: string | null = null;
       if (settingStage) {
-        if (!canSetStageSince(access)) return res.status(403).json({ error: "This login cannot set the date a deal reached its stage" });
+        if (writer.kind === "landsec" && !canSetStageSince(writer.access)) return res.status(403).json({ error: "This login cannot set the date a deal reached its stage" });
         if (!stageCode || CLOSED_STATUSES.includes(stageCode)) return res.status(400).json({ error: "The date can only be set on a live deal" });
         const checked = checkStageSinceInput(b.stageSince, { today: londonDay(), createdAt: deal.created_at });
         if (!checked.ok) return res.status(400).json({ error: checked.error });
@@ -759,7 +805,8 @@ export function setupLandsecUnitRoutes(app: Express) {
       if (dependsOn) {
         if (dependsOn === dealId) return res.status(400).json({ error: "A deal cannot depend on itself" });
         const dep = (await pool.query(`SELECT property_id FROM crm_deals WHERE id = $1`, [dependsOn])).rows[0];
-        if (!dep || !(await unitAccess(req, dep.property_id))) return res.status(400).json({ error: "The deal it depends on is not on a Landsec scheme you can see" });
+        if (!dep) return res.status(400).json({ error: "The deal it depends on was not found" });
+        if (writer.kind === "landsec" && !(await unitAccess(req, dep.property_id))) return res.status(400).json({ error: "The deal it depends on is not on a Landsec scheme you can see" });
       }
       // The link to the deal's checklist, checked before anything is written:
       // the item is on this deal's own checklist and still open.
@@ -824,7 +871,7 @@ export function setupLandsecUnitRoutes(app: Express) {
       // checklist itself, after the clock is saved: one task, one email.
       const assigned = linked ? await linked.assign() : null;
       const [stored, checklists] = await Promise.all([
-        clocksFor([dealId], visiblePropertyIds(access, await resolveLandsecPortfolio(access.companyId))),
+        clocksFor([dealId], writer.visible),
         waitingChecklistsForDeals([dealId]),
       ]);
       // The stage half as the feed now reads it, when the stage date was sent.

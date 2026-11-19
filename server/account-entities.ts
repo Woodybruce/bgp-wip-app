@@ -358,7 +358,7 @@ async function entityAudit(
   ).catch((e: any) => console.warn("[entity-kyc-audit] insert failed:", e?.message));
 }
 
-async function recheckIntervalDays(q: Querier): Promise<number> {
+export async function recheckIntervalDays(q: Querier): Promise<number> {
   try {
     const s = await q.query("SELECT recheck_interval_days FROM aml_settings ORDER BY id LIMIT 1");
     const configured = parseInt(s.rows[0]?.recheck_interval_days, 10);
@@ -399,11 +399,24 @@ export async function putEntityKyc(
   return { status: 200, body: rows[0] };
 }
 
+// Options for a decision made elsewhere and recorded here (a deal party's
+// BGP sign-off or KYC4U's result, server/deal-party-aml.ts and the KYC4U
+// mirror, 18 November 2026): the date it was made, evidence merged into the
+// row, a line for the audit trail, and for a company filed under a brand,
+// the brand the re-check reminder is listed under.
+export interface EntityDecisionOptions {
+  pool?: Querier;
+  at?: Date | null;
+  evidence?: Record<string, unknown> | null;
+  notes?: string | null;
+  reminderCompanyId?: string | null;
+}
+
 export async function approveEntityKyc(
   kind: EntityKind,
   id: string,
   actorName: string | null,
-  deps: { pool?: Querier } = {},
+  deps: EntityDecisionOptions = {},
 ): Promise<{ status: number; body: any }> {
   const q = deps.pool ?? await defaultPool();
   const entity = await loadEntityRow(q, kind, id);
@@ -412,26 +425,34 @@ export async function approveEntityKyc(
   // MLR 2017 Reg 28: the cadence is the MLRO's configurable
   // recheck_interval_days (default 182 ≈ the historic 6-month policy).
   const intervalDays = await recheckIntervalDays(q);
-  const expiresAt = new Date();
+  const at = deps.at && !isNaN(deps.at.getTime()) ? deps.at : new Date();
+  const expiresAt = new Date(at);
   expiresAt.setDate(expiresAt.getDate() + intervalDays);
 
   const { rows } = await q.query(
     `INSERT INTO crm_entity_kyc (entity_kind, entity_id, kyc_status, checked_at, approved_by, approved_at,
-                                 expires_at, next_review_at, outstanding, updated_at)
-     VALUES ($1, $2, 'approved', now(), $3, now(), $4, $4, '[]'::jsonb, now())
+                                 expires_at, next_review_at, outstanding, evidence, updated_at)
+     VALUES ($1, $2, 'approved', $5, $3, $5, $4, $4, '[]'::jsonb, $6::jsonb, now())
      ON CONFLICT (entity_kind, entity_id) DO UPDATE SET
-       kyc_status = 'approved', checked_at = now(), approved_by = $3, approved_at = now(),
-       expires_at = $4, next_review_at = $4, outstanding = '[]'::jsonb, updated_at = now()
+       kyc_status = 'approved', checked_at = $5, approved_by = $3, approved_at = $5,
+       expires_at = $4, next_review_at = $4, outstanding = '[]'::jsonb,
+       evidence = COALESCE(crm_entity_kyc.evidence, '{}'::jsonb) || $6::jsonb, updated_at = now()
      RETURNING *`,
-    [kind, id, actorName, expiresAt],
+    [kind, id, actorName, expiresAt, at, JSON.stringify(deps.evidence || {})],
   );
   await entityAudit(q, kind, id, "entity_kyc_approved", actorName,
-    `Re-check due ${expiresAt.toISOString().slice(0, 10)} (${intervalDays}-day cycle)`);
+    `${deps.notes ? `${deps.notes} · ` : ""}Re-check due ${expiresAt.toISOString().slice(0, 10)} (${intervalDays}-day cycle)`);
   try {
+    // A fresh approval replaces this entity's earlier periodic re-check.
+    await q.query(
+      `UPDATE aml_recheck_reminders SET completed_at = now(), completed_by = $3
+        WHERE company_id = $1 AND entity_name = $2 AND recheck_type = 'periodic_cdd' AND completed_at IS NULL`,
+      [deps.reminderCompanyId || id, entity.name, actorName],
+    );
     await q.query(
       `INSERT INTO aml_recheck_reminders (company_id, entity_name, recheck_type, due_date, notes)
        VALUES ($1, $2, 'periodic_cdd', $3, $4)`,
-      [id, entity.name, expiresAt, `Auto-generated on entity KYC approval (${kind}) — ${intervalDays}-day re-check`],
+      [deps.reminderCompanyId || id, entity.name, expiresAt, `Auto-generated on entity KYC approval (${kind}) — ${intervalDays}-day re-check`],
     );
   } catch (e: any) {
     console.warn("[entity-kyc-approve] reminder insert failed:", e?.message);
@@ -444,22 +465,61 @@ export async function rejectEntityKyc(
   id: string,
   reason: string | null,
   actorName: string | null,
-  deps: { pool?: Querier } = {},
+  deps: EntityDecisionOptions = {},
 ): Promise<{ status: number; body: any }> {
   const q = deps.pool ?? await defaultPool();
   const entity = await loadEntityRow(q, kind, id);
   if (!entity) return { status: 404, body: { error: "Entity not found" } };
 
+  const at = deps.at && !isNaN(deps.at.getTime()) ? deps.at : new Date();
   const { rows } = await q.query(
-    `INSERT INTO crm_entity_kyc (entity_kind, entity_id, kyc_status, checked_at, approved_by, updated_at)
-     VALUES ($1, $2, 'rejected', now(), $3, now())
+    `INSERT INTO crm_entity_kyc (entity_kind, entity_id, kyc_status, checked_at, approved_by, evidence, updated_at)
+     VALUES ($1, $2, 'rejected', $4, $3, $5::jsonb, now())
      ON CONFLICT (entity_kind, entity_id) DO UPDATE SET
-       kyc_status = 'rejected', checked_at = now(), approved_by = $3, updated_at = now()
+       kyc_status = 'rejected', checked_at = $4, approved_by = $3,
+       evidence = COALESCE(crm_entity_kyc.evidence, '{}'::jsonb) || $5::jsonb, updated_at = now()
      RETURNING *`,
-    [kind, id, actorName],
+    [kind, id, actorName, at, JSON.stringify(deps.evidence || {})],
   );
   await entityAudit(q, kind, id, "entity_kyc_rejected", actorName, reason);
   return { status: 200, body: rows[0] };
+}
+
+// With KYC4U (their result says they are still working on it): in review,
+// keeping any outstanding list, evidence merged (the KYC4U mirror's company
+// pass, server/kyc4u.ts).
+export async function markEntityInReview(
+  kind: EntityKind,
+  id: string,
+  actorName: string | null,
+  deps: EntityDecisionOptions = {},
+): Promise<{ status: number; body: any }> {
+  const q = deps.pool ?? await defaultPool();
+  const entity = await loadEntityRow(q, kind, id);
+  if (!entity) return { status: 404, body: { error: "Entity not found" } };
+  const { rows } = await q.query(
+    `INSERT INTO crm_entity_kyc (entity_kind, entity_id, kyc_status, evidence, updated_at)
+     VALUES ($1, $2, 'in_review', $3::jsonb, now())
+     ON CONFLICT (entity_kind, entity_id) DO UPDATE SET
+       kyc_status = 'in_review',
+       evidence = COALESCE(crm_entity_kyc.evidence, '{}'::jsonb) || $3::jsonb,
+       updated_at = now()
+     RETURNING *`,
+    [kind, id, JSON.stringify(deps.evidence || {})],
+  );
+  await entityAudit(q, kind, id, "entity_kyc_in_review", actorName, deps.notes || null);
+  return { status: 200, body: rows[0] };
+}
+
+// Evidence merged into the row with nothing else changed (a KYC4U status that
+// leaves a still-valid approval standing).
+export async function stampEntityEvidence(kind: EntityKind, id: string, evidence: Record<string, unknown>, deps: { pool?: Querier } = {}): Promise<void> {
+  const q = deps.pool ?? await defaultPool();
+  await q.query(
+    `UPDATE crm_entity_kyc SET evidence = COALESCE(evidence, '{}'::jsonb) || $3::jsonb, updated_at = now()
+      WHERE entity_kind = $1 AND entity_id = $2`,
+    [kind, id, JSON.stringify(evidence)],
+  );
 }
 
 // Session user's NAME (the approve/reject representation rule), resolved

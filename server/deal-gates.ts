@@ -3,22 +3,82 @@
 // and the bulk-status update. Each warns and lets the move through, and
 // each refuses a counterparty the MLRO has rejected.
 //
-// KYC scope: brand-level only. The deal table carries `*EntityId` columns
-// (landlordEntityId etc.) for Xero billing context — those are Xero
-// ContactID GUIDs per the schema comment at shared/schema.ts:845. They
-// are NOT linked to crm_trading_entities, so this gate doesn't attempt
-// an entity-level KYC lookup. (Earlier versions queried
-// crm_trading_entities by id and silently always missed because of the
-// id-shape mismatch; the entity-aware branch was dead code that masked
-// the brand-level result.)
+// KYC scope (since 18 November 2026, step 2 of the deal page review; Woody:
+// "go ahead with your suggestions"): a party with no company that signs is
+// judged on its brand (crm_companies.kyc_*), as before. A party whose deal
+// names the company that signs (crm_deals.<role>_trading_entity_id, set from
+// the deal's parties, server/deal-parties.ts) is judged on that company's
+// own check (crm_entity_kyc), or the brand's while it has none and is the
+// brand's own legal company. A brand the MLRO rejected still blocks. The
+// rule is shared/party-kyc.ts. The `*EntityId` columns (landlordEntityId
+// etc.) are Xero ContactIDs and are never read here.
 import { pool } from "./db";
+import { kycVerdict, partyKycState, type PartyKycState } from "@shared/party-kyc";
 
 export type AmlGateInput = {
   landlordId?: string | null;
   tenantId?: string | null;
   vendorId?: string | null;
   purchaserId?: string | null;
+  // The company that signs for each party: given here, or read from the deal
+  // named by dealId. Counted only when it is filed under that party's brand,
+  // so a party changed in the same save drops the old one.
+  landlordTradingEntityId?: string | null;
+  tenantTradingEntityId?: string | null;
+  vendorTradingEntityId?: string | null;
+  purchaserTradingEntityId?: string | null;
+  dealId?: string | null;
 };
+
+const GATE_ROLES = ["landlord", "tenant", "vendor", "purchaser"] as const;
+type Querier = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
+
+// The company that signs for each role: as given, else as the deal stores it.
+async function signingCompanies(deal: AmlGateInput): Promise<Record<string, string | null>> {
+  const given = (role: string) => (deal as any)[`${role}TradingEntityId`] as string | null | undefined;
+  const stored = deal.dealId && GATE_ROLES.some(r => given(r) === undefined)
+    ? (await pool.query(
+        `SELECT landlord_trading_entity_id, tenant_trading_entity_id, vendor_trading_entity_id, purchaser_trading_entity_id
+           FROM crm_deals WHERE id = $1`, [deal.dealId]).catch(() => ({ rows: [] as any[] }))).rows[0] || null
+    : null;
+  const out: Record<string, string | null> = {};
+  for (const role of GATE_ROLES) {
+    const g = given(role);
+    out[role] = g !== undefined ? (g || null) : (stored?.[`${role}_trading_entity_id`] || null);
+  }
+  return out;
+}
+
+/** Each party's AML state by role: the brand, or the company that signs (shared/party-kyc.ts). */
+export async function loadPartyKyc(q: Querier, parties: Array<{ role: string; brandId: string; entityId: string | null }>): Promise<Record<string, PartyKycState>> {
+  const brandIds = [...new Set(parties.map(p => p.brandId).filter(Boolean))];
+  const entityIds = [...new Set(parties.map(p => p.entityId).filter((x): x is string => !!x))];
+  const brands = brandIds.length ? (await q.query(
+    `SELECT id, name, uk_entity_name, companies_house_number, companies_house_data->>'company_name' AS ch_name,
+            kyc_status, kyc_expires_at, kyc_approved_by, kyc_checked_at
+       FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds])).rows : [];
+  const entities = entityIds.length ? (await q.query(
+    `SELECT id, parent_company_id, name, companies_house_number FROM crm_trading_entities WHERE id = ANY($1::varchar[])`, [entityIds])).rows : [];
+  // A failed read of the companies' own checks reads as "no checks run":
+  // never as approved.
+  const checks = entityIds.length ? (await q.query(
+    `SELECT entity_id, kyc_status, expires_at, approved_by, approved_at FROM crm_entity_kyc
+      WHERE entity_kind = 'trading_entity' AND entity_id = ANY($1::text[])`, [entityIds]).catch(() => ({ rows: [] as any[] }))).rows : [];
+  const out: Record<string, PartyKycState> = {};
+  for (const p of parties) {
+    const b = brands.find((r: any) => r.id === p.brandId);
+    if (!b) { out[p.role] = { name: `(unknown ${p.role})`, source: "brand", status: null, expiresAt: null, approvedBy: null }; continue; }
+    const e = p.entityId ? entities.find((r: any) => r.id === p.entityId && r.parent_company_id === p.brandId) : null;
+    const k = e ? checks.find((r: any) => r.entity_id === e.id) : null;
+    out[p.role] = partyKycState({
+      brand: { id: b.id, name: b.name, companiesHouseNumber: b.companies_house_number || null, legalName: b.uk_entity_name || b.ch_name || null,
+        status: b.kyc_status || null, expiresAt: b.kyc_expires_at || null, approvedBy: b.kyc_approved_by || null, approvedAt: b.kyc_checked_at || null },
+      company: e ? { id: e.id, name: e.name, companiesHouseNumber: e.companies_house_number || null,
+        kyc: k ? { status: k.kyc_status || null, expiresAt: k.expires_at || null, approvedBy: k.approved_by || null, approvedAt: k.approved_at || null } : null } : null,
+    });
+  }
+  return out;
+}
 
 export type AmlNotReady = { name: string; reason: string; role: string };
 
@@ -39,24 +99,13 @@ export async function checkCounterpartyAml(deal: AmlGateInput): Promise<AmlGateR
     return { hasCounterparties: false, notReady: [] };
   }
 
-  const parentIds = Array.from(new Set(pairs.map(p => p.parentId)));
-  const parentRes = await pool.query(
-    `SELECT id, name, kyc_status, kyc_expires_at FROM crm_companies WHERE id = ANY($1::varchar[])`,
-    [parentIds]
-  );
-  const parentById = new Map(parentRes.rows.map((r: any) => [r.id, r]));
-
+  const signs = await signingCompanies(deal);
+  const states = await loadPartyKyc(pool, pairs.map(p => ({ role: p.role, brandId: p.parentId, entityId: signs[p.role] })));
   const notReady: AmlNotReady[] = [];
   for (const p of pairs) {
-    const parent = parentById.get(p.parentId);
-    const kycStatus = parent?.kyc_status ?? null;
-    const kycExpiresAt = parent?.kyc_expires_at ?? null;
-    const displayName = parent?.name || `(unknown ${p.role})`;
-    if (kycStatus !== "approved") {
-      notReady.push({ name: displayName, reason: kycStatus || "no checks run", role: p.role });
-    } else if (kycExpiresAt && new Date(kycExpiresAt) < new Date()) {
-      notReady.push({ name: displayName, reason: "expired", role: p.role });
-    }
+    const state = states[p.role];
+    const verdict = kycVerdict(state);
+    if (!verdict.approved) notReady.push({ name: state.name || `(unknown ${p.role})`, reason: verdict.reason || "no checks run", role: p.role });
   }
 
   return { hasCounterparties: true, notReady };
@@ -124,11 +173,30 @@ export function formatAmlWarning(result: AmlGateResult): string | null {
 export async function recomputeDealKycApproved(companyId: string, approvedBy?: string | null): Promise<number> {
   if (!companyId) return 0;
   const { rows: deals } = await pool.query(
-    `SELECT id, landlord_id, tenant_id, vendor_id, purchaser_id, kyc_approved
+    `SELECT id, landlord_id, tenant_id, vendor_id, purchaser_id, kyc_approved,
+            landlord_trading_entity_id, tenant_trading_entity_id, vendor_trading_entity_id, purchaser_trading_entity_id
        FROM crm_deals
       WHERE landlord_id = $1 OR tenant_id = $1 OR vendor_id = $1 OR purchaser_id = $1`,
     [companyId],
   );
+  return recomputeDeals(deals, approvedBy);
+}
+
+// The deals that name a company that signs, when that company's own check
+// changes (BGP sign-off, KYC4U's result on it).
+export async function recomputeDealsForTradingEntity(entityId: string, approvedBy?: string | null): Promise<number> {
+  if (!entityId) return 0;
+  const { rows: deals } = await pool.query(
+    `SELECT id, landlord_id, tenant_id, vendor_id, purchaser_id, kyc_approved,
+            landlord_trading_entity_id, tenant_trading_entity_id, vendor_trading_entity_id, purchaser_trading_entity_id
+       FROM crm_deals
+      WHERE landlord_trading_entity_id = $1 OR tenant_trading_entity_id = $1 OR vendor_trading_entity_id = $1 OR purchaser_trading_entity_id = $1`,
+    [entityId],
+  );
+  return recomputeDeals(deals, approvedBy);
+}
+
+async function recomputeDeals(deals: any[], approvedBy?: string | null): Promise<number> {
   let changed = 0;
   for (const d of deals as any[]) {
     const result = await checkCounterpartyAml({
@@ -136,6 +204,10 @@ export async function recomputeDealKycApproved(companyId: string, approvedBy?: s
       tenantId: d.tenant_id,
       vendorId: d.vendor_id,
       purchaserId: d.purchaser_id,
+      landlordTradingEntityId: d.landlord_trading_entity_id || null,
+      tenantTradingEntityId: d.tenant_trading_entity_id || null,
+      vendorTradingEntityId: d.vendor_trading_entity_id || null,
+      purchaserTradingEntityId: d.purchaser_trading_entity_id || null,
     });
     const shouldApprove = result.hasCounterparties && result.notReady.length === 0;
     if (!!d.kyc_approved === shouldApprove) continue; // already in sync
@@ -210,7 +282,7 @@ export async function dealStatusTransitionDenial(
   if (["SOL", "EXC", "COM", "INV"].includes(targetCode) && deal.aml_check_completed !== "YES") {
     const parties: AmlGateInput = {
       landlordId: deal.landlord_id, tenantId: deal.tenant_id,
-      vendorId: deal.vendor_id, purchaserId: deal.purchaser_id,
+      vendorId: deal.vendor_id, purchaserId: deal.purchaser_id, dealId,
     };
     const amlResult = await checkCounterpartyAml(parties);
     const outcome = amlGateOutcome(amlResult);

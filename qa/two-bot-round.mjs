@@ -798,7 +798,9 @@ async function victoriaRound(page, cross) {
       await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/deals/${deal.id}`, nav);
       await mob.locator('[data-testid="button-edit-deal"]').waitFor({ timeout: 20000 });
-      for (const id of ['button-deal-image-studio', 'button-deal-create-document', 'button-edit-deal']) {
+      // Since 18 November 2026 the deal page's header is Edit and one More
+      // menu (Image Studio, Document, Delete).
+      for (const id of ['button-deal-more', 'button-edit-deal']) {
         const box = await mob.locator(`[data-testid="${id}"]`).first().boundingBox();
         if (!box) throw new Error(`deal action ${id} missing at 390px`);
         if (box.x < 0 || box.x + box.width > 390 + 2) {
@@ -812,18 +814,19 @@ async function victoriaRound(page, cross) {
         const txt = await amlBanner.innerText();
         if (/Only 0 counterparty/.test(txt)) throw new Error(`AML banner regressed to "Only 0 counterparty": ${txt.slice(0, 80)}`);
       }
-      // r363: with no party linked, the Brand section pill must show its
-      // empty state instead of a blank screen, and Delete Deal is gated to
-      // the Overview section on phones.
-      if (!deal.tenantId && !deal.landlordId) {
-        await mob.locator('[data-testid="deal-section-brand"]').click();
-        await mob.waitForTimeout(600);
-        if (!(await mob.locator('[data-testid="deal-brand-empty"]').isVisible())) throw new Error('Brand pill with no linked party missing its empty state');
-        if (await mob.locator('[data-testid="button-delete-deal"]').isVisible()) throw new Error('Delete Deal visible on the Brand phone section');
-        await mob.locator('[data-testid="deal-section-overview"]').click();
-        await mob.waitForTimeout(600);
-        if (!(await mob.locator('[data-testid="button-delete-deal"]').count())) throw new Error('Delete Deal missing from the Overview phone section');
+      // Since 18 November 2026 the deal page's sections are one row of pills
+      // (Overview, Timeline, Parties & AML, Files ...): each opens on a phone,
+      // and Delete is in the More menu.
+      for (const key of ['timeline', 'parties', 'files', 'overview']) {
+        const pill = mob.locator(`[data-testid="deal-section-${key}"]`);
+        if (!(await pill.count())) throw new Error(`deal page lost its ${key} section pill at 390px`);
+        await pill.click();
+        await mob.waitForTimeout(500);
+        if (!(await mob.locator(`[data-company-section="${key}"]`).isVisible())) throw new Error(`the ${key} pill did not open its section at 390px`);
       }
+      await mob.locator('[data-testid="button-deal-more"]').click();
+      if (!(await mob.locator('[data-testid="button-delete-deal"]').isVisible())) throw new Error('Delete deal missing from the More menu');
+      await mob.keyboard.press('Escape');
     } finally {
       await mob.close();
       await mobCtx.close();
@@ -5557,20 +5560,18 @@ async function markRound(page, cross) {
       await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/deals/${deal.id}`, nav);
       await mob.waitForTimeout(3000);
-      // JOGQK 2026-08-24: phone deal detail gates the stacked sections behind
-      // section pills (Overview/Brand/Activity/Files) — drive the pills the
-      // way a user would and assert the sections are still reachable.
+      // Since 18 November 2026 the deal page is one frame on every screen:
+      // the conversation line under the header, and sections behind one row
+      // of pills — drive them the way a user would.
       const filesPill = mob.locator('[data-testid="deal-section-files"]');
       if (!(await filesPill.count())) throw new Error('mobile deal detail lost its section pills (deal-section-files missing at 390px)');
       await filesPill.click();
       await mob.waitForTimeout(800);
-      if (!(await mob.locator('[data-testid="deal-sidebar-mobile"]').isVisible().catch(() => false))) {
-        throw new Error('Files pill did not surface the sidebar sections (deal-sidebar-mobile not visible at 390px)');
+      if (!(await mob.locator('[data-testid="deal-files-section"]').isVisible().catch(() => false))) {
+        throw new Error('Files pill did not open the files section at 390px');
       }
-      await mob.locator('[data-testid="deal-section-activity"]').click();
-      await mob.waitForTimeout(800);
-      if (!(await mob.locator('[data-testid="deal-sidebar-mobile-activity"] [data-testid="toggle-sidebar-comments"]').count())) {
-        throw new Error('Activity pill section is missing the Comments block');
+      if (!(await mob.locator('[data-testid="deal-conversation"]').count())) {
+        throw new Error('the deal page lost its conversation line at 390px');
       }
     } finally {
       await mob.close();

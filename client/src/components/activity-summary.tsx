@@ -102,10 +102,12 @@ const linkCls = "text-primary hover:underline";
 
 // The details box: what it was, who was on it, what it is linked to, a short
 // read of what it was about, and the next things to do with it.
-function ActivityDetail({ opened, onClose, propertyId, summaries, setSummaries }: {
+function ActivityDetail({ opened, onClose, propertyId, feedDealId, summaries, setSummaries }: {
   opened: Opened | null;
   onClose: () => void;
   propertyId?: string;
+  // The deal whose page the feed is on: it is not linked back to itself.
+  feedDealId?: string;
   summaries: Record<string, string>;
   setSummaries: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }) {
@@ -151,7 +153,8 @@ function ActivityDetail({ opened, onClose, propertyId, summaries, setSummaries }
 
   const Icon = a ? KIND_ICON[a.kind] || Activity : CalendarDays;
   const title = a ? a.subject || a.summary : ev?.title || "";
-  const dealId = a?.deal_id || ev?.deal_id || null;
+  const itemDealId = a?.deal_id || ev?.deal_id || null;
+  const dealId = itemDealId && itemDealId !== feedDealId ? itemDealId : null;
   const propId = a?.property_id || ev?.property_id || null;
   const propName = a?.property_name || ev?.property_name || null;
   const reading = !!a && summarise.isPending && summarise.variables === a.id;
@@ -317,7 +320,8 @@ export function ActivitySummary({ propertyId, companyId, contactId, dealId, vari
   }
 
   const allUpcoming = variant === "recent" ? [] : (data?.upcoming || []);
-  const allRecent = variant === "upcoming" ? [] : (data?.recent || []);
+  // On a deal's page its own moves are on the Timeline, not in this feed.
+  const allRecent = (variant === "upcoming" ? [] : (data?.recent || [])).filter(a => !(dealId && a.kind === "deal" && (!a.deal_id || a.deal_id === dealId)));
   const kindCounts: Record<string, number> = {};
   for (const a of allRecent) kindCounts[a.kind] = (kindCounts[a.kind] || 0) + 1;
   const upcoming = (section === "recent" ? [] : allUpcoming);
@@ -337,25 +341,25 @@ export function ActivitySummary({ propertyId, companyId, contactId, dealId, vari
   const KIND_LABEL: Record<string, string> = { email: "emails", meeting: "meetings", call: "calls", deal: "deal moves" };
   return (
     <div className="space-y-2" data-testid="activity-summary">
-      {variant === "both" && (
+      {variant === "both" && (Object.keys(kindCounts).length > 1 || (allUpcoming.length > 0 && allRecent.length > 0)) && (
         <div className="flex items-center gap-1.5 flex-wrap">
           {/* "0 upcoming" was the only chip that showed at zero. */}
           {/* Filters are the standard pills (docs/DESIGN.md §3), counts in mono. */}
-          {allUpcoming.length > 0 && <Pill
+          {allUpcoming.length > 0 && allRecent.length > 0 && <Pill
             active={section === "upcoming"}
             onClick={() => setSection(s => s === "upcoming" ? "all" : "upcoming")}
             data-testid="activity-chip-upcoming"
           >
             <span className="font-mono tabular-nums">{allUpcoming.length}</span> upcoming
           </Pill>}
-          <Pill
+          {allUpcoming.length > 0 && allRecent.length > 0 && <Pill
             active={section === "recent"}
             onClick={() => setSection(s => s === "recent" ? "all" : "recent")}
             data-testid="activity-chip-recent"
           >
             <span className="font-mono tabular-nums">{allRecent.length}</span> recent
-          </Pill>
-          {(["email", "meeting", "call", "deal"] as const).filter(k => kindCounts[k]).map(k => (
+          </Pill>}
+          {Object.keys(kindCounts).length > 1 && (["email", "meeting", "call", "deal"] as const).filter(k => kindCounts[k]).map(k => (
             <Pill
               key={k}
               active={kind === k}
@@ -411,7 +415,7 @@ export function ActivitySummary({ propertyId, companyId, contactId, dealId, vari
         ));
       })()}
       </div>
-      <ActivityDetail opened={opened} onClose={() => setOpened(null)} propertyId={propertyId} summaries={summaries} setSummaries={setSummaries} />
+      <ActivityDetail opened={opened} onClose={() => setOpened(null)} propertyId={propertyId} feedDealId={dealId} summaries={summaries} setSummaries={setSummaries} />
     </div>
   );
 }
