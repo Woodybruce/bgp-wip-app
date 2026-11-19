@@ -86,6 +86,10 @@ Respond with ONLY valid JSON, no markdown fences, no commentary. Example:
 export async function parseRequirementBrochure(args: {
   pdfBuffer: Buffer;
   maxPages?: number;
+  // Where the read's spend is logged (api_usage_log, App costs): the PIPnet
+  // import reads each flyer as "pipnet-flyer", so the catch-up can say what
+  // its first 100 cost.
+  feature?: string;
 }): Promise<ParsedRequirement | null> {
   if (!process.env.ANTHROPIC_API_KEY) {
     console.warn("[req-vision] ANTHROPIC_API_KEY not set");
@@ -132,6 +136,7 @@ export async function parseRequirementBrochure(args: {
       max_tokens: 1500,
       messages: [{ role: "user", content }],
     });
+    import("./api-usage").then(m => m.logAiUsage({ provider: "anthropic", model: "claude-sonnet-4-5", feature: args.feature || "requirement-flyer", usage: (msg as any).usage })).catch(() => {});
     const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {

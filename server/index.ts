@@ -4358,6 +4358,7 @@ import activitySummaryRouter from "./activity-summary";
 import expansionIntelRouter from "./expansion-intel";
 import brandStoreCountRouter from "./brand-store-count";
 import brandPipelineRouter from "./brand-pipeline";
+import pipnetCatchupRouter from "./pipnet-catchup";
 import crmHubRouter from "./crm-hub";
 import turnoverRouter from "./turnover";
 import { serveStatic } from "./static";
@@ -5629,6 +5630,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // planning and job-advert pipeline. Their tables are made here (additive).
   app.use(brandStoreCountRouter);
   app.use(brandPipelineRouter);
+  app.use(pipnetCatchupRouter);
   // The CRM page's lists: landlords, brands, agents and lenders in one design (BGP staff only).
   app.use(crmHubRouter);
   import("./brand-store-count").then(m => m.ensureStoreCountTable()).catch(e => console.warn("[brand-store-count] table:", e?.message));
@@ -6583,6 +6585,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         setTimeout(() => { import("./brand-website-sweep").then(m => m.resumeWebsiteSweep()).catch(() => {}); }, 60000);
         // The twelve-month planning check an admin started carries on too; it never starts by itself.
         setTimeout(() => { import("./brand-pipeline").then(m => m.resumePlanningSweep()).catch(() => {}); }, 75000);
+        // The twelve-month PIPnet catch-up an admin started carries on too; it never starts by itself.
+        setTimeout(() => { import("./pipnet-catchup").then(m => m.resumePipnetCatchup()).catch(() => {}); }, 90000);
         // One-off (2026-09-23): tenants on BGP deals with no Companies House
         // entity get re-resolved now that deal records (HOTs, fee emails) are
         // a source — they would otherwise wait a month in the parked queue.

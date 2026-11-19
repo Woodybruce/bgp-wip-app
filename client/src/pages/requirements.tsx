@@ -73,6 +73,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { FilterDropdown } from "@/components/wip-filter-dropdown";
 import { SuggestionTray, RequirementEvidenceDrawer, type SuggestionList } from "@/components/requirement-centre";
+import { PipnetCatchupDialog } from "@/components/pipnet-catchup";
 import {
   requirementLive, requirementGoingStale, requirementDaysLeft, requirementListKey, requirementSourceLabels, formatRequirementDay,
   type RequirementLive,
@@ -421,6 +422,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
 
   const [pipnetHeadersText, setPipnetHeadersText] = useState<string | null>(null);
   const [healthOpen, setHealthOpen] = useState(false);
+  const [catchupOpen, setCatchupOpen] = useState(false);
   const inspectPipnetDetail = async () => {
     try {
       const res = await fetch("/api/external-requirements/pipnet-inspect-detail", {
@@ -1150,6 +1152,9 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
             {reqUser?.isAdmin && (
               <DropdownMenuItem onClick={() => setHealthOpen(true)} data-testid="button-requirements-health">Health report</DropdownMenuItem>
             )}
+            {reqUser?.isAdmin && (
+              <DropdownMenuItem onClick={() => setCatchupOpen(true)} data-testid="button-pipnet-catchup">PIPnet, last 12 months</DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
         )}
@@ -1623,6 +1628,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
       </Dialog>
 
       <RequirementsHealthDialog open={healthOpen} onOpenChange={setHealthOpen} />
+      {catchupOpen && <PipnetCatchupDialog open={catchupOpen} onOpenChange={setCatchupOpen} />}
 
       <RequirementMatchesDialog
         requirement={matchItem}

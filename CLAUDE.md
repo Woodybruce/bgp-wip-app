@@ -4243,6 +4243,50 @@ the brand and gets no link.
   from a build machine: the first links come from the 05:30 import, and the
   older listings get theirs when the 12-month catch-up reads them again.
 
+**PIPnet, last 12 months** (19 November 2026; Woody: "We want the last 12
+months", each flyer kept as uploaded). PIPnet's requirements search takes ONE
+"listed since" date (`documentDate`, dd/mm/yyyy), sorts newest first and
+stops at 50 pages, so date windows cannot get past the cap: the newest rows
+always come first. (The review said "shorter date windows"; that was wrong.)
+The search form also takes a trade type (`tradeTypeListBox`, 122 on
+19 November 2026), use class tick boxes, "named clients only" and agent and
+client lists, read from the form that day. So the catch-up searches one trade
+type at a time, listed since a year ago (`catchupSince`, London's date), then
+once with no trade type for listings that carry none.
+- **Rules** `shared/pipnet-catchup.ts`; **run** `server/pipnet-catchup.ts`
+  (state in `system_settings.pipnet-catchup`), admin only:
+  `GET`/`POST /api/admin/pipnet-catchup` (`start`, `carry_on`, `stop`). The
+  screen is **PIPnet, last 12 months** in the requirements board's Sync tools
+  (`client/src/components/pipnet-catchup.tsx`). Nothing starts it at boot or
+  on a timer. A run an admin started carries on after a deploy
+  (`resumePipnetCatchup`, 90 seconds after boot).
+- **Each search is one PIPnet session**, logged off when it finishes
+  (`importPipnetCatchupStep`, `listPipnetTradeTypes`), so the run never holds a
+  licence for long. The imports take turns (`oneAtATime` in
+  `server/pipnet.ts`): a second search in the same session wipes the first
+  one's result set, so the 05:30 import waits for the search in hand to finish.
+  A refused or failed search stops the run at that search, and Carry on tries
+  it again. Stop keeps the place; the search in flight is done again.
+- **Each listing goes through the daily import's own step** (`importPipnetRow`,
+  shared by both): the detail page, the flyer kept as a PDF, the stored
+  listing, the requirement as a market listing (decision D), the agent and
+  the tenant rep link. A search that reached PIPnet's cap is listed as cut
+  short on the card.
+- **Each flyer is read by AI once** (`flyerAlreadyRead`): a stored listing
+  with the same document date, a kept pack and a sure reading keeps both. A
+  new listing, a re-issued one (new date) or one never read is downloaded and
+  read. This holds for the 05:30 import too, which before re-read every flyer
+  of the last three months each morning.
+- **The pause for the cost** (decision A): after the first 100 flyers read
+  (`CATCHUP_FIRST_FLYERS`), the run pauses and the card says what they cost,
+  read back from App costs: each read is now logged with `logAiUsage` as
+  `pipnet-flyer` (`parseRequirementBrochure`'s `feature`; the other callers log
+  `requirement-flyer`). Carry on reads the rest without pausing again.
+- Tests: `server/pipnet-catchup.test.ts` (in `npm test`) and
+  `qa/regression/pipnet-catchup-guards.test.mjs`. Not run against PIPnet
+  from a build machine (it writes to the live CRM and spends on AI): the first
+  run is an admin's Start.
+
 Woody: "the requirements page is just picking up historic requirements
 dragged from a couple of data bases. We need it to be the live requirements
 centre for brands that are expanding to include and pick up on all chats and

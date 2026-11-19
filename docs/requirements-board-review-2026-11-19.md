@@ -173,8 +173,10 @@ read pages and ran searches.
 
   On BGP's account, Let, Investment and Auction returned nothing.
 - **Every search stops at 50 pages**, about 1,000 rows. Latest, Dead,
-  available and under offer all reached that cap. A 12-month import has to be
-  split into shorter date windows to get past it.
+  available and under offer all reached that cap. The date box is "listed
+  since" only, newest first, so shorter date windows cannot get past it (this
+  line first said they could). A 12-month import splits the search by trade
+  type instead (corrected later on 19 November 2026).
 - **PIPnet limits how many people can be logged in at once.** After a few test
   logins it answered "Maximum number of licensed users for your company
   exceeded". The app never logged off (`server/pipnet.ts` had no logoff), so
@@ -772,7 +774,8 @@ confirms it in the To confirm tray, the rule of 12 November.
 **What is missing for the brief**
 
 1. **12 months, past the 50-page cap.** This is a one-off admin catch-up that
-   searches PIPnet a few weeks at a time. The daily run stays as it is.
+   searches PIPnet one trade type at a time (built as "PIPnet, last 12
+   months" in Sync tools). The daily run stays as it is.
 2. **Agents into the tenant rep CRM.** Each agent on a flyer becomes a
    tenant-rep link to its brand (`brand_agent_representations`, through
    `createBrandRepresentation`). Then the brand page, the CRM's Agents list

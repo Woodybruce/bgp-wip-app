@@ -91,7 +91,7 @@ test('a listing links its agent once: a link a person deleted is not put back by
   assert.equal(reps.length, 0);
   assert.ok(!writes.some(w => w.table === 'external_requirements' && w.v.rawData));
   // The import carries the marker over when it reads the listing again.
-  assert.match(fn('server/pipnet.ts', 'importPipnetRequirementsInner'), /_tenantRepAt: \(existing\[0\]\?\.rawData as any\)\?\._tenantRepAt \|\| null,/);
+  assert.match(fn('server/pipnet.ts', 'importPipnetRow'), /_tenantRepAt: stored\?\._tenantRepAt \|\| null,/);
 });
 
 test('a firm only a brand or landlord shares the name of is made new, as an agent firm marked From PIPnet', async () => {
@@ -147,16 +147,16 @@ test('the tenant rep link goes through its own door after the listing commits, o
 });
 
 test('a listing that names no client keeps its agent, and nothing else', () => {
-  const loop = fn('server/pipnet.ts', 'importPipnetRequirementsInner');
-  assert.doesNotMatch(loop, /companyName === "\[No Client Quoted\]"\) continue;/);
+  const loop = fn('server/pipnet.ts', 'importPipnetRow');
+  assert.doesNotMatch(loop, /companyName === "\[No Client Quoted\]"\) (continue|return)/);
   const at = loop.indexOf('if (companyName === "[No Client Quoted]") {');
   assert.ok(at > 0);
-  const block = loop.slice(at, loop.indexOf('\n    }\n', at));
+  const block = loop.slice(at, loop.indexOf('\n  }\n', at));
   assert.match(block, /upsertPipnetAgent\(tx, \{/);
   assert.match(block, /brand: null/);
-  assert.match(block, /continue;/);
+  assert.match(block, /return \{ \.\.\.outcome, status: "agent_only" \};/);
   assert.doesNotMatch(block, /externalRequirements|promoteToCrmRequirement|downloadBrochureAsPdf|parseRequirementBrochure|recordPipnetTenantRep/);
-  assert.ok(loop.indexOf('if (parsedDate && parsedDate < cutoff)') < at, 'an old anonymous listing is skipped as any old listing is');
+  assert.ok(loop.indexOf('if (parsedDate && parsedDate < ctx.cutoff)') < at, 'an old anonymous listing is skipped as any old listing is');
 });
 
 test('the import still never confirms a requirement', () => {

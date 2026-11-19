@@ -9,6 +9,7 @@ import { parseRequirementBrochure, mergeVisionIntoRecord } from "./requirement-v
 import { geocodeOne } from "./geocode";
 import { requirementListingUpdates, importMayLabel, listingTarget } from "@shared/requirement-live";
 import { agentFirmKey, agentFirmSearchWord, pickAgentFirm, pipnetContactNote, pipnetTenantRepNote, PIPNET_SOURCE } from "@shared/pipnet-agents";
+import { flyerAlreadyRead, parseTradeTypes, PIPNET_PAGE_CAP } from "@shared/pipnet-catchup";
 
 const PIPNET_DEFAULT = "https://v1.pipnet.co.uk";
 const PIPNET_URL = sanitisePipnetUrl(process.env.PIPNET_URL);
@@ -259,6 +260,7 @@ async function searchPipnetRequirementsInner(params: {
   client?: string;
   status?: string;
   documentDate?: string;
+  tradeType?: string;
   allPages?: boolean;
   maxPages?: number;
   stopBeforeDate?: Date;
@@ -277,6 +279,8 @@ async function searchPipnetRequirementsInner(params: {
     maxSalesArea: params.maxSize || "",
     Search: "Search",
   });
+  // One trade type, as the search form's list names it (the twelve-month catch-up).
+  if (params.tradeType) body.set("tradeTypeListBox", params.tradeType);
 
   const fetched = await pipFetchRetrying403(`${PIPNET_URL}/reqfetch.jsp`, (c) => ({
     method: "POST",
@@ -913,7 +917,7 @@ async function importPipnetRequirementsInner(params: {
   allPages?: boolean;
   monthsBack?: number;
   autoPromote?: boolean;
-}): Promise<{ imported: number; promoted: number; skippedOld: number; agentsOnly: number; total: number; pages: number }> {
+}): Promise<{ imported: number; promoted: number; skippedOld: number; agentsOnly: number; aiReads: number; total: number; pages: number }> {
   const monthsBack = params.monthsBack ?? 3;
   const autoPromote = params.autoPromote ?? true;
   const cutoff = new Date();
@@ -925,11 +929,6 @@ async function importPipnetRequirementsInner(params: {
     maxPages: params.allPages === false ? 1 : 5,
     stopBeforeDate: cutoff,
   });
-  let imported = 0;
-  let promoted = 0;
-  let skippedOld = 0;
-  let agentsOnly = 0;
-  let loggedHeaders = false;
 
   // Reuse the cookie the search just established — do NOT call login() here.
   // login() pings reqSearch.jsp to validate the session, and that hit wipes
@@ -939,75 +938,134 @@ async function importPipnetRequirementsInner(params: {
   const cookie = sessionCookie;
   if (!cookie) throw new Error("PIPnet session missing after search");
 
-  for (const row of results) {
+  const tally = await importPipnetRows(results, cookie, { cutoff, autoPromote });
+  return { imported: tally.imported, promoted: tally.promoted, skippedOld: tally.skippedOld, agentsOnly: tally.agentsOnly, aiReads: tally.aiReads,
+    total: results.length, pages: Math.ceil(results.length / 20) };
+}
+
+export type PipnetRowTally = { imported: number; promoted: number; skippedOld: number; agentsOnly: number; aiReads: number; reused: number; failed: number };
+
+// Every listing of a search through importPipnetRow, counted.
+async function importPipnetRows(rows: Record<string, string>[], cookie: string, ctx: { cutoff: Date; autoPromote: boolean }): Promise<PipnetRowTally> {
+  const tally: PipnetRowTally = { imported: 0, promoted: 0, skippedOld: 0, agentsOnly: 0, aiReads: 0, reused: 0, failed: 0 };
+  let loggedHeaders = false;
+  for (const row of rows) {
     if (!loggedHeaders) {
       console.log(`[pipnet import] PIPnet row columns: ${JSON.stringify(Object.keys(row))}`);
       loggedHeaders = true;
     }
-    const companyName =
-      row["Client"] || row["Company"] || row["Name"] || "Unknown";
-    if (companyName === "Unknown") continue;
-
-    const agentCompany = (row["Agent"] || row["Agency"] || row["Acting Agent"] || "").trim();
-    // List view's Contact has a "(Agent)" suffix — strip it. Detail page Contact is cleaner anyway.
-    const listContactName = (row["Contact"] || row["Contact Name"] || row["Agent Contact"] || "").trim().replace(/\s*\(Agent\)\s*$/i, "");
-    const sizeRange = (row["Size"] || row["Sales Area"] || row["Sq Ft"] || row["Square Footage"] || row["Floor Area"] || row["Area"] || "").trim();
-    const docDate = row["Document Date"] || row["Date"] || row["Updated"] || row["Last Updated"] || "";
-
-    const parsedDate = parseUkDate(docDate);
-    if (parsedDate && parsedDate < cutoff) {
-      skippedOld++;
-      continue;
+    try {
+      const out = await importPipnetRow(row, cookie, ctx);
+      if (out.status === "old") tally.skippedOld++;
+      else if (out.status === "agent_only") tally.agentsOnly++;
+      else if (out.status === "imported") { tally.imported++; if (out.promoted) tally.promoted++; }
+      if (out.aiRead) tally.aiReads++;
+      if (out.reused) tally.reused++;
+    } catch (e: any) {
+      tally.failed++;
+      console.error(`[pipnet import] listing ${row["Client"] || row["Company"] || "?"}: ${e?.message}`);
     }
+  }
+  return tally;
+}
 
-    // A listing that names no client is no requirement (a row needs a brand)
-    // and makes no tenant rep link, but its agent still goes into the CRM
-    // (the review's decision B: agents only). The detail page gives the
-    // agent's email and mobile; the flyer is not downloaded or read.
-    if (companyName === "[No Client Quoted]") {
-      if (!agentCompany) continue;
-      let anonDetail: Awaited<ReturnType<typeof fetchPipnetDetail>> = {};
-      if (row._detailHref) {
-        try {
-          anonDetail = await fetchPipnetDetail(row._detailHref, cookie);
-          await new Promise(r => setTimeout(r, 150));
-        } catch (e: any) {
-          console.error(`[pipnet detail] ${row._detailHref}: ${e?.message}`);
-        }
-      }
-      try {
-        await db.transaction(tx => upsertPipnetAgent(tx, {
-          firmName: agentCompany,
-          contactName: (anonDetail.contactName || listContactName || "").trim() || null,
-          email: anonDetail.email || row["Email"] || row["E-Mail"] || row["E-mail"] || null,
-          phone: anonDetail.telephone || row["Tel. No"] || row["Phone"] || row["Telephone"] || row["Tel"] || null,
-          mobile: anonDetail.mobile || null,
-          brand: null,
-          listedOn: parsedDate ? parsedDate.toISOString().slice(0, 10) : null,
-        }));
-        agentsOnly++;
-      } catch (e: any) {
-        console.error(`[pipnet import] agent on an anonymous listing (${agentCompany}): ${e?.message}`);
-      }
-      continue;
-    }
+type PipnetRowOutcome = { status: "skipped" | "old" | "agent_only" | "imported"; promoted: boolean; aiRead: boolean; reused: boolean };
 
-    // Per-row detail fetch — pulls use class, email, mobile, brochure URL etc.
-    // The list view doesn't expose any of these. Adds one HTTP request per row.
-    let detail: Awaited<ReturnType<typeof fetchPipnetDetail>> = {};
+// One listing: its detail page, its flyer (kept as a PDF and read by AI once:
+// a listing already stored with the same document date, a read flyer and a
+// kept pack is not downloaded or read again), the stored listing, and the
+// requirement it becomes. A listing that names no client adds its agent only.
+async function importPipnetRow(row: Record<string, string>, cookie: string, ctx: { cutoff: Date; autoPromote: boolean }): Promise<PipnetRowOutcome> {
+  const outcome: PipnetRowOutcome = { status: "skipped", promoted: false, aiRead: false, reused: false };
+  const companyName =
+    row["Client"] || row["Company"] || row["Name"] || "Unknown";
+  if (companyName === "Unknown") return outcome;
+
+  const agentCompany = (row["Agent"] || row["Agency"] || row["Acting Agent"] || "").trim();
+  // List view's Contact has a "(Agent)" suffix — strip it. Detail page Contact is cleaner anyway.
+  const listContactName = (row["Contact"] || row["Contact Name"] || row["Agent Contact"] || "").trim().replace(/\s*\(Agent\)\s*$/i, "");
+  const sizeRange = (row["Size"] || row["Sales Area"] || row["Sq Ft"] || row["Square Footage"] || row["Floor Area"] || row["Area"] || "").trim();
+  const docDate = row["Document Date"] || row["Date"] || row["Updated"] || row["Last Updated"] || "";
+
+  const parsedDate = parseUkDate(docDate);
+  if (parsedDate && parsedDate < ctx.cutoff) return { ...outcome, status: "old" };
+
+  // A listing that names no client is no requirement (a row needs a brand)
+  // and makes no tenant rep link, but its agent still goes into the CRM
+  // (the review's decision B: agents only). The detail page gives the
+  // agent's email and mobile; the flyer is not downloaded or read.
+  if (companyName === "[No Client Quoted]") {
+    if (!agentCompany) return outcome;
+    let anonDetail: Awaited<ReturnType<typeof fetchPipnetDetail>> = {};
     if (row._detailHref) {
       try {
-        detail = await fetchPipnetDetail(row._detailHref, cookie);
+        anonDetail = await fetchPipnetDetail(row._detailHref, cookie);
         await new Promise(r => setTimeout(r, 150));
       } catch (e: any) {
         console.error(`[pipnet detail] ${row._detailHref}: ${e?.message}`);
       }
     }
+    try {
+      await db.transaction(tx => upsertPipnetAgent(tx, {
+        firmName: agentCompany,
+        contactName: (anonDetail.contactName || listContactName || "").trim() || null,
+        email: anonDetail.email || row["Email"] || row["E-Mail"] || row["E-mail"] || null,
+        phone: anonDetail.telephone || row["Tel. No"] || row["Phone"] || row["Telephone"] || row["Tel"] || null,
+        mobile: anonDetail.mobile || null,
+        brand: null,
+        listedOn: parsedDate ? parsedDate.toISOString().slice(0, 10) : null,
+      }));
+      return { ...outcome, status: "agent_only" };
+    } catch (e: any) {
+      console.error(`[pipnet import] agent on an anonymous listing (${agentCompany}): ${e?.message}`);
+      return outcome;
+    }
+  }
 
+  // Per-row detail fetch — pulls use class, email, mobile, brochure URL etc.
+  // The list view doesn't expose any of these. Adds one HTTP request per row.
+  let detail: Awaited<ReturnType<typeof fetchPipnetDetail>> = {};
+  if (row._detailHref) {
+    try {
+      detail = await fetchPipnetDetail(row._detailHref, cookie);
+      await new Promise(r => setTimeout(r, 150));
+    } catch (e: any) {
+      console.error(`[pipnet detail] ${row._detailHref}: ${e?.message}`);
+    }
+  }
+
+  // Prefer PIPnet's stable Requirement ID for dedup; fall back to the old
+  // hash-style id for rows where the detail page didn't yield one.
+  const sourceId = detail.requirementId
+    ? `pipnet-req-${detail.requirementId}`
+    : `pipnet-req-${companyName}-${agentCompany}-${sizeRange}`.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-]/g, "").toLowerCase();
+
+  const existing = await db
+    .select()
+    .from(externalRequirements)
+    .where(
+      and(
+        eq(externalRequirements.source, "PIPnet"),
+        eq(externalRequirements.sourceId, sourceId)
+      )
+    )
+    .limit(1);
+
+  // Each flyer is read once (the review's decision A): a listing stored with
+  // the same document date, a kept pack and a sure reading keeps them. A new
+  // listing, a re-issued one (new date) or one never read is downloaded and read.
+  const stored: any = existing[0]?.rawData || null;
+  const listedAs = detail.documentDate || docDate || null;
+  let brochurePack: { url: string; name: string; pages: number; buffer?: Buffer } | null = null;
+  let visionParse: Awaited<ReturnType<typeof parseRequirementBrochure>> = null;
+  if (flyerAlreadyRead(existing[0] ? { lastUpdated: existing[0].lastUpdated, rawData: stored } : null, listedAs)) {
+    brochurePack = stored._brochurePack;
+    visionParse = stored._visionParse;
+    outcome.reused = true;
+  } else {
     // Download the "View All Images" brochure (the landlord pack — flyer plus
     // photos) and stitch into a single PDF hosted by BGP. Falls back to the
     // raw PIPnet URL on failure so the link still works (with PIPnet login).
-    let brochurePack: { url: string; name: string; pages: number; buffer?: Buffer } | null = null;
     if (detail.landlordPackUrl && detail.requirementId) {
       brochurePack = await downloadBrochureAsPdf(detail.landlordPackUrl, cookie, detail.requirementId, companyName);
       if (!brochurePack) {
@@ -1020,10 +1078,10 @@ async function importPipnetRequirementsInner(params: {
     // Run Claude vision over the brochure pages to extract structured fields.
     // PIPnet's tabular metadata is sparse + often wrong — the brochure images
     // contain the real requirement (size, use class, target locations, format).
-    let visionParse: Awaited<ReturnType<typeof parseRequirementBrochure>> = null;
     if (brochurePack?.buffer) {
       try {
-        visionParse = await parseRequirementBrochure({ pdfBuffer: brochurePack.buffer });
+        outcome.aiRead = true;
+        visionParse = await parseRequirementBrochure({ pdfBuffer: brochurePack.buffer, feature: "pipnet-flyer" });
         if (visionParse) {
           console.log(`[pipnet import] vision parse for ${companyName} (${visionParse.confidence}): size=${visionParse.sizeRange}, locations=${visionParse.locations?.length || 0}`);
         }
@@ -1032,29 +1090,12 @@ async function importPipnetRequirementsInner(params: {
       }
     }
 
-    // Prefer PIPnet's stable Requirement ID for dedup; fall back to the old
-    // hash-style id for rows where the detail page didn't yield one.
-    const sourceId = detail.requirementId
-      ? `pipnet-req-${detail.requirementId}`
-      : `pipnet-req-${companyName}-${agentCompany}-${sizeRange}`.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-]/g, "").toLowerCase();
-
-    const existing = await db
-      .select()
-      .from(externalRequirements)
-      .where(
-        and(
-          eq(externalRequirements.source, "PIPnet"),
-          eq(externalRequirements.sourceId, sourceId)
-        )
-      )
-      .limit(1);
-
     // If fresh vision didn't run (no brochure link / download failed / parse
     // returned null) but we have a cached vision parse from a prior sync, reuse
     // it. Saves the Claude call AND keeps Use / Type / Comments populated when
     // PIPnet's HTML occasionally drops the brochure link.
-    if (!visionParse && existing.length > 0) {
-      const cached = (existing[0].rawData as any)?._visionParse;
+    if (!visionParse && stored) {
+      const cached = stored._visionParse;
       if (cached && cached.confidence && cached.confidence !== "low") {
         visionParse = cached;
         console.log(`[pipnet import] reusing cached vision parse for ${companyName} (${cached.confidence})`);
@@ -1064,79 +1105,105 @@ async function importPipnetRequirementsInner(params: {
     // Similarly, if we couldn't get a fresh brochure pack this run but the
     // previous sync stored one, keep the cached URL so the Landlord Pack
     // column still has a clickable link.
-    if (!brochurePack && existing.length > 0) {
-      const cachedPack = (existing[0].rawData as any)?._brochurePack;
+    if (!brochurePack && stored) {
+      const cachedPack = stored._brochurePack;
       if (cachedPack?.url) {
         brochurePack = cachedPack;
         console.log(`[pipnet import] reusing cached brochure pack for ${companyName}`);
       }
     }
-
-    const contactName = (detail.contactName || listContactName || "").trim();
-    const useClass = detail.useClass || "";
-
-    const record: any = {
-      source: "PIPnet" as const,
-      sourceId,
-      companyName,
-      contactName: contactName || null,
-      contactPhone: detail.telephone || row["Tel. No"] || row["Phone"] || row["Telephone"] || row["Tel"] || null,
-      contactEmail: detail.email || row["Email"] || row["E-Mail"] || row["E-mail"] || null,
-      tenure: detail.tenure || row["Tenure"] || null,
-      sizeRange: sizeRange || null,
-      useClass: useClass || null,
-      locations: null as string[] | null, // PIPnet does not expose wanted locations — team fills manually.
-      lastUpdated: detail.documentDate || docDate || null,
-      description: [detail.comments, agentCompany ? `Acting agent: ${agentCompany}` : null].filter(Boolean).join("\n\n") || null,
-      status: row["Status"] || "active",
-      rawData: {
-        ...row,
-        _agentCompany: agentCompany,
-        _detail: detail,
-        _landlordPackUrl: detail.landlordPackUrl || null,
-        _brochurePack: brochurePack ? { url: brochurePack.url, name: brochurePack.name, pages: brochurePack.pages } : null,
-        _mobile: detail.mobile || null,
-        _address: { line1: detail.address1, line2: detail.address2, town: detail.town, county: detail.county, postCode: detail.postCode },
-        _visionParse: visionParse,
-        // When this listing's agent was linked to the brand as its tenant rep
-        // (or found linked already): a listing links once, so a link a person
-        // deletes is not put back by the same flyer.
-        _tenantRepAt: (existing[0]?.rawData as any)?._tenantRepAt || null,
-      } as any,
-      updatedAt: new Date(),
-    };
-
-    // Merge vision-extracted fields into the record. Vision wins on empty
-    // fields, AND wins entirely when confidence === "high".
-    if (visionParse) {
-      mergeVisionIntoRecord(record, visionParse);
-    }
-
-    let externalId: string;
-    if (existing.length > 0) {
-      await db
-        .update(externalRequirements)
-        .set(record)
-        .where(eq(externalRequirements.id, existing[0].id));
-      externalId = existing[0].id;
-    } else {
-      const [inserted] = await db.insert(externalRequirements).values(record).returning({ id: externalRequirements.id });
-      externalId = inserted.id;
-    }
-    imported++;
-
-    // Always run promote — for new rows it creates the CRM requirement, for
-    // already-converted rows it RE-ENRICHES (fills empty columns from the
-    // vision parse and refreshes the landlord pack). Without this, rows
-    // converted by an earlier sync never pick up newly-extracted Use / Type /
-    // locations or the freshly-downloaded clean brochure.
-    if (autoPromote) {
-      const created = await promoteToCrmRequirement(externalId, record);
-      if (created) promoted++;
-    }
   }
 
-  return { imported, promoted, skippedOld, agentsOnly, total: results.length, pages: Math.ceil(results.length / 20) };
+  const contactName = (detail.contactName || listContactName || "").trim();
+  const useClass = detail.useClass || "";
+
+  const record: any = {
+    source: "PIPnet" as const,
+    sourceId,
+    companyName,
+    contactName: contactName || null,
+    contactPhone: detail.telephone || row["Tel. No"] || row["Phone"] || row["Telephone"] || row["Tel"] || null,
+    contactEmail: detail.email || row["Email"] || row["E-Mail"] || row["E-mail"] || null,
+    tenure: detail.tenure || row["Tenure"] || null,
+    sizeRange: sizeRange || null,
+    useClass: useClass || null,
+    locations: null as string[] | null, // PIPnet does not expose wanted locations — team fills manually.
+    lastUpdated: listedAs,
+    description: [detail.comments, agentCompany ? `Acting agent: ${agentCompany}` : null].filter(Boolean).join("\n\n") || null,
+    status: row["Status"] || "active",
+    rawData: {
+      ...row,
+      _agentCompany: agentCompany,
+      _detail: detail,
+      _landlordPackUrl: detail.landlordPackUrl || null,
+      _brochurePack: brochurePack ? { url: brochurePack.url, name: brochurePack.name, pages: brochurePack.pages } : null,
+      _mobile: detail.mobile || null,
+      _address: { line1: detail.address1, line2: detail.address2, town: detail.town, county: detail.county, postCode: detail.postCode },
+      _visionParse: visionParse,
+      // When this listing's agent was linked to the brand as its tenant rep
+      // (or found linked already): a listing links once, so a link a person
+      // deletes is not put back by the same flyer.
+      _tenantRepAt: stored?._tenantRepAt || null,
+    } as any,
+    updatedAt: new Date(),
+  };
+
+  // Merge vision-extracted fields into the record. Vision wins on empty
+  // fields, AND wins entirely when confidence === "high".
+  if (visionParse) {
+    mergeVisionIntoRecord(record, visionParse);
+  }
+
+  let externalId: string;
+  if (existing.length > 0) {
+    await db
+      .update(externalRequirements)
+      .set(record)
+      .where(eq(externalRequirements.id, existing[0].id));
+    externalId = existing[0].id;
+  } else {
+    const [inserted] = await db.insert(externalRequirements).values(record).returning({ id: externalRequirements.id });
+    externalId = inserted.id;
+  }
+  outcome.status = "imported";
+
+  // Always run promote — for new rows it creates the CRM requirement, for
+  // already-converted rows it RE-ENRICHES (fills empty columns from the
+  // vision parse and refreshes the landlord pack). Without this, rows
+  // converted by an earlier sync never pick up newly-extracted Use / Type /
+  // locations or the freshly-downloaded clean brochure.
+  if (ctx.autoPromote) {
+    outcome.promoted = await promoteToCrmRequirement(externalId, record);
+  }
+  return outcome;
+}
+
+// The twelve-month catch-up (server/pipnet-catchup.ts), one search at a time:
+// one trade type, or none for the last pass, listed since a date, every page
+// up to PIPnet's cap of 50. Each search is its own session, logged off after.
+async function importPipnetCatchupStepInner(params: { tradeType: string | null; since: string; cutoff: string }): Promise<PipnetRowTally & { rows: number; capped: boolean }> {
+  const cutoff = new Date(params.cutoff);
+  const results = await searchPipnetRequirements({
+    tradeType: params.tradeType || undefined,
+    documentDate: params.since,
+    allPages: true,
+    maxPages: PIPNET_PAGE_CAP,
+    stopBeforeDate: cutoff,
+  });
+  const cookie = sessionCookie;
+  if (!cookie) throw new Error("PIPnet session missing after search");
+  const tally = await importPipnetRows(results, cookie, { cutoff, autoPromote: true });
+  return { ...tally, rows: results.length, capped: results.length >= PIPNET_PAGE_CAP * 20 };
+}
+
+// The trade types PIPnet's requirements search offers (122 on 19 November 2026).
+async function listPipnetTradeTypesInner(): Promise<string[]> {
+  const cookie = await login();
+  const res = await pipFetch(`${PIPNET_URL}/reqretailsearch.jsp`, { headers: { Cookie: cookie } });
+  if (!res.ok) throw new Error(`PIPnet search form failed: ${res.status}`);
+  const types = parseTradeTypes(await res.text());
+  if (!types.length) throw new Error("PIPnet's search form listed no trade types");
+  return types;
 }
 
 // Coarse fallback when the vision parse didn't run (no brochure / parse failed).
@@ -1450,6 +1517,17 @@ async function recordPipnetTenantRep(input: { brandId: string | null; firmId: st
 // session dropped while another operation was still using it.
 let pipnetUsers = 0;
 const staleCookies = new Set<string>();
+
+// The imports read a search's result set page by page, then each listing's
+// detail page, in one session; a second search in that session wipes the
+// first one's result set. So the imports and the catch-up's searches take
+// turns, each in a session of its own that is logged off when it finishes.
+let pipnetTurn: Promise<unknown> = Promise.resolve();
+function oneAtATime<T>(run: () => Promise<T>): Promise<T> {
+  const next = pipnetTurn.then(run, run);
+  pipnetTurn = next.catch(() => {});
+  return next;
+}
 
 async function logoffCookie(cookie: string): Promise<void> {
   const url = `${PIPNET_URL}/logoff.jsp`;
@@ -1819,8 +1897,10 @@ async function inspectPipnetPropertySearchInner(): Promise<any> {
 // session is logged off when the last one using it finishes.
 export const searchPipnetRequirements = (params: Parameters<typeof searchPipnetRequirementsInner>[0]) => withPipnetSession(() => searchPipnetRequirementsInner(params));
 export const searchPipnetProperties = (params: Parameters<typeof searchPipnetPropertiesInner>[0]) => withPipnetSession(() => searchPipnetPropertiesInner(params));
-export const importPipnetRequirements = (params: Parameters<typeof importPipnetRequirementsInner>[0]) => withPipnetSession(() => importPipnetRequirementsInner(params));
-export const importPipnetProperties = (params: Parameters<typeof importPipnetPropertiesInner>[0]) => withPipnetSession(() => importPipnetPropertiesInner(params));
+export const importPipnetRequirements = (params: Parameters<typeof importPipnetRequirementsInner>[0]) => oneAtATime(() => withPipnetSession(() => importPipnetRequirementsInner(params)));
+export const importPipnetProperties = (params: Parameters<typeof importPipnetPropertiesInner>[0]) => oneAtATime(() => withPipnetSession(() => importPipnetPropertiesInner(params)));
+export const importPipnetCatchupStep = (params: Parameters<typeof importPipnetCatchupStepInner>[0]) => oneAtATime(() => withPipnetSession(() => importPipnetCatchupStepInner(params)));
+export const listPipnetTradeTypes = () => oneAtATime(() => withPipnetSession(() => listPipnetTradeTypesInner()));
 export const inspectPipnetDetail = () => withPipnetSession(() => inspectPipnetDetailInner());
 export const testPipnetLogin = () => withPipnetSession(() => testPipnetLoginInner());
 export const inspectPipnetPropertySearch = () => withPipnetSession(() => inspectPipnetPropertySearchInner());
