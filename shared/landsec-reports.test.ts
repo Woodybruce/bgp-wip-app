@@ -94,16 +94,19 @@ test("labels", () => {
   assert.equal(reportPeriodLabel("bad", "2026-12"), "");
 });
 
-test("the registry: nine reports, unique keys, a format each, and no budgets", () => {
-  assert.equal(LANDSEC_REPORTS.length, 9);
-  assert.equal(new Set(LANDSEC_REPORTS.map(r => r.key)).size, 9);
+test("the registry: the board report's two files then nine reports, unique keys, a format each, and no budgets", () => {
+  assert.equal(LANDSEC_REPORTS.length, 11);
+  assert.equal(new Set(LANDSEC_REPORTS.map(r => r.key)).size, 11);
+  assert.deepEqual(LANDSEC_REPORTS.filter(r => r.card === "board").map(r => [r.key, r.format]), [["board-report", "pdf"], ["board-report-figures", "xlsx"]]);
+  assert.deepEqual(LANDSEC_REPORTS.slice(0, 2).map(r => r.card), ["board", "board"], "the board report leads the list");
+  assert.match(landsecReportByKey("board-report")!.note || "", /only if it is on the app/);
   for (const r of LANDSEC_REPORTS) {
     assert.match(r.key, /^[a-z][a-z-]*$/);
     assert.ok(r.format === "xlsx" || r.format === "pdf");
     assert.ok(r.title && r.description && r.period);
     assert.equal(landsecReportByKey(r.key), r);
   }
-  assert.deepEqual(LANDSEC_REPORTS.filter(r => r.format === "pdf").map(r => r.key), ["leasing-activity-pdf", "asset-profile"]);
+  assert.deepEqual(LANDSEC_REPORTS.filter(r => r.format === "pdf").map(r => r.key), ["board-report", "leasing-activity-pdf", "asset-profile"]);
   assert.deepEqual(LANDSEC_REPORTS.filter(r => r.schemes === "one").map(r => r.key), ["asset-profile"]);
   assert.match(landsecReportByKey("portfolio")!.note || "", /No budgets/);
   assert.equal(landsecReportByKey("budgets"), null);

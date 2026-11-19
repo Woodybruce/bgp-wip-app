@@ -485,6 +485,16 @@ test("a joint agent is refused the reports index and every report", () => {
   for (const path of ["/api/landsec/reports-old", "/api/landsec/report", "/api/landsec/home", "/api/landsec/deals"]) assert.equal(jointAgentApiDenied("GET", path), false, path);
 });
 
+// The board report's market report (Woody, 2026-11-19): read, save and draft
+// sit under the reports address, so the same two lines refuse a joint agent.
+test("a joint agent is refused the board report's market report: reading, saving and drafting", () => {
+  for (const [method, path] of [["GET", "/api/landsec/reports/board-report/market?from=2026-08&to=2026-10"], ["PUT", "/api/landsec/reports/board-report/market"],
+    ["POST", "/api/landsec/reports/board-report/market/draft"], ["GET", "/api/landsec/reports/board-report"], ["GET", "/api/landsec/reports/board-report-figures"]] as const) {
+    assert.equal(restrictedLandsecApiRule("joint_agent", method, path), "deny", `${method} ${path}`);
+    assert.equal(jointAgentApiDenied(method, path), true, `${method} ${path}`);
+  }
+});
+
 // Every leasing requirement is open to a client login since 17 November 2026,
 // to read, add and amend (Woody: "keep all requirements open for clients and
 // access to amend and add"). A joint agent is another agency with no Brands:

@@ -113,9 +113,24 @@ export interface LandsecReportDef {
   period: string;
   /** Anything the report does not hold, said on the card. */
   note?: string;
+  /** "board" = one of the two files of the board report, which the page draws as one card at the head of the list. */
+  card?: "board";
 }
 
 export const LANDSEC_REPORTS: readonly LandsecReportDef[] = [
+  // The board report (Woody, 2026-11-19): the document Landsec presents each
+  // quarter, and the figures behind it. Its rules are shared/landsec-board-report.ts.
+  {
+    key: "board-report", title: "Board report", format: "pdf", schemes: "schemes", card: "board",
+    description: "The document to present: headlines, letting activity by scheme and by brief category, rental growth, deal speed, brand engagements and the market report.",
+    period: "Lettings, Heads of Terms, new instructions, viewings and offers dated in the period. Occupancy, live lettings and brand stages are as recorded today.",
+    note: "It holds what is recorded in ChatBGP. A letting Landsec did without BGP is in it only if it is on the app. A market report section prints only once it has been saved.",
+  },
+  {
+    key: "board-report-figures", title: "Board report figures", format: "xlsx", schemes: "schemes", card: "board",
+    description: "The figures behind the board report, one sheet per section, with every letting, viewing count and brand line it was worked out from.",
+    period: "The same period and rules as the board report.",
+  },
   {
     key: "tenancy-schedule", title: "Tenancy schedule", format: "xlsx", schemes: "schemes",
     description: "Every unit at each scheme as its property page lists it: unit, floor, brand, lease name, size, passing rent, ERV, lease dates, occupancy and letting stage.",

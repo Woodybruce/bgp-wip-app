@@ -43,7 +43,9 @@ import { UNIT_OCCUPANCY_LABELS, type PropertyUnit } from "@shared/property-units
 import { statusLabelsFor } from "@shared/letting-rules";
 import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
 import { statusLineIsMoveSql } from "@shared/stage-since";
-import { LANDSEC_CATEGORIES, landsecCategoryLabel } from "@shared/landsec";
+import { LANDSEC_CATEGORIES, landsecCategoryLabel, landsecCategoryOf, type LandsecCategoryOrOther } from "@shared/landsec";
+import { isLettingType } from "@shared/letting-rules";
+import { STAGE_BULK_PEERS } from "@shared/stage-since";
 import { requirementReason } from "@shared/requirement-live";
 import {
   LANDSEC_REPORTS, REPORT_MAX_MONTHS, defaultReportMonths, inReportPeriod, landsecReportByKey, landsecReportFileName, parseReportPeriod, reportDay,
@@ -76,7 +78,7 @@ export async function reportViewer(req: Request): Promise<LandsecViewer | null> 
   return viewer;
 }
 
-interface Ctx {
+export interface Ctx {
   req: Request;
   schemes: ReportScheme[];
   period: ReportPeriod;
@@ -91,8 +93,8 @@ const once = <T,>(ctx: Ctx, key: string, load: () => Promise<T>): Promise<T> => 
 
 // ── Small helpers ────────────────────────────────────────────────────────
 
-const text = (v: unknown): string | null => { const s = String(v ?? "").trim(); return s ? s : null; };
-const num = (v: unknown): number | null => { if (v == null || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
+export const text = (v: unknown): string | null => { const s = String(v ?? "").trim(); return s ? s : null; };
+export const num = (v: unknown): number | null => { if (v == null || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
 const figure = (v: unknown): number | null => {
   // A figure typed as words ("£95,000 pa", "2,400 sq ft"): the first number in it.
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
@@ -109,28 +111,28 @@ const typedDay = (v: unknown): string | null => {
   return uk ? `${uk[3]}-${uk[2].padStart(2, "0")}-${uk[1].padStart(2, "0")}` : null;
 };
 const list = (v: unknown): string | null => (Array.isArray(v) ? v.map(x => String(x ?? "").trim()).filter(Boolean).join(", ") || null : text(v));
-const stageLabel = (code: string | null | undefined, dealType?: string | null): string | null =>
+export const stageLabel = (code: string | null | undefined, dealType?: string | null): string | null =>
   code ? (statusLabelsFor(dealType ?? "New Letting") as Record<string, string>)[code] || code : null;
-const longDay = (d: Date): string => d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" });
-const shortDay = (day: string | null): string => {
+export const longDay = (d: Date): string => d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" });
+export const shortDay = (day: string | null): string => {
   if (!day) return "";
   const d = new Date(`${day}T12:00:00Z`);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 };
-const money = (v: number | null | undefined): string => (v == null ? "" : `£${Math.round(v).toLocaleString("en-GB")}`);
-const count = (v: number | null | undefined): string => (v == null ? "" : Math.round(v).toLocaleString("en-GB"));
+export const money = (v: number | null | undefined): string => (v == null ? "" : `£${Math.round(v).toLocaleString("en-GB")}`);
+export const count = (v: number | null | undefined): string => (v == null ? "" : Math.round(v).toLocaleString("en-GB"));
 // A total of figures that are recorded: blank, not zero, when none is.
-const total = (values: Array<number | null | undefined>): number | null => {
+export const total = (values: Array<number | null | undefined>): number | null => {
   const held = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
   return held.length ? held.reduce((n, v) => n + v, 0) : null;
 };
 
 // ── The feeds ────────────────────────────────────────────────────────────
 
-interface SchemeUnits { scheme: ReportScheme; units: PropertyUnit[] }
+export interface SchemeUnits { scheme: ReportScheme; units: PropertyUnit[] }
 
 /** Every unit at the chosen schemes, as the property page's unit feed gives them to this viewer. */
-function unitsFor(ctx: Ctx): Promise<SchemeUnits[]> {
+export function unitsFor(ctx: Ctx): Promise<SchemeUnits[]> {
   return once(ctx, "units", async () => {
     const viewer = await unitViewerFor(ctx.req);
     const out: SchemeUnits[] = [];
@@ -148,7 +150,7 @@ function unitsFor(ctx: Ctx): Promise<SchemeUnits[]> {
 }
 
 /** The deal clock feed's rows at the chosen schemes. */
-function clockFor(ctx: Ctx): Promise<any[]> {
+export function clockFor(ctx: Ctx): Promise<any[]> {
   return once(ctx, "clock", async () => {
     const feed = await landsecDealsFeed(ctx.req);
     const keys = new Set(ctx.schemes.map(s => s.key));
@@ -156,10 +158,19 @@ function clockFor(ctx: Ctx): Promise<any[]> {
   });
 }
 
-interface DealDates {
+/** A day in a deal's history: `confirmed` is false when the same minute stamped 5 or more other deals (shared/stage-since.ts). */
+export interface HistoryDay { day: string; confirmed: boolean }
+export interface DealDates {
   id: string; ref: number | null; name: string | null; status: string | null; dealType: string | null; propertyId: string;
-  tenant: string | null; unit: string | null; rentPa: number | null;
+  tenant: string | null; tenantId: string | null; category: LandsecCategoryOrOther | null; unit: string | null; rentPa: number | null;
+  /** The unit's schedule row and Letting Tracker row, to find it in the unit feed. */
+  scheduleRowId: string | null; trackerId: string | null;
+  /** A letting by its type, or because it has a Letting Tracker row. */
+  letting: boolean;
   instructed: string | null; hotsIssued: string | null; exchanged: string | null; completed: string | null; movedInPeriod: string | null;
+  /** The day the deal was added to the app (not confirmed when it came in with a bulk load), and its first move to each stage in its history. */
+  created: HistoryDay | null;
+  firstMove: Partial<Record<"AVA" | "HOT" | "EXC" | "COM", HistoryDay>>;
 }
 
 /**
@@ -167,23 +178,42 @@ interface DealDates {
  * moved stage inside the period. The one query this file makes for itself:
  * named columns, dates and the stage only.
  */
-function dealDatesFor(ctx: Ctx): Promise<DealDates[]> {
+export function dealDatesFor(ctx: Ctx): Promise<DealDates[]> {
   return once(ctx, "dealDates", async () => {
     const ids = ctx.schemes.flatMap(s => s.properties.map(p => p.id));
     if (ids.length === 0) return [];
-    const londonDaySql = "(a.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date";
+    const london = (column: string) => `(${column} AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date`;
+    const londonDaySql = london("a.created_at");
     const rows = (await pool.query(
       `/* landsec-reports:deal-dates */
-       SELECT d.id, d.deal_ref, d.name, d.status, d.deal_type, d.property_id, d.rent_pa,
+       WITH moves AS (
+         SELECT a.deal_id, a.new_value, a.created_at, date_trunc('minute', a.created_at) AS stamped
+           FROM deal_audit_log a
+          WHERE a.field = 'status' AND ${statusLineIsMoveSql("a")}
+            AND a.deal_id IN (SELECT p.id FROM crm_deals p WHERE p.property_id = ANY($1))
+       ), stamps AS (
+         SELECT date_trunc('minute', o.created_at) AS stamped, COUNT(DISTINCT o.deal_id)::int AS deals
+           FROM deal_audit_log o
+          WHERE o.field = 'status' AND ${statusLineIsMoveSql("o")}
+            AND date_trunc('minute', o.created_at) IN (SELECT m.stamped FROM moves m)
+          GROUP BY 1
+       )
+       SELECT d.id, d.deal_ref, d.name, d.status, d.deal_type, d.property_id, d.rent_pa, d.tenant_id,
               d.instructed_at, d.exchanged_at, d.completed_at,
-              tc.name AS tenant_name, COALESCE(t.premises, t.unit_number, au.unit_name) AS unit_name, au.hots_issued_at,
+              to_char(${london("d.created_at")}, 'YYYY-MM-DD') AS created_day,
+              (SELECT COUNT(*)::int FROM crm_deals c WHERE c.id <> d.id AND date_trunc('minute', c.created_at) = date_trunc('minute', d.created_at)) AS created_with,
+              tc.name AS tenant_name, tc.company_type AS tenant_type, COALESCE(t.premises, t.unit_number, au.unit_name) AS unit_name,
+              t.id AS schedule_row_id, au.id AS tracker_id,
+              CASE WHEN au.deal_id = d.id THEN au.hots_issued_at END AS hots_issued_at,
+              (SELECT json_agg(json_build_object('to', m.new_value, 'day', to_char(${london("m.created_at")}, 'YYYY-MM-DD'), 'with', GREATEST(COALESCE(s.deals, 1) - 1, 0)) ORDER BY m.created_at)
+                 FROM moves m LEFT JOIN stamps s ON s.stamped = m.stamped WHERE m.deal_id = d.id) AS moves,
               (SELECT MAX(a.created_at) FROM deal_audit_log a
                 WHERE a.deal_id = d.id AND a.field = 'status' AND ${statusLineIsMoveSql("a")}
                   AND ${londonDaySql} >= $2::date AND ${londonDaySql} < $3::date) AS moved_at
          FROM crm_deals d
          LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
          LEFT JOIN LATERAL (
-           SELECT u.id, u.unit_name, u.tenancy_unit_id, u.hots_issued_at FROM available_units u
+           SELECT u.id, u.deal_id, u.unit_name, u.tenancy_unit_id, u.hots_issued_at FROM available_units u
             WHERE u.property_id = ANY($1) AND (u.deal_id = d.id OR (d.tenancy_unit_id IS NOT NULL AND u.tenancy_unit_id = d.tenancy_unit_id))
             ORDER BY (u.deal_id = d.id) DESC NULLS LAST, u.updated_at DESC NULLS LAST
             LIMIT 1
@@ -191,18 +221,31 @@ function dealDatesFor(ctx: Ctx): Promise<DealDates[]> {
          LEFT JOIN tenancy_schedule_units t ON t.id = COALESCE(d.tenancy_unit_id, au.tenancy_unit_id) AND t.property_id = ANY($1)
         WHERE d.property_id = ANY($1) AND d.status IS NOT NULL`,
       [ids, ctx.period.start, ctx.period.end])).rows;
-    return rows.map((r: any): DealDates => ({
-      id: r.id, ref: r.deal_ref ?? null, name: text(r.name), status: text(r.status), dealType: text(r.deal_type), propertyId: r.property_id,
-      tenant: text(r.tenant_name), unit: text(r.unit_name), rentPa: num(r.rent_pa),
-      instructed: reportDay(r.instructed_at), hotsIssued: reportDay(r.hots_issued_at), exchanged: reportDay(r.exchanged_at), completed: reportDay(r.completed_at),
-      movedInPeriod: reportDay(r.moved_at),
-    }));
+    return rows.map((r: any): DealDates => {
+      // The first time the deal's history shows it moving to each stage.
+      const firstMove: DealDates["firstMove"] = {};
+      for (const m of Array.isArray(r.moves) ? r.moves : []) {
+        const code = legacyToCode(m?.to);
+        if ((code === "AVA" || code === "HOT" || code === "EXC" || code === "COM") && m?.day && !firstMove[code]) {
+          firstMove[code] = { day: String(m.day), confirmed: Number(m.with || 0) < STAGE_BULK_PEERS };
+        }
+      }
+      return {
+        id: r.id, ref: r.deal_ref ?? null, name: text(r.name), status: text(r.status), dealType: text(r.deal_type), propertyId: r.property_id,
+        tenant: text(r.tenant_name), tenantId: text(r.tenant_id), category: r.tenant_id ? landsecCategoryOf(r.tenant_type) : null, unit: text(r.unit_name), rentPa: num(r.rent_pa),
+        scheduleRowId: text(r.schedule_row_id), trackerId: text(r.tracker_id), letting: isLettingType(r.deal_type) || !!r.tracker_id,
+        instructed: reportDay(r.instructed_at), hotsIssued: reportDay(r.hots_issued_at), exchanged: reportDay(r.exchanged_at), completed: reportDay(r.completed_at),
+        movedInPeriod: reportDay(r.moved_at),
+        created: r.created_day ? { day: String(r.created_day), confirmed: Number(r.created_with || 0) < STAGE_BULK_PEERS } : null,
+        firstMove,
+      };
+    });
   });
 }
 
 // ── Rows, each built from a named list ───────────────────────────────────
 
-const brandOf = (u: PropertyUnit): string | null => text(u.tenant.companyName) || text(u.tenant.name);
+export const brandOf = (u: PropertyUnit): string | null => text(u.tenant.companyName) || text(u.tenant.name);
 
 function unitRow(scheme: ReportScheme, u: PropertyUnit) {
   return {
@@ -361,9 +404,9 @@ function leaseRoll(rows: UnitRow[]): RollYear[] {
 
 // ── Sheets ───────────────────────────────────────────────────────────────
 
-type Kind = "text" | "money" | "int" | "date" | "rate";
-interface Col { header: string; key: string; width: number; kind?: Kind }
-interface Sheet { name: string; columns: Col[]; rows: Array<Record<string, unknown>>; caption?: string; totals?: Record<string, unknown> }
+export type Kind = "text" | "money" | "int" | "date" | "rate" | "pct";
+export interface Col { header: string; key: string; width: number; kind?: Kind }
+export interface Sheet { name: string; columns: Col[]; rows: Array<Record<string, unknown>>; caption?: string; totals?: Record<string, unknown> }
 
 const UNIT_COLS: Col[] = [
   { header: "Scheme", key: "scheme", width: 24 }, { header: "Unit", key: "unit", width: 22 }, { header: "Floor", key: "floor", width: 12 },
@@ -388,7 +431,7 @@ const ACTIVITY_COLS: Col[] = [
   { header: "Changed stage in period", key: "movedInPeriod", width: 21, kind: "date" }, { header: "Joint agent", key: "jointAgent", width: 20 },
 ];
 
-const sheetName = (name: string, taken: Set<string>): string => {
+export const sheetName = (name: string, taken: Set<string>): string => {
   const base = name.replace(/[\\/?*[\]:]/g, " ").replace(/\s+/g, " ").trim().slice(0, 31) || "Sheet";
   let out = base, n = 2;
   while (taken.has(out.toLowerCase())) { const tail = ` ${n++}`; out = `${base.slice(0, 31 - tail.length)}${tail}`; }
@@ -558,7 +601,7 @@ async function portfolioSheets(ctx: Ctx): Promise<Sheet[]> {
 
 const HELD = "It holds what is recorded in ChatBGP on the day it was made. Nothing in it is estimated.";
 
-async function workbookOf(def: LandsecReportDef, ctx: Ctx, sheets: Sheet[]): Promise<Buffer> {
+export async function workbookOf(def: LandsecReportDef, ctx: Ctx, sheets: Sheet[], more: Array<[string, string]> = []): Promise<Buffer> {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
   wb.creator = "ChatBGP";
@@ -566,7 +609,7 @@ async function workbookOf(def: LandsecReportDef, ctx: Ctx, sheets: Sheet[]): Pro
   // BGP v19: Bordeaux headers, Cream banding.
   const headerFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FF6E0C25" } };
   const bandFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFFCF8F4" } };
-  const FORMATS: Partial<Record<Kind, string>> = { money: "£#,##0", int: "#,##0", date: "dd mmm yyyy", rate: "£#,##0.00" };
+  const FORMATS: Partial<Record<Kind, string>> = { money: "£#,##0", int: "#,##0", date: "dd mmm yyyy", rate: "£#,##0.00", pct: '+0.0"%";-0.0"%";0.0"%"' };
 
   const about = wb.addWorksheet("About");
   about.columns = [{ key: "label", width: 22 }, { key: "value", width: 96 }];
@@ -580,6 +623,7 @@ async function workbookOf(def: LandsecReportDef, ctx: Ctx, sheets: Sheet[]): Pro
     ["Made on", longDay(ctx.madeAt)],
     ["Source", `ChatBGP. ${HELD}`],
     ["Sheets", sheets.map(s => s.name).join(", ")],
+    ...more,
   ];
   for (const [label, value] of lines) {
     const row = about.addRow({ label, value });
@@ -598,7 +642,7 @@ async function workbookOf(def: LandsecReportDef, ctx: Ctx, sheets: Sheet[]): Pro
   const cellValue = (kind: Kind | undefined, v: unknown): unknown => {
     if (v == null || v === "") return null;
     if (kind === "date") return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(`${v}T00:00:00Z`) : v;
-    if (kind === "money" || kind === "int" || kind === "rate") { const n = Number(v); return Number.isFinite(n) ? n : v; }
+    if (kind === "money" || kind === "int" || kind === "rate" || kind === "pct") { const n = Number(v); return Number.isFinite(n) ? n : v; }
     return v;
   };
   for (const s of sheets) {
@@ -636,9 +680,11 @@ const pdfSafe = (v: unknown): string =>
   String(v ?? "").replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/…/g, "...").replace(/•/g, "-")
     .replace(/\s+/g, " ").replace(/[^\x20-\x7E\xA0-\xFF]/g, " ").trim();
 
-interface PdfCol { header: string; width: number; align?: "left" | "right" }
-interface Pdf {
+export interface PdfCol { header: string; width: number; align?: "left" | "right" }
+export interface Pdf {
   heading(text: string): void;
+  /** Start a new page unless this one is still empty; with `need`, only when fewer than that many points are left on it. */
+  pageBreak(need?: number): void;
   para(text: string, quiet?: boolean): void;
   figures(items: Array<[string, string]>): void;
   table(columns: PdfCol[], rows: string[][], empty: string): void;
@@ -647,7 +693,7 @@ interface Pdf {
 }
 
 /** A BGP-branded A4 document: a bordeaux band with the real wordmark, then headings, figures and tables that break across pages. */
-async function pdfDocument(title: string, subtitle: string, ctx: Ctx, landscape: boolean): Promise<Pdf> {
+export async function pdfDocument(title: string, subtitle: string, ctx: Ctx, landscape: boolean, titleSize = 20): Promise<Pdf> {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -657,7 +703,7 @@ async function pdfDocument(title: string, subtitle: string, ctx: Ctx, landscape:
   const side = landscape ? 40 : MARGIN;
   const contentW = pw - side * 2;
   const FOOT = 46;
-  doc.setTitle(pdfSafe(`${title}: ${subtitle}`));
+  doc.setTitle(pdfSafe(subtitle ? `${title}: ${subtitle}` : title));
   doc.setAuthor("Bruce Gillingham Pollard");
   const markLight = wordmarkBytes("light"), markDark = wordmarkBytes("dark");
   const logoLight: PDFImage | null = markLight ? await doc.embedPng(markLight) : null;
@@ -677,7 +723,7 @@ async function pdfDocument(title: string, subtitle: string, ctx: Ctx, landscape:
   page.drawRectangle({ x: 0, y: ph - bandH, width: pw, height: bandH, color: BORDEAUX });
   drawMark(page, logoLight, side, ph - 44, 30);
   label(page, "Landsec", pw - side, ph - 36, 9, WHITE, "right");
-  page.drawText(pdfSafe(title), { x: side, y: ph - 72, size: 20, font: serif, color: WHITE });
+  page.drawText(pdfSafe(title), { x: side, y: ph - 72, size: titleSize, font: serif, color: WHITE });
   const sub = pdfSafe(subtitle);
   page.drawText(sub, { x: pw - side - font.widthOfTextAtSize(sub, 10), y: ph - 70, size: 10, font, color: WHITE });
   let y = ph - bandH - 18;
@@ -686,7 +732,7 @@ async function pdfDocument(title: string, subtitle: string, ctx: Ctx, landscape:
   const newPage = () => {
     page = doc.addPage(size);
     drawMark(page, logoDark, side, ph - 46, 22);
-    label(page, `${title} · ${subtitle}`, pw - side, ph - 36, 7, STONE, "right");
+    label(page, subtitle ? `${title} · ${subtitle}` : title, pw - side, ph - 36, 7, STONE, "right");
     y = ph - 62;
     if (repeat) repeat();
   };
@@ -707,6 +753,7 @@ async function pdfDocument(title: string, subtitle: string, ctx: Ctx, landscape:
 
   const api: Pdf = {
     gap(h) { y -= h; },
+    pageBreak(need) { if (y < ph - 140 && (need == null || y - need < FOOT)) { const hold = repeat; repeat = null; newPage(); repeat = hold; } },
     heading(words) {
       const hold = repeat; repeat = null;
       room(60);
@@ -918,6 +965,8 @@ async function nameOf(req: Request): Promise<string> {
 export async function buildLandsecReport(def: LandsecReportDef, ctx: Omit<Ctx, "cache">, viewer: LandsecViewer): Promise<Buffer> {
   const full: Ctx = { ...ctx, cache: new Map() };
   switch (def.key) {
+    case "board-report": return (await import("./landsec-board-report")).boardReportPdf(full, viewer);
+    case "board-report-figures": return (await import("./landsec-board-report")).boardReportWorkbook(def, full, viewer);
     case "tenancy-schedule": return workbookOf(def, full, await tenancySheets(full));
     case "leasing-activity": return workbookOf(def, full, await activitySheets(full));
     case "leasing-activity-pdf": return Buffer.from(await activityPdf(full));

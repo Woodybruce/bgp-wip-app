@@ -4263,6 +4263,7 @@ import { setupDealChecklistRoutes } from "./deal-checklist";
 import { setupDealPageRoutes } from "./deal-page";
 import { setupUnitRecommendationRoutes } from "./unit-recommendation";
 import { setupLandsecReportRoutes } from "./landsec-reports";
+import { setupLandsecBoardMarketRoutes } from "./landsec-board-market";
 import { setupLandsecBrandCaseRoutes } from "./landsec-brand-case";
 import { setupBrandCrmPlanRoutes } from "./brand-scheme-plan";
 import { setupBrandCrmDiaryRoutes } from "./brand-crm-diary";
@@ -5005,6 +5006,10 @@ app.use("/api/branding/assets", express.static(
     // writes are opened — delete / ai-generate / bulk ops stay staff-only.
     "/api/unit-briefs", "/api/unit-offers", "/api/unit-hots", "/api/deal-checklists", "/api/unit-recommendations", "/api/image-studio/upload",
     "/api/landsec/unit", "/api/landsec/deal/", "/api/landsec/brand-case/",
+    // The board report's market report (Woody, 2026-11-19: "Me and Mark working
+    // together"): a Landsec login saves a section. The handler resolves the
+    // caller (reportViewer) and drafting is refused to every client login there.
+    "/api/landsec/reports/board-report/market",
     // Brand CRM plan actions (Woody, 2026-11-11): the engagement router checks the brand is in the client's slice.
     "/api/crm/engagement/actions",
     "/api/push/", "/api/config/", "/api/favorite-instructions",
@@ -5592,6 +5597,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupDealPageRoutes(app);
   setupUnitRecommendationRoutes(app);
   setupLandsecReportRoutes(app);
+  setupLandsecBoardMarketRoutes(app);
   setupLandsecBrandCaseRoutes(app);
   setupBrandCrmPlanRoutes(app);
   setupBrandCrmDiaryRoutes(app);
