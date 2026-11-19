@@ -173,7 +173,9 @@ test("the client checks run on their own switch, not the old in-app AML one (Woo
     assert.match(portal.slice(at, at + 400), /if \(!clientChecksOn\(\)\) return res\.status\(410\)/, route);
   }
   assert.match(compliance, /clientChecks: clientChecksSwitchOn\(process\.env\.KYC_CLIENT_CHECKS\),/);
-  assert.equal((card.match(/\{data\.clientChecks && \(/g) || []).length, 2, "both card layouts offer Send client checks on the client checks' switch");
+  // One place offers them (PartyActions, 19 November 2026), drawn on both card layouts.
+  assert.equal((card.match(/\{data\.clientChecks && \(/g) || []).length, 1, "Send client checks follows the client checks' switch");
+  assert.equal((card.match(/<PartyActions dealId=\{dealId\} data=\{data\} cp=\{cp\}/g) || []).length, 2, "both card layouts offer it");
   assert.doesNotMatch(card, /data\.inAppAml/);
   assert.match(deals, /const clientChecks = !!amlStepStatus\?\.clientChecks;/);
   assert.doesNotMatch(deals, /amlInApp|inAppAml/);

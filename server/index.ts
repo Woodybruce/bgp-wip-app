@@ -3016,6 +3016,29 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_entity_kyc_entity ON crm_entity_kyc(entity_kind, entity_id)`,
     `ALTER TABLE kyc_audit_log ADD COLUMN IF NOT EXISTS entity_kind text`,
     `ALTER TABLE kyc_audit_log ADD COLUMN IF NOT EXISTS entity_id text`,
+    // Red flags the MLRO set aside with a comment (Woody, 19 November 2026:
+    // "have the option to ignore with a comment"): one row per decision,
+    // restored_at when it is put back. company_id null: a flag on the deal
+    // record (deal_id). server/kyc-red-flags.ts reads and writes it.
+    `CREATE TABLE IF NOT EXISTS kyc_flag_reviews (
+      id serial PRIMARY KEY,
+      company_id varchar,
+      trading_entity_id varchar,
+      deal_id varchar,
+      flag_key text NOT NULL,
+      flag_label text NOT NULL,
+      flag_source text,
+      evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
+      comment text NOT NULL,
+      set_aside_by varchar,
+      set_aside_by_name text,
+      set_aside_at timestamptz NOT NULL DEFAULT now(),
+      restored_at timestamptz,
+      restored_by varchar,
+      restored_by_name text
+    )`,
+    `CREATE INDEX IF NOT EXISTS kyc_flag_reviews_company_idx ON kyc_flag_reviews (company_id) WHERE restored_at IS NULL`,
+    `CREATE INDEX IF NOT EXISTS kyc_flag_reviews_deal_idx ON kyc_flag_reviews (deal_id) WHERE restored_at IS NULL`,
     // Deal contracting entities + shadow gate comparison log:
     `CREATE TABLE IF NOT EXISTS crm_deal_entities (
       id varchar PRIMARY KEY DEFAULT gen_random_uuid(),

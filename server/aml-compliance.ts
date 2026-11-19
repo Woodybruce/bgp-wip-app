@@ -1463,8 +1463,17 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
     // everyhting we can before we ask questions on someone"): each party's
     // latest, and a run started for any party with none from the last 30
     // days. Before the red flags, so a run that has just finished counts.
+    // No check runs on a company party until the deal names the company that
+    // signs for it (Woody, 2026-11-19: "We must have the company taking the
+    // lease or who owns the property to be able to do a check").
+    const individuals = staff && counterparties.length
+      ? new Set((await pool.query(`SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) = 'individual'`,
+          [counterparties.map(c => c.id)]).catch(() => ({ rows: [] as any[] }))).rows.map((r: any) => String(r.id)))
+      : new Set<string>();
     const prechecks = staff
-      ? await (await import("./kyc-prechecks")).dealPrechecks(d.id, counterparties.map(c => ({ companyId: c.id, entityId: signs[c.id] || null })), {
+      ? await (await import("./kyc-prechecks")).dealPrechecks(d.id, counterparties.map(c => ({
+          companyId: c.id, entityId: signs[c.id] || null, needsCompany: !signs[c.id] && !individuals.has(String(c.id)),
+        })), {
           userId: (req as any).session?.userId || (req as any).tokenUserId || null, autoStart: true,
         }).catch((e: any) => { console.warn("[kyc-prechecks] deal view:", e?.message); return null; })
       : null;

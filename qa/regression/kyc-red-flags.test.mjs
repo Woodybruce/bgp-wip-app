@@ -58,8 +58,8 @@ test('the finished note and the admin previews carry the red flags', () => {
 });
 
 test('the deal card shows each party its red flags beside Request KYC4U check; the Kick off step sends a flagged party to KYC4U', () => {
-  assert.equal((card.match(/<PartyRedFlags data=\{data\} companyId=\{cp\.id\} \/>/g) || []).length, 2);
-  assert.equal((card.match(/<DealRedFlags data=\{data\} \/>/g) || []).length, 2);
+  assert.equal((card.match(/<PartyRedFlags dealId=\{dealId\} data=\{data\} companyId=\{cp\.id\} role=\{cp\.role\} \/>/g) || []).length, 2);
+  assert.equal((card.match(/<DealRedFlags dealId=\{dealId\} data=\{data\} \/>/g) || []).length, 2);
   assert.match(card, /Red flags could not be checked against/);
   assert.match(deals, /const flags = amlStepStatus\?\.redFlags\?\.parties\[p\.id\] \|\| \[\];/);
   assert.match(deals, /\{clientChecks && !flags\.length\s*\? <SendClientChecksButton/);

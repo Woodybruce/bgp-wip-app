@@ -11,7 +11,7 @@
 // search finds it with a source to check (shared/kyc-prechecks.ts).
 
 import type { KycAnswers, KycOwnersReply } from "./kyc-request";
-import { precheckRedFlags, type KycPrecheckResult } from "./kyc-prechecks";
+import { flagKeyPart, precheckRedFlags, type KycPrecheckResult } from "./kyc-prechecks";
 
 export type KycRedFlagKind =
   | "client_pep"
@@ -33,6 +33,10 @@ export type KycRedFlagKind =
   // The client says the owners Companies House lists are not right.
   | "owners_differ";
 
+// One line of what is behind a flag (Woody, 19 November 2026: "We also need
+// to see the detail of the red flag").
+export interface KycFlagFact { label: string; value: string; url?: string | null }
+
 export interface KycRedFlag {
   kind: KycRedFlagKind;
   // One line, in plain words.
@@ -43,7 +47,58 @@ export interface KycRedFlag {
   // Where the flag was read.
   source: string;
   at: string | null;
+  // What the flag is about, the same from one check to the next (the subject
+  // and the kind of finding), and the evidence behind it (a list entry, a
+  // web address, a ComplyAdvantage profile, a status). Setting a flag aside
+  // covers that evidence only: new evidence raises it again.
+  key: string;
+  evidence: string[];
+  facts?: KycFlagFact[];
 }
+
+// ── Setting a flag aside ────────────────────────────────────────────────────
+//
+// Woody, 19 November 2026: "have the option to ignore with a comment as
+// comply advantage is picking up things that are not really a massive
+// problem". The MLRO (admins until one is appointed) sets a flag aside with
+// a comment; it stays on the record, listed with who set it aside, when and
+// why, and no longer counts as a red flag anywhere (KYC4U's note, Kick off
+// AML, the sign-off, the AML dashboard). A flag with evidence the review did
+// not see is a new flag.
+
+export const FLAG_REVIEW_COMMENT_MIN = 10;
+
+export interface KycFlagReview {
+  id: number;
+  flagKey: string;
+  evidence: string[];
+  comment: string;
+  by: string | null;
+  at: string | null;
+}
+
+export interface SetAsideFlag { flag: KycRedFlag; review: KycFlagReview }
+
+/** Splits flags into the ones that count and the ones a review set aside. */
+export function applyFlagReviews(flags: KycRedFlag[], reviews: KycFlagReview[]): { live: KycRedFlag[]; setAside: SetAsideFlag[] } {
+  const live: KycRedFlag[] = [];
+  const setAside: SetAsideFlag[] = [];
+  for (const flag of flags) {
+    const review = reviews.find(r => r.flagKey === flag.key && flag.evidence.every(e => r.evidence.includes(e)));
+    if (review) setAside.push({ flag, review });
+    else live.push(flag);
+  }
+  return { live, setAside };
+}
+
+/** The words of a comment a person gives for setting a flag aside, or why it will not do. */
+export function flagReviewComment(raw: unknown): { comment: string } | { problem: string } {
+  const comment = String(raw ?? "").replace(/\s+/g, " ").trim().slice(0, 1000);
+  if (comment.length < FLAG_REVIEW_COMMENT_MIN) return { problem: `Say why it is not a concern (at least ${FLAG_REVIEW_COMMENT_MIN} characters): the comment is kept on the KYC record.` };
+  return { comment };
+}
+
+const keyPart = flagKeyPart;
 
 export interface PartyRedFlagFacts {
   company: {
@@ -63,6 +118,10 @@ export interface PartyRedFlagFacts {
   requests: Array<{ ref: string; answers?: KycAnswers | null; ownersAnswer?: KycOwnersReply | null }>;
   // The party's identity checks.
   idChecks: Array<{ status: string | null; decision_reason?: string | null; received_at?: string | Date | null; name?: string | null }>;
+  // The KYC record's own history about its risk, PEP and enhanced due
+  // diligence fields (the KYC audit lines), newest first: the facts behind
+  // a flag read from the record.
+  recordHistory?: Array<{ at: string | null; what: string; who: string | null }>;
 }
 
 export interface DealRedFlagFacts {
@@ -125,6 +184,13 @@ export function partyRedFlags(facts: PartyRedFlagFacts): KycRedFlag[] {
       detail: words(r.answers!.pepDetail),
       source: `Client checks, ref ${r.ref}`,
       at: iso(r.answers!.answeredAt),
+      key: `client_pep:${keyPart(r.ref)}`,
+      evidence: [`answer:${r.answers!.pep}`],
+      facts: [
+        { label: "Their answer", value: r.answers!.pep === "yes" ? "Yes" : "Not sure" },
+        ...(words(r.answers!.pepDetail) ? [{ label: "What they said", value: words(r.answers!.pepDetail)! }] : []),
+        { label: "Request", value: `Client checks, ref ${r.ref}` },
+      ],
     });
   }
   // The client's reply about the owners on the register, the latest that
@@ -137,6 +203,9 @@ export function partyRedFlags(facts: PartyRedFlagFacts): KycRedFlag[] {
       detail: words(r.ownersAnswer!.detail),
       source: `Client checks, ref ${r.ref}`,
       at: iso(r.ownersAnswer!.answeredAt),
+      key: `owners_differ:${keyPart(r.ref)}`,
+      evidence: [],
+      facts: words(r.ownersAnswer!.detail) ? [{ label: "What they said", value: words(r.ownersAnswer!.detail)! }] : [],
     });
   }
   for (const s of facts.idChecks.filter(c => String(c.status || "").toLowerCase() === "declined")) {
@@ -146,18 +215,26 @@ export function partyRedFlags(facts: PartyRedFlagFacts): KycRedFlag[] {
       detail: words(s.decision_reason),
       source: "Veriff",
       at: iso(s.received_at),
+      key: `id_declined:${keyPart(s.name)}`,
+      evidence: [`at:${iso(s.received_at) || "unknown"}`],
+      facts: words(s.decision_reason) ? [{ label: "Veriff's reason", value: words(s.decision_reason)! }] : [],
     });
   }
+  // The brand's KYC record: who wrote each field, and when, is in its history
+  // (recordHistory, the KYC audit lines about it), shown as the flag's facts.
+  const history = (facts.recordHistory || []).map(h => ({ label: h.at ? new Date(h.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : "On the record", value: `${h.what}${h.who ? ` (${h.who})` : ""}` }));
   const pep = pepStatusLabel(facts.company?.aml_pep_status);
-  if (pep) flags.push({ kind: "screening", label: pep, detail: null, source: "Screening and KYC record", at: null });
+  if (pep) flags.push({ kind: "screening", label: pep, detail: null, source: "Screening and KYC record", at: null, key: "record:screening", evidence: [`status:${keyPart(facts.company?.aml_pep_status)}`], facts: history });
   if (facts.latestInvestigation?.sanctions_match && !facts.latestInvestigation.precheck) {
-    flags.push({ kind: "sanctions", label: "Possible match on the UK Sanctions List", detail: null, source: "Latest screening", at: iso(facts.latestInvestigation.conducted_at) });
+    flags.push({ kind: "sanctions", label: "Possible match on the UK Sanctions List", detail: null, source: "Latest screening", at: iso(facts.latestInvestigation.conducted_at),
+      key: "record:sanctions", evidence: [`at:${iso(facts.latestInvestigation.conducted_at) || "unknown"}`], facts: history });
   }
   if (highRisk(facts.company?.aml_risk_level)) {
-    flags.push({ kind: "high_risk", label: riskLabel(facts.company!.aml_risk_level!), detail: null, source: "KYC record", at: null });
+    flags.push({ kind: "high_risk", label: riskLabel(facts.company!.aml_risk_level!), detail: null, source: "KYC record", at: null, key: "record:high_risk", evidence: [`level:${keyPart(facts.company!.aml_risk_level)}`], facts: history });
   }
   if (facts.company?.aml_edd_required) {
-    flags.push({ kind: "edd", label: "Marked for enhanced due diligence", detail: eddReason(facts.company.aml_edd_reason), source: "KYC record", at: null });
+    flags.push({ kind: "edd", label: "Marked for enhanced due diligence", detail: eddReason(facts.company.aml_edd_reason), source: "KYC record", at: null,
+      key: "record:edd", evidence: [`reason:${keyPart(facts.company.aml_edd_reason)}`], facts: history });
   }
   if (facts.precheck?.result) flags.push(...precheckRedFlags(facts.precheck.result, { sanctionsCurrent: facts.precheck.current }));
   return flags;
@@ -169,10 +246,10 @@ export function dealRedFlags(deal: DealRedFlagFacts | null): KycRedFlag[] {
   if (!deal) return [];
   const flags: KycRedFlag[] = [];
   const pep = pepStatusLabel(deal.aml_pep_status);
-  if (pep) flags.push({ kind: "screening", label: pep, detail: null, source: "Deal record", at: null });
-  if (highRisk(deal.aml_risk_level)) flags.push({ kind: "high_risk", label: riskLabel(deal.aml_risk_level!), detail: null, source: "Deal record", at: null });
+  if (pep) flags.push({ kind: "screening", label: pep, detail: null, source: "Deal record", at: null, key: "deal:screening", evidence: [`status:${keyPart(deal.aml_pep_status)}`] });
+  if (highRisk(deal.aml_risk_level)) flags.push({ kind: "high_risk", label: riskLabel(deal.aml_risk_level!), detail: null, source: "Deal record", at: null, key: "deal:high_risk", evidence: [`level:${keyPart(deal.aml_risk_level)}`] });
   if (deal.aml_edd_required && !deal.aml_edd_completed_at) {
-    flags.push({ kind: "edd", label: "Marked for enhanced due diligence", detail: eddReason(deal.aml_edd_reason), source: "Deal record", at: null });
+    flags.push({ kind: "edd", label: "Marked for enhanced due diligence", detail: eddReason(deal.aml_edd_reason), source: "Deal record", at: null, key: "deal:edd", evidence: [`reason:${keyPart(deal.aml_edd_reason)}`] });
   }
   const mismatched = (deal.aml_sof_analysis?.items || []).filter(i => i?.declaredSourceMatchesDocument === false);
   if (mismatched.length) {
@@ -183,6 +260,8 @@ export function dealRedFlags(deal: DealRedFlagFacts | null): KycRedFlag[] {
       detail: kinds.length ? kinds.join(", ") : null,
       source: "Source of funds review",
       at: iso(mismatched[0].generatedAt),
+      key: "deal:sof_mismatch",
+      evidence: mismatched.map(i => `doc:${keyPart(i.documentType)}:${iso(i.generatedAt) || ""}`),
     });
   }
   return flags;

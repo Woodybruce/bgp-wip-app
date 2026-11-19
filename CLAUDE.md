@@ -3391,10 +3391,11 @@ screens: `client/src/components/deal-parties.tsx`. Tests:
   gains blank fields only; a new contact carries a note saying why it was
   added. Someone else in the client checks also becomes the party's person
   when the deal names nobody.
-- **What is missing** (`partyGaps`): a company party with no company set and
-  a brand with no Companies House number needs the company that signs; every
-  party needs a person to ask, with an email. An individual's date of birth
-  and address are the client checks' to gather, not asked here.
+- **What is missing** (`partyGaps`): a company party with no company that
+  signs set needs it, whatever the brand holds (since 19 November 2026; until
+  then a brand with a Companies House number counted, see "The AML box"
+  below); every party needs a person to ask, with an email. An individual's
+  date of birth and address are the client checks' to gather, not asked here.
 - **Routes** (BGP staff signed in as themselves; `/api/deals/` is on no client
   gateway list): `GET /api/deals/:id/parties` (each party's brand, the company
   set, what to offer, the brand's companies, the Xero contact, the person,
@@ -3580,6 +3581,111 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
 - Checked in a browser against a local copy on 18 November 2026 (desktop and
   an iPhone profile). Not built: the stage on the deal page's own card (it
   shows the state, not this chain), and a count of To do on the side bar.
+
+## The AML box: the company, red flags in detail, set aside (Woody, 2026-11-19)
+
+Woody, on deal #4213 (T4 at Brent Cross, Hammerson the landlord), both parties
+red-flagged for KYC4U: "we havent got the actual company info? We must have
+the company taking the lease or who owns the property to be able to do a
+check. in this box we need to see the company info. We also need to see the
+detail of the redflag and have the option to ignore with a comment as comply
+advantage is picking up things that are not really a massive problem. Also
+API a problem on companies house?", then "On the deals page the landlord and
+tenant have numbers but its not clear if there is a billing company? The
+brand is different normally to the billing or contracting entity which is
+critical for the AML", and "clean up the design". Do not re-litigate.
+Guards: `qa/regression/aml-box-company-and-flags.test.mjs`; unit tests in
+`server/kyc-red-flags.test.ts`, `server/kyc-prechecks.test.ts`,
+`server/companies-house-gate.test.ts` and `server/deal-parties.test.ts`.
+
+- **No check without the company that signs.** A company party's checks
+  before asking, client checks and KYC4U request wait until the deal names
+  the company taking the lease (tenant), the one that owns the property
+  (landlord), selling or buying (`SIGNING_COMPANY_WORDS` in
+  `shared/deal-parties.ts`). The brand's own Companies House record never
+  stands in for it (it did until this day: Hammerson's checks ran on
+  HAMMERSON PLC, T4's on T4 UK FRANCHISE LTD). `dealPrechecks` gives such a
+  party the state `needs_company` and starts nothing; Run again answers
+  `needs_company`; `createClientCheck` and `kyc4uPrefill` refuse with 409;
+  `loadDealRedFlags` and the AML dashboard read no brand-level check's
+  findings for it (the brand's KYC record flags still show). An individual
+  needs no company. The brand's own registered company is offered as one
+  choice (`brandOwn` on the party view, when no company filed under the
+  brand carries its number), saved under the brand from Companies House with
+  no Xero contact (`xero: false` on `POST /api/billing-entities`; "Bill to …
+  in Xero" makes one), alongside the company on the lease, the brand's main
+  company and Find it at Companies House.
+- **The Parties card** (`DealPartiesCard` in `deal-detail.tsx`,
+  `DealPartyLines` in `deal-parties.tsx`): BGP acts for, then one box per
+  party: the brand picker, then **Company that signs**, **Billed to (Xero)**
+  and **Who to ask** as labelled rows, a missing one in amber with Use it for
+  a suggestion. The deal-level Xero contact shows only when one is held. The
+  Overview's dates and terms are one card in the page's type scale, labels in
+  sentence case ("Last contact", not "Last Interaction").
+- **Company checked** (`PartyCompanyFacts` in `deal-aml-status.tsx`, from
+  `precheckCompany` in `shared/kyc-prechecks.ts`): the company the checks
+  were about, as the register gives it: name and number with the register
+  link, type, status, incorporation, registered office, business (common SIC
+  codes in words), listed and what it means (reg 28(5), simplified due
+  diligence under reg 37), directors, owners, the chain above it, latest
+  accounts and the documents on the KYC record.
+- **Companies House's limit.** It allows a key 600 requests in five minutes
+  and answered 429 to the first call of both checks: one check makes about 50
+  calls and nothing paced them. Every `chFetch` now waits its turn in one
+  queue (`server/companies-house-gate.ts`): a burst of 60 then 1.8 a second,
+  Companies House's own count (`X-Ratelimit-Remain` / `-Reset`, which counts
+  every process on the key) with 25 kept in reserve, and a hold after a 429
+  until the window ends, then one more try. A caller waits up to 30 seconds
+  for a turn, then gets "BGP's allowance of 600 requests in five minutes is
+  used up; try again in about N minutes"; the checks before asking read the
+  register inside `withChPatience` (five minutes), and their document
+  downloads wait in the same queue. A check that could not read Companies
+  House for a passing reason (`precheckUnfinished`: a 429, a 5xx, a time-out;
+  a 404 is an answer) is not finished: the box says so, and the next view
+  runs it again after `PRECHECK_RETRY_MINUTES` (10), at most
+  `PRECHECK_AUTO_RUNS_A_DAY` (4) runs a day for one party.
+- **Each flag has a key and its evidence** (`KycRedFlag.key`, `evidence`,
+  `facts`): what it is about, the same from one run to the next (the subject
+  and the kind of finding: `ca:<name>`, `web:adverse_media:<name>`,
+  `record:high_risk`, `deal:edd` …), and what is behind it (a list entry, a
+  web address, a ComplyAdvantage profile, a status). **Detail** shows the
+  facts: the ComplyAdvantage profiles matched with their source and match
+  score and any article (kept on a check since this day; an older check says
+  it kept only the kinds), the web page, the register entry, or for a flag
+  read from the brand's KYC record its history lines (who wrote it, when:
+  T4's three were the retired in-app screening's of 23 and 24 September).
+- **Set aside with a comment** (the MLRO's, as the sign-off is: `decider` in
+  `server/deal-party-aml.ts`; admins until an MLRO is appointed).
+  `POST /api/deals/:id/red-flags/set-aside { role?, key, comment }` reads the
+  flags again and acts only on one the party has now, with the app's own
+  words (`setFlagAside`); `POST …/put-back { reviewId }` only for the deal's
+  own parties or record. Stored in `kyc_flag_reviews` (boot migration in
+  `server/index.ts`: company, company that signs, deal, the flag's key,
+  label, source and evidence, the comment, who and when, and who put it
+  back), with a `kyc_audit_log` line (`red_flag_set_aside`,
+  `red_flag_put_back`) and an `aml_red_flag` line on the deal's history. A
+  review covers a flag with the same key whose evidence it saw
+  (`applyFlagReviews`): new evidence raises it again. A flag from the brand's
+  KYC record is set aside for the brand whoever signs; any other for the
+  company that signs at the time. A set-aside flag counts nowhere (the deal
+  card, KYC4U's note, Kick off AML, the sign-off, the AML dashboard), and a
+  set-aside record field (risk, enhanced due diligence, PEP status) no longer
+  makes the file higher risk for the sign-off. The comment needs at least 10
+  characters (`FLAG_REVIEW_COMMENT_MIN`).
+- **The plc question** (Woody, the same day: "are you sure we need to AML a
+  PLC company?"): yes, but lightly. A company listed on a regulated market
+  (Hammerson plc is on the London Stock Exchange's main market) is
+  identified and verified from the register, with no beneficial owners or
+  board to identify (MLR 2017 reg 28(5)), and simplified due diligence may
+  apply (reg 37). Sanctions screening applies to everyone. The landlord on a
+  Hammerson lease is usually a subsidiary or a joint-venture vehicle, not the
+  plc: a wholly owned subsidiary is treated as listed through its chain
+  (KYC4U to confirm), a joint venture is not.
+- Not built, waiting on Woody: media hits on a listed company shown as
+  information rather than red flags; anyone but the MLRO setting a flag
+  aside. Not run against Companies House or ComplyAdvantage from a build
+  machine (no keys here): the queue and the profile detail are first seen on
+  live.
 
 ## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
 

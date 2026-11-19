@@ -170,10 +170,15 @@ export function setupBillingEntityRoutes(app: Express) {
         return res.status(409).json({ message: `${brand.name} already has a company called ${name}, with Companies House number ${entity.conflict}. Check which company is right on its page.` });
       }
 
-      // The contact in the firm's Xero: the one already there by that name, or a new one.
+      // The contact in the firm's Xero: the one already there by that name, or
+      // a new one. Not when the company is only being set as the one that
+      // signs (xero: false, from the deal's party box): BGP bills one side.
       let contact: Record<string, unknown> | null = null;
       let xeroCreated = false;
       let xeroError: string | null = null;
+      if (req.body?.xero === false) {
+        return res.status(entity.created ? 201 : 200).json({ entity, contact: null, xeroCreated: false, xeroError: null });
+      }
       try {
         const { withSystemXero } = await import("./xero-system-session");
         const { xeroApi, pickBillingAddress, rememberXeroContact } = await import("./xero");

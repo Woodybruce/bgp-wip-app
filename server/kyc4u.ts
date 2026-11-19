@@ -666,6 +666,16 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
   const entity = partyRole && deal?.[`${partyRole}_trading_entity_id`] ? (await pool.query(
     `SELECT id, name, companies_house_number FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [deal[`${partyRole}_trading_entity_id`], companyId])).rows[0] || null : null;
   const entityId: string | null = entity ? String(entity.id) : null;
+  // On a deal, KYC4U checks the company that signs, not the brand (Woody,
+  // 19 November 2026: "We must have the company taking the lease or who owns
+  // the property to be able to do a check").
+  if (deal && partyRole && !entity) {
+    const kind = (await pool.query(`SELECT aml_subject_type FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+    if (String(kind?.aml_subject_type || "").toLowerCase() !== "individual") {
+      const what = partyRole === "tenant" ? "the company taking the lease" : partyRole === "landlord" ? "the company that owns the property" : partyRole === "vendor" ? "the company selling" : "the company buying";
+      throw Object.assign(new Error(`Set ${what} on the deal first: KYC4U checks that company, not ${company.name}.`), { status: 409 });
+    }
+  }
   const partyPerson = partyRole && deal?.[`${partyRole}_contact_id`] ? (await pool.query(
     `SELECT name, role, email, COALESCE(NULLIF(phone_mobile, ''), NULLIF(phone, '')) AS mobile FROM crm_contacts WHERE id = $1`, [deal[`${partyRole}_contact_id`]])).rows[0] || null : null;
   const addr = (() => {

@@ -282,6 +282,15 @@ const sourceName = (list: unknown): string | undefined => {
   return first ? String(first.name || first.title).slice(0, 160) : undefined;
 };
 
+// A profile's media items, as far as Mesh gives them: the title, the link
+// and the date, for the deal's AML box to show (19 November 2026).
+const mediaItems = (list: unknown): Array<{ title: string; url: string | null; date: string | null }> =>
+  (Array.isArray(list) ? list : []).slice(0, 4).map((m: any) => ({
+    title: String(m?.title || m?.name || m?.snippet || "").replace(/\s+/g, " ").trim().slice(0, 200),
+    url: typeof m?.url === "string" ? m.url.slice(0, 500) : typeof m?.link === "string" ? m.link.slice(0, 500) : null,
+    date: String(m?.date || m?.publication_date || m?.published_at || m?.publishedAt || "").slice(0, 20) || null,
+  })).filter(m => m.title || m.url);
+
 // A matched profile becomes one match per kind it carries, as the old
 // search's hits did, so a profile that is both sanctioned and a PEP still
 // reads as a PEP to the screens that look for one.
@@ -313,6 +322,7 @@ export function matchesFromRisks(risks: any[], subject: ScreenSubject, kind: Mes
           decision: risk.decision || null,
           datesOfBirth: dobYears,
           kinds,
+          media: k === "adverse_media" ? mediaItems(indicators.media) : [],
         },
       });
     }

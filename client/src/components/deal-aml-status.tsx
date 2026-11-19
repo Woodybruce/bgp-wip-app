@@ -9,8 +9,8 @@ import { ClientChecksForParty, SendClientChecksButton } from "@/components/kyc-c
 import { PartyReadyToStart, useDealParties } from "@/components/deal-parties";
 import { PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
-import type { KycRedFlag } from "@shared/kyc-red-flags";
-import { precheckDay, type PrecheckCardLine } from "@shared/kyc-prechecks";
+import { FLAG_REVIEW_COMMENT_MIN, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
+import { precheckDay, type PrecheckCardLine, type PrecheckCompany } from "@shared/kyc-prechecks";
 import { getAuthHeaders, queryClient, apiRequest } from "@/lib/queryClient";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -47,7 +47,11 @@ export interface DealAmlStatus {
   inAppAml?: boolean;
   clientChecks?: boolean;
   // What sends a party to KYC4U (BGP staff only; null for anyone else).
-  redFlags?: { parties: Record<string, KycRedFlag[]>; deal: KycRedFlag[]; unchecked: string[] } | null;
+  redFlags?: {
+    parties: Record<string, KycRedFlag[]>; deal: KycRedFlag[]; unchecked: string[];
+    // Set aside by the MLRO with a comment: listed, no longer counted.
+    setAside?: Record<string, SetAsideFlag[]>; dealSetAside?: SetAsideFlag[];
+  } | null;
   // BGP's checks before asking, per party (BGP staff only).
   prechecks?: Record<string, PartyPrecheck> | null;
   // BGP's sign-off and KYC4U's result (BGP staff only): whether the person
@@ -56,11 +60,60 @@ export interface DealAmlStatus {
 }
 
 export interface PartyPrecheck {
-  state: "done" | "running" | "none" | "cap" | "off" | "waiting";
+  // needs_company: no check runs until the deal names the company that signs.
+  state: "done" | "running" | "none" | "cap" | "off" | "waiting" | "needs_company";
   startedAt: string | null;
   ranAt: string | null;
   lines: PrecheckCardLine[];
   errors: string[];
+  company?: PrecheckCompany | null;
+  unfinished?: string | null;
+  retryAt?: string | null;
+}
+
+const clock = (iso: string | null | undefined) => {
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" }) : "";
+};
+
+// The company the checks are about, as the register gives it (Woody,
+// 2026-11-19: "in this box we need to see the company info").
+function PartyCompanyFacts({ data, companyId }: { data: DealAmlStatus; companyId: string }) {
+  const [more, setMore] = useState(false);
+  const c = data.prechecks?.[companyId]?.company;
+  if (!c) return null;
+  const directors = more ? c.directors : c.directors.slice(0, 4);
+  return (
+    <div className="rounded-md border border-border bg-card p-2.5 space-y-1.5" data-testid={`kyc-company-${companyId}`}>
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Company checked</span>
+        <a href={c.registerUrl} target="_blank" rel="noreferrer" className="ml-auto text-[11px] text-primary hover:underline">Companies House register</a>
+      </div>
+      <div className="text-sm">
+        <span className="font-semibold">{c.name}</span>
+        <span className="ml-1.5 font-mono tabular-nums text-muted-foreground">{c.number}</span>
+      </div>
+      <div className="text-[11px] text-muted-foreground">{[c.type, c.status, c.incorporatedOn ? `incorporated ${c.incorporatedOn}` : null].filter(Boolean).join(" · ")}</div>
+      {c.warnings.length > 0 && (
+        <ul className="text-xs text-red-700 dark:text-red-400 space-y-0.5">{c.warnings.map(w => <li key={w}>{w}</li>)}</ul>
+      )}
+      <dl className="grid grid-cols-1 gap-y-1 text-xs">
+        {c.registeredOffice && <div><dt className="inline text-muted-foreground">Registered office: </dt><dd className="inline">{c.registeredOffice}</dd></div>}
+        {c.business.length > 0 && <div><dt className="inline text-muted-foreground">Business: </dt><dd className="inline">{c.business.join("; ")}</dd></div>}
+        {c.listing && <div data-testid={`kyc-company-listing-${companyId}`}><dt className="inline text-muted-foreground">Listed: </dt><dd className="inline">{c.listing}. {c.listingNote}</dd></div>}
+        {directors.length > 0 && (
+          <div><dt className="inline text-muted-foreground">Directors: </dt><dd className="inline">{directors.join(", ")}
+            {c.directors.length > 4 && <button type="button" className="ml-1 text-primary hover:underline" onClick={() => setMore(m => !m)}>{more ? "fewer" : `and ${c.directors.length - 4} more`}</button>}
+          </dd></div>
+        )}
+        {c.owners.length > 0 && <div><dt className="inline text-muted-foreground">Owners: </dt><dd className="inline">{c.owners.map(o => `${o.name} (${o.control})`).join("; ")}</dd></div>}
+        {c.ownerNote && <div><dt className="inline text-muted-foreground">Owners: </dt><dd className="inline">{c.ownerNote}</dd></div>}
+        {c.chain.length > 0 && <div><dt className="inline text-muted-foreground">Owned through: </dt><dd className="inline">{c.chain.join(" › ")}</dd></div>}
+        {c.accounts && <div><dt className="inline text-muted-foreground">Latest accounts: </dt><dd className="inline">{c.accounts}</dd></div>}
+        {c.documents.some(d => d.onFile) && <div><dt className="inline text-muted-foreground">On the KYC record: </dt><dd className="inline">{c.documents.filter(d => d.onFile).map(d => d.title).join("; ")}</dd></div>}
+      </dl>
+    </div>
+  );
 }
 
 // What BGP checked before anyone was asked anything (Woody, 2026-11-17: "we
@@ -76,11 +129,12 @@ function PartyPrechecks({ dealId, data, companyId }: { dealId: string; data: Dea
       const state = r?.started?.[companyId];
       if (state === "cap") toast({ title: "Not run", description: "Today's limit for these checks is used up. They run again tomorrow." });
       else if (state === "off") toast({ title: "Not run", description: "These checks are switched off." });
+      else if (state === "needs_company") toast({ title: "Not run", description: "Set the company that signs for this party first: the checks are about it, not the brand." });
       queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
     },
     onError: (e: any) => toast({ title: "Not run", description: String(e?.message || e), variant: "destructive" }),
   });
-  if (!view || view.state === "off") return null;
+  if (!view || view.state === "off" || view.state === "needs_company") return null;
   const running = view.state === "running" || again.isPending;
   const attention = view.lines.filter(l => l.state === "attention").length;
   const icon = (l: PrecheckCardLine) => l.state === "ok" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
@@ -111,8 +165,13 @@ function PartyPrechecks({ dealId, data, companyId }: { dealId: string; data: Dea
           <Loader2 className="w-3.5 h-3.5 animate-spin" />Reading Companies House, screening the sanctions lists and searching the web for public roles and adverse media. This takes a minute or two.
         </p>
       )}
+      {!running && view.unfinished && (
+        <p className="text-amber-800 dark:text-amber-300" data-testid={`kyc-prechecks-unfinished-${companyId}`}>
+          Not finished: Companies House did not answer ({view.unfinished.replace(/^Companies House could not be read \(|\)\.?$/g, "")}). The check runs again by itself when this box is opened{view.retryAt ? ` after ${clock(view.retryAt)}` : ""}, or press Run again.
+        </p>
+      )}
       {!running && view.state === "cap" && <p className="text-muted-foreground">Today's limit for these checks is used up: they run when the card is next opened tomorrow.</p>}
-      {!running && view.state === "waiting" && <p className="text-muted-foreground">The last run did not finish. It is tried again shortly, or press Run again.</p>}
+      {!running && view.state === "waiting" && !view.unfinished && <p className="text-muted-foreground">The last run did not finish. It is tried again shortly, or press Run again.</p>}
       {!running && !view.lines.length && view.state === "none" && <p className="text-muted-foreground">Not run yet.</p>}
       {(open || (attention > 0 && !running)) && view.lines.length > 0 && (
         <ul className="space-y-1.5" data-testid={`kyc-prechecks-lines-${companyId}`}>
@@ -139,27 +198,148 @@ function PartyPrechecks({ dealId, data, companyId }: { dealId: string; data: Dea
 
 // A red flag sends the party to KYC4U (Woody, 2026-11-17: "basically we do
 // the normal checks expected and if there is a red flag then we get KYC4U").
-function RedFlagList({ flags, title, step, testId }: { flags: KycRedFlag[]; title: string; step: string; testId: string }) {
-  if (!flags.length) return null;
+// Each opens what is behind it, and the MLRO (admins until one is appointed)
+// can set one aside with a comment (Woody, 2026-11-19: "We also need to see
+// the detail of the red flag and have the option to ignore with a comment as
+// comply advantage is picking up things that are not really a massive problem").
+function refreshAml(dealId: string) {
+  queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+}
+
+function FlagFacts({ flag }: { flag: KycRedFlag }) {
+  const facts = flag.facts || [];
   return (
-    <div className="rounded-md border border-red-300 bg-red-50 p-2.5 text-xs text-red-900" data-testid={testId}>
-      <div className="flex items-center gap-1.5 text-sm font-semibold"><Flag className="w-3.5 h-3.5 shrink-0" />{title}</div>
-      <ul className="mt-1.5 list-disc space-y-1 pl-4">
-        {flags.map((f, i) => (
-          <li key={`${f.kind}-${i}`}>
-            {f.label}{f.detail ? `: ${f.detail}` : ""} <span className="text-red-800/70">({f.source})</span>
-          </li>
-        ))}
-      </ul>
-      <p className="mt-1.5">{step}</p>
+    <dl className="mt-1 space-y-0.5 rounded border border-border bg-background p-2 text-[11px] text-foreground" data-testid={`kyc-flag-facts-${flag.key}`}>
+      {facts.map((f, i) => (
+        <div key={i}>
+          <dt className="inline text-muted-foreground">{f.label}: </dt>
+          <dd className="inline break-words">{f.url ? <a href={f.url} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-primary">{f.value}</a> : f.value}</dd>
+        </div>
+      ))}
+      <div><dt className="inline text-muted-foreground">Found by: </dt><dd className="inline">{flag.source}{flag.at ? `, ${precheckDay(flag.at)}` : ""}</dd></div>
+    </dl>
+  );
+}
+
+function SetAsideDialog({ dealId, role, flag, onClose }: { dealId: string; role: string | null; flag: KycRedFlag; onClose: () => void }) {
+  const { toast } = useToast();
+  const [comment, setComment] = useState("");
+  const save = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/red-flags/set-aside`, { role, key: flag.key, comment })).json(),
+    onSuccess: () => { refreshAml(dealId); toast({ title: "Set aside", description: "It stays on the KYC record with your comment, and no longer counts as a red flag." }); onClose(); },
+    onError: (e: any) => toast({ title: "Not set aside", description: String(e?.message || e).replace(/^\d{3}:\s*/, ""), variant: "destructive" }),
+  });
+  const short = comment.trim().length < FLAG_REVIEW_COMMENT_MIN;
+  return (
+    <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg" data-testid="kyc-flag-set-aside-dialog">
+        <DialogHeader><DialogTitle>Set this red flag aside</DialogTitle></DialogHeader>
+        <div className="space-y-3 text-sm">
+          <div>
+            <div className="font-medium">{flag.label}</div>
+            {flag.detail && <div className="text-muted-foreground text-xs mt-0.5">{flag.detail}</div>}
+            <FlagFacts flag={flag} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Why it is not a concern</Label>
+            <Textarea value={comment} onChange={e => setComment(e.target.value)} rows={3} placeholder="e.g. The article is about a merger review by the CMA, cleared in 2016: no finding of wrongdoing." data-testid="input-kyc-flag-comment" />
+            <p className="text-[11px] text-muted-foreground">Kept on the KYC record with your name and the date. If the checks find something new about it, it is raised again.</p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button disabled={short || save.isPending} onClick={() => save.mutate()} data-testid="button-kyc-flag-set-aside-save">
+            {save.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}Set aside
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, testId }: {
+  dealId: string; role: string | null; flags: KycRedFlag[]; setAside: SetAsideFlag[]; canDecide: boolean;
+  title: string; step: string; testId: string;
+}) {
+  const { toast } = useToast();
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [asideOpen, setAsideOpen] = useState(false);
+  const [dialog, setDialog] = useState<KycRedFlag | null>(null);
+  const putBack = useMutation({
+    mutationFn: async (reviewId: number) => (await apiRequest("POST", `/api/deals/${dealId}/red-flags/put-back`, { reviewId })).json(),
+    onSuccess: () => { refreshAml(dealId); toast({ title: "Put back", description: "It counts as a red flag again." }); },
+    onError: (e: any) => toast({ title: "Not put back", description: String(e?.message || e).replace(/^\d{3}:\s*/, ""), variant: "destructive" }),
+  });
+  if (!flags.length && !setAside.length) return null;
+  return (
+    <div className="space-y-1.5" data-testid={testId}>
+      {flags.length > 0 && (
+        <div className="rounded-md border border-red-300 bg-red-50 p-2.5 text-xs text-red-900 dark:bg-red-950/20 dark:text-red-200" data-testid={`${testId}-live`}>
+          <div className="flex items-center gap-1.5 text-sm font-semibold"><Flag className="w-3.5 h-3.5 shrink-0" />{title}</div>
+          <ul className="mt-1.5 space-y-1.5">
+            {flags.map((f, i) => {
+              const id = `${f.key}-${i}`;
+              const open = openKey === id;
+              return (
+                <li key={id} className="space-y-0.5" data-testid={`kyc-flag-${f.key}`}>
+                  <div className="flex items-start gap-1.5">
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-red-600" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium">{f.label}</div>
+                      {f.detail && <div className="text-red-800/80 dark:text-red-200/80 break-words">{f.detail}</div>}
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                        <button type="button" className="inline-flex items-center gap-0.5 underline-offset-2 hover:underline" onClick={() => setOpenKey(open ? null : id)} data-testid={`kyc-flag-detail-${f.key}`}>
+                          {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}{open ? "Hide detail" : "Detail"}
+                        </button>
+                        {canDecide && (
+                          <button type="button" className="underline-offset-2 hover:underline" onClick={() => setDialog(f)} data-testid={`kyc-flag-set-aside-${f.key}`}>Set aside</button>
+                        )}
+                      </div>
+                      {open && <FlagFacts flag={f} />}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="mt-1.5">{step}{canDecide ? " Or, if one is not a concern, set it aside with a comment." : " The MLRO, or an admin until one is appointed, can set one aside with a comment."}</p>
+        </div>
+      )}
+      {setAside.length > 0 && (
+        <div className="rounded-md border border-border bg-muted/30 p-2 text-xs" data-testid={`${testId}-aside`}>
+          <button type="button" className="flex w-full items-center gap-1 text-left text-muted-foreground hover:text-foreground" onClick={() => setAsideOpen(o => !o)}>
+            {asideOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            {setAside.length} red flag{setAside.length === 1 ? "" : "s"} set aside
+          </button>
+          {asideOpen && (
+            <ul className="mt-1.5 space-y-1.5">
+              {setAside.map(({ flag, review }) => (
+                <li key={review.id} className="space-y-0.5" data-testid={`kyc-flag-aside-${flag.key}`}>
+                  <div className="text-foreground line-through decoration-muted-foreground/60">{flag.label}</div>
+                  <div className="text-muted-foreground">Set aside{review.by ? ` by ${review.by}` : ""}{review.at ? `, ${precheckDay(review.at)}` : ""}: “{review.comment}”</div>
+                  {canDecide && (
+                    <button type="button" className="text-primary hover:underline disabled:opacity-50" disabled={putBack.isPending} onClick={() => putBack.mutate(review.id)} data-testid={`kyc-flag-put-back-${flag.key}`}>Put back</button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {dialog && <SetAsideDialog dealId={dealId} role={role} flag={dialog} onClose={() => setDialog(null)} />}
     </div>
   );
 }
 
-function PartyRedFlags({ data, companyId }: { data: DealAmlStatus; companyId: string }) {
+function PartyRedFlags({ dealId, data, companyId, role }: { dealId: string; data: DealAmlStatus; companyId: string; role: string }) {
   return (
     <RedFlagList
+      dealId={dealId}
+      role={role}
       flags={data.redFlags?.parties[companyId] || []}
+      setAside={data.redFlags?.setAside?.[companyId] || []}
+      canDecide={!!data.decisions?.canDecide}
       title="Red flag: raise with KYC4U"
       step="Press Request KYC4U check below: the red flags are already in its note."
       testId={`kyc-red-flags-${companyId}`}
@@ -167,12 +347,16 @@ function PartyRedFlags({ data, companyId }: { data: DealAmlStatus; companyId: st
   );
 }
 
-function DealRedFlags({ data }: { data: DealAmlStatus }) {
+function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus }) {
   const unchecked = data.redFlags?.unchecked || [];
   return (
     <>
       <RedFlagList
+        dealId={dealId}
+        role={null}
         flags={data.redFlags?.deal || []}
+        setAside={data.redFlags?.dealSetAside || []}
+        canDecide={!!data.decisions?.canDecide}
         title="Red flag on the deal record"
         step="It is not tied to one party: Request KYC4U check on the party it concerns carries it in the note."
         testId="kyc-red-flags-deal"
@@ -182,6 +366,25 @@ function DealRedFlags({ data }: { data: DealAmlStatus }) {
           Red flags could not be checked against: {unchecked.join(", ")}.
         </p>
       )}
+    </>
+  );
+}
+
+// Client checks and KYC4U are about the company that signs: until the deal
+// names it, the buttons wait (the server refuses them too).
+function PartyActions({ dealId, data, cp, wide }: { dealId: string; data: DealAmlStatus; cp: DealAmlStatus["counterparties"][number]; wide?: boolean }) {
+  if (data.prechecks?.[cp.id]?.state === "needs_company") {
+    return <p className="text-[11px] text-muted-foreground" data-testid={`kyc-actions-wait-${cp.id}`}>The client checks and a KYC4U request start once the company that signs is set.</p>;
+  }
+  return (
+    <>
+      {data.clientChecks && (
+        <>
+          <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={cp.kycName || cp.name} className={wide ? "w-full justify-center" : undefined} />
+          <ClientChecksForParty dealId={dealId} companyId={cp.id} />
+        </>
+      )}
+      <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.kycName || cp.name} />
     </>
   );
 }
@@ -230,19 +433,14 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
               {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — set the parties on the deal record, then {data.clientChecks ? "send each one the client checks" : "raise each with KYC4U"}.
             </span>
           </div>
-          <DealRedFlags data={data} />
+          <DealRedFlags dealId={dealId} data={data} />
           {data.counterparties.map(cp => (
             <div key={cp.id} className="space-y-2">
               {staffView && !(cp.isApproved && !cp.isExpired) && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
+              <PartyCompanyFacts data={data} companyId={cp.id} />
               <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
-              <PartyRedFlags data={data} companyId={cp.id} />
-              {data.clientChecks && (
-                <>
-                  <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={cp.name} />
-                  <ClientChecksForParty dealId={dealId} companyId={cp.id} />
-                </>
-              )}
-              <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
+              <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} />
+              <PartyActions dealId={dealId} data={data} cp={cp} />
               <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={cp.kycName || cp.name} approved={cp.isApproved && !cp.isExpired} />
             </div>
           ))}
@@ -272,7 +470,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
           )}
         </div>
 
-        <DealRedFlags data={data} />
+        <DealRedFlags dealId={dealId} data={data} />
 
         <div className="grid sm:grid-cols-2 gap-2">
           {data.counterparties.map(cp => {
@@ -317,15 +515,10 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                 <div className="mt-2 space-y-2">
                   {/* What the checks still need is moot once the party is approved. */}
                   {staffView && status !== "approved" && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
+                  <PartyCompanyFacts data={data} companyId={cp.id} />
                   <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
-                  <PartyRedFlags data={data} companyId={cp.id} />
-                  {data.clientChecks && (
-                    <>
-                      <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={cp.name} className="w-full justify-center" />
-                      <ClientChecksForParty dealId={dealId} companyId={cp.id} />
-                    </>
-                  )}
-                  <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
+                  <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} />
+                  <PartyActions dealId={dealId} data={data} cp={cp} wide />
                   <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={cp.kycName || cp.name} approved={status === "approved"} />
                 </div>
               </div>

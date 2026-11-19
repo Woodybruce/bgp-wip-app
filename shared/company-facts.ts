@@ -32,6 +32,9 @@ const TYPE_WORDS: Record<string, string> = {
   "uk-establishment": "UK establishment of an overseas company",
 };
 
+/** A Companies House company type in words ("plc" → "Public limited company"). */
+export const companyTypeWords = (type: string): string => TYPE_WORDS[String(type || "").trim().toLowerCase()] || String(type || "").replace(/-/g, " ");
+
 const profileOf = (company: FactsCompany) => (company.companies_house_data && typeof company.companies_house_data === "object" ? company.companies_house_data.profile : null) || {};
 
 /** True for a public limited company on the stored Companies House record. */

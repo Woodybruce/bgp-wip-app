@@ -403,16 +403,16 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
   const numericFields: { label: string; value: number | string | null | undefined; format?: "currency" | "number" | "percent" }[] = [
     { label: "Pricing", value: deal.pricing, format: "currency" },
-    { label: "Headline Rent", value: deal.rentPa, format: "currency" },
+    { label: "Headline rent", value: deal.rentPa, format: "currency" },
     { label: "Yield", value: deal.yieldPercent, format: "percent" },
-    { label: `${_areaBasis} Area (sq ft)`, value: deal.totalAreaSqft, format: "number" },
-    { label: "Price PSF", value: deal.pricePsf, format: "currency" },
+    { label: `${_areaBasis} area (sq ft)`, value: deal.totalAreaSqft, format: "number" },
+    { label: "Price psf", value: deal.pricePsf, format: "currency" },
     ...(_isRetail ? [{ label: "Price ITZA", value: deal.priceItza, format: "currency" as const }] : []),
-    { label: "Capital Contribution", value: deal.capitalContribution, format: "currency" },
-    { label: "Rent Free (months)", value: deal.rentFree, format: "number" },
-    { label: "Lease Length (years)", value: deal.leaseLength, format: "number" },
-    { label: "Break Option (years)", value: deal.breakOption, format: "number" },
-    { label: "Rent Analysis", value: deal.rentAnalysis, format: "currency" },
+    { label: "Capital contribution", value: deal.capitalContribution, format: "currency" },
+    { label: "Rent free (months)", value: deal.rentFree, format: "number" },
+    { label: "Lease length (years)", value: deal.leaseLength, format: "number" },
+    { label: "Break option (years)", value: deal.breakOption, format: "number" },
+    { label: "Rent analysis", value: deal.rentAnalysis, format: "currency" },
   ];
 
   // Last = latest past date; a future stored date only ever shows as Next.
@@ -431,13 +431,13 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const textFields: { label: string; value: string | null | undefined; colorMap?: Record<string, string>; href?: string }[] = [
     { label: "Team", value: Array.isArray(deal.team) ? deal.team.join(", ") : deal.team, colorMap: DEAL_TEAM_COLORS },
     { label: "Tenure", value: deal.tenureText },
-    { label: "Fee Agreement", value: deal.feeAgreement, colorMap: DEAL_FEE_AGREEMENT_COLORS },
+    { label: "Fee agreement", value: deal.feeAgreement, colorMap: DEAL_FEE_AGREEMENT_COLORS },
     { label: "Instructed", value: deal.instructedAt ? formatDate(deal.instructedAt) : null },
     { label: "Exchanged", value: deal.exchangedAt ? formatDate(deal.exchangedAt) : null },
     { label: "Completed", value: deal.completedAt ? formatDate(deal.completedAt) : null },
     { label: "Invoiced", value: deal.invoicedAt ? formatDate(deal.invoicedAt) : null },
-    { label: "Last Interaction", value: lastTouchValue },
-    { label: "Next Interaction", value: nextTouchValue },
+    { label: "Last contact", value: lastTouchValue },
+    { label: "Next contact", value: nextTouchValue },
   ];
 
   // Investment: the purchaser or vendor; leasing: the tenant.
@@ -712,107 +712,96 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                       </div>
                     );
                   })()}
-                  {textFields.some((f) => f.value) && (
-                    <Card>
-                      <CardContent className="p-3">
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-4 gap-y-1.5">
-                          {textFields.filter((f) => f.value).map((field) => (
-                            <div key={field.label} className="flex flex-col py-1">
-                              <p className="text-[10px] text-muted-foreground leading-tight">{field.label}</p>
-                              {field.colorMap && field.value && field.colorMap[field.value] ? (
-                                <Badge variant="outline" className="text-[9px] w-fit mt-0.5 gap-1" data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
-                                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${field.colorMap[field.value]}`} />
-                                  {field.value}
-                                </Badge>
-                              ) : (
-                                <p className="text-xs font-medium truncate" data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
-                                  {field.value}
-                                </p>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
-                  {(numericFields.some((f) => f.value != null) || [deal.gfAreaSqft, deal.ffAreaSqft, deal.basementAreaSqft, deal.itzaAreaSqft].some((v) => v != null)) && (
-                    <Card>
-                      <CardContent className="p-3">
-                        {/* Columns fit the space, not a fixed six: with ChatBGP open the
-                            page is narrow and £1,233,036 ran into the next figure
-                            (Woody, 2026-10-12). The Net Effective Rent is the clock's. */}
-                        <div className="grid grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))] gap-x-4 gap-y-1.5">
-                          {numericFields.filter((f) => f.value != null).map((field) => (
-                            <div key={field.label} className="flex flex-col py-1 min-w-0">
-                              <p className="text-[10px] text-muted-foreground leading-tight">{field.label}</p>
-                              <p className="text-xs font-mono font-medium" data-testid={`text-deal-${field.label.toLowerCase().replace(/[\s()\/]+/g, "-")}`}>
-                                {field.format === "currency"
-                                  ? formatCurrency(field.value)
-                                  : field.format === "percent"
-                                  ? `${field.value}%`
-                                  : formatNumber(field.value)}
-                              </p>
-                            </div>
-                          ))}
-                          {[
-                            { label: "GF", value: deal.gfAreaSqft },
-                            { label: "FF", value: deal.ffAreaSqft },
-                            { label: "Bsmt", value: deal.basementAreaSqft },
-                            ...(_isRetail ? [{ label: "ITZA", value: deal.itzaAreaSqft }] : []),
-                          ].some(f => f.value != null) && (
-                            <div className="flex flex-col py-1 col-span-2">
-                              <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Floor Breakdown</p>
-                              <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                                {[
-                                  { label: "GF", value: deal.gfAreaSqft },
-                                  { label: "FF", value: deal.ffAreaSqft },
-                                  { label: "Bsmt", value: deal.basementAreaSqft },
-                                  ...(_isRetail ? [{ label: "ITZA", value: deal.itzaAreaSqft }] : []),
-                                ].filter(f => f.value != null).map(f => (
-                                  <span key={f.label} className="text-xs font-mono">
-                                    <span className="text-[9px] text-muted-foreground/70 uppercase mr-0.5">{f.label}</span>
-                                    {formatNumber(f.value)}
+                  {/* The deal's dates and terms in one card, in the page's type
+                      scale (Woody, 2026-11-19: "clean up the design ... Similar
+                      design issue on this page"). Money and areas in mono;
+                      the Net Effective Rent is the clock's. */}
+                  {(textFields.some((f) => f.value) || numericFields.some((f) => f.value != null) || [deal.gfAreaSqft, deal.ffAreaSqft, deal.basementAreaSqft, deal.itzaAreaSqft].some((v) => v != null)) && (
+                    <div className={sectionCard} data-testid="deal-terms-card">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Dates and terms</span>
+                      <dl className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-x-6 gap-y-3">
+                        {textFields.filter((f) => f.value).map((field) => {
+                          const testId = `text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`;
+                          return (
+                            <div key={field.label} className="min-w-0">
+                              <dt className="text-[11px] text-muted-foreground">{field.label}</dt>
+                              <dd className="text-sm font-medium truncate" data-testid={testId} title={field.value || undefined}>
+                                {field.colorMap && field.value && field.colorMap[field.value] ? (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <span className={`w-2 h-2 rounded-full shrink-0 ${field.colorMap[field.value]}`} />
+                                    {field.value}
                                   </span>
-                                ))}
-                              </div>
+                                ) : field.value}
+                              </dd>
                             </div>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
+                          );
+                        })}
+                        {numericFields.filter((f) => f.value != null).map((field) => (
+                          <div key={field.label} className="min-w-0">
+                            <dt className="text-[11px] text-muted-foreground">{field.label}</dt>
+                            <dd className="text-sm font-mono tabular-nums font-medium" data-testid={`text-deal-${field.label.toLowerCase().replace(/[\s()\/]+/g, "-")}`}>
+                              {field.format === "currency"
+                                ? formatCurrency(field.value)
+                                : field.format === "percent"
+                                ? `${field.value}%`
+                                : formatNumber(field.value)}
+                            </dd>
+                          </div>
+                        ))}
+                        {[
+                          { label: "GF", value: deal.gfAreaSqft },
+                          { label: "FF", value: deal.ffAreaSqft },
+                          { label: "Bsmt", value: deal.basementAreaSqft },
+                          ...(_isRetail ? [{ label: "ITZA", value: deal.itzaAreaSqft }] : []),
+                        ].some(f => f.value != null) && (
+                          <div className="min-w-0 col-span-2">
+                            <dt className="text-[11px] text-muted-foreground">Floor breakdown (sq ft)</dt>
+                            <dd className="flex flex-wrap gap-x-3 gap-y-0.5 text-sm">
+                              {[
+                                { label: "GF", value: deal.gfAreaSqft },
+                                { label: "FF", value: deal.ffAreaSqft },
+                                { label: "Bsmt", value: deal.basementAreaSqft },
+                                ...(_isRetail ? [{ label: "ITZA", value: deal.itzaAreaSqft }] : []),
+                              ].filter(f => f.value != null).map(f => (
+                                <span key={f.label} className="font-mono tabular-nums">
+                                  <span className="text-[11px] text-muted-foreground mr-1">{f.label}</span>
+                                  {formatNumber(f.value)}
+                                </span>
+                              ))}
+                            </dd>
+                          </div>
+                        )}
+                      </dl>
+                    </div>
                   )}
                   {/* Client-facing fee view: the fee they're paying us. The
                       internal per-agent split stays staff-only (Fees & invoicing). */}
                   {!staffView && (deal.fee != null || deal.feePercentage != null) && (
-                    <Card>
-                      <CardContent className="p-3">
-                        <h3 className="text-[10px] text-muted-foreground font-medium uppercase tracking-widest mb-2">BGP Fee</h3>
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-                          {deal.fee != null && (
-                            <div className="flex flex-col py-1">
-                              <p className="text-[10px] text-muted-foreground leading-tight">Total Fee</p>
-                              <p className="text-xs font-mono font-medium" data-testid="text-client-fee-total">{formatCurrency(deal.fee)}</p>
-                            </div>
-                          )}
-                          {deal.feePercentage != null && (
-                            <div className="flex flex-col py-1">
-                              <p className="text-[10px] text-muted-foreground leading-tight">Agency Fee</p>
-                              <p className="text-xs font-mono font-medium" data-testid="text-client-fee-pct">{deal.feePercentage}%</p>
-                            </div>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
+                    <div className={sectionCard} data-testid="deal-client-fee">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">BGP fee</span>
+                      <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-3">
+                        {deal.fee != null && (
+                          <div>
+                            <dt className="text-[11px] text-muted-foreground">Total fee</dt>
+                            <dd className="text-sm font-mono tabular-nums font-medium" data-testid="text-client-fee-total">{formatCurrency(deal.fee)}</dd>
+                          </div>
+                        )}
+                        {deal.feePercentage != null && (
+                          <div>
+                            <dt className="text-[11px] text-muted-foreground">Agency fee</dt>
+                            <dd className="text-sm font-mono tabular-nums font-medium" data-testid="text-client-fee-pct">{deal.feePercentage}%</dd>
+                          </div>
+                        )}
+                      </dl>
+                    </div>
                   )}
                   {/* AI-curated activity — BGP staff's emails and meetings, staff only.
                       Deal moves are on the Timeline, not in this feed. */}
                   {staffView && <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />}
-                  <Card data-testid="deal-activity-feed">
-                    <CardContent className="p-3 space-y-2">
-                      <h3 className="text-sm font-semibold">Emails, calls and meetings</h3>
-                      <ActivitySummary dealId={id} />
-                    </CardContent>
-                  </Card>
+                  <div className={`${sectionCard} space-y-2`} data-testid="deal-activity-feed">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Emails, calls and meetings</span>
+                    <ActivitySummary dealId={id} />
+                  </div>
                 </div>
               );
 
@@ -972,10 +961,15 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   );
 }
 
-// Parties: the BGP team, who BGP acts for, each party with the company that
-// signs and who to ask (DealPartyLines), and the deal's Xero contact. A client
-// login reads the party names from the page's own read; BGP staff pick and
-// create parties, so the company list loads when this section is first opened.
+// Parties: the BGP team, who BGP acts for, then each party as its own block:
+// the brand, and under it the company that signs, who is billed in Xero and
+// who to ask (DealPartyLines). Woody, 2026-11-19: "the landlord and tenant
+// have numbers but its not clear if there is a billing company? The brand is
+// different normally to the billing or contracting entity which is critical
+// for the AML", and "clean up the design the Land lord tenant and xero all
+// older text". A client login reads the party names from the page's own
+// read; BGP staff pick and create parties, so the company list loads when
+// this section is first opened.
 function DealPartiesCard({ dealId, deal, names, isClientDeal, ddUser, dealBgpTeam, onPartySave, onActingFor, onCreate }: {
   dealId: string; deal: CrmDeal; names: DealPageNames | null; isClientDeal: boolean; ddUser: any; dealBgpTeam: BgpTeamPerson[];
   onPartySave: (field: "tenantId" | "landlordId" | "vendorId" | "purchaserId", value: string | null) => Promise<void>;
@@ -994,10 +988,29 @@ function DealPartiesCard({ dealId, deal, names, isClientDeal, ddUser, dealBgpTea
     }
     return list;
   };
+  const sectionLabel = "text-xs font-semibold uppercase tracking-wider text-muted-foreground";
+  const actingFor = ((deal as any).bgpActingFor || "landlord") as "landlord" | "tenant";
+  // Leasing deals show Landlord/Tenant; investment (Sale/Purchase) deals show
+  // Vendor/Purchaser — the unused pair is clutter that invites mis-linking
+  // (UX #19). Already-linked slots stay visible either way so existing data
+  // is never hidden.
+  const slots: Array<{
+    role: "landlord" | "tenant" | "vendor" | "purchaser"; label: string; field: "landlordId" | "tenantId" | "vendorId" | "purchaserId";
+    value: string | null | undefined; keep: (c: CrmCompany) => boolean; createType: string;
+  }> = [
+    ...(!partiesInvestment || deal.landlordId ? [{ role: "landlord" as const, label: "Landlord", field: "landlordId" as const, value: deal.landlordId, createType: "Landlord",
+      keep: (c: CrmCompany) => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" }] : []),
+    ...(!partiesInvestment || deal.tenantId ? [{ role: "tenant" as const, label: "Tenant", field: "tenantId" as const, value: deal.tenantId, createType: "Tenant",
+      keep: (c: CrmCompany) => !!c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" }] : []),
+    ...(partiesInvestment || deal.vendorId ? [{ role: "vendor" as const, label: "Vendor", field: "vendorId" as const, value: deal.vendorId, createType: "Vendor",
+      keep: (c: CrmCompany) => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" }] : []),
+    ...(partiesInvestment || deal.purchaserId ? [{ role: "purchaser" as const, label: "Purchaser", field: "purchaserId" as const, value: deal.purchaserId, createType: "Purchaser",
+      keep: (c: CrmCompany) => c.companyType === "Purchaser" || c.companyType === "Investor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType === "Vendor" }] : []),
+  ];
   return (
     <Card>
-      <CardContent className="p-4 space-y-2">
-        <div className="flex items-center gap-2 mb-1">
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center gap-2">
           <Users className="w-4 h-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold">Parties</h3>
         </div>
@@ -1005,128 +1018,77 @@ function DealPartiesCard({ dealId, deal, names, isClientDeal, ddUser, dealBgpTea
             (Woody, 2026-11-14). Clients see who to chase; staff change the
             agents in Fee allocation, where the split lives. */}
         {dealBgpTeam.length > 0 && (
-          <div className="pb-2 mb-1 border-b border-border/60" data-testid="deal-bgp-team">
+          <div className="pb-3 border-b border-border" data-testid="deal-bgp-team">
             <BgpTeamGroup people={dealBgpTeam} addControl={isClientDeal ? null : <span className="text-[11px] text-muted-foreground">Change in Fees &amp; invoicing</span>} />
           </div>
         )}
-        {/* Leasing deals show Landlord/Tenant; investment (Sale/Purchase)
-            deals show Vendor/Purchaser — the unused pair is clutter that
-            invites mis-linking (UX #19). Already-linked slots stay visible
-            either way so existing data is never hidden. */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-2">
-          {isClientDeal ? (() => {
-            // UX #155 — clients get read-only party slots: staff-worded
-            // "+ Link landlord" pickers on their own deal read like the deal
-            // is set up wrong. Landlord defaults to their own company.
-            const slots: Array<[string, string | null]> = partiesInvestment
+        {isClientDeal ? (
+          // UX #155 — clients get read-only party slots: staff-worded "+ Link
+          // landlord" pickers on their own deal read like the deal is set up
+          // wrong. Landlord defaults to their own company.
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {(partiesInvestment
               ? [["Vendor", names?.parties.vendor?.name || null], ["Purchaser", names?.parties.purchaser?.name || null]]
-              : [["Landlord", names?.parties.landlord?.name || ddUser?.companyScopeName || null], ["Tenant", names?.parties.tenant?.name || null]];
-            return slots.map(([label, name]) => (
-              <div key={label} className="flex flex-col gap-1" data-testid={`client-party-${label.toLowerCase()}`}>
-                <p className="text-[10px] text-muted-foreground leading-tight">{label}</p>
+              : [["Landlord", names?.parties.landlord?.name || ddUser?.companyScopeName || null], ["Tenant", names?.parties.tenant?.name || null]]
+            ).map(([label, name]) => (
+              <div key={label as string} className="space-y-1" data-testid={`client-party-${String(label).toLowerCase()}`}>
+                <p className={sectionLabel}>{label}</p>
                 {name
-                  ? <span className="text-xs font-medium">{name}</span>
-                  : <span className="text-[11px] text-muted-foreground italic">Not set yet — your BGP team will link parties</span>}
+                  ? <p className="text-sm font-medium">{name}</p>
+                  : <p className="text-sm text-muted-foreground">Not set yet: your BGP team will link the parties.</p>}
               </div>
-            ));
-          })() : (
-            <>
-              {/* Which side BGP acts for on a leasing deal — drives instruction
-                  vs related activity on the landlord and brand pages (Woody,
-                  2026-09-26). Investment deals take their side from the
-                  vendor / purchaser. */}
-              {!partiesInvestment && (
-                <div className="flex items-center gap-2 sm:col-span-3" data-testid="deal-bgp-acting-for">
-                  <p className="text-[10px] text-muted-foreground leading-tight">BGP acting for</p>
-                  <div className="flex flex-wrap gap-1">
-                    {(["landlord", "tenant"] as const).map(side => (
-                      <Pill key={side} active={((deal as any).bgpActingFor || "landlord") === side} onClick={() => onActingFor(side)} data-testid={`deal-acting-for-${side}`}>
-                        {side === "landlord" ? "Landlord" : "Tenant"}
-                      </Pill>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {(!partiesInvestment || deal.landlordId) && (
-                <div className="flex flex-col gap-1">
-                  <p className="text-[10px] text-muted-foreground leading-tight">Landlord</p>
-                  <InlineLinkSelect
-                    value={deal.landlordId}
-                    options={companyOptions(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client", deal.landlordId)}
-                    href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
-                    onSave={(v) => onPartySave("landlordId", v || null)}
-                    onCreate={(name) => onCreate("landlordId", "Landlord", name)}
-                    placeholder="Link landlord"
-                  />
-                  {/* The company that signs and the person to ask (BGP staff;
-                      this branch is never drawn for a client login). */}
-                  {deal.landlordId && <DealPartyLines dealId={id} role="landlord" />}
-                </div>
-              )}
-              {(!partiesInvestment || deal.tenantId) && (
-                <div className="flex flex-col gap-1">
-                  <p className="text-[10px] text-muted-foreground leading-tight">Tenant</p>
-                  <InlineLinkSelect
-                    value={deal.tenantId}
-                    options={companyOptions(c => !!c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser", deal.tenantId)}
-                    href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
-                    onSave={(v) => onPartySave("tenantId", v || null)}
-                    onCreate={(name) => onCreate("tenantId", "Tenant", name)}
-                    placeholder="Link tenant"
-                  />
-                  {/* The company that signs and the person to ask (BGP staff;
-                      this branch is never drawn for a client login). */}
-                  {deal.tenantId && <DealPartyLines dealId={id} role="tenant" />}
-                </div>
-              )}
-              {(partiesInvestment || deal.vendorId) && (
-                <div className="flex flex-col gap-1">
-                  <p className="text-[10px] text-muted-foreground leading-tight">Vendor</p>
-                  <InlineLinkSelect
-                    value={deal.vendorId}
-                    options={companyOptions(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client", deal.vendorId)}
-                    href={deal.vendorId ? `/companies/${deal.vendorId}` : undefined}
-                    onSave={(v) => onPartySave("vendorId", v || null)}
-                    onCreate={(name) => onCreate("vendorId", "Vendor", name)}
-                    placeholder="Link vendor"
-                  />
-                  {/* The company that signs and the person to ask (BGP staff;
-                      this branch is never drawn for a client login). */}
-                  {deal.vendorId && <DealPartyLines dealId={id} role="vendor" />}
-                </div>
-              )}
-              {(partiesInvestment || deal.purchaserId) && (
-                <div className="flex flex-col gap-1">
-                  <p className="text-[10px] text-muted-foreground leading-tight">Purchaser</p>
-                  <InlineLinkSelect
-                    value={deal.purchaserId}
-                    options={companyOptions(c => c.companyType === "Purchaser" || c.companyType === "Investor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType === "Vendor", deal.purchaserId)}
-                    href={deal.purchaserId ? `/companies/${deal.purchaserId}` : undefined}
-                    onSave={(v) => onPartySave("purchaserId", v || null)}
-                    onCreate={(name) => onCreate("purchaserId", "Purchaser", name)}
-                    placeholder="Link purchaser"
-                  />
-                  {/* The company that signs and the person to ask (BGP staff;
-                      this branch is never drawn for a client login). */}
-                  {deal.purchaserId && <DealPartyLines dealId={id} role="purchaser" />}
-                </div>
-              )}
-              <div className="flex flex-col gap-1">
-                <p className="text-[10px] text-muted-foreground leading-tight">Xero Contact</p>
-                {(deal as any).xeroContactName ? (
-                  <div className="text-xs">
-                    <span className="font-medium">{(deal as any).xeroContactName}</span>
-                    {(deal as any).xeroAccountNumber && (
-                      <span className="text-muted-foreground"> · A/C {(deal as any).xeroAccountNumber}</span>
+            ))}
+          </div>
+        ) : (
+          <>
+            {/* Which side BGP acts for on a leasing deal — drives instruction
+                vs related activity on the landlord and brand pages (Woody,
+                2026-09-26). Investment deals take their side from the
+                vendor / purchaser. */}
+            {!partiesInvestment && (
+              <div className="flex flex-wrap items-center gap-2" data-testid="deal-bgp-acting-for">
+                <span className={sectionLabel}>BGP acts for</span>
+                {(["landlord", "tenant"] as const).map(side => (
+                  <Pill key={side} active={actingFor === side} onClick={() => onActingFor(side)} data-testid={`deal-acting-for-${side}`}>
+                    {side === "landlord" ? "Landlord" : "Tenant"}
+                  </Pill>
+                ))}
+              </div>
+            )}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {slots.map(slot => (
+                <div key={slot.role} className="rounded-lg border border-border p-3 space-y-2" data-testid={`deal-party-${slot.role}`}>
+                  <div className="flex items-center gap-2">
+                    <span className={sectionLabel}>{slot.label}</span>
+                    {!partiesInvestment && (slot.role === "landlord" || slot.role === "tenant") && actingFor === slot.role && (
+                      <span className="text-[11px] text-muted-foreground">· BGP's client</span>
                     )}
                   </div>
-                ) : (
-                  <span className="text-[11px] text-muted-foreground italic">Not set — add via Edit</span>
-                )}
-              </div>
-            </>
-          )}
-        </div>
+                  <InlineLinkSelect
+                    value={slot.value}
+                    options={companyOptions(slot.keep, slot.value)}
+                    href={slot.value ? `/companies/${slot.value}` : undefined}
+                    onSave={(v) => onPartySave(slot.field, v || null)}
+                    onCreate={(name) => onCreate(slot.field, slot.createType, name)}
+                    placeholder={`Link ${slot.label.toLowerCase()}`}
+                  />
+                  {/* The company that signs, who is billed and who to ask
+                      (BGP staff; this branch is never drawn for a client login). */}
+                  {slot.value && <DealPartyLines dealId={id} role={slot.role} />}
+                </div>
+              ))}
+            </div>
+            {/* The deal's own invoice contact in Xero, from before each party
+                had its own billing contact: shown only when one is held. */}
+            {(deal as any).xeroContactName && (
+              <p className="text-sm" data-testid="deal-xero-contact">
+                <span className={sectionLabel}>Invoice contact (Xero)</span>{" "}
+                <span className="ml-1 font-medium">{(deal as any).xeroContactName}</span>
+                {(deal as any).xeroAccountNumber && <span className="text-muted-foreground"> · A/C <span className="font-mono tabular-nums">{(deal as any).xeroAccountNumber}</span></span>}
+              </p>
+            )}
+          </>
+        )}
       </CardContent>
     </Card>
   );

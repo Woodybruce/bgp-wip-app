@@ -4,7 +4,7 @@
 import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { dealRedFlags, partyRedFlags, pepStatusLabel, redFlagAlertKey, redFlagNote, type PartyRedFlagFacts } from "../shared/kyc-red-flags";
+import { FLAG_REVIEW_COMMENT_MIN, applyFlagReviews, dealRedFlags, flagReviewComment, partyRedFlags, pepStatusLabel, redFlagAlertKey, redFlagNote, type PartyRedFlagFacts } from "../shared/kyc-red-flags";
 import { KYC_LOGO_CID, kycFinishedEmail, kycRedFlagEmail } from "../shared/kyc-request";
 
 const facts = (over: Partial<PartyRedFlagFacts> = {}): PartyRedFlagFacts => ({
@@ -141,4 +141,53 @@ test("the finished note carries the red flags when there are any", () => {
   const flagged = kycFinishedEmail({ ...base, redFlags: dealRedFlags({ aml_risk_level: "high" }) }).html;
   assert.match(flagged, /Red flag: raise with KYC4U/);
   assert.match(flagged, /Risk rated high/);
+});
+
+// ── Setting a flag aside (Woody, 19 November 2026: "have the option to ignore
+// with a comment as comply advantage is picking up things that are not
+// really a massive problem") ────────────────────────────────────────────────
+
+test("a flag set aside no longer counts; new evidence raises it again", () => {
+  const flags = partyRedFlags(facts({
+    company: { aml_pep_status: "review_required", aml_risk_level: "high", aml_edd_required: true, aml_edd_reason: "Sanctions screening returned a match — EDD mandatory" },
+    recordHistory: [{ at: "2026-09-24T10:00:00Z", what: "Sanctions screening returned a match — EDD mandatory", who: "automatic" }],
+  }));
+  assert.deepEqual(flags.map(f => f.key).sort(), ["record:edd", "record:high_risk", "record:screening"]);
+  // What is behind a record flag: the record's own history.
+  assert.ok(flags.every(f => (f.facts || []).some(x => /EDD mandatory/.test(x.value) && /automatic/.test(x.value))));
+  const risk = flags.find(f => f.key === "record:high_risk")!;
+  const review = { id: 1, flagKey: risk.key, evidence: risk.evidence, comment: "Left by the old automatic screening.", by: "Woody Bruce", at: "2026-11-19T12:00:00Z" };
+  const split = applyFlagReviews(flags, [review]);
+  assert.deepEqual(split.live.map(f => f.key).sort(), ["record:edd", "record:screening"]);
+  assert.equal(split.setAside.length, 1);
+  assert.equal(split.setAside[0].review.comment, "Left by the old automatic screening.");
+  // The record moves to "critical": not what was set aside.
+  const critical = partyRedFlags(facts({ company: { aml_risk_level: "critical" } }));
+  assert.equal(applyFlagReviews(critical, [review]).live.length, 1);
+});
+
+test("setting a flag aside needs a reason worth keeping", () => {
+  assert.ok("problem" in flagReviewComment("ok"));
+  assert.ok("problem" in flagReviewComment("   "));
+  assert.deepEqual(flagReviewComment("  The CMA merger review   was cleared in 2016.  "), { comment: "The CMA merger review was cleared in 2016." });
+  assert.equal(FLAG_REVIEW_COMMENT_MIN, 10);
+});
+
+test("every flag carries a key and its evidence", () => {
+  const all = [
+    ...partyRedFlags(facts({
+      company: { aml_pep_status: "pep_domestic", aml_risk_level: "high", aml_edd_required: true },
+      latestInvestigation: { sanctions_match: true, conducted_at: "2026-11-01" },
+      requests: [{ ref: "7K2Q9M", answers: { pep: "yes", pepDetail: "MP", answeredAt: "2026-11-17T10:00:00Z" }, ownersAnswer: { answer: "no", detail: "Sold in 2025", answeredAt: "2026-11-17T10:00:00Z" } as any }],
+      idChecks: [{ status: "declined", decision_reason: "Document expired", received_at: "2026-11-17T10:00:00Z", name: "Jane Doe" }],
+    })),
+    ...dealRedFlags({ aml_pep_status: "pep", aml_risk_level: "critical", aml_edd_required: true, aml_sof_analysis: { items: [{ documentType: "bank statement", declaredSourceMatchesDocument: false, generatedAt: "2026-11-01" }] } }),
+  ];
+  assert.ok(all.length >= 9);
+  for (const f of all) {
+    assert.ok(f.key && typeof f.key === "string", `${f.label} has no key`);
+    assert.ok(Array.isArray(f.evidence), `${f.label} has no evidence list`);
+  }
+  // A deal record flag never shares a key with a party's.
+  assert.ok(all.filter(f => f.source === "Deal record").every(f => f.key.startsWith("deal:")));
 });

@@ -49,6 +49,16 @@ export interface PartyGap { key: PartyGapKey; words: string; short: string }
 
 export type CompanyOfferWhy = "lease" | "default" | "only";
 
+// What the company that signs is, for each party (Woody, 19 November 2026:
+// "We must have the company taking the lease or who owns the property to be
+// able to do a check").
+export const SIGNING_COMPANY_WORDS: Record<DealPartyRole, string> = {
+  landlord: "the company that owns the property",
+  tenant: "the company taking the lease",
+  vendor: "the company selling",
+  purchaser: "the company buying",
+};
+
 export interface DealPartyView {
   role: DealPartyRole;
   label: string;
@@ -58,6 +68,9 @@ export interface DealPartyView {
   // What to offer when none is set: the company on the unit's lease (a
   // letting's tenant), the brand's default, or its only company.
   offer: (DealPartyCompany & { why: CompanyOfferWhy }) | null;
+  // The brand's own registered company, when no company filed under the
+  // brand carries its number: offered as one choice, never assumed.
+  brandOwn: { name: string; number: string } | null;
   // Every company filed under the brand.
   companies: DealPartyCompany[];
   // The Xero contact invoices go to.
@@ -97,21 +110,28 @@ export const OFFER_WORDS: Record<CompanyOfferWhy, string> = {
 
 /**
  * What stops BGP's checks and the client checks from starting for one party.
- * A company party needs a company the checks can read: the one set on the
- * deal, or the brand's own Companies House record. Every party needs a
- * person to ask, with an email. Nothing else is asked for here: an
+ * A company party needs the company that signs set on the deal: the company
+ * taking the lease, or the one that owns the property. The brand is usually
+ * not it, so its own Companies House record is never assumed (Woody,
+ * 19 November 2026; until then a brand with a number counted). Every party
+ * needs a person to ask, with an email. Nothing else is asked for here: an
  * individual's date of birth and address are the client checks' to gather.
  */
 export function partyGaps(input: {
+  role: DealPartyRole;
   kind: "company" | "individual";
   brandName: string;
-  brandHasNumber: boolean;
   companySet: boolean;
   person: { name: string; email: string | null } | null;
 }): PartyGap[] {
   const gaps: PartyGap[] = [];
-  if (input.kind === "company" && !input.companySet && !input.brandHasNumber) {
-    gaps.push({ key: "company", words: `The company that signs for ${text(input.brandName) || "this party"}, so the checks can read Companies House`, short: "the company that signs" });
+  if (input.kind === "company" && !input.companySet) {
+    const what = SIGNING_COMPANY_WORDS[input.role];
+    gaps.push({
+      key: "company",
+      words: `${what[0].toUpperCase()}${what.slice(1)}: the checks are about it, not ${text(input.brandName) || "the brand"}`,
+      short: what.replace(/^the /, ""),
+    });
   }
   if (!input.person) gaps.push({ key: "person", words: "Who to ask: their name and email", short: "who to ask" });
   else if (!text(input.person.email)) gaps.push({ key: "email", words: `An email for ${text(input.person.name) || "the person to ask"}`, short: "their email" });

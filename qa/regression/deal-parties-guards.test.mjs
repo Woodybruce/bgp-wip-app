@@ -127,7 +127,9 @@ test('the client checks and the KYC4U request name the company and the person', 
 
 test('the deal page and the deal form carry it', () => {
   const page = read('client/src/components/deal-detail.tsx');
-  for (const role of ['landlord', 'tenant', 'vendor', 'purchaser']) assert.ok(page.includes(`<DealPartyLines dealId={id} role="${role}" />`), role);
+  // One block per party (19 November 2026), each with its lines.
+  assert.ok(page.includes('{slot.value && <DealPartyLines dealId={id} role={slot.role} />}'));
+  for (const role of ['landlord', 'tenant', 'vendor', 'purchaser']) assert.ok(page.includes(`role: "${role}" as const`), role);
   const card = read('client/src/components/deal-aml-status.tsx');
   // On both layouts of the card, hidden once the party is approved (step 2, 18 November 2026).
   assert.ok(card.includes('{staffView && !(cp.isApproved && !cp.isExpired) && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}'));

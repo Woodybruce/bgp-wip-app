@@ -395,6 +395,13 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   if (!found) throw Object.assign(new Error("Deal not found"), { status: 404 });
   const party = found.parties.find(p => p.companyId === input.companyId);
   if (!party) throw Object.assign(new Error("That company is not a party to this deal. Set it on the deal first."), { status: 400 });
+  // The checks are about the company that signs, not the brand (Woody,
+  // 19 November 2026: "We must have the company taking the lease or who owns
+  // the property to be able to do a check").
+  if (input.kind === "company" && !party.entityId) {
+    const what = party.role === "tenant" ? "the company taking the lease" : party.role === "landlord" ? "the company that owns the property" : party.role === "vendor" ? "the company selling" : "the company buying";
+    throw Object.assign(new Error(`Set ${what} on the deal first: the client checks are about that company, not ${party.name}.`), { status: 409 });
+  }
   const email = cleanEmail(input.email);
   if (!isEmail(email)) throw Object.assign(new Error("Enter a valid email address for the person to ask."), { status: 400 });
   if (input.contactId && !party.contacts.some(c => c.id === input.contactId)) throw Object.assign(new Error("That contact is not at this company."), { status: 400 });
@@ -996,7 +1003,7 @@ kycRequestRouter.post("/api/kyc-upload/:token/finish", async (req: Request, res:
 
 const SAMPLE = { dealName: "12 Example Street (sample)", partyName: "Example Trading Ltd", recipientName: "Jane Smith" };
 const SAMPLE_RED_FLAGS: KycRedFlag[] = [
-  { kind: "client_pep", label: "Said yes to the question about public roles", detail: "My father is a serving member of a foreign parliament.", source: "Client checks, ref 7K2Q9M", at: null },
+  { kind: "client_pep", label: "Said yes to the question about public roles", detail: "My father is a serving member of a foreign parliament.", source: "Client checks, ref 7K2Q9M", at: null, key: "client_pep:7k2q9m", evidence: ["answer:yes"] },
 ];
 
 async function adminMe(req: Request) {

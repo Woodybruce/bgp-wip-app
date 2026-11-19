@@ -19,7 +19,7 @@ import { pool } from "./db";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, isDealPartyRole } from "@shared/deal-parties";
 import { CLOSED_STATUSES, TERMINAL_STATUSES, dealLeftTrackerSql, statusSpellingsFor } from "@shared/deal-status";
 import { amlBucket, amlDealClosed, amlDue, amlStage, amlWaitingOn, daysSince, type AmlDashboardRow } from "@shared/aml-dashboard";
-import { dealRedFlags, partyRedFlags } from "@shared/kyc-red-flags";
+import { applyFlagReviews, dealRedFlags, partyRedFlags } from "@shared/kyc-red-flags";
 import { isPrecheckResult } from "@shared/kyc-prechecks";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
 
@@ -70,10 +70,11 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   };
   const none: any[] = [];
   const { loadPartyKyc } = await import("./deal-gates");
-  const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers] = await Promise.all([
+  const { loadFlagReviews, reviewsForDeal, reviewsForParty } = await import("./kyc-red-flags");
+  const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews] = await Promise.all([
     loadPartyKyc(pool, parties.map(p => ({ role: p.key, brandId: p.brandId, entityId: p.entityId }))),
     read("KYC records", async () => (await pool.query(
-      `SELECT id, aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds])).rows, none),
+      `SELECT id, aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason, aml_subject_type FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds])).rows, none),
     read("screening records", async () => (await pool.query(
       `SELECT DISTINCT ON (crm_company_id, trading_entity_id) crm_company_id, trading_entity_id, id, sanctions_match, conducted_at, (result->>'kind' = 'precheck') AS precheck
          FROM kyc_investigations WHERE crm_company_id = ANY($1::varchar[]) AND ${SCREENED_INVESTIGATION_SQL}
@@ -112,11 +113,13 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       const ids = [...new Set(deals.flatMap((d: any) => Array.isArray(d.internal_agent_ids) ? d.internal_agent_ids : []).filter(Boolean))];
       return ids.length ? (await pool.query(`SELECT id, name FROM users WHERE id = ANY($1::varchar[])`, [ids])).rows : none;
     }, none),
+    // Flags the MLRO set aside with a comment: listed on the deal, not counted here.
+    read("flags set aside", () => loadFlagReviews(pool, brandIds, dealIds), [] as Awaited<ReturnType<typeof loadFlagReviews>>),
   ]);
   const { kyc4uVerdict } = await import("./kyc4u");
   const meName = me.name.toLowerCase();
   const dealFlags = new Map<string, string[]>();
-  for (const deal of deals) dealFlags.set(String(deal.id), dealRedFlags(deal).map(f => `Deal: ${f.label}`));
+  for (const deal of deals) dealFlags.set(String(deal.id), applyFlagReviews(dealRedFlags(deal), reviewsForDeal(reviews, String(deal.id))).live.map(f => `Deal: ${f.label}`));
 
   const rows: AmlDashboardRow[] = [];
   for (const p of parties) {
@@ -126,11 +129,14 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     // (its "signs", server/deal-parties.ts), else the brand's.
     const own = (r: any) => r.crm_company_id === p.brandId && (r.trading_entity_id || null) === (p.entityId || null);
     const latest = investigations.find(own) || null;
-    const pre = prechecks.find((r: any) => own(r) && isPrecheckResult(r.result)) || null;
+    const companyRow = companies.find((c: any) => c.id === p.brandId) || null;
+    // No company that signs: no checks before asking to read (the deal card's rule).
+    const needsCompany = !p.entityId && String(companyRow?.aml_subject_type || "").toLowerCase() !== "individual";
+    const pre = needsCompany ? null : prechecks.find((r: any) => own(r) && isPrecheckResult(r.result)) || null;
     const partyTokens = tokens.filter((t: any) => String(t.deal_id) === String(p.deal.id) && t.company_id === p.brandId);
     const live = partyTokens.filter((t: any) => !t.revoked_at);
-    const flags = partyRedFlags({
-      company: companies.find((c: any) => c.id === p.brandId) || null,
+    const flags = applyFlagReviews(partyRedFlags({
+      company: companyRow,
       latestInvestigation: latest ? { sanctions_match: latest.sanctions_match, conducted_at: latest.conducted_at, precheck: !!latest.precheck } : null,
       precheck: pre ? { result: pre.result, current: !!latest && String(latest.id) === String(pre.id) } : null,
       requests: partyTokens.map((t: any) => ({ ref: t.request?.ref || "", answers: t.request?.answers || null, ownersAnswer: t.request?.ownersAnswer || null })),
@@ -138,7 +144,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
         status: s.status, decision_reason: s.decision_reason, received_at: s.received_at,
         name: [s.first_name, s.last_name].filter(Boolean).join(" ") || null,
       })),
-    }).map(f => f.label);
+    }), reviewsForParty(reviews, p.brandId, p.entityId)).live.map(f => f.label);
     const openDrafts = drafts.filter((d: any) => String(d.deal_id) === String(p.deal.id) && d.company_id === p.brandId);
     const kyc4uOpen = openDrafts.some((d: any) => !d.request_item_id || kyc4uVerdict(d.request_status) === "in_review");
     const kyc4uLast = state.source === "company"

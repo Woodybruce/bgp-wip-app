@@ -86,7 +86,7 @@ async function raisedWithKyc4u(db: Db, party: AmlParty): Promise<boolean> {
 }
 
 export interface KnownFacts {
-  redFlags?: { parties: Record<string, unknown[]>; deal: unknown[]; unchecked: string[] } | null;
+  redFlags?: { parties: Record<string, unknown[]>; deal: unknown[]; unchecked: string[]; setAside?: Record<string, Array<{ flag: { key: string } }>> } | null;
   precheck?: { ranAt: string | null; running: boolean } | null;
 }
 
@@ -95,8 +95,17 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
   const verdict = kycVerdict(party.state);
   const flags = known.redFlags ?? await (await import("./kyc-red-flags"))
     .loadDealRedFlags(party.dealId, [party.brandId], party.entityId ? { [party.brandId]: party.entityId } : {});
-  const brand = (await db.query(
+  const held = (await db.query(
     `SELECT aml_risk_level, aml_edd_required, aml_pep_status, aml_cdd_form FROM crm_companies WHERE id = $1`, [party.brandId])).rows[0] || null;
+  // A record field whose flag the MLRO set aside with a comment does not make
+  // the file higher risk either (the old automatic screening's marks).
+  const aside = new Set((flags?.setAside?.[party.brandId] || []).map((x: any) => String(x?.flag?.key || "")));
+  const brand = held ? {
+    ...held,
+    aml_risk_level: aside.has("record:high_risk") ? null : held.aml_risk_level,
+    aml_edd_required: aside.has("record:edd") ? false : held.aml_edd_required,
+    aml_pep_status: aside.has("record:screening") ? null : held.aml_pep_status,
+  } : null;
   const { isHigherRisk } = await import("@shared/aml-checklist");
   let precheck = known.precheck ?? null;
   if (!precheck) {
@@ -222,6 +231,67 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
   } catch (err: any) {
     console.error("[deal-party-aml] sign-off failed:", err?.message);
     res.status(500).json({ message: "The sign-off could not be saved." });
+  }
+});
+
+// A red flag set aside with a comment, or put back (Woody, 19 November 2026:
+// "have the option to ignore with a comment as comply advantage is picking
+// up things that are not really a massive problem"). The MLRO's, as the
+// sign-off is: it decides whether a finding matters.
+//   POST /api/deals/:id/red-flags/set-aside  { role?: party, key, comment } (no role: a flag on the deal record)
+//   POST /api/deals/:id/red-flags/put-back   { reviewId }
+router.post("/api/deals/:id/red-flags/set-aside", async (req: Request, res: Response) => {
+  try {
+    const me = await decider(req);
+    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
+    const { flagReviewComment } = await import("@shared/kyc-red-flags");
+    const said = flagReviewComment(req.body?.comment);
+    if ("problem" in said) return res.status(400).json({ message: said.problem });
+    const key = text(req.body?.key).slice(0, 300);
+    if (!key) return res.status(400).json({ message: "Which red flag?" });
+    const roleRaw = req.body?.role == null || req.body.role === "" ? null : String(req.body.role);
+    let brandId: string | null = null;
+    let entityId: string | null = null;
+    let partyWords = "the deal record";
+    if (roleRaw) {
+      if (!isDealPartyRole(roleRaw)) return res.status(400).json({ message: "Unknown party." });
+      const party = await loadAmlParty(pool, String(req.params.id), roleRaw);
+      if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[roleRaw].toLowerCase()}.` });
+      brandId = party.brandId;
+      entityId = party.entityId;
+      partyWords = `${DEAL_PARTY_LABEL[roleRaw]}: ${partyName(party)}`;
+    } else {
+      const deal = (await pool.query(`SELECT id FROM crm_deals WHERE id = $1`, [String(req.params.id)])).rows[0];
+      if (!deal) return res.status(404).json({ message: "Deal not found." });
+    }
+    const { setFlagAside } = await import("./kyc-red-flags");
+    const done = await setFlagAside({ dealId: String(req.params.id), brandId, entityId, key, comment: said.comment, me });
+    await dealAudit(String(req.params.id), "aml_red_flag", done.flag.label, `set aside by ${me.name}`, `${partyWords} · ${done.flag.label} · why: ${said.comment}`, me);
+    res.json({ ok: true, review: done.review });
+  } catch (err: any) {
+    if (err?.name === "FlagReviewRefusal") return res.status(err.status || 409).json({ message: err.message });
+    console.error("[deal-party-aml] set aside failed:", err?.message);
+    res.status(500).json({ message: "The red flag could not be set aside." });
+  }
+});
+
+router.post("/api/deals/:id/red-flags/put-back", async (req: Request, res: Response) => {
+  try {
+    const me = await decider(req);
+    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
+    const reviewId = Number(req.body?.reviewId);
+    if (!Number.isInteger(reviewId) || reviewId <= 0) return res.status(400).json({ message: "Which red flag?" });
+    const deal = (await pool.query(`SELECT id, landlord_id, tenant_id, vendor_id, purchaser_id FROM crm_deals WHERE id = $1`, [String(req.params.id)])).rows[0];
+    if (!deal) return res.status(404).json({ message: "Deal not found." });
+    const partyIds = [deal.landlord_id, deal.tenant_id, deal.vendor_id, deal.purchaser_id].filter(Boolean).map(String);
+    const { putFlagBack } = await import("./kyc-red-flags");
+    const back = await putFlagBack({ dealId: deal.id, partyIds, reviewId, me });
+    await dealAudit(deal.id, "aml_red_flag", `set aside`, `put back by ${me.name}`, `${back.label}: counts as a red flag again`, me);
+    res.json({ ok: true });
+  } catch (err: any) {
+    if (err?.name === "FlagReviewRefusal") return res.status(err.status || 409).json({ message: err.message });
+    console.error("[deal-party-aml] put back failed:", err?.message);
+    res.status(500).json({ message: "The red flag could not be put back." });
   }
 });
 

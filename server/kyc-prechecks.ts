@@ -30,10 +30,11 @@ import crypto from "crypto";
 import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
 import {
-  KYC_PRECHECK_FRESH_DAYS, KYC_PRECHECK_MAX_WEB_PEOPLE, KYC_PRECHECK_VERSION, askInputFrom, checkWebAnswer, isOffshoreCountry,
-  isPrecheckResult, listingFromExemptions, nameTokens, ownerKind, personNamesMatch, precheckCardLines, precheckSanctionsMatch,
-  sanctionsLine, statementIsConcern, statementWords,
-  type KycPrecheckResult, type ListEntry, type PrecheckAskInput, type PrecheckCardLine, type PrecheckDocument, type PrecheckListing,
+  KYC_PRECHECK_FRESH_DAYS, KYC_PRECHECK_MAX_WEB_PEOPLE, KYC_PRECHECK_VERSION, PRECHECK_AUTO_RUNS_A_DAY, PRECHECK_RETRY_MINUTES,
+  askInputFrom, checkWebAnswer, isOffshoreCountry,
+  isPrecheckResult, listingFromExemptions, nameTokens, ownerKind, personNamesMatch, precheckCardLines, precheckCompany, precheckSanctionsMatch,
+  precheckUnfinished, sanctionsLine, statementIsConcern, statementWords,
+  type KycPrecheckResult, type ListEntry, type PrecheckAskInput, type PrecheckCardLine, type PrecheckCompany, type PrecheckDocument, type PrecheckListing,
   type ProviderLine, type RegisterOwner, type SanctionsLine, type WebSearchLine,
 } from "@shared/kyc-prechecks";
 import type { KycPartyKind } from "@shared/kyc-request";
@@ -115,10 +116,26 @@ export async function awaitPrecheck(companyId: string, ms: number, entityId: str
   return Promise.race([r.promise.catch(() => null), new Promise<null>(resolve => setTimeout(() => resolve(null), ms))]);
 }
 
-const isFresh = (stored: StoredPrecheck | null, now = Date.now()) =>
-  !!stored && now - Date.parse(stored.ranAt) < KYC_PRECHECK_FRESH_DAYS * 86400000 && stored.result.version >= KYC_PRECHECK_VERSION;
+// A check that could not read Companies House (it was busy) is good for
+// PRECHECK_RETRY_MINUTES only: the next view after that runs it again.
+const isFresh = (stored: StoredPrecheck | null, now = Date.now()) => {
+  if (!stored || stored.result.version < KYC_PRECHECK_VERSION) return false;
+  const age = now - Date.parse(stored.ranAt);
+  if (precheckUnfinished(stored.result)) return age < PRECHECK_RETRY_MINUTES * 60_000;
+  return age < KYC_PRECHECK_FRESH_DAYS * 86400000;
+};
 
-export type PrecheckStart = "started" | "running" | "fresh" | "cap" | "off" | "waiting";
+// Runs for one party in the last day: past PRECHECK_AUTO_RUNS_A_DAY a page
+// view starts no more (Run again still does).
+async function runsToday(companyId: string, entityId: string | null): Promise<number> {
+  const row = (await pool.query(
+    `SELECT count(*)::int AS n FROM kyc_investigations
+      WHERE crm_company_id = $1 AND trading_entity_id IS NOT DISTINCT FROM $2 AND result->>'kind' = 'precheck'
+        AND conducted_at > now() - interval '24 hours'`, [companyId, entityId || null]).catch(() => ({ rows: [{ n: 0 }] }))).rows[0];
+  return Number(row?.n) || 0;
+}
+
+export type PrecheckStart = "started" | "running" | "fresh" | "cap" | "off" | "waiting" | "needs_company";
 
 export async function startPrecheck(companyId: string, opts: { dealId?: string | null; userId?: string | null; force?: boolean; entityId?: string | null }): Promise<PrecheckStart> {
   if (!prechecksOn()) return "off";
@@ -127,7 +144,9 @@ export async function startPrecheck(companyId: string, opts: { dealId?: string |
   if (running.has(key)) return "running";
   if (!opts.force) {
     if ((backoff.get(key) || 0) > Date.now()) return "waiting";
-    if (isFresh(await latestPrecheck(companyId, entityId).catch(() => null))) return "fresh";
+    const stored = await latestPrecheck(companyId, entityId).catch(() => null);
+    if (isFresh(stored)) return "fresh";
+    if (stored && precheckUnfinished(stored.result) && (await runsToday(companyId, entityId)) >= PRECHECK_AUTO_RUNS_A_DAY) return "waiting";
   }
   const { claimDailyRead } = await import("./requirement-feeds");
   if (!(await claimDailyRead(USAGE_KEY, precheckDailyCap()))) return "cap";
@@ -146,9 +165,15 @@ export async function startPrecheck(companyId: string, opts: { dealId?: string |
 
 // ── Companies House ─────────────────────────────────────────────────────────
 
+// The register is read inside withChPatience (runPrecheck): a call waits up
+// to a few minutes for its turn in the Companies House queue, and the request
+// itself has 20 seconds.
+const CH_PATIENCE_MS = 5 * 60_000;
+const chPatient = (ms: number) => CH_PATIENCE_MS + ms;
+
 async function ch(path: string): Promise<any> {
   const { chFetch } = await import("./companies-house");
-  return withTimeout(chFetch(path), 20_000, "Companies House");
+  return chFetch(path, { timeoutMs: 20_000 });
 }
 // A resource Companies House answers 404 for when there is nothing to show
 // (no PSC statements, no exemptions).
@@ -164,10 +189,12 @@ async function chOrEmpty(path: string): Promise<any> {
 async function downloadChDocument(docId: string): Promise<Buffer> {
   const key = process.env.COMPANIES_HOUSE_API_KEY;
   if (!key) throw new Error("no Companies House key");
-  const res = await withTimeout(fetch(`${DOC_API_BASE}/document/${encodeURIComponent(docId)}/content`, {
+  const { chGate, chMaxWait } = await import("./companies-house-gate");
+  const res = await chGate.request(() => fetch(`${DOC_API_BASE}/document/${encodeURIComponent(docId)}/content`, {
     headers: { Authorization: `Basic ${Buffer.from(key + ":").toString("base64")}`, Accept: "application/pdf" },
     redirect: "follow",
-  }), 45_000, "The Companies House document");
+    signal: AbortSignal.timeout(45_000),
+  }), chMaxWait());
   if (!res.ok) throw new Error(`Companies House answered ${res.status}`);
   const length = Number(res.headers.get("content-length") || 0);
   if (length > MAX_PDF_BYTES) throw new Error("the file is over 25MB");
@@ -241,7 +268,7 @@ async function documentsFor(n: string, companyId: string, entityId: string | nul
   } else {
     try {
       const { fetchLatestAccountsForCompany } = await import("./ch-accounts");
-      const outcome = await withTimeout(fetchLatestAccountsForCompany(companyId), 60_000, "The accounts download");
+      const outcome = await withTimeout(fetchLatestAccountsForCompany(companyId), chPatient(60_000), "The accounts download");
       if (outcome.status === "skipped") {
         documents.push({ kind: "accounts", title: "Latest accounts", filedOn: null, madeUpTo: null, kycDocumentId: null, error: outcome.reason.replace(/_/g, " ") });
       } else {
@@ -368,7 +395,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
   let peopleUpChain: Array<{ name: string; foundAt: string; controls: string[] }> = [];
   try {
     const { discoverUltimateParent } = await import("./companies-house");
-    const walk = await withTimeout(discoverUltimateParent(n), 45_000, "The ownership chain");
+    const walk = await withTimeout(discoverUltimateParent(n), chPatient(45_000), "The ownership chain");
     chain = walk.chain.map(l => ({ name: clean(l.name, 160), number: padNumber(clean(l.number, 20)), individuals: l.individualPscs.length, companies: l.corporatePscs.length }));
     peopleUpChain = walk.ubos.filter(u => u.depth > 0).slice(0, 12).map(u => ({ name: clean(u.name, 160), foundAt: clean(u.foundAt, 160), controls: (u.controls || []).map(c => clean(c, 120)) }));
   } catch (e: any) {
@@ -407,7 +434,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
   let covenant: NonNullable<KycPrecheckResult["companiesHouse"]>["covenant"] = null;
   try {
     const { getCovenantReport } = await import("./covenant-engine");
-    const report = await withTimeout(getCovenantReport(n), 60_000, "The covenant report");
+    const report = await withTimeout(getCovenantReport(n), chPatient(60_000), "The covenant report");
     covenant = {
       grade: report.grade || null, score: Number.isFinite(report.score) ? report.score : null,
       flags: (report.flags || []).filter(f => f.level !== "info").slice(0, 8).map(f => ({ level: f.level, label: clean(f.label, 160), detail: f.detail ? clean(f.detail, 200) : null })),
@@ -554,6 +581,17 @@ async function screenComplyAdvantage(subjects: Subject[]): Promise<KycPrecheckRe
       types: [...new Set((r.matches || []).map(m => String(m.matchType || "")).filter(Boolean))],
       detail: r.error ? clean(r.error, 160)
         : r.setAside ? `${r.setAside} matched profile${r.setAside === 1 ? "" : "s"} set aside: a different date of birth` : null,
+      // What each matched profile is, so the deal's AML box can show it
+      // (Woody, 19 November 2026: "We also need to see the detail of the red flag").
+      matches: (r.matches || []).slice(0, 8).map(m => {
+        const d: any = m.details || {};
+        return {
+          name: clean(m.name, 200), kind: clean(m.matchType, 40), source: m.listName ? clean(m.listName, 160) : null,
+          score: typeof m.score === "number" ? m.score : null, profileId: d.profileId ? clean(d.profileId, 80) : null,
+          media: (Array.isArray(d.media) ? d.media : []).slice(0, 3).map((x: any) => ({ title: clean(x?.title, 200), url: x?.url ? clean(x.url, 500) : null, date: x?.date ? clean(x.date, 20) : null })),
+        };
+      }),
+      customerId: r.customerId ? clean(r.customerId, 120) : null,
     }));
     if (lines.length && lines.every(l => l.status === "error")) {
       const message = lines[0].detail || "every screen failed";
@@ -605,12 +643,13 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   // A brand with no number: the brand-page lookup finds it (its website,
   // then the exact name), at most once a week. Never for the company that
   // signs: that lookup writes to the brand.
+  const { withChPatience } = await import("./companies-house-gate");
   if (!number && !entity && subjectKind === "company" && process.env.COMPANIES_HOUSE_API_KEY) {
     const lastLooked = company.kyc_checked_at ? Date.parse(company.kyc_checked_at) : 0;
     if (!lastLooked || lastLooked < Date.now() - 7 * 86400000) {
       try {
         const { performAutoKyc } = await import("./companies-house");
-        const found = await withTimeout(performAutoKyc(companyId, { userId: opts.userId || null }), 120_000, "Finding the company at Companies House");
+        const found = await withChPatience(CH_PATIENCE_MS, () => withTimeout(performAutoKyc(companyId, { userId: opts.userId || null }), chPatient(120_000), "Finding the company at Companies House"));
         number = clean(found.companyNumber, 20);
         if (!number && found.message) notAtCompaniesHouse = `Not found at Companies House: ${clean(found.message, 200)}`;
       } catch (e: any) {
@@ -628,7 +667,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   let raw: { profile: any; officers: any[]; pscs: any[] } | null = null;
   if (number) {
     try {
-      const read = await readCompaniesHouse(number, companyId, entityId, dealId, errors);
+      const read = await withChPatience(CH_PATIENCE_MS, () => readCompaniesHouse(number, companyId, entityId, dealId, errors));
       companiesHouse = read.data;
       raw = read.raw;
     } catch (e: any) {
@@ -718,7 +757,8 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   ].filter(Boolean).join("; ");
   await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'precheck', $2, $3, $4, $5)`,
     [companyId, opts.userId || "ChatBGP", `BGP's checks before asking${entity ? ` on ${partyName}` : ""}: ${summary}`, entityId ? "trading_entity" : null, entityId]).catch(() => {});
-  backoff.delete(partyKey(companyId, entityId));
+  if (precheckUnfinished(result)) backoff.set(partyKey(companyId, entityId), Date.now() + PRECHECK_RETRY_MINUTES * 60_000);
+  else backoff.delete(partyKey(companyId, entityId));
   console.log(`[kyc-prechecks] ${partyName}: ${summary}`);
   return { id: Number(inserted.id), ranAt: new Date(inserted.conducted_at || result.ranAt).toISOString(), result };
 }
@@ -726,21 +766,35 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
 // ── What the deal's screens get ─────────────────────────────────────────────
 
 export interface PartyPrecheckView {
-  state: "done" | "running" | "none" | "cap" | "off" | "waiting";
+  // needs_company: a company party with no company that signs set; no check
+  // runs until there is one (Woody, 19 November 2026: "We must have the
+  // company taking the lease or who owns the property to be able to do a check").
+  state: "done" | "running" | "none" | "cap" | "off" | "waiting" | "needs_company";
   startedAt: string | null;
   ranAt: string | null;
   lines: PrecheckCardLine[];
   errors: string[];
+  // What the register says about the company checked.
+  company: PrecheckCompany | null;
+  // Why the last check did not finish (Companies House busy), and when a
+  // view may run it again.
+  unfinished: string | null;
+  retryAt: string | null;
 }
 
 // The deal's parties: each one's latest pre-check (on the company that signs
 // for it when the deal names one), and a run started for any party with none
-// from the last 30 days (when `autoStart`). Keyed by the party's brand.
-export async function dealPrechecks(dealId: string, parties: Array<{ companyId: string; entityId?: string | null }>, opts: { userId: string | null; autoStart: boolean }): Promise<Record<string, PartyPrecheckView>> {
+// from the last 30 days (when `autoStart`). Keyed by the party's brand. A
+// company party with no company that signs (`needsCompany`) is not checked.
+export async function dealPrechecks(dealId: string, parties: Array<{ companyId: string; entityId?: string | null; needsCompany?: boolean }>, opts: { userId: string | null; autoStart: boolean }): Promise<Record<string, PartyPrecheckView>> {
   const out: Record<string, PartyPrecheckView> = {};
-  for (const { companyId, entityId: givenEntity } of parties) {
+  for (const { companyId, entityId: givenEntity, needsCompany } of parties) {
     if (!companyId || out[companyId]) continue;
     const entityId = givenEntity || null;
+    if (needsCompany && !entityId) {
+      out[companyId] = { state: "needs_company", startedAt: null, ranAt: null, lines: [], errors: [], company: null, unfinished: null, retryAt: null };
+      continue;
+    }
     const key = partyKey(companyId, entityId);
     let stored = await latestPrecheck(companyId, entityId).catch(() => null);
     let state: PartyPrecheckView["state"] = stored ? "done" : "none";
@@ -751,12 +805,17 @@ export async function dealPrechecks(dealId: string, parties: Array<{ companyId: 
     } else if (running.has(key)) {
       state = "running";
     }
+    const unfinished = stored ? precheckUnfinished(stored.result) : null;
+    const retryAt = unfinished && stored ? new Date(Math.max(Date.parse(stored.ranAt) + PRECHECK_RETRY_MINUTES * 60_000, backoff.get(key) || 0)).toISOString() : null;
     out[companyId] = {
       state,
       startedAt: running.get(key)?.startedAt || null,
       ranAt: stored?.ranAt || null,
       lines: stored ? precheckCardLines(stored.result) : [],
       errors: stored?.result.errors.slice(0, 6) || [],
+      company: precheckCompany(stored?.result || null),
+      unfinished,
+      retryAt,
     };
   }
   return out;
@@ -787,8 +846,10 @@ router.post("/api/kyc/deal/:id/prechecks", async (req: Request, res: Response) =
     const wanted = typeof req.body?.companyId === "string" ? [req.body.companyId] : parties;
     if (wanted.some(id => !parties.includes(id))) return res.status(400).json({ message: "That company is not a party to this deal" });
     const signs = await (await import("./deal-parties")).dealPartyCompanies(pool, d.id);
+    const individuals = new Set((await pool.query(`SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) = 'individual'`, [wanted])).rows.map((r: any) => String(r.id)));
     const started: Record<string, PrecheckStart> = {};
-    for (const id of wanted) started[id] = await startPrecheck(id, { dealId: d.id, userId, force: true, entityId: signs[id] || null });
+    // A company party with no company that signs is not checked: set it first.
+    for (const id of wanted) started[id] = !signs[id] && !individuals.has(id) ? "needs_company" : await startPrecheck(id, { dealId: d.id, userId, force: true, entityId: signs[id] || null });
     res.json({ started });
   } catch (err: any) {
     res.status(500).json({ message: err?.message || "Could not start the checks" });

@@ -33,25 +33,28 @@ test("every party's API field and column name the same thing", () => {
   assert.ok(!isDealPartyRole("__proto__"));
 });
 
-test("what stops the checks starting: a company they can read, a person, an email", () => {
+test("what stops the checks starting: the company that signs, a person, an email", () => {
   const person = { name: "Jane Smith", email: "jane@example.com" };
-  // A brand with no Companies House record needs the company that signs.
-  assert.deepEqual(partyGaps({ kind: "company", brandName: "The Dulwich Bakery", brandHasNumber: false, companySet: false, person }).map(g => g.key), ["company"]);
-  assert.match(partyGaps({ kind: "company", brandName: "The Dulwich Bakery", brandHasNumber: false, companySet: false, person })[0].words, /The Dulwich Bakery/);
-  // The brand's own record is enough until a company is set; a set company is enough.
-  assert.deepEqual(partyGaps({ kind: "company", brandName: "Pret", brandHasNumber: true, companySet: false, person }), []);
-  assert.deepEqual(partyGaps({ kind: "company", brandName: "X", brandHasNumber: false, companySet: true, person }), []);
+  // A company party always needs the company that signs set on the deal:
+  // the brand's own Companies House record is never assumed (Woody,
+  // 19 November 2026: "We must have the company taking the lease or who
+  // owns the property to be able to do a check").
+  assert.deepEqual(partyGaps({ role: "tenant", kind: "company", brandName: "The Dulwich Bakery", companySet: false, person }).map(g => g.key), ["company"]);
+  assert.match(partyGaps({ role: "tenant", kind: "company", brandName: "The Dulwich Bakery", companySet: false, person })[0].words, /^The company taking the lease: the checks are about it, not The Dulwich Bakery/);
+  assert.match(partyGaps({ role: "landlord", kind: "company", brandName: "Hammerson", companySet: false, person })[0].words, /^The company that owns the property/);
+  assert.equal(partyGaps({ role: "purchaser", kind: "company", brandName: "X", companySet: false, person })[0].short, "company buying");
+  assert.deepEqual(partyGaps({ role: "tenant", kind: "company", brandName: "X", companySet: true, person }), []);
   // A private individual has no company to pick.
-  assert.deepEqual(partyGaps({ kind: "individual", brandName: "J Bloggs", brandHasNumber: false, companySet: false, person }), []);
+  assert.deepEqual(partyGaps({ role: "tenant", kind: "individual", brandName: "J Bloggs", companySet: false, person }), []);
   // Nobody to ask, or nobody with an email.
-  assert.deepEqual(partyGaps({ kind: "company", brandName: "X", brandHasNumber: true, companySet: false, person: null }).map(g => g.key), ["person"]);
-  const noEmail = partyGaps({ kind: "company", brandName: "X", brandHasNumber: true, companySet: false, person: { name: "Sam", email: " " } });
+  assert.deepEqual(partyGaps({ role: "tenant", kind: "company", brandName: "X", companySet: true, person: null }).map(g => g.key), ["person"]);
+  const noEmail = partyGaps({ role: "tenant", kind: "company", brandName: "X", companySet: true, person: { name: "Sam", email: " " } });
   assert.deepEqual(noEmail.map(g => g.key), ["email"]);
   assert.match(noEmail[0].words, /Sam/);
   // In the order to fill them, each with a few words for a narrow column.
-  const both = partyGaps({ kind: "company", brandName: "X", brandHasNumber: false, companySet: false, person: null });
+  const both = partyGaps({ role: "landlord", kind: "company", brandName: "X", companySet: false, person: null });
   assert.deepEqual(both.map(g => g.key), ["company", "person"]);
-  assert.deepEqual(both.map(g => g.short), ["the company that signs", "who to ask"]);
+  assert.deepEqual(both.map(g => g.short), ["company that owns the property", "who to ask"]);
   assert.equal(noEmail[0].short, "their email");
 });
 

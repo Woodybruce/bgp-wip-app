@@ -18,6 +18,7 @@
 import { Router, type Request, type Response } from "express";
 import {
   DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, companyOffer, isDealPartyRole, newPartyPerson, partyGaps, personFill,
+  sameCompaniesHouseNumber,
   type DealPartyCompany, type DealPartyPerson, type DealPartyRole, type DealPartyView,
 } from "@shared/deal-parties";
 
@@ -99,7 +100,9 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
   const brandIds = [...new Set(roles.map(r => String(deal[DEAL_PARTY_COLUMNS[r].brand])))];
   if (!brandIds.length) return { deal: { id: deal.id, name: deal.name }, parties: [] };
   const [brands, companies, people] = await Promise.all([
-    db.query(`SELECT id, name, companies_house_number, aml_subject_type FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds]),
+    db.query(`SELECT id, name, companies_house_number, aml_subject_type,
+                     COALESCE(NULLIF(companies_house_data->'profile'->>'companyName', ''), NULLIF(companies_house_data->>'company_name', ''), NULLIF(uk_entity_name, '')) AS legal_name
+                FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds]),
     db.query(`SELECT id, parent_company_id, name, companies_house_number, is_default FROM crm_trading_entities
                WHERE parent_company_id = ANY($1::varchar[]) ORDER BY is_default DESC, lower(name)`, [brandIds]),
     db.query(`SELECT id, company_id, name, email, phone_mobile, phone, role FROM (
@@ -128,16 +131,20 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
     const person = setPerson ? { ...personOf(setPerson), from: "party" as const }
       : clientPerson ? { ...personOf(clientPerson), from: "client" as const } : null;
     const kind = String(brandRow.aml_subject_type || "").toLowerCase() === "individual" ? "individual" as const : "company" as const;
+    const brandNumber = text(brandRow.companies_house_number);
+    const brandOwn = kind === "company" && !company && brandNumber && !filed.some(c => sameCompaniesHouseNumber(c.companiesHouseNumber, brandNumber))
+      ? { name: text(brandRow.legal_name) || text(brandRow.name), number: brandNumber } : null;
     parties.push({
       role, label: DEAL_PARTY_LABEL[role],
       brand: { id: String(brandRow.id), name: text(brandRow.name), companiesHouseNumber: text(brandRow.companies_house_number) || null, kind },
       company,
       offer: company ? null : companyOffer(filed, role === "tenant" ? lease : null),
+      brandOwn,
       companies: filed,
       xero: text(deal[col.xeroId]) ? { contactId: String(deal[col.xeroId]), name: text(deal[col.xeroName]) || null } : null,
       person,
       people: people.rows.filter((p: any) => p.company_id === brandRow.id).map(personOf),
-      gaps: partyGaps({ kind, brandName: brandRow.name, brandHasNumber: !!text(brandRow.companies_house_number), companySet: !!company, person }),
+      gaps: partyGaps({ role, kind, brandName: brandRow.name, companySet: !!company, person }),
     });
   }
   return { deal: { id: deal.id, name: deal.name }, parties };
