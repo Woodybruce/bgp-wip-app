@@ -676,8 +676,25 @@ property chips (finding 9) are gone; the board's "+N more" opens the full
 list and "+ brief" shows without hovering (finding 8); the Brand CRM chip
 kept its wording, with one new state for a size and a region with no use
 ("Size fits, in their area, use not matched"); BGP staff get the units to
-fill in. CLAUDE.md, "One fit rule", has the detail. The board feed, the
-panel and the new layout are still to come.
+fill in. CLAUDE.md, "One fit rule", has the detail.
+
+**Built later on 19 November 2026** (decisions 1, 3, 4 and 6, taken as the
+recommendations): steps 2 (the feed), 3 and 4. The board is one row per
+brand from one feed (`GET /api/crm/requirements-board`), opening on Open
+(BGP's own, then market listings newest first), with BGP's own, Market
+listings, Older (which now also holds market listings unseen for six
+months), Suggestions, In the news and Closed as pills and the rest in one
+Filters box. A row is brand, wants, state, best fit with why, agent, BGP
+owner, Expansion score and last contact. Clicking a row, or any link
+carrying `?requirementId=`, opens the requirement panel: what it wants (with
+its linked deal), who, every unit that fits with Add as target and Want at
+this scheme, the brand's cards, the conversation and the CRM plan. The
+pickers, In the news, recent viewings and the fits load only when they are
+used. The "Needs confirming" filter takes over the old To confirm list's
+reconfirming role, and the digest's link opens it. Checked in a browser
+against a local copy (staff on a computer and a phone, the Landsec client).
+Still to come: step 5 (links in), step 6 (one meaning of live), group owners
+(decision 5) and market listings on the brand page (decision 7).
 
 Each step updates `server/chatbgp-app-map.ts` and the requirements section of
 CLAUDE.md where it changes what a screen shows.

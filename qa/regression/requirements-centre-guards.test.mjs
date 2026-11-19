@@ -145,8 +145,15 @@ test('the page keeps staff tools from client logins and has no Wipe & resync', (
     assert.ok(at > 0, `${component} is not on the page`);
     assert.match(page.slice(Math.max(0, at - 1000), at), /canUseCentre/, `${component} is not behind canUseCentre`);
   }
-  for (const id of ['requirements-list-', 'requirements-scope-', 'button-still-live-', 'button-evidence-', 'button-requirements-health', 'requirements-suggestions-waiting'])
+  for (const id of ['requirements-list-', 'requirements-scope-', 'button-requirements-health', 'requirements-suggestions-waiting'])
     assert.ok(page.includes(id), `missing data-testid ${id}`);
+  // Since 19 November 2026 the rows are their own component: Still live and
+  // the evidence drawer are there, behind canUseCentre.
+  const rows = source('client/src/components/requirements-board/board-rows.tsx');
+  for (const id of ['button-still-live-', 'button-evidence-']) assert.ok(rows.includes(id), `missing data-testid ${id}`);
+  assert.match(rows, /\{canUseCentre && onConfirm && live && live\.state !== "closed" && \(/);
+  assert.match(rows, /\{canUseCentre && onEvidence && \(/);
+  assert.match(page, /canUseCentre=\{canUseCentre\}/);
 });
 
 test("ChatBGP's app map describes the centre and how a phone user reaches it", () => {

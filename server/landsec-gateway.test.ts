@@ -480,6 +480,7 @@ test("a joint agent is refused the requirements, their writes and every route th
   const refused: Array<[string, string]> = [
     ["GET", "/api/crm/requirements-leasing"], ["GET", "/api/crm/requirements-leasing/"], ["GET", "/API/CRM/Requirements-Leasing"],
     ["GET", `/api/crm/requirements-leasing/${X}`], ["GET", "/api/crm/requirements-leasing/matches"],
+    ["GET", "/api/crm/requirements-board"], ["GET", "/api/crm/requirements-board?x=1"],
     ["POST", "/api/crm/requirements-leasing"], ["PUT", `/api/crm/requirements-leasing/${X}`], ["PATCH", `/api/crm/requirements-leasing/${X}`],
     ["DELETE", `/api/crm/requirements-leasing/${X}`], ["POST", `/api/crm/requirements-leasing/${X}/landlord-pack`],
     ["POST", "/api/crm/requirements-leasing/agent-audit"], ["GET", "/api/crm/requirements-leasing?status=Active"],

@@ -4174,6 +4174,69 @@ In the news loaded only when opened; market listings on the brand page with
 Confirm). Read it before changing the board, the fit rules or a requirement
 link.
 
+**The board, rebuilt (19 November 2026; decisions 1, 3, 4 and 6).**
+- **One feed**: `GET /api/crm/requirements-board` (`loadRequirementsBoard` in
+  `server/requirements-board.ts`, a fixed handful of queries; rules and types
+  in `shared/requirements-board.ts`; tests `server/requirements-board.test.ts`,
+  in `npm test`). **One row per brand** (`groupByBrand`): the brand's strongest
+  requirement by `compareCandidates` (BGP's own before market listings before
+  older, live before to confirm, newest date) with the rest under `others`; a
+  requirement with no brand is a row of its own. Each row carries the wants
+  line (`wantsLine`), its list, the state and date line (staff), the fits
+  (count and best, `requirementFit` over the units on the market), the agent
+  named on the requirement (`agent_contact_id`; never a private-mailbox
+  address), the BGP owners and last contact (staff, the CRM lists' private
+  mailbox rule), and the brand's Expansion score and band
+  (`boardExpansionBand`, the Hunter board's bands, read through
+  `splitSubScores`). `GET /api/crm/requirements-board/:id/fits` lists every
+  fit for the panel. A client login's rows are open or closed (`clientList`),
+  worded by `requirementReason().clientText` with the requirement's own date,
+  with no state, source, listing link, confirmation, owner or contact, and
+  fits on its own units only (scheme limit included). A joint agent is
+  refused (403; `jointAgentApiDenied` covers the path); a login tied to no
+  company gets an empty reply.
+- **Lists** (`boardListOf`, `onPill`, `countPills`): **Open** (where the page
+  opens: BGP's own, then market listings), **BGP's own** (live, to confirm,
+  drafts), **Market listings** (import-only, listed within `MARKET_UNSEEN_DAYS`,
+  183), **Older** (BGP's own background rows, and market listings with no
+  date or unseen for six months: read, never written), **Closed**;
+  **Suggestions** (the tray, with "N of BGP's own requirements need
+  confirming · Show them" under it) and **In the news** are pills of the page,
+  not lists. A client: Open and Closed. `?list=` goes through `LIST_ALIASES`:
+  live and stale open BGP's own (stale with Going stale on), `to_confirm`
+  opens BGP's own with **Needs confirming** on. The digest and the phone
+  alert link to Suggestions while suggestions wait, else `?list=to_confirm`
+  (`requirementsToConfirmPath` in `server/requirement-overlaps.ts`).
+- **Filters** is one popover (`requirements-filters`): Fit your units, Last
+  90 days, Going stale, Needs confirming, Recently viewing, Group, Source,
+  Sort, Clear.
+- **Rows** (`client/src/components/requirements-board/board-rows.tsx`): Brand,
+  Wants, State (Still live / Confirm and the evidence clipboard, behind
+  `canUseCentre`), Fits, Agent, BGP, Expansion, Contact; a client: Brand,
+  Wants, Listed, Fits, Agent, Expansion. Phone: cards, 30 at a time.
+- **The panel** (`client/src/components/requirements-board/requirement-panel.tsx`,
+  loaded lazily): a row or `?requirementId=` opens it (written with
+  replaceState and taken off on close, so every link in the app that carries
+  the id opens it). What it wants (with the deal the requirement is linked
+  to, name and stage only; a client is sent only a deal it may open,
+  `isDealInScope`), Who, Where it fits (Add as target through
+  the unit's Targeting Brief routes; Want at this scheme, staff, through
+  `POST /api/brand-crm/targets`), The brand (Expansion, `EstatePipelineCards`,
+  `SchemePlanCard` for staff or the Landsec view), Conversation and CRM plan
+  (staff), Other requirements. Edit opens the existing form over the panel;
+  Delete asks first.
+- **Loaded only when needed** (decision 6): the brand, contact and deal lists
+  only for the form or Suggestions; In the news only on its pill; recent
+  viewings only for that filter or the Filters box; a requirement's fits only
+  in its panel. The board no longer calls `GET /api/crm/requirements-leasing/matches`
+  or `GET /api/requirements/matches/:id`: both stay for a cached client and
+  keep the one fit rule.
+- Checked in a browser against a local copy on 19 November 2026 (staff on a
+  computer and an iPhone profile, the Landsec client login). Not built yet:
+  group owners (decision 5, needs the four names), market listings on the
+  brand page with Confirm (decision 7), and one meaning of live on the
+  consumers that still read Active.
+
 **One fit rule (Woody, 2026-11-19, decision 2: "size and use or place").**
 `requirementFit` in `shared/requirement-fit.ts` is the only judge of whether
 a leasing requirement fits a unit: the unit's size in the requirement's
@@ -4205,12 +4268,11 @@ then the smaller unit. Do not write a second fit test on a screen.
 - **Each fit opens the unit and says why**: the Fits cell links each unit to
   its schedule row on the property page (`propertyUnitHref` with the
   `scheduleRowId` the route reads by stored ties), else its tracker row
-  (`trackerUnitHref`), with the reason under it; "+ brief" is no longer
-  hover-only; **+N more** opens the Match dialog for staff and, for a client
-  login (no Match dialog: `/api/requirements/` is on no client gateway list,
-  so its button is staff only now), shows the rest in place (a client is
-  sent up to 20 fits a requirement, staff 5). Both dialogs show each fit's
-  reason, link the unit or the requirement, and say why nothing fits.
+  (`trackerUnitHref`), with the reason under it. Since the board was rebuilt
+  the cell shows the best fit, its reason and how many fit, and the
+  requirement's panel lists every fit with Add as target (above). The
+  Letting Tracker's Find matching requirements shows each requirement's
+  reason, opens its panel, and says why nothing fits.
 - **The property chips under Map Locations are gone** (finding 9: every CRM
   property whose name or address held a typed place), and with them the
   board's download of the whole property list.
@@ -4573,13 +4635,13 @@ nothing new" under NOT built.
   the intake as press-reported (`confirmed_how = 'press'`, source label
   "News"), which the expansion score does not count as BGP's own. The press
   headline classifier (`classifySignal`) does not ask the extra question.
-- **The page** (`client/src/pages/requirements.tsx`, Leasing view): one pill
-  row of lists in place of the Active / Past / Archived tables. Every row is
-  on exactly one list, from `requirementListKey` in the live rule: To confirm
-  (the suggestions tray, then drafts), Live, Market listings (unconfirmed imports), Older (BGP's
-  own background rows; shown when there are some), Closed. Going stale is the
-  part of Live within 14 days of lapsing (`requirementGoingStale`); In the
-  news is the Expanding list; Everyone / Mine filters on the BGP owner. The
+- **The page** (`client/src/pages/requirements.tsx`, Leasing view; the board
+  was rebuilt on 19 November 2026, see "The board, rebuilt" above, which
+  supersedes the lists named here). Every row is on exactly one list, from
+  `boardListOf` (`requirementListKey` in the live rule is the per-requirement
+  reading it builds on). Going stale is the part of Live within 14 days of
+  lapsing (`requirementGoingStale`); In the news is the Expanding list;
+  Everyone / Mine filters on the BGP owner. The
   owner is the LIST column `bgp_contact_user_ids` (the single id follows it:
   `requirementOwnerColumns` in the live rule, `setOwner` in the intake). Still
   live / Confirm call the intake's `stillLive`: one tap on a row a person has
@@ -4594,13 +4656,13 @@ nothing new" under NOT built.
   17 November 2026 it has Add requirement and Edit (`clientForm`, above).
   Never show a client the state or who confirmed.
 - **Tray, evidence drawer, news Dismiss** (`client/src/components/requirement-centre.tsx`,
-  mounted only when `canUseCentre`): `SuggestionTray` sits at the top of To
-  confirm and is the ONE place suggestions are answered (do not add a second
-  list elsewhere). Its answers are the intake routes: confirm (the detected
-  fields are checked in a form first; one requirement on file = one tap),
-  attach, brand, dismiss, satisfied, not-live. The To confirm pill counts
-  requirement rows plus suggestions; the search narrows the tray and the
-  other filters hide it. `RequirementEvidenceDrawer` reads
+  mounted only when `canUseCentre`): `SuggestionTray` is the Suggestions pill
+  (since 19 November 2026; it was the top of To confirm) and is the ONE place
+  suggestions are answered (do not add a second list elsewhere). Its answers
+  are the intake routes: confirm (the detected fields are checked in a form
+  first; one requirement on file = one tap), attach, brand, dismiss,
+  satisfied, not-live. With none waiting it says so. The search narrows the
+  tray and the other filters hide it. `RequirementEvidenceDrawer` reads
   `GET /api/requirement-centre/requirements/:id/evidence`, which now also
   returns the market listing as a line (read from the row the import stamps;
   added after `howSure` is worked out, so it never changes the label).

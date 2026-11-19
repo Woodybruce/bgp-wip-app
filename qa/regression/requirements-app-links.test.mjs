@@ -19,7 +19,11 @@ test('the Requirements page opens a linked requirement and offers a client the c
   const table = find('client/src/pages/requirements.tsx', n => ts.isFunctionDeclaration(n) && n.name?.text === 'LeasingTable');
   assert.match(table, /requirementId\?: string \| null \}\)/);
   assert.match(table, /const linked = items\.find\(item => item\.id === requirementId\);/);
-  assert.match(table, /\} else if \(clientShape\) \{\s*setSearch\(linked\.name \|\| ""\);\s*\} else \{\s*setEditItem\(linked\);/);
+  // Since 19 November 2026 the link opens the requirement's panel, for every login.
+  assert.match(table, /\} else \{\s*setPanelId\(linked\.id\);\s*\}/);
+  // Opening and closing the panel keeps ?requirementId= in the address, replacing it.
+  assert.match(table, /if \(id\) url\.searchParams\.set\("requirementId", id\); else url\.searchParams\.delete\("requirementId"\);/);
+  assert.match(table, /window\.history\.replaceState\(/);
   assert.ok(!table.includes('createOpen && !clientShape'), 'the create form is no longer held back from a client login');
   assert.match(table, /\{createOpen && !!reqUser && \(/);
   assert.match(page, /const requirementIdParam = urlParams\.get\("requirementId"\);/);

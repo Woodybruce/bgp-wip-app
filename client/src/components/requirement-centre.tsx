@@ -501,7 +501,13 @@ export function SuggestionTray({ suggestions, totalOpen, searching, isLoading, i
     );
   }
   if (isLoading) return <div className="space-y-2" data-testid="requirements-suggestion-tray-loading">{[1, 2].map((i) => <Skeleton key={i} className="h-24" />)}</div>;
-  if (!open.length) return null;
+  if (!open.length) {
+    return (
+      <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground" data-testid="requirements-suggestion-tray-empty">
+        {searching ? "No suggestions match the search." : "Nothing is waiting for an answer. Suggestions from chat, viewings, deals, meetings, emails and the news arrive here."}
+      </p>
+    );
+  }
 
   const btn = isMobile ? "h-11 w-full justify-center text-sm" : "h-8 text-xs";
   const count = (n: number) => <span className="font-mono tabular-nums">{n.toLocaleString("en-GB")}</span>;

@@ -231,21 +231,25 @@ test('every screen that says a requirement fits a unit asks requirementFit', () 
   assert.match(plan, /chip\.requirementId = null; chip\.range = null; chip\.why = null;/);
 });
 
-test('the board: each fit opens the unit and says why; the property chips are gone; the Match dialog is BGP\'s', () => {
+// Since 19 November 2026 the board's rows come from its own feed
+// (server/requirements-board.ts) and a row opens the requirement panel, whose
+// "Where it fits" lists every unit; the old Fits column and Match dialog went.
+test('the board: each fit opens the unit and says why; the property chips are gone; the panel lists every fit', () => {
   const page = read('client/src/pages/requirements.tsx');
-  assert.doesNotMatch(page, /propertyMatchMap|req-prop-match-/);
-  assert.match(page, /const href = propertyUnitHref\(m\.propertyId, m\.scheduleRowId\) \|\| trackerUnitHref\(m\.unitId, m\.propertyId, unitViewer\)/);
-  assert.match(page, /data-testid=\{`fit-why-\$\{item\.id\}-\$\{m\.unitId\}`\}/);
-  assert.match(page, /data-testid=\{`fits-more-\$\{item\.id\}`\}/);
-  // "+ brief" is no longer shown on hover only (nobody can hover on a phone).
-  assert.doesNotMatch(page, /opacity-0 group-hover\/fit:opacity-100/);
-  // The Match dialog's route is on no client gateway list, so the button is staff only.
-  assert.match(page, /onMatch=\{clientShape \? undefined : setMatchItem\}/);
-  assert.match(page, /\{!clientShape && \(\s+<button[\s\S]{0,300}data-testid=\{`mobile-match-\$\{item\.id\}`\}/);
-  const dialog = find('client/src/pages/requirements.tsx', n => ts.isFunctionDeclaration(n) && n.name?.text === 'RequirementMatchesDialog');
-  assert.match(dialog, /unit\.fit_why/);
-  assert.match(dialog, /data-testid="match-units-empty"/);
-  assert.match(dialog, /propertyUnitHref\(unit\.property_id, unit\.schedule_row_id\)/);
+  assert.doesNotMatch(page, /propertyMatchMap|req-prop-match-|RequirementMatchesDialog|requirements-leasing\/matches/);
+  const rows = read('client/src/components/requirements-board/board-rows.tsx');
+  assert.match(rows, /return propertyUnitHref\(fit\.propertyId, fit\.scheduleRowId\) \|\| trackerUnitHref\(fit\.unitId, fit\.propertyId, viewer\)/);
+  assert.match(rows, /<Link href=\{fitHref\(best, unitViewer\)\}/);
+  assert.match(rows, /title=\{best\.why\}>\{best\.why\}</);
+  const panel = read('client/src/components/requirements-board/requirement-panel.tsx');
+  assert.match(panel, /`\/api\/crm\/requirements-board\/\$\{encodeURIComponent\(id\)\}\/fits`/);
+  assert.match(panel, /<Link href=\{fitHref\(fit, unitViewer\)\}/);
+  assert.match(panel, /\{fit\.why\}/);
+  // Add as target is a button on every fit, never shown on hover only.
+  assert.match(panel, /data-testid=\{`requirement-panel-add-target-\$\{fit\.unitId\}`\}/);
+  assert.doesNotMatch(panel + rows, /opacity-0 group-hover/);
+  // Want at this scheme (the Brand CRM's Wanted line) is BGP staff's.
+  assert.match(panel, /\{staff && row\.brandId && fit\.propertyId && \(/);
   const tracker = find('client/src/pages/available-units.tsx', n => ts.isFunctionDeclaration(n) && n.name?.text === 'UnitMatchesDialog');
   assert.match(tracker, /req\.fit_why/);
   assert.match(tracker, /href=\{`\/requirements\?requirementId=\$\{encodeURIComponent\(req\.id\)\}`\}/);
@@ -283,5 +287,5 @@ test('the units to fill in: BGP staff only, read from the units on the market, a
     ],
   });
   // The board shows the card to BGP staff only.
-  assert.match(read('client/src/pages/requirements.tsx'), /\{canUseCentre && activeList !== "news" && <UnitFitGapsCard navigate=\{navigate\} \/>\}/);
+  assert.match(read('client/src/pages/requirements.tsx'), /\{canUseCentre && onBoard && <UnitFitGapsCard navigate=\{navigate\} \/>\}/);
 });

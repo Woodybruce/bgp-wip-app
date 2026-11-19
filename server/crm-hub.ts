@@ -72,7 +72,7 @@ const OPEN_DEAL = `lower(trim(COALESCE(d.status, ''))) NOT IN (${closedStatusSql
 // tests are the ones /api/interactions/summary uses (a last contact is on or
 // before now; what is ahead is a meeting dated ahead), and nothing the
 // private mailbox is on is read.
-const PRIVATE_PATTERN = (() => {
+export const PRIVATE_PATTERN = (() => {
   const [local, domain] = PRIVATE_MAILBOX.split("@");
   const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return `(^|[^a-z0-9._%+-])${escape(local)}(\\+[^@[:space:]]+)?@${escape(domain)}`;

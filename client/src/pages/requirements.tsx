@@ -44,7 +44,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -63,7 +63,8 @@ import { useIsLandsecView } from "@/components/landsec/deal-clock";
 import { LETTING_STATUS_LABELS } from "@shared/letting-rules";
 import { legacyToCode } from "@shared/deal-status";
 import { Link } from "wouter";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, SlidersHorizontal } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   AlertDialog,
@@ -78,8 +79,12 @@ import {
 import { FilterDropdown } from "@/components/wip-filter-dropdown";
 import { SuggestionTray, RequirementEvidenceDrawer, UnitFitGapsCard, type SuggestionList } from "@/components/requirement-centre";
 import { PipnetCatchupDialog } from "@/components/pipnet-catchup";
+import { BoardRows } from "@/components/requirements-board/board-rows";
+import { BOARD_PILL_LABELS, countPills, onPill, type BoardPill, type BoardResponse, type BoardRow } from "@shared/requirements-board";
+// The requirement panel loads with its brand cards only when it opens.
+const RequirementPanel = lazy(() => import("@/components/requirements-board/requirement-panel"));
 import {
-  requirementLive, requirementGoingStale, requirementDaysLeft, requirementListKey, requirementSourceLabels, formatRequirementDay,
+  requirementLive, requirementGoingStale, formatRequirementDay,
   type RequirementLive,
 } from "@shared/requirement-live";
 
@@ -97,74 +102,38 @@ function parseLocationData(raw: string | null): LocationEntry[] {
 
 // Age of the requirement's own date, for the client login's read-only view
 // (staff rows carry the state and the honest date line instead).
-function FreshBadge({ iso }: { iso: string | null | undefined }) {
-  if (!iso) return null;
-  const t = Date.parse(iso);
-  if (isNaN(t)) return null;
-  const days = Math.max(0, Math.round((Date.now() - t) / 86400000));
-  const label = days === 0 ? "today" : days < 7 ? `${days}d` : days < 60 ? `${Math.round(days / 7)}w` : `${Math.round(days / 30)}mo`;
-  return <span className={`text-[11px] font-mono tabular-nums shrink-0 ${days <= 30 ? "text-foreground" : "text-muted-foreground"}`}>{label}</span>;
-}
-
-// The Requirements page's lists (shared/requirement-live.ts). "stale" is the
-// part of Live that lapses within 14 days; "news" is brands in the press with
-// nothing on our books; "open" is all a client login is shown besides closed.
-type ListKey = "to_confirm" | "live" | "stale" | "news" | "market" | "older" | "closed" | "open";
-const LIST_LABELS: Record<ListKey, string> = {
-  to_confirm: "To confirm", live: "Live", stale: "Going stale", news: "In the news",
-  market: "Market listings", older: "Older", closed: "Closed", open: "Open",
-};
+// The board's tabs (shared/requirements-board.ts; review of 19 November 2026,
+// decisions 3, 4 and 6): Open (BGP's own first, then market listings, newest
+// listing first), BGP's own, Market listings, Older and Closed are lists of
+// rows, one per brand; Suggestions is the tray and In the news the press list,
+// loaded only when opened. A client login has Open and Closed.
+type ListKey = BoardPill | "suggestions" | "news";
+const LIST_LABELS: Record<ListKey, string> = { ...BOARD_PILL_LABELS, suggestions: "Suggestions", news: "In the news" };
 const LIST_NOTES: Record<ListKey, string> = {
-  to_confirm: "Suggestions waiting for an answer, then drafts and requirements nobody at BGP has confirmed in the last 90 days. Confirm the ones that are still live.",
-  live: "Confirmed by a named BGP person in the last 90 days.",
-  stale: "Live, but the confirmation runs out within 14 days.",
-  news: "Brands in the press for opening, raising money or stating a requirement in the last 12 months, with nothing live or to confirm on our books. Press only: nobody at BGP has confirmed it with the brand.",
-  market: "PIPnet and The Requirement List listings nobody at BGP has confirmed. Market listings, not BGP's own requirements.",
-  older: "BGP's own records that are on hold or have gone more than 12 months without a confirmation.",
+  open: "BGP's own requirements first, then market listings, newest listing first.",
+  own: "Requirements BGP made or confirmed: live (confirmed by a named BGP person in the last 90 days) or to confirm.",
+  market: "PIPnet and The Requirement List listings nobody at BGP has confirmed, listed in the last six months. Market listings, not BGP's own requirements.",
+  older: "BGP's own records on hold or more than 12 months without a confirmation, and market listings PIPnet has not listed for six months.",
   closed: "Past and archived requirements.",
-  open: "Requirements that are not past or archived.",
+  suggestions: "Suggestions waiting for an answer, from chat, viewings, deals, meetings, emails and news. A suggestion is not a requirement until a person confirms it.",
+  news: "Brands in the press for opening, raising money or stating a requirement in the last 12 months, with nothing live or to confirm on our books. Press only: nobody at BGP has confirmed it with the brand.",
 };
-type SortKey = "name" | "confirmed_desc" | "confirmed_asc" | "date_desc";
+const CLIENT_OPEN_NOTE = "Requirements that are not past or archived.";
+// Old addresses (?list=) open the tab that now holds their rows.
+const LIST_ALIASES: Record<string, ListKey> = {
+  open: "open", own: "own", live: "own", stale: "own", to_confirm: "own", suggestions: "suggestions",
+  market: "market", older: "older", closed: "closed", news: "news",
+};
+type SortKey = "board" | "name" | "confirmed_desc" | "confirmed_asc" | "date_desc";
 const SORT_LABELS: Record<SortKey, string> = {
-  name: "Name", confirmed_desc: "Last confirmed, newest", confirmed_asc: "Last confirmed, oldest", date_desc: "Newest date",
+  board: "Default", name: "Name", confirmed_desc: "Last confirmed, newest", confirmed_asc: "Last confirmed, oldest", date_desc: "Newest date",
 };
 const STAFF_EMAIL = /@brucegillinghampollard\.com$/i;
+type BgpUser = { id: string; name: string; email: string; role: string; department: string; team: string | null };
 const EXPANDING_KEY = "/api/requirement-centre/expanding?limit=100";
 const SUGGESTIONS_KEY = "/api/requirement-suggestions?status=open&limit=300";
 // How long a one-tap dismissal waits for Undo before it is saved.
 const NEWS_UNDO_MS = 6000;
-
-// Row pill for a requirement's state, in the hues of the page's status map.
-function RequirementStatePill({ live, testId }: { live: RequirementLive; testId?: string }) {
-  const stale = requirementGoingStale(live);
-  // Press-reported and live is outlined, not filled: nobody has recorded speaking to the brand.
-  const press = live.state === "live" && live.pressReported;
-  const cls = live.state === "live" ? (stale ? "bg-amber-500 text-white border-transparent" : press ? "border-emerald-500 text-emerald-700 dark:text-emerald-400" : "bg-emerald-500 text-white border-transparent")
-    : live.state === "to_confirm" ? "border-foreground/40 text-foreground"
-    : live.state === "closed" ? "bg-zinc-400 text-white border-transparent"
-    : "border-border text-muted-foreground";
-  const base = stale ? "Going stale" : live.state === "background" ? (live.importOnly ? "Market listing" : "Older") : live.stateLabel;
-  const label = press ? `${base} · press` : base;
-  return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide leading-none whitespace-nowrap ${cls}`}
-      title={live.why}
-      data-testid={testId}
-      data-press={press ? "true" : undefined}
-    >
-      {label}
-    </span>
-  );
-}
-
-// What the "+ brief" button may say about a requirement: only one a person
-// confirmed within 90 days is called live.
-function requirementBriefReason(live: RequirementLive | undefined): string {
-  if (!live) return "Requirement on file";
-  if (live.state === "live") return live.pressReported ? "Press-reported requirement" : "Live requirement";
-  if (live.importOnly && !live.confirmed) return "Market listing";
-  return "Requirement on file";
-}
 
 // GET /api/requirement-centre/expanding (BGP staff only).
 type ExpandingSignal = { id: string; type: string; headline: string; detail: string | null; date: string | null; source: string | null; link: string | null };
@@ -261,102 +230,30 @@ function ProgressTickCell({
   );
 }
 
-function MapLocationsCell({
-  itemId,
-  locationData,
-  onSave,
-  navigate,
-}: {
-  itemId: string;
-  locationData: string | null;
-  onSave: (data: string | null) => void;
-  navigate: (to: string) => void;
-}) {
-  const [adding, setAdding] = useState(false);
-  const locations = parseLocationData(locationData);
-
-  const addLocation = (addr: { formatted: string; placeId: string; lat?: number; lng?: number } | null) => {
-    if (!addr) return;
-    if (locations.some((l) => l.placeId === addr.placeId)) {
-      setAdding(false);
-      return;
-    }
-    const updated = [...locations, addr];
-    onSave(JSON.stringify(updated));
-    setAdding(false);
-  };
-
-  const removeLocation = (placeId: string) => {
-    const updated = locations.filter((l) => l.placeId !== placeId);
-    onSave(updated.length > 0 ? JSON.stringify(updated) : null);
-  };
-
-  return (
-    <div className="space-y-1">
-      {locations.map((loc) => (
-        <div key={loc.placeId} className="flex items-center gap-1 group">
-          <button
-            className="text-[11px] text-primary hover:underline cursor-pointer flex items-center gap-0.5 truncate max-w-[160px]"
-            onClick={() => {
-              if (loc.lat && loc.lng) {
-                navigate(`/map?lat=${loc.lat}&lng=${loc.lng}&zoom=15`);
-              }
-            }}
-            title={loc.formatted}
-            data-testid={`link-map-location-${itemId}-${loc.placeId}`}
-          >
-            <MapPin className="w-2.5 h-2.5 shrink-0" />
-            <span className="truncate">{loc.formatted.split(",")[0]}</span>
-          </button>
-          <button
-            onClick={() => removeLocation(loc.placeId)}
-            className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity"
-            data-testid={`button-remove-location-${itemId}-${loc.placeId}`}
-          >
-            <X className="w-3 h-3" />
-          </button>
-        </div>
-      ))}
-      {adding ? (
-        <div className="min-w-[200px]">
-          <AddressAutocomplete
-            value={null}
-            onChange={addLocation}
-            placeholder="Search location..."
-          />
-        </div>
-      ) : (
-        <button
-          onClick={() => setAdding(true)}
-          className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-0.5 cursor-pointer"
-          data-testid={`button-add-location-${itemId}`}
-        >
-          <Plus className="w-3 h-3" />
-          {locations.length === 0 ? "Add location" : "Add more"}
-        </button>
-      )}
-    </div>
-  );
-}
-
 function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requirementId }: { teamFilter?: string | null; companyFilter?: string | null; autoCreate?: boolean; initialList?: string | null; requirementId?: string | null }) {
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
-  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [createOpen, setCreateOpen] = useState(!!autoCreate);
   const [editItem, setEditItem] = useState<CrmRequirementsLeasing | null>(null);
   const isMobile = useIsMobile();
   const [deleteItem, setDeleteItem] = useState<CrmRequirementsLeasing | null>(null);
-  const [matchItem, setMatchItem] = useState<CrmRequirementsLeasing | null>(null);
   const [pipnetSyncing, setPipnetSyncing] = useState(false);
   const [freshOnly, setFreshOnly] = useState(false);
   const [recentViewingOnly, setRecentViewingOnly] = useState(false);
   const [fitsOnly, setFitsOnly] = useState(false);
   const [newBrandOpen, setNewBrandOpen] = useState(false);
-  const [discussingId, setDiscussingId] = useState<string | null>(null);
-  // null = open on the first list that has rows. /requirements?list=news (or
-  // to_confirm, live, stale, market, older, closed) opens on that list.
-  const [list, setList] = useState<ListKey | null>(initialList && initialList in LIST_LABELS ? (initialList as ListKey) : null);
+  // The board opens on Open. /requirements?list=news (or own, market, older,
+  // closed, suggestions, and the old live, stale and to_confirm) opens a tab.
+  const [list, setList] = useState<ListKey | null>(initialList ? LIST_ALIASES[initialList] ?? null : null);
+  // "Going stale" (live, the confirmation running out within 14 days) is a filter on BGP's own.
+  const [staleOnly, setStaleOnly] = useState(initialList === "stale");
+  // "Needs confirming" (to confirm: a lapsed confirmation, a draft, BGP's own
+  // row nobody has confirmed) is a filter on BGP's own. The digest's
+  // "requirements need reconfirming" link (?list=to_confirm) opens on it.
+  const [confirmOnly, setConfirmOnly] = useState(initialList === "to_confirm");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  // The requirement whose panel is open, kept in the address as ?requirementId=.
+  const [panelId, setPanelId] = useState<string | null>(null);
   const [mineOnly, setMineOnly] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<Set<string>>(new Set());
   const [sortBy, setSortBy] = useState<SortKey | null>(null);
@@ -408,7 +305,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
         const s = await sres.json();
         if (s.state === "done") {
           const d = s.result || {};
-          queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+          refreshRequirements();
           const parts = [
             `${d.imported ?? 0} imported`,
             d.promoted ? `${d.promoted} added to requirements` : null,
@@ -509,7 +406,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Sync failed");
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      refreshRequirements();
       toast({ title: "TRL synced", description: `${data.discovered} discovered · ${data.imported} imported · ${data.failed} failed` });
     } catch (err: any) {
       toast({ title: "TRL sync failed", description: err.message, variant: "destructive" });
@@ -521,9 +418,14 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
   const { data: items = [], isLoading, error } = useQuery<CrmRequirementsLeasing[]>({
     queryKey: ["/api/crm/requirements-leasing"],
   });
-  // ?requirementId= (ChatBGP receipts, landlord chat, a contact's list) opens
-  // that requirement: its form for BGP staff, a search for it for a client
-  // login (its row has Edit). One not in the list says so.
+  // A change to a requirement refreshes its record and the board's rows.
+  const refreshRequirements = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] }),
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-board"] }),
+  ]);
+  // ?requirementId= (ChatBGP receipts, landlord chat, a contact's list, the
+  // tracker's matching requirements) opens that requirement's panel, for
+  // every login. One not on the board says so.
   const openedRequirementId = useRef<string | null>(null);
   useEffect(() => {
     if (!requirementId) { openedRequirementId.current = null; return; }
@@ -532,12 +434,19 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
     const linked = items.find(item => item.id === requirementId);
     if (!linked) {
       toast({ title: "Requirement unavailable", description: "This requirement was removed or is not available to your account.", variant: "destructive" });
-    } else if (clientShape) {
-      setSearch(linked.name || "");
     } else {
-      setEditItem(linked);
+      setPanelId(linked.id);
     }
-  }, [requirementId, items, isLoading, error, reqUser, clientShape, toast]);
+  }, [requirementId, items, isLoading, error, reqUser, toast]);
+  // Opening or closing the panel replaces the address: it is never a Back step.
+  const showPanel = (id: string | null) => {
+    setPanelId(id);
+    try {
+      const url = new URL(window.location.href);
+      if (id) url.searchParams.set("requirementId", id); else url.searchParams.delete("requirementId");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    } catch { /* the address is a convenience */ }
+  };
   // The one live rule, worked out as the rows are read (shared/requirement-live.ts).
   const liveMap = useMemo(() => {
     const today = new Date();
@@ -545,16 +454,11 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
     items.forEach((i) => map.set(i.id, requirementLive(i, today)));
     return map;
   }, [items]);
-  const listOf = (item: CrmRequirementsLeasing): ListKey => {
-    const live = liveMap.get(item.id)!;
-    if (clientShape) return live.state === "closed" ? "closed" : "open";
-    return requirementListKey(live);
-  };
-
   // "In the news": brands in the press with nothing on our books (BGP staff).
+  // Its read is slow, so it loads only when its tab is opened (decision 6).
   const expandingQuery = useQuery<ExpandingList>({
     queryKey: [EXPANDING_KEY],
-    enabled: canUseCentre,
+    enabled: canUseCentre && list === "news",
     refetchInterval: false,
     staleTime: 5 * 60_000,
   });
@@ -566,7 +470,8 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
     staleTime: 60_000,
   });
 
-  const recentViewingQuery = useQuery<{ viewings: ViewingRecord[] }>({ queryKey: ["/api/leasing-viewings"] });
+  // Viewings load when the filter that reads them is shown or switched on.
+  const recentViewingQuery = useQuery<{ viewings: ViewingRecord[] }>({ queryKey: ["/api/leasing-viewings"], enabled: recentViewingOnly || filtersOpen });
   const recentViewings = useMemo(() => {
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
     const cutoff = new Date(`${today}T12:00:00Z`);
@@ -576,64 +481,10 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
   }, [recentViewingQuery.data]);
   const recentlyViewingBrands = useMemo(() => new Set(recentViewings.map(v => v.companyId)), [recentViewings]);
 
-  // Requirement → vacancy matches ("Fits" column). Server-scoped: staff see
-  // fits across every instructed unit, a Landsec login only their portfolio.
-  const { data: matchData } = useQuery<{ unitPool: number; matches: Record<string, { count: number; top: any[] }> }>({
-    queryKey: ["/api/crm/requirements-leasing/matches"],
-  });
-  const fitsMap = matchData?.matches || {};
-
-  // "Discuss" — spin up a chat about this requirement with the brand smart-
-  // tagged and ChatBGP in the room, then jump straight into it.
-  const discussRequirement = async (item: CrmRequirementsLeasing) => {
-    if (discussingId) return;
-    setDiscussingId(item.id);
-    try {
-      const res = await apiRequest("POST", "/api/chat/threads", {
-        title: `${item.name} — requirement`,
-        memberIds: ["__chatbgp__"],
-        isAiChat: false,
-      });
-      const thread = await res.json();
-      const tag = item.companyId ? `@[${item.name}](tag:company/${item.companyId})` : item.name;
-      const sizeText = Array.isArray(item.size) ? item.size.join(", ") : (item.size || "");
-      await apiRequest("POST", `/api/chat/threads/${thread.id}/messages`, {
-        content: `${tag} requirement${sizeText ? ` (${sizeText})` : ""} — @ChatBGP what do we know about this brand, and which of our available units could fit?`,
-      });
-      navigate(`/chatbgp?thread=${thread.id}`);
-    } catch (e: any) {
-      toast({ title: "Couldn't start the conversation", description: e?.message, variant: "destructive" });
-    } finally {
-      setDiscussingId(null);
-    }
-  };
-
-  // "Intro pack" — put this brand on the unit's Operator Targeting Brief
-  // (creating the brief if the unit doesn't have one yet).
-  const sendToBrief = async (match: any, item: CrmRequirementsLeasing) => {
-    try {
-      const listRes = await apiRequest("GET", "/api/unit-briefs");
-      const rows = await listRes.json();
-      let brief = (Array.isArray(rows) ? rows : [])
-        .map((r: any) => r.brief || r)
-        .find((b: any) => b.unitId === match.unitId);
-      if (!brief) {
-        const createRes = await apiRequest("POST", "/api/unit-briefs", { unitId: match.unitId });
-        brief = await createRes.json();
-      }
-      if (!brief?.id) throw new Error("Could not open a brief for this unit");
-      const sizeText = Array.isArray(item.size) ? item.size.join(", ") : (item.size || "");
-      await apiRequest("POST", `/api/unit-briefs/${brief.id}/targets`, {
-        operatorName: item.name,
-        companyId: item.companyId || undefined,
-        // Only a requirement a person confirmed within 90 days is called live.
-        rationale: `${requirementBriefReason(liveMap.get(item.id))}${sizeText ? ` (${sizeText})` : ""} — added from the Requirements board`,
-      });
-      toast({ title: `${item.name} → ${match.unitName} brief`, description: `Added as a target operator at ${match.propertyName}` });
-    } catch (e: any) {
-      toast({ title: "Couldn't add to brief", description: e?.message, variant: "destructive" });
-    }
-  };
+  // The board's rows: one per brand, with the fits by the one rule, the agent,
+  // the owner, the score and the last contact (server/requirements-board.ts).
+  const boardQuery = useQuery<BoardResponse>({ queryKey: ["/api/crm/requirements-board"] });
+  const boardRows: BoardRow[] = boardQuery.data?.rows || [];
 
   // Demand read-out: what the open requirements say the market wants.
   const demand = useMemo(() => {
@@ -657,21 +508,26 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
       }
     }
     const topLocs = Object.entries(locCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
-    const fitsCount = active.filter((i) => fitsMap[i.id]?.count).length;
-    const fresh90 = active.filter((i) => { const d = liveMap.get(i.id)?.days; return d != null && d <= 90; }).length;
-    return { topBand, topLocs, fitsCount, fresh90, total: active.length };
-  }, [items, fitsMap, liveMap]);
+    return { topBand, topLocs, total: active.length };
+  }, [items, liveMap]);
 
+  // Every company, contact and deal: the form's pickers, the tray's brand
+  // picker and New Brand. They load only when one of those is opened (the
+  // board itself reads its own feed).
+  const formOpen = createOpen || !!editItem;
   const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
+    enabled: formOpen || newBrandOpen || list === "suggestions",
   });
 
   const { data: contacts = [] } = useQuery<CrmContact[]>({
     queryKey: ["/api/crm/contacts"],
+    enabled: formOpen,
   });
 
   const { data: deals = [] } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
+    enabled: formOpen,
   });
 
   const { data: users = [] } = useQuery<{ id: string; name: string; email: string; role: string; department: string; team: string | null }[]>({
@@ -725,7 +581,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
     mutationFn: (data: Partial<CrmRequirementsLeasing>) =>
       apiRequest("POST", "/api/crm/requirements-leasing", data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      refreshRequirements();
       setCreateOpen(false);
       toast(clientShape
         ? { title: "Requirement added", description: "It is on BGP's list to check with the brand." }
@@ -738,7 +594,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
     mutationFn: ({ id, data }: { id: string; data: Partial<CrmRequirementsLeasing> }) =>
       apiRequest("PUT", `/api/crm/requirements-leasing/${id}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      refreshRequirements();
       setEditItem(null);
       toast({ title: "Requirement updated" });
     },
@@ -747,15 +603,16 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
 
   const inlineUpdate = (id: string, data: Partial<CrmRequirementsLeasing>) => {
     apiRequest("PUT", `/api/crm/requirements-leasing/${id}`, data)
-      .then(() => queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] }))
+      .then(() => refreshRequirements())
       .catch((e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }));
   };
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiRequest("DELETE", `/api/crm/requirements-leasing/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      refreshRequirements();
       setDeleteItem(null);
+      showPanel(null);
       toast({ title: "Requirement deleted" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -767,7 +624,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
   const stillLiveMutation = useMutation({
     mutationFn: ({ id, how }: { id: string; how?: string }) => apiRequest("POST", `/api/requirement-centre/requirements/${id}/still-live`, how ? { how } : {}),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      refreshRequirements();
       queryClient.invalidateQueries({ queryKey: [EXPANDING_KEY] });
       queryClient.invalidateQueries({ queryKey: [SUGGESTIONS_KEY] });
       toast({ title: "Confirmed", description: "Recorded as confirmed by you today." });
@@ -785,7 +642,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
   // "Not a requirement" on a draft archives it; the toast can put it back.
   const dismissDraft = (item: CrmRequirementsLeasing) => {
     const put = (status: string) => apiRequest("PUT", `/api/crm/requirements-leasing/${item.id}`, { status })
-      .then(() => queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] }));
+      .then(() => refreshRequirements());
     put("Archived")
       .then(() => toast({
         title: `${item.name || "Draft"}: archived`,
@@ -798,43 +655,9 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
   const ownerMutation = useMutation({
     mutationFn: ({ id, userIds }: { id: string; userIds: string[] }) =>
       apiRequest("PUT", `/api/requirement-centre/requirements/${id}/owner`, { userIds }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] }),
+    onSuccess: () => refreshRequirements(),
     onError: (e: any) => toast({ title: "Couldn't change the owner", description: e.message, variant: "destructive" }),
   });
-
-  const toggleColumnFilter = (col: string, value: string) => {
-    setColumnFilters((prev) => {
-      const current = prev[col] || [];
-      const next = current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
-      if (next.length === 0) {
-        const { [col]: _, ...rest } = prev;
-        return rest;
-      }
-      return { ...prev, [col]: next };
-    });
-  };
-
-  const leasingFilterOptions = useMemo(() => {
-    const statusSet = new Set<string>();
-    const useSet = new Set<string>();
-    const typeSet = new Set<string>();
-    const sizeSet = new Set<string>();
-    const locSet = new Set<string>();
-    items.forEach((i) => {
-      if (i.status) statusSet.add(i.status);
-      if (Array.isArray(i.use)) i.use.forEach((v) => useSet.add(v));
-      if (Array.isArray(i.requirementType)) i.requirementType.forEach((v) => typeSet.add(v));
-      if (Array.isArray(i.size)) i.size.forEach((v) => sizeSet.add(v));
-      if (Array.isArray(i.requirementLocations)) i.requirementLocations.forEach((v) => locSet.add(v));
-    });
-    return {
-      status: Array.from(statusSet).sort(),
-      use: Array.from(useSet).sort(),
-      requirementType: Array.from(typeSet).sort(),
-      size: Array.from(sizeSet).sort(),
-      requirementLocations: Array.from(locSet).sort(),
-    };
-  }, [items]);
 
   const groups = useMemo(() => {
     const set = new Set<string>();
@@ -842,79 +665,44 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
     return Array.from(set).sort();
   }, [items]);
 
-  const hasColumnFilters = Object.keys(columnFilters).length > 0;
-
   const sourceOptions = useMemo(() => {
     const set = new Set<string>();
-    items.forEach((i) => requirementSourceLabels(i).forEach((l) => set.add(l)));
+    boardRows.forEach((row) => (row.requirement.sources || []).forEach((l) => set.add(l)));
     return Array.from(set).sort();
-  }, [items]);
+  }, [boardRows]);
 
-  // Every filter except the list pill and Mine: the pill counts are taken from this.
-  const baseFiltered = useMemo(() => {
-    return items.filter((item) => {
-      if (companyFilter && item.companyId !== companyFilter) return false;
-      if (recentViewingOnly && (!item.companyId || !recentlyViewingBrands.has(item.companyId))) return false;
+  const commentsOf = useMemo(() => new Map(items.map((i) => [i.id, i.comments || ""])), [items]);
+  const isStale = (row: BoardRow) => { const live = liveMap.get(row.requirement.id); return !!live && requirementGoingStale(live); };
+  const needsConfirm = (row: BoardRow) => liveMap.get(row.requirement.id)?.state === "to_confirm";
+  const within90 = (iso: string | null | undefined) => { const t = iso ? Date.parse(iso) : NaN; return Number.isFinite(t) && Date.now() - t <= 90 * 86400000; };
+  // Every filter except the tab and Mine: the tab counts are taken from this.
+  const baseRows = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    return boardRows.filter((row) => {
+      const r = row.requirement;
+      if (companyFilter && row.brandId !== companyFilter) return false;
+      if (recentViewingOnly && (!row.brandId || !recentlyViewingBrands.has(row.brandId))) return false;
       if (teamUserIds) {
-        const ids = item.bgpContactUserIds || (item.bgpContactUserId ? [item.bgpContactUserId] : []);
-        if (ids.length > 0 && !ids.some(id => teamUserIds.has(id))) return false;
+        const ids = (row.owners || []).map((o) => o.id);
+        if (ids.length > 0 && !ids.some((id) => teamUserIds.has(id))) return false;
       }
-      if (groupFilter !== "all" && (item.groupName || "Ungrouped") !== groupFilter) return false;
-      if (freshOnly) {
-        const age = liveMap.get(item.id)?.days;
-        if (age == null || age > 90) return false;
-      }
-      if (fitsOnly && !fitsMap[item.id]?.count) return false;
-      if (sourceFilter.size && !requirementSourceLabels(item).some((l) => sourceFilter.has(l))) return false;
-      if (columnFilters.status?.length && !columnFilters.status.includes(item.status || "")) return false;
-      if (columnFilters.use?.length) {
-        const vals = Array.isArray(item.use) ? item.use : [];
-        if (!columnFilters.use.some((f) => vals.includes(f))) return false;
-      }
-      if (columnFilters.requirementType?.length) {
-        const vals = Array.isArray(item.requirementType) ? item.requirementType : [];
-        if (!columnFilters.requirementType.some((f) => vals.includes(f))) return false;
-      }
-      if (columnFilters.size?.length) {
-        const vals = Array.isArray(item.size) ? item.size : [];
-        if (!columnFilters.size.some((f) => vals.includes(f))) return false;
-      }
-      if (columnFilters.requirementLocations?.length) {
-        const vals = Array.isArray(item.requirementLocations) ? item.requirementLocations : [];
-        if (!columnFilters.requirementLocations.some((f) => vals.includes(f))) return false;
-      }
-      if (search) {
-        const s = search.toLowerCase();
-        return (
-          item.name.toLowerCase().includes(s) ||
-          (item.companyId ? companyMap.get(item.companyId)?.name || "" : "").toLowerCase().includes(s) ||
-          (Array.isArray(item.use) ? item.use.join(" ") : (item.use || "")).toLowerCase().includes(s) ||
-          (Array.isArray(item.requirementLocations) ? item.requirementLocations.join(" ") : (item.requirementLocations || "")).toLowerCase().includes(s) ||
-          item.comments?.toLowerCase().includes(s)
-        );
-      }
+      if (groupFilter !== "all" && (r.group || "Ungrouped") !== groupFilter) return false;
+      if (freshOnly && !within90(r.date)) return false;
+      if (fitsOnly && !row.fits.count) return false;
+      if (staleOnly && !isStale(row)) return false;
+      if (confirmOnly && !needsConfirm(row)) return false;
+      if (sourceFilter.size && !(r.sources || []).some((l) => sourceFilter.has(l))) return false;
+      if (s && ![row.brandName, r.name, r.wants, r.type, row.agent?.name, row.agent?.firmName, commentsOf.get(r.id)]
+        .some((v) => (v || "").toLowerCase().includes(s))) return false;
       return true;
     });
-  }, [items, groupFilter, columnFilters, search, teamUserIds, companyFilter, freshOnly, fitsOnly, fitsMap, recentViewingOnly, recentlyViewingBrands, liveMap, sourceFilter, companyMap]);
+  }, [boardRows, search, companyFilter, recentViewingOnly, recentlyViewingBrands, teamUserIds, groupFilter, freshOnly, fitsOnly, staleOnly, confirmOnly, liveMap, sourceFilter, commentsOf]);
 
   // "Mine" is a per-person filter on the BGP owner; Everyone is the default.
-  const filteredItems = useMemo(
-    () => (mineOnly && meId ? baseFiltered.filter((i) => requirementOwnerIds(i).includes(meId)) : baseFiltered),
-    [baseFiltered, mineOnly, meId],
-  );
-  const mineCount = useMemo(
-    () => (meId ? baseFiltered.filter((i) => liveMap.get(i.id)?.state !== "closed" && requirementOwnerIds(i).includes(meId)).length : 0),
-    [baseFiltered, meId, liveMap],
-  );
-  const listCounts = useMemo(() => {
-    const c: Record<ListKey, number> = { to_confirm: 0, live: 0, stale: 0, news: 0, market: 0, older: 0, closed: 0, open: 0 };
-    for (const i of filteredItems) {
-      const k = listOf(i);
-      c[k]++;
-      if (k === "live" && requirementGoingStale(liveMap.get(i.id)!)) c.stale++;
-    }
-    return c;
-  }, [filteredItems, liveMap, clientShape]);
+  const ownedByMe = (row: BoardRow) => !!meId && (row.owners || []).some((o) => o.id === meId);
+  const filteredRows = useMemo(() => (mineOnly && meId ? baseRows.filter(ownedByMe) : baseRows), [baseRows, mineOnly, meId]);
+  const mineCount = useMemo(() => baseRows.filter((row) => row.list !== "closed" && ownedByMe(row)).length, [baseRows, meId]);
+  const listCounts = useMemo(() => countPills(filteredRows), [filteredRows]);
 
   const expandingBrands = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -923,10 +711,10 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
   }, [expandingQuery.data, search]);
   const newsCount = !expandingQuery.data ? null : search.trim() ? expandingBrands.length : expandingQuery.data.total;
 
-  // The tray of suggestions at the top of To confirm (BGP staff). A suggestion
-  // has a brand and a source but no group, fit, owner team or list source, so
-  // the search and the brand filter narrow the tray and the other filters hide it.
-  const trayHidden = groupFilter !== "all" || hasColumnFilters || freshOnly || fitsOnly || recentViewingOnly || sourceFilter.size > 0 || !!teamUserIds;
+  // The tray of suggestions (BGP staff): the Suggestions tab. A suggestion has
+  // a brand and a source but no group, fit, owner team or list source, so the
+  // search and the brand filter narrow the tray and the other filters hide it.
+  const trayHidden = groupFilter !== "all" || freshOnly || fitsOnly || staleOnly || confirmOnly || recentViewingOnly || sourceFilter.size > 0 || !!teamUserIds;
   const traySuggestions = useMemo(() => {
     const all = canUseCentre ? suggestionsQuery.data?.suggestions || [] : [];
     const s = search.trim().toLowerCase();
@@ -936,68 +724,78 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
   const trayCount = trayHidden ? 0 : traySuggestions.length;
   const suggestionAnswered = () => {
     queryClient.invalidateQueries({ queryKey: [SUGGESTIONS_KEY] });
-    queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+    refreshRequirements();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-board"] });
     queryClient.invalidateQueries({ queryKey: [EXPANDING_KEY] });
   };
 
-  const listOrder: ListKey[] = clientShape ? ["open", "closed"] : ["to_confirm", "live", "market", "older", "closed"];
-  const listAllowed = (k: ListKey) => (clientShape ? k === "open" || k === "closed" : k !== "open" && (k !== "news" || canUseCentre));
-  const activeList: ListKey = list && listAllowed(list) ? list : listOrder.find((k) => listCounts[k] > 0 || (k === "to_confirm" && trayCount > 0)) || listOrder[0];
-  const activeSort: SortKey = sortBy || (activeList === "stale" ? "confirmed_asc" : "name");
+  const listAllowed = (k: ListKey) => (clientShape ? k === "open" || k === "closed" : (k !== "news" && k !== "suggestions") || canUseCentre);
+  const activeList: ListKey = list && listAllowed(list) ? list : "open";
+  const activeSort: SortKey = sortBy || (staleOnly ? "confirmed_asc" : "board");
 
-  const listItems = useMemo(() => {
-    const rows = filteredItems.filter((i) => activeList === "stale"
-      ? listOf(i) === "live" && requirementGoingStale(liveMap.get(i.id)!)
-      : listOf(i) === activeList);
-    if (activeSort !== "name") {
-      const confirmedOnly = activeSort !== "date_desc";
-      const dir = activeSort === "confirmed_asc" ? 1 : -1;
-      const at = (i: CrmRequirementsLeasing) => {
-        const l = liveMap.get(i.id)!;
-        return (confirmedOnly && !l.confirmed) || !l.date ? null : l.date.getTime();
-      };
-      // Rows with no such date go last, whichever way the sort runs.
-      rows.sort((a, b) => {
-        const ta = at(a), tb = at(b);
-        if (ta == null || tb == null) return ta == null ? (tb == null ? 0 : 1) : -1;
-        return (ta - tb) * dir;
-      });
-    }
-    // Drafts lead To confirm: no screen listed them before.
-    if (activeList === "to_confirm") {
-      const isDraft = (i: CrmRequirementsLeasing) => String(i.status || "").trim().toLowerCase() === "draft";
-      return [...rows.filter(isDraft), ...rows.filter((i) => !isDraft(i))];
-    }
-    return rows;
-  }, [filteredItems, activeList, activeSort, liveMap, clientShape]);
+  const listRows = useMemo(() => {
+    if (activeList === "suggestions" || activeList === "news") return [] as BoardRow[];
+    const rows = filteredRows.filter((row) => onPill(row.list, activeList));
+    // Default: the feed's own order (BGP's own first, then market listings,
+    // newest listing first; a client login's newest first).
+    if (activeSort === "board") return rows;
+    if (activeSort === "name") return [...rows].sort((a, b) => a.brandName.localeCompare(b.brandName, "en-GB", { sensitivity: "base" }));
+    const confirmedOnly = activeSort !== "date_desc";
+    const dir = activeSort === "confirmed_asc" ? 1 : -1;
+    const at = (row: BoardRow) => {
+      const v = confirmedOnly ? row.requirement.confirmedAt : row.requirement.date;
+      const t = v ? Date.parse(v) : NaN;
+      return Number.isFinite(t) ? t : null;
+    };
+    // Rows with no such date go last, whichever way the sort runs.
+    return [...rows].sort((a, b) => {
+      const ta = at(a), tb = at(b);
+      if (ta == null || tb == null) return ta == null ? (tb == null ? 0 : 1) : -1;
+      return (ta - tb) * dir;
+    });
+  }, [filteredRows, activeList, activeSort]);
 
   // Phone renders 30 cards then "Show more" — every requirement at once made
   // a ~26,000px page (Woody, 2026-09-27).
   const PHONE_PAGE = 30;
   const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
-  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [filteredItems, activeList]);
+  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [filteredRows, activeList]);
 
-  // Group pills count the open requirements (not past or archived), with
-  // ungrouped ones as "Other".
+  // The filters' counts are taken over the open rows, ungrouped as "Other".
+  const openRows = useMemo(() => boardRows.filter((row) => row.list !== "closed"), [boardRows]);
   const groupCounts = useMemo(() => {
     const map: Record<string, number> = {};
-    items.filter((i) => liveMap.get(i.id)?.state !== "closed").forEach((i) => {
-      const g = i.groupName || "Ungrouped";
-      map[g] = (map[g] || 0) + 1;
-    });
+    openRows.forEach((row) => { const g = row.requirement.group || "Ungrouped"; map[g] = (map[g] || 0) + 1; });
     return map;
-  }, [items, liveMap]);
-  const recentViewingCount = useMemo(
-    () => items.filter(item => item.companyId && recentlyViewingBrands.has(item.companyId)).length,
-    [items, recentlyViewingBrands],
-  );
+  }, [openRows]);
+  const filterCounts = useMemo(() => ({
+    fits: openRows.filter((row) => row.fits.count > 0).length,
+    fresh: openRows.filter((row) => within90(row.requirement.date)).length,
+    stale: openRows.filter(isStale).length,
+    confirm: openRows.filter(needsConfirm).length,
+    viewing: openRows.filter((row) => !!row.brandId && recentlyViewingBrands.has(row.brandId)).length,
+  }), [openRows, liveMap, recentlyViewingBrands]);
 
-  const anyFilter = !!search || groupFilter !== "all" || hasColumnFilters || freshOnly || fitsOnly || recentViewingOnly || sourceFilter.size > 0 || mineOnly;
+  const activeFilterCount = [freshOnly, fitsOnly, staleOnly, confirmOnly, recentViewingOnly, groupFilter !== "all", sourceFilter.size > 0, !!sortBy].filter(Boolean).length;
+  const anyFilter = !!search || activeFilterCount > 0 || mineOnly;
   const clearFilters = () => {
-    setSearch(""); setGroupFilter("all"); setColumnFilters({}); setFreshOnly(false); setFitsOnly(false); setRecentViewingOnly(false);
-    setSourceFilter(new Set()); setMineOnly(false);
+    setSearch(""); setGroupFilter("all"); setFreshOnly(false); setFitsOnly(false); setStaleOnly(false); setConfirmOnly(false); setRecentViewingOnly(false);
+    setSourceFilter(new Set()); setSortBy(null); setMineOnly(false);
   };
   const userName = (id: string) => users.find((u) => u.id === id)?.name || "";
+
+  // The panel's row: the board row, or for one of a brand's other
+  // requirements, that one shown in its place.
+  const panelRow = useMemo(() => {
+    if (!panelId) return null;
+    for (const row of boardRows) {
+      if (row.requirement.id === panelId) return row;
+      const other = row.others.find((o) => o.id === panelId);
+      if (other) return { ...row, requirement: other, others: [row.requirement, ...row.others.filter((o) => o.id !== panelId)] };
+    }
+    return null;
+  }, [panelId, boardRows]);
+  const panelItem = panelId ? items.find((i) => i.id === panelId) || null : null;
 
   if (error) {
     return (
@@ -1020,33 +818,45 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
   const listPills: Array<{ key: ListKey; n: number | null }> = clientShape
     ? [{ key: "open", n: listCounts.open }, { key: "closed", n: listCounts.closed }]
     : [
-        // Requirements to confirm plus the suggestions in the tray.
-        { key: "to_confirm", n: listCounts.to_confirm + trayCount },
-        { key: "live", n: listCounts.live },
-        { key: "stale", n: listCounts.stale },
-        ...(canUseCentre ? [{ key: "news" as ListKey, n: newsCount }] : []),
+        { key: "open", n: listCounts.open },
+        { key: "own", n: listCounts.own },
         { key: "market", n: listCounts.market },
-        // BGP's own rows that have aged into the background: shown only when there are some.
+        // Older: shown when there are some, or while it is open.
         ...(listCounts.older > 0 || activeList === "older" ? [{ key: "older" as ListKey, n: listCounts.older }] : []),
+        ...(canUseCentre ? [
+          { key: "suggestions" as ListKey, n: suggestionsQuery.data ? traySuggestions.length : null },
+          // In the news is counted once it has been opened (its read is slow).
+          { key: "news" as ListKey, n: newsCount },
+        ] : []),
         { key: "closed", n: listCounts.closed },
       ];
-  const emptyText = anyFilter ? "No requirements match these filters"
-    : activeList === "to_confirm" ? (trayCount > 0 ? "No requirements to confirm. The suggestions above are still waiting for an answer." : "Nothing to confirm")
-    : activeList === "live" ? "No live requirements yet — confirm one from To confirm, or add a requirement"
-    : activeList === "stale" ? "Nothing going stale"
+  const emptyText = boardQuery.isError ? "The board could not be loaded."
+    : anyFilter ? "No requirements match these filters"
+    : activeList === "own" ? "No requirements of BGP's own yet: confirm a market listing, or add a requirement"
     : activeList === "market" ? "No market listings"
     : activeList === "older" ? "No older requirements"
     : activeList === "closed" ? "No closed requirements"
     : "No requirements found";
   const groupNames = Object.keys(groupCounts).sort((a, b) => (a === "Ungrouped" ? 1 : 0) - (b === "Ungrouped" ? 1 : 0));
+  const onBoard = activeList !== "news" && activeList !== "suggestions";
+  const itemOf = (id: string) => items.find((i) => i.id === id) || null;
+  const panelLive = panelItem ? liveMap.get(panelItem.id) || null : null;
+  const packOf = (item: CrmRequirementsLeasing | null) => {
+    if (!item) return null;
+    if (!clientShape) return <LandlordPackCell itemId={item.id} landlordPack={item.landlordPack} />;
+    let pack: { url?: string; name?: string } | null = null;
+    try { pack = item.landlordPack ? JSON.parse(item.landlordPack) : null; } catch { pack = null; }
+    return pack?.url ? <a href={pack.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline" data-testid={`link-landlord-pack-${item.id}`}>{pack.name || "Document"}</a> : null;
+  };
   return (
     <div className={isMobile ? "flex flex-col gap-4" : "space-y-4"}>
-      {/* The lists carry the counts (docs/DESIGN.md §5): one row of pills in
-          place of the Active / Past / Archived tables. */}
+      {/* The tabs carry the counts (docs/DESIGN.md §5): one row per brand on
+          each list, Open first (review of 19 November 2026, decision 3). */}
       <div className={`flex items-center gap-1.5 ${tileRow}`} data-testid="requirements-lists">
         {listPills.map(({ key, n }) => (
-          <Pill key={key} active={activeList === key} aria-pressed={activeList === key} onClick={() => setList(key)} title={LIST_NOTES[key]} data-testid={`requirements-list-${key}`}>
-            {LIST_LABELS[key]} {count(n)}
+          <Pill key={key} active={activeList === key} aria-pressed={activeList === key} onClick={() => setList(key)}
+            title={clientShape && key === "open" ? CLIENT_OPEN_NOTE : LIST_NOTES[key]} data-testid={`requirements-list-${key}`}>
+            {LIST_LABELS[key]}{n != null && <> {count(n)}</>}
           </Pill>
         ))}
         {!clientShape && meId && (
@@ -1096,6 +906,83 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
             <X className="w-3.5 h-3.5 mr-1" />
             Clear
           </Button>
+        )}
+        {/* The filters, in one popover (review of 19 November 2026, section 1). */}
+        {activeList !== "news" && activeList !== "suggestions" && (
+          <Popover open={filtersOpen} onOpenChange={setFiltersOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-1" data-testid="requirements-filters">
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                Filters{activeFilterCount > 0 && <span className="font-mono tabular-nums">{activeFilterCount}</span>}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-80 space-y-3" data-testid="requirements-filters-popover">
+              <div className="flex flex-wrap gap-1.5">
+                <Pill active={fitsOnly} aria-pressed={fitsOnly} onClick={() => setFitsOnly(!fitsOnly)} title="Requirements a unit on the market fits, by the one fit rule" data-testid="card-demand-fits">
+                  Fit your units {count(filterCounts.fits)}
+                </Pill>
+                <Pill active={freshOnly} aria-pressed={freshOnly} onClick={() => setFreshOnly(!freshOnly)} title={clientShape ? "Listed, dated or added in the last 90 days" : "Confirmed, listed or dated in the last 90 days"} data-testid="card-demand-fresh">
+                  Last 90 days {count(filterCounts.fresh)}
+                </Pill>
+                {!clientShape && (
+                  <Pill active={staleOnly} aria-pressed={staleOnly} onClick={() => setStaleOnly(!staleOnly)} title="Live, but the confirmation runs out within 14 days" data-testid="requirements-going-stale">
+                    Going stale {count(filterCounts.stale)}
+                  </Pill>
+                )}
+                {!clientShape && (
+                  <Pill active={confirmOnly} aria-pressed={confirmOnly} onClick={() => setConfirmOnly(!confirmOnly)} title="BGP's own requirements to confirm: last confirmed more than 90 days ago, a draft, or never confirmed" data-testid="requirements-needs-confirming">
+                    Needs confirming {count(filterCounts.confirm)}
+                  </Pill>
+                )}
+                <Pill active={recentViewingOnly} aria-pressed={recentViewingOnly} onClick={() => setRecentViewingOnly(v => !v)} title="Brands with a confirmed viewing in the last 90 days" data-testid="requirements-recently-viewing">
+                  Recently viewing · 90 days {recentViewingQuery.data ? count(filterCounts.viewing) : null}
+                </Pill>
+              </div>
+              {groupNames.some((group) => group !== "Ungrouped") && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Group</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {groupNames.map((group) => (
+                      <Pill key={group} active={groupFilter === group} aria-pressed={groupFilter === group}
+                        onClick={() => setGroupFilter(groupFilter === group ? "all" : group)} data-testid={`card-leasing-group-${group}`}>
+                        {group === "Ungrouped" ? "Other" : group} {count(groupCounts[group])}
+                      </Pill>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!clientShape && sourceOptions.length > 1 && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Source</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {sourceOptions.map((v) => (
+                      <Pill key={v} active={sourceFilter.has(v)} aria-pressed={sourceFilter.has(v)} data-testid={`requirements-source-${v}`}
+                        onClick={() => setSourceFilter((prev) => { const next = new Set(prev); if (next.has(v)) next.delete(v); else next.add(v); return next; })}>
+                        {v}
+                      </Pill>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!clientShape && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Sort</p>
+                  <div className="flex flex-wrap gap-1.5" data-testid="requirements-sort">
+                    {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+                      <Pill key={k} active={activeSort === k} aria-pressed={activeSort === k} onClick={() => setSortBy(k === "board" ? null : k)} data-testid={`requirements-sort-${k}`}>
+                        {SORT_LABELS[k]}
+                      </Pill>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {activeFilterCount > 0 && (
+                <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => { setFitsOnly(false); setFreshOnly(false); setStaleOnly(false); setConfirmOnly(false); setRecentViewingOnly(false); setGroupFilter("all"); setSourceFilter(new Set()); setSortBy(null); }} data-testid="requirements-filters-clear">
+                  Clear filters
+                </Button>
+              )}
+            </PopoverContent>
+          </Popover>
         )}
         {/* Staff only. It was hidden from clients when POST
             /api/crm/companies was refused for every client login. A client
@@ -1155,116 +1042,40 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
         </Button>
       </div>
 
-      {/* Filters as pills: a number that filters the list is a pill, not a
-          tile (docs/DESIGN.md §8). Hidden at 0 unless switched on, so a
-          filter can always be switched off. */}
-      {activeList !== "news" && (
-      <div className={`flex items-center gap-1.5 ${tileRow}`} data-testid="requirements-filters">
-        {(demand.fitsCount > 0 || fitsOnly) && (
-          <Pill active={fitsOnly} aria-pressed={fitsOnly} onClick={() => setFitsOnly(!fitsOnly)} title="Open requirements whose size fits a unit you have available" data-testid="card-demand-fits">
-            Fit your units {count(demand.fitsCount)}
-          </Pill>
-        )}
-        {(demand.fresh90 > 0 || freshOnly) && (
-          <Pill active={freshOnly} aria-pressed={freshOnly} onClick={() => setFreshOnly(!freshOnly)} title="Confirmed, listed or dated in the last 90 days" data-testid="card-demand-fresh">
-            Last 90 days {count(demand.fresh90)}
-          </Pill>
-        )}
-        {(recentViewingCount > 0 || recentViewingOnly) && (
-          <Pill active={recentViewingOnly} aria-pressed={recentViewingOnly} onClick={() => setRecentViewingOnly(v => !v)} title="Brands with a confirmed viewing in the last 90 days" data-testid="requirements-recently-viewing">
-            Recently viewing · 90 days {count(recentViewingCount)}
-          </Pill>
-        )}
-        {groupNames.some((group) => group !== "Ungrouped") && groupNames.map((group) => (
-          <Pill
-            key={group}
-            active={groupFilter === group}
-            aria-pressed={groupFilter === group}
-            onClick={() => setGroupFilter(groupFilter === group ? "all" : group)}
-            data-testid={`card-leasing-group-${group}`}
-          >
-            {group === "Ungrouped" ? "Other" : group} {count(groupCounts[group])}
-          </Pill>
-        ))}
-        {!clientShape && sourceOptions.length > 1 && (
-          <FilterDropdown
-            title="Source"
-            items={sourceOptions}
-            selected={sourceFilter}
-            onToggle={(v) => setSourceFilter((prev) => { const next = new Set(prev); if (next.has(v)) next.delete(v); else next.add(v); return next; })}
-            onClearAll={() => setSourceFilter(new Set())}
-          />
-        )}
-        {!clientShape && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button type="button" data-no-min-touch className={cn(pillMetrics, sortBy ? pillActive : pillInactive)} data-testid="requirements-sort">
-                Sort: {SORT_LABELS[activeSort]}
-                <ChevronDown className="h-3 w-3 opacity-60" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
-                <DropdownMenuItem key={k} onClick={() => setSortBy(k)} data-testid={`requirements-sort-${k}`}>
-                  {SORT_LABELS[k]}
-                  {activeSort === k && <Check className="w-3.5 h-3.5 ml-auto" />}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </div>
-      )}
+      {onBoard && <p className="text-xs text-muted-foreground" data-testid="requirements-note">{clientShape && activeList === "open" ? CLIENT_OPEN_NOTE : LIST_NOTES[activeList]}</p>}
 
-      {recentViewingOnly && activeList !== "news" && <Card><CardContent className="p-4 space-y-3">
+      {recentViewingOnly && activeList !== "news" && activeList !== "suggestions" && <Card><CardContent className="p-4 space-y-3">
         <h3 className="text-sm font-semibold">Recent viewing evidence</h3>
         {recentViewingQuery.isLoading ? <Skeleton className="h-24 w-full" /> : recentViewingQuery.isError ? <div className="space-y-2"><p className="text-sm">Viewing evidence could not be loaded.</p><Button variant="outline" size="sm" onClick={() => void recentViewingQuery.refetch()}>Refresh</Button></div> : <>
-          {recentViewings.filter(v => filteredItems.some(item => item.companyId === v.companyId)).slice(0, 12).map(viewing => <div key={viewing.id} className="rounded-lg border p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          {recentViewings.filter(v => filteredRows.some(row => row.brandId === v.companyId)).slice(0, 12).map(viewing => <div key={viewing.id} className="rounded-lg border p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="min-w-0"><p className="text-sm font-semibold break-words">{viewing.companyName}</p><p className="text-[11px] text-muted-foreground break-words">{viewing.propertyName} · {viewing.unitName}{viewing.sqft != null ? ` · ${viewing.sqft.toLocaleString("en-GB")} sq ft` : ""}</p><p className="text-[11px] text-muted-foreground">{gbDate(`${viewing.viewingDate}T12:00:00Z`, { day: "numeric", month: "short", timeZone: "UTC" })}{viewing.outcome ? ` · ${viewing.outcome}` : ""}</p></div>
             <Button variant="outline" size="sm" asChild><a href={`/available?workspace=viewings&viewing=${encodeURIComponent(viewing.id)}`}>Open viewing</a></Button>
           </div>)}
-          {!filteredItems.length && <p className="text-sm text-muted-foreground">No requirements match the recent viewing evidence and current filters.</p>}
+          {!filteredRows.length && <p className="text-sm text-muted-foreground">No requirements match the recent viewing evidence and current filters.</p>}
           <p className="text-[11px] text-muted-foreground">Showing up to 12 recent viewings for these requirements. Actual viewed sizes and locations are evidence only; stated search requirements are unchanged.</p>
           <Button variant="outline" size="sm" asChild><a href="/available?workspace=viewings">Open viewing calendar</a></Button>
         </>}
       </CardContent></Card>}
 
-      {/* Demand read-out: what the open requirements say the market wants,
-          by size and place. Information only (docs/DESIGN.md §8). */}
-      {activeList !== "news" && demand.total > 0 && ((demand.topBand && demand.topBand[1] > 0) || demand.topLocs.length > 0) && (
-        <div className={`flex items-stretch gap-3 ${tileRow}`}>
-          {demand.topBand && demand.topBand[1] > 0 && (
-            <Card className="flex-1 min-w-[170px]" data-testid="card-demand-size">
-              <CardContent className="p-3">
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Most-wanted size</p>
-                <p className="text-lg font-bold font-mono tabular-nums">{demand.topBand[0]} <span className="text-xs font-normal font-sans text-muted-foreground">sq ft</span></p>
-                <p className="text-[11px] text-muted-foreground">{countLabel(demand.topBand[1], "open requirement")}</p>
-              </CardContent>
-            </Card>
-          )}
-          {demand.topLocs.length > 0 && (
-            <Card className="flex-1 min-w-[200px]" data-testid="card-demand-locations">
-              <CardContent className="p-3">
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Most-wanted locations</p>
-                <div className="flex items-center gap-1.5 flex-wrap mt-1">
-                  {demand.topLocs.map(([loc, n]) => (
-                    <Badge key={loc} variant="outline" className="text-[10px]">{loc} · <span className="font-mono tabular-nums ml-0.5">{n}</span></Badge>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
+      {/* Demand read-out, in one line: what the open requirements say the
+          market wants, by size and place. Information only. */}
+      {onBoard && demand.total > 0 && ((demand.topBand && demand.topBand[1] > 0) || demand.topLocs.length > 0) && (
+        <p className="text-xs text-muted-foreground" data-testid="requirements-demand">
+          Most wanted:{" "}
+          {demand.topBand && demand.topBand[1] > 0 && <><span className="font-mono tabular-nums text-foreground">{demand.topBand[0]}</span> sq ft (<span className="font-mono tabular-nums">{demand.topBand[1]}</span> of <span className="font-mono tabular-nums">{demand.total}</span>)</>}
+          {demand.topBand && demand.topBand[1] > 0 && demand.topLocs.length > 0 && " · "}
+          {demand.topLocs.map(([loc]) => loc).join(", ")}
+        </p>
       )}
 
       {/* The units the fit rule cannot judge (no use class or no size), for
           someone to fill in on the Letting Tracker. BGP staff only. */}
-      {canUseCentre && activeList !== "news" && <UnitFitGapsCard navigate={navigate} />}
+      {canUseCentre && onBoard && <UnitFitGapsCard navigate={navigate} />}
 
-      {/* The To confirm tray: suggestions from chat, viewings, deals,
+      {/* The Suggestions tab: suggestions from chat, viewings, deals,
           meetings and news, each answered by a person in one tap. BGP staff
           only; a suggestion is not a requirement until a person confirms it. */}
-      {activeList === "to_confirm" && canUseCentre && (trayHidden ? traySuggestions.length > 0 && (
+      {activeList === "suggestions" && canUseCentre && (trayHidden ? traySuggestions.length > 0 && (
         <p className="text-[11px] text-muted-foreground" data-testid="requirements-suggestions-waiting">
           {countLabel(traySuggestions.length, "suggestion")} waiting for an answer {traySuggestions.length === 1 ? "is" : "are"} hidden while these filters are on. Clear the filters to answer {traySuggestions.length === 1 ? "it" : "them"}.
         </p>
@@ -1282,6 +1093,14 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
           onAnswered={suggestionAnswered}
         />
       ))}
+      {activeList === "suggestions" && canUseCentre && filterCounts.confirm > 0 && (
+        <p className="text-xs text-muted-foreground" data-testid="requirements-confirm-line">
+          <span className="font-mono tabular-nums">{filterCounts.confirm.toLocaleString("en-GB")}</span> of BGP's own requirement{filterCounts.confirm === 1 ? " needs" : "s need"} confirming.{" "}
+          <button type="button" className="text-primary hover:underline" onClick={() => { setList("own"); setConfirmOnly(true); setStaleOnly(false); }} data-testid="requirements-show-to-confirm">
+            Show {filterCounts.confirm === 1 ? "it" : "them"}
+          </button>
+        </p>
+      )}
 
       {activeList === "news" ? (
         <ExpandingNowPanel
@@ -1295,185 +1114,58 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
           isMobile={isMobile}
           navigate={navigate}
         />
-      ) : isMobile ? (<>
-        {/* Same icon and copy as the desktop empty table (Woody, 2026-09-28). */}
-        <MobileCardView
-          emptyMessage={emptyText}
-          emptyIcon={Users}
-          emptyDescription={anyFilter
-            ? undefined
-            : clientShape ? "No requirements yet. Add one with Add requirement." : LIST_NOTES[activeList]}
-          items={listItems.slice(0, phoneShown).map((item) => {
-            const live = liveMap.get(item.id)!;
-            const stale = requirementGoingStale(live);
-            const isDraft = String(item.status || "").trim().toLowerCase() === "draft";
-            const owners = requirementOwnerIds(item).map(userName).filter(Boolean);
-            const useText = Array.isArray(item.use) ? item.use.map(useClassLabel).join(", ") : useClassLabel(item.use as any);
-            const sizeText = formatSizeList(item.size as any);
-            const locText = Array.isArray(item.requirementLocations) ? item.requirementLocations.join(", ") : (item.requirementLocations as any);
-            let pack: { url?: string; name?: string } | null = null;
-            if (item.landlordPack) { try { pack = JSON.parse(item.landlordPack); } catch {} }
-            const brand = item.companyId ? companyMap.get(item.companyId)?.name : undefined;
-            return {
-            id: item.id,
-            title: item.name,
-            // Brand name is usually the requirement name too ("Anna / Anna")
-            // — only show it when it adds something (Woody, 2026-09-27).
-            subtitle: brand && brand.trim().toLowerCase() !== (item.name || "").trim().toLowerCase() ? brand
-              : !item.companyId && !clientShape ? "No brand linked" : undefined,
-            // Staff see the state from the one live rule; a client login keeps the plain status.
-            status: clientShape ? (item.status || "Active")
-              : stale ? "Going stale"
-              : live.state === "background" ? (live.importOnly ? "Market listing" : "Older") : live.stateLabel,
-            statusColor: clientShape
-              ? (item.status === "Past" ? "bg-zinc-400" : item.status === "Archived" ? "bg-zinc-300" : "bg-emerald-500")
-              : live.state === "live" ? (stale ? "bg-amber-500" : "bg-emerald-500")
-              : live.state === "to_confirm" ? "bg-foreground"
-              : live.state === "closed" ? "bg-zinc-400" : "bg-zinc-300",
-            fields: clientShape ? [
-              { label: "Use", value: useText },
-              { label: "Size", value: sizeText },
-              { label: "Locations", value: locText },
-              { label: "Type", value: Array.isArray(item.requirementType) ? item.requirementType.join(", ") : (item.requirementType as any) },
-            ] : [
-              { label: "Date", value: stale ? `${live.dateLabel} · ${countLabel(requirementDaysLeft(live) ?? 0, "day")} left` : live.dateLabel },
-              { label: "Owner", value: owners.length ? owners.join(", ") : "No owner" },
-              { label: "Source", value: requirementSourceLabels(item).join(", ") },
-              { label: "Wants", value: [useText, sizeText].filter(Boolean).join(" · ") },
-              { label: "Locations", value: locText },
-            ],
-            // Every login amends a requirement through the form, a client login
-            // included (it is offered no delete or centre tools); not until the
-            // login is known.
-            onEdit: reqUser ? () => setEditItem(item) : undefined,
-            // Delete lives in the ⋮ menu in the footer — a red Delete on every
-            // phone card was one mis-tap from losing a requirement
-            // (Woody, 2026-09-27).
-            footer: (
-                <span className="inline-flex items-center gap-3 whitespace-nowrap">
-                  {canUseCentre && live.state !== "closed" && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-9 px-3 text-xs gap-1.5"
-                      onClick={() => confirmRow(item)}
-                      disabled={stillLiveId === item.id}
-                      data-testid={`mobile-still-live-${item.id}`}
-                    >
-                      {stillLiveId === item.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                      {live.confirmed ? "Still live" : "Confirm"}
-                    </Button>
-                  )}
-                  {/* Match was desktop-only, stranding the "N fit your units"
-                      KPI on phones (UX #29). Its route is BGP's: a client
-                      login was shown an empty list. */}
-                  {!clientShape && (
-                    <button
-                      type="button"
-                      onClick={() => setMatchItem(item)}
-                      className="inline-flex items-center gap-1.5 text-xs font-medium text-primary"
-                      data-testid={`mobile-match-${item.id}`}
-                    >
-                      <Target className="w-3.5 h-3.5" />
-                      Match
-                    </button>
-                  )}
-                  {clientShape && pack?.url && (
-                    <a
-                      href={pack.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-xs font-medium text-primary"
-                      data-testid={`download-landlord-pack-${item.id}`}
-                    >
-                      <Download className="w-3.5 h-3.5 shrink-0" />
-                      Landlord pack
-                    </a>
-                  )}
-                  {!clientShape && (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground" aria-label="More actions" data-testid={`button-more-card-${item.id}`}>
-                          <MoreVertical className="w-4 h-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {canUseCentre && (
-                          <DropdownMenuItem onClick={() => setEvidenceItem(item)} data-testid={`button-evidence-card-${item.id}`}>
-                            <ClipboardList className="w-3.5 h-3.5 mr-2" />
-                            Evidence
-                          </DropdownMenuItem>
-                        )}
-                        {pack?.url && (
-                          <DropdownMenuItem asChild>
-                            <a href={pack.url} target="_blank" rel="noopener noreferrer" data-testid={`download-landlord-pack-${item.id}`}>
-                              <Download className="w-3.5 h-3.5 mr-2" />
-                              Landlord pack
-                            </a>
-                          </DropdownMenuItem>
-                        )}
-                        {isDraft && (
-                          <DropdownMenuItem onClick={() => dismissDraft(item)} data-testid={`button-dismiss-draft-card-${item.id}`}>
-                            <X className="w-3.5 h-3.5 mr-2" />
-                            Not a requirement
-                          </DropdownMenuItem>
-                        )}
-                        <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteItem(item)} data-testid={`button-delete-card-${item.id}`}>
-                          <Trash2 className="w-3.5 h-3.5 mr-2" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  )}
-                </span>
-            ),
-            };
-          })}
-        />
-        {listItems.length > phoneShown && (
-          <Button variant="outline" className="w-full mt-3" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="mobile-requirements-show-more">
-            Show more ({(listItems.length - phoneShown).toLocaleString("en-GB")} left)
+      ) : onBoard ? (<>
+        {boardQuery.isLoading ? (
+          <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
+        ) : (
+          <BoardRows
+            rows={isMobile ? listRows.slice(0, phoneShown) : listRows}
+            staff={!clientShape}
+            canUseCentre={canUseCentre}
+            liveMap={liveMap}
+            selectedId={panelId}
+            onOpen={(row) => showPanel(row.requirement.id)}
+            onConfirm={(id) => { const item = itemOf(id); if (item) confirmRow(item); }}
+            onEvidence={canUseCentre ? (id) => { const item = itemOf(id); if (item) setEvidenceItem(item); } : undefined}
+            stillLiveId={stillLiveId}
+            unitViewer={unitViewer}
+            isMobile={isMobile}
+            empty={emptyText}
+          />
+        )}
+        {isMobile && listRows.length > phoneShown && (
+          <Button variant="outline" className="w-full" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="mobile-requirements-show-more">
+            Show more ({(listRows.length - phoneShown).toLocaleString("en-GB")} left)
           </Button>
         )}
-      </>) : (
-      <LeasingSection
-        title={LIST_LABELS[activeList]}
-        note={LIST_NOTES[activeList]}
-        emptyText={emptyText}
-        items={listItems}
-        isLoading={isLoading}
-        companies={companies}
-        contacts={contacts}
-        companyMap={companyMap}
-        contactMap={contactMap}
-        dealMap={dealMap}
-        userMap={userMap}
-        navigate={navigate}
-        inlineUpdate={inlineUpdate}
-        onEdit={setEditItem}
-        onDelete={setDeleteItem}
-        onMatch={clientShape ? undefined : setMatchItem}
-        fitsMap={fitsMap}
-        onDiscuss={discussRequirement}
-        discussingId={discussingId}
-        onBrief={sendToBrief}
-        isArchived={activeList === "closed"}
-        columnFilters={columnFilters}
-        filterOptions={leasingFilterOptions}
-        onToggleFilter={toggleColumnFilter}
-        colorMap={userIdColorMap}
-        unitViewer={unitViewer}
-        liveMap={liveMap}
-        readOnly={clientShape}
-        canEdit={!!reqUser}
-        staffTools={canUseCentre}
-        ownerUsers={staffUsers}
-        onStillLive={confirmRow}
-        onDismissDraft={dismissDraft}
-        stillLiveId={stillLiveId}
-        onOwner={(item, userIds) => ownerMutation.mutate({ id: item.id, userIds })}
-        onEvidence={canUseCentre ? setEvidenceItem : undefined}
-      />
+      </>) : null}
+
+      {/* The requirement panel: pressing a row, or a link with ?requirementId=. */}
+      {panelRow && (
+        <Suspense fallback={null}>
+          <RequirementPanel
+            row={panelRow}
+            comments={panelItem?.comments || null}
+            open={!!panelRow}
+            onClose={() => showPanel(null)}
+            staff={!clientShape}
+            canUseCentre={canUseCentre}
+            canEdit={!!reqUser && !!panelItem}
+            canDelete={!clientShape && !!panelItem}
+            landsecView={landsecView}
+            live={panelLive}
+            onEdit={() => { if (panelItem) setEditItem(panelItem); }}
+            onConfirm={() => { if (panelItem) confirmRow(panelItem); }}
+            onEvidence={() => { if (panelItem) setEvidenceItem(panelItem); }}
+            onDelete={() => { if (panelItem) setDeleteItem(panelItem); }}
+            isDraft={String(panelItem?.status || "").trim().toLowerCase() === "draft"}
+            onDismissDraft={() => { if (panelItem) { dismissDraft(panelItem); showPanel(null); } }}
+            packSlot={packOf(panelItem)}
+            stillLiveBusy={!!panelId && stillLiveId === panelId}
+            unitViewer={unitViewer}
+            isMobile={isMobile}
+          />
+        </Suspense>
       )}
 
       {canUseCentre && (
@@ -1623,12 +1315,6 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
 
       <RequirementsHealthDialog open={healthOpen} onOpenChange={setHealthOpen} />
       {catchupOpen && <PipnetCatchupDialog open={catchupOpen} onOpenChange={setCatchupOpen} />}
-
-      <RequirementMatchesDialog
-        requirement={matchItem}
-        onClose={() => setMatchItem(null)}
-        unitViewer={unitViewer}
-      />
 
       <NewBrandDialog
         open={newBrandOpen}
@@ -2044,85 +1730,6 @@ function NewBrandDialog({ open, onOpenChange, isClientView }: { open: boolean; o
   );
 }
 
-function RequirementMatchesDialog({ requirement, onClose, unitViewer }: { requirement: any | null; onClose: () => void; unitViewer: UnitLinkViewer }) {
-  const { data: matches = [], isLoading, isError } = useQuery<any[]>({
-    queryKey: ["/api/requirements/matches", requirement?.id],
-    queryFn: async () => {
-      if (!requirement?.id) return [];
-      const res = await fetch(`/api/requirements/matches/${requirement.id}?type=leasing`, {
-        credentials: "include",
-        headers: getAuthHeaders(),
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      return res.json();
-    },
-    enabled: !!requirement?.id,
-  });
-  const list = (v: unknown) => (Array.isArray(v) ? v : v ? [v] : []).map(x => String(x ?? "").trim()).filter(Boolean);
-  const hasSize = list(requirement?.size).length > 0;
-  const hasUse = list(requirement?.use).length > 0;
-  const hasPlaces = list(requirement?.requirementLocations).length > 0;
-  const total = Number(matches[0]?.fit_count) || matches.length;
-  // Why nothing fits, from what the requirement gives (the one fit rule:
-  // size and use or a named place; with no size to compare, both).
-  const emptyWhy = !hasSize && !(hasUse && hasPlaces)
-    ? "It gives no size, so a unit needs both its use and a place it names to fit, and it does not give both."
-    : !hasUse && !hasPlaces
-      ? "It gives a size but no use or places, so no unit can fit on size alone."
-      : "No unit on the market fits its size with its use or a place it names. Units with no use class or no size recorded cannot fit on those.";
-
-  return (
-    <Dialog open={!!requirement} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Units that fit</DialogTitle>
-          <DialogDescription>
-            Units on the market that fit "{requirement?.name}": the size and the use or a place it names, or with no size to compare, both.
-            {total > matches.length && ` The ${matches.length} surest of ${total.toLocaleString("en-GB")}.`}
-          </DialogDescription>
-        </DialogHeader>
-        <ScrollArea className="max-h-[400px]">
-          {isLoading ? (
-            <div className="space-y-2 p-2">{[1,2,3].map(i => <Skeleton key={i} className="h-12 w-full" />)}</div>
-          ) : isError ? (
-            <p role="status" className="py-8 text-center text-sm text-muted-foreground">The units could not be loaded.</p>
-          ) : matches.length === 0 ? (
-            <div className="py-8 text-center" data-testid="match-units-empty">
-              <p className="text-sm text-muted-foreground">No unit fits</p>
-              <p className="text-xs text-muted-foreground mt-1">{emptyWhy}</p>
-            </div>
-          ) : (
-            <div className="space-y-1 p-1">
-              {matches.map((unit: any) => {
-                const href = propertyUnitHref(unit.property_id, unit.schedule_row_id) || trackerUnitHref(unit.id, unit.property_id, unitViewer) || (unit.property_id ? `/properties/${unit.property_id}` : null);
-                const body = (
-                  <>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{unit.unit_name}</p>
-                      <p className="text-xs text-muted-foreground">{unit.property_name || ""}{unit.use_class ? ` · ${useClassLabel(unit.use_class)}` : " · no use class recorded"}</p>
-                      {unit.fit_why && <p className="text-[11px] text-muted-foreground" data-testid={`match-unit-why-${unit.id}`}>{unit.fit_why}</p>}
-                    </div>
-                    <div className="text-right shrink-0 ml-2">
-                      {unit.sqft ? <p className="text-xs font-medium font-mono tabular-nums">{Number(unit.sqft).toLocaleString("en-GB")} sq ft</p> : <p className="text-xs text-muted-foreground">Size not recorded</p>}
-                      {unit.asking_rent && <p className="text-[10px] text-muted-foreground font-mono tabular-nums">£{Number(unit.asking_rent).toLocaleString("en-GB")} pa</p>}
-                      <Badge variant="outline" className="text-[9px] mt-0.5">{(() => { const code = legacyToCode(unit.marketing_status); return code ? LETTING_STATUS_LABELS[code] : unit.marketing_status || "Marketing"; })()}</Badge>
-                    </div>
-                  </>
-                );
-                return href ? (
-                  <Link key={unit.id} href={href} onClick={onClose} className="flex items-center justify-between p-3 rounded-md border hover:bg-muted/50 transition-colors" data-testid={`match-unit-${unit.id}`}>{body}</Link>
-                ) : (
-                  <div key={unit.id} className="flex items-center justify-between p-3 rounded-md border" data-testid={`match-unit-${unit.id}`}>{body}</div>
-                );
-              })}
-            </div>
-          )}
-        </ScrollArea>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function FormMultiLocationPicker({
   locationData,
   onChange,
@@ -2284,185 +1891,6 @@ const INVEST_TYPE_OPTIONS = CRM_OPTIONS.reqInvestmentType.map((t) => ({ label: t
 const INVEST_SIZE_OPTIONS = CRM_OPTIONS.reqInvestmentSize.map((s) => ({ label: s, value: s }));
 const INVEST_LOCATION_OPTIONS = CRM_OPTIONS.reqInvestmentLocations.map((l) => ({ label: l, value: l }));
 
-function InlineCompanyPicker({
-  companies,
-  currentCompanyId,
-  currentName,
-  companyMap,
-  onSelect,
-  navigate,
-  testIdPrefix,
-}: {
-  companies: CrmCompany[];
-  currentCompanyId: string | null;
-  currentName: string;
-  companyMap: Map<string, CrmCompany>;
-  onSelect: (companyId: string | null, name: string) => void;
-  navigate: (to: string) => void;
-  testIdPrefix: string;
-}) {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [search, setSearch] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
-
-  // Inline-create capability mirrors the TenantBrandPicker / CrmEntityPicker
-  // shape: when the user types a name that doesn't match any existing
-  // company, a green 'Create company "X"' row appears at the bottom of
-  // the dropdown. POSTs to /api/crm/companies, then selects the new
-  // row so the requirement is linked straight away.
-  const createMutation = useMutation({
-    mutationFn: async (name: string) => {
-      const r = await apiRequest("POST", "/api/crm/companies", {
-        name: name.trim(),
-        companyType: "Tenant",
-      });
-      return r.json();
-    },
-    onSuccess: (created: any) => {
-      qc.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-      qc.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
-      onSelect(String(created.id), created.name);
-      setEditing(false);
-      toast({ title: "Company created", description: `${created.name} added to CRM.` });
-    },
-    onError: (e: any) => toast({ title: "Couldn't create company", description: e?.message, variant: "destructive" }),
-  });
-
-  useEffect(() => {
-    if (!editing) return;
-    function handleClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node) &&
-          dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setEditing(false);
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [editing]);
-
-  useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus();
-      const rect = inputRef.current.getBoundingClientRect();
-      setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 220) });
-    }
-  }, [editing]);
-
-  const filtered = useMemo(() => {
-    const list = companies || [];
-    if (!search) return list.slice(0, 20);
-    const s = search.toLowerCase();
-    return list.filter((c) =>
-      c.name.toLowerCase().includes(s) ||
-      (c.companyType || "").toLowerCase().includes(s)
-    ).slice(0, 20);
-  }, [companies, search]);
-
-  const company = currentCompanyId ? companyMap.get(currentCompanyId) : null;
-
-  if (!editing) {
-    return (
-      <div className="flex items-center gap-1.5 group">
-        {company ? (
-          <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-        ) : (
-          <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-        )}
-        {company ? (
-          <button
-            className="text-left text-primary hover:underline cursor-pointer font-medium truncate"
-            onClick={() => navigate(`/companies/${currentCompanyId}`)}
-            data-testid={`${testIdPrefix}-link`}
-          >
-            {currentName}
-          </button>
-        ) : (
-          <span className="truncate">{currentName || "—"}</span>
-        )}
-        <button
-          type="button"
-          onClick={() => { setEditing(true); setSearch(""); }}
-          className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground shrink-0"
-          data-testid={`${testIdPrefix}-edit`}
-        >
-          <Pencil className="w-3 h-3" />
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative" ref={containerRef}>
-      <div className="relative">
-        <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-        <input
-          ref={inputRef}
-          type="text"
-          placeholder="Search companies..."
-          className="w-full pl-7 pr-2 py-1 text-sm border rounded-md bg-background"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          data-testid={`${testIdPrefix}-search`}
-        />
-      </div>
-      {dropdownPos && ReactDOM.createPortal(
-        <div
-          ref={dropdownRef}
-          className="fixed z-[9999] bg-popover border rounded-md shadow-lg max-h-48 overflow-y-auto"
-          style={{ top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width, minWidth: 220 }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          {currentCompanyId && (
-            <button
-              type="button"
-              className="w-full text-left px-3 py-1.5 hover:bg-accent text-xs text-red-600 border-b"
-              onClick={() => { onSelect(null, ""); setEditing(false); }}
-              data-testid={`${testIdPrefix}-clear`}
-            >
-              <X className="w-3 h-3 inline mr-1" /> Remove company link
-            </button>
-          )}
-          {filtered.length === 0 && !search.trim() ? (
-            <div className="p-3 text-xs text-muted-foreground text-center">No companies found</div>
-          ) : (
-            filtered.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                className="w-full text-left px-3 py-1.5 hover:bg-accent flex items-center gap-2 text-sm"
-                onClick={() => { onSelect(c.id, c.name); setEditing(false); }}
-                data-testid={`${testIdPrefix}-option-${c.id}`}
-              >
-                <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <span className="truncate">{c.name}</span>
-                {c.companyType && (
-                  <Badge variant="outline" className="text-[10px] shrink-0">{c.companyType}</Badge>
-                )}
-              </button>
-            ))
-          )}
-          {search.trim() && !filtered.some(c => c.name.toLowerCase() === search.trim().toLowerCase()) && (
-            <button
-              type="button"
-              disabled={createMutation.isPending}
-              className="w-full text-left px-3 py-2 text-xs border-t hover:bg-muted flex items-center gap-2 text-primary font-medium"
-              onClick={() => createMutation.mutate(search.trim())}
-              data-testid={`${testIdPrefix}-create`}
-            >
-              {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-              Create company "{search.trim()}"
-            </button>
-          )}
-        </div>,
-        document.body
-      )}
-    </div>
-  );
-}
-
 function InlineMultiUserPicker({
   users,
   currentUserIds,
@@ -2616,854 +2044,6 @@ function InlineMultiUserPicker({
   );
 }
 
-function InlineContactPicker({
-  contacts,
-  currentContactId,
-  contactMap,
-  companyId,
-  onSelect,
-  navigate,
-  testIdPrefix,
-}: {
-  contacts: CrmContact[];
-  currentContactId: string | null;
-  contactMap: Map<string, CrmContact>;
-  companyId: string | null;
-  onSelect: (contactId: string | null) => void;
-  navigate: (to: string) => void;
-  testIdPrefix: string;
-}) {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [search, setSearch] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
-
-  // Same inline-create pattern as InlineCompanyPicker. Requires a
-  // companyId so the contact lands attached to the right company —
-  // without it we just hide the create row, since an orphan contact
-  // is rarely useful.
-  const createMutation = useMutation({
-    mutationFn: async (name: string) => {
-      if (!companyId) throw new Error("Pick a company first");
-      const r = await apiRequest("POST", "/api/crm/contacts", {
-        name: name.trim(),
-        companyId,
-      });
-      return r.json();
-    },
-    onSuccess: (created: any) => {
-      qc.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
-      onSelect(String(created.id));
-      setEditing(false);
-      toast({ title: "Contact created", description: `${created.name} added to CRM.` });
-    },
-    onError: (e: any) => toast({ title: "Couldn't create contact", description: e?.message, variant: "destructive" }),
-  });
-
-  useEffect(() => {
-    if (!editing) return;
-    function handleClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node) &&
-          dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setEditing(false);
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [editing]);
-
-  useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus();
-      const rect = inputRef.current.getBoundingClientRect();
-      setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 220) });
-    }
-  }, [editing]);
-
-  const baseContacts = useMemo(() => {
-    const list = contacts || [];
-    if (companyId) return list.filter((c) => c.companyId === companyId);
-    return list;
-  }, [contacts, companyId]);
-
-  const filtered = useMemo(() => {
-    if (!search) return baseContacts.slice(0, 20);
-    const s = search.toLowerCase();
-    return baseContacts.filter((c) =>
-      c.name.toLowerCase().includes(s) ||
-      (c.email || "").toLowerCase().includes(s) ||
-      (c.phone || "").toLowerCase().includes(s) ||
-      (c.companyName || "").toLowerCase().includes(s)
-    ).slice(0, 20);
-  }, [baseContacts, search]);
-
-  const contact = currentContactId ? contactMap.get(currentContactId) : null;
-
-  if (!editing) {
-    return (
-      <div className="flex items-center gap-1.5 group">
-        {contact ? (
-          <>
-            <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-            <div className="min-w-0">
-              <button
-                className="text-left text-xs font-medium text-primary hover:underline cursor-pointer truncate block max-w-[140px]"
-                onClick={() => navigate(`/contacts/${contact.id}`)}
-                data-testid={`${testIdPrefix}-link`}
-              >
-                {contact.name}
-              </button>
-              {contact.email && (
-                <a href={`mailto:${contact.email}`} className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1 truncate" data-testid={`${testIdPrefix}-email`}>
-                  <Mail className="w-2.5 h-2.5 shrink-0" />
-                  <span className="truncate max-w-[140px]">{contact.email}</span>
-                </a>
-              )}
-              {contact.phone && (
-                <a href={`tel:${contact.phone}`} className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1" data-testid={`${testIdPrefix}-phone`}>
-                  <Phone className="w-2.5 h-2.5 shrink-0" />
-                  <span>{contact.phone}</span>
-                </a>
-              )}
-            </div>
-          </>
-        ) : (
-          <span className="text-xs text-muted-foreground">—</span>
-        )}
-        <button
-          type="button"
-          onClick={() => { setEditing(true); setSearch(""); }}
-          className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground shrink-0"
-          data-testid={`${testIdPrefix}-edit`}
-        >
-          <Pencil className="w-3 h-3" />
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative" ref={containerRef}>
-      <div className="relative">
-        <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-        <input
-          ref={inputRef}
-          type="text"
-          placeholder={companyId ? "Search company contacts..." : "Search all contacts..."}
-          className="w-full pl-7 pr-2 py-1 text-sm border rounded-md bg-background"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          data-testid={`${testIdPrefix}-search`}
-        />
-      </div>
-      {dropdownPos && ReactDOM.createPortal(
-        <div
-          ref={dropdownRef}
-          className="fixed z-[9999] bg-popover border rounded-md shadow-lg max-h-48 overflow-y-auto"
-          style={{ top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width, minWidth: 220 }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          {currentContactId && (
-            <button
-              type="button"
-              className="w-full text-left px-3 py-1.5 hover:bg-accent text-xs text-red-600 border-b"
-              onClick={() => { onSelect(null); setEditing(false); }}
-              data-testid={`${testIdPrefix}-clear`}
-            >
-              <X className="w-3 h-3 inline mr-1" /> Remove contact
-            </button>
-          )}
-          {filtered.length === 0 && !search.trim() ? (
-            <div className="px-3 py-2 text-xs text-muted-foreground">No contacts found</div>
-          ) : (
-            filtered.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                className="w-full text-left px-3 py-1.5 hover:bg-accent flex items-center gap-2"
-                onClick={() => { onSelect(c.id); setEditing(false); }}
-                data-testid={`${testIdPrefix}-option-${c.id}`}
-              >
-                <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <span className="text-xs font-medium truncate block">{c.name}</span>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {c.email && <span className="text-[10px] text-muted-foreground truncate">{c.email}</span>}
-                    {c.companyName && <Badge variant="outline" className="text-[10px] shrink-0">{c.companyName}</Badge>}
-                  </div>
-                </div>
-              </button>
-            ))
-          )}
-          {search.trim() && companyId && !filtered.some(c => c.name.toLowerCase() === search.trim().toLowerCase()) && (
-            <button
-              type="button"
-              disabled={createMutation.isPending}
-              className="w-full text-left px-3 py-2 text-xs border-t hover:bg-muted flex items-center gap-2 text-primary font-medium"
-              onClick={() => createMutation.mutate(search.trim())}
-              data-testid={`${testIdPrefix}-create`}
-            >
-              {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-              Create contact "{search.trim()}"
-            </button>
-          )}
-        </div>,
-        document.body
-      )}
-    </div>
-  );
-}
-
-type BgpUser = { id: string; name: string; email: string; role: string; department: string; team: string | null };
-
-function LeasingSection({
-  title,
-  note,
-  emptyText,
-  items,
-  isLoading,
-  companies,
-  contacts,
-  companyMap,
-  contactMap,
-  dealMap,
-  userMap,
-  navigate,
-  inlineUpdate,
-  onEdit,
-  onDelete,
-  onMatch,
-  fitsMap = {},
-  onDiscuss,
-  discussingId,
-  onBrief,
-  isArchived,
-  columnFilters,
-  filterOptions,
-  onToggleFilter,
-  colorMap,
-  unitViewer = { staff: false, landsecView: false, restricted: false },
-  liveMap,
-  readOnly,
-  canEdit,
-  staffTools,
-  ownerUsers,
-  onStillLive,
-  onDismissDraft,
-  stillLiveId,
-  onOwner,
-  onEvidence,
-}: {
-  title: string;
-  note?: string;
-  emptyText?: string;
-  items: CrmRequirementsLeasing[];
-  isLoading: boolean;
-  companies: CrmCompany[];
-  contacts: CrmContact[];
-  companyMap: Map<string, CrmCompany>;
-  contactMap: Map<string, CrmContact>;
-  dealMap: Map<string, CrmDeal>;
-  userMap: Map<string, BgpUser>;
-  navigate: (to: string) => void;
-  inlineUpdate: (id: string, data: Partial<CrmRequirementsLeasing>) => void;
-  onEdit: (item: CrmRequirementsLeasing) => void;
-  onDelete: (item: CrmRequirementsLeasing) => void;
-  onMatch?: (item: CrmRequirementsLeasing) => void;
-  fitsMap?: Record<string, { count: number; top: any[] }>;
-  onDiscuss?: (item: CrmRequirementsLeasing) => void;
-  discussingId?: string | null;
-  onBrief?: (match: any, item: CrmRequirementsLeasing) => void;
-  isArchived?: boolean;
-  columnFilters?: Record<string, string[]>;
-  filterOptions?: { status: string[]; use: string[]; requirementType: string[]; size: string[]; requirementLocations: string[] };
-  onToggleFilter?: (col: string, value: string) => void;
-  colorMap?: Record<string, string>;
-  unitViewer?: UnitLinkViewer;
-  /** The state and honest date line of every row (shared/requirement-live.ts). */
-  liveMap: Map<string, RequirementLive>;
-  /** A client login: no state, owner, inline editing or delete, and nothing to click that it cannot save. */
-  readOnly?: boolean;
-  /** The row's Edit (the form): every login once it is known, a client login included (Woody, 2026-11-17). */
-  canEdit?: boolean;
-  /** BGP staff: Still live and the owner picker. */
-  staffTools?: boolean;
-  ownerUsers: BgpUser[];
-  onStillLive?: (item: CrmRequirementsLeasing) => void;
-  onDismissDraft?: (item: CrmRequirementsLeasing) => void;
-  stillLiveId?: string | null;
-  onOwner?: (item: CrmRequirementsLeasing, userIds: string[]) => void;
-  /** BGP staff: opens the evidence drawer. */
-  onEvidence?: (item: CrmRequirementsLeasing) => void;
-}) {
-  // Rows whose Fits list is opened in place (a client login; staff open the Match dialog).
-  const [openFits, setOpenFits] = useState<Set<string>>(new Set());
-  const plain = (text: string | null | undefined) => (
-    text ? <span className="text-xs">{text}</span> : <span className="text-xs text-muted-foreground">—</span>
-  );
-  const joined = (vals: string[] | string | null | undefined, fmt: (v: string) => string = (v) => v) =>
-    (Array.isArray(vals) ? vals : vals ? [vals] : []).map(fmt).join(", ");
-  return (
-    <Card>
-      <CardContent className="p-0">
-        {title && (
-          <div className={`px-4 py-2 border-b ${isArchived ? "bg-muted/30" : "bg-muted/40"}`}>
-            <h3 className={`text-sm font-semibold ${isArchived ? "text-muted-foreground" : ""}`} data-testid={`text-section-${isArchived ? "archived" : "active"}`}>
-              {title} <span className="font-mono tabular-nums font-normal text-muted-foreground">{items.length.toLocaleString("en-GB")}</span>
-            </h3>
-            {note && <p className="mt-0.5 text-[11px] text-muted-foreground">{note}</p>}
-          </div>
-        )}
-        {isLoading ? (
-          <div className="p-4 space-y-3">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <Skeleton key={i} className="h-12" />
-            ))}
-          </div>
-        ) : items.length === 0 ? (
-          // No results = the message alone, centred — a header row over
-          // nothing pushed it off-centre (Woody, 2026-09-28).
-          <div className="py-12 text-center text-muted-foreground" data-testid="requirements-empty">
-            <Users className="w-8 h-8 mx-auto mb-2 opacity-30" />
-            <p className="text-sm">{emptyText || "No requirements found"}</p>
-          </div>
-        ) : (
-          // Scrolls with the page — its own fixed-height box cut the last
-          // row off under the fold (Woody, 2026-09-28). Fixed widths up to
-          // Req. Locations and a minWidth under the column sum, so no spare
-          // width is shared out by content and columns hold still across
-          // searches (Woody, 2026-09-28). Staff rows carry two more columns
-          // (state and owner) than a client login's.
-          <ScrollableTable minWidth={readOnly ? 2400 : 2850} pageScroll>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="min-w-[180px] w-[280px] max-w-[280px] sticky left-0 bg-background z-10">Name</TableHead>
-                  {!readOnly && <TableHead className="min-w-[320px] w-[320px]">State</TableHead>}
-                  {!readOnly && <TableHead className="min-w-[130px] w-[130px]">BGP owner</TableHead>}
-                  {/* "12 Sep 26" keeps the date on one line without widening
-                      the column and cutting the location chips
-                      (Woody, 2026-09-28). */}
-                  <TableHead className="min-w-[124px] w-[124px]">{readOnly ? "Date" : "Dated"}</TableHead>
-                  <TableHead className="min-w-[100px] w-[100px]">
-                    {filterOptions && onToggleFilter ? (
-                      <ColumnFilterPopover
-                        label="Status"
-                        options={filterOptions.status}
-                        activeFilters={columnFilters?.status || []}
-                        onToggleFilter={(v) => onToggleFilter("status", v)}
-                      />
-                    ) : "Status"}
-                  </TableHead>
-                  <TableHead className="min-w-[144px] w-[144px]">
-                    {filterOptions && onToggleFilter ? (
-                      <ColumnFilterPopover
-                        label="Use"
-                        options={filterOptions.use}
-                        activeFilters={columnFilters?.use || []}
-                        onToggleFilter={(v) => onToggleFilter("use", v)}
-                      />
-                    ) : "Use"}
-                  </TableHead>
-                  <TableHead className="min-w-[176px] w-[176px] whitespace-nowrap">
-                    {filterOptions && onToggleFilter ? (
-                      <ColumnFilterPopover
-                        label="Requirement Type"
-                        options={filterOptions.requirementType}
-                        activeFilters={columnFilters?.requirementType || []}
-                        onToggleFilter={(v) => onToggleFilter("requirementType", v)}
-                      />
-                    ) : "Requirement Type"}
-                  </TableHead>
-                  <TableHead className="min-w-[152px] w-[152px]">
-                    {filterOptions && onToggleFilter ? (
-                      <ColumnFilterPopover
-                        label="Size"
-                        options={filterOptions.size}
-                        activeFilters={columnFilters?.size || []}
-                        onToggleFilter={(v) => onToggleFilter("size", v)}
-                      />
-                    ) : "Size"}
-                  </TableHead>
-                  <TableHead className="min-w-[264px] w-[264px]">
-                    {filterOptions && onToggleFilter ? (
-                      <ColumnFilterPopover
-                        label="Req. Locations"
-                        options={filterOptions.requirementLocations}
-                        activeFilters={columnFilters?.requirementLocations || []}
-                        onToggleFilter={(v) => onToggleFilter("requirementLocations", v)}
-                      />
-                    ) : "Req. Locations"}
-                  </TableHead>
-                  <TableHead className="min-w-[230px]">Fits</TableHead>
-                  <TableHead className="min-w-[220px]">Map Locations</TableHead>
-                  <TableHead className="min-w-[220px]">Principal Contact</TableHead>
-                  <TableHead className="min-w-[220px]">Agent Contact</TableHead>
-                  <TableHead className="min-w-[180px]">Deal</TableHead>
-                  <TableHead className="min-w-[120px]">Landlord Pack</TableHead>
-                  <TableHead className="min-w-[150px]">Comments</TableHead>
-                  <TableHead className="min-w-[80px]">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((item) => {
-                  const live = liveMap.get(item.id) || requirementLive(item);
-                  const stale = requirementGoingStale(live);
-                  const closed = live.state === "closed";
-                  const isDraft = String(item.status || "").trim().toLowerCase() === "draft";
-                  const brand = item.companyId ? companyMap.get(item.companyId) : null;
-                  const brandLine = brand && brand.name.trim().toLowerCase() !== (item.name || "").trim().toLowerCase() ? brand.name
-                    : !item.companyId && !readOnly ? "No brand linked" : null;
-                  // Staff see whose record it is first; a client login keeps the labels it always had.
-                  const sourceChips = readOnly ? (item.sources || []) : requirementSourceLabels(item);
-                  const ownerIds = requirementOwnerIds(item);
-                  let pack: { url?: string; name?: string } | null = null;
-                  if (readOnly && item.landlordPack) { try { pack = JSON.parse(item.landlordPack); } catch {} }
-                  return (
-                  <TableRow key={item.id} className={`text-xs ${isArchived ? "opacity-60" : ""}`} data-testid={`row-leasing-${item.id}`}>
-                    <TableCell className="px-1.5 py-1 font-medium text-sm w-[280px] max-w-[280px] truncate sticky left-0 bg-background z-10" title={item.name || undefined}>
-                      {readOnly ? (
-                        brand ? (
-                          <button
-                            className="text-left text-primary hover:underline cursor-pointer font-medium truncate max-w-full"
-                            onClick={() => navigate(`/companies/${item.companyId}`)}
-                            data-testid={`name-leasing-${item.id}-link`}
-                          >
-                            {item.name}
-                          </button>
-                        ) : (
-                          <span className="truncate">{item.name || "—"}</span>
-                        )
-                      ) : (
-                      <InlineCompanyPicker
-                        companies={companies}
-                        currentCompanyId={item.companyId}
-                        currentName={item.name}
-                        companyMap={companyMap}
-                        onSelect={(companyId, name) => {
-                          const updates: Partial<CrmRequirementsLeasing> = { companyId: companyId as any, name };
-                          if (companyId !== item.companyId) updates.principalContactId = null;
-                          inlineUpdate(item.id, updates);
-                        }}
-                        navigate={navigate}
-                        testIdPrefix={`name-leasing-${item.id}`}
-                      />
-                      )}
-                      {brandLine && (
-                        <p className="mt-0.5 truncate text-[11px] font-normal text-muted-foreground" data-testid={`brand-${item.id}`}>{brandLine}</p>
-                      )}
-                      {sourceChips.length > 0 && (
-                        <div className="flex gap-0.5 mt-0.5 flex-wrap">
-                          {sourceChips.map((s) => (
-                            <span
-                              key={s}
-                              className="text-[10px] font-normal px-1 py-px rounded border border-border text-muted-foreground"
-                              data-testid={`source-${item.id}-${s}`}
-                            >
-                              {s}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </TableCell>
-                    {!readOnly && (
-                    <TableCell className="px-1.5 py-1" data-testid={`cell-state-${item.id}`}>
-                      <div className="flex items-center gap-1.5 whitespace-nowrap">
-                        <RequirementStatePill live={live} testId={`state-${item.id}`} />
-                        {staffTools && !closed && onStillLive && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 px-2 text-[11px] gap-1"
-                            onClick={() => onStillLive(item)}
-                            disabled={stillLiveId === item.id}
-                            title={live.confirmed ? "Record that you have confirmed today that this is still live" : "Confirm this requirement: you are asked how you know"}
-                            data-testid={`button-still-live-${item.id}`}
-                          >
-                            {stillLiveId === item.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                            {live.confirmed ? "Still live" : "Confirm"}
-                          </Button>
-                        )}
-                        {isDraft && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 px-2 text-[11px] text-muted-foreground"
-                            onClick={() => (onDismissDraft ? onDismissDraft(item) : inlineUpdate(item.id, { status: "Archived" }))}
-                            title="Archive this draft: it is not a requirement"
-                            data-testid={`button-dismiss-draft-${item.id}`}
-                          >
-                            Not a requirement
-                          </Button>
-                        )}
-                        {onEvidence && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                            onClick={() => onEvidence(item)}
-                            title="Evidence: how we know, and add a note"
-                            aria-label="Evidence"
-                            data-testid={`button-evidence-${item.id}`}
-                          >
-                            <ClipboardList className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-                      </div>
-                      <p className="mt-0.5 text-[11px] text-muted-foreground whitespace-nowrap" title={live.why} data-testid={`date-label-${item.id}`}>
-                        {live.dateLabel}{stale ? ` · ${countLabel(requirementDaysLeft(live) ?? 0, "day")} left` : ""}
-                      </p>
-                    </TableCell>
-                    )}
-                    {!readOnly && (
-                    <TableCell className="px-1.5 py-1" data-testid={`cell-owner-${item.id}`}>
-                      {staffTools && onOwner ? (
-                        <InlineMultiUserPicker
-                          users={ownerUsers}
-                          currentUserIds={ownerIds}
-                          userMap={userMap}
-                          onSelect={(ids) => onOwner(item, ids)}
-                          testIdPrefix={`owner-${item.id}`}
-                          colorMap={colorMap}
-                          emptyLabel="No owner"
-                        />
-                      ) : plain(ownerIds.map((id) => userMap.get(id)?.name).filter(Boolean).join(", ") || "No owner")}
-                    </TableCell>
-                    )}
-                    <TableCell className="px-1.5 py-1">
-                      {readOnly ? (
-                        <div className="flex items-center gap-1 whitespace-nowrap">
-                          {(() => {
-                            const d = item.requirementDate ? new Date(item.requirementDate) : null;
-                            return d && !isNaN(d.getTime())
-                              ? <span className="text-xs tabular-nums">{gbDate(d, { day: "numeric", month: "short", year: "2-digit" })}</span>
-                              : <span className="text-xs text-muted-foreground">—</span>;
-                          })()}
-                          <FreshBadge iso={item.requirementDate} />
-                        </div>
-                      ) : (
-                        <CompactInlineDate
-                          value={item.requirementDate || null}
-                          onSave={(v) => inlineUpdate(item.id, { requirementDate: v || null })}
-                        />
-                      )}
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
-                      {readOnly ? plain(item.status) : (
-                      <InlineLabelSelect
-                        value={item.status}
-                        options={CRM_OPTIONS.reqLeasingStatus}
-                        colorMap={CRM_OPTIONS.reqLeasingStatusColors}
-                        onSave={(v) => inlineUpdate(item.id, { status: v || null })}
-                        placeholder="Set status"
-                      />
-                      )}
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
-                      {readOnly ? plain(joined(item.use, useClassLabel)) : (
-                      <InlineMultiSelect
-                        value={item.use}
-                        options={USE_OPTIONS}
-                        colorMap={CRM_OPTIONS.reqLeasingUseColors}
-                        onSave={(v) => inlineUpdate(item.id, { use: v })}
-                        placeholder="Set use"
-                        testId={`select-use-${item.id}`}
-                      />
-                      )}
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
-                      {readOnly ? plain(joined(item.requirementType)) : (
-                      <InlineMultiSelect
-                        value={item.requirementType}
-                        options={TYPE_OPTIONS}
-                        colorMap={CRM_OPTIONS.reqLeasingTypeColors}
-                        onSave={(v) => inlineUpdate(item.id, { requirementType: v })}
-                        placeholder="Set type"
-                        testId={`select-type-${item.id}`}
-                      />
-                      )}
-                    </TableCell>
-                    {/* One line — the chevron wrapped under "3,500–10,000 sq m"
-                        (Woody, 2026-09-28). */}
-                    <TableCell className="px-1.5 py-1 [&_button]:flex-nowrap [&_button>div]:whitespace-nowrap">
-                      {readOnly ? plain(joined(item.size, formatSizeText)) : (
-                      <InlineMultiSelect
-                        value={item.size}
-                        options={sizeOptionsFor(item.size)}
-                        colorMap={CRM_OPTIONS.reqLeasingSizeColors}
-                        onSave={(v) => inlineUpdate(item.id, { size: v })}
-                        placeholder="Set size"
-                        testId={`select-size-${item.id}`}
-                      />
-                      )}
-                    </TableCell>
-                    {/* Capped so the chips wrap inside the column. Three chips
-                        then "+N" (the rest in the tooltip) — a fourth ran off
-                        the table edge as "Chest"/"Nor" (Woody, 2026-09-28).
-                        The cell follows the column and two chips + "+N" fit
-                        it; a 260px cap in a 240px column hid the "+N"
-                        (Woody, 2026-09-28). */}
-                    <TableCell className="px-1.5 py-1">
-                      {readOnly ? plain(joined(item.requirementLocations)) : (
-                      <div className="flex items-center gap-0.5 w-full min-w-0 [&>button]:min-w-0 [&>button>div:nth-child(n+3)]:hidden">
-                        <InlineMultiSelect
-                          value={item.requirementLocations}
-                          options={LOCATION_OPTIONS}
-                          colorMap={CRM_OPTIONS.reqLeasingLocationsColors}
-                          onSave={(v) => inlineUpdate(item.id, { requirementLocations: v })}
-                          placeholder="Set locations"
-                          testId={`select-locations-${item.id}`}
-                        />
-                        {(item.requirementLocations?.length || 0) > 2 && (
-                          <span className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0" title={item.requirementLocations!.slice(2).join(", ")} data-testid={`locations-more-${item.id}`}>
-                            +{item.requirementLocations!.length - 2}
-                          </span>
-                        )}
-                      </div>
-                      )}
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1" data-testid={`cell-fits-${item.id}`}>
-                      {(() => {
-                        // The one fit rule (shared/requirement-fit.ts): each fit
-                        // opens the unit itself and says why it fits.
-                        const fit = fitsMap[item.id];
-                        if (!fit?.count) return <span className="text-[10px] text-muted-foreground">—</span>;
-                        const shown = openFits.has(item.id) ? fit.top : fit.top.slice(0, 2);
-                        const unseen = fit.count - shown.length;
-                        return (
-                          <div className="space-y-0.5">
-                            {shown.map((m: any) => {
-                              const href = propertyUnitHref(m.propertyId, m.scheduleRowId) || trackerUnitHref(m.unitId, m.propertyId, unitViewer) || `/properties/${m.propertyId}`;
-                              const size = m.sizeUnknown ? "size not recorded" : `${Number(m.sqft).toLocaleString("en-GB")} sq ft`;
-                              return (
-                                <div key={m.unitId} className="min-w-0">
-                                  <div className="flex items-center gap-1 min-w-0">
-                                    <Link href={href} className="text-[11px] text-primary hover:underline truncate max-w-[150px]"
-                                      title={`${m.unitName} · ${m.propertyName} · ${size}`} data-testid={`fit-unit-${item.id}-${m.unitId}`}>
-                                      {m.unitName} · {m.propertyName}
-                                    </Link>
-                                    <span className="text-[9px] text-muted-foreground font-mono tabular-nums shrink-0">{m.sizeUnknown ? "size?" : Number(m.sqft).toLocaleString("en-GB")}</span>
-                                    {onBrief && (
-                                      <button
-                                        className="text-[9px] text-primary hover:underline shrink-0"
-                                        onClick={() => onBrief(m, item)}
-                                        title="Add this brand to the unit's targeting brief"
-                                        data-testid={`button-brief-${item.id}-${m.unitId}`}
-                                      >
-                                        + brief
-                                      </button>
-                                    )}
-                                  </div>
-                                  {m.why && <p className="text-[9px] text-muted-foreground truncate max-w-[200px]" title={m.why} data-testid={`fit-why-${item.id}-${m.unitId}`}>{m.why}</p>}
-                                </div>
-                              );
-                            })}
-                            {unseen > 0 && (onMatch || shown.length < fit.top.length ? (
-                              <button
-                                type="button"
-                                className="text-[9px] text-primary hover:underline"
-                                onClick={() => (onMatch ? onMatch(item) : setOpenFits(prev => new Set(prev).add(item.id)))}
-                                data-testid={`fits-more-${item.id}`}
-                              >
-                                +{unseen.toLocaleString("en-GB")} more
-                              </button>
-                            ) : (
-                              <span className="text-[9px] text-muted-foreground" title={`Only the first ${fit.top.length} are listed here`}>+{unseen.toLocaleString("en-GB")} more</span>
-                            ))}
-                          </div>
-                        );
-                      })()}
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
-                      {readOnly ? plain(parseLocationData(item.locationData).map((l) => l.formatted.split(",")[0]).join(", ")) : (
-                      <MapLocationsCell
-                        itemId={item.id}
-                        locationData={item.locationData}
-                        onSave={(data) => inlineUpdate(item.id, { locationData: data })}
-                        navigate={navigate}
-                      />
-                      )}
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
-                      {readOnly ? plain(item.principalContactId ? contactMap.get(item.principalContactId)?.name : null) : (
-                      <InlineContactPicker
-                        contacts={contacts}
-                        currentContactId={item.principalContactId || null}
-                        contactMap={contactMap}
-                        companyId={item.companyId || null}
-                        onSelect={(contactId) => inlineUpdate(item.id, { principalContactId: contactId })}
-                        navigate={navigate}
-                        testIdPrefix={`contact-${item.id}`}
-                      />
-                      )}
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
-                      {readOnly ? plain(item.agentContactId ? contactMap.get(item.agentContactId)?.name : null) : (
-                      <InlineContactPicker
-                        contacts={contacts}
-                        currentContactId={item.agentContactId || null}
-                        contactMap={contactMap}
-                        companyId={null}
-                        onSelect={(contactId) => inlineUpdate(item.id, { agentContactId: contactId })}
-                        navigate={navigate}
-                        testIdPrefix={`agent-contact-${item.id}`}
-                      />
-                      )}
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
-                      {(() => {
-                        const deal = item.dealId ? dealMap.get(item.dealId) : null;
-                        if (!deal) return <span className="text-muted-foreground">—</span>;
-                        return (
-                          <button
-                            className="font-medium text-primary hover:underline cursor-pointer flex items-center gap-1"
-                            onClick={() => navigate(`/deals/${deal.id}`)}
-                            data-testid={`link-deal-${item.id}`}
-                          >
-                            <FileText className="w-3 h-3 shrink-0" />
-                            <span className="truncate max-w-[140px]">{deal.name}</span>
-                            {deal.status && (
-                              <Badge variant="outline" className="text-[10px] shrink-0 ml-1">{deal.status}</Badge>
-                            )}
-                          </button>
-                        );
-                      })()}
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
-                      {readOnly ? (
-                        pack?.url ? (
-                          <a
-                            href={pack.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-primary hover:underline flex items-center gap-1 cursor-pointer"
-                            data-testid={`link-landlord-pack-${item.id}`}
-                          >
-                            <File className="w-3 h-3 shrink-0" />
-                            <span className="truncate max-w-[80px]">{pack.name || "Document"}</span>
-                          </a>
-                        ) : plain(null)
-                      ) : (
-                      <LandlordPackCell itemId={item.id} landlordPack={item.landlordPack} />
-                      )}
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
-                      {readOnly ? (
-                        <span className="text-xs line-clamp-2" title={item.comments || undefined}>{item.comments || "—"}</span>
-                      ) : (
-                      <InlineText
-                        value={item.comments || ""}
-                        onSave={(v) => inlineUpdate(item.id, { comments: v || null })}
-                        placeholder="Add comment..."
-                        maxLines={2}
-                        multiline
-                      />
-                      )}
-                    </TableCell>
-                    <TableCell className="px-1 py-1">
-                      <div className="flex items-center gap-0.5">
-                        {onDiscuss && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                            onClick={() => onDiscuss(item)}
-                            disabled={discussingId === item.id}
-                            data-testid={`button-discuss-leasing-${item.id}`}
-                            title="Discuss in chat — brand tagged, ChatBGP in the room"
-                          >
-                            {discussingId === item.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5" />}
-                          </Button>
-                        )}
-                        {onMatch && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                            onClick={() => onMatch(item)}
-                            data-testid={`button-match-leasing-${item.id}`}
-                            title="Find matching units"
-                          >
-                            <Sparkles className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-                        {/* Every login amends a requirement through the form, a
-                            client login included; only BGP staff delete one. */}
-                        {canEdit && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => onEdit(item)}
-                          title="Edit"
-                          data-testid={`button-edit-leasing-${item.id}`}
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </Button>
-                        )}
-                        {!readOnly && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => onDelete(item)}
-                          title="Delete"
-                          data-testid={`button-delete-leasing-${item.id}`}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </ScrollableTable>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// InlineDate with a compact "12 Sep 26" display for the requirements
-// table's Date column (Woody, 2026-09-28).
-function CompactInlineDate({ value, onSave }: { value: string | null; onSave: (value: string | null) => void }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const dateStr = value ? value.split("T")[0] : "";
-  if (editing) {
-    return (
-      <input
-        autoFocus
-        type="date"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => { setEditing(false); if ((draft || null) !== (dateStr || null)) onSave(draft || null); }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") e.currentTarget.blur();
-          if (e.key === "Escape") { setDraft(dateStr); setEditing(false); }
-        }}
-        className="px-1 py-0.5 text-xs border border-primary/40 rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary/30"
-        data-testid="inline-edit-date"
-      />
-    );
-  }
-  const d = value ? new Date(value) : null;
-  const display = d && !isNaN(d.getTime()) ? gbDate(d, { day: "numeric", month: "short", year: "2-digit" }) : null;
-  return (
-    <span
-      onClick={() => { setDraft(dateStr); setEditing(true); }}
-      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] tabular-nums transition-colors ${!display ? "text-muted-foreground italic" : ""}`}
-      data-testid="inline-edit-display"
-    >
-      {display || "—"}
-    </span>
-  );
-}
 
 function CompanySearchPicker({
   companies,

@@ -355,12 +355,15 @@ test('the Requirements page offers a client Add and Edit on the client form, and
   assert.equal([...table.matchAll(/clientForm=\{clientShape\}/g)].length, 2, 'the add and the edit form');
   assert.equal([...table.matchAll(/companies=\{formCompanies\}/g)].length, 2);
   assert.match(table, /c\.id !== reqUser\?\.companyScopeId && \/\^tenant\/i\.test/);
-  // Edit on a row for every login once it is known; Delete stays behind the staff shape.
-  assert.match(table, /onEdit: reqUser \? \(\) => setEditItem\(item\) : undefined/);
-  assert.match(table, /canEdit=\{!!reqUser\}/);
-  const section = find('client/src/pages/requirements.tsx', n => ts.isFunctionDeclaration(n) && n.name?.text === 'LeasingSection');
-  assert.match(section, /\{canEdit && \(\s*<Button[\s\S]*?data-testid=\{`button-edit-leasing-\$\{item\.id\}`\}/);
-  assert.match(section, /\{!readOnly && \(\s*<Button[\s\S]*?onClick=\{\(\) => onDelete\(item\)\}/);
+  // Edit in the requirement panel for every login once it is known (since
+  // 19 November 2026 the board's rows open the panel); Delete stays behind
+  // the staff shape.
+  assert.match(table, /canEdit=\{!!reqUser && !!panelItem\}/);
+  assert.match(table, /canDelete=\{!clientShape && !!panelItem\}/);
+  assert.match(table, /onEdit=\{\(\) => \{ if \(panelItem\) setEditItem\(panelItem\); \}\}/);
+  const panel = source('client/src/components/requirements-board/requirement-panel.tsx');
+  assert.match(panel, /\{canEdit && <Button[^\n]*onClick=\{onEdit\}[^\n]*data-testid="requirement-panel-edit"/);
+  assert.match(panel, /\{canDelete && <DropdownMenuItem onClick=\{onDelete\}/);
   // The client form sends no owner and picks a brand.
   const form = find('client/src/pages/requirements.tsx', n => ts.isFunctionDeclaration(n) && n.name?.text === 'LeasingFormDialog');
   assert.match(form, /\.\.\.\(clientForm \? \{\} : \{\s*bgpContactUserIds:/);

@@ -333,7 +333,7 @@ export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = [];
 export function jointAgentApiDenied(method: string, path: string): boolean {
   const p = String(path || "").toLowerCase().split("?")[0];
   if (/^\/api\/(brand|brands|brand-crm|brand-pack|covenant\/by-crm)(\/|$)/.test(p)) return true;
-  if (/^\/api\/crm\/requirements-leasing(\/|$)/.test(p)) return true;
+  if (/^\/api\/crm\/requirements-(leasing|board)(\/|$)/.test(p)) return true;
   if (/^\/api\/(requirements|requirement-suggestions|requirement-centre)(\/|$)/.test(p)) return true;
   if (/^\/api\/available-units\/matches(\/|$)/.test(p)) return true;
   if (/^\/api\/available-units\/[^/]+\/brand-suggestions$/.test(p)) return true;

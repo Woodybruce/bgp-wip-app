@@ -15,7 +15,15 @@ type Db = { query(sql: string, params?: any[]): Promise<{ rows: any[] }> };
 // The story types that say something about whether a brand wants space.
 export const OVERLAP_SIGNAL_TYPES = ["opening", "funding", "requirement", "hiring", "closure"] as const;
 
+// The board's "Needs confirming" filter on BGP's own requirements, and its
+// Suggestions list (since 19 November 2026 the two are apart).
 export const REQUIREMENTS_TO_CONFIRM_PATH = "/requirements?list=to_confirm";
+export const REQUIREMENT_SUGGESTIONS_PATH = "/requirements?list=suggestions";
+
+/** Where a "N suggestions to answer and N requirements need reconfirming" line links: the suggestions while any wait, else BGP's own to confirm. */
+export function requirementsToConfirmPath(counts: Pick<ReconfirmCounts, "suggestions"> | null | undefined): string {
+  return counts?.suggestions ? REQUIREMENT_SUGGESTIONS_PATH : REQUIREMENTS_TO_CONFIRM_PATH;
+}
 
 export interface OverlapRequirement { id: string; name: string | null; state: RequirementState; stateLabel: string; reason: string; size: string | null; locations: string | null }
 export interface OverlapSignal { type: string; headline: string; date: Date | null; source: string | null; sentiment: string | null }
@@ -103,7 +111,7 @@ export interface ReconfirmCounts {
   lapsed: number;
   /** Still live, but within 14 days of lapsing. */
   goingStale: number;
-  /** Open suggestions waiting for a person in the To confirm tray (from `openSuggestionCount`), when the caller counted them. */
+  /** Open suggestions waiting for a person on the Suggestions list (from `openSuggestionCount`), when the caller counted them. */
   suggestions?: number;
 }
 
@@ -152,6 +160,6 @@ export function overlapReportText(result: RequirementNewsOverlaps, counts: Recon
   }
   if (result.unlinkedRequirements) lines.push(`${result.unlinkedRequirements} open requirement row${result.unlinkedRequirements === 1 ? " has" : "s have"} no brand link and could not be joined to news.`);
   const reconfirm = counts ? reconfirmLine(counts) : null;
-  if (reconfirm) lines.push("", `REQUIREMENTS TO RECONFIRM: ${reconfirm}. Link: ${baseUrl}${REQUIREMENTS_TO_CONFIRM_PATH}`);
+  if (reconfirm) lines.push("", `REQUIREMENTS TO RECONFIRM: ${reconfirm}. Link: ${baseUrl}${requirementsToConfirmPath(counts)}`);
   return lines.join("\n");
 }

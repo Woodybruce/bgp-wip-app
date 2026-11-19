@@ -11069,10 +11069,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // with no deal yet. "Open requirement" used to list the ten newest rows
       // of any status, past and archived included.
       try {
-        const { requirementsToReconfirm, openSuggestionCount, reconfirmLine, REQUIREMENTS_TO_CONFIRM_PATH } = await import("./requirement-overlaps");
+        const { requirementsToReconfirm, openSuggestionCount, reconfirmLine, requirementsToConfirmPath } = await import("./requirement-overlaps");
         const counts = { ...(await requirementsToReconfirm(pool)), suggestions: await openSuggestionCount(pool) };
         const line = reconfirmLine(counts);
-        if (line) alerts.push({ type: "requirements_to_confirm", severity: "warning", title: line.replace(/ \(.*$/, ""), detail: line.includes("(") ? line.slice(line.indexOf("(") + 1, -1) : "Open the To confirm list on the Requirements page", entityType: "requirement", href: REQUIREMENTS_TO_CONFIRM_PATH });
+        if (line) alerts.push({ type: "requirements_to_confirm", severity: "warning", title: line.replace(/ \(.*$/, ""), detail: line.includes("(") ? line.slice(line.indexOf("(") + 1, -1) : (counts.suggestions ? "Open Suggestions on the Requirements page" : "Open BGP's own requirements that need confirming"), entityType: "requirement", href: requirementsToConfirmPath(counts) });
       } catch (e: any) { console.warn("[daily-digest] requirements to reconfirm:", e?.message); }
 
       const unmatchedReqs = await pool.query(

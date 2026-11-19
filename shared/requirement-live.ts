@@ -436,7 +436,9 @@ export function requirementGoingStale(live: Pick<RequirementLive, "state" | "day
 
 // Every row sits on exactly one list. Background splits in two so nothing is
 // hidden: an import nobody confirmed is a market listing; BGP's own row that
-// has gone a year unconfirmed, or is on hold, is "older".
+// has gone a year unconfirmed, or is on hold, is "older". The board's pills
+// (since 19 November 2026) are `boardListOf` in shared/requirements-board.ts,
+// which also puts a market listing unseen for six months under Older.
 export type RequirementListKey = "to_confirm" | "live" | "market" | "older" | "closed";
 
 export function requirementListKey(live: Pick<RequirementLive, "state" | "importOnly">): RequirementListKey {
