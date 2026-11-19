@@ -3,6 +3,48 @@
 Three recordings. For everything except the walking clip: a quiet room, and
 the phone on a stand or propped up, not hand held.
 
+## Reporting to the board (19 November 2026)
+
+After a call with Mark Warne, Woody asked for a part towards the end on how
+the app is used for approvals and for the quarterly report to Landsec's
+board ("this is Me and Mark working together to provide overall analysis for
+him to present each quarter"). Three changes, recorded on 19 November as one
+short phone recording and added after the end of the main one:
+
+- **The approval pack** (scene 11, in place of "The recommendation arrives
+  in your own template"):
+
+  > Then the deal analysis and letting approval pack. It's generated for
+  > every approval, in your own template, with Net Effective Rent worked out
+  > against ERV and the brief, which hopefully makes senior approvals
+  > seamless.
+
+- **Reporting to the board** (new, after the phone scenes and before the
+  close; one picture a line):
+
+  > And the last piece is for the board. Each quarter, Mark and I pull the
+  > analysis together for him to present.
+  > Pick the months and the schemes, and the app builds a report from the
+  > same records everyone has been working on.
+  > It can include lettings exchanged, Heads of Terms agreed, rental growth
+  > and deal speed, scheme by scheme.
+  > Also the tenants we are targeting, and how far each one has got.
+  > We provide a market view for each sector of what the industry did that
+  > quarter.
+  > It comes out as a PDF or a PowerPoint, in your colours, ready to present.
+
+  A closing line about the reports Landsec takes from another system was
+  written and then dropped (Woody: "dont worry about the VTS stuff").
+
+- **Ollie Duthie** has since moved out of Data and Technology. The spoken
+  line was not re-recorded; the film's tag for him reads "then Data &
+  Technology, Landsec" and the card "Initial pilot clearance". If the line is
+  recorded again: "And Ollie Duthie, when he was in your Data and Technology
+  team, gave it initial clearance for a pilot."
+
+The board deck's figures in the film are staged on the demo copy and every
+frame that shows a slide is marked "Illustration".
+
 ## Re-cut after Landsec's feedback (18 November 2026)
 
 Mark Warne's feedback, as Woody passed it on, changes who is in the film:

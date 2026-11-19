@@ -201,6 +201,42 @@ recorded afterwards is added after the END of the main recording (level
 matched), so no earlier time in the cut list moves, and the scene's stretches
 are then no longer in recording order.
 
+### Reporting to the board (19 November 2026)
+
+Woody recorded two more pieces (the approval pack line and a new section,
+"Reporting to the board"; the words are in the recording sheet). They were
+added after the end of the recording, a second apart and level matched, as
+the close line was.
+
+- **The approval pack scene** was filmed again on the demo copy running the
+  renamed screens ("Deal analysis and letting approval pack"), with the
+  senior asset manager's decision taken off first so he can press Approve on
+  film.
+- **The reports section is one clip made to the words.** The cut list writes
+  when each phrase is spoken (`cues`); `film.cjs` films two takes of the
+  Reports page against that clock (`reportsPick`: the page arrives, the
+  months and schemes are picked, the Board report card; `reportsOut`: PDF and
+  PowerPoint are pressed, the two files answered from disk so the buttons
+  free at once); `reports-clip.cjs` joins them with the board deck's own
+  pages (pdftoppm, set in a frame that leaves the right edge and the foot
+  clear for the presenter and the captions, a slow push in, one page shown
+  larger for the targets grid) and ends on the deck's title slide. In the cut
+  list the item is `exact`: `voice-cut.cjs` plays it at 1x for the length
+  given, and the pauses between its sentences are written in the cut list.
+- **The figures on the slides are staged, on the demo copy only**, because
+  the copy held no rent to compare and no confirmed stage dates: a handful of
+  lettings that sat at Solicitors were given made-up instructed, Heads of
+  Terms and exchange dates inside the period, an agreed rent, and a previous
+  passing rent and ERV on their schedule rows. Every frame that shows a slide
+  carries "Illustration" (written by `reports-clip.cjs`). The staging script
+  and the database copy taken before it are kept outside the repo. The
+  market slides were left as the copy had them: no market words were written.
+- **Hesitations** in a new recording are still found by transcribing each
+  loud stretch on its own: this one held "for the, for each sector", cut
+  between the end of "view" and the second "for", and three words the
+  transcript had placed in the silence before them, which were moved to
+  where the sound starts.
+
 ## Two versions
 
 - **Room cut**, about 2 minutes 45. Woody can pause it and talk.

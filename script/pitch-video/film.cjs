@@ -104,6 +104,8 @@ class Shot {
   async wait(ms) { await this.page.waitForTimeout(ms); }
   // The cut starts here: everything before it is loading.
   async start() { await this.moveTo(this.x, this.y, 1); this.trim = (Date.now() - this.t0) / 1000; }
+  // A scene filmed to the words (reports): wait until `secs` after the cut starts, so each action lands on its cue.
+  async until(secs) { const left = this.t0 + (this.trim + secs) * 1000 - Date.now(); if (left > 0) await this.wait(left); }
   async goto(p, settle = 2500) {
     await this.page.goto(BASE + p, { waitUntil: "domcontentloaded", timeout: 120000 });
     try { await this.page.waitForLoadState("networkidle", { timeout: 30000 }); } catch {}
@@ -465,6 +467,63 @@ const SCENES = {
     await s.click('[data-testid="filter-assigned-by-me"]', { before: 400, after: 1500 });
     await s.over('text=/fit-out programme/', 900, { fx: 0.3 });
     await s.wait(3200);
+  },
+
+  // 17. Reporting to the board, filmed to the words: FILM_CUES names a JSON file of
+  // when each phrase is spoken (seconds into the scene; the cut list writes it).
+  // The first take runs from the scene's start to the first slide: the Reports
+  // page arrives, the months and the schemes are picked, the Board report card.
+  async reportsPick(s) {
+    const cue = JSON.parse(fs.readFileSync(process.env.FILM_CUES, "utf8"));
+    await s.goto("/deals/properties", 3000);
+    await s.start();
+    await s.until(Math.max(0, cue.page - 0.5));
+    await s.click('a[href="/landsec/reports"]', { before: 150, after: 200, ms: 600 });
+    await s.page.locator('[data-testid="landsec-report-board-report"]').waitFor({ state: "visible", timeout: 20000 });
+    await s.until(cue.quarter + 0.8);
+    await s.moveTo(760, 300, 1200);
+    await s.until(cue.pick - 0.5);
+    await s.over('[data-testid="landsec-reports-from"]', 500, { fx: 0.35 });
+    await s.page.mouse.down(); await s.wait(60); await s.page.mouse.up();
+    await s.page.locator('[data-testid="landsec-reports-from"]').fill("2026-09");
+    await s.wait(350);
+    await s.over('[data-testid="landsec-reports-to"]', 450, { fx: 0.35 });
+    await s.page.mouse.down(); await s.wait(60); await s.page.mouse.up();
+    await s.page.locator('[data-testid="landsec-reports-to"]').fill("2026-11");
+    await s.page.keyboard.press("Tab").catch(() => {});
+    await s.until(cue.schemes + 0.9);
+    await s.click('[data-testid="landsec-reports-scheme-lucent"]', { before: 100, after: 450, ms: 450 });
+    await s.click('[data-testid="landsec-reports-scheme-lucent"]', { before: 100, after: 200, ms: 100 });
+    await s.until(cue.builds + 0.5);
+    await s.over('[data-testid="landsec-report-board-report"]', 800, { fx: 0.4, fy: 0.25 });
+    await s.wait(1400);
+    await s.over('[data-testid="landsec-report-export-board-report-pdf"]', 1100);
+    await s.until(cue.lettings + 0.6);
+  },
+
+  // The second take: back on the page, the PDF and the PowerPoint are pressed
+  // (the film cuts to the deck's title slide after it). The two files are
+  // answered from disk here (FILM_DECK_PDF, FILM_DECK_PPTX), so the buttons
+  // are free again at once and the app is not asked to make a deck twice.
+  async reportsOut(s) {
+    const cue = JSON.parse(fs.readFileSync(process.env.FILM_CUES, "utf8"));
+    const files = { pdf: process.env.FILM_DECK_PDF, pptx: process.env.FILM_DECK_PPTX };
+    await s.page.route(/\/api\/landsec\/reports\/board-report\?/, route => {
+      const pptx = /format=pptx/.test(route.request().url()), file = pptx ? files.pptx : files.pdf;
+      if (!file || !fs.existsSync(file)) return route.continue();
+      return route.fulfill({ status: 200, contentType: pptx ? "application/vnd.openxmlformats-officedocument.presentationml.presentation" : "application/pdf",
+        headers: { "content-disposition": `attachment; filename="Landsec Board report.${pptx ? "pptx" : "pdf"}"` }, body: fs.readFileSync(file) });
+    });
+    await s.goto("/landsec/reports", 3000);
+    await s.page.locator('[data-testid="landsec-reports-from"]').fill("2026-09");
+    await s.page.locator('[data-testid="landsec-reports-to"]').fill("2026-11");
+    await s.over('[data-testid="landsec-report-board-report"]', 300, { fx: 0.5, fy: 0.3 });
+    await s.wait(600);
+    await s.start();
+    await s.click('[data-testid="landsec-report-export-board-report-pdf"]', { before: 250, after: 150, ms: 550 });
+    await s.until(cue.pptx - cue.out + 0.35);
+    await s.click('[data-testid="landsec-report-export-board-report-pptx"]', { before: 150, after: 150, ms: 400 });
+    await s.until(cue.colours - cue.out + 1.2);
   },
 
   // 1b. The phone: the same app in the hand (filmed at phone size).

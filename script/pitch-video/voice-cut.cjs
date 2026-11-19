@@ -210,7 +210,8 @@ function mouthOf(file, secs) {
     const raw = Math.min(item.max || 1e9, Math.max(4, t.length - t.trim - 0.6));
     // Long enough for the line, and for the scene at a pace that can be followed.
     const lastEnd = item.starts ? Math.max(...ranges.map(([a, b], i) => item.starts[i] + b - a)) : 0.15 + spoken;
-    const secs = Math.max(lastEnd + 0.15, raw / (item.phone ? MAX_PHONE_SPEED : MAX_SPEED)), speed = raw / secs;
+    // exact: a clip made to the words (reports-clip.cjs) is played as it is, for the length the cut list gives.
+    const secs = item.exact ? item.secs : Math.max(lastEnd + 0.15, raw / (item.phone ? MAX_PHONE_SPEED : MAX_SPEED)), speed = item.exact ? 1 : raw / secs;
     lineAudio(item, wav, secs, 0.15);
     const actors = stage && item.actors && item.actors.length ? item.actors : null;
     let overlay = null, top = 0;
@@ -229,7 +230,7 @@ function mouthOf(file, secs) {
     ];
     // Where he turns into the presenter: his last picture shrinks into the corner as the drawing pops up.
     const morph = item.morph && lastFrame && actors;
-    const inputs = ["-ss", String(t.trim), "-t", String(raw), "-i", src, "-i", withSounds(item, wav, secs), ...(overlay ? ["-i", overlay] : []), ...(morph ? ["-loop", "1", "-t", "1", "-i", lastFrame] : [])];
+    const inputs = ["-ss", String(t.trim), "-t", String(item.exact ? secs : raw), "-i", src, "-i", withSounds(item, wav, secs), ...(overlay ? ["-i", overlay] : []), ...(morph ? ["-loop", "1", "-t", "1", "-i", lastFrame] : [])];
     let graph = `[0:v]${base}[b0]`, last = "b0";
     if (morph) {
       const k = "min(t/0.75\\,1)", idx = overlay ? 3 : 2;
