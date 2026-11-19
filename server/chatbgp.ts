@@ -7342,7 +7342,8 @@ export async function executeCrmToolRaw(
           completedDealsCount: full.completedDeals ?? full.completedDealRows?.length ?? 0,
           activeDealsCount: full.activeDeals ?? full.activeDealRows?.length ?? 0,
           activeDeals: full.activeDealRows?.slice(0, 10).map((d: any) => ({ id: d.id, name: d.name, stage: d.stage, role: d.role })),
-          requirements: full.requirements?.filter((r: any) => r.status === "Active").slice(0, 10),
+          // The profile's rows are already by the one live rule (live or to confirm for staff).
+          requirements: full.requirements?.slice(0, 10),
           pitchedTo: full.pitchedTo?.slice(0, 15).map((p: any) => ({
             propertyId: p.property_id, propertyName: p.property_name, unit: p.unit_name, status: p.status,
           })),

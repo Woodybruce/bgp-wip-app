@@ -43,6 +43,12 @@ export function boardListOf(live: Pick<RequirementLive, "state" | "importOnly" |
 // A client login is never told which of BGP's lists a row is on (that would
 // say whether BGP confirmed it): its rows read "open" or "closed".
 export type RowList = BoardList | "open";
+
+/** A requirement's state in the board's words, for BGP staff: Live, To confirm, Market listing, Older or Closed. */
+export function boardStateWords(live: Pick<RequirementLive, "state" | "stateLabel" | "importOnly" | "days">): string {
+  if (live.state !== "background") return live.stateLabel;
+  return boardListOf(live) === "market" ? "Market listing" : "Older";
+}
 export const clientList = (list: BoardList): RowList => (list === "closed" ? "closed" : "open");
 
 /** Is a row on a pill? Open is BGP's own and the market listings together (and every open row of a client's). */

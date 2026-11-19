@@ -203,9 +203,9 @@ export function AgentRelationshipCard({ companyId, part, onOpen }: { companyId: 
         {data && active === "requirements" && (
           <div className="space-y-1">
             {data.leasingRequirements.map((r: any) => (
-              <Row key={`l-${r.id}`} href={r.brand_id ? `/companies/${r.brand_id}` : "/requirements"} title={r.brand_name}
-                sub={["Leasing", list(r.size), list(r.requirement_locations), r.agent_name].filter(Boolean).join(" · ")}
-                right={<RowPill>{r.status || "Active"}</RowPill>} />
+              <Row key={`l-${r.id}`} href={`/requirements?requirementId=${encodeURIComponent(r.id)}`} title={r.brand_name}
+                sub={["Leasing", list(r.size), list(r.requirement_locations), r.agent_name, r.date_label].filter(Boolean).join(" · ")}
+                right={<RowPill>{r.state_label}</RowPill>} />
             ))}
             {data.investmentRequirements.map((r: any) => (
               <Row key={`i-${r.id}`} href={r.client_id ? `/companies/${r.client_id}` : "/investment/requirements"} title={r.client_name || r.name}

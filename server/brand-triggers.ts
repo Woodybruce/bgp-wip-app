@@ -60,7 +60,10 @@ const CLAUDE_FONT = `ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI
 // works both figures out from its sub-scores (splitSubScores).
 const HOT_THRESHOLD = 30;
 const COOLING_THRESHOLD = 20;
-const SCORE_VERSION = 5;
+// 6 (19 November 2026): the count of BGP's own requirements reads the one
+// live rule alone (a draft or a row with no status now counts as to
+// confirm), so a crossing never compares with a score counted the old way.
+const SCORE_VERSION = 6;
 
 interface TriggerEvent {
   brandId: string;

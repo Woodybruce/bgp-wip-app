@@ -192,6 +192,28 @@ export async function requirementsHealthReport(pool: Pool): Promise<Requirements
       ];
     });
 
+  // Five places pick an agent or a brand through a requirement while its
+  // status reads Active or blank, not by the one live rule: the client Agents
+  // directory, the contact review, ChatBGP's offer logging, the diary's
+  // viewing match and the intake's brand match (step 6 of the board review,
+  // 19 November 2026). Before any of them moves onto the rule, this lists the
+  // links that would change, for Woody to see. Read only.
+  await section("agents_by_rule", "Agent links that would change on the live rule",
+    "An agent (or the brand's own contact) named on a requirement counts in five places (the client Agents directory, the contact review, ChatBGP's offer logging, the diary's viewing match and the intake's brand match) only while the requirement's status is Active or blank. By the one live rule every requirement that is not closed would count. + is a link that would be gained, − one that would be lost. Nothing has changed yet.",
+    () => grouped(`SELECT (CASE WHEN ${requirementStateSql("q")} <> 'closed' THEN '+ ' ELSE '− ' END)
+             || coalesce(ct.name, 'Unnamed') || coalesce(' (' || f.name || ')', '')
+             || CASE WHEN p.how = 'principal' THEN ', the brand''s contact,' ELSE '' END
+             || ' for ' || coalesce(b.name, 'no brand')
+             || ' · status ' || coalesce(nullif(btrim(q.status), ''), '(blank)') AS label,
+             count(*) AS count
+        FROM ${T} q
+        CROSS JOIN LATERAL (VALUES (q.agent_contact_id, 'agent'), (q.principal_contact_id, 'principal')) AS p(person_id, how)
+        JOIN crm_contacts ct ON ct.id = p.person_id
+        LEFT JOIN crm_companies f ON f.id = ct.company_id
+        LEFT JOIN crm_companies b ON b.id = q.company_id
+       WHERE (lower(btrim(coalesce(q.status, ''))) IN ('', 'active')) <> (${requirementStateSql("q")} <> 'closed')
+       GROUP BY 1 ORDER BY 1 LIMIT 300`));
+
   await section("evidence", "Evidence and suggestions", "Suggestions wait for a person to confirm, attach or dismiss them.",
     () => grouped(`SELECT status || ' (' || created_by_kind || ')' AS label, count(*) AS count FROM requirement_evidence GROUP BY 1 ORDER BY 2 DESC`));
 

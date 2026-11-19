@@ -1060,7 +1060,8 @@ not opened to them.
     before the split holds the old sum, so every reader works both out from
     the sub-scores (`splitSubScores`). Bands and alerts (Very hot 30, Hot
     20, Watch 10; hot / cooling emails) are judged on Expansion.
-    `SCORE_VERSION` is 5. A client login is sent Expansion only
+    `SCORE_VERSION` is 6 (since 19 November 2026, when the count of BGP's
+    own requirements moved onto the one live rule). A client login is sent Expansion only
     (`clientScoreView` drops the Relationship figure, part and lines). The
     Hunter board shows Relationship beside each score for staff and has a
     **No BGP relationship** filter (Expansion 10 or more, Relationship 0:
@@ -4263,8 +4264,26 @@ link.
   `server/deal-page.ts`, `crm_requirements_leasing.deal_id`), drawn as
   **Answers the requirement** on the Overview, opening its panel; the state
   for BGP staff, a client by what it is and its own date, a joint agent none.
-- Not built yet: group owners (decision 5, needs the four names), and one
-  meaning of live on the consumers that still read Active.
+- **One meaning of live (step 6; finding 20).** These read the one rule now:
+  the old Fits route; the Expansion score's count of BGP's own requirements
+  (`SCORE_VERSION` 6: a draft or a row with no status counts as to confirm);
+  the BGP take's places; the brand preparation queue's order; ChatBGP's
+  brand profile; the agent firm page (open requirements only, live first,
+  each opening its panel); and a contact's Records (closed last; a client
+  reads Open or Closed only). Both name the state in the board's words
+  (`boardStateWords`: Live, To confirm, Market listing, Older, Closed; never
+  "Background"). Five places pick an agent or a
+  brand through a requirement and still read status Active or blank: the
+  client Agents directory, the contact review, ChatBGP's offer logging, the
+  diary's viewing match and the intake's brand match. The requirements
+  Health report (Sync tools → Health report, admins) lists the agent links
+  each would gain or lose on the rule ("Agent links that would change on
+  the live rule"); they move once Woody has seen it.
+  `qa/regression/requirement-one-live.test.mjs` fails on any other
+  hand-written reading. Windows over newness (Who's hot, the market
+  commentary, the dashboard widget, the brand tidy, HR points) are not
+  liveness and stay as they are.
+- Not built yet: group owners (decision 5, needs the four names).
 
 **One fit rule (Woody, 2026-11-19, decision 2: "size and use or place").**
 `requirementFit` in `shared/requirement-fit.ts` is the only judge of whether

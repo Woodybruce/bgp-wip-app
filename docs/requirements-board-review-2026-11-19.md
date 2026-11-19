@@ -711,6 +711,18 @@ with no structured id (the target engine's saved evidence, Start strategy's
 facts, Explorer's chip inside a brand card) is not linked. Still to come:
 step 6 (one meaning of live) and group owners (decision 5).
 
+**Step 6, built the same day.** The old Fits route, the Expansion score's
+count of BGP's own requirements (with a new score version, so no alert fires
+from the change), the BGP take, the brand preparation queue, ChatBGP's brand
+profile, the agent firm page and a contact's Records now read the one live
+rule. As section 6 asked, the five places that pick an agent or a brand
+through a requirement (the client Agents directory, the contact review,
+ChatBGP's offer logging, the diary's viewing match and the intake's brand
+match) are unchanged until Woody has seen which links would change: the
+requirements Health report lists them under "Agent links that would change
+on the live rule". A guard test fails on any new hand-written reading. The
+date windows in finding 20 measure newness, not liveness, and stay.
+
 Each step updates `server/chatbgp-app-map.ts` and the requirements section of
 CLAUDE.md where it changes what a screen shows.
 

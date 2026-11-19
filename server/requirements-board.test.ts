@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { requirementLive } from "../shared/requirement-live";
 import {
-  MARKET_UNSEEN_DAYS, boardListOf, clientList, compareCandidates, compareForClient, countPills, groupByBrand, onPill, wantsLine,
+  MARKET_UNSEEN_DAYS, boardListOf, boardStateWords, clientList, compareCandidates, compareForClient, countPills, groupByBrand, onPill, wantsLine,
 } from "../shared/requirements-board";
 import { loadRequirementFits, loadRequirementsBoard, type Queryable } from "./requirements-board";
 
@@ -199,4 +199,13 @@ test("a linked deal: its name and stage for staff, and for a client only a deal 
   const bare = await loadRequirementsBoard(fakeDb(withDeal, seen), { kind: "client", companyId: "landsec" }, deps, NOW);
   assert.ok(bare.rows.every(r => r.requirement.deal === null));
   assert.ok(!seen.some(q => /requirements-board:deals/.test(q.text)));
+});
+
+test("a requirement's state in the board's words", () => {
+  const words = (row: Record<string, any>) => boardStateWords(requirementLive(row, NOW));
+  assert.equal(words({ origin: "bgp", last_confirmed_at: daysAgo(5), last_confirmed_by: "u1", last_confirmed_by_name: "Emily" }), "Live");
+  assert.equal(words({ origin: "bgp", created_at: daysAgo(40) }), "To confirm");
+  assert.equal(words({ origin: "pipnet", sources: ["PIPnet"], last_listed_at: daysAgo(30) }), "Market listing");
+  assert.equal(words({ origin: "pipnet", sources: ["PIPnet"] }), "Older", "never 'Background'");
+  assert.equal(words({ origin: "bgp", status: "Archived" }), "Closed");
 });

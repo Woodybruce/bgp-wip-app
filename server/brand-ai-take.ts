@@ -641,8 +641,8 @@ router.get("/api/brand/:companyId/suggested-units", requireAuth, async (req: Req
     let reqLocations: string[] = [];
     try {
       const reqQ = await pool.query(
-        `SELECT requirement_locations FROM crm_requirements_leasing
-          WHERE company_id = $1 AND (status IS NULL OR status ILIKE '%active%')
+        `SELECT r.requirement_locations FROM crm_requirements_leasing r
+          WHERE r.company_id = $1 AND ${requirementStateSql("r")} <> 'closed'
           LIMIT 5`,
         [companyId]
       );

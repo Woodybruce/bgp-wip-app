@@ -1190,7 +1190,7 @@ function ContactDetail({ id }: { id: string }) {
                 {recordGroup("Deals", linkedDeals.map((deal: any) => recordRow(`/deals/${deal.id}`, <Handshake className="w-4 h-4" />, deal.name,
                   [deal.status, deal.dealType].filter(Boolean).join(" · "), `link-deal-${deal.id}`)))}
                 {recordGroup("Requirements", (contactRequirements || []).map((req: any) => recordRow(req.requirementType === "investment" ? `/investment/requirements?requirementId=${encodeURIComponent(req.id)}` : `/requirements?requirementId=${encodeURIComponent(req.id)}`, <ClipboardList className="w-4 h-4" />, req.name,
-                  [req.linkSource === "agent" ? "Tenant rep" : null, req.requirementType, req.use?.length ? req.use.join(", ") : null].filter(Boolean).join(" · "), `link-requirement-${req.id}`)))}
+                  [req.linkSource === "agent" ? "Tenant rep" : null, req.requirementType, req.use?.length ? req.use.join(", ") : null, req.stateLabel].filter(Boolean).join(" · "), `link-requirement-${req.id}`)))}
                 {recordGroup("Investment tracker", (contactInvestmentItems || []).map((item: any) => recordRow(`/investment-tracker?highlight=${item.id}`, <TrendingUp className="w-4 h-4" />, item.assetName,
                   [...(item.agentRoles || []), item.status, item.guidePrice ? `£${Number(item.guidePrice).toLocaleString()}` : null].filter(Boolean).join(" · "), `link-investment-${item.id}`)))}
               </div>

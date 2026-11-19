@@ -7,6 +7,8 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import type { Querier } from "./account-resolver";
 import { DEAL_AGENT_ROLES, roleFromAgentType, roleFromSpecialty, teamForRole, teamFromSpecialty, AGENT_TEAMS, type AgentRole } from "@shared/agent-roles";
+import { requirementLive, requirementLiveColumnsSql, requirementStateSql } from "@shared/requirement-live";
+import { boardStateWords } from "@shared/requirements-board";
 
 
 async function rows(q: Querier, sql: string, params: any[]): Promise<any[]> {
@@ -42,13 +44,21 @@ export async function getAgentRelationship(firmId: string, deps: { pool?: Querie
     for (const d of found) deals.push({ ...d, role: r.role, roleLabel: r.label, open: !/^(COM|INV|WIT|Completed|Invoiced|Withdrawn|Lost|Dead)$/i.test(d.status || "") });
   }
 
-  const leasingRequirements = await rows(q, `SELECT r.id, r.status, r.size, r.requirement_locations, r.updated_at, c.id AS brand_id, r.agent_contact_id AS person_id,
-      COALESCE(c.name, r.name) AS brand_name, ac.name AS agent_name
+  // Open requirements by the one live rule (a closed one is not the firm's
+  // current work), live first, each with its state and dated line (staff only).
+  const leasingRequirements = (await rows(q, `SELECT r.id, r.size, r.requirement_locations, c.id AS brand_id, r.agent_contact_id AS person_id,
+      COALESCE(c.name, r.name) AS brand_name, ac.name AS agent_name, ${requirementLiveColumnsSql("r")}
     FROM crm_requirements_leasing r
     LEFT JOIN crm_companies c ON c.id = r.company_id
     LEFT JOIN crm_contacts ac ON ac.id = r.agent_contact_id
-    WHERE r.agent_contact_id = ANY($1::text[])
-    ORDER BY (r.status IS NULL OR r.status = 'Active') DESC, r.updated_at DESC NULLS LAST LIMIT 60`, [contactIds]);
+    WHERE r.agent_contact_id = ANY($1::text[]) AND ${requirementStateSql("r")} <> 'closed'
+    ORDER BY (${requirementStateSql("r")} = 'live') DESC, r.updated_at DESC NULLS LAST LIMIT 60`, [contactIds]))
+    .map((r: any) => {
+      const live = requirementLive(r);
+      // In the board's words: Live, To confirm, Market listing or Older.
+      const label = boardStateWords(live);
+      return { id: r.id, size: r.size, requirement_locations: r.requirement_locations, brand_id: r.brand_id, person_id: r.person_id, brand_name: r.brand_name, agent_name: r.agent_name, state_label: label, date_label: live.dateLabel };
+    });
   const investmentRequirements = await rows(q, `SELECT r.id, r.name, r.status, r.size_range, r.requirement_locations, c.id AS client_id, c.name AS client_name, r.agent_contact_id AS person_id
     FROM crm_requirements_investment r LEFT JOIN crm_companies c ON c.id = r.company_id
     WHERE r.agent_contact_id = ANY($1::text[]) ORDER BY r.updated_at DESC NULLS LAST LIMIT 30`, [contactIds]);

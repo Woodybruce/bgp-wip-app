@@ -83,7 +83,7 @@ export async function gatherBgpEvidence(companyId: string, opts: { domainThreads
                       ${requirementImportOnlySql("r")} AS import_only,
                       coalesce(lower(btrim(r.origin)) = '${REQUIREMENT_ORIGIN_CLIENT}', false) AS client_made
                  FROM crm_requirements_leasing r
-                WHERE r.company_id = $1 AND r.status = 'Active') x`, [companyId]),
+                WHERE r.company_id = $1) x`, [companyId]),
     // Status spellings (codes + legacy labels) come from shared/deal-status;
     // the closed set is the shared historic list (shared/letting-rules).
     q(`SELECT count(*) FILTER (WHERE lower(trim(COALESCE(status,''))) = ANY($2::text[]))::int AS committed,

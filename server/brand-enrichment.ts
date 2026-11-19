@@ -25,6 +25,7 @@ import { candidateBrandWebsite, discoverAndVerifyBrandWebsite, hasAnySavedWebsit
 import { currentOfficialProfileEvidence, prepareOfficialProfileEvidence, retainedProfileFactsCorroborated, type OfficialProfilePage } from "./brand-profile-evidence";
 import { CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
+import { requirementStateSql } from "@shared/requirement-live";
 import { ACCOUNTS_RETRY_STAGE, BRAND_PREPARATION_STAGES, readPreparationStates, runPreparationStage, shouldEnqueueOnPageOpen, summarizeBrandPreparation, type BrandPreparationStage, type PreparationOutcome } from "./brand-preparation-jobs";
 import { ACCOUNTS_MAX_EMPTY_READS, accountsHaveFigures, accountsNoFiguresSql, accountsRetryDue, emptyReadCount } from "@shared/accounts-read";
 
@@ -471,7 +472,7 @@ async function selectPreparationCompanies(limit: number): Promise<string[]> {
           AND COALESCE(NULLIF(s.value->>'nextAttemptAt','')::timestamptz, '1970-01-01'::timestamptz) <= now()))
     ORDER BY
       EXISTS(SELECT 1 FROM system_settings q WHERE q.key='brand-preparation-request:'||c.id) DESC,
-      EXISTS(SELECT 1 FROM crm_requirements_leasing r WHERE r.company_id=c.id AND LOWER(COALESCE(r.status,'active'))='active') DESC,
+      EXISTS(SELECT 1 FROM crm_requirements_leasing r WHERE r.company_id=c.id AND ${requirementStateSql("r")} IN ('live', 'to_confirm')) DESC,
       EXISTS(SELECT 1 FROM crm_deals d WHERE d.tenant_id=c.id AND LOWER(COALESCE(d.status,'')) NOT IN (${statusSpellingsFor(CLOSED_STATUSES).map((s) => `'${s}'`).join(",")})) DESC,
       (c.company_type ILIKE ANY($1::text[]) OR EXISTS(SELECT 1 FROM crm_companies client WHERE c.id=ANY(COALESCE(client.crm_extra_brand_ids,'{}'::text[])))) DESC,
       COALESCE((SELECT MIN(s.updated_at) FROM system_settings s WHERE s.key LIKE 'brand-preparation:'||c.id||':%' AND s.key NOT LIKE '%:${ACCOUNTS_RETRY_STAGE}'), '1970-01-01'::timestamp) ASC,

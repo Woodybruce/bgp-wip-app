@@ -47,7 +47,8 @@ import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { contentDispositionFor } from "./utils/http-headers";
 import { searchPipnetRequirements } from "./pipnet";
-import { bgpCreatedStamp, clientCreatedStamp, clientRequirementFields, CLIENT_REQUIREMENT_STATUSES, parseRequirementDate, stripRequirementProvenance, requirementClientCopy, requirementOwnerColumns, requirementReason, requirementStateSql, requirementLiveColumnsSql } from "@shared/requirement-live";
+import { boardStateWords } from "@shared/requirements-board";
+import { bgpCreatedStamp, clientCreatedStamp, clientRequirementFields, CLIENT_REQUIREMENT_STATUSES, parseRequirementDate, stripRequirementProvenance, requirementClientCopy, requirementOwnerColumns, requirementReason, requirementStateSql, requirementLiveColumnsSql, requirementLive } from "@shared/requirement-live";
 import { clientScoreLabel, schemeLimitedScoreLabel, splitSubScores } from "./hunter-score";
 import { xeroApi, refreshXeroToken, SALES_ACCOUNT_CODE, feeCurrencyOf, invoiceCurrencyFields } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
@@ -5644,9 +5645,10 @@ Return a JSON object with these fields (use null for any field you cannot find):
       // since 17 November 2026 is every requirement (Woody: "keep all
       // requirements open for clients"); against its own units only. A login
       // tied to no company (NO_ACCESS_SCOPE) gets none.
+      // Open requirements by the one live rule (it read status Active or blank).
       const reqRows = scopeCompanyId === NO_ACCESS_SCOPE ? { rows: [] as any[] } : await pool.query(
-        `SELECT id, size, use, requirement_locations FROM crm_requirements_leasing
-          WHERE (status IS NULL OR status = 'Active')`
+        `SELECT r.id, r.size, r.use, r.requirement_locations FROM crm_requirements_leasing r
+          WHERE ${requirementStateSql("r")} <> 'closed'`
       );
       // The one fit rule (requirementFit): size and use or place; with no
       // size to compare, both. Each fit says why.
@@ -6720,6 +6722,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
       }
       const seenIds = new Set(results.map(r => r.id));
       const agentLeasing = await db.select().from(crmRequirementsLeasing).where(eq(crmRequirementsLeasing.agentContactId, contactId));
+      // Each leasing requirement read by the one live rule: open ones first; a
+      // closed one says so (it is no longer current work).
       for (const r of agentLeasing) {
         if (!seenIds.has(r.id)) {
           results.push({ ...r, requirementType: "leasing", linkSource: "agent" });
@@ -6739,15 +6743,18 @@ Return a JSON object with these fields (use null for any field you cannot find):
       // for brands in their CRM slice, as before. A Landsec joint agent is
       // refused contacts at the gateway.
       const reqScope = await resolveCompanyScope(req);
+      const closedLast = (list: any[]) => list
+        .map(r => r.requirementType === "leasing" ? { r, live: requirementLive(r) } : { r, live: null })
+        .sort((a, b) => Number(a.live?.state === "closed") - Number(b.live?.state === "closed"));
       if (reqScope) {
         if (reqScope === NO_ACCESS_SCOPE) return res.json([]);
         const visible = await Promise.all(results.map(r => r.requirementType === "leasing" ? Promise.resolve(true)
           : r.companyId ? isClientVisibleBrand(r.companyId, reqScope) : Promise.resolve(false)));
-        return res.json(results
-          .filter((_r, i) => visible[i])
-          .map(r => r.requirementType === "leasing" ? requirementClientCopy(r) : r));
+        // A client is never told the state: Open or Closed only.
+        return res.json(closedLast(results.filter((_r, i) => visible[i]))
+          .map(({ r, live }) => r.requirementType === "leasing" ? { ...requirementClientCopy(r), stateLabel: live!.state === "closed" ? "Closed" : null } : r));
       }
-      res.json(results);
+      res.json(closedLast(results).map(({ r, live }) => live ? { ...r, stateLabel: boardStateWords(live) } : r));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
   app.post("/api/crm/contacts/:id/requirements", async (req, res) => {
