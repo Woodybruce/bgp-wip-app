@@ -3985,6 +3985,14 @@ what was read, fills the form, and saves through the form's own route.
 `/brands?tab=requirements`, for every login; `/requirements` forwards there
 with its parameters. See "The BGP side bar".)
 
+**The board's shape and its links were reviewed on 19 November 2026**
+(`docs/requirements-board-review-2026-11-19.md`; Woody: "it's old and I think
+isn't that well set up or linked to the rest of the app"). It covers the live
+figures, the nine fit rules, the about 70 places that show a requirement and
+where each one links, a build plan and seven decisions. All seven decisions
+are waiting on Woody. Nothing in it is built. Read it before changing the
+board, the fit rules or a requirement link.
+
 Woody: "the requirements page is just picking up historic requirements
 dragged from a couple of data bases. We need it to be the live requirements
 centre for brands that are expanding to include and pick up on all chats and

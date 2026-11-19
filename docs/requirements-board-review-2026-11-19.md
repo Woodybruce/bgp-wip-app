@@ -19,8 +19,12 @@ shape and its links.
 
 The board is a feed of PIPnet listings laid out as an old spreadsheet.
 
-- Of 211 requirements on live, 210 are PIPnet imports that nobody at BGP has
-  confirmed. One was made by BGP. None has ever been closed.
+- Of 211 requirements on live, 210 are PIPnet listings that nobody at BGP has
+  confirmed. One was made by BGP. None is closed. Only 13 of the 210 brands
+  are on any BGP deal.
+- The PIPnet import itself needs a look. It last saw a listing on 15
+  November and has added no new row since 12 November. 590 imported listings
+  never reached the board.
 - It opens on 58 suggestions, not on requirements.
 - The row runs to 17 columns. Three of them are empty on every row, and two
   more repeat what the row already says.
@@ -30,16 +34,31 @@ The board is a feed of PIPnet listings laid out as an old spreadsheet.
   unit. Discuss starts a new chat each time you press it. The brand's
   expansion score, Super Brand star, Brand CRM stage, viewings and offers are
   not on the row at all.
+- The rest of the app barely links back. About 70 places show requirements.
+  Only two open a requirement itself, and both open its edit form. For BGP
+  staff the brand page leaves out all 210 market listings. It says "No BGP
+  requirement recorded · Add a requirement", which invites a duplicate. Yet
+  the same page's Suggested pitches quotes that listing as "their
+  requirement".
 - "Fit your units 199" means size alone. 199 of the 211 requirements fit,
-  averaging 36 units each out of 153 on the market. The rule the rest of the
-  app uses gives 140 requirements with a fit, averaging 5 units each.
+  averaging 36 units each out of 153 on the market. The stricter shared rule,
+  used by the target engine and landlord pages, gives 140 requirements with a
+  fit, averaging 5 units each. Nine places decide a fit, each in its own
+  way. On the same row, Find matching units never checks size.
 - It downloads the whole CRM every time it opens: about 3.4 MB compressed. On
   top of that, a news list takes 10 seconds to answer.
 
-The proposal: a board of the brands that want space, with the brand's context
-on each row. A requirement panel that opens from anywhere in the app with
-`?requirementId=`. One fit rule, with each fit opening the unit. A feed that
-loads only what the board shows. Six decisions for Woody are at the end.
+The proposal:
+
+- A board of the brands that want space, with the brand's context on each
+  row.
+- A requirement panel, opened with `?requirementId=`, that every place in the
+  app opens when it shows a requirement.
+- One fit rule, with each fit opening the unit.
+- One meaning of "live" everywhere.
+- A feed that loads only what the board shows.
+
+Seven decisions for Woody are at the end.
 
 ## What the board is today (live, 19 November 2026)
 
@@ -67,6 +86,35 @@ loads only what the board shows. Six decisions for Woody are at the end.
 
 No brand has more than one requirement: the PIPnet import keeps one row per
 brand.
+
+The import also adds its label to a row a person made before 12 November. So
+a few of the 210 may have started as BGP's own (the health report says so).
+84 rows have been edited by hand since they were made.
+
+**The brands behind them** (read from the CRM on 19 November):
+
+- Only 13 of the 210 brands are a party on any BGP deal, and 7 of those on a
+  live one.
+- None is a Super Brand.
+- None has a BGP team set (`bgp_contact_user_ids`). Only 6 companies in the
+  whole CRM have one.
+- 35 brands have no company type at all. These are name-only records the
+  import made when PIPnet named a client the CRM did not hold
+  (`promoteToCrmRequirement`, `server/pipnet.ts`).
+- Three requirements are tied to the wrong kind of company: an agent, a
+  landlord and a client.
+
+**The import.** The health report (Sync tools → Health report) has three
+signs that the import needs a look in its logs:
+
+- PIPnet last saw a listing on 15 November, four days ago, though the import
+  runs at 05:30 every day.
+- No new row has come from PIPnet since 12 November. 62 existing rows were
+  seen again in that time.
+- 590 listings sit in the import table as "active" and never became a row on
+  the board. 321 did.
+
+Why was not established.
 
 **How old they are.** The board counts a market listing's age from the day
 PIPnet listed it. The median is 119 days. 99 were listed within the last 90
@@ -139,7 +187,7 @@ no use class at all.
    does not use them.
 
 8. **"+N more" cannot be clicked, and "+ brief" only appears on hover.** "+N
-   more" (line 3237) is plain text. "+ brief", which adds the brand to the
+   more" (line 3229) is plain text. "+ brief", which adds the brand to the
    unit's Targeting Brief, is hidden until the mouse is over it
    (`opacity-0 group-hover`), so on a phone nobody can see it. The full list
    of fits is behind the row's Find matching units button, which opens a
@@ -147,7 +195,7 @@ no use class at all.
 
 9. **A second "match" on the same row, by a different rule.** Under Map
    Locations, up to three property chips show. They come from
-   `propertyMatchMap` (line 676), which checks the requirement's typed places
+   `propertyMatchMap` (line 686), which checks the requirement's typed places
    against the name and address of **every** property record in the CRM,
    whoever owns it and whether or not BGP is letting it. So a row can show
    fits from one rule and property chips from another, and the two do not
@@ -179,36 +227,32 @@ no use class at all.
 
 ### The fits
 
-12. **Five rules for whether a requirement fits a unit**, counting only the
-    ones that touch this board.
+12. **Nine ways to decide a fit, and two of them disagree on the same row.**
+    The Fits column checks size and nothing else. The Find matching units
+    button on the same row checks place and use and never size.
 
-    - **The board's Fits column** (`GET /api/crm/requirements-leasing/matches`,
-      `server/crm.ts` line 5621): a unit with a size fits on size alone. A unit
-      with no size fits on use or place.
-    - **`requirementFitsUnit`** (`shared/requirement-fit.ts`): size **and** use
-      or place. A unit with no size needs both use and place. Space fits on
-      landlord pages (`server/account-teams.ts`) and the target engine
-      (`server/target-tenant-engine.ts`) use it. Its comment says "same rules
-      as the requirements Fits column", which is not true.
-    - **`requirementUseFits`**: size and use class. A unit with no use class
-      counts as fitting. The board's Find matching units dialog
-      (`/api/requirements/matches/:id`, `server/routes.ts`), the tracker's
-      Find matching requirements and Brand Gap's lists
-      (`server/property-gap-analysis.ts`) use it.
-    - **The Brand CRM's chip** (`requirementChip`, `shared/brand-stage.ts`):
-      size and place, with regions, and no use.
-    - **The property chips** (finding 9): place words against every property.
+    | Where | What it checks |
+    |---|---|
+    | The board's Fits column (`GET /api/crm/requirements-leasing/matches`, `server/crm.ts` line 5621) | Size alone. A unit with no size fits on use or place. |
+    | The board's Find matching units (`/api/requirements/matches/:id`, `server/routes.ts` line 10523) | Place and use class. Never size. |
+    | The tracker's Find matching requirements (`/api/available-units/matches/:unitId`, line 10568) | Place and use class. Never size. |
+    | Brand Gap's lists (`server/property-gap-analysis.ts`) | Size and use class (`requirementUseFits`). A unit with no use class counts as fitting. |
+    | Space fits on landlord pages (`server/account-teams.ts`) and the target engine (`server/target-tenant-engine.ts`) | Size and use or place (`requirementFitsUnit`). A unit with no size needs both. |
+    | The Brand CRM's chip (`requirementChip`, `shared/brand-stage.ts`) | Size and place, with regions. Never use. |
+    | The tracker's brand suggestions (`server/crm.ts` around line 5508) | Size alone is enough. |
+    | Suggested pitches on the brand page (`server/crm.ts` around line 5430) | Size, within 0.5 to 1.6 times, and place words. |
+    | The property chips (finding 9) | Place words against every property in the CRM. |
 
-    CLAUDE.md counts six matchers across the app. The AI brand suggestions
-    and ChatBGP's own reading are the other two.
+    `requirementFitsUnit`'s own comment says it follows "the same rules as the
+    requirements Fits column". It does not.
 
-    On the live data:
+    On the live data, three of these rules give:
 
     | Rule | Requirements with a fit | Units per requirement, on average |
     |---|---|---|
-    | The board (size alone) | 199 of 211 | 35.7 |
-    | Size and use class (`requirementUseFits`) | 198 | 26.3 |
-    | Size and use or place (`requirementFitsUnit`) | 140 | 5.2 |
+    | The board's Fits column (size alone) | 199 of 211 | 35.7 |
+    | Brand Gap's rule (size and use class) | 198 | 26.3 |
+    | The target engine's rule (size and use or place) | 140 | 5.2 |
 
     When a requirement "fits" a quarter of the market, the fit tells you
     nothing. Izzy Home Store fits 90 units on the board, 63 on size and use
@@ -236,8 +280,124 @@ no use class at all.
 
 ## Where the rest of the app meets requirements
 
-Being mapped (19 November 2026): every screen, report and ChatBGP tool that
-names a requirement, and where each one sends you. This section follows.
+A code search on 19 November found about 70 places outside the board that
+read or show leasing requirements. They cover:
+
+- the brand page, on a computer and a phone;
+- the Brand CRM;
+- Brand Gap;
+- the Letting Tracker and the target engine;
+- landlord and property pages;
+- the Brands overview, Explorer and Hunter;
+- the CRM lists and Start strategy;
+- viewings, deals, contacts and agents;
+- the dashboard and the phone home;
+- ChatBGP;
+- the Brand Pack and the reports.
+
+The points below were checked against the code.
+
+16. **Almost none of them open the requirement.**
+    - **Two open a single requirement** (`?requirementId=`): the contact
+      page's Records list and the landlord chat receipt. Both open the edit
+      form.
+    - **Six have the requirement's id but open the brand's list instead**
+      (`?companyId=`):
+      - the brand page's requirements card;
+      - the deal page's Brand Profiles card;
+      - the Brand CRM card;
+      - Brand Gap's target detail;
+      - a viewing's "Linked requirement";
+      - ChatBGP's requirement tools (`pageUrl`, `server/chatbgp-requirements.ts`).
+
+      The dashboard's "Live requirement" alert carries the id but opens the
+      bare board (`digestHref`, `client/src/pages/dashboard.tsx` line 141).
+    - **About twenty show a requirement with no link to it at all:**
+      - the tracker's Find matching requirements and its brand suggestions;
+      - the target engine's evidence;
+      - the Brand CRM chip and Targets board;
+      - the phone brand page;
+      - Tenant rep "on a requirement";
+      - the counts on the brand page;
+      - Explorer's chip;
+      - Who's hot;
+      - the overview tile;
+      - the CRM list's reason;
+      - Start strategy's "Requirement on file";
+      - the dashboard widget's rows;
+      - the client Agents directory.
+    - **One link is broken.** The Brands overview's radar links to
+      `/companies/<id>?tab=requirements` (`brands-hub.tsx` line 570), but the
+      company page ignores `tab`.
+
+17. **The brand page and the board disagree.** For BGP staff, the brand page
+    lists only live and to-confirm requirements (`server/brand-profile.ts`,
+    from line 544). On live, that is one brand. The other 210 brands on the
+    board get one of two things:
+    - "No BGP requirement recorded · Add a requirement" (`brand-profile-panel.tsx`
+      line 3452), which invites a duplicate;
+    - a live PIPnet lookup, which is a separate fetch and not the board's
+      row.
+
+    On the same page, Suggested pitches quotes the listing as "their
+    requirement", and so do Brand Gap, the target engine and the tracker.
+    The server sends each row's state and date, but the desktop page never
+    draws them. The phone card has no link.
+
+18. **A deal and its requirement are never shown together.** The server
+    links them through `crm_requirements_leasing.deal_id`, for:
+    - the Brand CRM's "Linked" chip;
+    - the "mark as satisfied?" question;
+    - ChatBGP.
+
+    Only the requirement form sets the link, through its Deal picker. The
+    deal page never shows it, and the deal form cannot set it. On live, no
+    requirement has a deal.
+
+19. **Brand Gap can say "None held" for a brand that has a requirement.** Its
+    targets read only the 30 best-weighted requirements whose use fits a
+    unit at the scheme (`server/property-gap-analysis.ts` line 598). A brand
+    outside those 30 shows "None held" and an Add requirement button. Its
+    "Fits here" units cannot be opened.
+
+20. **Each place has its own idea of "live",** although CLAUDE.md says every
+    consumer uses the one rule in `shared/requirement-live.ts`.
+    - **Six places read status "active" or blank:**
+      - the diary sync that links a viewing to a requirement;
+      - the client Agents directory;
+      - the contact review;
+      - ChatBGP's offer logging;
+      - brand enrichment;
+      - the intake's brand match.
+    - **Two add "status = Active" on top of the rule:** the Expansion
+      why-lines and ChatBGP's brand profile.
+    - **Four apply no state at all,** so closed requirements still show on the
+      agent firm page and the contact page.
+    - **Five use their own date windows:**
+      - Who's hot: 90 days;
+      - the market commentary: 90 days;
+      - the dashboard widget: 7 days;
+      - the brand tidy: 24 months;
+      - HR points: this week.
+
+    The wording drifts too:
+    - "Live" covers live and to confirm on Explorer's chip and filter and on
+      the overview tile. A client login also sees the tile.
+    - On landlord pages, "listing" is used for any older row, including
+      BGP's own.
+
+21. **Clients may add a requirement, but most places do not offer it.**
+    Client logins have been able to add one since 17 November, and Brand Gap
+    offers it. The brand page, the phone brand page, the Brand CRM card and
+    the dashboard still hide Add from them.
+
+22. **Old code still carries old rules:**
+    - The phone shell's "Reqs" list applies no state at all. It looks
+      unreachable: nothing in `mobile-app.tsx` sets its tab.
+    - Three panels that are never mounted still hold old matchers and status
+      rules.
+    - In Brand Gap, a joint agent's "Requirements whose use fits" rows link
+      to a page it is refused.
 
 ## Proposal
 
@@ -259,10 +419,10 @@ sideways scroll:
 |---|---|
 | Brand | Logo, name and the Super Brand star. Opens the brand page. |
 | Wants | Size, use and places in one line, with the requirement type under it. |
-| State | One chip and one date: "Listed on PIPnet 13 Oct", "Confirmed by Emily 3 Nov". No Status column and no Dated column. |
+| State | One chip and one date: "Listed on PIPnet 13 Oct", "Confirmed 3 Nov". No Status column and no Dated column. |
 | Fits | How many units fit by the one rule (section 3). The best one names the unit and opens it. |
 | Agent | The named person and their firm, with call and email icons. Opens the contact. |
-| BGP | The requirement's owner. If it has none, the brand's BGP team, greyed (decision 5). |
+| BGP | The requirement's owner, or the owner decision 5 gives it, greyed. |
 | Expansion | The score and its band, as on Brand Hunter. |
 | Last contact | From `shared/last-contact.ts`, as on the CRM lists. |
 
@@ -316,11 +476,10 @@ the CRM plan, so the cut stays as `requirementClientCopy` and
 
 ### 3. One fit rule, and each fit opens the unit
 
-The board's Fits column, Find matching units, the tracker's Find matching
-requirements, Brand Gap, space fits and the target engine all use one
-function. The Brand CRM chip keeps its wording ("Size fits, no places") but
-uses the same rule underneath. Each fit says why it fits. The property chips
-(finding 9) go.
+Every place in finding 12 uses one function. The Brand CRM chip ("Size fits,
+no places") and suggested pitches ("Fits", "Size fits", "Close to") keep
+their wording on the same rule underneath. Each fit says why it fits. The
+property chips (finding 9) go.
 
 Which rule is decision 2. Alongside it, a data card lists the marketing units
 with no use class (96) or no size (38) for someone to fill in. Nothing is
@@ -334,32 +493,82 @@ star, the Expansion score, the BGP team, the agent's name, the fits and the
 last contact. The pickers load when the panel's Edit opens. In the news loads
 only when its pill is opened, and its 10-second query gets looked at.
 
-### 5. Every link in the app opens the panel
+### 5. Every place that shows a requirement opens the panel
 
-Every place that names a requirement opens the panel with `?requirementId=`:
+Each place in findings 16 to 19 that shows a requirement opens the panel with
+`?requirementId=`. That includes:
 
-- the brand page's requirements card;
+- every row on the brand page, on a computer and a phone;
+- the Brand CRM card and chip;
 - Brand Gap's targets;
-- the Letting Tracker's matching requirements;
-- ChatBGP's receipts;
-- the contact page;
-- the landlord chat;
-- the dashboard widget.
+- the tracker's Find matching requirements and its brand suggestions;
+- the target engine's evidence;
+- a viewing's linked requirement;
+- the dashboard alert and widget;
+- Explorer, Who's hot and the radar;
+- Start strategy;
+- ChatBGP's receipts.
 
-The section above lists every such place.
+A count, such as "3 requirements" on a brand page, opens the board filtered to
+that brand.
+
+Beyond the links:
+
+- **The brand page shows what the board shows.** The desktop page draws the
+  state and date the server already sends. If decision 7 is yes, market
+  listings appear there too, labelled, with Confirm. That replaces "No BGP
+  requirement recorded · Add a requirement" for a brand the board already
+  holds.
+- **Deal and requirement.** The panel shows the deal a requirement led to.
+  The deal page shows the requirement it answers. The requirement form already has a
+  Deal picker (`DealSearchPicker`), and the panel keeps it. The deal page
+  gains a line naming the requirement, which opens the panel.
+- **Brand Gap** reads a brand's requirement whether or not it is in the top
+  30, and its "Fits here" units open the unit.
+- **Add for clients** is offered wherever the server already lets a client
+  add a requirement: the brand page, the phone brand page, the Brand CRM card
+  and the dashboard.
+
+### 6. One meaning of "live"
+
+Every place in finding 20 reads `requirementStateSql` or `requirementLive`
+from `shared/requirement-live.ts`. Each uses its words: "live", "to confirm",
+"market listing" or "older", never "Live" for both of the first two. A guard
+test fails on a new `status = 'Active'` reading of a requirement outside the
+rule.
+
+Some of these places choose agents through a requirement: the client Agents
+directory, the contact review and ChatBGP's offer logging. Moving them onto
+the rule changes which agents they offer. Before that ships, the build lists
+which agents each place would gain or lose, for Woody to see.
+
+The phone shell's Reqs list and the three unmounted panels are deleted.
 
 ## Build order
 
-1. **Feed and fit rule (server):** the board feed, and the chosen fit rule in
+1. **The PIPnet import first:**
+   - read the 05:30 job's logs since 15 November;
+   - find why 590 listings never became rows;
+   - report back before changing anything.
+
+   Whether the import should keep making a name-only brand record for a
+   client the CRM does not hold is Woody's call. Today it makes one, with no
+   type.
+2. **Feed and fit rule (server):** the board feed, and the chosen fit rule in
    `shared/requirement-fit.ts` with tests, used by every caller (finding 12).
    The client cut and the joint agent rule carry over unchanged.
-2. **The panel:** read, then edit, with the brand's cards, fits, evidence,
-   conversation and CRM plan.
-3. **The board:** the new row on a computer and a phone, the pills, the
+3. **The panel:** read, then edit, with the brand's cards, fits, evidence,
+   conversation, CRM plan and deal.
+4. **The board:** the new row on a computer and a phone, the pills, the
    Filters popover, and the corrected demand line.
-4. **Links in:** every caller opens the panel. Update `server/chatbgp-app-map.ts`
-   and the requirements section of CLAUDE.md.
-5. **The unit data card**, if Woody wants it (decision 2).
+5. **Links in:** every place in findings 16 to 19 opens the panel. This step
+   also covers the brand page, Brand Gap and Add for clients from section 5.
+6. **One meaning of "live":** section 6, with its guard test, and the old
+   code removed.
+7. **The unit data card**, if Woody wants it (decision 2).
+
+Each step updates `server/chatbgp-app-map.ts` and the requirements section of
+CLAUDE.md where it changes what a screen shows.
 
 Each step is checked in a browser against a local copy before it is
 committed. Nothing is pushed until Woody says push.
@@ -372,10 +581,10 @@ committed. Nothing is pushed until Woody says push.
    its row.
 
 2. **The fit rule.**
-   - (a) Size **and** use or place. This is the rule most of the app already
-     uses: 140 requirements with a fit, about 5 units each.
-   - (b) Size and use class, with place only used to rank: 198 with a fit,
-     about 26 units each until the 96 units get a use class.
+   - (a) Size **and** use or place, the rule space fits and the target engine
+     already use: 140 requirements with a fit, about 5 units each.
+   - (b) Size and use class, Brand Gap's rule, with place only used to rank:
+     198 with a fit, about 26 units each until the 96 units get a use class.
    - (c) Size alone, as the board does today: 199 with a fit, about 36 units
      each.
 
@@ -393,13 +602,35 @@ committed. Nothing is pushed until Woody says push.
    written to the database. Today an unconfirmed import stays under Market
    listings at any age.
 
-5. **The owner.** 210 of 211 requirements have no BGP owner. I recommend that
-   when a requirement has no owner, the board shows the brand's BGP team as
-   the owner, greyed and marked "via the brand". This would also be worked
-   out on read, with nothing written. Handing owners out from the brand's team
-   is on the 12 November "not built, waiting on Woody" list.
+5. **Who owns a market listing.** 210 of 211 requirements have no BGP owner.
+   Today the first person to confirm one becomes its owner, and only one has
+   been confirmed. The brand's BGP team cannot fill the gap: it is set on
+   none of these brands, and only 13 of them are on a BGP deal whose agents
+   could stand in.
+
+   The choices:
+   - (a) Leave listings unowned until someone confirms them, as today.
+   - (b) Give each group a named owner, who sees that group's listings under
+     Mine: F&B, Retail, Leisure, and Fitness & Wellness. Woody would name
+     the four people.
+   - (c) Use the agents on the brand's deals where there are any, and leave
+     the rest unowned.
+
+   I recommend (b). A listing nobody owns is a listing nobody chases. Each
+   row's owner would be worked out on read, with nothing written. Handing
+   owners out is on the 12 November "not built, waiting on Woody" list.
 
 6. **In the news (550 brands).** These are brands in the press with nothing on
    BGP's books. I recommend it stays a pill on the board but loads only when
    opened. The alternative is moving it to Brand Hunter as a filter, since it
    is a prospecting list.
+
+7. **Market listings on the brand page.** Since 12 November the brand page
+   has shown staff only live and to-confirm requirements, under the heading
+   "BGP requirements". So 210 brands on the board read "No BGP requirement
+   recorded · Add a requirement" there.
+
+   I recommend the brand page also shows a brand's market listing, labelled
+   "Market listing, listed on PIPnet 13 Oct, not confirmed", with Confirm, so
+   staff confirm the listing rather than add a second row. Client logins
+   already see every requirement there, so nothing changes for them.
