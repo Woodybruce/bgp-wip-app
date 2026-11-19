@@ -3029,7 +3029,8 @@ re-litigate.
   table, or if the access checks move.
 - **The reports to present are decks: one slide model, two files** (Woody,
   2026-11-19: "we dont need complicated excels just visual PDF which can also
-  be power point"). Three decks, each 16:9 slides with charts and big figures
+  be power point"). Four decks (the Market report was added the same day,
+  see "The market report" below), each 16:9 slides with charts and big figures
   first and short tables only where a chart cannot say it, each downloading
   as a **PDF** or as a **PowerPoint** of the SAME slides:
   - **Board report** (`board-report`, the ticked schemes and the period):
@@ -3041,7 +3042,9 @@ re-litigate.
     brands let, `inPlayFirst`; a Next step or Requirement column no row has
     a word in is not printed, `columnsWithWords`); Occupancy today (each scheme's units as a share); Lease roll
     (expiries and breaks, ten years from this one); Rental growth; Deal
-    speed; the Market report slides; How the figures are counted.
+    speed; the market report in short (Market report, a slide a sector that
+    has something in it, Market report: competition); How the figures are
+    counted.
   - **Asset profile** (`asset-profile`, one scheme, as recorded today):
     title; At a glance (figures, occupancy by units and by sq ft, trading
     units by brief category); Lease roll; Live lettings (by stage, with a
@@ -3126,9 +3129,11 @@ re-litigate.
   workbook opens on an **About** sheet. Excel is exceljs. Their routes and
   keys are unchanged.
 - **The page** (`client/src/pages/landsec-reports.tsx`): the period and the
-  scheme ticks, then **Reports to present** (the three deck cards, each with
-  **PDF** and **PowerPoint**; the board card also has **Market report**, the
-  asset profile its scheme picker), then the fold.
+  scheme ticks, then **Reports to present** (the four deck cards, each with
+  **PDF** and **PowerPoint**; the board card also has **Market report** and
+  the market report's card **Write the words**, both opening the one editor;
+  the asset profile its scheme picker), then the fold, which also holds
+  **Market report items**.
 - **Landsec's logo and the Landsec report palette, not BGP's** (Woody,
   2026-11-19: "also can you use the bluewater colours and juts have the
   landsec logo", "not BGP"). Every deck opens on a navy slide with
@@ -3244,55 +3249,11 @@ Do not re-litigate.
   Marketing, HOTs, Exchanged and Completed with how many deals each minute
   stamped. The board report's own queries are two (offers by day and whether
   a person logged them; brand names with their type).
-- **The market report's words are written by people**
-  (`server/landsec-board-market.ts`, editor
-  `client/src/components/landsec/board-market-editor.tsx`). One box per
-  section: Overall, Hospitality, Leisure, Cinema & entertainment, London
-  retail. Stored with no schema change: one JSON value in `system_settings`
-  per period and set of schemes (`landsec_board_report:<from>:<to>:<hash of
-  the sorted scheme keys>`), each section with its text, who saved it, BGP
-  or Landsec, and when. BGP staff and Landsec logins read and save
-  (`GET`/`PUT /api/landsec/reports/board-report/market`; the PUT is on
-  `CLIENT_ALLOWED_WRITES`); a save over somebody else's newer text is refused
-  (409) so two people do not lose each other's words; empty text clears a
-  section. **Only saved words go on a slide; a draft never does by itself.** Saved
-  words sit beside the section's stories and carry on over further slides
-  when they are long (`pageWords`), with "Written by <name> (<firm>)".
-- **Draft** (`POST …/market/draft`) is for BGP staff signed in as themselves
-  only (`contactViewer`). Anthropic, called directly, one call a section,
-  capped a day (`LANDSEC_BOARD_DRAFT_DAILY_CAP`, default 40, 0 = off). It is
-  sent the lines the pack already prints for a Landsec login (`boardFacts`),
-  dated public brand signals with a link (never a rumour, never the body of
-  a story), and dated research on the benchmark centres that are not
-  Landsec's own, and is told to write nothing else. The reply is made plain,
-  web addresses are taken out, and any figure in it that was not in what it
-  was sent is listed beside the box for the person to check. It only fills
-  the box: Save is the one write. It has not been run against Anthropic from
-  a build machine (no key): the prompt builder, the order of checks and the
-  reply clean-up are tested with a stub (`server/landsec-board-report.test.ts`).
-- **The industry this period** (`server/landsec-board-industry.ts`, counted
-  by `industryFigures`): on the market slides, whether or not words are
-  saved: the overall slide's tiles and stories, then **Market report: by
-  section** with every section's figures side by side; a section has a slide
-  of its own only when it has saved words or a story to show (a slide of
-  noughts is not made). The figures are counted across EVERY brand on the app (not only the brands
-  at the schemes), by the brief category of the brand's type: brands with an
-  opening story and with a closure, CVA or administration story (signals
-  that carry a link, never a rumour), the net change in stores on the
-  brands' own websites (only where a brand has two good counts of the same
-  list at least 20 days apart, the later one in the period, and it says how
-  many brands that covers), planning applications naming a brand (no tree or
-  telecoms application), job adverts, leasing requirements added (a count
-  only), and up to ten headline stories (headline, source and date:
-  never the text of a story, which is the publisher's; a Google News link
-  names the publisher from the end of its headline, `storySource`, never
-  "news.google.com"). Hidden and junk
-  brands are left out. Four queries whatever the number of brands; each may
-  fail to "not available" without failing the pack. **It holds no footfall,
-  sales, turnover, consumer spending or rental index: the app holds none,
-  and the pack says so. Never invent or imply one.** Nothing of BGP's own is
-  read, and the staff-only Investment Research library and Insights cards
-  are not used.
+- **The market report** (its words, the Draft, and what it is built from) is
+  the next section. The board deck carries it in short. The board workbook's
+  Industry sheets are the counts as before (`industryFigures`), now counted
+  from the same rows as the market report's items, trade newsletters
+  included.
 - **Guards**: `qa/regression/landsec-reports-guards.test.mjs` holds the
   board builder, the industry read, the slide model, the composers, the
   gathering and both renderers to the same never-named words as the
@@ -3309,10 +3270,171 @@ Do not re-litigate.
   shows the new tenant; a comparison with the quarter before; net
   effective rent in rental growth (it compares the rent on the deal); a
   palette per scheme; the market report for a single category rather than a
-  group; anything from footfall or sales. Store counts began on 15 November
+  group (the Market report deck is by category); anything from footfall or
+  sales. Store counts began on 15 November
   2026, so a period before then has no store change to show. A Google News
   headline whose publisher's own name holds " - " ("News 12 - Hudson
   Valley") is cut at the last one, so the source reads "Hudson Valley".
+
+### The market report (Woody, 2026-11-19)
+
+Woody, on the film's thin market slides: "The market analysis reports need to
+be surrounding the brands and who's doing what news etc including all the
+info we get each month from the team news propel etc needs to give a
+comprehensive market report broken into sectors similar to our brands page.
+But also to include any competition news such as buying shopping centres or
+their leasing ie Hammerson and Canary Wharf". Then, on what Landsec may be
+shown in it: "Ignore Jack! This is landsec they should have intel that we do
+including other schemes". And asked whether live deals at other clients'
+schemes should show in the Landsec market report, after being told the
+information belongs to the other landlord: "Switch on". Do not re-litigate.
+These three answers are about the Landsec MARKET REPORT only: a client login
+still never opens another landlord's page, and the Investment Research
+library and its Insights cards are still staff only everywhere else.
+
+- **What it is.** A fourth deck, **Market report** (`market-report`, PDF and
+  PowerPoint, card `market`), and under the Excel fold **Market report
+  items** (`market-report-items`: Items, Competition, Most active brands,
+  Research, Themes). The Board report's market slides are its short form
+  (`boardMarketSlides`). Same access as every report (`reportViewer`; a joint
+  agent is refused at both gateway lists and in the handler).
+- **The rules are one shared file, `shared/landsec-market-report.ts`** (tests
+  `shared/landsec-market-report.test.ts`, in `npm test`); the slides are
+  `shared/landsec-market-deck.ts` (`marketDeck`, `boardMarketSlides`,
+  `stackTables`; tests `shared/landsec-market-deck.test.ts`). The reads are
+  `server/landsec-board-industry.ts` (signals, store counts, planning and
+  jobs, requirements: four queries) and `server/landsec-market-report.ts`
+  (eight more, and `marketData`, `marketWorkbook`). A fixed number of
+  queries whatever the number of brands; each may fail to "not available",
+  which the last slide says. **No AI is asked anything when a deck is made.**
+- **Sectors as Brands groups them**: the four groups of Landsec's brief
+  (Hospitality, Leisure, Cinema & entertainment, London retail), each with
+  its categories, then **Other sectors** for a brand in no brief category
+  (`MARKET_GROUPS`, `marketGroupOf`, `marketCategories`). A brand's category
+  is read from its type. Hidden and junk brands are left out.
+- **An item** (`MarketItem`, built by `marketItems`) is a brand, a kind, ONE
+  line, a named source and a day. Kinds, in the order listed
+  (`MARKET_KINDS`): Ownership, Administration or CVA, Funding, Letting,
+  Closure, Opening, Requirement stated, New concept or market, Stores
+  counted, Planning, Requirement, Offer, Viewing, People, Jobs, News. Order
+  (`sortMarketItems`): what a brand did before plain news; a brand trading at
+  the viewer's schemes or a target there first (marked "(at your schemes)" /
+  "(target)", from the unit feed and the Brand CRM plan as Landsec reads it);
+  then the kind, the bigger story, the newer. One story once a brand
+  (`storyKeyOf`, the Expansion score's rule: the same headline under two
+  publishers, or the same link).
+- **A public report is named by its source, and a story is never
+  reproduced** (`signalLine`). A signal is in only when it carries a link
+  (the source is its site, or the publisher at the end of a Google News
+  headline) or came out of a **trade publisher's newsletter** (Propel,
+  Property Week and the other `scope: "any"` senders: `newsletterPublisherOf`
+  in `server/insights-feed.ts` names the publisher; until this day a
+  newsletter signal had no link and was left out, which is why the slides
+  were thin). Never a rumour, never a newsletter from an agent or data firm,
+  never a line BGP typed about its own deal (`bgp-deal:`), never a brand's own
+  social post, and of plain news only a headline about sites, deals, money or
+  trading (`ESTATE_NEWS`: not a Christmas menu). The line is the headline
+  with its publisher suffix off, plus what the story states about space where
+  the reader kept it ("Stated: 20 UK sites; Leeds."). The stored detail is
+  never handed on beyond that, and a news article is read by headline, link,
+  publisher and day only.
+- **What BGP's own records add** (origin `bgp`, source "BGP records"), on a
+  sector's slides under **BGP intelligence**: a leasing requirement added in
+  the period, worded by `requirementReason(...).clientText` as every client
+  screen words one; viewings held and offers a person logged at the viewer's
+  own schemes; and lettings at schemes that are NOT the viewer's.
+- **Other landlords' schemes: one switch, `OTHER_SCHEMES_LEVEL`**, shipped at
+  `"live"` on Woody's "Switch on". `"completed"`: a letting at another
+  landlord's scheme once it has exchanged or completed in the period.
+  `"live"`: also one in negotiation, at Heads of Terms or with solicitors,
+  and an asset on the Investment Tracker not yet sold. Change the one word to
+  turn it back. **What reaches a Landsec login of another landlord's letting
+  is, field by field: the brand, its brief category, the scheme (the
+  property's name), the landlord's name, the day it exchanged or completed,
+  and for one that is not done its stage** ("Live, In negotiation:", "Live,
+  Heads of Terms:", "Live, Solicitors:", with no date). There is no town: the
+  property record holds none. **Never** a rent, an incentive, lease terms, a
+  size, the fee, who runs it, a contact, a note, compliance working or the
+  deal's reference, for any viewer: `otherSchemeLettings` selects eight named
+  columns and the guard pins them. The viewer's own schemes and landlord are
+  never "other schemes".
+- **Movers** (`marketMovers`): the brands with the most evidence in the
+  period, as stacked bars of item counts (signs of growth, funding or
+  ownership, planning or jobs, closures), with the net store change. News
+  with no direction is not evidence. No score is invented.
+- **Competition** (`competitionItems`): other landlords and competing
+  centres, in three lists: Ownership and investment, Leasing and openings,
+  Redevelopment and repositioning. From public news that names a landlord or
+  a centre (`news_articles` under `publicNewsSourceSql`, headline only), the
+  weekly research on the benchmark centres that are not the viewer's, BGP's
+  lettings at other schemes (above), and sales: a completed comparable of a
+  shopping centre, retail park or leisure scheme (`investment_comps`:
+  property, place, buyer, seller, price and yield) and, at "live", such an
+  asset on the Investment Tracker with its stage and NEVER a price. Who a
+  headline is about is rules only (`competitionSubjects`,
+  `competitionSubject`): the landlords BGP holds a record for (found only in
+  a headline that is also about property, because a landlord's name is often
+  a bank's or a word), a fixed list of well-known owners (`CORE_LANDLORDS`:
+  Hammerson, Canary Wharf Group, Westfield and others), and the benchmark
+  centres with their owners. The viewer's own name, schemes and centres are
+  left out. `competitionTheme` reads the headline: money and owners first,
+  then what is being built, then who is taking space.
+- **Research this period** ("Ignore Jack"): the papers the investment team
+  has read (`investment_research_reads`), each as publisher and month, our
+  one-line headline and up to two checked figures; never the summary, the
+  quote or the paper. Under the section its sector belongs to
+  (`researchSection`). **Market themes**: the Insights cards any client login
+  is already shown (audience `all`, news or market-report), named by what
+  they were drawn from.
+- **The words are written by people** (`server/landsec-board-market.ts`,
+  editor `client/src/components/landsec/board-market-editor.tsx`): one box a
+  section, `MARKET_WORD_SECTIONS`: Overall, the four groups, and
+  **Competition**. Stored as before (one JSON value in `system_settings` per
+  period and scheme set, who saved each and when, a 409 on a stale save).
+  **Only saved words are on a slide**; a sector with none shows its items.
+- **What a section is written from** (`GET …/market/material`,
+  `sectionMaterial`): its figures, movers, items, research and themes, listed
+  under the box for whoever is writing. **BGP's team posts**
+  (`server/landsec-market-posts.ts`): what BGP staff posted, tagging a tenant
+  brand, in a conversation the requirement feed would read (never a ChatBGP
+  chat, a record's shared conversation or one linked to a property, deal or
+  company; the creator, the poster and every member a BGP person). They are
+  raw talk and are NEVER printed by themselves: they are sent to BGP staff
+  signed in as themselves only (`postsFor`; a Landsec login, and staff viewing
+  as Landsec, get none), listed under the section with **Add to the report**,
+  which puts the post's words in the box for the person to edit and save, and
+  they are sent to the Draft.
+- **Draft** (`POST …/market/draft`, BGP staff signed in as themselves,
+  Anthropic direct, one call a section, `LANDSEC_BOARD_DRAFT_DAILY_CAP`): now
+  150 to 300 words a section and 250 to 400 for Overall, written only from
+  the section's material and the team's posts (`marketDraftRequest`), naming
+  a public source in brackets and saying "BGP's records show" or "BGP's team
+  reports" for BGP's own. **Draft all sections** drafts every section that
+  has nothing in it, one after another; each is still saved by a person. A
+  draft is never on a slide until saved. Not run against Anthropic from a
+  build machine.
+- **Two-line table rows** (`DeckTable.lines: 2`, `tableRowHeight`,
+  `fitCell(…, 2)`): a line of news runs to a second line in both renderers.
+- Checked on 19 November 2026 against a seeded scratch copy of the smoke
+  fixture: each kind of item appeared once with its source; an agent firm's
+  newsletter, a `bgp-deal:` line, a rumour, a hidden brand's story, a social
+  post, a tree application, a story dated before the period, news about
+  Landsec itself and an article from a brand-search feed did not; a completed
+  letting at Hammerson's Brent Cross appeared as brand, scheme and landlord,
+  a live negotiation there as "Live, In negotiation", and neither deal's rent
+  or fee was anywhere in the PDF; a letting at Bluewater was not listed as
+  another scheme's; a team post reached BGP staff and not a Landsec login,
+  who was refused a draft.
+- **Not built**: the town of a letting at another scheme (the property record
+  holds none); "now trading at" lists from other landlords' tenancy
+  schedules; the Expansion score band on the movers; a period-on-period
+  comparison; Landsec's own news as a section; a palette per scheme. The
+  ownership read's changes of owner are listed with their source (that read
+  was on no client list before: this report is the one place a Landsec login
+  sees it). Completed sale comparables may have come from a licensed feed
+  (RCA): whether their price and yield should print for a client is Woody's
+  call. A landlord record with a common word for a name can still be matched
+  to an unrelated property headline.
 
 ## Client checks: the in-app KYC request (Woody, 2026-11-17)
 

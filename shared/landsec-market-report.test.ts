@@ -53,6 +53,10 @@ test("a signal's line: its headline and a named source, and only a public report
   assert.equal(signalLine(signal({ source: "apollo" })), null);
   assert.equal(signalLine(signal({ type: "rumour" })), null);
   assert.equal(signalLine(signal({ source: "https://www.instagram.com/p/abc" })), null);
+  // General coverage is not market news: a plain news story is kept only when its headline is about sites, deals, money or trading.
+  assert.equal(signalLine(signal({ type: "news", headline: "Starbucks' Christmas menu 2026: menu details, release date and more" })), null);
+  assert.equal(signalLine(signal({ type: "news", headline: "Wingstop like-for-like sales up 12%" }))!.line, "Wingstop like-for-like sales up 12%");
+  assert.equal(signalLine(signal({ type: "opening", headline: "Starbucks' Christmas menu arrives in its new Leeds branch" }))!.source, "bighospitality.co.uk", "a story filed as an opening is kept");
 });
 
 test("items: one story once a brand, every source, in order, and a failed read leaves its items out", () => {
@@ -106,6 +110,9 @@ test("items: one story once a brand, every source, in order, and a failed read l
   for (const i of items.filter(x => x.kind === "letting")) assert.doesNotMatch(i.line, /£|rent|months|psf|sq ft/i);
   // A read that failed leaves its items out and nothing in their place.
   assert.deepEqual(marketItems(input({ signals: null, lettings: null }), period), []);
+  // Plain news comes last, even for a brand at the schemes.
+  const withNews = marketItems(input({ signals: [signal({ brandId: "b2", brand: "Flat Iron", category: REST, type: "news", headline: "Flat Iron sales rise", source: "https://x.example/1" }), signal({ brandId: "b9", brand: "Zizzi", category: REST, type: "opening", headline: "Zizzi opens in York", source: "https://x.example/2" })], trading: new Set(["b2"]) }), period);
+  assert.deepEqual(withNews.map(i => i.brand), ["Zizzi", "Flat Iron"]);
   // By group, by category, and a brand capped for a slide.
   assert.equal(itemsIn(items, { group: "Hospitality" }).length, items.length);
   assert.deepEqual(itemsIn(items, { category: QSR, perBrand: 2 }).map(i => i.kind), ["opening", "planning"]);

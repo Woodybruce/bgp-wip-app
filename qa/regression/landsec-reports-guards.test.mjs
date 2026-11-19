@@ -336,10 +336,11 @@ test('the market report: a fixed set of named reads, public news by headline onl
   assert.match(report, /const DONE = \["EXC", "COM", "INV"\], RUNNING = \["NEG", "HOT", "SOL"\];/);
   // A sale: a completed comparable in the period; an asset still on the tracker only at "live", with its stage and never a price.
   const sales = sql.find(text => text.includes('FROM investment_comps'));
-  assert.match(sales, /SELECT s\.property_name, s\.city, s\.buyer, s\.seller, s\.price, s\.cap_rate, s\.transaction_date\s+FROM investment_comps s/);
+  assert.match(sales, /SELECT s\.property_name, s\.city, s\.buyer, s\.seller, s\.price, s\.cap_rate, s\.transaction_date, s\.subtype, s\.transaction_type\s+FROM investment_comps s/);
+  assert.match(report, /const CENTRE_CLASSES: readonly string\[\] = \["Retail - Shopping Centre", "London Shopping Centre", "Retail Parks", "Leisure Schemes"\];/, 'shopping centres, retail parks and leisure schemes: not every investment BGP tracks');
   assert.match(sales, /!~\* '\(terminat\|withdraw\|pending\|under offer\|quoting\|on the market\|refinanc\)'/);
   const tracker = sql.find(text => text.includes('FROM investment_tracker'));
-  assert.match(tracker, /SELECT t\.asset_name, t\.asset_type, t\.status\s+FROM investment_tracker t/);
+  assert.match(tracker, /SELECT t\.asset_name, t\.asset_type, t\.address, t\.tenure, t\.status\s+FROM investment_tracker t/);
   assert.doesNotMatch(tracker, /price|niy|eqy|rent|client|vendor|buyer|guide/i, 'a live investment deal is its asset and its stage');
   assert.match(report, /if \(level !== "live"\) return out;/);
   assert.match(report, /price: null, yieldPct: null, day: null, live: true,/);

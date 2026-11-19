@@ -15,14 +15,18 @@
 //    reports are for; reportViewer). A joint agent, and any other client's
 //    login, gets nothing: the gateway refuses /api/landsec/reports for a
 //    joint agent and reportViewer refuses again here.
+//  - Sections: Overall, the four sector groups and Competition
+//    (MARKET_WORD_SECTIONS in shared/landsec-market-report.ts).
+//  - What a section is written from (the items the report lists, its movers,
+//    research and themes) is listed under its box for whoever is writing.
+//    BGP's own team posts are sent to BGP staff signed in as themselves and
+//    nobody else, to add to a box by hand; they are never printed by themselves.
 //  - Draft is for BGP staff signed in as themselves only. Anthropic, called
 //    directly, one call a section, capped a day
 //    (LANDSEC_BOARD_DRAFT_DAILY_CAP, default 40, 0 = off). It is sent the
-//    lines the pack already prints for a Landsec login, dated public brand
-//    signals with a source link, and dated competing-centre research with a
-//    source link, and told to write nothing else (the request and its checks
-//    are shared/landsec-board-report.ts). The draft only fills the box on the
-//    screen: Save is the one write.
+//    section's own material and the team's posts and told to write nothing
+//    else (marketDraftRequest). The draft only fills the box on the screen:
+//    Save is the one write.
 import crypto from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";

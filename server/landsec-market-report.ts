@@ -45,6 +45,7 @@ import { reportDay, type ReportPeriod } from "@shared/landsec-reports";
 import { isJunkBrand } from "@shared/junk-brand";
 import { lettingTypeSqlList } from "@shared/letting-rules";
 import { OWNERSHIP_KIND_LABEL } from "@shared/ownership-intel";
+import { compTrackerClass, trackerClass } from "@shared/tracker-class";
 import {
   OTHER_SCHEMES_LEVEL, competitionItems, competitionSubjects, marketItems, researchLines, themeSection,
   type CompetitionArticle, type CompetitionResearchRow, type CompetitionSaleRow, type CompetitionSubject, type MarketData, type MarketLettingRow,
@@ -192,19 +193,19 @@ export async function otherSchemeLettings(viewer: LandsecViewer, ownPropertyIds:
   return out;
 }
 
-const SHOPPING = "(retail|shopping|leisure|outlet|f&b|food|mixed)";
+// A sale is the competition's when it is of a shopping centre, a retail park or a leisure scheme: the classes the Investment Tracker files those under.
+const CENTRE_CLASSES: readonly string[] = ["Retail - Shopping Centre", "London Shopping Centre", "Retail Parks", "Leisure Schemes"];
 
 /** Completed sales of shopping and leisure property from the investment comparables; at "live", the Investment Tracker's assets with their stage and no price. */
 export async function centreSales(period: ReportPeriod, level: OtherSchemesLevel, db: Queryable = pool): Promise<CompetitionSaleRow[]> {
   const sold = (await db.query(
     `/* landsec-market-report:sales */
-     SELECT s.property_name, s.city, s.buyer, s.seller, s.price, s.cap_rate, s.transaction_date
+     SELECT s.property_name, s.city, s.buyer, s.seller, s.price, s.cap_rate, s.transaction_date, s.subtype, s.transaction_type
        FROM investment_comps s
       WHERE s.transaction_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(s.transaction_date, 10) >= $1 AND left(s.transaction_date, 10) < $2
-        AND (COALESCE(s.subtype, '') || ' ' || COALESCE(s.transaction_type, '')) ~* '${SHOPPING}'
         AND COALESCE(s.status, '') !~* '(terminat|withdraw|pending|under offer|quoting|on the market|refinanc)'
-      ORDER BY s.transaction_date DESC LIMIT 400`, [period.start, period.end])).rows;
-  const out: CompetitionSaleRow[] = sold.map((r: any): CompetitionSaleRow => ({
+      ORDER BY s.transaction_date DESC LIMIT 2000`, [period.start, period.end])).rows;
+  const out: CompetitionSaleRow[] = sold.filter((r: any) => CENTRE_CLASSES.includes(compTrackerClass({ subtype: r.subtype, transactionType: r.transaction_type, propertyName: r.property_name }))).map((r: any): CompetitionSaleRow => ({
     property: String(r.property_name || ""), place: r.city ? String(r.city) : null, buyer: r.buyer ? String(r.buyer) : null, seller: r.seller ? String(r.seller) : null,
     price: Number(r.price) > 0 ? Number(r.price) : null, yieldPct: Number(r.cap_rate) > 0 ? (Number(r.cap_rate) < 1 ? Number(r.cap_rate) * 100 : Number(r.cap_rate)) : null,
     day: reportDay(r.transaction_date), live: false,
@@ -212,12 +213,12 @@ export async function centreSales(period: ReportPeriod, level: OtherSchemesLevel
   if (level !== "live") return out;
   const running = (await db.query(
     `/* landsec-market-report:tracker */
-     SELECT t.asset_name, t.asset_type, t.status
+     SELECT t.asset_name, t.asset_type, t.address, t.tenure, t.status
        FROM investment_tracker t
-      WHERE COALESCE(t.asset_type, '') ~* '${SHOPPING}' AND (t.status IN ('AVA', 'Live', 'SOL') OR t.status ILIKE 'U/O%' OR t.status ILIKE 'under offer%')
-      ORDER BY t.asset_name LIMIT 400`)).rows;
+      WHERE t.status IN ('AVA', 'Live', 'SOL') OR t.status ILIKE 'U/O%' OR t.status ILIKE 'under offer%'
+      ORDER BY t.asset_name LIMIT 2000`)).rows;
   const stage = (s: string) => (/^sol/i.test(s) ? "with solicitors" : /^(u\/o|under offer)/i.test(s) ? "under offer" : "on the market");
-  for (const r of running) if (r.asset_name) out.push({ property: String(r.asset_name), place: null, buyer: null, seller: null, price: null, yieldPct: null, day: null, live: true, status: stage(String(r.status || "")) });
+  for (const r of running) if (r.asset_name && CENTRE_CLASSES.includes(trackerClass({ assetType: r.asset_type, assetName: r.asset_name, address: typeof r.address === "string" ? r.address : null, tenure: r.tenure }).cls)) out.push({ property: String(r.asset_name), place: null, buyer: null, seller: null, price: null, yieldPct: null, day: null, live: true, status: stage(String(r.status || "")) });
   return out;
 }
 

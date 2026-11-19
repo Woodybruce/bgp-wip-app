@@ -38,9 +38,12 @@ const plural = (n: number, one: string, many: string): string => `${count(n)} ${
 /** Items per category, and items of the competition per theme, that a deck prints: the rest are in the data export. */
 export const MARKET_DECK_PER_CATEGORY = 12;
 export const MARKET_DECK_PER_THEME = 18;
+/** Rows of BGP's own records a sector's slides print. */
+export const MARKET_DECK_OWN = 16;
 
 const ITEM_COLUMNS: DeckColumn[] = [{ header: "Date", width: 1 }, { header: "Brand", width: 2.1 }, { header: "Kind", width: 1.5 }, { header: "What happened", width: 6.1 }, { header: "Source", width: 1.5 }];
 const itemRow = (i: MarketItem): string[] => [shortReportDay(i.day), brandMark(i), marketKindLabel(i.kind), i.line, i.source];
+const OWN_COLUMNS: DeckColumn[] = [{ header: "Date", width: 1 }, { header: "Brand", width: 2.1 }, { header: "Kind", width: 1.5 }, { header: "What BGP holds", width: 7.6 }];
 const NARROW_COLUMNS: DeckColumn[] = [{ header: "Date", width: 1.05 }, { header: "Brand", width: 1.7 }, { header: "What happened", width: 4.3 }, { header: "Source", width: 1.25 }];
 const narrowRow = (i: MarketItem): string[] => [shortReportDay(i.day), brandMark(i), `${marketKindLabel(i.kind)}: ${i.line}`, i.source];
 const COMPETITION_COLUMNS: DeckColumn[] = [{ header: "Date", width: 1 }, { header: "Landlord or centre", width: 2.3 }, { header: "What happened", width: 7.3 }, { header: "Source", width: 1.6 }];
@@ -149,28 +152,21 @@ function groupSlides(input: MarketDeckInput, group: string): DeckSlide[] {
     saved: key ? input.words[key] : undefined, wordsTitle: group, perBrand: 2,
     caveat: "A brand is in a sector by its type. An item is a public report named by its source, or a record of BGP's. A brand marked (target) or (at your schemes) is listed first.",
   });
-  // Public reports, category by category.
+  // Public reports category by category, then what BGP's own records hold: one under the other, so no slide is left mostly empty.
   let more = 0;
   const tables = marketCategories(group).map(c => {
     const items = itemsIn(all, { category: c.key, origin: "public", perBrand: 3 });
     more += Math.max(0, itemsIn(all, { category: c.key, origin: "public" }).length - Math.min(items.length, MARKET_DECK_PER_CATEGORY));
     return { title: c.label, columns: ITEM_COLUMNS, rows: items.slice(0, MARKET_DECK_PER_CATEGORY).map(itemRow) };
   }).filter(t => t.rows.length);
+  const own = itemsIn(all, { origin: "bgp" });
+  more += Math.max(0, own.length - MARKET_DECK_OWN);
+  if (own.length) tables.push({ title: "BGP intelligence: what BGP's own records hold", columns: OWN_COLUMNS, rows: own.slice(0, MARKET_DECK_OWN).map(i => [shortReportDay(i.day), brandMark(i), marketKindLabel(i.kind), i.line]) });
   slides.push(...stackTables({
-    title: `${group}: who is doing what`, subtitle: `Public reports, ${input.period.label}`,
-    caveat: ["A news item is its headline, the publisher and the date: never the text of the story. At most three items a brand and twelve a category.", moreLine(more)].filter(Boolean).join(" "),
+    title: `${group}: who is doing what`, subtitle: input.period.label,
+    caveat: ["A news item is its headline, publisher and date, never the story's text. BGP's records: lettings at other schemes (brand, scheme, landlord; never a rent or terms; Live is not done), requirements, and viewings and offers here.", moreLine(more)].filter(Boolean).join(" "),
     rules: [MARKET_SOURCES],
   }, tables));
-  // What BGP's own records hold.
-  const own = itemsIn(all, { origin: "bgp" });
-  if (own.length) {
-    const fit = tableRowsThatFit(freeHeight(true), false, 2) * 2;
-    slides.push(...stackTables({
-      title: `${group}: BGP intelligence`, subtitle: `From BGP's own records, ${input.period.label}`,
-      caveat: ["Lettings BGP has recorded at other schemes (brand, scheme and landlord: never a rent or terms; one marked Live is not done), requirements BGP holds, and viewings and offers at these schemes.", moreLine(own.length - fit)].filter(Boolean).join(" "),
-      rules: [MARKET_SOURCES],
-    }, [{ title: "What BGP's records hold", columns: [{ header: "Date", width: 1 }, { header: "Brand", width: 2.1 }, { header: "Kind", width: 1.5 }, { header: "What BGP holds", width: 7.6 }], rows: own.slice(0, fit).map(i => [shortReportDay(i.day), brandMark(i), marketKindLabel(i.kind), i.line]) }]));
-  }
   return slides;
 }
 

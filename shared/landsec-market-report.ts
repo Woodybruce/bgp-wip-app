@@ -182,9 +182,12 @@ export function signalLine(row: Pick<MarketSignalRow, "headline" | "detail" | "s
   // A brand's own post on a social network is not a report of anything, and its words are the brand's.
   if (!headline || !named || SOCIAL.test(named) || SOCIAL.test(siteName(source))) return null;
   const stated = statedOf(row.detail);
+  // General coverage (a menu, a campaign, a competition) is not market news: a plain news story is kept only when its headline is about sites, deals, money or trading.
+  if (signalKind(row.type, headline) === "news" && !stated && !ESTATE_NEWS.test(headline)) return null;
   return { line: cut(`${headline.replace(/[.\s]+$/, "")}${stated ? `. ${stated}` : ""}`, 230), source: named };
 }
 
+const ESTATE_NEWS = /\b(?:re-?open\w*|open(?:s|ed|ing|ings)?|clos(?:e|es|ed|ing|ure|ures)|expan\w+|roll-?out|new (?:site|store|shop|restaurant|branch|pub|caf[eé]|bar|outlet|location|venue|flagship|concept|format|market)s?|sites?|stores?|flagship|debut\w*|franchis\w*|acqui\w+|takeover|buys?|bought|sells?|sold|sale|stake|invest\w*|funding|raises?|backed|backing|ventures?|sign(?:s|ed)?|leas(?:e|es|ed|ing)|lets?|landlords?|property|estate|pipeline|targets?|administrat\w+|CVA|restructur\w+|profits?|sales|revenue|results|trading|like-for-like)\b/i;
 const SOCIAL = /(?:^|\.)(?:instagram|facebook|linkedin|tiktok|twitter|x|youtube|threads)\.(?:com|net)$/i;
 
 /** One story once: the same words under two publishers' names, or cut short in one copy, are the same story. */
@@ -271,11 +274,13 @@ export function marketItems(input: MarketInput, period: ReportPeriod, level: Oth
   return sortMarketItems(out);
 }
 
-/** The order of a list: a brand at the viewer's schemes or a target there first, then the kind, the bigger story, the newer, the brand. */
+/** The order of a list: what a brand did before plain news; a brand at the viewer's schemes or a target there first; then the kind, the bigger story, the newer, the brand. */
 export function sortMarketItems(items: MarketItem[]): MarketItem[] {
   const flagged = (i: MarketItem) => (i.atSchemes || i.target ? 0 : 1);
+  // Plain news comes after everything that says what a brand did, whoever the brand is.
+  const plain = (i: MarketItem) => (i.kind === "news" ? 1 : 0);
   return items.slice().sort((a, b) =>
-    flagged(a) - flagged(b) || (KIND_RANK.get(a.kind) ?? 99) - (KIND_RANK.get(b.kind) ?? 99) || a.size - b.size
+    plain(a) - plain(b) || flagged(a) - flagged(b) || (KIND_RANK.get(a.kind) ?? 99) - (KIND_RANK.get(b.kind) ?? 99) || a.size - b.size
     || String(b.day || "").localeCompare(String(a.day || "")) || a.brand.localeCompare(b.brand) || a.line.localeCompare(b.line));
 }
 

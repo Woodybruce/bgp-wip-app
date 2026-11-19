@@ -64,7 +64,7 @@ test("the market report: an overview, each sector with its categories one under 
   sound(deck);
   const titles = deckOutline(deck);
   assert.equal(titles[1], "Overview");
-  for (const t of ["Hospitality", "Hospitality (continued)", "Hospitality: who is doing what", "Hospitality: BGP intelligence", "Cinema & entertainment", "Other sectors", "Competition", "Competition: who is doing what", "Research and themes"]) assert.ok(titles.includes(t), `a slide called "${t}"`);
+  for (const t of ["Hospitality", "Hospitality (continued)", "Hospitality: who is doing what", "Cinema & entertainment", "Other sectors", "Competition", "Competition: who is doing what", "Research and themes"]) assert.ok(titles.includes(t), `a slide called "${t}"`);
   assert.ok(!titles.includes("Leisure") && !titles.includes("London retail"), "a sector with nothing in it has no slide");
   assert.equal(titles[titles.length - 1], "Sources, and what this report does not hold");
   // Saved words are on the sector's first slide, with who wrote them, and every word is printed.
@@ -77,7 +77,7 @@ test("the market report: an overview, each sector with its categories one under 
   // Who is doing what: a table a category, headed by the category, twelve at most, two lines a row; a target leads.
   const who = deck.slides.filter(s => s.title.startsWith("Hospitality: who is doing what"));
   const tables = who.flatMap(s => s.rows.flatMap(r => r.blocks)).filter((b): b is DeckTable => b.kind === "table");
-  assert.deepEqual(Array.from(new Set(tables.map(t => (t.title || "").replace(" (continued)", "")))), ["Restaurants & Bars", "Café, Grab & Go and QSR"]);
+  assert.deepEqual(Array.from(new Set(tables.map(t => (t.title || "").replace(" (continued)", "")))), ["Restaurants & Bars", "Café, Grab & Go and QSR", "BGP intelligence: what BGP's own records hold"]);
   assert.ok(tables.every(t => t.lines === 2));
   const restaurants = tables.filter(t => (t.title || "").startsWith("Restaurants")).flatMap(t => t.rows);
   assert.equal(restaurants.length, MARKET_DECK_PER_CATEGORY);
@@ -85,7 +85,7 @@ test("the market report: an overview, each sector with its categories one under 
   assert.deepEqual(restaurants[0].slice(2), ["Opening", "Brand 7 opens a new restaurant in town number 7", "bighospitality.co.uk"]);
   assert.match(who[0].caveat || "", /18 more items are in the data export\./);
   // BGP's own records: the requirement, and the lettings at another landlord's scheme, the live one marked.
-  const own = deck.slides.find(s => s.title === "Hospitality: BGP intelligence")!.rows[0].blocks[0] as DeckTable;
+  const own = tables.find(t => (t.title || "").startsWith("BGP intelligence"))!;
   assert.deepEqual(own.rows.map(r => r[3]), ["Dishoom has exchanged at Bullring (Hammerson)", "Live, In negotiation: Nando's is in negotiation at Brent Cross (Hammerson)", "Wants QSR; 1,500 sq ft (requirement added 8 Oct)"]);
   // The competition: public news first, then what BGP's records hold, a live row last.
   const comp = deck.slides.filter(s => s.title.startsWith("Competition: who is doing what")).flatMap(s => s.rows.flatMap(r => r.blocks)).filter((b): b is DeckTable => b.kind === "table");
