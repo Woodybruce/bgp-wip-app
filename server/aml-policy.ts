@@ -81,8 +81,9 @@ router.get("/api/aml-policy", async (req: Request, res: Response) => {
   try {
     const me = await staffMe(req);
     if (!me) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
-    const { amlOfficers } = await import("./aml-authority");
+    const { amlOfficers, amlActor } = await import("./aml-authority");
     const officers = await amlOfficers();
+    const actor = await amlActor(req);
     res.json({
       documents: AML_POLICY_DOCUMENTS.map(d => ({ key: d.key, title: d.title, issue: d.issue, date: d.date, url: `/api/aml-policy/documents/${d.key}`, onFile: !!documentPath(d.file) })),
       officers: {
@@ -91,6 +92,11 @@ router.get("/api/aml-policy", async (req: Request, res: Response) => {
       },
       policyNames: POLICY_OFFICER_NAMES,
       canEdit: me.isAdmin,
+      // The Nominated Officer or the Deputy (admins while none is set): the
+      // AML register and the five-year deletion are theirs; training is
+      // theirs and admins'.
+      isOfficer: actor.isMlro,
+      managesTraining: actor.isMlro || me.isAdmin,
       recheckYears: RECHECK_YEARS,
       lettingMonthlyRent: LETTING_AML_MONTHLY_RENT,
       fatfAsOf: FATF_LISTS_AS_OF,

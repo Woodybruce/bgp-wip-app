@@ -11,6 +11,7 @@ const TasksPage = lazy(() => import("./tasks"));
 const Kyc4uPanel = lazy(() => import("@/components/kyc4u-panel"));
 const MyCardAndExpenses = lazy(() => import("./my-expenses").then(m => ({ default: m.MyCardAndExpenses })));
 const BusinessCardPanel = lazy(() => import("./business-card").then(m => ({ default: m.BusinessCardPanel })));
+const AmlTrainingPanel = lazy(() => import("@/components/aml-training").then(m => ({ default: m.AmlTrainingPanel })));
 import {
   Users, User, TrendingUp, Calendar, FileText, CreditCard,
   Building2, GraduationCap, Phone, Mail, Linkedin,
@@ -2399,6 +2400,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             {(isAdmin || isOwn) && !isSecretary(person.title) && <TabsTrigger value="career" className={pillTabsTrigger}>Career</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="expenses" className={pillTabsTrigger} data-testid="tab-profile-expenses">{isOwn ? "Card & expenses" : "Expenses"}</TabsTrigger>}
             {isOwn && <TabsTrigger value="business-card" className={pillTabsTrigger} data-testid="tab-profile-business-card">Business card</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="aml-training" className={pillTabsTrigger} data-testid="tab-profile-aml-training">AML training</TabsTrigger>}
             <TabsTrigger value="cv" className={pillTabsTrigger}>CV</TabsTrigger>
           </TabsList>
 
@@ -2579,6 +2581,14 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             <TabsContent value="business-card" className="mt-4">
               <Suspense fallback={<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}>
                 <BusinessCardPanel embedded />
+              </Suspense>
+            </TabsContent>
+          )}
+
+          {(isAdmin || isOwn) && (
+            <TabsContent value="aml-training" className="mt-4">
+              <Suspense fallback={<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}>
+                <AmlTrainingPanel userId={String(person.id)} isOwn={isOwn} />
               </Suspense>
             </TabsContent>
           )}

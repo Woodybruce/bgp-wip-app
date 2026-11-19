@@ -37,6 +37,7 @@ const READ_DENY = new Set<string>([
   "file_storage",           // raw file bytes — too large to ever return
   "ai_write_audit",         // the audit log itself
   "aml_internal_reports",   // suspicion reports — the MLRO's register (tipping off, POCA s.333A)
+  "aml_deletion_log",       // the record of AML records deleted after five years
   "private_mail_quarantine", // excluded mail payloads are not CRM evidence
   "private_mail_blocked_messages", // private message identifiers and mailbox addresses
   "private_mail_pending_quarantine", // excluded payloads awaiting quarantine
@@ -51,6 +52,8 @@ export const HR_ADMIN_ONLY = new Set<string>([
   "pension_contributions", "benefits", "staff_benefit_enrolments", "holiday_requests",
   "staff_parental_leave", "hr_documents", "staff_promotion_pitches", "staff_competencies",
   "staff_awards", "staff_kit",
+  // AML training records (each person sees their own; the officers and admins everyone's).
+  "aml_training_records",
 ]);
 export function hrTableIn(sql: string): string | null {
   for (const t of HR_ADMIN_ONLY) if (new RegExp(`\\b${t}\\b`, "i").test(sql)) return t;

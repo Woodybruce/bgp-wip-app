@@ -3,19 +3,27 @@ import { requireAuth } from "./auth";
 
 const router = Router();
 
-// Two consolidated lists, both free/public:
+// Three consolidated lists, all free/public:
 //   UK OFSI  — FCDO, https://sanctionslist.fcdo.gov.uk/
 //   US OFAC  — Treasury OFAC SDN list, https://ofac.treasury.gov/sdn-list
+//   EU       — the EU's consolidated financial sanctions list (the Financial
+//              Sanctions Files). BGP's AML policy 3.10: "It is illegal to have
+//              a commercial relationship with any person, organisation, or
+//              country if they are on the HM Treasury sanction list or
+//              European sanctions lists" (added 19 November 2026). The public
+//              file needs its published token; EU_SANCTIONS_CSV_URL moves it.
 // Between them these cover the vast majority of designated persons/entities
 // BGP will ever see. Adverse media / FATF grey-list is layered in separately
 // via Perplexity + ComplyAdvantage (see server/kyc-orchestrator.ts).
 const SANCTIONS_CSV_URL = "https://sanctionslist.fcdo.gov.uk/docs/UK-Sanctions-List.csv";
 const OFAC_SDN_CSV_URL = "https://www.treasury.gov/ofac/downloads/sdn.csv";
+const EU_FSF_CSV_URL = process.env.EU_SANCTIONS_CSV_URL
+  || "https://webgate.ec.europa.eu/fsd/fsf/public/files/csvFullSanctionsList_1_1/content?token=dG9rZW4tMjAxNw";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-type SanctionSource = "UK-OFSI" | "US-OFAC";
+type SanctionSource = "UK-OFSI" | "US-OFAC" | "EU-FSF";
 
-interface SanctionEntry {
+export interface SanctionEntry {
   uniqueId: string;
   name: string;
   nameType: string;
@@ -42,6 +50,7 @@ export function loadedSanctionsLists(): string[] {
   const lists: string[] = [];
   if (sanctionsCache.some(e => e.source === "UK-OFSI")) lists.push("the UK Sanctions List");
   if (sanctionsCache.some(e => e.source === "US-OFAC")) lists.push("the US OFAC list");
+  if (sanctionsCache.some(e => e.source === "EU-FSF")) lists.push("the EU consolidated list");
   return lists;
 }
 
@@ -300,12 +309,127 @@ async function loadUsOfacEntries(): Promise<SanctionEntry[]> {
   return entries;
 }
 
+/**
+ * Rows of a delimited file one at a time, so a large file is never held as
+ * arrays of every row. A field that starts with a quote runs to its closing
+ * quote (a doubled quote is a quote, and a delimiter or line break inside it
+ * is text); a quote anywhere else is text. A leading byte-order mark is
+ * dropped. Blank lines are skipped.
+ */
+export function* delimitedRows(text: string, delimiter: string): Generator<string[]> {
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  let inQuotes = false;
+  let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+  for (; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
+      } else field += ch;
+      continue;
+    }
+    if (ch === '"' && field === "" && !quoted) { inQuotes = true; quoted = true; continue; }
+    if (ch === delimiter) { row.push(field); field = ""; quoted = false; continue; }
+    if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(field);
+      if (row.some(f => f.trim())) yield row;
+      row = []; field = ""; quoted = false;
+      continue;
+    }
+    field += ch;
+  }
+  if (field || row.length) {
+    row.push(field);
+    if (row.some(f => f.trim())) yield row;
+  }
+}
+
+/**
+ * The EU's Financial Sanctions Files, CSV version 1.1: semicolon separated,
+ * one row per combination of an entity's names, addresses, birth dates,
+ * identity documents and citizenships, so an entity spans many rows. Each of
+ * an entity's names becomes one entry carrying all its birth dates and
+ * citizenships, as the UK list's names do.
+ */
+export function parseEuSanctionsCsv(text: string): SanctionEntry[] {
+  const rows = delimitedRows(text, ";");
+  const header = rows.next();
+  if (header.done) throw new Error("The EU sanctions file is empty");
+  const cols = header.value.map(h => h.trim());
+  const at = (name: string) => cols.indexOf(name);
+  const iId = at("Entity_LogicalId");
+  const iRef = at("Entity_EU_ReferenceNumber");
+  const iKind = at("Entity_SubjectType_ClassificationCode");
+  const iProgramme = at("Entity_Regulation_Programme");
+  const iDesignated = at("Entity_DesignationDate");
+  const iPublished = at("Entity_Regulation_PublicationDate");
+  const iWhole = at("NameAlias_WholeName");
+  const iFirst = at("NameAlias_FirstName");
+  const iMiddle = at("NameAlias_MiddleName");
+  const iLast = at("NameAlias_LastName");
+  const iBirth = at("BirthDate_BirthDate");
+  const iBirthYear = at("BirthDate_Year");
+  const iCitizen = at("Citizenship_CountryDescription");
+  const iCitizenCode = at("Citizenship_CountryIso2Code");
+  if (iId < 0 || (iWhole < 0 && iLast < 0)) throw new Error("Could not find the EU sanctions file's columns");
+  type Entity = { ref: string; person: boolean; programmes: Set<string>; designated: string; names: string[]; seen: Set<string>; dobs: Set<string>; citizenships: Set<string> };
+  const entities = new Map<string, Entity>();
+  const cell = (r: string[], idx: number) => (idx >= 0 ? String(r[idx] || "").trim() : "");
+  for (const r of rows) {
+    const id = cell(r, iId);
+    if (!id) continue;
+    let e = entities.get(id);
+    if (!e) {
+      e = { ref: cell(r, iRef), person: /^person$/i.test(cell(r, iKind)), programmes: new Set(), designated: cell(r, iDesignated) || cell(r, iPublished), names: [], seen: new Set(), dobs: new Set(), citizenships: new Set() };
+      entities.set(id, e);
+    }
+    const programme = cell(r, iProgramme);
+    if (programme) e.programmes.add(programme);
+    const name = cell(r, iWhole) || [cell(r, iFirst), cell(r, iMiddle), cell(r, iLast)].filter(Boolean).join(" ");
+    const key = normalise(name);
+    if (name && key && !e.seen.has(key)) { e.seen.add(key); e.names.push(name); }
+    const dob = cell(r, iBirth) || cell(r, iBirthYear);
+    if (dob) e.dobs.add(dob);
+    const citizen = cell(r, iCitizen) || cell(r, iCitizenCode);
+    if (citizen && !/^(unknown|00)$/i.test(citizen)) e.citizenships.add(citizen);
+  }
+  const out: SanctionEntry[] = [];
+  for (const [id, e] of entities) {
+    const kind = e.person ? "Individual" : "Entity";
+    e.names.forEach((name, n) => out.push({
+      uniqueId: e.ref || `EU-${id}`,
+      name,
+      nameType: n === 0 ? "Primary name" : "alias",
+      regime: [...e.programmes].join(", "),
+      designationType: kind,
+      sanctionsImposed: "EU asset freeze",
+      nationality: [...e.citizenships].join(", "),
+      dob: [...e.dobs].join("; "),
+      entityType: kind,
+      dateDesignated: e.designated,
+      source: "EU-FSF",
+    }));
+  }
+  return out;
+}
+
+async function loadEuEntries(): Promise<SanctionEntry[]> {
+  console.log("[sanctions] Downloading the EU consolidated sanctions list...");
+  const res = await fetch(EU_FSF_CSV_URL);
+  if (!res.ok) throw new Error(`EU sanctions download failed: ${res.status}`);
+  return parseEuSanctionsCsv(await res.text());
+}
+
 async function doLoadSanctionsList(): Promise<void> {
-  // Pull both lists in parallel — if one fails, keep the other so we always
+  // Pull the lists in parallel — if one fails, keep the others so we always
   // have *some* screening coverage rather than zero.
-  const [ofsiRes, ofacRes] = await Promise.allSettled([
+  const [ofsiRes, ofacRes, euRes] = await Promise.allSettled([
     loadUkOfsiEntries(),
     loadUsOfacEntries(),
+    loadEuEntries(),
   ]);
 
   const merged: SanctionEntry[] = [];
@@ -321,15 +445,21 @@ async function doLoadSanctionsList(): Promise<void> {
   } else {
     console.error("[sanctions] US OFAC load failed:", ofacRes.reason?.message || ofacRes.reason);
   }
+  if (euRes.status === "fulfilled") {
+    merged.push(...euRes.value);
+    console.log(`[sanctions] EU consolidated list loaded: ${euRes.value.length} entries`);
+  } else {
+    console.error("[sanctions] EU consolidated list load failed:", euRes.reason?.message || euRes.reason);
+  }
 
   if (merged.length === 0) {
-    console.error("[sanctions] BOTH sanctions sources failed — screening will return no results");
+    console.error("[sanctions] EVERY sanctions source failed — screening will return no results");
     return;
   }
 
   sanctionsCache = merged;
   cacheLoadedAt = Date.now();
-  console.log(`[sanctions] Total sanctions entries loaded: ${merged.length} (OFSI + OFAC)`);
+  console.log(`[sanctions] Total sanctions entries loaded: ${merged.length} (OFSI + OFAC + EU)`);
 }
 
 export async function loadSanctionsList(): Promise<void> {
@@ -417,11 +547,12 @@ router.post("/api/sanctions/screen", requireAuth, async (req, res) => {
 
     const ofsiCount = sanctionsCache.filter(e => e.source === "UK-OFSI").length;
     const ofacCount = sanctionsCache.filter(e => e.source === "US-OFAC").length;
+    const euCount = sanctionsCache.filter(e => e.source === "EU-FSF").length;
     res.json({
       screenedAt: new Date().toISOString(),
-      listDate: "UK OFSI (FCDO) + US OFAC SDN",
+      listDate: "UK OFSI (FCDO) + US OFAC SDN + EU consolidated list",
       totalEntries: sanctionsCache.length,
-      sources: { ukOfsi: ofsiCount, usOfac: ofacCount },
+      sources: { ukOfsi: ofsiCount, usOfac: ofacCount, eu: euCount },
       results,
       overallStatus,
     });
@@ -434,6 +565,7 @@ router.post("/api/sanctions/screen", requireAuth, async (req, res) => {
 router.get("/api/sanctions/status", requireAuth, async (_req, res) => {
   const ofsiCount = sanctionsCache.filter(e => e.source === "UK-OFSI").length;
   const ofacCount = sanctionsCache.filter(e => e.source === "US-OFAC").length;
+  const euCount = sanctionsCache.filter(e => e.source === "EU-FSF").length;
   res.json({
     loaded: sanctionsCache.length > 0,
     entries: sanctionsCache.length,
@@ -441,6 +573,7 @@ router.get("/api/sanctions/status", requireAuth, async (_req, res) => {
     sources: [
       { name: "UK OFSI (FCDO)", entries: ofsiCount, loaded: ofsiCount > 0 },
       { name: "US OFAC SDN", entries: ofacCount, loaded: ofacCount > 0 },
+      { name: "EU consolidated list", entries: euCount, loaded: euCount > 0 },
     ],
   });
 });

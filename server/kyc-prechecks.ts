@@ -9,7 +9,8 @@
 //   (charges and The Gazette), and the latest accounts, confirmation
 //   statement and certificate of incorporation, downloaded and filed on the
 //   party's KYC record so a KYC4U request carries them.
-//   Sanctions: the UK Sanctions List and the US OFAC list, for the company,
+//   Sanctions: the UK Sanctions List, the US OFAC list and the EU
+//   consolidated list, for the company,
 //   every officer, every owner, the companies up the chain and the contact.
 //   Public roles and adverse media: a web search with sources for each
 //   person (and the company), kept only where a source can be checked.
@@ -33,9 +34,9 @@ import {
   KYC_PRECHECK_FRESH_DAYS, KYC_PRECHECK_MAX_WEB_PEOPLE, KYC_PRECHECK_VERSION, PRECHECK_AUTO_RUNS_A_DAY, PRECHECK_RETRY_MINUTES,
   askInputFrom, checkWebAnswer, chooseScreened, isOffshoreCountry,
   isPrecheckResult, listingFromExemptions, nameTokens, ownerKind, personNamesMatch, precheckCardLines, precheckCompany, precheckSanctionsMatch,
-  precheckUnfinished, sanctionsLine, statementIsConcern, statementWords,
+  looksOverseasName, pickOverseasEntity, precheckUnfinished, sanctionsLine, sanctionsListCode, sanctionsListName, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput, type PrecheckCardLine, type PrecheckCompany, type PrecheckDocument, type PrecheckListing,
-  type ProviderLine, type RegisterOwner, type SanctionsLine, type WebSearchLine,
+  type PrecheckOverseasEntity, type ProviderLine, type RegisterOwner, type SanctionsLine, type WebSearchLine,
 } from "@shared/kyc-prechecks";
 import type { KycPartyKind } from "@shared/kyc-request";
 
@@ -175,6 +176,21 @@ async function ch(path: string): Promise<any> {
   const { chFetch } = await import("./companies-house");
   return chFetch(path, { timeoutMs: 20_000 });
 }
+// Overseas entities whose names hold these words: the advanced search filtered
+// to the register's type, else the ordinary search (its results are filtered
+// to OE numbers by pickOverseasEntity).
+async function searchOverseasEntities(name: string): Promise<Array<{ company_number?: string; title?: string; company_type?: string; company_status?: string }>> {
+  const asItems = (res: any) => (Array.isArray(res?.items) ? res.items : []).map((i: any) => ({
+    company_number: i.company_number, title: i.title || i.company_name, company_type: i.company_type, company_status: i.company_status,
+  }));
+  try {
+    return asItems(await ch(`/advanced-search/companies?company_name_includes=${encodeURIComponent(name)}&company_type=registered-overseas-entity&size=50`));
+  } catch (e: any) {
+    if (e?.name === "ChBusyError" || /\b429\b/.test(String(e?.message || ""))) throw e;
+    return asItems(await ch(`/search/companies?q=${encodeURIComponent(name)}&items_per_page=50`));
+  }
+}
+
 // A resource Companies House answers 404 for when there is nothing to show
 // (no PSC statements, no exemptions).
 async function chOrEmpty(path: string): Promise<any> {
@@ -388,6 +404,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
     nationality: clean(p.nationality, 60) || null,
     residence: clean(p.country_of_residence, 80) || null,
     dob: dobOf(p.date_of_birth),
+    ...(p.is_sanctioned === true ? { sanctioned: true } : {}),
   }));
   const statements = rawStatements.slice(0, 10).map((s: any) => ({ statement: clean(s.statement, 120), words: statementWords(s.statement), concern: statementIsConcern(s.statement), notifiedOn: s.notified_on || null }));
 
@@ -486,10 +503,10 @@ async function screenSubjects(subjects: Subject[]): Promise<KycPrecheckResult["s
     const { loadSanctionsList, screenName, loadedSanctionsLists } = await import("./sanctions-screening");
     await withTimeout(loadSanctionsList(), 90_000, "Loading the sanctions lists");
     const lists = loadedSanctionsLists();
-    if (!lists.length) return { ran: false, lists, lines: [], error: "the UK and US lists could not be downloaded" };
+    if (!lists.length) return { ran: false, lists, lines: [], error: "the sanctions lists could not be downloaded" };
     const lines: SanctionsLine[] = subjects.map(s => {
       const candidates: ListEntry[] = screenName(s.name, 0.6).map(({ entry }) => ({
-        name: entry.name, source: entry.source === "US-OFAC" ? "US" : "UK", regime: entry.regime || "",
+        name: entry.name, source: sanctionsListCode(entry.source), regime: entry.regime || "",
         designationType: entry.designationType || "", dob: entry.dob || "", nationality: entry.nationality || "",
       }));
       return sanctionsLine(s, candidates);
@@ -682,6 +699,31 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
       : "No Companies House number on the record and none found for the name. If it is registered outside the UK, the client is asked for an extract from its own register.";
   }
 
+  // No UK number: the Register of Overseas Entities, searched by the party's
+  // name (the company that signs: its own name only). Exactly one entity of
+  // that name is read below as the company.
+  let overseasEntity: PrecheckOverseasEntity | null = null;
+  if (!number && subjectKind === "company" && process.env.COMPANIES_HOUSE_API_KEY) {
+    const names = [...new Set((entity ? [clean(entity.name, 160)] : [clean(company.uk_entity_name, 160), clean(company.name, 160)]).filter(Boolean))];
+    overseasEntity = { searched: true, number: null, name: null, status: null, candidates: 0, looksOverseas: names.some(looksOverseasName), error: null };
+    try {
+      for (const name of names) {
+        const items = await withChPatience(CH_PATIENCE_MS, () => searchOverseasEntities(name));
+        const pick = pickOverseasEntity(name, items);
+        overseasEntity.candidates = Math.max(overseasEntity.candidates, pick.candidates);
+        if (pick.found) {
+          overseasEntity = { ...overseasEntity, number: pick.found.number, name: pick.found.name, status: pick.found.status, candidates: 1 };
+          number = pick.found.number;
+          notAtCompaniesHouse = null;
+          break;
+        }
+      }
+    } catch (e: any) {
+      overseasEntity.error = words(e);
+      errors.push(`The Register of Overseas Entities: ${words(e)}`);
+    }
+  }
+
   let companiesHouse: KycPrecheckResult["companiesHouse"] = null;
   let raw: { profile: any; officers: any[]; pscs: any[] } | null = null;
   if (number) {
@@ -761,6 +803,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     party: { companyId, name: partyName, subjectKind, contactName, ...(entityId ? { entityId } : {}) },
     companiesHouse, notAtCompaniesHouse, sanctions, web, complyAdvantage,
     screened: { basis: screen.basis, people: screen.full.filter(s => s.person).map(s => s.name), sanctionsOnly: screen.sanctionsOnly.map(s => s.name) },
+    ...(overseasEntity ? { overseasEntity } : {}),
     errors,
   };
 
@@ -776,7 +819,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   // know, so this row counts as the party's latest screening.
   const sanctionsScreening = sanctions.ran ? sanctions.lines.map(l => ({
     name: l.name, role: l.role, status: l.outcome === "possible" ? "potential_match" : "clear",
-    matches: l.outcome === "possible" ? l.matches.map(m => ({ matchType: "sanctions", source: m.source === "UK" ? "UK Sanctions List" : "US OFAC", sanctionedName: m.name, regime: m.regime })) : [],
+    matches: l.outcome === "possible" ? l.matches.map(m => ({ matchType: "sanctions", source: sanctionsListName(m.source), sanctionedName: m.name, regime: m.regime })) : [],
   })) : null;
   const inserted = (await pool.query(
     `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, trading_entity_id, risk_level, risk_score, sanctions_match, result, conducted_by, notes)

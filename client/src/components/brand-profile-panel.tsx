@@ -78,6 +78,7 @@ import { isLandlordCompany } from "@/lib/company-kind";
 import { AccountDealsBoard } from "@/components/account-deals-board";
 import { AccountTeamViewsCard } from "@/components/account-team-views";
 import { AgentRelationshipCard, AgentDealingsScope, AgentGlance, type AgentTab } from "@/components/agent-relationship-card";
+import { AgentAmlCard } from "@/components/agent-aml";
 import { OWNERSHIP_INTEL_KEY, ownershipKindLine, type OwnershipIntel } from "@shared/ownership-intel";
 import { CompanyKindPage, CompanySummaryCard, CompanyWhereWeAre, CompanyStartStrategy, companyPair, companyStack } from "@/components/company-page/company-kind-page";
 import { SuperBrandBadge, SuperBrandStar } from "@/components/brand-page/super-brand-star";
@@ -2815,6 +2816,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         sections: [
           ...(isClientViewer ? [] : [{ key: "overview", label: "Overview", body: <>
             <AgentRelationshipCard companyId={companyId} part="roles" onOpen={openList} />
+            {/* Whether the firm is registered with HMRC for AML supervision (BGP's AML policy, joint agents). */}
+            <AgentAmlCard companyId={companyId} companyName={c.name} />
             {/* The CRM plan: an agent firm can hold a strategy, events and actions (15 November 2026). */}
             {staffPlan && <LandlordEngagementPanel companyId={companyId} companyName={c.name} interviews={false} />}
             {kindActivity("agent-activity-feed")}

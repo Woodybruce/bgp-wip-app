@@ -13,6 +13,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Pill, PillCount } from "@/components/ui/pill";
 import { DealAmlStatusCard } from "@/components/deal-aml-status";
 import { AmlPolicyPanel } from "@/components/aml-policy-panel";
+import { AmlRegisterBoard, MyRegisterReports, RaiseReportButton } from "@/components/aml-register";
+import { AmlTrainingBoard, AmlTrainingPanel } from "@/components/aml-training";
+import { AmlRetentionBoard } from "@/components/aml-retention";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { AML_BUCKETS, AML_STAGE_LABEL, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow, type AmlStage } from "@shared/aml-dashboard";
@@ -55,6 +58,19 @@ const roleWords = (role: string) => (isDealPartyRole(role) ? DEAL_PARTY_LABEL[ro
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : "");
 const moved = (n: number | null) => (n === null ? "—" : n === 0 ? "Today" : n === 1 ? "1 day" : `${n} days`);
 const isBucket = (v: string | null): v is AmlBucket => !!v && AML_BUCKETS.some(b => b.key === v);
+
+// The page's sections (19 November 2026): the checks for everyone; the AML
+// register and the five-year deletion for the Nominated Officer and the
+// Deputy; training for everyone (the officers and admins see everyone's).
+type Section = "checks" | "reports" | "training" | "records";
+const SECTIONS: Array<{ key: Section; label: string; officer?: boolean }> = [
+  { key: "checks", label: "Checks" },
+  { key: "reports", label: "Reports", officer: true },
+  { key: "training", label: "Training" },
+  { key: "records", label: "Records", officer: true },
+];
+const isSection = (v: string | null): v is Section => !!v && SECTIONS.some(x => x.key === v);
+interface PolicyRoles { isOfficer?: boolean; managesTraining?: boolean }
 
 function StageChip({ row }: { row: AmlDashboardRow }) {
   const label = row.stage === "expiring" && row.expiresAt ? `Expires ${day(row.expiresAt)}` : AML_STAGE_LABEL[row.stage];
@@ -154,19 +170,24 @@ export default function AmlDashboard() {
   const [location, setLocation] = useLocation();
   const params = new URLSearchParams(search);
   const [bucket, setBucket] = useState<AmlBucket>(() => (isBucket(params.get("view")) ? (params.get("view") as AmlBucket) : "todo"));
+  const [section, setSection] = useState<Section>(() => (isSection(params.get("section")) ? (params.get("section") as Section) : "checks"));
   const [mine, setMine] = useState(params.get("who") === "mine");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<AmlDashboardRow | null>(null);
-  const { data, isLoading, error } = useQuery<Feed>({ queryKey: ["/api/aml-dashboard"] });
+  const { data, isLoading, error } = useQuery<Feed>({ queryKey: ["/api/aml-dashboard"], enabled: section === "checks" });
+  const { data: roles } = useQuery<PolicyRoles>({ queryKey: ["/api/aml-policy"] });
+  const sections = SECTIONS.filter(x => !x.officer || roles?.isOfficer);
+  const shownSection: Section = sections.some(x => x.key === section) ? section : "checks";
 
   // The view in the address, replaced (a pill change is never a Back step).
   useEffect(() => {
     const next = new URLSearchParams();
-    if (bucket !== "todo") next.set("view", bucket);
-    if (mine) next.set("who", "mine");
+    if (shownSection !== "checks") next.set("section", shownSection);
+    if (shownSection === "checks" && bucket !== "todo") next.set("view", bucket);
+    if (shownSection === "checks" && mine) next.set("who", "mine");
     const target = `${location}${next.toString() ? `?${next}` : ""}`;
     if (`${location}${search ? `?${search}` : ""}` !== target) setLocation(target, { replace: true });
-  }, [bucket, mine]);
+  }, [bucket, mine, shownSection]);
 
   const scoped = useMemo(() => (data?.rows || []).filter(r => (!mine || r.mine) && rowMatches(r, query)), [data, mine, query]);
   const counts = useMemo(() => bucketCounts(scoped), [scoped]);
@@ -182,6 +203,21 @@ export default function AmlDashboard() {
 
       <AmlPolicyPanel />
 
+      <div className="flex flex-wrap items-center gap-2 border-b pb-2" data-testid="aml-sections">
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Sections">
+          {sections.map(x => (
+            <Pill key={x.key} active={shownSection === x.key} onClick={() => setSection(x.key)} data-testid={`aml-section-${x.key}`}>{x.label}</Pill>
+          ))}
+        </div>
+        <div className="md:ml-auto"><RaiseReportButton label="Report to the Nominated Officer" officer={!!roles?.isOfficer} testId="aml-raise-report" /></div>
+      </div>
+
+      {shownSection === "reports" && <AmlRegisterBoard />}
+      {shownSection === "records" && <AmlRetentionBoard />}
+      {shownSection === "training" && (roles?.managesTraining ? <AmlTrainingBoard /> : <AmlTrainingPanel userId="me" isOwn />)}
+      {shownSection === "checks" && <MyRegisterReports />}
+
+      {shownSection === "checks" && <>
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Where the checks stand">
           {AML_BUCKETS.map(b => (
@@ -261,6 +297,8 @@ export default function AmlDashboard() {
           </table>
         </div>
       )}
+
+      </>}
 
       {open && <PartyTrail row={open} onClose={() => setOpen(null)} />}
     </div>
