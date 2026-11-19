@@ -6,8 +6,9 @@
 // Two things live here, and nowhere else:
 //  1. THE PERIOD RULE: one or several whole months, From and To inclusive.
 //  2. THE REPORT REGISTRY: every report the Reports page offers. A new report
-//     (the quarterly board pack comes next) is one more entry here plus its
-//     builder in server/landsec-reports.ts.
+//     is one more entry here plus its builder in server/landsec-reports.ts.
+//     The board report is two entries (the PDF and its figures) drawn as one
+//     card; its own rules are shared/landsec-board-report.ts.
 //
 // Pure: no database, no request. Tests: shared/landsec-reports.test.ts.
 

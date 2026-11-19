@@ -121,10 +121,12 @@ test('no login has a Portfolio, Scheme, Lettings or Ask entry, or a menu entry t
 });
 
 // Woody, 2026-11-19, on who runs reports: "yes landsec and BGP".
-test('Reports: on a Landsec login\'s and staff\'s menu and tabs, never a joint agent\'s, whose page and API are refused', () => {
+// The phone tabs do not hold it (it was an eighth tab for a day; Woody called the bar crowded on 15 November).
+test('Reports: on a Landsec login\'s and staff\'s menu, off every phone tab bar, never a joint agent\'s, whose page and API are refused', () => {
   for (const role of [null, 'leasing_manager', 'asset_manager']) assert.ok(menu(role).some(([title, url]) => title === 'Reports' && url === '/landsec/reports'), String(role));
   assert.ok(menu(null, true).some(([, url]) => url === '/landsec/reports'));
-  assert.ok(phone('full').some(([, path]) => path === '/landsec/reports') && phone('staff').some(([, path]) => path === '/landsec/reports'));
+  for (const which of ['full', 'staff', 'jointAgent']) assert.ok(!phone(which).some(([label, path]) => label === 'Reports' || path.startsWith('/landsec/reports')), which);
+  assert.doesNotMatch(source(TABS), /LANDSEC_MENU\.reports|"\/landsec\/reports"/, 'the tab bar does not name the Reports page');
   assert.ok(!menu('joint_agent').some(([title, url]) => title === 'Reports' || url.startsWith('/landsec/reports')));
   assert.ok(!phone('jointAgent').some(([, path]) => path.startsWith('/landsec/reports')));
   assert.match(source(TABS), /\[\.\.\.LANDSEC_JOINT_AGENT_NAV_ITEMS, \{ label: "CRM"/);
@@ -137,12 +139,12 @@ test('a joint agent has no Brands entry on either menu', () => {
   assert.ok(!phone('jointAgent').some(([, path]) => path.startsWith('/brands')));
 });
 
-test('phone tabs: Properties, Deals, Tracker, Calendar, Tasks, Brands, Reports, Chat for a Landsec login', () => {
-  assert.deepEqual(phone('full'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['Reports', '/landsec/reports'], ['Chat', '/messages']]);
+test('phone tabs: Properties, Deals, Tracker, Calendar, Tasks, Brands, Chat for a Landsec login', () => {
+  assert.deepEqual(phone('full'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['Chat', '/messages']]);
 });
 
 test('phone tabs: staff viewing as Landsec keep Home, the way out of the Landsec view, in place of Brands', () => {
-  assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/tasks'], ['Reports', '/landsec/reports'], ['Chat', '/messages']]);
+  assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/tasks'], ['Chat', '/messages']]);
 });
 
 // Woody, 2026-11-13, asked whether to build chat for joint agents: "yes go ahead".

@@ -9,7 +9,7 @@
 // server (server/landsec-reports.ts): this page only asks.
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, FileSpreadsheet, FileText, Loader2 } from "lucide-react";
+import { Download, FileSpreadsheet, FileText, Loader2, PenLine } from "lucide-react";
 import { Pill, PillCount, pillMetrics } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { downloadWithAuth } from "@/components/unit-hots/hots-api";
+import { BoardMarketEditor } from "@/components/landsec/board-market-editor";
 import {
   defaultReportMonths, landsecReportFileName, parseReportPeriod,
   type LandsecReportDef, type LandsecReportsIndex,
@@ -46,6 +47,7 @@ export default function LandsecReports() {
   const [ticked, setTicked] = useState<Set<string> | null>(null);
   const [oneScheme, setOneScheme] = useState<string>("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [marketOpen, setMarketOpen] = useState(false);
 
   const schemes = data?.schemes || [];
   const chosen = useMemo(() => (ticked ? schemes.filter(s => ticked.has(s.key)) : schemes), [schemes, ticked]);
@@ -102,12 +104,16 @@ export default function LandsecReports() {
   }
 
   const noneTicked = chosen.length === 0;
+  // The board report is two files (the PDF and its figures) drawn as one card at the head of the list.
+  const board = data.reports.filter(def => def.card === "board");
+  const boardPdf = board.find(def => def.format === "pdf"), boardFigures = board.find(def => def.format === "xlsx");
+  const others = data.reports.filter(def => def.card !== "board");
   return (
     <div className="p-4 md:p-6 space-y-5" data-testid="landsec-reports">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Reports</h1>
         <p className="mt-0.5 text-sm text-muted-foreground" data-testid="landsec-reports-summary">
-          <span className="font-mono tabular-nums">{data.reports.length}</span> reports
+          <span className="font-mono tabular-nums">{others.length + (boardPdf ? 1 : 0)}</span> reports
           {period ? <> · {period.label}</> : null}
           {schemes.length > 0 && <> · <span className="font-mono tabular-nums">{chosen.length}</span> of <span className="font-mono tabular-nums">{schemes.length}</span> schemes</>}
         </p>
@@ -160,10 +166,44 @@ export default function LandsecReports() {
             {noneTicked && <p className="text-xs text-muted-foreground" data-testid="landsec-reports-none-ticked">Tick at least one scheme to export.</p>}
           </section>
 
+          {boardPdf && (
+            <section className="space-y-2" aria-label="Board report">
+              <h2 className={SECTION_LABEL}>Board report</h2>
+              <div className="flex flex-col gap-2 rounded-lg border bg-card p-4" data-testid="landsec-report-board">
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="flex min-w-0 items-center gap-2 text-base font-semibold"><FileText className="h-4 w-4 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words">{boardPdf.title}</span></h3>
+                  <span className={FORMAT_CHIP}>PDF and Excel</span>
+                </div>
+                <p className="max-w-3xl text-sm text-muted-foreground">{boardPdf.description}</p>
+                <p className="max-w-3xl text-[11px] text-muted-foreground">{boardPdf.period}</p>
+                {boardPdf.note && <p className="max-w-3xl text-[11px] text-muted-foreground" data-testid="landsec-report-note-board">{boardPdf.note}</p>}
+                <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:flex-wrap sm:items-center">
+                  <Button type="button" size="sm" className="min-h-[44px] sm:min-h-0" disabled={!period || noneTicked || !!busy} onClick={() => exportReport(boardPdf)} data-testid="landsec-report-export-board-report">
+                    {busy === boardPdf.key ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1 h-3.5 w-3.5" />}
+                    {busy === boardPdf.key ? "Making it" : "Export PDF"}
+                  </Button>
+                  {boardFigures && (
+                    <Button type="button" variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" disabled={!period || noneTicked || !!busy} onClick={() => exportReport(boardFigures)} data-testid="landsec-report-export-board-report-figures">
+                      {busy === boardFigures.key ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="mr-1 h-3.5 w-3.5" />}
+                      {busy === boardFigures.key ? "Making it" : "Export Excel"}
+                    </Button>
+                  )}
+                  <Button type="button" variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" disabled={!period || noneTicked} onClick={() => setMarketOpen(true)} data-testid="landsec-report-board-market">
+                    <PenLine className="mr-1 h-3.5 w-3.5" />
+                    Market report
+                  </Button>
+                </div>
+              </div>
+              {period && !noneTicked && (
+                <BoardMarketEditor open={marketOpen} onOpenChange={setMarketOpen} from={period.from} to={period.to} schemes={ticked ? chosen.map(s => s.key) : null} />
+              )}
+            </section>
+          )}
+
           <section className="space-y-2" aria-label="Reports">
             <h2 className={SECTION_LABEL}>Reports</h2>
             <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {data.reports.map(def => {
+              {others.map(def => {
                 const one = def.schemes === "one";
                 const working = busy === def.key;
                 const blocked = !period || (one ? !oneScheme : noneTicked);

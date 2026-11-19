@@ -215,7 +215,15 @@ test('the page only asks: the list and the rule come from the shared file, and i
   const page = code(read('client/src/pages/landsec-reports.tsx'));
   assert.match(page, /from "@shared\/landsec-reports";/);
   assert.match(page, /parseReportPeriod\(from, to\)/);
-  assert.match(page, /data\.reports\.map\(def =>/);
+  assert.match(page, /const others = data\.reports\.filter\(def => def\.card !== "board"\);/);
+  assert.match(page, /others\.map\(def =>/);
+  // The board report's card leads the list, and its editor asks only the market report's addresses.
+  assert.ok(page.indexOf('data-testid="landsec-report-board"') > 0 && page.indexOf('data-testid="landsec-report-board"') < page.indexOf('others.map(def =>'));
+  const editor = code(read('client/src/components/landsec/board-market-editor.tsx'));
+  const asked = Array.from(editor.matchAll(/["`](\/api\/[^"`?$]*)/g)).map(m => m[1]);
+  assert.deepEqual(Array.from(new Set(asked)).sort(), ['/api/landsec/reports/board-report/market', '/api/landsec/reports/board-report/market/draft']);
+  assert.match(editor, /\{data\.canDraft && \(/, 'Draft is offered only where the server says so');
+  assert.doesNotMatch(editor, /landsecRole|joint_agent|isStaff/, 'who may save or draft is decided on the server');
   const called = Array.from(page.matchAll(/["`](\/api\/[^"`?$]*)/g)).map(m => m[1]);
   assert.ok(called.length >= 2);
   for (const address of called) assert.match(address, /^\/api\/landsec\/reports(\/|\/board-report\/market(\/draft)?)?$/, address);

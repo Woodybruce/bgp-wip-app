@@ -1,6 +1,6 @@
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake, Target, Layers, Building2, CalendarDays, FileSpreadsheet } from "lucide-react";
+import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake, Target, Layers, Building2, CalendarDays } from "lucide-react";
 import { useKeyboardOpen } from "@/hooks/use-mobile";
 import { useBrand } from "@/lib/brand-context";
 import { LANDSEC_MENU, JOINT_AGENT_MENU, LANDSEC_STAFF_TASKS, landsecMenuActive, openTaskCount } from "@shared/landsec-menu";
@@ -35,9 +35,9 @@ const LANDSEC_NAV_ITEMS = [
   { label: "Calendar", icon: CalendarDays, path: LANDSEC_MENU.calendar },
   { label: "Tasks", icon: CheckSquare, path: LANDSEC_MENU.tasks },
   { label: "Brands", icon: Handshake, path: LANDSEC_MENU.brands },
-  // Reports (Woody, 2026-11-19), for a Landsec login and staff viewing as
-  // Landsec; a joint agent's tabs are their own list below.
-  { label: "Reports", icon: FileSpreadsheet, path: LANDSEC_MENU.reports },
+  // Reports is on the side bar and the ChatBGP page's menu, not here: it was
+  // an eighth tab for a day (19 November 2026) and Woody had already called
+  // this bar crowded (15 November). On a phone the page opens by its address.
   { label: "Chat", icon: MessageCircle, path: LANDSEC_MENU.chat },
 ] as const;
 
@@ -152,9 +152,7 @@ export function MobileBottomNav() {
                   </span>
                 )}
               </span>
-              {/* Eight tabs (a Landsec page no tab is lit on, since Reports
-                  joined them) take a smaller label so none runs into the next. */}
-              <span className={`${shown.length > 7 ? "text-[9px] tracking-tight" : "text-[10px]"} font-semibold`}>
+              <span className="text-[10px] font-semibold">
                 {item.label}
               </span>
             </button>
@@ -170,4 +168,4 @@ export function MobileBottomNav() {
  * These should not show the standard mobile header back button behavior
  * and instead just display in the content area above the bottom nav.
  */
-export const BOTTOM_NAV_PATHS = ["/", "/home", "/messages", "/chatbgp", "/mail", "/deals", "/news", "/tasks", "/landsec/tracker", "/landsec/calendar", "/landsec/viewings", "/landsec/tasks", "/landsec/reports", "/landsec/chat"];
+export const BOTTOM_NAV_PATHS = ["/", "/home", "/messages", "/chatbgp", "/mail", "/deals", "/news", "/tasks", "/landsec/tracker", "/landsec/calendar", "/landsec/viewings", "/landsec/tasks", "/landsec/chat"];
