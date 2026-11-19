@@ -250,7 +250,7 @@ async function activityRows(ctx: Ctx): Promise<ActivityRow[]> {
     out.push({
       scheme: d.scheme.name, unit: text(d.unit), brand: text(d.tenant), ref: d.ref ?? null, deal: text(d.name), dealType: text(d.dealType), jointAgent: text(d.jointAgent),
       stage: stageLabel(d.code, d.dealType), stageCode: d.code || null, live: "Live", daysAtStage: d.days ?? null,
-      daysDate: d.days == null ? null : d.stageConfirmed === false ? "Date not confirmed" : null,
+      daysDate: d.days == null ? null : d.stageConfirmed === false ? "No" : "Yes",
       atStageSince: reportDay(d.since),
       waitingOn: waiting.length ? Array.from(new Set(waiting)).join(", ") : null, waitingSince: reportDay(d.clock?.waitingSince),
       quotingRent: (d.trackerId ? quoting.get(`t:${d.trackerId}`) : undefined) ?? (d.unitId ? quoting.get(`s:${d.unitId}`) : undefined) ?? null,
@@ -378,7 +378,7 @@ const ACTIVITY_COLS: Col[] = [
   { header: "Scheme", key: "scheme", width: 24 }, { header: "Unit", key: "unit", width: 20 }, { header: "Brand", key: "brand", width: 24 },
   { header: "Ref", key: "ref", width: 8, kind: "int" }, { header: "Deal type", key: "dealType", width: 15 },
   { header: "Stage", key: "stage", width: 14 }, { header: "Live or closed", key: "live", width: 13 },
-  { header: "Days at stage", key: "daysAtStage", width: 12, kind: "int" }, { header: "Days at stage: its date", key: "daysDate", width: 19 },
+  { header: "Days at stage", key: "daysAtStage", width: 12, kind: "int" }, { header: "Stage date confirmed", key: "daysDate", width: 18 },
   { header: "At stage since", key: "atStageSince", width: 14, kind: "date" },
   { header: "Waiting on", key: "waitingOn", width: 26 }, { header: "Waiting since", key: "waitingSince", width: 13, kind: "date" },
   { header: "Quoting rent pa", key: "quotingRent", width: 15, kind: "money" }, { header: "Rent on the deal pa", key: "dealRent", width: 17, kind: "money" },
@@ -822,7 +822,7 @@ async function activityPdf(ctx: Ctx): Promise<Uint8Array> {
     pdf.heading(scheme.name);
     pdf.table(columns, mine.map(r => [
       r.unit || "", r.brand || r.deal || "", r.ref != null ? String(r.ref) : "", [r.stage, r.live === "Closed" ? "(closed)" : ""].filter(Boolean).join(" "),
-      r.daysAtStage == null ? "" : `${r.daysAtStage}${r.daysDate ? " (date not confirmed)" : ""}`,
+      r.daysAtStage == null ? "" : `${r.daysAtStage}${r.daysDate === "No" ? " (date not confirmed)" : ""}`,
       r.waitingOn || "", money(r.quotingRent), money(r.dealRent), money(r.ner), r.briefCheck || "",
       [r.instructed ? `Instructed ${shortDay(r.instructed)}` : "", r.hotsIssued ? `HoTs ${shortDay(r.hotsIssued)}` : "", r.exchanged ? `Exchanged ${shortDay(r.exchanged)}` : "",
         r.completed ? `Completed ${shortDay(r.completed)}` : "", r.movedInPeriod ? `Moved ${shortDay(r.movedInPeriod)}` : ""].filter(Boolean).join("; "),

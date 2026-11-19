@@ -2976,7 +2976,10 @@ who runs reports, "yes landsec and BGP". Do not re-litigate.
 - **Reports** (`/landsec/reports`, `client/src/pages/landsec-reports.tsx`):
   on the Landsec menu (`LANDSEC_MENU.reports` in `shared/landsec-menu.ts`;
   the side bar, the ChatBGP page's header menu and the phone tabs) for a full
-  Landsec login and BGP staff in the Landsec view. **A joint agent has no
+  Landsec login and BGP staff in the Landsec view. The phone bar now holds
+  eight tabs; the lit one is still left out, and on a page no tab is lit on
+  the eight labels drop to 9px so none runs into the next
+  (`mobile-bottom-nav.tsx`). **A joint agent has no
   entry and is refused**: its route guard (`JOINT_AGENT_BLOCKED_ROUTES`), both
   gateway lists in `shared/landsec.ts` (`restrictedLandsecApiRule`, because
   the shared `/api/landsec/` prefix would otherwise open it, and
@@ -2997,7 +3000,8 @@ who runs reports, "yes landsec and BGP". Do not re-litigate.
   file). Every route resolves the caller with `landsecViewer()`: BGP staff
   get all 14 schemes, a Landsec login the schemes ticked on it
   (`reportSchemesFor`); a scheme asked for only narrows that
-  (`pickSchemes`). GET `/api/landsec/` is on the client gateway's list.
+  (`pickSchemes`, tests `server/landsec-reports.test.ts`, in `npm test`). GET
+  `/api/landsec/` is on the client gateway's list.
 - **THE RULE: the same feeds as the pages.** Units come from the property
   page's unit feed (`loadPropertyUnits`, `unitsForViewer`, behind
   `propertyReadBlocked`); deals from the deal clock feed (`landsecDealsFeed`);
@@ -3017,8 +3021,8 @@ who runs reports, "yes landsec and BGP". Do not re-litigate.
 - **The nine reports**: Tenancy schedule (Excel: Summary and a sheet per
   scheme), Leasing activity (Excel) and Leasing activity (formatted) (PDF):
   the clock feed's live deals plus the deals that changed stage in the period
-  and have since closed, with days at stage marked "Date not confirmed" where
-  the app greys it; Space activity (Excel: lease roll by expiry and break
+  and have since closed, with a "Stage date confirmed" column that reads No where
+  the app greys the days at stage; Space activity (Excel: lease roll by expiry and break
   year, and each lease event with any letting on the unit); Tour activity
   (Excel: viewings dated in the period); Requirements (Excel: open
   requirements; not held by scheme, so the ticks do not cut it); Comps
