@@ -349,6 +349,9 @@ export function jointAgentApiDenied(method: string, path: string): boolean {
   if (/^\/api\/(landlord|landlords|crm\/landlords)\//.test(p)) return true;
   if (/^\/api\/interactions(\/|$)/.test(p)) return true;
   if (/^\/api\/landsec\/brand-case(\/|$)/.test(p)) return true;
+  // Reports (Woody, 2026-11-19: who runs them, "yes landsec and BGP"): a
+  // joint agent runs none.
+  if (/^\/api\/landsec\/reports(\/|$)/.test(p)) return true;
   if (/^\/api\/landsec\/brand-crm\/plan\/[^/]+/.test(p)) return true;
   if (/^\/api\/unit-briefs\/[^/]+\/generate-document$/.test(p)) return true;
   if (/^\/api\/leasing-viewings\/[^/]+\/requirement$/.test(p)) return true;
@@ -454,6 +457,8 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
   if (hit(RESTRICTED_COMMON)) {
     // Joint agents never see brand cases (BGP's brand work).
     if (jointAgent && p.startsWith("/api/landsec/brand-case")) return "deny";
+    // Nor does one run reports (Woody, 2026-11-19: "yes landsec and BGP").
+    if (jointAgent && /^\/api\/landsec\/reports(\/|$)/.test(p)) return "deny";
     return "allow";
   }
   // The generated Targeting Brief document carries BGP's notes on the

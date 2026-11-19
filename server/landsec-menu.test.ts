@@ -44,6 +44,17 @@ test("Tasks: a Landsec login's entry is /landsec/tasks, staff viewing as Landsec
   }
 });
 
+test("Reports is lit on its own page and nowhere else, and lights nothing else", () => {
+  assert.equal(LANDSEC_MENU.reports, "/landsec/reports");
+  for (const location of ["/landsec/reports", "/landsec/reports?from=2026-08"]) {
+    assert.equal(landsecMenuActive(LANDSEC_MENU.reports, location), true, location);
+    assert.deepEqual(lit(location), [], location);
+  }
+  for (const location of ["/", "/deals", "/landsec/tasks", "/landsec/reports-old", "/reporting", "/brands"]) assert.equal(landsecMenuActive(LANDSEC_MENU.reports, location), false, location);
+  // A joint agent's menu has no Reports entry.
+  assert.ok(!(Object.values(JOINT_AGENT_MENU) as string[]).includes(LANDSEC_MENU.reports));
+});
+
 test("the number on Tasks is the open tasks", () => {
   assert.equal(openTaskCount([{ status: "todo" }, { status: "in_progress" }, { status: "done" }, { status: "todo", parent_task_id: "t-1" }]), 3);
   assert.equal(openTaskCount([]), 0);

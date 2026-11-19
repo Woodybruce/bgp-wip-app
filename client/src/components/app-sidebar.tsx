@@ -136,6 +136,9 @@ export const LANDSEC_NAV = [
   { title: "Calendar", url: LANDSEC_MENU.calendar, icon: Calendar },
   { title: "Brands", url: LANDSEC_MENU.brands, icon: Handshake },
   { title: "CRM", url: LANDSEC_MENU.crm, icon: Users },
+  // Reports (Woody, 2026-11-19): for a Landsec login and BGP staff in the
+  // Landsec view. A joint agent's menu is built without this list.
+  { title: "Reports", url: LANDSEC_MENU.reports, icon: FileSpreadsheet },
 ];
 
 // A joint agent uses the real Properties and Deals pages, cut to its own
@@ -175,7 +178,8 @@ const LANDSEC_TASKS_NAV = { title: "Tasks", url: LANDSEC_MENU.tasks, icon: ListT
 const JOINT_AGENT_BRAND_CRM = { title: "Brand CRM", url: "/landsec/brand-crm", icon: Target };
 export function landsecNavFor(role: string | null | undefined, staffView = false) {
   if (role === "joint_agent") return [...LANDSEC_RESTRICTED_NAV, ...LANDSEC_JOINT_AGENT_NAV, JOINT_AGENT_BRAND_CRM];
-  return [...LANDSEC_NAV.filter(i => i.title !== "Brands" && i.title !== "CRM"), { ...LANDSEC_TASKS_NAV, url: landsecTasksPath(staffView) }, ...LANDSEC_NAV.filter(i => i.title === "Brands" || i.title === "CRM")];
+  const last = ["Brands", "CRM", "Reports"];
+  return [...LANDSEC_NAV.filter(i => !last.includes(i.title)), { ...LANDSEC_TASKS_NAV, url: landsecTasksPath(staffView) }, ...LANDSEC_NAV.filter(i => last.includes(i.title))];
 }
 
 // The Tasks entry with its number: the login's open tasks. Nothing is shown

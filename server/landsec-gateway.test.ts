@@ -470,6 +470,21 @@ test("no role is a restricted role: a joint agent's difference is the deny list,
   }
 });
 
+// Reports (Woody, 2026-11-19; who runs them: "yes landsec and BGP"). A joint
+// agent runs none: the index and every export are refused before a handler
+// runs, and the handler refuses the role again (server/landsec-reports.ts).
+test("a joint agent is refused the reports index and every report", () => {
+  for (const path of ["/api/landsec/reports", "/api/landsec/reports/", "/api/landsec/reports/tenancy-schedule", "/api/landsec/reports/portfolio?from=2026-08&to=2026-10",
+    "/API/Landsec/Reports/asset-profile", "/api/landsec/reports/anything/else"]) {
+    for (const method of ["GET", "HEAD", "POST"]) {
+      assert.equal(restrictedLandsecApiRule("joint_agent", method, path), "deny", `${method} ${path}: never on the list a joint agent reaches`);
+      assert.equal(jointAgentApiDenied(method, path), true, `${method} ${path}`);
+    }
+  }
+  // Nothing else under /api/landsec/ is caught by the reports line.
+  for (const path of ["/api/landsec/reports-old", "/api/landsec/report", "/api/landsec/home", "/api/landsec/deals"]) assert.equal(jointAgentApiDenied("GET", path), false, path);
+});
+
 // Every leasing requirement is open to a client login since 17 November 2026,
 // to read, add and amend (Woody: "keep all requirements open for clients and
 // access to amend and add"). A joint agent is another agency with no Brands:

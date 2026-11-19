@@ -16,7 +16,7 @@ const statement = (file, start) => find(file, node => ts.isVariableStatement(nod
 const fn = (file, name) => find(file, node => ts.isFunctionDeclaration(node) && node.name?.text === name);
 // Values made inside the evaluated source belong to another realm.
 const plain = value => JSON.parse(JSON.stringify(value));
-const ICONS = Object.fromEntries(['Users', 'Calendar', 'CalendarDays', 'LayoutDashboard', 'Building2', 'BarChart3', 'Store', 'Handshake', 'Layers', 'Eye', 'ListTodo', 'Target', 'MessageCircle', 'CheckSquare'].map(name => [name, name]));
+const ICONS = Object.fromEntries(['Users', 'Calendar', 'CalendarDays', 'LayoutDashboard', 'Building2', 'BarChart3', 'Store', 'Handshake', 'Layers', 'Eye', 'ListTodo', 'Target', 'MessageCircle', 'CheckSquare', 'FileSpreadsheet'].map(name => [name, name]));
 const BINDINGS = { ...ICONS, LANDSEC_MENU, JOINT_AGENT_MENU, LANDSEC_STAFF_TASKS, landsecTasksPath };
 
 const sidebar = evaluate([
@@ -38,7 +38,7 @@ const tabs = evaluate([
 ].join('\n'), BINDINGS);
 const phone = which => plain(tabs[which]).map(i => [i.label, i.path]);
 
-const FULL_MENU = [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Letting Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['CRM', '/contacts']];
+const FULL_MENU = [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Letting Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['CRM', '/contacts'], ['Reports', '/landsec/reports']];
 const GONE = ['Portfolio', 'Scheme', 'Lettings', 'Ask'];
 
 test('a full Landsec login, a leasing manager and an asset manager have Properties, Deals, Letting Tracker, Tasks, Brands', () => {
@@ -120,17 +120,29 @@ test('no login has a Portfolio, Scheme, Lettings or Ask entry, or a menu entry t
   }
 });
 
+// Woody, 2026-11-19, on who runs reports: "yes landsec and BGP".
+test('Reports: on a Landsec login\'s and staff\'s menu and tabs, never a joint agent\'s, whose page and API are refused', () => {
+  for (const role of [null, 'leasing_manager', 'asset_manager']) assert.ok(menu(role).some(([title, url]) => title === 'Reports' && url === '/landsec/reports'), String(role));
+  assert.ok(menu(null, true).some(([, url]) => url === '/landsec/reports'));
+  assert.ok(phone('full').some(([, path]) => path === '/landsec/reports') && phone('staff').some(([, path]) => path === '/landsec/reports'));
+  assert.ok(!menu('joint_agent').some(([title, url]) => title === 'Reports' || url.startsWith('/landsec/reports')));
+  assert.ok(!phone('jointAgent').some(([, path]) => path.startsWith('/landsec/reports')));
+  assert.match(source(TABS), /\[\.\.\.LANDSEC_JOINT_AGENT_NAV_ITEMS, \{ label: "CRM"/);
+  assert.match(source('client/src/App.tsx'), /const JOINT_AGENT_BLOCKED_ROUTES = \[[^\]]*"\/landsec\/reports"[^\]]*\]/);
+  assert.match(source('shared/landsec.ts'), /if \(\/\^\\\/api\\\/landsec\\\/reports\(\\\/\|\$\)\/\.test\(p\)\) return true;/);
+});
+
 test('a joint agent has no Brands entry on either menu', () => {
   assert.ok(!menu('joint_agent').some(([, url]) => url.startsWith('/brands')));
   assert.ok(!phone('jointAgent').some(([, path]) => path.startsWith('/brands')));
 });
 
-test('phone tabs: Properties, Deals, Tracker, Calendar, Tasks, Brands, Chat for a Landsec login', () => {
-  assert.deepEqual(phone('full'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['Chat', '/messages']]);
+test('phone tabs: Properties, Deals, Tracker, Calendar, Tasks, Brands, Reports, Chat for a Landsec login', () => {
+  assert.deepEqual(phone('full'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['Reports', '/landsec/reports'], ['Chat', '/messages']]);
 });
 
 test('phone tabs: staff viewing as Landsec keep Home, the way out of the Landsec view, in place of Brands', () => {
-  assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/tasks'], ['Chat', '/messages']]);
+  assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/tasks'], ['Reports', '/landsec/reports'], ['Chat', '/messages']]);
 });
 
 // Woody, 2026-11-13, asked whether to build chat for joint agents: "yes go ahead".

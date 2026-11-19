@@ -55,6 +55,7 @@ const LandsecDeals = lazy(() => import("@/pages/landsec-deals"));
 const LandsecTracker = lazy(() => import("@/pages/landsec-tracker"));
 const LandsecViewings = lazy(() => import("@/pages/landsec-viewings"));
 const LandsecTasks = lazy(() => import("@/pages/landsec-tasks"));
+const LandsecReports = lazy(() => import("@/pages/landsec-reports"));
 const LandsecChat = lazy(() => import("@/pages/landsec-chat"));
 const JointAgentChat = lazy(() => import("@/components/landsec/joint-agent-chat").then(m => ({ default: m.JointAgentChat })));
 const LandsecBrandCrm = lazy(() => import("@/pages/landsec-brand-crm"));
@@ -321,7 +322,7 @@ const CLIENT_ALLOWED_ROUTES = [
 // contacts and brand cases (the server refuses their data too:
 // jointAgentApiDenied in shared/landsec.ts), and from the staff Letting
 // Tracker to its own, which leaves BGP's notes on target brands out.
-const JOINT_AGENT_BLOCKED_ROUTES = ["/brands", "/companies", "/contacts", "/landsec/brand-case", "/people", "/brand-crm"];
+const JOINT_AGENT_BLOCKED_ROUTES = ["/brands", "/companies", "/contacts", "/landsec/brand-case", "/landsec/reports", "/people", "/brand-crm"];
 function ClientRouteGuard() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   const [location, setLocation] = useLocation();
@@ -439,6 +440,7 @@ function Router() {
       <Route path="/landsec/viewings" component={LandsecViewings} />
       <Route path="/landsec/calendar" component={AvailableUnitsPage} />
       <Route path="/landsec/tasks" component={LandsecTasks} />
+      <Route path="/landsec/reports" component={LandsecReports} />
       <Route path="/landsec/chat" component={LandsecChat} />
       <Route path="/landsec/brand-cases">{() => <Redirect to="/brands" />}</Route>
       <Route path="/landsec/brand-crm" component={LandsecBrandCrm} />
@@ -848,6 +850,7 @@ function AuthenticatedApp() {
               if (location.startsWith("/landsec/viewings")) return "Viewings";
               if (location.startsWith("/landsec/calendar")) return "Calendar";
               if (location.startsWith("/landsec/tasks")) return "Tasks";
+              if (location.startsWith("/landsec/reports")) return "Reports";
               if (location.startsWith("/landsec/chat")) return "Chat";
               const seg = location.replace(/^\//, "").split("/");
               const root = seg[0];
@@ -926,7 +929,7 @@ function AuthenticatedApp() {
             {backBrand.id === "landsec" && (
               <nav className="hidden md:flex items-center gap-1 mr-2" data-testid="chatbgp-landsec-menu">
                 {([["Properties", LANDSEC_MENU.properties], ["Deals", LANDSEC_MENU.deals], ["Letting Tracker", LANDSEC_MENU.tracker], ["Calendar", LANDSEC_MENU.calendar],
-                  ["Tasks", currentUser?.role === "Client" ? LANDSEC_MENU.tasks : "/tasks"], ["Brands", LANDSEC_MENU.brands]] as const).map(([label, path]) => (
+                  ["Tasks", currentUser?.role === "Client" ? LANDSEC_MENU.tasks : "/tasks"], ["Brands", LANDSEC_MENU.brands], ["Reports", LANDSEC_MENU.reports]] as const).map(([label, path]) => (
                   <button key={label} type="button" onClick={() => navigate(path)} data-no-min-touch
                     className="px-2.5 py-1 rounded-md text-xs font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
                     data-testid={`chatbgp-menu-${label.toLowerCase().replace(/\s+/g, "-")}`}>{label}</button>

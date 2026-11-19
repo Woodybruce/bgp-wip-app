@@ -2806,7 +2806,10 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   changed it with the old and new figure. BGP's internal split (BGP House, who at BGP earns what)
   is for BGP staff only, on the deal page: never show it or its wording to a
   client login or on a Landsec unit's form.
-- **Transaction recommendation** (`shared/unit-recommendation.ts`,
+- **Deal analysis and letting approval pack**, the Transaction
+  recommendation until 19 November 2026 (see "Landsec reports and the
+  approval pack" below; the code, table and route names still say
+  recommendation) (`shared/unit-recommendation.ts`,
   `server/unit-recommendation.ts`, `components/unit-recommendation/*`,
   migration 0054; Woody, 2026-11-12: "letting transaction recommendation
   once the HOTs are issued to a tenant"). One per unit and its current deal.
@@ -2946,6 +2949,95 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   the main table (`TrackerChecklistCell`), on the staff tracker and the
   joint agent's (Woody, 2026-11-13: "swap the check list and against the
   brief"). Do not swap them back.
+
+## Landsec reports and the approval pack (Woody, 2026-11-19)
+
+Woody, after a call with Mark Warne at Landsec: "The agents recommendation we
+need to improve / rename into Deal analysis and letting approval pack, this
+can be generated for all approvals based on their template", and the reports
+Landsec takes from VTS should come from the app. Asked, he answered "go
+ahead"; "quarters just have ability to pick one or several months"; and on
+who runs reports, "yes landsec and BGP". Do not re-litigate.
+
+- **The name.** The Transaction recommendation is the **Deal analysis and
+  letting approval pack** on every screen, email and document a person reads,
+  "approval pack" where a short label is needed (the tracker chip, the Offers
+  dialog's button, the Landsec unit page's button, the deal page's card and
+  timeline, the emails to the deciders, the PDF's title and its file name
+  "Approval pack - <unit>.pdf", ChatBGP's directions and the joint agent's
+  tool). Tables, columns, routes (`/api/unit-recommendations/*`), test ids,
+  the `?recommendation=1` link and code names are unchanged. Inside the pack
+  the agents' own call (Proceed, Proceed subject to conditions, Do not
+  proceed, with its summary) is still headed **The recommendation**: do not
+  rename that section. History lines written before the rename keep their
+  words. The PDF download was already there (`GET
+  /api/unit-recommendations/:unitId/pdf`, the same `briefAccess` read as the
+  pack itself, on Landsec's Offer template): only its title changed.
+- **Reports** (`/landsec/reports`, `client/src/pages/landsec-reports.tsx`):
+  on the Landsec menu (`LANDSEC_MENU.reports` in `shared/landsec-menu.ts`;
+  the side bar, the ChatBGP page's header menu and the phone tabs) for a full
+  Landsec login and BGP staff in the Landsec view. **A joint agent has no
+  entry and is refused**: its route guard (`JOINT_AGENT_BLOCKED_ROUTES`), both
+  gateway lists in `shared/landsec.ts` (`restrictedLandsecApiRule`, because
+  the shared `/api/landsec/` prefix would otherwise open it, and
+  `jointAgentApiDenied`) and the handler itself (`reportViewer`).
+- **The period rule and the registry are one file, `shared/landsec-reports.ts`**
+  (tests `shared/landsec-reports.test.ts`, in `npm test`).
+  `parseReportPeriod(from, to)`: months as YYYY-MM, both included; neither
+  given is the last three whole months (London), one given is that month; a
+  reversed period or more than 36 months is refused; it gives the first day
+  (included), the first day after (excluded) and the label ("Aug to Oct
+  2026"). `inReportPeriod` judges a date by its London day. `LANDSEC_REPORTS`
+  is every report (key, title, description, format, whether it takes the
+  ticked schemes or one scheme, how it uses the period, what it does not
+  hold). **A new report is one more entry there and one more `case` in
+  `buildLandsecReport`**; the page draws whatever the registry holds.
+- **The builders** are `server/landsec-reports.ts` (`GET /api/landsec/reports`
+  for the page, `GET /api/landsec/reports/:key?from=&to=&schemes=` for a
+  file). Every route resolves the caller with `landsecViewer()`: BGP staff
+  get all 14 schemes, a Landsec login the schemes ticked on it
+  (`reportSchemesFor`); a scheme asked for only narrows that
+  (`pickSchemes`). GET `/api/landsec/` is on the client gateway's list.
+- **THE RULE: the same feeds as the pages.** Units come from the property
+  page's unit feed (`loadPropertyUnits`, `unitsForViewer`, behind
+  `propertyReadBlocked`); deals from the deal clock feed (`landsecDealsFeed`);
+  viewings from `listLeasingViewings`, read as a Landsec login reads them
+  whoever asks; requirements from the Requirements list, worded with
+  `requirementReason(...).clientText` (never the state, the BGP owner or a
+  confirmation); comparables from the Comps list by its own scheme test;
+  trading units by category from `categoryMixByProperty`. The one query of
+  its own (`dealDatesFor`) reads a deal's instructed, exchanged and completed
+  dates, the unit's Heads of Terms issue date, the rent on the deal and the
+  day it last moved stage in the period, by name. **Every row is built key by
+  key from a named list**: no fee, fee split, BGP note, internal agent, email
+  history or AML working reaches a report for any viewer, BGP staff included.
+  `qa/regression/landsec-reports-guards.test.mjs` fails if one of those field
+  names appears in the builders, if a row is spread, if a query reads another
+  table, or if the access checks move.
+- **The nine reports**: Tenancy schedule (Excel: Summary and a sheet per
+  scheme), Leasing activity (Excel) and Leasing activity (formatted) (PDF):
+  the clock feed's live deals plus the deals that changed stage in the period
+  and have since closed, with days at stage marked "Date not confirmed" where
+  the app greys it; Space activity (Excel: lease roll by expiry and break
+  year, and each lease event with any letting on the unit); Tour activity
+  (Excel: viewings dated in the period); Requirements (Excel: open
+  requirements; not held by scheme, so the ticks do not cut it); Comps
+  (Excel: every comparable at the schemes, those completed in the period
+  marked; a typed date is read as a date only when it is a full date); Asset
+  profile (PDF, one scheme: facts, occupancy, trading units by brief
+  category, lease roll by year, live lettings by stage); Portfolio (one Excel
+  workbook: Assets, Deals, Spaces, Tenants, Lease terms and options). Every
+  workbook opens on an **About** sheet (period, how the period is used,
+  schemes, who made it and when, that it holds what is recorded in ChatBGP).
+  Excel is exceljs, as the Finance board pack; the PDFs are pdf-lib with the
+  v19 palette and the real wordmark from `server/unit-info-sheet.ts`.
+- **Not built**: budgets (the app holds none, the Portfolio card says so, and
+  no sheet is invented); Landsec's own in-house lettings, which are in a
+  report only when they are on the app; the quarterly board pack and the
+  market report by subsection, which come next (add them to the registry);
+  a notes or comments column on any report (left out on purpose);
+  scheduling or emailing a report. ERV and passing rent are whatever the
+  unit feed gives the viewer.
 
 ## Client checks: the in-app KYC request (Woody, 2026-11-17)
 

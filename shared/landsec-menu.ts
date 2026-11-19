@@ -22,6 +22,9 @@ export const LANDSEC_MENU = {
   brands: "/brands",
   // The CRM (Woody, 2026-11-14: "add CRM to the side bar for Landsec").
   crm: "/contacts",
+  // Reports (Woody, 2026-11-19: the reports Landsec takes from VTS come from
+  // the app; who runs them, "yes landsec and BGP"). Never on a joint agent's menu.
+  reports: "/landsec/reports",
   chat: "/messages",
 } as const;
 
@@ -98,6 +101,8 @@ export function landsecMenuActive(url: string, location: string): boolean | null
       return at("/brands") || loc.startsWith("/landsec/brand-case");
     case LANDSEC_MENU.crm:
       return at("/contacts");
+    case LANDSEC_MENU.reports:
+      return at("/landsec/reports");
     case LANDSEC_MENU.chat:
       return at("/messages") || at("/chatbgp");
     default:

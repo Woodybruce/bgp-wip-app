@@ -4262,6 +4262,7 @@ import { setupUnitShareRoutes } from "./unit-share";
 import { setupDealChecklistRoutes } from "./deal-checklist";
 import { setupDealPageRoutes } from "./deal-page";
 import { setupUnitRecommendationRoutes } from "./unit-recommendation";
+import { setupLandsecReportRoutes } from "./landsec-reports";
 import { setupLandsecBrandCaseRoutes } from "./landsec-brand-case";
 import { setupBrandCrmPlanRoutes } from "./brand-scheme-plan";
 import { setupBrandCrmDiaryRoutes } from "./brand-crm-diary";
@@ -5590,6 +5591,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupDealChecklistRoutes(app);
   setupDealPageRoutes(app);
   setupUnitRecommendationRoutes(app);
+  setupLandsecReportRoutes(app);
   setupLandsecBrandCaseRoutes(app);
   setupBrandCrmPlanRoutes(app);
   setupBrandCrmDiaryRoutes(app);
