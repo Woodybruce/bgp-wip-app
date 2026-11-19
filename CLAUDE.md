@@ -3377,8 +3377,21 @@ library and its Insights cards are still staff only everywhere else.
   a bank's or a word), a fixed list of well-known owners (`CORE_LANDLORDS`:
   Hammerson, Canary Wharf Group, Westfield and others), and the benchmark
   centres with their owners. The viewer's own name, schemes and centres are
-  left out. `competitionTheme` reads the headline: money and owners first,
-  then what is being built, then who is taking space.
+  left out, and so is any headline that names one of them (`own` on
+  `competitionItems`): "Landsec reports stable earnings as Metrocentre
+  acquisition boosts growth outlook" is Landsec's news, not Metrocentre's.
+  **A landlord that is only a record of BGP's** (not on `CORE_LANDLORDS`) is
+  who a headline is about only in a property story (`PROPERTY_STORY`: a
+  place, a lease or a holding; shops and stores alone do not make one) that
+  writes its name with its capital (`asOwnName`); a one-word name must also
+  be the party the story is about, opening the headline, doing the deal or
+  named as the owner (`asSubject`), and a word of every headline (Capital,
+  Office, Property) names nobody. Found on 19 November 2026: "Majestic
+  unveils 30th new store under Fortress ownership" was listed under a
+  landlord record called Fortress. `competitionTheme` reads the headline:
+  an accident or incident is "other" (a centre that "re-opens" after an
+  injury is not leasing news), then money and owners, then what is being
+  built, then who is taking space.
 - **Research this period** ("Ignore Jack"): the papers the investment team
   has read (`investment_research_reads`), each as publisher and month, our
   one-line headline and up to two checked figures; never the summary, the
@@ -3428,13 +3441,15 @@ library and its Insights cards are still staff only everywhere else.
 - **Not built**: the town of a letting at another scheme (the property record
   holds none); "now trading at" lists from other landlords' tenancy
   schedules; the Expansion score band on the movers; a period-on-period
-  comparison; Landsec's own news as a section; a palette per scheme. The
-  ownership read's changes of owner are listed with their source (that read
-  was on no client list before: this report is the one place a Landsec login
-  sees it). Completed sale comparables may have come from a licensed feed
-  (RCA): whether their price and yield should print for a client is Woody's
-  call. A landlord record with a common word for a name can still be matched
-  to an unrelated property headline.
+  comparison; Landsec's own news as a section; a palette per scheme.
+- **Woody, 2026-11-19**, asked about sale comps with price and yield (some
+  from a licensed feed), brand owner changes and live Investment Tracker
+  assets in the Landsec market report: "landsec can see all of that yep..".
+  So completed sale comparables print their price and yield whatever feed
+  they came from, the ownership read's changes of owner are listed with
+  their source (this report is the one place a Landsec login sees that
+  read), and live Investment Tracker assets are listed with their stage and
+  no price. Do not re-litigate.
 
 ## Client checks: the in-app KYC request (Woody, 2026-11-17)
 

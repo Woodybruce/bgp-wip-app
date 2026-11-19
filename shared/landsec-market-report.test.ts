@@ -193,6 +193,32 @@ test("the competition: who a headline is about, what it is about, and the viewer
   assert.equal(about("Aviva Investors sells retail park portfolio"), "Aviva Investors");
   assert.equal(about("Aviva Investors appoints new head of equities"), null, "a landlord BGP holds a record for is found only in a headline about property");
   assert.equal(about("Peel Hunt upgrades retailer"), null);
+  // Real headlines (19 November 2026). The well-known owners are found by name.
+  assert.equal(about("Hammerson and Landsec bet on a shopping centre revival"), "Hammerson");
+  assert.equal(about("Canary Wharf’s 30 North Colonnade joins Colliers’ 11 million sq ft of managed properties in London"), "Canary Wharf");
+  // A landlord that is only a record of BGP's: the party a property story is about, under its own capitalised name.
+  const records = competitionSubjects({ landlords: ["Fortress", "Capital", "Aviva Investors", "Ballymore"], centres: [], own: ["Landsec"] });
+  const record = (title: string) => competitionSubject(title, records)?.name || null;
+  assert.equal(record("Majestic unveils 30th new store under Fortress ownership"), null, "another company's news that carries the landlord's name as a word");
+  assert.equal(record("Majestic Opens 30th New Store Under Fortress in Ealing"), null);
+  assert.equal(record("Wine merchant builds a fortress of new shopping centre stores"), null, "not written as a name");
+  assert.equal(record("Fortress buys Leeds retail park for £26m"), "Fortress", "the party that does the deal");
+  assert.equal(record("Retail park sold to landlord Fortress"), "Fortress", "named as the owner");
+  assert.equal(record("Fortress buys stake in drinks maker"), null, "not a property story");
+  assert.equal(record("Capital flows back to shopping centres"), null, "a word of every headline names nobody");
+  assert.equal(record("Ballymore submits plans for 1,200-home scheme"), "Ballymore");
+  assert.equal(record("New tenants line up for Aviva Investors retail park"), "Aviva Investors", "a name of more than one word is found wherever a property story names it");
+  assert.equal(record("Aviva Investors opens new stores fund"), null, "shops alone do not make a property story");
+  // The viewer's own news is not the competition's, though the headline also names a centre it is buying; an accident is not leasing news.
+  const ownNews = competitionItems({
+    articles: [
+      { title: "Landsec reports stable earnings as Metrocentre acquisition boosts growth outlook - Property Week", url: "https://news.google.com/rss/m", sourceName: "Landsec (Google News)", day: "2026-11-13" },
+      { title: "Brent Cross Shopping Centre re-opens following ‘life-threatening’ injury to worker - Barnet Post", url: "https://news.google.com/rss/b", sourceName: "Brent Cross (Google News)", day: "2026-11-19" },
+    ],
+    research: [], lettings: [], sales: [], own: ["Landsec", "Land Securities", "Bluewater"],
+    subjects: competitionSubjects({ landlords: [], centres: [{ name: "Metrocentre", aliases: [] }, { name: "Brent Cross", aliases: [] }], own: ["Landsec"] }),
+  }, period);
+  assert.deepEqual(ownNews.map(c => [c.subject, c.theme]), [["Brent Cross", "other"]]);
   assert.equal(about("Landsec sells Bluewater stake"), null, "the viewer's own news is not the competition");
   assert.equal(about("Interest rates held"), null);
   assert.deepEqual([

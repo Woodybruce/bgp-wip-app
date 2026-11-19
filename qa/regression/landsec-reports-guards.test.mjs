@@ -358,7 +358,10 @@ test('the market report: a fixed set of named reads, public news by headline onl
   assert.doesNotMatch(research, /extracted|file_|k\.content|r\.summary|r\.outlook/, 'never the paper');
   assert.match(report, /figures: \(Array\.isArray\(r\.facts\) \? r\.facts : \[\]\)\.map\(\(f: any\) => \(\{ topic: String\(f\?\.topic \|\| ""\), figure: String\(f\?\.figure \|\| ""\), place: /, 'a figure without the sentence it was read from: the quote is the paper\'s');
   // The viewer's own name, schemes and centres are not the competition.
-  assert.match(report, /own: \[\.\.\.\(landlords\?\.own \|\| \[\]\), "Landsec", "Land Securities", \.\.\.portfolio\.schemes\.map\(s => s\.name\), /);
+  assert.match(report, /const own = \[\.\.\.\(landlords\?\.own \|\| \[\]\), "Landsec", "Land Securities", \.\.\.portfolio\.schemes\.map\(s => s\.name\), /);
+  // The viewer's own names go to both: who a headline may be about, and which headlines are its own news.
+  assert.match(report, /competitionSubjects\(\{ landlords: landlords\?\.names \|\| \[\], centres: \(centres\?\.centres \|\| \[\]\)\.filter\(c => !c\.own\), own \}\)/);
+  assert.match(report, /competitionItems\(\{ articles, research: centres\?\.research \|\| null, lettings, sales, subjects, own \}, ctx\.period, level\)/);
   assert.match(report, /if \(record && !own\) for \(const item of /);
   // Each read fails on its own, and what failed is said on the last slide.
   assert.equal((report.match(/attempt\("/g) || []).length, 8);

@@ -229,8 +229,27 @@ the close line was.
   Terms and exchange dates inside the period, an agreed rent, and a previous
   passing rent and ERV on their schedule rows. Every frame that shows a slide
   carries "Illustration" (written by `reports-clip.cjs`). The staging script
-  and the database copy taken before it are kept outside the repo. The
-  market slides were left as the copy had them: no market words were written.
+  and the database copy taken before it are kept outside the repo.
+- **The market line is pictured from the Market report deck, with real
+  news** (v22, later on 19 November). The copy held brand news for two
+  brands only, so real, public news was copied onto it, read only, from the
+  live app that day: the dated signals of 38 well-known brands as their
+  brand pages list them (headline, link or newsletter reference, type and
+  date; 451 of them, September to November), the public articles the
+  landlord news pages and the centre openings feed list (headline, link,
+  publisher and date; 136, of which 106 were not on the copy already), and
+  the dated research on eight benchmark centres that are not Landsec's
+  (headline, link, kind and date). Nothing was written to the live app and
+  no story was made up; the copy script and a database copy taken before it
+  are kept outside the repo. `reports-clip.cjs` takes `MARKET_DECK` (the
+  Market report as a PDF) and shows, for "a market view for each sector of
+  what the industry did that quarter", its **Overview**, the first
+  **Hospitality: who is doing what** slide and the **Competition** slide.
+  Those three carry no "Illustration" mark, because nothing on them is
+  staged; the board deck's slides before them and its title slide after
+  them keep the mark. The two takes of the Reports page were filmed again,
+  because the page now has four reports to present. No market words were
+  written.
 - **Hesitations** in a new recording are still found by transcribing each
   loud stretch on its own: this one held "for the, for each sector", cut
   between the end of "view" and the second "for", and three words the

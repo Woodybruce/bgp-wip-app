@@ -418,6 +418,31 @@ export const CORE_LANDLORDS: ReadonlyArray<{ name: string; aliases: string[] }> 
 
 const PROPERTY_WORDS = /\b(?:property|real[ -]estate|landlords?|leases?|leasing|lettings?|lets\b|pre-?let|retail parks?|shopping cent(?:re|er)s?|malls?|outlets?|estates?|schemes?|occupiers?|tenants?|high streets?|REITs?|development|redevelop\w*|asset|portfolio|stores?|shops?|restaurants?|flagship|sq ?ft|planning)\b/i;
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// A landlord BGP only holds a record for (not one of the well-known owners) is the subject of a headline only when the headline is a property story:
+// about a place, a lease or a holding, not about another company's shops ("Majestic opens 30th new store under Fortress ownership" is Majestic's news).
+const PROPERTY_STORY = /\b(?:shopping cent(?:re|er)s?|retail parks?|leisure parks?|outlets?|malls?|arcades?|schemes?|estates?|portfolios?|landlords?|leases?|leasing|lettings?|lets\b|pre-?lets?|REITs?|development|redevelop\w*|masterplan|planning|sq ?ft|tenants?|occupiers?|property|properties|real[ -]estate|offices?|towers?|buildings?)\b/i;
+const SUBJECT_VERB = "(?:acquires?|buys?|bought|sells?|sold|signs?|lets|pre-?lets|secures?|agrees?|exchanges?|completes?|submits?|unveils?|launch(?:es)?|plans?|appoints?|wins?|refinances?|invests?|purchases?|snaps up|lines up|brings?|welcomes?|reveals?|names?|backs?|seeks?|puts?|to (?:buy|sell|acquire|redevelop|develop|build|let))";
+const OWNER_CUE = "(?:landlords?|owners?|developers?|investors?|asset managers?|fund managers?|buyers?|sellers?|vendors?|purchasers?)";
+// One word that is a word of every headline cannot name a landlord by itself.
+const GENERIC_NAME = /^(?:property|properties|estates?|retail|shopping|centres?|capital|offices?|london|national|central|metro|urban|local|royal|general|legal|prime|focus|target|boost|pause|crisis|strong|group|holdings|investments?|developments?|council|city|land|homes|living|space|places?)$/i;
+/** The name stands in the headline as a name: at a word's edge, and written with its capital. */
+function asOwnName(text: string, name: string): boolean {
+  const m = new RegExp(`(?:^|[^A-Za-z0-9])(${esc(name)})(?:$|[^A-Za-z0-9])`, "i").exec(text);
+  return !!m && /^[A-Z0-9]/.test(m[1]);
+}
+/** The name is the party the headline is about: it opens the headline, it is what does the deal, or it is named as the owner. */
+function asSubject(text: string, name: string): boolean {
+  const n = esc(name), company = "(?:['’]s)?(?:\\s+(?:plc|group|REIT|estates?|properties|capital|investments?|developments?))?";
+  return new RegExp(`^(?:the\\s+)?${n}(?:$|[^A-Za-z0-9])`, "i").test(text)
+    || new RegExp(`(?:^|[^A-Za-z0-9])${n}${company}\\s+${SUBJECT_VERB}\\b`, "i").test(text)
+    || new RegExp(`\\b${OWNER_CUE}\\s+(?:the\\s+)?${n}(?:$|[^A-Za-z0-9])`, "i").test(text);
+}
+/** Whether a landlord that is only a record of BGP's is who this headline is about. */
+function recordLandlordIsSubject(text: string, name: string): boolean {
+  if (!PROPERTY_STORY.test(text) || !asOwnName(text, name)) return false;
+  if (name.includes(" ")) return true;
+  return !GENERIC_NAME.test(name) && asSubject(text, name);
+}
 const namesOf = (s: CompetitionSubject): string[] => Array.from(new Set([s.name, ...s.aliases].map(one).filter(n => n.replace(/\W/g, "").length >= 3)));
 const mentions = (text: string, name: string): boolean => new RegExp(`(?:^|[^a-z0-9])${esc(name)}(?:$|[^a-z0-9])`, "i").test(text);
 
@@ -455,6 +480,10 @@ export function competitionSubjects(input: { landlords: string[]; centres: Array
  * Who a headline is about, or null. A centre is found by its name. A landlord
  * is found by its name only when the headline is also about property: a
  * landlord's name is often an insurer's, a bank's or a word ("Peel", "Aviva").
+ * A landlord that is only a record of BGP's (not a well-known owner) must also
+ * stand under its own capitalised name in a property story, and a one-word
+ * name must be the party the story is about: a Majestic Wine story "under
+ * Fortress ownership" is not news of a landlord called Fortress.
  */
 export function competitionSubject(title: string, subjects: CompetitionSubject[]): CompetitionSubject | null {
   const text = one(title);
@@ -466,6 +495,8 @@ export function competitionSubject(title: string, subjects: CompetitionSubject[]
     for (const name of namesOf(s)) {
       // A short name, or one that is also a word or a place ("Peel", "Westfield", "Grosvenor"), needs the headline to be about property.
       if ((name.replace(/\W/g, "").length <= 4 || (s.core && !name.includes(" ") && name !== s.name) || /^(?:Peel|Grosvenor|Cadogan|Praxis)$/i.test(name)) && !property) continue;
+      // A landlord that is only a record of BGP's must be the party the property story is about, under its own capitalised name.
+      if (s.kind === "landlord" && !s.core && !recordLandlordIsSubject(text, name)) continue;
       if (mentions(text, name) && (!best || name.length > best.length || (name.length === best.length && s.kind === "centre" && best.subject.kind !== "centre"))) best = { subject: s, length: name.length };
     }
   }
@@ -476,9 +507,12 @@ const OWNERSHIP_NEWS = /\b(?:acquir\w+|acquisition|buys?|bought|purchas\w+|sells
 const REDEVELOPMENT_NEWS = /\b(?:redevelop\w+|masterplan|planning (?:permission|consent|application|approval)|refurbish\w+|extension|repurpos\w+|reposition\w+|revamp\w*|transform\w+|regenerat\w+|demolish\w+|green ?light|approved|overhaul|makeover|pulls? .{0,30}plans|plans (?:for|to)\b)/i;
 const LEASING_NEWS = /\b(?:signs?|signed|signing|lets\b|letting|leas(?:e|es|ed|ing)|pre-?let|opens?|opened|opening|to open|debuts?|flagship|new store|new restaurant|tenants?|occupiers?|line-?up|joins|arrives?|welcomes?|upsizes?|relocat\w+|clos(?:es|ed|ing|ure))\b/i;
 
+const INCIDENT_NEWS = /\b(?:injur\w+|dies|died|deaths?|killed|stabb\w+|attack(?:s|ed)?|police|arrest\w*|evacuat\w+|crash(?:es|ed)?|collaps\w+|flood\w*|robber\w+|theft|assault\w*)\b/i;
 /** What a piece of competition news is about: money and owners first, then what is being built, then who is taking space. */
 export function competitionTheme(text: string): CompetitionTheme {
   const t = one(text);
+  // An accident or an incident at a centre is not leasing news, though the centre "re-opens" after it.
+  if (INCIDENT_NEWS.test(t)) return "other";
   if (OWNERSHIP_NEWS.test(t)) return "ownership";
   if (REDEVELOPMENT_NEWS.test(t)) return "redevelopment";
   if (LEASING_NEWS.test(t)) return "leasing";
@@ -512,11 +546,14 @@ export function articleSource(a: Pick<CompetitionArticle, "title" | "url" | "sou
 export function competitionItems(input: {
   articles: CompetitionArticle[] | null; research: CompetitionResearchRow[] | null; lettings: MarketLettingRow[] | null; sales: CompetitionSaleRow[] | null;
   subjects: CompetitionSubject[];
+  /** The viewer's own names (its landlord and its schemes): a headline that names one is its own news, not the competition's, whoever else it names. */
+  own?: string[];
 }, period: ReportPeriod, level: OtherSchemesLevel = OTHER_SCHEMES_LEVEL): CompetitionItem[] {
   const out: CompetitionItem[] = [];
   const seen = new Set<string>();
   for (const a of (input.articles || []).filter(a => inReportPeriod(a.day, period))) {
     const told = articleSource(a);
+    if ((input.own || []).some(name => one(name).replace(/\W/g, "").length >= 4 && mentions(told.headline, one(name)))) continue;
     const subject = competitionSubject(told.headline, input.subjects);
     const key = storyKeyOf(told.headline);
     if (!subject || !told.source || !key || seen.has(key)) continue;

@@ -237,11 +237,8 @@ export async function marketData(ctx: Ctx, viewer: LandsecViewer, data: BoardDat
     attempt("lettings at other schemes", failed, () => otherSchemeLettings(viewer, ownIds, ctx.period, level, db)),
     attempt("sales of centres", failed, () => centreSales(ctx.period, level, db)),
   ]);
-  const subjects = competitionSubjects({
-    landlords: landlords?.names || [],
-    centres: (centres?.centres || []).filter(c => !c.own),
-    own: [...(landlords?.own || []), "Landsec", "Land Securities", ...portfolio.schemes.map(s => s.name), ...(centres?.centres || []).filter(c => c.own).map(c => c.name)],
-  });
+  const own = [...(landlords?.own || []), "Landsec", "Land Securities", ...portfolio.schemes.map(s => s.name), ...(centres?.centres || []).filter(c => c.own).map(c => c.name)];
+  const subjects = competitionSubjects({ landlords: landlords?.names || [], centres: (centres?.centres || []).filter(c => !c.own), own });
   const articles = await attempt("landlord and centre news", failed, () => competitionArticles(ctx.period, subjects, db));
   const rows = data.industryRows;
   for (const [label, list] of [["brand news", rows.signals], ["store counts", rows.snapshots], ["planning and jobs", rows.pipeline], ["requirements", rows.requirements]] as const) if (!list) failed.push(label);
@@ -251,7 +248,7 @@ export async function marketData(ctx: Ctx, viewer: LandsecViewer, data: BoardDat
       signals: rows.signals, snapshots: rows.snapshots, pipeline: rows.pipeline, owners, requirements: rows.requirements,
       ownActivity: data.ownActivity, lettings, trading: data.tradingBrandIds, targets: data.targetBrandIds,
     }, ctx.period, level),
-    competition: competitionItems({ articles, research: centres?.research || null, lettings, sales, subjects }, ctx.period, level),
+    competition: competitionItems({ articles, research: centres?.research || null, lettings, sales, subjects, own }, ctx.period, level),
     research: reads ? researchLines(reads, ctx.period) : [],
     themes: themeRows || [],
     notAvailable: failed,
