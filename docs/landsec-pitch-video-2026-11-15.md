@@ -250,8 +250,31 @@ the close line was.
   them keep the mark. The two takes of the Reports page were filmed again,
   because the page now has four reports to present. No market words were
   written.
+- **The reporting section was recorded again, and the market report is
+  shown for longer** (v23, the evening of 19 November; Woody: "re cut that
+  sounded bad", "can you show the market report a little more too"). The
+  second recording is added after the end of the first, a second apart and
+  level matched, and written out so that every earlier sample is unchanged;
+  only the `reports` item of the cut list takes its words from it (the
+  approval pack line is still the first recording), and its captions follow
+  what he now says. Transcribed a loud stretch at a time it held no retake or
+  filler, only an "Okay." before the first line, which is left out. The cut
+  list gives the last pause of the scene as 5 seconds, after "what the
+  industry did that quarter", and writes three more cues (`m1`, `m2`, `m3`)
+  with a soft pop at each. With them `reports-clip.cjs` shows four Market
+  report slides across the line and the pause, each up for a little over 2.2
+  seconds (about 9 seconds in all) and none marked "Illustration": the
+  **Overview** and **Competition** start whole and move in to their list of
+  top items; the first **Hospitality: who is doing what** and **London
+  retail: who is doing what** slides (`MARKET_SECTOR`, `MARKET_SECTOR2`) are
+  shown from the title to the eighth row without the source column, so a
+  headline can be read. The two takes of the Reports page were not filmed
+  again: the still page is held until "we pick the months", the picking is
+  played at 1.6 times and the PDF and PowerPoint presses at 1.4 times, to
+  sit with the quicker reading. The Market report deck was made again from
+  the demo copy on the current code first.
 - **Hesitations** in a new recording are still found by transcribing each
-  loud stretch on its own: this one held "for the, for each sector", cut
+  loud stretch on its own: the first recording of the section held "for the, for each sector", cut
   between the end of "view" and the second "for", and three words the
   transcript had placed in the silence before them, which were moved to
   where the sound starts.

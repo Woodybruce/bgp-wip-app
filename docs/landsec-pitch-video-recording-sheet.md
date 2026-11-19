@@ -20,18 +20,24 @@ short phone recording and added after the end of the main one:
   > seamless.
 
 - **Reporting to the board** (new, after the phone scenes and before the
-  close; one picture a line):
+  close; one picture a line). Woody recorded this section a second time
+  later on 19 November ("re cut that sounded bad"), and the film uses that
+  recording. The lines as he now says them:
 
-  > And the last piece is for the board. Each quarter, Mark and I pull the
-  > analysis together for him to present.
-  > Pick the months and the schemes, and the app builds a report from the
+  > And the last piece is for updating senior management and the board.
+  > Each quarter, Mark and I pull the analysis together for him to present.
+  > We pick the months and the schemes, and the app builds a report from the
   > same records everyone has been working on.
   > It can include lettings exchanged, Heads of Terms agreed, rental growth
   > and deal speed, scheme by scheme.
-  > Also the tenants we are targeting, and how far each one has got.
+  > Also the tenants we are targeting, and how far each one has got to.
   > We provide a market view for each sector of what the industry did that
   > quarter.
-  > It comes out as a PDF or a PowerPoint, in your colours, ready to present.
+  > (a pause of about five seconds: the Market report's slides stay up)
+  > All comes out as a PDF or PowerPoint, in your colours, ready to present.
+
+  The approval pack line above was not recorded again; it is still the first
+  recording of 19 November.
 
   A closing line about the reports Landsec takes from another system was
   written and then dropped (Woody: "dont worry about the VTS stuff").
