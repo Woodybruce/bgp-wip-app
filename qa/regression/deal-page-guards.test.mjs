@@ -50,7 +50,7 @@ test("BGP's own records stay BGP's", () => {
     assert.match(feed.slice(at - 200, at), /staff \? pool\.query\(/, `${table} is read for staff only`);
   }
   // A client check's token is the client's key: never selected.
-  assert.match(feed, /`SELECT contact_name, contact_email, created_at, completed_at, revoked_at FROM kyc_upload_tokens/);
+  assert.match(feed, /`SELECT contact_name, contact_email, created_at, completed_at, revoked_at, request->'person'->>'name' AS person_name, request->>'sentAt' AS sent_at FROM kyc_upload_tokens/);
   // Tasks: BGP staff read every task on the deal; anyone else only their own.
   assert.match(feed, /AND \(\$2::boolean OR t\.user_id = \$3\)/);
   // A joint agent: company names with no ids, and a contact's name only on its own offer.
