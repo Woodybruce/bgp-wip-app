@@ -783,10 +783,13 @@ export function reminderDue(row: Pick<TokenRow, "revoked_at" | "completed_at" | 
 
 export async function sendKycReminders(now = new Date()): Promise<{ sent: number; failed: number; skipped: number }> {
   if (!clientChecksOn()) return { sent: 0, failed: 0, skipped: 0 };
+  // Nobody is chased about a deal that has been deleted (Woody, 19 November
+  // 2026: "Yes don't chase"). Its requests are left as they are.
   const rows = (await pool.query(
     `SELECT * FROM kyc_upload_tokens
       WHERE request IS NOT NULL AND is_test IS NOT TRUE AND revoked_at IS NULL AND completed_at IS NULL
-        AND expires_at > now() AND COALESCE(reminders_sent, 0) < $1`, [REMINDER_DAYS.length])).rows as TokenRow[];
+        AND expires_at > now() AND COALESCE(reminders_sent, 0) < $1
+        AND EXISTS (SELECT 1 FROM crm_deals d WHERE d.id = kyc_upload_tokens.deal_id)`, [REMINDER_DAYS.length])).rows as TokenRow[];
   let sent = 0, failed = 0, skipped = 0;
   for (const row of rows) {
     if (!reminderDue(row, now)) continue;

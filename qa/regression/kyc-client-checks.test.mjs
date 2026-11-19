@@ -102,6 +102,8 @@ test("replies are filed only from the address the request went to, with its refe
   assert.match(index, /pollKycMailbox\(\)/, "the reader runs on a timer");
   assert.match(index, /key: "kyc-client-reminders"/, "reminders run");
   assert.match(portal, /if \(!clientChecksOn\(\)\) return \{ sent: 0/, "reminders do nothing while the client checks are switched off");
+  // Woody, 19 November 2026: a deal that has been deleted is not chased.
+  assert.match(portal, /AND expires_at > now\(\) AND COALESCE\(reminders_sent, 0\) < \$1\s*AND EXISTS \(SELECT 1 FROM crm_deals d WHERE d\.id = kyc_upload_tokens\.deal_id\)`, \[REMINDER_DAYS\.length\]/, "no reminder for a deal that has been deleted");
   assert.match(index, /if \(!clientChecksSwitchOn\(process\.env\.KYC_CLIENT_CHECKS\)\) return;\s*import\("\.\/aml-portal"\)\.then\(m => m\.pollKycMailbox\(\)\)/, "the reply reader follows the client checks' own switch");
 });
 
