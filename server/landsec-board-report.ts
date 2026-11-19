@@ -38,7 +38,7 @@ import { listLeasingViewings } from "./leasing-viewings";
 import { brandGrid, loadPlan, planSchemes, type PlanViewer } from "./brand-scheme-plan";
 import { clientBrandSliceSql } from "./company-scope";
 import { loadBoardMarket } from "./landsec-board-market";
-import { industryInput } from "./landsec-board-industry";
+import { industryCountInput, industryInput, type IndustryRows } from "./landsec-board-industry";
 import {
   brandOf, clockFor, count, dealDatesFor, stageLabel, unitsFor, workbookOf,
   type Ctx, type ReportScheme, type Sheet,
@@ -49,9 +49,10 @@ import { reportDay, type LandsecReportDef } from "@shared/landsec-reports";
 import { londonDay } from "@shared/stage-since";
 import { BRAND_STAGE_LABELS } from "@shared/brand-stage";
 import {
-  BOARD_MARKET_SECTIONS, INDUSTRY_COUNTED, TARGET_EVENT_WORDS, boardActivity, brandEngagement, categoryRows, dealSpeed, industryFigures, industryLines, rentalGrowth, targetEvent, targetTenants,
-  type BoardActivity, type BoardMarketKey, type IndustryFigures, type BoardTargetLine, type TargetTenants, type BoardCounts, type BoardDeal, type BoardMarket, type BoardOffer, type BoardViewing, type BrandEngagement, type DealSpeed, type RentalGrowth,
+  BOARD_MARKET_SECTIONS, INDUSTRY_COUNTED, TARGET_EVENT_WORDS, TARGET_STAGES, boardActivity, brandEngagement, categoryRows, dealSpeed, industryFigures, industryLines, rentalGrowth, targetEvent, targetTenants, viewingHeld,
+  type BoardActivity, type BoardMarketKey, type IndustryFigures, type BoardTargetLine, type TargetTenants, type BoardCounts, type BoardDeal, type BoardOffer, type BoardViewing, type BrandEngagement, type DealSpeed, type RentalGrowth,
 } from "@shared/landsec-board-report";
+import { MARKET_WORD_SECTIONS, type MarketWords } from "@shared/landsec-market-report";
 
 // ── What the pack is worked out from ─────────────────────────────────────
 
@@ -78,6 +79,13 @@ export interface BoardData {
   brands: Map<string, { name: string; category: LandsecCategoryOrOther | null }>;
   /** The industry in the period, one set of figures per market report section, counted across the whole brand directory. */
   industry: Array<{ key: BoardMarketKey; title: string; figures: IndustryFigures }>;
+  /** The rows those figures were counted from: the market report's items are built from the same rows. */
+  industryRows: IndustryRows;
+  /** Brands trading at the chosen schemes, and brands that are targets there (on the plan before Let), by company id. */
+  tradingBrandIds: Set<string>;
+  targetBrandIds: Set<string>;
+  /** Viewings held and offers a person logged at the chosen schemes, by brand: what the market report lists as BGP's own record of a brand's activity here. */
+  ownActivity: Array<{ brandId: string; brand: string; category: LandsecCategoryOrOther | null; kind: "viewing" | "offer"; scheme: string; day: string | null }>;
 }
 
 const uniq = <T,>(list: T[]): T[] => Array.from(new Set(list));
@@ -150,7 +158,7 @@ export async function boardData(ctx: Ctx, viewer: LandsecViewer): Promise<BoardD
     listLeasingViewings({ companyId: viewer.companyId, propertyIds: new Set(propertyIds), jointAgent: false }),
     offersAt(propertyIds),
     brandLinesFor(ctx, viewer).catch((e: any) => { console.warn(`[landsec-board-report] brand plan: ${e?.message}`); return null; }),
-    industryInput(ctx.period),
+    industryInput(ctx.period, pool, ctx.madeAt),
   ]);
 
   const unitOf = new Map<string, PropertyUnit>();
@@ -201,7 +209,21 @@ export async function boardData(ctx: Ctx, viewer: LandsecViewer): Promise<BoardD
     const id = u.occupancy === "occupied" ? u.tenant.companyId : null;
     if (id && types.has(id)) brands.set(id, types.get(id)!);
   }
+  const tradingBrandIds = new Set(brands.keys());
   for (const b of plan?.brands || []) brands.set(b.id, { name: b.name, category: b.category });
+  // A target: a brand whose furthest line at these schemes is before Let.
+  const notYetLet = new Set((plan?.lines || []).filter(l => TARGET_STAGES.includes(l.stage) && l.stage !== "let").map(l => l.brand));
+  const targetBrandIds = new Set((plan?.brands || []).filter(b => notYetLet.has(b.name)).map(b => b.id));
+  const ownActivity: BoardData["ownActivity"] = [];
+  for (const v of viewingRows) {
+    const scheme = v.propertyId ? schemeOfProperty.get(v.propertyId) : undefined, brand = v.companyId ? types.get(v.companyId) : undefined;
+    const day = reportDay(v.viewingDate);
+    if (scheme && brand?.name && v.companyId && viewingHeld({ day, status: v.status ? String(v.status) : null }, ctx.period, today)) ownActivity.push({ brandId: v.companyId, brand: brand.name, category: brand.category, kind: "viewing", scheme: scheme.name, day });
+  }
+  for (const o of offerRows) {
+    const scheme = schemeOfProperty.get(o.propertyId), brand = o.companyId ? types.get(o.companyId) : undefined;
+    if (scheme && brand?.name && o.companyId && o.logged) ownActivity.push({ brandId: o.companyId, brand: brand.name, category: brand.category, kind: "offer", scheme: scheme.name, day: o.day });
+  }
 
   return {
     today, deals, schemes,
@@ -212,7 +234,8 @@ export async function boardData(ctx: Ctx, viewer: LandsecViewer): Promise<BoardD
     engagement: plan ? brandEngagement(plan.lines, ctx.period) : null,
     targets: plan ? targetTenants(plan.lines, ctx.period, today) : null,
     brands,
-    industry: BOARD_MARKET_SECTIONS.map(s => ({ key: s.key, title: s.title, figures: industryFigures(industryRows, s.group, ctx.period) })),
+    industry: BOARD_MARKET_SECTIONS.map(s => ({ key: s.key, title: s.title, figures: industryFigures(industryCountInput(industryRows), s.group, ctx.period) })),
+    industryRows, tradingBrandIds, targetBrandIds, ownActivity,
   };
 }
 
@@ -314,7 +337,7 @@ const countKeys = (c: BoardCounts | undefined) => ({
 
 export async function boardReportWorkbook(def: LandsecReportDef, ctx: Ctx, viewer: LandsecViewer): Promise<Buffer> {
   const data = await boardData(ctx, viewer);
-  const market: BoardMarket = await loadBoardMarket(ctx.period, ctx.schemes.map(s => s.key)).catch(() => ({}));
+  const market: MarketWords = await loadBoardMarket(ctx.period, ctx.schemes.map(s => s.key)).catch(() => ({}));
   const a = data.activity, g = data.growth, sp = data.speed, e = data.engagement;
   const schemeName = new Map(ctx.schemes.map(s => [s.key, s.name]));
   const occupied = data.schemes.reduce((n, s) => n + s.occupied, 0), vacant = data.schemes.reduce((n, s) => n + s.vacant, 0);
@@ -440,7 +463,7 @@ export async function boardReportWorkbook(def: LandsecReportDef, ctx: Ctx, viewe
   const marketSheet: Sheet = {
     name: "Market report",
     columns: [{ header: "Section", key: "section", width: 24 }, { header: "Text", key: "text", width: 120 }, { header: "Saved by", key: "savedBy", width: 22 }, { header: "Firm", key: "firm", width: 10 }, { header: "Saved on", key: "savedOn", width: 13, kind: "date" }],
-    rows: BOARD_MARKET_SECTIONS.filter(s => market[s.key]?.text).map(s => ({ section: s.title, text: market[s.key]!.text, savedBy: market[s.key]!.savedBy, firm: market[s.key]!.savedByFirm, savedOn: reportDay(market[s.key]!.savedAt) })),
+    rows: MARKET_WORD_SECTIONS.filter(s => market[s.key]?.text).map(s => ({ section: s.title, text: market[s.key]!.text, savedBy: market[s.key]!.savedBy, firm: market[s.key]!.savedByFirm, savedOn: reportDay(market[s.key]!.savedAt) })),
     caption: "Written by BGP and Landsec. Only the sections that have been saved for this period and these schemes are here.",
   };
 

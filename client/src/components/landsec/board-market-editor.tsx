@@ -1,12 +1,16 @@
-// The board report's market report (Woody, 2026-11-19: "Me and Mark working
-// together to provide overall analysis for him to present each quarter").
+// The market report's words (Woody, 2026-11-19: "Me and Mark working together
+// to provide overall analysis for him to present each quarter"; "a
+// comprehensive market report broken into sectors").
 //
-// One box per section, for the months and schemes picked on the Reports page.
-// What is saved here is the words the board report prints; a section with
-// nothing saved prints no words (its industry figures, which the app counts,
-// print either way). BGP staff can ask for a draft to start from:
-// a draft only fills the box, and nothing prints until a person saves it.
-// Who may read, save and draft is decided on the server
+// One box per section, for the months and schemes picked on the Reports page:
+// Overall, each sector, and the competition. What is saved here is on a slide
+// of the Market report and of the Board report; a section with nothing saved
+// shows its items and no words. Under each box is what the section is written
+// from: the items the report lists and, for BGP staff, what BGP's own team
+// posted about the sector's brands, each with "Add to the report" to put its
+// words in the box. BGP staff can ask for a draft of one section or of all of
+// them: a draft only fills the box, and nothing is on a slide until a person
+// saves it. Who may read, save and draft is decided on the server
 // (server/landsec-board-market.ts): this dialog only asks.
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,7 +21,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { BOARD_MARKET_MAX, cleanMarketText, type BoardMarketKey, type BoardMarketReply, type BoardMarketSaved } from "@shared/landsec-board-report";
+import { BOARD_MARKET_MAX, cleanMarketText, type BoardMarketSaved } from "@shared/landsec-board-report";
+import type { MarketTeamPost, MarketWordKey } from "@shared/landsec-market-report";
+
+type BoardMarketKey = MarketWordKey;
+interface BoardMarketReply {
+  period: { from: string; to: string; label: string };
+  schemes: string[];
+  sections: Array<{ key: MarketWordKey; title: string; saved: BoardMarketSaved | null }>;
+  canDraft: boolean;
+}
+/** What each section is written from (GET .../market/material). `posts` is empty for anyone but BGP staff. */
+interface MarketSheet {
+  sections: Array<{ key: MarketWordKey; title: string; facts: string[]; items: string[]; movers: string[]; research: string[]; themes: string[] }>;
+  posts: MarketTeamPost[];
+}
 
 const MICRO_LABEL = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
 const savedLine = (s: BoardMarketSaved): string => {
@@ -26,7 +44,7 @@ const savedLine = (s: BoardMarketSaved): string => {
   return `Saved by ${s.savedBy || "someone"} (${s.savedByFirm})${when ? ` on ${when}` : ""}`;
 };
 
-interface Box { text: string; drafted: boolean; check: string[]; sent: { facts: number; signals: number; research: number } | null }
+interface Box { text: string; drafted: boolean; check: string[]; sent: { facts: number; items: number; research: number; themes: number; posts: number } | null }
 
 export function BoardMarketEditor({ open, onOpenChange, from, to, schemes }: {
   open: boolean; onOpenChange: (open: boolean) => void; from: string; to: string;
@@ -39,6 +57,9 @@ export function BoardMarketEditor({ open, onOpenChange, from, to, schemes }: {
   if (schemes) params.set("schemes", schemes.join(","));
   const url = `/api/landsec/reports/board-report/market?${params.toString()}`;
   const { data, isLoading, error } = useQuery<BoardMarketReply>({ queryKey: [url], enabled: open, retry: false, staleTime: 0 });
+  // What each section is written from. It reads the whole report, so it is asked for once the dialog is open and kept a few minutes.
+  const sheetUrl = `/api/landsec/reports/board-report/market/material?${params.toString()}`;
+  const sheet = useQuery<MarketSheet>({ queryKey: [sheetUrl], enabled: open, retry: false, staleTime: 3 * 60 * 1000 });
   const [boxes, setBoxes] = useState<Partial<Record<BoardMarketKey, Box>>>({});
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -55,22 +76,44 @@ export function BoardMarketEditor({ open, onOpenChange, from, to, schemes }: {
       await apiRequest("PUT", "/api/landsec/reports/board-report/market", { ...scope, key, text, loadedAt });
       await queryClient.invalidateQueries({ queryKey: [url] });
       setBoxes(prev => { const next = { ...prev }; delete next[key]; return next; });
-      toast({ title: cleanMarketText(text) ? `${title} saved` : `${title} cleared`, description: cleanMarketText(text) ? "It will print in the board report." : "No words will print for this section." });
+      toast({ title: cleanMarketText(text) ? `${title} saved` : `${title} cleared`, description: cleanMarketText(text) ? "It is on a slide of the market report and the board report." : "No words will show for this section." });
     } catch (e) {
       toast({ title: `${title} was not saved`, description: (e as Error).message, variant: "destructive" });
       queryClient.invalidateQueries({ queryKey: [url] });
     } finally { setBusy(null); }
   };
 
+  const draftOne = async (key: BoardMarketKey, held: string) => {
+    const res = await apiRequest("POST", "/api/landsec/reports/board-report/market/draft", { ...scope, key });
+    const reply = await res.json() as { text: string; check: string[]; sent: Box["sent"] };
+    set(key, { text: reply.text, drafted: true, check: reply.check || [], sent: reply.sent || null }, held);
+  };
   const draft = async (key: BoardMarketKey, title: string, held: string) => {
     setBusy(`draft:${key}`);
-    try {
-      const res = await apiRequest("POST", "/api/landsec/reports/board-report/market/draft", { ...scope, key });
-      const reply = await res.json() as { text: string; check: string[]; sent: Box["sent"] };
-      set(key, { text: reply.text, drafted: true, check: reply.check || [], sent: reply.sent || null }, held);
-    } catch (e) {
-      toast({ title: `No draft for ${title}`, description: (e as Error).message, variant: "destructive" });
-    } finally { setBusy(null); }
+    try { await draftOne(key, held); }
+    catch (e) { toast({ title: `No draft for ${title}`, description: (e as Error).message, variant: "destructive" }); }
+    finally { setBusy(null); }
+  };
+  // A draft for every section that has nothing typed in it, one after the other. Each still has to be saved by a person.
+  const draftAll = async () => {
+    if (!data) return;
+    let made = 0;
+    for (const section of data.sections) {
+      const held = section.saved?.text || "";
+      if (boxes[section.key]?.text.trim() || held) continue;
+      setBusy(`draft:${section.key}`);
+      try { await draftOne(section.key, held); made += 1; }
+      catch (e) { toast({ title: `No draft for ${section.title}`, description: (e as Error).message, variant: "destructive" }); break; }
+    }
+    setBusy(null);
+    toast({ title: made ? `${made} ${made === 1 ? "section" : "sections"} drafted` : "Nothing to draft", description: made ? "Check each one, make it yours, then save it." : "Every section already has words. Clear one to draft it again." });
+  };
+  // A team post's words into a section's box, for the person to edit and save.
+  const addPost = (key: BoardMarketKey, held: string, post: MarketTeamPost) => {
+    const now = boxes[key]?.text ?? held;
+    const line = `BGP's team reports: ${post.text}`;
+    if (now.includes(post.text)) return;
+    set(key, { text: [now.trim(), line].filter(Boolean).join("\n\n").slice(0, BOARD_MARKET_MAX) }, held);
   };
 
   return (
@@ -80,8 +123,16 @@ export function BoardMarketEditor({ open, onOpenChange, from, to, schemes }: {
           <DialogTitle className="text-lg font-semibold">Market report</DialogTitle>
           <DialogDescription className="text-sm text-muted-foreground" data-testid="board-market-scope">
             {data ? <>{data.period.label} · <span className="font-mono tabular-nums">{data.schemes.length}</span> {data.schemes.length === 1 ? "scheme" : "schemes"}. </> : null}
-            What you save prints in the board report, above the industry figures the app counts for each section. A section with nothing saved prints its figures and no words.
+            What you save is on a slide of the Market report and of the Board report. A section with nothing saved shows its items and no words.
           </DialogDescription>
+          {data?.canDraft && (
+            <div className="pt-2">
+              <Button type="button" variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" disabled={!!busy} onClick={draftAll} data-testid="board-market-draft-all">
+                {busy?.startsWith("draft:") ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Sparkles className="mr-1 h-3.5 w-3.5" />}
+                Draft all sections
+              </Button>
+            </div>
+          )}
         </DialogHeader>
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4 sm:px-6">
           {isLoading && [0, 1, 2].map(i => <Skeleton key={i} className="h-40 rounded-lg" />)}
@@ -101,26 +152,63 @@ export function BoardMarketEditor({ open, onOpenChange, from, to, schemes }: {
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
                   <label htmlFor={`board-market-text-${section.key}`} className={MICRO_LABEL}>{section.title}</label>
                   <p className="text-[11px] text-muted-foreground" data-testid={`board-market-saved-${section.key}`}>
-                    {section.saved ? savedLine(section.saved) : "Nothing saved: no words will print for this section"}
+                    {section.saved ? savedLine(section.saved) : "Nothing saved: no words will show for this section"}
                   </p>
                 </div>
                 <Textarea
                   id={`board-market-text-${section.key}`} value={text} maxLength={BOARD_MARKET_MAX} rows={6}
                   className="min-h-[132px] text-base leading-relaxed md:text-sm"
-                  placeholder={section.key === "overall" ? "The market as a whole this period, in your own words." : `What happened in ${section.title.toLowerCase()} this period, in your own words.`}
+                  placeholder={section.key === "overall" ? "The market as a whole this period, in your own words." : section.key === "competition" ? "What other landlords and competing centres did this period, in your own words." : `What happened in ${section.title.toLowerCase()} this period, in your own words.`}
                   onChange={e => set(section.key, { text: e.target.value }, held)}
                   data-testid={`board-market-text-${section.key}`}
                 />
                 {box?.drafted && (
                   <div className="space-y-0.5 text-[11px] text-muted-foreground" role="status" data-testid={`board-market-draft-${section.key}`}>
                     <p>
-                      A draft, not saved. It was written only from this report's figures
-                      {box.sent ? <> (<span className="font-mono tabular-nums">{box.sent.facts}</span> lines), <span className="font-mono tabular-nums">{box.sent.signals}</span> public brand signals and <span className="font-mono tabular-nums">{box.sent.research}</span> competing-centre items</> : null}.
+                      A draft, not saved. It was written only from this section's material
+                      {box.sent ? <> (<span className="font-mono tabular-nums">{box.sent.items}</span> items, <span className="font-mono tabular-nums">{box.sent.facts}</span> figures, <span className="font-mono tabular-nums">{box.sent.research + box.sent.themes}</span> research and theme lines and <span className="font-mono tabular-nums">{box.sent.posts}</span> team posts)</> : null}.
                       Check it, make it yours, then save.
                     </p>
                     {box.check.length > 0 && <p className="text-foreground">Check these figures, which were not in what it was written from: <span className="font-mono tabular-nums">{box.check.join(", ")}</span></p>}
                   </div>
                 )}
+                {(() => {
+                  const from = sheet.data?.sections.find(x => x.key === section.key);
+                  const posts = (sheet.data?.posts || []).filter(post => section.key === "overall" || post.section === section.key);
+                  if (sheet.isLoading) return <p className="text-[11px] text-muted-foreground">Reading what this section is written from…</p>;
+                  if (!from) return null;
+                  return (
+                    <>
+                      <details className="rounded-md border bg-muted/30 text-xs" data-testid={`board-market-items-${section.key}`}>
+                        <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 px-3 py-2 text-muted-foreground sm:min-h-0 [&::-webkit-details-marker]:hidden">
+                          Written from <span className="font-mono tabular-nums text-foreground">{from.items.length}</span> {from.items.length === 1 ? "item" : "items"}
+                          {from.research.length + from.themes.length > 0 && <>, <span className="font-mono tabular-nums text-foreground">{from.research.length + from.themes.length}</span> research and theme lines</>}
+                        </summary>
+                        <ul className="max-h-56 space-y-1 overflow-y-auto border-t px-3 py-2">
+                          {[...from.facts, ...from.movers.map(m => `Most active: ${m}`), ...from.items, ...from.research, ...from.themes].map((line, i) => <li key={i} className="break-words text-muted-foreground">{line}</li>)}
+                          {from.items.length + from.research.length + from.themes.length === 0 && <li className="text-muted-foreground">Nothing is recorded for this section in the period.</li>}
+                        </ul>
+                      </details>
+                      {posts.length > 0 && (
+                        <details className="rounded-md border bg-muted/30 text-xs" data-testid={`board-market-posts-${section.key}`}>
+                          <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 px-3 py-2 text-muted-foreground sm:min-h-0 [&::-webkit-details-marker]:hidden">
+                            <span className="font-mono tabular-nums text-foreground">{posts.length}</span> {posts.length === 1 ? "post" : "posts"} by BGP's team. Not in the report unless you add one and save.
+                          </summary>
+                          <ul className="max-h-56 space-y-2 overflow-y-auto border-t px-3 py-2">
+                            {posts.map(post => (
+                              <li key={post.id} className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                                <p className="min-w-0 break-words text-muted-foreground"><span className="font-mono tabular-nums">{post.day}</span> · <span className="text-foreground">{post.brands.join(", ")}</span> · {post.text}</p>
+                                <Button type="button" variant="outline" size="sm" className="min-h-[44px] shrink-0 sm:min-h-0" disabled={!!busy || text.includes(post.text)} onClick={() => addPost(section.key, held, post)} data-testid={`board-market-add-post-${post.id}`}>
+                                  {text.includes(post.text) ? "Added" : "Add to the report"}
+                                </Button>
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                    </>
+                  );
+                })()}
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <span className="mr-auto font-mono text-[11px] tabular-nums text-muted-foreground">{text.length} / {BOARD_MARKET_MAX}</span>
                   {changed && !saving && (

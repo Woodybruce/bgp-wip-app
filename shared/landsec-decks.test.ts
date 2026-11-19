@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseReportPeriod } from "./landsec-reports";
 import { DECK_PAGE, chartHasData, deckOutline, freeHeight, layoutSlide, tableRowsThatFit, type Deck, type DeckBlock, type DeckChart, type DeckTable } from "./landsec-deck";
-import { boardActivity, dealSpeed, industryFigures, rentalGrowth, targetTenants, type BoardDeal, type BoardTargetLine, type IndustryInput } from "./landsec-board-report";
+import { boardActivity, dealSpeed, rentalGrowth, targetTenants, type BoardDeal, type BoardTargetLine } from "./landsec-board-report";
+import { marketItems, type MarketData, type MarketInput } from "./landsec-market-report";
 import { activityDeck, assetDeck, boardDeck, type ActivityDeckRow, type AssetLetting, type BoardDeckInput } from "./landsec-decks";
 
 const parsed = parseReportPeriod("2026-08", "2026-10");
@@ -23,13 +24,10 @@ const deal = (over: Partial<BoardDeal>): BoardDeal => ({
   hotsIssued: "2026-08-10", hotsMoved: null, exchangedOn: "2026-09-19", exchangeMoved: null, completedOn: null, completeMoved: null,
   passingRent: 100000, erv: 105000, scheduleShowsTenant: false, ...over,
 });
-const noIndustry: IndustryInput = { signals: [], snapshots: [], pipeline: [], requirements: [] };
+const NO_MARKET: MarketData = { level: "live", items: [], competition: [], research: [], themes: [], notAvailable: [] };
+const marketOf = (over: Partial<MarketInput>): MarketData => ({ ...NO_MARKET, items: marketItems({ signals: [], snapshots: [], pipeline: [], owners: [], requirements: [], ownActivity: [], lettings: [], trading: new Set(), targets: new Set(), ...over }, period) });
 
 function boardInput(over: Partial<BoardDeckInput> = {}, deals: BoardDeal[] = [deal({})]): BoardDeckInput {
-  const industry = (input: IndustryInput) => ([
-    { key: "overall", title: "Overall", group: null }, { key: "hospitality", title: "Hospitality", group: "Hospitality" }, { key: "leisure", title: "Leisure", group: "Leisure" },
-    { key: "cinema_entertainment", title: "Cinema & entertainment", group: "Cinema & entertainment" }, { key: "london_retail", title: "London retail", group: "London retail" },
-  ] as const).map(s => ({ key: s.key, title: s.title, figures: industryFigures(input, s.group, period) }));
   return {
     period, schemes: SCHEMES, footer: "Made in ChatBGP on 19 November 2026 by A Person. It holds what is recorded in ChatBGP on that day.", thisYear: 2026,
     activity: boardActivity({ deals, viewings: [{ scheme: "bluewater", day: "2026-09-02", status: "completed", category: null }], offers: [] }, period, "2026-11-19"),
@@ -41,7 +39,7 @@ function boardInput(over: Partial<BoardDeckInput> = {}, deals: BoardDeal[] = [de
     ],
     targets: targetTenants(TARGET_LINES, period, "2026-11-19"),
     roll: [{ year: 2024, expiries: 2, breaks: 0, expiryRent: 5000, breakRent: null }, { year: 2026, expiries: 10, breaks: 5, expiryRent: 900000, breakRent: 100000 }, { year: 2027, expiries: 14, breaks: 6, expiryRent: null, breakRent: null }, { year: 2040, expiries: 3, breaks: 0, expiryRent: null, breakRent: null }],
-    industry: industry(noIndustry), market: {}, counted, ...over,
+    marketData: NO_MARKET, market: {}, counted, ...over,
   };
 }
 
@@ -62,19 +60,19 @@ function sound(deck: Deck) {
       assert.ok(placed.y + placed.h <= (slide.caveat ? DECK_PAGE.bottomWithCaveat : DECK_PAGE.bottom) + 1e-6);
       if (placed.block.kind === "table") {
         const t = placed.block as DeckTable;
-        assert.ok(t.rows.length <= tableRowsThatFit(placed.h, !!t.title), `"${slide.title}": ${t.rows.length} rows fit their box`);
+        assert.ok(t.rows.length <= tableRowsThatFit(placed.h, !!t.title, t.lines === 2 ? 2 : 1), `"${slide.title}": ${t.rows.length} rows fit their box`);
         for (const row of t.rows) assert.equal(row.length, t.columns.length);
       }
     }
   }
 }
 
-test("the board deck: its slides, in order, with every section's industry figures and a slide only for a section with something to show", () => {
+test("the board deck: its slides, in order, ending on the market report in short and the rules", () => {
   const deck = boardDeck(boardInput());
   sound(deck);
   assert.deepEqual(deckOutline(deck), [
     "Landsec Hospitality & Leisure", "Headlines", "Letting activity by scheme", "Letting activity by brief category", "Live lettings today",
-    "Target tenants", "Target tenants: in play", "Occupancy today", "Lease roll", "Rental growth", "Deal speed", "Market report", "Market report: by section", "How the figures are counted",
+    "Target tenants", "Target tenants: in play", "Occupancy today", "Lease roll", "Rental growth", "Deal speed", "Market report", "Market report: competition", "How the figures are counted",
   ]);
   const at = (title: string) => deck.slides.find(s => s.title === title)!;
   assert.equal(deck.slides[0].layout, "title");
@@ -107,8 +105,7 @@ test("the board deck: its slides, in order, with every section's industry figure
   assert.deepEqual(growth.series.map(s => s.values), [[10], [4.8]]);
   assert.equal(growth.format, "pct");
   // The rules are printed in full at the back.
-  const back = deck.slides[deck.slides.length - 1];
-  const words = back.rows[0].blocks.flatMap(b => (b.kind === "words" ? b.paragraphs : [])).join(" ");
+  const words = deck.slides.filter(sl => sl.title.startsWith("How the figures are counted")).flatMap(sl => sl.rows[0].blocks).flatMap(b => (b.kind === "words" ? b.paragraphs : [])).join(" ");
   for (const k of Object.values(counted)) assert.ok(words.includes(k));
   assert.match(words, /It holds no footfall, sales, turnover, consumer spending or rental index: the app holds none\./);
   assert.match(words, /A letting Landsec did without BGP is in it only if it is on the app\./);
@@ -192,41 +189,31 @@ test("target tenants: the figures, the targets by stage and by scheme, and the t
   assert.ok(!deckOutline(none).includes("Target tenants: in play"));
 });
 
-test("the market report: saved words sit beside the stories, carry on over further slides, and a section with neither has no slide of its own", () => {
+test("the board report's market part: the overview, a slide for a sector with something in it, the competition, and saved words carried over", () => {
   const signals = [
-    { brandId: "b1", brand: "Jersey Mike's", category: "cafe_qsr" as BoardDeal["category"], type: "opening", headline: "Jersey Mike's opens first UK restaurant - ROI-NJ", source: "https://news.google.com/rss/articles/abc", date: "2026-09-09" },
-    { brandId: "b2", brand: "Flat Iron", category: "restaurants_bars" as BoardDeal["category"], type: "opening", headline: "Flat Iron opens in Birmingham", source: "https://www.propelinfo.com/story", date: "2026-10-11" },
+    { brandId: "b1", brand: "Jersey Mike's", category: "cafe_qsr" as BoardDeal["category"], type: "opening", headline: "Jersey Mike's opens first UK restaurant - ROI-NJ", detail: null, publisher: null, source: "https://news.google.com/rss/articles/abc", date: "2026-09-09" },
+    { brandId: "b2", brand: "Flat Iron", category: "restaurants_bars" as BoardDeal["category"], type: "opening", headline: "Flat Iron opens in Birmingham", detail: null, publisher: null, source: "https://www.propelinfo.com/story", date: "2026-10-11" },
   ];
-  const input = { ...noIndustry, signals };
-  const industry = boardInput().industry.map(s => ({ ...s, figures: industryFigures(input, s.key === "overall" ? null : s.title, period) }));
   const long = Array.from({ length: 9 }, (_, i) => `Paragraph ${i + 1}. ${"Quick service continued to lead demand through the quarter. ".repeat(7)}`).join("\n\n");
-  const deck = boardDeck(boardInput({ industry, market: { overall: { text: long, savedBy: "A Person", savedByFirm: "BGP", savedAt: "2026-11-01T10:00:00Z" } } }));
+  const deck = boardDeck(boardInput({ marketData: marketOf({ signals }), market: { overall: { text: long, savedBy: "A Person", savedByFirm: "BGP", savedAt: "2026-11-01T10:00:00Z" } } }));
   sound(deck);
   const titles = deckOutline(deck);
-  const first = titles.indexOf("Market report");
-  assert.ok(first > 0);
+  assert.ok(titles.indexOf("Market report") > 0);
   assert.ok(titles.includes("Market report (continued)"), "words that do not fit carry on");
-  assert.equal(titles[titles.lastIndexOf("Market report (continued)") + 1], "Market report: by section", "the section figures follow the overall slides");
-  assert.deepEqual(titles.filter(t => t.startsWith("Market report: ")), ["Market report: by section", "Market report: Hospitality"], "Leisure, cinema and London retail have nothing to show, so no slide");
+  assert.deepEqual(titles.filter(t => t.startsWith("Market report: ")), ["Market report: Hospitality", "Market report: competition"], "Leisure, cinema and London retail have nothing to show, so no slide");
   // Every word saved is on a slide, in order, with who wrote it.
-  const market = deck.slides.filter(s => s.title === "Market report" || s.title === "Market report (continued)");
-  const printed = market.flatMap(s => s.rows.flatMap(r => r.blocks)).filter(b => b.kind === "words").flatMap(b => (b.kind === "words" ? b.paragraphs : [])).join(" ").replace(/\s+/g, " ");
+  const market = deck.slides.filter(sl => sl.title === "Market report" || sl.title === "Market report (continued)");
+  const printed = market.flatMap(sl => sl.rows.flatMap(r => r.blocks)).filter(b => b.kind === "words").flatMap(b => (b.kind === "words" ? b.paragraphs : [])).join(" ").replace(/\s+/g, " ");
   assert.equal(printed, long.replace(/\s+/g, " ").trim());
   const words = market[0].rows[1].blocks[0];
   if (words.kind === "words") assert.equal(words.credit, "Written by A Person (BGP)");
-  // A story is its day, brand, headline and source: a Google News link names the publisher, never news.google.com.
-  const stories = market[0].rows[1].blocks[1] as DeckTable;
-  assert.deepEqual(stories.rows, [["11 Oct 2026", "Flat Iron", "Flat Iron opens in Birmingham", "propelinfo.com"], ["9 Sep 2026", "Jersey Mike's", "Jersey Mike's opens first UK restaurant", "ROI-NJ"]]);
+  // A sector's slide lists its top items: day, brand, what happened and the source. A Google News link names the publisher, never news.google.com.
+  const stories = deck.slides.find(sl => sl.title === "Market report: Hospitality")!.rows[1].blocks[0] as DeckTable;
+  assert.equal(stories.lines, 2);
+  assert.deepEqual(stories.rows, [["11 Oct 2026", "Flat Iron", "Opening: Flat Iron opens in Birmingham", "propelinfo.com"], ["9 Sep 2026", "Jersey Mike's", "Opening: Jersey Mike's opens first UK restaurant", "ROI-NJ"]]);
   assert.ok(!JSON.stringify(deck).includes("news.google.com"));
-  // The figures by section are always there, every section on its line.
-  const by = deck.slides.find(s => s.title === "Market report: by section")!.rows[0].blocks[0] as DeckTable;
-  assert.deepEqual(by.rows.map(r => r[0]), ["Hospitality", "Leisure", "Cinema & entertainment", "London retail"]);
-  assert.deepEqual(by.rows[0].slice(1), ["2", "0", "No counts", "0", "0"]);
-  // A list that could not be read says so.
-  const failed = boardDeck(boardInput({ industry: boardInput().industry.map(s => ({ ...s, figures: industryFigures({ signals: null, snapshots: null, pipeline: null, requirements: null }, null, period) })) }));
-  sound(failed);
-  const tiles = failed.slides.find(s => s.title === "Market report")!.rows[0].blocks[0];
-  if (tiles.kind === "tiles") assert.deepEqual(tiles.tiles.map(t => t.value), ["Not available", "Not available", "Not available", "Not available", "Not available"]);
+  const strip = deck.slides.find(sl => sl.title === "Market report: Hospitality")!.rows[0].blocks[0];
+  if (strip.kind === "tiles") assert.deepEqual(strip.tiles.map(t => t.value), ["2", "0", "No counts yet", "0", "0", "0"]);
 });
 
 const letting = (i: number, over: Partial<AssetLetting> = {}): AssetLetting => ({ unit: `Unit ${i}`, inUnit: "Vacant", stage: "Marketing", stageCode: "AVA", lettingTo: "", ref: 3000 + i, days: 10 + i, daysConfirmed: true, ...over });

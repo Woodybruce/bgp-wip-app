@@ -21,6 +21,7 @@ const market = code(read('server/landsec-board-market.ts'));
 // The decks (Woody, 2026-11-19: "we dont need complicated excels just visual PDF which can also be power point"):
 // the slide model, what is on each slide, the gathering, and the two renderers.
 const MODEL = 'shared/landsec-deck.ts', COMPOSE = 'shared/landsec-decks.ts', GATHER = 'server/landsec-decks.ts', PDF = 'server/landsec-deck-pdf.ts', PPTX = 'server/landsec-deck-pptx.ts', LOGO = 'server/landsec-report-logo.ts';
+const marketDeckCode = code(read('shared/landsec-market-deck.ts'));
 const model = code(read(MODEL)), compose = code(read(COMPOSE)), gather = code(read(GATHER)), pdf = code(read(PDF)), pptx = code(read(PPTX)), logo = code(read(LOGO));
 const namedIn = text => {
   const words = text.replace(/jointAgent|joint_agent/g, 'JOINTAGENT');
@@ -194,24 +195,29 @@ test('the board report: the same feeds, a Landsec reading of the brand plan, and
   // The rules are the shared file's: no second count here.
   assert.match(board, /activity: boardActivity\(\{ deals, viewings, offers \}, ctx\.period, today\),\s*growth: rentalGrowth\(deals, ctx\.period\),\s*speed: dealSpeed\(deals, ctx\.period\),/);
   // The market report's words on a slide are only what a person saved: the deck reads them from the store and writes none.
-  assert.match(compose, /const saved = input\.market\[section\.key\];/);
-  assert.match(compose, /const cut = pageWords\(saved\.text\.split\(/);
-  assert.doesNotMatch(compose + gather, /draftMarketSection|marketDraftPrompt/, 'a deck never drafts');
-  assert.doesNotMatch(board, /draftMarketSection|marketDraftPrompt|anthropic/i, 'the builder never drafts');
+  assert.match(compose, /slides\.push\(\.\.\.boardMarketSlides\(\{ period: input\.period, schemes: input\.schemes, footer: input\.footer, data: input\.marketData, words: input\.market \}\)\);/);
+  assert.match(marketDeckCode, /if \(!o\.saved\?\.text\) \{/, 'a sector with nothing saved shows its items and no words');
+  assert.match(marketDeckCode, /pageWords\(text\.split\(/);
+  assert.doesNotMatch(compose + gather + marketDeckCode, /draftMarketSection|marketDraftRequest|anthropic/i, 'a deck never drafts');
+  assert.doesNotMatch(board, /draftMarketSection|marketDraftRequest|anthropic/i, 'the builder never drafts');
 });
 
 test('the market report: every route asks who is calling first, drafting is BGP staff only, and a draft is never saved by itself', () => {
   const routes = market.slice(market.indexOf('export function setupLandsecBoardMarketRoutes'));
   const handlers = routes.split(/app\.(?:get|put|post)\(/).slice(1);
-  assert.equal(handlers.length, 3, 'read, save and draft');
+  assert.equal(handlers.length, 4, 'read, what the sections are written from, save and draft');
   for (const handler of handlers) {
-    assert.match(handler, /^"\/api\/landsec\/reports\/board-report\/market(\/draft)?", requireAuth, async/);
+    assert.match(handler, /^"\/api\/landsec\/reports\/board-report\/market(\/draft|\/material)?", requireAuth, async/);
     const first = handler.slice(handler.indexOf('try {') + 5).trim();
     assert.match(first, /^const viewer = await reportViewer\(req\);\s*if \(!viewer\) return res\.status\(403\)/, 'the viewer is resolved before anything else');
     assert.match(handler, /await scopeOf\(viewer, /, 'the period and the schemes are cut to the caller');
   }
   assert.doesNotMatch(routes, /app\.(patch|delete)\(/);
-  const draft = handlers[2];
+  const draft = handlers[3];
+  // BGP's team posts go to BGP staff signed in as themselves and nobody else: the one door for them asks first.
+  assert.match(market, /async function postsFor\(req: Request, period: ReportPeriod\): Promise<MarketTeamPost\[\]> \{\s*if \(!\(await contactViewer\(req\)\)\.staff\) return \[\];/);
+  assert.equal((market.match(/teamPosts\(/g) || []).length, 1, 'the posts are read in one place');
+  assert.equal((market.match(/postsFor\(req, period\)/g) || []).length, 2, 'the list for the editor, and the draft');
   assert.match(draft.slice(draft.indexOf('try {') + 5).trim(), /^const viewer = await reportViewer\(req\);\s*if \(!viewer\) return res\.status\(403\)\.json\(REFUSED\);\s*if \(!\(await contactViewer\(req\)\)\.staff\) return res\.status\(403\)/, 'a draft is for BGP staff signed in as themselves');
   assert.doesNotMatch(draft, /saveBoardMarketSection|system_settings/, 'the draft route saves nothing');
   // The schemes a request names only narrow the caller's own.
@@ -224,15 +230,13 @@ test('the market report: every route asks who is calling first, drafting is BGP 
   assert.match(market, /claimDailyRead\(USAGE_KEY, boardDraftDailyCap\(\)\)/);
   const draftFn = market.slice(market.indexOf('export async function draftMarketSection'), market.indexOf('// ── Routes'));
   assert.ok(draftFn.indexOf('hasKey()') < draftFn.indexOf('await claim()') && draftFn.indexOf('await claim()') < draftFn.indexOf('(deps.ask || askAnthropic)'), 'the key, then the allowance, then the call');
-  // What it is sent: public signals with a link and no rumour, and research on centres that are not Landsec's own.
-  assert.match(market, /s\.source ~\* '\^https\?:\/\/'/);
-  assert.match(market, /COALESCE\(s\.signal_type, ''\) <> 'rumour' AND COALESCE\(s\.confidence, ''\) <> 'rumour'/);
-  assert.match(market, /if \(ownPropertyIds\.has\(record\.id\)\) continue;/);
+  // What it is sent is the section's own material, the same lines the editor lists: nothing is read here for the draft alone.
+  assert.match(draft, /const sheet = sheetOf\(material\)\.find\(s => s\.key === section\.key\)!;/);
+  assert.match(draft, /res\.json\(await draftMarketSection\(\{ section: \{ key: section\.key, title: section\.title \}, periodLabel: period\.label, schemes: schemes\.map\(s => s\.name\), facts: sheet\.facts, items: sheet\.items, movers: sheet\.movers, research: sheet\.research, themes: sheet\.themes, posts: about \}\)\);/);
   const sql = Array.from(market.matchAll(/\.query\(\s*`([\s\S]*?)`/g)).map(m => m[1]);
   const tables = new Set();
   for (const text of sql) for (const m of text.matchAll(/\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_]+)/gi)) tables.add(m[1].toLowerCase());
-  assert.deepEqual(Array.from(tables).sort(), ['brand_signals', 'system_settings', 'users']);
-  assert.doesNotMatch(sql.find(text => text.includes('brand_signals')), /\bdetail\b|SELECT\s+\*|[a-z]\.\*/i, 'a signal is its date, kind, headline and link');
+  assert.deepEqual(Array.from(tables).sort(), ['system_settings', 'users']);
   // Stored in system_settings under the period and scheme set: no table of its own.
   assert.match(read('shared/landsec-board-report.ts'), /`landsec_board_report:\$\{from\}:\$\{to\}:\$\{digest\}`/);
   // A save over somebody else's newer text is refused.
@@ -265,18 +269,24 @@ test('the industry figures: four public reads across the brand directory, none o
     assert.doesNotMatch(text, /SELECT\s+\*|\b[a-z]\.\*/i, 'named columns only');
     assert.doesNotMatch(text, /\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE)\b/i, 'it writes nothing');
     assert.match(text, /\$\{BRAND\}/, 'every read is held to brands on the directory');
-    // Nothing of BGP's own: no star, no hold, no owner, no score, no confirmation, no remark.
-    assert.doesNotMatch(text, /hunter|concept_status|bgp_|confirmed|origin|sources|score|description|ai_generated/i);
+    // Nothing of BGP's own: no star, no hold, no owner at BGP, no score, no confirmation, no remark.
+    assert.doesNotMatch(text, /hunter|concept_status|bgp_|confirmed|score|description|ai_generated/i);
   }
   assert.match(industry, /const BRAND = `c\.company_type ILIKE 'tenant%' AND c\.archived_at IS NULL AND c\.merged_into_id IS NULL`;/, 'a hidden brand is left out');
   assert.match(industry, /isJunkBrand\(\{ name: row\.name, companyType: row\.company_type \}\) \? null/, 'a junk brand is left out');
-  // A signal is its kind, headline, link and date: never the body of a story. And never a rumour or one with no link.
+  // A signal is a public report: one with a link, or one out of a trade publisher's newsletter. Never a rumour, and never a line
+  // BGP typed about its own deal (those carry neither). Of its stored detail only what the story states about space is handed on.
   const signals = sql.find(text => text.includes('brand_signals'));
-  assert.doesNotMatch(signals, /s\.detail|s\.sentiment|s\.dedupe/);
-  assert.match(signals, /s\.source ~\* '\^https\?:\/\/'/);
+  assert.doesNotMatch(signals, /s\.sentiment|s\.dedupe/);
+  assert.match(signals, /AND \(s\.source ~\* '\^https\?:\/\/' OR s\.source ILIKE 'newsletter:%'\)/);
   assert.match(signals, /COALESCE\(s\.signal_type, ''\) <> 'rumour' AND COALESCE\(s\.confidence, ''\) <> 'rumour'/);
-  // A requirement is a count: the brand it is tied to and the day it was added.
-  assert.match(sql.find(text => text.includes('crm_requirements_leasing')), /SELECT r\.company_id, c\.id AS brand_id, c\.name, c\.company_type, r\.created_at\s+FROM/);
+  assert.match(industry, /const publisher = letter \? newsletterPublisherOf\(r\.detail\) : null;\s*if \(letter && !publisher\) continue;/, 'a newsletter from anyone but a trade publisher is not read');
+  assert.match(industry, /const stated = \/\^Stated: \/\.test\(String\(r\.detail \|\| ""\)\) \? String\(r\.detail\)\.split\(\/\\s\+Via newsletter:\/\)\[0\] : null;/);
+  assert.match(industry, /detail: stated, source, publisher,/);
+  // A requirement is what it is and its own date, as every client screen words it: never its state, who holds it at BGP, or a confirmation.
+  const requirements = sql.find(text => text.includes('crm_requirements_leasing'));
+  assert.doesNotMatch(requirements, /last_confirmed|confirmed_how|bgp_contact|landlord_pack|principal_contact|deal_id/);
+  assert.match(industry, /record: requirementReason\(r, today\)\.clientText \}\);/);
   // Only good store counts, and no tree or telecoms application (the Expansion card's own exclusion).
   assert.match(sql.find(text => text.includes('brand_store_counts')), /n\.error IS NULL/);
   assert.match(industry, /NOT IN \(\$\{NEVER_AN_OCCUPIER_TYPES\.map\(t => `'\$\{t\}'`\)\.join\(", "\)\}\)/);
@@ -284,23 +294,105 @@ test('the industry figures: four public reads across the brand directory, none o
   assert.equal((industry.match(/attempt\("/g) || []).length, 4);
   assert.match(industry, /try \{ return await run\(\); \} catch \(e: any\) \{ console\.warn\(.*\); return null; \}/);
   assert.doesNotMatch(industry, /anthropic|perplexity|openai|fetch\(/i, 'counted from what the app holds: no outside call');
-  // Staff-only libraries are not used.
-  assert.doesNotMatch(industry, /knowledge_base|investment_research|insights|newsletter/i);
+  // The research library and the Insights cards are read elsewhere (server/landsec-market-report.ts), not here.
   // The counting, and the line saying what it does not hold, are the shared file's.
   const shared = read('shared/landsec-board-report.ts');
   assert.match(shared, /It holds no footfall, sales, turnover, consumer spending or rental index: the app holds none\./);
-  assert.match(board, /industry: BOARD_MARKET_SECTIONS\.map\(s => \(\{ key: s\.key, title: s\.title, figures: industryFigures\(industryRows, s\.group, ctx\.period\) \}\)\),/);
-  // In the deck every section's figures are always there (the overall slide's tiles and the by-section slide);
-  // a section has a slide of its own only when it has words or a story, and the words only where a person saved them.
-  assert.match(compose, /slides\.splice\(overallEnd \+ 1, 0, bySection\);/, 'the by-section figures always follow the overall slide');
-  assert.match(compose, /rows: parts\.map\(sec => \{\s*const f = figuresOf\(sec\.key\);/);
-  assert.match(compose, /if \(section\.key !== "overall" && !saved\?\.text && !\(f\?\.headlines \|\| \[\]\)\.length\) continue;/);
-  assert.match(compose, /if \(!saved\?\.text\) \{\s*slides\.push\(\{ layout: "content", title, subtitle, rows: \[\{ blocks: \[tiles\] \}, \{ blocks: \[storyBlock\] \}\], caveat, rules: \[INDUSTRY_COUNTED\] \}\);/, 'the figures do not wait on saved words');
-  assert.match(compose, /No footfall, sales, turnover, spending or rental index is held\./);
-  // A printed story is its date, brand, headline and source; a Google News link names the publisher.
-  assert.match(compose, /rows: stories\.map\(h => \[shortReportDay\(h\.date\), h\.brand, h\.headline, h\.site\]\)/);
+  assert.match(board, /industry: BOARD_MARKET_SECTIONS\.map\(s => \(\{ key: s\.key, title: s\.title, figures: industryFigures\(industryCountInput\(industryRows\), s\.group, ctx\.period\) \}\)\),/);
   assert.match(shared, /if \(site !== "news\.google\.com"\) return \{ headline: words, site \};/);
-  assert.match(shared, /out\.push\(\{ date: s\.date \? s\.date\.slice\(0, 10\) : null, brand: s\.brand, headline: story\.headline\.slice\(0, 200\), site: story\.site \}\);/);
+});
+
+// Woody, 2026-11-19: "The market analysis reports need to be surrounding the brands and who's doing what news etc including all
+// the info we get each month from the team news propel etc needs to give a comprehensive market report broken into sectors
+// similar to our brands page. But also to include any competition news such as buying shopping centres or their leasing ie
+// Hammerson and Canary Wharf". On what Landsec may be shown: "Ignore Jack! This is landsec they should have intel that we do
+// including other schemes"; and, asked whether live deals at other clients' schemes should show: "Switch on".
+test('the market report: a fixed set of named reads, public news by headline only, and of another landlord\'s letting only who, where and how far', () => {
+  const FILE = 'server/landsec-market-report.ts';
+  const report = code(read(FILE));
+  assert.deepEqual(namedIn(report), [], `${FILE} names: ${namedIn(report).join(', ')}`);
+  assert.deepEqual(namedIn(marketDeckCode), [], `shared/landsec-market-deck.ts names: ${namedIn(marketDeckCode).join(', ')}`);
+  const rules = code(read('shared/landsec-market-report.ts'));
+  assert.deepEqual(namedIn(rules), [], `shared/landsec-market-report.ts names: ${namedIn(rules).join(', ')}`);
+  const sql = Array.from(report.matchAll(/db\.query\(\s*`([\s\S]*?)`/g)).map(m => m[1]);
+  assert.equal(sql.length, 8, 'owners, landlord names, news, themes, research, lettings, sales, tracker: no query per brand or per landlord');
+  assert.doesNotMatch(report, /for \([^)]*\)\s*\{[^}]*await db\.query/, 'never a query inside a loop');
+  const tables = new Set();
+  for (const text of sql) for (const m of text.matchAll(/\b(?:FROM|JOIN)\s+([a-z_]+)/gi)) tables.add(m[1].toLowerCase());
+  // The catalogue of landlords is a list of names: its own test of who is a landlord looks at deals and properties, and reads nothing from them.
+  assert.deepEqual(Array.from(tables).sort(), ['crm_companies', 'crm_deals', 'crm_properties', 'insights', 'investment_comps', 'investment_research_reads', 'investment_tracker', 'knowledge_base', 'news_articles', 'news_sources']);
+  for (const text of sql) {
+    assert.doesNotMatch(text, /SELECT\s+\*|\b[a-z]+\.\*/i, 'named columns only');
+    assert.doesNotMatch(text, /\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE)\b/i, 'it writes nothing');
+  }
+  // Another landlord's letting: the brand, the scheme, its landlord, the two dates and the status. Nothing else of the deal.
+  const lettings = sql.find(text => text.includes('FROM crm_deals d'));
+  assert.match(lettings, /SELECT d\.tenant_id, c\.name, c\.company_type, p\.name AS scheme, l\.name AS landlord, d\.status, d\.exchanged_at, d\.completed_at\s+FROM crm_deals d/);
+  assert.doesNotMatch(lettings, /rent|premium|incentive|capital|break|lease_length|term|area|sqft|ref|d\.name|d\.id\b|target_date|solicitor|team/i, 'never a rent, an incentive, lease terms, a reference or who runs it');
+  assert.match(lettings, /AND NOT \(d\.property_id = ANY\(\$2::varchar\[\]\)\) AND COALESCE\(p\.landlord_id, d\.landlord_id, ''\) <> \$3/, 'the viewer\'s own schemes are not "other schemes"');
+  assert.match(lettings, /d\.deal_type IN \(\$\{lettingTypeSqlList\(\)\}\) AND d\.status = ANY\(\$1::text\[\]\)/);
+  // A letting that is not done is read only at "live": the statuses asked for are the level's.
+  assert.match(report, /const stages = level === "live" \? \[\.\.\.DONE, \.\.\.RUNNING\] : DONE;/);
+  assert.match(report, /const DONE = \["EXC", "COM", "INV"\], RUNNING = \["NEG", "HOT", "SOL"\];/);
+  // A sale: a completed comparable in the period; an asset still on the tracker only at "live", with its stage and never a price.
+  const sales = sql.find(text => text.includes('FROM investment_comps'));
+  assert.match(sales, /SELECT s\.property_name, s\.city, s\.buyer, s\.seller, s\.price, s\.cap_rate, s\.transaction_date\s+FROM investment_comps s/);
+  assert.match(sales, /!~\* '\(terminat\|withdraw\|pending\|under offer\|quoting\|on the market\|refinanc\)'/);
+  const tracker = sql.find(text => text.includes('FROM investment_tracker'));
+  assert.match(tracker, /SELECT t\.asset_name, t\.asset_type, t\.status\s+FROM investment_tracker t/);
+  assert.doesNotMatch(tracker, /price|niy|eqy|rent|client|vendor|buyer|guide/i, 'a live investment deal is its asset and its stage');
+  assert.match(report, /if \(level !== "live"\) return out;/);
+  assert.match(report, /price: null, yieldPct: null, day: null, live: true,/);
+  // Public news: public sources only, by headline, link, publisher and day. Never a story's summary or text.
+  const news = sql.find(text => text.includes('FROM news_articles'));
+  assert.match(news, /SELECT n\.title, n\.url, COALESCE\(n\.source_name, ns\.name\) AS source_name, n\.published_at\s+FROM news_articles n JOIN news_sources ns/);
+  assert.match(news, /WHERE \$\{publicNewsSourceSql\("ns"\)\}/);
+  assert.doesNotMatch(news, /summary|content|ai_/);
+  // The Insights cards any client login is shown, and no other; a paper is its publisher, month, headline and checked figures.
+  const themes = sql.find(text => text.includes('FROM insights'));
+  assert.match(themes, /WHERE i\.audience = 'all' AND i\.source_kind IN \('news', 'market-report'\)/);
+  assert.match(report, /\|\| !isPublishableInsight\(r\)\) continue;/);
+  const research = sql.find(text => text.includes('FROM investment_research_reads'));
+  assert.match(research, /SELECT k\.category, r\.published, r\.publisher, r\.headline, r\.facts, r\.read_at\s+FROM investment_research_reads r JOIN knowledge_base k/);
+  assert.doesNotMatch(research, /extracted|file_|k\.content|r\.summary|r\.outlook/, 'never the paper');
+  assert.match(report, /figures: \(Array\.isArray\(r\.facts\) \? r\.facts : \[\]\)\.map\(\(f: any\) => \(\{ topic: String\(f\?\.topic \|\| ""\), figure: String\(f\?\.figure \|\| ""\), place: /, 'a figure without the sentence it was read from: the quote is the paper\'s');
+  // The viewer's own name, schemes and centres are not the competition.
+  assert.match(report, /own: \[\.\.\.\(landlords\?\.own \|\| \[\]\), "Landsec", "Land Securities", \.\.\.portfolio\.schemes\.map\(s => s\.name\), /);
+  assert.match(report, /if \(record && !own\) for \(const item of /);
+  // Each read fails on its own, and what failed is said on the last slide.
+  assert.equal((report.match(/attempt\("/g) || []).length, 8);
+  assert.match(report, /notAvailable: failed,/);
+  assert.match(marketDeckCode, /Not available when this was made: \$\{failed\.join\(", "\)\}\. Nothing was put in their place\./);
+  assert.doesNotMatch(report + marketDeckCode + rules, /anthropic|perplexity|openai|fetch\(|setInterval|setTimeout|cron/i, 'no outside call and no timer: the decks stay free of AI');
+  // The switch is one word, and it ships at "live".
+  assert.match(rules, /export const OTHER_SCHEMES_LEVEL: OtherSchemesLevel = "live";/);
+  assert.match(rules, /stage === "exchanged" \|\| stage === "completed" \|\| level === "live";/);
+  assert.match(rules, /line: cut\(`\$\{live \? `Live, \$\{live\}: ` : ""\}/, 'a row that is not done says so first');
+  // A news item is its headline, never the story; a line BGP typed about its own deal is not a public report.
+  assert.match(rules, /if \(\/\^https\?:\\\/\\\/\/i\.test\(source\)\) \{/);
+  assert.match(rules, /\} else if \(\/\^newsletter:\/i\.test\(source\) && row\.publisher\) named = one\(row\.publisher\);\s*if \(!headline \|\| !named/);
+  assert.match(read('shared/landsec-market-report.ts'), /It holds no footfall, sales, turnover, consumer spending or rental index: the app holds none\./);
+});
+
+test('BGP\'s team posts: staff-only conversations, read in two queries, and never printed by themselves', () => {
+  const posts = code(read('server/landsec-market-posts.ts'));
+  const sql = Array.from(posts.matchAll(/db\.query\(\s*`([\s\S]*?)`/g)).map(m => m[1]);
+  assert.equal(sql.length, 2);
+  const tables = new Set();
+  for (const text of sql) for (const m of text.matchAll(/\b(?:FROM|JOIN)\s+([a-z_]+)/gi)) tables.add(m[1].toLowerCase());
+  assert.deepEqual(Array.from(tables).sort(), ['chat_messages', 'chat_thread_members', 'chat_threads', 'crm_companies', 'users']);
+  const read1 = sql[0];
+  assert.match(read1, /m\.role = 'user'/);
+  assert.match(read1, /t\.is_ai_chat IS NOT TRUE AND t\.created_by <> '__record__'/, 'never a ChatBGP chat or a record\'s shared conversation');
+  assert.match(read1, /COALESCE\(t\.linked_type, ''\) IN \('', 'channel'\)/, 'never a conversation linked to a property, a deal or a company');
+  assert.match(read1, /WHERE who\.person IS NULL OR u\.id IS NULL\s+OR lower\(trim\(COALESCE\(u\.email, ''\)\)\) NOT LIKE '%\$\{STAFF_DOMAIN\}'\s+OR lower\(trim\(COALESCE\(u\.role, ''\)\)\) = 'client'\)/, 'one person who is not BGP staff, or cannot be found, and the conversation is left alone');
+  assert.match(sql[1], /c\.company_type ILIKE 'tenant%' AND c\.archived_at IS NULL AND c\.merged_into_id IS NULL/);
+  assert.doesNotMatch(posts, /anthropic|fetch\(/i);
+  // A deck, the workbook and the gathering never read them: only the editor's list and the draft do.
+  for (const file of ['server/landsec-market-report.ts', 'server/landsec-decks.ts', 'shared/landsec-market-deck.ts', 'shared/landsec-decks.ts', 'server/landsec-reports.ts', 'server/landsec-board-report.ts']) {
+    assert.doesNotMatch(code(read(file)), /landsec-market-posts|teamPosts|MarketTeamPost/, `${file} does not read the team's posts`);
+  }
+  assert.doesNotMatch(code(read('shared/landsec-market-report.ts')).split('export interface MarketData')[1].split('}')[0], /post/i, 'a deck\'s data holds no post');
 });
 
 // Woody, 2026-11-19: "also can you use the bluewater colours and juts have the landsec logo", "not BGP".
@@ -343,11 +435,11 @@ test('the Landsec reports carry Landsec\'s logo and the Landsec report palette: 
 // Woody, 2026-11-19, on the first populated samples: "we dont need complicated excels just visual PDF which can also be power point".
 test('the reports to present are decks: one slide model, drawn as a PDF and as a PowerPoint of the same slides', () => {
   // The three decks are on the registry, and each is built through the one door.
-  assert.deepEqual(LANDSEC_REPORTS.filter(r => r.deck).map(r => r.key), ['board-report', 'leasing-activity-pdf', 'asset-profile']);
+  assert.deepEqual(LANDSEC_REPORTS.filter(r => r.deck).map(r => r.key), ['board-report', 'market-report', 'leasing-activity-pdf', 'asset-profile']);
   const body = builders.slice(builders.indexOf('export async function buildLandsecReport'), builders.indexOf('export function setupLandsecReportRoutes'));
-  for (const key of ['board-report', 'leasing-activity-pdf', 'asset-profile']) assert.match(body, new RegExp(`case "${key}": return deck\\(\\);`));
+  for (const key of ['board-report', 'market-report', 'leasing-activity-pdf', 'asset-profile']) assert.match(body, new RegExp(`case "${key}": return deck\\(\\);`));
   assert.match(body, /const slides = await \(await import\("\.\/landsec-decks"\)\)\.landsecDeck\(def\.key, full, viewer\);\s*return format === "pptx" \? \(await import\("\.\/landsec-deck-pptx"\)\)\.deckPptx\(slides\) : Buffer\.from\(await \(await import\("\.\/landsec-deck-pdf"\)\)\.deckPdf\(slides\)\);/, 'the same slides go to either renderer');
-  for (const key of ['board-report', 'asset-profile', 'leasing-activity-pdf']) assert.match(gather, new RegExp(`case "${key}": return `));
+  for (const key of ['board-report', 'market-report', 'asset-profile', 'leasing-activity-pdf']) assert.match(gather, new RegExp(`case "${key}": return `));
   // The route: a PowerPoint only of a deck, and only one of the two formats.
   const routes = builders.slice(builders.indexOf('export function setupLandsecReportRoutes'));
   assert.match(routes, /const format = deckFormat\(req\.query\.format\);\s*if \(!format \|\| \(format === "pptx" && !def\.deck\)\) return res\.status\(400\)/);
@@ -357,7 +449,8 @@ test('the reports to present are decks: one slide model, drawn as a PDF and as a
     assert.match(text, /for \(const placed of layoutSlide\(s(lide)?\)\) \{/, `${file} places blocks by the shared layout`);
     assert.match(text, /tileBoxes\(t, b\)/);
     assert.match(text, /tileValueSize\(tile\.value, /);
-    assert.match(text, /fitCell\(cells\[i\] \?\? "", widths\[i\]\)/, `${file} cuts a cell to one line by the shared rule`);
+    assert.match(text, /fitCell\(cells\[i\] \?\? "", widths\[i\](, 9\.5, (2|t\.lines === 2 \? 2 : 1))?\)/, `${file} cuts a cell to its lines by the shared rule`);
+    assert.match(text, /tableRowHeight\(t\.lines\)/, `${file} draws a row of two lines at the shared height`);
     assert.doesNotMatch(text, /from "\.\/landsec-(decks|board-[a-z]+|reports)"|from "@shared\/landsec-(decks|board-report)"|lettings|scheme/i, `${file} draws the deck it is given and nothing else`);
   }
   // The PowerPoint's charts and tables are native, so they can be edited: never a picture of a chart.
@@ -414,7 +507,11 @@ test('the page only asks: the list and the rule come from the shared file, and i
   assert.match(page, /\{board && \(\s*<Button [^\n]*data-testid="landsec-report-board-market">/);
   const editor = code(read('client/src/components/landsec/board-market-editor.tsx'));
   const asked = Array.from(editor.matchAll(/["`](\/api\/[^"`?$]*)/g)).map(m => m[1]);
-  assert.deepEqual(Array.from(new Set(asked)).sort(), ['/api/landsec/reports/board-report/market', '/api/landsec/reports/board-report/market/draft']);
+  assert.deepEqual(Array.from(new Set(asked)).sort(), ['/api/landsec/reports/board-report/market', '/api/landsec/reports/board-report/market/draft', '/api/landsec/reports/board-report/market/material']);
+  // A team post is only ever put in the box for a person to edit and save; and the market report's card opens the same editor.
+  assert.match(editor, /const addPost = \(key: BoardMarketKey, held: string, post: MarketTeamPost\) => \{/);
+  assert.doesNotMatch(editor.slice(editor.indexOf('const addPost'), editor.indexOf('return (')), /apiRequest/, 'adding a post saves nothing');
+  assert.match(page, /\{market && \(\s*<Button [^\n]*data-testid="landsec-report-market-words">/);
   assert.match(editor, /\{data\.canDraft && \(/, 'Draft is offered only where the server says so');
   assert.doesNotMatch(editor, /landsecRole|joint_agent|isStaff/, 'who may save or draft is decided on the server');
   const called = Array.from(page.matchAll(/["`](\/api\/[^"`?$]*)/g)).map(m => m[1]);

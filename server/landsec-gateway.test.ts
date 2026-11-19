@@ -489,7 +489,10 @@ test("a joint agent is refused the reports index and every report", () => {
 // sit under the reports address, so the same two lines refuse a joint agent.
 test("a joint agent is refused the board report's market report: reading, saving and drafting", () => {
   for (const [method, path] of [["GET", "/api/landsec/reports/board-report/market?from=2026-08&to=2026-10"], ["PUT", "/api/landsec/reports/board-report/market"],
-    ["POST", "/api/landsec/reports/board-report/market/draft"], ["GET", "/api/landsec/reports/board-report"], ["GET", "/api/landsec/reports/board-report-figures"]] as const) {
+    ["POST", "/api/landsec/reports/board-report/market/draft"], ["GET", "/api/landsec/reports/board-report"], ["GET", "/api/landsec/reports/board-report-figures"],
+    // The market report, its items and what its sections are written from (the team's own posts among them).
+    ["GET", "/api/landsec/reports/market-report"], ["GET", "/api/landsec/reports/market-report?format=pptx"], ["GET", "/api/landsec/reports/market-report-items"],
+    ["GET", "/api/landsec/reports/board-report/market/material?from=2026-09&to=2026-11"]] as const) {
     assert.equal(restrictedLandsecApiRule("joint_agent", method, path), "deny", `${method} ${path}`);
     assert.equal(jointAgentApiDenied(method, path), true, `${method} ${path}`);
   }

@@ -10,7 +10,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage, type RGB } from "pdf-lib";
 import { LANDSEC_REPORT_PALETTE } from "@shared/landsec-reports";
 import {
-  DECK_COLOURS, DECK_PAGE, DECK_TINTS, deckValue, fitCell, layoutSlide, lightOn, readSteps, tileBoxes, tileValueSize,
+  DECK_COLOURS, DECK_PAGE, DECK_TINTS, deckValue, fitCell, layoutSlide, lightOn, readSteps, tableRowHeight, tileBoxes, tileValueSize,
   type Deck, type DeckBox, type DeckCard, type DeckChart, type DeckColour, type DeckSlide, type DeckTable, type DeckTiles, type DeckWords,
 } from "@shared/landsec-deck";
 import { landsecLogoBytes } from "./landsec-report-logo";
@@ -212,24 +212,34 @@ export async function deckPdf(deck: Deck): Promise<Uint8Array> {
       write(cutTo(c.header, widths[i] - pad * 2, 9, bold), x + pad, area.y + P.tableHeadH / 2 - 0.068, 9, { f: bold, color: WHITE, align: c.align === "right" ? "right" : "left", width: widths[i] - pad * 2 });
       x += widths[i];
     });
+    const rowH = tableRowHeight(t.lines);
     t.rows.forEach((cells, r) => {
-      const y = area.y + P.tableHeadH + r * P.tableRowH;
-      if (y + P.tableRowH > b.y + b.h + 0.02) return;
-      if (r % 2 === 1) rect({ x: area.x, y, w: area.w, h: P.tableRowH }, BAND);
+      const y = area.y + P.tableHeadH + r * rowH;
+      if (y + rowH > b.y + b.h + 0.02) return;
+      if (r % 2 === 1) rect({ x: area.x, y, w: area.w, h: rowH }, BAND);
       let cx = area.x;
       t.columns.forEach((c, i) => {
         if (c.steps) {
           // A progress strip: small steps, the first few filled, then the word.
           const { filled, word } = readSteps(cells[i]);
           const side = 0.085, gap = 0.022;
-          for (let k = 0; k < c.steps; k++) rect({ x: cx + pad + k * (side + gap), y: y + P.tableRowH / 2 - side / 2, w: side, h: side }, k < filled ? NAVY : SERIES.grey);
+          for (let k = 0; k < c.steps; k++) rect({ x: cx + pad + k * (side + gap), y: y + rowH / 2 - side / 2, w: side, h: side }, k < filled ? NAVY : SERIES.grey);
           const after = c.steps * (side + gap) + 0.05;
-          write(cutTo(word, widths[i] - pad * 2 - after, 9.5), cx + pad + after, y + P.tableRowH / 2 - 0.072, 9.5);
+          write(cutTo(word, widths[i] - pad * 2 - after, 9.5), cx + pad + after, y + rowH / 2 - 0.072, 9.5);
+          cx += widths[i];
+          return;
+        }
+        if (t.lines === 2) {
+          // Up to two lines, set about the middle of the taller row.
+          const two = wrap(fitCell(cells[i] ?? "", widths[i], 9.5, 2), widths[i] - pad * 2, 9.5).slice(0, 2);
+          if (two.length === 2) two[1] = cutTo(two[1], widths[i] - pad * 2, 9.5);
+          const lead = 0.165, top = y + rowH / 2 - 0.072 - ((two.length - 1) * lead) / 2;
+          two.forEach((line, k) => write(line, cx + pad, top + k * lead, 9.5, { align: c.align === "right" ? "right" : "left", width: widths[i] - pad * 2 }));
           cx += widths[i];
           return;
         }
         const words = cutTo(fitCell(cells[i] ?? "", widths[i]), widths[i] - pad * 2, 9.5);
-        write(words, cx + pad, y + P.tableRowH / 2 - 0.072, 9.5, { align: c.align === "right" ? "right" : "left", width: widths[i] - pad * 2 });
+        write(words, cx + pad, y + rowH / 2 - 0.072, 9.5, { align: c.align === "right" ? "right" : "left", width: widths[i] - pad * 2 });
         cx += widths[i];
       });
     });

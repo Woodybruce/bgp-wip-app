@@ -29,13 +29,13 @@ import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { contactViewer } from "./contact-viewer";
 import { pickSchemes, reportSchemesFor, reportViewer, type ReportScheme } from "./landsec-reports";
-import { resolveLandsecPortfolio } from "./landsec-schemes";
 import type { LandsecViewer } from "./landsec-access";
 import { parseReportPeriod, type ReportPeriod } from "@shared/landsec-reports";
+import { boardMarketSettingsKey, boardSchemeSet, cleanMarketDraft, cleanMarketText, draftFiguresNotSent, type BoardMarketSaved } from "@shared/landsec-board-report";
 import {
-  BOARD_MARKET_SECTIONS, boardMarketSection, boardMarketSettingsKey, boardSchemeSet, cleanMarketDraft, cleanMarketText, draftFiguresNotSent, marketDraftPrompt,
-  type BoardMarket, type BoardMarketKey, type BoardMarketReply, type BoardMarketSaved, type MarketDraftInput, type MarketResearch, type MarketSignal,
-} from "@shared/landsec-board-report";
+  MARKET_WORD_SECTIONS, marketDraftRequest, marketStrip, marketWordSection, sectionMaterial, stripLines,
+  type MarketData, type MarketDraftMaterial, type MarketTeamPost, type MarketWordKey, type MarketWords,
+} from "@shared/landsec-market-report";
 
 type Queryable = { query: (text: string, values?: any[]) => Promise<{ rows: any[] }> };
 
@@ -56,10 +56,10 @@ export function boardDraftDailyCap(): number {
 export const schemeDigest = (keys: string[]): string => crypto.createHash("sha256").update(boardSchemeSet(keys)).digest("hex").slice(0, 16);
 export const marketKeyFor = (period: Pick<ReportPeriod, "from" | "to">, schemeKeys: string[]): string => boardMarketSettingsKey(period.from, period.to, schemeDigest(schemeKeys));
 
-function savedOf(value: any): BoardMarket {
-  const out: BoardMarket = {};
+function savedOf(value: any): MarketWords {
+  const out: MarketWords = {};
   const sections = value && typeof value === "object" && value.sections && typeof value.sections === "object" ? value.sections : {};
-  for (const s of BOARD_MARKET_SECTIONS) {
+  for (const s of MARKET_WORD_SECTIONS) {
     const row = sections[s.key];
     const text = cleanMarketText(row?.text);
     if (!text) continue;
@@ -69,7 +69,7 @@ function savedOf(value: any): BoardMarket {
 }
 
 /** The saved sections for a period and a set of schemes. */
-export async function loadBoardMarket(period: Pick<ReportPeriod, "from" | "to">, schemeKeys: string[], db: Queryable = pool): Promise<BoardMarket> {
+export async function loadBoardMarket(period: Pick<ReportPeriod, "from" | "to">, schemeKeys: string[], db: Queryable = pool): Promise<MarketWords> {
   const row = (await db.query(`/* landsec-board-market:load */ SELECT value FROM system_settings WHERE key = $1`, [marketKeyFor(period, schemeKeys)])).rows[0];
   return savedOf(row?.value);
 }
@@ -81,9 +81,9 @@ export async function loadBoardMarket(period: Pick<ReportPeriod, "from" | "to">,
  * not lose each other's words.
  */
 export async function saveBoardMarketSection(
-  input: { period: Pick<ReportPeriod, "from" | "to">; schemeKeys: string[]; key: BoardMarketKey; text: unknown; loadedAt: unknown; who: { name: string; firm: "BGP" | "Landsec" }; now?: Date },
+  input: { period: Pick<ReportPeriod, "from" | "to">; schemeKeys: string[]; key: MarketWordKey; text: unknown; loadedAt: unknown; who: { name: string; firm: "BGP" | "Landsec" }; now?: Date },
   connect: () => Promise<{ query: Queryable["query"]; release: () => void }> = () => pool.connect() as any,
-): Promise<BoardMarket> {
+): Promise<MarketWords> {
   const text = cleanMarketText(input.text);
   const settingsKey = marketKeyFor(input.period, input.schemeKeys);
   const db = await connect();
@@ -114,50 +114,43 @@ export async function saveBoardMarketSection(
   }
 }
 
-// ── The draft ────────────────────────────────────────────────────────────
+// ── What a section is written from ───────────────────────────────────────
 
-const monthOf = (date: unknown): string | null => { const m = /^(\d{4}-\d{2})/.exec(String(date ?? "")); return m ? m[1] : null; };
-const inMonths = (date: unknown, period: Pick<ReportPeriod, "from" | "to">): boolean => { const m = monthOf(date); return !!m && m >= period.from && m <= period.to; };
+export interface SectionSheet extends Pick<MarketDraftMaterial, "facts" | "items" | "movers" | "research" | "themes"> { key: MarketWordKey; title: string }
+export interface MarketSheet { sections: SectionSheet[]; posts: MarketTeamPost[] }
 
-/** Dated public signals, each with a source link, for the brands given. Nothing typed by BGP and nothing marked a rumour. */
-export async function marketSignals(brands: Map<string, string>, period: ReportPeriod, db: Queryable = pool): Promise<MarketSignal[]> {
-  if (brands.size === 0) return [];
-  const rows = (await db.query(
-    `/* landsec-board-market:signals */
-     SELECT s.brand_company_id, s.signal_type, s.headline, s.source, s.signal_date
-       FROM brand_signals s
-      WHERE s.brand_company_id = ANY($1::varchar[]) AND s.source ~* '^https?://'
-        AND s.signal_date >= $2::date AND s.signal_date < $3::date
-        AND COALESCE(s.signal_type, '') <> 'rumour' AND COALESCE(s.confidence, '') <> 'rumour'
-      ORDER BY s.signal_date DESC LIMIT 300`, [Array.from(brands.keys()), period.start, period.end])).rows;
-  const seen = new Set<string>();
-  const out: MarketSignal[] = [];
-  for (const r of rows) {
-    const headline = String(r.headline || "").trim();
-    const mark = headline.toLowerCase();
-    if (!headline || seen.has(mark) || out.length >= 30) continue;
-    seen.add(mark);
-    out.push({ date: r.signal_date ? new Date(r.signal_date).toISOString().slice(0, 10) : null, brand: brands.get(r.brand_company_id) || "", kind: String(r.signal_type || "news"), headline, source: String(r.source) });
-  }
-  return out;
-}
+// A section's material is the same for a few minutes of editing: drafting six sections reads it once.
+const sheets = new Map<string, { at: number; value: Promise<{ data: MarketData; facts: Map<MarketWordKey, string[]> }> }>();
+const SHEET_MS = 3 * 60 * 1000;
 
-/** Dated research on the benchmark centres that are not Landsec's own, each item with a source link. `brandNames`: only items that name one of these brands (a category group's section). */
-export async function marketResearch(period: ReportPeriod, ownPropertyIds: Set<string>, brandNames: Set<string> | null): Promise<MarketResearch[]> {
-  const { benchmarkCentres, centreRecords } = await import("./benchmark-centres");
-  const records = await centreRecords(benchmarkCentres());
-  const out: MarketResearch[] = [];
-  for (const [centre, record] of records) {
-    if (ownPropertyIds.has(record.id)) continue;
-    const items = Array.isArray(record.research?.items) ? record.research.items : [];
-    for (const item of items) {
-      if (!item?.source_url || !/^https?:\/\//i.test(String(item.source_url)) || !inMonths(item.date, period)) continue;
-      if (brandNames && !(item.brand && brandNames.has(String(item.brand).trim().toLowerCase()))) continue;
-      out.push({ date: String(item.date), centre, kind: String(item.kind || "other"), headline: String(item.headline || "").trim(), source: String(item.source_url) });
+/** The market report's items for a period and a set of schemes, with the figures the report prints for each section. */
+async function materialFor(req: Request, viewer: LandsecViewer, period: ReportPeriod, schemes: ReportScheme[]): Promise<{ data: MarketData; facts: Map<MarketWordKey, string[]> }> {
+  const key = `${marketKeyFor(period, schemes.map(s => s.key))}:${viewer.companyId}`;
+  const hit = sheets.get(key);
+  if (hit && Date.now() - hit.at < SHEET_MS) return hit.value;
+  const value = (async () => {
+    const { boardData, boardFacts } = await import("./landsec-board-report");
+    const { marketData } = await import("./landsec-market-report");
+    const ctx = { req, schemes, period, madeBy: "", madeAt: new Date(), cache: new Map() };
+    const board = await boardData(ctx, viewer);
+    const data = await marketData(ctx, viewer, board);
+    const facts = new Map<MarketWordKey, string[]>();
+    for (const s of MARKET_WORD_SECTIONS) {
+      if (s.competition) { facts.set(s.key, [`Items about other landlords and competing centres in the period: ${data.competition.length}.`]); continue; }
+      facts.set(s.key, [...boardFacts(board, s.group).filter(line => !/^(Brands with an opening story|Store counts|Net change in stores|Planning applications|Job adverts|Leasing requirements)/.test(line)), ...stripLines(marketStrip(data.items, s.group), s.title)]);
     }
-  }
-  return out.filter(r => r.headline).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 20);
+    return { data, facts };
+  })();
+  sheets.set(key, { at: Date.now(), value });
+  value.catch(() => sheets.delete(key));
+  if (sheets.size > 40) for (const [k, v] of sheets) if (Date.now() - v.at > SHEET_MS) sheets.delete(k);
+  return value;
 }
+
+const sheetOf = (m: { data: MarketData; facts: Map<MarketWordKey, string[]> }): SectionSheet[] =>
+  MARKET_WORD_SECTIONS.map(s => ({ key: s.key, title: s.title, facts: m.facts.get(s.key) || [], ...sectionMaterial(m.data, s.key) }));
+
+// ── The draft ────────────────────────────────────────────────────────────
 
 export interface BoardDraftDeps {
   ask?: (system: string, user: string) => Promise<{ text: string; model: string; usage?: any }>;
@@ -168,24 +161,24 @@ export interface BoardDraftDeps {
 async function askAnthropic(system: string, user: string) {
   const { getAnthropicClient, CHATBGP_MODEL } = await import("./utils/anthropic-client");
   const response = await getAnthropicClient(true).messages.create({
-    model: CHATBGP_MODEL, max_tokens: 900, system,
+    model: CHATBGP_MODEL, max_tokens: 1400, system,
     messages: [{ role: "user", content: user }],
   });
   return { text: response.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join(""), model: response.model || CHATBGP_MODEL, usage: response.usage };
 }
 
 /** One section's draft: one call, under the day's allowance. `check` lists figures in the draft that were not in what it was sent. */
-export async function draftMarketSection(input: MarketDraftInput, deps: BoardDraftDeps = {}): Promise<{ text: string; check: string[]; sent: { facts: number; signals: number; research: number } }> {
+export async function draftMarketSection(input: MarketDraftMaterial, deps: BoardDraftDeps = {}): Promise<{ text: string; check: string[]; sent: { facts: number; items: number; research: number; themes: number; posts: number } }> {
   const hasKey = deps.hasKey || (() => !!(process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY));
   if (!hasKey()) throw new BoardMarketError(503, "Drafting is not switched on. Write the section by hand.");
   const claim = deps.claim || (async () => (await import("./requirement-feeds")).claimDailyRead(USAGE_KEY, boardDraftDailyCap()));
   if (!(await claim())) throw new BoardMarketError(429, "Today's allowance of drafts is used. Write the section by hand.");
-  const prompt = marketDraftPrompt(input);
+  const prompt = marketDraftRequest(input);
   const reply = await (deps.ask || askAnthropic)(prompt.system, prompt.user);
   if (!deps.ask) import("./api-usage").then(m => m.logAiUsage({ provider: "anthropic", model: reply.model, feature: FEATURE, usage: reply.usage })).catch(() => {});
   const text = cleanMarketDraft(reply.text);
   if (!text) throw new BoardMarketError(502, "No draft came back. Write the section by hand, or try again.");
-  return { text, check: draftFiguresNotSent(text, prompt.user), sent: { facts: input.facts.length, signals: input.signals.length, research: input.research.length } };
+  return { text, check: draftFiguresNotSent(text, prompt.user), sent: { facts: input.facts.length, items: input.items.length, research: input.research.length, themes: input.themes.length, posts: input.posts.length } };
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────
@@ -213,6 +206,12 @@ const fail = (res: Response, e: any, words: string) => {
   res.status(500).json({ message: words });
 };
 
+/** BGP's team posts of the period, for BGP staff signed in as themselves and nobody else. A failed read is no posts. */
+async function postsFor(req: Request, period: ReportPeriod): Promise<MarketTeamPost[]> {
+  if (!(await contactViewer(req)).staff) return [];
+  return (await import("./landsec-market-posts")).teamPosts(period).catch((e: any) => { console.warn(`[landsec-board-market] team posts: ${e?.message}`); return []; });
+}
+
 export function setupLandsecBoardMarketRoutes(app: Express) {
   // The editor: each section's saved text, who saved it and when.
   app.get("/api/landsec/reports/board-report/market", requireAuth, async (req: Request, res: Response) => {
@@ -221,13 +220,24 @@ export function setupLandsecBoardMarketRoutes(app: Express) {
       if (!viewer) return res.status(403).json(REFUSED);
       const { period, schemes } = await scopeOf(viewer, req.query.from, req.query.to, req.query.schemes);
       const saved = await loadBoardMarket(period, schemes.map(s => s.key));
-      const reply: BoardMarketReply = {
+      res.json({
         period: { from: period.from, to: period.to, label: period.label }, schemes: schemes.map(s => s.name),
-        sections: BOARD_MARKET_SECTIONS.map(s => ({ key: s.key, title: s.title, saved: saved[s.key] || null })),
+        sections: MARKET_WORD_SECTIONS.map(s => ({ key: s.key, title: s.title, saved: saved[s.key] || null })),
         canDraft: (await contactViewer(req)).staff && boardDraftDailyCap() > 0,
-      };
-      res.json(reply);
+      });
     } catch (e: any) { fail(res, e, "The market report could not be loaded."); }
+  });
+
+  // What each section is written from: the items the report lists, and (BGP staff only) the team's own posts to add by hand.
+  app.get("/api/landsec/reports/board-report/market/material", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const viewer = await reportViewer(req);
+      if (!viewer) return res.status(403).json(REFUSED);
+      const { period, schemes } = await scopeOf(viewer, req.query.from, req.query.to, req.query.schemes);
+      const [material, posts] = await Promise.all([materialFor(req, viewer, period, schemes), postsFor(req, period)]);
+      const reply: MarketSheet = { sections: sheetOf(material), posts };
+      res.json(reply);
+    } catch (e: any) { fail(res, e, "What the sections are written from could not be loaded."); }
   });
 
   // Save one section. BGP staff and a Landsec login; empty text clears it.
@@ -235,7 +245,7 @@ export function setupLandsecBoardMarketRoutes(app: Express) {
     try {
       const viewer = await reportViewer(req);
       if (!viewer) return res.status(403).json(REFUSED);
-      const section = boardMarketSection(req.body?.key);
+      const section = marketWordSection(req.body?.key);
       if (!section) return res.status(400).json({ message: "There is no section of that name." });
       const { period, schemes } = await scopeOf(viewer, req.body?.from, req.body?.to, req.body?.schemes);
       const saved = await saveBoardMarketSection({ period, schemeKeys: schemes.map(s => s.key), key: section.key, text: req.body?.text, loadedAt: req.body?.loadedAt, who: await who(req, viewer) });
@@ -249,23 +259,14 @@ export function setupLandsecBoardMarketRoutes(app: Express) {
       const viewer = await reportViewer(req);
       if (!viewer) return res.status(403).json(REFUSED);
       if (!(await contactViewer(req)).staff) return res.status(403).json({ message: "Drafting is for BGP staff. Write the section, then save it." });
-      const section = boardMarketSection(req.body?.key);
+      const section = marketWordSection(req.body?.key);
       if (!section) return res.status(400).json({ message: "There is no section of that name." });
       const { period, schemes } = await scopeOf(viewer, req.body?.from, req.body?.to, req.body?.schemes);
-      const { boardData, boardFacts, boardBrandsIn } = await import("./landsec-board-report");
-      const data = await boardData({ req, schemes, period, madeBy: "", madeAt: new Date(), cache: new Map() }, viewer);
-      const brands = boardBrandsIn(data, section.group);
-      const portfolio = await resolveLandsecPortfolio(viewer.companyId);
-      const own = new Set(portfolio.schemes.flatMap(s => s.properties.map(p => p.id)));
-      const [signals, research] = await Promise.all([
-        marketSignals(brands, period).catch(() => [] as MarketSignal[]),
-        marketResearch(period, own, section.group ? new Set(Array.from(brands.values()).map(n => n.toLowerCase())) : null).catch(() => [] as MarketResearch[]),
-      ]);
-      // The headline stories the pack prints for this section (headline, site and date only) go in with the schemes' own brands' signals.
-      const printed = (data.industry.find(i => i.key === section.key)?.figures.headlines || []).map((h): MarketSignal => ({ date: h.date, brand: h.brand, kind: "story", headline: h.headline, source: `https://${h.site}` }));
-      const known = new Set(signals.map(s => s.headline.toLowerCase()));
-      const stories = [...signals, ...printed.filter(h => !known.has(h.headline.toLowerCase()))].slice(0, 36);
-      res.json(await draftMarketSection({ section, periodLabel: period.label, schemes: schemes.map(s => s.name), facts: boardFacts(data, section.group), signals: stories, research }));
+      const [material, posts] = await Promise.all([materialFor(req, viewer, period, schemes), postsFor(req, period)]);
+      const sheet = sheetOf(material).find(s => s.key === section.key)!;
+      // The team's posts about the section's brands (every post, for the overall section). None for the competition: they tag brands.
+      const about = section.competition ? [] : posts.filter(p => section.key === "overall" || p.section === section.key).slice(0, 25).map(p => `${p.day || "undated"} | ${p.brands.join(", ")} | ${p.text}`);
+      res.json(await draftMarketSection({ section: { key: section.key, title: section.title }, periodLabel: period.label, schemes: schemes.map(s => s.name), facts: sheet.facts, items: sheet.items, movers: sheet.movers, research: sheet.research, themes: sheet.themes, posts: about }));
     } catch (e: any) { fail(res, e, "The draft could not be made."); }
   });
 }

@@ -76,6 +76,28 @@ function isPublisherSender(from: string): boolean {
   return REPORT_SENDER_RULES.some(r => r.scope === "any" && (f.endsWith(`@${r.domain}`) || f.endsWith(`.${r.domain}`)));
 }
 
+/**
+ * The publisher a newsletter signal came from, by the note its reader left on
+ * it ("... Via newsletter: <subject> (<sender>)"): "Propel", "Propertyweek
+ * newsletter". Null when the sender is not a pure trade publisher: a
+ * newsletter from an agent or data firm is not a public report.
+ */
+export function newsletterPublisherOf(detail: unknown): string | null {
+  const m = /Via newsletter: (.*) \(([^()\s]+@[^()\s]+)\)\s*$/.exec(String(detail ?? ""));
+  if (!m || !isPublisherSender(m[2])) return null;
+  const f = m[2].toLowerCase();
+  if (/propel/.test(`${f} ${m[1].toLowerCase()}`)) return "Propel";
+  const name = (f.split("@")[1] || "").replace(/^(?:email|mail|news|newsletter|e|info)\./, "").split(".")[0];
+  const known: Record<string, string> = { propertyweek: "Property Week", greenstreetnews: "Green Street News", estatesgazette: "Estates Gazette", egi: "EG", reactnews: "React News", bisnow: "Bisnow", drapers: "Drapers", "retail-week": "Retail Week", businessoffashion: "Business of Fashion", voguebusiness: "Vogue Business" };
+  return known[name] || (name ? `${name.charAt(0).toUpperCase()}${name.slice(1)} newsletter` : null);
+}
+
+/** The trade publisher whose newsletter an Insights card was drawn from, by the card's own evidence. Null for any other card or sender. */
+export function insightPublisherOf(evidence: unknown): string | null {
+  const sender = parseInsightEvidence(evidence).find(item => item.type === "report-email")?.from;
+  return sender ? newsletterPublisherOf(`Via newsletter: card (${String(sender).trim()})`) : null;
+}
+
 async function ensureTables(): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS insight_themes (

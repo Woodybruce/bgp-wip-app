@@ -94,9 +94,11 @@ test("labels", () => {
   assert.equal(reportPeriodLabel("bad", "2026-12"), "");
 });
 
-test("the registry: the board report's two files then nine reports, unique keys, a format each, and no budgets", () => {
-  assert.equal(LANDSEC_REPORTS.length, 11);
-  assert.equal(new Set(LANDSEC_REPORTS.map(r => r.key)).size, 11);
+test("the registry: the board report's two files, the market report's two, then nine reports, unique keys, a format each, and no budgets", () => {
+  assert.equal(LANDSEC_REPORTS.length, 13);
+  assert.equal(new Set(LANDSEC_REPORTS.map(r => r.key)).size, 13);
+  assert.deepEqual(LANDSEC_REPORTS.filter(r => r.card === "market").map(r => [r.key, r.format]), [["market-report", "pdf"], ["market-report-items", "xlsx"]]);
+  assert.match(landsecReportByKey("market-report")!.note || "", /never the text of the story/);
   assert.deepEqual(LANDSEC_REPORTS.filter(r => r.card === "board").map(r => [r.key, r.format]), [["board-report", "pdf"], ["board-report-figures", "xlsx"]]);
   assert.deepEqual(LANDSEC_REPORTS.slice(0, 2).map(r => r.card), ["board", "board"], "the board report leads the list");
   assert.match(landsecReportByKey("board-report")!.note || "", /only if it is on the app/);
@@ -106,9 +108,9 @@ test("the registry: the board report's two files then nine reports, unique keys,
     assert.ok(r.title && r.description && r.period);
     assert.equal(landsecReportByKey(r.key), r);
   }
-  assert.deepEqual(LANDSEC_REPORTS.filter(r => r.format === "pdf").map(r => r.key), ["board-report", "leasing-activity-pdf", "asset-profile"]);
+  assert.deepEqual(LANDSEC_REPORTS.filter(r => r.format === "pdf").map(r => r.key), ["board-report", "market-report", "leasing-activity-pdf", "asset-profile"]);
   // The three reports to present are decks (a PDF, or a PowerPoint of the same slides); every other entry is an Excel data export.
-  assert.deepEqual(LANDSEC_REPORTS.filter(r => r.deck).map(r => [r.key, r.title]), [["board-report", "Board report"], ["leasing-activity-pdf", "Leasing activity"], ["asset-profile", "Asset profile"]]);
+  assert.deepEqual(LANDSEC_REPORTS.filter(r => r.deck).map(r => [r.key, r.title]), [["board-report", "Board report"], ["market-report", "Market report"], ["leasing-activity-pdf", "Leasing activity"], ["asset-profile", "Asset profile"]]);
   for (const r of LANDSEC_REPORTS) assert.equal(!!r.deck, r.format === "pdf", `${r.key}: a deck is a PDF, an export is Excel`);
   assert.deepEqual(LANDSEC_REPORTS.filter(r => r.schemes === "one").map(r => r.key), ["asset-profile"]);
   assert.match(landsecReportByKey("portfolio")!.note || "", /No budgets/);

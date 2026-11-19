@@ -20,9 +20,11 @@ import {
 } from "./landsec-deck";
 import { shortReportDay, reportMonths, type ReportPeriod } from "./landsec-reports";
 import {
-  BOARD_MARKET_SECTIONS, INDUSTRY_COUNTED, TARGET_BANDS, TARGET_EVENT_WORDS, TARGET_STAGES, categoryRows,
-  type BoardActivity, type BoardCounts, type BoardMarket, type BoardMarketKey, type DealSpeed, type IndustryFigures, type RentalGrowth, type SpeedStat, type TargetRow, type TargetTenants,
+  TARGET_BANDS, TARGET_EVENT_WORDS, TARGET_STAGES, categoryRows,
+  type BoardActivity, type BoardCounts, type DealSpeed, type RentalGrowth, type SpeedStat, type TargetRow, type TargetTenants,
 } from "./landsec-board-report";
+import { MARKET_SOURCES, type MarketData, type MarketWords } from "./landsec-market-report";
+import { boardMarketSlides } from "./landsec-market-deck";
 import { landsecCategoryLabel } from "./landsec";
 
 // ── Shared pieces ────────────────────────────────────────────────────────
@@ -221,9 +223,10 @@ export interface BoardDeckInput {
   /** The target tenants. Null when the Brand CRM plan could not be read. */
   targets: TargetTenants | null;
   roll: DeckRollYear[];
-  industry: Array<{ key: BoardMarketKey; title: string; figures: IndustryFigures }>;
+  /** The market report's items, competition, research and themes (shared/landsec-market-report.ts). */
+  marketData: MarketData;
   /** The words people saved for the market report. */
-  market: BoardMarket;
+  market: MarketWords;
   /** How each figure is counted, in full (BOARD_COUNTED on the server). */
   counted: Record<"lettings" | "hots" | "instructions" | "viewings" | "offers" | "occupancy" | "bulk" | "growth" | "speed" | "targets", string>;
 }
@@ -399,89 +402,17 @@ export function boardDeck(input: BoardDeckInput): Deck {
     rules: [input.counted.speed],
   });
 
-  // The market report: the industry's figures always, the words only where a
-  // person saved them. The overall slide, then every section's figures side by
-  // side, then a slide for each section that has words or a story to show.
-  const figuresOf = (key: BoardMarketKey) => input.industry.find(i => i.key === key)?.figures;
-  const parts = BOARD_MARKET_SECTIONS.filter(sec => sec.key !== "overall");
-  const bySection: DeckSlide = {
-    layout: "content", title: "Market report: by section", subtitle: `The industry in ${input.period.label}, by the groups of Landsec's agency brief`,
-    rows: [{
-      widths: [1.7, 1],
-      blocks: [
-        { kind: "table", title: "The figures, section by section", columns: [
-          { header: "Section", width: 2.3 }, { header: "Openings", width: 1.05, align: "right" }, { header: "Closures", width: 1.05, align: "right" },
-          { header: "Net stores", width: 1.3, align: "right" }, { header: "Planning", width: 1, align: "right" }, { header: "Requirements", width: 1.3, align: "right" },
-        ], rows: parts.map(sec => {
-          const f = figuresOf(sec.key);
-          return [sec.title, f?.signals ? count(f.signals.opening) : "Not available", f?.signals ? count(f.signals.closure) : "Not available",
-            !f?.stores ? "Not available" : f.stores.brands ? `${f.stores.net > 0 ? "+" : ""}${count(f.stores.net)}` : "No counts",
-            f?.planning ? count(f.planning.applications) : "Not available", f?.requirements ? count(f.requirements.added) : "Not available"];
-        }) },
-        chartOrCard({ kind: "chart", chart: "bar", title: "Leasing requirements added, by section", format: "count", categories: parts.map(sec => sec.title), series: [{ ...DECK_SERIES.one, name: "Requirements added", values: parts.map(sec => figuresOf(sec.key)?.requirements?.added ?? 0) }] },
-          { title: "No requirement was added in the period", lines: ["No leasing requirement tied to a brand in these sections was added to the app in the period."] }),
-      ],
-    }],
-    caveat: "Brands with an opening story, and with a closure, CVA or administration story; the net change in stores on brands' own websites; planning applications naming a brand; requirements added. A brand is in a section by its type.",
-    rules: [INDUSTRY_COUNTED],
-  };
-  for (const section of BOARD_MARKET_SECTIONS) {
-    const f = figuresOf(section.key);
-    const saved = input.market[section.key];
-    if (section.key !== "overall" && !saved?.text && !(f?.headlines || []).length) continue;
-    const title = section.key === "overall" ? "Market report" : `Market report: ${section.title}`;
-    const subtitle = section.key === "overall" ? "The industry this period, across every brand on the app" : `The industry this period: ${section.title}`;
-    const signed = (n: number) => `${n > 0 ? "+" : ""}${count(n)}`;
-    const tiles: DeckBlock = { kind: "tiles", tiles: [
-      { label: "Brands with an opening story", value: f?.signals ? count(f.signals.opening) : "Not available" },
-      { label: "Brands with a closure story", value: f?.signals ? count(f.signals.closure) : "Not available" },
-      { label: "Net change in stores", value: !f?.stores ? "Not available" : f.stores.brands ? signed(f.stores.net) : "No counts yet" },
-      { label: "Planning applications", value: f?.planning ? count(f.planning.applications) : "Not available" },
-      { label: "Requirements added", value: f?.requirements ? count(f.requirements.added) : "Not available" },
-    ] };
-    const caveat = "Counted across every brand on the app from public records: a story is its headline, source and date only. No footfall, sales, turnover, spending or rental index is held.";
-    const body = freeHeight(true, DECK_PAGE.tileH + DECK_PAGE.rowGap);
-    const fit = tableRowsThatFit(body, true);
-    const stories = (f?.headlines || []).slice(0, fit);
-    const storyColumns = saved?.text
-      ? [{ header: "Date", width: 1.25 }, { header: "Brand", width: 1.7 }, { header: "Story", width: 3.6 }, { header: "Source", width: 1.5 }]
-      : [{ header: "Date", width: 1.2 }, { header: "Brand", width: 2.2 }, { header: "Story", width: 6.4 }, { header: "Source", width: 2.2 }];
-    const storyBlock: DeckBlock = stories.length
-      ? { kind: "table", title: "In the news", columns: storyColumns, rows: stories.map(h => [shortReportDay(h.date), h.brand, h.headline, h.site]) }
-      : { kind: "card", title: "No dated story is recorded for the period", lines: ["The app holds no story with a link and a date in the period for this section."] };
-    if (!saved?.text) {
-      slides.push({ layout: "content", title, subtitle, rows: [{ blocks: [tiles] }, { blocks: [storyBlock] }], caveat, rules: [INDUSTRY_COUNTED] });
-      continue;
-    }
-    // The words beside the stories; what does not fit carries on over further slides.
-    const half = (DECK_PAGE.w - DECK_PAGE.side * 2 - DECK_PAGE.blockGap) / 2;
-    const lineChars = (width: number) => charsPerLine(width, 11);
-    const linesIn = (height: number) => Math.max(4, Math.floor(((height - DECK_PAGE.blockTitleH - 0.3) * 72) / 15.4));
-    const first = Math.floor(lineChars(half) * linesIn(body) * 0.82);
-    const next = Math.floor(lineChars(DECK_PAGE.w - DECK_PAGE.side * 2) * linesIn(freeHeight(false)) * 0.82);
-    const cut = pageWords(saved.text.split(/\n+/).map(p => p.trim()).filter(Boolean), first, next);
-    const credit = `Written by ${saved.savedBy} (${saved.savedByFirm})`;
-    slides.push({
-      layout: "content", title, subtitle,
-      rows: [{ blocks: [tiles] }, { blocks: [{ kind: "words", title: section.key === "overall" ? "The market" : section.title, paragraphs: cut[0], credit }, storyBlock] }],
-      caveat, rules: [INDUSTRY_COUNTED],
-    });
-    cut.slice(1).forEach((page, i) => slides.push({
-      layout: "content", title: `${title} (continued)`, subtitle: `${i + 2} of ${cut.length}`,
-      rows: [{ blocks: [{ kind: "words", paragraphs: page, credit }] }],
-    }));
-  }
-  // Every section's figures, straight after the overall slide and anything it carried over.
-  const overallEnd = slides.reduce((last, s, i) => (s.title === "Market report" || s.title === "Market report (continued)" ? i : last), -1);
-  slides.splice(overallEnd + 1, 0, bySection);
+  // The market report, in short: the overview, a slide a sector and one for the
+  // competition. The Market report deck holds every item, category by category.
+  slides.push(...boardMarketSlides({ period: input.period, schemes: input.schemes, footer: input.footer, data: input.marketData, words: input.market }));
 
   // The rules, in full, at the back.
   const rules = [
     "What this deck holds: what is recorded in ChatBGP on the day it was made. A letting Landsec did without BGP is in it only if it is on the app. Nothing in it is estimated: a figure the app does not hold is shown as not held and left out of the averages.",
     input.counted.lettings, input.counted.hots, input.counted.instructions, input.counted.viewings, input.counted.offers, input.counted.bulk,
     input.counted.occupancy, input.counted.targets, input.counted.growth, input.counted.speed,
-    `The industry figures: ${INDUSTRY_COUNTED}`,
-    "The market report's words are written by BGP and Landsec. A section with nothing saved prints its figures and no words.",
+    `The market report: ${MARKET_SOURCES}`,
+    "The market report's words are written by BGP and Landsec. A sector with nothing saved shows its items and no words.",
   ];
   const column = (DECK_PAGE.w - DECK_PAGE.side * 2 - DECK_PAGE.blockGap) / 2;
   const perColumn = Math.floor(charsPerLine(column, 9.5) * Math.floor((freeHeight(false) * 72) / 13) * 0.92);

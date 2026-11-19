@@ -8,8 +8,9 @@
 // pages show and nothing else.
 //
 //  - Board report: the board report's own gathered figures (boardData), the
-//    words people saved for the market report, and the lease roll from the
-//    unit feed.
+//    market report's items (server/landsec-market-report.ts), the words people
+//    saved for it, and the lease roll from the unit feed.
+//  - Market report: the same items and words, laid out sector by sector.
 //  - Asset profile: the unit feed for one scheme, the Schemes cards' count
 //    of trading units by brief category, and the scheme's target tenants.
 //  - Target tenants (both decks): the Brand CRM plan read as a Landsec login
@@ -31,7 +32,10 @@ import { UNIT_OCCUPANCY_LABELS, type PropertyUnit } from "@shared/property-units
 import { LANDSEC_CATEGORIES, landsecCategoryLabel } from "@shared/landsec";
 import { reportDay } from "@shared/landsec-reports";
 import { londonDay } from "@shared/stage-since";
-import { targetTenants, viewingHeld, type BoardMarket } from "@shared/landsec-board-report";
+import { targetTenants, viewingHeld } from "@shared/landsec-board-report";
+import type { MarketWords } from "@shared/landsec-market-report";
+import { marketDeck } from "@shared/landsec-market-deck";
+import { marketData } from "./landsec-market-report";
 import type { Deck } from "@shared/landsec-deck";
 import { activityDeck, assetDeck, boardDeck, type DeckRollYear } from "@shared/landsec-decks";
 
@@ -45,9 +49,10 @@ const thisYear = (ctx: Ctx): number => Number(londonDay(ctx.madeAt).slice(0, 4))
 async function boardSlides(ctx: Ctx, viewer: LandsecViewer): Promise<Deck> {
   const [data, market, units] = await Promise.all([
     boardData(ctx, viewer),
-    loadBoardMarket(ctx.period, ctx.schemes.map(s => s.key)).catch((): BoardMarket => ({})),
+    loadBoardMarket(ctx.period, ctx.schemes.map(s => s.key)).catch((): MarketWords => ({})),
     unitsFor(ctx),
   ]);
+  const items = await marketData(ctx, viewer, data);
   return boardDeck({
     period: { label: ctx.period.label, from: ctx.period.from, to: ctx.period.to },
     schemes: ctx.schemes.map(s => ({ key: s.key, name: s.name })),
@@ -56,9 +61,22 @@ async function boardSlides(ctx: Ctx, viewer: LandsecViewer): Promise<Deck> {
     schemeRows: data.schemes.map(s => ({ key: s.key, name: s.name, units: s.units, occupied: s.occupied, vacant: s.vacant, unknown: s.unknown, live: s.live })),
     targets: data.targets,
     roll: rollYears(leaseRoll(units.flatMap(s => s.units.map(u => unitRow(s.scheme, u))))),
-    industry: data.industry,
+    marketData: items,
     market,
     counted: BOARD_COUNTED,
+  });
+}
+
+/** The Market report: who is doing what sector by sector, the competition, the research read, and the words people saved. */
+async function marketSlides(ctx: Ctx, viewer: LandsecViewer): Promise<Deck> {
+  const [data, words] = await Promise.all([
+    boardData(ctx, viewer),
+    loadBoardMarket(ctx.period, ctx.schemes.map(s => s.key)).catch((): MarketWords => ({})),
+  ]);
+  return marketDeck({
+    period: { label: ctx.period.label, from: ctx.period.from, to: ctx.period.to },
+    schemes: ctx.schemes.map(s => ({ key: s.key, name: s.name })),
+    footer: deckFooter(ctx), data: await marketData(ctx, viewer, data), words,
   });
 }
 
@@ -125,6 +143,7 @@ async function activitySlides(ctx: Ctx, viewer: LandsecViewer): Promise<Deck> {
 export async function landsecDeck(key: string, ctx: Ctx, viewer: LandsecViewer): Promise<Deck> {
   switch (key) {
     case "board-report": return boardSlides(ctx, viewer);
+    case "market-report": return marketSlides(ctx, viewer);
     case "asset-profile": return assetSlides(ctx, viewer);
     case "leasing-activity-pdf": return activitySlides(ctx, viewer);
     default: throw new Error(`No deck for report ${key}`);

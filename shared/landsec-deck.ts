@@ -65,6 +65,10 @@ export const DECK_SERIES = {
   targetApproached: { name: "Approached or viewed", colour: "blue" },
   targetTerms: { name: "Negotiating or HOTs", colour: "gold" },
   targetLegal: { name: "Solicitors or let", colour: "navy" },
+  moverGrowing: { name: "Signs of growth", colour: "navy" },
+  moverMoney: { name: "Funding or ownership", colour: "gold" },
+  moverPipeline: { name: "Planning or jobs", colour: "blue" },
+  moverShrinking: { name: "Closures", colour: "grey" },
   one: { name: "", colour: "navy" },
 } as const satisfies Record<string, { name: string; colour: DeckColour }>;
 
@@ -97,7 +101,7 @@ export function readSteps(cell: string | null | undefined): { filled: number; wo
   const m = /^(\d+):([\s\S]*)$/.exec(String(cell ?? ""));
   return m ? { filled: Number(m[1]), word: m[2].trim() } : { filled: 0, word: String(cell ?? "").trim() };
 }
-export interface DeckTable { kind: "table"; title?: string; columns: DeckColumn[]; rows: string[][] }
+export interface DeckTable { kind: "table"; title?: string; columns: DeckColumn[]; rows: string[][]; /** 2: taller rows whose words may run to a second line (a line of news). Default 1. */ lines?: 1 | 2 }
 /** A plain box of words: what stands in for a chart that would be empty, or says a figure is not held. */
 export interface DeckCard { kind: "card"; title: string; lines: string[] }
 /** Words a person wrote (the market report), or the rules at the back. */
@@ -146,7 +150,7 @@ export const DECK_PAGE = {
   rowGap: 0.22, blockGap: 0.34,
   tileH: 1.12, tileGap: 0.14,
   blockTitleH: 0.34, legendH: 0.28,
-  tableHeadH: 0.32, tableRowH: 0.3,
+  tableHeadH: 0.32, tableRowH: 0.3, tableRowH2: 0.46,
 } as const;
 
 export interface DeckBox { x: number; y: number; w: number; h: number }
@@ -202,10 +206,14 @@ export function tileValueSize(value: string, tile: Pick<DeckBox, "w" | "h">): nu
 }
 
 /** How many rows of a table fit a block of this height (inches). */
-export function tableRowsThatFit(height: number, titled = false): number {
+export function tableRowsThatFit(height: number, titled = false, lines: 1 | 2 = 1): number {
   const P = DECK_PAGE;
-  return Math.max(1, Math.floor((height - (titled ? P.blockTitleH : 0) - P.tableHeadH + 0.001) / P.tableRowH));
+  return Math.max(1, Math.floor((height - (titled ? P.blockTitleH : 0) - P.tableHeadH + 0.001) / tableRowHeight(lines)));
 }
+/** The height of one row of a table: a row of two lines is taller. */
+export const tableRowHeight = (lines: 1 | 2 | undefined): number => (lines === 2 ? DECK_PAGE.tableRowH2 : DECK_PAGE.tableRowH);
+/** The height a table of this many rows needs, with its heading row and its title. */
+export const tableHeight = (rows: number, titled = false, lines: 1 | 2 = 1): number => (titled ? DECK_PAGE.blockTitleH : 0) + DECK_PAGE.tableHeadH + rows * tableRowHeight(lines);
 /** The height of the flexible rows of a slide: all of it for one, shared for more. */
 export function freeHeight(caveat: boolean, rowsAbove = 0): number {
   const P = DECK_PAGE;
@@ -232,9 +240,10 @@ export function pagesEven<T>(list: T[], size: number): T[][] {
 export const charsPerLine = (width: number, size: number): number => Math.max(4, Math.floor((width * 72) / (size * 0.5)));
 
 /** A cell's words cut to one line of its column, with "..." when cut. Both renderers write this, so a row is one line in each. */
-export function fitCell(words: string, width: number, size = 9.5): string {
+export function fitCell(words: string, width: number, size = 9.5, lines: 1 | 2 = 1): string {
   const text = String(words ?? "").replace(/\s+/g, " ").trim();
-  const max = Math.max(3, Math.floor(charsPerLine(Math.max(0.2, width - 0.12), size) * 0.92));
+  // Two lines hold a little less than twice one: the first breaks at a word.
+  const max = Math.max(3, Math.floor(charsPerLine(Math.max(0.2, width - 0.12), size) * (lines === 2 ? 1.72 : 0.92)));
   return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 3)).trimEnd()}...`;
 }
 

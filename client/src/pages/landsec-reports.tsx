@@ -173,11 +173,11 @@ export default function LandsecReports() {
 
           <section className="space-y-2" aria-label="Reports to present">
             <h2 className={SECTION_LABEL}>Reports to present</h2>
-            <ul className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+            <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {decks.map(def => {
                 const one = def.schemes === "one";
                 const blocked = !period || (one ? !oneScheme : noneTicked);
-                const board = def.card === "board";
+                const board = def.card === "board", market = def.card === "market";
                 return (
                   <li key={def.key} className="flex flex-col gap-2 rounded-lg border bg-card p-4" data-testid={`landsec-report-${def.key}`}>
                     <div className="flex items-start justify-between gap-2">
@@ -209,6 +209,12 @@ export default function LandsecReports() {
                           <Button type="button" variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" disabled={!period || noneTicked} onClick={() => setMarketOpen(true)} data-testid="landsec-report-board-market">
                             <PenLine className="mr-1 h-3.5 w-3.5" />
                             Market report
+                          </Button>
+                        )}
+                        {market && (
+                          <Button type="button" variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" disabled={!period || noneTicked} onClick={() => setMarketOpen(true)} data-testid="landsec-report-market-words">
+                            <PenLine className="mr-1 h-3.5 w-3.5" />
+                            Write the words
                           </Button>
                         )}
                       </div>

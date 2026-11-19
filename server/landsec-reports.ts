@@ -695,6 +695,8 @@ export async function buildLandsecReport(def: LandsecReportDef, ctx: Omit<Ctx, "
   switch (def.key) {
     case "board-report": return deck();
     case "board-report-figures": return (await import("./landsec-board-report")).boardReportWorkbook(def, full, viewer);
+    case "market-report": return deck();
+    case "market-report-items": return (await import("./landsec-market-report")).marketWorkbook(def, full, viewer);
     case "tenancy-schedule": return workbookOf(def, full, await tenancySheets(full));
     case "leasing-activity": return workbookOf(def, full, await activitySheets(full));
     case "leasing-activity-pdf": return deck();

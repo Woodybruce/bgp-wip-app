@@ -153,8 +153,8 @@ export interface LandsecReportDef {
   period: string;
   /** Anything the report does not hold, said on the card. */
   note?: string;
-  /** "board" = the board report and the workbook of its figures. */
-  card?: "board";
+  /** "board" = the board report and the workbook of its figures; "market" = the market report and the workbook of its items. Both have the market report's words to write. */
+  card?: "board" | "market";
 }
 
 export const LANDSEC_REPORTS: readonly LandsecReportDef[] = [
@@ -162,14 +162,27 @@ export const LANDSEC_REPORTS: readonly LandsecReportDef[] = [
   // quarter, and the figures behind it. Its rules are shared/landsec-board-report.ts.
   {
     key: "board-report", title: "Board report", format: "pdf", deck: true, schemes: "schemes", card: "board",
-    description: "The deck to present each quarter: headlines, letting activity by scheme, live lettings, target tenants, occupancy, the lease roll, rental growth, deal speed and the market report, a slide a section.",
+    description: "The deck to present each quarter: headlines, letting activity by scheme, live lettings, target tenants, occupancy, the lease roll, rental growth, deal speed and the market report in short.",
     period: "Lettings, Heads of Terms, new instructions, viewings and offers dated in the period. Occupancy, live lettings, the lease roll and brand stages are as recorded today.",
-    note: "It holds what is recorded in ChatBGP. A letting Landsec did without BGP is in it only if it is on the app. The market report's words are on a slide only once someone has saved them; the industry figures are counted by the app and are always there.",
+    note: "It holds what is recorded in ChatBGP. A letting Landsec did without BGP is in it only if it is on the app. Its market part is the short form of the Market report: the overview, a slide a sector and one for the competition.",
   },
   {
     key: "board-report-figures", title: "Board report figures", format: "xlsx", schemes: "schemes", card: "board",
     description: "The figures behind the board report, one sheet per section, with every letting, viewing count and brand line it was worked out from.",
     period: "The same period and rules as the board report.",
+  },
+  // The market report (Woody, 2026-11-19): who is doing what, sector by sector, and the competition.
+  // Its rules are shared/landsec-market-report.ts.
+  {
+    key: "market-report", title: "Market report", format: "pdf", deck: true, schemes: "schemes", card: "market",
+    description: "Who is doing what, sector by sector as Brands groups them: openings, closures, funding, changes of owner, planning and requirements, the most active brands, what BGP's own records hold, the competition (other landlords and competing centres) and the research read in the period.",
+    period: "Public reports, BGP's records and research dated in the period. A letting at another scheme that is not yet done is marked Live.",
+    note: "A news item is its headline, publisher and date, never the text of the story. The words on each sector's slide are there only once someone has saved them. No footfall, sales, turnover, spending or rental index: the app holds none.",
+  },
+  {
+    key: "market-report-items", title: "Market report items", format: "xlsx", schemes: "schemes", card: "market",
+    description: "Every item behind the market report, by sector and category, with the competition, the most active brands, the research and the themes.",
+    period: "The same period and rules as the market report.",
   },
   {
     key: "tenancy-schedule", title: "Tenancy schedule", format: "xlsx", schemes: "schemes",

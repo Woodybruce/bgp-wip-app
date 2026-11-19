@@ -10,7 +10,7 @@ import PptxGenJSImport from "pptxgenjs";
 import JSZip from "jszip";
 import { LANDSEC_REPORT_PALETTE } from "@shared/landsec-reports";
 import {
-  DECK_COLOURS, DECK_PAGE, DECK_TINTS, fitCell, layoutSlide, lightOn, readSteps, tileBoxes, tileValueSize,
+  DECK_COLOURS, DECK_PAGE, DECK_TINTS, fitCell, layoutSlide, lightOn, readSteps, tableRowHeight, tileBoxes, tileValueSize,
   type Deck, type DeckBox, type DeckCard, type DeckChart, type DeckSlide, type DeckTable, type DeckTiles, type DeckValueFormat, type DeckWords,
 } from "@shared/landsec-deck";
 import { LANDSEC_LOGO_RATIO, landsecLogoBytes } from "./landsec-report-logo";
@@ -111,10 +111,10 @@ export async function deckPptx(deck: Deck): Promise<Buffer> {
     };
     const rows = [
       t.columns.map((c, i) => cell(c.header, i, { bold: true, color: WHITE, fill: { color: NAVY }, fontSize: 9 })),
-      ...t.rows.map((cells, r) => t.columns.map((c, i) => (c.steps ? strip(cells[i] ?? "", c.steps, r) : cell(fitCell(cells[i] ?? "", widths[i]), i, { color: TEXT, fontSize: 9.5, ...band(r) })))),
+      ...t.rows.map((cells, r) => t.columns.map((c, i) => (c.steps ? strip(cells[i] ?? "", c.steps, r) : cell(fitCell(cells[i] ?? "", widths[i], 9.5, t.lines === 2 ? 2 : 1), i, { color: TEXT, fontSize: 9.5, ...band(r) })))),
     ];
     slide.addTable(rows, {
-      x: area.x, y: area.y, w: area.w, colW: widths, rowH: [P.tableHeadH, ...t.rows.map(() => P.tableRowH)],
+      x: area.x, y: area.y, w: area.w, colW: widths, rowH: [P.tableHeadH, ...t.rows.map(() => tableRowHeight(t.lines))],
       border: { type: "none" }, margin: [0.02, 0.07, 0.02, 0.07], autoPage: false,
     });
   };

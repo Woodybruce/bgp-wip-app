@@ -6,8 +6,9 @@ import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { parseReportPeriod } from "@shared/landsec-reports";
-import { boardActivity, brandEngagement, dealSpeed, rentalGrowth, type BoardDeal, type MarketDraftInput } from "@shared/landsec-board-report";
-import { BoardMarketError, boardDraftDailyCap, draftMarketSection, loadBoardMarket, marketKeyFor, marketSignals, saveBoardMarketSection, schemeDigest } from "./landsec-board-market";
+import { boardActivity, brandEngagement, dealSpeed, rentalGrowth, type BoardDeal } from "@shared/landsec-board-report";
+import type { MarketDraftMaterial } from "@shared/landsec-market-report";
+import { BoardMarketError, boardDraftDailyCap, draftMarketSection, loadBoardMarket, marketKeyFor, saveBoardMarketSection, schemeDigest } from "./landsec-board-market";
 import { boardBrandsIn, boardFacts, BOARD_COUNTED, type BoardData } from "./landsec-board-report";
 
 const parsed = parseReportPeriod("2026-08", "2026-10");
@@ -64,10 +65,11 @@ test("a save over somebody else's newer text is refused, and nothing changes", a
   assert.equal(ok.overall?.text, "Agreed words.");
 });
 
-const INPUT: MarketDraftInput = {
+const INPUT: MarketDraftMaterial = {
   section: { key: "hospitality", title: "Hospitality" }, periodLabel: "Aug to Oct 2026", schemes: ["Bluewater"],
   facts: ["Hospitality, all categories: lettings exchanged or completed 3, Heads of Terms agreed 2, new instructions 1, viewings held 12, offers received 4."],
-  signals: [{ date: "2026-09-03", brand: "Wingstop", kind: "opening", headline: "Wingstop to open 20 UK sites", source: "https://www.propelinfo.com/a" }], research: [],
+  items: ["3 Sep 2026 | Wingstop | Opening | Wingstop to open 20 UK sites | source: Propel"], movers: ["Wingstop: 1 sign of growth"], research: [], themes: [],
+  posts: ["2026-09-10 | Wingstop | Wingstop told us they want two more in Kent"],
 };
 
 test("the draft: no key, no call; no allowance, no call; then one call and a reply made plain", async () => {
@@ -80,10 +82,11 @@ test("the draft: no key, no call; no allowance, no call; then one call and a rep
   const out = await draftMarketSection(INPUT, { ask: async (system, user) => { seen = { system, user }; return ask(); }, hasKey: () => true, claim: async () => true });
   assert.equal(calls, 1);
   assert.match(seen!.system, /Write nothing you were not sent/);
-  assert.match(seen!.user, /Wingstop to open 20 UK sites \| source: propelinfo\.com/);
+  assert.match(seen!.user, /Wingstop to open 20 UK sites \| source: Propel/);
+  assert.match(seen!.user, /BGP TEAM POSTS\n- 2026-09-10 \| Wingstop \| Wingstop told us they want two more in Kent/);
   assert.doesNotMatch(out.text, /[#*]|https?:/);
   assert.deepEqual(out.check, ["7%"], "a figure that was not in what it was sent is listed for the person to check");
-  assert.deepEqual(out.sent, { facts: 1, signals: 1, research: 0 });
+  assert.deepEqual(out.sent, { facts: 1, items: 1, research: 0, themes: 0, posts: 1 });
   await assert.rejects(draftMarketSection(INPUT, { ask: async () => ({ text: "  ", model: "m" }), hasKey: () => true, claim: async () => true }), (e: any) => e instanceof BoardMarketError && e.status === 502);
 });
 
@@ -95,23 +98,6 @@ test("the day's allowance of drafts: a default, a figure from the environment, a
     process.env.LANDSEC_BOARD_DRAFT_DAILY_CAP = "12"; assert.equal(boardDraftDailyCap(), 12);
     process.env.LANDSEC_BOARD_DRAFT_DAILY_CAP = "lots"; assert.equal(boardDraftDailyCap(), 40);
   } finally { if (held == null) delete process.env.LANDSEC_BOARD_DRAFT_DAILY_CAP; else process.env.LANDSEC_BOARD_DRAFT_DAILY_CAP = held; }
-});
-
-test("signals: one line per headline, named by brand, and none asked for with no brand", async () => {
-  let asked = 0;
-  const db = { query: async (_sql: string, values: any[] = []) => {
-    asked += 1;
-    assert.deepEqual(values.slice(1), [Q.start, Q.end]);
-    return { rows: [
-      { brand_company_id: "c1", signal_type: "opening", headline: "Wingstop to open 20 UK sites", source: "https://a.example/1", signal_date: "2026-09-03T00:00:00Z" },
-      { brand_company_id: "c1", signal_type: "opening", headline: "wingstop to open 20 UK sites", source: "https://b.example/2", signal_date: "2026-09-02T00:00:00Z" },
-      { brand_company_id: "c2", signal_type: null, headline: "Gail's signs at a centre", source: "https://c.example/3", signal_date: null },
-    ] };
-  } };
-  const out = await marketSignals(new Map([["c1", "Wingstop"], ["c2", "Gail's"]]), Q, db);
-  assert.deepEqual(out.map(s => [s.brand, s.kind, s.date]), [["Wingstop", "opening", "2026-09-03"], ["Gail's", "news", null]]);
-  assert.deepEqual(await marketSignals(new Map(), Q, db), []);
-  assert.equal(asked, 1);
 });
 
 test("the facts a draft is written from are the pack's own lines, cut to the section's category group", () => {
@@ -129,6 +115,7 @@ test("the facts a draft is written from are the pack's own lines, cut to the sec
     activity: boardActivity({ deals, viewings: [], offers: [] }, Q, "2026-11-19"), growth: rentalGrowth(deals, Q), speed: dealSpeed(deals, Q),
     brandLines: lines, engagement: brandEngagement(lines, Q),
     brands: new Map([["c1", { name: "Wingstop", category: "cafe_qsr" }], ["c2", { name: "Hollywood Bowl", category: "competitive_socialising" }], ["c3", { name: "A landlord", category: null }]]),
+    industryRows: { signals: [], snapshots: [], pipeline: [], requirements: [] }, tradingBrandIds: new Set(), targetBrandIds: new Set(), ownActivity: [],
     industry: [
       { key: "overall", title: "Overall", figures: { signals: { opening: 4, closure: 1, net: 3, stories: 9 }, stores: null, planning: { applications: 6, brands: 2 }, jobs: null, requirements: { added: 5, brands: 4, noBrand: 0 }, headlines: [] } },
       { key: "leisure", title: "Leisure", figures: { signals: { opening: 1, closure: 1, net: 0, stories: 2 }, stores: { brands: 0, net: 0, up: 0, down: 0 }, planning: null, jobs: null, requirements: null, headlines: [] } },
