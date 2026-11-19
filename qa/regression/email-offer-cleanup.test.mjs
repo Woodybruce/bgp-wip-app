@@ -207,10 +207,12 @@ test('preview, apply and undo, for real', { skip }, async () => {
     assert.deepEqual(out.counts, { deleted: 3, rounds: 1, units: 3, skipped: 1, notPreviewed: 2, failed: 0 });
     assert.equal(out.byName, 'Ada Admin');
     assert.deepEqual(out.skipped, [{ id: 'o2', reason: 'status is Negotiating, saved since the import' }]);
-    const left = (await run(`SELECT id FROM unit_offers ORDER BY id`)).rows.map(r => r.id);
+    // Sorted here, not by the database: the workflow's Postgres sorts by en_US.utf8, which ignores hyphens.
+    const left = (await run(`SELECT id FROM unit_offers`)).rows.map(r => r.id).sort();
     assert.deepEqual(left, ['o-hots', 'o-manual', 'o-rec', 'o-sug', 'o-sweep', 'o2', 'o4', 'o5', 'o6']);
-    assert.deepEqual((await run(`SELECT id FROM unit_offer_rounds ORDER BY id`)).rows.map(r => r.id), ['r5a', 'r5b']);
-    const log = (await run(`SELECT table_name, record_id, action, prior FROM investment_comp_migration_log WHERE batch = $1 ORDER BY table_name, record_id`, [out.batch])).rows;
+    assert.deepEqual((await run(`SELECT id FROM unit_offer_rounds`)).rows.map(r => r.id).sort(), ['r5a', 'r5b']);
+    const log = (await run(`SELECT table_name, record_id, action, prior FROM investment_comp_migration_log WHERE batch = $1`, [out.batch])).rows
+      .sort((a, b) => { const x = `${a.table_name} ${a.record_id}`, y = `${b.table_name} ${b.record_id}`; return x < y ? -1 : x > y ? 1 : 0; });
     assert.deepEqual(log.map(l => [l.table_name, l.record_id, l.action]), [
       ['unit_offer_rounds', 'r1', 'deleted'], ['unit_offers', 'o-orphan', 'deleted'], ['unit_offers', 'o1', 'deleted'], ['unit_offers', 'o3', 'deleted'],
     ]);
