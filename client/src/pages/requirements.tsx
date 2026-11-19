@@ -83,6 +83,7 @@ import { BoardRows } from "@/components/requirements-board/board-rows";
 import { BOARD_PILL_LABELS, countPills, onPill, type BoardPill, type BoardResponse, type BoardRow } from "@shared/requirements-board";
 // The requirement panel loads with its brand cards only when it opens.
 const RequirementPanel = lazy(() => import("@/components/requirements-board/requirement-panel"));
+import { ConfirmHowDialog } from "@/components/requirements-board/confirm-how-dialog";
 import {
   requirementLive, requirementGoingStale, formatRequirementDay,
   type RequirementLive,
@@ -633,10 +634,8 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
   });
   const stillLiveId = stillLiveMutation.isPending ? (stillLiveMutation.variables?.id ?? null) : null;
   const [confirmAsk, setConfirmAsk] = useState<CrmRequirementsLeasing | null>(null);
-  const [confirmHow, setConfirmHow] = useState("call");
   const confirmRow = (item: CrmRequirementsLeasing) => {
     if (liveMap.get(item.id)?.confirmed) return stillLiveMutation.mutate({ id: item.id });
-    setConfirmHow("call");
     setConfirmAsk(item);
   };
   // "Not a requirement" on a draft archives it; the toast can put it back.
@@ -1169,47 +1168,12 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList, requ
       )}
 
       {canUseCentre && (
-        <Dialog open={!!confirmAsk} onOpenChange={(o) => { if (!o) setConfirmAsk(null); }}>
-          <DialogContent className="sm:max-w-md" data-testid="dialog-confirm-how">
-            <DialogHeader>
-              <DialogTitle>How do you know?</DialogTitle>
-              <DialogDescription>
-                Nobody has confirmed {confirmAsk?.name || "this requirement"} before. You are recorded as confirming it today, with how you know.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-1.5" role="radiogroup" aria-label="How do you know?">
-              {([
-                ["call", "I spoke to the brand or its agent (call)"],
-                ["meeting", "I met the brand or its agent"],
-                ["email", "They told me by email"],
-                ["chat", "They told me by message or chat"],
-                ["still_live", "No conversation: I am vouching for it myself"],
-              ] as const).map(([value, label]) => (
-                <button key={value} type="button" role="radio" aria-checked={confirmHow === value} onClick={() => setConfirmHow(value)}
-                  className={cn("flex min-h-11 w-full items-center gap-2 rounded-md border p-2 text-left text-sm", confirmHow === value ? "border-foreground bg-muted/40" : "border-border hover:bg-muted/30")}
-                  data-testid={`confirm-how-${value}`}>
-                  <span className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded-full border", confirmHow === value ? "border-foreground bg-foreground text-background" : "border-border")}>
-                    {confirmHow === value && <Check className="h-3 w-3" />}
-                  </span>
-                  <span className="min-w-0">{label}</span>
-                </button>
-              ))}
-            </div>
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setConfirmAsk(null)} data-testid="confirm-how-cancel">Cancel</Button>
-              <Button
-                onClick={() => {
-                  if (!confirmAsk) return;
-                  stillLiveMutation.mutate({ id: confirmAsk.id, how: confirmHow === "still_live" ? undefined : confirmHow });
-                  setConfirmAsk(null);
-                }}
-                data-testid="confirm-how-submit"
-              >
-                Confirm
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <ConfirmHowDialog name={confirmAsk?.name || null} open={!!confirmAsk} onClose={() => setConfirmAsk(null)}
+          onConfirm={(how) => {
+            if (!confirmAsk) return;
+            stillLiveMutation.mutate({ id: confirmAsk.id, how });
+            setConfirmAsk(null);
+          }} />
       )}
 
       {canUseCentre && (

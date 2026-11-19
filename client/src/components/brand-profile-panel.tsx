@@ -2,6 +2,7 @@ import { aboutText } from "@/lib/about-text";
 import { isRestrictedLandsecRole } from "@/components/landsec/deal-clock";
 import { Kyc4uStatusStrip } from "@/components/kyc4u-panel";
 import { formatSizeList } from "@/lib/format-size";
+import { BrandMarketListings, type BrandMarketListing } from "@/components/brand-page/market-listings";
 import { snippetAddsNothing } from "@shared/news-snippet";
 import { CLOSED_STATUSES, DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 import { BrandViewingActivity, brandViewingRows } from "@/components/brand-viewing-activity";
@@ -195,7 +196,10 @@ interface BrandProfile {
     published_at: string | null;
     category: string | null;
   }>;
-  requirements: Array<{ id: string; name: string | null; use: string[] | null; size: string[] | null; requirement_locations: string[] | null; status: string | null; updated_at: string | null }>;
+  // For BGP staff each row also carries its state and dated line (the one live rule).
+  requirements: Array<{ id: string; name: string | null; use: string[] | null; size: string[] | null; requirement_locations: string[] | null; status: string | null; updated_at: string | null; state_label?: string; date_label?: string }>;
+  // BGP staff only: the brand's unconfirmed market listings (decision 7 of the board review).
+  marketListings?: BrandMarketListing[];
   pitchedTo: Array<{ id: string; unit_name: string | null; target_brands: string | null; status: string | null; priority: string | null; property_id: string; property_name: string; property_address: string | null; updated_at: string | null }>;
   // contacts is re-declared further down with interaction stats — keep this
   // here for backwards-compat with code that destructures from BrandProfile.
@@ -1703,6 +1707,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const pitchedTo = data.pitchedTo || [];
   const liveLocations = (data as any).liveLocations || [];
   const requirements = data.requirements || [];
+  const marketListings = isClientViewer ? [] : (data.marketListings || []);
   const completedDeals = data.completedDealRows || [];
   const activeDeals = data.activeDealRows || [];
   // Full-set counts from the server aggregate — the deal list is capped at
@@ -1944,7 +1949,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       ...(brandFactsFirst ? [
         activeDealCount ? <span key="live">{num(activeDealCount)} live deal{activeDealCount === 1 ? "" : "s"}</span> : null,
         completedDealCount ? <span key="completed">{num(completedDealCount)} completed</span> : null,
-        liveRequirementCount ? <span key="requirements">{num(liveRequirementCount)} requirement{liveRequirementCount === 1 ? "" : "s"}</span> : null,
+        liveRequirementCount ? <Link key="requirements" href={`/requirements?companyId=${encodeURIComponent(companyId)}`} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="link-brand-requirements-count">{num(liveRequirementCount)} requirement{liveRequirementCount === 1 ? "" : "s"}</Link> : null,
         <button key="contacts" type="button" onClick={() => setPanelSection("more")} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="button-brand-contacts-count">{num(data.contacts.length)} contact{data.contacts.length === 1 ? "" : "s"} in the CRM</button>,
       ] : []),
       threads ? (stats
@@ -3146,14 +3151,17 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     return (
                       <Link
                         key={r.id}
-                        href={`/requirements?companyId=${c.id}`}
+                        href={`/requirements?requirementId=${encodeURIComponent(r.id)}`}
                         className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5"
+                        data-testid={`brand-requirement-${r.id}`}
                       >
                         {useClass && <Badge variant="outline" className="text-[11px] shrink-0">{useClass}</Badge>}
                         {size && <span className="font-medium shrink-0">{size}</span>}
                         {locations && <span className="truncate text-muted-foreground">{locations}</span>}
                         {/* A record with no use, size or place still gets a row: its name, so the count and the rows agree. */}
                         {brandTop && !useClass && !size && !locations && <span className="truncate font-medium">{r.name || "Requirement on file"}</span>}
+                        {/* BGP staff: the state and its dated line, as the board shows them. */}
+                        {!isClientViewer && r.date_label && <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{r.state_label ? `${r.state_label} · ` : ""}{r.date_label}</span>}
                       </Link>
                     );
                   })}
@@ -3162,6 +3170,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               </div>
             );
   const pipnetRequirementsBlock = !isLandlord && <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} pattern={brandTop} />;
+  // The brand's market listings for BGP staff, labelled and dated, each with
+  // Confirm (decision 7 of the board review, 19 November 2026).
+  const marketListingsBlock = !isLandlord && marketListings.length > 0 && (
+    <BrandMarketListings companyId={companyId} listings={marketListings} heading={brandTop
+      ? <BrandBlockHeading count={marketListings.length} action={<Link href={`/requirements?companyId=${encodeURIComponent(companyId)}`} className={brandCardAction}>Open</Link>}><FileText className="w-3.5 h-3.5" /> Market listings</BrandBlockHeading>
+      : <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1"><FileText className="w-3 h-3" /> Market listings ({marketListings.length})</div>} />
+  );
 
   // Brand pages: an Expansion card with nothing in it (score 0 with no
   // why-lines, no research, requirements, PIPnet rows, signals or agents) is
@@ -3169,7 +3184,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // the card appears if that finds rows. Staff open it from the quiet line.
   const expansionEmpty = brandOverview && !addRep && !addSignalOpen && !expansionToolsOpen
     && !((hunter?.expansionScore ?? 0) > 0) && !hunter?.lines?.length && !c.brand_analysis
-    && liveRequirementCount === 0 && !pipnetReqs?.rows?.length
+    && liveRequirementCount === 0 && marketListings.length === 0 && !pipnetReqs?.rows?.length
     && dedupedSignals.length === 0 && data.representing.length === 0;
 
   // ── The top of a brand's page (Woody, 2026-11-12: "still looks a bit
@@ -3444,9 +3459,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     // The requirements card is drawn once there is a requirement to show
     // (BGP's own, or one on PIPnet). With none, a client login gets nothing
     // and staff get quiet lines with the actions that fill it.
-    const hasRequirements = liveRequirementCount > 0 || !!pipnetReqs?.rows?.length;
+    const hasRequirements = liveRequirementCount > 0 || marketListings.length > 0 || !!pipnetReqs?.rows?.length;
     const requirementsCard = hasRequirements ? (
-      <div className={card} data-testid="brand-requirements-card"><div className="space-y-2.5">{bgpRequirementsBlock}{pipnetRequirementsBlock}</div></div>
+      <div className={card} data-testid="brand-requirements-card"><div className="space-y-2.5">{bgpRequirementsBlock}{marketListingsBlock}{pipnetRequirementsBlock}</div></div>
     ) : null;
     const requirementsQuiet = !hasRequirements && !isClientViewer ? <>
       <BrandQuietLine testId="brand-requirements-empty">No BGP requirement recorded · <Link href={`/requirements?companyId=${c.id}&new=1`} className={brandQuietLink}>Add a requirement</Link></BrandQuietLine>
@@ -4167,6 +4182,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             {/* Active internal requirements — what this brand has on our books.
                 Occupier-only: a landlord lets space rather than seeking it. */}
             {bgpRequirementsBlock}
+            {marketListingsBlock}
 
             {/* Pipnet requirements — external feed of what the brand is asking
                 the wider market for. Lazy-fetched, cached server-side 1h.

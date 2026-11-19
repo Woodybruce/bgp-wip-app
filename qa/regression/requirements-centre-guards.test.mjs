@@ -254,6 +254,12 @@ test('the tray never splits a size at its thousands comma, and a first Confirm a
   assert.doesNotMatch(tray, /fields\.size = textList\(/);
   const page = source('client/src/pages/requirements.tsx');
   assert.match(page, /if \(liveMap\.get\(item\.id\)\?\.confirmed\) return stillLiveMutation\.mutate\(\{ id: item\.id \}\)/);
-  for (const id of ['dialog-confirm-how', 'confirm-how-submit', 'button-undo-dismiss-draft-', 'button-undo-dismiss-news-']) assert.ok(page.includes(id), `missing data-testid ${id}`);
+  for (const id of ['button-undo-dismiss-draft-', 'button-undo-dismiss-news-']) assert.ok(page.includes(id), `missing data-testid ${id}`);
+  // "How do you know?" is one dialog (19 November 2026), shared by the board
+  // and the brand page's market listings; "no conversation" sends no way of knowing.
+  const dialog = source('client/src/components/requirements-board/confirm-how-dialog.tsx');
+  for (const id of ['dialog-confirm-how', 'confirm-how-submit']) assert.ok(dialog.includes(id), `missing data-testid ${id}`);
+  assert.match(dialog, /onConfirm\(how === "still_live" \? undefined : how\)/);
+  assert.match(page, /<ConfirmHowDialog name=\{confirmAsk\?\.name \|\| null\} open=\{!!confirmAsk\}/);
 });
 

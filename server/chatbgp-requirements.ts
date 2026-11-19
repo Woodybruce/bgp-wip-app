@@ -150,7 +150,11 @@ function oneLine(r: RequirementRow, now: Date): string {
   return `${d.name}${facts ? ` (${facts})` : ""}: ${d.state}, ${d.howKnown}`;
 }
 
-const pageUrl = (companyId: string | null | undefined) => (companyId ? `/requirements?companyId=${encodeURIComponent(companyId)}` : "/requirements");
+// A receipt opens the requirement's panel on the board (?requirementId=);
+// with no id, the brand's requirements.
+const pageUrl = (requirementId: string | null | undefined, companyId?: string | null) =>
+  requirementId ? `/requirements?requirementId=${encodeURIComponent(requirementId)}`
+  : companyId ? `/requirements?companyId=${encodeURIComponent(companyId)}` : "/requirements";
 const fail = (message: string, extra: Record<string, any> = {}): ChatRequirementResult => ({ success: false, error: message, message, ...extra });
 
 /**
@@ -194,7 +198,7 @@ export async function logRequirementFromChat(store: IntakeStore, raw: any, actor
     if (b.suggestionId) return fail(`"${b.brandName}" is still not matched to a brand in the CRM. The suggestion is still waiting in To confirm. Nothing else was saved.`);
     // Never invent a brand: the person's note waits as a suggestion carrying the name.
     const out = await confirm(store, { evidence }, actor, now);
-    if (out.outcome === "duplicate" && out.requirement) return { success: true, action: "already_logged", entity: "requirement", ...describe(out.requirement, now), url: pageUrl(out.requirement.company_id), message: `This was already logged today: ${oneLine(out.requirement, now)}. Nothing new was saved.` };
+    if (out.outcome === "duplicate" && out.requirement) return { success: true, action: "already_logged", entity: "requirement", ...describe(out.requirement, now), url: pageUrl(out.requirement.id, out.requirement.company_id), message: `This was already logged today: ${oneLine(out.requirement, now)}. Nothing new was saved.` };
     return {
       success: true, action: "suggested", entity: "requirement suggestion", requirementSaved: false, suggestionId: out.suggestionId || null,
       brandSaid: b.brandName, reason: tied ? "ambiguous" : "unmatched", url: "/requirements",
@@ -230,7 +234,7 @@ export async function logRequirementFromChat(store: IntakeStore, raw: any, actor
   }, actor, now);
 
   if (out.outcome === "duplicate" || !out.requirement) {
-    if (out.requirement) return { success: true, action: "already_logged", entity: "requirement", ...describe(out.requirement, now), url: pageUrl(out.requirement.company_id), message: `This was already logged today: ${oneLine(out.requirement, now)}. Nothing new was saved.` };
+    if (out.requirement) return { success: true, action: "already_logged", entity: "requirement", ...describe(out.requirement, now), url: pageUrl(out.requirement.id, out.requirement.company_id), message: `This was already logged today: ${oneLine(out.requirement, now)}. Nothing new was saved.` };
     return { success: true, action: "already_logged", entity: "requirement suggestion", requirementSaved: false, suggestionId: out.suggestionId || null, url: "/requirements", message: "This was already recorded today and is waiting in To confirm on the Requirements page. Nothing new was saved." };
   }
 
@@ -239,7 +243,7 @@ export async function logRequirementFromChat(store: IntakeStore, raw: any, actor
   const pressNote = press ? " It is marked press-reported until someone records speaking to the brand." : "";
   if (out.outcome === "created") {
     return {
-      success: true, action: "created", entity: "requirement", category: "Leasing", brand: brand.name, ...describe(requirement, now), url: pageUrl(brand.id),
+      success: true, action: "created", entity: "requirement", category: "Leasing", brand: brand.name, ...describe(requirement, now), url: pageUrl(requirement.id, brand.id),
       message: `Logged a requirement for ${brand.name}${line ? ` (${line})` : ""}. It is on the Requirements page as Live, confirmed today by ${actor.name}.${pressNote}`,
     };
   }
@@ -266,7 +270,7 @@ export async function logRequirementFromChat(store: IntakeStore, raw: any, actor
     if (Object.keys(patch).length) requirement = await store.updateRequirement(requirement.id, { ...patch, updated_at: now });
   }
   return {
-    success: true, action: "updated", entity: "requirement", category: "Leasing", brand: brand.name, ...describe(requirement, now), url: pageUrl(brand.id),
+    success: true, action: "updated", entity: "requirement", category: "Leasing", brand: brand.name, ...describe(requirement, now), url: pageUrl(requirement.id, brand.id),
     alreadyExisted: true, filled, notChanged, briefKeptAsEvidenceOnly: keptOffRow,
     message: `${brand.name} already had this requirement, so I did not add a second one. It is confirmed as Live today by ${actor.name}.${pressNote}`
       + (keptOffRow ? " That row is the PIPnet listing, which client logins can see, so what you told me is kept as staff-only evidence on it and its text was not changed."
@@ -334,7 +338,7 @@ export async function updateRequirementFromChat(store: IntakeStore, raw: any, ac
   }
   const d = describe(requirement, now);
   return {
-    success: true, action: "updated", entity: "requirement", category: "Leasing", ...d, url: pageUrl(requirement.company_id), changed, confirmedStillLive: confirming, needsConfirmation,
+    success: true, action: "updated", entity: "requirement", category: "Leasing", ...d, url: pageUrl(requirement.id, requirement.company_id), changed, confirmedStillLive: confirming, needsConfirmation,
     withheldFromClientVisibleRow: withheld,
     message: `Updated the requirement for ${requirement.name}${changed.length ? `: ${changed.join(", ")}` : ""}. `
       + (confirming ? `It is confirmed as still live today by ${actor.name}${d.pressReported ? " (still press-reported: nobody has recorded speaking to the brand)" : ""}. `

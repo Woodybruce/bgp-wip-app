@@ -567,7 +567,7 @@ export default function BrandsHub() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
               {data.activeRequirements.map(r => (
-                <Link key={r.id} href={`/companies/${r.company_id}?tab=requirements`}>
+                <Link key={r.id} href={`/requirements?requirementId=${encodeURIComponent(r.id)}`}>
                   <div className="flex items-start gap-2.5 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors cursor-pointer">
                     <BrandLogo name={r.company_name} domain={r.domain} size={28} />
                     <div className="flex-1 min-w-0">

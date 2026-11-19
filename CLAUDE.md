@@ -4183,7 +4183,8 @@ link.
   older, live before to confirm, newest date) with the rest under `others`; a
   requirement with no brand is a row of its own. Each row carries the wants
   line (`wantsLine`), its list, the state and date line (staff), the fits
-  (count and best, `requirementFit` over the units on the market), the agent
+  (count and best, `requirementFit` over the units on the market), the
+  linked deal (name and stage in words), the agent
   named on the requirement (`agent_contact_id`; never a private-mailbox
   address), the BGP owners and last contact (staff, the CRM lists' private
   mailbox rule), and the brand's Expansion score and band
@@ -4232,10 +4233,38 @@ link.
   or `GET /api/requirements/matches/:id`: both stay for a cached client and
   keep the one fit rule.
 - Checked in a browser against a local copy on 19 November 2026 (staff on a
-  computer and an iPhone profile, the Landsec client login). Not built yet:
-  group owners (decision 5, needs the four names), market listings on the
-  brand page with Confirm (decision 7), and one meaning of live on the
-  consumers that still read Active.
+  computer and an iPhone profile, the Landsec client login).
+- **Links in (step 5; findings 16 to 19).** Every place that holds a
+  requirement's id opens its panel (`/requirements?requirementId=<id>`): a
+  viewing's Linked requirement, the Brand CRM card's requirement lines (not
+  for a joint agent or a hidden requirement), the Brands overview's radar
+  (it linked to a `?tab=` the company page ignores), the dashboard's Live
+  requirement alert and its phone twin, the dashboard widget's rows,
+  Suggest targets' requirement line, Brand Gap's target (`requirement_id`,
+  never for a joint agent; read from every requirement that fits a unit
+  here, the More list still showing 30), ChatBGP's receipts (`pageUrl` in
+  `server/chatbgp-requirements.ts`), and each row of the brand page,
+  desktop and phone. A brand page's requirement count opens the board
+  filtered to the brand. Guard: `qa/regression/requirement-panel-links.test.mjs`.
+  Text with no structured id (the target engine's saved evidence, Start
+  strategy's facts, Explorer's chip inside a brand card) is not linked.
+- **The brand page shows market listings (decision 7).** BGP staff get the
+  brand's PIPnet and Requirement List listings nobody at BGP has confirmed
+  (`marketListings` on the brand profile, empty for a client login), each
+  labelled with its listing date ("Older" past six months), opening its
+  panel, with **Confirm** (`client/src/components/brand-page/market-listings.tsx`),
+  which asks How do you know? through the board's own dialog
+  (`client/src/components/requirements-board/confirm-how-dialog.tsx`) and
+  the intake's still-live route. "No BGP requirement recorded · Add a
+  requirement" shows only when there is neither. BGP staff also read each
+  requirement row's state and dated line.
+- **The deal page names the requirement it answers** (finding 18):
+  `requirements` on `GET /api/crm/deals/:id/page` (`requirementsFor` in
+  `server/deal-page.ts`, `crm_requirements_leasing.deal_id`), drawn as
+  **Answers the requirement** on the Overview, opening its panel; the state
+  for BGP staff, a client by what it is and its own date, a joint agent none.
+- Not built yet: group owners (decision 5, needs the four names), and one
+  meaning of live on the consumers that still read Active.
 
 **One fit rule (Woody, 2026-11-19, decision 2: "size and use or place").**
 `requirementFit` in `shared/requirement-fit.ts` is the only judge of whether

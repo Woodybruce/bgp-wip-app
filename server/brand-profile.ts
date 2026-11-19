@@ -20,6 +20,7 @@ import { nameKey } from "../shared/contact-tiers";
 import { isDismissedLandlordContact } from "../shared/landlord-contact-suggestions";
 import { TERMINAL_STATUSES } from "../shared/deal-status";
 import { requirementLive, requirementStateSql, requirementLiveColumnsSql } from "../shared/requirement-live";
+import { boardListOf } from "../shared/requirements-board";
 import { conceptStatusForSave } from "../shared/brand-stage";
 import { clientProfileCompanyView } from "../shared/tenant-categories";
 import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
@@ -593,6 +594,24 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       dealsParams
     );
 
+    // The brand's market listings (decision 7 of the board review, 19
+    // November 2026): PIPnet and Requirement List listings nobody at BGP has
+    // confirmed, for BGP staff to see and confirm on the brand page, each
+    // labelled a market listing and dated by its listing, under Older once
+    // PIPnet has not listed it for six months. Never BGP's requirement, and
+    // not for a client login (it reads every requirement in `requirements`).
+    const marketListingsQ = bpScope ? Promise.resolve({ rows: [] as any[] }) : pool.query(
+      `SELECT r.id, r.name, r.use, r.size, r.requirement_locations, ${requirementLiveColumnsSql("r")}
+         FROM crm_requirements_leasing r
+        WHERE r.company_id = $1 AND ${requirementStateSql("r")} = 'background'
+        ORDER BY COALESCE(r.last_listed_at, r.created_at) DESC NULLS LAST
+        LIMIT 10`,
+      [companyId]
+    ).then(q => ({ rows: q.rows.map((r: any) => ({ r, live: requirementLive(r) })).filter(({ live }) => live.importOnly).map(({ r, live }) => ({
+      id: r.id, name: r.name, use: r.use, size: r.size, requirement_locations: r.requirement_locations,
+      date_label: live.dateLabel, list: boardListOf(live),
+    })) }));
+
     // Recent contacts — emails/meetings linked to this company
     // Interaction stats per contact — fold email/meeting counts and
     // last-touch date back into each contact row so the key-contacts
@@ -986,7 +1005,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       rolloutVelocityRow, rentComps,
       bgpDeals, bgpInteractions, bgpInteractionsList, decisionMakers, leaseEvents, competitors,
       rolloutMonthly, kycInvestigation, ownedProperties, landRegistry, landlordFindings, contactInteractionStats,
-      liveLocations, dismissedDiscoveries, dealTotalsRow, dealListRows,
+      liveLocations, dismissedDiscoveries, dealTotalsRow, dealListRows, marketListings,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
       safe(reqAgentsQ),
@@ -995,7 +1014,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       safe(rolloutVelocityQ), safe(rentCompsQ),
       safe(bgpDealsQ), safe(bgpInteractionsQ), safe(bgpInteractionsListQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
       safe(rolloutMonthlyQ), safe(kycInvestigationQ), safe(ownedPropertiesQ), safe(landRegistryQ), safe(landlordFindingsQ), safe(contactInteractionStatsQ),
-      safe(liveLocationsQ), safe(dismissedDiscoveriesQ), safe(dealTotalsQ), safe(dealListQ),
+      safe(liveLocationsQ), safe(dismissedDiscoveriesQ), safe(dealTotalsQ), safe(dealListQ), safe(marketListingsQ),
     ]);
 
     marks.queries = Date.now() - profileStart;
@@ -1373,6 +1392,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       siblings: siblings.rows,
       news: dedupeNewsStories((news.rows as any[]).filter((n: any) => isBrandNewsRelevant(c, n) && !otherBrandsSocialPost(c.name, n.source_name))).slice(0, 20),
       requirements: requirements.rows,
+      // BGP staff only: the brand's unconfirmed market listings (empty for a client login).
+      marketListings: marketListings.rows,
       pitchedTo: pitchedTo.rows,
       liveLocations: liveLocations.rows,
       contacts: (() => {

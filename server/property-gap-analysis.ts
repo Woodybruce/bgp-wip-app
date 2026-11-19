@@ -594,7 +594,10 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
         reason: reqViewer === "staff" ? why.text : reqViewer === "client" ? why.clientText : why.listingText,
         listing: why.listingText, weight: why.weight,
       };
-    }).sort((a: any, b: any) => b.weight - a.weight).slice(0, 30)).catch(() => [] as any[]);
+    }).sort((a: any, b: any) => b.weight - a.weight)).catch(() => [] as any[]);
+    // The list under More shows the 30 surest; a target reads its brand's
+    // requirement from all of them (a brand ranked 31st read "None held").
+    const listedRequirements = matchingRequirements.slice(0, 30);
 
     // "At other shopping centres, not here" — the peer-scheme comparison
     // (Woody, 2026-08-04). A brand qualifies when it trades at one or more
@@ -608,7 +611,9 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     for (const r of matchingRequirements) if (r.company_id && !reqByCompany.has(String(r.company_id))) reqByCompany.set(String(r.company_id), r);
     const reqFlags = (id: any) => {
       const r = reqByCompany.get(String(id));
-      return { has_live_requirement: !gapScope && r?.state === "live", requirement_note: r?.reason || null, requirement_listing: r?.listing || null };
+      return { has_live_requirement: !gapScope && r?.state === "live", requirement_note: r?.reason || null, requirement_listing: r?.listing || null,
+        // The requirement itself, to open its panel; a joint agent has no requirements to open.
+        requirement_id: reqViewer === "joint_agent" ? null : r?.id ?? null };
     };
     const reqWeight = (id: any) => reqByCompany.get(String(id))?.weight || 0;
     const peerGaps = pitchable
@@ -708,8 +713,8 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     const sliced = <T extends { brand_company_id: string }>(arr: T[]) =>
       sliceFilter ? arr.filter(b => sliceFilter!(String(b.brand_company_id))) : arr;
     const slicedReqs = (sliceFilter
-      ? matchingRequirements.filter((r: any) => !r.company_id || sliceFilter!(String(r.company_id)))
-      : matchingRequirements).map(({ weight, ...r }: any) => r);
+      ? listedRequirements.filter((r: any) => !r.company_id || sliceFilter!(String(r.company_id)))
+      : listedRequirements).map(({ weight, ...r }: any) => r);
 
     // Top-25 benchmark — this centre against each of the other top-25 UK
     // centres on the same hospitality / leisure slice (Woody, 2026-09-27);

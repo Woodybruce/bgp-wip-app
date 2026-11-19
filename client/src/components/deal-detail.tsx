@@ -690,6 +690,20 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                       )}
                     </div>
                   )}
+                  {/* The requirement the deal answers (set on the requirement's form), opening its panel. */}
+                  {!!page?.requirements?.length && (
+                    <div className={sectionCard} data-testid="deal-requirements">
+                      <h3 className="text-sm font-semibold">Answers {page.requirements.length === 1 ? "the requirement" : "the requirements"}</h3>
+                      <div className="mt-1 space-y-1">
+                        {page.requirements.map(r => (
+                          <Link key={r.id} href={`/requirements?requirementId=${encodeURIComponent(r.id)}`} className="block text-sm hover:underline" data-testid={`deal-requirement-${r.id}`}>
+                            <span className="text-primary">{r.wants || r.name || "Requirement"}</span>
+                            <span className="text-xs text-muted-foreground"> · {r.stateLabel ? `${r.stateLabel}, ` : ""}{r.dateLine}</span>
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {(() => {
                     const owed = owedItems(page?.checklist || null);
                     if (!owed.length) return null;

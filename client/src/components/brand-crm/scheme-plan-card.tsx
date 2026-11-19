@@ -227,7 +227,9 @@ export function SchemePlanCard({ companyId, client = false }: { companyId: strin
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm" data-testid="scheme-plan-requirement">
           {plan.requirements.length > 0 ? <>
             <span className="text-xs font-semibold text-muted-foreground">Requirement</span>
-            {plan.requirements.slice(0, 2).map(req => <span key={req.id} className="min-w-0 break-words">{req.summary}
+            {plan.requirements.slice(0, 2).map(req => <span key={req.id} className="min-w-0 break-words">{!restricted && !req.detailHidden
+              ? <Link href={`/requirements?requirementId=${encodeURIComponent(req.id)}`} className="hover:underline" data-testid={`scheme-plan-requirement-${req.id}`}>{req.summary}</Link>
+              : req.summary}
               {(req.ageDays != null || req.source) && <span className="text-xs text-muted-foreground"> · {[req.source, req.ageDays == null ? null : req.ageDays === 0 ? "updated today" : `updated ${whole(req.ageDays)} day${req.ageDays === 1 ? "" : "s"} ago`].filter(Boolean).join(" · ")}</span>}
             </span>)}
             {plan.requirements.length > 2 && <span className="text-xs text-muted-foreground">and {plan.requirements.length - 2} more</span>}

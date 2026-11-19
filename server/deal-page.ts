@@ -23,6 +23,8 @@ import { briefStateOf, clockForDeal, clockWriterFor, nerFloorOf, schemeOfPropert
 import { resolveLandsecPortfolio } from "./landsec-schemes";
 import { readOfferStatus } from "./unit-negotiation";
 import { CLOSED_STATUSES, legacyToCode, statusSpellingsFor } from "@shared/deal-status";
+import { requirementLive, requirementLiveColumnsSql, requirementReason } from "@shared/requirement-live";
+import { wantsLine } from "@shared/requirements-board";
 import { ALL_LETTING_TYPES, DEFAULT_LETTING_TYPE, isLettingType } from "@shared/letting-rules";
 import { STAGE_BULK_PEERS, londonDay, statusLineIsMoveSql } from "@shared/stage-since";
 import { checklistStageFor, checklistSummary } from "@shared/deal-checklist";
@@ -354,6 +356,26 @@ async function namesFor(ctx: DealContext): Promise<DealPageNames> {
   };
 }
 
+// The leasing requirements this deal answers (crm_requirements_leasing.deal_id,
+// set from the requirement's own form), each opening its panel on the board
+// (finding 18 of the board review, 19 November 2026). BGP staff read the state
+// and the dated line; a client login every requirement (open to clients since
+// 17 November 2026) by what it is and its own date; a joint agent none.
+async function requirementsFor(ctx: DealContext): Promise<DealPageData["requirements"]> {
+  if (ctx.viewer === "joint_agent") return [];
+  const r = await pool.query(
+    `SELECT r.id, r.name, r.size, r.use, r.requirement_locations, ${requirementLiveColumnsSql("r")}
+       FROM crm_requirements_leasing r WHERE r.deal_id = $1
+      ORDER BY r.created_at DESC NULLS LAST LIMIT 5`, [ctx.deal.id]).catch(() => ({ rows: [] as any[] }));
+  return r.rows.map((row: any) => {
+    const live = requirementLive(row);
+    return {
+      id: String(row.id), name: text(row.name) || null, wants: wantsLine(row),
+      ...(ctx.viewer === "staff" ? { stateLabel: live.stateLabel, dateLine: live.dateLabel } : { dateLine: requirementReason(row).clientText }),
+    };
+  });
+}
+
 export async function buildDealPage(req: Request, ctx: DealContext): Promise<DealPageData> {
   const { deal } = ctx;
   const code = legacyToCode(deal.status);
@@ -364,7 +386,7 @@ export async function buildDealPage(req: Request, ctx: DealContext): Promise<Dea
   const stageType = letting && !isLettingType(deal.deal_type) ? DEFAULT_LETTING_TYPE : deal.deal_type;
   const writer = await clockWriterFor(req, deal);
   const visible = writer ? writer.visible : new Set<string>([deal.property_id].filter(Boolean));
-  const [names, clock, moves, otherDeals, lettingSummary, checklist, tasks] = await Promise.all([
+  const [names, clock, moves, otherDeals, lettingSummary, checklist, tasks, requirements] = await Promise.all([
     namesFor(ctx),
     clockForDeal(deal, { letting, visible }),
     stageMoves(deal.id),
@@ -372,6 +394,7 @@ export async function buildDealPage(req: Request, ctx: DealContext): Promise<Dea
     lettingFor(ctx),
     checklistFor(ctx),
     tasksFor(ctx),
+    requirementsFor(ctx),
   ]);
   const since = iso(clock.since);
   const ner = landsecNer({ headlinePa: deal.rent_pa, rentFreeMonths: deal.rent_free, capital: deal.capital_contribution, leaseLength: deal.lease_length, breakOption: deal.break_option });
@@ -385,7 +408,7 @@ export async function buildDealPage(req: Request, ctx: DealContext): Promise<Dea
     }),
     clock: clock.clock, waitingDays: clock.waitingDays, otherDeals,
     ner, incentivesRecorded: landsecIncentivesRecorded(deal.rent_free, deal.capital_contribution),
-    letting: lettingSummary, checklist, tasks,
+    letting: lettingSummary, checklist, tasks, requirements,
   };
 }
 

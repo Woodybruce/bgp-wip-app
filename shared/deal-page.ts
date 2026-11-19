@@ -289,6 +289,9 @@ export interface DealPageData {
   letting: DealLettingSummary | null;
   checklist: DealChecklistView | null;
   tasks: DealTaskView[];
+  // The leasing requirements the deal answers, each opening its panel: the
+  // state for BGP staff only; none for a joint agent.
+  requirements: { id: string; name: string | null; wants: string; dateLine: string; stateLabel?: string }[];
 }
 
 // What the deal owes now, for the Overview: required checklist items still

@@ -185,9 +185,9 @@ test("the panel's fits: every unit a requirement fits, against the viewer's unit
 
 test("a linked deal: its name and stage for staff, and for a client only a deal it may open", async () => {
   const withDeal = { ...ANSWERS, requirements: REQUIREMENTS.map(r => r.id === "r-sb" ? { ...r, deal_id: "d-1" } : r.id === "r-gym" ? { ...r, deal_id: "d-2" } : r),
-    deals: [{ id: "d-1", name: "Unit 4, Bluewater", status: "HOTs", fee: 50000 }, { id: "d-2", name: "Elsewhere", status: "NEG" }] };
+    deals: [{ id: "d-1", name: "Unit 4, Bluewater", status: "HOT", fee: 50000 }, { id: "d-2", name: "Elsewhere", status: "NEG" }] };
   const staff = await loadRequirementsBoard(fakeDb(withDeal), { kind: "staff" }, deps, NOW);
-  assert.deepEqual(staff.rows.find(r => r.brandName === "Starbucks")!.requirement.deal, { id: "d-1", name: "Unit 4, Bluewater", status: "HOTs" }, "never the fee");
+  assert.deepEqual(staff.rows.find(r => r.brandName === "Starbucks")!.requirement.deal, { id: "d-1", name: "Unit 4, Bluewater", status: "HOTs" }, "the stage in words, never the fee");
   const asked: string[] = [];
   const client = await loadRequirementsBoard(fakeDb(withDeal), { kind: "client", companyId: "landsec" },
     { ...deps, dealInScope: async (company, deal) => { asked.push(`${company}:${deal}`); return deal === "d-1"; } }, NOW);

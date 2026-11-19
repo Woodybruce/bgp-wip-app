@@ -41,11 +41,13 @@ test('links into the page carry what the page reads', () => {
   assert.equal([...phone.matchAll(/\/requirements\?companyId=\$\{c\.id\}&new=1`\}>Add a requirement/g)].length, 2);
   assert.ok(!/companyId=\$\{c\.id\}`\}[^>]*>Add a requirement/.test(panel + phone), 'no Add link without new=1');
   // The phone's suggestions alert keeps its list.
-  assert.match(source('client/src/components/mobile-home.tsx'), /if \(a\.entityType === "requirement"\) return a\.href && a\.href\.startsWith\("\/requirements"\) \? a\.href : `\/requirements`;/);
+  // The alert's own link where it carries one, else the requirement itself (since 19 November 2026).
+  assert.match(source('client/src/components/mobile-home.tsx'), /if \(a\.entityType === "requirement"\) return a\.href && a\.href\.startsWith\("\/requirements"\) \? a\.href : a\.entityId \? `\/requirements\?requirementId=\$\{encodeURIComponent\(a\.entityId\)\}` : `\/requirements`;/);
   // Brand Gap offers Add requirement to every login with brand pages, a client
   // login included (17 November 2026), never a joint agent.
   const gap = source('client/src/components/brand-gap-panel.tsx');
-  assert.match(gap, /\{!noBrandPages && <Button size="sm" variant="outline" asChild><Link href=\{`\/requirements\?type=leasing&companyId=\$\{t\.brand_company_id\}\$\{t\.requirement_note \? "" : "&new=1"\}`\}/);
+  // A target with a requirement opens it (since 19 November 2026); without one, the brand's list or Add.
+  assert.match(gap, /\{!noBrandPages && <Button size="sm" variant="outline" asChild><Link href=\{t\.requirement_id \? `\/requirements\?requirementId=\$\{encodeURIComponent\(t\.requirement_id\)\}` : `\/requirements\?type=leasing&companyId=\$\{t\.brand_company_id\}\$\{t\.requirement_note \? "" : "&new=1"\}`\}/);
   assert.ok(!gap.includes('(t.requirement_note || canWant) && <Button'), 'Add requirement is no longer held to BGP staff');
 });
 

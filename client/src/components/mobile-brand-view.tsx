@@ -1,4 +1,5 @@
 import { formatSizeList } from "@/lib/format-size";
+import { BrandMarketListings, type BrandMarketListing } from "@/components/brand-page/market-listings";
 import { rolloutBadge } from "@shared/rollout-badge";
 import { EstatePipelineCards, type StatedPlans } from "@/components/brand-page/estate-pipeline";
 import { aboutText } from "@/lib/about-text";
@@ -600,7 +601,10 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
   // Deals & space (a brand's own page): BGP's requirements for the brand
   // and the ones on PIPnet in one card. With neither, a client login gets
   // nothing and staff get quiet lines with the actions that fill it.
-  const requirementsCard = requirements.length > 0 || !!pipnetReqs?.rows?.length ? (
+  // BGP staff also get the brand's market listings, each with Confirm
+  // (decision 7 of the requirements board review, 19 November 2026).
+  const marketListings: BrandMarketListing[] = isClientViewer ? [] : ((data as any).marketListings || []);
+  const requirementsCard = requirements.length > 0 || marketListings.length > 0 || !!pipnetReqs?.rows?.length ? (
     <Card data-testid="company-phone-requirements">
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
@@ -612,8 +616,8 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
         {requirements.length > 0 ? (
           <div className="space-y-1.5">
             {(requirementsShowAll ? requirements : requirements.slice(0, 5)).map((r: any) => (
-              // The desktop card's row: use class, size, then where.
-              <div key={r.id} className="text-xs min-w-0">
+              // The desktop card's row: use class, size, then where; it opens the requirement's panel.
+              <Link key={r.id} href={`/requirements?requirementId=${encodeURIComponent(r.id)}`} className="block text-xs min-w-0" data-testid={`company-phone-requirement-${r.id}`}>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {r.use?.[0] && <Badge variant="outline" className="text-[11px]">{r.use[0]}</Badge>}
                   {(r.size || []).length > 0 && <span className="font-medium">{formatSizeList(r.size)}</span>}
@@ -622,7 +626,8 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
                 {(r.requirement_locations || []).length > 0 && (
                   <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">{r.requirement_locations.join(", ")}</p>
                 )}
-              </div>
+                {!isClientViewer && r.date_label && <p className="text-[11px] text-muted-foreground">{r.state_label ? `${r.state_label} · ` : ""}{r.date_label}</p>}
+              </Link>
             ))}
             {requirements.length > 5 && (
               <button type="button" onClick={() => setRequirementsShowAll(v => !v)} className="text-[11px] text-primary hover:underline">
@@ -630,9 +635,11 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
               </button>
             )}
           </div>
-        ) : !isClientViewer ? (
+        ) : !isClientViewer && marketListings.length === 0 ? (
           <BrandQuietLine>No BGP requirement recorded · <Link href={`/requirements?companyId=${c.id}&new=1`}>Add a requirement</Link></BrandQuietLine>
         ) : null}
+        <BrandMarketListings companyId={companyId} listings={marketListings} phone
+          heading={<p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Market listings <span className="font-mono tabular-nums normal-case tracking-normal">{marketListings.length}</span></p>} />
         <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} pattern />
       </CardContent>
     </Card>

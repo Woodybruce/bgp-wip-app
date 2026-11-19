@@ -17,6 +17,7 @@
 //   - A login tied to no company (NO_ACCESS_SCOPE): nothing.
 import { Router, type Request, type RequestHandler, type Response } from "express";
 import { FIT_POOL_STATUSES, fitScore, requirementFit } from "@shared/requirement-fit";
+import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 import {
   REQUIREMENT_STATE_LABELS, parseRequirementDate, requirementLive, requirementLiveColumnsSql, requirementReason, requirementSourceLabels,
 } from "@shared/requirement-live";
@@ -129,7 +130,9 @@ export async function loadRequirementsBoard(q: Queryable, viewer: BoardViewer, d
   const dealById = new Map<string, any>(dealRows.map(d => [String(d.id), d]));
   const dealOf = (row: any): BoardRequirement["deal"] => {
     const d = row.deal_id ? dealById.get(String(row.deal_id)) : null;
-    return d ? { id: String(d.id), name: String(d.name || "Deal"), status: d.status || null } : null;
+    // The stage in words ("HOTs", not the stored code).
+    const code = legacyToCode(d?.status);
+    return d ? { id: String(d.id), name: String(d.name || "Deal"), status: code ? DEAL_STATUS_LABELS[code] : d.status || null } : null;
   };
 
   // Every requirement read by the one live rule, then grouped by brand.

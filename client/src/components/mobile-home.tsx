@@ -202,7 +202,7 @@ function alertHref(a: Alert): string {
   if (a.entityType === "contact" && a.entityId) return `/contacts/${a.entityId}`;
   // The alert's own link where it carries one ("/requirements?list=to_confirm"
   // for the suggestions digest), so the phone opens the same list the desktop does.
-  if (a.entityType === "requirement") return a.href && a.href.startsWith("/requirements") ? a.href : `/requirements`;
+  if (a.entityType === "requirement") return a.href && a.href.startsWith("/requirements") ? a.href : a.entityId ? `/requirements?requirementId=${encodeURIComponent(a.entityId)}` : `/requirements`;
   return "/today";
 }
 

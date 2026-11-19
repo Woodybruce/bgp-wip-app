@@ -48,6 +48,7 @@ type GapBrand = {
   competing_at?: string[];
   has_live_requirement?: boolean;
   requirement_note?: string | null;
+  requirement_id?: string | null;
 };
 
 interface BrandGapResult {
@@ -328,7 +329,7 @@ type GapTarget = {
   sector: string | null; sector_label: string | null; sector_missing: boolean;
   competing_at: string[]; top_count: number; top_centres: string[]; local_km: number | null;
   rollout_status: string | null; expanding: boolean; expanding_note: string | null; score: number | null;
-  has_live_requirement?: boolean; requirement_note?: string | null;
+  has_live_requirement?: boolean; requirement_note?: string | null; requirement_id?: string | null;
   // The marketing units here its requirement fits by the one fit rule, each with why.
   units: Array<{ id: string; name: string; sqft: number | null; why?: string }>;
   stage: string | null; stage_label: string | null; stage_unit: string | null; ruled_out: boolean;
@@ -397,7 +398,7 @@ function TargetDetail({ target, onClose, propertyId, propertyName, units, canWan
               {[t.score ? `Score ${t.score}` : null, t.rollout_status === "scaling" ? "Scaling" : t.rollout_status === "entering_uk" ? "Entering the UK" : null, t.expanding ? "Expanding (web research)" : null].filter(Boolean).join(" · ") || "No signal held"}
               {t.expanding_note && <span className="block text-xs text-muted-foreground mt-0.5">{t.expanding_note}</span>}
             </GapLine>
-            <GapLine label="Requirement">{t.requirement_note || "None held"}</GapLine>
+            <GapLine label="Requirement">{t.requirement_note || "None that fits a unit here"}</GapLine>
             <GapLine label="Fits here">{t.units.length
               ? t.units.map(u => <span key={u.id} className="block">{u.name}{u.sqft ? ` (${u.sqft.toLocaleString("en-GB")} sq ft)` : ""}{u.why && <span className="text-xs text-muted-foreground"> · {u.why}</span>}</span>)
               : "No requirement of theirs fits a unit being marketed here"}</GapLine>
@@ -423,7 +424,7 @@ function TargetDetail({ target, onClose, propertyId, propertyName, units, canWan
             {/* Every login with brand pages adds a requirement or opens the brand's
                 (Woody, 2026-11-17: "keep all requirements open for clients and access
                 to amend and add"); never a joint agent (noBrandPages). */}
-            {!noBrandPages && <Button size="sm" variant="outline" asChild><Link href={`/requirements?type=leasing&companyId=${t.brand_company_id}${t.requirement_note ? "" : "&new=1"}`} onClick={onClose}><FileText className="w-3.5 h-3.5 mr-1" />{t.requirement_note ? "Its requirements" : "Add requirement"}</Link></Button>}
+            {!noBrandPages && <Button size="sm" variant="outline" asChild><Link href={t.requirement_id ? `/requirements?requirementId=${encodeURIComponent(t.requirement_id)}` : `/requirements?type=leasing&companyId=${t.brand_company_id}${t.requirement_note ? "" : "&new=1"}`} onClick={onClose} data-testid="gap-target-requirement"><FileText className="w-3.5 h-3.5 mr-1" />{t.requirement_id ? "Its requirement" : t.requirement_note ? "Its requirements" : "Add requirement"}</Link></Button>}
             {!noBrandPages && <Button size="sm" variant="ghost" asChild><Link href={`/companies/${t.brand_company_id}`} onClick={onClose}><Store className="w-3.5 h-3.5 mr-1" />Brand page</Link></Button>}
           </div>
         </>)}

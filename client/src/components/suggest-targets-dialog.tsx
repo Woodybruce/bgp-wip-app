@@ -8,6 +8,7 @@
 // the unit's Operator Targeting Brief; callers can pass their own onAdd to
 // attach agents/categories, otherwise the built-in default is used.
 import { useState } from "react";
+import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -84,8 +85,10 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
                   <p className="text-[11px] text-muted-foreground truncate" title={s.reason || ""}>
                     {s.reason || [s.size, s.use, s.agent && `via ${s.agent}`].filter(Boolean).join(" · ")}
                   </p>
-                  {s.requirementReason && (
-                    <p className="text-[11px] text-muted-foreground truncate" title={s.requirementReason} data-testid={`text-requirement-reason-${i}`}>{s.requirementReason}</p>
+                  {s.requirementReason && (s.requirementId
+                    // Opens the requirement's panel on the board.
+                    ? <Link href={`/requirements?requirementId=${encodeURIComponent(s.requirementId)}`} className="block text-[11px] text-muted-foreground truncate hover:text-foreground hover:underline" title={s.requirementReason} data-testid={`text-requirement-reason-${i}`}>{s.requirementReason}</Link>
+                    : <p className="text-[11px] text-muted-foreground truncate" title={s.requirementReason} data-testid={`text-requirement-reason-${i}`}>{s.requirementReason}</p>
                   )}
                   {/* Why the requirement fits, by the one fit rule (shared/requirement-fit.ts). */}
                   {s.fitWhy && (

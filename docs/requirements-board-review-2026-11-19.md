@@ -696,6 +696,21 @@ against a local copy (staff on a computer and a phone, the Landsec client).
 Still to come: step 5 (links in), step 6 (one meaning of live), group owners
 (decision 5) and market listings on the brand page (decision 7).
 
+**Step 5 and decision 7, built the same day.** Every place that holds a
+requirement's id now opens its panel: a viewing's linked requirement, the
+Brand CRM card, the Brands overview's radar (whose `?tab=` link was broken),
+the dashboard alert, its phone twin and the widget's rows, Suggest targets,
+Brand Gap's targets and ChatBGP's receipts, and each requirement row on the
+brand page, desktop and phone. Brand Gap now reads a target's requirement
+from every requirement that fits a unit at the scheme, not only the 30 it
+lists (finding 19). The brand page shows BGP staff the brand's market
+listings with Confirm (decision 7), each requirement's state and dated line
+(finding 17), and only says "No BGP requirement recorded" when there is
+neither. The deal page names the requirement it answers (finding 18). Text
+with no structured id (the target engine's saved evidence, Start strategy's
+facts, Explorer's chip inside a brand card) is not linked. Still to come:
+step 6 (one meaning of live) and group owners (decision 5).
+
 Each step updates `server/chatbgp-app-map.ts` and the requirements section of
 CLAUDE.md where it changes what a screen shows.
 

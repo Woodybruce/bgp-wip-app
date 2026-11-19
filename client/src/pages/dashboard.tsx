@@ -138,7 +138,7 @@ function ActivityFeedWidget() {
     alert.href ? alert.href
     : alert.entityType === "deal" ? `/deals/${alert.entityId}`
     : alert.entityType === "contact" ? `/contacts/${alert.entityId}`
-    : alert.entityType === "requirement" ? `/requirements`
+    : alert.entityType === "requirement" ? (alert.entityId ? `/requirements?requirementId=${encodeURIComponent(alert.entityId)}` : `/requirements`)
     : null;
 
   const isLoading = digestLoading || actLoading;
@@ -2710,7 +2710,9 @@ export default function Dashboard() {
               {filteredReqs.length > 0 ? (
                 <div className="space-y-1.5 flex-1 overflow-y-auto">
                   {filteredReqs.map(r => (
-                    <div key={r.id} className="flex items-center gap-2.5 p-2 rounded-md border text-xs" data-testid={`new-req-${r.id}`}>
+                    // Each row opens the requirement itself: its panel on the board, or the investment requirement.
+                    <Link key={r.id} href={isInvestmentTeam ? `/investment/requirements?requirementId=${encodeURIComponent(r.id)}` : `/requirements?requirementId=${encodeURIComponent(r.id)}`}
+                      className="flex items-center gap-2.5 p-2 rounded-md border text-xs hover:bg-muted/50" data-testid={`new-req-${r.id}`}>
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${isInvestmentTeam ? "bg-amber-500/10" : "bg-blue-500/10"}`}>
                         <FileText className={`w-3.5 h-3.5 ${isInvestmentTeam ? "text-amber-500" : "text-blue-500"}`} />
                       </div>
@@ -2718,7 +2720,7 @@ export default function Dashboard() {
                         <p className="font-medium truncate">{r.name}</p>
                         <p className="text-muted-foreground">{new Date(r.createdAt).toLocaleDateString("en-GB")}</p>
                       </div>
-                    </div>
+                    </Link>
                   ))}
                 </div>
               ) : (
