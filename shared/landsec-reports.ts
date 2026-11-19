@@ -12,6 +12,22 @@
 //
 // Pure: no database, no request. Tests: shared/landsec-reports.test.ts.
 
+// The colours of every Landsec report, PDF and Excel (Woody, 2026-11-19: "also
+// can you use the bluewater colours and juts have the landsec logo", "not
+// BGP"). Read that day from bluewater.co.uk's own stylesheet. The reports
+// carry Landsec's logo only (server/assets/landsec-logo-*.png), never BGP's
+// wordmark or BGP's palette. One palette for every scheme and for the
+// multi-scheme reports for now: a scheme's own palette would be one more
+// entry beside this one, keyed by the scheme.
+export const LANDSEC_REPORT_PALETTE = {
+  navy: "#082862",      // header band, table header rows, headings, figures
+  paleBlue: "#dbe5fe",  // stat tiles, banded rows, rules
+  sand: "#eeeae4",      // quiet rules and banding where a neutral is wanted
+  gold: "#c0b283",      // a sparing accent
+  text: "#141414",
+  muted: "#525252",
+} as const;
+
 export const REPORT_MAX_MONTHS = 36;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MONTH_RE = /^(\d{4})-(0[1-9]|1[0-2])$/;

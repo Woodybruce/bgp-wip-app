@@ -27,7 +27,8 @@
 // on the login). A joint agent is refused at the gateway
 // (jointAgentApiDenied) and again here.
 import type { Express, Request, Response } from "express";
-import { PDFDocument, StandardFonts, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
+import fs from "fs";
+import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { storage } from "./storage";
@@ -38,7 +39,7 @@ import { propertyReadBlocked, unitViewerFor, loadPropertyUnits, unitsForViewer }
 import { landsecDealsFeed } from "./landsec-unit";
 import { listLeasingViewings } from "./leasing-viewings";
 import { categoryMixByProperty, sumCategoryMixes } from "./landsec-home";
-import { A4, MARGIN, BORDEAUX, INK, CREAM, BLUSH, STONE, WHITE, wordmarkBytes, wrapText } from "./unit-info-sheet";
+import { A4, MARGIN, wrapText } from "./unit-info-sheet";
 import { UNIT_OCCUPANCY_LABELS, type PropertyUnit } from "@shared/property-units";
 import { statusLabelsFor } from "@shared/letting-rules";
 import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
@@ -48,7 +49,7 @@ import { isLettingType } from "@shared/letting-rules";
 import { STAGE_BULK_PEERS } from "@shared/stage-since";
 import { requirementReason } from "@shared/requirement-live";
 import {
-  LANDSEC_REPORTS, REPORT_MAX_MONTHS, defaultReportMonths, inReportPeriod, landsecReportByKey, landsecReportFileName, parseReportPeriod, reportDay,
+  LANDSEC_REPORT_PALETTE, LANDSEC_REPORTS, REPORT_MAX_MONTHS, defaultReportMonths, inReportPeriod, landsecReportByKey, landsecReportFileName, parseReportPeriod, reportDay,
   type LandsecReportDef, type LandsecReportsIndex, type ReportPeriod,
 } from "@shared/landsec-reports";
 
@@ -606,14 +607,15 @@ export async function workbookOf(def: LandsecReportDef, ctx: Ctx, sheets: Sheet[
   const wb = new ExcelJS.Workbook();
   wb.creator = "ChatBGP";
   wb.created = ctx.madeAt;
-  // BGP v19: Bordeaux headers, Cream banding.
-  const headerFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FF6E0C25" } };
-  const bandFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFFCF8F4" } };
+  // The Landsec report palette: navy headers, sand banding.
+  const argb = (hex: string) => `FF${hex.slice(1).toUpperCase()}`;
+  const headerFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: argb(LANDSEC_REPORT_PALETTE.navy) } };
+  const bandFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: argb(LANDSEC_REPORT_PALETTE.sand) } };
   const FORMATS: Partial<Record<Kind, string>> = { money: "£#,##0", int: "#,##0", date: "dd mmm yyyy", rate: "£#,##0.00", pct: '+0.0"%";-0.0"%";0.0"%"' };
 
   const about = wb.addWorksheet("About");
   about.columns = [{ key: "label", width: 22 }, { key: "value", width: 96 }];
-  about.addRow({ label: `Landsec: ${def.title.replace(/\s*\(formatted\)$/i, "")}` }).font = { bold: true, size: 14, color: { argb: "FF6E0C25" } };
+  about.addRow({ label: `Landsec: ${def.title.replace(/\s*\(formatted\)$/i, "")}` }).font = { bold: true, size: 14, color: { argb: argb(LANDSEC_REPORT_PALETTE.navy) } };
   about.addRow({});
   const lines: Array<[string, string]> = [
     ["Period", ctx.period.label],
@@ -680,6 +682,23 @@ const pdfSafe = (v: unknown): string =>
   String(v ?? "").replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/…/g, "...").replace(/•/g, "-")
     .replace(/\s+/g, " ").replace(/[^\x20-\x7E\xA0-\xFF]/g, " ").trim();
 
+// The Landsec report palette as PDF colours (shared/landsec-reports.ts says where it came from).
+const colour = (hex: string) => rgb(parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);
+const NAVY = colour(LANDSEC_REPORT_PALETTE.navy), PALE = colour(LANDSEC_REPORT_PALETTE.paleBlue), SAND = colour(LANDSEC_REPORT_PALETTE.sand), GOLD = colour(LANDSEC_REPORT_PALETTE.gold);
+const TEXT = colour(LANDSEC_REPORT_PALETTE.text), MUTED = colour(LANDSEC_REPORT_PALETTE.muted), WHITE = rgb(1, 1, 1);
+
+// Landsec's own logo (the mark above the word, from its website footer):
+// white for the navy band, near-black for a white page. The only logo a
+// Landsec report carries. A file that cannot be read means no logo: nothing
+// is drawn in its place and none is ever typeset.
+export function landsecLogoBytes(kind: "light" | "dark"): Uint8Array | null {
+  const file = kind === "light" ? "landsec-logo-light.png" : "landsec-logo-dark.png";
+  for (const p of [`${process.cwd()}/server/assets/${file}`, `${process.cwd()}/dist/server/assets/${file}`]) {
+    try { if (fs.existsSync(p)) return new Uint8Array(fs.readFileSync(p)); } catch {}
+  }
+  return null;
+}
+
 export interface PdfCol { header: string; width: number; align?: "left" | "right" }
 export interface Pdf {
   heading(text: string): void;
@@ -692,7 +711,7 @@ export interface Pdf {
   bytes(): Promise<Uint8Array>;
 }
 
-/** A BGP-branded A4 document: a bordeaux band with the real wordmark, then headings, figures and tables that break across pages. */
+/** A Landsec report as an A4 document: a navy band with Landsec's logo, then headings, figures and tables that break across pages. */
 export async function pdfDocument(title: string, subtitle: string, ctx: Ctx, landscape: boolean, titleSize = 20): Promise<Pdf> {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -705,11 +724,11 @@ export async function pdfDocument(title: string, subtitle: string, ctx: Ctx, lan
   const FOOT = 46;
   doc.setTitle(pdfSafe(subtitle ? `${title}: ${subtitle}` : title));
   doc.setAuthor("Bruce Gillingham Pollard");
-  const markLight = wordmarkBytes("light"), markDark = wordmarkBytes("dark");
+  const markLight = landsecLogoBytes("light"), markDark = landsecLogoBytes("dark");
   const logoLight: PDFImage | null = markLight ? await doc.embedPng(markLight) : null;
   const logoDark: PDFImage | null = markDark ? await doc.embedPng(markDark) : null;
   const drawMark = (pg: PDFPage, img: PDFImage | null, x: number, y: number, h: number) => { if (img) pg.drawImage(img, { x, y, width: (img.width / img.height) * h, height: h }); };
-  const label = (pg: PDFPage, words: string, x: number, y: number, s: number, color = STONE, align: "left" | "right" = "left") => {
+  const label = (pg: PDFPage, words: string, x: number, y: number, s: number, color = MUTED, align: "left" | "right" = "left") => {
     const t = pdfSafe(words).toUpperCase();
     const space = s * 0.14;
     const width = bold.widthOfTextAtSize(t, s) + space * Math.max(0, t.length - 1);
@@ -720,19 +739,21 @@ export async function pdfDocument(title: string, subtitle: string, ctx: Ctx, lan
   // Page one: the band.
   let page = doc.addPage(size);
   const bandH = 92;
-  page.drawRectangle({ x: 0, y: ph - bandH, width: pw, height: bandH, color: BORDEAUX });
-  drawMark(page, logoLight, side, ph - 44, 30);
-  label(page, "Landsec", pw - side, ph - 36, 9, WHITE, "right");
-  page.drawText(pdfSafe(title), { x: side, y: ph - 72, size: titleSize, font: serif, color: WHITE });
+  page.drawRectangle({ x: 0, y: ph - bandH, width: pw, height: bandH, color: NAVY });
+  page.drawRectangle({ x: 0, y: ph - bandH - 2, width: pw, height: 2, color: GOLD });
+  // The logo sits at the right of the band; the title and the period at the left.
+  const logoH = 58;
+  if (logoLight) drawMark(page, logoLight, pw - side - (logoLight.width / logoLight.height) * logoH, ph - bandH + (bandH - logoH) / 2, logoH);
   const sub = pdfSafe(subtitle);
-  page.drawText(sub, { x: pw - side - font.widthOfTextAtSize(sub, 10), y: ph - 70, size: 10, font, color: WHITE });
-  let y = ph - bandH - 18;
+  page.drawText(pdfSafe(title), { x: side, y: sub ? ph - 48 : ph - 54, size: titleSize, font: serif, color: WHITE });
+  if (sub) page.drawText(sub, { x: side, y: ph - 68, size: 10.5, font, color: WHITE });
+  let y = ph - bandH - 20;
 
   let repeat: (() => void) | null = null;
   const newPage = () => {
     page = doc.addPage(size);
-    drawMark(page, logoDark, side, ph - 46, 22);
-    label(page, subtitle ? `${title} · ${subtitle}` : title, pw - side, ph - 36, 7, STONE, "right");
+    drawMark(page, logoDark, side, ph - 50, 28);
+    label(page, subtitle ? `${title} · ${subtitle}` : title, pw - side, ph - 36, 7, MUTED, "right");
     y = ph - 62;
     if (repeat) repeat();
   };
@@ -759,15 +780,15 @@ export async function pdfDocument(title: string, subtitle: string, ctx: Ctx, lan
       room(60);
       repeat = hold;
       y -= 12;
-      page.drawText(pdfSafe(words), { x: side, y: y - 12, size: 12.5, font: bold, color: BORDEAUX });
+      page.drawText(pdfSafe(words), { x: side, y: y - 12, size: 12.5, font: bold, color: NAVY });
       y -= 18;
-      page.drawLine({ start: { x: side, y }, end: { x: pw - side, y }, thickness: 0.6, color: BLUSH });
+      page.drawLine({ start: { x: side, y }, end: { x: pw - side, y }, thickness: 0.8, color: PALE });
       y -= 8;
     },
     para(words, quiet) {
       for (const line of cut(words, font, 9.5, contentW)) {
         room(13.5);
-        page.drawText(line, { x: side, y: y - 9.5, size: 9.5, font, color: INK, opacity: quiet ? 0.62 : 1 });
+        page.drawText(line, { x: side, y: y - 9.5, size: 9.5, font, color: quiet ? MUTED : TEXT });
         y -= 13.5;
       }
     },
@@ -780,9 +801,9 @@ export async function pdfDocument(title: string, subtitle: string, ctx: Ctx, lan
         const w = contentW / perRow;
         row.forEach(([name, value], j) => {
           const x = side + j * w;
-          page.drawRectangle({ x, y: y - 46, width: w - 8, height: 46, color: CREAM });
-          page.drawText(pdfSafe(value) || "-", { x: x + 8, y: y - 22, size: 15, font: serif, color: BORDEAUX });
-          label(page, name, x + 8, y - 38, 6.5, INK);
+          page.drawRectangle({ x, y: y - 46, width: w - 8, height: 46, color: PALE });
+          page.drawText(pdfSafe(value) || "-", { x: x + 8, y: y - 22, size: 15, font: serif, color: NAVY });
+          label(page, name, x + 8, y - 38, 6.5, TEXT);
         });
         y -= 54;
       }
@@ -792,7 +813,7 @@ export async function pdfDocument(title: string, subtitle: string, ctx: Ctx, lan
       const widths = columns.map(c => (c.width / total) * contentW);
       const pad = 4, s = 8, lh = 10.5;
       const head = () => {
-        page.drawRectangle({ x: side, y: y - 18, width: contentW, height: 18, color: BORDEAUX });
+        page.drawRectangle({ x: side, y: y - 18, width: contentW, height: 18, color: NAVY });
         let x = side;
         columns.forEach((c, i) => {
           const t = pdfSafe(c.header);
@@ -805,7 +826,7 @@ export async function pdfDocument(title: string, subtitle: string, ctx: Ctx, lan
       room(18 + lh + 8);
       head();
       if (rows.length === 0) {
-        page.drawText(pdfSafe(empty), { x: side + pad, y: y - 13, size: 9, font, color: INK, opacity: 0.62 });
+        page.drawText(pdfSafe(empty), { x: side + pad, y: y - 13, size: 9, font, color: MUTED });
         y -= 22;
         return;
       }
@@ -814,12 +835,12 @@ export async function pdfDocument(title: string, subtitle: string, ctx: Ctx, lan
         const wrapped = cells.map((c, i) => cut(c, font, s, widths[i] - pad * 2).slice(0, 4));
         const h = Math.max(...wrapped.map(w => w.length)) * lh + 6;
         if (y - h < FOOT) newPage();
-        if (r % 2 === 1) page.drawRectangle({ x: side, y: y - h, width: contentW, height: h, color: CREAM });
+        if (r % 2 === 1) page.drawRectangle({ x: side, y: y - h, width: contentW, height: h, color: PALE, opacity: 0.45 });
         let x = side;
         wrapped.forEach((linesOf, i) => {
           linesOf.forEach((line, k) => {
             const tx = columns[i].align === "right" ? x + widths[i] - pad - font.widthOfTextAtSize(line, s) : x + pad;
-            page.drawText(line, { x: tx, y: y - 4 - s - k * lh, size: s, font, color: INK });
+            page.drawText(line, { x: tx, y: y - 4 - s - k * lh, size: s, font, color: TEXT });
           });
           x += widths[i];
         });
@@ -833,10 +854,10 @@ export async function pdfDocument(title: string, subtitle: string, ctx: Ctx, lan
       let foot = pdfSafe(`Made in ChatBGP on ${longDay(ctx.madeAt)} by ${ctx.madeBy}. It holds what is recorded in ChatBGP on that day.`);
       while (foot.length > 20 && font.widthOfTextAtSize(foot, 7) > contentW - 60) foot = foot.slice(0, -1);
       pages.forEach((pg, i) => {
-        pg.drawLine({ start: { x: side, y: 34 }, end: { x: pw - side, y: 34 }, thickness: 0.5, color: BLUSH });
-        pg.drawText(foot, { x: side, y: 22, size: 7, font, color: INK, opacity: 0.62 });
+        pg.drawLine({ start: { x: side, y: 34 }, end: { x: pw - side, y: 34 }, thickness: 0.8, color: SAND });
+        pg.drawText(foot, { x: side, y: 22, size: 7, font, color: MUTED });
         const n = `${i + 1} of ${pages.length}`;
-        pg.drawText(n, { x: pw - side - font.widthOfTextAtSize(n, 7), y: 22, size: 7, font, color: INK, opacity: 0.62 });
+        pg.drawText(n, { x: pw - side - font.widthOfTextAtSize(n, 7), y: 22, size: 7, font, color: MUTED });
       });
       return doc.save();
     },

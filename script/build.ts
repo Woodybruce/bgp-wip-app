@@ -336,7 +336,7 @@ async function buildAll() {
   // Copy brand assets used by server-side Excel/PDF builders
   if (existsSync("server/assets")) {
     await mkdir(outputPath("server/assets"), { recursive: true });
-    for (const f of ["BGP_BlackHolder.png", "BGP_WhiteHolder.png", "historical-invoiced-wip.json", "website-seed.json"]) {
+    for (const f of ["BGP_BlackHolder.png", "BGP_WhiteHolder.png", "landsec-logo-light.png", "landsec-logo-dark.png", "historical-invoiced-wip.json", "website-seed.json"]) {
       if (existsSync(`server/assets/${f}`)) {
         await copyFile(`server/assets/${f}`, outputPath(`server/assets/${f}`));
         console.log(`copied server/assets/${f} to dist/server/assets/`);

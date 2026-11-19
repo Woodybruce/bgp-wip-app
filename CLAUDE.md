@@ -2975,11 +2975,12 @@ who runs reports, "yes landsec and BGP". Do not re-litigate.
   pack itself, on Landsec's Offer template): only its title changed.
 - **Reports** (`/landsec/reports`, `client/src/pages/landsec-reports.tsx`):
   on the Landsec menu (`LANDSEC_MENU.reports` in `shared/landsec-menu.ts`;
-  the side bar, the ChatBGP page's header menu and the phone tabs) for a full
-  Landsec login and BGP staff in the Landsec view. The phone bar now holds
-  eight tabs; the lit one is still left out, and on a page no tab is lit on
-  the eight labels drop to 9px so none runs into the next
-  (`mobile-bottom-nav.tsx`). **A joint agent has no
+  the side bar and the ChatBGP page's header menu) for a full Landsec login
+  and BGP staff in the Landsec view. **It is not a phone tab**: it was the
+  eighth for a day and came off the same day, because Woody had called that
+  bar crowded on 15 November; on a phone the page opens by its address and
+  has the ordinary Back arrow (`mobile-bottom-nav.tsx`,
+  `qa/regression/landsec-menu.test.mjs`). **A joint agent has no
   entry and is refused**: its route guard (`JOINT_AGENT_BLOCKED_ROUTES`), both
   gateway lists in `shared/landsec.ts` (`restrictedLandsecApiRule`, because
   the shared `/api/landsec/` prefix would otherwise open it, and
@@ -3033,8 +3034,28 @@ who runs reports, "yes landsec and BGP". Do not re-litigate.
   workbook: Assets, Deals, Spaces, Tenants, Lease terms and options). Every
   workbook opens on an **About** sheet (period, how the period is used,
   schemes, who made it and when, that it holds what is recorded in ChatBGP).
-  Excel is exceljs, as the Finance board pack; the PDFs are pdf-lib with the
-  v19 palette and the real wordmark from `server/unit-info-sheet.ts`.
+  Excel is exceljs, as the Finance board pack; the PDFs are pdf-lib.
+- **Landsec's logo and the Landsec report palette, not BGP's** (Woody,
+  2026-11-19: "also can you use the bluewater colours and juts have the
+  landsec logo", "not BGP"). Every Landsec report PDF (Leasing activity
+  (formatted), Asset profile, the board report) has a navy band with
+  Landsec's logo and no BGP wordmark; the workbooks' header rows and titles
+  take the same colours. `LANDSEC_REPORT_PALETTE` in
+  `shared/landsec-reports.ts` is the ONE place the colours are written (navy
+  #082862, pale blue #dbe5fe, sand #eeeae4, gold #c0b283, text #141414, muted
+  #525252, read that day from bluewater.co.uk's own stylesheet); it is used
+  for every scheme and for the multi-scheme reports, and a palette per scheme
+  is NOT built (it would be one more entry beside it). The logo is
+  `server/assets/landsec-logo-light.png` (white, on the band) and
+  `landsec-logo-dark.png` (on the later pages), made from Landsec's website
+  footer logo, read by `landsecLogoBytes` from `server/assets` or
+  `dist/server/assets` (both are on the copy list in `script/build.ts`); if
+  a file cannot be read the page has no logo, and none is ever typeset or
+  swapped for BGP's. The line at the foot ("Made in ChatBGP on ... by ...")
+  stays: it is words. This is the Landsec reports only: the approval pack
+  PDF, the info sheet and every other BGP document keep `BGP_BRAND`. The
+  guard test fails if a report builder names the BGP wordmark or a BGP
+  colour.
 - **Not built**: budgets (the app holds none, the Portfolio card says so, and
   no sheet is invented); Landsec's own in-house lettings, which are in a
   report only when they are on the app; the quarterly board pack and the

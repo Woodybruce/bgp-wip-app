@@ -278,7 +278,7 @@ export function boardFacts(data: BoardData, group: string | null, schemeNames: M
 // ── The PDF ──────────────────────────────────────────────────────────────
 
 const right = (header: string, width: number): PdfCol => ({ header, width, align: "right" });
-const COUNT_COLS: PdfCol[] = [right("Exchanged or completed", 15), right("HoTs agreed", 11), right("New instructions", 13), right("Viewings held", 12), right("Offers received", 12)];
+const COUNT_COLS: PdfCol[] = [right("Exchanged or completed", 20), right("HoTs agreed", 12), right("New instructions", 16), right("Viewings held", 13), right("Offers received", 15)];
 const countCells = (c: BoardCounts | undefined): string[] => [c?.lettings || 0, c?.hots || 0, c?.instructions || 0, c?.viewings || 0, c?.offers || 0].map(n => count(n));
 
 function speedSection(title: string, stat: SpeedStat): [string, string][] {
@@ -309,20 +309,20 @@ export async function boardReportPdf(ctx: Ctx, viewer: LandsecViewer): Promise<B
   // 2. Letting activity.
   pdf.pageBreak(260);
   pdf.heading("Letting activity by scheme");
-  pdf.table([{ header: "Scheme", width: 37 }, ...COUNT_COLS], [
+  pdf.table([{ header: "Scheme", width: 24 }, ...COUNT_COLS], [
     ...data.schemes.map(s => [s.name, ...countCells(a.byScheme[s.key])]),
     ...(data.schemes.length > 1 ? [["All schemes", ...countCells(t)]] : []),
   ], "No scheme is picked.");
   pdf.para("Counted in the period, by the rules under the headlines.", true);
   pdf.gap(6);
-  pdf.table([{ header: "Scheme, today", width: 37 }, right("Occupied", 10), right("Vacant", 9), ...LIVE_STAGES.map(code => right(stageLabel(code) || code, 11))], [
+  pdf.table([{ header: "Scheme, today", width: 24 }, right("Occupied", 13), right("Vacant", 11), ...LIVE_STAGES.map(code => right(stageLabel(code) || code, 13))], [
     ...data.schemes.map(s => [s.name, count(s.occupied), count(s.vacant), ...LIVE_STAGES.map(code => count(s.live[code] || 0))]),
     ...(data.schemes.length > 1 ? [["All schemes", count(occupied), count(vacant), ...LIVE_STAGES.map(code => count(data.schemes.reduce((n, s) => n + (s.live[code] || 0), 0)))]] : []),
   ], "No scheme is picked.");
   pdf.para("Units occupied and vacant on the tenancy schedule, and live lettings by stage as the Deals page lists them, today.", true);
 
   pdf.heading("Letting activity by brief category");
-  pdf.table([{ header: "Category", width: 37 }, ...COUNT_COLS], categoryRows(a.byCategory).map(r => [r.label, ...countCells(r.counts)]), "Nothing is recorded in the period.");
+  pdf.table([{ header: "Category", width: 24 }, ...COUNT_COLS], categoryRows(a.byCategory).map(r => [r.label, ...countCells(r.counts)]), "Nothing is recorded in the period.");
   pdf.para("The category is read from the brand's type, by the categories of Landsec's agency brief. A letting, viewing or offer with no brand recorded is under No brand recorded.", true);
 
   // 3. Rental growth.

@@ -194,6 +194,35 @@ test('the market report: every route asks who is calling first, drafting is BGP 
   assert.match(index, /\n\s*setupLandsecBoardMarketRoutes\(app\);/);
 });
 
+// Woody, 2026-11-19: "also can you use the bluewater colours and juts have the landsec logo", "not BGP".
+test('the Landsec reports carry Landsec\'s logo and the Landsec report palette: never BGP\'s wordmark or BGP\'s colours', async () => {
+  const { LANDSEC_REPORT_PALETTE } = await import('../../shared/landsec-reports.ts');
+  assert.deepEqual(LANDSEC_REPORT_PALETTE, { navy: '#082862', paleBlue: '#dbe5fe', sand: '#eeeae4', gold: '#c0b283', text: '#141414', muted: '#525252' });
+  for (const [file, text] of [[BUILDERS, builders], [BOARD, board]]) {
+    for (const never of ['wordmarkBytes', 'BGP_WhiteHolder', 'BGP_BlackHolder', 'BGP_BRAND', 'BORDEAUX', 'NECTAR', 'BLUSH', 'CREAM', 'STONE', 'doc-engine']) assert.ok(!text.includes(never), `${file} uses ${never}`);
+    assert.doesNotMatch(text, /6e0c25|fc9f8d|fcf8f4|e4d8d3|c2baa3/i, `${file} holds one of BGP's colours`);
+  }
+  // From BGP's document helpers the builders take the page size, the margin and the line wrap only.
+  assert.match(builders, /import \{ A4, MARGIN, wrapText \} from "\.\/unit-info-sheet";/);
+  // Every colour comes from the one palette, for the PDFs and the workbooks.
+  assert.match(builders, /const NAVY = colour\(LANDSEC_REPORT_PALETTE\.navy\), PALE = colour\(LANDSEC_REPORT_PALETTE\.paleBlue\), SAND = colour\(LANDSEC_REPORT_PALETTE\.sand\), GOLD = colour\(LANDSEC_REPORT_PALETTE\.gold\);/);
+  assert.match(builders, /fgColor: \{ argb: argb\(LANDSEC_REPORT_PALETTE\.navy\) \}/);
+  assert.equal((builders.match(/#[0-9a-f]{6}\b/gi) || []).length + (builders.match(/argb: "FF(?!FFFFFF")/g) || []).length, 0, 'no colour but white is written into the builders');
+  assert.doesNotMatch(board, /rgb\(|#[0-9a-f]{6}\b|argb/i, 'the board report draws through the shared document, with no colour of its own');
+  // The logo is Landsec's own file, read from server/assets (and from dist after a build). No file, no logo: none is typeset in its place.
+  assert.match(builders, /const file = kind === "light" \? "landsec-logo-light\.png" : "landsec-logo-dark\.png";/);
+  assert.match(builders, /const markLight = landsecLogoBytes\("light"\), markDark = landsecLogoBytes\("dark"\);/);
+  assert.match(builders, /if \(logoLight\) drawMark\(page, logoLight,/);
+  assert.doesNotMatch(builders, /label\(page, "Landsec"/, 'the word Landsec is never drawn as a logo');
+  for (const file of ['server/assets/landsec-logo-light.png', 'server/assets/landsec-logo-dark.png']) {
+    const bytes = fs.readFileSync(new URL(`../../${file}`, import.meta.url));
+    assert.deepEqual(Array.from(bytes.subarray(0, 4)), [0x89, 0x50, 0x4e, 0x47], `${file} is a PNG`);
+  }
+  assert.match(read('script/build.ts'), /"landsec-logo-light\.png", "landsec-logo-dark\.png"/, 'the build copies both logo files to dist/server/assets');
+  // The line at the foot is words, and stays.
+  assert.match(builders, /Made in ChatBGP on \$\{longDay\(ctx\.madeAt\)\} by \$\{ctx\.madeBy\}\. It holds what is recorded in ChatBGP on that day\./);
+});
+
 test('every report on the registry has a builder, and no builder is off the registry', () => {
   const body = builders.slice(builders.indexOf('export async function buildLandsecReport'), builders.indexOf('export function setupLandsecReportRoutes'));
   const built = Array.from(body.matchAll(/case "([a-z-]+)":/g)).map(m => m[1]);
