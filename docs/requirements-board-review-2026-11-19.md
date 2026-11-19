@@ -22,9 +22,9 @@ The board is a feed of PIPnet listings laid out as an old spreadsheet.
 - Of 211 requirements on live, 210 are PIPnet listings that nobody at BGP has
   confirmed. One was made by BGP. None is closed. Only 13 of the 210 brands
   are on any BGP deal.
-- The PIPnet import itself needs a look. It last saw a listing on 15
-  November and has added no new row since 12 November. 590 imported listings
-  never reached the board.
+- The PIPnet import has been stopped since 15 November. The app's ScraperAPI
+  account is out of credits (100,073 of 100,000 used), and every PIPnet
+  search goes through it. The login itself still works.
 - It opens on 58 suggestions, not on requirements.
 - The row runs to 17 columns. Three of them are empty on every row, and two
   more repeat what the row already says.
@@ -104,17 +104,52 @@ a few of the 210 may have started as BGP's own (the health report says so).
 - Three requirements are tied to the wrong kind of company: an agent, a
   landlord and a client.
 
-**The import.** The health report (Sync tools → Health report) has three
-signs that the import needs a look in its logs:
+**The import has been stopped since 15 November.** The health report (Sync
+tools → Health report) says PIPnet last saw a listing on 15 November, though
+the import runs at 05:30 every day. The cause was found on 19 November:
 
-- PIPnet last saw a listing on 15 November, four days ago, though the import
-  runs at 05:30 every day.
-- No new row has come from PIPnet since 12 November. 62 existing rows were
-  seen again in that time.
-- 590 listings sit in the import table as "active" and never became a row on
-  the board. 321 did.
+- The app's PIPnet login works. The admin login test passed, with the
+  credentials held in the app's database.
+- Every PIPnet search goes through ScraperAPI, and the ScraperAPI account is
+  out of credits. The app's costs report shows 100,073 requests used of
+  100,000. A search answers "ScraperAPI paused — account out of credits".
+- Eight other parts of the app also go through ScraperAPI:
+  - The Requirement List import;
+  - planning documents;
+  - Companies House;
+  - brand enrichment and identity checks;
+  - the brand, landlord and social scrapers.
 
-Why was not established.
+  While the credits are out, each of these either skips ScraperAPI or fails.
+  The app does not log which feature used the 100,000.
+
+No new row has come from PIPnet since 12 November. 62 existing rows were seen
+again before the credits ran out.
+
+The 590 "active" listings in the import table are not recent ones that went
+missing. They came from a one-off import in May 2026, with PIPnet dates going
+back to 2025, and were never turned into rows. 136 of them are for brands
+already on the board. The 321 that did become rows arrived between May and
+November.
+
+**What PIPnet holds**, from the 911 requirement listings and 379 available
+properties the app has stored:
+
+- **Each retail requirement listing gives:**
+  - the client (the brand);
+  - an area range, held on 863 of the 911;
+  - the agent firm and the agent's name, with a phone on 264 and an email
+    on 79;
+  - a status and a document date.
+
+  Behind each listing is a detail page with the agent's address and mobile,
+  and a brochure (the "landlord pack"). The app reads the brochure for use
+  and places. Even so, only 189 listings have a use class and 80 have places.
+  That is why few requirements on the board have places.
+- **Retail availability:** space on the market across the UK. Each one has
+  the address, size, tenure, use class and the agent firm (121 firms). 201
+  have a rent and 232 a rateable value. These are kept apart from the CRM, on
+  their own map layer.
 
 **How old they are.** The board counts a market listing's age from the day
 PIPnet listed it. The median is 119 days. 99 were listed within the last 90
@@ -546,14 +581,13 @@ The phone shell's Reqs list and the three unmounted panels are deleted.
 
 ## Build order
 
-1. **The PIPnet import first:**
-   - read the 05:30 job's logs since 15 November;
-   - find why 590 listings never became rows;
-   - report back before changing anything.
+1. **Get the PIPnet import running again.** ScraperAPI needs topping up, or
+   its plan needs to renew (Woody's). Then check the next 05:30 run.
 
-   Whether the import should keep making a name-only brand record for a
-   client the CRM does not hold is Woody's call. Today it makes one, with no
-   type.
+   Two more things are Woody's call:
+   - whether the 590 May listings should be brought in;
+   - whether the import should keep making a name-only brand record, with no
+     type, for a client the CRM does not hold.
 2. **Feed and fit rule (server):** the board feed, and the chosen fit rule in
    `shared/requirement-fit.ts` with tests, used by every caller (finding 12).
    The client cut and the joint agent rule carry over unchanged.
