@@ -13,19 +13,24 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 type Group = "clear" | "brand" | "kept";
-type Row = { id: string; offerDate: string | null; companyName: string | null; contactName: string | null; subject: string | null; group: Group; keptBecause: string[] };
-type Unit = { unitId: string; onTracker: boolean; unitName: string | null; propertyId: string | null; propertyName: string | null; counts: Record<Group, number>; otherOffers: number; rows: Row[] };
+type Row = { id: string; offerDate: string | null; companyName: string | null; contactName: string | null; subject: string | null; group: Group; keptBecause: string[]; thread: string; keeper: boolean };
+type Thread = { key: string; subject: string | null; emails: number; keeperId: string | null; keeperChosen: boolean; counts: Record<Group, number>; first: string | null; last: string | null };
+type Unit = { unitId: string; onTracker: boolean; unitName: string | null; propertyId: string | null; propertyName: string | null; counts: Record<Group, number>; otherOffers: number; threads: Thread[]; rows: Row[] };
 type Run = { kind: "apply" | "undo"; at: string; byName: string | null; batch: string; undoOf?: string; undoneAt?: string; counts: Record<string, number> };
-type Preview = { previewedAt: string; counts: { offers: number; units: number } & Record<Group, number>; units: Unit[]; runs: Run[] };
+type Preview = { previewedAt: string; counts: { offers: number; units: number; threads: number } & Record<Group, number>; units: Unit[]; runs: Run[] };
 
 const GROUPS: Array<{ key: Group; label: string; what: string }> = [
-  { key: "clear", label: "To clear", what: "Still exactly as the import wrote them, credited to nobody, to the landlord, to BGP or to a company that is not a brand. Tick a unit to clear all of its rows here." },
-  { key: "brand", label: "Credited to a brand", what: "Still as the import wrote them, but credited to a company typed as a tenant brand, so each shows as that brand's offer on the Brand CRM. Some may be real: read the subject, and open the email from the brand's page if unsure. Each is ticked on its own." },
-  { key: "kept", label: "Kept", what: "Import rows a person has worked on since. They are never cleared." },
+  { key: "clear", label: "Copies to clear", what: "The import wrote one row for every email in a thread, so one offer could become a hundred rows. One row per email thread stays as the offer (one credited to a brand first, else the first email) and these copies are cleared. Tick a unit or a thread. Tick Not an offer on a thread that is not an offer at all, such as a newsletter, to clear its kept row too." },
+  { key: "brand", label: "Credited to a brand", what: "Copies credited to a company typed as a tenant brand, so each shows as that brand's offer on the Brand CRM. Read the subject first. Each is ticked on its own." },
+  { key: "kept", label: "Kept", what: "The row kept as each email thread's offer, and import rows a person has worked on since. A row a person has worked on is never cleared." },
 ];
 
 const offers = (n: number) => `${n.toLocaleString("en-GB")} ${n === 1 ? "offer" : "offers"}`;
+const copies = (n: number) => `${n.toLocaleString("en-GB")} ${n === 1 ? "copy" : "copies"}`;
+const emails = (n: number) => `${n.toLocaleString("en-GB")} ${n === 1 ? "email" : "emails"}`;
+const threadsWord = (n: number) => `${n.toLocaleString("en-GB")} email ${n === 1 ? "thread" : "threads"}`;
 const units = (n: number) => `${n.toLocaleString("en-GB")} ${n === 1 ? "unit" : "units"}`;
+const slotOf = (unitId: string, key: string) => `${unitId}\u0000${key}`;
 const plainMessage = (err: unknown) => (err instanceof Error ? err.message : String(err ?? "")).replace(/^\d{3}:\s*/, "") || "Try again in a moment.";
 const unitLabel = (u: Unit) => (u.onTracker ? `${u.propertyName || "No property"} · ${u.unitName || "Unnamed unit"}` : "A unit no longer on the tracker");
 const day = (d: string | null) => {
@@ -58,6 +63,9 @@ export function EmailOfferCleanupPanel() {
   const [open, setOpen] = useState<Group | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [ticked, setTicked] = useState<Set<string>>(new Set());
+  // Threads ticked as not an offer at all: every row goes, the kept one too.
+  const [whole, setWhole] = useState<Set<string>>(new Set());
+  const [openThreads, setOpenThreads] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<"preview" | "apply" | "undo" | null>(null);
   const [confirm, setConfirm] = useState<{ kind: "apply" } | { kind: "undo"; batch: string } | null>(null);
   const [word, setWord] = useState("");
@@ -74,7 +82,19 @@ export function EmailOfferCleanupPanel() {
 
   const rowsIn = (group: Group) => (preview?.units || []).flatMap((u) => u.rows.filter((r) => r.group === group).map((r) => ({ row: r, unit: u })));
   const clearIds = useMemo(() => new Set(rowsIn("clear").map((x) => x.row.id)), [preview]);
-  const tickedUnits = useMemo(() => new Set((preview?.units || []).filter((u) => u.rows.some((r) => ticked.has(r.id))).map((u) => u.unitId)), [preview, ticked]);
+  // What Apply will clear: the ticked copies, plus every clearable row of a
+  // thread ticked as not an offer (the server works the same list out).
+  const going = useMemo(() => {
+    const ids = new Set(ticked);
+    for (const u of preview?.units || []) {
+      for (const r of u.rows) {
+        if (!whole.has(slotOf(u.unitId, r.thread))) continue;
+        if (r.group !== "kept" || (r.keeper && u.threads.find((t) => t.key === r.thread)?.keeperChosen)) ids.add(r.id);
+      }
+    }
+    return ids;
+  }, [preview, ticked, whole]);
+  const tickedUnits = useMemo(() => new Set((preview?.units || []).filter((u) => u.rows.some((r) => going.has(r.id))).map((u) => u.unitId)), [preview, going]);
   const closeConfirm = () => { setConfirm(null); setWord(""); };
   const setTick = (ids: string[], on: boolean) => {
     const next = new Set(ticked);
@@ -90,6 +110,8 @@ export function EmailOfferCleanupPanel() {
       setPreview(data);
       setRuns(data.runs || []);
       setTicked(new Set());
+      setWhole(new Set());
+      setOpenThreads(new Set());
       setExpanded(new Set());
       setOpen(data.counts.clear ? "clear" : data.counts.brand ? "brand" : data.counts.kept ? "kept" : null);
       setResult(null);
@@ -103,15 +125,18 @@ export function EmailOfferCleanupPanel() {
   const runApply = async () => {
     setBusy("apply");
     try {
-      const data = await (await apiRequest("POST", "/api/admin/email-offer-cleanup", { dryRun: false, ids: [...ticked], previewedAt: preview?.previewedAt })).json();
+      const threads = [...whole].map((s) => { const [unitId, key] = s.split("\u0000"); return { unitId, key }; });
+      const data = await (await apiRequest("POST", "/api/admin/email-offer-cleanup", { dryRun: false, ids: [...ticked], threads, previewedAt: preview?.previewedAt })).json();
       const c = data.counts || {};
       const said = `Cleared ${offers(c.deleted ?? 0)} on ${units(c.units ?? 0)}`
-        + (c.skipped ? `; ${offers(c.skipped)} left because a person has worked on them since the preview` : "")
+        + (c.wholeThreads ? `, ${threadsWord(c.wholeThreads)} cleared completely as not offers` : "")
+        + (c.skipped ? `; ${offers(c.skipped)} left, because a person has worked on them or their thread's offer has gone since the preview` : "")
         + (c.failed ? `; ${units(c.failed)} failed and nothing was cleared there` : "") + ".";
       setResult(said);
       setRuns([{ kind: "apply", at: data.appliedAt, byName: data.byName, batch: data.batch, counts: c }, ...runs]);
       setPreview(null);
       setTicked(new Set());
+      setWhole(new Set());
       closeConfirm();
       refreshTracker();
       toast({ title: "Applied", description: said });
@@ -134,6 +159,7 @@ export function EmailOfferCleanupPanel() {
         ...runs.map((r) => (r.batch === batch ? { ...r, undoneAt: data.undoneAt } : r))]);
       setPreview(null);
       setTicked(new Set());
+      setWhole(new Set());
       closeConfirm();
       refreshTracker();
       toast({ title: "Undone", description: said });
@@ -156,21 +182,21 @@ export function EmailOfferCleanupPanel() {
             {busy === "preview" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Eye className="w-4 h-4 mr-2" />}
             {busy === "preview" ? "Previewing…" : "Preview"}
           </Button>
-          <Button size="sm" onClick={() => { setWord(""); setConfirm({ kind: "apply" }); }} disabled={!preview || ticked.size === 0 || busy !== null} data-testid="button-email-offer-apply">
+          <Button size="sm" onClick={() => { setWord(""); setConfirm({ kind: "apply" }); }} disabled={!preview || going.size === 0 || busy !== null} data-testid="button-email-offer-apply">
             {busy === "apply" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
-            {busy === "apply" ? "Applying…" : `Apply${ticked.size ? ` ${offers(ticked.size)}` : ""}`}
+            {busy === "apply" ? "Applying…" : `Apply${going.size ? `: clear ${going.size.toLocaleString("en-GB")} ${going.size === 1 ? "row" : "rows"}` : ""}`}
           </Button>
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        On 14 August 2026 a one-off import read three months of stored emails and logged an unconfirmed offer for every email that mentioned an offer and could be pinned on a tracker unit.
-        None has terms, and most are credited to nobody, to the landlord or to BGP. This clears the ones still exactly as the import wrote them. Offers people logged are never touched, nor import rows anyone has worked on since.
+        On 14 August 2026 a one-off import read three months of stored emails and logged an unconfirmed offer for every email that mentioned an offer and could be pinned on a tracker unit,
+        so one offer became one row for every email in its thread. This keeps one offer per email thread and clears the copies. Offers people logged are never touched, nor import rows anyone has worked on since.
         Every row cleared is recorded and can be put back with Undo.
       </p>
       {preview && (
         <>
           <p className="text-xs text-muted-foreground" data-testid="text-email-offer-summary">
-            Previewed {new Date(preview.previewedAt).toLocaleString("en-GB")}: <span className="tabular-nums">{offers(preview.counts.offers)}</span> from the import on <span className="tabular-nums">{units(preview.counts.units)}</span>.
+            Previewed {new Date(preview.previewedAt).toLocaleString("en-GB")}: <span className="tabular-nums">{offers(preview.counts.offers)}</span> from the import on <span className="tabular-nums">{units(preview.counts.units)}</span>, in <span className="tabular-nums">{threadsWord(preview.counts.threads ?? 0)}</span>.
           </p>
           <div className="flex flex-wrap gap-1.5">
             {GROUPS.map((g) => (
@@ -187,35 +213,82 @@ export function EmailOfferCleanupPanel() {
                 clearIds.size === 0 ? <p className="text-xs text-muted-foreground">None.</p> : (
                   <>
                     <div className="flex flex-wrap items-center gap-3 text-xs">
-                      <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setTick([...clearIds], true)} data-testid="button-email-offer-tick-all">Tick all</button>
-                      <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setTicked(new Set())}>Tick none</button>
-                      <span className="text-muted-foreground"><span className="tabular-nums">{offers(ticked.size)}</span> ticked on <span className="tabular-nums">{units(tickedUnits.size)}</span></span>
+                      <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setTick([...clearIds], true)} data-testid="button-email-offer-tick-all">Tick all copies</button>
+                      <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => { setTicked(new Set()); setWhole(new Set()); }}>Tick none</button>
+                      <span className="text-muted-foreground"><span className="tabular-nums">{going.size.toLocaleString("en-GB")}</span> {going.size === 1 ? "row" : "rows"} ticked on <span className="tabular-nums">{units(tickedUnits.size)}</span>
+                        {whole.size ? `, ${threadsWord(whole.size)} as not offers` : ""}</span>
                     </div>
                     <ul>
-                      {preview.units.filter((u) => u.counts.clear > 0).map((u) => {
+                      {preview.units.filter((u) => u.counts.clear > 0 || u.threads.some((t) => t.keeperChosen)).map((u) => {
                         const ids = u.rows.filter((r) => r.group === "clear").map((r) => r.id);
                         const on = ids.filter((id) => ticked.has(id)).length;
                         const isOpen = expanded.has(u.unitId);
+                        const withCopies = u.threads.filter((t) => t.counts.clear > 0).length;
                         return (
                           <li key={u.unitId} className="py-1 border-b border-border/50 last:border-0">
                             <div className="flex items-start gap-2 text-xs">
-                              <Checkbox className="mt-0.5" checked={on === ids.length ? true : on > 0 ? "indeterminate" : false}
-                                onCheckedChange={(v) => setTick(ids, v === true)} aria-label={`Clear ${offers(ids.length)} on ${unitLabel(u)}`} data-testid={`checkbox-email-offer-unit-${u.unitId}`} />
+                              <Checkbox className="mt-0.5" checked={ids.length > 0 && on === ids.length ? true : on > 0 ? "indeterminate" : false} disabled={ids.length === 0}
+                                onCheckedChange={(v) => setTick(ids, v === true)} aria-label={`Clear ${copies(ids.length)} on ${unitLabel(u)}`} data-testid={`checkbox-email-offer-unit-${u.unitId}`} />
                               <button type="button" className="flex min-w-0 flex-1 items-start gap-1 text-left" onClick={() => {
                                 const next = new Set(expanded); if (isOpen) next.delete(u.unitId); else next.add(u.unitId); setExpanded(next);
                               }} data-testid={`button-email-offer-unit-${u.unitId}`}>
                                 {isOpen ? <ChevronDown className="mt-0.5 w-3 h-3 shrink-0" /> : <ChevronRight className="mt-0.5 w-3 h-3 shrink-0" />}
                                 <span className="min-w-0">
                                   <span className="font-medium">{unitLabel(u)}</span>{" "}
-                                  <span className="text-muted-foreground"><span className="tabular-nums">{offers(ids.length)}</span> to clear
-                                    {u.counts.brand ? `, ${u.counts.brand} credited to a brand` : ""}{u.counts.kept ? `, ${u.counts.kept} kept` : ""}
+                                  <span className="text-muted-foreground">
+                                    {ids.length ? <><span className="tabular-nums">{copies(ids.length)}</span> to clear in {threadsWord(withCopies)}; one offer per thread stays</> : `${threadsWord(u.threads.length)}, one email each: nothing to clear unless one is not an offer`}
+                                    {u.counts.brand ? `, ${u.counts.brand} credited to a brand` : ""}
                                     {u.otherOffers ? `; ${offers(u.otherOffers)} not from the import ${u.otherOffers === 1 ? "stays" : "stay"}` : ""}</span>
                                 </span>
                               </button>
                             </div>
                             {isOpen && (
                               <ul className="ml-6 mt-1">
-                                {u.rows.filter((r) => r.group === "clear").map((r) => <OfferLine key={r.id} row={r} />)}
+                                {u.threads.filter((t) => t.counts.clear > 0 || t.keeperChosen).map((t) => {
+                                  const slot = slotOf(u.unitId, t.key);
+                                  const tIds = u.rows.filter((r) => r.thread === t.key && r.group === "clear").map((r) => r.id);
+                                  const tOn = tIds.filter((id) => ticked.has(id)).length;
+                                  const notOffer = whole.has(slot);
+                                  const keeperRow = u.rows.find((r) => r.id === t.keeperId);
+                                  const tOpen = openThreads.has(slot);
+                                  return (
+                                    <li key={slot} className="py-1 border-b border-border/50 last:border-0 text-xs" data-testid={`row-email-offer-thread-${t.keeperId ?? "none"}`}>
+                                      <div className="flex items-start gap-2">
+                                        <Checkbox className="mt-0.5" checked={notOffer || (tIds.length > 0 && tOn === tIds.length) ? true : tOn > 0 ? "indeterminate" : false}
+                                          disabled={notOffer || tIds.length === 0} onCheckedChange={(v) => setTick(tIds, v === true)}
+                                          aria-label={`Clear the ${copies(tIds.length)} of this thread`} data-testid={`checkbox-email-offer-thread-${t.keeperId ?? "none"}`} />
+                                        <div className="min-w-0 flex-1 space-y-0.5">
+                                          <button type="button" className="flex items-start gap-1 text-left" onClick={() => {
+                                            const next = new Set(openThreads); if (tOpen) next.delete(slot); else next.add(slot); setOpenThreads(next);
+                                          }}>
+                                            {tOpen ? <ChevronDown className="mt-0.5 w-3 h-3 shrink-0" /> : <ChevronRight className="mt-0.5 w-3 h-3 shrink-0" />}
+                                            <span className="font-medium break-words">{t.subject ? `“${t.subject}”` : "No subject"}</span>
+                                          </button>
+                                          <p className="text-muted-foreground">
+                                            {emails(t.emails)}{t.first ? `, ${day(t.first)}` : ""}{t.last && t.last !== t.first ? ` to ${day(t.last)}` : ""}.{" "}
+                                            {notOffer
+                                              ? "All of it is cleared, as not an offer."
+                                              : `Keeps the offer of ${day(keeperRow?.offerDate ?? null)}${keeperRow ? ` (${keeperRow.companyName || "no company"})` : ""}${tIds.length ? `, clears ${copies(tIds.length)}` : ""}.`}
+                                            {t.counts.brand ? ` ${t.counts.brand} more ${t.counts.brand === 1 ? "is" : "are"} credited to a brand: see Credited to a brand.` : ""}
+                                          </p>
+                                          {t.keeperChosen && (
+                                            <label className="inline-flex items-center gap-1.5 text-muted-foreground">
+                                              <Checkbox checked={notOffer} onCheckedChange={(v) => {
+                                                const next = new Set(whole); if (v === true) next.add(slot); else next.delete(slot); setWhole(next);
+                                              }} data-testid={`checkbox-email-offer-not-offer-${t.keeperId}`} />
+                                              Not an offer: clear all of it
+                                            </label>
+                                          )}
+                                        </div>
+                                      </div>
+                                      {tOpen && (
+                                        <ul className="ml-6 mt-1">
+                                          {u.rows.filter((r) => r.thread === t.key && (r.group === "clear" || r.keeper)).map((r) => <OfferLine key={r.id} row={r} />)}
+                                        </ul>
+                                      )}
+                                    </li>
+                                  );
+                                })}
                               </ul>
                             )}
                           </li>
@@ -265,7 +338,9 @@ export function EmailOfferCleanupPanel() {
             <DialogDescription>
               {confirm?.kind === "undo"
                 ? "Every offer this run cleared goes back on its unit, with its blank negotiation round, unless the unit has gone or the email has been logged again."
-                : `${offers(ticked.size)} on ${units(tickedUnits.size)} ${ticked.size === 1 ? "is" : "are"} deleted, with any blank negotiation round. An offer a person has worked on since the preview is left. Every row is recorded and can be put back with Undo.`}
+                : `${going.size.toLocaleString("en-GB")} ${going.size === 1 ? "row" : "rows"} on ${units(tickedUnits.size)} ${going.size === 1 ? "is" : "are"} deleted, with any blank negotiation round.`
+                  + ` One offer per email thread stays${whole.size ? `, except in the ${threadsWord(whole.size)} ticked as not an offer` : ""}.`
+                  + " A row a person has worked on since the preview is left, and so are a thread's copies if its kept offer has gone. Every row is recorded and can be put back with Undo."}
               {" "}Type {needed} to confirm.
             </DialogDescription>
           </DialogHeader>
@@ -278,7 +353,7 @@ export function EmailOfferCleanupPanel() {
               data-testid="button-email-offer-confirm"
             >
               {busy === "apply" || busy === "undo" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-              {confirm?.kind === "undo" ? "Put back" : `Clear ${offers(ticked.size)}`}
+              {confirm?.kind === "undo" ? "Put back" : `Clear ${going.size.toLocaleString("en-GB")} ${going.size === 1 ? "row" : "rows"}`}
             </Button>
           </DialogFooter>
         </DialogContent>

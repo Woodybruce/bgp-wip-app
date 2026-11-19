@@ -5,8 +5,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  OFFER_TERM_COLUMNS, cleanupGroup, importSubject, isBlankFirstRound, isImportOffer, mayClear, touchedBecause,
-  type ImportOfferFacts, type ImportRound,
+  OFFER_TERM_COLUMNS, cleanupGroup, importSubject, isBlankFirstRound, isImportOffer, mayClear, threadKeeper, threadKey, touchedBecause,
+  type ImportOfferFacts, type ImportRound, type ThreadRow,
 } from "../shared/email-offer-cleanup";
 
 const importRow = (over: Partial<ImportOfferFacts> = {}): ImportOfferFacts => ({
@@ -128,4 +128,43 @@ test("every reason is listed, not just the first", () => {
 
 test("a touched row credited to a brand is kept, not listed with the brands", () => {
   assert.equal(cleanupGroup(importRow({ creditedToBrand: true, status: "Rejected" })).group, "kept");
+});
+
+// One email thread on one unit is one offer (Woody, 2026-11-19: "these are
+// actual offers but its picking up all the emails so shows hundred of entries
+// for each offer").
+
+test("a thread is its subject without reply and forward prefixes, case or spacing", () => {
+  const one = threadKey("Re: One New Change - House of Dice offer");
+  for (const s of ["RE: One New Change - House of Dice offer", "One New Change - House of Dice offer", "Re: RE: Fwd: One New Change - House of Dice offer",
+    "FW:  One New Change  -  House of Dice offer", "re[2]: one new change - house of dice offer", "AW: One New Change - House of Dice offer"]) {
+    assert.equal(threadKey(s), one, s);
+  }
+  assert.notEqual(threadKey("Re: One New Change - Bloom offer"), one);
+  assert.equal(threadKey("Offer: Regent Street"), "offer: regent street", "a word that is not a prefix stays");
+  assert.equal(threadKey(null), "");
+});
+
+const thread = (rows: Array<Partial<ThreadRow> & { id: string }>): ThreadRow[] =>
+  rows.map(r => ({ offerDate: "2026-06-29", group: "clear", creditedToBrand: false, ...r }));
+
+test("one untouched row is kept as the thread's offer: the first email", () => {
+  assert.deepEqual(threadKeeper(thread([{ id: "b", offerDate: "2026-07-02" }, { id: "a", offerDate: "2026-06-29" }, { id: "c", offerDate: "2026-07-01" }])),
+    { keeperId: "a", chosen: true });
+  assert.deepEqual(threadKeeper(thread([{ id: "b" }, { id: "a" }])), { keeperId: "a", chosen: true }, "the same day: the lowest id");
+  assert.deepEqual(threadKeeper(thread([{ id: "a", offerDate: null }, { id: "b", offerDate: "2026-07-02" }])), { keeperId: "b", chosen: true }, "a dated email before one with no date");
+});
+
+test("a row credited to a brand is kept before an earlier one credited to nobody", () => {
+  assert.deepEqual(threadKeeper(thread([{ id: "a", offerDate: "2026-06-01" }, { id: "b", group: "brand", creditedToBrand: true, offerDate: "2026-06-20" }])),
+    { keeperId: "b", chosen: true });
+});
+
+test("a row a person has worked on stands for the offer, so every untouched row is a copy", () => {
+  assert.deepEqual(threadKeeper(thread([{ id: "a" }, { id: "b", group: "kept", offerDate: "2026-07-05" }, { id: "c" }])), { keeperId: "b", chosen: false });
+});
+
+test("a thread of one email keeps it; an empty thread keeps nothing", () => {
+  assert.deepEqual(threadKeeper(thread([{ id: "only" }])), { keeperId: "only", chosen: true });
+  assert.deepEqual(threadKeeper([]), { keeperId: null, chosen: false });
 });

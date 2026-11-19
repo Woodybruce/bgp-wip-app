@@ -11,6 +11,14 @@
 // import wrote them. A row anyone has touched since is kept, with the reason.
 // A row credited to a tenant brand counts as that brand's offer on the Brand
 // CRM, so it is listed on its own for a person to tick.
+//
+// The import wrote one row for every email in a thread, so one real offer can
+// be 144 rows (Woody, 2026-11-19: "these are actual offers but its picking up
+// all the emails so shows hundred of entries for each offer"). One email
+// thread on one unit (the subject without Re: or Fwd:, threadKey) is one
+// offer: one of its rows stays as the offer (threadKeeper) and only the copies
+// are cleared. A person can tick a thread that is not an offer at all (a
+// newsletter caught by the import) to clear the one kept row as well.
 
 export const IMPORT_COMMENT_PREFIX = "Backfilled from synced email: ";
 export const IMPORT_KEY_PREFIX = "int_";
@@ -121,3 +129,40 @@ export function cleanupGroup(f: ImportOfferFacts): { group: CleanupGroup; keptBe
 }
 
 export const mayClear = (group: CleanupGroup): boolean => group === "clear" || group === "brand";
+
+/** The thread an import row belongs to: its subject without any run of reply
+ *  or forward prefixes (Re:, RE:, Fwd:, FW:, AW:, Re[2]:), spacing or case. */
+export function threadKey(subject: string | null | undefined): string {
+  let s = String(subject ?? "").trim();
+  for (let i = 0; i < 20; i += 1) {
+    const next = s.replace(/^(?:re|fw|fwd|aw|sv|wg)\s*(?:\[\d+\])?\s*[:：]\s*/i, "");
+    if (next === s) break;
+    s = next;
+  }
+  return s.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+export type ThreadRow = { id: string; offerDate: string | null; group: CleanupGroup; creditedToBrand: boolean };
+
+const byDateThenId = (a: ThreadRow, b: ThreadRow): number => {
+  const da = a.offerDate || "~", db = b.offerDate || "~";
+  return da < db ? -1 : da > db ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+};
+
+/**
+ * Which row of one thread on one unit stands for its offer. A row a person
+ * has worked on does, if there is one (chosen false: it is kept anyway).
+ * Otherwise one untouched row is kept as the offer (chosen true): one credited
+ * to a brand first, then the earliest email, then the lowest id. Null for a
+ * thread with no rows.
+ */
+export function threadKeeper(rows: ThreadRow[]): { keeperId: string | null; chosen: boolean } {
+  const touched = rows.filter(r => r.group === "kept").sort(byDateThenId);
+  if (touched.length) return { keeperId: touched[0].id, chosen: false };
+  const open = rows.filter(r => mayClear(r.group));
+  if (!open.length) return { keeperId: null, chosen: false };
+  const pick = [...open].sort((a, b) => Number(b.creditedToBrand) - Number(a.creditedToBrand) || byDateThenId(a, b))[0];
+  return { keeperId: pick.id, chosen: true };
+}
+
+export const KEEPER_REASON = "the offer for this email thread: its other emails are the copies";

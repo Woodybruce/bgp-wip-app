@@ -2026,6 +2026,21 @@ credited to no company, 256 to Landsec and 10 to BGP. None had been touched.
   type starting "Tenant") shows as that brand's offer on the Brand CRM, so it
   is listed apart as **Credited to a brand** and ticked one by one (11 on
   live, Krispy Kreme, Choux Bun, Fat Face and Asda among them).
+- **One offer per email thread** (Woody, 2026-11-19, on the first preview:
+  "these are actual offers but its picking up all the emails so shows hundred
+  of entries for each offer").
+  - The import wrote one row for every email in a thread. The 970 rows were
+    74 threads, up to 144 rows each. A thread is the unit plus the subject
+    without Re: or Fwd: (`threadKey`).
+  - `threadKeeper` keeps one row per thread as its offer: a row a person
+    worked on, else one credited to a brand, else the first email. Only the
+    copies are offered for clearing, and the preview lists each unit's
+    threads.
+  - **Not an offer** on a thread (a newsletter the import caught) clears its
+    kept row too (`threads` on apply).
+  - Apply leaves a thread's copies when its kept row has gone since the
+    preview. A preview made before this rule recorded no kept rows, so apply
+    refuses it.
 - **The tool** is `server/email-offer-cleanup.ts`, admin only
   (`POST /api/admin/email-offer-cleanup`, `…/undo`, `GET …/runs`), mounted
   from `server/index.ts`; never at boot or on a timer. Preview records the

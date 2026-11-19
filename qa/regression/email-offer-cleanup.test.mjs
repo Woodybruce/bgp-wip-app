@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import pg from 'pg';
-import { IMPORT_COMMENT_PREFIX, IMPORT_KEY_PREFIX } from '../../shared/email-offer-cleanup.ts';
+import { IMPORT_COMMENT_PREFIX, IMPORT_KEY_PREFIX, threadKey } from '../../shared/email-offer-cleanup.ts';
 import {
   BATCH_PREFIX, DRY_RUN_KEY, OFFER_LOCK_PREFIX, RUNS_KEY,
   applyEmailOfferCleanup, emailOfferCleanupRuns, previewEmailOfferCleanup, undoEmailOfferCleanup,
@@ -92,6 +92,18 @@ test('the panel sits with the other letting repairs in Settings, and ChatBGP kno
   assert.match(source('server/chatbgp-app-map.ts'), /Offers from the 14 August email import/);
 });
 
+test('one offer per email thread stays: a copy goes only while its kept row is there', () => {
+  const mod = source('server/email-offer-cleanup.ts');
+  const preview = mod.slice(mod.indexOf('export async function previewEmailOfferCleanup'), mod.indexOf('export async function applyEmailOfferCleanup'));
+  assert.match(preview, /threadKeeper\(/);
+  assert.match(preview, /keepers\[row\.id\] = \{ unitId: raw\.unit_id, thread: row\.thread \}/);
+  const apply = mod.slice(mod.indexOf('export async function applyEmailOfferCleanup'), mod.indexOf('export async function undoEmailOfferCleanup'));
+  // A kept row is cleared only for a thread ticked as not an offer.
+  assert.match(apply, /Object\.entries\(dry\.keepers\)\.filter\(\(\[, k\]\) => whole\.has\(threadSlot\(k\.unitId, k\.thread\)\)\)/);
+  assert.match(apply, /if \(lost\.has\(threadOf\(id\)\)\)/);
+  assert.match(apply, /if \(!dry\.keepers\) throw refusal\(409/);
+});
+
 // ---------------------------------------------------------------------------
 // The SQL, for real.
 
@@ -151,22 +163,34 @@ async function schemaPool(withOptional = true) {
 test('preview, apply and undo, for real', { skip }, async () => {
   const { pool, run, offer, drop } = await schemaPool();
   try {
-    await offer('o1', 'au1');
+    // A thread on au1: the first email stays as the offer; the replies are copies.
+    await offer('o0', 'au1', { offer_date: '2026-07-01', comments: COMMENT('Unit 4 - House of Dice offer') });
+    await offer('o1', 'au1', { comments: COMMENT('RE: Unit 4 - House of Dice offer') });
     await run(`INSERT INTO unit_offer_rounds (id, offer_id, unit_id, round_no, party, round_date, created_at) VALUES ('r1', 'o1', 'au1', 1, 'tenant', '2026-07-06', '2026-08-14 10:00:00')`);
-    await offer('o2', 'au1', { company_name: 'Landsec', company_id: 'c-landsec' });
-    await offer('o3', 'au2', { company_name: 'Krispy Kreme', company_id: 'c-brand' });
+    await offer('o2', 'au1', { company_name: 'Landsec', company_id: 'c-landsec', comments: COMMENT('Re: Unit 4 - House of Dice offer') });
+    // Worked on by a person: kept, each its own thread.
     await offer('o4', 'au1', { status: 'Rejected' });
     await offer('o5', 'au1');
     await run(`INSERT INTO unit_offer_rounds (id, offer_id, unit_id, round_no, party, round_date) VALUES ('r5a', 'o5', 'au1', 1, 'tenant', '2026-07-06'),
       ('r5b', 'o5', 'au1', 2, 'landlord', '2026-09-01')`);
     await run(`UPDATE unit_offer_rounds SET created_by_user_id = 'u-admin', created_by_name = 'Ada Admin' WHERE id = 'r5b'`);
     await offer('o6', 'au1', { rent_pa: 95000 });
-    await offer('o-hots', 'au2');
+    // A thread on au2: the row credited to a brand stays, though a copy came first.
+    await offer('o7', 'au2', { offer_date: '2026-07-01', comments: COMMENT('Kiosk offer') });
+    await offer('o3', 'au2', { company_name: 'Krispy Kreme', company_id: 'c-brand', comments: COMMENT('RE: Kiosk offer') });
+    await offer('o8', 'au2', { offer_date: '2026-07-09', company_name: 'Krispy Kreme', company_id: 'c-brand', comments: COMMENT('FW: Kiosk offer') });
+    // A thread whose row a person worked on stands for the offer: the rest are copies.
+    await offer('o-hots', 'au2', { comments: COMMENT('Kiosk HOTs') });
     await run(`UPDATE available_units SET hots_offer_id = 'o-hots' WHERE id = 'au2'`);
+    await offer('o9', 'au2', { comments: COMMENT('Re: Kiosk HOTs') });
     await offer('o-rec', 'au2');
     await run(`INSERT INTO unit_recommendations (id, unit_id, offer_id) VALUES ('rec1', 'au2', 'o-rec')`);
     await offer('o-sug', 'au2');
     await run(`INSERT INTO letting_suggestions (id, record_kind, record_id) VALUES ('s1', 'offer', 'o-sug')`);
+    // A thread whose kept row is removed after the preview: its copy stays.
+    await offer('o10', 'au2', { offer_date: '2026-07-01', comments: COMMENT('Kiosk second offer') });
+    await offer('o11', 'au2', { comments: COMMENT('Re: Kiosk second offer') });
+    // One email on a unit that has gone: kept, unless ticked as not an offer.
     await offer('o-orphan', 'gone-unit');
     // Not the import's: never listed, and they stay.
     await offer('o-sweep', 'au1', { comments: "Detected in peter@example.test's inbox: \"Offer\"", email_conversation_id: 'conv_abc' });
@@ -176,45 +200,64 @@ test('preview, apply and undo, for real', { skip }, async () => {
     const beforeRound = (await run(`SELECT to_jsonb(r) AS row FROM unit_offer_rounds r WHERE id = 'r1'`)).rows[0].row;
 
     const preview = await previewEmailOfferCleanup(pool, { by: 'u-admin' });
-    assert.deepEqual(preview.counts, { offers: 10, units: 3, clear: 3, brand: 1, kept: 6 });
+    assert.deepEqual(preview.counts, { offers: 16, units: 3, threads: 10, clear: 5, brand: 1, kept: 10 });
     const unit = id => preview.units.find(u => u.unitId === id);
-    assert.deepEqual(unit('au1').counts, { clear: 2, brand: 0, kept: 3 });
+    assert.deepEqual(unit('au1').counts, { clear: 2, brand: 0, kept: 4 });
     assert.equal(unit('au1').otherOffers, 2, 'the sweep row and the person\'s offer stay');
     assert.equal(unit('au1').propertyName, 'Cathedral Walk');
     assert.equal(unit('gone-unit').onTracker, false);
     const row = id => preview.units.flatMap(u => u.rows).find(r => r.id === id);
-    assert.equal(row('o1').subject, 'RE: o1 offer');
-    assert.equal(row('o3').group, 'brand');
+    assert.equal(row('o1').subject, 'RE: Unit 4 - House of Dice offer');
+    assert.equal(row('o1').thread, row('o0').thread, 'Re: and the first email are one thread');
+    assert.deepEqual([row('o0').group, row('o0').keeper], ['kept', true]);
+    assert.deepEqual([row('o3').group, row('o3').keeper], ['kept', true], 'the row credited to a brand is the one kept');
+    assert.equal(row('o7').group, 'clear');
+    assert.equal(row('o8').group, 'brand');
+    assert.deepEqual([row('o-hots').keeper, row('o-hots').keptBecause], [true, ["the unit's Heads of Terms name it"]]);
+    assert.equal(row('o9').group, 'clear');
     assert.deepEqual(row('o4').keptBecause, ['status is Rejected']);
     assert.deepEqual(row('o5').keptBecause, ['negotiation logged']);
     assert.deepEqual(row('o6').keptBecause, ['terms entered']);
-    assert.deepEqual(row('o-hots').keptBecause, ["the unit's Heads of Terms name it"]);
     assert.deepEqual(row('o-rec').keptBecause, ['a recommendation names it']);
     assert.deepEqual(row('o-sug').keptBecause, ['logged from a comment']);
+    assert.equal(row('o-orphan').keeper, true);
     assert.equal(row('o-sweep'), undefined);
+    const kiosk = unit('au2').threads.find(t => t.key === threadKey('Kiosk offer'));
+    assert.deepEqual([kiosk.emails, kiosk.keeperId, kiosk.keeperChosen, kiosk.first, kiosk.last], [3, 'o3', true, '2026-07-01', '2026-07-09']);
     const dry = (await run(`SELECT value FROM system_settings WHERE key = $1`, [DRY_RUN_KEY])).rows[0].value;
-    assert.deepEqual(Object.keys(dry.ids).sort(), ['o-orphan', 'o1', 'o2', 'o3']);
+    assert.deepEqual(Object.keys(dry.ids).sort(), ['o1', 'o11', 'o2', 'o7', 'o8', 'o9']);
+    assert.deepEqual(Object.keys(dry.keepers).sort(), ['o-orphan', 'o0', 'o10', 'o3']);
+    assert.equal(dry.ids.o11.keeper, 'o10');
 
     // Refused: another preview, another admin, nothing ticked.
     await assert.rejects(applyEmailOfferCleanup(pool, { by: 'u-admin', ids: ['o1'], previewedAt: '2026-01-01T00:00:00.000Z' }), e => e.status === 409);
     await assert.rejects(applyEmailOfferCleanup(pool, { by: 'u-other', ids: ['o1'], previewedAt: preview.previewedAt }), e => e.status === 409);
     await assert.rejects(applyEmailOfferCleanup(pool, { by: 'u-admin', ids: [], previewedAt: preview.previewedAt }), e => e.status === 400);
 
-    // A person works on o2 after the preview: it is left.
+    // A person works on o2 after the preview: it is left. o10 goes some other way: its copy is left.
     await run(`UPDATE unit_offers SET status = 'Negotiating', updated_at = now() WHERE id = 'o2'`);
-    const out = await applyEmailOfferCleanup(pool, { by: 'u-admin', ids: ['o1', 'o2', 'o3', 'o4', 'o-orphan', 'nope'], previewedAt: preview.previewedAt });
+    await run(`DELETE FROM unit_offers WHERE id = 'o10'`);
+    const out = await applyEmailOfferCleanup(pool, {
+      by: 'u-admin', previewedAt: preview.previewedAt,
+      ids: ['o1', 'o2', 'o7', 'o8', 'o9', 'o11', 'o0', 'nope'],
+      threads: [{ unitId: 'gone-unit', key: threadKey('RE: o-orphan offer') }],
+    });
     assert.ok(out.batch.startsWith(BATCH_PREFIX));
-    assert.deepEqual(out.counts, { deleted: 3, rounds: 1, units: 3, skipped: 1, notPreviewed: 2, failed: 0 });
+    assert.deepEqual(out.counts, { deleted: 5, rounds: 1, units: 3, skipped: 2, notPreviewed: 2, failed: 0, wholeThreads: 1 });
     assert.equal(out.byName, 'Ada Admin');
-    assert.deepEqual(out.skipped, [{ id: 'o2', reason: 'status is Negotiating, saved since the import' }]);
+    assert.deepEqual(out.skipped, [
+      { id: 'o2', reason: 'status is Negotiating, saved since the import' },
+      { id: 'o11', reason: 'the offer kept for its email thread has gone since the preview, so its copies are left' },
+    ]);
     // Sorted here, not by the database: the workflow's Postgres sorts by en_US.utf8, which ignores hyphens.
     const left = (await run(`SELECT id FROM unit_offers`)).rows.map(r => r.id).sort();
-    assert.deepEqual(left, ['o-hots', 'o-manual', 'o-rec', 'o-sug', 'o-sweep', 'o2', 'o4', 'o5', 'o6']);
+    assert.deepEqual(left, ['o-hots', 'o-manual', 'o-rec', 'o-sug', 'o-sweep', 'o0', 'o11', 'o2', 'o3', 'o4', 'o5', 'o6']);
     assert.deepEqual((await run(`SELECT id FROM unit_offer_rounds`)).rows.map(r => r.id).sort(), ['r5a', 'r5b']);
     const log = (await run(`SELECT table_name, record_id, action, prior FROM investment_comp_migration_log WHERE batch = $1`, [out.batch])).rows
       .sort((a, b) => { const x = `${a.table_name} ${a.record_id}`, y = `${b.table_name} ${b.record_id}`; return x < y ? -1 : x > y ? 1 : 0; });
     assert.deepEqual(log.map(l => [l.table_name, l.record_id, l.action]), [
-      ['unit_offer_rounds', 'r1', 'deleted'], ['unit_offers', 'o-orphan', 'deleted'], ['unit_offers', 'o1', 'deleted'], ['unit_offers', 'o3', 'deleted'],
+      ['unit_offer_rounds', 'r1', 'deleted'], ['unit_offers', 'o-orphan', 'deleted'], ['unit_offers', 'o1', 'deleted'],
+      ['unit_offers', 'o7', 'deleted'], ['unit_offers', 'o8', 'deleted'], ['unit_offers', 'o9', 'deleted'],
     ]);
     assert.deepEqual(log.find(l => l.record_id === 'o1').prior, before, 'the whole row is recorded');
     // The preview is used up; the run is recorded.
@@ -222,12 +265,12 @@ test('preview, apply and undo, for real', { skip }, async () => {
     assert.equal((await run(`SELECT 1 FROM system_settings WHERE key = $1`, [DRY_RUN_KEY])).rows.length, 0);
     assert.equal((await emailOfferCleanupRuns(pool))[0].batch, out.batch);
 
-    // Undo: o3's email key has been taken since, and o-orphan's unit is gone.
-    await offer('o-new', 'au2', { email_conversation_id: 'int_o3' });
+    // Undo: o7's email key has been taken since, and o-orphan's unit is gone.
+    await offer('o-new', 'au2', { email_conversation_id: 'int_o7' });
     await assert.rejects(undoEmailOfferCleanup(pool, { batch: 'something-else', by: 'u-admin' }), e => e.status === 400);
     await assert.rejects(undoEmailOfferCleanup(pool, { batch: `${BATCH_PREFIX}2020-01-01T00:00:00.000Z`, by: 'u-admin' }), e => e.status === 404);
     const undo = await undoEmailOfferCleanup(pool, { batch: out.batch, by: 'u-admin' });
-    assert.deepEqual(undo.counts, { restored: 1, rounds: 1, notRestored: 2 });
+    assert.deepEqual(undo.counts, { restored: 3, rounds: 1, notRestored: 2 });
     assert.deepEqual((await run(`SELECT to_jsonb(o) AS row FROM unit_offers o WHERE id = 'o1'`)).rows[0].row, before, 'put back exactly');
     assert.deepEqual((await run(`SELECT to_jsonb(r) AS row FROM unit_offer_rounds r WHERE id = 'r1'`)).rows[0].row, beforeRound);
     const runs = await emailOfferCleanupRuns(pool);
@@ -237,7 +280,7 @@ test('preview, apply and undo, for real', { skip }, async () => {
     const runsSetting = (await run(`SELECT value FROM system_settings WHERE key = $1`, [RUNS_KEY])).rows[0].value;
     assert.equal(runsSetting.length, 2);
     // A second undo finds nothing to put back.
-    assert.deepEqual((await undoEmailOfferCleanup(pool, { batch: out.batch, by: 'u-admin' })).counts, { restored: 0, rounds: 0, notRestored: 3 });
+    assert.deepEqual((await undoEmailOfferCleanup(pool, { batch: out.batch, by: 'u-admin' })).counts, { restored: 0, rounds: 0, notRestored: 5 });
   } finally {
     await drop();
   }
@@ -246,8 +289,9 @@ test('preview, apply and undo, for real', { skip }, async () => {
 test('an offer someone is logging a position on is waited for, then left', { skip }, async () => {
   const { pool, offer, drop } = await schemaPool();
   try {
-    await offer('o1', 'au1');
-    await offer('o2', 'au1');
+    await offer('o0', 'au1', { offer_date: '2026-07-01', comments: COMMENT('Unit 4 offer') });
+    await offer('o1', 'au1', { comments: COMMENT('RE: Unit 4 offer') });
+    await offer('o2', 'au1', { comments: COMMENT('Re: Unit 4 offer') });
     const preview = await previewEmailOfferCleanup(pool, { by: 'u-admin' });
     const blocker = await pool.connect();
     await blocker.query('BEGIN');
@@ -261,9 +305,9 @@ test('an offer someone is logging a position on is waited for, then left', { ski
     await blocker.query('COMMIT');
     blocker.release();
     const out = await applying;
-    assert.deepEqual(out.counts, { deleted: 1, rounds: 0, units: 1, skipped: 1, notPreviewed: 0, failed: 0 });
+    assert.deepEqual(out.counts, { deleted: 1, rounds: 0, units: 1, skipped: 1, notPreviewed: 0, failed: 0, wholeThreads: 0 });
     assert.deepEqual(out.skipped, [{ id: 'o1', reason: 'negotiation logged' }]);
-    assert.deepEqual((await pool.query(`SELECT id FROM unit_offers`)).rows.map(r => r.id), ['o1']);
+    assert.deepEqual((await pool.query(`SELECT id FROM unit_offers`)).rows.map(r => r.id).sort(), ['o0', 'o1']);
   } finally {
     await drop();
   }
@@ -272,12 +316,13 @@ test('an offer someone is logging a position on is waited for, then left', { ski
 test('a database without the rounds, recommendations or suggestions tables still previews and applies', { skip }, async () => {
   const { pool, offer, drop } = await schemaPool(false);
   try {
-    await offer('o1', 'au1');
+    await offer('o0', 'au1', { offer_date: '2026-07-01', comments: COMMENT('Unit 4 offer') });
+    await offer('o1', 'au1', { comments: COMMENT('RE: Unit 4 offer') });
     await offer('o2', 'au1', { status: 'Withdrawn' });
     const preview = await previewEmailOfferCleanup(pool, { by: 'u-admin' });
-    assert.deepEqual(preview.counts, { offers: 2, units: 1, clear: 1, brand: 0, kept: 1 });
+    assert.deepEqual(preview.counts, { offers: 3, units: 1, threads: 2, clear: 1, brand: 0, kept: 2 });
     const out = await applyEmailOfferCleanup(pool, { by: 'u-admin', ids: ['o1'], previewedAt: preview.previewedAt });
-    assert.deepEqual(out.counts, { deleted: 1, rounds: 0, units: 1, skipped: 0, notPreviewed: 0, failed: 0 });
+    assert.deepEqual(out.counts, { deleted: 1, rounds: 0, units: 1, skipped: 0, notPreviewed: 0, failed: 0, wholeThreads: 0 });
     const undo = await undoEmailOfferCleanup(pool, { batch: out.batch, by: 'u-admin' });
     assert.deepEqual(undo.counts, { restored: 1, rounds: 0, notRestored: 0 });
   } finally {
