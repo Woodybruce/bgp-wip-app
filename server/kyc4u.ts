@@ -552,7 +552,7 @@ export async function copyKyc4uDocuments(deps: CopyDeps): Promise<{ copied: numb
       const brandId = deps.match.company(parts.entity);
       if (!brandId) { out.unmatched++; continue; }
       const entityId = deps.match.entity(brandId, parts.entity);
-      const dealId = (await pool.query(`SELECT deal_id FROM kyc4u_drafts WHERE request_item_id = $1 AND deal_id IS NOT NULL ORDER BY created_at DESC LIMIT 1`, [parts.ref]).catch(() => ({ rows: [] as any[] }))).rows[0]?.deal_id || null;
+      const dealId = (await pool.query(`SELECT deal_id FROM kyc4u_drafts WHERE (request_item_id = $1 OR upper(submitted_ref) = upper($1)) AND deal_id IS NOT NULL ORDER BY created_at DESC LIMIT 1`, [parts.ref]).catch(() => ({ rows: [] as any[] }))).rows[0]?.deal_id || null;
       // The folder's files, three folders deep at most (sections, and a
       // folder named just the REQ number inside some requests).
       const walk = async (itemId: string, section: string, depth: number): Promise<void> => {
@@ -994,6 +994,68 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
       await pool.query(`UPDATE kyc4u_drafts SET status = $2 WHERE id = $1`, [String(req.params.id), status]);
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // The pack for KYC4U's portal (Jack, 20 November 2026): the request sheet,
+  // BGP's AML report and the documents, for the agent to type in and upload.
+  app.get("/api/kyc4u/drafts/:id/pack", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (!await staffOnly(req, res)) return;
+      const me = (await pool.query(`SELECT id, name, email FROM users WHERE id = $1`, [userIdOf(req)])).rows[0];
+      if (!me) return res.status(401).json({ message: "Not signed in." });
+      const { buildKyc4uPack } = await import("./kyc4u-pack");
+      const pack = await buildKyc4uPack(String(req.params.id), { id: String(me.id), name: me.name || me.email || "BGP" });
+      if (!pack) return res.status(404).json({ message: "Request not found" });
+      const ascii = pack.fileName.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "'");
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(pack.fileName)}`);
+      res.send(pack.zip);
+    } catch (e: any) { res.status(500).json({ message: e.message || "The pack could not be made" }); }
+  });
+
+  // Submitted on KYC4U's portal (Jack, 20 November 2026): the agent records
+  // that the request went, with KYC4U's reference. It marks the party's latest
+  // prepared request submitted, or, when the request was raised on the portal
+  // without one, records one. Only then is the party with KYC4U.
+  app.post("/api/kyc4u/submitted", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (!await staffOnly(req, res)) return;
+      const { kyc4uSubmittedInput } = await import("@shared/kyc4u-portal");
+      const input = kyc4uSubmittedInput(req.body);
+      if ("error" in input) return res.status(400).json({ message: input.error });
+      const companyId = String(req.body?.companyId || "");
+      const dealId = req.body?.dealId ? String(req.body.dealId) : null;
+      const role = req.body?.role ? String(req.body.role).slice(0, 20) : null;
+      const company = (await pool.query(`SELECT id, name FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+      if (!company) return res.status(404).json({ message: "Party not found" });
+      const me = (await pool.query(`SELECT id, name, email FROM users WHERE id = $1`, [userIdOf(req)])).rows[0];
+      const byName = me?.name || me?.email || "BGP";
+      const open = (await pool.query(
+        `SELECT id FROM kyc4u_drafts WHERE company_id = $1 AND deal_id IS NOT DISTINCT FROM $2 AND status IN ('queued', 'filled')
+          ORDER BY created_at DESC LIMIT 1`, [companyId, dealId])).rows[0];
+      const at = `${input.date}T12:00:00Z`;
+      let id: string;
+      if (open) {
+        id = String(open.id);
+        await pool.query(
+          `UPDATE kyc4u_drafts SET status = 'submitted', submitted_at = $2, submitted_ref = $3, submitted_by = $4, submitted_by_name = $5 WHERE id = $1`,
+          [id, at, input.reference, me?.id || null, byName]);
+      } else {
+        id = String((await pool.query(
+          `INSERT INTO kyc4u_drafts (deal_id, company_id, role, fields, status, created_by, submitted_at, submitted_ref, submitted_by, submitted_by_name)
+           VALUES ($1, $2, $3, $4::jsonb, 'submitted', $5, $6, $7, $5, $8) RETURNING id`,
+          [dealId, companyId, role, JSON.stringify({ partyName: company.name }), me?.id || null, at, input.reference, byName])).rows[0].id);
+      }
+      const words = `Submitted on KYC4U's portal on ${input.date}${input.reference ? ` (KYC4U reference ${input.reference})` : ""}, recorded by ${byName}`;
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'kyc4u_submitted', $2, $3)`,
+        [companyId, byName, words]).catch(() => {});
+      if (dealId) {
+        await pool.query(
+          `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by, changed_by_name) VALUES ($1, 'kyc4u_submitted', NULL, $2, $3, $4, $5)`,
+          [dealId, input.reference || "submitted", `${company.name}: ${words}`, me?.id || null, byName]).catch(() => {});
+      }
+      res.json({ ok: true, id });
+    } catch (e: any) { res.status(500).json({ message: e.message || "Could not record it" }); }
   });
 
   // One company's KYC4U requests, for the Compliance & KYC board and the

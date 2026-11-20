@@ -1364,6 +1364,8 @@ const schemaStartup = (async () => {
        created_by VARCHAR, created_at TIMESTAMP DEFAULT now(), filled_at TIMESTAMP
      )`,
     `ALTER TABLE kyc4u_drafts ADD COLUMN IF NOT EXISTS request_list_id VARCHAR, ADD COLUMN IF NOT EXISTS request_item_id VARCHAR`,
+    // Submitted on KYC4U's portal, recorded by a person (Jack, 20 November 2026).
+    `ALTER TABLE kyc4u_drafts ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMP, ADD COLUMN IF NOT EXISTS submitted_ref TEXT, ADD COLUMN IF NOT EXISTS submitted_by VARCHAR, ADD COLUMN IF NOT EXISTS submitted_by_name TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc4u_request_key TEXT`,
     // The deal party's company that signs a KYC4U result is about, when it is
     // not the brand's own legal company (18 November 2026, step 2 of

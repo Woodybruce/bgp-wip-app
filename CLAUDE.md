@@ -4631,10 +4631,38 @@ Tests: `server/aml-second-read.test.ts` (in `npm test`),
   with KYC4U** box (`aml-kyc4u-needed-<role>`), and the AML dashboard a red
   Not with KYC4U mark beside Enhanced (`amlNeedsKyc4u`: enhanced and at Not
   started, BGP checked, Client checks sent or Client finished). KYC4U takes
-  requests only on its portal: Request KYC4U check prepares the request, the
-  agent opens KYC4U's form, presses the Send to ChatBGP bookmark (which fills
-  it and attaches the documents) and presses Submit there. The app sends
-  KYC4U no email.
+  requests only on its portal (next bullet). The app sends KYC4U no email.
+- **KYC4U's portal, not the bookmark** (Jack, same day: "build 1 and 2",
+  and a downloadable pack "they can then manually put into the KYC4U
+  portal"). On live every KYC4U request prepared since October still sat at
+  "queued": the Send to ChatBGP bookmark had never filled a form, and the
+  sync is waiting on KYC4U's IT approval. Rules: `shared/kyc4u-portal.ts`
+  (`KYC4U_FORM_FIELDS`, `kyc4uDraftState`, `kyc4uSubmittedInput`); pack:
+  `server/kyc4u-pack.ts`; tests `server/kyc4u-portal.test.ts` (in `npm
+  test`), `qa/regression/kyc4u-portal.test.mjs`.
+  - **Only a request submitted on KYC4U's portal is with KYC4U**
+    (`kyc4u_drafts.status` filled or submitted): the sign-off's "raised with
+    KYC4U" (`raisedWithKyc4u`) and the AML dashboard's With KYC4U no longer
+    count one only prepared (queued). A request prepared and not submitted
+    for 30 days (`KYC4U_PREPARED_STALE_DAYS`) is stale: it no longer reads as
+    ready, and the request line offers to cancel it.
+  - **Request KYC4U check** prepares the request and then shows three steps:
+    Download the pack, Open KYC4U's portal, Submitted on KYC4U's portal.
+  - **The pack** (`GET /api/kyc4u/drafts/:id/pack`, BGP staff): a ZIP with
+    01 the request sheet (KYC4U's form field by field, in its order, with
+    the note: the deal, the company that signs, red flags, BGP's checks, the
+    trust checklist), 02 BGP's AML report on the party (the AML file's report,
+    on a deal) and the documents (those ticked, else every one on the party's
+    KYC record). A `kyc_audit_log` line (`kyc4u_pack`).
+  - **Submitted on KYC4U's portal** (`POST /api/kyc4u/submitted { dealId?,
+    companyId, role?, reference?, date }`, BGP staff): marks the party's
+    latest prepared request submitted, or records one when it was raised on
+    the portal by hand; columns `submitted_at`, `submitted_ref`,
+    `submitted_by`, `submitted_by_name` (boot MIGRATIONS). Lines on the KYC
+    history and the deal's history (`kyc4u_submitted`). KYC4U's document
+    sync matches a REQ folder to the deal by that reference too. The button
+    is in the AML box's Next line, the red box and the KYC4U section.
+  - The bookmark routes stay for anyone who uses it.
 - **Second read** (`POST /api/deals/:id/parties/:role/second-read`, the
   officers only, `decider`; an enhanced party only, 409 otherwise;
   `server/aml-second-read.ts`, `client/src/components/aml-second-read.tsx`

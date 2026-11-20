@@ -142,7 +142,7 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
     return { tone: "wait", who: "bgp", words: "BGP's checks are running: Companies House, the sanctions lists and a web search. It takes a minute or two.", action: null };
   }
   if (f.kyc4u === "queued") {
-    return { tone: "act", who: "bgp", words: "The KYC4U request is ready. Open KYC4U's form, press your Send to ChatBGP bookmark, check it and press Submit there.", action: "kyc4u_form" };
+    return { tone: "act", who: "bgp", words: "The KYC4U request is prepared. Download the pack, raise it on KYC4U's portal (type in the sheet, upload the documents), then press Submitted on KYC4U's portal.", action: "kyc4u_form" };
   }
   if (f.kyc4u === "raised" || f.stage === "with_kyc4u") {
     return { tone: "wait", who: "kyc4u", words: `With KYC4U. When their result comes, ${f.canDecide ? "add it here" : "the Nominated Officer or a Deputy adds it here"}.`, action: f.canDecide ? "kyc4u_result" : null };

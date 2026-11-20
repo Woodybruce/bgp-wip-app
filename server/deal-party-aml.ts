@@ -89,15 +89,16 @@ export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole):
   };
 }
 
-// Raised with KYC4U from this deal and not answered yet: a request prepared
-// on the deal for this party in the last 180 days, not cancelled, whose
+// Raised with KYC4U from this deal and not answered yet: a request submitted
+// on KYC4U's portal for this party in the last 180 days (one only prepared in
+// the app is not with them: Jack, 20 November 2026), whose
 // KYC4U request is not linked yet or still reads as with KYC4U.
 async function raisedWithKyc4u(db: Db, party: AmlParty): Promise<boolean> {
   const rows = (await db.query(
     `SELECT d.status, q.status AS request_status, d.request_item_id
        FROM kyc4u_drafts d
        LEFT JOIN kyc4u_requests q ON q.list_id = d.request_list_id AND q.item_id = d.request_item_id
-      WHERE d.deal_id = $1 AND d.company_id = $2 AND d.status IN ('queued', 'filled', 'submitted')
+      WHERE d.deal_id = $1 AND d.company_id = $2 AND d.status IN ('filled', 'submitted')
         AND d.created_at > now() - interval '180 days'`, [party.dealId, party.brandId]).catch(() => ({ rows: [] as any[] }))).rows;
   if (!rows.length) return false;
   const { kyc4uVerdict } = await import("./kyc4u");

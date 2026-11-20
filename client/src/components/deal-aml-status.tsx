@@ -4,7 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, TrendingUp, TrendingDown, FolderOpen, Flag, AlertTriangle } from "lucide-react";
 import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
-import { KYC4U_FORM_URL, Kyc4uRequestButton } from "@/components/kyc4u-panel";
+import { KYC4U_FORM_URL, Kyc4uPackButton, Kyc4uRequestButton, Kyc4uSubmittedButton } from "@/components/kyc4u-panel";
+import { kyc4uDraftState } from "@shared/kyc4u-portal";
 import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks } from "@/components/kyc-client-checks";
 import { SecondReadPanel } from "@/components/aml-second-read";
 import { DealPartyEditor, PartyBillingDetail, PartyReadyToStart, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
@@ -623,7 +624,10 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
   const owing = people ? people.people.filter(p => p.outstanding.length) : [];
   const unreachable = party && people ? peopleToReach(people.people, party.people, personNamesMatch) : [];
   const draft = (drafts.data || []).find((d: any) => d.status !== "cancelled") || null;
-  const kyc4uState: AmlBoxFacts["kyc4u"] = draft?.status === "queued" ? "queued" : draft ? "raised" : "none";
+  // Only a request submitted on KYC4U's portal is with them; one prepared and
+  // never submitted for 30 days is stale and offered to cancel (20 November 2026).
+  const draftState = kyc4uDraftState(draft);
+  const kyc4uState: AmlBoxFacts["kyc4u"] = draftState === "prepared" ? "queued" : draftState === "submitted" ? "raised" : "none";
   const gaps = (party?.gaps || []).filter(g => g.key !== "company")
     .map(g => (g.key === "person" ? "Set who to ask for the checks: their name and email" : `Add an email for ${party?.person?.name || "the person to ask"}`));
 
@@ -651,7 +655,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
       case "send_client_checks": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} />;
       case "people": return <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => reveal("people")} data-testid={`aml-next-people-${cp.role}`}>Open People</Button>;
       case "request_kyc4u": return <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} buttonOnly />;
-      case "kyc4u_form": return <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" asChild><a href={KYC4U_FORM_URL} target="_blank" rel="noopener noreferrer">Open KYC4U's form</a></Button>;
+      case "kyc4u_form": return <>
+        {draft?.id && <Kyc4uPackButton draftId={String(draft.id)} />}
+        <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" asChild><a href={KYC4U_FORM_URL} target="_blank" rel="noopener noreferrer">Open KYC4U's portal</a></Button>
+        <Kyc4uSubmittedButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} />
+      </>;
       case "kyc4u_result": return <PartyDecisionButton dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} kind="kyc4u_result" />;
       case "sign_off": return <PartyDecisionButton dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} kind="sign_off" />;
       case "red_flags": return <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => reveal("flags")}>See the red flags</Button>;
@@ -755,9 +763,10 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
 
   const kyc4uReq = kyc4uCompany.data?.requests?.[0] || null;
   const kyc4uLine: { tone: BoxTone; summary: string } | null = !staff || cp.notRequired ? null
-    : draft?.status === "queued" ? { tone: "act", summary: "Ready for KYC4U's form: press your Send to ChatBGP bookmark there" }
-    : draft?.status === "filled" ? { tone: "wait", summary: `Filled on KYC4U's form ${day(draft.filled_at)}: submit it there` }
-    : draft ? { tone: "wait", summary: `Raised · ${draft.request_status || "no status yet"}` }
+    : draftState === "prepared" ? { tone: "act", summary: "Prepared, not yet submitted on KYC4U's portal" }
+    : draftState === "stale" ? { tone: "act", summary: `Prepared ${day(draft.created_at)} and never submitted: cancel it, or prepare a new one` }
+    : draft?.status === "filled" ? { tone: "wait", summary: `Filled on KYC4U's form ${day(draft.filled_at)}` }
+    : draft ? { tone: "wait", summary: `With KYC4U${draft.submitted_at ? ` since ${day(draft.submitted_at)}` : ""}${draft.submitted_ref ? ` · ref ${draft.submitted_ref}` : ""} · ${draft.request_status || "no status from KYC4U yet"}` }
     : kyc4uReq ? { tone: "info", summary: `KYC4U's record: ${kyc4uReq.status || "no status yet"}` }
     : { tone: flags.length || factors.length ? "act" : "info", summary: flags.length || factors.length ? "Not raised: the red flags go to KYC4U" : "Not raised: needed only for a red flag or enhanced due diligence" };
 
@@ -811,8 +820,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
           <div className="text-[13px] leading-snug">
             <div className="font-semibold uppercase tracking-wide text-[11px]">Not yet with KYC4U</div>
             {step.action === "kyc4u_form"
-              ? "The request is ready but not on KYC4U's portal. Open KYC4U's form, press your Send to ChatBGP bookmark, check it and press Submit there."
-              : `${isTrust ? "This party is a trust" : flags.length ? "This party has red flags" : "This party needs enhanced due diligence"}: press Request KYC4U check, then submit it on KYC4U's portal. Nothing goes to KYC4U until it is submitted there.`}
+              ? "Prepared, but not on KYC4U's portal yet. Download the pack, raise it on KYC4U's portal, then press Submitted on KYC4U's portal here."
+              : `${isTrust ? "This party is a trust" : flags.length ? "This party has red flags" : "This party needs enhanced due diligence"}: press Request KYC4U check, download the pack and raise it on KYC4U's portal, then record it here. Nothing goes to KYC4U until it is submitted there.`}
+            {step.action === "request_kyc4u" && (
+              <div className="mt-1.5"><Kyc4uSubmittedButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} className="h-7 text-xs" /> <span className="text-xs">if it was already raised on the portal.</span></div>
+            )}
           </div>
         </div>
       )}
@@ -894,7 +906,16 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
             <BoxSection id={sid("kyc4u")} testId={tid("kyc4u")} label="KYC4U" tone={kyc4uLine.tone} summary={kyc4uLine.summary} open={open.has("kyc4u")} onToggle={() => toggle("kyc4u")}>
               {companyMissing
                 ? <p className="text-xs text-muted-foreground">The client checks and a KYC4U request start once the company that signs is set.</p>
-                : <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} />}
+                : <div className="space-y-2">
+                    <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} />
+                    {draftState !== "submitted" && (
+                      <div className="flex flex-wrap items-center gap-1.5" data-testid={`aml-kyc4u-portal-${cp.role}`}>
+                        {draft?.id && draftState === "prepared" && <Kyc4uPackButton draftId={String(draft.id)} />}
+                        <Kyc4uSubmittedButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} />
+                        <span className="text-xs text-muted-foreground">once it is submitted on KYC4U's portal.</span>
+                      </div>
+                    )}
+                  </div>}
             </BoxSection>
           )}
           <BoxSection id={sid("decision")} testId={tid("decision")} label="Sign-off" tone={decisionLine.tone} summary={decisionLine.summary} open={open.has("decision")} onToggle={() => toggle("decision")}>

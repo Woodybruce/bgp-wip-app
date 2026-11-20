@@ -120,7 +120,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     read("KYC4U requests", async () => (await pool.query(
       `SELECT d.deal_id, d.company_id, d.status, d.created_at, d.filled_at, d.request_item_id, q.status AS request_status
          FROM kyc4u_drafts d LEFT JOIN kyc4u_requests q ON q.list_id = d.request_list_id AND q.item_id = d.request_item_id
-        WHERE d.deal_id = ANY($1::varchar[]) AND d.status IN ('queued', 'filled', 'submitted')
+        WHERE d.deal_id = ANY($1::varchar[]) AND d.status IN ('filled', 'submitted')
           AND d.created_at > now() - interval '180 days'`, [dealIds])).rows, none),
     // KYC4U's own latest status for each brand and each company that signs,
     // the KYC4U mirror's reading (the latest row by date, then the latest recorded).
