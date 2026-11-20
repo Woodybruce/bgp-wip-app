@@ -4,8 +4,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   AML_HOTS_CLAUSE, AML_POLICY_DOCUMENTS, NOT_REQUIRED_REASONS, RECHECK_YEARS,
-  amlOfficerRole, amlPolicyDocument, amlRegime, countryOf, countryRisk, dueDiligenceLevel, inLondonOrSouthEast, isDealAgent,
-  notRequiredInput, officerWords, policyFactorFlags, policyFactorsToWeigh, recheckDate, sectorMatches, sellsCitizenship,
+  MAX_AML_DEPUTIES, amlOfficerRole, amlPolicyDocument, amlRegime, countryOf, countryRisk, deputyNames, dueDiligenceLevel, inLondonOrSouthEast, isDealAgent,
+  notRequiredInput, officerWords, policyFactorFlags, policyFactorsToWeigh, readDeputies, recheckDate, sectorMatches, sellsCitizenship,
   simplifiedBasis, superPrimeFlag,
 } from "../shared/aml-policy";
 import { STANDARD_HOTS_TEMPLATE, STANDARD_HOTS_TEMPLATE_37 } from "../shared/unit-hots";
@@ -15,16 +15,41 @@ import { amlBucket, amlStage } from "../shared/aml-dashboard";
 
 const officers = {
   nominated: { id: "jack", name: "Jack Barratt", email: "jack@brucegillinghampollard.com" },
-  deputy: { id: "victoria", name: "Victoria Broadhead", email: "victoria@brucegillinghampollard.com" },
+  deputies: [{ id: "victoria", name: "Victoria Broadhead", email: "victoria@brucegillinghampollard.com" }],
 };
 
 test("the Nominated Officer and the Deputy both decide; admins only while no Nominated Officer is set", () => {
   assert.deepEqual(amlOfficerRole({ id: "jack" }, officers, false), { role: "nominated", appointed: true });
   assert.deepEqual(amlOfficerRole({ id: "x", email: "VICTORIA@brucegillinghampollard.com" }, officers, false), { role: "deputy", appointed: true });
   assert.deepEqual(amlOfficerRole({ id: "woody" }, officers, true), { role: null, appointed: true });
-  assert.deepEqual(amlOfficerRole({ id: "woody" }, { nominated: null, deputy: null }, true), { role: "admin", appointed: false });
-  assert.deepEqual(amlOfficerRole({ id: "agent" }, { nominated: null, deputy: null }, false), { role: null, appointed: false });
+  assert.deepEqual(amlOfficerRole({ id: "woody" }, { nominated: null, deputies: [] }, true), { role: "admin", appointed: false });
+  assert.deepEqual(amlOfficerRole({ id: "agent" }, { nominated: null, deputies: [] }, false), { role: null, appointed: false });
   assert.equal(officerWords(officers), "the Nominated Officer (Jack Barratt) or the Deputy (Victoria Broadhead)");
+});
+
+// Woody, 20 November 2026: "jack as officer and then layla and i as depituties".
+test("more than one Deputy: each decides, and the stored single Deputy still reads", () => {
+  const two = {
+    nominated: officers.nominated,
+    deputies: [
+      { id: "layla", name: "Layla O'Driscoll", email: "layla@brucegillinghampollard.com" },
+      { id: "woody", name: "Woody Bruce", email: "woody@brucegillinghampollard.com" },
+    ],
+  };
+  assert.deepEqual(amlOfficerRole({ id: "layla" }, two, false), { role: "deputy", appointed: true });
+  assert.deepEqual(amlOfficerRole({ id: "w", email: "Woody@brucegillinghampollard.com" }, two, false), { role: "deputy", appointed: true });
+  assert.deepEqual(amlOfficerRole({ id: "victoria" }, two, true), { role: null, appointed: true });
+  assert.equal(officerWords(two), "the Nominated Officer (Jack Barratt) or a Deputy (Layla O'Driscoll or Woody Bruce)");
+  assert.equal(deputyNames(two), "Layla O'Driscoll and Woody Bruce");
+  assert.equal(officerWords({ nominated: officers.nominated, deputies: [] }), "the Nominated Officer (Jack Barratt)");
+
+  // Stored as a list since 20 November 2026; one officer before.
+  assert.deepEqual(readDeputies({ deputies: two.deputies, setBy: "Woody Bruce" }), two.deputies);
+  assert.deepEqual(readDeputies({ id: "victoria", name: "Victoria Broadhead", email: "victoria@brucegillinghampollard.com", setBy: "x" }), officers.deputies);
+  assert.deepEqual(readDeputies({ id: null, name: null, email: null }), []);
+  assert.deepEqual(readDeputies(null), []);
+  assert.deepEqual(readDeputies("nonsense"), []);
+  assert.deepEqual(readDeputies({ deputies: [{ id: "a" }, null, { email: "b@x.com" }, { id: "c" }, { id: "d" }] }).map(d => d.id || d.email), ["a", "b@x.com", "c"].slice(0, MAX_AML_DEPUTIES));
 });
 
 test("approvals last 3 years, or 1 for enhanced due diligence", () => {

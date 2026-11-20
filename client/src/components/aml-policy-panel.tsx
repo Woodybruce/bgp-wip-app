@@ -1,12 +1,13 @@
 // BGP's AML policy on the AML dashboard (Woody, 19 November 2026: "can you
 // consider these and add into the AML as required", then "can we have that
-// as a download"): the Nominated Officer and the Deputy, the policy and the
-// risk assessment to download, and how the app applies them. BGP staff only
-// (the feed, server/aml-policy.ts, refuses anyone else); an admin sets the
-// officers. The rules are shared/aml-policy.ts.
+// as a download"): the Nominated Officer and the Deputies (more than one
+// since 20 November 2026), the policy and the risk assessment to download,
+// and how the app applies them. BGP staff only (the feed, server/aml-policy.ts,
+// refuses anyone else); an admin sets the officers. The rules are
+// shared/aml-policy.ts.
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, Download, Loader2, ShieldCheck, UserCog } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, Loader2, ShieldCheck, UserCog, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -16,7 +17,8 @@ import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 
 interface PolicyFeed {
   documents: Array<{ key: string; title: string; issue: number; date: string; url: string; onFile: boolean }>;
-  officers: { nominated: { id: string | null; name: string | null } | null; deputy: { id: string | null; name: string | null } | null };
+  officers: { nominated: { id: string | null; name: string | null } | null; deputies: Array<{ id: string | null; name: string | null }> };
+  maxDeputies: number;
   policyNames: { nominated: string; deputy: string };
   canEdit: boolean;
   recheckYears: { simplified: number; standard: number; enhanced: number };
@@ -52,10 +54,13 @@ function OfficersDialog({ feed, onClose }: { feed: PolicyFeed; onClose: () => vo
   const staff = (Array.isArray(users) ? users : (users as any)?.users || [])
     .filter((u: any) => u?.id && u.isActive !== false && /@brucegillinghampollard\.com$/i.test(String(u.email || "")))
     .sort((a: any, b: any) => String(a.name || "").localeCompare(String(b.name || "")));
+  const nameOf = (id: string) => staff.find((u: any) => String(u.id) === id)?.name || feed.officers.deputies.find(d => d.id === id)?.name || "Someone";
   const [nominatedId, setNominated] = useState(feed.officers.nominated?.id || "");
-  const [deputyId, setDeputy] = useState(feed.officers.deputy?.id || "");
+  const [deputyIds, setDeputies] = useState<string[]>(feed.officers.deputies.map(d => d.id).filter((x): x is string => !!x));
+  const max = feed.maxDeputies || 3;
+  const addable = staff.filter((u: any) => String(u.id) !== nominatedId && !deputyIds.includes(String(u.id)));
   const save = useMutation({
-    mutationFn: async () => (await apiRequest("PUT", "/api/aml-policy/officers", { nominatedId, deputyId: deputyId || null })).json(),
+    mutationFn: async () => (await apiRequest("PUT", "/api/aml-policy/officers", { nominatedId, deputyIds: deputyIds.filter(id => id !== nominatedId) })).json(),
     onSuccess: () => { refreshOfficers(); toast({ title: "Officers saved" }); onClose(); },
     onError: (e: any) => toast({ title: "Not saved", description: plain(e), variant: "destructive" }),
   });
@@ -64,25 +69,36 @@ function OfficersDialog({ feed, onClose }: { feed: PolicyFeed; onClose: () => vo
       <DialogContent className="max-w-md" data-testid="aml-officers-dialog">
         <DialogHeader>
           <DialogTitle>AML officers</DialogTitle>
-          <DialogDescription>The policy names {feed.policyNames.nominated} as Nominated Officer and {feed.policyNames.deputy} as Deputy. Both decide: enhanced parties, KYC4U's results, red flags set aside and parties marked Not required.</DialogDescription>
+          <DialogDescription>The policy (Issue 2) names {feed.policyNames.nominated} as Nominated Officer and {feed.policyNames.deputy} as Deputy. The Nominated Officer and each Deputy decide: enhanced parties, KYC4U's results, red flags set aside and parties marked Not required.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">
             <Label>Nominated Officer (MLRO)</Label>
-            <Select value={nominatedId} onValueChange={setNominated}>
+            <Select value={nominatedId} onValueChange={v => { setNominated(v); setDeputies(d => d.filter(id => id !== v)); }}>
               <SelectTrigger data-testid="aml-officer-nominated"><SelectValue placeholder="Choose" /></SelectTrigger>
               <SelectContent>{staff.map((u: any) => <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>)}</SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Deputy Nominated Officer</Label>
-            <Select value={deputyId || "none"} onValueChange={v => setDeputy(v === "none" ? "" : v)}>
-              <SelectTrigger data-testid="aml-officer-deputy"><SelectValue placeholder="Choose" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">No deputy</SelectItem>
-                {staff.map((u: any) => <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <Label>Deputy Nominated Officers</Label>
+            {deputyIds.length > 0 ? (
+              <ul className="space-y-1" data-testid="aml-officer-deputies">
+                {deputyIds.map(id => (
+                  <li key={id} className="flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-sm" data-testid={`aml-officer-deputy-${id}`}>
+                    <span>{nameOf(id)}</span>
+                    <Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label={`Remove ${nameOf(id)}`} onClick={() => setDeputies(d => d.filter(x => x !== id))} data-testid={`aml-officer-deputy-remove-${id}`}>
+                      <X className="w-3.5 h-3.5" />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="text-xs text-muted-foreground">No Deputy yet.</p>}
+            {deputyIds.length < max && (
+              <Select value="" onValueChange={v => { if (v) setDeputies(d => d.includes(v) ? d : [...d, v]); }}>
+                <SelectTrigger data-testid="aml-officer-deputy"><SelectValue placeholder="Add a Deputy" /></SelectTrigger>
+                <SelectContent>{addable.map((u: any) => <SelectItem key={u.id} value={String(u.id)}>{u.name}</SelectItem>)}</SelectContent>
+              </Select>
+            )}
           </div>
         </div>
         <DialogFooter>
@@ -105,25 +121,27 @@ export function AmlPolicyPanel() {
     mutationFn: async () => (await apiRequest("POST", "/api/aml-policy/officers/from-policy", {})).json(),
     onSuccess: (r: any) => {
       refreshOfficers();
-      toast({ title: "Officers set", description: `Nominated Officer ${r?.nominated || ""}${r?.deputy ? `, Deputy ${r.deputy}` : ""}.${r?.deputyMissing ? " No single login matched the Deputy: choose them by hand." : ""}` });
+      toast({ title: "Officers set", description: `Nominated Officer ${r?.nominated || ""}${r?.deputies?.length ? `, Deputy ${r.deputies.join(", ")}` : ""}.${r?.deputyMissing ? " No single login matched the Deputy: choose them by hand." : ""}` });
     },
     onError: (e: any) => toast({ title: "Not set", description: plain(e), variant: "destructive" }),
   });
   if (!feed) return null;
-  const { nominated, deputy } = feed.officers;
-  const matchesPolicy = nominated?.name === feed.policyNames.nominated && deputy?.name === feed.policyNames.deputy;
+  const { nominated } = feed.officers;
+  const deputies = (feed.officers.deputies || []).map(d => d.name).filter((x): x is string => !!x);
+  const deputyLine = deputies.length < 2 ? deputies.join("") : `${deputies.slice(0, -1).join(", ")} and ${deputies[deputies.length - 1]}`;
   return (
     <div className="rounded-lg border bg-card p-3 space-y-2 text-sm" data-testid="aml-policy-panel">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex items-center gap-1.5 font-medium"><ShieldCheck className="w-4 h-4 text-muted-foreground" />BGP's AML policy</div>
         <div className="text-muted-foreground" data-testid="aml-policy-officers">
           {nominated
-            ? <>Nominated Officer <span className="text-foreground">{nominated.name}</span>{deputy ? <> · Deputy <span className="text-foreground">{deputy.name}</span></> : <> · no Deputy set</>}</>
+            ? <>Nominated Officer <span className="text-foreground">{nominated.name}</span>{deputies.length ? <> · {deputies.length === 1 ? "Deputy" : "Deputies"} <span className="text-foreground">{deputyLine}</span></> : <> · no Deputy set</>}</>
             : <span className="text-amber-700 dark:text-amber-300">No Nominated Officer set: admins decide until one is.</span>}
         </div>
         {feed.canEdit && (
           <div className="flex flex-wrap gap-1.5">
-            {!matchesPolicy && (
+            {/* First set-up only: once set, Change is the way (the server refuses it too). */}
+            {!nominated && (
               <Button type="button" variant="outline" size="sm" className="h-auto min-h-7 py-1 text-xs whitespace-normal text-left" disabled={fromPolicy.isPending} onClick={() => fromPolicy.mutate()} data-testid="aml-officers-from-policy">
                 {fromPolicy.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 shrink-0 animate-spin" /> : <UserCog className="w-3.5 h-3.5 mr-1 shrink-0" />}Use the policy's officers ({feed.policyNames.nominated} and {feed.policyNames.deputy})
               </Button>

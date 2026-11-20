@@ -36,7 +36,7 @@ import {
   type PartyKycState, type SignOffFacts,
 } from "@shared/party-kyc";
 import {
-  DUE_DILIGENCE_LABEL, NOT_REQUIRED_REASONS, RECHECK_YEARS, amlRegime, isDealAgent, notRequiredInput, officerWords,
+  DUE_DILIGENCE_LABEL, NOT_REQUIRED_REASONS, RECHECK_YEARS, amlRegime, deputyNames, isDealAgent, notRequiredInput, officerWords,
   type AmlOfficers, type AmlRegime, type PartyDueDiligence,
 } from "@shared/aml-policy";
 
@@ -217,8 +217,8 @@ export async function canDecideAml(req: Request, deal?: { internal_agent_ids?: u
 }> {
   const { amlActor } = await import("./aml-authority");
   const actor = await amlActor(req).catch(() => null);
-  const officers: AmlOfficers = actor?.officers || { nominated: null, deputy: null };
-  const names = { nominated: officers.nominated?.name || null, deputy: officers.deputy?.name || null };
+  const officers: AmlOfficers = actor?.officers || { nominated: null, deputies: [] };
+  const names = { nominated: officers.nominated?.name || null, deputy: deputyNames(officers) || null };
   const d = await decider(req).catch(() => null);
   if (d && "id" in d) return { canDecide: true, canSignOff: true, mlroAppointed: d.mlroAppointed, officers: names, officerWords: officerWords(officers) };
   const { contactViewer } = await import("./contact-viewer");

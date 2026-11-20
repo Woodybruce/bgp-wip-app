@@ -4100,14 +4100,26 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
 `server/aml-policy.ts`. Tests: `server/aml-policy.test.ts` (in `npm test`),
 `qa/regression/aml-policy-guards.test.mjs`.
 
-- **The officers** (policy C.b): Jack Barratt is the Nominated Officer
-  (MLRO) and Victoria Broadhead the Deputy. The Nominated Officer is on
-  `aml_settings` as before; the Deputy is `system_settings.aml_deputy_officer`.
-  Both decide (`amlOfficerRole`, `amlActor().officerRole`); admins act only
-  while no Nominated Officer is set. An admin sets them on the AML
-  dashboard's policy panel (**Use the policy's officers**, or **Change**;
-  `PUT /api/aml-policy/officers`, `POST …/officers/from-policy`). Not set on
-  live by a build machine: an admin presses the button. **KYC4U is BGP's
+- **The officers** (policy C.b): the policy names Jack Barratt as the
+  Nominated Officer (MLRO) and Victoria Broadhead as the Deputy. **Since
+  20 November 2026 there can be more than one Deputy** (Woody: "can you add
+  woody bruce as deputy AML too please", then "jack as officer and then
+  layla and i as depituties"): the officers in the app are Jack Barratt,
+  with Layla O'Driscoll and Woody Bruce as Deputies, whatever the policy
+  document (Issue 2) names. The Nominated Officer is on `aml_settings` as
+  before; the Deputies are `system_settings.aml_deputy_officer`, stored as
+  `{ deputies: [...] }` (`readDeputies` in `shared/aml-policy.ts` also reads
+  the single officer stored before; at most `MAX_AML_DEPUTIES`, 3). Each
+  decides (`amlOfficerRole`, `amlActor().officerRole`), each is emailed the
+  escalations (`amlOfficerEmails`); admins act only while no Nominated
+  Officer is set. An admin sets them on the AML dashboard's policy panel
+  (**Change**: the Nominated Officer and a list of Deputies, Add a Deputy
+  and a cross to remove one; `PUT /api/aml-policy/officers { nominatedId,
+  deputyIds }`, which still takes `deputyId` from a screen loaded before).
+  **Use the policy's officers** (`POST …/officers/from-policy`) is first
+  set-up only: with a Nominated Officer set the panel does not offer it and
+  the server answers 409, because it would put back the one Deputy the
+  policy names. **KYC4U is BGP's
   outsourced KYC provider, not its MLRO**: this supersedes "KYC4U is BGP's
   MLRO" (Woody, 2026-10-05) and "the MLRO's ... admins until then" wherever
   either appears in this file; the screens and ChatBGP say so.

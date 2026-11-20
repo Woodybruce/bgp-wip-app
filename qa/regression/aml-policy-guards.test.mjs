@@ -41,7 +41,14 @@ test('the Nominated Officer and the Deputy decide; the deal\'s agents sign off a
   assert.match(aml, /router\.post\("\/api\/deals\/:id\/parties\/:role\/kyc4u-result", deciderFirst, takeFiles/);
   const authority = read('server/aml-authority.ts');
   assert.match(authority, /export const DEPUTY_SETTING_KEY = "aml_deputy_officer";/);
-  assert.match(read('shared/aml-policy.ts'), /if \(isOfficer\(officers\.deputy, user\)\) return \{ role: "deputy", appointed \};/);
+  assert.match(read('shared/aml-policy.ts'), /if \(officers\.deputies\.some\(d => isOfficer\(d, user\)\)\) return \{ role: "deputy", appointed \};/);
+  // More than one Deputy (Woody, 20 November 2026): saved as a list, the
+  // escalation emails go to each, and Use the policy's officers is first
+  // set-up only (it would put back the one Deputy the policy names).
+  assert.match(authority, /const list = \[o\.nominated, \.\.\.o\.deputies\]/);
+  const policyRoutes = read('server/aml-policy.ts');
+  assert.match(policyRoutes, /const deputies = \{ deputies: ds\.map\(/);
+  assert.match(policyRoutes, /if \(\(await amlOfficers\(\)\)\.nominated\) return res\.status\(409\)/);
 });
 
 test('approvals last the policy\'s years by level', () => {

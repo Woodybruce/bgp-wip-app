@@ -40,16 +40,33 @@ export const amlPolicyDocument = (key: unknown): AmlPolicyDocument | null =>
 // ── The officers (policy C.b and D) ─────────────────────────────────────────
 
 // Who the policy names. The app holds who is set (AML settings); these are
-// only what "Use the policy's officers" looks for.
+// only what "Use the policy's officers" looks for. Since 20 November 2026
+// there can be more than one Deputy (Woody: "jack as officer and then layla
+// and i as depituties"), set in the AML policy panel; the policy document
+// (Issue 2) still names one.
 export const POLICY_OFFICER_NAMES = { nominated: "Jack Barratt", deputy: "Victoria Broadhead" } as const;
+export const MAX_AML_DEPUTIES = 3;
 
 export interface AmlOfficer { id: string | null; name: string | null; email: string | null }
-export interface AmlOfficers { nominated: AmlOfficer | null; deputy: AmlOfficer | null }
+export interface AmlOfficers { nominated: AmlOfficer | null; deputies: AmlOfficer[] }
 export type AmlOfficerRole = "nominated" | "deputy" | "admin";
 
 const lower = (v: unknown): string => String(v ?? "").trim().toLowerCase();
 const isOfficer = (o: AmlOfficer | null, user: { id?: string | null; email?: string | null }): boolean =>
   !!o && ((!!o.id && !!user.id && o.id === user.id) || (!!o.email && lower(o.email) === lower(user.email)));
+
+/**
+ * The Deputies as stored (system_settings.aml_deputy_officer): a list since
+ * 20 November 2026 ({ deputies: [...] }), one officer before ({ id, name,
+ * email }). Anything else reads as none.
+ */
+export function readDeputies(value: unknown): AmlOfficer[] {
+  const one = (v: any): AmlOfficer | null => v && typeof v === "object" && (v.id || v.email)
+    ? { id: v.id ? String(v.id) : null, name: v.name ? String(v.name) : null, email: v.email ? String(v.email) : null } : null;
+  const v = value as any;
+  const list = v && typeof v === "object" && Array.isArray(v.deputies) ? v.deputies.map(one) : [one(v)];
+  return list.filter((x: AmlOfficer | null): x is AmlOfficer => !!x).slice(0, MAX_AML_DEPUTIES);
+}
 
 /**
  * The AML role of a signed-in user: the Nominated Officer, the Deputy, or an
@@ -60,16 +77,26 @@ export function amlOfficerRole(user: { id?: string | null; email?: string | null
   const appointed = !!(officers.nominated && (officers.nominated.id || officers.nominated.email));
   if (!user) return { role: null, appointed };
   if (isOfficer(officers.nominated, user)) return { role: "nominated", appointed };
-  if (isOfficer(officers.deputy, user)) return { role: "deputy", appointed };
+  if (officers.deputies.some(d => isOfficer(d, user))) return { role: "deputy", appointed };
   if (!appointed && isAdmin) return { role: "admin", appointed };
   return { role: null, appointed };
 }
 
-/** "the Nominated Officer (Jack Barratt) or the Deputy (Victoria Broadhead)", as set. */
+/** "the Nominated Officer (Jack Barratt) or a Deputy (Layla O'Driscoll or Woody Bruce)", as set. */
 export function officerWords(officers: AmlOfficers): string {
-  const n = officers.nominated?.name, d = officers.deputy?.name;
+  const n = officers.nominated?.name;
   if (!officers.nominated) return "an admin, until a Nominated Officer is set in the AML policy panel";
-  return `the Nominated Officer${n ? ` (${n})` : ""}${officers.deputy ? ` or the Deputy${d ? ` (${d})` : ""}` : ""}`;
+  const names = officers.deputies.map(d => d.name).filter((x): x is string => !!x);
+  const deputies = !officers.deputies.length ? ""
+    : officers.deputies.length === 1 ? ` or the Deputy${names.length ? ` (${names[0]})` : ""}`
+    : ` or a Deputy${names.length ? ` (${names.join(" or ")})` : ""}`;
+  return `the Nominated Officer${n ? ` (${n})` : ""}${deputies}`;
+}
+
+/** The Deputies' names for a line: "Layla O'Driscoll and Woody Bruce". */
+export function deputyNames(officers: Pick<AmlOfficers, "deputies">): string {
+  const names = officers.deputies.map(d => d.name).filter((x): x is string => !!x);
+  return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
 // ── Levels of due diligence (policy F.a) and re-checks (policy H.a) ─────────

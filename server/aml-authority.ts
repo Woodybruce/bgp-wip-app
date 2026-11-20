@@ -5,13 +5,14 @@
 // policy (Issue 2, November 2026, section C.b) names a Nominated Officer and
 // a Deputy who acts in their place: both decide (Woody, 19 November 2026).
 // The Nominated Officer is the user whose email (or id) is on aml_settings;
-// the Deputy is system_settings.aml_deputy_officer. Until a Nominated Officer
+// the Deputies (more than one since 20 November 2026) are
+// system_settings.aml_deputy_officer. Until a Nominated Officer
 // is set, admins act, and every response says none is set, so the gap is
 // visible rather than silently papered over (Woody, 2026-09-23 AML review).
 import type { Request, Response, NextFunction } from "express";
 import { pool } from "./db";
 import { ADMIN_EMAILS } from "./auth";
-import { amlOfficerRole, officerWords, type AmlOfficer, type AmlOfficerRole, type AmlOfficers } from "@shared/aml-policy";
+import { amlOfficerRole, officerWords, readDeputies, type AmlOfficer, type AmlOfficerRole, type AmlOfficers } from "@shared/aml-policy";
 
 export type AmlActor = {
   id: string | null; name: string | null; email: string | null;
@@ -27,21 +28,21 @@ export function requestUserId(req: Request): string | null {
   return (req.session as any)?.userId || (req as any).tokenUserId || (req as any).user?.id || null;
 }
 
-/** Pure rule, for tests: is this user the Nominated Officer (or the Deputy, when given)? */
+/** Pure rule, for tests: is this user the Nominated Officer (or a Deputy, when given)? */
 export function isNominatedOfficer(user: { id?: string | null; email?: string | null; is_admin?: boolean | null } | null,
   settings: { nominated_officer_id?: string | null; nominated_officer_email?: string | null } | null,
-  deputy: AmlOfficer | null = null): { isMlro: boolean; mlroAppointed: boolean } {
+  deputies: AmlOfficer[] = []): { isMlro: boolean; mlroAppointed: boolean } {
   const officers: AmlOfficers = {
     nominated: settings?.nominated_officer_id || settings?.nominated_officer_email
       ? { id: settings?.nominated_officer_id || null, email: settings?.nominated_officer_email || null, name: null } : null,
-    deputy,
+    deputies,
   };
   const isAdmin = !!user && (user.is_admin === true || ADMIN_EMAILS.has(String(user.email || "").toLowerCase().trim()));
   const { role, appointed } = amlOfficerRole(user, officers, isAdmin);
   return { isMlro: role !== null, mlroAppointed: appointed };
 }
 
-/** The officers as set: the Nominated Officer on aml_settings, the Deputy in system_settings. */
+/** The officers as set: the Nominated Officer on aml_settings, the Deputies in system_settings. */
 export async function amlOfficers(): Promise<AmlOfficers> {
   const [settings, deputy] = await Promise.all([
     pool.query("SELECT nominated_officer_id, nominated_officer_name, nominated_officer_email FROM aml_settings ORDER BY id LIMIT 1").then(r => r.rows[0] || null).catch(() => null),
@@ -49,15 +50,13 @@ export async function amlOfficers(): Promise<AmlOfficers> {
   ]);
   const nominated = settings && (settings.nominated_officer_id || settings.nominated_officer_email)
     ? { id: settings.nominated_officer_id || null, name: settings.nominated_officer_name || null, email: settings.nominated_officer_email || null } : null;
-  const d = deputy && typeof deputy === "object" && (deputy.id || deputy.email)
-    ? { id: deputy.id || null, name: deputy.name || null, email: deputy.email || null } : null;
-  return { nominated, deputy: d };
+  return { nominated, deputies: readDeputies(deputy) };
 }
 
 /** The officers' email addresses that belong to active logins (for the policy's escalations). */
 export async function amlOfficerEmails(officers?: AmlOfficers): Promise<string[]> {
   const o = officers || await amlOfficers();
-  const list = [o.nominated, o.deputy].filter((x): x is AmlOfficer => !!x);
+  const list = [o.nominated, ...o.deputies].filter((x): x is AmlOfficer => !!x);
   const ids = list.map(x => x.id).filter((x): x is string => !!x);
   const active = ids.length
     ? (await pool.query(`SELECT id, email FROM users WHERE id = ANY($1::varchar[]) AND COALESCE(is_active, true) = true`, [ids]).catch(() => ({ rows: [] as any[] }))).rows

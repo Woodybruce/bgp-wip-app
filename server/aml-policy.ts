@@ -4,7 +4,7 @@
 //
 //   GET  /api/aml-policy                         the officers, the documents and the rules (BGP staff)
 //   GET  /api/aml-policy/documents/:key          a document as a download (BGP staff)
-//   PUT  /api/aml-policy/officers                { nominatedId, deputyId } (admins)
+//   PUT  /api/aml-policy/officers                { nominatedId, deputyIds } (admins; deputyId from a cached screen)
 //   POST /api/aml-policy/officers/from-policy    sets the officers the policy names (admins)
 //
 // Outside /api/aml/, which the retired in-app AML answers 410, and on no
@@ -15,7 +15,7 @@ import { existsSync } from "fs";
 import path from "path";
 import { pool } from "./db";
 import {
-  AML_POLICY_DOCUMENTS, FATF_LISTS_AS_OF, LETTING_AML_MONTHLY_RENT, NOT_REQUIRED_REASONS, POLICY_OFFICER_NAMES, RECHECK_YEARS,
+  AML_POLICY_DOCUMENTS, FATF_LISTS_AS_OF, LETTING_AML_MONTHLY_RENT, MAX_AML_DEPUTIES, NOT_REQUIRED_REASONS, POLICY_OFFICER_NAMES, RECHECK_YEARS,
   amlPolicyDocument, type NotRequiredReason, type PartyNotRequired,
 } from "@shared/aml-policy";
 
@@ -88,8 +88,11 @@ router.get("/api/aml-policy", async (req: Request, res: Response) => {
       documents: AML_POLICY_DOCUMENTS.map(d => ({ key: d.key, title: d.title, issue: d.issue, date: d.date, url: `/api/aml-policy/documents/${d.key}`, onFile: !!documentPath(d.file) })),
       officers: {
         nominated: officers.nominated ? { id: officers.nominated.id, name: officers.nominated.name } : null,
-        deputy: officers.deputy ? { id: officers.deputy.id, name: officers.deputy.name } : null,
+        deputies: officers.deputies.map(d => ({ id: d.id, name: d.name })),
+        // The first Deputy, for a screen loaded before there could be several.
+        deputy: officers.deputies[0] ? { id: officers.deputies[0].id, name: officers.deputies[0].name } : null,
       },
+      maxDeputies: MAX_AML_DEPUTIES,
       policyNames: POLICY_OFFICER_NAMES,
       canEdit: me.isAdmin,
       // The Nominated Officer or the Deputy (admins while none is set): the
@@ -120,17 +123,23 @@ router.get("/api/aml-policy/documents/:key", async (req: Request, res: Response)
 
 // ── The officers (admins) ───────────────────────────────────────────────────
 
-async function setOfficers(nominatedId: string | null, deputyId: string | null, me: { id: string; name: string }): Promise<{ nominated: string | null; deputy: string | null }> {
-  const ids = [nominatedId, deputyId].filter((x): x is string => !!x);
+async function setOfficers(nominatedId: string | null, deputyIds: string[], me: { id: string; name: string }): Promise<{ nominated: string | null; deputies: string[]; deputy: string | null }> {
+  const wanted = [...new Set(deputyIds.filter(Boolean))];
+  if (wanted.length > MAX_AML_DEPUTIES) throw Object.assign(new Error(`At most ${MAX_AML_DEPUTIES} Deputies.`), { status: 400 });
+  const ids = [nominatedId, ...wanted].filter((x): x is string => !!x);
   const users = ids.length
     ? (await pool.query(`SELECT id, name, email FROM users WHERE id = ANY($1::varchar[]) AND COALESCE(is_active, true) = true`, [ids])).rows
     : [];
   const user = (id: string | null) => id ? users.find((u: any) => String(u.id) === id) || null : null;
-  const n = user(nominatedId), d = user(deputyId);
+  const n = user(nominatedId);
   if (nominatedId && !n) throw Object.assign(new Error("The Nominated Officer must be an active BGP login."), { status: 400 });
-  if (deputyId && !d) throw Object.assign(new Error("The Deputy must be an active BGP login."), { status: 400 });
-  if (n && d && String(n.id) === String(d.id)) throw Object.assign(new Error("The Nominated Officer and the Deputy must be different people."), { status: 400 });
-  for (const u of [n, d]) {
+  const ds = wanted.map(id => {
+    const d = user(id);
+    if (!d) throw Object.assign(new Error("Each Deputy must be an active BGP login."), { status: 400 });
+    if (n && String(n.id) === String(d.id)) throw Object.assign(new Error("The Nominated Officer cannot also be a Deputy."), { status: 400 });
+    return d;
+  });
+  for (const u of [n, ...ds]) {
     if (u && !/@brucegillinghampollard\.com$/i.test(String(u.email || ""))) throw Object.assign(new Error("An officer must be a BGP member of staff."), { status: 400 });
   }
   const existing = (await pool.query(`SELECT id FROM aml_settings ORDER BY id LIMIT 1`)).rows[0];
@@ -146,12 +155,14 @@ async function setOfficers(nominatedId: string | null, deputyId: string | null, 
        VALUES ($1, $2, $3, NOW(), NOW())`, vals);
   }
   const { DEPUTY_SETTING_KEY } = await import("./aml-authority");
-  const deputy = d ? { id: String(d.id), name: text(d.name), email: String(d.email).toLowerCase(), setBy: me.name, setAt: new Date().toISOString() } : { id: null, name: null, email: null, setBy: me.name, setAt: new Date().toISOString() };
+  // The list form (20 November 2026); readDeputies also reads the single officer stored before.
+  const deputies = { deputies: ds.map(d => ({ id: String(d.id), name: text(d.name), email: String(d.email).toLowerCase() })), setBy: me.name, setAt: new Date().toISOString() };
   await pool.query(
     `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, now())
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, [DEPUTY_SETTING_KEY, JSON.stringify(deputy)]);
-  console.log(`[aml-policy] officers set by ${me.name}: Nominated Officer ${n ? text(n.name) : "none"}, Deputy ${d ? text(d.name) : "none"}`);
-  return { nominated: n ? text(n.name) : null, deputy: d ? text(d.name) : null };
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, [DEPUTY_SETTING_KEY, JSON.stringify(deputies)]);
+  const names = ds.map(d => text(d.name));
+  console.log(`[aml-policy] officers set by ${me.name}: Nominated Officer ${n ? text(n.name) : "none"}, Deputies ${names.length ? names.join(", ") : "none"}`);
+  return { nominated: n ? text(n.name) : null, deputies: names, deputy: names[0] || null };
 }
 
 router.put("/api/aml-policy/officers", async (req: Request, res: Response) => {
@@ -160,9 +171,12 @@ router.put("/api/aml-policy/officers", async (req: Request, res: Response) => {
     if (!me) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
     if (!me.isAdmin) return res.status(403).json({ message: "Only an admin sets the AML officers." });
     const nominatedId = text(req.body?.nominatedId) || null;
-    const deputyId = text(req.body?.deputyId) || null;
+    // deputyIds (a list, since 20 November 2026), or deputyId from a screen loaded before.
+    const deputyIds = Array.isArray(req.body?.deputyIds)
+      ? req.body.deputyIds.map((x: unknown) => text(x)).filter(Boolean)
+      : [text(req.body?.deputyId)].filter(Boolean);
     if (!nominatedId) return res.status(400).json({ message: "Choose the Nominated Officer." });
-    res.json({ ok: true, ...(await setOfficers(nominatedId, deputyId, me)) });
+    res.json({ ok: true, ...(await setOfficers(nominatedId, deputyIds, me)) });
   } catch (err: any) {
     if (!err?.status) console.error("[aml-policy] officers not saved:", err?.message);
     res.status(err?.status || 500).json({ message: err?.status ? err.message : "The officers could not be saved." });
@@ -179,10 +193,14 @@ router.post("/api/aml-policy/officers/from-policy", async (req: Request, res: Re
         `SELECT id FROM users WHERE lower(btrim(name)) = lower($1) AND COALESCE(is_active, true) = true AND email ILIKE '%@brucegillinghampollard.com'`, [name])).rows;
       return rows.length === 1 ? String(rows[0].id) : null;
     };
+    // First set-up only: it would put back the one Deputy the policy names
+    // over the ones an admin has chosen since (20 November 2026).
+    const { amlOfficers } = await import("./aml-authority");
+    if ((await amlOfficers()).nominated) return res.status(409).json({ message: "The officers are already set: use Change." });
     const nominatedId = await find(POLICY_OFFICER_NAMES.nominated);
     const deputyId = await find(POLICY_OFFICER_NAMES.deputy);
     if (!nominatedId) return res.status(409).json({ message: `No single active login is named ${POLICY_OFFICER_NAMES.nominated}: choose the officers by hand.` });
-    res.json({ ok: true, ...(await setOfficers(nominatedId, deputyId, me)), deputyMissing: !deputyId });
+    res.json({ ok: true, ...(await setOfficers(nominatedId, deputyId ? [deputyId] : [], me)), deputyMissing: !deputyId });
   } catch (err: any) {
     if (!err?.status) console.error("[aml-policy] officers not saved:", err?.message);
     res.status(err?.status || 500).json({ message: err?.status ? err.message : "The officers could not be saved." });
