@@ -3985,7 +3985,11 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
 `qa/regression/aml-policy-guards.test.mjs`.
 
 - **The officers** (policy C.b): Jack Barratt is the Nominated Officer
-  (MLRO) and Victoria Broadhead the Deputy. The Nominated Officer is on
+  (MLRO) and **Layla O'Driscoll the Deputy** (Woody, 2026-11-20: "Layla is
+  correct not Victoria"; the Issue 2 document names Victoria Broadhead as
+  Deputy Nominated Officer and Deputy Compliance Officer, and a corrected
+  issue is BGP's to publish, as a new entry and file). `POLICY_OFFICER_NAMES`
+  is what **Use the policy's officers** looks for. The Nominated Officer is on
   `aml_settings` as before; the Deputy is `system_settings.aml_deputy_officer`.
   Both decide (`amlOfficerRole`, `amlActor().officerRole`); admins act only
   while no Nominated Officer is set. An admin sets them on the AML

@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  AML_HOTS_CLAUSE, AML_POLICY_DOCUMENTS, NOT_REQUIRED_REASONS, RECHECK_YEARS,
+  AML_HOTS_CLAUSE, AML_POLICY_DOCUMENTS, NOT_REQUIRED_REASONS, POLICY_OFFICER_NAMES, RECHECK_YEARS,
   amlOfficerRole, amlPolicyDocument, amlRegime, countryOf, countryRisk, dueDiligenceLevel, inLondonOrSouthEast, isDealAgent,
   notRequiredInput, officerWords, policyFactorFlags, policyFactorsToWeigh, recheckDate, sectorMatches, sellsCitizenship,
   simplifiedBasis, superPrimeFlag,
@@ -15,16 +15,20 @@ import { amlBucket, amlStage } from "../shared/aml-dashboard";
 
 const officers = {
   nominated: { id: "jack", name: "Jack Barratt", email: "jack@brucegillinghampollard.com" },
-  deputy: { id: "victoria", name: "Victoria Broadhead", email: "victoria@brucegillinghampollard.com" },
+  deputy: { id: "layla", name: "Layla O'Driscoll", email: "layla@brucegillinghampollard.com" },
 };
 
 test("the Nominated Officer and the Deputy both decide; admins only while no Nominated Officer is set", () => {
   assert.deepEqual(amlOfficerRole({ id: "jack" }, officers, false), { role: "nominated", appointed: true });
-  assert.deepEqual(amlOfficerRole({ id: "x", email: "VICTORIA@brucegillinghampollard.com" }, officers, false), { role: "deputy", appointed: true });
+  assert.deepEqual(amlOfficerRole({ id: "x", email: "LAYLA@brucegillinghampollard.com" }, officers, false), { role: "deputy", appointed: true });
   assert.deepEqual(amlOfficerRole({ id: "woody" }, officers, true), { role: null, appointed: true });
   assert.deepEqual(amlOfficerRole({ id: "woody" }, { nominated: null, deputy: null }, true), { role: "admin", appointed: false });
   assert.deepEqual(amlOfficerRole({ id: "agent" }, { nominated: null, deputy: null }, false), { role: null, appointed: false });
-  assert.equal(officerWords(officers), "the Nominated Officer (Jack Barratt) or the Deputy (Victoria Broadhead)");
+  assert.equal(officerWords(officers), "the Nominated Officer (Jack Barratt) or the Deputy (Layla O'Driscoll)");
+});
+
+test("Use the policy's officers looks for Jack Barratt and Layla O'Driscoll (Woody, 20 November 2026)", () => {
+  assert.deepEqual({ ...POLICY_OFFICER_NAMES }, { nominated: "Jack Barratt", deputy: "Layla O'Driscoll" });
 });
 
 test("approvals last 3 years, or 1 for enhanced due diligence", () => {
