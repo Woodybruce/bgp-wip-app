@@ -290,9 +290,11 @@ export async function readLettingNote(input: ReadNoteInput, deps: NoteReaderDeps
   const guarded = (ai: ReturnType<typeof normaliseCandidate> | null, aiBrandPickable = false): LettingNoteReading => {
     const g = guardReading({ kind: input.kind, today: input.today, writtenOn: input.writtenOn ?? null, rules, short: shorthand, ai, unitBrands: input.brandNames,
       unitName: input.unitName, propertyName: input.propertyName, teamNames, aiBrandPickable });
-    // A box whose values are listed to choose from is not also "left out".
-    const dropped = rules.dropped.filter(d => !(d.field === "rentPa" && g.unsure.some(u => u.field === "rentPa")));
-    for (const d of [...(ai ? ai.dropped : []), ...g.dropped]) if (!dropped.some(x => x.field === d.field) && !(d.field in g.fields)) dropped.push(d);
+    // A box whose values are listed to choose from is not also "left out"
+    // (a term listed to Use was also said to be left out, 20 November 2026).
+    const listed = (field: string) => g.unsure.some(u => u.field === field);
+    const dropped = rules.dropped.filter(d => !listed(d.field));
+    for (const d of [...(ai ? ai.dropped : []), ...g.dropped]) if (!dropped.some(x => x.field === d.field) && !(d.field in g.fields) && !listed(d.field)) dropped.push(d);
     const unplaced = [...rules.unplaced];
     if (ai) for (const u of ai.unplaced) if (!unplaced.includes(u)) unplaced.push(u);
     const fields = { ...g.fields };
@@ -576,16 +578,29 @@ export function setupUnitNoteReaderRoutes(app: Express) {
       const onUnit: Brand[] = unit ? await brandsOnUnit(unit.id) : [];
       const teamNames = teamNamesFor(access, await staffNamesFor(pool, access));
       const boxes = NOTE_KIND_FIELDS.offer;
-      const reading = await readLettingNote({
-        kind: "offer", text, today: londonDay(), writtenOn: null,
-        unitName: unit?.unit_name || null, propertyName: unit?.property_name || property?.name || null,
-        brandNames: onUnit.map(b => b.name), pickableBrandNames: onUnit.map(b => b.name),
-        author: null, staffNames: teamNames, userId: access.userId,
-        pickBrand: name => resolveBrand(pool, name, onUnit, access),
-      });
+      // Beside the offer reading (the rent and the lease terms), the deal
+      // itself (2026-11-20): the kind of deal, the property, each party and
+      // its billing entity (server/deal-note-reader.ts). If that reading
+      // fails, the offer reading is still sent, with no deal.
+      const dealReader = import("./deal-note-reader").catch((e: any) => { console.warn("[unit-note-reader] deal reading unavailable:", e?.message || e); return null; });
+      const [reading, deal] = await Promise.all([
+        readLettingNote({
+          kind: "offer", text, today: londonDay(), writtenOn: null,
+          unitName: unit?.unit_name || null, propertyName: unit?.property_name || property?.name || null,
+          brandNames: onUnit.map(b => b.name), pickableBrandNames: onUnit.map(b => b.name),
+          author: null, staffNames: teamNames, userId: access.userId,
+          pickBrand: name => resolveBrand(pool, name, onUnit, access),
+        }),
+        dealReader.then(m => m ? m.readDealFromNote(pool, text, access.userId ?? null) : null).catch((e: any) => {
+          console.warn("[unit-note-reader] deal reading skipped:", e?.message || e);
+          return null;
+        }),
+      ]);
       await placeNamedBrands(pool, reading, onUnit, access, teamNames, boxes);
       await placeAgentFirm(pool, reading.fields, access, boxes);
-      res.json(reading);
+      const tidy = deal ? (await dealReader)?.tidyOfferReadingForDeal : null;
+      if (deal && tidy) tidy(reading, deal);
+      res.json({ ...reading, deal });
     } catch (err: any) {
       console.error("[unit-note-reader] deal note read failed:", err?.message || err);
       res.status(500).json({ message: "The note could not be read. Fill the form in yourself, or try again in a moment." });

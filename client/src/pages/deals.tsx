@@ -145,7 +145,9 @@ import { NoteFill } from "@/components/letting-note/note-fill";
 import type { LettingNoteReading } from "@shared/letting-note";
 import type { HotsConversion, HotsConvertDefaults } from "@shared/unit-hots";
 import { hotsCall } from "@/components/unit-hots/hots-api";
-import { dealNotePatch, noteTenant } from "@/lib/deal-note";
+import { billingPatch, dealAutoName, dealNotePatch, dealReadPatch, noteTenant, noteUnitId, PARTY_FORM_KEYS, partyPatch, propertyPickPatch, teamForDealType } from "@/lib/deal-note";
+import { DealNoteReadPanel } from "@/components/deal-note-read";
+import { DEAL_NOTE_ROLE_TYPES, DEAL_NOTE_ROLE_WORDS, type DealNoteCandidate, type DealNoteRead, type DealNoteRegisterHit, type DealNoteRole } from "@shared/deal-note";
 import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { SendClientChecksButton } from "@/components/kyc-client-checks";
 import { PartyReadyToStart } from "@/components/deal-parties";
@@ -1995,8 +1997,10 @@ function SimplifiedCreateBody({
   nameAutoFilled, setNameAutoFilled, hideFees = false,
   onUnitPicked, liveLettingRow, onUseLiveDeal,
   jointAgency, setJointAgency, jointAgencyErrors, signedBy,
-  place = null, hotsUnitId = null, hotsOnFile = null, tenantHint = null,
+  place = null, hotsUnitId = null, hotsOnFile = null, tenantHint = null, propertySeed = null,
 }: {
+  // The note's address, to open the property picker with it typed (2026-11-20).
+  propertySeed?: { text: string; key: number } | null;
   // A handover (Promote, the Heads of Terms' Convert): the property and unit
   // are the tracker unit's, shown as one line in place of the pickers.
   place?: { propertyName: string; unitName: string } | null;
@@ -2077,20 +2081,7 @@ function SimplifiedCreateBody({
   //   long as the user hasn't manually typed in the Deal Name box —
   //   typing flips nameAutoFilled off and the auto-fill stops touching
   //   it.
-  const computeAutoName = (f: any): string => {
-    const prop = properties.find(p => p.id === f.propertyId);
-    const propName = prop?.name || "";
-    const investType = f.dealType === "Sale" || f.dealType === "Purchase";
-    let cpName = "";
-    if (investType) {
-      const clientId = f.dealType === "Sale" ? f.vendorId : f.purchaserId;
-      cpName = companies.find(c => c.id === clientId)?.name || "";
-    } else {
-      cpName = companies.find(c => c.id === f.tenantId)?.name || "";
-    }
-    if (cpName && propName) return `${cpName} – ${propName}`;
-    return cpName || propName || "";
-  };
+  const computeAutoName = (f: any): string => dealAutoName(f, properties, companies);
   const applyAutoName = (next: any) => {
     if (!nameAutoFilled) return;
     const auto = computeAutoName(next);
@@ -2151,18 +2142,7 @@ function SimplifiedCreateBody({
   // flows — and takes the property's team (2026-10 team structure) unless
   // the deal is already Investment / Tenant Rep / Lease Advisory.
   const pickProperty = (val: string) => {
-    const prop = properties.find(p => p.id === val);
-    const propLandlordId = (prop as any)?.landlordId || "";
-    const investType = form.dealType === "Sale" || form.dealType === "Purchase";
-    const patch: any = { propertyId: val };
-    const propTeam = ((prop as any)?.bgpEngagement || []).find((t: string) => isBgpTeam(t));
-    if (propTeam && !form.team.some((t: string) => ["Investment", "Tenant Rep", "Lease Advisory"].includes(t))) {
-      patch.team = [propTeam, ...form.team.filter((t: string) => t === "Landsec")];
-    }
-    if (propLandlordId) {
-      if (investType && !form.vendorId) patch.vendorId = propLandlordId;
-      if (!investType && !form.landlordId) patch.landlordId = propLandlordId;
-    }
+    const patch = propertyPickPatch(form, val, properties.find(p => p.id === val) as any, isBgpTeam);
     setForm((p: any) => ({ ...p, ...patch }));
     applyAutoName({ ...form, ...patch });
   };
@@ -2368,6 +2348,7 @@ function SimplifiedCreateBody({
         <PropertyCombobox
           testId="select-deal-property-top"
           placeholder="Select property or paste an address"
+          seed={propertySeed}
           value={form.propertyId}
           items={properties.map((p) => ({
             id: p.id,
@@ -2411,10 +2392,7 @@ function SimplifiedCreateBody({
             const val = v === "__clear__" ? "" : v;
             set("dealType", val);
             // Auto-assign team based on deal type — matches the existing rule.
-            let autoTeam: string | null = null;
-            if (["Purchase", "Sale"].includes(val)) autoTeam = "Investment";
-            else if (val === "Lease Acquisition") autoTeam = "Tenant Rep";
-            else if (["Lease Disposal", "Lease Renewal", "Rent Review", "Regear"].includes(val)) autoTeam = "Lease Advisory";
+            const autoTeam = teamForDealType(val);
             if (autoTeam && !form.team.includes(autoTeam)) {
               setForm((p: any) => ({ ...p, team: [...p.team, autoTeam] }));
             }
@@ -3095,6 +3073,12 @@ export function DealFormDialog({
   const [jointAgencyErrors, setJointAgencyErrors] = useState(false);
   // Said under the tenant picker when the box at the top read a brand the picker does not list.
   const [noteBrandHint, setNoteBrandHint] = useState<string | null>(null);
+  // The deal the box at the top read (2026-11-20): the kind of deal, the
+  // property and each party, looked up in the CRM (client/src/lib/deal-note.ts).
+  const [dealRead, setDealRead] = useState<DealNoteRead | null>(null);
+  const [dealNoteBusy, setDealNoteBusy] = useState<string | null>(null);
+  // Opens the property picker with the note's address typed, to find or add it.
+  const [propertySeed, setPropertySeed] = useState<{ text: string; key: number } | null>(null);
   // After New Deal or a move to Solicitors saves (Woody, 2026-11-17: "on the
   // form we need a button to allow us to Kick off the AML"): the form shows
   // a Kick off AML button for each party, each the deal page's KYC4U request.
@@ -3135,6 +3119,9 @@ export function DealFormDialog({
     setJointAgency(EMPTY_JOINT_AGENCY);
     setJointAgencyErrors(false);
     setNoteBrandHint(null);
+    setDealRead(null);
+    setDealNoteBusy(null);
+    setPropertySeed(null);
   }, [open, deal]);
 
   // A handover's fee split starts from the deal's own (the editor keeps BGP
@@ -3168,6 +3155,72 @@ export function DealFormDialog({
     const f = reading.fields || {};
     if (f.brandId || String(f.brandName || "").trim()) setNoteBrandHint(noteTenant(reading, tenants) ? null : String(f.brandName || "").trim() || null);
     setForm(prev => ({ ...prev, ...dealNotePatch(prev, reading, tenants).patch }));
+  };
+
+  // The deal the box read: what is sure fills an empty box at once, and the
+  // panel under the box offers the rest (client/src/components/deal-note-read.tsx).
+  const named = (next: any, extra: Array<{ id: string; name: string }> = []) => {
+    if (!nameAutoFilled) return next;
+    const auto = dealAutoName(next, properties, [...companies, ...extra]);
+    return auto && auto !== next.name ? { ...next, name: auto } : next;
+  };
+  const withType = (f: any, dealType: string) => {
+    const team = teamForDealType(dealType);
+    return { ...f, dealType, ...(team && !f.team.includes(team) ? { team: [...f.team, team] } : {}) };
+  };
+  const withProperty = (f: any, propertyId: string, read: DealNoteRead | null) => {
+    const next: any = { ...f, ...propertyPickPatch(f, propertyId, properties.find(p => p.id === propertyId) as any, isBgpTeam) };
+    if (f.propertyId && f.propertyId !== propertyId) next.unitId = "";
+    if (read && UNIT_LEVEL_DEAL_TYPES.has(next.dealType) && !next.unitId) {
+      const unitId = noteUnitId(read, propertyId, propertyUnits);
+      if (unitId) next.unitId = unitId;
+    }
+    return next;
+  };
+  const applyDealRead = (read: DealNoteRead) => {
+    setForm((prev: any) => {
+      const patch = dealReadPatch(prev, read);
+      let next: any = { ...prev, ...patch };
+      if (patch.dealType) next = withType(next, patch.dealType);
+      if (patch.propertyId) next = withProperty({ ...next, propertyId: prev.propertyId }, patch.propertyId, read);
+      return named(next);
+    });
+  };
+  const requestWords = (e: any): string => {
+    const raw = String(e?.message || "");
+    const body = /^\d{3}:\s*([\s\S]*)$/.exec(raw)?.[1] ?? raw;
+    try { const j = JSON.parse(body); return String(j?.message || j?.error || body); } catch { return body; }
+  };
+  const billNoteParty = async (role: DealNoteRole, companyId: string, number: string) => {
+    setDealNoteBusy(`bill:${role}`);
+    try {
+      const made = await (await apiRequest("POST", "/api/billing-entities", { brandId: companyId, companyNumber: number })).json();
+      setForm((prev: any) => String(prev[PARTY_FORM_KEYS[role].id] || "") === companyId ? { ...prev, ...billingPatch(role, made) } : prev);
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId, "trading-entities"] });
+      if (made?.xeroError) toast({ title: `${made?.entity?.name || "The company"} is filed under the ${DEAL_NOTE_ROLE_WORDS[role].toLowerCase()}, not billed`, description: made.xeroError });
+      else toast({ title: "Billing entity set", description: `${made?.contact?.Name || made?.entity?.name || number}${made?.xeroCreated ? " was added to Xero." : " is in Xero."}` });
+    } catch (e: any) {
+      toast({ title: "Couldn't set the billing entity", description: requestWords(e), variant: "destructive" });
+    } finally {
+      setDealNoteBusy(null);
+    }
+  };
+  const addNoteParty = async (role: DealNoteRole, name: string, hit: DealNoteRegisterHit | null) => {
+    setDealNoteBusy(`add:${role}`);
+    try {
+      const created = await (await apiRequest("POST", "/api/crm/companies", { name: name.trim(), companyType: DEAL_NOTE_ROLE_TYPES[role] })).json();
+      const candidate: DealNoteCandidate = { companyId: String(created.id), companyName: String(created.name || name), companyType: created.companyType ?? DEAL_NOTE_ROLE_TYPES[role], entityId: null, entityName: null, entityNumber: null };
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
+      setDealRead(prev => prev ? { ...prev, parties: prev.parties.map(p => p.role === role ? { ...p, candidates: [candidate] } : p) } : prev);
+      setForm((prev: any) => named({ ...prev, ...partyPatch(prev, role, candidate) }, [{ id: candidate.companyId, name: candidate.companyName }]));
+      toast({ title: `${DEAL_NOTE_ROLE_WORDS[role]} added`, description: `${candidate.companyName} added to the CRM.` });
+      if (hit) await billNoteParty(role, candidate.companyId, hit.number);
+    } catch (e: any) {
+      toast({ title: "Couldn't add it", description: requestWords(e), variant: "destructive" });
+    } finally {
+      setDealNoteBusy(null);
+    }
   };
 
   const hasLiveChanges = isEdit && open && draftSessionRef.current?.dealId === deal?.id
@@ -3636,10 +3689,29 @@ export function DealFormDialog({
             readUrl="/api/deal-notes/read"
             readExtra={{ propertyId: form.propertyId || null, trackerUnitId: handover?.unit.id || null }}
             title="Describe the deal"
-            example="Terms: 10 year lease. Rent £120k pax. 6 MRF. TBO yr 5"
+            example="Letting of 55 Wells Street to Acme Ltd. Landlord is Wells Estates Ltd. 10 year lease. Rent £120k pax. 6 MRF"
             startOpen
             autoApply
             onApply={applyDealNote}
+            onRead={(data) => {
+              const read = ((data as { deal?: DealNoteRead | null } | null)?.deal) ?? null;
+              setDealRead(read);
+              if (read) applyDealRead(read);
+            }}
+          />
+        )}
+        {dealRead && !isEdit && !isClientCreate && (
+          <DealNoteReadPanel
+            read={dealRead}
+            form={form}
+            busy={dealNoteBusy}
+            billing
+            onUseType={(value) => setForm((prev: any) => named(withType(prev, value)))}
+            onPickProperty={(id) => setForm((prev: any) => named(withProperty(prev, id, dealRead)))}
+            onFindProperty={(text) => setPropertySeed({ text, key: Date.now() })}
+            onPickParty={(role, c) => setForm((prev: any) => named({ ...prev, ...partyPatch(prev, role, c) }))}
+            onAddParty={(role, name, hit) => { void addNoteParty(role, name, hit); }}
+            onBill={(role, companyId, number) => { void billNoteParty(role, companyId, number); }}
           />
         )}
         {hasLiveChanges && (
@@ -3699,6 +3771,7 @@ export function DealFormDialog({
               hotsUnitId={handover?.kind === "promote" ? handover.unit.id : null}
               hotsOnFile={handover?.kind === "hots" ? (handover.finalFileName || "the final Heads of Terms") : null}
               tenantHint={noteBrandHint}
+              propertySeed={propertySeed}
             />
             )
           ) : (

@@ -45,7 +45,7 @@ const CLIENT = { ...STAFF, name: 'Landsec leasing', email: 'leasing@landsec.com'
 const VIEWING_AS_CLIENT = { ...STAFF, scope: 'landsec' };
 const TIGHT = 'Terms: 10 year lease. Rent £120k pax. 6 MRF. TBO yr 5';
 
-async function readDealNote({ access = STAFF, body = { text: TIGHT, propertyId: 'p1', trackerUnitId: null }, unit = true, property = true, onUnit = [{ id: 'b1', name: "Jersey Mike's" }] } = {}) {
+async function readDealNote({ access = STAFF, body = { text: TIGHT, propertyId: 'p1', trackerUnitId: null }, unit = true, property = true, onUnit = [{ id: 'b1', name: "Jersey Mike's" }], dealReader = null } = {}) {
   const queries = [], accessFor = [];
   const pool = { async query(sql, params) {
     queries.push(sql);
@@ -59,6 +59,7 @@ async function readDealNote({ access = STAFF, body = { text: TIGHT, propertyId: 
     './db': { pool },
     './unit-brief-workspace': { briefAccess: async (_req, propertyId) => { accessFor.push(propertyId); return access; } },
     './unit-negotiation': { brandsOnUnit: async () => onUnit },
+    ...(dealReader ? { './deal-note-reader': dealReader } : {}),
   }, { process: { env: {} } });   // no provider key: the rules read it alone
   let handler;
   mod.setupUnitNoteReaderRoutes({ post(url, ...handlers) { if (url === '/api/deal-notes/read') handler = handlers.at(-1); } });
@@ -86,6 +87,32 @@ test('with the tracker unit the brands on the unit are the brands, and its prope
   assert.equal(body.fields.brandName, "Jersey Mike's");
   assert.equal(body.fields.brandId, 'b1');
   assert.equal(body.fields.rentPa, 120000);
+});
+
+test('the deal itself is read beside the terms (2026-11-20): the route sends `deal` and tidies the offer reading by it', async () => {
+  const deal = { dealType: { value: 'New Letting', quote: 'Letting' }, place: null, usedAi: false, dropped: [],
+    parties: [{ role: 'tenant', name: 'Acme Ltd', quote: 'to Acme Ltd', candidates: [], register: [], registerNote: null }] };
+  const asked = [], tidied = [];
+  const dealReader = {
+    readDealFromNote: async (_db, text, userId) => { asked.push([text, userId]); return deal; },
+    tidyOfferReadingForDeal: (reading, d) => { tidied.push(d); reading.fields.tidied = true; },
+  };
+  const { res, body } = await readDealNote({ body: { text: TIGHT, propertyId: 'p1' }, dealReader });
+  assert.equal(res.statusCode, 200, JSON.stringify(body));
+  assert.deepEqual(body.deal, deal);
+  assert.deepEqual(asked, [[TIGHT, 'u1']], 'the note and the login the read is counted against');
+  assert.equal(tidied.length, 1);
+  assert.equal(body.fields.tidied, true);
+  assert.equal(body.fields.rentPa, 120000, 'the terms are still read');
+
+  // The deal reading failing never costs the terms.
+  const broken = await readDealNote({ dealReader: { readDealFromNote: async () => { throw new Error('down'); }, tidyOfferReadingForDeal: () => { throw new Error('never'); } } });
+  assert.equal(broken.res.statusCode, 200);
+  assert.equal(broken.body.deal, null);
+  assert.equal(broken.body.fields.rentPa, 120000);
+  const none = await readDealNote();
+  assert.equal(none.res.statusCode, 200, 'with no deal reader at all the box still reads the terms');
+  assert.equal(none.body.deal, null);
 });
 
 test('only BGP staff signed in as themselves: a client login, or staff viewing as a client, is refused before anything is read', async () => {

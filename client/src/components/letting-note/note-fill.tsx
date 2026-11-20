@@ -39,6 +39,9 @@ export interface NoteFillProps {
   title?: string;
   example?: string;
   startOpen?: boolean;
+  // Every reading as the server sent it, for a form that reads more than the
+  // letting fields (the deal form's `deal`, 2026-11-20). It fills nothing here.
+  onRead?: (data: unknown) => void;
 }
 
 export interface NoteReadingRow { field: LettingNoteField; label: string; value: string; quote: string | null }
@@ -121,7 +124,7 @@ export function NoteFill(props: NoteFillProps) {
   return <NoteFillBox {...props} />;
 }
 
-function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, autoRead, autoApply, onApply, className, readUrl, readExtra, title, example, startOpen }: NoteFillProps) {
+function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, autoRead, autoApply, onApply, onRead, className, readUrl, readExtra, title, example, startOpen }: NoteFillProps) {
   const [source, setSource] = useState<NoteSource | undefined>(sourceProp);
   const heading = title || "Paste a note";
   const [open, setOpen] = useState(!!sourceProp || !!initialText || !!autoRead || !!startOpen);
@@ -135,6 +138,8 @@ function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, a
   const started = useRef(false);
   const onApplyRef = useRef(onApply);
   onApplyRef.current = onApply;
+  const onReadRef = useRef(onRead);
+  onReadRef.current = onRead;
 
   const read = async (from?: NoteSource) => {
     const words = text.trim();
@@ -147,12 +152,14 @@ function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, a
         : { kind, text: words.slice(0, NOTE_MAX), ...(offerId ? { offerId } : {}) };
     const turn = ++latest.current;
     setBusy(true); setError(null); setReading(null); setFilled(false); setUsed(new Set());
+    onReadRef.current?.(null);
     try {
       const res = await apiRequest("POST", readUrl || `/api/unit-offers/unit/${encodeURIComponent(unitId)}/read-note`, body);
       const data = (await res.json()) as LettingNoteReading;
       if (turn !== latest.current) return;
       if (!data || typeof data !== "object" || !data.fields) throw new Error("500: empty");
       setReading(data);
+      onReadRef.current?.(data);
       const toFill = readingToFill(data);
       if (autoApply && Object.keys(toFill.fields).length) { onApplyRef.current(toFill); setFilled(true); }
     } catch (e) {

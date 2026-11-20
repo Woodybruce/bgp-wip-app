@@ -2683,7 +2683,8 @@ same day, never live). Do not re-litigate. Tests:
   contribution fill; the tenant only when the tenant picker lists it (else
   "Brand read as"); anything else is a Comments line, once. An offer's date is
   never the target date. A note led by a brand that is not on a unit is not
-  tight, so the box's example names none.
+  tight. Since 20 November 2026 the box also reads the deal itself: see
+  "Describe the deal reads the deal" below.
 - **Add heads of terms**: the New Deal form's HOTs parser
   (`/api/crm/deals/parse-hots`) fills the form; on promote the document is
   first filed on the unit as its final agreed Heads of Terms (`POST
@@ -2966,6 +2967,65 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   the main table (`TrackerChecklistCell`), on the staff tracker and the
   joint agent's (Woody, 2026-11-13: "swap the check list and against the
   brief"). Do not swap them back.
+
+## Describe the deal reads the deal (Woody, 2026-11-20)
+
+Woody, on New Deal's "Describe the deal" box with the note "lettering on 55
+wells street London to Bruce gillingham pollard LTd. Landlord is Brucecap Ltd
+rent is 300,000 pax term 10 yrs rent free 5 momnths", which filled nothing
+but the terms: "Need to improve the autofill as doesn't search the adress?
+Also didn't pick up the tenant and couldn't add landlord or tenant once
+worked out they are not in the CRM?", "also didnt change the deal typ to new
+letting", "also didnt help with the billing entiryies either". The box's
+first reading (the letting note reader, read as an offer) is unchanged; a
+second reading, of the deal itself, runs beside it. Rules and checks:
+`shared/deal-note.ts`; provider and look-ups: `server/deal-note-reader.ts`;
+form mapping: `client/src/lib/deal-note.ts`; panel:
+`client/src/components/deal-note-read.tsx`. Tests: `server/deal-note.test.ts`
+(in `npm test`), `qa/regression/deal-note-reader-guards.test.mjs`, and the
+route case in `qa/regression/promote-to-solicitors.test.mjs`.
+
+- **What it reads**: the deal type (one of `DEAL_NOTE_TYPES`, the deal form's
+  types for a deal with a property), the address and a unit, and each party
+  (landlord, tenant, vendor, purchaser) by the name the note gives. Anthropic
+  when a key and the letting note reader's daily allowance allow (its own
+  call, `defaultNoteReaderDeps`, logged as `deal-note-reader`), sent the note
+  and the list of deal types and nothing from the CRM; the rules
+  (`readDealNoteRules`: "Landlord is X", "letting ... to X", "55 Wells
+  Street", "lettering on", which is "letting" autocorrected) fill what the
+  provider leaves out, or read the note alone. Every value must be the
+  note's own words (`checkDealNoteAnswer`); a name in two roles, or the
+  address as a party, is used for neither.
+- **What it looks up**: the address among `crm_properties` word by word
+  (`addressSearch`: the house number whole, Street as St too, the town left
+  out; the address's values, never its key names), then by postcode, then
+  without the number (offered, never filled). Each party among the CRM's
+  companies and the companies filed under them (`crm_trading_entities`, the
+  billing entities) by the PIPnet import's name key (`partyCandidates`: "Bruce
+  gillingham pollard LTd" is the BRUCE GILLINGHAM POLLARD LIMITED filed under
+  barrette estates), and at Companies House (live companies of exactly that
+  name, `registerHits`) when the CRM holds no company for it, or holds the
+  party but not the legal company a name ending Ltd names.
+- **What the form does**: what is sure fills an EMPTY box by itself
+  (`dealReadPatch`: the deal type, a property that matched every word, a
+  party with one CRM company and the company that signs; never a party,
+  property or type already chosen, and only the parties the deal type's
+  form shows), with the property's own side effects (`propertyPickPatch`),
+  the deal type's team (`teamForDealType`) and the deal name (`dealAutoName`).
+  The panel under the box shows each part with the words it came from and
+  offers the rest: pick a property or party, **Find or add it** (the
+  property picker opens with the address typed, its `seed`), **Add … as
+  tenant** (`POST /api/crm/companies` with the role's type, then, when
+  Companies House matched, the billing entity) and **Bill …** (`POST
+  /api/billing-entities`, the route the billing entity picker uses, which
+  files the company under the party and finds or makes its Xero contact).
+  Each of those is a press; nothing is sent by a reading.
+- The offer reading is tidied by the deal reading (`tidyOfferReadingForDeal`):
+  a party read as a brand or agent, and "not a brand on this unit", are taken
+  out. A value listed to Use is no longer also listed as left out, on every
+  letting form (`readLettingNote`).
+- Not run against Anthropic or Companies House from a build machine: checked
+  in a browser against a local copy on 20 November 2026 with the rules alone.
 
 ## Client checks: the in-app KYC request (Woody, 2026-11-17)
 

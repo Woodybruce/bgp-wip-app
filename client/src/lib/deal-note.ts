@@ -11,6 +11,7 @@
 // labelled line, once. An offer's date is never the target date. Pure, so it
 // is tested without React.
 import type { LettingNoteReading } from "../../../shared/letting-note";
+import type { DealNoteCandidate, DealNoteRead, DealNoteRole } from "../../../shared/deal-note";
 import { formatCalendarDate } from "../../../shared/calendar-date";
 
 export interface DealNoteForm {
@@ -103,4 +104,132 @@ export function dealNotePatch(form: DealNoteForm, reading: LettingNoteReading, t
   ]);
   if (comments !== words(form.comments)) patch.comments = comments;
   return { patch, brandHint };
+}
+
+// ── The deal itself (2026-11-20) ────────────────────────────────────────────
+// The box's second reading (shared/deal-note.ts, server/deal-note-reader.ts):
+// the kind of deal, the property and each party, looked up in the CRM. What
+// is sure fills an EMPTY box by itself: one kind of deal, one property that
+// matched every word of the address, one CRM company for a party. A party
+// already picked, a property already chosen or a deal type already set is
+// never replaced. The rest is listed on the form to pick, or to add.
+
+/** The form's boxes for each party: the CRM company, the company that signs, and the billing entity (Xero). */
+export const PARTY_FORM_KEYS: Record<DealNoteRole, { id: string; trading: string; entity: string; entityName: string }> = {
+  landlord: { id: "landlordId", trading: "landlordTradingEntityId", entity: "landlordEntityId", entityName: "landlordEntityName" },
+  tenant: { id: "tenantId", trading: "tenantTradingEntityId", entity: "tenantEntityId", entityName: "tenantEntityName" },
+  vendor: { id: "vendorId", trading: "vendorTradingEntityId", entity: "vendorEntityId", entityName: "vendorEntityName" },
+  purchaser: { id: "purchaserId", trading: "purchaserTradingEntityId", entity: "purchaserEntityId", entityName: "purchaserEntityName" },
+};
+
+/** The parties a deal type's form shows: vendor and purchaser for a sale or purchase, landlord and tenant for the rest. */
+export function rolesShownFor(dealType: string | null | undefined): DealNoteRole[] {
+  return dealType === "Sale" || dealType === "Purchase" ? ["vendor", "purchaser"] : ["landlord", "tenant"];
+}
+
+/** The team a deal type adds (the deal form's own rule when a type is picked), or null. */
+export function teamForDealType(dealType: string | null | undefined): string | null {
+  if (dealType === "Purchase" || dealType === "Sale") return "Investment";
+  if (dealType === "Lease Acquisition") return "Tenant Rep";
+  if (["Lease Disposal", "Lease Renewal", "Rent Review", "Regear"].includes(String(dealType || ""))) return "Lease Advisory";
+  return null;
+}
+
+/** Picking a party: its CRM company and, when the name matched one, the company that signs; a change of party clears the billing entity. */
+export function partyPatch(form: Record<string, any>, role: DealNoteRole, c: Pick<DealNoteCandidate, "companyId" | "entityId">): Record<string, string> {
+  const k = PARTY_FORM_KEYS[role];
+  const patch: Record<string, string> = {};
+  const changed = String(form[k.id] || "") !== c.companyId;
+  if (changed) Object.assign(patch, { [k.id]: c.companyId, [k.entity]: "", [k.entityName]: "", [k.trading]: "" });
+  if (c.entityId && (changed || !form[k.trading])) patch[k.trading] = c.entityId;
+  return patch;
+}
+
+/** The billing entity made or found for a party (POST /api/billing-entities): the company that signs and its Xero contact. */
+export function billingPatch(role: DealNoteRole, made: { entity?: { id?: string | null } | null; contact?: { ContactID?: string; Name?: string } | null }): Record<string, string> {
+  const k = PARTY_FORM_KEYS[role];
+  const patch: Record<string, string> = {};
+  if (made.entity?.id) patch[k.trading] = String(made.entity.id);
+  if (made.contact?.ContactID) { patch[k.entity] = String(made.contact.ContactID); patch[k.entityName] = String(made.contact.Name || ""); }
+  return patch;
+}
+
+/** The property the reading is sure of: one that matched every word of the address. */
+export function surePropertyId(read: DealNoteRead | null | undefined): string | null {
+  const place = read?.place;
+  return place && !place.approximate && place.properties.length === 1 ? place.properties[0].id : null;
+}
+
+/**
+ * What a deal reading fills by itself: a deal type when none is set, the
+ * property when none is chosen, and each party the form shows that has one
+ * CRM company and is not picked yet.
+ */
+export function dealReadPatch(form: Record<string, any>, read: DealNoteRead): Record<string, string> {
+  const patch: Record<string, string> = {};
+  if (read.dealType?.value && !form.dealType) patch.dealType = read.dealType.value;
+  const propertyId = surePropertyId(read);
+  if (propertyId && !form.propertyId) patch.propertyId = propertyId;
+  const shown = rolesShownFor(patch.dealType || form.dealType);
+  for (const party of read.parties) {
+    if (!shown.includes(party.role) || party.candidates.length !== 1) continue;
+    const k = PARTY_FORM_KEYS[party.role];
+    if (form[k.id] && String(form[k.id]) !== party.candidates[0].companyId) continue;
+    Object.assign(patch, partyPatch(form, party.role, party.candidates[0]));
+  }
+  return patch;
+}
+
+const unitKey = (s: unknown) => String(s ?? "").toLowerCase().replace(/\b(?:unit|shop|suite)\b/g, " ").replace(/[^a-z0-9]+/g, "");
+
+/** The unit on the chosen property: the one the note names, else the property's only unit. Null when it is not one for certain. */
+export function noteUnitId(read: DealNoteRead, propertyId: string, units: ReadonlyArray<{ id: string; unitName: string; propertyId: string }>): string | null {
+  const here = units.filter(u => u.propertyId === propertyId);
+  const named = read.place?.unit?.value;
+  if (named) {
+    const want = unitKey(named);
+    const hits = want ? here.filter(u => unitKey(u.unitName) === want) : [];
+    return hits.length === 1 ? hits[0].id : null;
+  }
+  return here.length === 1 ? here[0].id : null;
+}
+
+/**
+ * Picking a property (the combobox, a "Find the unit" row, or a note): the
+ * property, its landlord as the landlord (or vendor on a sale or purchase)
+ * when none is picked yet, and its BGP team unless the deal is already
+ * Investment, Tenant Rep or Lease Advisory.
+ */
+export function propertyPickPatch(
+  form: { dealType?: string; team: string[]; landlordId?: string; vendorId?: string },
+  propertyId: string,
+  prop: { landlordId?: string | null; bgpEngagement?: string[] | null } | null | undefined,
+  isBgpTeam: (team: string) => boolean,
+): Record<string, any> {
+  const patch: Record<string, any> = { propertyId };
+  const propLandlordId = prop?.landlordId || "";
+  const investType = form.dealType === "Sale" || form.dealType === "Purchase";
+  const propTeam = (prop?.bgpEngagement || []).find(t => isBgpTeam(t));
+  if (propTeam && !form.team.some(t => ["Investment", "Tenant Rep", "Lease Advisory"].includes(t))) {
+    patch.team = [propTeam, ...form.team.filter(t => t === "Landsec")];
+  }
+  if (propLandlordId) {
+    if (investType && !form.vendorId) patch.vendorId = propLandlordId;
+    if (!investType && !form.landlordId) patch.landlordId = propLandlordId;
+  }
+  return patch;
+}
+
+/** The deal name the form fills while nobody has typed one: "Tenant – Property", or "Client – Property" on a sale or purchase. */
+export function dealAutoName(
+  f: { dealType?: string; propertyId?: string; tenantId?: string; vendorId?: string; purchaserId?: string },
+  properties: ReadonlyArray<{ id: string; name?: string | null }>,
+  companies: ReadonlyArray<{ id: string; name?: string | null }>,
+): string {
+  const propName = properties.find(p => p.id === f.propertyId)?.name || "";
+  const investType = f.dealType === "Sale" || f.dealType === "Purchase";
+  const partyId = investType ? (f.dealType === "Sale" ? f.vendorId : f.purchaserId) : f.tenantId;
+  const cpName = companies.find(c => c.id === partyId)?.name || "";
+  if (cpName && propName) return `${cpName} – ${propName}`;
+  return cpName || propName || "";
 }

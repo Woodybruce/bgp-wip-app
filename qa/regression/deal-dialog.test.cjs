@@ -23,7 +23,8 @@ const { EMPTY_JOINT_AGENCY } = evaluate(find('client/src/components/joint-agency
 // opens the same dialog on the unit's deal through handoverForm.
 function setup({ handover } = {}) {
   const state = { form: null, resets: 0, changeReason: '', learning: '', showAllFields: false, feeRows: [], feeAllocType: 'percentage', nameAutoFilled: false,
-    pickedUnit: null, jointAgency: EMPTY_JOINT_AGENCY, jointAgencyErrors: false, noteBrandHint: 'stale' };
+    pickedUnit: null, jointAgency: EMPTY_JOINT_AGENCY, jointAgencyErrors: false, noteBrandHint: 'stale',
+    dealRead: 'stale', dealNoteBusy: 'stale', propertySeed: 'stale' };
   const bindings = {
     draftSessionRef: { current: null },
     dealToForm: deal => ({ ...deal }),
@@ -34,7 +35,7 @@ function setup({ handover } = {}) {
     setForm: value => { state.form = value; state.resets++; },
     EMPTY_JOINT_AGENCY,
   };
-  for (const field of ['changeReason', 'learning', 'showAllFields', 'feeRows', 'feeAllocType', 'nameAutoFilled', 'pickedUnit', 'jointAgency', 'jointAgencyErrors', 'noteBrandHint']) {
+  for (const field of ['changeReason', 'learning', 'showAllFields', 'feeRows', 'feeAllocType', 'nameAutoFilled', 'pickedUnit', 'jointAgency', 'jointAgencyErrors', 'noteBrandHint', 'dealRead', 'dealNoteBusy', 'propertySeed']) {
     bindings[`set${field[0].toUpperCase()}${field.slice(1)}`] = value => { state[field] = value; };
   }
   const { render } = evaluate(`exports.render = (open, deal) => (${resetEffect.getText(ast)})();`, bindings);
@@ -104,6 +105,8 @@ test('a handover starts from the unit\'s deal at Solicitors, keeps the deal\'s n
   assert.deepEqual(state.form, { id: 'deal-a', name: 'Bluewater – Unit 12', status: 'SOL', landlordId: 'landlord-1', from: 'promote' });
   assert.equal(state.nameAutoFilled, false, 'the deal\'s own name is never overwritten by the auto-name rule');
   assert.equal(state.noteBrandHint, null);
+  // The deal read from the box at the top (2026-11-20) is cleared with it.
+  assert.deepEqual([state.dealRead, state.dealNoteBusy, state.propertySeed], [null, null, null]);
   // A tracker row with no deal yet still opens on the handover form.
   const orphan = setup({ handover: { kind: 'promote', unit: { id: 'row-2' } } });
   orphan.render(true, undefined);

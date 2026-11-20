@@ -36,6 +36,8 @@ interface PropertyComboboxProps {
   disabled?: boolean;
   className?: string;
   testId?: string;
+  /** Opens the picker with this text typed (the deal form's "Find or add it" for an address read from a note); a new key opens it again. */
+  seed?: { text: string; key: number } | null;
 }
 
 // Property picker — same shape as EntityCombobox, plus a second
@@ -59,6 +61,7 @@ export function PropertyCombobox({
   disabled = false,
   className,
   testId,
+  seed = null,
 }: PropertyComboboxProps) {
   // Defensive alphabetical sort — same pattern as EntityCombobox. Caller
   // historically had to remember to pre-sort; most forgot.
@@ -82,6 +85,13 @@ export function PropertyCombobox({
   const placesServiceRef = React.useRef<google.maps.places.PlacesService | null>(null);
   const debounceRef = React.useRef<ReturnType<typeof setTimeout>>();
   const { toast } = useToast();
+
+  React.useEffect(() => {
+    if (!seed || disabled) return;
+    setSearch(seed.text);
+    setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed?.key]);
 
   React.useEffect(() => {
     loadGoogleMaps().then((loaded) => {
