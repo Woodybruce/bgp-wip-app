@@ -33,7 +33,7 @@ import {
   type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycOwnersReply, type KycPartyKind, type KycPortalView, type KycProgress, type KycRequestPerson,
 } from "@shared/kyc-request";
 import { idCheckIsThePerson, personNamesMatch, precheckAsks, verifiedPersonName } from "@shared/kyc-prechecks";
-import { personRequestAsks, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
+import { personKey, personRequestAsks, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 import { partySubjectKind } from "@shared/deal-parties";
 import { ADDRESS_PROOF_ACCEPT_NOTE_MIN } from "@shared/kyc-address-proof";
@@ -321,9 +321,11 @@ async function linkedPeople(row: TokenRow): Promise<Set<string>> {
 
 // The people to check for the request's party (a company's request only).
 async function partyPeopleForRow(row: TokenRow): Promise<PartyPeople | null> {
-  if (!row.company_id || row.is_test || row.request?.kind !== "company") return null;
+  // The request to the party itself (a company's person acting, or a private
+  // individual), never a person's own request.
+  if (!row.company_id || row.is_test || !row.request || row.request.person) return null;
   const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
-  return partyPeopleFor({ companyId: row.company_id, entityId: row.trading_entity_id, kind: "company" }, await dealPeopleRequests(row.deal_id));
+  return partyPeopleFor({ companyId: row.company_id, entityId: row.trading_entity_id, kind: row.request.kind === "company" ? "company" : "individual" }, await dealPeopleRequests(row.deal_id));
 }
 
 async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycProgress & { idState: KycIdState | null; idPerson: KycIdPerson | null; files: UploadedFile[] }> {
@@ -593,6 +595,10 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
 export const personCheckBody = z.object({
   companyId: z.string().min(1).max(200),
   key: z.string().min(1).max(300),
+  // Someone added by name alongside a private individual (Jack, 20 November
+  // 2026: more than one person buying before any company is set up). With a
+  // name, key is ignored.
+  name: z.string().trim().min(2).max(200).nullish(),
   email: z.string().trim().max(200).nullish(),
   mobile: z.string().trim().max(40).nullish(),
   send: z.boolean(),
@@ -613,12 +619,28 @@ export async function createPersonCheck(dealId: string, input: z.infer<typeof pe
   if (!found) throw Object.assign(new Error("Deal not found"), { status: 404 });
   const party = found.parties.find(p => p.companyId === input.companyId);
   if (!party) throw Object.assign(new Error("That company is not a party to this deal."), { status: 400 });
-  if (party.kind !== "company" || !party.entityId) {
+  if (party.kind === "company" && !party.entityId) {
     throw Object.assign(new Error("Set the company that signs on the deal first: the people to check are read from its register."), { status: 409 });
   }
   const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
-  const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: "company" }, await dealPeopleRequests(dealId));
-  const person: KycPartyPerson | undefined = people.people.find(p => p.key === input.key);
+  const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: party.kind }, await dealPeopleRequests(dealId));
+  let person: KycPartyPerson | undefined;
+  if (input.name) {
+    // Adding someone by name is for a private individual's side only: a
+    // company's people come from its register.
+    if (party.kind !== "individual") throw Object.assign(new Error("People are added by hand only alongside a private individual. A company's people come from its register."), { status: 400 });
+    if ("client" in by) throw Object.assign(new Error("Only BGP adds people to a deal."), { status: 403 });
+    const name = input.name.replace(/\s+/g, " ").trim();
+    if (!personKey(name)) throw Object.assign(new Error("Enter their full name."), { status: 400 });
+    person = people.people.find(p => personNamesMatch(p.name, name)) || {
+      key: personKey(name), name, roles: ["joint"], ownerDetail: null, born: null,
+      id: { state: "not_started", ref: null, elsewhere: null, someoneElse: null, asked: false },
+      address: { done: false, ref: null, asked: false, proof: null },
+      sanctions: "not_screened", own: null, outstanding: ["identity check", "proof of address"], canSend: true,
+    };
+  } else {
+    person = people.people.find(p => p.key === input.key);
+  }
   if (!person) throw Object.assign(new Error(`That person is not on the list of people to check for ${party.name}.`), { status: 404 });
   const main = "client" in by ? by.client : null;
   if (main) {

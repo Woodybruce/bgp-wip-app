@@ -184,6 +184,23 @@ test("a listed company, an unread register and a private individual", () => {
   assert.equal(partyPeople({ companyId: "x", kind: "individual", precheck: null, requests: [] }).basis, "individual");
 });
 
+test("more than one private individual on one side: each is listed with their own checks (Jack, 20 November 2026)", () => {
+  const sandy = request({ token: "t-sandy", ref: "SANDY1", companyId: "brand-sandy", recipientName: "Sandy Macaskill",
+    idChecks: [{ state: "approved", verifiedName: "Sandy Macaskill", verifiedDob: "1970-04-02" }] });
+  const jane = request({ token: "t-jane", ref: "JANE01", companyId: "brand-sandy", recipientName: "Jane Macaskill", sentAt: null,
+    person: { key: personKey("Jane Macaskill"), name: "Jane Macaskill", roles: ["joint"] } });
+  // A register on an individual is never read.
+  const out = partyPeople({ companyId: "brand-sandy", kind: "individual", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [sandy, jane] });
+  assert.equal(out.basis, "individual");
+  assert.deepEqual(out.people.map(p => [p.name, p.roles]), [["Sandy Macaskill", ["acting"]], ["Jane Macaskill", ["joint"]]]);
+  assert.deepEqual(out.directors, []);
+  const janeRow = out.people.find(p => p.name === "Jane Macaskill")!;
+  assert.deepEqual(janeRow.outstanding, ["identity check", "proof of address"]);
+  assert.equal(janeRow.own?.ref, "JANE01");
+  assert.equal(out.people.find(p => p.name === "Sandy Macaskill")!.id.state, "passed");
+  assert.ok(out.outstanding.some(l => l.startsWith("Jane Macaskill: identity check and proof of address")));
+});
+
 test("a cancelled request keeps the checks done on it but makes nobody the person acting; another party's files are not this party's", () => {
   const cancelled = request({ cancelled: true, idChecks: [{ state: "approved", verifiedName: "Huseyn Mirhadiyev", verifiedDob: "1982-02-10" }] });
   const other = request({ companyId: "brand-cap", recipientName: "Huseyn Mirhadiyev", files: [{ name: "bill.pdf", docKey: "proof_of_address", uploadedAt: "2026-11-20T09:00:00Z", url: null }] });

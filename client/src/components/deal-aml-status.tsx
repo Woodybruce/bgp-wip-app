@@ -618,7 +618,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
   const people = checks?.people?.[cp.id] || null;
   const requests = (checks?.requests || []).filter(r => r.companyId === cp.id && !r.person);
   const request = requests.find(r => r.status !== "cancelled") || null;
-  const owing = people && people.basis !== "individual" ? people.people.filter(p => p.outstanding.length) : [];
+  const owing = people ? people.people.filter(p => p.outstanding.length) : [];
   const unreachable = party && people ? peopleToReach(people.people, party.people, personNamesMatch) : [];
   const draft = (drafts.data || []).find((d: any) => d.status !== "cancelled") || null;
   const kyc4uState: AmlBoxFacts["kyc4u"] = draft?.status === "queued" ? "queued" : draft ? "raised" : "none";
@@ -704,7 +704,13 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
   };
 
   const peopleLine: { tone: BoxTone; summary: string } | null = (() => {
-    if (!data.clientChecks || !people || people.basis === "individual" || cp.notRequired || !isCompany) return null;
+    if (!data.clientChecks || !people || cp.notRequired) return null;
+    // A private individual (Jack, 20 November 2026): everyone named on their
+    // side, each with their own checks, and Add another person.
+    if (people.basis === "individual" && !sanctionsOnly && !people.people.length) {
+      return { tone: "info", summary: "Their own checks are under Client checks · add anyone buying, selling or renting with them" };
+    }
+    if (people.basis !== "individual" && !isCompany) return null;
     const possible = [...people.people.map(p => p.sanctions), ...people.directors.map(d => d.sanctions)].includes("possible");
     if (sanctionsOnly) {
       const n = people.people.length + people.directors.length;

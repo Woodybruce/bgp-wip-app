@@ -4201,8 +4201,8 @@ their sanctions result only". Do not re-litigate. Rules (pure):
   the register spells them (`personNamesMatch`; the register's spelling wins,
   `personDisplayName`). A listed company has no owners to identify (reg
   28(5)): the person acting only. Directors who are neither are listed with
-  their sanctions result only, no ID. A private individual's own request
-  covers them (no list). With no company that signs, or no register read,
+  their sanctions result only, no ID. A private individual's side lists the
+  person asked and anyone added alongside them (below). With no company that signs, or no register read,
   the owners are not known (`not_read`).
 - **What each sends**: an identity check (Veriff) and a proof of address from
   the last three months (BGP's AML policy, Issue 2, "Individuals": one proof
@@ -4253,6 +4253,24 @@ their sanctions result only". Do not re-litigate. Rules (pure):
   19 November 2026. Not run against Veriff or Microsoft from a build machine.
   Not built: adding a person by hand (an owner the register does not name),
   and asking each owner the source of funds.
+- **More than one private individual on one side** (Jack, 20 November 2026:
+  "sometimes it is private individuals who havent set up a company yet ...
+  I want to be able to start checks on more that one private indiviaul").
+  A private individual's party now has a people list too (`partyPeople`
+  with `kind: "individual"`, basis `individual`; no register is read): the
+  person the request went to (`acting`) and anyone added alongside them
+  (role `joint`, "named on this deal alongside <name>"). **Add another
+  person** (`AddPersonButton` in `kyc-client-checks.tsx`: in People on the
+  AML card, and in the party box under Who signs, `IndividualSidePeople`)
+  posts `name` with the person check (`POST /api/aml/deal/:id/client-checks/people`,
+  `createPersonCheck`; BGP staff only, refused for a company party and from
+  a client's page): their own request asks the identity check, a proof of
+  address (read against them) and the question about public roles, and
+  emailing it files them in the CRM under the party. Each owes what anyone
+  on a people list owes (the sign-off, the AML dashboard, the Finished
+  email). There is no table: an added person is their own request. Not
+  built: adding a person by hand to a company party (an owner the register
+  does not name), and asking each owner the source of funds.
 - **The party box names them and asks for their details** (Woody,
   20 November 2026: "where it says who to ask it should really say these
   owners need to AML and prompt for contact details at that stage", and
