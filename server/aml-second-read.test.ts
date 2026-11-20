@@ -1,0 +1,82 @@
+// Trusts to KYC4U in full and the officers' second read (Jack, 20 November 2026).
+import test from "node:test";
+import assert from "node:assert/strict";
+import { checkSecondRead, quoteInSource, secondReadItems, secondReadSystem } from "../shared/aml-second-read";
+import { TRUST_CHECKLIST, policyFactorFlags, trustChecklistNote } from "../shared/aml-policy";
+import { isTrustRecord, partyGaps, trustMarkInName } from "../shared/deal-parties";
+import { amlNextStep, type AmlBoxFacts } from "../shared/aml-box";
+import { amlNeedsKyc4u } from "../shared/aml-dashboard";
+
+test("a name that reads like a trust is spotted, as a suggestion only", () => {
+  assert.equal(trustMarkInName("URC Thames North Trust"), true);
+  assert.equal(trustMarkInName("The Smith Family Settlement"), true);
+  assert.equal(trustMarkInName("Trustees of the Grosvenor Estate"), true);
+  assert.equal(trustMarkInName("Trustpilot Ltd"), false);
+  assert.equal(trustMarkInName("Gail's Bakery"), false);
+  assert.equal(isTrustRecord("trust"), true);
+  assert.equal(isTrustRecord("Trust"), true);
+  assert.equal(isTrustRecord("company"), false);
+});
+
+test("a party recorded as a trust is enhanced, and needs no company that signs", () => {
+  const flags = policyFactorFlags({ precheck: null, companyType: "Vendor", subjectType: "trust" });
+  assert.ok(flags.some(f => f.kind === "policy_trust" && f.factor));
+  assert.deepEqual(partyGaps({ role: "vendor", kind: "company", brandName: "A Trust", companySet: false, person: { name: "A", email: "a@x.com" }, trust: true }), []);
+  assert.deepEqual(partyGaps({ role: "vendor", kind: "company", brandName: "A Co", companySet: false, person: { name: "A", email: "a@x.com" } }).map(g => g.key), ["company"]);
+});
+
+test("a trust goes to KYC4U in full, and the red mark shows until it is with them", () => {
+  const facts: AmlBoxFacts = {
+    role: "vendor", stage: "bgp_checked", due: true, approvedBy: null, expiresAt: null, notRequiredWords: null,
+    company: true, companyMissing: false, gaps: [], askName: "Adam Harvey", precheckRunning: false, redFlags: 0, factors: 1,
+    sanctionsOnly: false, clientChecks: true, request: null, people: [], kyc4u: "none", canSignOff: true, canDecide: true,
+    signOffBlocked: null, needsNote: false, trust: true,
+  };
+  const step = amlNextStep(facts);
+  assert.equal(step.action, "request_kyc4u");
+  assert.match(step.words, /^A trust: KYC4U checks it in full/);
+  assert.equal(amlNextStep({ ...facts, kyc4u: "queued" }).action, "kyc4u_form");
+  assert.equal(amlNextStep({ ...facts, kyc4u: "raised" }).who, "kyc4u");
+  assert.equal(amlNeedsKyc4u("enhanced", "bgp_checked"), true);
+  assert.equal(amlNeedsKyc4u("enhanced", "with_kyc4u"), false);
+  assert.equal(amlNeedsKyc4u("standard", "not_started"), false);
+});
+
+test("KYC4U's note carries the trust checklist, without the officer's sign-off", () => {
+  const note = trustChecklistNote();
+  assert.match(note, /^TRUST: BGP's AML checklist for trusts/);
+  assert.match(note, /2\. Trust Registration Service/);
+  assert.doesNotMatch(note, /11\. Nominated Officer sign-off/);
+  assert.equal(TRUST_CHECKLIST.length, 11);
+});
+
+test("the second read checks every item and sets each quote against its document", () => {
+  const items = secondReadItems("trust");
+  assert.equal(items.length, 10);
+  assert.ok(!items.some(i => /sign-off/i.test(i.title)));
+  assert.match(secondReadSystem("trust", "URC <x>"), /Never decide or advise/);
+  const sources = [
+    { id: "R", name: "BGP's record", text: "BGP check: Sanctions: 8 names screened, no match" },
+    { id: "D1", name: "deed.pdf", text: "THIS DEED OF TRUST is made between the Settlor John Smith and the Trustees" },
+    { id: "D2", name: "photo.jpg", text: null },
+  ];
+  const read = checkSecondRead({
+    items: [
+      { n: 1, status: "found", source: "D1", quote: "made between the Settlor John Smith", note: null },
+      { n: 2, status: "found", source: "D1", quote: "registered with HMRC under URN XYZ", note: null },
+      { n: 5, status: "found", source: "D2", quote: "PASSPORT JANE DOE", note: null },
+      { n: 6, status: "found", source: null, quote: "x", note: null },
+      { n: 10, status: "partly", source: "R", quote: "8 names screened, no match", note: "Settlor not screened." },
+    ],
+    concerns: [{ text: "The deed names three trustees, the record two.", source: "D1", quote: null }, { text: "", source: null, quote: null }],
+  }, { checklist: "trust", sources, documents: [], readAt: "2026-11-20T12:00:00Z" });
+  const by = (n: number) => read.items.find(i => i.n === n)!;
+  assert.equal(by(1).status, "found"); assert.equal(by(1).quoteChecked, true); assert.equal(by(1).where, "deed.pdf");
+  assert.equal(by(2).status, "partly"); assert.equal(by(2).quoteChecked, false); assert.match(by(2).note || "", /not found in deed\.pdf/);
+  assert.equal(by(5).status, "found"); assert.equal(by(5).quoteChecked, null);
+  assert.equal(by(6).status, "missing"); assert.equal(by(6).where, null);
+  assert.equal(by(3).status, "missing"); assert.equal(by(3).quote, null);
+  assert.equal(by(10).status, "partly");
+  assert.equal(read.concerns.length, 1);
+  assert.equal(quoteInSource("ab", sources[1]), false);
+});

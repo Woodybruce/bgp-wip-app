@@ -205,8 +205,9 @@ test("BGP's standard heads of terms carry the AML clause; the 37-clause copy is 
   assert.ok(STANDARD_HOTS_TEMPLATE.trimEnd().endsWith("Code for Leasing Business Premises in England & Wales."));
 });
 
-test("the two documents are listed by issue", () => {
-  assert.equal(AML_POLICY_DOCUMENTS.length, 2);
+test("the documents are listed by issue, the trust checklist among them", () => {
+  assert.equal(AML_POLICY_DOCUMENTS.length, 3);
+  assert.equal(amlPolicyDocument("checklist-trusts")?.file, "bgp-aml-checklist-trusts.docx");
   assert.equal(amlPolicyDocument("policy-issue-2")?.file, "bgp-aml-policy-issue-2.docx");
   assert.equal(amlPolicyDocument("../etc/passwd"), null);
 });

@@ -145,7 +145,7 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
     const own = (r: any) => r.crm_company_id === id && (r.trading_entity_id || null) === (signs[id] || null);
     const latest = investigations.find(own) || null;
     const companyRow = companies.find((c: any) => c.id === id) || null;
-    const needsCompany = !signs[id] && String(companyRow?.aml_subject_type || "").toLowerCase() !== "individual";
+    const needsCompany = !signs[id] && !["individual", "trust"].includes(String(companyRow?.aml_subject_type || "").toLowerCase());
     const pre = needsCompany ? null : prechecks.find((p: any) => own(p) && isPrecheckResult(p.result)) || null;
     const all = partyRedFlags({
       company: companyRow,

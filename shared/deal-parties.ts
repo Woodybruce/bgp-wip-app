@@ -105,6 +105,20 @@ export const SIGNING_COMPANY_WORDS: Record<DealPartyRole, string> = {
 // suggestion: a person records the party as a private individual (Woody,
 // 20 November 2026, after the Kick off AML step asked for "the company
 // buying" for Sandy Macaskill).
+/**
+ * A party recorded as a trust (Jack, 20 November 2026: "Trusts are listed as
+ * high risk under our policy, and quite technical"; the vendor on Fortis Green,
+ * URC Thames North Trust, read as an ordinary company). Stored as the record's
+ * own subject type, crm_companies.aml_subject_type = 'trust'. The checks are
+ * KYC4U's in full; a trust needs no company that signs (its trustees sign), and
+ * a corporate trustee can still be set as one, so BGP's free checks run on it.
+ */
+export const isTrustRecord = (subjectType: unknown): boolean => text(subjectType).toLowerCase() === "trust";
+
+/** A name that reads like a trust: a suggestion a person confirms, never applied by itself. */
+export const trustMarkInName = (name: unknown): boolean =>
+  /\b(trust|trusts|trustees?|settlement|trust corporation)\b/i.test(text(name)) && !/\btrust ?pilot\b/i.test(text(name));
+
 export const privateMarkInName = (name: unknown): boolean =>
   /\(\s*(?:private(?:\s+(?:client|individual|buyer|purchaser|vendor|seller|investor))?|individual)\s*\)/i.test(String(name ?? ""));
 
@@ -122,7 +136,10 @@ export interface DealPartyView {
   // kind: whether the checks are about a company or a private individual (a
   // person who signs makes it an individual); recordIndividual: the record
   // itself is a private individual; privateMark: its CRM name says private.
-  brand: { id: string; name: string; companiesHouseNumber: string | null; kind: "company" | "individual"; recordIndividual?: boolean; privateMark?: boolean };
+  brand: { id: string; name: string; companiesHouseNumber: string | null; kind: "company" | "individual"; recordIndividual?: boolean; privateMark?: boolean;
+    // recordTrust: recorded as a trust (KYC4U in full, enhanced); trustHint:
+    // its name, or the company that signs, reads like a trust (Jack, 20 November 2026).
+    recordTrust?: boolean; trustHint?: boolean };
   // The company that signs, as set on the deal.
   company: DealPartyCompany | null;
   // What to offer when none is set: the company on the unit's lease (a
@@ -188,9 +205,10 @@ export function partyGaps(input: {
   brandName: string;
   companySet: boolean;
   person: { name: string; email: string | null } | null;
+  trust?: boolean;
 }): PartyGap[] {
   const gaps: PartyGap[] = [];
-  if (input.kind === "company" && !input.companySet) {
+  if (input.kind === "company" && !input.companySet && !input.trust) {
     const what = SIGNING_COMPANY_WORDS[input.role];
     gaps.push({
       key: "company",

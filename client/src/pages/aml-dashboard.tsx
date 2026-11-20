@@ -20,7 +20,7 @@ import { AmlTrainingBoard, AmlTrainingPanel } from "@/components/aml-training";
 import { AmlRetentionBoard } from "@/components/aml-retention";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getAuthHeaders } from "@/lib/queryClient";
-import { AML_BUCKETS, AML_STAGE_LABEL, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow } from "@shared/aml-dashboard";
+import { AML_BUCKETS, AML_STAGE_LABEL, amlNeedsKyc4u, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow } from "@shared/aml-dashboard";
 import { DEAL_PARTY_LABEL, isDealPartyRole } from "@shared/deal-parties";
 import { legacyToCode } from "@shared/deal-status";
 
@@ -40,7 +40,14 @@ const LEVEL_TONE: Record<AmlDashboardRow["level"], string> = {
 function LevelCell({ row }: { row: AmlDashboardRow }) {
   // Marked Not required: no checks are needed, so no level applies.
   if (row.stage === "not_required") return <span className="text-muted-foreground" title={row.levelWhy.join("\n")} data-testid={`aml-level-${row.key}`}>—</span>;
-  return <span className={`whitespace-nowrap ${LEVEL_TONE[row.level]}`} title={row.levelWhy.join("\n")} data-testid={`aml-level-${row.key}`}>{LEVEL_WORDS[row.level]}</span>;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <span className={`whitespace-nowrap ${LEVEL_TONE[row.level]}`} title={row.levelWhy.join("\n")} data-testid={`aml-level-${row.key}`}>{LEVEL_WORDS[row.level]}</span>
+      {amlNeedsKyc4u(row.level, row.stage) && (
+        <span className="whitespace-nowrap rounded border border-red-600 bg-red-50 px-1 text-[10px] font-semibold uppercase text-red-700 dark:bg-red-950/40 dark:text-red-300" title="Enhanced: request the KYC4U check and submit it on KYC4U's portal" data-testid={`aml-kyc4u-needed-${row.key}`}>Not with KYC4U</span>
+      )}
+    </span>
+  );
 }
 
 const roleWords = (role: string) => (isDealPartyRole(role) ? DEAL_PARTY_LABEL[role] : role);

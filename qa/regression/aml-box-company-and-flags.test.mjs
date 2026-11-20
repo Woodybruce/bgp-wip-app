@@ -37,7 +37,8 @@ test('a check Companies House was too busy for runs again, a few times a day at 
 
 test('no check runs on a company party until the deal names the company that signs', () => {
   const rules = read('shared/deal-parties.ts');
-  assert.match(rules, /if \(input\.kind === "company" && !input\.companySet\) \{/);
+  // A trust needs no company that signs: its trustees sign (Jack, 20 November 2026).
+  assert.match(rules, /if \(input\.kind === "company" && !input\.companySet && !input\.trust\) \{/);
   assert.doesNotMatch(rules, /brandHasNumber/, 'the brand\'s own number never stands in for the company that signs');
   const status = read('server/aml-compliance.ts');
   assert.match(status, /needsCompany: !signs\[c\.id\] && !individuals\.has\(String\(c\.id\)\)/);

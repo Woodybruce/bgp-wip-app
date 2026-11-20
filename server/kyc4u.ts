@@ -18,6 +18,7 @@ import multer from "./utils/upload";
 import { pool } from "./db";
 import { loadDealRedFlags } from "./kyc-red-flags";
 import { redFlagNote } from "@shared/kyc-red-flags";
+import { trustChecklistNote } from "@shared/aml-policy";
 import { precheckNote } from "@shared/kyc-prechecks";
 
 const TENANT = process.env.KYC4U_TENANT || "kyc4ultd.onmicrosoft.com";
@@ -677,7 +678,8 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
   // the property to be able to do a check").
   if (deal && partyRole && !entity) {
     const kind = (await pool.query(`SELECT aml_subject_type FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
-    if (String(kind?.aml_subject_type || "").toLowerCase() !== "individual") {
+    // A trust needs no company that signs: its trustees sign (Jack, 20 November 2026).
+    if (!["individual", "trust"].includes(String(kind?.aml_subject_type || "").toLowerCase())) {
       const what = partyRole === "tenant" ? "the company taking the lease" : partyRole === "landlord" ? "the company that owns the property" : partyRole === "vendor" ? "the company selling" : "the company buying";
       throw Object.assign(new Error(`Set ${what} on the deal first: KYC4U checks that company, not ${company.name}.`), { status: 409 });
     }
@@ -728,6 +730,9 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
   const flags = dealId ? await loadDealRedFlags(dealId, [companyId], entityId ? { [companyId]: entityId } : {}).catch(() => null) : null;
   const flagNote = flags ? redFlagNote(flags.parties[companyId] || [], flags.deal) : "";
   const checkedNote = precheckNote(precheck?.result || null, precheckState);
+  // A party recorded as a trust carries BGP's trust checklist to KYC4U (Jack, 20 November 2026).
+  const subject = (await pool.query(`SELECT aml_subject_type FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+  const trustNote = String(subject?.aml_subject_type || "").toLowerCase() === "trust" ? trustChecklistNote() : "";
   return {
     fields: {
       partyType: isClient ? "Client" : "Counterparty",
@@ -745,7 +750,7 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
       note: [deal ? `BGP deal ${deal.deal_ref ? "#" + deal.deal_ref + " " : ""}${deal.name || ""}`.trim() : "", dt ? `Deal type: ${dt}` : "", role ? `Role: ${role}${isClient ? " (BGP's client)" : " (counterparty)"}` : "",
         entity ? (signsAsPerson ? `Contracting party: ${entity.name}, a private individual, for ${company.name}` : `Contracting company: ${entity.name}${entity.companies_house_number ? ` (Companies House ${entity.companies_house_number})` : ""}, trading as ${company.name}`) : "",
         !isClient && partyPerson ? `Person to ask: ${[partyPerson.name, partyPerson.email, partyPerson.mobile].filter(Boolean).join(", ")}` : "",
-        flagNote, checkedNote].filter(Boolean).join("\n").slice(0, 4000),
+        trustNote, flagNote, checkedNote].filter(Boolean).join("\n").slice(0, 4000),
     },
     docs,
   };

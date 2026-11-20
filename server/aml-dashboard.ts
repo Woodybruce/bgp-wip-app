@@ -159,7 +159,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const latest = investigations.find(own) || null;
     const companyRow = companies.find((c: any) => c.id === p.brandId) || null;
     // No company that signs: no checks before asking to read (the deal card's rule).
-    const needsCompany = !p.entityId && String(companyRow?.aml_subject_type || "").toLowerCase() !== "individual";
+    const needsCompany = !p.entityId && !["individual", "trust"].includes(String(companyRow?.aml_subject_type || "").toLowerCase());
     const pre = needsCompany ? null : prechecks.find((r: any) => own(r) && isPrecheckResult(r.result)) || null;
     const partyTokens = tokens.filter((t: any) => String(t.deal_id) === String(p.deal.id) && t.company_id === p.brandId);
     const liveTokens = partyTokens.filter((t: any) => !t.revoked_at);

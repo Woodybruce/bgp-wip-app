@@ -7,7 +7,7 @@
 // shared/deal-parties.ts. Every change saves straight away.
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Building2, CheckCircle2, Loader2, Plus, Receipt, ShieldCheck, UserRound } from "lucide-react";
+import { Building2, CheckCircle2, Loader2, Plus, Receipt, ShieldCheck, UserRound, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -89,6 +89,56 @@ function useMarkIndividual(dealId: string, role: DealPartyRole) {
     onSuccess: (d) => { refresh(dealId, d); queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] }); },
     onError: (e) => toast({ title: "Not recorded", description: plain(e), variant: "destructive" }),
   });
+}
+
+function useMarkTrust(dealId: string, role: DealPartyRole) {
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (trust: boolean) =>
+      (await apiRequest("PUT", `/api/deals/${dealId}/parties/${role}/trust`, { trust })).json() as Promise<DealParties>,
+    onSuccess: (d) => {
+      refresh(dealId, d);
+      queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+      queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0] || "").startsWith(`/api/kyc/deal/${dealId}`) });
+    },
+    onError: (e) => toast({ title: "Not recorded", description: plain(e), variant: "destructive" }),
+  });
+}
+
+// A trust (Jack, 20 November 2026: URC Thames North Trust, the vendor on
+// Fortis Green, read as an ordinary company). Recorded, it is enhanced and goes
+// to KYC4U in full. A name that reads like a trust is a suggestion a person
+// presses, never applied by itself.
+export function TrustLine({ dealId, party, compact }: { dealId: string; party: DealPartyView; compact?: boolean }) {
+  const mark = useMarkTrust(dealId, party.role);
+  if (party.brand.kind !== "company" && !party.brand.recordTrust) return null;
+  if (party.brand.recordTrust) {
+    if (compact) return null;
+    return (
+      <div className="rounded-md border border-red-300 bg-red-50 px-2.5 py-2 text-xs text-red-900 dark:bg-red-950/30 dark:text-red-200 space-y-1" data-testid={`deal-party-trust-${party.role}`}>
+        <p><strong>{party.brand.name} is recorded as a trust.</strong> Enhanced due diligence: KYC4U checks it in full (the trust deed, its Trust Registration Service entry, the settlor's source of wealth, ID for the settlor, trustees, any protector and beneficiaries entitled to 25% or more). The Nominated Officer or a Deputy signs it off. If a company is the trustee, set it below as the company that signs, so BGP's free checks run on it.</p>
+        <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={mark.isPending} onClick={() => mark.mutate(false)} data-testid={`deal-party-unmark-trust-${party.role}`}>Not a trust? Undo</button>
+      </div>
+    );
+  }
+  if (!party.brand.trustHint) {
+    if (compact) return null;
+    return (
+      <p className="text-xs text-muted-foreground" data-testid={`deal-party-trust-option-${party.role}`}>
+        Is {party.brand.name} a trust, or acting as trustee?{" "}
+        <button type="button" className="underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-trust-${party.role}`}>Record as a trust</button>
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" data-testid={`deal-party-trust-hint-${party.role}`}>
+      <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-600" />
+      <span className="min-w-0 flex-1"><strong>{party.brand.name}</strong> reads like a trust. A trust is higher risk under BGP's AML policy: if it is one, or holds the property as trustee, record it, and it goes to KYC4U in full.</span>
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-trust-${party.role}`}>
+        {mark.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Record as a trust
+      </Button>
+    </div>
+  );
 }
 
 // The suggestion when the CRM name says private: one press records the party
@@ -701,7 +751,8 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                 </div>
               ) : (
                 <>
-                  <p className="text-xs text-muted-foreground">{capital(SIGNING_COMPANY_WORDS[role])}. The checks are about it, not {party.brand.name}: the brand is usually a different company.</p>
+                  <TrustLine dealId={dealId} party={party} />
+                  <p className="text-xs text-muted-foreground">{party.brand.recordTrust ? "The company that signs, if a company is the trustee (optional for a trust)." : <>{capital(SIGNING_COMPANY_WORDS[role])}. The checks are about it, not {party.brand.name}: the brand is usually a different company.</>}</p>
                   {party.brand.privateMark && !party.company && !party.brand.companiesHouseNumber && (
                     <div className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs">
                       <PrivateIndividualSuggestion dealId={dealId} party={party} />

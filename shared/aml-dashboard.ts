@@ -126,6 +126,15 @@ export function amlWaitingOn(stage: AmlStage, redFlags: number): string {
   }
 }
 
+/**
+ * An enhanced party not yet with KYC4U (Jack, 20 November 2026: KYC4U takes
+ * requests only on its own portal, so "a big red mark against it" until the
+ * agent has submitted it there).
+ */
+export function amlNeedsKyc4u(level: "simplified" | "standard" | "enhanced", stage: AmlStage): boolean {
+  return level === "enhanced" && (stage === "not_started" || stage === "bgp_checked" || stage === "client_sent" || stage === "client_finished");
+}
+
 /** Whole days since the latest of the given moments, or null when there is none. */
 export function daysSince(moments: Array<string | Date | null | undefined>, now: Date = new Date()): number | null {
   const times = moments.map(time).filter((t): t is number => t !== null);

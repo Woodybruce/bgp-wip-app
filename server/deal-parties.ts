@@ -32,7 +32,7 @@
 import { Router, type Request, type Response } from "express";
 import {
   DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, companyOffer, dealClientRole, isDealPartyRole, newPartyPerson, ownerContactMatch, partyGaps, partySubjectKind, personFill,
-  privateMarkInName, sameCompaniesHouseNumber, signerKindOf,
+  privateMarkInName, isTrustRecord, trustMarkInName, sameCompaniesHouseNumber, signerKindOf,
   type DealPartyBilling, type DealPartyCompany, type DealPartyPayer, type DealPartyPerson, type DealPartyRole, type DealPartyView,
 } from "@shared/deal-parties";
 import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
@@ -197,7 +197,8 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
     parties.push({
       role, label: DEAL_PARTY_LABEL[role],
       brand: { id: String(brandRow.id), name: text(brandRow.name), companiesHouseNumber: text(brandRow.companies_house_number) || null, kind,
-        recordIndividual: String(brandRow.aml_subject_type || "").toLowerCase() === "individual", privateMark: privateMarkInName(brandRow.name) },
+        recordIndividual: String(brandRow.aml_subject_type || "").toLowerCase() === "individual", privateMark: privateMarkInName(brandRow.name),
+        recordTrust: isTrustRecord(brandRow.aml_subject_type), trustHint: trustMarkInName(brandRow.name) || trustMarkInName(company?.name) },
       company,
       offer: company ? null : companyOffer(filed, role === "tenant" ? lease : null),
       brandOwn,
@@ -205,7 +206,7 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
       xero: text(deal[col.xeroId]) ? { contactId: String(deal[col.xeroId]), name: text(deal[col.xeroName]) || null } : null,
       person,
       people: people.rows.filter((p: any) => p.company_id === brandRow.id).map(personOf),
-      gaps: partyGaps({ role, kind, brandName: brandRow.name, companySet: !!company, person }),
+      gaps: partyGaps({ role, kind, brandName: brandRow.name, companySet: !!company, person, trust: isTrustRecord(brandRow.aml_subject_type) }),
       client: role === clientRoleOf(deal),
       billing: role === clientRoleOf(deal) ? partyBilling(deal, role, kind, company, filed) : null,
     });
@@ -418,6 +419,47 @@ router.put("/api/deals/:id/parties/:role/individual", async (req: Request, res: 
       const words = wanted
         ? `${text(brand.name)} recorded as a private individual: the checks are about the person, with no company that signs`
         : `${text(brand.name)} no longer recorded as a private individual`;
+      await audit(pool, deal.id, "aml_subject_type", before, after, words, me);
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'aml_subject_type', $2, $3)`,
+        [brandId, me.name || me.id, `${words} (on ${deal.name})`]).catch((e: any) => console.warn(`[deal-parties] KYC history line not written: ${e?.message}`));
+    }
+    res.json(await loadDealParties(pool, deal.id));
+  } catch (err: any) {
+    res.status(err?.status || 500).json({ message: err?.message || "Could not record the party" });
+  }
+});
+
+// A party recorded as a trust (Jack, 20 November 2026, on Fortis Green's
+// vendor URC Thames North Trust: "Trusts are listed as high risk under our
+// policy ... I think we should send trusts to KYC4U in full"). Sets the
+// record's subject type to 'trust': BGP's AML policy factor makes it enhanced
+// (policyFactorFlags), so the next step is KYC4U and only the officers sign it
+// off. A trust needs no company that signs; a corporate trustee can still be
+// set as one. Undo clears only what it set. The record is shared, so every
+// deal with it follows. A line on the deal's and the record's KYC history.
+router.put("/api/deals/:id/parties/:role/trust", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party" });
+    const wanted = req.body && typeof req.body === "object" ? (req.body as any).trust : undefined;
+    if (typeof wanted !== "boolean") return res.status(400).json({ message: "Say whether the party is a trust." });
+    const { pool } = await import("./db");
+    const deal = await readDeal(pool, String(req.params.id));
+    if (!deal) return res.status(404).json({ message: "Deal not found" });
+    const brandId = text(deal[DEAL_PARTY_COLUMNS[role].brand]);
+    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the deal first.` });
+    const brand = (await pool.query(`SELECT id, name, aml_subject_type FROM crm_companies WHERE id = $1`, [brandId])).rows[0];
+    if (!brand) return res.status(404).json({ message: "Party not found" });
+    const before = text(brand.aml_subject_type) || null;
+    const isTrust = isTrustRecord(before);
+    if (wanted !== isTrust) {
+      const after = wanted ? "trust" : null;
+      await pool.query(`UPDATE crm_companies SET aml_subject_type = $2 WHERE id = $1`, [brandId, after]);
+      const words = wanted
+        ? `${text(brand.name)} recorded as a trust: enhanced due diligence, sent to KYC4U in full, signed off by the Nominated Officer or a Deputy`
+        : `${text(brand.name)} no longer recorded as a trust`;
       await audit(pool, deal.id, "aml_subject_type", before, after, words, me);
       await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'aml_subject_type', $2, $3)`,
         [brandId, me.name || me.id, `${words} (on ${deal.name})`]).catch((e: any) => console.warn(`[deal-parties] KYC history line not written: ${e?.message}`));

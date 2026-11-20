@@ -77,6 +77,8 @@ export interface AmlBoxFacts {
   // nobody saying who pays (shared/deal-billing.ts, 20 November 2026). Asked
   // before sign-off; it never jumps ahead of the checks themselves.
   billingDiffers?: boolean;
+  // Recorded as a trust (Jack, 20 November 2026): KYC4U checks it in full.
+  trust?: boolean;
 }
 
 export interface AmlNextStep { tone: AmlBoxTone; who: AmlBoxWho; words: string; action: AmlBoxAction | null }
@@ -144,6 +146,13 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
   }
   if (f.kyc4u === "raised" || f.stage === "with_kyc4u") {
     return { tone: "wait", who: "kyc4u", words: `With KYC4U. When their result comes, ${f.canDecide ? "add it here" : "the Nominated Officer or a Deputy adds it here"}.`, action: f.canDecide ? "kyc4u_result" : null };
+  }
+  if (f.trust) {
+    return {
+      tone: "flag", who: "bgp",
+      words: "A trust: KYC4U checks it in full (the trust deed, its Trust Registration Service entry, the settlor's source of wealth, and ID for the settlor, trustees, any protector and beneficiaries entitled to 25% or more). Request the KYC4U check and submit it on KYC4U's portal. The Nominated Officer or a Deputy approves the result.",
+      action: "request_kyc4u",
+    };
   }
   if (f.redFlags > 0) {
     return {

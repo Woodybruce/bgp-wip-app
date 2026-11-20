@@ -4593,6 +4593,68 @@ EU parts of `shared/kyc-prechecks.ts`. Tests: `server/aml-records.test.ts` (in
   KYC4U; the FCA register for simplified due diligence; trusts' own TRS
   check.
 
+## Trusts to KYC4U in full, and the officers' second read (Jack, 2026-11-20)
+
+Jack, on Fortis Green (vendor URC Thames North Trust, a 1902 company limited
+by guarantee that the app read as an ordinary company: no PSC, so its
+directors stood in under reg 28(6), standard due diligence), with BGP's
+trust checklist attached: "send trusts to KYC4U in full, and use AI only as a
+second reader when signing off as Nominated Officer"; then "Build for any
+enhanced party", and a big red mark until the agent has submitted the request
+on KYC4U's portal ("KYC4U will want it uploaded in the portal"). Do not
+re-litigate. Rules: `shared/deal-parties.ts` (`isTrustRecord`,
+`trustMarkInName`), `shared/aml-policy.ts` (`TRUST_CHECKLIST`,
+`ENHANCED_CHECKLIST`, `trustChecklistNote`), `shared/aml-box.ts` (`trust`),
+`shared/aml-dashboard.ts` (`amlNeedsKyc4u`), `shared/aml-second-read.ts`.
+Tests: `server/aml-second-read.test.ts` (in `npm test`),
+`qa/regression/aml-trust-second-read.test.mjs`.
+
+- **Record as a trust** (`PUT /api/deals/:id/parties/:role/trust { trust }`,
+  BGP staff as themselves): `crm_companies.aml_subject_type = 'trust'`, a
+  deal history and KYC history line; Undo clears only what it set; the
+  record is shared, so every deal with it follows. The policy factor
+  `policy_trust` already read that value, so the party is enhanced and only
+  the officers sign it off. A trust needs no company that signs (its
+  trustees sign: `partyGaps` `trust`, the red flags', dashboard's and KYC4U
+  prefill's company rule); a corporate trustee can be set as one, so BGP's
+  free checks run on it. A name that reads like a trust (`trustMarkInName`:
+  Trust, Trustees, Settlement; never Trustpilot) is a suggestion in the
+  party box and the AML box (`TrustLine`), never applied by itself. Not
+  read: a company limited by guarantee with no PSC is not flagged by
+  itself.
+- **The trust's next step** is Request KYC4U check, ahead of the client
+  checks, and its KYC4U note leads with BGP's trust checklist (items 1 to
+  10 and the evidence line). The checklist is a download on the AML policy
+  panel (`checklist-trusts`, `server/assets/aml-policy/bgp-aml-checklist-trusts.docx`).
+- **The red mark**: while an enhanced or red-flagged party's next step is
+  Request KYC4U check or KYC4U's form, the AML box shows a red **Not yet
+  with KYC4U** box (`aml-kyc4u-needed-<role>`), and the AML dashboard a red
+  Not with KYC4U mark beside Enhanced (`amlNeedsKyc4u`: enhanced and at Not
+  started, BGP checked, Client checks sent or Client finished). KYC4U takes
+  requests only on its portal: Request KYC4U check prepares the request, the
+  agent opens KYC4U's form, presses the Send to ChatBGP bookmark (which fills
+  it and attaches the documents) and presses Submit there. The app sends
+  KYC4U no email.
+- **Second read** (`POST /api/deals/:id/parties/:role/second-read`, the
+  officers only, `decider`; an enhanced party only, 409 otherwise;
+  `server/aml-second-read.ts`, `client/src/components/aml-second-read.tsx`
+  in the Sign-off section): the party's KYC documents (up to 12, 18 MB, KYC4U
+  and trust papers first; PDFs whole, pictures, Word as text) and BGP's
+  record of the checks (`partyRecordText`, source R) go to Anthropic,
+  called directly, one forced-tool call (`AML_SECOND_READ_DAILY_CAP`,
+  default 40, 0 = off). Each checklist item (the trust list for a trust, the
+  enhanced list otherwise; never the officer's own sign-off) comes back
+  found, partly or not found with its source and words; `checkSecondRead`
+  sets each quote against the document's own text (a quote not found makes
+  the item "partly", a picture is "check it by eye", no source makes it not
+  found). It never decides (discretionary, credible, acceptable, approve):
+  the prompt forbids it and nothing it returns is stored or acts. A KYC
+  history line (`aml_second_read`) says a read was made. Not run against
+  Anthropic from a build machine.
+- Not built: screening the names a trust's deed gives (settlor, protector,
+  beneficiaries) against the sanctions lists; a trust with individual
+  trustees and no company has no BGP checks before asking.
+
 ## The AML box, shortened, and the officers' AML file (Woody, 2026-11-20)
 
 Woody, on the AML checks page's trail: "on this page can you build to

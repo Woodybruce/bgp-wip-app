@@ -1,12 +1,13 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, TrendingUp, TrendingDown, FolderOpen, Flag } from "lucide-react";
+import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, TrendingUp, TrendingDown, FolderOpen, Flag, AlertTriangle } from "lucide-react";
 import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
 import { KYC4U_FORM_URL, Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks } from "@/components/kyc-client-checks";
-import { DealPartyEditor, PartyBillingDetail, PartyReadyToStart, partyAmlFacts, useDealParties } from "@/components/deal-parties";
+import { SecondReadPanel } from "@/components/aml-second-read";
+import { DealPartyEditor, PartyBillingDetail, PartyReadyToStart, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
 import { FLAG_REVIEW_COMMENT_MIN, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
@@ -614,7 +615,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
   const canDecide = !!data.decisions?.canDecide;
   const sanctionsOnly = data.regime?.regime === "sanctions_only";
   const isCompany = party ? party.brand.kind === "company" : true;
-  const companyMissing = party ? party.brand.kind === "company" && !party.company : pre?.state === "needs_company";
+  const isTrust = !!party?.brand.recordTrust;
+  const companyMissing = party ? party.brand.kind === "company" && !party.company && !isTrust : pre?.state === "needs_company";
   const people = checks?.people?.[cp.id] || null;
   const requests = (checks?.requests || []).filter(r => r.companyId === cp.id && !r.person);
   const request = requests.find(r => r.status !== "cancelled") || null;
@@ -638,6 +640,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     signOffBlocked: decision ? decision.blocked : data.decisions ? "This party could not be read." : null,
     needsNote: !!decision?.needsNote,
     billingDiffers: !!party?.client && party.billing?.state === "different",
+    trust: isTrust,
   };
   const step = amlNextStep(facts);
 
@@ -799,6 +802,20 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
           : <Badge variant="secondary" className="shrink-0 text-[11px]">In progress</Badge>}
       </div>
 
+      {party && !settled && <TrustLine dealId={dealId} party={party} compact />}
+      {(step.action === "kyc4u_form" || (step.action === "request_kyc4u" && (isTrust || flags.length + factors.length + dealFactors.length > 0))) && (
+        // Jack, 20 November 2026: KYC4U takes requests only on its own portal,
+        // so a big red mark until the agent has sent it there.
+        <div className="flex items-start gap-2 rounded-md border-2 border-red-600 bg-red-50 px-2.5 py-2 text-red-900 dark:bg-red-950/40 dark:text-red-200" data-testid={`aml-kyc4u-needed-${cp.role}`}>
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+          <div className="text-[13px] leading-snug">
+            <div className="font-semibold uppercase tracking-wide text-[11px]">Not yet with KYC4U</div>
+            {step.action === "kyc4u_form"
+              ? "The request is ready but not on KYC4U's portal. Open KYC4U's form, press your Send to ChatBGP bookmark, check it and press Submit there."
+              : `${isTrust ? "This party is a trust" : flags.length ? "This party has red flags" : "This party needs enhanced due diligence"}: press Request KYC4U check, then submit it on KYC4U's portal. Nothing goes to KYC4U until it is submitted there.`}
+          </div>
+        </div>
+      )}
       <div className={`rounded-md border px-2.5 py-2 ${NEXT_BOX[step.tone]}`} data-testid={`aml-next-${cp.role}`}>
         <div className="flex flex-wrap items-start gap-x-2 gap-y-1.5">
           <BoxToneIcon tone={step.tone} />
@@ -883,6 +900,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
           <BoxSection id={sid("decision")} testId={tid("decision")} label="Sign-off" tone={decisionLine.tone} summary={decisionLine.summary} open={open.has("decision")} onToggle={() => toggle("decision")}>
             <PartyNotRequiredBox cp={cp} />
             <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} />
+            {canDecide && level?.level === "enhanced" && !cp.notRequired && <SecondReadPanel dealId={dealId} role={cp.role} partyName={partyName} trust={isTrust} />}
             {canDecide && (
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-file-line-${cp.role}`}>
                 <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />

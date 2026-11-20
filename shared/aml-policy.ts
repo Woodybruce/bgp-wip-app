@@ -33,7 +33,47 @@ export interface AmlPolicyDocument { key: string; title: string; issue: number; 
 export const AML_POLICY_DOCUMENTS: readonly AmlPolicyDocument[] = [
   { key: "policy-issue-2", title: "Anti-Money Laundering Policy", issue: 2, date: "November 2026", file: "bgp-aml-policy-issue-2.docx" },
   { key: "risk-assessment-issue-2", title: "Firm-Wide Anti-Money Laundering Risk Assessment", issue: 2, date: "November 2026", file: "bgp-firm-wide-aml-risk-assessment-issue-2.docx" },
+  { key: "checklist-trusts", title: "AML checklist: trusts", issue: 1, date: "November 2026", file: "bgp-aml-checklist-trusts.docx" },
 ];
+
+// ── Checklists for enhanced due diligence ───────────────────────────────────
+// BGP's AML checklist for trusts (Jack, 20 November 2026), item for item: what
+// KYC4U is asked for on a trust, and what the officers' second read looks for.
+export interface AmlChecklistItem { n: number; title: string; detail: string }
+export const TRUST_CHECKLIST: readonly AmlChecklistItem[] = [
+  { n: 1, title: "Trust deed", detail: "A certified copy of the trust deed, confirming the form of the trust, the settlor(s), the trustees, the beneficiaries and any protector or other person with control (sections 4.7 and 3.12)." },
+  { n: 2, title: "Trust Registration Service", detail: "Evidence that the trust is registered with HMRC, with a copy of the registration kept on file (section 4.7)." },
+  { n: 3, title: "Structure chart", detail: "If the trust holds the asset through one or more companies, a chart showing the ownership up to the trust (section 3.7.1)." },
+  { n: 4, title: "Settlor(s)", detail: "Identity verification, and evidence of source of wealth: the original funds placed in the trust must not be tainted (section 4.7)." },
+  { n: 5, title: "Trustees", detail: "Identity verification of each trustee; a professional trust company is checked as a company (sections 4.4 and 4.7)." },
+  { n: 6, title: "Protector", detail: "Identity verification, where one is appointed (section 4.7)." },
+  { n: 7, title: "Beneficiaries", detail: "Not required if the trust is discretionary; if not, identity verification of any beneficiary entitled to 25% or more (section 4.7)." },
+  { n: 8, title: "Authority to instruct", detail: "Confirmation that the instruction comes from the trustees, or from someone with their written authority (section 3.7.4)." },
+  { n: 9, title: "Source of funds", detail: "Source of funds for this transaction, including the identity of any third party providing funding (sections 3.7.5 and 3.7.6)." },
+  { n: 10, title: "Screening", detail: "Sanctions, PEP and adverse media checks on the trust and on every individual named above (sections 3.13 and 4.12)." },
+  { n: 11, title: "Nominated Officer sign-off", detail: "A file note recording the risk level and the reasons for it (sections 3.11 and H)." },
+];
+export const TRUST_PERSON_EVIDENCE = "For each individual: one valid photo ID (passport or photocard driving licence) and one proof of address no more than 3 months old (utility bill, bank statement or council tax demand). Copies for non-UK residents, or for anyone we have not met, must be certified (sections 4.10, 4.11 and 3.12).";
+
+// Any other enhanced party: what the officers' second read looks for (BGP's
+// AML policy, Issue 2, sections 3.7 and F.a).
+export const ENHANCED_CHECKLIST: readonly AmlChecklistItem[] = [
+  { n: 1, title: "Identity of the party", detail: "The company verified from its register (or the person's photo ID), and who is acting for it with their authority." },
+  { n: 2, title: "Beneficial owners", detail: "Everyone owning or controlling more than 25%, through any chain of companies, identified and verified; a structure chart where there is a chain." },
+  { n: 3, title: "Each person's ID and address", detail: "One valid photo ID and one proof of address no more than 3 months old for each beneficial owner and the person acting." },
+  { n: 4, title: "Source of funds", detail: "Where the money for this transaction comes from, with evidence, and who provides it." },
+  { n: 5, title: "Source of wealth", detail: "How the owners came by their wealth, where the risk calls for it (a PEP, a high-risk country, a large sum)." },
+  { n: 6, title: "The higher-risk factor", detail: "What made it enhanced (the red flag or policy factor) and how it was resolved or why it is acceptable." },
+  { n: 7, title: "Screening", detail: "Sanctions, PEP and adverse media checks on the party and every person named." },
+  { n: 8, title: "Nominated Officer sign-off", detail: "A file note recording the risk level and the reasons for it (sections 3.11 and H)." },
+];
+
+/** The trust checklist as lines for KYC4U's note. */
+export function trustChecklistNote(): string {
+  return ["TRUST: BGP's AML checklist for trusts, please collect and review in full:",
+    ...TRUST_CHECKLIST.filter(i => i.n <= 10).map(i => `${i.n}. ${i.title}: ${i.detail}`),
+    TRUST_PERSON_EVIDENCE].join("\n");
+}
 export const amlPolicyDocument = (key: unknown): AmlPolicyDocument | null =>
   AML_POLICY_DOCUMENTS.find(d => d.key === String(key ?? "")) || null;
 
