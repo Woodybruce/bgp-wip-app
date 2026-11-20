@@ -19,7 +19,7 @@ export async function dealPeopleRequests(dealId: string, db: Db = pool): Promise
   if (!rows.length) return [];
   const tokens = rows.map((r: any) => r.token);
   const files = (await db.query(
-    `SELECT f.token, f.original_filename, f.doc_type, f.uploaded_at, d.file_url
+    `SELECT f.token, f.original_filename, f.doc_type, f.uploaded_at, d.file_url, d.id AS document_id
        FROM kyc_upload_files f LEFT JOIN kyc_documents d ON d.id::text = f.kyc_document_id
       WHERE f.token = ANY($1::varchar[]) ORDER BY f.uploaded_at`, [tokens])).rows;
   const sessionIds = [...new Set(rows.flatMap((r: any) => Array.isArray(r.request?.veriffSessionIds) ? r.request.veriffSessionIds : []))];
@@ -46,10 +46,17 @@ export async function dealPeopleRequests(dealId: string, db: Db = pool): Promise
         .map((id: string) => sessions.find((s: any) => s.session_id === id))
         .filter(Boolean)
         .map((s: any) => ({ state: kycIdStateFor(s.status), verifiedName: verifiedPersonName(s.verdict_person), verifiedDob: verifiedPersonDob(s.verdict_person) })),
-      files: files.filter((f: any) => f.token === r.token).map((f: any) => ({
-        name: f.original_filename, docKey: isKycDocKey(f.doc_type) ? f.doc_type : null,
-        uploadedAt: new Date(f.uploaded_at).toISOString(), url: f.file_url || null,
-      })),
+      files: files.filter((f: any) => f.token === r.token).map((f: any) => {
+        // A proof of address's reading and an officer's acceptance, kept on the request (server/kyc-address-proof.ts).
+        const documentId = f.document_id != null ? String(f.document_id) : null;
+        return {
+          name: f.original_filename, docKey: isKycDocKey(f.doc_type) ? f.doc_type : null,
+          uploadedAt: new Date(f.uploaded_at).toISOString(), url: f.file_url || null,
+          documentId,
+          reading: documentId ? request.addressProofs?.[documentId] || null : null,
+          accepted: documentId ? request.addressAccepted?.[documentId] || null : null,
+        };
+      }),
     };
   });
 }

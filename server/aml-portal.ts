@@ -35,6 +35,8 @@ import {
 import { idCheckIsThePerson, personNamesMatch, precheckAsks, verifiedPersonName } from "@shared/kyc-prechecks";
 import { personRequestAsks, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
+import { ADDRESS_PROOF_ACCEPT_NOTE_MIN } from "@shared/kyc-address-proof";
+import { officerWords } from "@shared/aml-policy";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
 
 export const KYC_MAILBOX = (process.env.KYC_MAILBOX || process.env.BGP_AML_MAILBOX || "kyc@chatbgp.app").trim();
@@ -862,6 +864,16 @@ async function fileClientDocument(row: TokenRow, file: { name: string; mime: str
       [row.company_id, row.contact_name || row.contact_email, `${file.name} (${docType}) ${how.toLowerCase()}, ref ${request.ref}`]).catch(() => {});
   }
 
+  if (docKey === "proof_of_address") {
+    // Read and set against the person it is for (20 November 2026): the
+    // people to check count it only when it reads right or an officer
+    // accepts it. After the file is safe; a failed read only says so.
+    const documentId = String(doc.rows[0].id);
+    void import("./kyc-address-proof")
+      .then(async m => m.recordAddressProof(pool, row.token, documentId, await m.readAddressProof({ buffer: file.buffer, mime: file.mime || null, name: file.name })))
+      .catch((e: any) => console.warn(`[kyc] proof of address reading not kept: ${e?.message}`));
+  }
+
   if (docKey === "source_of_funds") {
     // The AI reading of a source of funds document, as before. After the
     // file is safe; a temporary copy under a name the app chose.
@@ -1019,6 +1031,8 @@ kycRequestRouter.get("/api/aml/deal/:id/client-checks", signedIn, async (req: Re
     if (!found) return res.status(404).json({ message: "Deal not found" });
     const agents = await dealAgents(dealId);
     const veriff = veriffConfigured();
+    // Any proof of address not read yet is read in the background (20 November 2026).
+    void import("./kyc-address-proof").then(m => m.readUnreadAddressProofs(pool, dealId)).catch(() => {});
     // The people to check per party (19 November 2026).
     const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
     const peopleRequests = await dealPeopleRequests(dealId).catch(() => null);
@@ -1056,6 +1070,63 @@ kycRequestRouter.post("/api/aml/deal/:id/client-checks/people", signedIn, async 
     res.json(await createPersonCheck(String(req.params.id), parsed.data, { agent: me }));
   } catch (err: any) {
     res.status(err?.status || 500).json({ message: err?.message || "Could not make their link" });
+  }
+});
+
+// A proof of address read again (BGP staff), or accepted by the Nominated
+// Officer or a Deputy with a note when its reading did not pass (Woody,
+// 20 November 2026: "is the app checking its actually for that person and
+// acceptable?"). Both keep what they did on the request the file came in on.
+async function addressProofRow(dealId: string, token: unknown, documentId: unknown) {
+  const t = String(token || "").slice(0, 200), d = String(documentId || "").slice(0, 100);
+  if (!t || !d) return null;
+  const row = (await pool.query(
+    `SELECT u.token, u.company_id, u.request FROM kyc_upload_tokens u
+       JOIN kyc_upload_files f ON f.token = u.token AND f.kyc_document_id = $3 AND f.doc_type = 'proof_of_address'
+      WHERE u.token = $1 AND u.deal_id = $2 AND u.is_test IS NOT TRUE`, [t, dealId, d])).rows[0];
+  return row ? { token: t, documentId: d, companyId: row.company_id as string | null, ref: String(row.request?.ref || "") } : null;
+}
+
+kycRequestRouter.post("/api/aml/deal/:id/client-checks/address-proof/read", signedIn, async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    if (!clientChecksOn()) return res.status(410).json({ message: CHECKS_OFF });
+    const found = await addressProofRow(String(req.params.id), req.body?.token, req.body?.documentId);
+    if (!found) return res.status(404).json({ message: "That proof of address is not on this deal." });
+    const { rereadAddressProof } = await import("./kyc-address-proof");
+    const reading = await rereadAddressProof(pool, found.token, found.documentId);
+    res.json({ ok: true, reading });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not read it again" });
+  }
+});
+
+kycRequestRouter.post("/api/aml/deal/:id/client-checks/address-proof/accept", signedIn, async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    if (!clientChecksOn()) return res.status(410).json({ message: CHECKS_OFF });
+    const { amlActor } = await import("./aml-authority");
+    const actor = await amlActor(req);
+    if (!actor.isMlro) return res.status(403).json({ message: `Only ${officerWords(actor.officers)} can accept a proof of address the reading did not pass.` });
+    const note = String(req.body?.note || "").replace(/\s+/g, " ").trim().slice(0, 1000);
+    if (note.length < ADDRESS_PROOF_ACCEPT_NOTE_MIN) return res.status(400).json({ message: "Say why it is acceptable (at least 10 characters)." });
+    const found = await addressProofRow(String(req.params.id), req.body?.token, req.body?.documentId);
+    if (!found) return res.status(404).json({ message: "That proof of address is not on this deal." });
+    const accepted = { by: me.name || me.email || "BGP", at: new Date().toISOString(), note };
+    await pool.query(
+      `UPDATE kyc_upload_tokens
+          SET request = jsonb_set(COALESCE(request, '{}'::jsonb), '{addressAccepted}',
+                                  COALESCE(request->'addressAccepted', '{}'::jsonb) || jsonb_build_object($2::text, $3::jsonb))
+        WHERE token = $1`, [found.token, found.documentId, JSON.stringify(accepted)]);
+    if (found.companyId) {
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'address_proof_accepted', $2, $3)`,
+        [found.companyId, accepted.by, `Proof of address accepted on client checks ref ${found.ref}: ${note}`]).catch(() => {});
+    }
+    res.json({ ok: true, accepted });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not accept it" });
   }
 });
 

@@ -190,7 +190,7 @@ function levenshtein(a: string, b: string): number {
   return prev[b.length];
 }
 
-const sameToken = (a: string, b: string) => a === b || (a.length >= 5 && b.length >= 5 && levenshtein(a, b) <= 1);
+export const sameToken = (a: string, b: string) => a === b || (a.length >= 5 && b.length >= 5 && levenshtein(a, b) <= 1);
 const covers = (outer: string[], inner: string[]) => inner.every(t => outer.some(o => sameToken(o, t)));
 
 const DISPLAY_TITLE = /^(mr|mrs|ms|miss|mx|dr|sir|dame|lord|lady|prof|professor|rev|revd)\.?\s+/i;

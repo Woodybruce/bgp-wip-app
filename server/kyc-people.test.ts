@@ -43,6 +43,12 @@ const request = (over: Partial<PeopleRequest>): PeopleRequest => ({
   cancelled: false, expired: false, finished: false, sentAt: "2026-11-19T16:43:18.270Z", needsIdCheck: true, docs: [], ownerNames: [], idChecks: [], files: [], ...over,
 });
 
+// A proof of address as the reader reads it (20 November 2026).
+const thamesWater = {
+  readAt: "2026-11-20T09:00:05Z", read: true, unreadable: null, kind: "utility_bill" as const, kindWords: "Thames Water bill", issuer: "Thames Water",
+  names: ["MR H MIRHADIYEV"], date: "2026-10-30", address: "1 Example Road, London W1", certified: null,
+};
+
 test("names read as people write them, and one key for a person however the register spells them", () => {
   assert.equal(personDisplayName("BRUCE, David"), "David Bruce");
   assert.equal(personDisplayName("Mr Woody Bruce"), "Woody Bruce");
@@ -128,12 +134,13 @@ test("a person's own request: its check and its proof of address are theirs, and
     token: "t-huseyn", ref: "H2K9QP", recipientName: "Huseyn Mirhadiyev", needsIdCheck: true, docs: ["proof_of_address"],
     person: { key: personKey("Mr Huseyn Mirhadiyev"), name: "Huseyn Mirhadiyev", roles: ["owner"] },
     idChecks: [{ state: "submitted", verifiedName: null, verifiedDob: null }],
-    files: [{ name: "bill.pdf", docKey: "proof_of_address", uploadedAt: "2026-11-20T09:00:00Z", url: "/api/chat-media/c.pdf" }],
+    files: [{ name: "bill.pdf", docKey: "proof_of_address", uploadedAt: "2026-11-20T09:00:00Z", url: "/api/chat-media/c.pdf", documentId: "doc-1", reading: thamesWater }],
   });
   const out = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [request({}), own] });
   const huseyn = out.people.find(p => p.name === "Huseyn Mirhadiyev")!;
   assert.equal(huseyn.id.state, "waiting");
   assert.equal(huseyn.address.done, true);
+  assert.equal(huseyn.address.proof?.summary, "Thames Water bill, 30 Oct 2026, in the name of MR H MIRHADIYEV");
   assert.deepEqual(huseyn.outstanding, []);
   assert.deepEqual(huseyn.own, { token: "t-huseyn", ref: "H2K9QP", isMain: false, sentAt: "2026-11-19T16:43:18.270Z" });
   assert.equal(huseyn.canSend, false);
@@ -200,4 +207,52 @@ test("a person's own request asks only what is still outstanding", () => {
     { needsIdCheck: true, docs: ["proof_of_address"] });
   assert.deepEqual(personRequestAsks({ id: { state: "not_started", ref: null, elsewhere: null, someoneElse: null, asked: false }, address: { done: true, ref: "Y", asked: false } }, false),
     { needsIdCheck: false, docs: ["photo_id"] });
+});
+
+// Woody, 20 November 2026: "with the proof of address is the app checking its
+// actually for that person and acceptable? linking it from a name perspective?"
+test("a proof of address counts only when it reads as theirs, in date and accepted by the policy, or an officer accepts it", () => {
+  const ownWith = (file: Partial<PeopleRequest["files"][number]>) => request({
+    token: "t-huseyn", ref: "H2K9QP", recipientName: "Huseyn Mirhadiyev", needsIdCheck: true, docs: ["proof_of_address"], finished: true,
+    person: { key: personKey("Mr Huseyn Mirhadiyev"), name: "Huseyn Mirhadiyev", roles: ["owner"] },
+    files: [{ name: "bill.pdf", docKey: "proof_of_address", uploadedAt: "2026-11-20T09:00:00Z", url: "/api/chat-media/c.pdf", documentId: "doc-1", ...file }],
+  });
+  const huseynWith = (file: Partial<PeopleRequest["files"][number]>) =>
+    partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [request({}), ownWith(file)] })
+      .people.find(p => p.name === "Huseyn Mirhadiyev")!;
+
+  // Not read yet, or not readable: it does not count, and they can be sent a link for a new one.
+  const unread = huseynWith({ reading: null });
+  assert.equal(unread.address.done, false);
+  assert.deepEqual(unread.address.proof?.reasons, ["Not read yet"]);
+  assert.ok(unread.outstanding.includes("proof of address"));
+  assert.equal(unread.canSend, true);
+  const blank = huseynWith({ reading: { ...thamesWater, read: false, unreadable: "the file is empty", kind: null, names: [], date: null } });
+  assert.deepEqual(blank.address.proof?.reasons, ["Could not be read: the file is empty"]);
+
+  // Another person's bill, an old one, a driving licence: each says why.
+  assert.deepEqual(huseynWith({ reading: { ...thamesWater, names: ["MRS J SMITH"] } }).address.proof?.reasons, ["In the name of MRS J SMITH, not Huseyn Mirhadiyev"]);
+  assert.deepEqual(huseynWith({ reading: { ...thamesWater, date: "2026-05-01" } }).address.proof?.reasons, ["Dated 1 May 2026, more than three months before it was sent"]);
+  assert.deepEqual(huseynWith({ reading: { ...thamesWater, kind: "driving_licence", kindWords: "DVLA driving licence" } }).address.proof?.reasons,
+    ["A driving licence proves identity, not address (BGP's AML policy)"]);
+
+  // The Nominated Officer or a Deputy accepting it makes it count, with their note.
+  const accepted = huseynWith({ reading: { ...thamesWater, date: "2026-05-01" }, accepted: { by: "Jack Barratt", at: "2026-11-20T10:00:00Z", note: "Annual statement, the latest one issued" } });
+  assert.equal(accepted.address.done, true);
+  assert.equal(accepted.address.proof?.accepted?.by, "Jack Barratt");
+  assert.ok(!accepted.outstanding.includes("proof of address"));
+
+  // A later good proof counts over an earlier bad one.
+  const both = request({
+    token: "t-huseyn", ref: "H2K9QP", recipientName: "Huseyn Mirhadiyev", docs: ["proof_of_address"], finished: true,
+    person: { key: personKey("Mr Huseyn Mirhadiyev"), name: "Huseyn Mirhadiyev", roles: ["owner"] },
+    files: [
+      { name: "old.pdf", docKey: "proof_of_address", uploadedAt: "2026-11-20T09:00:00Z", url: "/a", documentId: "doc-1", reading: { ...thamesWater, date: "2026-01-01" } },
+      { name: "new.pdf", docKey: "proof_of_address", uploadedAt: "2026-11-20T09:10:00Z", url: "/b", documentId: "doc-2", reading: thamesWater },
+    ],
+  });
+  const fixed = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [request({}), both] })
+    .people.find(p => p.name === "Huseyn Mirhadiyev")!;
+  assert.equal(fixed.address.done, true);
+  assert.equal(fixed.address.proof?.documentId, "doc-2");
 });

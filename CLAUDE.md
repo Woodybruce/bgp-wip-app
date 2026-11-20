@@ -4129,6 +4129,57 @@ their sanctions result only". Do not re-litigate. Rules (pure):
   date, Not required, or a letting under £10,000 a month draws no line and
   asks for nothing (`partyAmlQuietWords`). Tests:
   `server/deal-parties.test.ts`, `qa/regression/deal-parties-guards.test.mjs`.
+- **Each proof of address is read and set against the person** (Woody,
+  20 November 2026: "with the proof of address is the app checking its
+  actually for that person and acceptable? linking it from a name
+  perspective?"; until then a file on someone's own link, on the proof of
+  address step, counted as theirs whatever it said). Rules:
+  `shared/kyc-address-proof.ts`; reader: `server/kyc-address-proof.ts`.
+  Tests: `server/kyc-address-proof.test.ts` (in `npm test`),
+  `server/kyc-people.test.ts`, `qa/regression/kyc-address-proof-guards.test.mjs`.
+  - **The reading**: when a client files a proof of address
+    (`fileClientDocument`, never on a test request, whose uploads are not
+    kept), the file alone goes to Anthropic, called directly, one forced
+    tool call (`read_address_document`): the kind (`ADDRESS_PROOF_KINDS`:
+    utility bill, bank, building society or mortgage statement, council tax
+    bill; or driving licence, or other), what it calls itself, the issuer,
+    the names it is addressed to, its date (a statement's closing date), the
+    address and whether it is a certified copy. A PDF goes as a document, a
+    picture (an iPhone HEIC converted first) as a JPEG of at most 2000px, a
+    Word file as its text. Capped a day (`ADDRESS_PROOF_READER_DAILY_CAP`,
+    default 200, 0 = off); a file it cannot read, the reader off or the
+    allowance used is a reading that says why, and nothing is claimed for a
+    file it cannot open. The reading is kept on the request it came in on
+    (`kyc_upload_tokens.request.addressProofs`, keyed by the KYC document):
+    no schema change. A proof filed before the reading existed, or whose read
+    was lost to a restart, is read when BGP staff open the deal's client
+    checks (`readUnreadAddressProofs`: five at a time, each once; a failed
+    read is kept as a reading that says why, and Read again retries it).
+  - **The verdict** (`checkAddressProof`): a name on it is the person's
+    (`addressNameMatches`: the register's way, or the same surname with each
+    forename or initial on it one of theirs, so "MR H MIRHADIYEV" is Huseyn
+    Mirhadiyev and a surname alone is not), dated at most 92 days before it
+    was sent (a council tax bill, "this year's", 396), not after it, and a
+    kind the policy accepts. Each failure is a plain reason.
+  - **Counting**: a proof counts for the person only when its verdict passes
+    or the Nominated Officer or a Deputy accepted it with a note of at least
+    10 characters (`request.addressAccepted`, a `kyc_audit_log` line
+    `address_proof_accepted`). Until then the person still owes a proof of
+    address, so the sign-off asks for a note and they can be sent a link
+    for a new one; a later proof that passes counts over an earlier one.
+  - **The deal card** (`AddressProofLine` in `kyc-client-checks.tsx`): what
+    it was read as ("British Gas electricity bill, 12 Oct 2026, in the name
+    of MR H MIRHADIYEV", opening the file), the address on it, the reasons
+    in amber, **Read again** (BGP staff, `POST
+    /api/aml/deal/:id/client-checks/address-proof/read`) and **Accept it**
+    (offered only to those who decide, `canDecide` from the AML status;
+    `…/address-proof/accept`, refused to anyone else on the server). Both
+    routes are on `KYC_CLIENT_CHECK_ROUTES` and take only a proof of
+    address on that deal's own requests, never a test's.
+  - Not built: telling the client on their page that a proof did not pass;
+    reading the proof on a private individual's own request (its request
+    row shows the file as before); reading identity documents sent as
+    files. Not run against Anthropic from a build machine (no key here).
 
 ## BGP's AML policy and risk assessment, Issue 2 (Woody, 2026-11-19)
 

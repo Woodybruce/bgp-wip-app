@@ -23,6 +23,7 @@
 
 import { controlWords, nameTokens, personDisplayName, personNamesMatch, type KycPrecheckResult } from "./kyc-prechecks";
 import type { KycDocKey, KycIdState, KycPartyKind, KycPersonRole } from "./kyc-request";
+import { checkAddressProof, type AddressProofAcceptance, type AddressProofReading } from "./kyc-address-proof";
 
 export { personDisplayName };
 
@@ -77,7 +78,14 @@ export interface PeopleRequest {
   ownerNames: string[];
   // Every identity check started on it, oldest first.
   idChecks: PeopleIdCheck[];
-  files: Array<{ name: string; docKey: KycDocKey | null; uploadedAt: string; url: string | null }>;
+  files: Array<{
+    name: string; docKey: KycDocKey | null; uploadedAt: string; url: string | null;
+    // The KYC document it was filed as, and for a proof of address what it
+    // was read as and whether an officer accepted it (20 November 2026).
+    documentId?: string | null;
+    reading?: AddressProofReading | null;
+    accepted?: AddressProofAcceptance | null;
+  }>;
 }
 
 export interface PartyPeopleInput {
@@ -113,7 +121,17 @@ export interface KycPartyPerson {
     // A live request of theirs asks for it.
     asked: boolean;
   };
-  address: { done: boolean; ref: string | null; asked: boolean };
+  address: {
+    done: boolean; ref: string | null; asked: boolean;
+    // The proof that counts, else the latest one sent, as read against them
+    // (shared/kyc-address-proof.ts): it counts when the reading passes or
+    // the Nominated Officer or a Deputy accepted it.
+    proof: {
+      token: string; ref: string; documentId: string | null; fileName: string; url: string | null; uploadedAt: string;
+      read: boolean; ok: boolean; summary: string; reasons: string[]; address: string | null;
+      accepted: AddressProofAcceptance | null;
+    } | null;
+  };
   sanctions: PersonSanctions;
   // Their own live request (their own link before the request to the person acting): their link, if they have one.
   own: { token: string; ref: string; isMain: boolean; sentAt: string | null } | null;
@@ -240,8 +258,24 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     const idDone = id.state === "passed" || id.state === "waiting" || id.state === "document";
     id.asked = live.some(r => !r.finished && (r.needsIdCheck || r.docs.includes("photo_id")));
 
-    const addressFrom = mine.find(r => r.files.some(f => f.docKey === "proof_of_address")) || null;
-    const address = { done: !!addressFrom, ref: addressFrom?.ref || null, asked: live.some(r => !r.finished && r.docs.includes("proof_of_address")) };
+    // A proof of address counts only when it reads as theirs, in date and of
+    // a kind the policy accepts, or an officer accepted it (Woody, 20 November
+    // 2026: "is the app checking its actually for that person and acceptable?").
+    const proofs = mine.flatMap(r => r.files.filter(f => f.docKey === "proof_of_address").map(f => {
+      const check = checkAddressProof(f.reading || null, d.name, f.uploadedAt);
+      return { r, f, check, counts: check.ok || !!f.accepted };
+    }));
+    const counting = proofs.find(x => x.counts) || null;
+    const shown = counting || proofs[proofs.length - 1] || null;
+    const address: KycPartyPerson["address"] = {
+      done: !!counting, ref: counting?.r.ref || null,
+      asked: live.some(r => !r.finished && r.docs.includes("proof_of_address")),
+      proof: shown ? {
+        token: shown.r.token, ref: shown.r.ref, documentId: shown.f.documentId || null, fileName: shown.f.name, url: shown.f.url, uploadedAt: shown.f.uploadedAt,
+        read: !!shown.f.reading?.read, ok: shown.check.ok, summary: shown.check.summary, reasons: shown.check.reasons,
+        address: shown.f.reading?.address || null, accepted: shown.f.accepted || null,
+      } : null,
+    };
 
     const outstanding: KycPartyPerson["outstanding"] = [...(idDone ? [] : ["identity check" as const]), ...(address.done ? [] : ["proof of address" as const])];
     const ownLink = live.find(r => r.person) || live.find(r => !r.person) || null;

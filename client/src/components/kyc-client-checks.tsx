@@ -220,7 +220,7 @@ export function ClientCheckRow({ dealId, request }: { dealId: string; request: C
 // sanctionsOnly: a letting under £10,000 a month (BGP's AML policy A), where
 // the owners are identified and screened, not verified. notRequired: the
 // officers marked the party Not required on this deal (policy G).
-export function ClientChecksForParty({ dealId, companyId, sanctionsOnly, notRequired }: { dealId: string; companyId: string; sanctionsOnly?: boolean; notRequired?: boolean }) {
+export function ClientChecksForParty({ dealId, companyId, sanctionsOnly, notRequired, canDecide }: { dealId: string; companyId: string; sanctionsOnly?: boolean; notRequired?: boolean; canDecide?: boolean }) {
   const { data } = useClientChecks(dealId);
   if (!data) return null;
   const list = data.requests.filter(r => r.companyId === companyId && !r.person);
@@ -228,7 +228,7 @@ export function ClientChecksForParty({ dealId, companyId, sanctionsOnly, notRequ
   const people = data.people?.[companyId] || null;
   return (
     <>
-      {party && people && people.basis !== "individual" && !notRequired && <PeopleToCheck dealId={dealId} data={data} party={party} people={people} sanctionsOnly={!!sanctionsOnly} />}
+      {party && people && people.basis !== "individual" && !notRequired && <PeopleToCheck dealId={dealId} data={data} party={party} people={people} sanctionsOnly={!!sanctionsOnly} canDecide={!!canDecide} />}
       {list.length > 0 && <div className="space-y-1.5">{list.map(r => <ClientCheckRow key={r.token} dealId={dealId} request={r} />)}</div>}
     </>
   );
@@ -262,7 +262,7 @@ function Tick({ ok }: { ok: boolean }) {
   return ok ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> : <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
 }
 
-function PeopleToCheck({ dealId, data, party, people, sanctionsOnly }: { dealId: string; data: ClientChecks; party: Party; people: PartyPeople; sanctionsOnly: boolean }) {
+function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }: { dealId: string; data: ClientChecks; party: Party; people: PartyPeople; sanctionsOnly: boolean; canDecide: boolean }) {
   if (sanctionsOnly) {
     const everyone = [...people.people.map(p => ({ name: p.name, roles: p.roles, sanctions: p.sanctions })), ...people.directors.map(d => ({ name: d.name, roles: ["director" as const], sanctions: d.sanctions }))];
     if (!everyone.length) return null;
@@ -291,7 +291,7 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly }: { dealId:
         )}
       </div>
       <p className="text-muted-foreground">{PARTY_PEOPLE_BASIS_WORDS[people.basis]} Each gets a link of their own: an identity check (Veriff) and a proof of address from the last three months.</p>
-      {people.people.map(person => <PersonRow key={person.key} dealId={dealId} data={data} party={party} person={person} />)}
+      {people.people.map(person => <PersonRow key={person.key} dealId={dealId} data={data} party={party} person={person} canDecide={canDecide} />)}
       {people.directors.length > 0 && (
         <p className="text-muted-foreground" data-testid={`people-directors-${party.companyId}`}>
           <span className="font-medium text-foreground">Directors, no ID needed</span> (screened against the UK and US sanctions lists only):{" "}
@@ -309,7 +309,7 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly }: { dealId:
   );
 }
 
-function PersonRow({ dealId, data, party, person }: { dealId: string; data: ClientChecks; party: Party; person: KycPartyPerson }) {
+function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string; data: ClientChecks; party: Party; person: KycPartyPerson; canDecide: boolean }) {
   const [open, setOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const ownRequest = person.own && !person.own.isMain ? data.requests.find(r => r.token === person.own!.token) || null : null;
@@ -332,10 +332,7 @@ function PersonRow({ dealId, data, party, person }: { dealId: string; data: Clie
             {!idOk && person.id.asked ? <span className="text-muted-foreground"> · asked</span> : null}
           </span>
         </li>
-        <li className="flex items-start gap-1">
-          <Tick ok={person.address.done} />
-          <span>{person.address.done ? `Proof of address sent (${person.address.ref})` : "Proof of address not sent"}{!person.address.done && person.address.asked ? <span className="text-muted-foreground"> · asked</span> : null}</span>
-        </li>
+        <AddressProofLine dealId={dealId} person={person} canDecide={canDecide} />
         <li className={SANCTIONS_WORDS[person.sanctions].cls}>{SANCTIONS_WORDS[person.sanctions].text}</li>
       </ul>
       <div className="flex flex-wrap items-center gap-1">
@@ -355,6 +352,76 @@ function PersonRow({ dealId, data, party, person }: { dealId: string; data: Clie
       {open && ownRequest && <ClientCheckRow dealId={dealId} request={ownRequest} />}
       {sending && <PersonLinkDialog dealId={dealId} data={data} party={party} person={person} onClose={() => setSending(false)} />}
     </div>
+  );
+}
+
+// A person's proof of address as it was read against them (Woody, 20 November
+// 2026: "is the app checking its actually for that person and acceptable?").
+// It counts only when the reading passes (their name, dated in the last three
+// months, a kind the policy accepts) or the Nominated Officer or a Deputy
+// accepts it with a note.
+function AddressProofLine({ dealId, person, canDecide }: { dealId: string; person: KycPartyPerson; canDecide: boolean }) {
+  const { toast } = useToast();
+  const [accepting, setAccepting] = useState(false);
+  const [note, setNote] = useState("");
+  const proof = person.address.proof;
+  const testKey = person.key.replace(/\s+/g, "-");
+  const refresh = () => queryClient.invalidateQueries({ queryKey: keyFor(dealId) });
+  const reread = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/aml/deal/${dealId}/client-checks/address-proof/read`, { token: proof?.token, documentId: proof?.documentId })).json(),
+    onSuccess: () => { refresh(); toast({ title: "Read again" }); },
+    onError: (e) => toast({ title: "Not read", description: plain(String((e as any)?.message || e)), variant: "destructive" }),
+  });
+  const accept = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/aml/deal/${dealId}/client-checks/address-proof/accept`, { token: proof?.token, documentId: proof?.documentId, note: note.trim() })).json(),
+    onSuccess: () => { refresh(); setAccepting(false); setNote(""); toast({ title: "Proof of address accepted" }); },
+    onError: (e) => toast({ title: "Not accepted", description: plain(String((e as any)?.message || e)), variant: "destructive" }),
+  });
+  if (!proof) {
+    return (
+      <li className="flex items-start gap-1" data-testid={`person-address-${testKey}`}>
+        <Tick ok={false} />
+        <span>Proof of address not sent{person.address.asked ? <span className="text-muted-foreground"> · asked</span> : null}</span>
+      </li>
+    );
+  }
+  const counts = person.address.done;
+  return (
+    <li className="space-y-1" data-testid={`person-address-${testKey}`}>
+      <div className="flex items-start gap-1">
+        <Tick ok={counts} />
+        <span>
+          {counts ? "Proof of address" : "Proof of address to check"} ({proof.ref}):{" "}
+          {proof.url ? <a href={proof.url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" data-testid={`person-address-file-${testKey}`}>{proof.summary}</a> : proof.summary}
+          {proof.accepted ? <span className="text-muted-foreground"> · accepted by {proof.accepted.by}: {proof.accepted.note}</span> : null}
+        </span>
+      </div>
+      {!counts && proof.reasons.length > 0 && (
+        <p className="pl-5 text-amber-800 dark:text-amber-300" data-testid={`person-address-reasons-${testKey}`}>{proof.reasons.join(". ")}.</p>
+      )}
+      {proof.address && <p className="pl-5 text-muted-foreground">Address on it: {proof.address}</p>}
+      {!counts && proof.documentId && (
+        <div className="pl-5 flex flex-wrap items-center gap-1">
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={reread.isPending} onClick={() => reread.mutate()} data-testid={`person-address-reread-${testKey}`}>
+            {reread.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}Read again
+          </Button>
+          {canDecide && !accepting && (
+            <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setAccepting(true)} data-testid={`person-address-accept-${testKey}`}>Accept it</Button>
+          )}
+        </div>
+      )}
+      {accepting && (
+        <div className="pl-5 space-y-1">
+          <Textarea rows={2} className="text-xs" placeholder="Why it is acceptable, e.g. the bill is in their married name, matching their passport" value={note} onChange={e => setNote(e.target.value)} data-testid={`person-address-accept-note-${testKey}`} />
+          <div className="flex gap-1">
+            <Button size="sm" className="h-7 px-2 text-xs" disabled={accept.isPending || note.trim().length < 10} onClick={() => accept.mutate()} data-testid={`person-address-accept-save-${testKey}`}>
+              {accept.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}Accept
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setAccepting(false)}>Cancel</Button>
+          </div>
+        </div>
+      )}
+    </li>
   );
 }
 
