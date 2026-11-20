@@ -71,6 +71,7 @@ import {
 } from "@/components/property-asset-brief";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
+import { DealAmlDialog, type AmlDialogDeal } from "@/components/deal-aml-dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -439,6 +440,15 @@ export function PropertyDetail({ id }: { id: string }) {
   // brand gap, compliance or activity: the server refuses those to it.
   const jointAgent = isRestrictedLandsecRole(pdViewer?.landsecRole);
   const schemeList = usePropertySchemeList(id);
+  // The open deals on the property, for the AML pills (Jack, 2026-11-20: the
+  // AML "option ... on the properties page"). BGP staff only; the list is the
+  // Deals board's (an investment deal shows from Solicitors).
+  const { data: propertyDeals = [] } = useQuery<any[]>({
+    queryKey: [`/api/crm/properties/${id}/deals`],
+    enabled: !!id && !isClientViewer,
+  });
+  const amlDeals = propertyDeals.filter((d: any) => !["WIT", "ARCH", "INV"].includes(legacyToCode(d.status) || ""));
+  const [amlDeal, setAmlDeal] = useState<AmlDialogDeal | null>(null);
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
     refetchInterval: (query) => {
@@ -712,6 +722,7 @@ export function PropertyDetail({ id }: { id: string }) {
         open={folderDialogOpen}
         onOpenChange={setFolderDialogOpen}
       />
+      <DealAmlDialog deal={amlDeal} reason="property" onClose={() => setAmlDeal(null)} />
 
       <div className="px-4 sm:px-6 pt-4 sm:pt-5">
         <Breadcrumbs
@@ -987,6 +998,14 @@ export function PropertyDetail({ id }: { id: string }) {
                     {property.website && <a href={/^https?:\/\//i.test(property.website) ? property.website : `https://${property.website}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground" title="Open website"><ExternalLink className="w-3 h-3" /></a>}
                     <WebsiteLookup propertyId={property.id} propertyName={property.name} address={formatAddress(property.address)} hasWebsite={!!property.website} onPick={url => inlineUpdateAsync("website", url)} /></span>
                   <span className={factPill} data-testid="property-field-competitor"><span className={factLabel}>Joint agent</span><InlineCompetitorAgent propertyId={id} competitorAgentId={(property as any).competitorAgentId} competitorAgent={property.competitorAgent} allCompanies={allCompanies} /></span>
+                  {/* AML for each open deal here: the deal's own AML box in a window. */}
+                  {!isClientViewer && amlDeals.slice(0, 4).map((d: any) => (
+                    <button key={d.id} type="button" className={`${factPill} hover:border-primary hover:text-foreground`} title={`AML and KYC for ${d.name || "the deal"}`}
+                      onClick={() => setAmlDeal({ id: d.id, name: d.name, dealRef: d.dealRef ?? d.deal_ref ?? null, status: d.status })} data-testid={`property-aml-${d.id}`}>
+                      <ShieldCheck className="w-3 h-3 text-muted-foreground" /><span className={factLabel}>AML</span>
+                      <span className="truncate max-w-[12rem]">{d.dealRef != null ? `#${d.dealRef}` : (d.name || "Deal")}</span>
+                    </button>
+                  ))}
                 </div>
               );
             })()}

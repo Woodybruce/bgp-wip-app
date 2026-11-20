@@ -46,6 +46,7 @@ import {
 } from "@/components/ui/popover";
 
 import { INVESTMENT_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+import { DealAmlDialog, type AmlDialogDeal } from "@/components/deal-aml-dialog";
 import { TrackerHeroThumb, NewAssetBrochureFlow, useTrackerHeroes, heroThumbUrl } from "@/components/tracker-hero-image";
 import { TRACKER_CLASSES, trackerClass, compareByClassThenUpload } from "@/lib/tracker-class";
 const STATUSES = INVESTMENT_STATUSES;
@@ -1437,6 +1438,8 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
   const agentContacts = useMemo(() => contacts.filter(c => c.contactType === "Agent"), [contacts]);
   const agentContactItems = useMemo(() => agentContacts.map(c => ({ id: c.id, name: c.companyName ? `${c.name} (${c.companyName})` : c.name })), [agentContacts]);
 
+  // The deal's AML box, opened when a deal moves to Solicitors.
+  const [amlDeal, setAmlDeal] = useState<AmlDialogDeal | null>(null);
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/investment-tracker", data),
     onSuccess: async (res: any) => {
@@ -1463,7 +1466,13 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
       invalidateDealCaches();
       const body = await res?.json?.().catch(() => null);
       const movedTo = vars?.data?.boardType as BoardType | undefined;
-      if (movedTo && BOARD_TYPES.includes(movedTo) && movedTo !== boardType) {
+      // At Solicitors the deal leaves the tracker for the rest of the app, and
+      // its AML starts: open the deal's AML box (Jack, 2026-11-20).
+      const atSolicitors = !!vars?.data?.status && legacyToCode(vars.data.status) === "SOL" && !!body?.dealId;
+      if (atSolicitors) {
+        toast({ title: "Moved to Solicitors", description: "Set up the AML for each party in the window." });
+        setAmlDeal({ id: body.dealId, name: body.assetName || null, status: "SOL" });
+      } else if (movedTo && BOARD_TYPES.includes(movedTo) && movedTo !== boardType) {
         setBoardType(movedTo);
         toast({ title: `Moved to ${movedTo}`, description: "The backing deal is now a " + (movedTo === "Sales" ? "Sale" : "Purchase") + "." });
       } else if (body?.ownerChanged) {
@@ -1741,10 +1750,19 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
 
   const bulkSetStatus = async (status: string) => {
     const ids = Array.from(selectedIds);
-    await Promise.all(ids.map(id => apiRequest("PATCH", `/api/investment-tracker/${id}`, { status }).catch(() => null)));
+    const replies = await Promise.all(ids.map(id => apiRequest("PATCH", `/api/investment-tracker/${id}`, { status }).then(r => r.json()).catch(() => null)));
     queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
     setSelectedIds(new Set());
-    toast({ title: `Updated ${ids.length} asset${ids.length === 1 ? "" : "s"} to ${status}` });
+    const atSol = legacyToCode(status) === "SOL" ? replies.filter((r: any) => r?.dealId) : [];
+    if (atSol.length === 1) {
+      toast({ title: "Moved to Solicitors", description: "Set up the AML for each party in the window." });
+      setAmlDeal({ id: atSol[0].dealId, name: atSol[0].assetName || null, status: "SOL" });
+    } else {
+      toast({
+        title: `Updated ${ids.length} asset${ids.length === 1 ? "" : "s"} to ${status}`,
+        description: atSol.length > 1 ? "Set up each deal's AML from its Parties & AML, or the AML pill on its property page." : undefined,
+      });
+    }
   };
 
   const statusSummary = useMemo(() => {
@@ -1925,6 +1943,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
     // left the list a window barely two cards tall.
     <div ref={setPageEl} className={`${present ? "p-3 space-y-2" : foldedTop ? "px-4 py-2 sm:px-6 space-y-2" : "p-4 sm:p-6 space-y-4"} flex flex-col ${present ? "h-full" : isMobile ? "" : "h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
       {brochureFor && <NewAssetBrochureFlow asset={brochureFor} onClose={() => setBrochureFor(null)} />}
+      <DealAmlDialog deal={amlDeal} reason="solicitors" onClose={() => setAmlDeal(null)} />
       {soldCompFor && <SoldCompDialog item={soldCompFor} onClose={() => setSoldCompFor(null)} />}
       {!soldCompFor && soldCompQueue.items[0] && (
         <SoldCompDialog
