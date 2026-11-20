@@ -3563,7 +3563,9 @@ screens: `client/src/components/deal-parties.tsx`. Tests:
 - **Screens**: the deal page's Parties card, under each party, has Signs as,
   Billed to and Ask, and what is still needed; Fill in or Change opens the
   party box (the company: a suggestion, Use, Find it at Companies House; Bill
-  to it in Xero; Who to ask: pick, or Add someone). The KYC card and the Kick
+  to it in Xero; since 20 November 2026 Who the AML checks need, the owners
+  with their contact details, see "People to check" below; Who to ask: pick,
+  or Add someone). The KYC card and the Kick
   off AML step show "Before the checks can start" per party
   (`PartyReadyToStart`). The deal form's billing entity boxes set the company
   that signs when a company filed under the party is picked or created
@@ -4050,6 +4052,39 @@ their sanctions result only". Do not re-litigate. Rules (pure):
   19 November 2026. Not run against Veriff or Microsoft from a build machine.
   Not built: adding a person by hand (an owner the register does not name),
   and asking each owner the source of funds.
+- **The party box names them and asks for their details** (Woody,
+  20 November 2026: "where it says who to ask it should really say these
+  owners need to AML and prompt for contact details at that stage", and
+  "make sure this form is consistant where dealks are added or converted").
+  The one party box (`DealPartyEditor` in `client/src/components/deal-parties.tsx`)
+  opens with **Who the AML checks need**, above Who to ask: the people to
+  check as the deal card reads them (`GET /api/aml/deal/:id/client-checks`,
+  `usePartyPeople`), each with their roles, how they own it, what is still
+  to do, and the email and mobile the CRM holds, or boxes to give them;
+  directors are listed with sanctions only. With the register not read yet
+  it offers **Read them now** (BGP's checks before asking, `POST
+  /api/kyc/deal/:id/prechecks`), and with no company that signs it says to
+  set one first. **Save** is `POST /api/deals/:id/parties/:role/owner { key,
+  email?, mobile? }` (BGP staff signed in as themselves): the person is the
+  one with that key among the party's people to check (never a typed
+  name), saved on the CRM contact under the brand that is them
+  (`ownerContactMatch`: the email, else the name the register's way, one
+  with an email first; blank fields only, and an email already held is
+  kept and named in the reply), else a new contact with a note saying why;
+  a `deal_audit_log` line (`aml_person_contact`). It does not change who to
+  ask: **Make them who to ask** does, through the party save. One line,
+  "<names> need AML checks: no email or mobile held for them yet. Add their
+  details" (`peopleToReach`: something owed, no link of their own, no
+  contact of that name with an email or mobile), opens the box from the
+  three places it is drawn: the deal page's Parties card (`DealPartyLines`),
+  the deal's AML box and the Kick off AML step after New Deal, Promote to
+  Solicitors and the Heads of Terms convert (`PartyReadyToStart`). Each
+  caller passes what the deal's AML status already says
+  (`partyAmlFacts` in `shared/deal-parties.ts`; the Parties card reads the
+  status the AML box on the same pill reads, one request): approved and in
+  date, Not required, or a letting under £10,000 a month draws no line and
+  asks for nothing (`partyAmlQuietWords`). Tests:
+  `server/deal-parties.test.ts`, `qa/regression/deal-parties-guards.test.mjs`.
 
 ## BGP's AML policy and risk assessment, Issue 2 (Woody, 2026-11-19)
 

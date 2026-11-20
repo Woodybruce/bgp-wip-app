@@ -79,8 +79,8 @@ import {
 import { PropertyFoldersPanel } from "@/pages/properties";
 import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { AIActivityCard, pickTouchDates } from "@/components/ai-activity-card";
-import { DealAmlStatusCard } from "@/components/deal-aml-status";
-import { DealPartyLines } from "@/components/deal-parties";
+import { DealAmlStatusCard, useDealAmlStatus } from "@/components/deal-aml-status";
+import { DealPartyLines, partyAmlFacts } from "@/components/deal-parties";
 import { JointAgencyNoteCard } from "@/components/joint-agency-aml";
 import { useIsLandsecView, DaysAtStage, NerFigure, BriefCheck } from "@/components/landsec/deal-clock";
 import { CompanyChip } from "@/components/company-chip";
@@ -991,6 +991,10 @@ function DealPartiesCard({ dealId, deal, names, isClientDeal, ddUser, dealBgpTea
   onCreate: (field: "landlordId" | "tenantId" | "vendorId" | "purchaserId", companyType: string, name: string) => Promise<void>;
 }) {
   const { data: companies = [] } = useQuery<CrmCompany[]>({ queryKey: ["/api/crm/companies"], enabled: !isClientDeal });
+  // The AML box on this same pill reads the deal's AML status; the party
+  // lines read the same answer (one request) to know who is approved, marked
+  // Not required, or on a letting that asks no one for anything.
+  const { data: amlStatus } = useDealAmlStatus(dealId, !isClientDeal);
   const id = dealId;
   const partiesInvestment = deal.dealType === "Sale" || deal.dealType === "Purchase";
   const companyOptions = (keep: (c: CrmCompany) => boolean, current: string | null | undefined) => {
@@ -1088,7 +1092,7 @@ function DealPartiesCard({ dealId, deal, names, isClientDeal, ddUser, dealBgpTea
                   />
                   {/* The company that signs, who is billed and who to ask
                       (BGP staff; this branch is never drawn for a client login). */}
-                  {slot.value && <DealPartyLines dealId={id} role={slot.role} />}
+                  {slot.value && <DealPartyLines dealId={id} role={slot.role} aml={partyAmlFacts(amlStatus, slot.value)} />}
                 </div>
               ))}
             </div>

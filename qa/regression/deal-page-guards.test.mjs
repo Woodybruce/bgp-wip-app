@@ -100,7 +100,15 @@ test('the conversation is the property\'s shared thread, cut to the deal', () =>
 
 test('the page: one frame, the AML card only in its own section, no whole lists to look up names', () => {
   assert.match(page, /<CompanyKindPage key=\{id\} testId="deal-page" sectionTestPrefix="deal-section" scrollOnPhone>/);
-  assert.doesNotMatch(page, /useDealAmlStatus/, 'reading the AML status starts the paid checks before asking: only the Parties & AML section reads it');
+  // Reading the AML status starts the paid checks before asking: only the
+  // Parties & AML section reads it, the AML card and (20 November 2026) the
+  // Parties card beside it, one request between them.
+  assert.equal((page.match(/useDealAmlStatus\(/g) || []).length, 1, 'one read of the AML status on the page');
+  const partiesCard = page.slice(page.indexOf('function DealPartiesCard('));
+  assert.match(partiesCard.slice(0, partiesCard.indexOf('\n}\n')), /useDealAmlStatus\(dealId, !isClientDeal\)/, 'only the Parties card reads it');
+  assert.equal((page.match(/<DealPartiesCard\b/g) || []).length, 1);
+  const partiesSection = page.slice(page.indexOf('const parties = ('), page.indexOf('<DealPartiesCard'));
+  assert.ok(partiesSection.length < 200, 'the Parties card is drawn only in the Parties & AML section');
   const top = page.slice(page.indexOf('export function DealDetail('), page.indexOf('function DealPartiesCard('));
   for (const list of ['"/api/crm/companies"', '"/api/crm/contacts"', '"/api/crm/properties"', '"/api/property-units"']) {
     assert.doesNotMatch(top, new RegExp(`useQuery<[^(]*\\(\\{\\s*queryKey: \\[${list.replace(/[/]/g, '\\/')}\\]`), `${list} is not downloaded on every deal page`);

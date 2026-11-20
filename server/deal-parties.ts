@@ -6,6 +6,9 @@
 //   PUT  /api/deals/:id/parties/:role            { companyId?, personId?, xero? }: set or clear (null) any
 //   POST /api/deals/:id/parties/:role/person     { name, email?, mobile?, jobTitle? }: find or add the
 //                                                person under the brand, and make them the one to ask
+//   POST /api/deals/:id/parties/:role/owner      { key, email?, mobile? }: save the contact details of
+//                                                one of the party's people to check (an owner the
+//                                                register names) to the CRM under the brand
 //
 // The company that signs is always one filed under the party's brand: the
 // deal saves refuse anything else (checkPartyCompanies, called by the deal
@@ -17,10 +20,12 @@
 
 import { Router, type Request, type Response } from "express";
 import {
-  DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, companyOffer, isDealPartyRole, newPartyPerson, partyGaps, personFill,
+  DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, companyOffer, isDealPartyRole, newPartyPerson, ownerContactMatch, partyGaps, personFill,
   sameCompaniesHouseNumber,
   type DealPartyCompany, type DealPartyPerson, type DealPartyRole, type DealPartyView,
 } from "@shared/deal-parties";
+import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
+import { kycPersonRoleWords } from "@shared/kyc-request";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -317,6 +322,69 @@ router.post("/api/deals/:id/parties/:role/person", async (req: Request, res: Res
     res.json({ ...(await loadDealParties(pool, deal.id)), personId: person.id, created: person.created });
   } catch (err: any) {
     res.status(err?.status || 500).json({ message: err?.message || "Could not add the person" });
+  }
+});
+
+// The contact details of someone the party's AML checks need (Woody,
+// 20 November 2026: "these owners need to AML and prompt for contact details
+// at that stage"). The person is named by their key on the party's people to
+// check (server/kyc-people.ts, read from the register), never by a name the
+// request types, so only someone the checks need is written. Saved on the
+// CRM contact under the brand that is them (by email, else by name: blank
+// fields filled, nothing overwritten), else a new one; the deal's person to
+// ask is not changed.
+router.post("/api/deals/:id/parties/:role/owner", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party" });
+    const key = text(req.body?.key).slice(0, 200);
+    if (!key) return res.status(400).json({ message: "Pick the person." });
+    const { pool } = await import("./db");
+    const deal = await readDeal(pool, String(req.params.id));
+    if (!deal) return res.status(404).json({ message: "Deal not found" });
+    const col = DEAL_PARTY_COLUMNS[role];
+    const brandId = text(deal[col.brand]);
+    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the deal first.` });
+    const brand = (await pool.query(`SELECT id, name, aml_subject_type FROM crm_companies WHERE id = $1`, [brandId])).rows[0];
+    if (!brand) return res.status(404).json({ message: "That party was not found." });
+    const kind = String(brand.aml_subject_type || "").toLowerCase() === "individual" ? "individual" as const : "company" as const;
+    const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
+    const people = await partyPeopleFor({ companyId: brandId, entityId: text(deal[col.company]) || null, kind }, await dealPeopleRequests(deal.id));
+    const who = people?.people.find(p => p.key === key);
+    if (!who) return res.status(400).json({ message: "That person is not one of the people this party's checks need." });
+    const name = personDisplayName(who.name);
+    const typed = newPartyPerson({ name, email: req.body?.email, mobile: req.body?.mobile });
+    if ("problem" in typed) return res.status(400).json({ message: typed.problem });
+
+    const contacts = (await pool.query(`SELECT id, name, email, phone_mobile, role FROM crm_contacts WHERE company_id = $1`, [brandId])).rows;
+    const held = ownerContactMatch(who.name, typed.person.email, contacts.map((c: any) => ({ ...c, id: String(c.id), name: text(c.name) })), personNamesMatch);
+    let contactId: string;
+    let created = false;
+    let kept: string | null = null;
+    if (held) {
+      const fill = personFill(held, typed.person);
+      const keys = Object.keys(fill);
+      if (keys.length) {
+        await pool.query(`UPDATE crm_contacts SET ${keys.map((k, i) => `${k} = $${i + 2}`).join(", ")}, updated_at = now() WHERE id = $1`, [held.id, ...keys.map(k => fill[k])]);
+      }
+      // An email already held is never overwritten: the reply says which was kept.
+      if (typed.person.email && text(held.email) && text(held.email).toLowerCase() !== typed.person.email) kept = text(held.email);
+      contactId = held.id;
+    } else {
+      // The note says what they are to the company the checks are about.
+      const signing = text(deal[col.company]) ? (await pool.query(`SELECT name FROM crm_trading_entities WHERE id = $1`, [deal[col.company]])).rows[0] : null;
+      const roleWords = kycPersonRoleWords(who.roles, text(signing?.name) || text(brand.name));
+      const made = await findOrAddPartyPerson(pool, brandId, typed.person, `Added by ${me.name || "BGP"} for the AML checks on ${deal.name}: ${roleWords}, from Companies House.`);
+      contactId = made.id;
+      created = made.created;
+    }
+    await audit(pool, deal.id, "aml_person_contact", null, contactId,
+      `Contact details for ${name} saved for the ${role}'s AML checks${created ? " (added to the CRM)" : ""}`, me);
+    res.json({ ...(await loadDealParties(pool, deal.id)), contactId, created, kept });
+  } catch (err: any) {
+    res.status(err?.status || 500).json({ message: err?.message || "Could not save their details" });
   }
 });
 

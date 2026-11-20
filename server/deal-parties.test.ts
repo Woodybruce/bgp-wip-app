@@ -7,9 +7,11 @@ import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_ROLES, companyOffer, isDealPartyRole, newPartyPerson, partyGaps, personFill, sameCompaniesHouseNumber,
+  DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_ROLES, companyOffer, isDealPartyRole, newPartyPerson, ownerContactMatch, partyAmlFacts,
+  partyAmlQuietWords, partyGaps, peopleToReach, personFill, sameCompaniesHouseNumber,
   type DealPartyCompany,
 } from "../shared/deal-parties";
+import { personNamesMatch } from "../shared/kyc-prechecks";
 import { PartyCompanyRefusal, checkPartyCompanies, findOrAddPartyPerson } from "./deal-parties";
 
 type Call = { sql: string; params: unknown[] };
@@ -155,4 +157,69 @@ test("a person typed for a party is found by email under the brand, else added",
 
   // An unknown brand is refused.
   await assert.rejects(findOrAddPartyPerson(fakeDb(), "nope", { name: "Sam", email: "s@x.com", mobile: null, jobTitle: null }, "n"), PartyCompanyRefusal);
+});
+
+// Woody, 20 November 2026: "here where it says who to ask it should really
+// say these owners need to AML and prompt for contact details at that stage".
+test("an owner's details go on the contact that is them: by email, else by name", () => {
+  const contacts = [
+    { id: "c1", name: "Jane Smith", email: null },
+    { id: "c2", name: "Jane Anne Smith", email: "jane@acme.co.uk" },
+    { id: "c3", name: "Jane", email: "jane.other@acme.co.uk" },
+    { id: "c4", name: "Robert Brown", email: "rob@acme.co.uk" },
+  ];
+  // The register's spelling ("SMITH, Jane Anne") finds the person under any of theirs, one with an email first.
+  assert.equal(ownerContactMatch("SMITH, Jane Anne", null, contacts, personNamesMatch)?.id, "c2");
+  // An email typed finds whoever holds it, whatever the name says.
+  assert.equal(ownerContactMatch("SMITH, Jane Anne", "Rob@Acme.co.uk", contacts, personNamesMatch)?.id, "c4");
+  // An email nobody holds falls back to the name.
+  assert.equal(ownerContactMatch("SMITH, Jane Anne", "new@acme.co.uk", contacts, personNamesMatch)?.id, "c2");
+  // A first name alone is not them; nobody of that name means a new contact.
+  assert.equal(ownerContactMatch("JONES, Jane", null, contacts, personNamesMatch), null);
+  assert.equal(ownerContactMatch("SMITH, Jane", null, [{ id: "x", name: "Jane", email: "j@x.com" }], personNamesMatch), null);
+});
+
+test("the people still to reach: something owed, no link of their own, no email or mobile held", () => {
+  const person = (name: string, outstanding: string[], own: unknown = null) => ({ name, outstanding, own });
+  const contacts = [
+    { id: "a", name: "Huseyn Mirhadiyev", email: "h@x.az", mobile: null, jobTitle: null },
+    { id: "b", name: "David Bruce", email: null, mobile: null, jobTitle: null },
+    { id: "c", name: "Mary Lee", email: null, mobile: "07700900123", jobTitle: null },
+  ];
+  const people = [
+    person("MIRHADIYEV, Huseyn", ["identity check", "proof of address"]),   // email held
+    person("BRUCE, David", ["identity check"]),                              // contact with nothing on it
+    person("LEE, Mary", ["proof of address"]),                               // a mobile is enough
+    person("KHAN, Omar", ["identity check"]),                                // nobody in the CRM
+    person("PATEL, Asha", ["identity check"], { token: "t", ref: "7MJEGT" }), // has their own link
+    person("GREEN, Tom", []),                                                 // nothing owed
+  ];
+  assert.deepEqual(peopleToReach(people, contacts, personNamesMatch).map(p => p.name), ["BRUCE, David", "KHAN, Omar"]);
+  assert.deepEqual(peopleToReach([], contacts, personNamesMatch), []);
+});
+
+test("a party approved, Not required, or on a letting under £10,000 a month asks nobody for details", () => {
+  const status = {
+    regime: { regime: "full" },
+    counterparties: [
+      { id: "ll", isApproved: true, isExpired: false },
+      { id: "tt", isApproved: false, isExpired: false },
+      { id: "old", isApproved: true, isExpired: true },
+      { id: "nr", isApproved: false, isExpired: false, notRequired: { reasonWords: "Joint agent's client" } },
+    ],
+  };
+  assert.deepEqual(partyAmlFacts(status, "ll"), { done: "approved", sanctionsOnly: false });
+  assert.deepEqual(partyAmlFacts(status, "tt"), { done: null, sanctionsOnly: false });
+  assert.deepEqual(partyAmlFacts(status, "old"), { done: null, sanctionsOnly: false });
+  assert.deepEqual(partyAmlFacts(status, "nr"), { done: "not_required", sanctionsOnly: false });
+  assert.deepEqual(partyAmlFacts({ ...status, regime: { regime: "sanctions_only" } }, "tt"), { done: null, sanctionsOnly: true });
+  // Not read yet: nothing is known, so nothing is drawn.
+  assert.equal(partyAmlFacts(undefined, "tt"), null);
+  assert.equal(partyAmlFacts(status, null), null);
+
+  assert.match(partyAmlQuietWords({ done: "approved", sanctionsOnly: false })!, /^Approved/);
+  assert.match(partyAmlQuietWords({ done: "not_required", sanctionsOnly: true })!, /Not required/);
+  assert.match(partyAmlQuietWords({ done: null, sanctionsOnly: true })!, /£10,000 a month/);
+  assert.equal(partyAmlQuietWords({ done: null, sanctionsOnly: false }), null);
+  assert.equal(partyAmlQuietWords(null), null);
 });

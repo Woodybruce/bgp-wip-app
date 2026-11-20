@@ -5,9 +5,9 @@
 // BGP staff only: the server (server/deal-parties.ts) refuses anyone else,
 // and the callers draw these only for staff. The rules are
 // shared/deal-parties.ts. Every change saves straight away.
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Building2, CheckCircle2, Loader2, Plus, UserRound } from "lucide-react";
+import { Building2, CheckCircle2, Loader2, Plus, ShieldCheck, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -18,7 +18,10 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { CreateBillingEntityDialog, type SavedCompany } from "@/components/billing-entity-create";
 import { leaseCompaniesKey } from "@/components/lease-company-picker";
-import { OFFER_WORDS, SIGNING_COMPANY_WORDS, type DealPartyRole, type DealPartyView } from "@shared/deal-parties";
+import { useClientChecks } from "@/components/kyc-client-checks";
+import { OFFER_WORDS, SIGNING_COMPANY_WORDS, partyAmlFacts, partyAmlQuietWords, peopleToReach, type DealPartyRole, type DealPartyView, type PartyAmlFacts } from "@shared/deal-parties";
+import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
+import { PARTY_PEOPLE_BASIS_WORDS, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
 
 interface DealParties { deal: { id: string; name: string }; parties: DealPartyView[] }
 
@@ -103,6 +106,157 @@ export function PartyCompanyChoice({ dealId, party, onChoose }: { dealId: string
   );
 }
 
+// What the deal's AML status says about a party (approved, Not required, a
+// letting that asks no one for anything): shared/deal-parties.ts. The callers
+// hold the status and pass it down.
+export { partyAmlFacts, type PartyAmlFacts };
+const quietWords = partyAmlQuietWords;
+
+const joinNames = (names: string[]) => names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
+// The people a party's AML checks need, as the deal card's People to check
+// reads them (shared/kyc-people.ts): null while they cannot be known (a
+// private individual, no company that signs, the client checks off).
+function usePartyPeople(dealId: string, party: DealPartyView | null | undefined) {
+  const wanted = !!party && party.brand.kind === "company" && !!party.company;
+  const checks = useClientChecks(dealId, wanted);
+  const people: PartyPeople | null = wanted ? checks.data?.people?.[party!.brand.id] ?? null : null;
+  return { people, loading: wanted && checks.isLoading, refetch: checks.refetch };
+}
+
+const roleWords = (p: KycPartyPerson) =>
+  [p.roles.includes("owner") ? "Owner" : null, p.roles.includes("acting") ? "dealing with us" : null].filter(Boolean).join(", ") || "Director";
+
+// Names the people still to reach, with the box a press away (the Kick off
+// AML step, the AML box, the Parties card): Woody, 20 November 2026, "these
+// owners need to AML and prompt for contact details at that stage". Drawn
+// only once the deal's AML status is read, and never for a party approved,
+// marked Not required, or on a letting that asks no one for anything.
+function PeopleToReachLine({ party, people, aml, onOpen }: { party: DealPartyView; people: PartyPeople | null; aml: PartyAmlFacts | null | undefined; onOpen: () => void }) {
+  if (!aml || quietWords(aml) || !people || people.basis === "individual") return null;
+  if (people.basis === "not_read") {
+    return (
+      <p className="text-[11px] text-muted-foreground" data-testid={`deal-party-people-unread-${party.role}`}>
+        The owners of {party.company?.name} are not read from Companies House yet. <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={onOpen}>Read them</button>
+      </p>
+    );
+  }
+  const missing = peopleToReach(people.people, party.people, personNamesMatch);
+  if (!missing.length) return null;
+  return (
+    <p className="text-[11px] text-amber-700 dark:text-amber-400" data-testid={`deal-party-people-to-reach-${party.role}`}>
+      {joinNames(missing.map(p => personDisplayName(p.name)))} {missing.length === 1 ? "needs" : "need"} AML checks: no email or mobile held for them yet. <button type="button" className="underline underline-offset-2" onClick={onOpen} data-testid={`deal-party-people-add-${party.role}`}>Add their details</button>
+    </p>
+  );
+}
+
+// One person the checks need, in the party box: their contact details as the
+// CRM holds them under the party, or a place to give them (saved to the CRM,
+// blank fields only, by POST /api/deals/:id/parties/:role/owner).
+function PersonToReach({ dealId, party, person, busy, quiet, onAsk }: { dealId: string; party: DealPartyView; person: KycPartyPerson; busy: boolean; quiet: boolean; onAsk: (contactId: string) => void }) {
+  const { toast } = useToast();
+  const contact = party.people.find(c => personNamesMatch(person.name, c.name) && (c.email || c.mobile)) || null;
+  const [email, setEmail] = useState(contact?.email || "");
+  const [mobile, setMobile] = useState(contact?.mobile || "");
+  const asked = !!party.person && personNamesMatch(person.name, party.person.name);
+  const name = personDisplayName(person.name);
+  const save = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${party.role}/owner`, {
+      key: person.key, email: email.trim() || null, mobile: mobile.trim() || null,
+    })).json(),
+    onSuccess: (r: any) => {
+      refresh(dealId, { deal: r.deal, parties: r.parties });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      toast(r.kept
+        ? { title: `Kept the email already held for ${name}`, description: `The CRM has ${r.kept}; any blank details were filled in.` }
+        : { title: r.created ? "Added to the CRM" : "Saved to the CRM", description: `${name}'s details are under ${party.brand.name}.` });
+    },
+    onError: (e) => toast({ title: "Not saved", description: plain(e), variant: "destructive" }),
+  });
+  const needs = !quiet && person.outstanding.length > 0 && !person.own;
+  return (
+    <li className="rounded-md border px-2.5 py-2 text-xs space-y-1" data-testid={`deal-party-check-person-${person.key}`}>
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="text-sm font-medium">{name}</span>
+        <span className="text-muted-foreground">{roleWords(person)}</span>
+        {asked && <Badge variant="outline" className="text-[10px]">Who to ask</Badge>}
+      </div>
+      {person.ownerDetail && <div className="text-muted-foreground">{person.ownerDetail}</div>}
+      {!quiet && (
+        <div className="text-muted-foreground">
+          {person.outstanding.length ? `Still to do: ${person.outstanding.join(" and ")}` : "Checks done"}
+          {person.own ? ` · has their own link (${person.own.ref})` : ""}
+        </div>
+      )}
+      {contact?.email ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="text-foreground">{[contact.email, contact.mobile].filter(Boolean).join(" · ")}</span>
+          {!asked && <button type="button" className="underline underline-offset-2 text-muted-foreground hover:text-foreground" disabled={busy} onClick={() => onAsk(contact.id)} data-testid={`deal-party-ask-${person.key}`}>Make them who to ask</button>}
+        </div>
+      ) : needs || (contact && !quiet) ? (
+        <div className="grid gap-1.5 sm:grid-cols-[minmax(0,1fr)_9rem_auto] sm:items-center">
+          <Input type="email" className="h-8 text-xs" placeholder="Their email" value={email} onChange={e => setEmail(e.target.value)} data-testid={`input-check-person-email-${person.key}`} />
+          <Input className="h-8 text-xs" placeholder="Mobile" value={mobile} onChange={e => setMobile(e.target.value)} data-testid={`input-check-person-mobile-${person.key}`} />
+          <Button type="button" size="sm" className="h-8 text-xs" disabled={busy || save.isPending || (!email.trim() && !mobile.trim())} onClick={() => save.mutate()} data-testid={`button-check-person-save-${person.key}`}>
+            {save.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Save
+          </Button>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+// The people the party's checks need, at the top of Who to ask.
+function PartyPeopleToCheck({ dealId, party, busy, aml, onAsk }: { dealId: string; party: DealPartyView; busy: boolean; aml: PartyAmlFacts | null | undefined; onAsk: (contactId: string) => void }) {
+  const { toast } = useToast();
+  const { people, loading, refetch } = usePartyPeople(dealId, party);
+  const [reading, setReading] = useState(false);
+  const read = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/kyc/deal/${dealId}/prechecks`, { companyId: party.brand.id })).json(),
+    onSuccess: () => setReading(true),
+    onError: (e) => toast({ title: "Not started", description: plain(e), variant: "destructive" }),
+  });
+  // While Companies House is read, ask again every few seconds (for up to two minutes).
+  useEffect(() => {
+    if (!reading) return;
+    if (people && people.basis !== "not_read") { setReading(false); return; }
+    const tick = setInterval(() => { void refetch(); }, 4000);
+    const stop = setTimeout(() => setReading(false), 120_000);
+    return () => { clearInterval(tick); clearTimeout(stop); };
+  }, [reading, people?.basis]);
+  if (party.brand.kind === "individual") return null;
+  if (!party.company) {
+    return <p className="text-xs text-muted-foreground" data-testid="deal-party-people-need-company">Set the company that signs first: the people its checks need are read from Companies House.</p>;
+  }
+  if (loading) return <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" />Finding who the checks need…</p>;
+  if (!people) return null;
+  if (people.basis === "not_read") {
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="deal-party-people-unread">
+        <span>The owners of {party.company.name} are read from Companies House by BGP's checks before asking.</span>
+        <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={read.isPending || reading} onClick={() => read.mutate()} data-testid="deal-party-people-read">
+          {read.isPending || reading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}{reading ? "Reading Companies House…" : "Read them now"}
+        </Button>
+      </div>
+    );
+  }
+  const quiet = quietWords(aml);
+  return (
+    <div className="space-y-1.5" data-testid="deal-party-people-to-check">
+      <p className="text-xs text-muted-foreground" data-testid={quiet ? "deal-party-people-quiet" : undefined}>
+        {quiet
+          ?? (people.basis === "owners"
+            ? `Companies House names these people for ${party.company.name}. Each does an identity check and sends a proof of address through a link of their own: give each one's email (or a mobile) here.`
+            : PARTY_PEOPLE_BASIS_WORDS[people.basis])}
+      </p>
+      {people.people.length > 0 && <ul className="space-y-1.5">{people.people.map(p => <PersonToReach key={p.key} dealId={dealId} party={party} person={p} busy={busy} quiet={!!quiet} onAsk={onAsk} />)}</ul>}
+      {people.directors.length > 0 && (
+        <p className="text-[11px] text-muted-foreground">Directors, no ID needed (sanctions checks only): {people.directors.map(d => personDisplayName(d.name)).join(", ")}.</p>
+      )}
+    </div>
+  );
+}
+
 // One labelled line of a party.
 function PartyRow({ label, children, testId }: { label: string; children: ReactNode; testId?: string }) {
   return (
@@ -120,10 +274,11 @@ function PartyRow({ label, children, testId }: { label: string; children: ReactN
 // under it, each on its own labelled line: the company that signs (never
 // the brand's number standing in for it), who is billed in Xero, and who
 // BGP asks for the checks.
-export function DealPartyLines({ dealId, role }: { dealId: string; role: DealPartyRole }) {
+export function DealPartyLines({ dealId, role, aml }: { dealId: string; role: DealPartyRole; aml?: PartyAmlFacts | null }) {
   const { data } = useDealParties(dealId);
   const [open, setOpen] = useState(false);
   const party = data?.parties.find(p => p.role === role);
+  const { people } = usePartyPeople(dealId, party);
   if (!party) return null;
   return (
     <div className="space-y-2" data-testid={`deal-party-lines-${role}`}>
@@ -151,11 +306,12 @@ export function DealPartyLines({ dealId, role }: { dealId: string; role: DealPar
             : <span className="text-amber-700 dark:text-amber-400">Nobody set, needed for the client checks</span>}
         </PartyRow>
       </dl>
+      <PeopleToReachLine party={party} people={people} aml={aml} onOpen={() => setOpen(true)} />
       {!party.company && party.brand.kind === "company" && <PartyCompanyChoice dealId={dealId} party={party} onChoose={() => setOpen(true)} />}
       <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid={`deal-party-edit-${role}`}>
         {party.gaps.length ? "Fill in" : "Change"}
       </Button>
-      {open && <DealPartyEditor dealId={dealId} role={role} onClose={() => setOpen(false)} />}
+      {open && <DealPartyEditor dealId={dealId} role={role} aml={aml} onClose={() => setOpen(false)} />}
     </div>
   );
 }
@@ -163,13 +319,15 @@ export function DealPartyLines({ dealId, role }: { dealId: string; role: DealPar
 // "Before the checks can start" in the AML box and the Kick off AML step:
 // what is missing for one party (by its brand), filled in place, with the
 // company that signs a press away where the app can offer one.
-export function PartyReadyToStart({ dealId, companyId }: { dealId: string; companyId: string }) {
+export function PartyReadyToStart({ dealId, companyId, aml }: { dealId: string; companyId: string; aml?: PartyAmlFacts | null }) {
   const { data } = useDealParties(dealId);
   const [open, setOpen] = useState(false);
   const party = data?.parties.find(p => p.brand.id === companyId);
+  const { people } = usePartyPeople(dealId, party);
   if (!party) return null;
   return (
     <>
+      <PeopleToReachLine party={party} people={people} aml={aml} onOpen={() => setOpen(true)} />
       {party.gaps.length > 0 ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-950 space-y-1.5 dark:bg-amber-950/20 dark:text-amber-100" data-testid={`kyc-ready-${companyId}`}>
           <div className="font-semibold">Before the checks can start</div>
@@ -192,12 +350,12 @@ export function PartyReadyToStart({ dealId, companyId }: { dealId: string; compa
           <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setOpen(true)} data-testid={`kyc-ready-change-${companyId}`}>Change</button>
         </p>
       )}
-      {open && <DealPartyEditor dealId={dealId} role={party.role} onClose={() => setOpen(false)} />}
+      {open && <DealPartyEditor dealId={dealId} role={party.role} aml={aml} onClose={() => setOpen(false)} />}
     </>
   );
 }
 
-export function DealPartyEditor({ dealId, role, onClose }: { dealId: string; role: DealPartyRole; onClose: () => void }) {
+export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string; role: DealPartyRole; aml?: PartyAmlFacts | null; onClose: () => void }) {
   const { toast } = useToast();
   const { data, isLoading, error } = useDealParties(dealId);
   const party = data?.parties.find(p => p.role === role) || null;
@@ -320,9 +478,20 @@ export function DealPartyEditor({ dealId, role, onClose }: { dealId: string; rol
               )}
             </section>
 
+            {party.brand.kind === "company" && (
+              <section className="space-y-2" data-testid="deal-party-people-section">
+                <h4 className="flex items-center gap-1.5 font-semibold"><ShieldCheck className="w-4 h-4 text-muted-foreground" />Who the AML checks need</h4>
+                <PartyPeopleToCheck dealId={dealId} party={party} busy={busy} aml={aml} onAsk={(id) => save.mutate({ personId: id })} />
+              </section>
+            )}
+
             <section className="space-y-2" data-testid="deal-party-person-section">
               <h4 className="flex items-center gap-1.5 font-semibold"><UserRound className="w-4 h-4 text-muted-foreground" />Who to ask</h4>
-              <p className="text-xs text-muted-foreground">The client checks go to them, and they are named on a KYC4U request.</p>
+              <p className="text-xs text-muted-foreground">
+                {party.brand.kind === "company"
+                  ? "The person dealing with us for the company, often one of the people above: the client checks go to them first, and they are named on a KYC4U request."
+                  : "The client checks go to them, and they are named on a KYC4U request."}
+              </p>
               {party.person && (
                 <div className="rounded-md border px-2.5 py-2 text-xs" data-testid="deal-party-person-current">
                   <div className="font-medium">{party.person.name}{party.person.jobTitle ? <span className="font-normal text-muted-foreground"> · {party.person.jobTitle}</span> : null}</div>

@@ -6,7 +6,7 @@ import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
 import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { ClientChecksForParty, SendClientChecksButton } from "@/components/kyc-client-checks";
-import { PartyReadyToStart, useDealParties } from "@/components/deal-parties";
+import { PartyReadyToStart, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
 import { FLAG_REVIEW_COMMENT_MIN, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
@@ -531,7 +531,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
           {data.counterparties.map(cp => (
             <div key={cp.id} className="space-y-2">
               <PartyNotRequiredBox cp={cp} />
-              {staffView && !(cp.isApproved && !cp.isExpired) && !cp.notRequired && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
+              {staffView && !(cp.isApproved && !cp.isExpired) && !cp.notRequired && <PartyReadyToStart dealId={dealId} companyId={cp.id} aml={partyAmlFacts(data, cp.id)} />}
               <PartyCompanyFacts data={data} companyId={cp.id} />
               <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
               {!cp.notRequired && <PartyLevel data={data} companyId={cp.id} />}
@@ -619,7 +619,7 @@ export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; deal
                 <div className="mt-2 space-y-2">
                   {/* What the checks still need is moot once the party is approved. */}
                   <PartyNotRequiredBox cp={cp} />
-                  {staffView && status !== "approved" && status !== "not_required" && <PartyReadyToStart dealId={dealId} companyId={cp.id} />}
+                  {staffView && status !== "approved" && status !== "not_required" && <PartyReadyToStart dealId={dealId} companyId={cp.id} aml={partyAmlFacts(data, cp.id)} />}
                   <PartyCompanyFacts data={data} companyId={cp.id} />
                   <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
                   {status !== "not_required" && <PartyLevel data={data} companyId={cp.id} />}

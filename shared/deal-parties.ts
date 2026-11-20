@@ -165,3 +165,65 @@ export function personFill(held: { email: string | null; phone_mobile: string | 
   if (!text(held.role) && typed.jobTitle) fill.role = typed.jobTitle;
   return fill;
 }
+
+/**
+ * The CRM contact an owner's details are saved on (Woody, 20 November 2026:
+ * "these owners need to AML and prompt for contact details at that stage"):
+ * the one filed under the party with the email typed, else the one whose name
+ * is theirs (the register's "SURNAME, Forenames" read the way the AML checks
+ * read it, `namesMatch`), one with an email first; null to add them.
+ */
+export function ownerContactMatch<T extends { id: string; name: string; email: string | null }>(
+  name: string, email: string | null, contacts: readonly T[], namesMatch: (a: string, b: string) => boolean,
+): T | null {
+  const want = text(email).toLowerCase();
+  if (want) {
+    const byEmail = contacts.find(c => text(c.email).toLowerCase() === want);
+    if (byEmail) return byEmail;
+  }
+  const byName = contacts.filter(c => namesMatch(name, c.name));
+  return byName.find(c => text(c.email)) || byName[0] || null;
+}
+
+/**
+ * The people a party's checks need who cannot be reached yet: something still
+ * owed, no link of their own, and no contact filed under the party with their
+ * name and an email or mobile. The party box asks for their details; the Kick
+ * off AML step and the Parties card name them.
+ */
+export function peopleToReach<P extends { name: string; outstanding: readonly string[]; own: unknown }>(
+  people: readonly P[], contacts: readonly DealPartyPerson[], namesMatch: (a: string, b: string) => boolean,
+): P[] {
+  return people.filter(p => p.outstanding.length > 0 && !p.own && !contacts.some(c => namesMatch(p.name, c.name) && (text(c.email) || text(c.mobile))));
+}
+
+/**
+ * What the deal's AML status (GET /api/kyc/deal/:id/status) already says
+ * about a party: approved and in date, or marked Not required, asks nothing
+ * more of anyone; a letting under £10,000 a month asks no one for anything
+ * (BGP's AML policy A). null while the status is not read.
+ */
+export interface PartyAmlFacts { done: "approved" | "not_required" | null; sanctionsOnly: boolean }
+
+export function partyAmlFacts(
+  status: { regime?: { regime: string } | null; counterparties: ReadonlyArray<{ id: string; isApproved: boolean; isExpired: boolean; notRequired?: unknown }> } | null | undefined,
+  companyId: string | null | undefined,
+): PartyAmlFacts | null {
+  if (!status || !companyId) return null;
+  const cp = status.counterparties.find(c => c.id === companyId);
+  return {
+    done: cp?.notRequired ? "not_required" : cp && cp.isApproved && !cp.isExpired ? "approved" : null,
+    sanctionsOnly: status.regime?.regime === "sanctions_only",
+  };
+}
+
+const PARTY_AML_QUIET_WORDS = {
+  approved: "Approved for AML: nothing more is needed from these people.",
+  not_required: "Marked Not required: no checks are needed from these people.",
+  sanctions_only: "A letting under £10,000 a month: sanctions checks only (BGP's AML policy A), so nobody is asked for anything.",
+} as const;
+
+/** Why nobody is asked for details on this party, or null when they are. */
+export function partyAmlQuietWords(aml: PartyAmlFacts | null | undefined): string | null {
+  return aml?.done ? PARTY_AML_QUIET_WORDS[aml.done] : aml?.sanctionsOnly ? PARTY_AML_QUIET_WORDS.sanctions_only : null;
+}
