@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { CreateBillingEntityDialog, type SavedCompany } from "@/components/billing-entity-create";
 import { leaseCompaniesKey } from "@/components/lease-company-picker";
-import { useClientChecks } from "@/components/kyc-client-checks";
+import { AddPersonButton, useClientChecks } from "@/components/kyc-client-checks";
 import { OFFER_WORDS, OWN_NAME_WORDS, SIGNING_COMPANY_WORDS, partyAmlFacts, partyAmlQuietWords, peopleToReach, type DealPartyBilling, type DealPartyPayer, type DealPartyRole, type DealPartyView, type PartyAmlFacts } from "@shared/deal-parties";
 import { PAYER_NOTE_MIN, PAYER_RELATIONSHIPS } from "@shared/deal-billing";
 import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
@@ -144,6 +144,25 @@ export function PartyCompanyChoice({ dealId, party, onChoose }: { dealId: string
 export { partyAmlFacts, type PartyAmlFacts };
 const quietWords = partyAmlQuietWords;
 
+// More than one private individual on one side (Jack, 20 November 2026): who
+// is named alongside them, and Add another person (their own checks).
+function IndividualSidePeople({ dealId, companyId }: { dealId: string; companyId: string }) {
+  const { data } = useClientChecks(dealId, true);
+  const party = data?.parties.find(p => p.companyId === companyId) || null;
+  if (!data || !party) return null;
+  const others = (data.people?.[companyId]?.people || []).filter(p => p.roles.includes("joint"));
+  return (
+    <div className="space-y-1 pt-1" data-testid="deal-party-individual-people">
+      <p className="text-xs text-muted-foreground">
+        {others.length
+          ? <>Also on this side, each with their own checks: {others.map(p => p.name).join(", ")}. Their progress is under People in the AML box.</>
+          : <>More than one person buying, selling or renting together? Add each of them: they get their own checks.</>}
+      </p>
+      <AddPersonButton dealId={dealId} data={data} party={party} />
+    </div>
+  );
+}
+
 const joinNames = (names: string[]) => names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 
 // The people a party's AML checks need, as the deal card's People to check
@@ -157,7 +176,7 @@ function usePartyPeople(dealId: string, party: DealPartyView | null | undefined)
 }
 
 const roleWords = (p: KycPartyPerson) =>
-  [p.roles.includes("owner") ? "Owner" : null, p.roles.includes("acting") ? "dealing with us" : null].filter(Boolean).join(", ") || "Director";
+  [p.roles.includes("owner") ? "Owner" : null, p.roles.includes("acting") ? "dealing with us" : null, p.roles.includes("joint") ? "alongside them" : null].filter(Boolean).join(", ") || "Director";
 
 // Names the people still to reach, with the box a press away (the Kick off
 // AML step, the AML box, the Parties card): Woody, 20 November 2026, "these
@@ -678,6 +697,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                     onClick={() => markIndividual.mutate(false)} data-testid="deal-party-unmark-individual">
                     {markIndividual.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Not a private individual? Undo
                   </Button>
+                  <IndividualSidePeople dealId={dealId} companyId={party.brand.id} />
                 </div>
               ) : (
                 <>

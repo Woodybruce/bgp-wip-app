@@ -161,7 +161,7 @@ export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
   listed: "Listed on a regulated market: no owners to identify (MLR 2017 reg 28(5)). The person dealing with us still does their own check.",
   no_owners: "The register names no person who owns or controls the company. Ask the client who does; the person dealing with us still does their own check.",
   not_read: "BGP's checks before asking have not read the register yet, so the owners are not known. The person dealing with us does their own check.",
-  individual: "A private individual: their own request covers them.",
+  individual: "Private individuals: each person named on the deal does an identity check and sends a proof of address. When more than one person is buying, selling or renting together, add each of them.",
   owners_abroad: "A company registered outside the UK owns or controls it, so Companies House cannot show the people behind it. The client is asked for a structure chart up to the people, and each of them then does their own check.",
 };
 
@@ -178,8 +178,9 @@ interface Draft {
 }
 
 export function partyPeople(input: PartyPeopleInput): PartyPeople {
-  if (input.kind === "individual") return { basis: "individual", people: [], directors: [], loose: [], outstanding: [] };
-  const ch = input.precheck?.companiesHouse || null;
+  // A private individual (Jack, 20 November 2026): the person asked and anyone
+  // added alongside them, each with their own checks. No register is read.
+  const ch = input.kind === "individual" ? null : input.precheck?.companiesHouse || null;
   const drafts: Draft[] = [];
   const add = (raw: string, role: KycPersonRole, extra: { detail?: string; dob?: Dob; register?: boolean } = {}) => {
     const name = String(raw || "").trim();
@@ -226,7 +227,7 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
 
   const people: KycPartyPerson[] = drafts.map(d => {
     const name = personDisplayName(d.name);
-    const roles = (["owner", "acting", "director"] as const).filter(r => d.roles.has(r));
+    const roles = (["owner", "acting", "joint", "director"] as const).filter(r => d.roles.has(r));
     // Their own requests: a cancelled one still holds what was done on it (a
     // check passed or a file sent is evidence), but is no longer their link.
     const own = (r: PeopleRequest) => r.companyId === input.companyId
@@ -301,7 +302,7 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     .map(r => ({ ref: r.ref, files: r.files.filter(f => f.docKey === "owner_ids").length, names: r.ownerNames.map(personDisplayName) }))
     .filter(l => l.files > 0);
   const abroad = ownersAbroadOf(ch);
-  const basis: PartyPeopleBasis = !ch ? "not_read" : ch.listing ? "listed" : people.some(p => p.roles.includes("owner")) ? "owners" : abroad.length ? "owners_abroad" : "no_owners";
+  const basis: PartyPeopleBasis = input.kind === "individual" ? "individual" : !ch ? "not_read" : ch.listing ? "listed" : people.some(p => p.roles.includes("owner")) ? "owners" : abroad.length ? "owners_abroad" : "no_owners";
   return {
     basis, people, directors, loose,
     outstanding: [

@@ -15,7 +15,9 @@ export type KycPartyKind = "individual" | "company";
 // their own Veriff link and a proof-of-address upload; the directors shown
 // with their sanctions result only"). Set on the request when it is for one
 // of the people a company's checks are about, not for the company itself.
-export type KycPersonRole = "owner" | "acting" | "director";
+// "joint": someone named on the deal alongside a private individual (two
+// people buying together before any company is set up; Jack, 20 November 2026).
+export type KycPersonRole = "owner" | "acting" | "director" | "joint";
 export interface KycRequestPerson {
   key: string;
   name: string;
@@ -23,8 +25,11 @@ export interface KycRequestPerson {
   // How they own or control the company, as the register gives it.
   detail?: string | null;
 }
+const withoutPrivateMark = (name: string) => name.replace(/\s*\((private|private client|individual)\)\s*$/i, "").trim() || name;
 export const kycPersonRoleWords = (roles: KycPersonRole[], partyName: string): string =>
-  roles.includes("owner") ? `an owner of ${partyName}` : roles.includes("acting") ? `the person dealing with us for ${partyName}` : `a director of ${partyName}`;
+  roles.includes("owner") ? `an owner of ${partyName}`
+    : roles.includes("joint") ? `named on this deal alongside ${withoutPrivateMark(partyName)}`
+    : roles.includes("acting") ? `the person dealing with us for ${partyName}` : `a director of ${partyName}`;
 
 export const KYC_DOC_KEYS: KycDocKey[] = ["photo_id", "proof_of_address", "source_of_funds", "ownership", "owner_ids", "authority", "company_documents", "other"];
 
@@ -405,6 +410,8 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
   // A person's own request: an owner may not know the deal at all.
   const opening = ctx.person?.roles.includes("owner")
     ? `<strong>${escHtml(ctx.partyName)}</strong> is a party to <strong>${escHtml(ctx.dealName)}</strong>, which we are working on. Companies House lists you as someone who owns or controls ${escHtml(ctx.partyName)}, so before the deal can go ahead the law requires us to confirm your identity too.`
+    : ctx.person?.roles.includes("joint")
+      ? `You are named alongside <strong>${escHtml(withoutPrivateMark(ctx.partyName))}</strong> on <strong>${escHtml(ctx.dealName)}</strong>, which we are working on, so before the deal can go ahead the law requires us to confirm your identity too.`
     : ctx.person
       ? `You are dealing with us for <strong>${escHtml(ctx.partyName)}</strong> on <strong>${escHtml(ctx.dealName)}</strong>, so before the deal can go ahead the law requires us to confirm your identity.`
       : `We're working with you on <strong>${escHtml(ctx.dealName)}</strong>. Before the deal can go ahead, the law requires us to confirm who we are dealing with.${forWhom}`;

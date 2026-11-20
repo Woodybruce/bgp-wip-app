@@ -7,7 +7,7 @@
 // otherwise KYC4U does the checks.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileText } from "lucide-react";
+import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileText, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -250,7 +250,7 @@ export function ClientChecksForParty({ dealId, companyId, sanctionsOnly, notRequ
   const people = data.people?.[companyId] || null;
   return (
     <>
-      {part !== "requests" && <>{party && people && people.basis !== "individual" && !notRequired && <PeopleToCheck dealId={dealId} data={data} party={party} people={people} sanctionsOnly={!!sanctionsOnly} canDecide={!!canDecide} />}</>}
+      {part !== "requests" && <>{party && people && !notRequired && <PeopleToCheck dealId={dealId} data={data} party={party} people={people} sanctionsOnly={!!sanctionsOnly} canDecide={!!canDecide} />}</>}
       {part !== "people" && list.length > 0 && <div className="space-y-1.5">{list.map(r => <ClientCheckRow key={r.token} dealId={dealId} request={r} />)}</div>}
     </>
   );
@@ -261,7 +261,7 @@ export function ClientChecksForParty({ dealId, companyId, sanctionsOnly, notRequ
 // acting, each with their own Veriff link and a proof-of-address upload; the
 // directors shown with their sanctions result only".
 
-const ROLE_WORDS: Record<KycPersonRole, string> = { owner: "Owner", acting: "Dealing with us", director: "Director" };
+const ROLE_WORDS: Record<KycPersonRole, string> = { owner: "Owner", acting: "Dealing with us", director: "Director", joint: "Alongside them" };
 
 const ID_STATE_WORDS: Record<PersonIdState, string> = {
   passed: "Identity check passed",
@@ -302,6 +302,7 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
   return (
     <div className="text-xs space-y-1.5" data-testid={`people-to-check-${party.companyId}`}>
       {people.people.map(person => <PersonRow key={person.key} dealId={dealId} data={data} party={party} person={person} canDecide={canDecide} />)}
+      {people.basis === "individual" && <AddPersonButton dealId={dealId} data={data} party={party} />}
       {people.directors.length > 0 && (
         <p className="text-muted-foreground" data-testid={`people-directors-${party.companyId}`}>
           <span className="font-medium text-foreground">Directors, no ID needed</span> (screened against the UK, US and EU sanctions lists only):{" "}
@@ -451,6 +452,82 @@ function AddressProofLine({ dealId, person, canDecide }: { dealId: string; perso
         </div>
       )}
     </li>
+  );
+}
+
+// Someone named alongside a private individual (Jack, 20 November 2026: "I
+// want to be able to start checks on more than one private individual"):
+// their name, then their own link, emailed or given to pass on. They then sit
+// in the list above as anyone else does.
+export function AddPersonButton({ dealId, data, party, className }: { dealId: string; data: ClientChecks; party: Party; className?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button size="sm" variant="outline" className={className || "h-7 px-2 text-xs"} onClick={() => setOpen(true)} data-testid={`person-add-${party.companyId}`}>
+        <UserPlus className="w-3 h-3 mr-1" />Add another person
+      </Button>
+      {open && <AddPersonDialog dealId={dealId} data={data} party={party} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function AddPersonDialog({ dealId, data, party, onClose }: { dealId: string; data: ClientChecks; party: Party; onClose: () => void }) {
+  const { toast } = useToast();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [mobile, setMobile] = useState("");
+  const [note, setNote] = useState("");
+  const [done, setDone] = useState<null | { link: string; emailed: boolean; error: string | null; person: string }>(null);
+  const make = useMutation({
+    mutationFn: async (send: boolean) => {
+      const res = await apiRequest("POST", `/api/aml/deal/${dealId}/client-checks/people`, {
+        companyId: party.companyId, key: "new", name: name.trim(), email: send ? email.trim() : null, mobile: mobile.trim() || null, send, note: note.trim() || null,
+      });
+      return res.json();
+    },
+    onSuccess: (r: any, send) => {
+      queryClient.invalidateQueries({ queryKey: keyFor(dealId) });
+      setDone({ link: r.link, emailed: send && !!r.sent?.ok, error: send && !r.sent?.ok ? r.sent?.error || "The email was not sent" : null, person: r.person || name.trim() });
+    },
+    onError: (e) => toast({ title: "Not added", description: plain(e), variant: "destructive" }),
+  });
+  const named = name.trim().split(/\s+/).filter(Boolean).length >= 2;
+  const canEmail = named && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && !make.isPending;
+  const what = [data.veriff ? "the identity check" : KYC_DOCS.photo_id.title.toLowerCase(), KYC_DOCS.proof_of_address.title.toLowerCase(), KYC_PEP_QUESTION.title.toLowerCase()];
+  return (
+    <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid="person-add-dialog">
+        <DialogHeader>
+          <DialogTitle>{done ? (done.error ? "Added, not emailed" : done.emailed ? `Sent to ${done.person}` : `${done.person}'s link`) : `Add another person alongside ${party.name}`}</DialogTitle>
+          {!done && <DialogDescription>For a second buyer, seller or tenant who is a private individual. They get a page of their own: {what.join(", ")}. They are added to the CRM under {party.name} when their link is emailed.</DialogDescription>}
+        </DialogHeader>
+        {done ? (
+          <div className="space-y-2 text-sm">
+            {done.error ? <p className="text-amber-800">{done.error}. Copy their link and send it yourself.</p> : <p className="text-muted-foreground">{done.emailed ? "Their link was emailed. They now show under People with what is still to come." : "Copy their link and send it to them only. They now show under People."}</p>}
+            <div className="flex gap-1">
+              <Input readOnly value={done.link} className="text-xs" />
+              <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(done.link); toast({ title: "Link copied" }); }}><Copy className="w-3 h-3 mr-1" />Copy</Button>
+            </div>
+            <DialogFooter><Button size="sm" onClick={onClose}>Done</Button></DialogFooter>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="space-y-1"><Label className="text-xs">Full name</Label><Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Jane Macaskill" data-testid="person-add-name" /></div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="space-y-1"><Label className="text-xs">Email</Label><Input type="email" value={email} onChange={e => setEmail(e.target.value)} data-testid="person-add-email" /></div>
+              <div className="space-y-1"><Label className="text-xs">Mobile (optional)</Label><Input value={mobile} onChange={e => setMobile(e.target.value)} data-testid="person-add-mobile" /></div>
+            </div>
+            <div className="space-y-1"><Label className="text-xs">A note in the email (optional)</Label><Textarea rows={2} className="text-xs" value={note} onChange={e => setNote(e.target.value)} /></div>
+            <DialogFooter className="gap-2">
+              <Button size="sm" variant="ghost" disabled={!named || make.isPending} onClick={() => make.mutate(false)} data-testid="person-add-link">Just make the link</Button>
+              <Button size="sm" disabled={!canEmail} onClick={() => make.mutate(true)} data-testid="person-add-send">
+                {make.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Send className="w-3 h-3 mr-1" />}Email their link
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

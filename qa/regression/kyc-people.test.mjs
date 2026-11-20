@@ -64,7 +64,12 @@ test("a party's checks are finished only when every person to check has sent wha
 test('the deal card lists the people to check first, and their own requests only under them', () => {
   const card = read('client/src/components/kyc-client-checks.tsx');
   assert.match(card, /const list = data\.requests\.filter\(r => r\.companyId === companyId && !r\.person\);/);
-  assert.match(card, /\{party && people && people\.basis !== "individual" && !notRequired && <PeopleToCheck dealId=\{dealId\} data=\{data\} party=\{party\} people=\{people\} sanctionsOnly=\{!!sanctionsOnly\} canDecide=\{!!canDecide\} \/>\}/);
+  // A private individual's side has a people list too since 20 November 2026 (Jack: more than one buyer).
+  assert.match(card, /\{party && people && !notRequired && <PeopleToCheck dealId=\{dealId\} data=\{data\} party=\{party\} people=\{people\} sanctionsOnly=\{!!sanctionsOnly\} canDecide=\{!!canDecide\} \/>\}/);
+  assert.match(card, /\{people\.basis === "individual" && <AddPersonButton dealId=\{dealId\} data=\{data\} party=\{party\} \/>\}/);
+  const portal = read('server/aml-portal.ts');
+  assert.match(portal, /People are added by hand only alongside a private individual/);
+  assert.match(portal, /if \("client" in by\) throw Object\.assign\(new Error\("Only BGP adds people to a deal\."\)/);
   // Under sanctions checks only, nobody is asked for an identity check or a proof of address.
   assert.match(card, /data-testid=\{`people-sanctions-only-\$\{party\.companyId\}`\}/);
   const box = read('client/src/components/deal-aml-status.tsx');
