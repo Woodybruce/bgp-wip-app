@@ -168,14 +168,20 @@ export function AgentAmlCard({ companyId, companyName }: { companyId: string; co
   );
 }
 
-/** Every agent on a deal, in the deal's AML box (BGP staff). */
-export function DealAgentsAml({ dealId }: { dealId: string }) {
-  const { data } = useQuery<{ agents: DealAgent[] }>({ queryKey: ["/api/deals", dealId, "agents-aml"] });
+export type DealAgentAmlTone = Tone;
+/** The agents on a deal and where each stands on HMRC's register (the AML box's Agents line reads it). */
+export function useDealAgentsAml(dealId: string, enabled = true) {
+  return useQuery<{ agents: DealAgent[] }>({ queryKey: ["/api/deals", dealId, "agents-aml"], enabled });
+}
+
+/** Every agent on a deal, in the deal's AML box (BGP staff). bare: under the box's own Agents line. */
+export function DealAgentsAml({ dealId, bare }: { dealId: string; bare?: boolean }) {
+  const { data } = useDealAgentsAml(dealId);
   const [checking, setChecking] = useState<DealAgent | null>(null);
   if (!data?.agents.length) return null;
   return (
     <div className="space-y-1.5" data-testid="deal-agents-aml">
-      <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Agents on this deal</div>
+      {!bare && <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Agents on this deal</div>}
       {data.agents.map(a => (
         <div key={`${a.role}-${a.companyId}`} className={`rounded-md border p-2.5 text-xs ${TONE_BOX[a.state.tone]}`} data-testid={`deal-agent-aml-${a.role}`}>
           <div className="flex items-start gap-2">

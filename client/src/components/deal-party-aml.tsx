@@ -30,6 +30,7 @@ function refreshAfterDecision(dealId: string) {
   queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "parties"] });
   queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
   queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0] || "").startsWith("/api/kyc4u") });
+  queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
 }
 
 const todayLondon = () => new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
@@ -280,5 +281,40 @@ export function PartyDecisions({ dealId, data, companyId, role, partyName, appro
       {open === "kyc4u" && <Kyc4uResultDialog dealId={dealId} role={role} partyName={partyName} onClose={() => setOpen(null)} />}
       {open === "not-required" && <NotRequiredDialog dealId={dealId} role={role} partyName={partyName} onClose={() => setOpen(null)} />}
     </div>
+  );
+}
+
+// One decision as a single button, for the AML box's Next line (20 November
+// 2026): Sign off, or Add KYC4U result. The same dialogs, the same server
+// checks; the button is only offered to those the deal's AML status says may.
+export function PartyDecisionButton({ dealId, data, companyId, role, partyName, kind }: {
+  dealId: string; data: DealAmlStatus | undefined; companyId: string; role: string; partyName: string; kind: "sign_off" | "kyc4u_result";
+}) {
+  const [open, setOpen] = useState(false);
+  const decisions = data?.decisions;
+  const view = decisions?.parties[companyId];
+  const level = data?.redFlags?.levels?.[companyId];
+  if (!decisions) return null;
+  if (kind === "sign_off") {
+    const canSignOff = !!(decisions.canSignOff ?? decisions.canDecide);
+    if (!canSignOff || !view || view.blocked) return null;
+    return (
+      <>
+        <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid={`aml-next-sign-off-${role}`}>
+          <BadgeCheck className="w-3.5 h-3.5 mr-1" />Sign off
+        </Button>
+        {open && <SignOffDialog dealId={dealId} role={role} partyName={partyName} needsNote={!!view.needsNote}
+          levelWords={level && level.level !== "enhanced" ? DUE_DILIGENCE_LABEL[level.level] : null} onClose={() => setOpen(false)} />}
+      </>
+    );
+  }
+  if (!decisions.canDecide) return null;
+  return (
+    <>
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => setOpen(true)} data-testid={`aml-next-kyc4u-result-${role}`}>
+        <FileUp className="w-3.5 h-3.5 mr-1" />Add KYC4U result
+      </Button>
+      {open && <Kyc4uResultDialog dealId={dealId} role={role} partyName={partyName} onClose={() => setOpen(false)} />}
+    </>
   );
 }

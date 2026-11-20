@@ -4320,6 +4320,7 @@ import kycPrecheckRouter from "./kyc-prechecks";
 import dealPartiesRouter from "./deal-parties";
 import dealPartyAmlRouter from "./deal-party-aml";
 import amlDashboardRouter from "./aml-dashboard";
+import amlFileRouter from "./aml-file";
 import amlPolicyRouter from "./aml-policy";
 import amlRegisterRouter from "./aml-register";
 import amlTrainingRouter from "./aml-training";
@@ -5690,6 +5691,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(dealPartiesRouter);
   app.use(dealPartyAmlRouter);
   app.use(amlDashboardRouter);
+  // The officers' AML file: a report and every document, for HMRC or KYC4U (20 November 2026).
+  app.use(amlFileRouter);
   app.use(amlPolicyRouter);
   // The AML register, training, agents' HMRC registration and the five-year
   // deletion (BGP staff; the officers where each route says).

@@ -7,19 +7,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useSearch } from "wouter";
-import { AlertCircle, ExternalLink, FileText, Flag, Loader2, Search } from "lucide-react";
+import { AlertCircle, ChevronDown, ExternalLink, FileText, Flag, Loader2, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Pill, PillCount } from "@/components/ui/pill";
 import { ScrollableTable } from "@/components/scrollable-table";
-import { DealAmlStatusCard } from "@/components/deal-aml-status";
+import { AML_STAGE_TONE, DealAmlStatusCard } from "@/components/deal-aml-status";
+import { AmlFileButton } from "@/components/aml-file-button";
 import { AmlPolicyPanel } from "@/components/aml-policy-panel";
 import { AmlRegisterBoard, MyRegisterReports, RaiseReportButton } from "@/components/aml-register";
 import { AmlTrainingBoard, AmlTrainingPanel } from "@/components/aml-training";
 import { AmlRetentionBoard } from "@/components/aml-retention";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getAuthHeaders } from "@/lib/queryClient";
-import { AML_BUCKETS, AML_STAGE_LABEL, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow, type AmlStage } from "@shared/aml-dashboard";
+import { AML_BUCKETS, AML_STAGE_LABEL, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow } from "@shared/aml-dashboard";
 import { DEAL_PARTY_LABEL, isDealPartyRole } from "@shared/deal-parties";
 import { legacyToCode } from "@shared/deal-status";
 
@@ -28,19 +29,6 @@ interface Trail {
   documents: Array<{ id: string; type: string; name: string; url: string; at: string | null; note: string | null; onCompany: boolean }>;
   history: Array<{ at: string | null; who: string | null; what: string; detail: string | null }>;
 }
-
-const STAGE_TONE: Record<AmlStage, string> = {
-  not_started: "bg-muted text-muted-foreground",
-  bgp_checked: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
-  client_sent: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
-  client_finished: "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-200",
-  with_kyc4u: "bg-orange-100 text-orange-900 dark:bg-orange-900/40 dark:text-orange-200",
-  approved: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
-  rejected: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
-  expiring: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
-  expired: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
-  not_required: "bg-muted text-muted-foreground",
-};
 
 // The level of due diligence BGP's AML policy gives the party.
 const LEVEL_WORDS: Record<AmlDashboardRow["level"], string> = { simplified: "Simplified", standard: "Standard", enhanced: "Enhanced" };
@@ -75,7 +63,7 @@ interface PolicyRoles { isOfficer?: boolean; managesTraining?: boolean }
 
 function StageChip({ row }: { row: AmlDashboardRow }) {
   const label = row.stage === "expiring" && row.expiresAt ? `Expires ${day(row.expiresAt)}` : AML_STAGE_LABEL[row.stage];
-  return <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${STAGE_TONE[row.stage]}`} data-testid={`aml-stage-${row.key}`}>{label}</span>;
+  return <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${AML_STAGE_TONE[row.stage]}`} data-testid={`aml-stage-${row.key}`}>{label}</span>;
 }
 
 function Flags({ row }: { row: AmlDashboardRow }) {
@@ -107,7 +95,14 @@ function DealCell({ row }: { row: AmlDashboardRow }) {
   );
 }
 
-function PartyTrail({ row, onClose }: { row: AmlDashboardRow; onClose: () => void }) {
+// The party's trail (20 November 2026, Woody: "minimise each section with the
+// detail to pop out"): the deal's AML box opens on this party, the deal's
+// other parties on their Next line, and the documents and history each on one
+// line until opened.
+// officer: the Nominated Officer or a Deputy, who can make the party's AML file.
+function PartyTrail({ row, onClose, officer }: { row: AmlDashboardRow; onClose: () => void; officer: boolean }) {
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const { data: trail, isLoading } = useQuery<Trail>({
     queryKey: ["/api/aml-dashboard/party", row.dealId, row.role],
     queryFn: async () => {
@@ -118,18 +113,27 @@ function PartyTrail({ row, onClose }: { row: AmlDashboardRow; onClose: () => voi
   });
   return (
     <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" data-testid="aml-trail">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto" data-testid="aml-trail">
         <DialogHeader>
           <DialogTitle>{row.signsAs || row.brandName}</DialogTitle>
           <DialogDescription>
             {roleWords(row.role)} on {row.dealName}{row.signsAs ? ` (${row.brandName})` : ""}.{" "}
             <Link href={`/deals/${row.dealId}`} className="text-primary hover:underline inline-flex items-center gap-1" data-testid="aml-trail-open-deal">Open the deal <ExternalLink className="w-3 h-3" /></Link>
           </DialogDescription>
+          {officer && (
+            <div className="pt-1" data-testid="aml-trail-file">
+              <AmlFileButton dealId={row.dealId} role={row.role} partyName={row.signsAs || row.brandName} />
+            </div>
+          )}
         </DialogHeader>
-        <DealAmlStatusCard dealId={row.dealId} dealStatus={row.dealStatus} />
+        <DealAmlStatusCard dealId={row.dealId} dealStatus={row.dealStatus} focusCompanyId={row.brandId} />
         <section className="space-y-1.5">
-          <h3 className="text-[11px] uppercase tracking-wider text-muted-foreground">Documents on its KYC record</h3>
-          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : !trail?.documents.length ? (
+          <button type="button" className="flex w-full items-center gap-2 text-left" aria-expanded={docsOpen} onClick={() => setDocsOpen(o => !o)} data-testid="aml-trail-documents-toggle">
+            <h3 className="text-[11px] uppercase tracking-wider text-muted-foreground">Documents on its KYC record</h3>
+            <span className="text-xs text-muted-foreground">{isLoading ? "…" : trail?.documents.length ? `${trail.documents.length}` : "none yet"}</span>
+            <ChevronDown className={`ml-auto w-3.5 h-3.5 text-muted-foreground transition-transform ${docsOpen ? "rotate-180" : ""}`} />
+          </button>
+          {!docsOpen ? null : isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : !trail?.documents.length ? (
             <p className="text-sm text-muted-foreground">None yet.</p>
           ) : (
             <ul className="divide-y rounded-md border" data-testid="aml-trail-documents">
@@ -146,8 +150,12 @@ function PartyTrail({ row, onClose }: { row: AmlDashboardRow; onClose: () => voi
           )}
         </section>
         <section className="space-y-1.5">
-          <h3 className="text-[11px] uppercase tracking-wider text-muted-foreground">History</h3>
-          {isLoading ? null : !trail?.history.length ? (
+          <button type="button" className="flex w-full items-center gap-2 text-left" aria-expanded={historyOpen} onClick={() => setHistoryOpen(o => !o)} data-testid="aml-trail-history-toggle">
+            <h3 className="text-[11px] uppercase tracking-wider text-muted-foreground">History</h3>
+            <span className="text-xs text-muted-foreground">{isLoading ? "…" : trail?.history.length ? `${trail.history.length} entries` : "nothing yet"}</span>
+            <ChevronDown className={`ml-auto w-3.5 h-3.5 text-muted-foreground transition-transform ${historyOpen ? "rotate-180" : ""}`} />
+          </button>
+          {!historyOpen || isLoading ? null : !trail?.history.length ? (
             <p className="text-sm text-muted-foreground">Nothing recorded yet.</p>
           ) : (
             <ul className="space-y-1.5 text-sm" data-testid="aml-trail-history">
@@ -307,7 +315,7 @@ export default function AmlDashboard() {
 
       </>}
 
-      {open && <PartyTrail row={open} onClose={() => setOpen(null)} />}
+      {open && <PartyTrail row={open} onClose={() => setOpen(null)} officer={!!roles?.isOfficer} />}
     </div>
   );
 }

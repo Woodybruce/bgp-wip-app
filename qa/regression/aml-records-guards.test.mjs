@@ -96,7 +96,7 @@ test('agents: BGP staff record the check, and the deal box lists every agent on 
   assert.match(h, /unzipper\.ParseOne\(\/\^content\\\.xml\$\/\)/);
   assert.doesNotMatch(h, /readFile|xlsx/);
   const card = read('client/src/components/deal-aml-status.tsx');
-  assert.match(card, /\{staffView && <DealAgentsAml dealId=\{dealId\} \/>\}/);
+  assert.match(card, /\{staffView && <DealAgentsAml dealId=\{dealId\} bare \/>\}/);
   assert.match(card, /\{staffView && <DealSuspicionLine dealId=\{dealId\} officer=\{!!data\.decisions\?\.canDecide\} \/>\}/);
   assert.match(read('client/src/components/brand-profile-panel.tsx'), /<AgentAmlCard companyId=\{companyId\} companyName=\{c\.name\} \/>/);
 });

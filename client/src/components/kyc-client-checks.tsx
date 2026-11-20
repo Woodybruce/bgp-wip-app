@@ -7,7 +7,7 @@
 // otherwise KYC4U does the checks.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileText, UserRound } from "lucide-react";
+import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -54,7 +54,7 @@ export interface ClientCheckRequest {
   files: Array<{ name: string; docKey: KycDocKey | null; uploadedAt: string; url: string | null }>;
   remindersSent: number; link: string; whatsapp: string | null; canRemind: boolean;
 }
-interface ClientChecks {
+export interface ClientChecks {
   dealName: string; mailbox: string; veriff: boolean; agents: Array<{ name: string; email: string }>; parties: Party[]; requests: ClientCheckRequest[];
   // The people to check per party (null when they could not be read).
   people?: Record<string, PartyPeople | null>;
@@ -95,8 +95,13 @@ const ID_WORDS: Record<KycIdState, string> = {
 };
 
 // One request: who it went to, what is done, the files, and what to do next.
-export function ClientCheckRow({ dealId, request }: { dealId: string; request: ClientCheckRequest }) {
+// It opens on one line (20 November 2026, Woody: "minimise each section with
+// the detail to pop out"): where it stands, how many steps are done, and any
+// warning; the rest on press. startOpen: a person's own link, opened from
+// their row, shows its detail at once.
+export function ClientCheckRow({ dealId, request, startOpen }: { dealId: string; request: ClientCheckRequest; startOpen?: boolean }) {
   const { toast } = useToast();
+  const [expanded, setExpanded] = useState(!!startOpen);
   const remind = useMutation({
     mutationFn: () => apiRequest("POST", `/api/aml/client-checks/${request.token}/remind`),
     onSuccess: () => { toast({ title: "Reminder sent", description: `To ${request.recipientName || request.recipientEmail}` }); queryClient.invalidateQueries({ queryKey: keyFor(dealId) }); },
@@ -109,13 +114,27 @@ export function ClientCheckRow({ dealId, request }: { dealId: string; request: C
   });
   const status = STATUS[request.status];
   const live = request.status !== "cancelled" && request.status !== "expired";
+  const idDone = request.needsIdCheck && !request.idOtherPerson && (request.idState === "approved" || request.idState === "submitted");
+  const steps = request.docs.length + (request.needsIdCheck ? 1 : 0);
+  const stepsDone = request.docs.filter(d => d.done).length + (idDone ? 1 : 0);
+  const warning = request.idOtherPerson ? `the identity check was ${request.idVerifiedName || "someone else"}'s`
+    : request.pep === "yes" || request.pep === "unsure" ? `public roles: ${kycPepWords(request.pep).toLowerCase()}`
+    : request.owners?.answer === "no" ? "says the register's owners are wrong"
+    : request.docs.some(d => d.note) ? "a document to check"
+    : !request.sentAt ? "the email did not go" : null;
   return (
     <div className="rounded-md border bg-background p-2.5 text-xs space-y-1.5" data-testid={`client-check-${request.ref}`}>
-      <div className="flex flex-wrap items-center gap-1.5">
+      <button type="button" className="flex w-full flex-wrap items-center gap-1.5 text-left" aria-expanded={expanded} onClick={() => setExpanded(v => !v)} data-testid={`client-check-toggle-${request.ref}`}>
         <span className={`${pillMetrics} ${status.cls}`}>{status.label}</span>
         <span className="font-medium text-sm">{request.recipientName || request.recipientEmail}</span>
-        <span className="text-muted-foreground truncate">{request.recipientEmail}</span>
-      </div>
+        <span className="text-muted-foreground">
+          {request.sentAt ? `sent ${shortDate(request.sentAt)}` : "not sent"}{steps ? ` · ${stepsDone} of ${steps} done` : ""}
+        </span>
+        {warning && <span className="inline-flex items-center gap-0.5 text-amber-800 dark:text-amber-300"><AlertCircle className="w-3.5 h-3.5 text-amber-600" />{warning}</span>}
+        <ChevronDown className={`ml-auto w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
+      </button>
+      {expanded && <>
+      <div className="text-muted-foreground truncate">{request.recipientEmail}</div>
       <div className="text-muted-foreground">
         {request.sentAt
           ? <>Sent {shortDate(request.sentAt)}{request.sentBy ? ` by ${request.sentBy}` : ""} from {request.sentFrom}{request.cc.length ? `, copied to ${request.cc.length} at BGP` : ""}{request.remindersSent ? ` · ${request.remindersSent} reminder${request.remindersSent === 1 ? "" : "s"}` : ""}</>
@@ -211,6 +230,7 @@ export function ClientCheckRow({ dealId, request }: { dealId: string; request: C
           )}
         </div>
       )}
+      </>}
     </div>
   );
 }
@@ -220,7 +240,9 @@ export function ClientCheckRow({ dealId, request }: { dealId: string; request: C
 // sanctionsOnly: a letting under £10,000 a month (BGP's AML policy A), where
 // the owners are identified and screened, not verified. notRequired: the
 // officers marked the party Not required on this deal (policy G).
-export function ClientChecksForParty({ dealId, companyId, sanctionsOnly, notRequired, canDecide }: { dealId: string; companyId: string; sanctionsOnly?: boolean; notRequired?: boolean; canDecide?: boolean }) {
+// part: the AML box draws the people and the requests in sections of their
+// own (20 November 2026); with none, both.
+export function ClientChecksForParty({ dealId, companyId, sanctionsOnly, notRequired, canDecide, part }: { dealId: string; companyId: string; sanctionsOnly?: boolean; notRequired?: boolean; canDecide?: boolean; part?: "people" | "requests" }) {
   const { data } = useClientChecks(dealId);
   if (!data) return null;
   const list = data.requests.filter(r => r.companyId === companyId && !r.person);
@@ -228,8 +250,8 @@ export function ClientChecksForParty({ dealId, companyId, sanctionsOnly, notRequ
   const people = data.people?.[companyId] || null;
   return (
     <>
-      {party && people && people.basis !== "individual" && !notRequired && <PeopleToCheck dealId={dealId} data={data} party={party} people={people} sanctionsOnly={!!sanctionsOnly} canDecide={!!canDecide} />}
-      {list.length > 0 && <div className="space-y-1.5">{list.map(r => <ClientCheckRow key={r.token} dealId={dealId} request={r} />)}</div>}
+      {part !== "requests" && <>{party && people && people.basis !== "individual" && !notRequired && <PeopleToCheck dealId={dealId} data={data} party={party} people={people} sanctionsOnly={!!sanctionsOnly} canDecide={!!canDecide} />}</>}
+      {part !== "people" && list.length > 0 && <div className="space-y-1.5">{list.map(r => <ClientCheckRow key={r.token} dealId={dealId} request={r} />)}</div>}
     </>
   );
 }
@@ -267,8 +289,7 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
     const everyone = [...people.people.map(p => ({ name: p.name, roles: p.roles, sanctions: p.sanctions })), ...people.directors.map(d => ({ name: d.name, roles: ["director" as const], sanctions: d.sanctions }))];
     if (!everyone.length) return null;
     return (
-      <div className="rounded-md border bg-background p-2.5 text-xs space-y-1.5" data-testid={`people-to-check-${party.companyId}`}>
-        <div className="flex items-center gap-1.5"><UserRound className="w-3.5 h-3.5 text-muted-foreground" /><span className="font-semibold text-sm">People to check</span></div>
+      <div className="text-xs space-y-1.5" data-testid={`people-to-check-${party.companyId}`}>
         <p className="text-muted-foreground" data-testid={`people-sanctions-only-${party.companyId}`}>A letting under £10,000 a month: sanctions checks only (BGP's AML policy A). The owners and directors are identified and screened, not verified, so no one needs to send an identity check or a proof of address.</p>
         <ul className="space-y-0.5">
           {everyone.map(p => (
@@ -278,23 +299,12 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
       </div>
     );
   }
-  const left = people.people.filter(p => p.outstanding.length).length;
   return (
-    <div className="rounded-md border bg-background p-2.5 text-xs space-y-2" data-testid={`people-to-check-${party.companyId}`}>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <UserRound className="w-3.5 h-3.5 text-muted-foreground" />
-        <span className="font-semibold text-sm">People to check</span>
-        {people.people.length > 0 && (
-          <span className={`${pillMetrics} ${left ? "bg-amber-50 text-amber-800 border border-amber-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"}`}>
-            {left ? `Waiting on ${left} of ${people.people.length}` : "All sent"}
-          </span>
-        )}
-      </div>
-      <p className="text-muted-foreground">{PARTY_PEOPLE_BASIS_WORDS[people.basis]} Each gets a link of their own: an identity check (Veriff) and a proof of address from the last three months.</p>
+    <div className="text-xs space-y-1.5" data-testid={`people-to-check-${party.companyId}`}>
       {people.people.map(person => <PersonRow key={person.key} dealId={dealId} data={data} party={party} person={person} canDecide={canDecide} />)}
       {people.directors.length > 0 && (
         <p className="text-muted-foreground" data-testid={`people-directors-${party.companyId}`}>
-          <span className="font-medium text-foreground">Directors, no ID needed</span> (screened against the UK and US sanctions lists only):{" "}
+          <span className="font-medium text-foreground">Directors, no ID needed</span> (screened against the UK, US and EU sanctions lists only):{" "}
           {people.directors.map((d, i) => (
             <span key={d.name}>{i ? "; " : ""}{d.name} <span className={SANCTIONS_WORDS[d.sanctions].cls}>({SANCTIONS_WORDS[d.sanctions].text.replace("Sanctions: ", "")})</span></span>
           ))}.
@@ -302,25 +312,43 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
       )}
       {people.loose.map(l => (
         <p key={l.ref} className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900" data-testid={`people-loose-${l.ref}`}>
-          {l.files} file{l.files === 1 ? " was" : "s were"} sent on {l.ref} as "ID for each of those owners"{l.names.length ? ` (${l.names.join(", ")})` : ""}: they don't say whose they are, so they count for nobody above. Open them on that request below.
+          {l.files} file{l.files === 1 ? " was" : "s were"} sent on {l.ref} as "ID for each of those owners"{l.names.length ? ` (${l.names.join(", ")})` : ""}: they don't say whose they are, so they count for nobody above. Open them on that request under Client checks.
         </p>
       ))}
+      <p className="text-[11px] text-muted-foreground">{PARTY_PEOPLE_BASIS_WORDS[people.basis]} Each gets a link of their own: an identity check (Veriff) and a proof of address from the last three months.</p>
     </div>
   );
 }
 
 function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string; data: ClientChecks; party: Party; person: KycPartyPerson; canDecide: boolean }) {
   const [open, setOpen] = useState(false);
+  const [details, setDetails] = useState(false);
   const [sending, setSending] = useState(false);
   const ownRequest = person.own && !person.own.isMain ? data.requests.find(r => r.token === person.own!.token) || null : null;
   const idOk = person.id.state === "passed" || person.id.state === "waiting" || person.id.state === "document";
+  const testKey = person.key.replace(/\s+/g, "-");
+  const proofToCheck = !!person.address.proof && !person.address.done;
   return (
-    <div className="rounded border px-2 py-1.5 space-y-1" data-testid={`person-${person.key.replace(/\s+/g, "-")}`}>
-      <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-        <span className="font-medium text-sm">{person.name}</span>
-        {person.roles.map(r => <span key={r} className={`${pillMetrics} bg-muted text-muted-foreground border border-border`}>{ROLE_WORDS[r]}</span>)}
-        {person.born && <span className="text-muted-foreground">born {person.born}</span>}
+    <div className="rounded border px-2 py-1.5 space-y-1" data-testid={`person-${testKey}`}>
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+        <button type="button" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-left" aria-expanded={details} onClick={() => setDetails(v => !v)} data-testid={`person-toggle-${testKey}`}>
+          <span className="font-medium text-sm">{person.name}</span>
+          {person.roles.map(r => <span key={r} className={`${pillMetrics} bg-muted text-muted-foreground border border-border`}>{ROLE_WORDS[r]}</span>)}
+          <span className="inline-flex items-center gap-0.5 text-muted-foreground"><Tick ok={idOk} />ID</span>
+          <span className={`inline-flex items-center gap-0.5 ${proofToCheck ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"}`}>
+            {proofToCheck ? <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" /> : <Tick ok={person.address.done} />}{proofToCheck ? "Address to check" : "Address"}
+          </span>
+          {person.sanctions === "possible" && <span className={SANCTIONS_WORDS.possible.cls}>{SANCTIONS_WORDS.possible.text}</span>}
+          <ChevronDown className={`ml-auto w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${details ? "rotate-180" : ""}`} />
+        </button>
+        {(person.canSend || (ownRequest && !ownRequest.sentAt && ownRequest.status !== "finished")) && (
+          <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setSending(true)} data-testid={`person-send-${testKey}`}>
+            <Send className="w-3 h-3 mr-1" />{person.canSend ? "Send them a link" : "Email their link"}
+          </Button>
+        )}
       </div>
+      {details && <>
+      {person.born && <p className="text-muted-foreground">Born {person.born}</p>}
       {person.ownerDetail && <p className="text-muted-foreground">{person.ownerDetail[0].toUpperCase() + person.ownerDetail.slice(1)}</p>}
       <ul className="space-y-0.5">
         <li className="flex items-start gap-1" data-testid={`person-id-${person.key.replace(/\s+/g, "-")}`}>
@@ -342,14 +370,10 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
             Their link ({person.own!.ref}){ownRequest.sentAt ? ` · emailed ${shortDate(ownRequest.sentAt)}` : " · not emailed"}
           </Button>
         )}
-        {person.own?.isMain && <span className="text-muted-foreground">On the request to them ({person.own.ref}), below.</span>}
-        {(person.canSend || (ownRequest && !ownRequest.sentAt && ownRequest.status !== "finished")) && (
-          <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setSending(true)} data-testid={`person-send-${person.key.replace(/\s+/g, "-")}`}>
-            <Send className="w-3 h-3 mr-1" />{person.canSend ? "Send them a link" : "Email their link"}
-          </Button>
-        )}
+        {person.own?.isMain && <span className="text-muted-foreground">On the request to them ({person.own.ref}), under Client checks.</span>}
       </div>
-      {open && ownRequest && <ClientCheckRow dealId={dealId} request={ownRequest} />}
+      {open && ownRequest && <ClientCheckRow dealId={dealId} request={ownRequest} startOpen />}
+      </>}
       {sending && <PersonLinkDialog dealId={dealId} data={data} party={party} person={person} onClose={() => setSending(false)} />}
     </div>
   );

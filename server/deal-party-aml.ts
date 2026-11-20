@@ -182,7 +182,7 @@ export function signOffView(facts: Omit<SignOffFacts, "note">): { blocked: strin
 type Decider = { id: string; name: string; mlroAppointed: boolean; as: "officer" | "agent"; officerRole: string | null };
 
 // The Nominated Officer or the Deputy (admins until a Nominated Officer is set).
-async function decider(req: Request): Promise<Decider | { refusal: string; status: number }> {
+export async function decider(req: Request): Promise<Decider | { refusal: string; status: number }> {
   const userId = (req as any).session?.userId || (req as any).tokenUserId;
   if (!userId) return { refusal: "Not signed in.", status: 401 };
   const { contactViewer } = await import("./contact-viewer");

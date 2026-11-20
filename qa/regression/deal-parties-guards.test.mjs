@@ -131,10 +131,12 @@ test('the deal page and the deal form carry it', () => {
   assert.ok(page.includes('{slot.value && <DealPartyLines dealId={id} role={slot.role} aml={partyAmlFacts(amlStatus, slot.value)} />}'));
   for (const role of ['landlord', 'tenant', 'vendor', 'purchaser']) assert.ok(page.includes(`role: "${role}" as const`), role);
   const card = read('client/src/components/deal-aml-status.tsx');
-  // On both layouts of the card, hidden once the party is approved (step 2, 18 November 2026)
-  // or marked Not required (BGP's AML policy, 19 November 2026).
-  assert.ok(card.includes('{staffView && !(cp.isApproved && !cp.isExpired) && !cp.notRequired && <PartyReadyToStart dealId={dealId} companyId={cp.id} aml={partyAmlFacts(data, cp.id)} />}'));
-  assert.ok(card.includes('{staffView && status !== "approved" && status !== "not_required" && <PartyReadyToStart dealId={dealId} companyId={cp.id} aml={partyAmlFacts(data, cp.id)} />}'));
+  // One party box for every layout (20 November 2026): what is missing opens under its Company line,
+  // and is hidden once the party is approved (step 2, 18 November 2026) or marked Not required
+  // (BGP's AML policy, 19 November 2026).
+  assert.ok(card.includes('const settled = approved || !!cp.notRequired;'));
+  assert.ok(card.includes('? (settled ? <p className="text-xs text-muted-foreground">Not set on this deal.</p> : <PartyReadyToStart dealId={dealId} companyId={cp.id} aml={aml} />)'));
+  assert.ok(card.includes('const aml = partyAmlFacts(data, cp.id);'));
   const form = read('client/src/pages/deals.tsx');
   for (const role of ['landlord', 'tenant', 'vendor', 'purchaser']) {
     assert.ok(form.includes(`...(company ? { ${role}TradingEntityId: company.id } : {}),`), `${role} billing box sets the company`);
@@ -181,7 +183,8 @@ test('the owners the checks need are named in the party box, with their contact 
 
   // Each caller passes what the deal's AML status says about the party.
   const amlBox = read('client/src/components/deal-aml-status.tsx');
-  assert.equal((amlBox.match(/<PartyReadyToStart dealId=\{dealId\} companyId=\{cp\.id\} aml=\{partyAmlFacts\(data, cp\.id\)\} \/>/g) || []).length, 2);
+  assert.equal((amlBox.match(/<PartyReadyToStart dealId=\{dealId\} companyId=\{cp\.id\} aml=\{aml\} \/>/g) || []).length, 1);
+  assert.match(amlBox, /<DealPartyEditor dealId=\{dealId\} role=\{cp\.role as DealPartyRole\} aml=\{aml\}/);
   const dealForm = read('client/src/pages/deals.tsx');
   assert.match(dealForm, /<PartyReadyToStart dealId=\{amlStep\.dealId\} companyId=\{p\.id\} aml=\{partyAmlFacts\(amlStepStatus, p\.id\)\} \/>/);
   const dealPage = read('client/src/components/deal-detail.tsx');

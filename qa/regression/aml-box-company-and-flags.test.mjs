@@ -53,7 +53,7 @@ test('no check runs on a company party until the deal names the company that sig
   const kyc4u = read('server/kyc4u.ts');
   assert.match(kyc4u, /if \(deal && partyRole && !entity\) \{/, 'the KYC4U request refuses it');
   const card = read('client/src/components/deal-aml-status.tsx');
-  assert.match(card, /state === "needs_company"\) \{\s*return <p[^>]*>The client checks and a KYC4U request start once the company that signs is set\./);
+  assert.match(card, /companyMissing\s*\?\s*<p[^>]*>The client checks and a KYC4U request start once the company that signs is set\./);
 });
 
 test('the brand\'s own company is offered, saved without a Xero contact, never assumed', () => {
@@ -103,7 +103,7 @@ test('a flag set aside counts nowhere: the deal card, KYC4U, the sign-off, the d
 
 test('the AML box shows the company checked and the detail behind each flag', () => {
   const card = read('client/src/components/deal-aml-status.tsx');
-  assert.equal((card.match(/<PartyCompanyFacts data=\{data\} companyId=\{cp\.id\} \/>/g) || []).length, 2, 'both layouts');
+  assert.equal((card.match(/<PartyCompanyFacts data=\{data\} companyId=\{cp\.id\} \/>/g) || []).length, 1, 'one party box for every layout');
   assert.match(card, /data-testid=\{`kyc-flag-detail-\$\{f\.key\}`\}/);
   assert.match(card, /\{canDecide && \(\s*<button[^>]*onClick=\{\(\) => setDialog\(f\)\}/, 'Set aside only for the MLRO');
   assert.match(card, /disabled=\{short \|\| save\.isPending\}/, 'a comment is needed');

@@ -67,7 +67,10 @@ test('the deal card lists the people to check first, and their own requests only
   assert.match(card, /\{party && people && people\.basis !== "individual" && !notRequired && <PeopleToCheck dealId=\{dealId\} data=\{data\} party=\{party\} people=\{people\} sanctionsOnly=\{!!sanctionsOnly\} canDecide=\{!!canDecide\} \/>\}/);
   // Under sanctions checks only, nobody is asked for an identity check or a proof of address.
   assert.match(card, /data-testid=\{`people-sanctions-only-\$\{party\.companyId\}`\}/);
-  assert.match(read('client/src/components/deal-aml-status.tsx'), /<ClientChecksForParty dealId=\{dealId\} companyId=\{cp\.id\} sanctionsOnly=\{data\.regime\?\.regime === "sanctions_only"\} notRequired=\{!!cp\.notRequired\} canDecide=\{!!data\.decisions\?\.canDecide\} \/>/);
+  const box = read('client/src/components/deal-aml-status.tsx');
+  assert.match(box, /const sanctionsOnly = data\.regime\?\.regime === "sanctions_only";/);
+  assert.match(box, /<ClientChecksForParty dealId=\{dealId\} companyId=\{cp\.id\} sanctionsOnly=\{sanctionsOnly\} notRequired=\{!!cp\.notRequired\} canDecide=\{canDecide\} part="people" \/>/);
+  assert.match(box, /<ClientChecksForParty dealId=\{dealId\} companyId=\{cp\.id\} sanctionsOnly=\{sanctionsOnly\} notRequired=\{!!cp\.notRequired\} canDecide=\{canDecide\} part="requests" \/>/);
   assert.match(card, /data-testid=\{`people-to-check-\$\{party\.companyId\}`\}/);
   assert.match(card, /Directors, no ID needed/);
   const page = read('client/src/pages/kyc-upload.tsx');

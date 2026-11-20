@@ -4,6 +4,7 @@
 // documents are BGP's.
 //
 //   GET /api/aml-dashboard                             one row per party of every live deal
+//   GET /api/aml-dashboard?dealId=                     the same rows for one deal, whatever its status
 //   GET /api/aml-dashboard/party?dealId=&role=         the party's documents and history
 //
 // Live deals: every deal not withdrawn or archived, and completed or
@@ -37,22 +38,27 @@ async function staffMe(req: Request): Promise<{ id: string; name: string } | nul
   return u ? { id: String(u.id), name: text(u.name) || text(u.email) } : null;
 }
 
-export async function loadAmlDashboard(me: { id: string; name: string }, now: Date = new Date()): Promise<{ rows: AmlDashboardRow[]; unchecked: string[] }> {
+// opts.dealId: one deal's rows, whatever its status (the deal's AML box reads
+// its parties' stage here, so the box and the dashboard say the same thing).
+export async function loadAmlDashboard(me: { id: string; name: string }, now: Date = new Date(), opts: { dealId?: string } = {}): Promise<{ rows: AmlDashboardRow[]; unchecked: string[] }> {
   const partyCols = DEAL_PARTY_ROLES.flatMap(r => [`d.${DEAL_PARTY_COLUMNS[r].brand}`, `d.${DEAL_PARTY_COLUMNS[r].company}`]);
   const closedOnly = CLOSED_STATUSES.filter(c => !TERMINAL_STATUSES.includes(c));
   const st = `lower(btrim(coalesce(d.status, '')))`;
+  const which = opts.dealId
+    ? `d.id = $1`
+    : `${st} NOT IN (${sqlList(TERMINAL_STATUSES)})
+        AND (${st} NOT IN (${sqlList(closedOnly)}) OR d.updated_at > now() - interval '${AML_DASHBOARD_CLOSED_DAYS} days')
+        AND ${dealLeftTrackerSql("d")}`;
   const deals = (await pool.query(
     `SELECT d.id, d.name, d.deal_ref, d.status, d.deal_type, d.team, d.updated_at, d.internal_agent_ids, d.internal_agent,
             d.aml_pep_status, d.aml_risk_level, d.aml_edd_required, d.aml_edd_reason, d.aml_edd_completed_at, d.aml_sof_analysis,
             d.pricing, p.postcode,
             ${partyCols.join(", ")}, p.name AS property_name
        FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
-      WHERE ${st} NOT IN (${sqlList(TERMINAL_STATUSES)})
-        AND (${st} NOT IN (${sqlList(closedOnly)}) OR d.updated_at > now() - interval '${AML_DASHBOARD_CLOSED_DAYS} days')
-        AND ${dealLeftTrackerSql("d")}
+      WHERE ${which}
         AND (d.landlord_id IS NOT NULL OR d.tenant_id IS NOT NULL OR d.vendor_id IS NOT NULL OR d.purchaser_id IS NOT NULL)
       ORDER BY d.updated_at DESC NULLS LAST
-      LIMIT 2000`)).rows;
+      LIMIT 2000`, opts.dealId ? [opts.dealId] : [])).rows;
   if (!deals.length) return { rows: [], unchecked: [] };
 
   type Party = { key: string; deal: any; role: typeof DEAL_PARTY_ROLES[number]; brandId: string; entityId: string | null };
@@ -213,7 +219,8 @@ router.get("/api/aml-dashboard", async (req: Request, res: Response) => {
   try {
     const me = await staffMe(req);
     if (!me) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
-    res.json(await loadAmlDashboard(me));
+    const dealId = text(req.query.dealId);
+    res.json(await loadAmlDashboard(me, new Date(), dealId ? { dealId } : {}));
   } catch (err: any) {
     console.error("[aml-dashboard] feed failed:", err?.message);
     res.status(500).json({ message: "The AML dashboard could not be read." });

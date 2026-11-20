@@ -54,7 +54,9 @@ test('Read again is BGP staff, Accept is the Nominated Officer or a Deputy, both
   assert.match(routes, /client-checks\\\/address-proof\\\/\(\?:read\|accept\)\$/);
   // The card offers Accept only to those who may decide.
   assert.match(card, /\{canDecide && !accepting && \(/);
-  assert.match(read('client/src/components/deal-aml-status.tsx'), /canDecide=\{!!data\.decisions\?\.canDecide\} \/>/);
+  const box = read('client/src/components/deal-aml-status.tsx');
+  assert.match(box, /const canDecide = !!data\.decisions\?\.canDecide;/);
+  assert.match(box, /canDecide=\{canDecide\} part="people" \/>/);
 });
 
 test('proofs sent before the reading existed are read when the deal card is opened, each once, never a test', () => {

@@ -382,7 +382,7 @@ function Kyc4uSignoffButton({ companyId }: { companyId: string }) {
 // Prepares KYC4U's "Raise New Service Request" form from the deal. The
 // Send to ChatBGP bookmark, clicked on that page, fills it in; the user
 // checks it and presses Submit there. KYC4U's status then shows above.
-const KYC4U_FORM_URL = "https://kyc4ultd.sharepoint.com/sites/customers/CST1092/SitePages/Raise-New-Service-Request.aspx";
+export const KYC4U_FORM_URL = "https://kyc4ultd.sharepoint.com/sites/customers/CST1092/SitePages/Raise-New-Service-Request.aspx";
 type DraftFields = Record<string, string>;
 const DRAFT_FIELDS: Array<{ key: string; label: string; required?: boolean; long?: boolean; hint?: string; type?: string }> = [
   { key: "partyType", label: "Party type", required: true, hint: "As KYC4U's dropdown words it — usually Client or Counterparty" },
@@ -400,7 +400,9 @@ const DRAFT_FIELDS: Array<{ key: string; label: string; required?: boolean; long
   { key: "note", label: "Note", long: true },
 ];
 
-export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label = "Request KYC4U check" }: { dealId?: string; companyId: string; role?: string; partyName: string; label?: string }) {
+// buttonOnly: the button and its dialog, without the status line (the AML
+// box's Next line, where the KYC4U row beside it already says where it stands).
+export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label = "Request KYC4U check", buttonOnly }: { dealId?: string; companyId: string; role?: string; partyName: string; label?: string; buttonOnly?: boolean }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [fields, setFields] = useState<DraftFields>({});
@@ -439,11 +441,13 @@ export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label =
         <Button size="sm" variant="outline" className="h-8 rounded-full" onClick={() => setOpen(true)} data-testid="button-kyc4u-request">
           <Upload className="w-3.5 h-3.5 mr-1.5" />{label}
         </Button>
+        {buttonOnly ? null : <>
         {!latest && req && <span className="text-xs text-muted-foreground">KYC4U · <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${kyc4uTone(req.status)}`}>{req.status || "No status yet"}</span>{req.webUrl && <> · <a href={req.webUrl} target="_blank" rel="noopener noreferrer" className="underline">open their record</a></>}</span>}
         {!latest && !req && companyReqs.isFetched && <span className="rounded-full px-2 py-0.5 text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" data-testid="flag-not-raised-kyc4u">Not raised with KYC4U</span>}
         {latest?.status === "queued" && <span className="text-xs text-muted-foreground">Waiting to be filled on KYC4U's form · <a href={KYC4U_FORM_URL} target="_blank" rel="noopener noreferrer" className="underline">open the form</a> · <button type="button" className="underline" onClick={() => setStatus.mutate({ id: latest.id, status: "cancelled" })}>cancel</button></span>}
         {latest?.status === "submitted" && <span className="text-xs text-muted-foreground">Raised with KYC4U · <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${kyc4uTone(latest.request_status)}`}>{latest.request_status || "No status yet"}</span>{latest.request_url && <> · <a href={latest.request_url} target="_blank" rel="noopener noreferrer" className="underline">open their record</a></>}</span>}
         {latest?.status === "filled" && <span className="text-xs text-muted-foreground">Filled on KYC4U's form {when(latest.filled_at)} — once submitted there, their status shows here after the next sync · <button type="button" className="underline" onClick={() => setStatus.mutate({ id: latest.id, status: "queued" })}>fill again</button></span>}
+        </>}
       </div>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl max-h-[85dvh] overflow-y-auto">

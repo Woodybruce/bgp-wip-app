@@ -60,8 +60,10 @@ test('the finished note and the admin previews carry the red flags', () => {
 });
 
 test('the deal card shows each party its red flags beside Request KYC4U check; the Kick off step sends a flagged party to KYC4U', () => {
-  assert.equal((card.match(/<PartyRedFlags dealId=\{dealId\} data=\{data\} companyId=\{cp\.id\} role=\{cp\.role\} \/>/g) || []).length, 2);
-  assert.equal((card.match(/<DealRedFlags dealId=\{dealId\} data=\{data\} \/>/g) || []).length, 2);
+  // One party box for every layout (20 November 2026): the red flags under Red flags, the policy's factors under Due diligence.
+  assert.equal((card.match(/<PartyRedFlags dealId=\{dealId\} data=\{data\} companyId=\{cp\.id\} role=\{cp\.role\} only="flags" \/>/g) || []).length, 1);
+  assert.equal((card.match(/<PartyRedFlags dealId=\{dealId\} data=\{data\} companyId=\{cp\.id\} role=\{cp\.role\} only="factors" \/>/g) || []).length, 1);
+  assert.equal((card.match(/<DealRedFlags dealId=\{dealId\} data=\{data\} \/>/g) || []).length, 1);
   assert.match(card, /Red flags could not be checked against/);
   assert.match(deals, /const flags = amlStepStatus\?\.redFlags\?\.parties\[p\.id\] \|\| \[\];/);
   assert.match(deals, /\{clientChecks && !flags\.length\s*\? <SendClientChecksButton/);

@@ -176,9 +176,10 @@ test("the client checks run on their own switch, not the old in-app AML one (Woo
     assert.match(portal.slice(at, at + 400), /if \(!clientChecksOn\(\)\) return res\.status\(410\)/, route);
   }
   assert.match(compliance, /clientChecks: clientChecksSwitchOn\(process\.env\.KYC_CLIENT_CHECKS\),/);
-  // One place offers them (PartyActions, 19 November 2026), drawn on both card layouts.
-  assert.equal((card.match(/\{data\.clientChecks && \(/g) || []).length, 1, "Send client checks follows the client checks' switch");
-  assert.equal((card.match(/<PartyActions dealId=\{dealId\} data=\{data\} cp=\{cp\}/g) || []).length, 2, "both card layouts offer it");
+  // One place offers them: the Client checks line of the one party box (20 November 2026), shown only while the switch is on.
+  assert.match(card, /const clientLine: \{ tone: BoxTone; summary: string \} \| null = !data\.clientChecks \|\| cp\.notRequired \? null/, "Send client checks follows the client checks' switch");
+  assert.match(card, /clientChecks: !!data\.clientChecks,/, "and so does the Next line");
+  assert.equal((card.match(/<SendClientChecksButton dealId=\{dealId\} companyId=\{cp\.id\} partyName=\{partyName\}/g) || []).length, 2, "the Client checks line and the Next line");
   assert.doesNotMatch(card, /data\.inAppAml/);
   assert.match(deals, /const clientChecks = !!amlStepStatus\?\.clientChecks;/);
   assert.doesNotMatch(deals, /amlInApp|inAppAml/);

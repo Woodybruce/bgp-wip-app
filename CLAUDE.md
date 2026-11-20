@@ -4413,6 +4413,73 @@ EU parts of `shared/kyc-prechecks.ts`. Tests: `server/aml-records.test.ts` (in
   KYC4U; the FCA register for simplified due diligence; trusts' own TRS
   check.
 
+## The AML box, shortened, and the officers' AML file (Woody, 2026-11-20)
+
+Woody, on the AML checks page's trail: "on this page can you build to
+minimise each section with the detail to pop out so people can clearly see
+whats happening and whats needed its pretty overwhelming for them but clearly
+we need that info displayed for the AML officers", then "an option for the AML
+officers to generate a report to include all the documents etc which we can
+then send to HMRC if asked? Also we can send to KYC4U if we get stuck and need
+them so they can move quicker". Do not re-litigate. Rules: `shared/aml-box.ts`
+(the Next line) and `shared/aml-file.ts`; the box:
+`client/src/components/deal-aml-status.tsx`; the file: `server/aml-file.ts`.
+Tests: `server/aml-box.test.ts`, `server/aml-file.test.ts` (both in
+`npm test`), `qa/regression/aml-box-sections.test.mjs`,
+`qa/regression/aml-file-guards.test.mjs`.
+
+- **One party box for every layout** (`PartyAmlBox`): the stage chip, the
+  **Next** line and one line per section. The stage is the AML dashboard's own
+  (`GET /api/aml-dashboard?dealId=`, the dashboard's loader for one deal,
+  whatever its status; `fallbackStage` from the AML status when that row is not
+  read), so the box and the AML checks page agree. The Next line is
+  `amlNextStep` (what happens next, who it waits on, and one action: Fill in,
+  Add their details, Send client checks, Open People, Request KYC4U check,
+  Open KYC4U's form, Add KYC4U result, Sign off), read from the facts the box
+  already holds: the AML status, the parties, the client checks, KYC4U's
+  drafts. Change the order of steps there, with a test, never in the box.
+- **The sections**: Company, BGP's checks, Due diligence, People, Client
+  checks, Red flags, KYC4U, Sign-off (`BoxSection`). Each is one line with a
+  tone and a summary; pressing it opens what the box showed before
+  (`PartyCompanyFacts`, `PartyPrechecks`, `PartyLevel` with the policy's
+  factors, `ClientChecksForParty part="people"` / `part="requests"`,
+  `PartyRedFlags only="flags"`, the KYC4U request, `PartyDecisions`). Nothing
+  was dropped: a new piece goes into a section's detail, and a section's line
+  says in a few words where it stands. A person and a request are one line
+  each too (`PersonRow`, `ClientCheckRow`), with any warning (someone else's
+  identity check, a public role, the register's owners disputed, a possible
+  sanctions match, a proof of address to check) kept on the line.
+- **Show all detail** opens every section of every party, remembered per
+  browser (`bgp:aml-box:open-all`, read and written in try/catch; never
+  relied on). The deal-level rows (Deal record red flags, Agents) fold the same
+  way. On the AML checks page the trail opens on its own party
+  (`focusCompanyId`), the deal's other parties folded to their Next line, and
+  the documents and history each on one line until pressed.
+- **The AML file** (the Nominated Officer and the Deputies only, admins until a
+  Nominated Officer is set: `decider` in `server/deal-party-aml.ts`).
+  `GET /api/deals/:id/aml-file?role=&format=zip|pdf`: one party or every party;
+  the ZIP holds, per party, `00 AML report - <party>.pdf` and every document on
+  its KYC record as stored (`documents/NN <type> - <name>`; a Veriff result is
+  written out from its session; a file not in the store, or past the 200 MB
+  cap, is listed in the report and left out). The report is read by the same
+  functions as the box (`loadPartyKyc`, `dealPrechecks` with `autoStart:
+  false`, so making it never starts a paid check, `loadDealRedFlags`,
+  `partyPeopleFor`, `clientChecksForDeal`, `loadNotRequired`, `dealAgentsAml`):
+  the deal, the company at Companies House, every check line, the red flags
+  and the ones set aside with the comment, the people to check, each client
+  check request and what came back, KYC4U, the history and the document index.
+  `POST /api/deals/:id/aml-file/kyc4u { role }` files the report as a KYC
+  document of type `aml_file` on the party (the company that signs when set), so
+  Request KYC4U check offers it and the bookmark attaches it. Each file made is
+  a `kyc_audit_log` line (`aml_file`) and a deal history line (`aml_file`) with
+  who made it. **The AML register is never in it** (internal reports and SARs:
+  the file may leave BGP, and tipping off is an offence). The button
+  (`client/src/components/aml-file-button.tsx`) is drawn for the officers only:
+  the box's header (every party), each party's Sign-off section, and the top of
+  the trail on the AML checks page (`isOfficer`).
+- Checked in a browser against a local copy on 20 November 2026. The file has
+  not been made on live: the first is an officer's.
+
 ## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
 
 Woody, on the deal page: "Needs a chat box too no and how the negotiations
