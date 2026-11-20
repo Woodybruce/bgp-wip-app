@@ -3282,6 +3282,16 @@ export function DealFormDialog({
   const { data: currentUser } = useQuery<{ isAdmin?: boolean; email?: string; name?: string; role?: string; companyScopeId?: string }>({
     queryKey: ["/api/auth/me"],
   });
+  // On Edit deal: the deal's joint agency note, if it already has one.
+  const { data: jointAgencyNotes } = useQuery<Array<{ signedBy: string; savedAt: string }>>({
+    queryKey: ["/api/crm/deals", deal?.id, "joint-agency-note"],
+    queryFn: async () => {
+      const res = await fetch(`/api/crm/deals/${deal!.id}/joint-agency-note`, { credentials: "include", headers: getAuthHeaders() });
+      return res.ok ? res.json() : [];
+    },
+    enabled: open && !!deal?.id && !!currentUser && currentUser.role !== "Client" && !currentUser.companyScopeId,
+  });
+  const jointAgencyOnFile = jointAgencyNotes?.[0] || null;
   // Clients can create deals but never set fees — the server strips every
   // fee field regardless, and here we hide the fee-exposing paths (Consultant
   // fee-only body + "Show all fields") so they only see the fee-less form.
@@ -3337,6 +3347,7 @@ export function DealFormDialog({
     try {
       await apiRequest("POST", `/api/crm/deals/${dealId}/joint-agency-note`, jointAgencyPayload(jointAgency));
       queryClient.invalidateQueries({ queryKey: ["/api/joint-agency-notes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId, "joint-agency-note"] });
     } catch (e: any) {
       toast({
         title: `${saved}, but the joint agency AML note did NOT save`,
@@ -3428,6 +3439,7 @@ export function DealFormDialog({
       if (isEdit) {
         delete payload.internalAgent;
         await apiRequest("PUT", `/api/crm/deals/${deal.id}`, payload);
+        await saveJointAgencyNote(deal.id, "Changes saved");
         return { id: deal.id };
       } else {
         const splitAgents = splitAgentNames(feeRows);
@@ -3613,8 +3625,9 @@ export function DealFormDialog({
       }
     }
 
-    // Joint Agency Lead Deal: the AML note needs all five details.
-    if (!isEdit) {
+    // Joint Agency Lead Deal: the AML note needs all five details (New Deal
+    // and Edit deal alike; off, nothing is needed).
+    {
       const jaMissing = jointAgencyMissing(jointAgency);
       if (jaMissing.length > 0) {
         setJointAgencyErrors(true);
@@ -4349,6 +4362,35 @@ export function DealFormDialog({
                 data-testid="input-deal-comments"
               />
             </div>
+
+            {/* Joint Agency Lead Deal on Edit deal too (Jack, 2026-11-20: "add
+                to all deals including historic ones ... so we can invoice").
+                The same switch as New Deal; saved with Save Changes. A deal
+                that already has its note shows that it is on file. */}
+            {!isClientCreate && !["Secondment", "Purchase", "Sale", "Investment"].includes(form.dealType) && (
+              <div className="sm:col-span-2">
+                {jointAgencyOnFile ? (
+                  <div className="flex items-center gap-2 rounded-lg border bg-primary/5 px-3 py-2 text-xs" data-testid="joint-agency-on-file">
+                    <ShieldCheck className="h-4 w-4 text-primary shrink-0" />
+                    <span><span className="font-semibold">Joint Agency Lead Deal</span>: AML file note on file (signed {jointAgencyOnFile.signedBy}, {new Date(jointAgencyOnFile.savedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}). It is on the deal page and in the register.</span>
+                  </div>
+                ) : (
+                  <JointAgencyWidget
+                    value={jointAgency}
+                    onChange={(s) => { setJointAgency(s); if (jointAgencyMissing(s).length === 0) setJointAgencyErrors(false); }}
+                    signedBy={currentUser?.name}
+                    showErrors={jointAgencyErrors}
+                    mode={isEdit ? "existing-form" : "create"}
+                    defaults={{
+                      property: (() => { const p = properties.find(x => x.id === form.propertyId) as any; return p ? [p.name, p.address && p.address !== p.name ? p.address : null].filter(Boolean).join(", ") : ""; })(),
+                      client: companies.find(c => c.id === (form.landlordId || form.tenantId))?.name || "",
+                      tenant: form.landlordId ? companies.find(c => c.id === form.tenantId)?.name || "" : "",
+                      rentPa: form.rentPa ? String(form.rentPa) : "",
+                    }}
+                  />
+                )}
+              </div>
+            )}
           </div>
           )}
 

@@ -8,7 +8,8 @@
 // of them blank → on save the note is recorded against the new deal.
 // On an existing deal without a note, the KYC card offers the same switch
 // with its own Save note button (Woody, 2026-11-16: "so we can add this
-// part at a later stage, not only when adding a new deal").
+// part at a later stage, not only when adding a new deal"), and Edit deal
+// carries it too, saved with Save Changes (Jack, 2026-11-20).
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -56,8 +57,9 @@ export function JointAgencyWidget({ value, onChange, defaults, signedBy, showErr
   defaults: { property?: string; client?: string; rentPa?: string; tenant?: string };
   signedBy?: string;
   showErrors?: boolean;
-  /** "create": recorded with the new deal. "existing": the deal page's card saves it with its own button. */
-  mode?: "create" | "existing";
+  /** "create": recorded with the new deal. "existing": the deal page's card saves it with its own button.
+   *  "existing-form": Edit deal, recorded with Save Changes. */
+  mode?: "create" | "existing" | "existing-form";
 }) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -183,7 +185,7 @@ export function JointAgencyWidget({ value, onChange, defaults, signedBy, showErr
 
       {/* Step 3 — what gets recorded */}
       <div className="rounded-md border bg-background p-3">
-        <p className="text-xs font-semibold">{mode === "existing" ? "3. Recorded when you press Save note" : "3. Recorded when you create the deal"}</p>
+        <p className="text-xs font-semibold">{mode === "existing" ? "3. Recorded when you press Save note" : mode === "existing-form" ? "3. Recorded when you press Save Changes" : "3. Recorded when you create the deal"}</p>
         <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
           The file note is saved against this deal and added to the Joint agency AML register. It states that {value.coAgent.trim() || "the co-agent"} is
           HMRC-registered, introduced {value.tenant.trim() || "the tenant"} and managed all dealings with them, and that BGP only advised its client.
