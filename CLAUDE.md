@@ -4646,8 +4646,11 @@ Tests: `server/aml-second-read.test.ts` (in `npm test`),
     count one only prepared (queued). A request prepared and not submitted
     for 30 days (`KYC4U_PREPARED_STALE_DAYS`) is stale: it no longer reads as
     ready, and the request line offers to cancel it.
-  - **Request KYC4U check** prepares the request and then shows three steps:
-    Download the pack, Open KYC4U's portal, Submitted on KYC4U's portal.
+  - **Request KYC4U check**: every document on the party is ticked to start
+    with, and the orange **Download for KYC4U** prepares the request and
+    downloads the pack at once (Jack, same day: "when you click the orange
+    button ... it literally downloads a zip file"), then shows the steps:
+    Download it again, Open KYC4U's portal, Submitted on KYC4U's portal.
   - **The pack** (`GET /api/kyc4u/drafts/:id/pack`, BGP staff): a ZIP with
     01 the request sheet (KYC4U's form field by field, in its order, with
     the note: the deal, the company that signs, red flags, BGP's checks, the

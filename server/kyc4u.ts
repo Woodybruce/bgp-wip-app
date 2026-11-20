@@ -762,7 +762,7 @@ export async function createKyc4uDraft(d: { dealId?: string | null; companyId: s
   const fields: Record<string, string> = {};
   for (const k of KYC4U_DRAFT_KEYS) if (typeof d.fields?.[k] === "string") fields[k] = d.fields[k].slice(0, 4000);
   if (!fields.partyName?.trim()) throw Object.assign(new Error("Party name is required"), { status: 400 });
-  const docIds = Array.isArray(d.docIds) ? d.docIds.filter((x: any) => typeof x === "string").slice(0, 10) : [];
+  const docIds = Array.isArray(d.docIds) ? d.docIds.filter((x: any) => typeof x === "string").slice(0, 40) : [];
   return (await pool.query(
     `INSERT INTO kyc4u_drafts (deal_id, company_id, role, fields, doc_ids, created_by) VALUES ($1,$2,$3,$4::jsonb,$5,$6) RETURNING *`,
     [d.dealId || null, d.companyId, d.role || null, JSON.stringify(fields), docIds, d.userId])).rows[0];

@@ -487,7 +487,7 @@ export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label =
     queryFn: async () => (await apiRequest("GET", `/api/kyc4u/drafts/prefill?${new URLSearchParams({ dealId: dealId || "", companyId, role: role || "" })}`)).json(),
     enabled: open,
   });
-  useEffect(() => { if (open && prefill.data) { setFields(prefill.data.fields); setDocIds([]); } }, [open, prefill.data]);
+  useEffect(() => { if (open && prefill.data) { setFields(prefill.data.fields); setDocIds(prefill.data.docs.map(d => d.id)); } }, [open, prefill.data]);
   const drafts = useQuery<any[]>({
     queryKey: ["/api/kyc4u/drafts", dealId, companyId],
     queryFn: async () => (await apiRequest("GET", `/api/kyc4u/drafts?${new URLSearchParams({ ...(dealId ? { dealId } : {}), companyId })}`)).json(),
@@ -496,9 +496,15 @@ export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label =
   useEffect(() => { if (!open) setSavedId(null); }, [open]);
   const save = useMutation({
     mutationFn: async () => (await apiRequest("POST", "/api/kyc4u/drafts", { dealId, companyId, role, fields, docIds })).json(),
-    onSuccess: (d: any) => {
+    // Jack, 20 November 2026: the orange button downloads the pack itself.
+    onSuccess: async (d: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/kyc4u/drafts", dealId, companyId] });
-      setSavedId(d?.id ? String(d.id) : null);
+      const id = d?.id ? String(d.id) : null;
+      setSavedId(id);
+      if (id) {
+        try { await downloadKyc4uPack(id); }
+        catch (e: any) { toast({ title: "The pack did not download", description: `${e?.message || e}. Press Download it again.`, variant: "destructive" }); }
+      }
     },
     onError: (e: any) => toast({ title: "Couldn't prepare the request", description: e?.message, variant: "destructive" }),
   });
@@ -531,11 +537,11 @@ export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label =
         <DialogContent className="max-w-2xl max-h-[85dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Request a KYC4U check — {partyName}</DialogTitle>
-            <DialogDescription>{savedId ? "Prepared. KYC4U takes requests only on its own portal." : "These are the answers to KYC4U's Raise New Service Request form. Check them here, then download the pack and type them in on KYC4U's portal."}</DialogDescription>
+            <DialogDescription>{savedId ? "Prepared. KYC4U takes requests only on its own portal." : "These are the answers to KYC4U's Raise New Service Request form. Check them, then press Download for KYC4U: a ZIP with the questions and answers, the note and the documents, to put into KYC4U's portal."}</DialogDescription>
           </DialogHeader>
           {savedId ? (
             <ol className="space-y-3 text-sm" data-testid="kyc4u-next-steps">
-              <li><span className="font-medium">1. Download the pack.</span> The request sheet (KYC4U's form, field by field), BGP's AML report and the documents.
+              <li><span className="font-medium">1. The pack has downloaded</span> (a ZIP): the request sheet with KYC4U's questions and these answers, the note, BGP's AML report and the documents to upload. Not there? Download it again.
                 <div className="mt-1.5"><Kyc4uPackButton draftId={savedId} className="h-8" /></div></li>
               <li><span className="font-medium">2. Open KYC4U's portal</span> and raise a new service request: type in the sheet's answers and upload the documents. Submit it there.
                 <div className="mt-1.5"><Button size="sm" variant="outline" className="h-8" asChild><a href={KYC4U_FORM_URL} target="_blank" rel="noopener noreferrer"><ExternalLink className="w-3.5 h-3.5 mr-1" />Open KYC4U's portal</a></Button></div></li>
@@ -559,13 +565,13 @@ export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label =
               </div>
             ))}
             {!!prefill.data?.docs?.length && <div className="sm:col-span-2">
-              <p className="text-xs font-medium">Attach KYC documents (up to 10 MB each)</p>
+              <p className="text-xs font-medium">Documents to put in the pack</p>
               <div className="mt-1 space-y-1">
                 {prefill.data.docs.map(d => (
                   <label key={d.id} className="flex items-center gap-2 text-sm min-h-9">
-                    <input type="checkbox" checked={docIds.includes(d.id)} disabled={(d.file_size || 0) > 10 * 1024 * 1024}
+                    <input type="checkbox" checked={docIds.includes(d.id)}
                       onChange={e => setDocIds(ids => e.target.checked ? [...ids, d.id] : ids.filter(x => x !== d.id))} />
-                    <span className="truncate">{d.file_name}</span><span className="text-xs text-muted-foreground shrink-0">{d.doc_type}{(d.file_size || 0) > 10 * 1024 * 1024 ? " · over 10 MB" : ""}</span>
+                    <span className="truncate">{d.file_name}</span><span className="text-xs text-muted-foreground shrink-0">{d.doc_type}</span>
                   </label>
                 ))}
               </div>
@@ -576,7 +582,7 @@ export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label =
             {savedId ? <Button variant="outline" onClick={() => setOpen(false)}>Done</Button> : <>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button onClick={() => save.mutate()} disabled={save.isPending || !(fields.partyName || "").trim()} data-testid="button-kyc4u-request-save">
-              {save.isPending ? "Saving…" : "Prepare the request"}
+              {save.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Download className="w-3.5 h-3.5 mr-1.5" />}{save.isPending ? "Making the pack…" : "Download for KYC4U"}
             </Button></>}
           </DialogFooter>
         </DialogContent>
