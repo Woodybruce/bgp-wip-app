@@ -2099,9 +2099,10 @@ credited to no company, 256 to Landsec and 10 to BGP. None had been touched.
   credited. Replayed against the 67 live sweep offers on 19 November 2026,
   29 subjects named another brand than the one credited (Kakure, Fulai,
   Fuel, The 2 Twits, Chayan among them). Rows already written are not
-  changed. TfL is still typed "Tenant" in the CRM and is not the recorded
-  landlord of the arches (Places for London is), so an arch email naming
-  no CRM brand is still credited to TfL until its type is corrected.
+  changed. TfL was typed "Tenant" in the CRM; on 20 November 2026 (Woody:
+  "can you change TFL?") it was retyped Landlord on live, as Places for
+  London (the recorded landlord of the arches) is, so an arch email naming
+  no CRM brand is no longer credited to it. TfL was on no deal.
   Tests: `server/viewing-email-brand.test.ts` (in `npm test`) and
   `qa/regression/email-sweep-brand.test.mjs`.
 - Not built, waiting on Woody: the 49 interest lines the same import left
@@ -2830,10 +2831,19 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   Bluewater, St David's, Trinity Leeds and White Rose, as Woody sent them.
   Create standard HOTs uses the scheme's form when the property's name
   matches AND Landsec is its landlord (they name Landsec's companies and
-  solicitors), BGP's 37 clauses otherwise. These mark blanks with `[ ]` or `XXXX`, not `{TOKENS}`:
+  solicitors), BGP's standard (38 clauses) otherwise. These mark blanks with `[ ]` or `XXXX`, not `{TOKENS}`:
   `fillSchemeHots` fills only what it can place with certainty, never deletes
   an OR alternative, and names what it could not place in the HOTs history.
   A new scheme form is one more entry in `SCHEME_HOTS_STANDARDS` plus a test.
+  **Each form carries BGP's AML clause** (Woody, 2026-11-20: "yes on AML";
+  `AML_HOTS_CLAUSE`, added by `withAmlClause`) as its next clause after its
+  last, before its closing paragraph where it has one: Bluewater 44, St
+  David's 47, White Rose 45, and at the end of Trinity Leeds, which numbers
+  none, as "Anti-money laundering:". Landsec's own clauses keep their
+  numbers. `before` on each entry is the form as it stood without the
+  clause, so a property that copied it earlier still reads as the scheme's
+  form ("…, before the AML clause", `builtInStandard` in
+  `server/unit-hots.ts`). Test: `server/hots-standards.test.ts`.
 - **Fee split between the agents** (Woody: "fee splits need to be for joint
   or sole agent ... include the joint agents for their own benefit and for
   clarity with Landsec"): `unit_briefs.joint_agent_fee_pct` (copied to
@@ -4415,8 +4425,8 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
   kept so a property's copied 37-clause text still reads as BGP's standard).
   The info sheet, the Share with a brand PDF and bgp.uk.com's particulars
   print `AML_MARKETING_NOTICE` (the marketing site needs its own redeploy).
-  Landsec's four scheme forms were not changed (they are Landsec's own):
-  adding the clause there is Woody's call. The client checks ask for the
+  Landsec's four scheme forms carry the clause too since 20 November 2026
+  (Woody: "yes on AML"; see "Scheme forms"). The client checks ask for the
   documents the policy lists (firearms or shotgun certificate, council tax
   bill, an address dated in the last three months, the certification words of
   policy 3.9, a structure chart).
@@ -4465,10 +4475,10 @@ EU parts of `shared/kyc-prechecks.ts`. Tests: `server/aml-records.test.ts` (in
   every deal's AML box; **Tell the Nominated Officer** / **Record an OFSI
   report** beside a sanctions red flag; the **Reports** pill of the AML
   dashboard for the officers.
-- **Not built, on purpose**: a hold that stops a deal moving while the NCA
-  decides. Every status door skips the AML gate when the officer's "AML
-  check: YES" is on the deal, so a hold means changing about eight doors:
-  Woody's call. The officers tell the team.
+- **No hold on a deal while the NCA decides** (Woody, 2026-11-20: "no dont
+  hold a deal"; do not build one). Every status door skips the AML gate
+  when the officer's "AML check: YES" is on the deal, so a hold would have
+  meant changing about eight doors. The officers tell the team.
 - **Training** (`server/aml-training.ts`; the old `aml_training_records` table
   with `title`, `provider`, `recorded_by`, `batch_id`). Each person confirms
   **I have read it** for the current policy on My BGP → **AML training**
@@ -4530,7 +4540,7 @@ EU parts of `shared/kyc-prechecks.ts`. Tests: `server/aml-records.test.ts` (in
   schema on 19 November 2026; on live nothing is five years old yet.
 - Also: the deal save's AML gate now passes the deal id, so a party marked
   Not required is honoured there too.
-- Not built: a deal hold (above); deleting the KYC4U list's own rows at
+- Not built: a deal hold (not wanted, above); deleting the KYC4U list's own rows at
   KYC4U; the FCA register for simplified due diligence; trusts' own TRS
   check.
 
@@ -5077,7 +5087,8 @@ figures, the nine fit rules, the about 70 places that show a requirement and
 where each one links, a build plan and seven decisions. Woody answered "carry
 on" the same day, taken as yes to the review's recommendation on each
 decision (one row per brand; size AND use-or-place; open on the open
-requirements; market listings unseen for six months under Older; group owners;
+requirements; market listings unseen for six months under Older; group owners (answered
+again on 20 November 2026: none, below);
 In the news loaded only when opened; market listings on the brand page with
 Confirm). Read it before changing the board, the fit rules or a requirement
 link.
@@ -5190,7 +5201,10 @@ link.
   hand-written reading. Windows over newness (Who's hot, the market
   commentary, the dashboard widget, the brand tidy, HR points) are not
   liveness and stay as they are.
-- Not built yet: group owners (decision 5, needs the four names).
+- **No group owners** (decision 5; Woody, 2026-11-20: "anyone can see the
+  requirements"): a market listing stays unowned until someone confirms it,
+  and Mine stays the BGP owner a person set. Do not build named owners per
+  group.
 
 **One fit rule (Woody, 2026-11-19, decision 2: "size and use or place").**
 `requirementFit` in `shared/requirement-fit.ts` is the only judge of whether

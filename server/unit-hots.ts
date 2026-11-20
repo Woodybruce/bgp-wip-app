@@ -402,11 +402,12 @@ function builtInStandard(unit: any): { isStandard: boolean; standardName: string
   const current = text(unit.hots_template);
   const scheme = schemeHotsStandardFor(unit.property_name, unit.landlord_name);
   const matched = SCHEME_HOTS_STANDARDS.find(x => x.text === current) || null;
+  const matchedBefore = matched ? null : SCHEME_HOTS_STANDARDS.find(x => x.before === current) || null;
   const isBgp = current === STANDARD_HOTS_TEMPLATE;
   const isBgp37 = current === STANDARD_HOTS_TEMPLATE_37;
   return {
-    isStandard: isBgp || isBgp37 || !!matched,
-    standardName: matched ? matched.name : isBgp ? "BGP standard, 38 clauses (with the AML clause)" : isBgp37 ? "BGP standard, 37 clauses (before the AML clause)" : null,
+    isStandard: isBgp || isBgp37 || !!matched || !!matchedBefore,
+    standardName: matched ? matched.name : matchedBefore ? `${matchedBefore.name}, before the AML clause` : isBgp ? "BGP standard, 38 clauses (with the AML clause)" : isBgp37 ? "BGP standard, 37 clauses (before the AML clause)" : null,
     schemeStandardName: scheme?.name || null,
   };
 }

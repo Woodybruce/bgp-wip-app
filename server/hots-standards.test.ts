@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BLUEWATER_HOTS, ST_DAVIDS_HOTS, TRINITY_LEEDS_HOTS, WHITE_ROSE_HOTS, fillSchemeHots, isBracketTemplate, schemeHotsStandardFor } from "../shared/hots-standards";
+import { BLUEWATER_HOTS, SCHEME_HOTS_STANDARDS, ST_DAVIDS_HOTS, TRINITY_LEEDS_HOTS, WHITE_ROSE_HOTS, fillSchemeHots, isBracketTemplate, schemeHotsStandardFor } from "../shared/hots-standards";
 import { STANDARD_HOTS_TEMPLATE } from "../shared/unit-hots";
+import { AML_HOTS_CLAUSE } from "../shared/aml-policy";
 
 const agreed = { unit: "L104", date: "12 November 2026", tenant: "Dishoom Limited", brand: "Dishoom", termYears: 10, rentPa: 110000, rentFreeMonths: 9, capitalContribution: 50000, breakOption: "Tenant break at year 5", use: "Indian restaurant" };
 
@@ -94,4 +95,27 @@ test("a scheme form is Landsec's: another landlord's property never gets one", (
   assert.equal(schemeHotsStandardFor("Trinity Walk, Wakefield", "Landsec"), null);
   assert.equal(schemeHotsStandardFor("Bluewater Shopping Centre", "Hammerson"), null);
   assert.equal(schemeHotsStandardFor("Bluewater Shopping Centre", null), null);
+});
+
+test("each scheme form carries BGP's AML clause once, after Landsec's own clauses (Woody, 20 November 2026)", () => {
+  const heading: Record<string, string> = { "bluewater": "44. Anti-money laundering:", "st-davids": "47. Anti-money laundering:", "trinity-leeds": "Anti-money laundering:", "white-rose": "45. Anti-money laundering:" };
+  for (const s of SCHEME_HOTS_STANDARDS) {
+    const clause = `${heading[s.key]}\n${AML_HOTS_CLAUSE}`;
+    assert.equal(s.text.split(clause).length - 1, 1, s.key);
+    assert.equal(s.text.split("Anti-money laundering:").length - 1, 1, s.key);
+    assert.ok(!s.before.includes("Anti-money laundering"), s.key);
+    // Landsec's own text is untouched: take the clause out and the form is as written.
+    const without = s.text.includes(`${clause}\n\nIt is acknowledged that`)
+      ? s.text.replace(`${clause}\n\n`, "")
+      : s.text.replace(`\n\n${clause}\n`, "\n");
+    assert.equal(without, s.before, s.key);
+  }
+  assert.match(BLUEWATER_HOTS, /43\. Circulation:\n\[ \]\n\[ \]\n\[ \]\n\n44\. Anti-money laundering:\n/);
+  assert.match(BLUEWATER_HOTS, /information requested\.\n\nIt is acknowledged that/);
+  assert.match(WHITE_ROSE_HOTS, /44\. Circulation:[\s\S]*45\. Anti-money laundering:[\s\S]*It is acknowledged that[\s\S]*Landlord's Complaints Procedure/);
+  assert.match(ST_DAVIDS_HOTS, /46\. Circulation:[\s\S]*Chris Chambers\n\n47\. Anti-money laundering:\n/);
+  assert.match(TRINITY_LEEDS_HOTS, /- XXXXXX\n\nAnti-money laundering:\n/);
+  // Filling the agreed figures leaves the clause alone.
+  const r = fillSchemeHots(BLUEWATER_HOTS, agreed);
+  assert.ok(r.text.includes(`44. Anti-money laundering:\n${AML_HOTS_CLAUSE}`));
 });

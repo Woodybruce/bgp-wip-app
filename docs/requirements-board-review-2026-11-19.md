@@ -772,6 +772,9 @@ committed. Nothing is pushed until Woody says push.
    - (c) Use the agents on the brand's deals where there are any, and leave
      the rest unowned.
 
+   Answered on 20 November 2026: no group owners (Woody: "anyone can see the
+   requirements"), so (a) stands.
+
    I recommend (b). A listing nobody owns is a listing nobody chases. Each
    row's owner would be worked out on read, with nothing written. Handing
    owners out is on the 12 November "not built, waiting on Woody" list.
