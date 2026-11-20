@@ -4144,17 +4144,21 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
 `server/aml-policy.ts`. Tests: `server/aml-policy.test.ts` (in `npm test`),
 `qa/regression/aml-policy-guards.test.mjs`.
 
-- **The officers** (policy C.b): the policy names Jack Barratt as the
-  Nominated Officer (MLRO) and Victoria Broadhead as the Deputy. **Since
-  20 November 2026 there can be more than one Deputy** (Woody: "can you add
-  woody bruce as deputy AML too please", then "jack as officer and then
-  layla and i as depituties"): the officers in the app are Jack Barratt,
-  with Layla O'Driscoll and Woody Bruce as Deputies, whatever the policy
-  document (Issue 2) names. The Nominated Officer is on `aml_settings` as
-  before; the Deputies are `system_settings.aml_deputy_officer`, stored as
-  `{ deputies: [...] }` (`readDeputies` in `shared/aml-policy.ts` also reads
-  the single officer stored before; at most `MAX_AML_DEPUTIES`, 3). Each
-  decides (`amlOfficerRole`, `amlActor().officerRole`), each is emailed the
+- **The officers** (policy C.b): Jack Barratt is the Nominated Officer
+  (MLRO) and **Layla O'Driscoll the Deputy** (Woody, 2026-11-20: "Layla is
+  correct not Victoria"; the Issue 2 document names Victoria Broadhead as
+  Deputy Nominated Officer and Deputy Compliance Officer, and a corrected
+  issue is BGP's to publish, as a new entry and file). `POLICY_OFFICER_NAMES`
+  is what **Use the policy's officers** looks for. **Since the same day
+  there can be more than one Deputy** (Woody: "can you add woody bruce as
+  deputy AML too please", then "jack as officer and then layla and i as
+  depituties"): the officers in the app are Jack Barratt, with Layla
+  O'Driscoll and Woody Bruce as Deputies. The Nominated Officer is on
+  `aml_settings` as before; the Deputies are
+  `system_settings.aml_deputy_officer`, stored as `{ deputies: [...] }`
+  (`readDeputies` in `shared/aml-policy.ts` also reads the single officer
+  stored before; at most `MAX_AML_DEPUTIES`, 3). Each decides
+  (`amlOfficerRole`, `amlActor().officerRole`), each is emailed the
   escalations (`amlOfficerEmails`); admins act only while no Nominated
   Officer is set. An admin sets them on the AML dashboard's policy panel
   (**Change**: the Nominated Officer and a list of Deputies, Add a Deputy
@@ -4162,7 +4166,7 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
   deputyIds }`, which still takes `deputyId` from a screen loaded before).
   **Use the policy's officers** (`POST …/officers/from-policy`) is first
   set-up only: with a Nominated Officer set the panel does not offer it and
-  the server answers 409, because it would put back the one Deputy the
+  the server answers 409, because it would leave only the one Deputy the
   policy names. **KYC4U is BGP's
   outsourced KYC provider, not its MLRO**: this supersedes "KYC4U is BGP's
   MLRO" (Woody, 2026-10-05) and "the MLRO's ... admins until then" wherever
@@ -4515,8 +4519,12 @@ mailbox stay in its thread, from there; staff sending as themselves
   from it first time): a Railway variable (`KYC_MAILBOX` or the older
   `BGP_AML_MAILBOX`) holds that address and wins over the code's default
   kyc@chatbgp.app. The app's own address on live is chatbgp1@chatbgp.app and
-  the shared mailbox follows it, as in the code. To send client checks from
-  kyc@chatbgp.app, delete that variable on Railway (Woody's).
+  the shared mailbox follows it, as in the code. **The KYC sender stays
+  kyc@brucegillinghampollard.com** (Woody, 2026-11-20: "that emails fine
+  working well"). Woody had deleted `KYC_MAILBOX` on Railway the evening
+  before and live still sent from this address after two fresh deploys, so
+  either the deletion is waiting to be applied in Railway (then discard it)
+  or `BGP_AML_MAILBOX` holds the address. Leave it unless Woody asks.
 
 ## Super Brands are BGP's VIP brands (Woody, 2026-11-17)
 

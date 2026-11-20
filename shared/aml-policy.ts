@@ -40,11 +40,12 @@ export const amlPolicyDocument = (key: unknown): AmlPolicyDocument | null =>
 // ── The officers (policy C.b and D) ─────────────────────────────────────────
 
 // Who the policy names. The app holds who is set (AML settings); these are
-// only what "Use the policy's officers" looks for. Since 20 November 2026
-// there can be more than one Deputy (Woody: "jack as officer and then layla
-// and i as depituties"), set in the AML policy panel; the policy document
-// (Issue 2) still names one.
-export const POLICY_OFFICER_NAMES = { nominated: "Jack Barratt", deputy: "Victoria Broadhead" } as const;
+// only what "Use the policy's officers" looks for. The Deputy is Layla
+// O'Driscoll (Woody, 20 November 2026: "Layla is correct not Victoria"); the
+// Issue 2 document still names Victoria Broadhead. Since the same day there
+// can be more than one Deputy (Woody: "jack as officer and then layla and i
+// as depituties"), set in the AML policy panel.
+export const POLICY_OFFICER_NAMES = { nominated: "Jack Barratt", deputy: "Layla O'Driscoll" } as const;
 export const MAX_AML_DEPUTIES = 3;
 
 export interface AmlOfficer { id: string | null; name: string | null; email: string | null }
