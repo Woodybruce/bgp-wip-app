@@ -34,6 +34,7 @@ import {
 } from "@shared/kyc-request";
 import { idCheckIsThePerson, personNamesMatch, precheckAsks, verifiedPersonName } from "@shared/kyc-prechecks";
 import { personRequestAsks, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
+import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
 
 export const KYC_MAILBOX = (process.env.KYC_MAILBOX || process.env.BGP_AML_MAILBOX || "kyc@chatbgp.app").trim();
@@ -783,13 +784,17 @@ export function reminderDue(row: Pick<TokenRow, "revoked_at" | "completed_at" | 
 
 export async function sendKycReminders(now = new Date()): Promise<{ sent: number; failed: number; skipped: number }> {
   if (!clientChecksOn()) return { sent: 0, failed: 0, skipped: 0 };
-  // Nobody is chased about a deal that has been deleted (Woody, 19 November
-  // 2026: "Yes don't chase"). Its requests are left as they are.
+  // Only a live deal is chased (Woody, 19 November 2026: "Yes don't chase",
+  // of a deleted deal; 20 November: "only chase live deals"): never one that
+  // has been deleted, withdrawn, completed, invoiced or archived
+  // (CLOSED_STATUSES). Its requests are left as they are.
   const rows = (await pool.query(
     `SELECT * FROM kyc_upload_tokens
       WHERE request IS NOT NULL AND is_test IS NOT TRUE AND revoked_at IS NULL AND completed_at IS NULL
         AND expires_at > now() AND COALESCE(reminders_sent, 0) < $1
-        AND EXISTS (SELECT 1 FROM crm_deals d WHERE d.id = kyc_upload_tokens.deal_id)`, [REMINDER_DAYS.length])).rows as TokenRow[];
+        AND EXISTS (SELECT 1 FROM crm_deals d WHERE d.id = kyc_upload_tokens.deal_id
+                     AND NOT (lower(btrim(coalesce(d.status, ''))) = ANY($2::text[])))`,
+    [REMINDER_DAYS.length, statusSpellingsFor(CLOSED_STATUSES)])).rows as TokenRow[];
   let sent = 0, failed = 0, skipped = 0;
   for (const row of rows) {
     if (!reminderDue(row, now)) continue;

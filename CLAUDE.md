@@ -3029,10 +3029,11 @@ pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
   to the page when done; a new session at most three times), the question,
   progress, and **Finish**, which emails the deal's agents what came in and
   what did not. Reminders three and seven days after sending while anything
-  is outstanding, and never for a deal that has been deleted (Woody,
-  19 November 2026: "Yes don't chase"; the deal's requests stay as they
-  are, and the manual Remind is on the deal card, which a deleted deal no
-  longer has). A reply by email is filed only when it carries a request's
+  is outstanding, and only while the deal is live: never for one deleted,
+  withdrawn, completed, invoiced or archived (`CLOSED_STATUSES`; a deal
+  with no status counts as live). Woody, 19 November 2026: "Yes don't
+  chase", of a deleted deal; 20 November: "only chase live deals". The
+  deal's requests stay as they are. A reply by email is filed only when it carries a request's
   reference AND comes from the address the request went to; anything else is
   marked in the mailbox for a person (`BGP-KYC-Unmatched`) and never filed.
 - **Checked against HMRC's guidance for supervised businesses** (AMLG2200
