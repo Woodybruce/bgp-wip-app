@@ -583,7 +583,7 @@ export const clientChecksSwitchOn = (value: string | null | undefined): boolean 
 export const KYC_CLIENT_CHECK_ROUTES: readonly RegExp[] = [
   /^\/api\/aml\/deal\/[^/]+\/client-checks$/,
   // A person's own link (19 November 2026).
-  /^\/api\/aml\/deal\/[^/]+\/client-checks\/people$/,
+  /^\/api\/aml\/deal\/[^/]+\/client-checks\/people(?:\/rename)?$/,
   // A proof of address read again or accepted (20 November 2026).
   /^\/api\/aml\/deal\/[^/]+\/client-checks\/address-proof\/(?:read|accept)$/,
   /^\/api\/aml\/client-checks\/[^/]+(?:\/remind)?$/,

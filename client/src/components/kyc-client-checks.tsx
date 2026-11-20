@@ -330,6 +330,7 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
   const [open, setOpen] = useState(false);
   const [details, setDetails] = useState(false);
   const [sending, setSending] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const ownRequest = person.own && !person.own.isMain ? data.requests.find(r => r.token === person.own!.token) || null : null;
   const idOk = person.id.state === "passed" || person.id.state === "waiting" || person.id.state === "document";
   const testKey = person.key.replace(/\s+/g, "-");
@@ -377,10 +378,41 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
           </Button>
         )}
         {person.own?.isMain && <span className="text-muted-foreground">On the request to them ({person.own.ref}), under Client checks.</span>}
+        {person.own && !person.roles.includes("owner") && !person.roles.includes("director") && (
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setRenaming(true)} data-testid={`person-rename-${testKey}`}>Change name</Button>
+        )}
       </div>
+      {renaming && person.own && <RenamePerson dealId={dealId} token={person.own.token} current={person.name} suggested={person.id.someoneElse} onDone={() => setRenaming(false)} />}
       {open && ownRequest && <ClientCheckRow dealId={dealId} request={ownRequest} startOpen />}
       </>}
       {sending && <PersonLinkDialog dealId={dealId} data={data} party={party} person={person} onClose={() => setSending(false)} />}
+    </div>
+  );
+}
+
+// The name BGP typed for a person, put right to the one on their documents
+// (Jack, 20 November 2026: "Jonny" on the deal, "Jonathan" on the passport).
+// What they sent is read against the new name at once; nothing is resent.
+function RenamePerson({ dealId, token, current, suggested, onDone }: { dealId: string; token: string; current: string; suggested: string | null; onDone: () => void }) {
+  const { toast } = useToast();
+  const titleCase = (s: string) => s.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+  const [name, setName] = useState(suggested ? titleCase(suggested) : current);
+  const save = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/aml/deal/${dealId}/client-checks/people/rename`, { token, name: name.trim() })).json(),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: keyFor(dealId) }); toast({ title: `Name changed to ${name.trim()}` }); onDone(); },
+    onError: (e: any) => toast({ title: "Not changed", description: String(e?.message || e).replace(/^\d+:\s*/, ""), variant: "destructive" }),
+  });
+  return (
+    <div className="rounded border bg-muted/40 p-2 space-y-1.5" data-testid="person-rename-box">
+      <p className="text-muted-foreground">Their full name as on their passport or driving licence. Their identity check and proof of address are read against it again; nothing is sent to them.</p>
+      <Input value={name} onChange={e => setName(e.target.value)} className="h-8 text-sm" data-testid="person-rename-input"
+        onKeyDown={e => { if (e.key === "Enter" && name.trim().split(/\s+/).length >= 2) save.mutate(); }} />
+      <div className="flex gap-1">
+        <Button size="sm" className="h-7 px-2 text-xs" disabled={save.isPending || name.trim().split(/\s+/).length < 2 || name.trim() === current} onClick={() => save.mutate()} data-testid="person-rename-save">
+          {save.isPending && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}Save name
+        </Button>
+        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={onDone}>Cancel</Button>
+      </div>
     </div>
   );
 }

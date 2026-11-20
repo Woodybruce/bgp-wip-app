@@ -243,7 +243,7 @@ test("the client checks' own switch: on unless KYC_CLIENT_CHECKS is off, and the
   assert.equal(clientChecksSwitchOn(" OFF "), false);
   assert.equal(clientChecksSwitchOn("off"), false);
   const through = (path: string) => KYC_CLIENT_CHECK_ROUTES.some(r => r.test(path));
-  for (const path of ["/api/aml/deal/d1/client-checks", "/api/aml/deal/d1/client-checks/people", "/api/aml/client-checks/tok", "/api/aml/client-checks/tok/remind", "/api/aml/poll-mailbox"]) assert.equal(through(path), true, path);
+  for (const path of ["/api/aml/deal/d1/client-checks", "/api/aml/deal/d1/client-checks/people", "/api/aml/deal/d1/client-checks/people/rename", "/api/aml/client-checks/tok", "/api/aml/client-checks/tok/remind", "/api/aml/poll-mailbox"]) assert.equal(through(path), true, path);
   for (const path of ["/api/aml/status", "/api/aml/deal/d1/cdd", "/api/aml/client-checks", "/api/aml/client-checks/tok/remind/x", "/api/kyc-upload/tok", "/api/aml/deal/d1/client-checks/people/x"]) assert.equal(through(path), false, path);
 });
 

@@ -1102,6 +1102,35 @@ kycRequestRouter.post("/api/aml/deal/:id/client-checks/people", signedIn, async 
   }
 });
 
+// The name a person was asked under, put right (Jack, 20 November 2026: added
+// as "Jonny Miller", his passport and bill say Jonathan Miller). Only for a
+// name BGP typed: someone added alongside a private individual, or the person
+// a private individual's request went to. A name from Companies House stays
+// the register's. Their identity check and proof of address are read against
+// the name on every view, so what they sent counts at once.
+kycRequestRouter.post("/api/aml/deal/:id/client-checks/people/rename", signedIn, async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    if (!clientChecksOn()) return res.status(410).json({ message: CHECKS_OFF });
+    const name = String(req.body?.name || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    if (name.split(" ").length < 2 || !personKey(name)) return res.status(400).json({ message: "Enter their full name, first and last." });
+    const row = await tokenRow(String(req.body?.token || ""));
+    if (!row || !row.request || row.is_test || String(row.deal_id || "") !== String(req.params.id)) return res.status(404).json({ message: "That request is not on this deal." });
+    const person = (row.request as any).person as KycRequestPerson | undefined;
+    const typedByBgp = person ? (person.roles || []).every(r => r === "joint") : row.request.kind === "individual";
+    if (!typedByBgp) return res.status(409).json({ message: "This name comes from Companies House and is kept as the register gives it." });
+    const before = person ? person.name : row.contact_name || "";
+    const request = person ? { ...row.request, person: { ...person, name, key: personKey(name) } } : row.request;
+    await pool.query(`UPDATE kyc_upload_tokens SET contact_name = $2, request = $3::jsonb WHERE token = $1`, [row.token, name, JSON.stringify(request)]);
+    if (row.company_id) await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_checks_renamed', $2, $3)`,
+      [row.company_id, me.name || me.id, `Name on client checks ref ${row.request.ref} changed from ${before} to ${name}`]).catch(() => {});
+    res.json({ ok: true, name });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not change the name" });
+  }
+});
+
 // A proof of address read again (BGP staff), or accepted by the Nominated
 // Officer or a Deputy with a note when its reading did not pass (Woody,
 // 20 November 2026: "is the app checking its actually for that person and

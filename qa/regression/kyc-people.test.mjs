@@ -28,7 +28,10 @@ test('a person gets a link of their own from BGP staff, or from the person actin
   // A client's typing is never saved to the CRM.
   assert.match(portal, /if \(!main && !row\.contact_id\) \{/);
   // The new staff address goes through the client checks' own switch.
-  assert.match(read('shared/kyc-request.ts'), /\/\^\\\/api\\\/aml\\\/deal\\\/\[\^\/\]\+\\\/client-checks\\\/people\$\//);
+  assert.match(read('shared/kyc-request.ts'), /\/\^\\\/api\\\/aml\\\/deal\\\/\[\^\/\]\+\\\/client-checks\\\/people\(\?:\\\/rename\)\?\$\//);
+  // A name BGP typed is put right by BGP staff; a register name is kept (Jack, 20 November 2026).
+  assert.match(portal, /kycRequestRouter\.post\("\/api\/aml\/deal\/:id\/client-checks\/people\/rename", signedIn, async[\s\S]{0,200}const me = await staffMe\(req\);\s*if \(!me\) return res\.status\(403\)/);
+  assert.match(portal, /This name comes from Companies House and is kept as the register gives it\./);
 });
 
 test("a person's own request asks only what is still outstanding and starts no identity check until they press the button", () => {
