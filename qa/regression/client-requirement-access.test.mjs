@@ -154,7 +154,15 @@ test('a client is told what a requirement is and its own date, never its state, 
   assert.equal(own.listingText, null, 'a joint agent is told nothing of BGP\'s own requirement');
 });
 
-test('a client\'s requirement is the client\'s, never confirmed, with no BGP owner, and reads To confirm for BGP', () => {
+// Woody, 20 November 2026: "Clients should be able to do what we can do
+// really". A client's add is confirmed by the person who added it, as BGP's
+// own are; with no creator the stamp still confirms nothing.
+test('a client\'s requirement is the client\'s with no BGP owner, confirmed by the person who added it', () => {
+  const at = new Date('2026-11-20T12:00:00Z');
+  const added = live.clientCreatedStamp('Landsec', { id: 'u-client', name: 'Lana Client' }, at);
+  assert.deepEqual(plain(added), { origin: 'client', sources: ['Landsec'], lastConfirmedAt: at.toISOString(), lastConfirmedBy: 'u-client', lastConfirmedByName: 'Lana Client', confirmedHow: 'created', bgpContactUserId: null, bgpContactUserIds: null });
+  const confirmedState = live.requirementLive({ status: 'Active', createdAt: at, ...added }, at);
+  assert.deepEqual([confirmedState.state, confirmedState.confirmed, confirmedState.clientMade], ['live', true, true]);
   const stamp = live.clientCreatedStamp('Landsec');
   assert.deepEqual(plain(stamp), { origin: 'client', sources: ['Landsec'], lastConfirmedAt: null, lastConfirmedBy: null, lastConfirmedByName: null, confirmedHow: null, bgpContactUserId: null, bgpContactUserIds: null });
   const row = { status: 'Active', requirementDate: TODAY.toISOString().slice(0, 10), createdAt: TODAY, ...stamp };
@@ -255,20 +263,24 @@ test('a client reads every requirement, BGP\'s own included, as the client copy'
   assert.equal((await r.call('get /api/crm/requirements-leasing')).data[0].lastConfirmedBy, 'u-emily');
 });
 
-test('a client\'s add is the client\'s: unconfirmed, labelled with its name, with no owner or provenance, and reads To confirm', async () => {
+test('a client\'s add is the client\'s: labelled with its name, confirmed by the person who added it, with no owner or provenance from the body', async () => {
   viewer = CLIENT;
   const r = requirementRoutes();
   const made = await r.call('post /api/crm/requirements-leasing', { body: { ...FORM, ...SMUGGLED } });
   assert.equal(made.status, 201, JSON.stringify(made.data));
   const [kind, stored] = r.writes.find(w => w[0] === 'create');
   assert.equal(kind, 'create');
-  assert.deepEqual([stored.origin, stored.sources, stored.lastConfirmedAt, stored.lastConfirmedBy, stored.lastConfirmedByName, stored.confirmedHow],
-    ['client', ['Landsec'], null, null, null, null]);
+  // Confirmed by the signed-in person at creation ('created'), never by what the body says ('call').
+  assert.deepEqual([stored.origin, stored.sources, stored.lastConfirmedBy, stored.lastConfirmedByName, stored.confirmedHow],
+    ['client', ['Landsec'], 'u-client', 'Lana Client', 'created']);
+  // The fake storage keeps plain values, so read the date by value.
+  const confirmedAt = new Date(stored.lastConfirmedAt).getTime();
+  assert.ok(Number.isFinite(confirmedAt) && Math.abs(confirmedAt - Date.now()) < 60_000, 'confirmed now, not at the body\'s time');
   assert.deepEqual([stored.bgpContactUserId, stored.bgpContactUserIds], [null, null]);
   for (const key of ['externalRequirementId', 'lastListedAt', 'lastListedSource', 'landlordPack', 'underOffer', 'extract']) assert.ok(!stored[key], `${key} was taken from the body`);
   assert.equal(stored.requirementDate, TODAY.toISOString().slice(0, 10), 'dated today, whatever the body says');
   assert.equal(stored.comments, 'Heard at the leasing meeting');
-  assert.equal(live.requirementLive(stored, TODAY).state, 'to_confirm');
+  assert.equal(live.requirementLive(stored, new Date()).state, 'live');
   // The reply is the client copy, and no agent was retyped by a client's write.
   for (const key of ['origin', 'bgpContactUserIds', 'lastConfirmedAt', 'updatedAt']) assert.equal(key in made.data, false, `${key} in the reply`);
   assert.equal(r.writes.some(w => w[0] === 'agent-typed'), false);

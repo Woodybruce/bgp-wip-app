@@ -17,9 +17,12 @@
 //                       listed for an admin, who passes rows through the
 //                       intake as SUGGESTIONS. Never straight to live.
 //
-// Staff only. Leasing only: investment requirements are not handled here.
+// A client login (or BGP staff viewing as one) adds and amends through the
+// page's own door instead (Woody, 2026-11-20: "Needs to be able to add a
+// requirement"): see clientLogRequirementFromChat below.
+// Leasing only: investment requirements are not handled here.
 import { createHash } from "node:crypto";
-import { requirementLive, requirementStateSql, type ConfirmedHow } from "@shared/requirement-live";
+import { requirementLive, requirementReason, requirementStateSql, type ConfirmedHow } from "@shared/requirement-live";
 import {
   confirm, suggest, stillLive, matchBrand, brandKey, pgIntakeStore, IntakeError,
   type Actor, type IntakeStore, type RequirementRow, type EvidenceInput, type EvidenceKind, type Queryable,
@@ -350,14 +353,258 @@ export async function updateRequirementFromChat(store: IntakeStore, raw: any, ac
   };
 }
 
+// ── Client logins (Woody, 20 November 2026: "Needs to be able to add a requirement") ──
+//
+// A client login, or BGP staff viewing as one, adds and amends a requirement
+// from chat as the Requirements page lets it: through the page's own routes,
+// as that login (POST and PUT /api/crm/requirements-leasing, called by
+// callOwnRoute in chatbgp.ts). Those routes keep to the client's fields,
+// check the brand is a tenant brand on its list, and save a new requirement
+// as the client's own with no BGP owner. Then "Clients should be able to do
+// what we can do really" (Woody, the same day): what the client logs is
+// confirmed by that person as BGP staff's is, and its word that a
+// requirement is still live (or the same search logged again) is a
+// confirmation through the intake's stillLive, named and never a BGP owner.
+// ChatBGP tells a client what a requirement is and its own date
+// (requirementReason().clientText), never its state or who at BGP confirmed it.
+
+export type ClientRequirementRoute = (method: "POST" | "PUT", path: string, body: Record<string, unknown>) => Promise<{ ok: boolean; status: number; json: any }>;
+
+export interface ClientRequirementDeps {
+  route: ClientRequirementRoute;
+  /** The one contact filed under the brand with this name, else null. */
+  contactAt?: (companyId: string, name: string) => Promise<string | null>;
+  /** The client's word that it is still live: a confirmation by that person, as BGP staff's is (never a BGP owner). */
+  markStillLive?: (requirementId: string, how: ConfirmedHow | null) => Promise<void>;
+}
+
+// How the client said it knows, for its confirmation ("press" is never a client's confirmation).
+const clientHow = (said: unknown): ConfirmedHow | null => {
+  const how = String(said || "").trim().toLowerCase();
+  return CHAT_HOW[how] && how !== "press" ? (how as ConfirmedHow) : null;
+};
+
+/** Records the client's confirmation; a refusal (a closed requirement) is said, never thrown. */
+async function clientConfirms(deps: ClientRequirementDeps, requirementId: string, how: ConfirmedHow | null): Promise<string> {
+  if (!deps.markStillLive) return "";
+  try { await deps.markStillLive(requirementId, how); return " It is recorded as still live today."; }
+  catch (e: any) { return ` It could not be recorded as still live: ${String(e?.message || "it could not be saved").replace(/[.\s]+$/, "")}.`; }
+}
+
+function clientDescribe(r: RequirementRow, now: Date) {
+  return { id: r.id, name: r.name, companyId: r.company_id, status: r.status, use: r.use || [], size: r.size || [], locations: r.requirement_locations || [], listed: requirementReason(r as any, now).clientText };
+}
+
+function clientOneLine(r: RequirementRow, now: Date): string {
+  const d = clientDescribe(r, now);
+  const facts = [d.locations.join(", "), d.size.join(", "), d.use.join(" / ")].filter(Boolean).join("; ");
+  return `${d.name}${facts ? ` (${facts})` : ""}, ${d.listed}`;
+}
+
+const routeRefusal = (r: { status: number; json: any }, fallback: string) =>
+  fail(`${String(r.json?.error || r.json?.message || `${fallback} (${r.status})`).replace(/[.\s]+$/, "")}. Nothing was saved.`);
+
+const addNote = (saved: string | null | undefined, entry: string) => (saved ? `${saved}\n\n${entry}` : entry);
+
+/** A client login asked ChatBGP to log a requirement. Saved as the client's own, through the page's route; never a second row for a brand and area that already has one. */
+export async function clientLogRequirementFromChat(store: IntakeStore, raw: any, user: { name: string }, deps: ClientRequirementDeps, now: Date = new Date()): Promise<ChatRequirementResult> {
+  const b = readBrief(raw);
+  if (b.investment) return fail(INVESTMENT_REFUSAL);
+  if (!b.brandName && !b.companyId) return fail("Which brand is the requirement for? Nothing was saved.");
+
+  let brand: { id: string; name: string } | null = null;
+  if (b.companyId) {
+    brand = (await store.brandsByIds([b.companyId]))[0] || null;
+    if (!brand) return fail("That company id is not in the CRM. Search for the brand first. Nothing was saved.");
+  } else {
+    const match = await matchBrand(store, { name: b.brandName });
+    if (match.companyId) brand = (await store.brandsByIds([match.companyId]))[0] || null;
+    else if (match.candidates.length) {
+      return fail(`More than one brand could be "${b.brandName}": ${match.candidates.map(c => `${c.name} (id ${c.id})`).join(", ")}. Nothing was saved. Which one is it?`,
+        { needsBrand: true, candidates: match.candidates.map(c => ({ id: c.id, name: c.name })), next: "Ask the user which brand, then call create_requirement again with its companyId." });
+    }
+  }
+  if (!brand) {
+    return fail(`"${b.brandName}" is not on the brand list yet, so nothing was saved.`,
+      { brandNotFound: true, next: "Offer to add it as a tenant brand (create_company), then call create_requirement again with the new companyId." });
+  }
+
+  const open = (await store.requirementsForCompanies([brand.id])).filter(r => requirementLive(r, now).state !== "closed");
+  let target: RequirementRow | null = null;
+  if (b.requirementId) {
+    target = open.find(r => r.id === b.requirementId) || null;
+    if (!target) return fail(`That requirement is not one of ${brand.name}'s open requirements. Nothing was saved.`);
+  } else if (!b.newSearch && open.length) {
+    const same = open.filter(r => sameArea(b.locations, r.requirement_locations));
+    if (same.length !== 1) {
+      return fail(`${brand.name} already has ${open.length === 1 ? "a requirement" : `${open.length} requirements`} on the Requirements list: ${open.map(r => `${clientOneLine(r, now)} (id ${r.id})`).join(" | ")}. `
+        + `Nothing was saved. Is this the same search as ${open.length === 1 ? "that one" : "one of those"}, or a separate new search?`,
+      { needsChoice: true, brand: brand.name, companyId: brand.id, existing: open.map(r => clientDescribe(r, now)),
+        next: "Ask the user, then call create_requirement again with requirementId (the same search: the details are added to it) or newSearch: true (a separate search)." });
+    }
+    target = same[0];
+  }
+
+  const line = briefLine(b);
+  if (target) {
+    // The same search: fill what is blank and add the note; never overwrite what is saved.
+    const patch: Record<string, unknown> = {};
+    const filled: string[] = [];
+    const notChanged: Array<{ field: string; saved: string[]; said: string[] }> = [];
+    for (const [field, column, key, said] of [["size", "size", "size", b.size], ["locations", "requirement_locations", "requirementLocations", b.locations], ["use", "use", "use", b.use]] as const) {
+      const saved: string[] = Array.isArray(target[column]) ? target[column].filter(Boolean) : [];
+      if (!said.length || sameList(said, saved)) continue;
+      if (!saved.length) { patch[key] = said; filled.push(field); }
+      else notChanged.push({ field, saved, said });
+    }
+    const said = [line, b.notes].filter(Boolean).join(". ");
+    if (said) patch.comments = addNote(target.comments, `[${ukDay(now)}, ${user.name} via ChatBGP] ${said}`);
+    const requirement = target;
+    const base = { entity: "requirement", category: "Leasing", brand: brand.name, ...clientDescribe(requirement, now), url: pageUrl(requirement.id, brand.id), alreadyExisted: true };
+    // As for BGP staff, the same search is confirmed as well as added to.
+    if (Object.keys(patch).length) {
+      const r = await deps.route("PUT", `/api/crm/requirements-leasing/${encodeURIComponent(requirement.id)}`, patch);
+      if (!r.ok) return routeRefusal(r, "The requirement could not be changed");
+    }
+    const confirmed = await clientConfirms(deps, requirement.id, clientHow(raw?.how));
+    return {
+      success: true, action: "updated", ...base, filled, notChanged,
+      message: `${brand.name} already had this requirement, so I did not add a second one.${confirmed}${filled.length ? ` Filled in: ${filled.join(", ")}.` : ""}${said ? " Your note is added to its comments." : ""}`
+        + notChanged.map(n => ` The saved ${n.field} (${n.saved.join(", ")}) differs from what you said (${n.said.join(", ")}); I left it as it was.`).join("")
+        + (notChanged.length ? ` Say if the saved details should be replaced. (id ${requirement.id})` : ""),
+      ...(notChanged.length ? { next: "Only if the user agrees, call update_requirement with this id, the new values and replaceSaved: true." } : {}),
+    };
+  }
+
+  const contactId = b.contactName && deps.contactAt ? await deps.contactAt(brand.id, b.contactName) : null;
+  const comments = [b.notes, b.budget ? `Budget: ${b.budget}` : "", b.priority ? `Priority: ${b.priority}` : "", b.contactName && !contactId ? `Contact: ${b.contactName}` : ""].filter(Boolean).join("\n");
+  const body: Record<string, unknown> = { name: brand.name, companyId: brand.id, status: "Active" };
+  if (b.use.length) body.use = b.use;
+  if (b.size.length) body.size = b.size;
+  if (b.locations.length) body.requirementLocations = b.locations;
+  if (comments) body.comments = comments;
+  if (contactId) body.principalContactId = contactId;
+  const r = await deps.route("POST", "/api/crm/requirements-leasing", body);
+  if (!r.ok) return routeRefusal(r, "The requirement could not be added");
+  const requirement = { id: r.json?.id ? String(r.json.id) : null, name: String(r.json?.name || brand.name) };
+  return {
+    success: true, action: "created", entity: "requirement", category: "Leasing", brand: brand.name, id: requirement.id, name: requirement.name, companyId: brand.id,
+    use: b.use, size: b.size, locations: b.locations, url: pageUrl(requirement.id, brand.id),
+    message: `Logged a requirement for ${brand.name}${line ? ` (${line})` : ""}. It is on the Requirements list (Brands → Requirements), and BGP's team sees it on theirs.`,
+  };
+}
+
+/** A client login asked ChatBGP to change a requirement: the page's own amendment, so only the client's fields. An edit is not a confirmation; its word that the requirement is still live is, as BGP staff's is. */
+export async function clientUpdateRequirementFromChat(store: IntakeStore, raw: any, user: { name: string }, deps: ClientRequirementDeps, now: Date = new Date()): Promise<ChatRequirementResult> {
+  const a = raw && typeof raw === "object" ? raw : {};
+  const id = text(a.id, 100);
+  if (!id) return fail("Which requirement? Nothing was changed.");
+  const existing = await store.requirementById(id);
+  if (!existing) return fail(`No leasing requirement has the id "${id}". Nothing was changed.`);
+  const b = readBrief({ ...a, companyName: null });
+  const patch: Record<string, unknown> = {};
+  const changed: string[] = [];
+  const needsConfirmation: Array<{ field: string; saved: string[]; said: string[] }> = [];
+  for (const [field, column, key, said] of [["size", "size", "size", b.size], ["locations", "requirement_locations", "requirementLocations", b.locations], ["use", "use", "use", b.use]] as const) {
+    const saved: string[] = Array.isArray(existing[column]) ? existing[column].filter(Boolean) : [];
+    if (!said.length || sameList(said, saved)) continue;
+    if (!saved.length || a.replaceSaved === true) { patch[key] = said; changed.push(field); }
+    else needsConfirmation.push({ field, saved, said });
+  }
+  let statusNote = "";
+  if (a.status != null && a.status !== "") {
+    const word = String(a.status).trim().toLowerCase();
+    const status = STATUS_WORDS[word];
+    if (!status) return fail(`"${a.status}" is not a status a requirement can have (Active, Past or Archived). Nothing was changed.`);
+    if (status !== existing.status) { patch.status = status; changed.push(`status (${status})`); }
+    if (word === "on_hold" || word === "on hold") statusNote = "On hold";
+  }
+  const said = [statusNote, b.budget ? `budget ${b.budget}` : "", b.priority ? `${b.priority} priority` : "", b.contactName ? `contact ${b.contactName}` : "", b.notes || ""].filter(Boolean).join("; ");
+  if (said) { patch.comments = addNote(existing.comments, `[${ukDay(now)}, ${user.name} via ChatBGP] ${said}`); changed.push("comments"); }
+  const confirming = a.stillLive === true;
+  const replaceLine = needsConfirmation.map(n => `The saved ${n.field} is ${n.saved.join(", ")}; you said ${n.said.join(", ")}.`).join(" ");
+  if (!changed.length && !confirming) {
+    if (needsConfirmation.length) return fail(`${replaceLine} Nothing was changed. Should the saved details be replaced? (id ${existing.id})`, { needsConfirmation, next: "Only if the user agrees, call update_requirement again with replaceSaved: true." });
+    return fail("No changes were given. Nothing was changed.");
+  }
+  if (changed.length) {
+    const r = await deps.route("PUT", `/api/crm/requirements-leasing/${encodeURIComponent(existing.id)}`, patch);
+    if (!r.ok) return routeRefusal(r, "The requirement could not be changed");
+  }
+  const requirement = existing;
+  const confirmed = confirming ? await clientConfirms(deps, requirement.id, clientHow(a.how)) : "";
+  return {
+    success: true, action: "updated", entity: "requirement", category: "Leasing", ...clientDescribe(requirement, now), url: pageUrl(requirement.id, requirement.company_id), changed, needsConfirmation,
+    message: `Updated the requirement for ${existing.name}${changed.length ? `: ${changed.join(", ")}` : ""}.${confirmed}`
+      + (statusNote ? " The Requirements list has no On hold status, so it is saved as Archived with an On hold note." : "")
+      + (needsConfirmation.length ? ` ${replaceLine} I left ${needsConfirmation.length === 1 ? "that" : "those"} as saved. Say if ${needsConfirmation.length === 1 ? "it" : "they"} should be replaced. (id ${existing.id})` : ""),
+    ...(needsConfirmation.length ? { next: "Only if the user agrees, call update_requirement again with replaceSaved: true." } : {}),
+  };
+}
+
+/** A client login's create or update from chat: the page's own routes as that login, then one audit row. */
+async function runClientRequirementTool(tool: "create_requirement" | "update_requirement", args: any, req: any,
+  callOwnRoute?: (req: any, method: "POST" | "PUT", path: string, body: Record<string, unknown>) => Promise<{ ok: boolean; status: number; json: any }>): Promise<{ data: ChatRequirementResult; action?: any }> {
+  if (!callOwnRoute) return { data: fail("Requirements cannot be saved from this chat. Add it on the Requirements list (Brands → Requirements). Nothing was saved.") };
+  const { requirementViewer } = await import("./landsec-access");
+  if (await requirementViewer(req) === "joint_agent") return { data: fail("Requirements are not available on this login. Nothing was saved.") };
+  const { pool } = await import("./db");
+  const userId = req?.session?.userId || req?.tokenUserId || null;
+  const user = userId ? (await pool.query(`SELECT id, name FROM users WHERE id = $1`, [userId])).rows[0] : null;
+  if (!user) return { data: fail("Your account could not be verified. Nothing was saved.") };
+  const who = { name: String(user.name || "").trim() || "Client" };
+  const deps: ClientRequirementDeps = {
+    route: (method, path, body) => callOwnRoute(req, method, path, body),
+    contactAt: async (companyId, name) => {
+      const rows = (await pool.query(`SELECT id FROM crm_contacts WHERE company_id = $1 AND lower(trim(name)) = lower(trim($2)) LIMIT 2`, [companyId, name])).rows;
+      return rows.length === 1 ? String(rows[0].id) : null;
+    },
+    // The client's confirmation, as BGP staff's (Woody, 2026-11-20: "Clients
+    // should be able to do what we can do really"), named, never a BGP owner.
+    markStillLive: async (requirementId, how) => {
+      const db = await pool.connect();
+      try {
+        await db.query("BEGIN");
+        await stillLive(pgIntakeStore(db), requirementId, { id: String(user.id), name: who.name, client: true }, how);
+        await db.query("COMMIT");
+      } catch (e) {
+        try { await db.query("ROLLBACK"); } catch {}
+        throw e;
+      } finally {
+        db.release();
+      }
+    },
+  };
+  let data: ChatRequirementResult;
+  try {
+    const store = pgIntakeStore(pool);
+    data = tool === "create_requirement" ? await clientLogRequirementFromChat(store, args, who, deps) : await clientUpdateRequirementFromChat(store, args, who, deps);
+  } catch (e: any) {
+    console.error("[chatbgp-requirements] client:", e?.message || e);
+    data = fail("The requirement could not be saved. Nothing was saved.");
+  }
+  const wrote = data.success && (data.action === "created" || data.action === "updated");
+  try {
+    const { logAudit } = await import("./sql-tools");
+    await logAudit({
+      tableName: "crm_requirements_leasing", op: data.action === "created" ? "INSERT" : "UPDATE", data: args,
+      where: { id: data.id || args?.id || null, companyId: data.companyId || null, outcome: data.action || null, client: true },
+      affectedRows: wrote ? 1 : 0, userId: user.id, threadId: req?.body?.threadId, success: data.success, error: data.error,
+    });
+  } catch {}
+  return wrote ? { data, action: { type: data.action === "created" ? "crm_created" : "crm_updated", entityType: "requirement", id: data.id, name: data.name } } : { data };
+}
+
 /** The create and update tools, as both ChatBGP executors call them: a named BGP person, one transaction, one audit row. */
-export async function runChatRequirementTool(tool: "create_requirement" | "update_requirement", args: any, req: any): Promise<{ data: ChatRequirementResult; action?: any }> {
+export async function runChatRequirementTool(tool: "create_requirement" | "update_requirement", args: any, req: any, deps: { callOwnRoute?: (req: any, method: "POST" | "PUT", path: string, body: Record<string, unknown>) => Promise<{ ok: boolean; status: number; json: any }> } = {}): Promise<{ data: ChatRequirementResult; action?: any }> {
   // A server-originated ChatBGP run (the Friday report, the activity curator,
   // a property sweep: askChatBgp sends X-BGP-Internal) has no person asking.
   // Only a person makes a requirement live, so both tools are refused there.
   if ((await import("./chatbgp-internal")).isInternalStaffRequest(req)) {
     return { data: fail("Requirements are logged and confirmed only when a BGP person asks in their own chat, never from an automated run. Nothing was saved.") };
   }
+  // A client login, or BGP staff viewing as one, goes through the page's own door.
+  if (await (await import("./company-scope")).resolveCompanyScope(req)) return runClientRequirementTool(tool, args, req, deps.callOwnRoute);
   let actor: Actor;
   try {
     actor = await (await import("./requirement-intake-routes")).staffActor(req);

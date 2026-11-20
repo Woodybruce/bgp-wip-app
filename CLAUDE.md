@@ -5414,10 +5414,13 @@ Two rules everything else follows (do not re-litigate):
 
 1. **No machine-made live requirements.** Anything a machine detects (an
    import, a news story, a chat post, a transcript, a viewing or deal rule)
-   is a SUGGESTION. Only a named BGP person makes a requirement live, by
-   confirming it. A staff member telling ChatBGP to log one counts as that
-   person's confirmation. A press story a person confirms is labelled
-   press-reported until someone records speaking to the brand.
+   is a SUGGESTION. Only a named person makes a requirement live, by
+   confirming it: BGP staff, and since 20 November 2026 a client login too
+   (Woody: "Clients should be able to do what we can do really"; a client
+   is never made a requirement's BGP owner). A person telling ChatBGP to
+   log one counts as that person's confirmation. A press story a person
+   confirms is labelled press-reported until someone records speaking to
+   the brand.
 2. **No scheduled ageing writes.** The state is DERIVED on read from the
    confirmation date. Nothing, at boot or on a timer, moves a row between
    states or back-fills; back-fills are admin Preview then Apply.
@@ -5463,15 +5466,20 @@ nothing new" under NOT built.
   `CLIENT_REQUIREMENT_FIELDS` (`shared/requirement-live.ts`: name, brand,
   group, status Active / Past / Archived, contacts, deal, use, type, size,
   places, comments), and the brand must be a tenant brand the login may see
-  (`isClientVisibleBrand`); never provenance, an owner or a confirmation. A
-  new row is stamped by `clientCreatedStamp`: `origin = 'client'`, the
-  client company's name in `sources` (Source "Client" on BGP's screens), no
-  confirmation and no owner, so it reads To confirm for BGP until a named
-  BGP person confirms it ("client requirement added 17 Nov, not confirmed").
-  A client's edit is never a confirmation. Imports never label or fold into
+  (`isClientVisibleBrand`); never provenance, an owner or a confirmation
+  from the body. A new row is stamped by `clientCreatedStamp`:
+  `origin = 'client'`, the client company's name in `sources` (Source
+  "Client" on BGP's screens), no BGP owner, and since 20 November 2026
+  confirmed by the person who added it at creation (`confirmedHow`
+  "created"), as BGP's own are (Woody: "Clients should be able to do what we
+  can do really"); until then it read To confirm ("client requirement added
+  17 Nov, not confirmed") until a BGP person confirmed it. A client's edit
+  is never a confirmation, as a BGP person's is not. Imports never label or fold into
   a client's row (`importMayLabel`, `listingTarget`). A login not tied to a
   client company (`NO_ACCESS_SCOPE`) reads and writes nothing. ChatBGP's
-  `create_requirement` and `update_requirement` stay BGP staff only.
+  `create_requirement` and `update_requirement` were BGP staff only until
+  20 November 2026; a client login now uses them through these same routes
+  (see "ChatBGP adds requirements for client logins" below).
 - **The page.** A client login, and BGP staff viewing as one, get Add
   requirement and Edit on the client shape (`LeasingFormDialog` with
   `clientForm`: the brand picked from the brands it may see, no BGP owner;
@@ -5499,7 +5507,8 @@ nothing new" under NOT built.
   `qa/regression/client-requirement-access.test.mjs`, with the requirement
   guards and `qa/two-bot-round.mjs` brought up to the rule.
 
-- **The states**: LIVE = a named BGP person confirmed it within 90 days
+- **The states**: LIVE = a named person (BGP staff, or a client login since
+  20 November 2026) confirmed it within 90 days
   (`REQUIREMENT_LIVE_DAYS`). TO CONFIRM = confirmed 90 days to 12 months ago
   (`REQUIREMENT_TO_CONFIRM_DAYS`, 365), a Draft, BGP's own row nobody has
   confirmed yet, or a suggestion waiting for a person. BACKGROUND = older, on
@@ -5555,10 +5564,43 @@ nothing new" under NOT built.
   outside `/api/crm/` on purpose. Do not write the provenance columns or
   `requirement_evidence` anywhere else: storage, the generic PATCH, Import
   Anything and `sql_write` all refuse or strip them.
+- **ChatBGP adds requirements for client logins** (Woody, 2026-11-20, on a
+  Landsec login's chat that said the action "isn't available in this chat":
+  "Needs to be able to add a requirement"). `create_requirement` and
+  `update_requirement` are off `CLIENT_BLOCKED_TOOLS`. For a client login,
+  or BGP staff viewing as one (`resolveCompanyScope`, read before
+  `staffActor` in `runChatRequirementTool`), they run
+  `clientLogRequirementFromChat` / `clientUpdateRequirementFromChat`, which
+  write only through the page's own routes as that login (`POST` / `PUT
+  /api/crm/requirements-leasing` by `callOwnRoute`, passed in from
+  `executeCrmToolRaw`): the client's fields, the brand checked as a tenant
+  brand on its list, a new row saved as the client's own, confirmed by that
+  person (`clientCreatedStamp` with the creator). Then the same day: "Clients
+  should be able to do what we can do really". So a client's word confirms
+  as a BGP person's does: "still live", or the same brand and area logged
+  again, runs the intake's `stillLive` with a client `Actor` (`client:
+  true`, through `markStillLive` in `runClientRequirementTool`, in a
+  transaction), recorded by name, and `confirmationPatch` never makes a
+  client the BGP owner. Fields are never written through the intake (no
+  `confirm`, suggestion or direct update). The brand is the companyId given
+  or the one brand the name matches; none matched saves nothing and offers
+  `create_company`; two of the same name are asked about. The same brand
+  and area is added to (blank size, area and use filled, the note added to
+  the comments as "[date, name via ChatBGP]") and confirmed, never a second
+  row; another area asks first, listing the open ones by
+  `requirementReason().clientText`. A refused confirmation (a closed
+  requirement) is said, and what was saved stays saved. What it is told
+  never names a state or who at BGP confirmed. The page gives a client no
+  Still live button yet. A joint agent is refused (`requirementViewer`), as its
+  own ChatBGP never has the tools. The client prompt says it may add and
+  amend requirements, and the client's `search_crm`
+  (`clientScopedCrmSearch`) now returns leasing requirements as the client
+  reads them, with their ids. Tests:
+  `qa/regression/chatbgp-client-requirements.test.mjs`.
 - **ChatBGP** (`server/chatbgp-requirements.ts`): `create_requirement` and
-  `update_requirement` are leasing only and BGP staff only (both are in
-  `CLIENT_BLOCKED_TOOLS`, and the handler needs a named staff member who is
-  not viewing as a client). Both are also refused on a server-originated
+  `update_requirement` are leasing only; for BGP staff the handler needs a
+  named staff member who is not viewing as a client (a client login goes
+  the way the bullet above says). Both are also refused on a server-originated
   run (`isInternalStaffRequest`: the Friday report, the activity curator,
   property sweeps), because nobody is asking: `runChatRequirementTool`
   checks that first. A staff member asking ChatBGP to log a

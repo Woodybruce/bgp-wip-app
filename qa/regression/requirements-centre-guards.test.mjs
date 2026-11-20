@@ -109,10 +109,15 @@ test('every requirements-centre route answers BGP staff only', () => {
   assert.match(staffActor, /STAFF_ONLY/);
 });
 
-test('client logins cannot log or change requirements through ChatBGP, and sql_write cannot fake provenance', () => {
+// Woody, 20 November 2026: "Needs to be able to add a requirement". A client
+// login logs and changes requirements through ChatBGP only by the page's own
+// routes (qa/regression/chatbgp-client-requirements.test.mjs), never the intake.
+test('client logins log and change requirements through ChatBGP only by the page routes, and sql_write cannot fake provenance', () => {
   const blocked = find('server/chatbgp.ts', (n, ast) => ts.isVariableDeclaration(n) && n.name.getText(ast) === 'CLIENT_BLOCKED_TOOLS');
-  assert.match(blocked, /"create_requirement"/);
-  assert.match(blocked, /"update_requirement"/);
+  assert.doesNotMatch(blocked, /"create_requirement"/);
+  assert.doesNotMatch(blocked, /"update_requirement"/);
+  const runner = find('server/chatbgp-requirements.ts', n => ts.isFunctionDeclaration(n) && n.name?.text === 'runChatRequirementTool');
+  assert.ok(runner.indexOf('resolveCompanyScope(req)') > 0 && runner.indexOf('resolveCompanyScope(req)') < runner.indexOf('staffActor(req)'), 'a client must be sent to the page routes before the staff intake');
   const sqlTools = source('server/sql-tools.ts');
   assert.match(sqlTools, /"requirement_evidence"/);
   assert.match(sqlTools, /REQUIREMENT_PROVENANCE_COLUMNS/);
@@ -237,8 +242,9 @@ test('a client login adds a requirement and amends any through its own fields; o
   assert.match(door, /isClientVisibleBrand\(String\(companyId\), scopeCompanyId\)/);
   assert.match(door, /if \(await requirementViewer\(req\) === "joint_agent"\) return \{ status: 403/);
   const post = crm.slice(crm.indexOf('app.post("/api/crm/requirements-leasing", async'), crm.indexOf('app.put("/api/crm/requirements-leasing/:id"'));
-  assert.match(post, /Object\.assign\(parsed, clientCreatedStamp\(await getScopeCompanyName\(scopeCompanyId\)\)\);/);
-  // Never confirmed, never owned by BGP: BGP's stamp is for BGP's own rows, after the client path has returned.
+  // Confirmed by the client who added it (Woody, 2026-11-20), never owned by
+  // BGP: BGP's stamp is for BGP's own rows, after the client path has returned.
+  assert.match(post, /Object\.assign\(parsed, clientCreatedStamp\(await getScopeCompanyName\(scopeCompanyId\), creator\)\);/);
   assert.ok(post.indexOf('clientCreatedStamp') < post.indexOf('bgpCreatedStamp(creator)'));
   assert.match(post, /return res\.status\(201\)\.json\(requirementClientCopy\(created\)\);/);
   // Deleting a requirement is BGP staff's, whatever the gateway lets through.

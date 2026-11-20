@@ -230,11 +230,14 @@ test("update: notes are added, saved details are replaced only on request, and a
   await assert.rejects(updateRequirementFromChat(store, { id: "r-leeds", stillLive: true }, TOM, NOW), (e: any) => e.code === "REQUIREMENT_CLOSED");
 });
 
-test("both tools are refused for client logins, and no ChatBGP code writes or reads the old requirements table", async () => {
+// Since 20 November 2026 both tools are open to client logins (Woody: "Needs
+// to be able to add a requirement"), through the page's own routes:
+// qa/regression/chatbgp-client-requirements.test.mjs.
+test("both tools are open to client logins, and no ChatBGP code writes or reads the old requirements table", async () => {
   const source = await readFile(path.join(process.cwd(), "server", "chatbgp.ts"), "utf8");
   const blocked = source.slice(source.indexOf("export const CLIENT_BLOCKED_TOOLS = new Set(["), source.indexOf("export function isToolAllowedForClient"));
-  assert.match(blocked, /"create_requirement"/);
-  assert.match(blocked, /"update_requirement"/);
+  assert.doesNotMatch(blocked, /"create_requirement"/);
+  assert.doesNotMatch(blocked, /"update_requirement"/);
   for (const file of ["chatbgp.ts", "mcp-server.ts"]) {
     const text = await readFile(path.join(process.cwd(), "server", file), "utf8");
     assert.doesNotMatch(text, /(?:FROM|INTO|UPDATE)\s+requirements\b/i, `${file} still touches the old table`);

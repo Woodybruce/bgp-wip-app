@@ -54,7 +54,10 @@ export class IntakeError extends Error {
 }
 
 /** The named BGP person behind an action. */
-export interface Actor { id: string; name: string }
+// A client login confirms as BGP staff do since 20 November 2026 (Woody:
+// "Clients should be able to do what we can do really"), but is never made a
+// requirement's BGP owner.
+export interface Actor { id: string; name: string; client?: boolean }
 
 export interface BrandRef { id: string; name: string; hidden?: boolean; brandType?: boolean; companyType?: string | null }
 export interface NamedBrand extends BrandRef { otherNames: string[] }
@@ -279,7 +282,7 @@ function toDate(v: Date | string | null | undefined): Date | null {
 function needActor(actor: Actor | null | undefined): Actor {
   const id = String(actor?.id || "").trim(), name = String(actor?.name || "").trim();
   if (!id || !name) throw new IntakeError(401, "NO_PERSON", "A named BGP person is needed for this");
-  return { id, name };
+  return actor?.client ? { id, name, client: true } : { id, name };
 }
 
 function needKind(kind: unknown): EvidenceKind {
@@ -325,8 +328,8 @@ function confirmationPatch(existing: RequirementRow, actor: Actor, how: Confirme
   if (String(existing.status || "").trim().toLowerCase() === "draft") patch.status = "Active";
   // No requirement date is written: every row is shown to client logins
   // since 17 November 2026, and the date would tell them when BGP confirmed it.
-  // Nobody owns it yet: the person who confirms it does.
-  if (!existing.bgp_contact_user_id && !(Array.isArray(existing.bgp_contact_user_ids) && existing.bgp_contact_user_ids.length)) {
+  // Nobody owns it yet: the person who confirms it does, unless a client login confirmed it.
+  if (!actor.client && !existing.bgp_contact_user_id && !(Array.isArray(existing.bgp_contact_user_ids) && existing.bgp_contact_user_ids.length)) {
     patch.bgp_contact_user_id = actor.id;
     patch.bgp_contact_user_ids = [actor.id];
   }

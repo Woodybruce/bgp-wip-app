@@ -63,6 +63,7 @@ import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schem
 import { resolveCompanyScope, isPropertyInScope, schemeLimitSql } from "./company-scope";
 import { legacyToCode, statusSpellingsFor, DEAL_STATUS_LABELS, LETTING_PICK_STATUSES, SYSTEM_SET_STATUSES, TERMINAL_STATUSES, isExcludedLegacyStatus, type DealStatusCode } from "@shared/deal-status";
 import { LETTING_DEAL_TYPES, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, TRACKER_LIVE_STATUSES, isLettingType } from "@shared/letting-rules";
+import { requirementLiveColumnsSql, requirementReason } from "@shared/requirement-live";
 
 // ── Lettings vocabulary (shared/letting-rules.ts) ────────────────────────
 // Tool descriptions and SQL IN-lists come from the one vocabulary, never
@@ -2364,10 +2365,11 @@ export const CLIENT_BLOCKED_TOOLS = new Set([
   "search_chat_history", "manage_chat_members",
   // Paid HMLR order on BGP's Business Gateway account.
   "order_hmlr_official_copy",
-  // 4. BGP's requirements. These write the live requirements centre as a
-  // named BGP person's confirmation (server/chatbgp-requirements.ts); the
-  // handler also refuses anyone who is not BGP staff signed in as themselves.
-  "create_requirement", "update_requirement",
+  // (create_requirement and update_requirement are open to client logins
+  // since 20 November 2026, Woody: "Needs to be able to add a requirement".
+  // For a client they go through the page's own routes as that login, so the
+  // client's fields only and an unconfirmed client record:
+  // server/chatbgp-requirements.ts.)
   // 5. BGP's CRM plan: strategies, actions and events are BGP's own
   // (server/chatbgp-crm-strategy.ts refuses anyone who is not BGP staff
   // signed in as themselves).
@@ -2464,6 +2466,7 @@ Strict rules:
 - Use search_crm to look up the client's properties, available units, deals, tenants and comp evidence on their schemes. Results are already filtered to their portfolio — the same slice their Comps board shows.
 - For who is in a unit, a unit's size, rent or lease dates, or what is vacant, call get_property_units: it reads the same unit list their property page shows. For what a deal or a unit's letting is waiting on, who it is with and what is next on its checklist, call get_deal_waiting_on: it reads the deal clock their Deals page shows. Use these before query_leasing_schedule or search_crm for such questions, and never say a tenant is not on a scheme or that nothing records what a deal is waiting on until they have been tried.
 - You can create operator targeting briefs for the client's units with create_targeting_brief. Gather the objective, target operator criteria, priority categories, named target operators, deliverable deadlines and success measures conversationally first, then call the tool once. The branded brief document is saved to the unit's Letting Tracker files and filed to SharePoint automatically — include the download link the tool returns.
+- You can add a brand's leasing requirement to the Requirements list (Brands → Requirements) with create_requirement, and change one with update_requirement: every leasing requirement is open to this client to read, add and amend, and search_crm finds them. They can do with requirements what BGP's own team can: a requirement they log, or say is still live, is confirmed by them. If the brand is not on the brand list yet, offer to add it first (create_company, a tenant brand), then pass its companyId.
 - **You can drive the app on their behalf, not just answer questions.** You have the same app tooling an agent has for their portfolio: update properties and units, maintain the tenancy/leasing schedule, log viewings and offers, create and update deals, comps, companies and contacts, run the Property Pathway, generate documents/decks/PDFs/Word/Excel, create and edit images and file them to a building, manage tasks and diary entries, run KYC/covenant checks and look up market data. If a request maps to a tool, DO IT rather than telling them to ask their BGP team.
 - Two things you genuinely cannot do: (a) anything in BGP's own systems — SharePoint/OneDrive filing, BGP mailboxes, BGP diaries; and (b) raw database, bulk/merge/delete or app-administration operations. For those, say plainly that it's a BGP-team action and offer to do the in-app equivalent (e.g. attach the document to the property/unit record instead of a SharePoint folder).
 - Never reveal or infer anything about another client, another landlord's portfolio, BGP's internal fees/WIP or the firm's pipeline. Every tool call you make must concern THIS client's own properties, units, deals and tenants. If a request would require reaching outside their portfolio, decline that part.
@@ -2622,8 +2625,23 @@ export async function clientScopedCrmSearch(scopeCompanyId: string, rawQuery: st
   ).catch(() => ({ rows: [] }));
   results.comps = comps.rows;
 
+  // Leasing requirements: every one is open to a client login to read (Woody,
+  // 2026-11-17), and ChatBGP adds and amends them for it (2026-11-20), so it
+  // needs their ids. What each is and its own date, never its state or who
+  // confirmed it (requirementReason().clientText).
+  const reqs = await pool.query(
+    `SELECT r.id, r.name, r.company_id AS "companyId", co.name AS brand, r.use, r.size, r.requirement_locations AS locations, ${requirementLiveColumnsSql("r")}
+     FROM crm_requirements_leasing r LEFT JOIN crm_companies co ON co.id = r.company_id
+     WHERE (${like("r.name", 1)} OR ${like("co.name", 1 + patterns.length)})
+     ORDER BY r.created_at DESC NULLS LAST
+     LIMIT 15`,
+    [...patterns, ...patterns]
+  ).catch(() => ({ rows: [] }));
+  results.requirements = reqs.rows.map((r: any) => ({ id: r.id, name: r.name, brand: r.brand, companyId: r.companyId, status: r.status,
+    use: r.use || [], size: r.size || [], locations: r.locations || [], listed: requirementReason(r).clientText }));
+
   const totalFound = Object.values(results).reduce((sum: number, arr: any) => sum + (arr?.length || 0), 0);
-  return { success: true, query: rawQuery, totalFound, results, note: "Results are limited to your own portfolio." };
+  return { success: true, query: rawQuery, totalFound, results, note: "Results are limited to your own portfolio, and requirements (every leasing requirement)." };
 }
 
 const SYSTEM_PROMPT_FALLBACK = "You are ChatBGP, an AI assistant for Bruce Gillingham Pollard (BGP). IMPORTANT: If deep_investigate returns report.property.ambiguous === true, present the options as a numbered list and ask the user to pick the correct property. Do NOT guess or proceed with unverified property data.";
@@ -4078,7 +4096,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_requirement",
-      description: "Log a brand's LEASING requirement on the Requirements page (the live requirements centre). Use ONLY when the user asks you to log, add or save that a brand or tenant is looking for space: a discussion, an email or a news story alone is not an instruction to save. The user is recorded as having confirmed it today and as its owner. Pass companyId from search_crm when you have it. If the brand already has a requirement for the same area, that one is confirmed and added to, never a second row. If the result has needsChoice, nothing was saved: ask the user, then call again with requirementId (same search) or newSearch: true (a separate search). If the brand is not matched to a CRM record, only a suggestion is saved (To confirm on the Requirements page) and nothing is live: tell the user exactly that. Always relay the result's message. Investment (buyer) requirements are not logged with this tool.",
+      description: "Log a brand's LEASING requirement on the Requirements page (the live requirements centre). Use ONLY when the user asks you to log, add or save that a brand or tenant is looking for space: a discussion, an email or a news story alone is not an instruction to save. The user is recorded as having confirmed it today (a BGP user also as its owner; for a client login it is saved as the client's own requirement). Pass companyId from search_crm (or from create_company) when you have it. If the brand already has a requirement for the same area, that one is confirmed and added to, never a second row. If the result has needsChoice, nothing was saved: ask the user, then call again with requirementId (same search) or newSearch: true (a separate search). If the brand is not matched to a CRM record: for BGP only a suggestion is saved (To confirm on the Requirements page) and nothing is live; for a client login nothing is saved, so offer to add the brand (create_company, a tenant brand) and call again with its companyId. Always relay the result's message. Investment (buyer) requirements are not logged with this tool.",
       parameters: {
         type: "object",
         properties: {
@@ -4296,7 +4314,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "update_requirement",
-      description: "Update a LEASING requirement on the Requirements page. Search first (search_crm, entityType 'requirements') for its id. Notes, budget, priority and contact are added to its comments with the user's name and the date; nothing is erased. A size, location or use that differs from what is saved replaces it only with replaceSaved: true, after the user has agreed. An edit is not a confirmation: pass stillLive: true only when the user says the requirement is still live, and they are then recorded as confirming it today. status: fulfilled = Past, withdrawn = Archived. The brand on a requirement is not changed from chat. Always relay the result's message.",
+      description: "Update a LEASING requirement on the Requirements page. Search first (search_crm, entityType 'requirements') for its id. Notes, budget, priority and contact are added to its comments with the user's name and the date; nothing is erased. A size, location or use that differs from what is saved replaces it only with replaceSaved: true, after the user has agreed. An edit is not a confirmation: pass stillLive: true only when the user says the requirement is still live, and they are then recorded as confirming it today (a client login too). status: fulfilled = Past, withdrawn = Archived. The brand on a requirement is not changed from chat. Always relay the result's message.",
       parameters: {
         type: "object",
         properties: {
@@ -7931,10 +7949,11 @@ export async function executeCrmToolRaw(
   }
 
   // Requirements go through the one intake as the asking staff member's
-  // confirmation (server/chatbgp-requirements.ts). Staff only.
+  // confirmation; a client login's through the page's own routes as that
+  // login (server/chatbgp-requirements.ts).
   if (fnName === "create_requirement" || fnName === "update_requirement") {
     const { runChatRequirementTool } = await import("./chatbgp-requirements");
-    return runChatRequirementTool(fnName, fnArgs, req);
+    return runChatRequirementTool(fnName, fnArgs, req, { callOwnRoute });
   }
 
   // Units and what a deal is waiting on: read from the same feeds as the

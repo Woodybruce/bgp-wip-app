@@ -242,14 +242,18 @@ export function bgpCreatedStamp(user: { id: string; name?: string | null }, how:
 /**
  * The stamp for a requirement a client login adds (Woody, 2026-11-17): the
  * client's record (origin 'client'), labelled with the client company's name
- * so BGP sees where it came from, never confirmed and with no BGP owner. Only
- * a named BGP person makes it live, by confirming it (rule 1 of the centre).
+ * so BGP sees where it came from, with no BGP owner. Since 20 November 2026
+ * (Woody: "Clients should be able to do what we can do really") it is
+ * confirmed by the person who added it, as BGP's own are (bgpCreatedStamp);
+ * until then it waited for a named BGP person. With no creator it is not
+ * confirmed.
  */
-export function clientCreatedStamp(clientCompanyName: string | null | undefined) {
+export function clientCreatedStamp(clientCompanyName: string | null | undefined, creator?: { id: string; name?: string | null } | null, at: Date = new Date()) {
   const name = String(clientCompanyName || "").trim();
+  const by = creator && String(creator.id || "").trim() ? creator : null;
   return {
     origin: REQUIREMENT_ORIGIN_CLIENT, sources: [name || "Client"],
-    lastConfirmedAt: null, lastConfirmedBy: null, lastConfirmedByName: null, confirmedHow: null,
+    lastConfirmedAt: by ? at : null, lastConfirmedBy: by ? by.id : null, lastConfirmedByName: by ? (by.name || null) : null, confirmedHow: by ? "created" : null,
     bgpContactUserId: null, bgpContactUserIds: null,
   };
 }

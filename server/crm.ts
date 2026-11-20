@@ -5779,13 +5779,13 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const scopeCompanyId = await resolveCompanyScope(req);
       if (scopeCompanyId) {
         // A client login's requirement (BGP staff viewing as a client add as
-        // the client does): the client's record, labelled with its name,
-        // never confirmed and with no BGP owner, so it reads To confirm for
-        // BGP until a named BGP person confirms it.
+        // the client does): the client's record, labelled with its name, with
+        // no BGP owner, confirmed by the person who added it as BGP's own are
+        // (Woody, 2026-11-20: "Clients should be able to do what we can do").
         const checked = await clientRequirementWrite(req, scopeCompanyId, null);
         if ("error" in checked) return res.status(checked.status).json({ error: checked.error });
         const parsed = insertCrmReqLeasingSchema.parse({ ...checked.data, requirementDate: new Date().toISOString().slice(0, 10) });
-        Object.assign(parsed, clientCreatedStamp(await getScopeCompanyName(scopeCompanyId)));
+        Object.assign(parsed, clientCreatedStamp(await getScopeCompanyName(scopeCompanyId), creator));
         const created = await storage.createCrmRequirementLeasing(parsed);
         if (created.dealId && created.companyId) await storage.linkCompanyDeal(created.companyId, created.dealId);
         return res.status(201).json(requirementClientCopy(created));
