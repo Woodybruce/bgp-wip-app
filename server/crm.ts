@@ -50,7 +50,7 @@ import { searchPipnetRequirements } from "./pipnet";
 import { boardStateWords } from "@shared/requirements-board";
 import { bgpCreatedStamp, clientCreatedStamp, clientRequirementFields, CLIENT_REQUIREMENT_STATUSES, parseRequirementDate, stripRequirementProvenance, requirementClientCopy, requirementOwnerColumns, requirementReason, requirementStateSql, requirementLiveColumnsSql, requirementLive } from "@shared/requirement-live";
 import { clientScoreLabel, schemeLimitedScoreLabel, splitSubScores } from "./hunter-score";
-import { xeroApi, refreshXeroToken, SALES_ACCOUNT_CODE, feeCurrencyOf, invoiceCurrencyFields } from "./xero";
+import { xeroApi, refreshXeroToken, resolveDealInvoiceContact, SALES_ACCOUNT_CODE, feeCurrencyOf, invoiceCurrencyFields } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
 import { getPlanningSummary } from "./planning-summary";
 import { getLandlordInterviewMentions } from "./landlord-interview-links";
@@ -4569,33 +4569,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
             }
 
             if (existingInvoices.length === 0 && (deal.fee || 0) > 0 && !kycBlocked && !poCheck?.missing) {
-              let contactName = deal.xeroContactName || "";
-              let contactEmail = deal.invoicingEmail || "";
-              let xeroContactId: string | undefined = deal.xeroContactId || undefined;
+              // Billed to the deal's own invoice contact, else the billing
+              // entity on BGP's client from Parties (20 November 2026). Until
+              // then a deal with neither was billed to its TENANT's name,
+              // whoever BGP acted for, with a Xero contact made from it.
+              const { contactId: xeroContactId, name: contactName, billing } = await resolveDealInvoiceContact(req.session, deal, { contactEmail: deal.invoicingEmail || null });
 
-              if (!contactName && deal.tenantId) {
-                const [tenant] = await db.select().from(crmCompanies)
-                  .where(eq(crmCompanies.id, deal.tenantId)).limit(1);
-                if (tenant) {
-                  contactName = tenant.name;
-                }
-              }
-
-              if (xeroContactId || contactName) {
-                if (!xeroContactId && contactName) {
-                  const searchRes = await xeroApi(req.session, `/Contacts?where=Name=="${contactName.replace(/"/g, "")}"`);
-                  if (searchRes.Contacts?.length > 0) {
-                    xeroContactId = searchRes.Contacts[0].ContactID;
-                  } else {
-                    const createContactRes = await xeroApi(req.session, "/Contacts", {
-                      method: "POST",
-                      body: JSON.stringify({
-                        Contacts: [{ Name: contactName, EmailAddress: contactEmail || undefined }],
-                      }),
-                    });
-                    xeroContactId = createContactRes.Contacts?.[0]?.ContactID;
-                  }
-                }
+              if (xeroContactId) {
 
                 const currency = feeCurrencyOf(deal.feeCurrency);
                 const currencyFields = await invoiceCurrencyFields(req.session, currency);
@@ -4629,6 +4609,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                   dealId: deal.id,
                   xeroInvoiceId: xeroInvoice?.InvoiceID,
                   xeroContactId: xeroContactId || null,
+                  invoicingEntityName: contactName || null,
+                  contactName: xeroInvoice?.Contact?.Name ?? contactName ?? null,
                   invoiceNumber: xeroInvoice?.InvoiceNumber,
                   reference: deal.name,
                   status: xeroInvoice?.Status || "DRAFT",
@@ -4643,7 +4625,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                 });
                 console.log(`Auto-created draft Xero invoice for deal ${deal.id} (${deal.name})`);
               } else {
-                console.log(`Skipped auto-invoice for deal ${deal.id}: no invoicing entity or tenant set`);
+                console.log(`Skipped auto-invoice for deal ${deal.id}: no billing entity for the ${billing.role} and no invoice contact on the deal`);
               }
             }
           } else {

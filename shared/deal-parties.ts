@@ -227,3 +227,56 @@ const PARTY_AML_QUIET_WORDS = {
 export function partyAmlQuietWords(aml: PartyAmlFacts | null | undefined): string | null {
   return aml?.done ? PARTY_AML_QUIET_WORDS[aml.done] : aml?.sanctionsOnly ? PARTY_AML_QUIET_WORDS.sanctions_only : null;
 }
+
+/**
+ * BGP's client on a deal, the party it invoices (Woody, 20 November 2026:
+ * "this xero invoicing is not autolinked to the AML deal process thats
+ * happening it should be"): the vendor on a sale, the purchaser on a
+ * purchase, the tenant on a tenant-side deal (Lease Acquisition, Lease
+ * Disposal, BGP acting for the tenant, the Tenant Rep team), else the
+ * landlord. The Deals table's Client cell reads the same rule.
+ */
+export function dealClientRole(deal: { dealType?: string | null; bgpActingFor?: string | null; team?: unknown }): DealPartyRole {
+  const dt = text(deal.dealType);
+  const team = (Array.isArray(deal.team) ? deal.team.join(",") : text(deal.team)).toLowerCase();
+  if (dt === "Sale") return "vendor";
+  if (dt === "Purchase") return "purchaser";
+  if (dt === "Lease Acquisition" || dt === "Lease Disposal") return "tenant";
+  if (/tenant\s*rep/.test(team) || text(deal.bgpActingFor).toLowerCase() === "tenant") return "tenant";
+  return "landlord";
+}
+
+export interface InvoiceContact {
+  // The party BGP invoices (dealClientRole).
+  role: DealPartyRole;
+  // The Xero contact the invoice goes to, and where it came from: "deal", the
+  // deal's own invoice contact (set on purpose on the deal, or from a
+  // scheme's billing entity); "party", the billing entity on BGP's client,
+  // set under Parties with the AML checks; null, none yet.
+  contactId: string | null;
+  name: string | null;
+  source: "deal" | "party" | null;
+  // The billing entity on BGP's client, whichever is used.
+  party: { contactId: string; name: string } | null;
+  // BGP's client is on the deal.
+  partyLinked: boolean;
+}
+
+/**
+ * Who the deal's invoice goes to in Xero: the deal's own invoice contact when
+ * one is set (some invoices go to another company than the party's billing
+ * entity: a fund's partnership, a scheme's billing company), else the billing
+ * entity on BGP's client from the Parties and AML set-up. Never a name made
+ * up from the deal or a brand.
+ */
+export function invoiceContactFor(deal: Record<string, any>): InvoiceContact {
+  const role = dealClientRole(deal);
+  const f = DEAL_PARTY_FIELDS[role];
+  const partyId = text(deal[f.xeroId]), partyName = text(deal[f.xeroName]);
+  const party = partyId && partyName ? { contactId: partyId, name: partyName } : null;
+  const partyLinked = !!text(deal[f.brand]);
+  const ownId = text(deal.xeroContactId), ownName = text(deal.xeroContactName);
+  if (ownId || ownName) return { role, contactId: ownId || null, name: ownName || null, source: "deal", party, partyLinked };
+  if (party) return { role, contactId: party.contactId, name: party.name, source: "party", party, partyLinked };
+  return { role, contactId: null, name: null, source: null, party: null, partyLinked };
+}

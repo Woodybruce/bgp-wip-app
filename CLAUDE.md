@@ -3044,6 +3044,50 @@ route case in `qa/regression/promote-to-solicitors.test.mjs`.
 - Not run against Anthropic or Companies House from a build machine: checked
   in a browser against a local copy on 20 November 2026 with the rules alone.
 
+## The invoice goes to the billing entity (Woody, 2026-11-20)
+
+Woody, on deal #4507's Xero Invoicing card: "this xero invoicing is not
+autolinked to the AML deal process thats happening it should be". The
+landlord's billing entity was set under Parties (Bruce Cap Ltd t/a Pave),
+but the card read only the deal's old single invoice contact and had to be
+given the contact again by hand; with neither set, the server made a Xero
+contact named after the DEAL, and the automatic draft at exchange or
+completion billed the TENANT's name whoever BGP acted for, making that
+contact too. Rules: `shared/deal-parties.ts`; server:
+`resolveDealInvoiceContact` in `server/xero.ts`. Tests:
+`server/deal-parties.test.ts`, `qa/regression/invoice-billing-entity.test.mjs`.
+
+- **BGP's client** is one rule, `dealClientRole`: a sale's vendor, a
+  purchase's purchaser, the tenant on a Lease Acquisition or Lease Disposal,
+  with BGP acting for the tenant or on the Tenant Rep team, else the
+  landlord. The Deals table's Client cell (`clientFieldFor`) reads it.
+- **Who is billed** is `invoiceContactFor`: the deal's own invoice contact
+  (`xero_contact_id` / `xero_contact_name`) when one is set, because some
+  invoices go to another company than the party's billing entity (six
+  invoiced deals on live on 20 November 2026, Brent Cross Partnership Ltd
+  among them), else the billing entity on BGP's client from Parties
+  (`<role>_entity_id` / `_name`). Never the deal's name, never the tenant.
+- **The invoice route** (`POST /api/xero/invoices`) bills the contact the
+  screen sends, else `resolveDealInvoiceContact`; with none it answers 409
+  `NO_BILLING_ENTITY` naming the party. **The automatic draft** (the deal
+  save on a move to Exchanged or Completed, `server/crm.ts`) uses the same
+  and is skipped, with a log line, when there is none. A deal's own contact
+  held by name alone (an estate scheme's billing entity,
+  `server/property-schemes.ts`) is still found in Xero by its exact name, or
+  made, as before.
+- **The card** (`XeroInvoiceSection` in `client/src/pages/deals.tsx`): an
+  **Invoice to** line with the name and where it came from ("the landlord's
+  billing entity, from Parties", or "the invoice contact set on this
+  deal"), **Set / Change the <party>'s billing entity** (the one party box,
+  `DealPartyEditor`), **Invoice someone else** / **Change the invoice
+  contact** (the deal's own contact, the old picker), and, when the deal's
+  own contact differs from the party's billing entity, a line naming it with
+  **Invoice it instead** (clears the deal's own contact). With no billing
+  entity it says so in amber and Create Draft Invoice is greyed. The Deals
+  table's Client & billing and Xero contact cells show the same contact.
+- Not run against Xero from a build machine; checked in a browser against a
+  local copy on 20 November 2026 with Xero not connected.
+
 ## Client checks: the in-app KYC request (Woody, 2026-11-17)
 
 Woody: the emails should "come from kyc@chatbgp.app", "copy the agent that

@@ -7,7 +7,7 @@ import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_ROLES, companyOffer, isDealPartyRole, newPartyPerson, ownerContactMatch, partyAmlFacts,
+  DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_ROLES, companyOffer, dealClientRole, invoiceContactFor, isDealPartyRole, newPartyPerson, ownerContactMatch, partyAmlFacts,
   partyAmlQuietWords, partyGaps, peopleToReach, personFill, sameCompaniesHouseNumber,
   type DealPartyCompany,
 } from "../shared/deal-parties";
@@ -222,4 +222,43 @@ test("a party approved, Not required, or on a letting under £10,000 a month ask
   assert.match(partyAmlQuietWords({ done: null, sanctionsOnly: true })!, /£10,000 a month/);
   assert.equal(partyAmlQuietWords({ done: null, sanctionsOnly: false }), null);
   assert.equal(partyAmlQuietWords(null), null);
+});
+
+// Woody, 20 November 2026: "this xero invoicing is not autolinked to the AML
+// deal process thats happening it should be".
+test("BGP's client, the party it invoices: one rule for the Deals table and the invoice", () => {
+  assert.equal(dealClientRole({ dealType: "Sale" }), "vendor");
+  assert.equal(dealClientRole({ dealType: "Purchase", bgpActingFor: "tenant" }), "purchaser");
+  assert.equal(dealClientRole({ dealType: "Lease Acquisition" }), "tenant");
+  assert.equal(dealClientRole({ dealType: "Lease Disposal" }), "tenant");
+  assert.equal(dealClientRole({ dealType: "New Letting", bgpActingFor: "tenant" }), "tenant");
+  assert.equal(dealClientRole({ dealType: "New Letting", team: ["Tenant Rep"] }), "tenant");
+  assert.equal(dealClientRole({ dealType: "New Letting", team: "London Estate, tenant rep" }), "tenant");
+  assert.equal(dealClientRole({ dealType: "New Letting", bgpActingFor: "landlord" }), "landlord");
+  assert.equal(dealClientRole({}), "landlord");
+});
+
+test("the invoice goes to the deal's own contact, else the client's billing entity, never a made-up name", () => {
+  // Deal #4507 as it was: the landlord's billing entity set under Parties, no invoice contact on the deal.
+  const wells = { name: "55 Wells Street", dealType: "New Letting", bgpActingFor: "landlord", landlordId: "brucecap",
+    landlordEntityId: "x-pave", landlordEntityName: "Bruce Cap Ltd t/a Pave", tenantEntityId: "x-bgp", tenantEntityName: "BRUCE GILLINGHAM POLLARD LIMITED" };
+  assert.deepEqual(invoiceContactFor(wells), {
+    role: "landlord", contactId: "x-pave", name: "Bruce Cap Ltd t/a Pave", source: "party",
+    party: { contactId: "x-pave", name: "Bruce Cap Ltd t/a Pave" }, partyLinked: true,
+  });
+  // BGP acting for the tenant bills the tenant's billing entity.
+  assert.equal(invoiceContactFor({ ...wells, bgpActingFor: "tenant", tenantId: "bgp" }).name, "BRUCE GILLINGHAM POLLARD LIMITED");
+  // A contact set on the deal on purpose wins (a fund's partnership, a scheme's billing company), and the party's is still named.
+  const own = invoiceContactFor({ ...wells, xeroContactId: "x-bcp", xeroContactName: "Brent Cross Partnership Ltd" });
+  assert.equal(own.source, "deal");
+  assert.equal(own.contactId, "x-bcp");
+  assert.deepEqual(own.party, { contactId: "x-pave", name: "Bruce Cap Ltd t/a Pave" });
+  // A scheme's billing entity held by name alone.
+  assert.deepEqual(invoiceContactFor({ dealType: "New Letting", xeroContactName: "Canary Wharf Retail Limited" }),
+    { role: "landlord", contactId: null, name: "Canary Wharf Retail Limited", source: "deal", party: null, partyLinked: false });
+  // Nothing set: nobody, never the deal's name or the tenant's.
+  const none = invoiceContactFor({ name: "55 Wells Street", dealType: "New Letting", landlordId: "brucecap", tenantId: "pret" });
+  assert.deepEqual(none, { role: "landlord", contactId: null, name: null, source: null, party: null, partyLinked: true });
+  // Another party's billing entity is not BGP's client's.
+  assert.equal(invoiceContactFor({ dealType: "New Letting", tenantEntityId: "t", tenantEntityName: "Tenant Ltd" }).name, null);
 });

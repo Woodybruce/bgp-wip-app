@@ -6,6 +6,7 @@ import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
 import { isInvoicedStatus, statusSpellingsFor, TERMINAL_STATUSES } from "@shared/deal-status";
+import { DEAL_PARTY_LABEL, invoiceContactFor, type InvoiceContact } from "@shared/deal-parties";
 
 const XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize";
 const XERO_TOKEN_URL = "https://identity.xero.com/connect/token";
@@ -408,6 +409,33 @@ export function xeroUsage() {
   return { since: XERO_COUNT_SINCE, blockedUntil: xeroBlockedUntil > Date.now() ? new Date(xeroBlockedUntil).toISOString() : null, byDay };
 }
 const XERO_COUNT_SINCE = new Date().toISOString();
+
+/**
+ * The Xero contact a deal's invoice goes to (Woody, 20 November 2026: "this
+ * xero invoicing is not autolinked to the AML deal process"): the deal's own
+ * invoice contact when one is set, else the billing entity on BGP's client
+ * from Parties (shared/deal-parties.ts invoiceContactFor). The deal's own
+ * contact held by name alone (an estate scheme's billing entity,
+ * server/property-schemes.ts) is found in Xero by that exact name, or made,
+ * as before. Never a contact named after the deal or its tenant, which is
+ * what the invoice routes fell back to until then.
+ */
+export async function resolveDealInvoiceContact(session: any, deal: Record<string, any>, opts: { contactEmail?: string | null } = {}): Promise<{ contactId: string | null; name: string | null; billing: InvoiceContact }> {
+  const billing = invoiceContactFor(deal);
+  if (billing.contactId) return { contactId: billing.contactId, name: billing.name, billing };
+  if (billing.name) {
+    const found = await xeroApi(session, `/Contacts?where=Name=="${billing.name.replace(/"/g, "")}"`);
+    const c = found?.Contacts?.[0];
+    if (c?.ContactID) return { contactId: String(c.ContactID), name: c.Name || billing.name, billing };
+    const made = await xeroApi(session, "/Contacts", {
+      method: "POST",
+      body: JSON.stringify({ Contacts: [{ Name: billing.name, EmailAddress: opts.contactEmail || undefined }] }),
+    });
+    const id = made?.Contacts?.[0]?.ContactID;
+    if (id) return { contactId: String(id), name: billing.name, billing };
+  }
+  return { contactId: null, name: billing.name, billing };
+}
 
 export async function xeroApi(session: any, path: string, options: RequestInit = {}): Promise<any> {
   const token = await refreshXeroToken(session);
@@ -1027,27 +1055,21 @@ export function setupXeroRoutes(app: Express) {
       // surveyors need to be able to draft early. AML status is still
       // tracked on the deal and visible on the KYC board for follow-up.
       //
-      // Xero contact is the source of truth for billing. Resolve in order:
-      // request body → deal.xeroContactId → name lookup → create new.
-      let xeroContactId: string | undefined = bodyContactId || deal.xeroContactId || undefined;
-      let resolvedContactName: string | undefined = contactName || deal.xeroContactName || deal.name || undefined;
-
-      if (!xeroContactId && resolvedContactName) {
-        const searchRes = await xeroApi(req.session, `/Contacts?where=Name=="${resolvedContactName.replace(/"/g, "")}"`);
-        if (searchRes.Contacts?.length > 0) {
-          xeroContactId = searchRes.Contacts[0].ContactID;
-          resolvedContactName = searchRes.Contacts[0].Name || resolvedContactName;
-        } else {
-          const createContactRes = await xeroApi(req.session, "/Contacts", {
-            method: "POST",
-            body: JSON.stringify({
-              Contacts: [{
-                Name: resolvedContactName,
-                EmailAddress: contactEmail || undefined,
-              }],
-            }),
+      // Who is billed: the contact the screen sends, else the deal's own
+      // invoice contact, else the billing entity on BGP's client from
+      // Parties (resolveDealInvoiceContact, 20 November 2026). Never a
+      // contact made up from the deal's name, as this route did until then.
+      let xeroContactId: string | undefined = bodyContactId || undefined;
+      let resolvedContactName: string | undefined = bodyContactId ? (contactName || undefined) : undefined;
+      if (!xeroContactId) {
+        const resolved = await resolveDealInvoiceContact(req.session, deal, { contactEmail: contactEmail || deal.invoicingEmail || null });
+        xeroContactId = resolved.contactId || undefined;
+        resolvedContactName = resolved.name || undefined;
+        if (!xeroContactId) {
+          return res.status(409).json({
+            code: "NO_BILLING_ENTITY",
+            message: `Set who is billed first: the ${DEAL_PARTY_LABEL[resolved.billing.role].toLowerCase()}'s billing entity under Parties, or an invoice contact on this deal.`,
           });
-          xeroContactId = createContactRes.Contacts?.[0]?.ContactID;
         }
       }
 

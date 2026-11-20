@@ -150,7 +150,8 @@ import { DealNoteReadPanel } from "@/components/deal-note-read";
 import { DEAL_NOTE_ROLE_TYPES, DEAL_NOTE_ROLE_WORDS, type DealNoteCandidate, type DealNoteRead, type DealNoteRegisterHit, type DealNoteRole } from "@shared/deal-note";
 import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { SendClientChecksButton } from "@/components/kyc-client-checks";
-import { PartyReadyToStart, partyAmlFacts } from "@/components/deal-parties";
+import { DealPartyEditor, PartyReadyToStart, partyAmlFacts } from "@/components/deal-parties";
+import { DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, dealClientRole, invoiceContactFor, type InvoiceContact } from "@shared/deal-parties";
 import { PartyDecisions } from "@/components/deal-party-aml";
 import { useDealAmlStatus } from "@/components/deal-aml-status";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
@@ -1629,14 +1630,10 @@ function PricingCell({
 // a Lease Disposal for the current tenant used to only offer landlords
 // (Carly, 2026-10-19).
 type ClientField = "landlordId" | "tenantId" | "vendorId" | "purchaserId";
+// BGP's client, the party it invoices: one rule with the invoice
+// (dealClientRole in shared/deal-parties.ts).
 function clientFieldFor(deal: any): ClientField {
-  const dt = deal.dealType || "";
-  const team = (Array.isArray(deal.team) ? deal.team.join(",") : String(deal.team || "")).toLowerCase();
-  if (dt === "Sale") return "vendorId";
-  if (dt === "Purchase") return "purchaserId";
-  if (dt === "Lease Acquisition" || dt === "Lease Disposal") return "tenantId";
-  if (/tenant\s*rep/.test(team) || deal.bgpActingFor === "tenant") return "tenantId";
-  return "landlordId";
+  return DEAL_PARTY_FIELDS[dealClientRole(deal)].brand as ClientField;
 }
 
 const CLIENT_CREATE_TYPE: Record<ClientField, string> = {
@@ -1680,8 +1677,11 @@ function ClientXeroCell({
   const clientName = clientId
     ? (companies.find(c => c.id === clientId)?.name || null)
     : null;
-  const xeroName = (deal as any).xeroContactName || null;
-  const xeroAcct = (deal as any).xeroAccountNumber || null;
+  // Who the invoice goes to: the deal's own invoice contact, else the billing
+  // entity on the client from Parties (20 November 2026).
+  const billing = invoiceContactFor(deal);
+  const xeroName = billing.name;
+  const xeroAcct = billing.source === "deal" ? (deal as any).xeroAccountNumber || null : null;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -1729,15 +1729,22 @@ function ClientXeroCell({
         </p>
         <div className="grid grid-cols-[80px_1fr] items-start gap-2">
           <Label className="text-xs text-muted-foreground pt-1.5">Xero contact</Label>
-          <XeroContactPicker
-            value={(deal as any).xeroContactId || null}
-            cachedName={(deal as any).xeroContactName}
-            cachedAccountNumber={(deal as any).xeroAccountNumber}
-            cachedAddress={(deal as any).xeroBillingAddress}
-            onChange={(c) => onXeroChange(c as any)}
-            testIdPrefix={`deal-${deal.id}-xero`}
-            compact
-          />
+          <div className="space-y-1 min-w-0">
+            {billing.source === "party" && (
+              <p className="text-[11px] text-muted-foreground" data-testid={`deal-${deal.id}-billed-party`}>
+                Billed to <span className="text-foreground">{billing.name}</span>, the {DEAL_PARTY_LABEL[billing.role].toLowerCase()}'s billing entity (Parties). Pick a contact here only to invoice someone else.
+              </p>
+            )}
+            <XeroContactPicker
+              value={(deal as any).xeroContactId || null}
+              cachedName={(deal as any).xeroContactName}
+              cachedAccountNumber={(deal as any).xeroAccountNumber}
+              cachedAddress={(deal as any).xeroBillingAddress}
+              onChange={(c) => onXeroChange(c as any)}
+              testIdPrefix={`deal-${deal.id}-xero`}
+              compact
+            />
+          </div>
         </div>
       </PopoverContent>
     </Popover>
@@ -1751,14 +1758,15 @@ function XeroContactCell({ deal, onXeroChange }: {
   onXeroChange: (c: { ContactID: string; Name: string; AccountNumber: string | null; BillingAddress: any } | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const xeroName = deal.xeroContactName || null;
+  const billing = invoiceContactFor(deal);
+  const xeroName = billing.name;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
           className="w-full text-left px-1 py-0.5 hover:bg-accent rounded min-w-0 max-w-full overflow-hidden"
-          title={xeroName ? `Xero: ${xeroName}${deal.xeroAccountNumber ? ` · account ${deal.xeroAccountNumber}` : ""}` : "Link a Xero contact"}
+          title={xeroName ? `Xero: ${xeroName}${billing.source === "party" ? ` (the ${DEAL_PARTY_LABEL[billing.role].toLowerCase()}'s billing entity)` : deal.xeroAccountNumber ? ` · account ${deal.xeroAccountNumber}` : ""}` : "Link a Xero contact"}
           data-testid={`xero-contact-cell-${deal.id}`}
         >
           {xeroName ? <span className="text-xs truncate block">{xeroName}</span> : <AddLabel text="Add Xero contact" />}
@@ -1766,6 +1774,9 @@ function XeroContactCell({ deal, onXeroChange }: {
       </PopoverTrigger>
       <PopoverContent className="w-[340px] p-3 space-y-2" align="start">
         <p className="text-xs font-semibold">Xero contact</p>
+        {billing.source === "party" && (
+          <p className="text-[11px] text-muted-foreground">Billed to <span className="text-foreground">{billing.name}</span>, the {DEAL_PARTY_LABEL[billing.role].toLowerCase()}'s billing entity (Parties). Pick a contact here only to invoice someone else.</p>
+        )}
         <XeroContactPicker
           value={deal.xeroContactId || null}
           cachedName={deal.xeroContactName}
@@ -5321,6 +5332,26 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
   const xeroContactName = (deal as any).xeroContactName || null;
   const xeroAccountNumber = (deal as any).xeroAccountNumber || null;
   const xeroBillingAddress = (deal as any).xeroBillingAddress || null;
+  // Who the invoice goes to (Woody, 20 November 2026: "this xero invoicing is
+  // not autolinked to the AML deal process thats happening it should be"):
+  // the deal's own invoice contact when one is set, else the billing entity on
+  // BGP's client from Parties. shared/deal-parties.ts invoiceContactFor.
+  const billing = invoiceContactFor(deal as any);
+  const roleWord = DEAL_PARTY_LABEL[billing.role].toLowerCase();
+  const [partyBox, setPartyBox] = useState(false);
+  const [pickOwn, setPickOwn] = useState(false);
+  const plainError = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "").replace(/^\{.*"message":"([^"]*)".*\}$/, "$1");
+  // The deal's own invoice contact, saved as the client's billing entity.
+  const useForParty = useMutation({
+    mutationFn: async () => (await apiRequest("PUT", `/api/deals/${dealId}/parties/${billing.role}`, { xero: { contactId: billing.contactId, name: billing.name } })).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "parties"] });
+      invalidateDealCaches();
+      toast({ title: `Saved as the ${roleWord}'s billing entity` });
+    },
+    onError: (e: Error) => toast({ title: "Not saved", description: plainError(e), variant: "destructive" }),
+  });
 
   const updateXeroContact = useCallback((contact: XeroContact | null) => {
     apiRequest("PUT", `/api/crm/deals/${dealId}`, {
@@ -5384,8 +5415,8 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/xero/invoices", {
         dealId,
-        xeroContactId: xeroContactId || null,
-        contactName: xeroContactName || deal.name,
+        xeroContactId: billing.contactId || null,
+        contactName: billing.name || undefined,
         poNumber: poNumber || deal.poNumber || null,
         allowMissingPo: allowMissingPo || undefined,
         // USD invoices go out on Xero's "USD BGP" template.
@@ -5414,7 +5445,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
       queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
     },
     onError: (err: Error) => {
-      toast({ title: "Error creating invoice", description: err.message, variant: "destructive" });
+      toast({ title: "Error creating invoice", description: plainError(err), variant: "destructive" });
     },
   });
 
@@ -5527,32 +5558,63 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
           </p>
         )}
 
-        {!creating && (
-          <div className="mb-3">
+        <div className="mb-3 space-y-1.5 text-sm" data-testid="xero-invoice-billed-to">
+          <Label className="text-xs block text-muted-foreground">Invoice to</Label>
+          {billing.name ? (
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="font-medium" data-testid="xero-invoice-billed-name">{billing.name}</span>
+              <span className="text-xs text-muted-foreground" data-testid="xero-invoice-billed-source">
+                {billing.source === "party" ? `the ${roleWord}'s billing entity, from Parties` : "the invoice contact set on this deal"}
+                {billing.source === "deal" && xeroAccountNumber ? ` · A/C ${xeroAccountNumber}` : ""}
+              </span>
+            </div>
+          ) : billing.partyLinked ? (
+            <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="xero-invoice-billed-missing">
+              No billing entity for the {roleWord} yet: set it under Parties, from the company that signs, so the invoice goes to the company the AML checks are on.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground" data-testid="xero-invoice-billed-missing">
+              Link the {roleWord} on the Parties pill to bill its company, or pick a Xero contact for this deal.
+            </p>
+          )}
+          {/* The deal's own contact differs from the client's billing entity: say so, and offer the switch either way. */}
+          {billing.source === "deal" && billing.party && billing.party.contactId !== billing.contactId && (
+            <p className="text-xs text-muted-foreground" data-testid="xero-invoice-party-differs">
+              The {roleWord}'s billing entity is <span className="text-foreground">{billing.party.name}</span>.{" "}
+              <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => updateXeroContact(null)} data-testid="xero-invoice-use-party">Invoice it instead</button>
+            </p>
+          )}
+          {billing.source === "deal" && !billing.party && billing.partyLinked && billing.contactId && (
+            <p className="text-xs text-muted-foreground">
+              Not the {roleWord}'s billing entity yet.{" "}
+              <button type="button" className="underline underline-offset-2 hover:text-foreground" disabled={useForParty.isPending} onClick={() => useForParty.mutate()} data-testid="xero-invoice-save-party">Use it for the {roleWord}</button>
+            </p>
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            {billing.partyLinked && (
+              <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setPartyBox(true)} data-testid="xero-invoice-open-party">
+                {billing.party ? `Change the ${roleWord}'s billing entity` : `Set the ${roleWord}'s billing entity`}
+              </Button>
+            )}
+            <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setPickOwn(v => !v)} data-testid="xero-invoice-pick-own">
+              {billing.source === "deal" ? "Change the invoice contact" : "Invoice someone else"}
+            </Button>
+          </div>
+          {pickOwn && (
             <XeroContactPicker
               value={xeroContactId}
               cachedName={xeroContactName}
               cachedAccountNumber={xeroAccountNumber}
               cachedAddress={xeroBillingAddress}
-              onChange={updateXeroContact}
+              onChange={(c) => { updateXeroContact(c); setPickOwn(false); }}
               testIdPrefix="deal-summary-xero-contact"
             />
-          </div>
-        )}
+          )}
+          {partyBox && <DealPartyEditor dealId={dealId} role={billing.role} onClose={() => setPartyBox(false)} />}
+        </div>
 
         {creating && (
           <div className="border rounded-md p-3 mb-3 space-y-3 bg-muted/30">
-            <div>
-              <Label className="text-xs mb-1 block">Xero Contact (Billing)</Label>
-              <XeroContactPicker
-                value={xeroContactId}
-                cachedName={xeroContactName}
-                cachedAccountNumber={xeroAccountNumber}
-                cachedAddress={xeroBillingAddress}
-                onChange={updateXeroContact}
-                testIdPrefix="invoice-xero-contact"
-              />
-            </div>
             <div>
               <Label className="text-xs mb-1 block">Reference</Label>
               <Input
@@ -5600,7 +5662,8 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
               <Button
                 size="sm"
                 onClick={() => createInvoiceMutation.mutate()}
-                disabled={createInvoiceMutation.isPending || (poStillMissing && !allowMissingPo)}
+                disabled={createInvoiceMutation.isPending || (poStillMissing && !allowMissingPo) || !billing.name}
+                title={!billing.name ? "Set who is billed first" : undefined}
                 data-testid="button-confirm-xero-invoice"
               >
                 {createInvoiceMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
