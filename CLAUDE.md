@@ -4266,7 +4266,12 @@ their sanctions result only". Do not re-litigate. Rules (pure):
   `createPersonCheck`; BGP staff only, refused for a company party and from
   a client's page): their own request asks the identity check, a proof of
   address (read against them) and the question about public roles, and
-  emailing it files them in the CRM under the party. Each owes what anyone
+  emailing it files them in the CRM under the party. **Change name** on
+  their row (`POST /api/aml/deal/:id/client-checks/people/rename`, BGP
+  staff; Jack, 20 November 2026: added as "Jonny Miller", passport
+  Jonathan) puts right a name BGP typed, never a Companies House one: what
+  they sent is read against the new name at once, nothing is resent, and
+  the CRM contact is not renamed. Each owes what anyone
   on a people list owes (the sign-off, the AML dashboard, the Finished
   email). There is no table: an added person is their own request. Not
   built: adding a person by hand to a company party (an owner the register
