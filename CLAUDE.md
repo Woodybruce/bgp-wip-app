@@ -6272,6 +6272,52 @@ invent new chip/tab styles. `rounded-full` buttons are exempt from the
 mobile 44px tap-target rule — that rule was the cause of the historic
 "massive pills".
 
+## ChatBGP runs on Claude Opus 5.5 (Woody, 2026-11-20)
+
+Woody: "change chat bGP to actually use opus 5.5 rather than open ai". Do
+not re-litigate. From 30 September 2026 the chat had run on OpenAI through
+the provider switches on Railway (`CHATBGP_PROVIDER` / `AI_PROVIDER`): on
+20 November 2026 live's `GET /api/chatbgp/status` read `openai` and
+`gpt-6-astra`, Astra had cost about $762 in 30 days, and the chat error log
+held OpenAI's "no credits remaining" (29 October, 9 November) and
+"overloaded" refusals.
+
+- **The rule**: `chatProvider()` in `server/utils/ai-provider.ts` never
+  answers `openai`, whatever either switch says (`CHATBGP_PROVIDER=kimi` can
+  still move the chat loop to Kimi). Every chat call then takes the Claude
+  path in `server/chatbgp.ts` (`callClaude`, `callClaudeStreaming`, the
+  image reader), and the router (`server/chatbgp-model-router.ts`) gives
+  Opus 5.5: the chat on desktop and phone, chat with files, the Office
+  add-ins, team chats, a joint agent's chat and WhatsApp. `/sonnet` and
+  `/fable` still switch a thread; a `/sol`, `/luna` or `/astra` choice saved
+  while on OpenAI reads as Opus 5.5.
+- **The Excel pane** ran on Fable 5 from 2 October (a session's choice, to
+  match its footer); it now follows the default too, and its footer reads
+  "Claude Opus 5.5 · BGP CRM".
+- **What a request carries** (unchanged code, checked against Opus 5.5 on
+  20 November 2026): adaptive thinking, effort `medium` from
+  `chatQualitySettings` (Woody's speed decision of 28 August 2026; it is
+  Opus 5.5's own default), `tool_choice` auto, no temperature, no thinking
+  budget, no prefill, and the server-side refusal fallback (`betas:
+  server-side-fallback-2026-07-01`, `fallbacks: "default"`, the beta
+  endpoint); a 400 or 404 retries once on Opus 4.8 (`downgradeFromSonnet5`).
+  Background callers of the chat engine that name no model get
+  `CHATBGP_MODEL` (Sonnet 4.6).
+- **The shared helpers are not moved**: `callClaude` in
+  `server/utils/anthropic-client.ts` (most background features) still
+  follows `AI_PROVIDER`, which on live sends them to OpenAI's Luna and
+  Sol. Moving them is a Railway change (`AI_PROVIDER` empty) or a code
+  change, and Woody's call.
+- The chat's OpenAI branches stay in the code, unused; the tests that stub
+  `chatProvider` to `openai` keep them working. Tests:
+  `qa/regression/chatbgp-on-claude.test.mjs` (an openai switch leaves the
+  chat, the status and the router on Opus 5.5; the Excel pane; the app
+  map) and `server/ai-provider.test.ts`. Check live with
+  `GET /api/chatbgp/status` (provider, default model, effort);
+  `GET /api/admin/ai-keys` reports `provider` (the chat) and
+  `helpersProvider` (the shared helpers), and probes each key with a tiny
+  paid request.
+
 ## ChatBGP's app map (KEEP CURRENT)
 
 `server/chatbgp-app-map.ts` is ChatBGP's description of the app itself —

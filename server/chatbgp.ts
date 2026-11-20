@@ -16985,11 +16985,12 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
       let msToken: string | null = null;
       try { msToken = await getValidMsToken(req); } catch {}
 
-      // OpenAI honours the thread's saved model on every turn. Keep the older
-      // Excel Fable default only for the legacy providers that originally used it.
+      // The Excel pane follows ChatBGP's default, Opus 5.5, and the thread's
+      // saved choice (Woody, 20 November 2026: "actually use opus 5.5"); it ran
+      // on Fable 5 from 2 October. /fable still switches a thread.
       const excelResolved = await resolveChatModel({
         threadId: excelThreadId,
-        override: excelSlashOverride || (chatProvider() !== "openai" && host === "excel" ? "fable" : null),
+        override: excelSlashOverride,
       });
       let convMessages: any[] = [
         { role: "system", content: systemContent },

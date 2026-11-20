@@ -1,10 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-// CHATBGP_PROVIDER selects the chat loop; AI_PROVIDER selects shared helpers.
-// OpenAI uses Responses (OPENAI_API_KEY); Kimi uses the Anthropic-compatible
-// endpoint (MOONSHOT_API_KEY); Anthropic remains available for rollback.
-// OPENAI_CHAT_MODEL defaults to Sol 6.1, OPENAI_HELPER_MODEL to Luna, and
-// OPENAI_ADVANCED_MODEL to Astra (the interactive chat default; /sol and /luna remain available).
+// ChatBGP's chat runs on Claude, Opus 5.5 by default (Woody, 20 November 2026:
+// "change chat bGP to actually use opus 5.5 rather than open ai"). CHATBGP_PROVIDER
+// can still move the chat loop to Kimi, never to OpenAI. AI_PROVIDER selects
+// the shared helpers: OpenAI uses Responses (OPENAI_API_KEY; OPENAI_CHAT_MODEL
+// defaults to Sol 6.1, OPENAI_HELPER_MODEL to Luna); Kimi uses the
+// Anthropic-compatible endpoint (MOONSHOT_API_KEY). The chat's own OpenAI
+// branches stay in the code, unused, behind chatProvider().
 // Direct Anthropic SDK pipelines are intentionally unchanged by these flags.
 
 export type AiProvider = "anthropic" | "kimi" | "openai";
@@ -22,7 +24,8 @@ function resolveProvider(raw: string | undefined): AiProvider {
 }
 
 export function chatProvider(): AiProvider {
-  return resolveProvider(process.env.CHATBGP_PROVIDER || process.env.AI_PROVIDER);
+  const chosen = resolveProvider(process.env.CHATBGP_PROVIDER || process.env.AI_PROVIDER);
+  return chosen === "openai" ? "anthropic" : chosen;
 }
 
 export function globalProvider(): AiProvider {

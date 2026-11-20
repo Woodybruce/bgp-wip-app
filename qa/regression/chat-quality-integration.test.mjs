@@ -125,16 +125,18 @@ test('closing file chat during a tool permits it to finish but starts no later t
   assert.deepEqual(result.toolsRun, ['first']);
 });
 
-test('Excel respects saved OpenAI choices without the legacy Fable default overriding them', async () => {
+// Woody, 20 November 2026: "actually use opus 5.5". The Excel pane ran on
+// Fable 5 from 2 October; it now takes ChatBGP's default and the thread's choice.
+test('Excel follows the thread choice and the Opus 5.5 default, with no Fable override', async () => {
   const resolved = find(file, n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText() === 'excelResolved'));
-  for (const provider of ['openai', 'anthropic']) {
+  for (const [slash, expected] of [[null, null], ['fable', 'fable'], ['sonnet', 'sonnet']]) {
     const calls = [];
     const { run } = evaluate(`export async function run() { ${resolved}; return excelResolved; }`, {
-      excelThreadId: 'example-thread', excelSlashOverride: null, host: 'excel', chatProvider: () => provider,
+      excelThreadId: 'example-thread', excelSlashOverride: slash, host: 'excel', chatProvider: () => 'anthropic',
       resolveChatModel: async args => { calls.push(args); return { model: 'selected' }; },
     });
     await run();
-    assert.equal(calls[0].override, provider === 'openai' ? null : 'fable');
+    assert.equal(calls[0].override, expected);
     assert.equal(calls[0].threadId, 'example-thread');
   }
 });

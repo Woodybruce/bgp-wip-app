@@ -1,5 +1,7 @@
-// Per-thread model choices follow the configured provider. Interactive OpenAI
-// chat defaults to Astra; explicit Sol/Luna choices keep their lower-cost tiers.
+// Per-thread model choices. ChatBGP runs on Claude (chatProvider() never answers
+// openai since Woody's 20 November 2026 switch back), so a thread gets Opus 5.5
+// unless it chose /sonnet or /fable; a /sol, /luna or /astra choice saved in
+// the OpenAI period reads as Opus 5.5. The OpenAI branch below is kept, unused.
 
 import { pool } from "./db";
 import { chatProvider, mapModelForKimi, openaiChatModel, openaiHelperModel, openaiAdvancedModel } from "./utils/ai-provider";

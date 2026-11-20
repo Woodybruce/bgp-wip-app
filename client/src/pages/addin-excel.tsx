@@ -2933,7 +2933,7 @@ function AddinExcel() {
               </button>
             </div>
             <div className="flex items-center justify-center gap-2 mt-1.5">
-              <span className="text-[9px] text-muted-foreground/50">Claude Fable 5 · BGP CRM</span>
+              <span className="text-[9px] text-muted-foreground/50">Claude Opus 5.5 · BGP CRM</span>
               <Pill
                 active={autoApply}
                 onClick={() => setAutoApply(v => !v)}

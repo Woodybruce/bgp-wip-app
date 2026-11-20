@@ -3,6 +3,7 @@
 // a 401 in a feature is the key or the feature.
 import Anthropic from "@anthropic-ai/sdk";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
+import { chatProvider, globalProvider } from "./utils/ai-provider";
 
 export type KeyStatus = { name: string; configured: boolean; ok: boolean | null; detail: string };
 
@@ -32,7 +33,7 @@ async function probeOpenAI(): Promise<KeyStatus> {
   }
 }
 
-export async function checkAiKeys(): Promise<{ checkedAt: string; provider: string; workspaceIdSet: boolean; keys: KeyStatus[] }> {
+export async function checkAiKeys(): Promise<{ checkedAt: string; provider: string; helpersProvider: string; workspaceIdSet: boolean; keys: KeyStatus[] }> {
   const keys = await Promise.all([
     probeAnthropic("Anthropic direct (ANTHROPIC_API_KEY)", process.env.ANTHROPIC_API_KEY),
     probeAnthropic("Anthropic integration (AI_INTEGRATIONS_ANTHROPIC_API_KEY)", process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY, process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL),
@@ -40,7 +41,10 @@ export async function checkAiKeys(): Promise<{ checkedAt: string; provider: stri
   ]);
   return {
     checkedAt: new Date().toISOString(),
-    provider: process.env.CHATBGP_PROVIDER || process.env.AI_PROVIDER || "anthropic",
+    // What the chat actually runs on (never OpenAI since 20 November 2026),
+    // and what the shared helpers run on (AI_PROVIDER).
+    provider: chatProvider(),
+    helpersProvider: globalProvider(),
     // A user-scoped key (sk-ant-usr-…) is refused without this header.
     workspaceIdSet: !!process.env.ANTHROPIC_WORKSPACE_ID,
     keys,

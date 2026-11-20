@@ -35,7 +35,9 @@ test('the provider choice reads only the switches', async () => {
   try {
     process.env.CHATBGP_PROVIDER = 'openai';
     process.env.AI_PROVIDER = 'openai';
-    assert.equal(chatProvider(), 'openai');
+    // The chat stays on Claude (Woody, 20 November 2026); the helpers follow
+    // AI_PROVIDER, for a Landsec request as for any other.
+    assert.equal(chatProvider(), 'anthropic');
     assert.equal(globalProvider(), 'openai');
   } finally {
     if (saved.c === undefined) delete process.env.CHATBGP_PROVIDER; else process.env.CHATBGP_PROVIDER = saved.c;
