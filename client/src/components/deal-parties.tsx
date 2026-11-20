@@ -20,7 +20,7 @@ import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { CreateBillingEntityDialog, type SavedCompany } from "@/components/billing-entity-create";
 import { leaseCompaniesKey } from "@/components/lease-company-picker";
 import { useClientChecks } from "@/components/kyc-client-checks";
-import { OFFER_WORDS, SIGNING_COMPANY_WORDS, partyAmlFacts, partyAmlQuietWords, peopleToReach, type DealPartyBilling, type DealPartyPayer, type DealPartyRole, type DealPartyView, type PartyAmlFacts } from "@shared/deal-parties";
+import { OFFER_WORDS, OWN_NAME_WORDS, SIGNING_COMPANY_WORDS, partyAmlFacts, partyAmlQuietWords, peopleToReach, type DealPartyBilling, type DealPartyPayer, type DealPartyRole, type DealPartyView, type PartyAmlFacts } from "@shared/deal-parties";
 import { PAYER_NOTE_MIN, PAYER_RELATIONSHIPS } from "@shared/deal-billing";
 import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
 import { PARTY_PEOPLE_BASIS_WORDS, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
@@ -78,6 +78,34 @@ function useSetSigningCompany(dealId: string, role: DealPartyRole) {
   });
 }
 
+// Records the party itself as a private individual, or undoes it (Woody,
+// 20 November 2026: Sandy Macaskill (private) was asked for "the company
+// buying"). The record is shared, so every deal with it follows.
+function useMarkIndividual(dealId: string, role: DealPartyRole) {
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (individual: boolean) =>
+      (await apiRequest("PUT", `/api/deals/${dealId}/parties/${role}/individual`, { individual })).json() as Promise<DealParties>,
+    onSuccess: (d) => { refresh(dealId, d); queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] }); },
+    onError: (e) => toast({ title: "Not recorded", description: plain(e), variant: "destructive" }),
+  });
+}
+
+// The suggestion when the CRM name says private: one press records the party
+// as a private individual, so there is no company to find.
+function PrivateIndividualSuggestion({ dealId, party }: { dealId: string; party: DealPartyView }) {
+  const mark = useMarkIndividual(dealId, party.role);
+  if (!party.brand.privateMark || party.brand.companiesHouseNumber || party.company || party.brand.kind !== "company") return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm" data-testid={`deal-party-private-${party.role}`}>
+      <span className="min-w-0 flex-1"><span className="font-medium">{party.brand.name}</span> is marked private in the CRM: if they {OWN_NAME_WORDS[party.role]}, there is no company to find.</span>
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-individual-${party.role}`}>
+        {mark.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <UserRound className="w-3.5 h-3.5 mr-1" />}A private individual
+      </Button>
+    </div>
+  );
+}
+
 // When the deal names no company that signs: the one to offer first (the
 // company on the unit's lease, the brand's main one, its only one) or the
 // brand's own registered company, each a press away, and the full list.
@@ -86,6 +114,7 @@ export function PartyCompanyChoice({ dealId, party, onChoose }: { dealId: string
   if (party.brand.kind !== "company" || party.company) return null;
   return (
     <div className="space-y-1.5" data-testid={`deal-party-choice-${party.role}`}>
+      <PrivateIndividualSuggestion dealId={dealId} party={party} />
       {party.offer && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="min-w-0"><span className="font-medium">{companyWords(party.offer)}</span> <span className="text-muted-foreground">({OFFER_WORDS[party.offer.why]})</span></span>
@@ -624,7 +653,8 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
   };
 
   const setOwn = useSetSigningCompany(dealId, role);
-  const busy = save.isPending || add.isPending || bill.isPending || setOwn.isPending;
+  const markIndividual = useMarkIndividual(dealId, role);
+  const busy = save.isPending || add.isPending || bill.isPending || setOwn.isPending || markIndividual.isPending;
   const billedElsewhere = !!party?.company && (!party.xero || (party.xero.name || "").trim().toLowerCase() !== party.company.name.trim().toLowerCase());
 
   return (
@@ -642,10 +672,21 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
             <section className="space-y-2" data-testid="deal-party-company-section">
               <h4 className="flex items-center gap-1.5 font-semibold"><Building2 className="w-4 h-4 text-muted-foreground" />Who signs: a company or a person</h4>
               {party.brand.recordIndividual && !party.company ? (
-                <p className="text-xs text-muted-foreground">{party.brand.name} is recorded as a private individual, so there is no company to pick. Their date of birth and home address are asked for in the client checks.</p>
+                <div className="space-y-1.5">
+                  <p className="text-xs text-muted-foreground">{party.brand.name} is recorded as a private individual, so there is no company to pick. Their date of birth and home address are asked for in the client checks.</p>
+                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" disabled={busy || markIndividual.isPending}
+                    onClick={() => markIndividual.mutate(false)} data-testid="deal-party-unmark-individual">
+                    {markIndividual.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Not a private individual? Undo
+                  </Button>
+                </div>
               ) : (
                 <>
                   <p className="text-xs text-muted-foreground">{capital(SIGNING_COMPANY_WORDS[role])}. The checks are about it, not {party.brand.name}: the brand is usually a different company.</p>
+                  {party.brand.privateMark && !party.company && !party.brand.companiesHouseNumber && (
+                    <div className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs">
+                      <PrivateIndividualSuggestion dealId={dealId} party={party} />
+                    </div>
+                  )}
                   {party.offer && (
                     <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs" data-testid="deal-party-offer">
                       <span className="min-w-0 flex-1"><strong>{companyWords(party.offer)}</strong><span className="block text-muted-foreground">Suggested: {OFFER_WORDS[party.offer.why]}</span></span>
@@ -693,6 +734,13 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                       <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" disabled={busy} onClick={() => save.mutate({ companyId: null })}>Clear</Button>
                     )}
                   </div>
+                  {!party.company && !party.brand.companiesHouseNumber && !party.brand.privateMark && (
+                    <p className="text-xs text-muted-foreground" data-testid="deal-party-individual-option">
+                      Is {party.brand.name} a person, not a company?{" "}
+                      <button type="button" className="underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={busy || markIndividual.isPending}
+                        onClick={() => markIndividual.mutate(true)} data-testid="deal-party-mark-individual">Record them as a private individual</button>
+                    </p>
+                  )}
                   {party.client && <div className="rounded-md bg-muted/50 px-2.5 py-2 text-xs space-y-1" data-testid="deal-party-billing">
                     <div><span className="text-muted-foreground">Billed to (Xero): </span>{party.xero ? (party.xero.name || "a Xero contact") : "not set"}</div>
                     {billedElsewhere && party.company?.companiesHouseNumber && (

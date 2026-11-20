@@ -277,3 +277,16 @@ test("a person who signs makes the party a private individual for the checks", a
   // A person who signs needs no company: only someone to ask, with an email.
   assert.deepEqual(partyGaps({ role: "purchaser", kind: "individual", brandName: "Sandy Macaskill (private)", companySet: true, person: { name: "Sandy Macaskill", email: "sandy@example.com" } }), []);
 });
+
+test("a CRM name marked private suggests a private individual; nothing else does", async () => {
+  const { privateMarkInName, OWN_NAME_WORDS } = await import("../shared/deal-parties");
+  // The investment import's names (20 November 2026: Sandy Macaskill (private)
+  // was asked for "the company buying" on the Fortis Green purchase).
+  for (const name of ["Sandy Macaskill (private)", "Chan family (private client)", "J Smith (Private Individual)", "A Buyer ( private )", "Jo Bloggs (individual)"]) {
+    assert.equal(privateMarkInName(name), true, name);
+  }
+  for (const name of ["Mayfairprivateoffice", "Private Hong Kong family (Jack Barratt client)", "URC Thames North Trust", "Private Equity Partners Ltd", "", null]) {
+    assert.equal(privateMarkInName(name), false, String(name));
+  }
+  assert.equal(OWN_NAME_WORDS.purchaser, "are buying in their own name");
+});

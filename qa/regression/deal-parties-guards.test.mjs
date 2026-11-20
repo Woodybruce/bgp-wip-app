@@ -194,3 +194,32 @@ test('the owners the checks need are named in the party box, with their contact 
   assert.match(dealPage, /useDealAmlStatus\(dealId, !isClientDeal\)/);
   assert.match(dealPage, /<DealPartyLines dealId=\{id\} role=\{slot\.role\} aml=\{partyAmlFacts\(amlStatus, slot\.value\)\} \/>/);
 });
+
+test('a party can be recorded as a private individual, from the party box and the Kick off AML step', () => {
+  // Woody, 20 November 2026 (the Fortis Green heads of terms on live): the
+  // Kick off AML step asked for "the company buying" for Sandy Macaskill
+  // (private), and nothing could record him as a person.
+  const route = parties.slice(parties.indexOf('router.put("/api/deals/:id/parties/:role/individual"'), parties.indexOf("// The contact details of someone the party's AML checks need"));
+  assert.ok(route.length > 200, 'the route is there');
+  assert.match(route, /const me = await staffMe\(req\);\s*if \(!me\) return res\.status\(403\)/);
+  assert.match(route, /typeof wanted !== "boolean"/);
+  // A record with a Companies House number is a company.
+  assert.match(route, /if \(wanted && text\(brand\.companies_house_number\)\)\s*\{\s*return res\.status\(409\)/);
+  assert.match(route, /UPDATE crm_companies SET aml_subject_type = \$2 WHERE id = \$1/);
+  // Undo only clears what this set.
+  assert.match(route, /const after = wanted \? "individual" : \(isIndividual \? null : before\);/);
+  assert.match(route, /await audit\(pool, deal\.id, "aml_subject_type"/);
+  assert.match(route, /INSERT INTO kyc_audit_log \(company_id, action, performed_by, notes\) VALUES \(\$1, 'aml_subject_type'/);
+  assert.match(parties, /privateMark: privateMarkInName\(brandRow\.name\)/);
+  const ui = read('client/src/components/deal-parties.tsx');
+  assert.match(ui, /apiRequest\("PUT", `\/api\/deals\/\$\{dealId\}\/parties\/\$\{role\}\/individual`, \{ individual \}\)/);
+  // First in the Kick off AML step's choice, when the CRM name says private.
+  assert.match(ui, /data-testid=\{`deal-party-choice-\$\{party\.role\}`\}>\s*<PrivateIndividualSuggestion dealId=\{dealId\} party=\{party\} \/>/);
+  assert.match(ui, /data-testid="deal-party-mark-individual"/);
+  assert.match(ui, /data-testid="deal-party-unmark-individual"/);
+});
+
+test('reading heads of terms keeps the property in the deal name', () => {
+  const deals = read('client/src/pages/deals.tsx');
+  assert.match(deals, /applyAutoName\(\{ \.\.\.form, \.\.\.\(propId \? \{ propertyId: propId \} : \{\}\), \.\.\.patch \}\);/);
+});
