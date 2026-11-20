@@ -38,7 +38,8 @@ interface Props {
   createFor?: { id: string; name: string } | null;
 }
 
-type FiledCompany = { id: string; name: string; companiesHouseNumber: string | null; isDefault?: boolean };
+type FiledCompany = { id: string; name: string; companiesHouseNumber: string | null; isDefault?: boolean; entityKind?: string | null; contactId?: string | null };
+const isPerson = (f: FiledCompany) => String(f.entityKind || "").toLowerCase() === "individual";
 
 function formatAddress(addr: any): string {
   if (!addr) return "";
@@ -145,6 +146,27 @@ export function XeroContactPicker({
   const [linkProblem, setLinkProblem] = useState<string | null>(null);
   const pickFiled = async (f: FiledCompany) => {
     setLinkProblem(null);
+    // A person filed under the party (20 November 2026): their Xero contact by name, found or made.
+    if (isPerson(f) && createFor?.id) {
+      setLinking(f.id);
+      try {
+        const r = await fetch("/api/billing-entities", {
+          method: "POST", credentials: "include",
+          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ brandId: createFor.id, person: { name: f.name } }),
+        });
+        const body = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(body?.message || `The person could not be linked (${r.status})`);
+        const company: SavedCompany = { id: String(body?.entity?.id || f.id), name: String(body?.entity?.name || f.name), companiesHouseNumber: null, kind: "individual", contactId: body?.entity?.contactId || f.contactId || null };
+        if (body?.contact?.ContactID) { onChange(body.contact, company); setSearch(""); setOpen(false); }
+        else setLinkProblem(`${f.name}: ${body?.xeroError || "the Xero contact was not made."}`);
+      } catch (e: any) {
+        setLinkProblem(e?.message || "The person could not be linked");
+      } finally {
+        setLinking(null);
+      }
+      return;
+    }
     if (!f.companiesHouseNumber || !createFor?.id) { setSearch(f.name); return; }
     setLinking(f.id);
     try {
@@ -234,6 +256,7 @@ export function XeroContactPicker({
                   <div className="flex items-center gap-2 flex-wrap">
                     {linking === f.id && <Loader2 className="w-3 h-3 animate-spin" />}
                     <span className="text-sm font-medium">{f.name}</span>
+                    {isPerson(f) && <Badge variant="outline" className="text-[10px]">A person</Badge>}
                     {f.companiesHouseNumber && <Badge variant="outline" className="text-[10px]">{f.companiesHouseNumber}</Badge>}
                     {f.isDefault && <Badge variant="outline" className="text-[10px]">Default</Badge>}
                   </div>
@@ -330,7 +353,7 @@ export function XeroContactPicker({
               onMouseDown={(e) => { e.preventDefault(); setCreating(trimmed); setOpen(false); }}
               data-testid={`${testIdPrefix}-create-new`}
             >
-              <Plus className="w-3.5 h-3.5" /> New billing entity for {createFor.name} (Companies House)
+              <Plus className="w-3.5 h-3.5" /> New billing entity for {createFor.name}: a company or a person
             </button>
           )}
           {!isFetching && !notConnected && !notInXero && !stillChecking && (

@@ -21,7 +21,7 @@
 // identity checks, and the deal card, the client page and the sign-off read
 // the answer.
 
-import { controlWords, nameTokens, personDisplayName, personNamesMatch, type KycPrecheckResult } from "./kyc-prechecks";
+import { controlWords, nameTokens, ownersAbroadOf, personDisplayName, personNamesMatch, type KycPrecheckResult } from "./kyc-prechecks";
 import type { KycDocKey, KycIdState, KycPartyKind, KycPersonRole } from "./kyc-request";
 import { checkAddressProof, type AddressProofAcceptance, type AddressProofReading } from "./kyc-address-proof";
 
@@ -140,7 +140,7 @@ export interface KycPartyPerson {
   canSend: boolean;
 }
 
-export type PartyPeopleBasis = "owners" | "listed" | "no_owners" | "not_read" | "individual";
+export type PartyPeopleBasis = "owners" | "listed" | "no_owners" | "not_read" | "individual" | "owners_abroad";
 
 export interface PartyPeople {
   basis: PartyPeopleBasis;
@@ -151,6 +151,9 @@ export interface PartyPeople {
   loose: Array<{ ref: string; files: number; names: string[] }>;
   // "Huseyn Mirhadiyev: identity check and proof of address", per person.
   outstanding: string[];
+  // Companies registered abroad that own the party: Companies House cannot
+  // show who owns them, so the client is asked (20 November 2026).
+  ownersAbroad?: Array<{ name: string; country: string; foundAt: string | null }>;
 }
 
 export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
@@ -159,6 +162,7 @@ export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
   no_owners: "The register names no person who owns or controls the company. Ask the client who does; the person dealing with us still does their own check.",
   not_read: "BGP's checks before asking have not read the register yet, so the owners are not known. The person dealing with us does their own check.",
   individual: "A private individual: their own request covers them.",
+  owners_abroad: "A company registered outside the UK owns or controls it, so Companies House cannot show the people behind it. The client is asked for a structure chart up to the people, and each of them then does their own check.",
 };
 
 const samePerson = (a: string | null | undefined, b: string | null | undefined): boolean => !!a && !!b && personNamesMatch(a, b);
@@ -296,10 +300,16 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     .filter(r => !r.person)
     .map(r => ({ ref: r.ref, files: r.files.filter(f => f.docKey === "owner_ids").length, names: r.ownerNames.map(personDisplayName) }))
     .filter(l => l.files > 0);
-  const basis: PartyPeopleBasis = !ch ? "not_read" : ch.listing ? "listed" : people.some(p => p.roles.includes("owner")) ? "owners" : "no_owners";
+  const abroad = ownersAbroadOf(ch);
+  const basis: PartyPeopleBasis = !ch ? "not_read" : ch.listing ? "listed" : people.some(p => p.roles.includes("owner")) ? "owners" : abroad.length ? "owners_abroad" : "no_owners";
   return {
     basis, people, directors, loose,
-    outstanding: people.filter(p => p.outstanding.length).map(p => `${p.name}: ${p.outstanding.join(" and ")}`),
+    outstanding: [
+      ...people.filter(p => p.outstanding.length).map(p => `${p.name}: ${p.outstanding.join(" and ")}`),
+      // Until the client names them, the people behind a company abroad are owed.
+      ...(abroad.length && !party.some(r => !r.person && r.files.some(f => f.docKey === "ownership")) ? [`The people behind ${abroad.map(a => `${a.name} (${a.country})`).join(" and ")}: a structure chart and their IDs`] : []),
+    ],
+    ...(abroad.length ? { ownersAbroad: abroad.map(a => ({ name: a.name, country: a.country, foundAt: a.foundAt })) } : {}),
   };
 }
 

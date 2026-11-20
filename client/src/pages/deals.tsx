@@ -2,6 +2,7 @@ import { isBgpTeam } from "@shared/teams";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { XeroContactPicker, type XeroContact } from "@/components/xero-contact-picker";
+import { SigningEntityPicker } from "@/components/signing-entity-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
@@ -145,12 +146,12 @@ import { NoteFill } from "@/components/letting-note/note-fill";
 import type { LettingNoteReading } from "@shared/letting-note";
 import type { HotsConversion, HotsConvertDefaults } from "@shared/unit-hots";
 import { hotsCall } from "@/components/unit-hots/hots-api";
-import { billingPatch, dealAutoName, dealNotePatch, dealReadPatch, noteTenant, noteUnitId, PARTY_FORM_KEYS, partyPatch, propertyPickPatch, teamForDealType } from "@/lib/deal-note";
+import { billingPatch, dealAutoName, dealNotePatch, dealReadPatch, findCompanyByName, hotsParties, hotsPricePatch, isInvestmentDealType, noteTenant, noteUnitId, PARTY_FORM_KEYS, partyPatch, propertyPickPatch, teamForDealType, teamPatch } from "@/lib/deal-note";
 import { DealNoteReadPanel } from "@/components/deal-note-read";
 import { DEAL_NOTE_ROLE_TYPES, DEAL_NOTE_ROLE_WORDS, type DealNoteCandidate, type DealNoteRead, type DealNoteRegisterHit, type DealNoteRole } from "@shared/deal-note";
 import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { SendClientChecksButton } from "@/components/kyc-client-checks";
-import { DealPartyEditor, PartyReadyToStart, partyAmlFacts } from "@/components/deal-parties";
+import { DealPartyEditor, PartyBillingDetail, PartyReadyToStart, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, dealClientRole, invoiceContactFor, type InvoiceContact } from "@shared/deal-parties";
 import { PartyDecisions } from "@/components/deal-party-aml";
 import { useDealAmlStatus } from "@/components/deal-aml-status";
@@ -2002,6 +2003,47 @@ function DealSchemeField({ form, setForm }: { form: any; setForm: (updater: (p: 
   );
 }
 
+// Sales and purchases already live on the property (Woody, 2026-11-20: three
+// deals were made for one purchase in a morning). Shown under the property on
+// New Deal for a sale or purchase, each opening its deal in a new tab.
+function LiveInvestmentDeals({ propertyId }: { propertyId: string }) {
+  const { data = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/properties", propertyId, "deals"],
+    queryFn: async () => {
+      const r = await fetch(`/api/crm/properties/${encodeURIComponent(propertyId)}/deals`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      const body = await r.json().catch(() => []);
+      return Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : [];
+    },
+    enabled: !!propertyId,
+    staleTime: 30_000,
+  });
+  const live = data.filter((d: any) => {
+    const code = legacyToCode(d.status);
+    const investment = isInvestmentDealType(d.dealType) || d.dealType === "Investment" || (Array.isArray(d.team) && d.team.includes("Investment"));
+    return investment && !(code && CLOSED_STATUSES.includes(code));
+  });
+  if (!live.length) return null;
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs dark:border-amber-900 dark:bg-amber-950/20" data-testid="deal-live-investment-on-property">
+      <p className="font-medium text-amber-900 dark:text-amber-200">Already a live sale or purchase on this property: open it rather than adding another.</p>
+      <ul className="mt-1 space-y-0.5">
+        {live.slice(0, 5).map((d: any) => {
+          const code = legacyToCode(d.status);
+          return (
+            <li key={d.id}>
+              <a href={`/deals/${d.id}`} target="_blank" rel="noreferrer" className="underline underline-offset-2" data-testid={`deal-live-investment-${d.id}`}>
+                {d.dealRef ? `#${d.dealRef} ` : ""}{d.name || "Deal"}
+              </a>
+              <span className="text-muted-foreground"> · {d.dealType || "No type"} · {code ? DEAL_STATUS_LABELS[code] : d.status || "No status"}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function SimplifiedCreateBody({
   form, set, properties, propertyUnits, companies, users, setForm,
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
@@ -2165,6 +2207,22 @@ function SimplifiedCreateBody({
   const hotsInputRef = useRef<HTMLInputElement>(null);
   const [hotsBusy, setHotsBusy] = useState(false);
   const [hotsParsed, setHotsParsed] = useState<{ fileName: string; fields: number } | null>(null);
+  // Parties the heads of terms name that the CRM does not hold: one press adds each.
+  const [hotsMissing, setHotsMissing] = useState<Array<{ role: DealNoteRole; name: string }>>([]);
+  const [hotsAdding, setHotsAdding] = useState<string | null>(null);
+  const addHotsParty = async (named: { role: DealNoteRole; name: string }) => {
+    const create = { landlord: createLandlord, tenant: createTenant, vendor: createVendor, purchaser: createPurchaser }[named.role];
+    const k = PARTY_FORM_KEYS[named.role];
+    setHotsAdding(named.name);
+    try {
+      const made = await create(named.name);
+      setForm((p: any) => ({ ...p, [k.id]: made.id, [k.entity]: "", [k.entityName]: "", [k.trading]: "" }));
+      applyAutoName({ ...form, [k.id]: made.id });
+      setHotsMissing(list => list.filter(x => !(x.role === named.role && x.name === named.name)));
+    } catch { /* the creator says why */ } finally {
+      setHotsAdding(null);
+    }
+  };
   const handleHotsFile = async (file: File) => {
     setHotsBusy(true);
     try {
@@ -2185,11 +2243,9 @@ function SimplifiedCreateBody({
       if (!r.ok) throw new Error(data?.error || data?.message || `Upload failed (${r.status})`);
       const ex = data.extracted || {};
       const norm = (v: unknown) => String(v ?? "").toLowerCase().trim();
-      const matchCompany = (name: string | null) => {
-        const q = norm(name);
-        if (!q) return "";
-        return (companies.find(c => norm(c.name) === q) || companies.find(c => norm(c.name).includes(q) || q.includes(norm(c.name))))?.id || "";
-      };
+      // Whole words only (20 November 2026: "Fortis Green Tennis Club" was
+      // read as EE, because "fortis gr-ee-n" holds "ee").
+      const matchCompany = (name: string | null) => findCompanyByName(name, companies)?.id || "";
       const matchProperty = (addr: string | null) => {
         const q = norm(addr);
         if (!q) return "";
@@ -2204,18 +2260,34 @@ function SimplifiedCreateBody({
       const patch: Record<string, any> = place ? {} : { status: "HOT" };
       const validType = typeof ex.dealType === "string" && [...LETTING_DEAL_TYPES, ...TENANT_REP_TYPES, ...ADVISORY_UNIT_TYPES, "Purchase", "Sale"].includes(ex.dealType);
       if (!form.dealType && validType) patch.dealType = ex.dealType;
-      const tenantId = matchCompany(ex.tenantName);
-      const landlordId = matchCompany(ex.landlordName);
-      if (tenantId && !form.tenantId) patch.tenantId = tenantId;
-      if (landlordId && !form.landlordId) patch.landlordId = landlordId;
-      for (const [k, v] of [["rentPa", ex.rentPa], ["fee", ex.fee], ["feePercentage", ex.feePercentage], ["totalAreaSqft", ex.totalAreaSqft],
-        ["capitalContribution", ex.capitalContribution], ["leaseLength", ex.leaseLength], ["breakOption", ex.breakOption], ["rentFree", ex.rentFree],
+      const typeNow = String(patch.dealType || form.dealType || "");
+      // The type's team, as picking the type does (20 November 2026: a deal
+      // the heads of terms made a Purchase had no team).
+      const team = teamPatch(form.team, typeNow);
+      if (team) patch.team = team;
+      // The parties of the deal type: vendor and purchaser on a sale or a
+      // purchase, landlord and tenant otherwise. A name the CRM does not hold
+      // is offered to add, never guessed.
+      const unmatched: Array<{ role: DealNoteRole; name: string }> = [];
+      for (const named of hotsParties(ex, typeNow)) {
+        const k = PARTY_FORM_KEYS[named.role];
+        const id = matchCompany(named.name);
+        if (id && !(form as any)[k.id]) Object.assign(patch, { [k.id]: id, [k.entity]: "", [k.entityName]: "", [k.trading]: "" });
+        else if (!id && !(form as any)[k.id]) unmatched.push(named);
+      }
+      const investment = isInvestmentDealType(typeNow);
+      if (investment) Object.assign(patch, hotsPricePatch(form, ex));
+      for (const [k, v] of [...(investment ? [] : [["rentPa", ex.rentPa], ["fee", ex.fee], ["feePercentage", ex.feePercentage], ["totalAreaSqft", ex.totalAreaSqft],
+        ["capitalContribution", ex.capitalContribution], ["leaseLength", ex.leaseLength], ["breakOption", ex.breakOption], ["rentFree", ex.rentFree]]),
         ["assetClass", ex.assetClass], ["feeAgreement", ex.feeAgreement]] as Array<[string, unknown]>) {
         if (str(v) && !str((form as any)[k])) patch[k] = str(v);
       }
+      setHotsMissing(unmatched);
       if (typeof ex.targetDate === "string" && ex.targetDate && !form.targetDate) patch.targetDate = ex.targetDate.slice(0, 10);
       if (str(ex.specialConditions) && !form.comments) patch.comments = str(ex.specialConditions);
       setForm((p: any) => ({ ...p, ...patch }));
+      // The deal name follows the parties the reading filled, as picking them does.
+      applyAutoName({ ...form, ...patch });
       // Fee split from the agents the HOTs names, only when none is entered
       // yet: BGP House keeps its slice and the agents share the rest.
       if (Array.isArray(ex.agentNames) && ex.agentNames.length && !feeRows.some(r => !r.isBgpHouse && r.agentName)) {
@@ -2338,6 +2410,19 @@ function SimplifiedCreateBody({
             {hotsBusy ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Upload className="w-3.5 h-3.5 mr-1.5" />}
             {hotsBusy ? "Reading heads of terms…" : "Add heads of terms"}
           </Button>
+          {hotsMissing.length > 0 && (
+            <div className="w-full space-y-1" data-testid="hots-missing-parties">
+              {hotsMissing.map(m => (
+                <div key={`${m.role}:${m.name}`} className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs dark:border-amber-900 dark:bg-amber-950/20">
+                  <span className="min-w-0 flex-1">The heads of terms name <strong>{m.name}</strong> as the {m.role}: not in the CRM yet.</span>
+                  <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" disabled={!!hotsAdding || !!(form as any)[PARTY_FORM_KEYS[m.role].id]}
+                    onClick={() => void addHotsParty(m)} data-testid={`hots-add-${m.role}`}>
+                    {hotsAdding === m.name ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1" />}Add as {m.role}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
           <p className="text-[11px] text-muted-foreground">
             {hotsParsed
               ? <>Read {hotsParsed.fileName}: {hotsParsed.fields} details filled below{place ? "" : " and the deal set to HOTs"} — check them before {place ? "you save" : "Create"}.</>
@@ -2390,6 +2475,7 @@ function SimplifiedCreateBody({
             }
           }}
         />
+        {form.propertyId && isInvestmentDealType(form.dealType) && <div className="mt-1.5"><LiveInvestmentDeals propertyId={form.propertyId} /></div>}
       </div>
       )}
 
@@ -2541,7 +2627,7 @@ function SimplifiedCreateBody({
               onCreate={createLandlord}
               createLabel="landlord"
             />
-            {form.landlordId && !hideFees && (
+            {form.landlordId && !hideFees && (!clientRole || clientRole === "landlord") && (
               <div>
                 <Label className="text-[10px] text-muted-foreground">Billing entity for {partyName(form.landlordId, "the landlord")} (Xero)</Label>
                 <XeroContactPicker
@@ -2558,6 +2644,18 @@ function SimplifiedCreateBody({
                   }}
                   createFor={{ id: form.landlordId, name: partyName(form.landlordId, "the landlord") }}
                   compact
+                />
+              </div>
+            )}
+            {/* Who signs for a party BGP does not bill: a company or a person, for the AML checks (2026-11-20). */}
+            {form.landlordId && !hideFees && clientRole && clientRole !== "landlord" && (
+              <div>
+                <Label className="text-[10px] text-muted-foreground">Who signs for {partyName(form.landlordId, "the landlord")} (for the AML checks)</Label>
+                <SigningEntityPicker
+                  party={{ id: form.landlordId, name: partyName(form.landlordId, "the landlord") }}
+                  value={form.landlordTradingEntityId || ""}
+                  onChange={(c) => set("landlordTradingEntityId", c?.id || "")}
+                  testIdPrefix="deal-landlord-signs"
                 />
               </div>
             )}
@@ -2580,7 +2678,7 @@ function SimplifiedCreateBody({
                 Brand read as <span className="font-medium text-foreground">{tenantHint}</span>. Pick it above if it is the tenant.
               </p>
             )}
-            {form.tenantId && !hideFees && (
+            {form.tenantId && !hideFees && (!clientRole || clientRole === "tenant") && (
               <div>
                 <Label className="text-[10px] text-muted-foreground">Billing entity for {partyName(form.tenantId, "the tenant")} (Xero)</Label>
                 {/* Linked to the party (Woody, 2026-11-17: "tenant and Landlord first then the billing entity comes up
@@ -2604,6 +2702,18 @@ function SimplifiedCreateBody({
                 />
               </div>
             )}
+            {/* Who signs for a party BGP does not bill: a company or a person, for the AML checks (2026-11-20). */}
+            {form.tenantId && !hideFees && clientRole && clientRole !== "tenant" && (
+              <div>
+                <Label className="text-[10px] text-muted-foreground">Who signs for {partyName(form.tenantId, "the tenant")} (for the AML checks)</Label>
+                <SigningEntityPicker
+                  party={{ id: form.tenantId, name: partyName(form.tenantId, "the tenant") }}
+                  value={form.tenantTradingEntityId || ""}
+                  onChange={(c) => set("tenantTradingEntityId", c?.id || "")}
+                  testIdPrefix="deal-tenant-signs"
+                />
+              </div>
+            )}
           </div>
           )}
         </div>
@@ -2622,7 +2732,7 @@ function SimplifiedCreateBody({
               onCreate={createVendor}
               createLabel="vendor"
             />
-            {form.vendorId && !hideFees && (
+            {form.vendorId && !hideFees && (!clientRole || clientRole === "vendor") && (
               <div>
                 <Label className="text-[10px] text-muted-foreground">Billing entity for {partyName(form.vendorId, "the vendor")} (Xero)</Label>
                 <XeroContactPicker
@@ -2642,6 +2752,18 @@ function SimplifiedCreateBody({
                 />
               </div>
             )}
+            {/* Who signs for a party BGP does not bill: a company or a person, for the AML checks (2026-11-20). */}
+            {form.vendorId && !hideFees && clientRole && clientRole !== "vendor" && (
+              <div>
+                <Label className="text-[10px] text-muted-foreground">Who signs for {partyName(form.vendorId, "the vendor")} (for the AML checks)</Label>
+                <SigningEntityPicker
+                  party={{ id: form.vendorId, name: partyName(form.vendorId, "the vendor") }}
+                  value={form.vendorTradingEntityId || ""}
+                  onChange={(c) => set("vendorTradingEntityId", c?.id || "")}
+                  testIdPrefix="deal-vendor-signs"
+                />
+              </div>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Purchaser{clientRole === "purchaser" ? " * (client)" : " (optional)"}</Label>
@@ -2655,7 +2777,7 @@ function SimplifiedCreateBody({
               onCreate={createPurchaser}
               createLabel="purchaser"
             />
-            {form.purchaserId && !hideFees && (
+            {form.purchaserId && !hideFees && (!clientRole || clientRole === "purchaser") && (
               <div>
                 <Label className="text-[10px] text-muted-foreground">Billing entity for {partyName(form.purchaserId, "the purchaser")} (Xero)</Label>
                 <XeroContactPicker
@@ -2672,6 +2794,18 @@ function SimplifiedCreateBody({
                   }}
                   createFor={{ id: form.purchaserId, name: partyName(form.purchaserId, "the purchaser") }}
                   compact
+                />
+              </div>
+            )}
+            {/* Who signs for a party BGP does not bill: a company or a person, for the AML checks (2026-11-20). */}
+            {form.purchaserId && !hideFees && clientRole && clientRole !== "purchaser" && (
+              <div>
+                <Label className="text-[10px] text-muted-foreground">Who signs for {partyName(form.purchaserId, "the purchaser")} (for the AML checks)</Label>
+                <SigningEntityPicker
+                  party={{ id: form.purchaserId, name: partyName(form.purchaserId, "the purchaser") }}
+                  value={form.purchaserTradingEntityId || ""}
+                  onChange={(c) => set("purchaserTradingEntityId", c?.id || "")}
+                  testIdPrefix="deal-purchaser-signs"
                 />
               </div>
             )}
@@ -2701,12 +2835,22 @@ function SimplifiedCreateBody({
         <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Financials & timing</div>
 
         <div className={`grid grid-cols-1 gap-3 ${hideFees ? "" : "sm:grid-cols-3"}`}>
-          <div>
-            <Label htmlFor="deal-rent-pa" className="text-xs">Headline Rent (£ p.a.)</Label>
-            <Input id="deal-rent-pa" type="number" value={form.rentPa}
-              onChange={(e) => set("rentPa", e.target.value)}
-              placeholder="e.g. 175000" />
-          </div>
+          {/* A sale or purchase is priced, not rented (Woody, 2026-11-20: "the form is set up for leases but needs that"). */}
+          {isInvestmentDealType(form.dealType) ? (
+            <div>
+              <Label htmlFor="deal-price" className="text-xs">Price (£)</Label>
+              <Input id="deal-price" type="number" min="0" value={form.pricing}
+                onChange={(e) => set("pricing", e.target.value)}
+                placeholder="e.g. 510000" data-testid="input-deal-price" />
+            </div>
+          ) : (
+            <div>
+              <Label htmlFor="deal-rent-pa" className="text-xs">Headline Rent (£ p.a.)</Label>
+              <Input id="deal-rent-pa" type="number" value={form.rentPa}
+                onChange={(e) => set("rentPa", e.target.value)}
+                placeholder="e.g. 175000" />
+            </div>
+          )}
           {!hideFees && (<>
           <div>
             <Label htmlFor="deal-fee-pct" className="text-xs">% Agency fee</Label>
@@ -2714,19 +2858,19 @@ function SimplifiedCreateBody({
               onChange={(e) => {
                 const pct = e.target.value;
                 set("feePercentage", pct);
-                const rent = parseFloat(form.rentPa);
+                const base = parseFloat(isInvestmentDealType(form.dealType) ? form.pricing : form.rentPa);
                 const pctNum = parseFloat(pct);
-                if (!isNaN(rent) && !isNaN(pctNum) && pctNum > 0) {
-                  set("fee", String(Math.round((rent * pctNum) / 100)));
+                if (!isNaN(base) && !isNaN(pctNum) && pctNum > 0) {
+                  set("fee", String(Math.round((base * pctNum) / 100)));
                 }
               }}
-              placeholder="e.g. 6" />
+              placeholder={isInvestmentDealType(form.dealType) ? "e.g. 1" : "e.g. 6"} />
           </div>
           <div>
             <Label htmlFor="deal-fee" className="text-xs">Total fee £</Label>
             <Input id="deal-fee" type="number" step="0.01" value={form.fee}
               onChange={(e) => set("fee", e.target.value)}
-              placeholder="auto from rent × %" />
+              placeholder={isInvestmentDealType(form.dealType) ? "auto from price × %" : "auto from rent × %"} />
           </div>
           </>)}
         </div>
@@ -4911,13 +5055,8 @@ function HotsChecklistDialog({
       setAiSummary(ex.summary || "");
 
       const missing: string[] = [];
-      const tryMatchCompany = (name: string | null) => {
-        if (!name) return "";
-        const q = name.toLowerCase().trim();
-        const match = companies.find(c => c.name.toLowerCase().trim() === q)
-          || companies.find(c => c.name.toLowerCase().includes(q) || q.includes(c.name.toLowerCase()));
-        return match?.id || "";
-      };
+      // Whole words only: "Fortis Green Tennis Club" is never EE (20 November 2026).
+      const tryMatchCompany = (name: string | null) => findCompanyByName(name, companies)?.id || "";
       const tryMatchProperty = (addr: string | null) => {
         if (!addr) return "";
         const q = addr.toLowerCase().trim();
@@ -5378,7 +5517,15 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
   // not autolinked to the AML deal process thats happening it should be"):
   // the deal's own invoice contact when one is set, else the billing entity on
   // BGP's client from Parties. shared/deal-parties.ts invoiceContactFor.
-  const billing = invoiceContactFor(deal as any);
+  // With no billing contact of its own, BGP's client is billed as the third
+  // party the deal records as paying, else as its company that signs (Woody,
+  // 20 November 2026: "the company signs is effectively the xero billing entity").
+  const { data: partiesView } = useDealParties(dealId);
+  const clientParty = partiesView?.parties.find(p => p.client) || null;
+  const billing = invoiceContactFor(deal as any, {
+    payer: clientParty?.billing?.payer ? { id: clientParty.billing.payer.id, name: clientParty.billing.payer.name, xeroContactId: clientParty.billing.payer.xeroContactId } : null,
+    signing: clientParty?.company ? { id: clientParty.company.id, name: clientParty.company.name, xeroContactId: clientParty.company.xeroContactId || null, xeroContactName: clientParty.company.xeroContactName || null } : null,
+  });
   const roleWord = DEAL_PARTY_LABEL[billing.role].toLowerCase();
   const [partyBox, setPartyBox] = useState(false);
   const [pickOwn, setPickOwn] = useState(false);
@@ -5606,18 +5753,27 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <span className="font-medium" data-testid="xero-invoice-billed-name">{billing.name}</span>
               <span className="text-xs text-muted-foreground" data-testid="xero-invoice-billed-source">
-                {billing.source === "party" ? `the ${roleWord}'s billing entity, from Parties` : "the invoice contact set on this deal"}
+                {billing.source === "party" ? `the ${roleWord}'s billing entity, from Parties`
+                  : billing.source === "signing" ? `the ${roleWord}'s company that signs${billing.contactId ? "" : ": its Xero contact is found or made when the invoice is drafted"}`
+                  : billing.source === "payer" ? `the third party that pays for the ${roleWord}${billing.contactId ? "" : ": its Xero contact is found or made when the invoice is drafted"}`
+                  : "the invoice contact set on this deal"}
                 {billing.source === "deal" && xeroAccountNumber ? ` · A/C ${xeroAccountNumber}` : ""}
               </span>
             </div>
           ) : billing.partyLinked ? (
             <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="xero-invoice-billed-missing">
-              No billing entity for the {roleWord} yet: set it under Parties, from the company that signs, so the invoice goes to the company the AML checks are on.
+              No company that signs for the {roleWord} yet: set it under Parties. BGP bills it, so the invoice goes to the company the AML checks are on.
             </p>
           ) : (
             <p className="text-xs text-muted-foreground" data-testid="xero-invoice-billed-missing">
               Link the {roleWord} on the Parties pill to bill its company, or pick a Xero contact for this deal.
             </p>
+          )}
+          {/* Billed as another company than the one that signs, or a third party paying (20 November 2026). */}
+          {clientParty?.billing && (clientParty.billing.state === "different" || clientParty.billing.state === "payer") && (
+            <div className={`rounded-md border px-2.5 py-2 ${clientParty.billing.tone === "flag" ? "border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/20" : "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/20"}`} data-testid="xero-invoice-billing-flag">
+              <PartyBillingDetail dealId={dealId} party={clientParty} compact />
+            </div>
           )}
           {/* The deal's own contact differs from the client's billing entity: say so, and offer the switch either way. */}
           {billing.source === "deal" && billing.party && billing.party.contactId !== billing.contactId && (

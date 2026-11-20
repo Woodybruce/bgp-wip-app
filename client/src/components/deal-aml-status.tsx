@@ -6,7 +6,7 @@ import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
 import { KYC4U_FORM_URL, Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks } from "@/components/kyc-client-checks";
-import { DealPartyEditor, PartyReadyToStart, partyAmlFacts, useDealParties } from "@/components/deal-parties";
+import { DealPartyEditor, PartyBillingDetail, PartyReadyToStart, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
 import { FLAG_REVIEW_COMMENT_MIN, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
@@ -532,8 +532,8 @@ const readOpenAll = (): boolean => { try { return window.localStorage.getItem(OP
 const writeOpenAll = (on: boolean) => { try { if (on) window.localStorage.setItem(OPEN_ALL_KEY, "1"); else window.localStorage.removeItem(OPEN_ALL_KEY); } catch { /* per browser only */ } };
 type OpenAll = { all: boolean; at: number };
 
-type SectionKey = "company" | "checks" | "level" | "people" | "client" | "flags" | "kyc4u" | "decision";
-const SECTION_KEYS: SectionKey[] = ["company", "checks", "level", "people", "client", "flags", "kyc4u", "decision"];
+type SectionKey = "company" | "payer" | "checks" | "level" | "people" | "client" | "flags" | "kyc4u" | "decision";
+const SECTION_KEYS: SectionKey[] = ["company", "payer", "checks", "level", "people", "client", "flags", "kyc4u", "decision"];
 
 function useOpenSections<K extends string>(keys: K[], openAll: OpenAll) {
   const [open, setOpen] = useState<Set<K>>(() => new Set(openAll.all ? keys : []));
@@ -637,6 +637,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     kyc4u: kyc4uState, canSignOff, canDecide,
     signOffBlocked: decision ? decision.blocked : data.decisions ? "This party could not be read." : null,
     needsNote: !!decision?.needsNote,
+    billingDiffers: !!party?.client && party.billing?.state === "different",
   };
   const step = amlNextStep(facts);
 
@@ -651,6 +652,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
       case "kyc4u_result": return <PartyDecisionButton dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} kind="kyc4u_result" />;
       case "sign_off": return <PartyDecisionButton dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} kind="sign_off" />;
       case "red_flags": return <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => reveal("flags")}>See the red flags</Button>;
+      case "billing": return <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => reveal("payer")} data-testid={`aml-next-billing-${cp.role}`}>Who pays</Button>;
       default: return null;
     }
   })();
@@ -667,6 +669,17 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     : companyMissing
       ? { tone: settled ? "info" : "act", summary: <span className={settled ? "text-muted-foreground" : "text-amber-800 dark:text-amber-300"}>Not set: {SIGNING_COMPANY_WORDS[cp.role as DealPartyRole] || "the company that signs"}</span> }
       : { tone: "info", summary: <span className="text-muted-foreground">{cp.signsAs || "Not read yet"}</span> };
+
+  // Who pays BGP's invoice (20 November 2026): BGP's client only.
+  const billing = party?.client ? party.billing || null : null;
+  const payLine: { tone: BoxTone; summary: string } | null = !billing || billing.state === "individual" ? null : {
+    tone: billing.tone === "flag" ? "flag" : billing.tone === "act" ? "act" : "done",
+    summary: billing.state === "same" ? `${billing.billed?.name || party?.company?.name || "The company"}, the company that signs`
+      : billing.state === "signing" ? `${party?.company?.name || "The company that signs"}, the company that signs`
+      : billing.state === "different" ? `${billing.billed?.name || "Another company"}: not the company that signs`
+      : billing.state === "payer" ? `${billing.payer?.name || "A third party"} pays (${(billing.payer?.relationshipWords || "relationship not recorded").toLowerCase()})`
+      : "Set the company that signs: BGP bills it",
+  };
 
   const attention = pre ? pre.lines.filter(l => l.state === "attention").length : 0;
   const namesakes = pre?.lines.find(l => l.key === "namesakes") || null;
@@ -698,6 +711,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
       return { tone: possible ? "flag" : "done", summary: `${plural(n, "person", "people")} screened, sanctions only: ${possible ? "a possible match" : "no match"}` };
     }
     if (people.basis === "not_read") return { tone: "wait", summary: "Not read yet: the owners come from Companies House" };
+    // A company registered abroad owns it: the people behind it are the client's to name (20 November 2026).
+    const abroad = people.ownersAbroad?.length
+      ? `owned through ${people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: the client is asked who is behind it`
+      : null;
+    if (abroad && !people.people.some(p => p.roles.includes("owner"))) return { tone: "act", summary: abroad[0].toUpperCase() + abroad.slice(1) };
     const n = people.people.length;
     const done = n - owing.length;
     const directors = people.directors.length ? ` · ${plural(people.directors.length, "director")}, sanctions only` : "";
@@ -739,8 +757,12 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     : approved ? { tone: "done", summary: `Approved${cp.kyc_approved_by ? ` by ${cp.kyc_approved_by}` : ""}${cp.kyc_expires_at ? `, valid until ${amlBoxDay(cp.kyc_expires_at)}` : ""}` }
     : cp.isExpired ? { tone: "flag", summary: `Expired${cp.kyc_expires_at ? ` on ${amlBoxDay(cp.kyc_expires_at)}` : ""}: check it again` }
     : !data.decisions ? { tone: "info", summary: "An agent on the deal, the Nominated Officer or a Deputy signs it off" }
-    : decision && decision.blocked === null && canSignOff ? { tone: decision.needsNote ? "info" : "act", summary: decision.needsNote ? "Can be signed off now, with a note: the client checks are not finished" : "Ready to sign off" }
-    : { tone: "wait", summary: `Not yet: ${decision?.blocked ? onInSentence(decision.blocked) : "this party could not be read"}` };
+    : !decision ? { tone: "wait", summary: "Not yet: this party could not be read" }
+    : decision.blocked !== null ? { tone: "wait", summary: `Not yet: ${onInSentence(decision.blocked)}` }
+    // It can be signed off now: by this viewer, or (when they cannot) by those who can.
+    : !canSignOff ? { tone: "info", summary: "Ready for an agent on the deal, the Nominated Officer or a Deputy to sign off" }
+    : decision.needsNote ? { tone: "info", summary: "Can be signed off now, with a note: the client checks are not finished" }
+    : { tone: "act", summary: "Ready to sign off" };
 
   const aml = partyAmlFacts(data, cp.id);
   const sid = (k: SectionKey) => `aml-${cp.id}-${k}`;
@@ -801,6 +823,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
                 ? (settled ? <p className="text-xs text-muted-foreground">Not set on this deal.</p> : <PartyReadyToStart dealId={dealId} companyId={cp.id} aml={aml} />)
                 : reg ? <PartyCompanyFacts data={data} companyId={cp.id} />
                 : <p className="text-xs text-muted-foreground">BGP's checks before asking read the company from Companies House.</p>}
+            </BoxSection>
+          )}
+          {payLine && party && (
+            <BoxSection id={sid("payer")} testId={tid("payer")} label="Who pays" tone={payLine.tone} summary={payLine.summary} open={open.has("payer")} onToggle={() => toggle("payer")}>
+              <PartyBillingDetail dealId={dealId} party={party} />
             </BoxSection>
           )}
           {checksLine && (

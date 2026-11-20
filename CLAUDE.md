@@ -3066,7 +3066,10 @@ contact too. Rules: `shared/deal-parties.ts`; server:
   invoices go to another company than the party's billing entity (six
   invoiced deals on live on 20 November 2026, Brent Cross Partnership Ltd
   among them), else the billing entity on BGP's client from Parties
-  (`<role>_entity_id` / `_name`). Never the deal's name, never the tenant.
+  (`<role>_entity_id` / `_name`), else (since later that day) a third party
+  the deal records as paying, else the company that signs for BGP's client
+  (see "Who BGP bills and who pays" below). Never the deal's name, never the
+  tenant.
 - **The invoice route** (`POST /api/xero/invoices`) bills the contact the
   screen sends, else `resolveDealInvoiceContact`; with none it answers 409
   `NO_BILLING_ENTITY` naming the party. **The automatic draft** (the deal
@@ -3087,6 +3090,113 @@ contact too. Rules: `shared/deal-parties.ts`; server:
   table's Client & billing and Xero contact cells show the same contact.
 - Not run against Xero from a build machine; checked in a browser against a
   local copy on 20 November 2026 with Xero not connected.
+
+## Who BGP bills and who pays (Woody, 2026-11-20)
+
+Woody: "the Xero billing entity and the aml entity need to be flagged if they
+are different? They are effectively the same thing? ... Should we need to
+change the billing entity it's done on the deal page as add billing entity
+which also needs its own KYC no?", then "yes biuild"; later the same day
+"need ability to create billing entity or contracting entity as a person we
+will then KYC them but we also need to be able to add a billing entity after
+when the deal is ready to invoice because they may not have set up the
+purchase vehicle to date". Do not re-litigate. Rules: `shared/deal-billing.ts`
+and `shared/deal-parties.ts`; reads and routes: `server/deal-parties.ts`,
+`server/billing-entity.ts`; screens: `PartyBillingDetail` and `PayerDialog`
+in `client/src/components/deal-parties.tsx`,
+`client/src/components/billing-entity-create.tsx`,
+`client/src/components/signing-entity-picker.tsx`. Tests:
+`server/deal-billing.test.ts` (in `npm test`), `server/deal-parties.test.ts`,
+`server/aml-box.test.ts`.
+
+- **BGP's client is billed as the one that signs for it.** With no invoice
+  contact of its own (`invoiceContactFor`: the deal's own contact, then the
+  party's billing contact, then a recorded payer, then the company that
+  signs), the invoice goes to the company that signs, whose own Xero contact
+  is kept on it (`crm_trading_entities.xero_contact_id` / `_name`, boot
+  migrations) once found or made. `resolveDealInvoiceContact` finds or makes
+  it by name with its Companies House number. Only BGP's client is billed: the
+  deal form shows a billing box for the client's party only (every party when
+  the deal type does not say who the client is).
+- **A billing contact that names another company is flagged**
+  (`billingState`: same, signing, different, payer, no_company, individual):
+  on the Parties card, the AML box's **Who pays** section, the AML box's Next
+  line (asked before sign-off, never ahead of the checks: `billingDiffers`)
+  and the Xero card. **They are the same company** keeps the contact on the
+  company; **Bill <company> instead** clears the deal's own contact and bills
+  the company that signs.
+- **A third party that pays** is recorded on the deal
+  (`crm_deals.invoice_payer_entity_id`, `_relationship`, `_note`, boot
+  migrations, not in `shared/schema.ts`) through `PUT /api/deals/:id/payer`
+  (BGP staff as themselves): a company filed under the client's brand, never
+  the one that signs, with how it is related (`PAYER_RELATIONSHIPS`: its
+  purchase vehicle, its group, the same owners, its guarantor, its agent,
+  another relationship with a note, or no clear relationship). It gets BGP's
+  checks before asking of its own; what they find, and "no clear
+  relationship" (HMRC AMLG3200: high risk), are red flags on the client
+  (`payerRedFlags`, kind `third_party_payer`), in the AML box and on the AML
+  dashboard. It warns; it never blocks a deal.
+- **A person as the billing or contracting entity.** The Create billing
+  entity dialog has **A company** (Companies House, as before) and **A
+  person** (name, email, mobile): `POST /api/billing-entities { brandId,
+  person }` files the person under the party as a `crm_trading_entities` row
+  with `entity_kind = 'individual'` and `contact_id` (the CRM contact who is
+  them, found by email or added: `savePersonEntity`), and makes their Xero
+  contact by name unless `xero: false`. Boot migrations add both columns.
+  Every AML reader then treats the party as a private individual
+  (`partySubjectKind`: the one who signs decides; with nobody named, the
+  record's `aml_subject_type`): BGP's checks before asking screen the person,
+  the client checks ask for an identity check, a proof of address and the
+  question about public roles, KYC4U's note names them as a private
+  individual, the sign-off and the AML file read them as one. The person who
+  signs is who to ask when nobody else is named (`from: "signer"`).
+- **Who signs for the other side.** On the deal form a party BGP does not bill
+  gets **Who signs for <party> (for the AML checks)** (`SigningEntityPicker`):
+  the companies and people filed under it, **A company (Companies House)** or
+  **A person**, never a Xero contact. The party box on the deal page has
+  **Find it at Companies House** and **A person signs**, with Xero only for
+  BGP's client.
+- **Adding the billing entity later** (the purchase vehicle not set up yet):
+  nothing on the form needs it. When it exists, the party box either changes
+  who signs to it (the AML checks then run on it, the person who signed
+  before being one of its owners), or records it under **A third party pays**
+  as **Its purchase vehicle** (the `vehicle` relationship), with its own
+  checks.
+- Not run against Xero or Companies House from a build machine.
+
+## Heads of terms on a sale or purchase (Woody, 2026-11-20)
+
+Woody, on New Deal with the Fortis Green Tennis Club heads of terms: "I loaded
+up HOTs but it didnt add new vendor also it hasnt added the purchase price
+which is because the form is set up for leases but needs that and should auto
+add team if its investment", then "the vendor FORTIS GREEN TENNIS CLUB but its
+not showing". On live the reader had no vendor, purchaser or price; the club
+(the sitting tenant) was linked to EE because "fortis gr-ee-n" holds "ee";
+#4520 had no team; and #4282 already held the same purchase, so #4519 and
+#4520 were duplicates. Helpers: `client/src/lib/deal-note.ts`
+(`findCompanyByName`, `hotsParties`, `hotsPricePatch`, `teamPatch`); tests in
+`server/deal-note.test.ts`.
+
+- The reader (`/api/crm/deals/parse-hots`, `server/crm.ts`) also reads
+  `vendorName`, `purchaserName`, `sittingTenant` and `price`. The form fills
+  the vendor and purchaser on a sale or purchase (a reading with only a
+  landlord gave the seller; a sale's tenant is never the buyer), and the
+  landlord and tenant otherwise.
+- **Names match by whole words** (`findCompanyByName`: the same words, legal
+  endings and "(private)" aside, else the one company whose every word is in
+  the name, two words at least; never part of a word, never a guess between
+  two), on New Deal and the deal page's heads of terms reader.
+- A party the CRM does not hold is listed under the button with **Add as
+  vendor** (or purchaser, landlord, tenant): one press makes the CRM record
+  and fills the box. Nothing is created by a reading.
+- **Price (£)** replaces Headline Rent on a sale or purchase (`pricing`), and
+  the fee is worked from price × % there. The reading fills the price and
+  the fee.
+- A reading that sets the deal type adds its team (`teamForDealType`), as
+  picking the type does.
+- **Already a live sale or purchase on this property** (`LiveInvestmentDeals`,
+  from `GET /api/crm/properties/:id/deals`) lists them under Property on New
+  Deal for a sale or purchase, each opening its deal.
 
 ## Client checks: the in-app KYC request (Woody, 2026-11-17)
 
@@ -4479,6 +4589,52 @@ Tests: `server/aml-box.test.ts`, `server/aml-file.test.ts` (both in
   the trail on the AML checks page (`isOfficer`).
 - Checked in a browser against a local copy on 20 November 2026. The file has
   not been made on live: the first is an officer's.
+
+## Owners behind a company abroad, and Monaco (Woody, 2026-11-20)
+
+Woody, on Tureddi Group Limited (15210693), owned more than 75% by Scp Aaa
+Invest, a Monaco société civile: "the app hasn't flagged this as an issue but
+the holding company for this business is in Monaco..? What do you think?" The
+box read Standard due diligence and "No one to verify": a company with no
+person on the UK register was treated as having no owners, so the directors
+stood in for them (MLR 2017 reg 28(6), which applies only once every means of
+finding the owners is exhausted), the client checks dropped the structure
+chart and the owners' IDs, and Monaco was on no list. Rules:
+`shared/kyc-prechecks.ts` (`ownerRegister`, `ownersAbroadOf`,
+`offshoreOwnersOf`, `offshoreNote`), `shared/kyc-people.ts`,
+`shared/kyc-request.ts` (`kycDocDetail`); the walk: `discoverUltimateParent`
+in `server/companies-house.ts`. Tests: `server/kyc-prechecks.test.ts`,
+`server/kyc-people.test.ts`.
+
+- **A corporate owner registered outside the UK** (its register's country or
+  place names somewhere other than the UK; `ownerRegister`), on the register
+  or up the chain, is a dead end for Companies House. The chain walk records
+  it (`abroad`) and stops there: until then it looked a foreign registration
+  number up as a UK one, which could read a stranger's company. Stored as
+  `companiesHouse.ownersAbroad` on a run; an older check reads them from its
+  owners on read, so no re-run is needed.
+- **The people behind it are asked for, not stood in for** (reg 28(4)(c);
+  BGP's policy: "Every organisation will have UBOs"). The client checks keep
+  the structure chart and the owners' IDs, and the chart's step names the
+  company abroad and asks for its register extract (`request.ownersAbroad`).
+  People to check reads `owners_abroad` and lists them; the party owes "the
+  people behind X: a structure chart and their IDs" until a chart arrives, so
+  the sign-off asks for a note meanwhile. The company abroad is screened as a
+  company (ComplyAdvantage, the web search, the sanctions lists); the
+  directors are screened meanwhile, under the `owners_abroad` basis, not
+  reg 28(6).
+- **Monaco is on the secrecy and higher-risk list** (`OFFSHORE`, the
+  `offshore_owner` red flag): a tax haven (BGP's AML policy: "Non-resident
+  customers, especially companies in tax havens"), on FATF's grey list from
+  June 2024 until 30 October 2026, and on the EU's list of high-risk third
+  countries since August 2025 (Delegated Regulation (EU) 2025/1184; not a UK
+  high-risk third country since FATF removed it). The flag now reads the
+  owners on read and up the chain, with the reason and what to ask for.
+  Jersey, Guernsey, the Isle of Man and other places a UK property owner is
+  often held from are abroad (the client is asked) but not red flags.
+- Not built: a person the client names behind the company abroad is added to
+  People to check by hand (still "Not built: adding a person by hand"); a
+  minority corporate owner the walk does not follow.
 
 ## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
 

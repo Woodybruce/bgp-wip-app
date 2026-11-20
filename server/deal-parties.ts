@@ -9,6 +9,17 @@
 //   POST /api/deals/:id/parties/:role/owner      { key, email?, mobile? }: save the contact details of
 //                                                one of the party's people to check (an owner the
 //                                                register names) to the CRM under the brand
+//   POST /api/deals/:id/billing/same-company     the client's billing contact is the company that signs
+//   POST /api/deals/:id/billing/signing          bill the client's company that signs, not another company
+//   GET  /api/deals/:id/payer                    the third party that pays for the client, and its checks
+//   PUT  /api/deals/:id/payer                    { companyId, relationship, note }: set or clear (null) it
+//   POST /api/deals/:id/payer/checks             run BGP's checks before asking on it again
+//
+// Who pays (Woody, 20 November 2026: "the Xero billing entity and the aml
+// entity need to be flagged if they are different", then "yes biuild"): BGP's
+// client is billed as the company that signs unless the deal says otherwise;
+// another company is flagged; a third party that pays is recorded with how it
+// is related, and checked (shared/deal-billing.ts).
 //
 // The company that signs is always one filed under the party's brand: the
 // deal saves refuse anything else (checkPartyCompanies, called by the deal
@@ -20,11 +31,12 @@
 
 import { Router, type Request, type Response } from "express";
 import {
-  DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, companyOffer, isDealPartyRole, newPartyPerson, ownerContactMatch, partyGaps, personFill,
-  sameCompaniesHouseNumber,
-  type DealPartyCompany, type DealPartyPerson, type DealPartyRole, type DealPartyView,
+  DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, companyOffer, dealClientRole, isDealPartyRole, newPartyPerson, ownerContactMatch, partyGaps, partySubjectKind, personFill,
+  sameCompaniesHouseNumber, signerKindOf,
+  type DealPartyBilling, type DealPartyCompany, type DealPartyPayer, type DealPartyPerson, type DealPartyRole, type DealPartyView,
 } from "@shared/deal-parties";
 import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
+import { billingState, billingWords, payerInput, payerRelationshipWords, PAYER_RELATIONSHIPS } from "@shared/deal-billing";
 import { kycPersonRoleWords } from "@shared/kyc-request";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
@@ -71,10 +83,44 @@ export async function checkPartyCompanies(db: Db, after: Record<string, any>, se
 
 interface DealRow extends Record<string, any> { id: string; name: string }
 
+/** BGP's client on the deal: the party it invoices (shared/deal-parties.ts dealClientRole). */
+export const clientRoleOf = (deal: Record<string, any>): DealPartyRole =>
+  dealClientRole({ dealType: deal.deal_type, bgpActingFor: deal.bgp_acting_for, team: deal.team });
+
+/** Who BGP's client is billed as, set against the company that signs, and the payer the deal records. */
+function partyBilling(deal: DealRow, role: DealPartyRole, kind: "company" | "individual", company: DealPartyCompany | null, filed: DealPartyCompany[]): DealPartyBilling {
+  const col = DEAL_PARTY_COLUMNS[role];
+  const own = text(deal.xero_contact_id) || text(deal.xero_contact_name)
+    ? { contactId: text(deal.xero_contact_id) || null, name: text(deal.xero_contact_name) || null } : null;
+  const partyBilled = text(deal[col.xeroId]) ? { contactId: text(deal[col.xeroId]), name: text(deal[col.xeroName]) || null } : null;
+  const billed = own || partyBilled;
+  const row = text(deal.invoice_payer_entity_id) ? filed.find(c => c.id === text(deal.invoice_payer_entity_id)) || null : null;
+  const relationship = text(deal.invoice_payer_relationship) || null;
+  const payer: DealPartyPayer | null = row ? {
+    id: row.id, name: row.name, companiesHouseNumber: row.companiesHouseNumber, xeroContactId: row.xeroContactId || null,
+    relationship, relationshipWords: payerRelationshipWords(relationship), note: text(deal.invoice_payer_note) || null,
+    clear: !!PAYER_RELATIONSHIPS.find(r => r.key === relationship)?.clear,
+  } : null;
+  // A person who signs is billed as the one who signs, as a company is; a
+  // private individual with nobody named is billed in their own name.
+  const state = billingState({
+    individual: kind === "individual" && !company,
+    signing: company ? { name: company.name, xeroContactId: company.xeroContactId || null, xeroContactName: company.xeroContactName || null } : null,
+    billed,
+    payer: payer ? { name: payer.name, xeroContactId: payer.xeroContactId, xeroContactName: row?.xeroContactName || null } : null,
+  });
+  return {
+    ...billingWords(state, { billed: billed?.name || null, signing: company?.name || null, payer: payer?.name || null, relationship, signingPerson: company?.kind === "individual" }),
+    billed, from: own ? "deal" : partyBilled ? "party" : null, payer,
+  };
+}
+
 async function readDeal(db: Db, dealId: string): Promise<DealRow | null> {
   const cols = DEAL_PARTY_ROLES.flatMap(r => Object.values(DEAL_PARTY_COLUMNS[r]));
   return (await db.query(
-    `SELECT id, name, deal_type, client_contact_id, tenancy_unit_id, ${cols.join(", ")} FROM crm_deals WHERE id = $1`, [dealId])).rows[0] || null;
+    `SELECT id, name, deal_type, team, bgp_acting_for, client_contact_id, tenancy_unit_id, xero_contact_id, xero_contact_name,
+            invoice_payer_entity_id, invoice_payer_relationship, invoice_payer_note, ${cols.join(", ")}
+       FROM crm_deals WHERE id = $1`, [dealId])).rows[0] || null;
 }
 
 // The company on the lease of the deal's unit (a letting's tenant): the
@@ -108,15 +154,18 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
     db.query(`SELECT id, name, companies_house_number, aml_subject_type,
                      COALESCE(NULLIF(companies_house_data->'profile'->>'companyName', ''), NULLIF(companies_house_data->>'company_name', ''), NULLIF(uk_entity_name, '')) AS legal_name
                 FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds]),
-    db.query(`SELECT id, parent_company_id, name, companies_house_number, is_default FROM crm_trading_entities
+    db.query(`SELECT id, parent_company_id, name, companies_house_number, is_default, xero_contact_id, xero_contact_name, entity_kind, contact_id FROM crm_trading_entities
                WHERE parent_company_id = ANY($1::varchar[]) ORDER BY is_default DESC, lower(name)`, [brandIds]),
     db.query(`SELECT id, company_id, name, email, phone_mobile, phone, role FROM (
                 SELECT c.*, row_number() OVER (PARTITION BY c.company_id ORDER BY (COALESCE(c.email, '') = ''), lower(c.name)) AS n
                   FROM crm_contacts c WHERE c.company_id = ANY($1::varchar[])) x
                WHERE n <= 80`, [brandIds]),
   ]);
-  // The people set on the deal, and its client contact, even when filed elsewhere.
-  const namedIds = [...new Set([...roles.map(r => text(deal[DEAL_PARTY_COLUMNS[r].person])), text(deal.client_contact_id)].filter(Boolean))];
+  // The people set on the deal, its client contact, and a person who signs,
+  // even when filed elsewhere.
+  const signerContacts = companies.rows.filter((c: any) => signerKindOf(c.entity_kind) === "individual" && text(c.contact_id)
+    && roles.some(r => text(deal[DEAL_PARTY_COLUMNS[r].company]) === String(c.id))).map((c: any) => text(c.contact_id));
+  const namedIds = [...new Set([...roles.map(r => text(deal[DEAL_PARTY_COLUMNS[r].person])), text(deal.client_contact_id), ...signerContacts].filter(Boolean))];
   const named = namedIds.length
     ? (await db.query(`SELECT id, company_id, name, email, phone_mobile, phone, role FROM crm_contacts WHERE id = ANY($1::varchar[])`, [namedIds])).rows
     : [];
@@ -129,19 +178,26 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
     if (!brandRow) continue;
     const filed: DealPartyCompany[] = companies.rows.filter((c: any) => c.parent_company_id === brandRow.id).map((c: any) => ({
       id: String(c.id), name: text(c.name), companiesHouseNumber: text(c.companies_house_number) || null, isDefault: !!c.is_default,
+      xeroContactId: text(c.xero_contact_id) || null, xeroContactName: text(c.xero_contact_name) || null,
+      kind: signerKindOf(c.entity_kind), contactId: text(c.contact_id) || null,
     }));
     const company = filed.find(c => c.id === deal[col.company]) || null;
     const setPerson = named.find((p: any) => p.id === deal[col.person]);
     const clientPerson = named.find((p: any) => p.id === deal.client_contact_id && p.company_id === brandRow.id);
+    // A person who signs is asked themselves when nobody else is named.
+    const signerPerson = company?.kind === "individual" && company.contactId ? named.find((p: any) => p.id === company.contactId) : undefined;
     const person = setPerson ? { ...personOf(setPerson), from: "party" as const }
-      : clientPerson ? { ...personOf(clientPerson), from: "client" as const } : null;
-    const kind = String(brandRow.aml_subject_type || "").toLowerCase() === "individual" ? "individual" as const : "company" as const;
+      : clientPerson ? { ...personOf(clientPerson), from: "client" as const }
+      : signerPerson ? { ...personOf(signerPerson), from: "signer" as const } : null;
+    // A person who signs is checked as a private individual (20 November 2026).
+    const kind = partySubjectKind(brandRow.aml_subject_type, company);
     const brandNumber = text(brandRow.companies_house_number);
     const brandOwn = kind === "company" && !company && brandNumber && !filed.some(c => sameCompaniesHouseNumber(c.companiesHouseNumber, brandNumber))
       ? { name: text(brandRow.legal_name) || text(brandRow.name), number: brandNumber } : null;
     parties.push({
       role, label: DEAL_PARTY_LABEL[role],
-      brand: { id: String(brandRow.id), name: text(brandRow.name), companiesHouseNumber: text(brandRow.companies_house_number) || null, kind },
+      brand: { id: String(brandRow.id), name: text(brandRow.name), companiesHouseNumber: text(brandRow.companies_house_number) || null, kind,
+        recordIndividual: String(brandRow.aml_subject_type || "").toLowerCase() === "individual" },
       company,
       offer: company ? null : companyOffer(filed, role === "tenant" ? lease : null),
       brandOwn,
@@ -150,6 +206,8 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
       person,
       people: people.rows.filter((p: any) => p.company_id === brandRow.id).map(personOf),
       gaps: partyGaps({ role, kind, brandName: brandRow.name, companySet: !!company, person }),
+      client: role === clientRoleOf(deal),
+      billing: role === clientRoleOf(deal) ? partyBilling(deal, role, kind, company, filed) : null,
     });
   }
   return { deal: { id: deal.id, name: deal.name }, parties };
@@ -349,7 +407,8 @@ router.post("/api/deals/:id/parties/:role/owner", async (req: Request, res: Resp
     if (!brandId) return res.status(400).json({ message: `Set the ${role} on the deal first.` });
     const brand = (await pool.query(`SELECT id, name, aml_subject_type FROM crm_companies WHERE id = $1`, [brandId])).rows[0];
     if (!brand) return res.status(404).json({ message: "That party was not found." });
-    const kind = String(brand.aml_subject_type || "").toLowerCase() === "individual" ? "individual" as const : "company" as const;
+    const signer = text(deal[col.company]) ? (await pool.query(`SELECT entity_kind FROM crm_trading_entities WHERE id = $1`, [deal[col.company]])).rows[0] || { entity_kind: null } : null;
+    const kind = partySubjectKind(brand.aml_subject_type, signer ? { kind: signer.entity_kind } : null);
     const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
     const people = await partyPeopleFor({ companyId: brandId, entityId: text(deal[col.company]) || null, kind }, await dealPeopleRequests(deal.id));
     const who = people?.people.find(p => p.key === key);
@@ -385,6 +444,158 @@ router.post("/api/deals/:id/parties/:role/owner", async (req: Request, res: Resp
     res.json({ ...(await loadDealParties(pool, deal.id)), contactId, created, kept });
   } catch (err: any) {
     res.status(err?.status || 500).json({ message: err?.message || "Could not save their details" });
+  }
+});
+
+// ── Who pays BGP's invoice (Woody, 20 November 2026) ───────────────────────
+
+async function clientParty(dealId: string) {
+  const { pool } = await import("./db");
+  const deal = await readDeal(pool, dealId);
+  if (!deal) return null;
+  const role = clientRoleOf(deal);
+  const col = DEAL_PARTY_COLUMNS[role];
+  return { pool, deal, role, col, brandId: text(deal[col.brand]), companyId: text(deal[col.company]) || null };
+}
+
+// "They are the same company": the client's billing contact is its company
+// that signs, kept on the company so the two read as one from then on.
+router.post("/api/deals/:id/billing/same-company", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const c = await clientParty(String(req.params.id));
+    if (!c) return res.status(404).json({ message: "Deal not found" });
+    if (!c.companyId) return res.status(400).json({ message: `Set the ${c.role}'s company that signs first.` });
+    const ownSet = !!(text(c.deal.xero_contact_id) || text(c.deal.xero_contact_name));
+    const contactId = ownSet ? text(c.deal.xero_contact_id) : text(c.deal[c.col.xeroId]);
+    const contactName = ownSet ? text(c.deal.xero_contact_name) : text(c.deal[c.col.xeroName]);
+    if (!contactId && !contactName) return res.status(400).json({ message: "There is no Xero contact on the deal to match to the company." });
+    const company = (await c.pool.query(`SELECT id, name, parent_company_id, xero_contact_id FROM crm_trading_entities WHERE id = $1`, [c.companyId])).rows[0];
+    if (!company || company.parent_company_id !== c.brandId) return res.status(404).json({ message: "The company that signs was not found." });
+    await c.pool.query(`UPDATE crm_trading_entities SET xero_contact_id = $2, xero_contact_name = $3 WHERE id = $1`, [company.id, contactId || null, contactName || company.name]);
+    await audit(c.pool, c.deal.id, "billing_same_company", text(company.xero_contact_id) || null, contactId || contactName,
+      `${contactName || "The Xero contact"} confirmed as ${company.name}, the ${c.role}'s company that signs, by ${me.name || "BGP"}`, me);
+    res.json(await loadDealParties(c.pool, c.deal.id));
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not save it" });
+  }
+});
+
+// Bill the company that signs, not another company: the deal's own invoice
+// contact and any payer come off, and the client is billed as its company that
+// signs (by its own Xero contact when it has one, else found or made at the invoice).
+router.post("/api/deals/:id/billing/signing", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const c = await clientParty(String(req.params.id));
+    if (!c) return res.status(404).json({ message: "Deal not found" });
+    if (!c.companyId) return res.status(400).json({ message: `Set the ${c.role}'s company that signs first.` });
+    const company = (await c.pool.query(`SELECT id, name, parent_company_id, xero_contact_id, xero_contact_name FROM crm_trading_entities WHERE id = $1`, [c.companyId])).rows[0];
+    if (!company || company.parent_company_id !== c.brandId) return res.status(404).json({ message: "The company that signs was not found." });
+    const before = text(c.deal.xero_contact_name) || text(c.deal[c.col.xeroName]) || null;
+    const ownId = text(company.xero_contact_id) || null;
+    await c.pool.query(
+      `UPDATE crm_deals SET xero_contact_id = NULL, xero_contact_name = NULL, xero_account_number = NULL, xero_billing_address = NULL,
+              ${c.col.xeroId} = $2, ${c.col.xeroName} = $3,
+              invoice_payer_entity_id = NULL, invoice_payer_relationship = NULL, invoice_payer_note = NULL, updated_at = now()
+        WHERE id = $1`,
+      [c.deal.id, ownId, ownId ? (text(company.xero_contact_name) || company.name) : null]);
+    await audit(c.pool, c.deal.id, "billing_signing", before, company.name, `The ${c.role} billed as ${company.name}, its company that signs${before ? `, not ${before}` : ""}`, me);
+    res.json(await loadDealParties(c.pool, c.deal.id));
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not save it" });
+  }
+});
+
+/** The payer the deal records for BGP's client, and BGP's checks before asking on it. */
+router.get("/api/deals/:id/payer", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const c = await clientParty(String(req.params.id));
+    if (!c) return res.status(404).json({ message: "Deal not found" });
+    const view = await loadDealParties(c.pool, c.deal.id);
+    const payer = view?.parties.find(p => p.role === c.role)?.billing?.payer || null;
+    let checks: unknown = null;
+    if (payer) {
+      const { dealPrechecks } = await import("./kyc-prechecks");
+      const views = await dealPrechecks(c.deal.id, [{ companyId: c.brandId, entityId: payer.id }], { userId: me.id, autoStart: false }).catch(() => null);
+      checks = views ? views[c.brandId] || null : null;
+    }
+    res.json({ role: c.role, payer, checks });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not read the payer" });
+  }
+});
+
+// Set or clear the third party that pays BGP's invoice for the client. It is a
+// company filed under the client (found at Companies House, which also gives
+// it a Xero contact), never the company that signs; the client is billed to
+// it; BGP's checks before asking start on it at once. Taking it off puts the
+// bill back on the company that signs.
+router.put("/api/deals/:id/payer", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const input = payerInput(req.body);
+    if ("problem" in input) return res.status(400).json({ message: input.problem });
+    const c = await clientParty(String(req.params.id));
+    if (!c) return res.status(404).json({ message: "Deal not found" });
+    if (!c.brandId) return res.status(400).json({ message: `Set the ${c.role} on the deal first: BGP bills it.` });
+    let payer: any = null;
+    if (input.companyId) {
+      payer = (await c.pool.query(`SELECT id, name, parent_company_id, xero_contact_id, xero_contact_name FROM crm_trading_entities WHERE id = $1`, [input.companyId])).rows[0];
+      if (!payer || payer.parent_company_id !== c.brandId) return res.status(400).json({ message: `Pick a company filed under the ${c.role}, or find it at Companies House.` });
+      if (payer.id === c.companyId) return res.status(400).json({ message: "That is the company that signs, not a third party." });
+    }
+    const oldPayer = text(c.deal.invoice_payer_entity_id) || null;
+    const sets: Record<string, string | null> = {
+      invoice_payer_entity_id: payer ? String(payer.id) : null,
+      invoice_payer_relationship: payer ? input.relationship : null,
+      invoice_payer_note: payer ? input.note : null,
+    };
+    if (payer) {
+      // Billed to the payer: its own Xero contact, or none here and found or made at the invoice.
+      sets[c.col.xeroId] = text(payer.xero_contact_id) || null;
+      sets[c.col.xeroName] = text(payer.xero_contact_id) ? (text(payer.xero_contact_name) || payer.name) : null;
+    } else if (oldPayer) {
+      const old = (await c.pool.query(`SELECT xero_contact_id FROM crm_trading_entities WHERE id = $1`, [oldPayer])).rows[0];
+      if (!text(c.deal[c.col.xeroId]) || (old?.xero_contact_id && old.xero_contact_id === c.deal[c.col.xeroId])) {
+        sets[c.col.xeroId] = null;
+        sets[c.col.xeroName] = null;
+      }
+    }
+    const keys = Object.keys(sets);
+    const assignments = keys.map((k, i) => k + " = $" + (i + 2)).join(", ");
+    await c.pool.query(`UPDATE crm_deals SET ${assignments}, updated_at = now() WHERE id = $1`, [c.deal.id, ...keys.map(k => sets[k])]);
+    await audit(c.pool, c.deal.id, "invoice_payer", oldPayer, payer ? String(payer.id) : null,
+      payer ? `${payer.name} pays BGP's invoice for the ${c.role} (${payerRelationshipWords(input.relationship).toLowerCase()}${input.note ? `: ${input.note}` : ""})`
+        : `The third party paying BGP's invoice for the ${c.role} taken off`, me);
+    let started: string | null = null;
+    if (payer) {
+      const { startPrecheck } = await import("./kyc-prechecks");
+      started = await startPrecheck(c.brandId, { entityId: String(payer.id), dealId: c.deal.id, userId: me.id }).catch(() => null);
+    }
+    res.json({ ...(await loadDealParties(c.pool, c.deal.id)), started });
+  } catch (err: any) {
+    res.status(err?.status || 500).json({ message: err?.message || "Could not save who pays" });
+  }
+});
+
+router.post("/api/deals/:id/payer/checks", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const c = await clientParty(String(req.params.id));
+    if (!c) return res.status(404).json({ message: "Deal not found" });
+    const payerId = text(c.deal.invoice_payer_entity_id);
+    if (!payerId) return res.status(400).json({ message: "No third party pays on this deal." });
+    const { startPrecheck } = await import("./kyc-prechecks");
+    res.json({ started: await startPrecheck(c.brandId, { entityId: payerId, dealId: c.deal.id, userId: me.id, force: true }) });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not start the checks" });
   }
 });
 

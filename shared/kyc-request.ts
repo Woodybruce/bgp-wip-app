@@ -218,6 +218,9 @@ export interface KycEmailContext {
   confirmOwners?: Array<{ name: string; detail: string }> | null;
   // The people whose ID is asked for, where the register names them.
   ownerNames?: string[] | null;
+  // Companies registered abroad that own the company: the structure chart is
+  // to show who owns them (20 November 2026).
+  ownersAbroad?: Array<{ name: string; country: string }> | null;
   // A person's own request: who they are to the company (19 November 2026).
   person?: { roles: KycPersonRole[] } | null;
   // The owners the person acting is asked to pass a link of their own to.
@@ -287,8 +290,14 @@ function agentNamesText(agents: KycAgent[]): string {
 
 // The steps a request asks for, in the order the client page shows them.
 // The owner IDs step names the owners when the register gave them.
-export function kycDocDetail(key: KycDocKey, ownerNames?: string[] | null): string {
+export function kycDocDetail(key: KycDocKey, ownerNames?: string[] | null, ownersAbroad?: Array<{ name: string; country: string }> | null): string {
   const names = (ownerNames || []).filter(Boolean);
+  const abroad = (ownersAbroad || []).filter(o => o?.name);
+  if (key === "ownership" && abroad.length) {
+    const which = abroad.map(o => `${o.name} (${o.country})`);
+    const who = which.length === 1 ? which[0] : `${which.slice(0, -1).join(", ")} and ${which[which.length - 1]}`;
+    return `${KYC_DOCS.ownership.detail} Companies House shows ${who} owns the company, and it cannot show who owns ${abroad.length === 1 ? "that company" : "those companies"}: please show the people behind ${abroad.length === 1 ? "it" : "them"}, with an extract from ${abroad.length === 1 ? "its" : "each one's"} own company register.`;
+  }
   if (key !== "owner_ids" || !names.length) return KYC_DOCS[key].detail;
   const who = names.length > 6 ? `${names.slice(0, 6).join(", ")} and ${names.length - 6} more` : names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
   return KYC_DOCS.owner_ids.detail.replace("For each person on that list", `For ${who}`);
@@ -302,7 +311,7 @@ export const kycOwnerLinksDetail = (names: string[]): string => {
   return `${who} ${names.length === 1 ? "does their" : "each do their"} own identity check and send${names.length === 1 ? "s" : ""} a proof of address, on a page of their own. Your page has a link for ${names.length === 1 ? "them" : "each of them"}, or give us ${names.length === 1 ? "their email address" : "their email addresses"} there and we'll send it.`;
 };
 
-export function kycSteps(ctx: Pick<KycEmailContext, "needsIdCheck" | "docs" | "askPep" | "confirmOwners" | "ownerNames" | "ownLinksFor"> & { kind?: KycPartyKind }): Array<{ title: string; detail: string }> {
+export function kycSteps(ctx: Pick<KycEmailContext, "needsIdCheck" | "docs" | "askPep" | "confirmOwners" | "ownerNames" | "ownLinksFor" | "ownersAbroad"> & { kind?: KycPartyKind }): Array<{ title: string; detail: string }> {
   const steps: Array<{ title: string; detail: string }> = [];
   if (ctx.needsIdCheck) {
     steps.push({ title: "A quick identity check", detail: "On your phone or computer: a photo of your passport, driving licence or identity card and a short selfie. It takes about two minutes." });
@@ -311,7 +320,7 @@ export function kycSteps(ctx: Pick<KycEmailContext, "needsIdCheck" | "docs" | "a
   const owners = ctx.confirmOwners?.length ? { title: KYC_OWNERS_QUESTION.title, detail: KYC_OWNERS_QUESTION.step } : null;
   if (owners) steps.push(owners);
   if (ctx.ownLinksFor?.length) steps.push({ title: KYC_OWNER_LINKS_TITLE, detail: kycOwnerLinksDetail(ctx.ownLinksFor) });
-  for (const key of ctx.docs) steps.push({ title: KYC_DOCS[key].title, detail: kycDocDetail(key, ctx.ownerNames) });
+  for (const key of ctx.docs) steps.push({ title: KYC_DOCS[key].title, detail: kycDocDetail(key, ctx.ownerNames, ctx.ownersAbroad) });
   if (ctx.askPep) {
     steps.push({ title: KYC_PEP_QUESTION.title, detail: ctx.kind === "individual"
       ? "Whether you hold a prominent public role, or are the spouse, partner, child or parent, or a close business associate, of someone who does. One click."

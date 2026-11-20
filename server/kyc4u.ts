@@ -669,8 +669,9 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
   const partyRole = (["landlord", "tenant", "vendor", "purchaser"] as const).find(r => r === role && deal?.[`${r}_id`] === companyId)
     || (["landlord", "tenant", "vendor", "purchaser"] as const).find(r => deal?.[`${r}_id`] === companyId) || null;
   const entity = partyRole && deal?.[`${partyRole}_trading_entity_id`] ? (await pool.query(
-    `SELECT id, name, companies_house_number FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [deal[`${partyRole}_trading_entity_id`], companyId])).rows[0] || null : null;
+    `SELECT id, name, companies_house_number, entity_kind FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [deal[`${partyRole}_trading_entity_id`], companyId])).rows[0] || null : null;
   const entityId: string | null = entity ? String(entity.id) : null;
+  const signsAsPerson = String(entity?.entity_kind || "").toLowerCase() === "individual";
   // On a deal, KYC4U checks the company that signs, not the brand (Woody,
   // 19 November 2026: "We must have the company taking the lease or who owns
   // the property to be able to do a check").
@@ -742,7 +743,7 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
       clientEmails: isClient && contact?.email ? contact.email : "",
       expectedCompletion: deal?.target_date ? new Date(deal.target_date).toISOString().slice(0, 10) : "",
       note: [deal ? `BGP deal ${deal.deal_ref ? "#" + deal.deal_ref + " " : ""}${deal.name || ""}`.trim() : "", dt ? `Deal type: ${dt}` : "", role ? `Role: ${role}${isClient ? " (BGP's client)" : " (counterparty)"}` : "",
-        entity ? `Contracting company: ${entity.name}${entity.companies_house_number ? ` (Companies House ${entity.companies_house_number})` : ""}, trading as ${company.name}` : "",
+        entity ? (signsAsPerson ? `Contracting party: ${entity.name}, a private individual, for ${company.name}` : `Contracting company: ${entity.name}${entity.companies_house_number ? ` (Companies House ${entity.companies_house_number})` : ""}, trading as ${company.name}`) : "",
         !isClient && partyPerson ? `Person to ask: ${[partyPerson.name, partyPerson.email, partyPerson.mobile].filter(Boolean).join(", ")}` : "",
         flagNote, checkedNote].filter(Boolean).join("\n").slice(0, 4000),
     },

@@ -104,6 +104,17 @@ test("everything in: sign it off, or say why not", () => {
   assert.equal(next({ ...done, signOffBlocked: "x", canSignOff: false }).who, "officers");
 });
 
+test("billed to another company: asked before sign-off, never ahead of the checks", () => {
+  const done = { request: { status: "finished" as const, to: "Jack Barratt" }, signOffBlocked: null, billingDiffers: true };
+  const step = next(done);
+  assert.equal(step.action, "billing");
+  assert.match(step.words, /^BGP's invoice goes to another company than the one that signs/);
+  assert.equal(next({ ...done, billingDiffers: false }).action, "sign_off");
+  // Sending the client checks still comes first.
+  assert.equal(next({ billingDiffers: true }).action, "send_client_checks");
+  assert.equal(next({ sanctionsOnly: true, signOffBlocked: null, billingDiffers: true }).action, "billing");
+});
+
 test("BGP's checks running say so first", () => {
   assert.equal(next({ precheckRunning: true }).tone, "wait");
   assert.equal(next({ precheckRunning: true }).action, null);

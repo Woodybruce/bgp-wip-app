@@ -233,3 +233,101 @@ export function dealAutoName(
   if (cpName && propName) return `${cpName} – ${propName}`;
   return cpName || propName || "";
 }
+
+// ── Heads of terms into the deal form (Woody, 20 November 2026) ─────────────
+// "I loaded up HOTs but it didnt add new vendor also it hasnt added the
+// purchase price which is because the form is set up for leases but needs
+// that and should auto add team if its investment". On live the reader had no
+// vendor, purchaser or price, and its name match took "Fortis Green Tennis
+// Club" for EE, because "fortis gr-ee-n" holds "ee".
+
+const NAME_NOISE = /\b(the|limited|ltd|plc|llp|lp|inc|company|co|trustees?|of)\b/g;
+/** A company name as a list of words: case, punctuation and legal endings do not count. */
+export const companyNameWords = (name: unknown): string[] =>
+  String(name ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/&/g, " and ")
+    .replace(/\([^)]*\)/g, " ").replace(/[^a-z0-9 ]+/g, " ").replace(NAME_NOISE, " ").split(/\s+/).filter(Boolean);
+
+/**
+ * The CRM company a name read from a document means: the same words, else the
+ * one company whose every word is in the name (or the name's every word in
+ * it) when that shorter side holds two words or more. Never part of a word,
+ * and never a guess between two.
+ */
+export function findCompanyByName<T extends { id: string; name: string }>(name: string | null | undefined, companies: ReadonlyArray<T>): T | null {
+  const want = companyNameWords(name);
+  if (!want.length) return null;
+  const key = want.join(" ");
+  const exact = companies.filter(c => companyNameWords(c.name).join(" ") === key);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return null;
+  const within = companies.filter(c => {
+    const has = companyNameWords(c.name);
+    if (!has.length) return false;
+    const [short, long] = has.length <= want.length ? [has, want] : [want, has];
+    return short.length >= 2 && short.every(w => long.includes(w));
+  });
+  return within.length === 1 ? within[0] : null;
+}
+
+/** What a heads of terms reading names for each party of the deal type, and its price. */
+export interface HotsReading {
+  dealType?: string | null;
+  landlordName?: string | null;
+  tenantName?: string | null;
+  vendorName?: string | null;
+  purchaserName?: string | null;
+  sittingTenant?: string | null;
+  price?: number | string | null;
+  feePercentage?: number | string | null;
+  fee?: number | string | null;
+}
+
+export const isInvestmentDealType = (dealType: string | null | undefined): boolean => dealType === "Sale" || dealType === "Purchase";
+
+/**
+ * The parties a reading names for the deal type the form will have: the
+ * vendor and purchaser on a sale or purchase (a reader that only gave a
+ * landlord gave the seller), the landlord and tenant otherwise. On a sale the
+ * tenant a reading names is the sitting tenant, never the buyer.
+ */
+export function hotsParties(reading: HotsReading, dealType: string | null | undefined): Array<{ role: DealNoteRole; name: string }> {
+  const out: Array<{ role: DealNoteRole; name: string }> = [];
+  const add = (role: DealNoteRole, v: unknown) => { const n = words(v); if (n) out.push({ role, name: n.slice(0, 160) }); };
+  if (isInvestmentDealType(dealType)) {
+    add("vendor", reading.vendorName || reading.landlordName);
+    add("purchaser", reading.purchaserName);
+  } else {
+    add("landlord", reading.landlordName);
+    add("tenant", reading.tenantName);
+  }
+  return out;
+}
+
+const money = (v: unknown): number | null => {
+  const n = typeof v === "number" ? v : Number(String(v ?? "").replace(/[£,\s]/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+/** The price and fee a reading gives a sale or purchase: the fee worked from the price when only a percentage is given. */
+export function hotsPricePatch(form: { pricing?: string; fee?: string; feePercentage?: string }, reading: HotsReading): Record<string, string> {
+  const patch: Record<string, string> = {};
+  const price = money(reading.price);
+  if (price && !words(form.pricing)) patch.pricing = String(price);
+  const pct = money(reading.feePercentage);
+  if (pct && !words(form.feePercentage)) patch.feePercentage = String(pct);
+  const fee = money(reading.fee);
+  const usePrice = money(patch.pricing ?? form.pricing);
+  const usePct = money(patch.feePercentage ?? form.feePercentage);
+  if (!words(form.fee)) {
+    if (fee) patch.fee = String(fee);
+    else if (usePrice && usePct) patch.fee = String(Math.round((usePrice * usePct) / 100));
+  }
+  return patch;
+}
+
+/** The team a deal type adds, when the form does not carry it yet. */
+export function teamPatch(team: readonly string[] | null | undefined, dealType: string | null | undefined): string[] | null {
+  const add = teamForDealType(dealType);
+  const now = Array.isArray(team) ? team : [];
+  return add && !now.includes(add) ? [...now, add] : null;
+}

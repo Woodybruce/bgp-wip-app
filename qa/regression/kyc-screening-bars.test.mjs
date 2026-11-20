@@ -63,7 +63,8 @@ test('only the company and its beneficial owners go to ComplyAdvantage and the w
   assert.match(pre, /const screen = chooseScreened\(subjects, \{ individual: subjectKind === "individual", listed: !!companiesHouse\?\.listing, maxPeople: KYC_PRECHECK_MAX_WEB_PEOPLE \}\);/);
   assert.match(pre, /screenSubjects\(subjects\),/);
   assert.match(pre, /screenComplyAdvantage\(screen\.full\),/);
-  assert.match(pre, /const searched = \[\.\.\.screen\.full\.filter\(s => !s\.person\)\.slice\(0, 1\), \.\.\.screen\.full\.filter\(s => s\.person\)\];/);
+  // The party, the companies registered abroad that own it (20 November 2026: Monaco), then the people.
+  assert.match(pre, /const searched = \[\.\.\.screen\.full\.filter\(s => !s\.person\)\.slice\(0, 1\), \.\.\.screen\.full\.filter\(s => !s\.person && s\.abroad\)\.slice\(0, 2\), \.\.\.screen\.full\.filter\(s => s\.person\)\];/);
   // The people up the ownership chain are owners, screened with the date of birth the register gives.
   assert.match(pre, /role: `owner of \$\{p\.foundAt\}`, person: true, owner: true, dobYear: p\.dob\?\.year \|\| null, dobMonth: p\.dob\?\.month \|\| null,/);
   assert.match(read('server/companies-house.ts'), /dob: chainDob\(p\.date_of_birth\)/);

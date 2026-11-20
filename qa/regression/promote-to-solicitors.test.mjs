@@ -439,7 +439,9 @@ test('the Xero picker says plainly a company is not in Xero yet when the firm li
   assert.match(picker, /createFor\?: \{ id: string; name: string \} \| null;/, 'optional: every other picker is unchanged');
   const dialog = source('client/src/components/billing-entity-create.tsx');
   assert.match(dialog, /fetch\("\/api\/billing-entities"/);
-  assert.match(dialog, /body: JSON\.stringify\(\{ brandId: brand\.id, companyNumber: hit\.companyNumber \}\)/, 'the name and address come from Companies House on the server');
+  assert.match(dialog, /body: JSON\.stringify\(\{ brandId: brand\.id, companyNumber: hit\.companyNumber, \.\.\.\(xero \? \{\} : \{ xero: false \}\) \}\)/, 'the name and address come from Companies House on the server');
+  // Or a person (20 November 2026): their own name, email and mobile, checked as a private individual.
+  assert.match(dialog, /person: \{ name: person\.name, email: person\.email \|\| null, mobile: person\.mobile \|\| null \}/);
   assert.match(dialog, /\/api\/companies-house\/search\?q=/);
 });
 
@@ -466,8 +468,10 @@ test('the box lists the companies filed under the party first; picking one keeps
   assert.match(picker, /body: JSON\.stringify\(\{ brandId: createFor\.id, companyNumber: f\.companiesHouseNumber \}\)/);
   // Without one: its name is searched in Xero.
   assert.match(picker, /if \(!f\.companiesHouseNumber \|\| !createFor\?\.id\) \{ setSearch\(f\.name\); return; \}/);
-  // Create is always offered for the party, not only when Xero has no match.
-  assert.match(picker, /New billing entity for \{createFor\.name\} \(Companies House\)/);
+  // Create is always offered for the party, not only when Xero has no match: a company or a person (20 November 2026).
+  assert.match(picker, /New billing entity for \{createFor\.name\}: a company or a person/);
+  // A person filed under the party is linked through the person route, by name.
+  assert.match(picker, /body: JSON\.stringify\(\{ brandId: createFor\.id, person: \{ name: f\.name \} \}\)/);
   assert.match(picker, /queryClient\.invalidateQueries\(\{ queryKey: leaseCompaniesKey\(createFor\.id\) \}\)/);
 });
 

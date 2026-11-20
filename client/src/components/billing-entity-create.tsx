@@ -6,9 +6,16 @@
 // House; POST /api/billing-entities (server/billing-entity.ts) saves it under
 // the brand and makes it a contact in the firm's Xero, and that contact is
 // handed back for the picker to select. Nothing else on the form is saved.
+//
+// Or a person (Woody, 20 November 2026: "need ability to create billing
+// entity or contracting entity as a person we will then KYC them"): their
+// name, email and mobile, filed under the brand as a person and added to the
+// CRM; the deal then checks them as a private individual.
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Landmark, Loader2 } from "lucide-react";
+import { Landmark, Loader2, UserRound } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -18,11 +25,12 @@ import type { XeroContact } from "@/components/xero-contact-picker";
 type ChHit = { companyNumber: string; title: string; companyStatus?: string | null; addressSnippet?: string | null };
 // The company as saved under the brand (crm_trading_entities): the deal
 // records it as the company that signs for the party (2026-11-18).
-export type SavedCompany = { id: string; name: string; companiesHouseNumber: string | null };
+// kind "individual": a person who signs or is billed in their own name.
+export type SavedCompany = { id: string; name: string; companiesHouseNumber: string | null; kind?: "company" | "individual"; contactId?: string | null };
 // Companies House statuses that cannot be billed (the server refuses them too).
 const CLOSED = new Set(["dissolved", "converted-closed", "removed", "closed"]);
 
-export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQuery, onCreated, onSavedWithoutXero, testIdPrefix = "billing-entity" }: {
+export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQuery, onCreated, onSavedWithoutXero, testIdPrefix = "billing-entity", xero = true, startAsPerson = false }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   brand: { id: string; name: string };
@@ -32,7 +40,14 @@ export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQu
   // contact (the deal's parties need the company; billing can follow).
   onSavedWithoutXero?: (company: SavedCompany, reason: string) => void;
   testIdPrefix?: string;
+  // false: filed under the brand with no Xero contact (a party BGP does not
+  // bill: the one that signs for it is still checked).
+  xero?: boolean;
+  startAsPerson?: boolean;
 }) {
+  const [mode, setMode] = useState<"company" | "person">(startAsPerson ? "person" : "company");
+  const [person, setPerson] = useState({ name: "", email: "", mobile: "" });
+  useEffect(() => { if (open) { setMode(startAsPerson ? "person" : "company"); setPerson({ name: "", email: "", mobile: "" }); } }, [open, startAsPerson]);
   const { toast } = useToast();
   const [term, setTerm] = useState(initialQuery);
   const [q, setQ] = useState(initialQuery.trim());
@@ -63,7 +78,7 @@ export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQu
         method: "POST",
         credentials: "include",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ brandId: brand.id, companyNumber: hit.companyNumber }),
+        body: JSON.stringify({ brandId: brand.id, companyNumber: hit.companyNumber, ...(xero ? {} : { xero: false }) }),
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) { setProblem(body?.message || "The billing entity could not be made. Try again."); return; }
@@ -90,16 +105,80 @@ export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQu
     }
   };
 
+  const savePerson = async () => {
+    if (busy) return;
+    setBusy("person");
+    setProblem(null);
+    try {
+      const res = await fetch("/api/billing-entities", {
+        method: "POST",
+        credentials: "include",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ brandId: brand.id, person: { name: person.name, email: person.email || null, mobile: person.mobile || null }, ...(xero ? {} : { xero: false }) }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) { setProblem(body?.message || "The person could not be saved. Try again."); return; }
+      const company: SavedCompany = { id: String(body.entity.id), name: String(body.entity.name || person.name), companiesHouseNumber: null, kind: "individual", contactId: body.entity.contactId || null };
+      if (body?.contact?.ContactID) {
+        onCreated(body.contact as XeroContact, company);
+        toast({ title: "Person added", description: `${company.name}: saved under ${brand.name}${body.xeroCreated ? " and added to Xero" : ", and already in Xero"}. They are checked as a private individual.` });
+        onOpenChange(false);
+      } else if (onSavedWithoutXero) {
+        onSavedWithoutXero(company, body?.xeroError || (xero ? "The Xero contact was not made." : "Not added to Xero: BGP does not bill this party."));
+        toast({ title: "Person added", description: `${company.name} is saved under ${brand.name}. They are checked as a private individual.${xero && body?.xeroError ? ` Not in Xero: ${body.xeroError}` : ""}` });
+        onOpenChange(false);
+      } else {
+        setProblem(`${company.name} is saved under ${brand.name}. ${body?.xeroError || "The Xero contact was not made."}`);
+      }
+    } catch {
+      setProblem("Could not reach the server. Check your connection and try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+  const personReady = person.name.trim().split(/\s+/).length >= 2 && (!person.email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(person.email.trim()));
+
   const hits = ch.data || [];
   return (
     <Dialog open={open} onOpenChange={v => { if (!busy) onOpenChange(v); }}>
       <DialogContent className="max-w-md" data-testid={`${testIdPrefix}-dialog`}>
         <DialogHeader>
-          <DialogTitle>Create billing entity</DialogTitle>
+          <DialogTitle>{xero ? "Create billing entity" : "Who signs"}</DialogTitle>
           <DialogDescription>
-            Find the company at Companies House. It is saved under {brand.name} and added to the firm's Xero as a contact.
+            {mode === "person"
+              ? <>A person who signs{xero ? " or is billed" : ""} in their own name. They are saved under {brand.name}{xero ? " and added to the firm's Xero" : ""}, and checked as a private individual: an identity check and a proof of address.</>
+              : <>Find the company at Companies House. It is saved under {brand.name}{xero ? " and added to the firm's Xero as a contact" : ""}.</>}
           </DialogDescription>
         </DialogHeader>
+        <div className="flex gap-1.5" role="tablist" data-testid={`${testIdPrefix}-mode`}>
+          <Button type="button" size="sm" variant={mode === "company" ? "default" : "outline"} className="h-7 rounded-full text-xs" onClick={() => { setMode("company"); setProblem(null); }} data-testid={`${testIdPrefix}-mode-company`}>
+            <Landmark className="mr-1 h-3.5 w-3.5" />A company
+          </Button>
+          <Button type="button" size="sm" variant={mode === "person" ? "default" : "outline"} className="h-7 rounded-full text-xs" onClick={() => { setMode("person"); setProblem(null); }} data-testid={`${testIdPrefix}-mode-person`}>
+            <UserRound className="mr-1 h-3.5 w-3.5" />A person
+          </Button>
+        </div>
+        {mode === "person" ? (
+          <form className="space-y-2.5" onSubmit={e => { e.preventDefault(); if (personReady) void savePerson(); }} data-testid={`${testIdPrefix}-person`}>
+            <div className="space-y-1">
+              <Label htmlFor={`${testIdPrefix}-person-name`} className="text-xs">Full name</Label>
+              <Input id={`${testIdPrefix}-person-name`} autoFocus value={person.name} onChange={e => setPerson(p => ({ ...p, name: e.target.value }))} placeholder="First name and surname" data-testid={`${testIdPrefix}-person-name`} />
+            </div>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor={`${testIdPrefix}-person-email`} className="text-xs">Email (for the client checks)</Label>
+                <Input id={`${testIdPrefix}-person-email`} type="email" value={person.email} onChange={e => setPerson(p => ({ ...p, email: e.target.value }))} placeholder="name@example.com" data-testid={`${testIdPrefix}-person-email`} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor={`${testIdPrefix}-person-mobile`} className="text-xs">Mobile (optional)</Label>
+                <Input id={`${testIdPrefix}-person-mobile`} type="tel" value={person.mobile} onChange={e => setPerson(p => ({ ...p, mobile: e.target.value }))} data-testid={`${testIdPrefix}-person-mobile`} />
+              </div>
+            </div>
+            <Button type="submit" size="sm" disabled={!personReady || !!busy} data-testid={`${testIdPrefix}-person-save`}>
+              {busy === "person" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}Save {person.name.trim() || "the person"}
+            </Button>
+          </form>
+        ) : (<>
         <Input
           autoFocus
           value={term}
@@ -140,6 +219,7 @@ export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQu
             );
           })}
         </div>
+        </>)}
         {problem && <p className="text-xs text-destructive" role="alert" data-testid={`${testIdPrefix}-problem`}>{problem}</p>}
       </DialogContent>
     </Dialog>

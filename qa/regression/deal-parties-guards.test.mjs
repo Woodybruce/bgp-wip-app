@@ -150,7 +150,10 @@ test('the deal page and the deal form carry it', () => {
 // say these owners need to AML and prompt for contact details at that stage
 // ... make sure this form is consistant where dealks are added or converted".
 test('the owners the checks need are named in the party box, with their contact details asked for', () => {
-  const route = parties.slice(parties.indexOf('router.post("/api/deals/:id/parties/:role/owner"'), parties.indexOf('export default router'));
+  // The owner route alone: the billing routes added after it on 20 November 2026 write the deal.
+  const ownerAt = parties.indexOf('router.post("/api/deals/:id/parties/:role/owner"');
+  const nextRoute = parties.indexOf('\nrouter.', ownerAt + 10);
+  const route = parties.slice(ownerAt, nextRoute > ownerAt ? nextRoute : parties.indexOf('export default router'));
   assert.ok(route.length > 100, 'the owner route exists');
   // The person is one of the party's people to check, found by their key: never a name the request types.
   assert.match(route, /partyPeopleFor\(/);

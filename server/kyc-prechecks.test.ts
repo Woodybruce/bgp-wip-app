@@ -495,3 +495,61 @@ test("web results: one flag per person and kind with every source, and a company
   assert.equal(web[0].facts.filter(x => x.label === "Source").length, 2);
   assert.match(web[1].label, /^Possibly owned or controlled by the state or a public figure: Acme Holdings Limited$/, "an older line is read from the name");
 });
+
+// Owners behind a company registered abroad (Woody, 20 November 2026, on
+// Tureddi Group Limited, owned 75%+ by a Monaco société civile: "the app hasn't
+// flagged this as an issue but the holding company for this business is in
+// Monaco..? What do you think?").
+test("a company registered abroad that owns the party: asked for, not stood in for, and Monaco flagged", async () => {
+  const { ownerRegister, ownersAbroadOf, offshoreOwnersOf } = await import("../shared/kyc-prechecks");
+  const { kycDocDetail } = await import("../shared/kyc-request");
+  for (const uk of ["England", "United Kingdom", "England And Wales", "Scotland", "Companies House", "Registrar Of Companies For England And Wales", "UK"]) assert.equal(ownerRegister(uk), "uk", uk);
+  for (const abroad of ["Monaco", "Registre Du Commerce Et De L'Industrie, Monaco", "Jersey", "Isle Of Man", "Luxembourg", "Delaware, United States", "New South Wales"]) assert.equal(ownerRegister(abroad), "abroad", abroad);
+  assert.equal(ownerRegister(""), null);
+  assert.equal(ownerRegister("Registrar of Companies"), null, "could be either");
+
+  const ch = result().companiesHouse!;
+  const tureddi = result({
+    party: { companyId: "c1", name: "TUREDDI GROUP LIMITED", subjectKind: "company", contactName: null },
+    companiesHouse: {
+      ...ch, number: "15210693", name: "TUREDDI GROUP LIMITED",
+      officers: ["A, One", "B, Two", "C, Three", "D, Four"].map(n => ({ name: n, role: "director", appointedOn: null, dob: { month: 1, year: 1980 }, nationality: "Italian" })),
+      owners: [{ name: "Scp Aaa Invest", kind: "company", controls: ["ownership-of-shares-75-to-100-percent", "voting-rights-75-to-100-percent"], notifiedOn: "2023-10-20", country: "Monaco", registrationNumber: "25sc38568" }],
+      // An older check, stored before the flag existed.
+      offshoreOwners: [],
+    },
+  });
+  assert.deepEqual(ownersAbroadOf(tureddi.companiesHouse).map(o => [o.name, o.country]), [["Scp Aaa Invest", "Monaco"]]);
+  const flags = precheckRedFlags(tureddi, { sanctionsCurrent: true });
+  const monaco = flags.find(f => f.kind === "offshore_owner");
+  assert.ok(monaco, "the stored check is flagged on read, with no new run");
+  assert.equal(monaco!.label, "Owned through Scp Aaa Invest, registered in Monaco");
+  assert.match(monaco!.detail || "", /grey list.*EU's list of high-risk third countries/);
+  assert.equal(offshoreOwnersOf(tureddi.companiesHouse).length, 1);
+  // A UK owner is not abroad, and not flagged.
+  const ukOwned = result({ companiesHouse: { ...ch, owners: [{ name: "HOLDCO LIMITED", kind: "company", controls: ["ownership-of-shares-75-to-100-percent"], notifiedOn: null, country: "England", registrationNumber: "01234568" }] } });
+  assert.deepEqual(ownersAbroadOf(ukOwned.companiesHouse), []);
+  assert.equal(precheckRedFlags(ukOwned, { sanctionsCurrent: true }).filter(f => f.kind === "offshore_owner").length, 0);
+  // Jersey is abroad (the client is asked) but not a red flag by itself.
+  const jersey = result({ companiesHouse: { ...ch, owners: [{ name: "ISLAND HOLDINGS LIMITED", kind: "company", controls: ["ownership-of-shares-75-to-100-percent"], notifiedOn: null, country: "Jersey", registrationNumber: "123456" }] } });
+  assert.equal(ownersAbroadOf(jersey.companiesHouse).length, 1);
+  assert.equal(precheckRedFlags(jersey, { sanctionsCurrent: true }).filter(f => f.kind === "offshore_owner").length, 0);
+
+  // The structure chart and the owners' IDs are still asked for, naming the company abroad.
+  const asks = precheckAsks(askInputFrom(tureddi), { kind: "company", role: "tenant", idCheck: true, contactName: null, today: TODAY });
+  assert.ok(asks.docs.includes("ownership") && asks.docs.includes("owner_ids"), "not dropped: the register does not name the people");
+  assert.deepEqual(asks.ownersAbroad, [{ name: "Scp Aaa Invest", country: "Monaco" }]);
+  assert.match(kycDocDetail("ownership", [], asks.ownersAbroad), /Companies House shows Scp Aaa Invest \(Monaco\) owns the company.*register/);
+  // The card says so, and KYC4U's note.
+  assert.equal(precheckCardLines(tureddi).find(l => l.key === "owners")?.state, "attention");
+  assert.match(precheckNote(tureddi, "done"), /Owned through a company registered abroad: Scp Aaa Invest \(Monaco\)/);
+
+  // Screening: the company abroad in full; the directors meanwhile, and the basis says why (not reg 28(6)).
+  const screen = chooseScreened([
+    { name: "TUREDDI GROUP LIMITED", role: "the company", person: false },
+    { name: "Scp Aaa Invest", role: "owning company", person: false, abroad: true },
+    { name: "A, One", role: "director", person: true },
+  ], { individual: false, listed: false, maxPeople: 10 });
+  assert.equal(screen.basis, "owners_abroad");
+  assert.deepEqual(screen.full.map(c => c.name), ["TUREDDI GROUP LIMITED", "Scp Aaa Invest", "A, One"]);
+});

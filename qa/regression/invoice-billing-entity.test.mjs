@@ -26,7 +26,8 @@ test('the invoice route bills the contact the rule names, never one made from th
   assert.doesNotMatch(route, /deal\.name \|\| undefined|\|\| deal\.name/, 'the deal name is never a contact name');
   assert.doesNotMatch(route, /method: "POST",\s*body: JSON\.stringify\(\{\s*Contacts/, 'no contact is created in the route itself');
   const helper = between(xero, 'export async function resolveDealInvoiceContact(', '\n}\n');
-  assert.match(helper, /const billing = invoiceContactFor\(deal\);/);
+  // Since 20 November 2026 the payer and the company that signs follow the deal's own contacts (invoiceCompaniesFor).
+  assert.match(helper, /const billing = invoiceContactFor\(deal, await invoiceCompaniesFor\(deal\)\);/);
   // Only a contact held by name (a scheme's billing entity) is found or made.
   assert.match(helper, /if \(billing\.name\) \{/);
 });
@@ -40,7 +41,10 @@ test('the automatic draft at exchange or completion bills the same contact, neve
 
 test('the invoice card and the Deals table read the one rule', () => {
   const card = between(deals, 'export function XeroInvoiceSection(', 'function kycStatusLabel(');
-  assert.match(card, /const billing = invoiceContactFor\(deal as any\);/);
+  // The card reads the payer and the company that signs from the party view (20 November 2026).
+  assert.match(card, /const billing = invoiceContactFor\(deal as any, \{/);
+  assert.match(card, /payer: clientParty\?\.billing\?\.payer \?/);
+  assert.match(card, /signing: clientParty\?\.company \?/);
   assert.match(card, /xeroContactId: billing\.contactId \|\| null,/);
   assert.match(card, /contactName: billing\.name \|\| undefined,/);
   assert.doesNotMatch(card, /xeroContactName \|\| deal\.name/);

@@ -14,6 +14,8 @@
 // The rules here are pure: server/deal-parties.ts reads the records and
 // writes, the screens draw from what it sends.
 
+import type { BillingState } from "./deal-billing";
+
 export const DEAL_PARTY_ROLES = ["landlord", "tenant", "vendor", "purchaser"] as const;
 export type DealPartyRole = (typeof DEAL_PARTY_ROLES)[number];
 export const isDealPartyRole = (v: unknown): v is DealPartyRole =>
@@ -39,7 +41,46 @@ export const DEAL_PARTY_COLUMNS: Record<DealPartyRole, { brand: string; company:
 };
 export const DEAL_PARTY_COMPANY_FIELDS = DEAL_PARTY_ROLES.map(r => DEAL_PARTY_FIELDS[r].company);
 
-export interface DealPartyCompany { id: string; name: string; companiesHouseNumber: string | null; isDefault: boolean }
+// xeroContactId: the company's own contact in the firm's Xero, once one is
+// found or made for it (20 November 2026), so billing it is billing this company.
+// kind "individual": a person filed under the party who signs (or is billed)
+// in their own name (Woody, 20 November 2026: "need ability to create billing
+// entity or contracting entity as a person we will then KYC them");
+// contactId: the CRM contact who is that person.
+export interface DealPartyCompany { id: string; name: string; companiesHouseNumber: string | null; isDefault: boolean; xeroContactId?: string | null; xeroContactName?: string | null; kind?: "company" | "individual"; contactId?: string | null }
+
+/** crm_trading_entities.entity_kind as the screens read it: "individual" for a person, else a company. */
+export const signerKindOf = (entityKind: unknown): "company" | "individual" =>
+  String(entityKind ?? "").trim().toLowerCase() === "individual" ? "individual" : "company";
+
+/**
+ * Whether a party's checks are about a company or a private individual. The
+ * one who signs decides when the deal names one (a person who signs is
+ * checked as an individual, whatever the record above them is); with nobody
+ * named, the record itself (crm_companies.aml_subject_type).
+ */
+export function partySubjectKind(brandSubjectType: unknown, signer: { kind?: unknown } | null | undefined): "company" | "individual" {
+  if (signer) return signerKindOf(signer.kind);
+  return String(brandSubjectType ?? "").trim().toLowerCase() === "individual" ? "individual" : "company";
+}
+
+/** A third party that pays BGP's invoice for the client (shared/deal-billing.ts). */
+export interface DealPartyPayer {
+  id: string; name: string; companiesHouseNumber: string | null; xeroContactId: string | null;
+  relationship: string | null; relationshipWords: string; note: string | null; clear: boolean;
+}
+
+/** Who BGP's client is billed as, set against the company that signs (BGP's client only). */
+export interface DealPartyBilling {
+  state: BillingState;
+  tone: "done" | "act" | "flag" | "info";
+  words: string;
+  // Who the invoice goes to now, and where that is set: the deal's own
+  // invoice contact, or this party's billing contact.
+  billed: { contactId: string | null; name: string | null } | null;
+  from: "deal" | "party" | null;
+  payer: DealPartyPayer | null;
+}
 export interface DealPartyPerson { id: string; name: string; email: string | null; mobile: string | null; jobTitle: string | null }
 
 export type PartyGapKey = "company" | "person" | "email";
@@ -62,7 +103,10 @@ export const SIGNING_COMPANY_WORDS: Record<DealPartyRole, string> = {
 export interface DealPartyView {
   role: DealPartyRole;
   label: string;
-  brand: { id: string; name: string; companiesHouseNumber: string | null; kind: "company" | "individual" };
+  // kind: whether the checks are about a company or a private individual (a
+  // person who signs makes it an individual); recordIndividual: the record
+  // itself is a private individual.
+  brand: { id: string; name: string; companiesHouseNumber: string | null; kind: "company" | "individual"; recordIndividual?: boolean };
   // The company that signs, as set on the deal.
   company: DealPartyCompany | null;
   // What to offer when none is set: the company on the unit's lease (a
@@ -76,12 +120,17 @@ export interface DealPartyView {
   // The Xero contact invoices go to.
   xero: { contactId: string; name: string | null } | null;
   // Who the client checks and KYC4U go to: set for this party on the deal,
-  // or the deal's client contact when that person is filed under the brand.
-  person: (DealPartyPerson & { from: "party" | "client" }) | null;
+  // or the deal's client contact when that person is filed under the brand,
+  // or the person who signs, when a person does.
+  person: (DealPartyPerson & { from: "party" | "client" | "signer" }) | null;
   // The people filed under the brand.
   people: DealPartyPerson[];
   // What stops the checks from starting, in the order to fill it.
   gaps: PartyGap[];
+  // BGP's client on the deal, the party it invoices (dealClientRole), and who
+  // it is billed as against the company that signs (null for any other party).
+  client?: boolean;
+  billing?: DealPartyBilling | null;
 }
 
 const text = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();
@@ -255,12 +304,17 @@ export interface InvoiceContact {
   // set under Parties with the AML checks; null, none yet.
   contactId: string | null;
   name: string | null;
-  source: "deal" | "party" | null;
+  source: "deal" | "party" | "payer" | "signing" | null;
   // The billing entity on BGP's client, whichever is used.
   party: { contactId: string; name: string } | null;
   // BGP's client is on the deal.
   partyLinked: boolean;
+  // A company billed by name (source "payer" or "signing"): its Xero contact
+  // is found or made when the invoice is drafted, and kept on the company.
+  company?: InvoiceCompany | null;
 }
+
+export interface InvoiceCompany { id: string; name: string; companiesHouseNumber?: string | null; xeroContactId?: string | null; xeroContactName?: string | null }
 
 /**
  * Who the deal's invoice goes to in Xero: the deal's own invoice contact when
@@ -269,7 +323,13 @@ export interface InvoiceContact {
  * entity on BGP's client from the Parties and AML set-up. Never a name made
  * up from the deal or a brand.
  */
-export function invoiceContactFor(deal: Record<string, any>): InvoiceContact {
+//
+// Since 20 November 2026 (Woody: "the company signs is effectively the xero
+// billing entity"), with neither set, the invoice goes to the third party the
+// deal records as paying for the client, else to the client's company that
+// signs: by their own Xero contact when one is kept on the company, else by
+// name, the contact found or made when the invoice is drafted.
+export function invoiceContactFor(deal: Record<string, any>, extra: { payer?: InvoiceCompany | null; signing?: InvoiceCompany | null } = {}): InvoiceContact {
   const role = dealClientRole(deal);
   const f = DEAL_PARTY_FIELDS[role];
   const partyId = text(deal[f.xeroId]), partyName = text(deal[f.xeroName]);
@@ -278,5 +338,9 @@ export function invoiceContactFor(deal: Record<string, any>): InvoiceContact {
   const ownId = text(deal.xeroContactId), ownName = text(deal.xeroContactName);
   if (ownId || ownName) return { role, contactId: ownId || null, name: ownName || null, source: "deal", party, partyLinked };
   if (party) return { role, contactId: party.contactId, name: party.name, source: "party", party, partyLinked };
+  const company = extra.payer?.name ? { co: extra.payer, source: "payer" as const } : extra.signing?.name ? { co: extra.signing, source: "signing" as const } : null;
+  if (company) {
+    return { role, contactId: text(company.co.xeroContactId) || null, name: text(company.co.xeroContactName) || company.co.name, source: company.source, party: null, partyLinked, company: company.co };
+  }
   return { role, contactId: null, name: null, source: null, party: null, partyLinked };
 }

@@ -35,6 +35,7 @@ import {
 import { idCheckIsThePerson, personNamesMatch, precheckAsks, verifiedPersonName } from "@shared/kyc-prechecks";
 import { personRequestAsks, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
+import { partySubjectKind } from "@shared/deal-parties";
 import { ADDRESS_PROOF_ACCEPT_NOTE_MIN } from "@shared/kyc-address-proof";
 import { officerWords } from "@shared/aml-policy";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
@@ -88,6 +89,9 @@ export interface KycRequestDetails {
   // for, the client's reply, what was not asked and why, and the run used.
   confirmOwners?: Array<{ name: string; detail: string }> | null;
   ownerNames?: string[];
+  // Companies registered abroad that own the party: the structure chart step
+  // names them (20 November 2026).
+  ownersAbroad?: Array<{ name: string; country: string }> | null;
   ownersAnswer?: KycOwnersReply | null;
   notAsked?: Array<{ key: KycDocKey; reason: string }>;
   precheckId?: number | null;
@@ -381,7 +385,7 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
     question: request.askPep ? { pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null } : null,
     owners: request.confirmOwners?.length ? { list: request.confirmOwners, answer: request.ownersAnswer?.answer ?? null, detail: request.ownersAnswer?.detail ?? null } : null,
     docs: request.docs.map(key => ({
-      key, title: KYC_DOCS[key].title, detail: kycDocDetail(key, request.ownerNames),
+      key, title: KYC_DOCS[key].title, detail: kycDocDetail(key, request.ownerNames, request.ownersAbroad),
       files: progress.files.filter(f => f.docKey === key).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
     })),
     otherFiles: progress.files.filter(f => !f.docKey || !requested.has(f.docKey)).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
@@ -434,16 +438,18 @@ async function dealParties(dealId: string) {
     const c = (await pool.query(`SELECT id, name, aml_subject_type FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
     if (!c) continue;
     const entity = d[col.entity] ? (await pool.query(
-      `SELECT id, name, companies_house_number FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [d[col.entity], companyId])).rows[0] || null : null;
+      `SELECT id, name, companies_house_number, entity_kind, contact_id FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [d[col.entity], companyId])).rows[0] || null : null;
     const client = d.client_contact_id ? (await pool.query(`SELECT company_id FROM crm_contacts WHERE id = $1`, [d.client_contact_id])).rows[0] : null;
-    const person = d[col.contact] || (client?.company_id === companyId ? d.client_contact_id : null);
+    // A person who signs is asked themselves when nobody else is named.
+    const person = d[col.contact] || (client?.company_id === companyId ? d.client_contact_id : null)
+      || (String(entity?.entity_kind || "").toLowerCase() === "individual" ? entity?.contact_id || null : null);
     const contacts = (await pool.query(
       `SELECT id, name, email, COALESCE(NULLIF(phone_mobile, ''), NULLIF(phone, '')) AS mobile
          FROM crm_contacts WHERE company_id = $1 AND COALESCE(email, '') <> ''
         ORDER BY (id = $2) DESC, name LIMIT 60`, [companyId, person || ""])).rows;
     parties.push({
       companyId, name: entity?.name || c.name, brandName: c.name, role: col.role,
-      kind: !entity && String(c.aml_subject_type || "").toLowerCase() === "individual" ? "individual" : "company",
+      kind: partySubjectKind(c.aml_subject_type, entity ? { kind: entity.entity_kind } : null),
       contactId: person && contacts.some((x: any) => x.id === person) ? person : null,
       entityId: entity ? String(entity.id) : null, entityNumber: entity?.companies_house_number || null, personField: col.contact,
       contacts: contacts.map((x: any) => ({ id: x.id, name: x.name, email: x.email, mobile: x.mobile || null })),
@@ -514,6 +520,7 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
     agents: agentList, cc, sentBy: { id: me.id, name: me.name }, sentFrom: null, sentAt: null, sendError: null,
     openedAt: null, veriffSessionIds: [], idCheckNote, askPep: true, answers: null,
     confirmOwners, ownerNames: docs.includes("owner_ids") ? asks.ownerNames : [], ownersAnswer: null,
+    ownersAbroad: input.kind === "company" && docs.includes("ownership") && asks.ownersAbroad?.length ? asks.ownersAbroad : null,
     notAsked: asks.notAsked.filter(n => !docs.includes(n.key)), precheckId: pre?.precheckId ?? null,
     ownLinksFor,
   };
@@ -561,7 +568,7 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
     build: sentFrom => kycRequestEmail({
       recipientName: input.name, partyName: party.name, kind: input.kind, dealName: found.deal.name, ref, link, expiresAt,
       needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, agents: agentList, sentFrom, askPep: true,
-      confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownLinksFor: ownLinksFor.map(o => o.name),
+      confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, ownLinksFor: ownLinksFor.map(o => o.name),
     }),
   });
   request.sentFrom = sent.from;
@@ -765,7 +772,7 @@ async function sendReminder(row: TokenRow): Promise<KycSendResult> {
       recipientName: row.contact_name, partyName: request.partyName, kind: request.kind, dealName: request.dealName,
       ref: request.ref, link, expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: request.docs,
       agents: request.agents, sentFrom, progress, test: !!row.is_test, askPep: !!request.askPep,
-      confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownLinksFor: (request.ownLinksFor || []).map(o => o.name),
+      confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, ownLinksFor: (request.ownLinksFor || []).map(o => o.name),
       person: request.person ? { roles: request.person.roles } : null,
     }),
   });

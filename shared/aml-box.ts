@@ -27,7 +27,8 @@ export type AmlBoxAction =
   | "kyc4u_form"         // KYC4U's own form, to press the Send to ChatBGP bookmark
   | "kyc4u_result"       // the Nominated Officer or a Deputy adds KYC4U's result
   | "sign_off"
-  | "red_flags";         // open Red flags
+  | "red_flags"          // open Red flags
+  | "billing";           // open Who pays: BGP's invoice goes to another company
 
 export const AML_BOX_WHO_WORDS: Record<AmlBoxWho, string> = {
   nobody: "Nothing to do",
@@ -72,6 +73,10 @@ export interface AmlBoxFacts {
   canDecide: boolean;                    // the Nominated Officer or a Deputy (admins until one is set)
   signOffBlocked: string | null;         // why it cannot be signed off now; null: it can
   needsNote: boolean;
+  // BGP's client billed as another company than the one that signs, with
+  // nobody saying who pays (shared/deal-billing.ts, 20 November 2026). Asked
+  // before sign-off; it never jumps ahead of the checks themselves.
+  billingDiffers?: boolean;
 }
 
 export interface AmlNextStep { tone: AmlBoxTone; who: AmlBoxWho; words: string; action: AmlBoxAction | null }
@@ -102,6 +107,14 @@ const stop = (t: string) => (/[.!?]$/.test(t) ? t : `${t}.`);
 function owed(people: readonly AmlBoxPerson[]): string {
   return andList(people.map(p => (p.needs.length ? `${p.name} (${andList(p.needs)})` : p.name)));
 }
+
+// BGP's invoice goes to another company than the one the checks are on
+// (shared/deal-billing.ts): HMRC expects BGP to know who pays and why.
+const BILLING_STEP: AmlNextStep = {
+  tone: "act", who: "bgp",
+  words: "BGP's invoice goes to another company than the one that signs: record who pays and how they are related, or confirm it is the same company.",
+  action: "billing",
+};
 
 /** The one line a party opens on: what happens next, and who it waits on. */
 export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
@@ -147,6 +160,7 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
     };
   }
   if (f.sanctionsOnly) {
+    if (f.billingDiffers) return BILLING_STEP;
     if (f.canSignOff && f.signOffBlocked === null) {
       return { tone: "act", who: "bgp", words: "A letting under £10,000 a month: sanctions checks only, and they are clear. Sign it off.", action: "sign_off" };
     }
@@ -192,6 +206,7 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
   if (f.people.length) {
     return { tone: "wait", who: "client", words: `Waiting on ${owed(f.people)}.`, action: null };
   }
+  if (f.billingDiffers) return BILLING_STEP;
   if (f.signOffBlocked === null && f.canSignOff) {
     return {
       tone: "act", who: "bgp",

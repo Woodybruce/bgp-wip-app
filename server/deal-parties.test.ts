@@ -262,3 +262,18 @@ test("the invoice goes to the deal's own contact, else the client's billing enti
   // Another party's billing entity is not BGP's client's.
   assert.equal(invoiceContactFor({ dealType: "New Letting", tenantEntityId: "t", tenantEntityName: "Tenant Ltd" }).name, null);
 });
+
+// A person as the contracting entity (Woody, 20 November 2026: "need ability
+// to create billing entity or contracting entity as a person we will then KYC
+// them").
+test("a person who signs makes the party a private individual for the checks", async () => {
+  const { partySubjectKind, signerKindOf, partyGaps } = await import("../shared/deal-parties");
+  assert.equal(signerKindOf("individual"), "individual");
+  assert.equal(signerKindOf(null), "company");
+  assert.equal(partySubjectKind(null, { kind: "individual" }), "individual", "a person signs for a company record");
+  assert.equal(partySubjectKind("individual", { kind: null }), "company", "a company signs for a record kept as a person");
+  assert.equal(partySubjectKind("individual", null), "individual");
+  assert.equal(partySubjectKind(null, null), "company");
+  // A person who signs needs no company: only someone to ask, with an email.
+  assert.deepEqual(partyGaps({ role: "purchaser", kind: "individual", brandName: "Sandy Macaskill (private)", companySet: true, person: { name: "Sandy Macaskill", email: "sandy@example.com" } }), []);
+});

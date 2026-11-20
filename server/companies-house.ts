@@ -48,7 +48,14 @@ type ChainPsc = {
   controls?: string[];
   kind?: string;
   dob?: ChainDob;
+  // A corporate PSC's register, as Companies House gives it (20 November 2026).
+  country?: string | null;
+  registrationNumber?: string | null;
 };
+
+// A corporate PSC's register in words: the country, else the place.
+const pscRegister = (p: any): string | null =>
+  String(p?.identification?.country_registered || p?.identification?.place_registered || p?.address?.country || "").replace(/\s+/g, " ").trim().slice(0, 80) || null;
 
 export type ChainLink = {
   name: string;
@@ -83,9 +90,15 @@ export async function discoverUltimateParent(companyNumber: string, maxDepth = 5
   chain: ChainLink[];
   ultimateParent: { name: string; number: string; } | null;
   ubos: UboFinding[];
+  // Corporate owners registered outside the UK, above the subject: Companies
+  // House cannot show who owns them, so the walk stops there (20 November
+  // 2026: until then a foreign registration number was looked up as a UK one).
+  abroad?: Array<{ name: string; country: string; registrationNumber: string | null; controls: string[]; foundAt: string; depth: number }>;
 }> {
   const chain: ChainLink[] = [];
   const ubos: UboFinding[] = [];
+  const abroad: Array<{ name: string; country: string; registrationNumber: string | null; controls: string[]; foundAt: string; depth: number }> = [];
+  const { ownerRegister } = await import("@shared/kyc-prechecks");
   const visited = new Set<string>();
   const seenUboNames = new Set<string>();
   let currentNumber = companyNumber;
@@ -106,7 +119,13 @@ export async function discoverUltimateParent(companyNumber: string, maxDepth = 5
         .map((p: any) => ({ name: p.name, nationality: p.nationality, controls: p.natures_of_control, kind: p.kind, dob: chainDob(p.date_of_birth) }));
       const corporatePscs: ChainPsc[] = items
         .filter((p: any) => p.kind === "corporate-entity-person-with-significant-control")
-        .map((p: any) => ({ name: p.name, controls: p.natures_of_control, kind: p.kind }));
+        .map((p: any) => ({ name: p.name, controls: p.natures_of_control, kind: p.kind, country: pscRegister(p), registrationNumber: p.identification?.registration_number || null }));
+      // A company registered abroad above the subject: recorded, never followed.
+      if (depth > 0) {
+        for (const c of corporatePscs) {
+          if (ownerRegister(c.country) === "abroad") abroad.push({ name: c.name, country: String(c.country), registrationNumber: c.registrationNumber || null, controls: c.controls || [], foundAt: currentName, depth });
+        }
+      }
 
       // Record individual PSCs found at this level as UBOs (skip the subject
       // itself at depth 0 — those are reported separately by the caller).
@@ -146,6 +165,8 @@ export async function discoverUltimateParent(companyNumber: string, maxDepth = 5
       const parentNumber = majorityOwner?.identification?.registration_number;
       const parentName = majorityOwner?.name;
       if (!parentNumber || !parentName) break;
+      // A foreign registration number is not a Companies House number.
+      if (ownerRegister(pscRegister(majorityOwner)) === "abroad") break;
 
       const paddedParent = parentNumber.padStart(8, "0");
       if (visited.has(paddedParent)) break;
@@ -160,6 +181,7 @@ export async function discoverUltimateParent(companyNumber: string, maxDepth = 5
   return {
     chain,
     ultimateParent: chain.length > 0 ? { name: chain[chain.length - 1].name, number: chain[chain.length - 1].number } : null,
+    abroad,
     ubos,
   };
 }

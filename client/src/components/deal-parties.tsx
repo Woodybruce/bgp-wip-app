@@ -7,10 +7,11 @@
 // shared/deal-parties.ts. Every change saves straight away.
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Building2, CheckCircle2, Loader2, Plus, ShieldCheck, UserRound } from "lucide-react";
+import { Building2, CheckCircle2, Loader2, Plus, Receipt, ShieldCheck, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -19,7 +20,8 @@ import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { CreateBillingEntityDialog, type SavedCompany } from "@/components/billing-entity-create";
 import { leaseCompaniesKey } from "@/components/lease-company-picker";
 import { useClientChecks } from "@/components/kyc-client-checks";
-import { OFFER_WORDS, SIGNING_COMPANY_WORDS, partyAmlFacts, partyAmlQuietWords, peopleToReach, type DealPartyRole, type DealPartyView, type PartyAmlFacts } from "@shared/deal-parties";
+import { OFFER_WORDS, SIGNING_COMPANY_WORDS, partyAmlFacts, partyAmlQuietWords, peopleToReach, type DealPartyBilling, type DealPartyPayer, type DealPartyRole, type DealPartyView, type PartyAmlFacts } from "@shared/deal-parties";
+import { PAYER_NOTE_MIN, PAYER_RELATIONSHIPS } from "@shared/deal-billing";
 import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
 import { PARTY_PEOPLE_BASIS_WORDS, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
 
@@ -51,7 +53,8 @@ function refresh(dealId: string, data?: DealParties) {
   queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
 }
 
-const companyWords = (c: { name: string; companiesHouseNumber: string | null }) => `${c.name}${c.companiesHouseNumber ? ` · ${c.companiesHouseNumber}` : ""}`;
+const companyWords = (c: { name: string; companiesHouseNumber: string | null; kind?: string }) =>
+  `${c.name}${c.kind === "individual" ? " · a person" : c.companiesHouseNumber ? ` · ${c.companiesHouseNumber}` : ""}`;
 const capital = (s: string) => `${s[0].toUpperCase()}${s.slice(1)}`;
 
 // Sets the company that signs: one filed under the brand, or the brand's own
@@ -249,11 +252,225 @@ function PartyPeopleToCheck({ dealId, party, busy, aml, onAsk }: { dealId: strin
             ? `Companies House names these people for ${party.company.name}. Each does an identity check and sends a proof of address through a link of their own: give each one's email (or a mobile) here.`
             : PARTY_PEOPLE_BASIS_WORDS[people.basis])}
       </p>
+      {!!people.ownersAbroad?.length && (
+        <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200" data-testid="deal-party-owners-abroad">
+          Owned through {people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: registered abroad, so Companies House cannot show who owns {people.ownersAbroad.length === 1 ? "it" : "them"}. The client checks ask for a structure chart up to the people and their IDs.
+        </p>
+      )}
       {people.people.length > 0 && <ul className="space-y-1.5">{people.people.map(p => <PersonToReach key={p.key} dealId={dealId} party={party} person={p} busy={busy} quiet={!!quiet} onAsk={onAsk} />)}</ul>}
       {people.directors.length > 0 && (
         <p className="text-[11px] text-muted-foreground">Directors, no ID needed (sanctions checks only): {people.directors.map(d => personDisplayName(d.name)).join(", ")}.</p>
       )}
     </div>
+  );
+}
+
+// ── Who pays BGP's invoice (Woody, 20 November 2026) ────────────────────────
+// "the Xero billing entity and the aml entity need to be flagged if they are
+// different ... Should we need to change the billing entity it's done on the
+// deal page as add billing entity which also needs its own KYC no?", then
+// "yes biuild". BGP's client is billed as the company that signs; another
+// company is flagged, with three ways out: they are the same company, a third
+// party pays (recorded with how it is related, and checked), or bill the
+// company that signs instead. The rules are shared/deal-billing.ts.
+
+const BILLING_TONE: Record<DealPartyBilling["tone"], string> = {
+  done: "text-muted-foreground",
+  info: "text-muted-foreground",
+  act: "text-amber-800 dark:text-amber-300",
+  flag: "text-red-700 dark:text-red-400",
+};
+
+function refreshBilling(dealId: string, data?: DealParties) {
+  refresh(dealId, data);
+  queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "payer"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+}
+
+interface PayerView { role: DealPartyRole; payer: DealPartyPayer | null; checks: { state: string; ranAt: string | null; lines: Array<{ key: string; label: string; state: string; detail: string | null }>; company: { owners: Array<{ name: string; control: string }> } | null } | null }
+
+export function usePayerChecks(dealId: string, enabled: boolean) {
+  return useQuery<PayerView>({
+    enabled,
+    queryKey: ["/api/deals", dealId, "payer"],
+    queryFn: async () => {
+      const res = await fetch(`/api/deals/${dealId}/payer`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error(plain(await res.text()));
+      return res.json();
+    },
+    refetchInterval: (q) => ((q.state.data as PayerView | undefined)?.checks?.state === "running" ? 5000 : false),
+  });
+}
+
+/** Who BGP's client is billed as, and what to do when it is another company. compact: the Parties card's line. */
+export function PartyBillingDetail({ dealId, party, compact }: { dealId: string; party: DealPartyView; compact?: boolean }) {
+  const { toast } = useToast();
+  const [paying, setPaying] = useState(false);
+  const b = party.billing;
+  const same = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/billing/same-company`, {})).json() as Promise<DealParties>,
+    onSuccess: (d) => { refreshBilling(dealId, d); toast({ title: "Recorded as the same company", description: "The Xero contact is kept on the company that signs." }); },
+    onError: (e) => toast({ title: "Not saved", description: plain(e), variant: "destructive" }),
+  });
+  const signing = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/billing/signing`, {})).json() as Promise<DealParties>,
+    onSuccess: (d) => { refreshBilling(dealId, d); toast({ title: `Billed as ${party.company?.name || "the company that signs"}` }); },
+    onError: (e) => toast({ title: "Not saved", description: plain(e), variant: "destructive" }),
+  });
+  const payerChecks = usePayerChecks(dealId, !compact && !!b?.payer);
+  const again = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/payer/checks`, {})).json(),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "payer"] }); queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] }); },
+    onError: (e) => toast({ title: "Not started", description: plain(e), variant: "destructive" }),
+  });
+  if (!b || b.state === "individual") return null;
+  const busy = same.isPending || signing.isPending;
+  const checks = payerChecks.data?.checks || null;
+  const attention = checks?.lines.filter(l => l.state === "attention") || [];
+  return (
+    <div className="space-y-1.5 text-xs" data-testid={`deal-billing-${party.role}`}>
+      <p className={BILLING_TONE[b.tone]} data-testid={`deal-billing-words-${party.role}`}>
+        {compact && (b.state === "same" || b.state === "signing")
+          ? <><span className="text-foreground">{b.state === "same" ? b.billed?.name : party.company?.name}</span>, the company that signs</>
+          : b.words}
+      </p>
+      {b.state === "payer" && b.payer && !compact && (
+        <div className="rounded-md border border-border bg-muted/30 p-2 space-y-1" data-testid={`deal-billing-payer-${party.role}`}>
+          <div><span className="font-medium text-foreground">{b.payer.name}</span>{b.payer.companiesHouseNumber ? <span className="ml-1 font-mono tabular-nums text-muted-foreground">{b.payer.companiesHouseNumber}</span> : null}</div>
+          <div className="text-muted-foreground">How it is related: {b.payer.relationshipWords}{b.payer.note ? `. ${b.payer.note}` : ""}</div>
+          {checks && (
+            <div className="space-y-0.5" data-testid={`deal-billing-payer-checks-${party.role}`}>
+              <div className="text-muted-foreground">
+                BGP's checks on it: {checks.state === "running" ? "running now" : checks.ranAt ? `${new Date(checks.ranAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, ${attention.length ? `${attention.length} to review` : "nothing to review"}` : "not run yet"}
+                {" · "}<button type="button" data-no-min-touch className="underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={again.isPending || checks.state === "running"} onClick={() => again.mutate()}>Run again</button>
+              </div>
+              {attention.map(l => <div key={l.key} className="text-amber-800 dark:text-amber-300">{l.label}{l.detail ? `: ${l.detail}` : ""}</div>)}
+              {!!checks.company?.owners.length && (
+                <div className="text-muted-foreground">Owners to identify and verify: {checks.company.owners.map(o => o.name).join("; ")}</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {b.state === "different" && (
+          <>
+            <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" disabled={busy} onClick={() => same.mutate()} data-testid={`deal-billing-same-${party.role}`}>They are the same company</Button>
+            <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" disabled={busy} onClick={() => setPaying(true)} data-testid={`deal-billing-payer-open-${party.role}`}>Record who pays</Button>
+          </>
+        )}
+        {(b.state === "different" || b.state === "payer") && party.company && (
+          <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" disabled={busy} onClick={() => signing.mutate()} data-testid={`deal-billing-signing-${party.role}`}>
+            {signing.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Bill {party.company.name} instead
+          </Button>
+        )}
+        {b.state === "payer" && !compact && (
+          <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" disabled={busy} onClick={() => setPaying(true)} data-testid={`deal-billing-payer-change-${party.role}`}>Change who pays</Button>
+        )}
+        {(b.state === "same" || b.state === "signing") && !compact && (
+          <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setPaying(true)} data-testid={`deal-billing-third-party-${party.role}`}>A third party pays</Button>
+        )}
+      </div>
+      {paying && <PayerDialog dealId={dealId} party={party} onClose={() => setPaying(false)} />}
+    </div>
+  );
+}
+
+// The third party that pays BGP's invoice for the client: a company filed
+// under the client (found at Companies House, which also makes its Xero
+// contact), how it is related, and a note. BGP's checks before asking start on
+// it when it is saved.
+export function PayerDialog({ dealId, party, onClose }: { dealId: string; party: DealPartyView; onClose: () => void }) {
+  const { toast } = useToast();
+  const current = party.billing?.payer || null;
+  const [companyId, setCompanyId] = useState<string | null>(current?.id || null);
+  const [relationship, setRelationship] = useState<string>(current?.relationship || "");
+  const [note, setNote] = useState(current?.note || "");
+  const [finding, setFinding] = useState(false);
+  const choices = party.companies.filter(c => c.id !== party.company?.id);
+  const save = useMutation({
+    mutationFn: async (body: Record<string, unknown>) => (await apiRequest("PUT", `/api/deals/${dealId}/payer`, body)).json(),
+    onSuccess: (d: any, body) => {
+      refreshBilling(dealId, { deal: d.deal, parties: d.parties });
+      toast(body.companyId
+        ? { title: "Recorded who pays", description: d.started === "started" ? "BGP's checks before asking are running on it now." : "BGP's checks before asking are on it." }
+        : { title: "Taken off", description: `The invoice goes back to ${party.company?.name || "the company that signs"}.` });
+      onClose();
+    },
+    onError: (e) => toast({ title: "Not saved", description: plain(e), variant: "destructive" }),
+  });
+  const needsNote = relationship === "other" && note.trim().length < PAYER_NOTE_MIN;
+  return (
+    <Dialog open onOpenChange={o => { if (!o && !finding) onClose(); }}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid="deal-payer-dialog">
+        <DialogHeader>
+          <DialogTitle>Who pays BGP's invoice</DialogTitle>
+          <DialogDescription>
+            For {party.brand.name}, when a company other than {party.company?.name || "the company that signs"} pays. HMRC expects BGP to know why a third party pays,
+            and BGP's AML policy asks for its owners to be identified and verified. BGP's checks before asking run on it when it is saved.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 text-sm">
+          <section className="space-y-1.5">
+            <Label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">The company that pays</Label>
+            {choices.length > 0 ? (
+              <ul className="divide-y rounded-md border">
+                {choices.map(c => (
+                  <li key={c.id}>
+                    <label className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 text-xs">
+                      <input type="radio" name="payer-company" checked={companyId === c.id} onChange={() => setCompanyId(c.id)} />
+                      <span className="min-w-0 flex-1"><span className="font-medium">{c.name}</span><span className="ml-1.5 text-muted-foreground">{c.companiesHouseNumber || "no Companies House number"}</span></span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-muted-foreground">No other company is filed under {party.brand.name}. Find the one that pays at Companies House.</p>
+            )}
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setFinding(true)} data-testid="deal-payer-find">
+              <Plus className="w-3.5 h-3.5 mr-1" />Find it at Companies House
+            </Button>
+          </section>
+          <section className="space-y-1.5">
+            <Label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">How it is related to {party.brand.name}</Label>
+            <div className="space-y-1">
+              {PAYER_RELATIONSHIPS.map(r => (
+                <label key={r.key} className="flex cursor-pointer items-start gap-2 text-xs">
+                  <input type="radio" name="payer-relationship" className="mt-0.5" checked={relationship === r.key} onChange={() => setRelationship(r.key)} data-testid={`deal-payer-relationship-${r.key}`} />
+                  <span className={r.clear ? "" : "text-red-700 dark:text-red-400"}>{r.words}{r.clear ? "" : ": a red flag, raised with KYC4U"}</span>
+                </label>
+              ))}
+            </div>
+            <Textarea rows={2} className="text-xs" value={note} onChange={e => setNote(e.target.value)} placeholder="What you know, e.g. the tenant's parent company pays all its agents' fees" data-testid="deal-payer-note" />
+            {relationship === "other" && <p className="text-[11px] text-muted-foreground">Say in the note how they are related.</p>}
+          </section>
+        </div>
+        <DialogFooter className="gap-2">
+          {current && (
+            <Button type="button" variant="ghost" className="mr-auto" disabled={save.isPending} onClick={() => save.mutate({ companyId: null })} data-testid="deal-payer-remove">Take it off</Button>
+          )}
+          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+          <Button type="button" disabled={save.isPending || !companyId || !relationship || needsNote}
+            onClick={() => save.mutate({ companyId, relationship, note: note.trim() || null })} data-testid="deal-payer-save">
+            {save.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}Save
+          </Button>
+        </DialogFooter>
+        {finding && (
+          <CreateBillingEntityDialog
+            open
+            onOpenChange={v => { if (!v) setFinding(false); }}
+            brand={{ id: party.brand.id, name: party.brand.name }}
+            initialQuery=""
+            onCreated={(_contact, company) => {
+              if (company) { setCompanyId(company.id); queryClient.invalidateQueries({ queryKey: dealPartiesKey(dealId) }); }
+              setFinding(false);
+            }}
+            onSavedWithoutXero={company => { setCompanyId(company.id); queryClient.invalidateQueries({ queryKey: dealPartiesKey(dealId) }); setFinding(false); }}
+            testIdPrefix="deal-payer-find"
+          />
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -283,12 +500,14 @@ export function DealPartyLines({ dealId, role, aml }: { dealId: string; role: De
   return (
     <div className="space-y-2" data-testid={`deal-party-lines-${role}`}>
       <dl className="space-y-1.5">
-        {party.brand.kind === "company" ? (
-          <PartyRow label="Company that signs" testId={`deal-party-row-company-${role}`}>
+        {party.brand.kind === "company" || party.company ? (
+          <PartyRow label={party.company?.kind === "individual" ? "Who signs" : "Company that signs"} testId={`deal-party-row-company-${role}`}>
             {party.company ? (
               <span data-testid={`deal-party-company-${role}`}>
                 <span className="font-medium">{party.company.name}</span>
-                {party.company.companiesHouseNumber && <span className="ml-1.5 font-mono tabular-nums text-muted-foreground">{party.company.companiesHouseNumber}</span>}
+                {party.company.kind === "individual"
+                  ? <span className="ml-1.5 text-muted-foreground">a person, checked as a private individual</span>
+                  : party.company.companiesHouseNumber && <span className="ml-1.5 font-mono tabular-nums text-muted-foreground">{party.company.companiesHouseNumber}</span>}
               </span>
             ) : (
               <span className="text-amber-700 dark:text-amber-400" data-testid={`deal-party-company-missing-${role}`}>Not set: {SIGNING_COMPANY_WORDS[role]}, needed for the AML checks</span>
@@ -297,9 +516,12 @@ export function DealPartyLines({ dealId, role, aml }: { dealId: string; role: De
         ) : (
           <PartyRow label="Signs as">A private individual</PartyRow>
         )}
-        <PartyRow label="Billed to (Xero)" testId={`deal-party-row-billing-${role}`}>
-          {party.xero ? <span>{party.xero.name || "a Xero contact"}</span> : <span className="text-muted-foreground">Not set</span>}
-        </PartyRow>
+        {/* Only BGP's client is billed (20 November 2026): as its company that signs, unless the deal says otherwise. */}
+        {party.client && party.billing && party.billing.state !== "individual" && (
+          <PartyRow label="Billed to" testId={`deal-party-row-billing-${role}`}>
+            <PartyBillingDetail dealId={dealId} party={party} compact />
+          </PartyRow>
+        )}
         <PartyRow label="Who to ask" testId={`deal-party-row-person-${role}`}>
           {party.person
             ? <span data-testid={`deal-party-person-${role}`}>{party.person.name}{party.person.email ? <span className="text-muted-foreground"> · {party.person.email}</span> : <span className="text-amber-700 dark:text-amber-400"> · no email</span>}</span>
@@ -345,7 +567,7 @@ export function PartyReadyToStart({ dealId, companyId, aml }: { dealId: string; 
         </div>
       ) : (
         <p className="text-[11px] text-muted-foreground" data-testid={`kyc-ready-set-${companyId}`}>
-          {party.brand.kind === "company" && party.company ? <>Signs as <span className="text-foreground font-medium">{companyWords(party.company)}</span> · </> : null}
+          {party.company ? <>Signs as <span className="text-foreground font-medium">{companyWords(party.company)}</span> · </> : null}
           {party.person ? <>Ask {party.person.name}{party.person.email ? ` (${party.person.email})` : ""} · </> : null}
           <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setOpen(true)} data-testid={`kyc-ready-change-${companyId}`}>Change</button>
         </p>
@@ -359,7 +581,8 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
   const { toast } = useToast();
   const { data, isLoading, error } = useDealParties(dealId);
   const party = data?.parties.find(p => p.role === role) || null;
-  const [finding, setFinding] = useState(false);
+  // "person": the dialog opens on a person who signs (2026-11-20).
+  const [finding, setFinding] = useState<boolean | "person">(false);
   const [adding, setAdding] = useState(false);
   const [person, setPerson] = useState({ name: "", jobTitle: "", email: "", mobile: "" });
 
@@ -417,8 +640,8 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
         {party && (
           <div className="space-y-5 text-sm">
             <section className="space-y-2" data-testid="deal-party-company-section">
-              <h4 className="flex items-center gap-1.5 font-semibold"><Building2 className="w-4 h-4 text-muted-foreground" />The company that signs</h4>
-              {party.brand.kind === "individual" ? (
+              <h4 className="flex items-center gap-1.5 font-semibold"><Building2 className="w-4 h-4 text-muted-foreground" />Who signs: a company or a person</h4>
+              {party.brand.recordIndividual && !party.company ? (
                 <p className="text-xs text-muted-foreground">{party.brand.name} is recorded as a private individual, so there is no company to pick. Their date of birth and home address are asked for in the client checks.</p>
               ) : (
                 <>
@@ -445,7 +668,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                           <li key={c.id} className="flex items-center gap-2 px-2.5 py-1.5 text-xs" data-testid={`deal-party-company-option-${c.id}`}>
                             <span className="min-w-0 flex-1">
                               <span className="font-medium">{c.name}</span>
-                              <span className="ml-1.5 text-muted-foreground">{c.companiesHouseNumber || "no Companies House number"}</span>
+                              <span className="ml-1.5 text-muted-foreground">{c.kind === "individual" ? "a person" : c.companiesHouseNumber || "no Companies House number"}</span>
                               {c.isDefault && <Badge variant="outline" className="ml-1.5 text-[10px]">Main</Badge>}
                             </span>
                             {chosen
@@ -462,21 +685,32 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                     <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy} onClick={() => setFinding(true)} data-testid="deal-party-find-company">
                       <Plus className="w-3.5 h-3.5 mr-1" />Find it at Companies House
                     </Button>
+                    {/* A person who signs in their own name, checked as a private individual (2026-11-20). */}
+                    <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy} onClick={() => setFinding("person")} data-testid="deal-party-add-person-signs">
+                      <UserRound className="w-3.5 h-3.5 mr-1" />A person signs
+                    </Button>
                     {party.company && (
                       <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" disabled={busy} onClick={() => save.mutate({ companyId: null })}>Clear</Button>
                     )}
                   </div>
-                  <div className="rounded-md bg-muted/50 px-2.5 py-2 text-xs space-y-1" data-testid="deal-party-billing">
+                  {party.client && <div className="rounded-md bg-muted/50 px-2.5 py-2 text-xs space-y-1" data-testid="deal-party-billing">
                     <div><span className="text-muted-foreground">Billed to (Xero): </span>{party.xero ? (party.xero.name || "a Xero contact") : "not set"}</div>
                     {billedElsewhere && party.company?.companiesHouseNumber && (
                       <Button type="button" variant="outline" size="sm" className="h-7 text-xs bg-background" disabled={busy} onClick={() => bill.mutate()} data-testid="deal-party-bill">
                         {bill.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Bill to {party.company.name} in Xero
                       </Button>
                     )}
-                  </div>
+                  </div>}
                 </>
               )}
             </section>
+
+            {party.client && party.billing && party.billing.state !== "individual" && (
+              <section className="space-y-2" data-testid="deal-party-pays-section">
+                <h4 className="flex items-center gap-1.5 font-semibold"><Receipt className="w-4 h-4 text-muted-foreground" />Who pays BGP's invoice</h4>
+                <PartyBillingDetail dealId={dealId} party={party} />
+              </section>
+            )}
 
             {party.brand.kind === "company" && (
               <section className="space-y-2" data-testid="deal-party-people-section">
@@ -549,6 +783,8 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
             onOpenChange={v => { if (!v) setFinding(false); }}
             brand={{ id: party.brand.id, name: party.brand.name }}
             initialQuery={party.brand.name}
+            xero={!!party.client}
+            startAsPerson={finding === "person"}
             onCreated={(contact, company) => { if (company) pickCompany(company, contact); setFinding(false); }}
             onSavedWithoutXero={company => { pickCompany(company); setFinding(false); }}
             testIdPrefix={`deal-party-${role}-find`}

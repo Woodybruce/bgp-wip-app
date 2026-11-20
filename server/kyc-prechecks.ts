@@ -32,13 +32,14 @@ import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
 import {
   KYC_PRECHECK_FRESH_DAYS, KYC_PRECHECK_MAX_WEB_PEOPLE, KYC_PRECHECK_VERSION, PRECHECK_AUTO_RUNS_A_DAY, PRECHECK_RETRY_MINUTES,
-  askInputFrom, checkWebAnswer, chooseScreened, isOffshoreCountry,
+  askInputFrom, checkWebAnswer, chooseScreened, isOffshoreCountry, ownerRegister, ownersAbroadOf, personNameOfRecord,
   isPrecheckResult, listingFromExemptions, nameTokens, ownerKind, personNamesMatch, precheckCardLines, precheckCompany, precheckSanctionsMatch,
   looksOverseasName, pickOverseasEntity, precheckUnfinished, sanctionsLine, sanctionsListCode, sanctionsListName, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput, type PrecheckCardLine, type PrecheckCompany, type PrecheckDocument, type PrecheckListing,
-  type PrecheckOverseasEntity, type ProviderLine, type RegisterOwner, type SanctionsLine, type WebSearchLine,
+  type OwnerAbroad, type PrecheckOverseasEntity, type ProviderLine, type RegisterOwner, type SanctionsLine, type WebSearchLine,
 } from "@shared/kyc-prechecks";
 import type { KycPartyKind } from "@shared/kyc-request";
+import { partySubjectKind } from "@shared/deal-parties";
 
 const DOC_API_BASE = "https://document-api.company-information.service.gov.uk";
 const REGISTER_BASE = "https://find-and-update.company-information.service.gov.uk";
@@ -411,6 +412,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
   // The chain of corporate owners, and the people with control at each level.
   let chain: NonNullable<KycPrecheckResult["companiesHouse"]>["chain"] = [];
   let peopleUpChain: NonNullable<KycPrecheckResult["companiesHouse"]>["peopleUpChain"] = [];
+  let abroadUpChain: OwnerAbroad[] = [];
   try {
     const { discoverUltimateParent } = await import("./companies-house");
     const walk = await withTimeout(discoverUltimateParent(n), chPatient(45_000), "The ownership chain");
@@ -418,6 +420,10 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
     peopleUpChain = walk.ubos.filter(u => u.depth > 0).slice(0, 12).map(u => ({
       name: clean(u.name, 160), foundAt: clean(u.foundAt, 160), controls: (u.controls || []).map(c => clean(c, 120)),
       dob: u.dob?.year ? { year: u.dob.year, month: u.dob.month ?? null } : null, nationality: clean(u.nationality, 60) || null,
+    }));
+    abroadUpChain = (walk.abroad || []).slice(0, 10).map(a => ({
+      name: clean(a.name, 160), country: clean(a.country, 80), registrationNumber: clean(a.registrationNumber, 40) || null,
+      controls: (a.controls || []).map(c => clean(c, 120)), foundAt: clean(a.foundAt, 160) || null,
     }));
   } catch (e: any) {
     errors.push(`Ownership chain: ${words(e)}`);
@@ -433,6 +439,13 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
   }
 
   const offshoreOwners = owners.filter(o => o.kind !== "individual" && isOffshoreCountry(o.country)).map(o => ({ name: o.name, country: o.country! }));
+  // Corporate owners registered abroad, on the register and up the chain
+  // (20 November 2026): Companies House cannot show who owns them.
+  const ownersAbroad: OwnerAbroad[] = [
+    ...owners.filter(o => (o.kind === "company" || o.kind === "legal_person") && ownerRegister(o.country) === "abroad")
+      .map(o => ({ name: o.name, country: String(o.country), registrationNumber: o.registrationNumber || null, controls: o.controls, foundAt: null })),
+    ...abroadUpChain,
+  ];
 
   // The disqualified directors register, by name, then date of birth.
   const disqualified: NonNullable<KycPrecheckResult["companiesHouse"]>["disqualified"] = [];
@@ -480,7 +493,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
       lastAccountsMadeUpTo: profile.accounts?.last_accounts?.made_up_to || null,
       lastAccountsType: accountsType || clean(profile.accounts?.last_accounts?.type, 40) || null,
       hasInsolvencyHistory: !!profile.has_insolvency_history, insolvencyCases,
-      officers, owners, statements, listing, chain, peopleUpChain, offshoreOwners, disqualified, covenant, documents,
+      officers, owners, statements, listing, chain, peopleUpChain, offshoreOwners, ownersAbroad, disqualified, covenant, documents,
     },
     raw: { profile, officers: rawOfficers, pscs: rawPscs },
   };
@@ -490,7 +503,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
 
 // owner: a person with significant control, of the company or of one up its
 // ownership chain (a beneficial owner, MLR 2017 reg 5).
-interface Subject { name: string; role: string; person: boolean; dobYear: number | null; context: string; dobMonth?: number | null; nationality?: string | null; owner?: boolean }
+interface Subject { name: string; role: string; person: boolean; dobYear: number | null; context: string; dobMonth?: number | null; nationality?: string | null; owner?: boolean; abroad?: boolean }
 
 // A UK nationality as Companies House words it, as the code Mesh takes (Woody,
 // 19 November 2026: send the birth year "and UK"). Any other nationality is
@@ -666,12 +679,13 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   // The company that signs for the party, when the deal names one: always
   // one filed under the brand.
   const entity = opts.entityId ? (await pool.query(
-    `SELECT id, name, companies_house_number FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [opts.entityId, companyId])).rows[0] || null : null;
+    `SELECT id, name, companies_house_number, entity_kind FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [opts.entityId, companyId])).rows[0] || null : null;
   if (opts.entityId && !entity) return null;
   const entityId: string | null = entity ? String(entity.id) : null;
   const errors: string[] = [];
   const dealId = opts.dealId || null;
-  const subjectKind: KycPartyKind = !entity && String(company.aml_subject_type || "").toLowerCase() === "individual" ? "individual" : "company";
+  // A person who signs is checked as a private individual (20 November 2026).
+  const subjectKind: KycPartyKind = partySubjectKind(company.aml_subject_type, entity ? { kind: entity.entity_kind } : null);
   const contactName = await dealContactName(dealId, companyId);
   let number = clean(entity ? entity.companies_house_number : company.companies_house_number, 20);
   let notAtCompaniesHouse: string | null = subjectKind === "individual" ? "A private individual: there is no company record to read." : null;
@@ -752,18 +766,20 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     if (!seen.dobYear && s.dobYear) { seen.dobYear = s.dobYear; seen.dobMonth = s.dobMonth ?? null; }
     if (!seen.nationality && s.nationality) seen.nationality = s.nationality;
     if (s.owner) seen.owner = true;
+    if (s.abroad) seen.abroad = true;
     if (s.context.length > seen.context.length) seen.context = s.context;
   };
   const where = companiesHouse ? `${companiesHouse.name} (Companies House ${companiesHouse.number})` : partyName;
-  if (subjectKind === "individual") add({ name: clean(company.name, 160), role: "the party", person: true, dobYear: null, context: "a private individual dealing in UK commercial property" });
+  if (subjectKind === "individual") add({ name: personNameOfRecord(entity ? entity.name : company.name), role: "the party", person: true, dobYear: null, context: "a private individual dealing in UK commercial property" });
   else add({ name: partyName, role: "the company", person: false, dobYear: null, context: companiesHouse ? `UK company ${companiesHouse.number}, registered office ${companiesHouse.registeredOffice || "not given"}` : "a company in a UK property deal" });
   if (subjectKind === "company" && clean(company.name, 160) && clean(company.name, 160).toLowerCase() !== partyName.toLowerCase()) {
     add({ name: clean(company.name, 160), role: "the company (trading name)", person: false, dobYear: null, context: `trading name of ${where}` });
   }
   if (contactName) add({ name: contactName, role: "the deal's contact", person: true, dobYear: null, context: `the contact for ${where} in a UK property deal` });
+  const abroadNames = new Set(ownersAbroadOf(companiesHouse).map(a => a.name.toLowerCase()));
   for (const o of companiesHouse?.owners || []) {
     const person = o.kind === "individual";
-    add({ name: o.name, role: person ? "owner" : "owning company", person, owner: person, dobYear: o.dob?.year || null, dobMonth: o.dob?.month || null, nationality: person ? o.nationality || null : null,
+    add({ name: o.name, role: person ? "owner" : "owning company", person, owner: person, abroad: !person && abroadNames.has(o.name.toLowerCase()), dobYear: o.dob?.year || null, dobMonth: o.dob?.month || null, nationality: person ? o.nationality || null : null,
       context: `${person ? "person" : "company"} with significant control of ${where}${o.dob?.year ? `, born ${o.dob.month ? `${o.dob.month}/` : ""}${o.dob.year}` : ""}${o.nationality ? `, ${o.nationality}` : ""}${o.country ? `, ${o.country}` : ""}` });
   }
   // The people with control of the companies up the chain are the company's
@@ -779,6 +795,9 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
       context: `${o.role.replace(/-/g, " ")} of ${where}${o.dob?.year ? `, born ${o.dob.month ? `${o.dob.month}/` : ""}${o.dob.year}` : ""}${o.nationality ? `, ${o.nationality}` : ""}` });
   }
   for (const c of companiesHouse?.chain || []) add({ name: c.name, role: "company up the ownership chain", person: false, dobYear: null, context: `UK company ${c.number}, in the ownership chain of ${where}` });
+  for (const a of (companiesHouse?.ownersAbroad || []).filter(x => x.foundAt)) {
+    add({ name: a.name, role: "owning company up the chain", person: false, abroad: true, dobYear: null, context: `company registered in ${a.country} that owns ${a.foundAt}, in the ownership chain of ${where}` });
+  }
 
   // Who is screened for public roles and adverse media (Woody, 19 November
   // 2026: "At that point need to work out who needs to be AML/KYC"): the
@@ -791,7 +810,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     (async (): Promise<KycPrecheckResult["web"]> => {
       const { isPerplexityConfigured } = await import("./perplexity");
       if (!isPerplexityConfigured()) return { ran: false, lines: [], skipped: "the web search (Perplexity) is not set up" };
-      const searched = [...screen.full.filter(s => !s.person).slice(0, 1), ...screen.full.filter(s => s.person)];
+      const searched = [...screen.full.filter(s => !s.person).slice(0, 1), ...screen.full.filter(s => !s.person && s.abroad).slice(0, 2), ...screen.full.filter(s => s.person)];
       const lines = await inBatches(searched, 3, searchWeb);
       return { ran: lines.some(l => l.ran), lines, skipped: lines.some(l => l.ran) ? null : `the web search did not answer (${lines[0]?.error || "no one to search"})` };
     })(),

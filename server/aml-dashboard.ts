@@ -20,7 +20,9 @@ import { pool } from "./db";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, isDealPartyRole } from "@shared/deal-parties";
 import { CLOSED_STATUSES, TERMINAL_STATUSES, dealLeftTrackerSql, statusSpellingsFor } from "@shared/deal-status";
 import { amlBucket, amlDealClosed, amlDue, amlStage, amlWaitingOn, daysSince, type AmlDashboardRow } from "@shared/aml-dashboard";
-import { applyFlagReviews, dealRedFlags, partyRedFlags } from "@shared/kyc-red-flags";
+import { applyFlagReviews, dealRedFlags, partyRedFlags, type KycRedFlag } from "@shared/kyc-red-flags";
+import { payerRedFlags } from "@shared/deal-billing";
+import { dealClientRole } from "@shared/deal-parties";
 import { isPrecheckResult } from "@shared/kyc-prechecks";
 import { dueDiligenceLevel, simplifiedBasis } from "@shared/aml-policy";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
@@ -38,6 +40,19 @@ async function staffMe(req: Request): Promise<{ id: string; name: string } | nul
   return u ? { id: String(u.id), name: text(u.name) || text(u.email) } : null;
 }
 
+// A third party paying BGP's invoice for the client (20 November 2026): its
+// flags join the client's, as they do in the deal's AML box
+// (server/kyc-red-flags.ts loadDealRedFlags).
+function withPayerFlags(p: { role: string; brandId: string; deal: any }, prechecks: any[], flags: KycRedFlag[]): KycRedFlag[] {
+  const payerId = String(p.deal.invoice_payer_entity_id || "");
+  if (!payerId || p.role !== dealClientRole({ dealType: p.deal.deal_type, bgpActingFor: p.deal.bgp_acting_for, team: p.deal.team })) return flags;
+  const pre = prechecks.find((r: any) => r.crm_company_id === p.brandId && (r.trading_entity_id || null) === payerId && isPrecheckResult(r.result)) || null;
+  return [...flags, ...payerRedFlags({
+    payer: { id: payerId, name: String(p.deal.invoice_payer_name || "The company that pays") },
+    relationship: p.deal.invoice_payer_relationship || null, note: p.deal.invoice_payer_note || null, precheck: pre?.result || null,
+  })];
+}
+
 // opts.dealId: one deal's rows, whatever its status (the deal's AML box reads
 // its parties' stage here, so the box and the dashboard say the same thing).
 export async function loadAmlDashboard(me: { id: string; name: string }, now: Date = new Date(), opts: { dealId?: string } = {}): Promise<{ rows: AmlDashboardRow[]; unchecked: string[] }> {
@@ -52,9 +67,11 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   const deals = (await pool.query(
     `SELECT d.id, d.name, d.deal_ref, d.status, d.deal_type, d.team, d.updated_at, d.internal_agent_ids, d.internal_agent,
             d.aml_pep_status, d.aml_risk_level, d.aml_edd_required, d.aml_edd_reason, d.aml_edd_completed_at, d.aml_sof_analysis,
-            d.pricing, p.postcode,
+            d.pricing, p.postcode, d.bgp_acting_for,
+            d.invoice_payer_entity_id, d.invoice_payer_relationship, d.invoice_payer_note, pe.name AS invoice_payer_name,
             ${partyCols.join(", ")}, p.name AS property_name
        FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
+       LEFT JOIN crm_trading_entities pe ON pe.id = d.invoice_payer_entity_id
       WHERE ${which}
         AND (d.landlord_id IS NOT NULL OR d.tenant_id IS NOT NULL OR d.vendor_id IS NOT NULL OR d.purchaser_id IS NOT NULL)
       ORDER BY d.updated_at DESC NULLS LAST
@@ -146,7 +163,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const pre = needsCompany ? null : prechecks.find((r: any) => own(r) && isPrecheckResult(r.result)) || null;
     const partyTokens = tokens.filter((t: any) => String(t.deal_id) === String(p.deal.id) && t.company_id === p.brandId);
     const liveTokens = partyTokens.filter((t: any) => !t.revoked_at);
-    const live = applyFlagReviews(partyRedFlags({
+    const live = applyFlagReviews(withPayerFlags(p, prechecks, partyRedFlags({
       company: companyRow,
       latestInvestigation: latest ? { sanctions_match: latest.sanctions_match, conducted_at: latest.conducted_at, precheck: !!latest.precheck } : null,
       precheck: pre ? { result: pre.result, current: !!latest && String(latest.id) === String(pre.id) } : null,
@@ -155,7 +172,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
         status: s.status, decision_reason: s.decision_reason, received_at: s.received_at,
         name: [s.first_name, s.last_name].filter(Boolean).join(" ") || null,
       })),
-    }), reviewsForParty(reviews, p.brandId, p.entityId)).live;
+    })), reviewsForParty(reviews, p.brandId, p.entityId)).live;
     const flags = live.map(f => f.label);
     const onDeal = dealFlags.get(String(p.deal.id)) || [];
     const level = dueDiligenceLevel({ partyFlags: live, dealFlags: onDeal, simplifiedBasis: simplifiedBasis({ precheck: pre?.result || null, partyName: companyRow?.name || null }) });

@@ -136,7 +136,8 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
     if (!brand) continue;
     const pv = view?.parties.find(p => p.role === role) || null;
     const mark = (marks as Map<string, any>).get(`${dealId}:${role}`);
-    const kind = individuals.has(brandId) ? "individual" : "company";
+    // A person who signs is a private individual (the party view's kind).
+    const kind = pv ? pv.brand.kind : individuals.has(brandId) ? "individual" : "company";
     const unread: string[] = [];
     const read = <T,>(what: string, run: Promise<T>, empty: T): Promise<T> => run.catch((e: any) => {
       unread.push(what);
@@ -349,7 +350,7 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
   const name = p.company?.name || p.brand.name;
   w.title(`${DEAL_PARTY_LABEL[p.role]}: ${name}`);
   w.kv("Brand on the deal", p.brand.name);
-  w.kv("Company that signs", p.individual ? "A private individual" : p.company ? `${p.company.name}${p.company.number ? ` (Companies House ${p.company.number})` : ""}` : "Not set on the deal", p.individual || p.company ? INK : AMBER);
+  w.kv(p.individual ? "Who signs" : "Company that signs", p.individual ? (p.company ? `${p.company.name}, a private individual` : "A private individual") : p.company ? `${p.company.name}${p.company.number ? ` (Companies House ${p.company.number})` : ""}` : "Not set on the deal", p.individual || p.company ? INK : AMBER);
   w.kv("Person dealing with BGP", p.person ? `${p.person.name}${p.person.email ? `, ${p.person.email}` : ""}` : null);
   const state = amlFileStateWords(p.state, p.notRequired);
   w.kv("Where it stands", state.words, state.tone === "done" ? GREEN : state.tone === "flag" ? RED : AMBER);

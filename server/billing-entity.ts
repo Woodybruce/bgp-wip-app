@@ -6,6 +6,15 @@
 // landlord"). brandId names the landlord or brand. One route, BGP staff only:
 //
 //   POST /api/billing-entities   { brandId, companyNumber }
+//   POST /api/billing-entities   { brandId, person: { name, email?, mobile? } }
+//
+// A person (Woody, 20 November 2026: "need ability to create billing entity
+// or contracting entity as a person we will then KYC them"): filed under the
+// brand as an entity of kind 'individual' with the CRM contact who is them
+// (found by email, else added), and made a Xero contact by name. The deal then
+// checks them as a private individual. `xero: false` (the party box for a
+// party BGP does not bill, or the deal form's contracting entity) files
+// either kind without a Xero contact.
 //
 // 1. The company is read from Companies House here: the request carries only
 //    its number, never a name or an address.
@@ -34,6 +43,36 @@ export const BILLING_ENTITY_STAFF_ONLY = "Only BGP staff, signed in as themselve
 export const CLOSED_COMPANY_STATUSES: readonly string[] = ["dissolved", "converted-closed", "removed", "closed"];
 
 export interface BillingEntityInput { brandId: string; companyNumber: string }
+export interface BillingPersonInput { brandId: string; person: { name: string; email: string | null; mobile: string | null } }
+
+// Words that make a name a company's, not a person's.
+const COMPANY_WORDS = /\b(limited|ltd|plc|llp|lp|inc|corp|corporation|holdings|group|trust|trustees|partnership|company|properties|investments|estates)\b/i;
+
+/** A person typed as the billing or contracting entity, or why not. */
+export function billingPersonInput(body: unknown): BillingPersonInput | { problem: string } {
+  const b: Record<string, unknown> = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
+  const brandId = typeof b.brandId === "string" ? b.brandId.trim() : "";
+  const p: Record<string, unknown> = b.person && typeof b.person === "object" && !Array.isArray(b.person) ? (b.person as Record<string, unknown>) : {};
+  const name = String(p.name ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+  const email = String(p.email ?? "").trim().toLowerCase().slice(0, 200) || null;
+  const mobile = String(p.mobile ?? "").replace(/[^\d+() -]/g, "").replace(/\s+/g, " ").trim().slice(0, 40) || null;
+  if (!brandId || brandId.length > 200) return { problem: "Pick the landlord or brand first." };
+  if (name.split(" ").filter(w => /[a-z]/i.test(w)).length < 2) return { problem: "Give the person's first name and surname." };
+  if (COMPANY_WORDS.test(name)) return { problem: `${name} reads as a company: find it at Companies House instead.` };
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { problem: "That email does not look right." };
+  return { brandId, person: { name, email, mobile } };
+}
+
+/** The contact made in Xero for a person: their name, first name and surname, and email. */
+export function xeroContactForPerson(person: { name: string; email: string | null }): Record<string, unknown> {
+  const words = person.name.split(" ");
+  return {
+    Name: person.name.slice(0, 255),
+    FirstName: words.slice(0, -1).join(" ").slice(0, 255),
+    LastName: words[words.length - 1].slice(0, 255),
+    ...(person.email ? { EmailAddress: person.email } : {}),
+  };
+}
 
 /** The brand and the Companies House number from a request, or null when either is missing or malformed. */
 export function billingEntityInput(body: unknown): BillingEntityInput | null {
@@ -88,8 +127,54 @@ type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>
 type Pool = Db & { connect: () => Promise<Db & { release: () => void }> };
 
 export type SavedEntity =
-  | { id: string; name: string; companiesHouseNumber: string | null; created: boolean }
+  | { id: string; name: string; companiesHouseNumber: string | null; created: boolean; kind?: "company" | "individual"; contactId?: string | null }
   | { conflict: string };
+
+/**
+ * A person under the brand: the entity of kind 'individual' (one of that name
+ * already filed is reused; a company of that name is not), and the CRM contact
+ * who is them, found by email or added. One transaction.
+ */
+export async function savePersonEntity(pool: Pool, brandId: string, person: BillingPersonInput["person"], actorName: string,
+  insertTradingEntity: (db: Db, entity: { parentCompanyId: string; name: string; companiesHouseNumber?: string | null }) => Promise<{ id: string; created: boolean }>,
+  findOrAddPartyPerson: (db: Db, brandId: string, typed: { name: string; email: string | null; mobile: string | null; jobTitle: string | null }, note: string) => Promise<{ id: string; created: boolean }>): Promise<SavedEntity> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const made = await insertTradingEntity(client, { parentCompanyId: brandId, name: person.name, companiesHouseNumber: null });
+    const row = (await client.query(`SELECT id, name, companies_house_number, entity_kind, contact_id FROM crm_trading_entities WHERE id = $1`, [made.id])).rows[0];
+    const number = String(row?.companies_house_number || "").trim();
+    // A company of that name already filed, with its Companies House number, is not a person.
+    if (!made.created && number) {
+      await client.query("ROLLBACK");
+      return { conflict: number };
+    }
+    let contactId: string | null = row?.contact_id ? String(row.contact_id) : null;
+    if (!contactId) {
+      contactId = (await findOrAddPartyPerson(client, brandId, { name: person.name, email: person.email, mobile: person.mobile, jobTitle: null },
+        `Added on a deal by ${actorName} as the person who signs or is billed (20 November 2026 feature: a person as the billing or contracting entity).`)).id;
+    } else if (person.email || person.mobile) {
+      // Blank fields only: an email or mobile already held is kept.
+      await client.query(
+        `UPDATE crm_contacts SET email = COALESCE(NULLIF(email, ''), $2), phone_mobile = COALESCE(NULLIF(phone_mobile, ''), $3), updated_at = now() WHERE id = $1`,
+        [contactId, person.email, person.mobile]);
+    }
+    await client.query(`UPDATE crm_trading_entities SET entity_kind = 'individual', contact_id = $2 WHERE id = $1`, [made.id, contactId]);
+    if (made.created) {
+      await client.query(
+        `INSERT INTO investment_comp_migration_log (batch, table_name, record_id, action, prior, note) VALUES ($1, $2, $3, $4, $5, $6)`,
+        ["billing-entity", "crm_trading_entities", made.id, "entity_created", null,
+          `${actorName}: entity_created under ${brandId} as a person who signs or is billed, from a deal`]);
+    }
+    await client.query("COMMIT");
+    return { id: made.id, name: String(row?.name || person.name), companiesHouseNumber: null, created: made.created, kind: "individual", contactId };
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 
 /**
  * The company under the brand, through the creation door. One transaction (the
@@ -125,6 +210,33 @@ export async function saveBillingEntity(pool: Pool, brandId: string, name: strin
   }
 }
 
+/** The firm's Xero contact by this exact name, or a new one from `body`. Never throws: a refusal is said in words. */
+async function xeroContactByName(name: string, body: Record<string, unknown>): Promise<{ contact: Record<string, unknown> | null; created: boolean; error: string | null }> {
+  try {
+    const { withSystemXero } = await import("./xero-system-session");
+    const { xeroApi, pickBillingAddress, rememberXeroContact } = await import("./xero");
+    const got = await withSystemXero(async (sys: any) => {
+      const found = await xeroApi(sys, `/Contacts?where=${encodeURIComponent(`Name=="${name.replace(/"/g, "")}"`)}`);
+      const same = (found?.Contacts || []).find((c: any) => c?.ContactStatus !== "ARCHIVED" && sameCompanyName(c?.Name, name));
+      if (same) return { contact: same, created: false, tenantId: sys?.xeroTokens?.tenantId || null };
+      const made = await xeroApi(sys, "/Contacts", { method: "POST", body: JSON.stringify({ Contacts: [body] }) });
+      const c = made?.Contacts?.[0];
+      if (!c?.ContactID) throw new Error("Xero did not send the new contact back");
+      return { contact: c, created: true, tenantId: sys?.xeroTokens?.tenantId || null };
+    });
+    if (!got) return { contact: null, created: false, error: xeroRefusal("Not connected") };
+    const c = got.contact;
+    rememberXeroContact(got.tenantId, c);
+    return {
+      contact: { ContactID: c.ContactID, Name: c.Name, AccountNumber: c.AccountNumber || null, EmailAddress: c.EmailAddress || null, BillingAddress: pickBillingAddress(c.Addresses), Addresses: c.Addresses || [] },
+      created: got.created, error: null,
+    };
+  } catch (e: any) {
+    console.warn("[billing-entity] Xero contact not made:", e?.message || e);
+    return { contact: null, created: false, error: xeroRefusal(e?.message) };
+  }
+}
+
 export function setupBillingEntityRoutes(app: Express) {
   const signedIn = (req: Request, res: Response, next: NextFunction) => {
     import("./auth").then(m => m.requireAuth(req, res, next)).catch(next);
@@ -136,13 +248,37 @@ export function setupBillingEntityRoutes(app: Express) {
       // viewing as a client, is refused before anything is read.
       const { isClientRequestUser, resolveCompanyScope } = await import("./company-scope");
       if ((await isClientRequestUser(req)) || (await resolveCompanyScope(req))) return res.status(403).json({ message: BILLING_ENTITY_STAFF_ONLY });
-      const input = billingEntityInput(req.body);
-      if (!input) return res.status(400).json({ message: "Pick the company from Companies House, and the landlord or brand first." });
+      // A person (20 November 2026), or a company from Companies House.
+      const personIn = req.body && typeof req.body === "object" && req.body.person != null ? billingPersonInput(req.body) : null;
+      if (personIn && "problem" in personIn) return res.status(400).json({ message: personIn.problem });
+      const input = personIn ? null : billingEntityInput(req.body);
+      if (!personIn && !input) return res.status(400).json({ message: "Pick the company from Companies House, and the landlord or brand first." });
 
       const { pool } = await import("./db");
-      const brand = (await pool.query(`SELECT id, name, merged_into_id FROM crm_companies WHERE id = $1`, [input.brandId])).rows[0];
+      const brand = (await pool.query(`SELECT id, name, merged_into_id FROM crm_companies WHERE id = $1`, [personIn ? personIn.brandId : input!.brandId])).rows[0];
       if (!brand) return res.status(404).json({ message: "That landlord or brand was not found." });
       if (brand.merged_into_id) return res.status(409).json({ message: "That landlord or brand was merged into another record. Pick it again." });
+
+      if (personIn) {
+        const userId = req.session?.userId || (req as any).tokenUserId || null;
+        const me = userId ? (await pool.query(`SELECT name, email FROM users WHERE id = $1`, [userId])).rows[0] : null;
+        const actorName = String(me?.name || me?.email || userId || "BGP staff");
+        const { insertTradingEntity } = await import("./tenancy-tenant");
+        const { findOrAddPartyPerson } = await import("./deal-parties");
+        const entity = await savePersonEntity(pool as unknown as Pool, brand.id, personIn.person, actorName, insertTradingEntity, findOrAddPartyPerson);
+        if ("conflict" in entity) {
+          return res.status(409).json({ message: `${brand.name} already has a company called ${personIn.person.name}, with Companies House number ${entity.conflict}. Pick that company instead.` });
+        }
+        if (req.body?.xero === false) return res.status(entity.created ? 201 : 200).json({ entity, contact: null, xeroCreated: false, xeroError: null });
+        const got = await xeroContactByName(personIn.person.name, xeroContactForPerson(personIn.person));
+        if (got.contact) {
+          await pool.query(`UPDATE crm_trading_entities SET xero_contact_id = $2, xero_contact_name = $3 WHERE id = $1`,
+            [entity.id, String(got.contact.ContactID), String(got.contact.Name || personIn.person.name)]).catch((e: any) => console.warn("[billing-entity] Xero contact not kept on the person:", e?.message));
+          console.log(`[billing-entity] ${actorName} ${got.created ? "made" : "picked the existing"} Xero contact for a person under brand ${brand.id}`);
+        }
+        return res.status(entity.created || got.created ? 201 : 200).json({ entity, contact: got.contact, xeroCreated: got.created, xeroError: got.error });
+      }
+      if (!input) return res.status(400).json({ message: "Pick the company from Companies House, and the landlord or brand first." });
 
       // The company as Companies House holds it.
       const { chFetch } = await import("./companies-house");
@@ -202,6 +338,10 @@ export function setupBillingEntityRoutes(app: Express) {
             BillingAddress: pickBillingAddress(c.Addresses), Addresses: c.Addresses || [] };
           xeroCreated = got.created;
           rememberXeroContact(got.tenantId, c);
+          // The company keeps its own Xero contact (20 November 2026), so
+          // billing it is known to be billing this company.
+          await pool.query(`UPDATE crm_trading_entities SET xero_contact_id = $2, xero_contact_name = $3 WHERE id = $1`,
+            [entity.id, String(c.ContactID), String(c.Name || name)]).catch((e: any) => console.warn("[billing-entity] Xero contact not kept on the company:", e?.message));
           console.log(`[billing-entity] ${actorName} ${got.created ? "made" : "picked the existing"} Xero contact for ${name} (${input.companyNumber}) under brand ${brand.id}`);
         }
       } catch (e: any) {

@@ -2392,6 +2392,22 @@ const schemaStartup = (async () => {
     `ALTER TABLE kyc_upload_files ADD COLUMN IF NOT EXISTS doc_type TEXT`,
     `ALTER TABLE kyc_upload_files ADD COLUMN IF NOT EXISTS kyc_document_id VARCHAR`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_mlro_report_url TEXT`,
+    // Who pays BGP's invoice (Woody, 2026-11-20, "yes biuild"): each company's
+    // own contact in the firm's Xero, and a third party the deal records as
+    // paying for the client, with how it is related (shared/deal-billing.ts).
+    // Additive and nullable; read and written by server/deal-parties.ts only.
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS xero_contact_id TEXT`,
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS xero_contact_name TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS invoice_payer_entity_id VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS invoice_payer_relationship TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS invoice_payer_note TEXT`,
+    // A person as the billing or contracting entity (Woody, 2026-11-20: "need
+    // ability to create billing entity or contracting entity as a person we
+    // will then KYC them"): entity_kind 'individual' marks a person filed under
+    // the party (null is a company), contact_id the CRM contact who is that
+    // person. Additive and nullable; written by server/billing-entity.ts.
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS entity_kind TEXT`,
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS contact_id TEXT`,
     // Promote the three other board members to admin alongside Woody +
     // Layla. Idempotent: re-runs are no-ops once is_admin is already true.
     // Match by name with ILIKE so minor spelling variants in the users

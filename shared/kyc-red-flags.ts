@@ -44,7 +44,10 @@ export type KycRedFlagKind =
   | "super_prime"
   // An overseas-looking company with no Overseas Entity ID found on the
   // Register of Overseas Entities (19 November 2026).
-  | "overseas_entity_missing";
+  | "overseas_entity_missing"
+  // A third party pays BGP's invoice with no clear relationship to the client
+  // (20 November 2026; shared/deal-billing.ts).
+  | "third_party_payer";
 
 // One line of what is behind a flag (Woody, 19 November 2026: "We also need
 // to see the detail of the red flag").

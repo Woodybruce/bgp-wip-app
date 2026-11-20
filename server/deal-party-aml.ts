@@ -29,7 +29,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import multer from "multer";
 import crypto from "crypto";
 import { pool } from "./db";
-import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, isDealPartyRole, type DealPartyRole } from "@shared/deal-parties";
+import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, isDealPartyRole, partySubjectKind, type DealPartyRole } from "@shared/deal-parties";
 import {
   KYC4U_RESULTS, KYC4U_RESULT_MAX_BYTES, KYC4U_RESULT_MAX_FILES, SIGN_OFF_NOTE_MIN,
   isKyc4uResultKey, kyc4uResultDate, kycVerdict, sameLegalCompany, signOffDenial,
@@ -146,7 +146,8 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
         AND completed_at IS NOT NULL AND COALESCE(is_test, false) = false
         AND COALESCE(jsonb_typeof(request->'person'), 'null') <> 'object' LIMIT 1`,
     [party.dealId, party.brandId, party.entityId]).catch(() => ({ rows: [] as any[] }))).rows.length > 0;
-  const kind = !party.entityId && String(held?.aml_subject_type || "").toLowerCase() === "individual" ? "individual" : "company";
+  const signer = party.entityId ? (await db.query(`SELECT entity_kind FROM crm_trading_entities WHERE id = $1`, [party.entityId]).catch(() => ({ rows: [] as any[] }))).rows[0] || { entity_kind: null } : null;
+  const kind = partySubjectKind(held?.aml_subject_type, signer ? { kind: signer.entity_kind } : null);
   const people = await import("./kyc-people")
     .then(async m => m.partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind }, await m.dealPeopleRequests(party.dealId, db)))
     .catch(() => null);

@@ -12,6 +12,8 @@ import {
 import { kycRedFlagEmail, kycReplyAddresses } from "@shared/kyc-request";
 import { isPrecheckResult } from "@shared/kyc-prechecks";
 import { dueDiligenceLevel, policyFactorsToWeigh, simplifiedBasis, type PartyDueDiligence } from "@shared/aml-policy";
+import { payerRedFlags } from "@shared/deal-billing";
+import { DEAL_PARTY_COLUMNS, dealClientRole } from "@shared/deal-parties";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
@@ -121,9 +123,20 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
       ORDER BY received_at DESC NULLS LAST`, [ids])).rows, none) : none;
   const deal = await read("the deal's AML fields", async () => (await pool.query(
     `SELECT d.aml_pep_status, d.aml_risk_level, d.aml_edd_required, d.aml_edd_reason, d.aml_edd_completed_at, d.aml_sof_analysis,
-            d.deal_type, d.team, d.pricing, p.postcode
-       FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id WHERE d.id = $1`, [dealId])).rows[0] || null, null as any);
+            d.deal_type, d.team, d.pricing, p.postcode,
+            d.bgp_acting_for, d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id,
+            d.invoice_payer_entity_id, d.invoice_payer_relationship, d.invoice_payer_note, e.name AS invoice_payer_name
+       FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
+       LEFT JOIN crm_trading_entities e ON e.id = d.invoice_payer_entity_id
+      WHERE d.id = $1`, [dealId])).rows[0] || null, null as any);
   const dealSplit = applyFlagReviews(dealRedFlags(deal), reviewsForDeal(reviews, dealId));
+  // A third party paying BGP's invoice for the client (20 November 2026): its
+  // own flags join the client's, read from BGP's checks before asking on it.
+  const payer = deal?.invoice_payer_entity_id ? {
+    brandId: String(deal[DEAL_PARTY_COLUMNS[dealClientRole({ dealType: deal.deal_type, bgpActingFor: deal.bgp_acting_for, team: deal.team })].brand] || ""),
+    id: String(deal.invoice_payer_entity_id), name: String(deal.invoice_payer_name || "The company that pays"),
+    relationship: deal.invoice_payer_relationship || null, note: deal.invoice_payer_note || null,
+  } : null;
 
   const parties: Record<string, KycRedFlag[]> = {};
   const setAside: Record<string, SetAsideFlag[]> = {};
@@ -145,6 +158,10 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
         name: [s.first_name, s.last_name].filter(Boolean).join(" ") || null,
       })),
     });
+    if (payer && payer.brandId === id) {
+      const payerPre = prechecks.find((p: any) => p.crm_company_id === id && (p.trading_entity_id || null) === payer.id && isPrecheckResult(p.result)) || null;
+      all.push(...payerRedFlags({ payer: { id: payer.id, name: payer.name }, relationship: payer.relationship, note: payer.note, precheck: payerPre?.result || null }));
+    }
     const split = applyFlagReviews(all, reviewsForParty(reviews, id, signs[id] || null));
     parties[id] = split.live;
     setAside[id] = split.setAside;

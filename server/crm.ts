@@ -3080,6 +3080,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         `SELECT id, parent_company_id AS "parentCompanyId", name,
                 companies_house_number AS "companiesHouseNumber",
                 vat_number AS "vatNumber", is_default AS "isDefault",
+                entity_kind AS "entityKind", contact_id AS "contactId",
                 notes, created_at AS "createdAt", updated_at AS "updatedAt"
            FROM crm_trading_entities
           WHERE parent_company_id = $1
@@ -5036,8 +5037,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 Return a JSON object with these fields (use null for any field you cannot find):
 {
   "propertyAddress": "string - full property address",
-  "tenantName": "string - name of the tenant company",
-  "landlordName": "string - name of the landlord company",
+  "tenantName": "string - for a letting: the tenant taking the lease (never the buyer in a sale)",
+  "landlordName": "string - for a letting: the landlord granting the lease",
+  "vendorName": "string - for a sale or purchase of a property: the seller (vendor), as the document names them",
+  "purchaserName": "string - for a sale or purchase of a property: the buyer (purchaser), a company or a person, as the document names them",
+  "sittingTenant": "string - for a sale or purchase: a tenant already in occupation that the buyer takes the property subject to",
+  "price": number - for a sale or purchase: the agreed purchase price or consideration in GBP (just the number),
   "rentPa": number - annual rent in GBP (just the number, no currency symbol),
   "rentPsf": number - rent per square foot if mentioned,
   "totalAreaSqft": number - total area in sq ft,

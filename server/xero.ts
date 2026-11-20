@@ -6,7 +6,7 @@ import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
 import { isInvoicedStatus, statusSpellingsFor, TERMINAL_STATUSES } from "@shared/deal-status";
-import { DEAL_PARTY_LABEL, invoiceContactFor, type InvoiceContact } from "@shared/deal-parties";
+import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, dealClientRole, invoiceContactFor, type InvoiceCompany, type InvoiceContact } from "@shared/deal-parties";
 
 const XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize";
 const XERO_TOKEN_URL = "https://identity.xero.com/connect/token";
@@ -419,22 +419,58 @@ const XERO_COUNT_SINCE = new Date().toISOString();
  * server/property-schemes.ts) is found in Xero by that exact name, or made,
  * as before. Never a contact named after the deal or its tenant, which is
  * what the invoice routes fell back to until then.
+ *
+ * With neither set (Woody, 20 November 2026: "the company signs is
+ * effectively the xero billing entity"), the invoice goes to the third party
+ * the deal records as paying for the client, else to the client's company
+ * that signs: by the Xero contact kept on the company, else by its name, found
+ * or made here and then kept on the company.
  */
 export async function resolveDealInvoiceContact(session: any, deal: Record<string, any>, opts: { contactEmail?: string | null } = {}): Promise<{ contactId: string | null; name: string | null; billing: InvoiceContact }> {
-  const billing = invoiceContactFor(deal);
+  const billing = invoiceContactFor(deal, await invoiceCompaniesFor(deal));
   if (billing.contactId) return { contactId: billing.contactId, name: billing.name, billing };
   if (billing.name) {
     const found = await xeroApi(session, `/Contacts?where=Name=="${billing.name.replace(/"/g, "")}"`);
     const c = found?.Contacts?.[0];
-    if (c?.ContactID) return { contactId: String(c.ContactID), name: c.Name || billing.name, billing };
-    const made = await xeroApi(session, "/Contacts", {
-      method: "POST",
-      body: JSON.stringify({ Contacts: [{ Name: billing.name, EmailAddress: opts.contactEmail || undefined }] }),
-    });
-    const id = made?.Contacts?.[0]?.ContactID;
-    if (id) return { contactId: String(id), name: billing.name, billing };
+    let id: string | null = c?.ContactID ? String(c.ContactID) : null;
+    const name = c?.ContactID ? (c.Name || billing.name) : billing.name;
+    if (!id) {
+      const number = billing.company?.companiesHouseNumber || null;
+      const made = await xeroApi(session, "/Contacts", {
+        method: "POST",
+        body: JSON.stringify({ Contacts: [{ Name: billing.name, ...(number ? { CompanyNumber: number } : {}), EmailAddress: opts.contactEmail || undefined }] }),
+      });
+      id = made?.Contacts?.[0]?.ContactID ? String(made.Contacts[0].ContactID) : null;
+    }
+    if (id && billing.company?.id) {
+      const { pool } = await import("./db");
+      await pool.query(`UPDATE crm_trading_entities SET xero_contact_id = $2, xero_contact_name = $3 WHERE id = $1 AND xero_contact_id IS NULL`, [billing.company.id, id, name])
+        .catch((e: any) => console.warn("[xero] contact not kept on the company:", e?.message));
+    }
+    if (id) return { contactId: id, name, billing };
   }
   return { contactId: null, name: billing.name, billing };
+}
+
+// The client's company that signs, and the third party the deal records as
+// paying for it: each only when filed under the client's brand.
+async function invoiceCompaniesFor(deal: Record<string, any>): Promise<{ payer: InvoiceCompany | null; signing: InvoiceCompany | null }> {
+  const dealId = String(deal.id || "");
+  if (!dealId) return { payer: null, signing: null };
+  const col = DEAL_PARTY_COLUMNS[dealClientRole(deal)];
+  const { pool } = await import("./db");
+  const row = (await pool.query(
+    `SELECT s.id AS s_id, s.name AS s_name, s.companies_house_number AS s_number, s.xero_contact_id AS s_xid, s.xero_contact_name AS s_xname,
+            p.id AS p_id, p.name AS p_name, p.companies_house_number AS p_number, p.xero_contact_id AS p_xid, p.xero_contact_name AS p_xname
+       FROM crm_deals d
+       LEFT JOIN crm_trading_entities s ON s.id = d.${col.company} AND s.parent_company_id = d.${col.brand}
+       LEFT JOIN crm_trading_entities p ON p.id = d.invoice_payer_entity_id AND p.parent_company_id = d.${col.brand}
+      WHERE d.id = $1`, [dealId]).catch(() => ({ rows: [] as any[] }))).rows[0];
+  const pick = (prefix: "s" | "p"): InvoiceCompany | null => row?.[`${prefix}_id`] ? {
+    id: String(row[`${prefix}_id`]), name: String(row[`${prefix}_name`] || ""), companiesHouseNumber: row[`${prefix}_number`] || null,
+    xeroContactId: row[`${prefix}_xid`] || null, xeroContactName: row[`${prefix}_xname`] || null,
+  } : null;
+  return { payer: pick("p"), signing: pick("s") };
 }
 
 export async function xeroApi(session: any, path: string, options: RequestInit = {}): Promise<any> {
@@ -1068,7 +1104,7 @@ export function setupXeroRoutes(app: Express) {
         if (!xeroContactId) {
           return res.status(409).json({
             code: "NO_BILLING_ENTITY",
-            message: `Set who is billed first: the ${DEAL_PARTY_LABEL[resolved.billing.role].toLowerCase()}'s billing entity under Parties, or an invoice contact on this deal.`,
+            message: `Set who is billed first: the ${DEAL_PARTY_LABEL[resolved.billing.role].toLowerCase()}'s company that signs under Parties (it is billed), or an invoice contact on this deal.`,
           });
         }
       }

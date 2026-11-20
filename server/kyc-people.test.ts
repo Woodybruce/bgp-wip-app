@@ -256,3 +256,21 @@ test("a proof of address counts only when it reads as theirs, in date and accept
   assert.equal(fixed.address.done, true);
   assert.equal(fixed.address.proof?.documentId, "doc-2");
 });
+
+test("owners behind a company registered abroad: the client is asked who they are", async () => {
+  const { partyPeople, PARTY_PEOPLE_BASIS_WORDS } = await import("../shared/kyc-people");
+  const precheck: any = {
+    kind: "precheck", version: 1, ranAt: "2026-11-20T09:00:00Z", party: { companyId: "c1", name: "TUREDDI GROUP LIMITED", subjectKind: "company", contactName: null },
+    companiesHouse: {
+      number: "15210693", name: "TUREDDI GROUP LIMITED", listing: null, chain: [], peopleUpChain: [], statements: [], offshoreOwners: [],
+      officers: [{ name: "ROSSI, Marco", role: "director", appointedOn: null, dob: { month: 1, year: 1980 }, nationality: "Italian" }],
+      owners: [{ name: "Scp Aaa Invest", kind: "company", controls: ["ownership-of-shares-75-to-100-percent"], notifiedOn: null, country: "Monaco", registrationNumber: "25sc38568" }],
+    },
+    sanctions: { ran: true, lists: [], lines: [], error: null },
+  };
+  const people = partyPeople({ kind: "company", companyId: "c1", precheck, requests: [] } as any);
+  assert.equal(people.basis, "owners_abroad");
+  assert.deepEqual(people.ownersAbroad, [{ name: "Scp Aaa Invest", country: "Monaco", foundAt: null }]);
+  assert.match(PARTY_PEOPLE_BASIS_WORDS.owners_abroad, /structure chart up to the people/);
+  assert.ok(people.outstanding.some(o => /The people behind Scp Aaa Invest \(Monaco\)/.test(o)), "owed until the client sends the chart");
+});

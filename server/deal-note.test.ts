@@ -293,3 +293,42 @@ test("the form's own rules, shared with the note: the property's landlord and te
   assert.equal(teamForDealType("New Letting"), null);
   assert.equal(dealAutoName({ dealType: "New Letting", propertyId: "p1", tenantId: "b1" }, [{ id: "p1", name: "55 Wells Street" }], [{ id: "b1", name: "barrette estates" }]), "barrette estates – 55 Wells Street");
 });
+
+// Heads of terms on a sale or purchase (Woody, 20 November 2026: "I loaded up
+// HOTs but it didnt add new vendor also it hasnt added the purchase price ...
+// and should auto add team if its investment").
+test("a name from a document finds its company by whole words, never part of a word", async () => {
+  const { findCompanyByName } = await import("../client/src/lib/deal-note");
+  const companies = [
+    { id: "ee", name: "EE" },
+    { id: "urc", name: "URC Thames North Trust" },
+    { id: "urc2", name: "United Reformed Church (trustees)" },
+    { id: "sandy", name: "Sandy Macaskill (private)" },
+    { id: "fg", name: "Fortis Green Tennis Club Ltd" },
+  ];
+  // On live, "Fortis Green Tennis Club" was linked to EE: "fortis gr-ee-n" holds "ee".
+  assert.equal(findCompanyByName("Fortis Green Tennis Club", companies.filter(c => c.id !== "fg")), null);
+  assert.equal(findCompanyByName("FORTIS GREEN TENNIS CLUB", companies)?.id, "fg");
+  assert.equal(findCompanyByName("Sandy Macaskill", companies)?.id, "sandy");
+  assert.equal(findCompanyByName("The Trustees of United Reformed Church", companies)?.id, "urc2");
+  assert.equal(findCompanyByName("URC Thames North Trust", companies)?.id, "urc");
+  assert.equal(findCompanyByName("EE Limited", companies)?.id, "ee", "the same words, a legal ending aside");
+  assert.equal(findCompanyByName("", companies), null);
+  // Two companies the words fit: no guess.
+  assert.equal(findCompanyByName("Green Tennis", [{ id: "a", name: "Green Tennis Club" }, { id: "b", name: "Green Tennis Centre" }]), null);
+});
+
+test("a sale's heads of terms fill the vendor, purchaser, price, fee and team", async () => {
+  const { hotsParties, hotsPricePatch, isInvestmentDealType, teamPatch } = await import("../client/src/lib/deal-note");
+  const reading = { dealType: "Purchase", vendorName: "URC Thames North Trust", purchaserName: "Sandy Macaskill", sittingTenant: "Fortis Green Tennis Club", tenantName: "Fortis Green Tennis Club", price: 510000, feePercentage: 1 };
+  assert.deepEqual(hotsParties(reading, "Purchase"), [{ role: "vendor", name: "URC Thames North Trust" }, { role: "purchaser", name: "Sandy Macaskill" }]);
+  // A reader that gave only a landlord gave the seller; the tenant of a sale is never the buyer.
+  assert.deepEqual(hotsParties({ landlordName: "URC Thames North Trust", tenantName: "Fortis Green Tennis Club" }, "Sale"), [{ role: "vendor", name: "URC Thames North Trust" }]);
+  assert.deepEqual(hotsParties(reading, "New Letting"), [{ role: "tenant", name: "Fortis Green Tennis Club" }]);
+  assert.deepEqual(hotsPricePatch({ pricing: "", fee: "", feePercentage: "" }, reading), { pricing: "510000", feePercentage: "1", fee: "5100" });
+  assert.deepEqual(hotsPricePatch({ pricing: "500000", fee: "", feePercentage: "" }, { price: "£510,000" }), {}, "a price already typed is kept");
+  assert.ok(isInvestmentDealType("Sale") && isInvestmentDealType("Purchase") && !isInvestmentDealType("New Letting"));
+  assert.deepEqual(teamPatch([], "Purchase"), ["Investment"]);
+  assert.equal(teamPatch(["Investment"], "Sale"), null);
+  assert.equal(teamPatch(["London Estate"], "New Letting"), null);
+});

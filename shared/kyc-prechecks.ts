@@ -444,7 +444,7 @@ export interface ProviderLine {
 // people who manage the company stand in for them (reg 28(6)). Everyone else
 // on the register (directors, the secretary) and the deal's contact are
 // screened against the sanctions lists only.
-export type ScreenBasis = "owners" | "managers" | "listed" | "individual" | "company";
+export type ScreenBasis = "owners" | "managers" | "listed" | "individual" | "company" | "owners_abroad";
 export interface PrecheckScreened {
   basis: ScreenBasis;
   // The people screened for public roles and adverse media.
@@ -458,12 +458,15 @@ export const SCREEN_BASIS_WORDS: Record<ScreenBasis, string> = {
   listed: "the company only: a company listed on a regulated market has no beneficial owners to identify (MLR 2017 reg 28(5))",
   individual: "the person",
   company: "the company only: no owner or director could be named from the register",
+  owners_abroad: "the company, the company registered abroad that owns it, and its directors meanwhile: Companies House cannot show who owns that company, so the client is asked for the people behind it",
 };
 // One person or company a run screens, as the server lists them: the roles
 // they were found in ("the company", "owner", "owner of <company up the
 // chain>", "director", "secretary", "the deal's contact", "the party"), joined
 // with ", " when one person is found twice.
-export interface ScreenCandidate { name: string; role: string; person: boolean; owner?: boolean }
+// abroad: a company registered outside the UK that owns the party (on the
+// register or up the chain), screened as a company in full (20 November 2026).
+export interface ScreenCandidate { name: string; role: string; person: boolean; owner?: boolean; abroad?: boolean }
 
 const roles = (c: ScreenCandidate) => c.role.split(", ");
 const isManager = (c: ScreenCandidate) => c.person && roles(c).some(r => /director|member/i.test(r) && !/corporate/i.test(r));
@@ -475,7 +478,7 @@ const isManager = (c: ScreenCandidate) => c.person && roles(c).some(r => /direct
  * the directors when no owner can be named; a private individual themselves.
  */
 export function chooseScreened<T extends ScreenCandidate>(candidates: T[], ctx: { individual: boolean; listed: boolean; maxPeople: number }): { basis: ScreenBasis; full: T[]; sanctionsOnly: T[] } {
-  const companies = candidates.filter(c => !c.person && roles(c).some(r => r.startsWith("the company")));
+  const companies = candidates.filter(c => !c.person && (roles(c).some(r => r.startsWith("the company")) || !!c.abroad));
   let basis: ScreenBasis;
   let people: T[];
   if (ctx.individual) {
@@ -489,7 +492,7 @@ export function chooseScreened<T extends ScreenCandidate>(candidates: T[], ctx: 
     people = [];
   } else {
     people = candidates.filter(isManager);
-    basis = people.length ? "managers" : "company";
+    basis = candidates.some(c => !c.person && c.abroad) ? "owners_abroad" : people.length ? "managers" : "company";
   }
   const full = [...companies, ...people.slice(0, ctx.maxPeople)];
   return { basis, full, sanctionsOnly: candidates.filter(c => c.person && !full.includes(c)) };
@@ -539,6 +542,10 @@ export interface KycPrecheckResult {
     // The month and year of birth and nationality since 19 November 2026.
     peopleUpChain: Array<{ name: string; foundAt: string; controls: string[]; dob?: { month?: number | null; year?: number | null } | null; nationality?: string | null }>;
     offshoreOwners: Array<{ name: string; country: string }>;
+    // Corporate owners registered outside the UK, on the register or up the
+    // chain: Companies House cannot show who owns them (since 20 November
+    // 2026; older checks read them from `owners` on read, ownersAbroadOf).
+    ownersAbroad?: OwnerAbroad[];
     disqualified: Array<{ officer: string; match: string; dobMatches: boolean | null; url: string | null }>;
     covenant: { grade: string | null; score: number | null; flags: Array<{ level: string; label: string; detail?: string | null }>; gazette: Array<{ title: string; published: string; link: string }> } | null;
     documents: PrecheckDocument[];
@@ -606,6 +613,11 @@ export function pickOverseasEntity(name: string, items: Array<{ company_number?:
   const m = matching[0];
   return { found: { number: String(m.company_number).toUpperCase(), name: String(m.title), status: m.company_status || null }, candidates: 1 };
 }
+
+// A private individual's name as a record holds it: "Sandy Macaskill
+// (private)" is screened as "Sandy Macaskill".
+export const personNameOfRecord = (name: unknown): string =>
+  String(name ?? "").replace(/\s*\((?:private|personal|individual|private individual|a person)\)\s*$/i, "").replace(/\s+/g, " ").trim().slice(0, 160);
 
 export const isPrecheckResult = (value: unknown): value is KycPrecheckResult =>
   !!value && typeof value === "object" && (value as any).kind === "precheck";
@@ -726,6 +738,7 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     ch.hasInsolvencyHistory ? `Insolvency history${ch.insolvencyCases ? ` (${ch.insolvencyCases} case${ch.insolvencyCases === 1 ? "" : "s"})` : ""}` : "",
     ch.accountsOverdue ? "Accounts overdue at Companies House" : "",
     ch.confirmationOverdue ? "Confirmation statement overdue" : "",
+    ...ownersAbroadOf(ch).map(a => `Owned through ${a.name}, registered in ${a.country}${a.foundAt ? ` (owner of ${a.foundAt})` : ""}: Companies House cannot show who owns it`),
   ].filter(Boolean);
   return {
     name: ch.name,
@@ -771,6 +784,8 @@ export interface PrecheckAskInput {
   peopleUpChain: Array<{ name: string; foundAt: string; controls: string[] }>;
   directors: string[];
   accounts: { madeUpTo: string | null; dormant: boolean } | null;
+  // Corporate owners registered abroad (20 November 2026).
+  ownersAbroad?: Array<{ name: string; country: string }>;
 }
 
 export interface PrecheckAsks {
@@ -781,6 +796,8 @@ export interface PrecheckAsks {
   confirmOwners: Array<{ name: string; detail: string }> | null;
   // The people whose ID is asked for, where the register names them.
   ownerNames: string[];
+  // The companies abroad whose owners the structure chart is to show.
+  ownersAbroad?: Array<{ name: string; country: string }>;
 }
 
 export function askInputFrom(result: KycPrecheckResult | null): PrecheckAskInput | null {
@@ -795,6 +812,7 @@ export function askInputFrom(result: KycPrecheckResult | null): PrecheckAskInput
     owners: ch?.owners || [],
     peopleUpChain: ch?.peopleUpChain || [],
     directors: (ch?.officers || []).filter(o => /director|member/i.test(o.role)).map(o => o.name),
+    ownersAbroad: ownersAbroadOf(ch).map(o => ({ name: o.name, country: o.country })),
     accounts: ch?.documents.some(d => d.kind === "accounts" && d.kycDocumentId)
       ? { madeUpTo: ch.lastAccountsMadeUpTo, dormant: /dormant/i.test(String(ch.lastAccountsType || "")) }
       : null,
@@ -833,6 +851,14 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: { kind: KycPar
     const reason = `${who} (Companies House PSC exemption${input.listing.since ? ` since ${input.listing.since}` : ""}): no beneficial owners to identify (MLR 2017 reg 28(5)).${check}`;
     drop("ownership", reason);
     drop("owner_ids", reason);
+  } else if (input.owners.length && input.ownersAbroad?.length) {
+    // A company registered abroad owns it: Companies House cannot show who
+    // owns that company, so the structure chart and the owners' IDs are asked
+    // for (20 November 2026). The client still confirms the register's list,
+    // and any person the register names does their own checks.
+    // The owners' IDs step is for the people behind the company abroad, so
+    // it names nobody: a person the register names has a link of their own.
+    confirmOwners = input.owners.map(o => ({ name: o.name, detail: ownerControlLine(o) || "a person with significant control" }));
   } else if (input.owners.length) {
     confirmOwners = input.owners.map(o => ({ name: o.name, detail: ownerControlLine(o) || "a person with significant control" }));
     const people = [
@@ -862,7 +888,7 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: { kind: KycPar
       drop("source_of_funds", `Its latest accounts, made up to ${input.accounts.madeUpTo}, were downloaded from Companies House and are on file.`);
     }
   }
-  return { docs, notAsked, confirmOwners, ownerNames };
+  return { docs, notAsked, confirmOwners, ownerNames, ...(input.ownersAbroad?.length ? { ownersAbroad: input.ownersAbroad } : {}) };
 }
 
 // ── Which screening matches are red flags (Woody, 19 November 2026) ─────────
@@ -955,9 +981,85 @@ export function precheckNamesakes(result: Pick<KycPrecheckResult, "complyAdvanta
 
 // Secrecy and high-risk places a corporate owner can be registered in: a
 // reason for KYC4U to look, never a verdict. The FATF call-for-action list
-// (Iran, North Korea, Myanmar) and the usual secrecy jurisdictions.
-const OFFSHORE = /\b(british virgin islands|bvi|cayman|panama|seychelles|belize|marshall islands|bahamas|anguilla|turks and caicos|vanuatu|samoa|liechtenstein|iran|north korea|korea, democratic|myanmar|burma)\b/i;
+// (Iran, North Korea, Myanmar) and the usual secrecy jurisdictions. Monaco
+// since 20 November 2026 (Woody, on Tureddi Group Limited, owned through a
+// Monaco société civile: "the holding company for this business is in
+// Monaco..? What do you think?"): a tax haven (BGP's AML policy: "Non-resident
+// customers, especially companies in tax havens"), on FATF's grey list from
+// June 2024 to 30 October 2026, and on the EU's list of high-risk third
+// countries since August 2025 (Delegated Regulation (EU) 2025/1184).
+const OFFSHORE = /\b(british virgin islands|bvi|cayman|panama|seychelles|belize|marshall islands|bahamas|anguilla|turks and caicos|vanuatu|samoa|liechtenstein|monaco|monegasque|iran|north korea|korea, democratic|myanmar|burma)\b/i;
 export const isOffshoreCountry = (country: string | null | undefined): boolean => OFFSHORE.test(String(country || ""));
+
+// Why a place is on that list, where there is more to say than "secrecy".
+const OFFSHORE_NOTES: Array<[RegExp, string]> = [
+  [/\b(monaco|monegasque)\b/i, "Monaco is a tax haven, was on FATF's grey list from June 2024 until 30 October 2026, and is on the EU's list of high-risk third countries (since August 2025). BGP's AML policy: \"Non-resident customers, especially companies in tax havens\"."],
+];
+export const offshoreNote = (country: string | null | undefined): string | null =>
+  OFFSHORE_NOTES.find(([re]) => re.test(String(country || "")))?.[1] || null;
+
+// ── Owners registered abroad (Woody, 20 November 2026) ──────────────────────
+// A company registered outside the UK that owns or controls the party (on the
+// register, or up its ownership chain) is a dead end for Companies House: it
+// cannot show who owns that company. The beneficial owners are still there to
+// identify (MLR 2017 reg 28(4): "take reasonable measures to understand the
+// ownership and control structure"; BGP's AML policy: "Every organisation will
+// have UBOs, and it is therefore necessary to identify and verify them"), so
+// the client is asked for a structure chart up to the people and their IDs.
+// The directors do not stand in for them under reg 28(6) meanwhile: that is
+// only once every means of finding the owners is exhausted.
+export interface OwnerAbroad {
+  name: string;
+  country: string;
+  registrationNumber: string | null;
+  controls: string[];
+  // The company up the chain it owns, when it is not the party itself.
+  foundAt: string | null;
+}
+
+/**
+ * Where a corporate owner's register is: "uk" when the words name the UK or
+ * Companies House, "abroad" when they name anywhere else, null when nothing is
+ * given (or a bare "Registrar of Companies", which could be either).
+ */
+export function ownerRegister(country: string | null | undefined): "uk" | "abroad" | null {
+  const t = String(country || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+  if (!t || /^(the )?(registrar|register) of companies$/.test(t)) return null;
+  if (/new south wales/.test(t)) return "abroad";
+  if (/\b(united kingdom|great britain|britain|england|wales|scotland|northern ireland|companies house|uk|u\.k\.?|gb)\b/.test(t)) return "uk";
+  return "abroad";
+}
+
+const sameOwnerName = (a: string, b: string) => a.replace(/\s+/g, " ").trim().toLowerCase() === b.replace(/\s+/g, " ").trim().toLowerCase();
+
+/** The corporate owners registered abroad: as the run stored them, or read from the register's owners for an older check. */
+export function ownersAbroadOf(ch: KycPrecheckResult["companiesHouse"] | null | undefined): OwnerAbroad[] {
+  if (!ch || ch.listing) return [];
+  const out: OwnerAbroad[] = [...(ch.ownersAbroad || [])];
+  for (const o of ch.owners) {
+    if (o.kind !== "company" && o.kind !== "legal_person") continue;
+    if (ownerRegister(o.country) !== "abroad" || out.some(x => sameOwnerName(x.name, o.name))) continue;
+    out.push({ name: o.name, country: String(o.country), registrationNumber: o.registrationNumber || null, controls: o.controls, foundAt: null });
+  }
+  return out;
+}
+
+/** The corporate owners in secrecy or high-risk places, on the register or up the chain. */
+export function offshoreOwnersOf(ch: KycPrecheckResult["companiesHouse"] | null | undefined): Array<{ name: string; country: string; foundAt: string | null }> {
+  if (!ch) return [];
+  const out: Array<{ name: string; country: string; foundAt: string | null }> = ch.offshoreOwners.map(o => ({ ...o, foundAt: null }));
+  for (const o of [...ch.owners.filter(x => x.kind !== "individual").map(x => ({ name: x.name, country: String(x.country || ""), foundAt: null as string | null })),
+    ...ownersAbroadOf(ch).map(x => ({ name: x.name, country: x.country, foundAt: x.foundAt }))]) {
+    if (isOffshoreCountry(o.country) && !out.some(x => sameOwnerName(x.name, o.name))) out.push(o);
+  }
+  return out;
+}
+
+/** "Scp Aaa Invest (Monaco)", "A Ltd (Jersey) and B SA (Luxembourg)". */
+export const ownersAbroadWords = (owners: ReadonlyArray<Pick<OwnerAbroad, "name" | "country">>): string => {
+  const one = owners.map(o => `${o.name} (${o.country})`);
+  return one.length < 2 ? one.join("") : `${one.slice(0, -1).join(", ")} and ${one[one.length - 1]}`;
+};
 
 const DISTRESS = /liquidation|receivership|administration|insolvency|voluntary-arrangement|dissolved|removed|struck|closed/i;
 
@@ -1076,9 +1178,14 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
       flags.push({ kind: "ownership_unclear", label: s.words, detail: null, source: `${source}: Companies House PSC statement`, at: s.notifiedOn || at,
         key: `ch:psc_statement:${k(s.statement)}`, evidence: [], facts: [{ label: "Register", value: `${ch.name} (${ch.number})${s.notifiedOn ? `, notified ${s.notifiedOn}` : ""}`, url: `${register}/persons-with-significant-control` }] });
     }
-    for (const o of ch.offshoreOwners) {
-      flags.push({ kind: "offshore_owner", label: `Owned through ${o.name}, registered in ${o.country}`, detail: null, source: `${source}: Companies House`, at,
-        key: `ch:offshore:${k(o.name)}`, evidence: [`country:${k(o.country)}`], facts: [{ label: "Register", value: `${ch.name} (${ch.number})`, url: `${register}/persons-with-significant-control` }] });
+    for (const o of offshoreOwnersOf(ch)) {
+      const note = offshoreNote(o.country);
+      flags.push({ kind: "offshore_owner", label: `Owned through ${o.name}, registered in ${o.country}${o.foundAt ? ` (up the chain, owning ${o.foundAt})` : ""}`,
+        detail: `${note ? `${note} ` : ""}Companies House cannot show who owns ${o.name}: ask the client for a structure chart up to the people, ${o.name}'s register extract, and each owner's ID and proof of address.`,
+        source: `${source}: Companies House`, at,
+        key: `ch:offshore:${k(o.name)}`, evidence: [`country:${k(o.country)}`],
+        facts: [{ label: "Register", value: `${ch.name} (${ch.number})`, url: `${register}/persons-with-significant-control` },
+          { label: "Registered in", value: o.country }, ...(note ? [{ label: "Why it is higher risk", value: note }] : [])] });
     }
     // A registered beneficial owner the overseas entity itself declared
     // sanctioned on its latest filing to the Register of Overseas Entities.
@@ -1147,6 +1254,8 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
       lines.push(`- Owners: ${ch.statements.map(s => s.words).join("; ")}.`);
     }
     if (ch.chain.length) lines.push(`- Ownership chain: ${ch.chain.map(c => `${c.name} (${c.number})`).join(" > ")}.${ch.peopleUpChain.length ? ` People with control up the chain: ${list(ch.peopleUpChain.map(p => p.name), 4)}.` : ""}`);
+    const abroadNote = ownersAbroadOf(ch);
+    if (abroadNote.length) lines.push(`- Owned through a company registered abroad: ${ownersAbroadWords(abroadNote)}. Companies House cannot show who owns ${abroadNote.length === 1 ? "it" : "them"}; the client is asked for a structure chart up to the people, the register extract, and each owner's ID.`);
     const filed = ch.documents.filter(d => d.kycDocumentId);
     if (filed.length) lines.push(`- Downloaded from Companies House and attached: ${filed.map(d => d.title).join("; ")}.`);
     const found = ch.disqualified.filter(d => d.dobMatches !== false);
@@ -1224,11 +1333,13 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
         links: [],
       });
     } else {
-      const concern = ch.statements.some(s => s.concern) || ch.offshoreOwners.length > 0;
+      const abroad = ownersAbroadOf(ch);
+      const concern = ch.statements.some(s => s.concern) || offshoreOwnersOf(ch).length > 0 || abroad.length > 0;
       out.push({
         key: "owners", label: ch.owners.length ? `Owners on the register: ${list(ch.owners.map(o => o.name), 4)}` : "No owners on the register",
         state: concern ? "attention" : ch.owners.length ? "ok" : "info",
-        detail: [ch.owners.map(o => `${o.name}: ${ownerControlLine(o) || "significant control"}`).join("; "), ch.statements.map(s => s.words).join("; "), ch.chain.length ? `Chain: ${ch.chain.map(c => c.name).join(" > ")}` : ""].filter(Boolean).join(". ") || null,
+        detail: [ch.owners.map(o => `${o.name}: ${ownerControlLine(o) || "significant control"}`).join("; "), ch.statements.map(s => s.words).join("; "), ch.chain.length ? `Chain: ${ch.chain.map(c => c.name).join(" > ")}` : "",
+          abroad.length ? `Registered abroad, so Companies House cannot show who owns ${abroad.length === 1 ? "it" : "them"}: ${ownersAbroadWords(abroad)}. The client is asked for a structure chart up to the people, and their IDs` : ""].filter(Boolean).join(". ") || null,
         links: [],
       });
     }
