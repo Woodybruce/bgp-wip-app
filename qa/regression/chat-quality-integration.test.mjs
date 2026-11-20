@@ -125,18 +125,19 @@ test('closing file chat during a tool permits it to finish but starts no later t
   assert.deepEqual(result.toolsRun, ['first']);
 });
 
-// Woody, 20 November 2026: "actually use opus 5.5". The Excel pane ran on
-// Fable 5 from 2 October; it now takes ChatBGP's default and the thread's choice.
-test('Excel follows the thread choice and the Opus 5.5 default, with no Fable override', async () => {
+// Woody, 20 November 2026: "Fable still for excel 5.2". The Excel pane runs on
+// Fable (5.2, the router's fable); a message's /opus or /sonnet switches it,
+// and the other Office hosts take the Opus 5.5 default.
+test('Excel defaults to Fable, a message switches it, and the other hosts take the default', async () => {
   const resolved = find(file, n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText() === 'excelResolved'));
-  for (const [slash, expected] of [[null, null], ['fable', 'fable'], ['sonnet', 'sonnet']]) {
+  for (const [host, slash, expected] of [['excel', null, 'fable'], ['excel', 'opus', 'opus'], ['excel', 'sonnet', 'sonnet'], ['word', null, null], ['powerpoint', null, null], ['outlook', 'fable', 'fable']]) {
     const calls = [];
     const { run } = evaluate(`export async function run() { ${resolved}; return excelResolved; }`, {
-      excelThreadId: 'example-thread', excelSlashOverride: slash, host: 'excel', chatProvider: () => 'anthropic',
+      excelThreadId: 'example-thread', excelSlashOverride: slash, host, chatProvider: () => 'anthropic',
       resolveChatModel: async args => { calls.push(args); return { model: 'selected' }; },
     });
     await run();
-    assert.equal(calls[0].override, expected);
+    assert.equal(calls[0].override, expected, `${host} ${slash}`);
     assert.equal(calls[0].threadId, 'example-thread');
   }
 });

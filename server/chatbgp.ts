@@ -17004,12 +17004,12 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
       let msToken: string | null = null;
       try { msToken = await getValidMsToken(req); } catch {}
 
-      // The Excel pane follows ChatBGP's default, Opus 5.5, and the thread's
-      // saved choice (Woody, 20 November 2026: "actually use opus 5.5"); it ran
-      // on Fable 5 from 2 October. /fable still switches a thread.
+      // The Excel pane runs on Fable 5.2 (Woody, 20 November 2026: "Fable
+      // still for excel 5.2"; Fable 5 from 2 October); /opus or /sonnet on a
+      // message switches it. The other Office hosts take the Opus 5.5 default.
       const excelResolved = await resolveChatModel({
         threadId: excelThreadId,
-        override: excelSlashOverride,
+        override: excelSlashOverride || (host === "excel" ? "fable" : null),
       });
       let convMessages: any[] = [
         { role: "system", content: systemContent },

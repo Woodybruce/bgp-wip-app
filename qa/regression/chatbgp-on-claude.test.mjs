@@ -43,7 +43,7 @@ test('an openai switch on Railway leaves the chat on Claude Opus 5.5 and the hel
         assert.equal(router.selectChatModel(saved).model, 'claude-opus-5-5', `saved ${saved}`);
       }
       assert.equal(router.selectChatModel('sonnet').model, 'claude-sonnet-4-6');
-      assert.equal(router.selectChatModel('fable').model, 'claude-fable-5');
+      assert.equal(router.selectChatModel('fable').model, 'claude-fable-5-2');
       assert.match(router.ackMessage('astra'), /Using Opus/);
       assert.doesNotMatch(router.ackMessage('astra'), /Astra|OpenAI/);
     });
@@ -64,13 +64,15 @@ test('the chat status on live reads Claude, Opus 5.5 and medium effort under an 
   });
 });
 
-test('the Excel pane has no Fable default and its footer names Opus 5.5', () => {
+// Woody, the same day: "Fable still for excel 5.2".
+test('the Excel pane runs on Fable 5.2 and its footer says so', () => {
   const resolved = find('server/chatbgp.ts', n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText() === 'excelResolved'));
-  assert.doesNotMatch(resolved, /fable/i);
-  assert.match(resolved, /override:\s*excelSlashOverride\s*,/);
+  assert.match(resolved, /override:\s*excelSlashOverride \|\| \(host === "excel" \? "fable" : null\)/);
+  assert.doesNotMatch(resolved, /chatProvider/, 'the Fable default no longer depends on the provider switch');
+  assert.match(source('server/chatbgp-model-router.ts'), /const FABLE = "claude-fable-5-2";/);
   const pane = read('client/src/pages/addin-excel.tsx');
-  assert.match(pane, /Claude Opus 5\.5 · BGP CRM/);
-  assert.doesNotMatch(pane, /Claude Fable 5 · BGP CRM/);
+  assert.match(pane, /Claude Fable 5\.2 · BGP CRM/);
+  assert.doesNotMatch(pane, /Claude Fable 5 · BGP CRM|Claude Opus 5\.5 · BGP CRM/);
 });
 
 test('ChatBGP tells people it runs on Opus 5.5, not that Astra is the default', () => {

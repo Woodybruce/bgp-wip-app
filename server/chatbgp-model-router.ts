@@ -11,10 +11,12 @@ const SONNET = "claude-sonnet-4-6";
 // Fable too expensive. /fable and /sonnet remain per-thread options.
 const OPUS_DEFAULT = "claude-opus-5-5";
 const OPUS = OPUS_DEFAULT;
-const FABLE = "claude-fable-5";
+// Fable 5.2 (Woody, 2026-11-20: "Fable still for excel 5.2"): the Excel pane's
+// default and every /fable thread.
+const FABLE = "claude-fable-5-2";
 
 // Opus 5.5 by default (Woody, 2026-09-29: cut AI spend, but "not sonnet").
-// Fable is 2.5x Opus 5.5's price; /fable remains available per thread.
+// Fable 5.2 is twice Opus 5.5's price; /fable remains available per thread.
 const DEFAULTS = {
   default: OPUS,
   fable: FABLE,

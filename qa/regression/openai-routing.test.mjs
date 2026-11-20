@@ -44,7 +44,7 @@ test('configured model overrides apply to their own preference slots and acknowl
 test('Anthropic and Kimi provider routes keep their existing model choices', async () => {
   const anthropic = routing('anthropic');
   assert.equal((await anthropic.resolveChatModel({})).model, 'claude-opus-5-5');
-  assert.equal((await anthropic.resolveChatModel({ override: 'fable' })).model, 'claude-fable-5');
+  assert.equal((await anthropic.resolveChatModel({ override: 'fable' })).model, 'claude-fable-5-2');
   assert.equal((await anthropic.resolveChatModel({ override: 'sonnet' })).model, 'claude-sonnet-4-6');
   const kimi = routing('kimi');
   assert.equal((await kimi.resolveChatModel({})).model, 'kimi-k3');

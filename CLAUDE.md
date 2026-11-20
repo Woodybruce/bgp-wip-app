@@ -6329,13 +6329,23 @@ held OpenAI's "no credits remaining" (29 October, 9 November) and
   still move the chat loop to Kimi). Every chat call then takes the Claude
   path in `server/chatbgp.ts` (`callClaude`, `callClaudeStreaming`, the
   image reader), and the router (`server/chatbgp-model-router.ts`) gives
-  Opus 5.5: the chat on desktop and phone, chat with files, the Office
-  add-ins, team chats, a joint agent's chat and WhatsApp. `/sonnet` and
-  `/fable` still switch a thread; a `/sol`, `/luna` or `/astra` choice saved
-  while on OpenAI reads as Opus 5.5.
-- **The Excel pane** ran on Fable 5 from 2 October (a session's choice, to
-  match its footer); it now follows the default too, and its footer reads
-  "Claude Opus 5.5 · BGP CRM".
+  Opus 5.5: the chat on desktop and phone, chat with files, the Word,
+  PowerPoint and Outlook add-ins, team chats, a joint agent's chat and
+  WhatsApp. `/sonnet` and `/fable` still switch a thread; a `/sol`, `/luna`
+  or `/astra` choice saved while on OpenAI reads as Opus 5.5.
+- **The Excel pane runs on Fable 5.2** (Woody, the same day: "Fable still
+  for excel 5.2"; it ran on Fable 5 from 2 October): the router's `FABLE`
+  is `claude-fable-5-2`, so every `/fable` thread is too, and the Excel
+  handler passes `fable` unless the message itself says `/opus` or
+  `/sonnet`. Footer "Claude Fable 5.2 · BGP CRM"; priced on the cost board
+  at $8 / $40 a million tokens (cache reads $0.20, writes $10). Fable 5.2
+  takes the same request as Fable 5 (adaptive thinking, the array refusal
+  fallback to Opus 4.8, the beta endpoint), and it enforces the
+  history-editing check on every account: a thinking block sent back after
+  an edit to the system prompt, the tools or an earlier message is a 400.
+  The Excel loop keeps its system prompt and tools fixed and only appends
+  (moving `cache_control` is not an edit), except the 100th step, which
+  drops the tools: keep it that way.
 - **What a request carries** (unchanged code, checked against Opus 5.5 on
   20 November 2026): adaptive thinking, effort `medium` from
   `chatQualitySettings` (Woody's speed decision of 28 August 2026; it is

@@ -20,6 +20,8 @@ import { requireEquityOrAdmin } from "./auth";
 const RATE_CARD: Array<{ match: RegExp; in: number; out: number; cacheRead: number; cacheWrite: number }> = [
   // Fable was unpriced here, so the dashboard showed ~$5/month while it ran
   // most of ChatBGP (Woody, 2026-09-29).
+  // Fable 5.2 and Mythos 5.2 (the Excel add-in and /fable since 20 November 2026).
+  { match: /^claude-(?:fable|mythos)-5-2(?:-\d{8})?$/i, in: 8, out: 40, cacheRead: 0.20, cacheWrite: 10 },
   { match: /^claude-fable-5-1(?:-\d{8})?$/i, in: 10, out: 50, cacheRead: 0.25, cacheWrite: 12.50 },
   { match: /^claude-(?:fable|mythos)-5(?:-\d{8})?$/i, in: 10, out: 50, cacheRead: 1.00, cacheWrite: 12.50 },
   { match: /opus-5-5/i, in: 4,  out: 20, cacheRead: 0.20, cacheWrite: 5.00 },

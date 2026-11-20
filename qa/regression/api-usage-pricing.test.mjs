@@ -67,7 +67,9 @@ test('Claude model-specific cache rates remain separate and saved cost overrides
   close(estimateCost({ provider: 'anthropic', model: 'claude-fable-5-1-20260929', usage }), .07275);
   close(estimateCost({ provider: 'anthropic', model: 'claude-opus-5-5', usage }), .0292);
   close(estimateCost({ provider: 'anthropic', model: 'claude-sonnet-4', usage }), .02205);
-  assert.equal(estimateCost({ provider: 'anthropic', model: 'claude-fable-5-2', usage }), null);
+  // Fable 5.2: $8 / $40, cache reads $0.20, writes $10 (the Excel add-in since 20 November 2026).
+  close(estimateCost({ provider: 'anthropic', model: 'claude-fable-5-2', usage }), .0582);
+  assert.equal(estimateCost({ provider: 'anthropic', model: 'claude-fable-5-3', usage }), null);
   assert.equal(estimateCost({ provider: 'other', model: 'unknown', costUsd: .123 }), .123);
   assert.equal(estimateCost({ provider: 'other', model: 'unknown', costUsd: 0 }), 0);
 });
