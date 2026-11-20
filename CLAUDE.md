@@ -4343,8 +4343,12 @@ mailbox stay in its thread, from there; staff sending as themselves
   from it first time): a Railway variable (`KYC_MAILBOX` or the older
   `BGP_AML_MAILBOX`) holds that address and wins over the code's default
   kyc@chatbgp.app. The app's own address on live is chatbgp1@chatbgp.app and
-  the shared mailbox follows it, as in the code. To send client checks from
-  kyc@chatbgp.app, delete that variable on Railway (Woody's).
+  the shared mailbox follows it, as in the code. **The KYC sender stays
+  kyc@brucegillinghampollard.com** (Woody, 2026-11-20: "that emails fine
+  working well"). Woody had deleted `KYC_MAILBOX` on Railway the evening
+  before and live still sent from this address after two fresh deploys, so
+  either the deletion is waiting to be applied in Railway (then discard it)
+  or `BGP_AML_MAILBOX` holds the address. Leave it unless Woody asks.
 
 ## Super Brands are BGP's VIP brands (Woody, 2026-11-17)
 
