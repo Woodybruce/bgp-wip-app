@@ -11,42 +11,38 @@ interface ScrollableTableProps {
   // no measured cap. For a zoomed parent, where a cap measured in window
   // pixels is the wrong size.
   fill?: boolean;
+  // A second horizontal scroll bar above the table, for a wide table whose
+  // left columns scroll out of sight (Woody, 2026-11-20, the AML checks:
+  // "can you put a scroll bar at the top").
+  topScrollbar?: boolean;
 }
 
-export function ScrollableTable({ children, minWidth, pageScroll = false, fill = false }: ScrollableTableProps) {
+export function ScrollableTable({ children, minWidth, pageScroll = false, fill = false, topScrollbar = false }: ScrollableTableProps) {
+  const topScrollRef = useRef<HTMLDivElement>(null);
   const bottomScrollRef = useRef<HTMLDivElement>(null);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
-  const syncingRef = useRef<"bottom" | "table" | null>(null);
+  const syncingRef = useRef<HTMLDivElement | null>(null);
   const [contentWidth, setContentWidth] = useState(minWidth);
   const [maxHeight, setMaxHeight] = useState<number | null>(null);
 
+  // The table and its bars scroll sideways together: whichever moves, the
+  // others follow, and their own scroll events are ignored until next frame.
   useEffect(() => {
-    const bottomEl = bottomScrollRef.current;
-    const tableEl = tableScrollRef.current;
-    if (!bottomEl || !tableEl) return;
-
-    const handleBottomScroll = () => {
-      if (syncingRef.current === "table") return;
-      syncingRef.current = "bottom";
-      tableEl.scrollLeft = bottomEl.scrollLeft;
-      requestAnimationFrame(() => { syncingRef.current = null; });
-    };
-
-    const handleTableScroll = () => {
-      if (syncingRef.current === "bottom") return;
-      syncingRef.current = "table";
-      bottomEl.scrollLeft = tableEl.scrollLeft;
-      requestAnimationFrame(() => { syncingRef.current = null; });
-    };
-
-    bottomEl.addEventListener("scroll", handleBottomScroll, { passive: true });
-    tableEl.addEventListener("scroll", handleTableScroll, { passive: true });
-    return () => {
-      bottomEl.removeEventListener("scroll", handleBottomScroll);
-      tableEl.removeEventListener("scroll", handleTableScroll);
-    };
-  }, []);
+    const els = [tableScrollRef.current, bottomScrollRef.current, topScrollRef.current].filter((el): el is HTMLDivElement => !!el);
+    if (els.length < 2) return;
+    const offs = els.map(source => {
+      const onScroll = () => {
+        if (syncingRef.current && syncingRef.current !== source) return;
+        syncingRef.current = source;
+        for (const other of els) if (other !== source && other.scrollLeft !== source.scrollLeft) other.scrollLeft = source.scrollLeft;
+        requestAnimationFrame(() => { syncingRef.current = null; });
+      };
+      source.addEventListener("scroll", onScroll, { passive: true });
+      return () => source.removeEventListener("scroll", onScroll);
+    });
+    return () => offs.forEach(off => off());
+  }, [topScrollbar]);
 
   // Keep the bottom scroll spacer matching the actual rendered content width.
   // Using a hardcoded width breaks when the table is wider than expected — the
@@ -95,6 +91,11 @@ export function ScrollableTable({ children, minWidth, pageScroll = false, fill =
 
   return (
     <div className={pageScroll ? "flex flex-col" : "flex flex-col flex-1 min-h-0"}>
+      {topScrollbar && (
+        <div ref={topScrollRef} className="sync-scroll-top" data-testid="scroll-bar-top">
+          <div style={{ width: contentWidth, height: 1 }} />
+        </div>
+      )}
       <div
         ref={tableScrollRef}
         className={pageScroll ? "table-scroll-container" : "table-scroll-container flex-1 min-h-0"}

@@ -3713,7 +3713,10 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   days since anything moved (`daysSince`: the checks, the requests, KYC4U
   drafts, the approval). Mine = the deal's `internal_agent_ids` or names.
 - **The page**: the pills with counts, All / Mine, a search (`rowMatches`), a
-  table on a computer and cards on a phone; a row opens the party's trail:
+  table on a computer (its rows scroll inside `ScrollableTable` with a scroll
+  bar above and below and the heading row fixed: Woody, 2026-11-20, "can you
+  put a scroll bar at the top and fix the heading as scroll down") and cards
+  on a phone; a row opens the party's trail:
   the deal's own AML card (every button: checks before asking, client checks,
   KYC4U request, Sign off, Add KYC4U result), the documents on the party's
   KYC record and its history (the KYC audit log and the deal's AML lines).

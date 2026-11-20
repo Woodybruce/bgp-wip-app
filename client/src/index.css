@@ -164,18 +164,31 @@ thead th.sticky {
   border-top: 1px solid hsl(var(--border));
   z-index: 20;
 }
-.sync-scroll-bottom::-webkit-scrollbar {
+/* The same bar above a wide table (ScrollableTable's topScrollbar). */
+.sync-scroll-top {
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 14px;
+  flex-shrink: 0;
+  background: hsl(var(--card));
+  border-bottom: 1px solid hsl(var(--border));
+}
+.sync-scroll-bottom::-webkit-scrollbar,
+.sync-scroll-top::-webkit-scrollbar {
   height: 10px;
 }
-.sync-scroll-bottom::-webkit-scrollbar-track {
+.sync-scroll-bottom::-webkit-scrollbar-track,
+.sync-scroll-top::-webkit-scrollbar-track {
   background: hsl(var(--muted));
   border-radius: 4px;
 }
-.sync-scroll-bottom::-webkit-scrollbar-thumb {
+.sync-scroll-bottom::-webkit-scrollbar-thumb,
+.sync-scroll-top::-webkit-scrollbar-thumb {
   background: rgba(0,0,0,0.25);
   border-radius: 4px;
 }
-.sync-scroll-bottom::-webkit-scrollbar-thumb:hover {
+.sync-scroll-bottom::-webkit-scrollbar-thumb:hover,
+.sync-scroll-top::-webkit-scrollbar-thumb:hover {
   background: rgba(0,0,0,0.4);
 }
 

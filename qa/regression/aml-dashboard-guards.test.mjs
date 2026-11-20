@@ -60,3 +60,14 @@ test('the pill is BGP staff only on Deals', () => {
   assert.match(hub, /t === "investment" \|\| t === "wip-report" \|\| t === "aml"\) setLocation\("\/deals\/list"/);
   assert.match(hub, /aml: "\/deals\/aml"/);
 });
+
+test('the checks table has a scroll bar above it and a heading that stays in view (Woody, 2026-11-20)', () => {
+  const page = read('client/src/pages/aml-dashboard.tsx');
+  // The rows scroll inside ScrollableTable's box, which the app's sticky table heading needs; a page-height wrapper never scrolls.
+  assert.match(page, /<ScrollableTable minWidth=\{1180\} topScrollbar>\s*<table className="w-full text-sm" data-testid="aml-table">/);
+  assert.doesNotMatch(page, /<div className="rounded-lg border overflow-x-auto">\s*<table className="w-full text-sm" data-testid="aml-table">/);
+  const box = read('client/src/components/scrollable-table.tsx');
+  assert.match(box, /\{topScrollbar && \(\s*<div ref=\{topScrollRef\} className="sync-scroll-top"/);
+  assert.match(box, /const els = \[tableScrollRef\.current, bottomScrollRef\.current, topScrollRef\.current\]/, 'the bars and the table scroll sideways together');
+  assert.match(read('client/src/index.css'), /\.sync-scroll-top \{/);
+});

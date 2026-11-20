@@ -11,6 +11,7 @@ import { AlertCircle, ExternalLink, FileText, Flag, Loader2, Search } from "luci
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Pill, PillCount } from "@/components/ui/pill";
+import { ScrollableTable } from "@/components/scrollable-table";
 import { DealAmlStatusCard } from "@/components/deal-aml-status";
 import { AmlPolicyPanel } from "@/components/aml-policy-panel";
 import { AmlRegisterBoard, MyRegisterReports, RaiseReportButton } from "@/components/aml-register";
@@ -266,7 +267,12 @@ export default function AmlDashboard() {
           ))}
         </ul>
       ) : (
-        <div className="rounded-lg border overflow-x-auto">
+        // A scroll bar above the table as well as below it, and the heading row
+        // stays in view while the rows scroll under it (Woody, 2026-11-20:
+        // "can you put a scroll bar at the top and fix the heading as scroll
+        // down"): the rows scroll inside the box, which the sticky heading needs.
+        <div className="rounded-lg border overflow-hidden" data-testid="aml-table-box">
+          <ScrollableTable minWidth={1180} topScrollbar>
           <table className="w-full text-sm" data-testid="aml-table">
             <thead className="bg-muted/50 text-[11px] uppercase tracking-wider text-muted-foreground">
               <tr>
@@ -295,6 +301,7 @@ export default function AmlDashboard() {
               ))}
             </tbody>
           </table>
+          </ScrollableTable>
         </div>
       )}
 
