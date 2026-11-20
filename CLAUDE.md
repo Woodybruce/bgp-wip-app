@@ -2001,6 +2001,23 @@ appendix `docs/letting-cleanup-technical-appendix.md`):
   before the pause and is admin only now. The other paused tools
   (`LETTING_REPAIR_TOOLS_ENABLED`) stay paused, and it still never runs at
   boot.
+- **Withdrawn is shown, not picked** (Woody, 2026-11-20: "only chase live
+  deals actually delete the Withdrawn option generally delete is good
+  enough"): a deal that falls through is deleted. The deal form, the Deals
+  table's status cell, the WIP Report, the Letting Tracker's bulk Change
+  Status and the joint agent's Edit unit no longer offer Withdrawn (`WIT`);
+  a deal already at it shows it, never a blank box. The Investment Tracker
+  keeps it: asked (21 of the 30 Withdrawn deals on live were investment
+  purchases), Woody did not answer, so that was the default chosen. One
+  rule, `INVESTMENT_ONLY_PICKS` in `shared/deal-status.ts`, read by
+  `DEAL_PAGE_STATUSES` and `LETTING_PICK_STATUSES`: never a hand-written
+  picker list. Withdrawn is still shown everywhere it was: its label and
+  colours, filters, the Historic pill and the tracker's counts
+  (`LETTING_STATUSES`). The server still accepts `WIT` on a save, and
+  deleting a tracker unit still moves a deal at Negotiating, HOTs or
+  Solicitors to Withdrawn with its Ref #, fee and history; a joint agent
+  cannot delete a unit and asks BGP. Tests:
+  `qa/regression/withdrawn-not-picked.test.mjs`, `shared/deal-status.test.ts`.
 - **Still parked for Woody:** the one-live-letting index (schema change)
   and wiring `actingForFromType` (Lease Disposal / Sub-Letting → tenant
   side) — both wait on his review of the integrity report's lists.

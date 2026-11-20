@@ -1,7 +1,7 @@
 // Small shared pieces of the joint agent's Letting Tracker
 // (client/src/pages/landsec-tracker.tsx).
 import { LETTING_STATUS_LABELS } from "@shared/letting-rules";
-import type { DealStatusCode } from "@shared/deal-status";
+import { LETTING_PICK_STATUSES, SYSTEM_SET_STATUSES, type DealStatusCode } from "@shared/deal-status";
 import { calendarDateValue } from "@shared/calendar-date";
 import { VIEWING_OUTCOMES } from "@shared/viewing-workflow";
 import type { LettingNoteFields } from "@shared/letting-note";
@@ -9,8 +9,11 @@ import type { LettingNoteFields } from "@shared/letting-note";
 export const MICRO_LABEL = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
 export const TRACKER_KEY = ["/api/landsec/tracker"];
 
-// The statuses a unit can be moved to from the Edit unit form, in order.
-export const UNIT_STATUS_OPTIONS: DealStatusCode[] = ["AVA", "NEG", "HOT", "SOL", "EXC", "COM", "WIT"];
+// The statuses a unit can be moved to from the Edit unit form, in order: the
+// Letting Tracker's choices less Opportunity and the system-set Invoiced.
+// Withdrawn is not one (Woody, 2026-11-20: a letting that falls through is
+// deleted); a unit already at it still shows it (edit-unit-dialog.tsx).
+export const UNIT_STATUS_OPTIONS: DealStatusCode[] = LETTING_PICK_STATUSES.filter(c => c !== "OPP" && !SYSTEM_SET_STATUSES.includes(c));
 export const LIVE_CODES: DealStatusCode[] = ["OPP", "AVA", "NEG", "HOT", "SOL"];
 
 export const statusLabel = (code: string | null | undefined): string =>
