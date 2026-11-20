@@ -98,7 +98,8 @@ export function EditUnitDialog({ unit, onClose, onSaved }: {
               <Select value={form.marketingStatus} onValueChange={v => set("marketingStatus", v)} disabled={busy}>
                 <SelectTrigger data-testid="ja-edit-unit-status"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {statusOptions.map(c => <SelectItem key={c} value={c}>{statusLabel(c)}</SelectItem>)}
+                  {/* A status not offered here (Withdrawn, Opportunity, Invoiced) shows while the unit is at it and cannot be picked. */}
+                  {statusOptions.map(c => <SelectItem key={c} value={c} disabled={!UNIT_STATUS_OPTIONS.includes(c)}>{statusLabel(c)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -108,7 +109,7 @@ export function EditUnitDialog({ unit, onClose, onSaved }: {
             <p className="text-xs text-muted-foreground" data-testid="ja-edit-unit-status-note">
               {form.marketingStatus === "HOT" || form.marketingStatus === "SOL"
                 ? "Heads of Terms and Solicitors are normally reached by issuing the Heads of Terms and converting them, which puts the agreed terms on the deal. Setting the status here moves the deal without them."
-                : form.marketingStatus === "EXC" || form.marketingStatus === "COM" || form.marketingStatus === "WIT"
+                : form.marketingStatus === "EXC" || form.marketingStatus === "COM"
                   ? "This closes the letting: the unit moves under Historic."
                   : "The deal moves with the unit."}
             </p>

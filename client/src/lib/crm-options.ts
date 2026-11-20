@@ -143,7 +143,8 @@ export const CRM_OPTIONS = {
   propertyTenure: ["Freehold", "Leasehold"],
 
   // Every code a person may pick on a deal — shared/deal-status.ts (INV is system-set on Xero invoice
-  // sync; ARCH is never offered). Opportunity is a tracker-only stage, so the deal pickers don't offer it.
+  // sync; ARCH is never offered; UOX and Withdrawn only on the Investment Tracker: a deal that falls
+  // through is deleted). Opportunity is a tracker-only stage, so the deal pickers don't offer it.
   dealStatus: DEAL_PAGE_STATUSES.filter((c) => c !== "OPP") as string[],
   dealType: [
     "Sale",

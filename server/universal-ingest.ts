@@ -98,11 +98,13 @@ const TARGETS: Record<IngestTarget, TargetSpec> = {
   },
   crm_deals: {
     table: "crm_deals",
+    // The deal pickers no longer offer Withdrawn (shared/deal-status.ts,
+    // INVESTMENT_ONLY_PICKS), but old rows carry it: an import still writes it.
     fields: `
       name (string, deal name),
       property_address (string or null — the property this deal is on),
       deal_type (one of: ${INGEST_DEAL_TYPES.join(" | ")}),
-      status (string — ${DEAL_PAGE_STATUSES.join(" | ")}),
+      status (string — ${[...DEAL_PAGE_STATUSES, "WIT"].join(" | ")}),
       tenant_name (string or null),
       landlord_name (string or null),
       vendor_name (string or null),

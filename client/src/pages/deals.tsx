@@ -3907,6 +3907,15 @@ export function DealFormDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__clear__">None</SelectItem>
+                  {(() => {
+                    // A deal at a status this picker does not offer
+                    // (Withdrawn, Archived, an Investment Tracker code) still
+                    // shows it, never a blank box; it cannot be picked again.
+                    const current = legacyToCode(form.status);
+                    return current && !CRM_OPTIONS.dealStatus.includes(current) ? (
+                      <SelectItem value={current} disabled data-testid="select-deal-status-current">{DEAL_STATUS_LABELS[current]}</SelectItem>
+                    ) : null;
+                  })()}
                   {CRM_OPTIONS.dealStatus.map((s) => {
                     // A new letting starts life on the Letting Tracker
                     // (which creates its deal); a new deal typed here

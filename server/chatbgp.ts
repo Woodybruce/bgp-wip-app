@@ -61,14 +61,17 @@ import { resolveAccessibleChatThread } from "./utils/chat-thread-access";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 import { resolveCompanyScope, isPropertyInScope, schemeLimitSql } from "./company-scope";
-import { legacyToCode, statusSpellingsFor, DEAL_STATUS_LABELS, SYSTEM_SET_STATUSES, TERMINAL_STATUSES, isExcludedLegacyStatus, type DealStatusCode } from "@shared/deal-status";
-import { LETTING_DEAL_TYPES, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, TRACKER_LIVE_STATUSES, HISTORIC_STATUSES, isLettingType } from "@shared/letting-rules";
+import { legacyToCode, statusSpellingsFor, DEAL_STATUS_LABELS, LETTING_PICK_STATUSES, SYSTEM_SET_STATUSES, TERMINAL_STATUSES, isExcludedLegacyStatus, type DealStatusCode } from "@shared/deal-status";
+import { LETTING_DEAL_TYPES, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, TRACKER_LIVE_STATUSES, isLettingType } from "@shared/letting-rules";
 
 // ── Lettings vocabulary (shared/letting-rules.ts) ────────────────────────
 // Tool descriptions and SQL IN-lists come from the one vocabulary, never
 // hand-typed here.
 const DEAL_TYPE_HINT = [...LETTING_DEAL_TYPES, ...TENANT_REP_TYPES, ...ADVISORY_UNIT_TYPES, "Sale", "Purchase"].join(", ");
-const TRACKER_STATUS_HINT = [...TRACKER_LIVE_STATUSES, ...HISTORIC_STATUSES]
+// What a person may pick on the Letting Tracker, less the system-set codes:
+// no Withdrawn (Woody, 2026-11-20), though a save that sends it is still
+// accepted.
+const TRACKER_STATUS_HINT = LETTING_PICK_STATUSES
   .filter((c) => !SYSTEM_SET_STATUSES.includes(c))
   .map((c) => `${c} (${DEAL_STATUS_LABELS[c]})`).join(", ");
 // Quoted IN-list of every stored spelling (code + legacy label) of `codes`,
@@ -3023,7 +3026,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "update_deal",
-      description: "Update an existing deal in the CRM — name, price, parties, dates, areas and other fields. Deal STATUS changes are not made from chat (approval and AML gates run on the deal page); if asked to change a status, direct the user to the deal page instead of calling this.",
+      description: "Update an existing deal in the CRM — name, price, parties, dates, areas and other fields. Deal STATUS changes are not made from chat (approval and AML gates run on the deal page); if asked to change a status, direct the user to the deal page instead of calling this. A deal that falls through is deleted, not withdrawn (Woody, 2026-11-20): Withdrawn is offered only on the Investment Tracker; a letting on the Letting Tracker is ended by deleting its unit there (its deal at Negotiating, HOTs or Solicitors moves to Withdrawn, keeping its Ref #, fee and history), any other deal by the deal page's More → Delete.",
       parameters: {
         type: "object",
         properties: {
@@ -3960,7 +3963,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           useClass: { type: "string" },
           condition: { type: "string" },
           availableDate: { type: "string" },
-          marketingStatus: { type: "string", description: `Tracker status code: ${TRACKER_STATUS_HINT}. A legacy label such as 'Under Offer' or 'Let' is normalised to its code; anything else is refused.` },
+          marketingStatus: { type: "string", description: `Tracker status code: ${TRACKER_STATUS_HINT}. A legacy label such as 'Under Offer' or 'Let' is normalised to its code; an unknown one is refused. Withdrawn is not offered (Woody, 2026-11-20): when a letting falls through, tell the user to delete the unit on the Letting Tracker (More actions → Delete unit), which moves a deal at Negotiating, HOTs or Solicitors to Withdrawn and keeps its Ref #, fee and history.` },
           epcRating: { type: "string" },
           notes: { type: "string" },
           fee: { type: "number" },

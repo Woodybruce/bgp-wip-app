@@ -89,15 +89,16 @@ import PDFViewer from "@/components/pdf-viewer";
 import { EntityCombobox } from "@/components/entity-combobox";
 import { FeeAllocationEditor, BGP_HOUSE_PCT, type FeeAllocationRow } from "@/components/fee-allocation-editor";
 
-import { LETTING_STATUSES, DEAL_STATUS_LABELS, WIP_STATUSES, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+import { LETTING_STATUSES, LETTING_PICK_STATUSES, DEAL_STATUS_LABELS, WIP_STATUSES, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 import { DEFAULT_LETTING_TYPE, LEGACY_LETTING_TYPES, TRACKER_LIVE_STATUSES, HISTORIC_STATUSES, PRE_MARKETING_STATUSES } from "@shared/letting-rules";
 import { tenancyStatusMatches } from "@shared/tenancy-schedule-display";
 import { CompanyChip } from "@/components/company-chip";
 import { UnitCommentButton, useUnitCommentSummaries } from "@/components/unit-comments";
 const MARKETING_STATUSES = LETTING_STATUSES;
 // The per-row Deal Status dropdown offers the deal pipeline only (Woody,
-// 2026-09-01): Opportunity/Available belong to Unit Status, Withdrawn moved
-// to the bulk Change Status menu (historic WIT rows keep their chip). AVA
+// 2026-09-01): Opportunity/Available belong to Unit Status. Withdrawn is
+// offered nowhere here since 2026-11-20 (a letting that falls through is
+// deleted: LETTING_PICK_STATUSES); historic WIT rows keep their chip. AVA
 // reads as "Marketing" on this board — same stored code (legacyToCode
 // already maps "marketing" → AVA), so WIP / deals boards are untouched.
 const DEAL_PIPELINE_STATUSES: DealStatusCode[] = WIP_STATUSES;
@@ -2509,8 +2510,9 @@ export default function AvailableUnitsPage() {
                   the WIP-capture modal (tenant, landlord, fee split,
                   AML check) that the inline per-row path runs. Bulk
                   flipping skipped all of that and let deals land in
-                  SOL with no counterparties. */}
-              {MARKETING_STATUSES.filter(s => s !== "SOL").map(s => (
+                  SOL with no counterparties. Withdrawn is not offered
+                  either: a letting that falls through is deleted. */}
+              {LETTING_PICK_STATUSES.filter(s => s !== "SOL").map(s => (
                 <DropdownMenuItem
                   key={s}
                   onClick={() => bulkStatusMutation.mutate({ ids: Array.from(selectedIds), status: s })}
@@ -3312,8 +3314,11 @@ export default function AvailableUnitsPage() {
                             rest behind one menu (Woody, 2026-11-12 "tidy up
                             that actions column"). Viewings, offers and interest
                             read in their own columns; a counter shows here only
-                            for a column that is switched off. Withdrawing is
-                            bulk tick → Change Status → Withdrawn. */}
+                            for a column that is switched off. A letting that
+                            falls through is deleted (More actions → Delete
+                            unit), which moves a deal at Negotiating, HOTs or
+                            Solicitors to Withdrawn on the server (Woody,
+                            2026-11-20). */}
                         <div className="flex flex-col gap-1 items-start">
                           {(!showCol("viewings") || !showCol("offers") || !showCol("interest")) && (
                           <div className="flex gap-1">

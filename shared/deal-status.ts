@@ -76,12 +76,31 @@ export const DEAL_STATUS_DOT_COLORS: Record<DealStatusCode, string> = {
   ARCH: "bg-stone-400",
 };
 
-// Per-tracker subsets — which codes each view's dropdown should offer
+// Per-tracker subsets — the codes each tracker shows (its status headings,
+// pills, counts and order). The Investment Tracker also offers every one of
+// them as a choice; the Letting Tracker offers LETTING_PICK_STATUSES (below).
 // REP dropped from the letting tracker headings (Alex, 2026-08-12: "not
 // relevant") — existing REP rows still render via legacyToCode, they just
 // lose their chip. HOT sits between NEG and SOL per the same request.
 export const LETTING_STATUSES: DealStatusCode[]    = ["OPP", "AVA", "NEG", "HOT", "SOL", "EXC", "COM", "WIT", "INV"];
 export const INVESTMENT_STATUSES: DealStatusCode[] = ["REP", "SPEC", "LIVE", "AVA", "NEG", "UOX", "SOL", "EXC", "COM", "WIT", "INV"];
+
+// Codes offered as a choice on the Investment Tracker only, the one rule
+// every other status picker reads. UOX is the Investment Tracker's own
+// (Jack, 2026-11-16). WIT: a deal that falls through is deleted, not moved to
+// Withdrawn (Woody, 2026-11-20: "only chase live deals actually delete the
+// Withdrawn option generally delete is good enough"); deleting a Letting
+// Tracker unit still moves its deal to Withdrawn on the server when the deal
+// is at Negotiating, HOTs or Solicitors, which keeps its Ref #, fee and
+// history (the unit DELETE in server/routes.ts). Woody did not answer whether
+// the Investment Tracker should lose Withdrawn too, so it keeps it. A deal
+// that carries either code still shows its label, colour, filters and
+// counts, and the server still accepts both on a save.
+export const INVESTMENT_ONLY_PICKS: DealStatusCode[] = ["UOX", "WIT"];
+const pickedOffInvestment = (c: DealStatusCode) => !INVESTMENT_ONLY_PICKS.includes(c);
+// What a person may pick on the Letting Tracker (the bulk Change Status menu)
+// and on the joint agent's tracker: its headings less Withdrawn.
+export const LETTING_PICK_STATUSES: DealStatusCode[] = LETTING_STATUSES.filter(pickedOffInvestment);
 // WIP report covers every fee-bearing stage including pre-deal pipeline.
 // AVA + NEG live on the Letting Tracker AND the Deals board (Woody,
 // 2026-10-26: a Marketing deal sits on the WIP and the Deals board from
@@ -90,11 +109,12 @@ export const INVESTMENT_STATUSES: DealStatusCode[] = ["REP", "SPEC", "LIVE", "AV
 // deals stay on the Investment tracker and deal pages, they just don't
 // count as WIP.
 export const WIP_STATUSES: DealStatusCode[]        = ["AVA", "NEG", "HOT", "SOL", "EXC", "COM", "INV"];
-// Every code a person may pick on a deal — ARCH is system-set (see above)
-// and never offered. UOX is picked on the Investment Tracker only, so the
-// Deals and WIP pickers (lettings, Landsec) never offer it; a deal that
-// carries it still shows its label.
-export const DEAL_PAGE_STATUSES: DealStatusCode[]  = DEAL_STATUS_CODES.filter((c) => c !== "ARCH" && c !== "UOX");
+// Every code a person may pick on a deal (the deal form, the Deals table's
+// status cell, the WIP report) — ARCH is system-set (see above) and never
+// offered. UOX and WIT are picked on the Investment Tracker only
+// (INVESTMENT_ONLY_PICKS), so the Deals and WIP pickers (lettings, Landsec)
+// never offer them; a deal that carries one still shows its label.
+export const DEAL_PAGE_STATUSES: DealStatusCode[]  = DEAL_STATUS_CODES.filter((c) => c !== "ARCH" && pickedOffInvestment(c));
 
 // INV is set automatically when a Xero invoice syncs onto the deal, ARCH by
 // the WIP import's soft-archive — UI should render them but disable manual
