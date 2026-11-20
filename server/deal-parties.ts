@@ -32,7 +32,7 @@
 import { Router, type Request, type Response } from "express";
 import {
   DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, companyOffer, dealClientRole, isDealPartyRole, newPartyPerson, ownerContactMatch, partyGaps, partySubjectKind, personFill,
-  sameCompaniesHouseNumber, signerKindOf,
+  privateMarkInName, sameCompaniesHouseNumber, signerKindOf,
   type DealPartyBilling, type DealPartyCompany, type DealPartyPayer, type DealPartyPerson, type DealPartyRole, type DealPartyView,
 } from "@shared/deal-parties";
 import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
@@ -197,7 +197,7 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
     parties.push({
       role, label: DEAL_PARTY_LABEL[role],
       brand: { id: String(brandRow.id), name: text(brandRow.name), companiesHouseNumber: text(brandRow.companies_house_number) || null, kind,
-        recordIndividual: String(brandRow.aml_subject_type || "").toLowerCase() === "individual" },
+        recordIndividual: String(brandRow.aml_subject_type || "").toLowerCase() === "individual", privateMark: privateMarkInName(brandRow.name) },
       company,
       offer: company ? null : companyOffer(filed, role === "tenant" ? lease : null),
       brandOwn,
@@ -380,6 +380,51 @@ router.post("/api/deals/:id/parties/:role/person", async (req: Request, res: Res
     res.json({ ...(await loadDealParties(pool, deal.id)), personId: person.id, created: person.created });
   } catch (err: any) {
     res.status(err?.status || 500).json({ message: err?.message || "Could not add the person" });
+  }
+});
+
+// A party recorded as a private individual (Woody, 20 November 2026: the
+// Kick off AML step asked for "the company buying" for Sandy Macaskill
+// (private), a private buyer, and nothing on the app could record him as a
+// person). Sets the record's own subject type, crm_companies.aml_subject_type,
+// which every AML reader follows (partySubjectKind): no company that signs is
+// then needed and the checks are about the person. A record with a Companies
+// House number is a company and is refused. Undo puts it back to not
+// recorded. The record is shared, so every deal with it follows. A line on
+// the deal's history and on the record's KYC history.
+router.put("/api/deals/:id/parties/:role/individual", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party" });
+    const wanted = req.body && typeof req.body === "object" ? (req.body as any).individual : undefined;
+    if (typeof wanted !== "boolean") return res.status(400).json({ message: "Say whether the party is a private individual." });
+    const { pool } = await import("./db");
+    const deal = await readDeal(pool, String(req.params.id));
+    if (!deal) return res.status(404).json({ message: "Deal not found" });
+    const brandId = text(deal[DEAL_PARTY_COLUMNS[role].brand]);
+    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the deal first.` });
+    const brand = (await pool.query(`SELECT id, name, companies_house_number, aml_subject_type FROM crm_companies WHERE id = $1`, [brandId])).rows[0];
+    if (!brand) return res.status(404).json({ message: "Party not found" });
+    if (wanted && text(brand.companies_house_number)) {
+      return res.status(409).json({ message: `${text(brand.name)} has a Companies House number (${text(brand.companies_house_number)}), so it is a company. If a person signs for it in their own name, use A person signs.` });
+    }
+    const before = text(brand.aml_subject_type) || null;
+    const isIndividual = (before || "").toLowerCase() === "individual";
+    const after = wanted ? "individual" : (isIndividual ? null : before);
+    if (wanted !== isIndividual) {
+      await pool.query(`UPDATE crm_companies SET aml_subject_type = $2 WHERE id = $1`, [brandId, after]);
+      const words = wanted
+        ? `${text(brand.name)} recorded as a private individual: the checks are about the person, with no company that signs`
+        : `${text(brand.name)} no longer recorded as a private individual`;
+      await audit(pool, deal.id, "aml_subject_type", before, after, words, me);
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'aml_subject_type', $2, $3)`,
+        [brandId, me.name || me.id, `${words} (on ${deal.name})`]).catch((e: any) => console.warn(`[deal-parties] KYC history line not written: ${e?.message}`));
+    }
+    res.json(await loadDealParties(pool, deal.id));
+  } catch (err: any) {
+    res.status(err?.status || 500).json({ message: err?.message || "Could not record the party" });
   }
 });
 

@@ -3183,7 +3183,30 @@ in `client/src/components/deal-parties.tsx`,
   live one met the dedupe index (`idx_crm_deals_dedupe`) and showed the
   database's own words, now `409 DUPLICATE_DEAL` naming the deal and its
   Ref with **Open deal**. Never put a `<form>` in a dialog the deal form
-  opens. Guard: `qa/regression/new-deal-create-guards.test.mjs`.
+  opens. Guard: `qa/regression/new-deal-create-guards.test.mjs`. Pressed
+  again later that day for lettings: a New Letting on a unit typed in, a
+  second one on the same unit (`409 LIVE_LETTING_EXISTS`, Open deal), one
+  with no unit (Create greyed, with the reason), a Lease Disposal and a Rent
+  Review (Lease Advisory) all behave. A letting's name is "<tenant> –
+  <property>", with no unit, so the same tenant taking a second unit from
+  the same landlord there meets the dedupe index: the person renames it.
+- **A party recorded as a private individual** (Woody, the same day, adding
+  the Fortis Green heads of terms on live as #4526: the Kick off AML step
+  asked for "the company buying" for Sandy Macaskill (private), a private
+  buyer, and nothing on the app could record him as a person).
+  `PUT /api/deals/:id/parties/:role/individual { individual }` (BGP staff
+  signed in as themselves, in `server/deal-parties.ts`) sets the record's
+  own `crm_companies.aml_subject_type`, which every AML reader follows
+  (`partySubjectKind`): no company that signs is then needed and the checks
+  are about the person. A record with a Companies House number is refused
+  (409: it is a company). Undo clears only what it set. The record is
+  shared, so every deal with it follows. A line on the deal's history and
+  on the record's KYC history (`aml_subject_type`). The party box offers
+  **Record them as a private individual** (and **Undo**); the Kick off AML
+  step and the AML box offer **A private individual** first when the CRM
+  name is marked private (`privateMarkInName`: "(private)", "(private
+  client)", "(individual)"), a suggestion a person presses, never applied
+  by itself. Guard: `qa/regression/deal-parties-guards.test.mjs`.
 
 ## Heads of terms on a sale or purchase (Woody, 2026-11-20)
 
@@ -3203,6 +3226,9 @@ not showing". On live the reader had no vendor, purchaser or price; the club
   the vendor and purchaser on a sale or purchase (a reading with only a
   landlord gave the seller; a sale's tenant is never the buyer), and the
   landlord and tenant otherwise.
+- Reading heads of terms names the deal with the property it picked, as
+  picking the property does (a sale read from them was named after the
+  vendor alone until 20 November 2026).
 - **Names match by whole words** (`findCompanyByName`: the same words, legal
   endings and "(private)" aside, else the one company whose every word is in
   the name, two words at least; never part of a word, never a guess between

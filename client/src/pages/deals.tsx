@@ -2286,8 +2286,10 @@ function SimplifiedCreateBody({
       if (typeof ex.targetDate === "string" && ex.targetDate && !form.targetDate) patch.targetDate = ex.targetDate.slice(0, 10);
       if (str(ex.specialConditions) && !form.comments) patch.comments = str(ex.specialConditions);
       setForm((p: any) => ({ ...p, ...patch }));
-      // The deal name follows the parties the reading filled, as picking them does.
-      applyAutoName({ ...form, ...patch });
+      // The deal name follows the parties the reading filled, as picking them
+      // does, and the property it picked (20 November 2026: a sale read from
+      // the Fortis Green heads of terms was named after the vendor alone).
+      applyAutoName({ ...form, ...(propId ? { propertyId: propId } : {}), ...patch });
       // Fee split from the agents the HOTs names, only when none is entered
       // yet: BGP House keeps its slice and the agents share the rest.
       if (Array.isArray(ex.agentNames) && ex.agentNames.length && !feeRows.some(r => !r.isBgpHouse && r.agentName)) {

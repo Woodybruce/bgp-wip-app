@@ -100,13 +100,29 @@ export const SIGNING_COMPANY_WORDS: Record<DealPartyRole, string> = {
   purchaser: "the company buying",
 };
 
+// A CRM name marked as a private client, as the investment import names them
+// ("Sandy Macaskill (private)", "Chan family (private client)"). Only a
+// suggestion: a person records the party as a private individual (Woody,
+// 20 November 2026, after the Kick off AML step asked for "the company
+// buying" for Sandy Macaskill).
+export const privateMarkInName = (name: unknown): boolean =>
+  /\(\s*(?:private(?:\s+(?:client|individual|buyer|purchaser|vendor|seller|investor))?|individual)\s*\)/i.test(String(name ?? ""));
+
+// "if they …", for the private individual suggestion.
+export const OWN_NAME_WORDS: Record<DealPartyRole, string> = {
+  landlord: "own the property in their own name",
+  tenant: "are taking the lease in their own name",
+  vendor: "are selling in their own name",
+  purchaser: "are buying in their own name",
+};
+
 export interface DealPartyView {
   role: DealPartyRole;
   label: string;
   // kind: whether the checks are about a company or a private individual (a
   // person who signs makes it an individual); recordIndividual: the record
-  // itself is a private individual.
-  brand: { id: string; name: string; companiesHouseNumber: string | null; kind: "company" | "individual"; recordIndividual?: boolean };
+  // itself is a private individual; privateMark: its CRM name says private.
+  brand: { id: string; name: string; companiesHouseNumber: string | null; kind: "company" | "individual"; recordIndividual?: boolean; privateMark?: boolean };
   // The company that signs, as set on the deal.
   company: DealPartyCompany | null;
   // What to offer when none is set: the company on the unit's lease (a
