@@ -3868,6 +3868,25 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       res.status(201).json(dealScope ? stripDealFees(deal as any) : deal);
     } catch (e: any) {
       if (e instanceof LettingRefusal) return res.status(e.status).json(e.toBody());
+      // A live deal with the same name and parties already exists (the dedupe
+      // index): say which, in words, never the database's own text
+      // (20 November 2026: the raw "duplicate key value violates unique
+      // constraint" reached the New Deal form).
+      const dbErr = e?.code ? e : e?.cause;
+      if (dbErr?.code === "23505" && /idx_crm_deals_dedupe/.test(String(dbErr?.constraint || dbErr?.message || ""))) {
+        const b = req.body || {};
+        const same = (await pool.query(
+          `SELECT id, deal_ref, name FROM crm_deals
+            WHERE LOWER(name) = LOWER($1) AND COALESCE(landlord_id, '') = COALESCE($2, '') AND COALESCE(tenant_id, '') = COALESCE($3, '')
+              AND status NOT IN ('ARCH', 'COM') ORDER BY created_at DESC LIMIT 1`,
+          [String(b.name || ""), b.landlordId || null, b.tenantId || null]).catch(() => ({ rows: [] as any[] }))).rows[0];
+        const name = same?.name || String(b.name || "this deal");
+        return res.status(409).json({
+          code: "DUPLICATE_DEAL",
+          message: `There is already a live deal called "${name}"${same?.deal_ref ? ` (#${same.deal_ref})` : ""}. Open it, or give this one another name.`,
+          existingDealId: same?.id || null, existingDealRef: same?.deal_ref ?? null,
+        });
+      }
       res.status(400).json({ error: e.message });
     }
   });

@@ -974,7 +974,7 @@ function LiveLettingNotice({ row, onUseDeal }: { row: LettingUnitSearchRow; onUs
 // non-2xx body to "<status>: <message>", which loses the code and the
 // existing deal id the letting-service 409s carry (LIVE_LETTING_EXISTS /
 // UNIT_REQUIRED). Other failures throw the same string apiRequest would.
-type LettingRefusal = { message: string; code: "LIVE_LETTING_EXISTS" | "UNIT_REQUIRED"; existingDealId?: string; existingDealRef?: number | string; trackerRowId?: string };
+type LettingRefusal = { message: string; code: "LIVE_LETTING_EXISTS" | "UNIT_REQUIRED" | "DUPLICATE_DEAL"; existingDealId?: string; existingDealRef?: number | string; trackerRowId?: string };
 async function postDeal(payload: Record<string, unknown>): Promise<any> {
   const res = await fetch("/api/crm/deals", {
     method: "POST",
@@ -986,7 +986,7 @@ async function postDeal(payload: Record<string, unknown>): Promise<any> {
   const text = (await res.text()) || res.statusText;
   let body: any = null;
   try { body = JSON.parse(text); } catch { /* plain text */ }
-  if (res.status === 409 && (body?.code === "LIVE_LETTING_EXISTS" || body?.code === "UNIT_REQUIRED")) {
+  if (res.status === 409 && (body?.code === "LIVE_LETTING_EXISTS" || body?.code === "UNIT_REQUIRED" || body?.code === "DUPLICATE_DEAL")) {
     throw Object.assign(new Error(body.message || text), { lettingRefusal: body as LettingRefusal });
   }
   throw new Error(`${res.status}: ${body?.error || body?.message || text}`);
@@ -3644,7 +3644,7 @@ export function DealFormDialog({
         toast({
           title: refusal.message,
           variant: "destructive",
-          action: refusal.code === "LIVE_LETTING_EXISTS" && refusal.existingDealId ? (
+          action: (refusal.code === "LIVE_LETTING_EXISTS" || refusal.code === "DUPLICATE_DEAL") && refusal.existingDealId ? (
             <ToastAction
               altText="Open deal"
               onClick={() => { onOpenChange(false); navigateTo(`/deals/${refusal.existingDealId}`); }}

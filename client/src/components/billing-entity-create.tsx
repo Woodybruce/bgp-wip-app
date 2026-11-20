@@ -159,7 +159,11 @@ export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQu
           </Button>
         </div>
         {mode === "person" ? (
-          <form className="space-y-2.5" onSubmit={e => { e.preventDefault(); if (personReady) void savePerson(); }} data-testid={`${testIdPrefix}-person`}>
+          // No form element here: this dialog opens inside the deal form, and React carries
+          // a submit through the portal to that form, which then saved the deal
+          // (20 November 2026). Enter in a box still saves the person.
+          <div className="space-y-2.5" data-testid={`${testIdPrefix}-person`}
+            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); if (personReady) void savePerson(); } }}>
             <div className="space-y-1">
               <Label htmlFor={`${testIdPrefix}-person-name`} className="text-xs">Full name</Label>
               <Input id={`${testIdPrefix}-person-name`} autoFocus value={person.name} onChange={e => setPerson(p => ({ ...p, name: e.target.value }))} placeholder="First name and surname" data-testid={`${testIdPrefix}-person-name`} />
@@ -174,10 +178,10 @@ export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQu
                 <Input id={`${testIdPrefix}-person-mobile`} type="tel" value={person.mobile} onChange={e => setPerson(p => ({ ...p, mobile: e.target.value }))} data-testid={`${testIdPrefix}-person-mobile`} />
               </div>
             </div>
-            <Button type="submit" size="sm" disabled={!personReady || !!busy} data-testid={`${testIdPrefix}-person-save`}>
+            <Button type="button" size="sm" disabled={!personReady || !!busy} onClick={() => void savePerson()} data-testid={`${testIdPrefix}-person-save`}>
               {busy === "person" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}Save {person.name.trim() || "the person"}
             </Button>
-          </form>
+          </div>
         ) : (<>
         <Input
           autoFocus

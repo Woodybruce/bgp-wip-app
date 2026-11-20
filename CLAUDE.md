@@ -3163,6 +3163,17 @@ in `client/src/components/deal-parties.tsx`,
   as **Its purchase vehicle** (the `vehicle` relationship), with its own
   checks.
 - Not run against Xero or Companies House from a build machine.
+- **New Deal pressed to Create** (Woody, the same day: "check the add deal
+  process actually works and doesnt fail"; a sale with a person signing, a
+  purchase and a lease acquisition, in a browser against a local copy). Two
+  faults found and fixed: the person dialog held a `<form>`, and React
+  carries a submit through the dialog's portal to the deal form, so saving
+  the person created the deal before the person was set (the dialog has no
+  form now; Enter still saves); and a deal with the name and parties of a
+  live one met the dedupe index (`idx_crm_deals_dedupe`) and showed the
+  database's own words, now `409 DUPLICATE_DEAL` naming the deal and its
+  Ref with **Open deal**. Never put a `<form>` in a dialog the deal form
+  opens. Guard: `qa/regression/new-deal-create-guards.test.mjs`.
 
 ## Heads of terms on a sale or purchase (Woody, 2026-11-20)
 
