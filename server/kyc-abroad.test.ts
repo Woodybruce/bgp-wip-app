@@ -10,7 +10,8 @@ import assert from "node:assert/strict";
 
 process.env.GLEIF_GAP_MS = "0";
 
-const { readAccountsParentNote, traceAbroad } = await import("./kyc-abroad");
+const { readAccountsParentNote, traceAbroad, traceAbroadParty } = await import("./kyc-abroad");
+const { partyPeople } = await import("../shared/kyc-people");
 const { traceGleif } = await import("./gleif");
 const { gleifTop } = await import("../shared/foreign-owners");
 
@@ -119,3 +120,19 @@ async function tinyPdf(pages: number): Promise<Buffer> {
   for (let i = 0; i < pages; i++) doc.addPage([200, 200]);
   return Buffer.from(await doc.save());
 }
+
+test("traceAbroadParty: a company with no UK record is looked up in GLEIF by its name and country, and its people are asked for", async () => {
+  const seen: any[] = [];
+  const out = await traceAbroadParty({ name: "Ramen Holding A/S", country: "Denmark" }, {
+    trace: async q => { seen.push(q); return { status: "found", entity: null, parents: [], top: gleifTop(null, "NATURAL_PERSONS"), candidates: 1, error: null }; },
+  });
+  assert.deepEqual(seen, [{ name: "Ramen Holding A/S", country: "Denmark", registrationNumber: null }]);
+  assert.equal(out.party, true);
+  assert.equal(out.accounts, null);
+  assert.deepEqual(out.traced.map(t => [t.name, t.country, t.via]), [["Ramen Holding A/S", "Denmark", "party"]]);
+  // With no Companies House record, the people are those behind the company abroad.
+  const people = partyPeople({ companyId: "b1", kind: "company", precheck: { companiesHouse: null, abroad: out } as any, requests: [] });
+  assert.equal(people.basis, "abroad_company");
+  const unread = partyPeople({ companyId: "b1", kind: "company", precheck: { companiesHouse: null } as any, requests: [] });
+  assert.equal(unread.basis, "not_read");
+});

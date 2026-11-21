@@ -42,6 +42,7 @@ const PARTY_TABLES: Array<{ table: string; party: string; at: string }> = [
   { table: "kyc_party_exemptions", party: "company_id", at: "COALESCE(undone_at, set_at)" },
   { table: "kyc_public_figure_checks", party: "company_id", at: "COALESCE(withdrawn_at, verified_at)" },
   { table: "kyc_abroad_records", party: "company_id", at: "COALESCE(removed_at, added_at)" },
+  { table: "kyc_reliance", party: "company_id", at: "COALESCE(withdrawn_at, recorded_at)" },
   { table: "kyc4u_archive_files", party: "company_id", at: "COALESCE(modified_at, copied_at, listed_at)" },
   { table: "kyc_audit_log", party: "company_id", at: "created_at" },
   { table: "aml_recheck_reminders", party: "company_id", at: "COALESCE(completed_at, created_at)" },
@@ -58,7 +59,9 @@ const DEAL_AML_COLUMNS = ["aml_check_completed", "kyc_approved", "kyc_approved_a
   "aml_source_of_funds_notes", "aml_source_of_wealth", "aml_source_of_wealth_notes", "aml_pep_status", "aml_pep_notes", "aml_edd_required",
   "aml_edd_reason", "aml_edd_completed_at", "aml_edd_completed_by", "aml_edd_notes", "aml_id_verified", "aml_id_verified_at", "aml_id_verified_by",
   "aml_id_doc_type", "aml_address_verified", "aml_address_doc_type", "aml_sar_filed", "aml_sar_reference", "aml_sar_filed_at", "aml_compliance_notes",
-  "aml_checklist", "aml_sof_analysis", "aml_ai_triage", "aml_market_data", "aml_mlro_report_url"];
+  "aml_checklist", "aml_sof_analysis", "aml_ai_triage", "aml_market_data", "aml_mlro_report_url",
+  // BGP stopping acting on the deal (server/aml-stop.ts, 21 November 2026).
+  "aml_stopped_at", "aml_stopped_by", "aml_stopped_by_name", "aml_stopped_reason", "aml_stopped_note", "aml_stopped_prev_status", "aml_stopped_withdrew"];
 // A deal holds AML fields when any of these is set.
 const DEAL_HAS_AML = `(aml_check_completed IS NOT NULL OR kyc_approved_at IS NOT NULL OR aml_risk_level IS NOT NULL OR aml_pep_status IS NOT NULL
   OR aml_source_of_funds IS NOT NULL OR aml_sof_analysis IS NOT NULL OR aml_checklist IS NOT NULL OR aml_ai_triage IS NOT NULL
@@ -228,6 +231,7 @@ async function deleteParty(client: PoolClient, companyId: string): Promise<Recor
   if (tables.has("kyc_party_exemptions")) await del("kyc_party_exemptions", `DELETE FROM kyc_party_exemptions WHERE company_id = $1`);
   if (tables.has("kyc_public_figure_checks")) await del("kyc_public_figure_checks", `DELETE FROM kyc_public_figure_checks WHERE company_id = $1`);
   if (tables.has("kyc_abroad_records")) await del("kyc_abroad_records", `DELETE FROM kyc_abroad_records WHERE company_id = $1`);
+  if (tables.has("kyc_reliance")) await del("kyc_reliance", `DELETE FROM kyc_reliance WHERE company_id = $1`);
   if (tables.has("kyc4u_archive_files")) {
     // Files copied from KYC4U's site for this party, with their stored copies.
     const keys = (await client.query(`SELECT storage_key FROM kyc4u_archive_files WHERE company_id = $1 AND storage_key IS NOT NULL`, [companyId])).rows.map((r: any) => String(r.storage_key));
@@ -256,10 +260,15 @@ async function deleteDealFields(client: PoolClient, dealId: string): Promise<Rec
   const counts: Record<string, number> = {};
   const n = await clearColumns(client, "crm_deals", DEAL_AML_COLUMNS, "id = $1", [dealId]);
   if (n) counts.deal_fields = n;
-  const tables = await existingTables(client, ["deal_events", "deal_audit_log", "kyc_solicitor_checks"]);
+  const tables = await existingTables(client, ["deal_events", "deal_audit_log", "kyc_solicitor_checks", "kyc_reliance"]);
   if (tables.has("kyc_solicitor_checks")) {
     const r = await client.query(`DELETE FROM kyc_solicitor_checks WHERE deal_id = $1`, [dealId]);
     if (r.rowCount) counts.solicitor_checks = r.rowCount;
+  }
+  // Reliance on another firm's checks (reg 39) was agreed for this deal.
+  if (tables.has("kyc_reliance")) {
+    const r = await client.query(`DELETE FROM kyc_reliance WHERE deal_id = $1`, [dealId]);
+    if (r.rowCount) counts.reliance = r.rowCount;
   }
   if (tables.has("deal_events")) {
     const r = await client.query(`DELETE FROM deal_events WHERE deal_id = $1 AND (event_type ILIKE 'aml%' OR event_type ILIKE 'kyc%')`, [dealId]);

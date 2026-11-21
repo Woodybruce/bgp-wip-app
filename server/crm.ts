@@ -2974,12 +2974,16 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const targetCode = legacyToCode(value);
         const GATED_CODES = new Set(["SOL", "EXC", "COM", "INV"]);
         const targetIsGated = !!targetCode && GATED_CODES.has(targetCode);
+        const { amlStopDenial } = await import("./aml-stop");
 
         for (const id of ids) {
           const oldDeal = await storage.getCrmDeal(id);
           if (!oldDeal) { failures.push({ id, reason: "deal not found" }); continue; }
           if (oldDeal.status === value) { passing.push(id); continue; }
           oldStatusById.set(id, (oldDeal as any).status ?? null);
+          // Stopped for AML reasons (server/aml-stop.ts): only Withdrawn.
+          const stopped = await amlStopDenial(id, value);
+          if (stopped) { failures.push({ id, reason: stopped.error }); continue; }
 
           if (APPROVAL_STATUSES.has(value) && !isSenior) {
             failures.push({ id, reason: `senior approval required for ${value}` });
@@ -3052,6 +3056,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           }
         }
       }
+      // A deal BGP stopped acting on for AML reasons is kept with its AML file
+      // (server/aml-stop.ts): it can be withdrawn, not deleted.
+      const { stoppedDealIds } = await import("./aml-stop");
+      const { AML_STOP_REFUSAL } = await import("@shared/aml-stop");
+      const stopped = await stoppedDealIds(ids.map(String));
+      if (stopped.size) return res.status(409).json({ error: `${stopped.size === 1 ? "One of these deals" : `${stopped.size} of these deals`}: ${AML_STOP_REFUSAL}`, code: "AML_STOPPED" });
       for (const id of ids) {
         await storage.deleteCrmDeal(id);
       }
@@ -4023,6 +4033,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const canonical = legacyToCode(req.body.status);
         if (canonical) req.body.status = canonical;
       }
+      // BGP has stopped acting on the deal for AML reasons (21 November 2026,
+      // server/aml-stop.ts): it moves only to Withdrawn until the officers release it.
+      if (oldDeal && typeof req.body?.status === "string" && req.body.status !== oldDeal.status) {
+        const { amlStopDenial } = await import("./aml-stop");
+        const stopped = await amlStopDenial(String(req.params.id), req.body.status);
+        if (stopped) return res.status(stopped.status).json({ error: stopped.error, code: stopped.code });
+      }
 
       // Same tenancy-token resolve as POST — picker can hand us a
       // "__tenancy__<id>" for rows that didn't have a property_units
@@ -4697,7 +4714,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const logs = await db.select().from(dealAuditLog)
         .where(eq(dealAuditLog.dealId, req.params.id))
         .orderBy(sql`created_at DESC`);
-      res.json(scopeCompanyId ? logs.filter((l) => !CLIENT_HIDDEN_AUDIT_FIELDS.has(l.field)) : logs);
+      // BGP's AML working is never a client's to read: every line about the
+      // checks (aml_sign_off, aml_red_flag, aml_reliance, aml_stopped,
+      // kyc4u_result, client_checks_sent ...), as the five-year deletion reads them.
+      res.json(scopeCompanyId ? logs.filter((l) => !CLIENT_HIDDEN_AUDIT_FIELDS.has(l.field) && !/^(aml|kyc|client_checks)/i.test(String(l.field || ""))) : logs);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -4837,6 +4857,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     try {
       const scope = await resolveCompanyScope(req);
       if (scope && !(await isDealInScope(scope, String(req.params.id)))) return res.status(403).json({ error: "Access denied" });
+      // A deal BGP stopped acting on for AML reasons is kept with its AML file (server/aml-stop.ts).
+      const { stoppedDealIds } = await import("./aml-stop");
+      if ((await stoppedDealIds([String(req.params.id)])).size) {
+        const { AML_STOP_REFUSAL } = await import("@shared/aml-stop");
+        return res.status(409).json({ error: AML_STOP_REFUSAL, code: "AML_STOPPED" });
+      }
       await storage.deleteCrmDeal(String(req.params.id));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }

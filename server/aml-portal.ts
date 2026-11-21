@@ -325,7 +325,7 @@ async function partyPeopleForRow(row: TokenRow): Promise<PartyPeople | null> {
   // individual), never a person's own request.
   if (!row.company_id || row.is_test || !row.request || row.request.person) return null;
   const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
-  return partyPeopleFor({ companyId: row.company_id, entityId: row.trading_entity_id, kind: row.request.kind === "company" ? "company" : "individual" }, await dealPeopleRequests(row.deal_id));
+  return partyPeopleFor({ companyId: row.company_id, entityId: row.trading_entity_id, kind: row.request.kind === "company" ? "company" : "individual", dealId: row.deal_id }, await dealPeopleRequests(row.deal_id));
 }
 
 async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycProgress & { idState: KycIdState | null; idPerson: KycIdPerson | null; files: UploadedFile[] }> {
@@ -497,7 +497,7 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   let ownLinksFor: Array<{ key: string; name: string }> = [];
   if (input.kind === "company" && !docs.includes("owner_ids")) {
     const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
-    const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: "company" }, await dealPeopleRequests(dealId)).catch(() => null);
+    const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: "company", dealId }, await dealPeopleRequests(dealId)).catch(() => null);
     ownLinksFor = (people?.people || [])
       .filter(p => p.roles.includes("owner") && p.outstanding.length && !(p.own && !p.own.isMain) && !personNamesMatch(p.name, input.name))
       .map(p => ({ key: p.key, name: p.name }));
@@ -623,7 +623,7 @@ export async function createPersonCheck(dealId: string, input: z.infer<typeof pe
     throw Object.assign(new Error("Set the company that signs on the deal first: the people to check are read from its register."), { status: 409 });
   }
   const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
-  const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: party.kind }, await dealPeopleRequests(dealId));
+  const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: party.kind, dealId }, await dealPeopleRequests(dealId));
   let person: KycPartyPerson | undefined;
   if (input.name) {
     // Adding someone by name is for a private individual's side only: a
@@ -1067,7 +1067,7 @@ kycRequestRouter.get("/api/aml/deal/:id/client-checks", signedIn, async (req: Re
     const peopleRequests = await dealPeopleRequests(dealId).catch(() => null);
     const people: Record<string, PartyPeople | null> = {};
     for (const p of found.parties) {
-      people[p.companyId] = peopleRequests ? await partyPeopleFor({ companyId: p.companyId, entityId: p.entityId, kind: p.kind }, peopleRequests).catch(() => null) : null;
+      people[p.companyId] = peopleRequests ? await partyPeopleFor({ companyId: p.companyId, entityId: p.entityId, kind: p.kind, dealId }, peopleRequests).catch(() => null) : null;
     }
     res.json({
       dealName: found.deal.name,

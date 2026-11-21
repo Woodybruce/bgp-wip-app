@@ -61,7 +61,8 @@ test("a party's checks are finished only when every person to check has sent wha
   assert.match(dashboard, /const personOpen = liveTokens\.some\(\(t: any\) => t\.request\?\.person && !t\.completed_at/);
   assert.match(dashboard, /const finished = personOpen \? null : liveTokens\.filter\(\(t: any\) => !t\.request\?\.person\)/);
   // A letting under £10,000 a month (BGP's AML policy A) needs no note and owes nothing.
-  assert.match(signOff, /outstanding: facts\.sanctionsOnly \? \[\] : facts\.clientChecksOutstanding \|\| \[\],/);
+  // Nor does a party whose checks another firm did and BGP relies on (MLR 2017 reg 39; 21 November 2026).
+  assert.match(signOff, /outstanding: facts\.sanctionsOnly \|\| facts\.reliance \? \[\] : facts\.clientChecksOutstanding \|\| \[\],/);
 });
 
 test('the deal card lists the people to check first, and their own requests only under them', () => {

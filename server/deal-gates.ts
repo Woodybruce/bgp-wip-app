@@ -315,6 +315,11 @@ export async function dealStatusTransitionDenial(
   const targetCode = legacyToCode(newStatusRaw);
   const currentCode = legacyToCode(deal.status);
   if (!targetCode || targetCode === currentCode) return null;
+  // BGP has stopped acting on the deal for AML reasons (21 November 2026,
+  // server/aml-stop.ts): it moves only to Withdrawn until the officers release it.
+  const { amlStopDenial } = await import("./aml-stop");
+  const stopped = await amlStopDenial(dealId, newStatusRaw);
+  if (stopped) return stopped;
   // Closed deals never move through a board edit — the mirror skips the
   // write and starts a fresh cycle instead (INV stays INV, COM may only
   // advance to INV). Nothing will be written, so there is nothing to deny:

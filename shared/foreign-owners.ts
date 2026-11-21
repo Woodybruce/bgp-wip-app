@@ -306,8 +306,9 @@ export interface AbroadTrace {
   country: string;
   registrationNumber: string | null;
   // register: a person with significant control of the party; chain: found
-  // up the UK chain; accounts: named in the party's accounts.
-  via: "register" | "chain" | "accounts";
+  // up the UK chain; accounts: named in the party's accounts; party: the
+  // party itself, a company with no UK record (21 November 2026).
+  via: "register" | "chain" | "accounts" | "party";
   foundAt: string | null;
   gleif: GleifTrace;
 }
@@ -316,6 +317,8 @@ export interface PrecheckAbroad {
   accounts: AccountsParentNote | null;
   traced: AbroadTrace[];
   checkedAt: string;
+  // The party is a company with no UK record: it was itself looked up in GLEIF.
+  party?: boolean;
 }
 
 /** The fields the GLEIF API gives a record, as the app keeps them. */

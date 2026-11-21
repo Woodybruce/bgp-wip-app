@@ -653,6 +653,39 @@ export function amlOutstandingAtCompletionEmail(ctx: {
   };
 }
 
+// BGP stops acting on a deal, or acts on it again (Woody, 21 November 2026:
+// shared/aml-stop.ts). It goes to the deal's agents and the officers, and
+// never says why: only the officers read the reason (tipping off).
+export function amlStoppedEmail(ctx: {
+  dealName: string;
+  dealRef: number | null;
+  by: string;
+  resumed: boolean;
+  withdrawn: boolean;
+  link: string;
+  sentFrom: string;
+}): { subject: string; html: string } {
+  const deal = ctx.dealRef != null ? `Deal #${escHtml(ctx.dealRef)}, ${escHtml(ctx.dealName)}` : escHtml(ctx.dealName);
+  const inner = ctx.resumed
+    ? [
+        `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3">BGP is acting on ${escHtml(ctx.dealName)} again</h1>`,
+        p(`${deal} is no longer on hold: ${escHtml(ctx.by)} released it. It can move on and be invoiced as before.`),
+        button("Open the deal", ctx.link),
+      ]
+    : [
+        `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:#b91c1c">BGP has stopped acting on ${escHtml(ctx.dealName)}</h1>`,
+        p(`${deal} is on hold for anti-money laundering reasons: ${escHtml(ctx.by)} stopped BGP acting on it.${ctx.withdrawn ? " The deal has been moved to Withdrawn." : ""}`),
+        h2("What this means"),
+        p("Do not move the deal on, raise or send an invoice, or do more work on it until the Nominated Officer releases it. The deal and its AML file are kept."),
+        p("Do not tell the client, the other side or their advisers why. If they ask, say the deal is on hold and pass them to the Nominated Officer."),
+        button("Open the deal", ctx.link),
+      ];
+  return {
+    subject: ctx.resumed ? `AML: ${ctx.dealName} is no longer on hold` : `AML: BGP has stopped acting on ${ctx.dealName}`,
+    html: frame("AML", inner.join("\n"), `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP to the deal's agents, BGP's Nominated Officer and the Deputies.`, false, "the deal's agents and the officers receive"),
+  };
+}
+
 // A new entry in the AML register (Woody, 19 November 2026). It goes to the
 // Nominated Officer and the Deputy only and says nothing of what the entry
 // is about: a mailbox is not the place for a suspicion (tipping off).

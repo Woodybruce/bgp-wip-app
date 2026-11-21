@@ -21,6 +21,7 @@
 import type { KycRedFlag } from "./kyc-red-flags";
 import { tradingState, type KycPrecheckResult } from "./kyc-prechecks";
 import { isInvestmentDeal } from "./deal-status";
+import { foundationMarkInName } from "./deal-parties";
 import { ALL_LETTING_TYPES, TENANT_REP_TYPES } from "./letting-rules";
 
 // ── The documents ───────────────────────────────────────────────────────────
@@ -395,12 +396,22 @@ export function policyFactorFlags(input: { precheck?: KycPrecheckResult | null; 
     ...(ch?.owners || []).filter(o => o.controls.some(c => /trust/i.test(c)) || /\btrustees?\b/i.test(o.name)).map(o => o.name),
     ...(ch?.peopleUpChain || []).filter(p => p.controls.some(c => /trust/i.test(c))).map(p => p.name),
   ];
-  if (trustOwners.length || /trust/i.test(String(input.subjectType || ""))) {
-    const names = [...new Set(trustOwners)];
+  // A foundation in the ownership, on the register, abroad, or above a
+  // company abroad in GLEIF (Woody, 21 November 2026): treated as a trust.
+  const foundationOwners = [
+    ...(ch?.owners || []).filter(o => o.kind !== "individual" && foundationMarkInName(o.name)).map(o => o.name),
+    ...(ch?.ownersAbroad || []).filter(o => foundationMarkInName(o.name)).map(o => o.name),
+    ...(input.precheck?.abroad?.traced || []).flatMap(t => t.gleif.parents.map(g => g.name)).filter(foundationMarkInName),
+  ];
+  if (trustOwners.length || foundationOwners.length || /trust/i.test(String(input.subjectType || ""))) {
+    const names = [...new Set([...trustOwners, ...foundationOwners])];
+    const anyFoundation = foundationOwners.length > 0;
     flags.push({
       ...base, kind: "policy_trust",
-      label: names.length ? `A trust in the ownership: ${names.slice(0, 3).join(", ")}${names.length > 3 ? ` and ${names.length - 3} more` : ""}` : "The party is a trust",
-      detail: "Ask for the trust deed, the settlor, trustees, any protector and beneficiaries of 25% or more, and its Trust Registration Service entry (policy 4.7).",
+      label: names.length ? `A ${anyFoundation && !trustOwners.length ? "foundation" : anyFoundation ? "trust or foundation" : "trust"} in the ownership: ${names.slice(0, 3).join(", ")}${names.length > 3 ? ` and ${names.length - 3} more` : ""}` : "The party is a trust or foundation",
+      detail: anyFoundation
+        ? "Ask for the foundation's charter and by-laws, its founder, the members of its board or council, any protector, and who benefits from it (MLR 2017 reg 6); for a trust, the trust deed, the settlor, trustees, any protector and beneficiaries of 25% or more, and its Trust Registration Service entry (policy 4.7)."
+        : "Ask for the trust deed, the settlor, trustees, any protector and beneficiaries of 25% or more, and its Trust Registration Service entry (policy 4.7).",
       key: "policy:trust", evidence: names.length ? names.map(n => `owner:${keyPart(n)}`) : ["party:trust"],
       facts: names.map(n => ({ label: "Held for a trust", value: n })),
     });

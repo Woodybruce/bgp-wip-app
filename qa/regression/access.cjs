@@ -55,7 +55,10 @@ function makeHandler(method, url, staff = false) {
     isClientReadableCompanyPage: async id => id === 'visible-brand' || id === 'agent-firm',
     isClientRequestUser: async () => !staff, ...statuses,
     pool: { query: async () => ({ rows: [{ email: 'client@example.test', is_admin: false }] }) },
-    require: name => name.includes('deal-status') ? statuses : { checkCounterpartyAml: async () => ({ notReady: [], hasCounterparties: true }), SENIOR_APPROVER_EMAILS: new Set() },
+    require: name => name.includes('deal-status') ? statuses
+      // BGP stopping acting on a deal (server/aml-stop.ts, 21 November 2026): none stopped here.
+      : name.includes('aml-stop') ? { amlStopDenial: async () => null, stoppedDealIds: async () => new Set(), AML_STOP_REFUSAL: 'on hold' }
+      : { checkCounterpartyAml: async () => ({ notReady: [], hasCounterparties: true }), SENIOR_APPROVER_EMAILS: new Set() },
     isPropertyInScope: async (_, id) => ['owned-property', 'shared-property'].includes(id),
     isDealInScope: async (_, id) => ['owned-deal', 'shared-deal'].includes(id), storage,
   });

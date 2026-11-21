@@ -116,8 +116,10 @@ export function TrustLine({ dealId, party, compact }: { dealId: string; party: D
     if (compact) return null;
     return (
       <div className="rounded-md border border-red-300 bg-red-50 px-2.5 py-2 text-xs text-red-900 dark:bg-red-950/30 dark:text-red-200 space-y-1" data-testid={`deal-party-trust-${party.role}`}>
-        <p><strong>{party.brand.name} is recorded as a trust.</strong> Enhanced due diligence: KYC4U checks it in full (the trust deed, its Trust Registration Service entry, the settlor's source of wealth, ID for the settlor, trustees, any protector and beneficiaries entitled to 25% or more). The Nominated Officer or a Deputy signs it off. If a company is the trustee, set it below as the company that signs, so BGP's free checks run on it.</p>
-        <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={mark.isPending} onClick={() => mark.mutate(false)} data-testid={`deal-party-unmark-trust-${party.role}`}>Not a trust? Undo</button>
+        {party.brand.foundationHint
+          ? <p><strong>{party.brand.name} is recorded as a foundation.</strong> Treated as a trust (MLR 2017 reg 6): enhanced due diligence, and KYC4U checks it in full (its charter and by-laws, its founder, the members of its board or council, any protector, who benefits from it and where its money came from). The Nominated Officer or a Deputy signs it off.</p>
+          : <p><strong>{party.brand.name} is recorded as a trust.</strong> Enhanced due diligence: KYC4U checks it in full (the trust deed, its Trust Registration Service entry, the settlor's source of wealth, ID for the settlor, trustees, any protector and beneficiaries entitled to 25% or more). The Nominated Officer or a Deputy signs it off. If a company is the trustee, set it below as the company that signs, so BGP's free checks run on it.</p>}
+        <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={mark.isPending} onClick={() => mark.mutate(false)} data-testid={`deal-party-unmark-trust-${party.role}`}>{party.brand.foundationHint ? "Not a foundation?" : "Not a trust?"} Undo</button>
       </div>
     );
   }
@@ -125,17 +127,19 @@ export function TrustLine({ dealId, party, compact }: { dealId: string; party: D
     if (compact) return null;
     return (
       <p className="text-xs text-muted-foreground" data-testid={`deal-party-trust-option-${party.role}`}>
-        Is {party.brand.name} a trust, or acting as trustee?{" "}
-        <button type="button" className="underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-trust-${party.role}`}>Record as a trust</button>
+        Is {party.brand.name} a trust or a foundation, or acting as trustee?{" "}
+        <button type="button" className="underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-trust-${party.role}`}>Record as a trust or foundation</button>
       </p>
     );
   }
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" data-testid={`deal-party-trust-hint-${party.role}`}>
       <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-600" />
-      <span className="min-w-0 flex-1"><strong>{party.brand.name}</strong> reads like a trust. A trust is higher risk under BGP's AML policy: if it is one, or holds the property as trustee, record it, and it goes to KYC4U in full.</span>
+      <span className="min-w-0 flex-1">{party.brand.foundationHint
+        ? <><strong>{party.brand.name}</strong> reads like a foundation. A foundation has no shareholders: its beneficial owners are the people who control it and the people it benefits, as for a trust (MLR 2017 reg 6). If it is one, record it, and it goes to KYC4U in full. A UK charity company called "… Foundation" is not one.</>
+        : <><strong>{party.brand.name}</strong> reads like a trust. A trust is higher risk under BGP's AML policy: if it is one, or holds the property as trustee, record it, and it goes to KYC4U in full.</>}</span>
       <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-trust-${party.role}`}>
-        {mark.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Record as a trust
+        {mark.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}{party.brand.foundationHint ? "Record as a foundation" : "Record as a trust"}
       </Button>
     </div>
   );

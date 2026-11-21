@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { checkSecondRead, quoteInSource, secondReadItems, secondReadSystem } from "../shared/aml-second-read";
 import { TRUST_CHECKLIST, policyFactorFlags, trustChecklistNote } from "../shared/aml-policy";
-import { isTrustRecord, partyGaps, trustMarkInName } from "../shared/deal-parties";
+import { foundationMarkInName, isTrustRecord, partyGaps, trustMarkInName } from "../shared/deal-parties";
 import { amlNextStep, type AmlBoxFacts } from "../shared/aml-box";
 import { amlNeedsKyc4u } from "../shared/aml-dashboard";
 
@@ -16,6 +16,35 @@ test("a name that reads like a trust is spotted, as a suggestion only", () => {
   assert.equal(isTrustRecord("trust"), true);
   assert.equal(isTrustRecord("Trust"), true);
   assert.equal(isTrustRecord("company"), false);
+});
+
+test("a foundation is spotted by name in its own languages, never a company that carries the word (21 November 2026)", () => {
+  for (const n of ["Holm Fonden", "LEGO Fonden", "Stichting Pensioenfonds ABP", "Fondation Hoffmann", "Kirkbi Stiftung", "Stiftelsen Ikano", "The Smith Foundation", "Fundación Amancio Ortega"]) {
+    assert.equal(foundationMarkInName(n), true, n);
+  }
+  for (const n of ["Foundation Coffee House Ltd", "The X Foundation Limited", "Holm Fonden A/S", "Fond Restaurant", "Gail's Bakery", "The Wellcome Trust"]) {
+    assert.equal(foundationMarkInName(n), false, n);
+  }
+});
+
+test("a foundation in the ownership, on the register, abroad or above a company abroad, is the trust factor", () => {
+  const precheck = (over: Record<string, unknown>): any => ({
+    kind: "precheck", version: 1, ranAt: "2026-11-21T10:00:00Z",
+    party: { companyId: "b1", name: "Party", subjectKind: "company", contactName: null },
+    companiesHouse: { number: "01234567", name: "PARTY LTD", status: "active", type: "ltd", incorporatedOn: null, registeredOffice: null, jurisdiction: "england-wales",
+      sicCodes: [], accountsOverdue: false, confirmationOverdue: false, lastAccountsMadeUpTo: null, lastAccountsType: null, hasInsolvencyHistory: false, insolvencyCases: 0,
+      officers: [], owners: [], statements: [], listing: null, chain: [], peopleUpChain: [], offshoreOwners: [], ownersAbroad: [], disqualified: [], covenant: null, documents: [], ...over },
+    notAtCompaniesHouse: null, sanctions: { ran: true, lists: [], lines: [], error: null }, web: { ran: false, lines: [], skipped: null }, complyAdvantage: { ran: false, lines: [], skipped: null }, errors: [],
+  });
+  const onRegister = policyFactorFlags({ precheck: precheck({ owners: [{ name: "Stichting Administratiekantoor Holm", kind: "company", controls: ["voting-rights-75-to-100-percent"], notifiedOn: null, country: "Netherlands" }] }) });
+  const f = onRegister.find(x => x.kind === "policy_trust");
+  assert.ok(f, "a foundation owner is the trust factor");
+  assert.match(f!.label, /^A foundation in the ownership: Stichting Administratiekantoor Holm/);
+  assert.match(f!.detail || "", /charter and by-laws/);
+  const abroad = policyFactorFlags({ precheck: precheck({ ownersAbroad: [{ name: "Holm Fonden", country: "Denmark", registrationNumber: null, controls: [], foundAt: null, via: "register" }] }) });
+  assert.ok(abroad.some(x => x.kind === "policy_trust"));
+  const company = policyFactorFlags({ precheck: precheck({ owners: [{ name: "Foundation Coffee Holdings Ltd", kind: "company", controls: [], notifiedOn: null, country: "England" }] }) });
+  assert.ok(!company.some(x => x.kind === "policy_trust"), "a company with the word in its name is not a foundation");
 });
 
 test("a party recorded as a trust is enhanced, and needs no company that signs", () => {

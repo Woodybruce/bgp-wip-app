@@ -119,6 +119,24 @@ export const isTrustRecord = (subjectType: unknown): boolean => text(subjectType
 export const trustMarkInName = (name: unknown): boolean =>
   /\b(trust|trusts|trustees?|settlement|trust corporation)\b/i.test(text(name)) && !/\btrust ?pilot\b/i.test(text(name));
 
+/**
+ * A name that reads like a foundation (Woody, 21 November 2026: "Foundations:
+ * a trust can be recorded as a trust, but names like Fonden, Stiftung,
+ * Stichting or Foundation aren't spotted" ... "Yes go ahead"). A foundation
+ * has no shareholders: the regulations treat the people who control it and
+ * the people it benefits as its beneficial owners (MLR 2017 reg 6), as for a
+ * trust, so BGP treats it as one. A suggestion a person confirms, never
+ * applied by itself: a UK charity company called "… Foundation" is not one.
+ */
+export const foundationMarkInName = (name: unknown): boolean => {
+  const t = text(name);
+  // A company form at the end ("… Foundation Limited", "Foundation Coffee
+  // House Ltd") makes it a company, whose owners the register shows.
+  if (!t || COMPANY_FORM_AT_END.test(t)) return false;
+  return /\b(foundation|fondation|fonden|stichting|fundaci[oó]n|fondazione|funda[cç][aã]o|fundacja|nadace|nad[aá]cia)\b|stiftung|stiftelse/i.test(t);
+};
+const COMPANY_FORM_AT_END = /\b(ltd|limited|plc|llp|llc|inc|incorporated|corp|corporation|gmbh|ag|a\/s|aps|ab|oy|sa|sas|sarl|s\.a\.r\.l|spa|s\.p\.a|srl|bv|b\.v|nv|n\.v|kg|lp)\.?$/i;
+
 export const privateMarkInName = (name: unknown): boolean =>
   /\(\s*(?:private(?:\s+(?:client|individual|buyer|purchaser|vendor|seller|investor))?|individual)\s*\)/i.test(String(name ?? ""));
 
@@ -137,9 +155,10 @@ export interface DealPartyView {
   // person who signs makes it an individual); recordIndividual: the record
   // itself is a private individual; privateMark: its CRM name says private.
   brand: { id: string; name: string; companiesHouseNumber: string | null; kind: "company" | "individual"; recordIndividual?: boolean; privateMark?: boolean;
-    // recordTrust: recorded as a trust (KYC4U in full, enhanced); trustHint:
-    // its name, or the company that signs, reads like a trust (Jack, 20 November 2026).
-    recordTrust?: boolean; trustHint?: boolean };
+    // recordTrust: recorded as a trust or foundation (KYC4U in full, enhanced);
+    // trustHint: its name, or the company that signs, reads like a trust (Jack,
+    // 20 November 2026) or a foundation (foundationHint, 21 November 2026).
+    recordTrust?: boolean; trustHint?: boolean; foundationHint?: boolean };
   // The company that signs, as set on the deal.
   company: DealPartyCompany | null;
   // What to offer when none is set: the company on the unit's lease (a

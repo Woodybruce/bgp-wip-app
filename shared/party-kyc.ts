@@ -104,6 +104,9 @@ export interface SignOffFacts {
   // Owned through a company registered abroad, in words: it goes to KYC4U
   // (Woody, 21 November 2026: "foreign companies I think we will send to KYC4U").
   ownersAbroad?: string[];
+  // Another firm's checks the officers rely on (MLR 2017 reg 39), in words:
+  // they stand in for the client checks, so no note is asked for.
+  reliance?: string | null;
   note: string;
   now?: Date;
 }
@@ -127,7 +130,7 @@ export function signOffDenial(f: SignOffFacts): string | null {
   if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) {
     return `BGP's checks before asking are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again on the card first.`;
   }
-  if (!f.clientChecksFinished && !f.sanctionsOnly && text(f.note).length < SIGN_OFF_NOTE_MIN) {
+  if (!f.clientChecksFinished && !f.sanctionsOnly && !f.reliance && text(f.note).length < SIGN_OFF_NOTE_MIN) {
     return f.clientChecksOutstanding?.length
       ? `The client checks are not finished for this party (still to come: ${f.clientChecksOutstanding.join("; ")}): say what you relied on instead (at least a sentence).`
       : "The client checks are not finished for this party: say what you relied on instead (at least a sentence).";

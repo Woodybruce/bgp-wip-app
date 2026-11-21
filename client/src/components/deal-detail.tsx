@@ -90,6 +90,7 @@ import { trackerUnitHref } from "@/lib/unit-links";
 import { dealPageSections, owedItems, type DealEventOpen, type DealPageData, type DealPageNames, type DealPartyRole } from "@shared/deal-page";
 import { useDealPage, type LettingDialog } from "@/components/deal-page/use-deal-page";
 import { StageStrip } from "@/components/deal-page/stage-strip";
+import { AmlStopBanner } from "@/components/aml-stop";
 import { DealTimelinePanel } from "@/components/deal-page/deal-timeline";
 import { DealNegotiation, sectionCard } from "@/components/deal-page/deal-negotiation";
 import { DealChecklistTasks, DealWaitingOn } from "@/components/deal-page/deal-checklist-tasks";
@@ -656,6 +657,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                   </div>
 
                   {page && <StageStrip strip={page.strip} />}
+                  {/* BGP has stopped acting on the deal for AML reasons (21 November 2026): BGP staff only. */}
+                  {!isClientLogin && <AmlStopBanner dealId={id} />}
 
                   <DealConversation
                     dealId={id}

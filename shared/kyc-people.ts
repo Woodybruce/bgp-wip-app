@@ -23,6 +23,7 @@
 
 import { controlWords, nameTokens, ownersAbroadOf, personDisplayName, personNamesMatch, type KycPrecheckResult } from "./kyc-prechecks";
 import { sameCompany } from "./foreign-owners";
+import { relianceWords, type PartyReliance } from "./aml-reliance";
 import type { KycDocKey, KycIdState, KycPartyKind, KycPersonRole } from "./kyc-request";
 import { checkAddressProof, type AddressProofAcceptance, type AddressProofReading } from "./kyc-address-proof";
 
@@ -111,6 +112,9 @@ export interface PartyPeopleInput {
   // The people BGP recorded behind a company abroad that owns the party
   // (21 November 2026: server/kyc-abroad.ts). Each is an owner to check.
   abroadPeople?: Array<{ name: string; ownerName: string; ownerCountry: string | null; detail: string; dob: { month: number | null; year: number | null } | null }>;
+  // Another firm's checks BGP relies on for this party (MLR 2017 reg 39;
+  // 21 November 2026): while it stands, no one on the list owes anything.
+  reliance?: PartyReliance | null;
   // Every request on the deal, each party's: an identity check passed on
   // someone else's link still counts for the person it was.
   requests: PeopleRequest[];
@@ -153,6 +157,8 @@ export interface KycPartyPerson {
   sanctions: PersonSanctions;
   // Verified from public sources by the officers: counts for the identity check and the proof of address.
   publicFigure: PublicFigureCheck | null;
+  // Covered by another firm's checks that BGP relies on (reg 39), in words.
+  reliedOn?: string | null;
   // Their own live request (their own link before the request to the person acting): their link, if they have one.
   own: { token: string; ref: string; isMain: boolean; sentAt: string | null } | null;
   outstanding: Array<"identity check" | "proof of address">;
@@ -160,7 +166,7 @@ export interface KycPartyPerson {
   canSend: boolean;
 }
 
-export type PartyPeopleBasis = "owners" | "listed" | "no_owners" | "not_read" | "individual" | "owners_abroad";
+export type PartyPeopleBasis = "owners" | "listed" | "no_owners" | "not_read" | "individual" | "owners_abroad" | "abroad_company";
 
 export interface PartyPeople {
   basis: PartyPeopleBasis;
@@ -171,6 +177,8 @@ export interface PartyPeople {
   loose: Array<{ ref: string; files: number; names: string[] }>;
   // "Huseyn Mirhadiyev: identity check and proof of address", per person.
   outstanding: string[];
+  // Another firm's checks BGP relies on (reg 39), with the words, while it stands.
+  reliance?: (PartyReliance & { words: string }) | null;
   // Companies registered abroad that own the party: Companies House cannot
   // show who owns them, so the client is asked (20 November 2026). answered:
   // someone is recorded behind it (21 November 2026).
@@ -183,6 +191,7 @@ export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
   no_owners: "The register names no person who owns or controls the company. Ask the client who does; the person dealing with us still does their own check.",
   not_read: "BGP's checks before asking have not read the register yet, so the owners are not known. The person dealing with us does their own check.",
   individual: "Private individuals: each person named on the deal does an identity check and sends a proof of address. When more than one person is buying, selling or renting together, add each of them.",
+  abroad_company: "Registered outside the UK, so Companies House has no record of it. The client is asked for an extract from its own register and the people who own or control it. The app looks it up in GLEIF (under Owners abroad), and each person found is recorded there and does their own check.",
   owners_abroad: "A company registered outside the UK owns or controls it, so Companies House cannot show the people behind it. It goes to KYC4U to find them. The app traces what it can (the accounts and GLEIF, under Owners abroad), the client can be asked for a structure chart, and each person found is recorded there and does their own check.",
 };
 
@@ -309,12 +318,13 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     };
 
     const publicFigure = (input.publicFigures || []).find(f => samePerson(f.name, d.name)) || null;
-    const outstanding: KycPartyPerson["outstanding"] = publicFigure ? [] : [...(idDone ? [] : ["identity check" as const]), ...(address.done ? [] : ["proof of address" as const])];
+    const relied = input.reliance ? relianceWords(input.reliance) : null;
+    const outstanding: KycPartyPerson["outstanding"] = publicFigure || relied ? [] : [...(idDone ? [] : ["identity check" as const]), ...(address.done ? [] : ["proof of address" as const])];
     const ownLink = live.find(r => r.person) || live.find(r => !r.person) || null;
     return {
       key: personKey(d.name), name, roles,
       ownerDetail: d.ownerDetail.length ? d.ownerDetail.join("; ") : null,
-      born: bornWords(d.dob), id, address, sanctions: sanctionsFor(d.name), publicFigure,
+      born: bornWords(d.dob), id, address, sanctions: sanctionsFor(d.name), publicFigure, ...(relied ? { reliedOn: relied } : {}),
       own: ownLink ? { token: ownLink.token, ref: ownLink.ref, isMain: !ownLink.person, sentAt: ownLink.sentAt } : null,
       outstanding,
       canSend: outstanding.some(o => o === "identity check" ? !id.asked : !address.asked),
@@ -333,15 +343,16 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
   // behind a parent GLEIF found above it (21 November 2026).
   const above = (name: string): string[] => [name, ...((input.precheck?.abroad?.traced || []).filter(t => sameCompany(t.name, name)).flatMap(t => t.gleif.parents.map(g => g.name)))];
   const unanswered = abroad.filter(a => !(input.abroadPeople || []).some(p => above(a.name).some(n => sameCompany(n, p.ownerName))));
-  const basis: PartyPeopleBasis = input.kind === "individual" ? "individual" : !ch ? "not_read" : ch.listing ? "listed" : abroad.length ? "owners_abroad" : people.some(p => p.roles.includes("owner")) ? "owners" : "no_owners";
+  const basis: PartyPeopleBasis = input.kind === "individual" ? "individual" : !ch ? (input.precheck?.abroad?.party ? "abroad_company" : "not_read") : ch.listing ? "listed" : abroad.length ? "owners_abroad" : people.some(p => p.roles.includes("owner")) ? "owners" : "no_owners";
   return {
     basis, people, directors, loose,
     outstanding: [
       ...people.filter(p => p.outstanding.length).map(p => `${p.name}: ${p.outstanding.join(" and ")}`),
       // Until the client names them, the people behind a company abroad are owed.
-      ...(unanswered.length && !party.some(r => !r.person && r.files.some(f => f.docKey === "ownership")) ? [`The people behind ${unanswered.map(a => `${a.name} (${a.country})`).join(" and ")}: a structure chart and their IDs`] : []),
+      ...(unanswered.length && !input.reliance && !party.some(r => !r.person && r.files.some(f => f.docKey === "ownership")) ? [`The people behind ${unanswered.map(a => `${a.name} (${a.country})`).join(" and ")}: a structure chart and their IDs`] : []),
     ],
     ...(abroad.length ? { ownersAbroad: abroad.map(a => ({ name: a.name, country: a.country, foundAt: a.foundAt, ...(unanswered.includes(a) ? {} : { answered: true }) })) } : {}),
+    ...(input.reliance ? { reliance: { ...input.reliance, words: relianceWords(input.reliance) } } : {}),
   };
 }
 

@@ -1075,6 +1075,14 @@ export function setupXeroRoutes(app: Express) {
 
       const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId));
       if (!deal) return res.status(404).json({ message: "Deal not found" });
+      // BGP raises no invoice on a deal it stopped acting on for AML reasons (server/aml-stop.ts).
+      {
+        const { stoppedDealIds } = await import("./aml-stop");
+        if ((await stoppedDealIds([dealId])).size) {
+          const { AML_STOP_REFUSAL } = await import("@shared/aml-stop");
+          return res.status(409).json({ code: "AML_STOPPED", message: AML_STOP_REFUSAL });
+        }
+      }
       const currency = feeCurrencyOf(bodyCurrency || deal.feeCurrency);
       const currencyFields = await invoiceCurrencyFields(req.session, currency);
 

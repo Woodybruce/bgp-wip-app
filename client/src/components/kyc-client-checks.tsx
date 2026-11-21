@@ -338,9 +338,11 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
   const ownRequest = person.own && !person.own.isMain ? data.requests.find(r => r.token === person.own!.token) || null : null;
   // Verified from public sources by the officers (21 November 2026): counts for the identity check and the proof of address.
   const pf = person.publicFigure || null;
-  const idOk = !!pf || person.id.state === "passed" || person.id.state === "waiting" || person.id.state === "document";
+  // Covered by another firm's checks that the officers rely on (MLR 2017 reg 39; 21 November 2026).
+  const relied = !pf && person.reliedOn ? person.reliedOn : null;
+  const idOk = !!pf || !!relied || person.id.state === "passed" || person.id.state === "waiting" || person.id.state === "document";
   const testKey = person.key.replace(/\s+/g, "-");
-  const proofToCheck = !pf && !!person.address.proof && !person.address.done;
+  const proofToCheck = !pf && !relied && !!person.address.proof && !person.address.done;
   return (
     <div className="rounded border px-2 py-1.5 space-y-1" data-testid={`person-${testKey}`}>
       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
@@ -349,9 +351,10 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
           {person.roles.map(r => <span key={r} className={`${pillMetrics} bg-muted text-muted-foreground border border-border`}>{ROLE_WORDS[r]}</span>)}
           <span className="inline-flex items-center gap-0.5 text-muted-foreground"><Tick ok={idOk} />ID</span>
           <span className={`inline-flex items-center gap-0.5 ${proofToCheck ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"}`}>
-            {proofToCheck ? <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" /> : <Tick ok={!!pf || person.address.done} />}{proofToCheck ? "Address to check" : "Address"}
+            {proofToCheck ? <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" /> : <Tick ok={!!pf || !!relied || person.address.done} />}{proofToCheck ? "Address to check" : "Address"}
           </span>
           {pf && <span className={`${pillMetrics} bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900`} data-testid={`person-public-figure-${testKey}`}>Public figure</span>}
+          {relied && <span className={`${pillMetrics} bg-violet-50 text-violet-800 border border-violet-200 dark:bg-violet-950/40 dark:text-violet-200 dark:border-violet-900`} data-testid={`person-relied-${testKey}`}>Covered by reliance</span>}
           {person.sanctions === "possible" && <span className={SANCTIONS_WORDS.possible.cls}>{SANCTIONS_WORDS.possible.text}</span>}
           <ChevronDown className={`ml-auto w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${details ? "rotate-180" : ""}`} />
         </button>
@@ -373,7 +376,7 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
       <ul className="space-y-0.5">
         <li className="flex items-start gap-1" data-testid={`person-id-${person.key.replace(/\s+/g, "-")}`}>
           <Tick ok={idOk} />
-          {pf ? <span>Identity: verified from public sources (above)</span> : (
+          {pf ? <span>Identity: verified from public sources (above)</span> : relied ? <span>Identity: {relied.replace(/^Relying on/, "covered by")}</span> : (
           <span>
             {ID_STATE_WORDS[person.id.state]}
             {person.id.elsewhere ? <span className="text-muted-foreground"> {person.id.elsewhere}</span> : null}
@@ -384,6 +387,7 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
         </li>
         {pf
           ? <li className="flex items-start gap-1" data-testid={`person-address-public-${testKey}`}><Tick ok /><span>Proof of address: covered by the verification from public sources</span></li>
+          : relied ? <li className="flex items-start gap-1" data-testid={`person-address-relied-${testKey}`}><Tick ok /><span>Proof of address: covered by the reliance on the firm's checks</span></li>
           : <AddressProofLine dealId={dealId} person={person} canDecide={canDecide} />}
         <li className={SANCTIONS_WORDS[person.sanctions].cls}>{SANCTIONS_WORDS[person.sanctions].text}</li>
       </ul>

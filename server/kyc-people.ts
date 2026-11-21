@@ -5,6 +5,7 @@
 // the person it was.
 
 import { pool } from "./db";
+import type { PartyReliance } from "@shared/aml-reliance";
 import { partyPeople, verifiedPersonDob, type PartyPeople, type PeopleRequest, type PublicFigureCheck } from "@shared/kyc-people";
 import { verifiedPersonName } from "@shared/kyc-prechecks";
 import { isKycDocKey, kycIdStateFor, type KycPartyKind, type KycRequestPerson } from "@shared/kyc-request";
@@ -66,7 +67,7 @@ export async function dealPeopleRequests(dealId: string, db: Db = pool): Promise
  * before asking on the company that signs; with none named there is no
  * register to read (the checks wait for it).
  */
-export async function partyPeopleFor(party: { companyId: string; entityId: string | null; kind: KycPartyKind }, requests: PeopleRequest[]): Promise<PartyPeople> {
+export async function partyPeopleFor(party: { companyId: string; entityId: string | null; kind: KycPartyKind; dealId?: string | null }, requests: PeopleRequest[]): Promise<PartyPeople> {
   let precheck: Parameters<typeof partyPeople>[0]["precheck"] = null;
   if (party.kind === "company" && party.entityId) {
     const { latestPrecheck } = await import("./kyc-prechecks");
@@ -74,7 +75,30 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
   }
   const { abroadPeopleFor } = await import("./kyc-abroad");
   const abroadPeople = party.kind === "company" ? await abroadPeopleFor(party.companyId, party.entityId).catch(() => []) : [];
-  return partyPeople({ companyId: party.companyId, kind: party.kind, precheck, requests, publicFigures: await publicFiguresFor(party.companyId, party.entityId), abroadPeople });
+  return partyPeople({
+    companyId: party.companyId, kind: party.kind, precheck, requests, publicFigures: await publicFiguresFor(party.companyId, party.entityId), abroadPeople,
+    reliance: party.dealId ? await relianceFor(party.dealId, party.companyId, party.entityId) : null,
+  });
+}
+
+/**
+ * Another firm's checks BGP relies on for a party on this deal (MLR 2017
+ * reg 39; Woody, 21 November 2026), not withdrawn: the latest. Reliance is
+ * agreed for one deal, so it is not carried to the party's other deals. A
+ * failed read is none.
+ */
+export async function relianceFor(dealId: string, companyId: string, entityId: string | null, db: Db = pool): Promise<PartyReliance | null> {
+  const r = (await db.query(
+    `SELECT * FROM kyc_reliance WHERE deal_id = $1 AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3::varchar AND withdrawn_at IS NULL
+      ORDER BY recorded_at DESC LIMIT 1`, [dealId, companyId, entityId]).catch(() => ({ rows: [] as any[] }))).rows[0];
+  if (!r) return null;
+  return {
+    id: String(r.id), firm: String(r.firm), kind: r.firm_kind, where: r.firm_where === "abroad" ? "abroad" : "uk", country: r.firm_country || null,
+    regulator: String(r.regulator || ""), regulatorRef: r.regulator_ref || null, contact: r.contact || null,
+    agreedOn: r.agreed_on instanceof Date ? r.agreed_on.toISOString().slice(0, 10) : String(r.agreed_on).slice(0, 10),
+    note: String(r.note || ""), by: String(r.recorded_by_name || "an officer"), at: new Date(r.recorded_at).toISOString(),
+    documents: Array.isArray(r.document_ids) ? r.document_ids.length : 0,
+  };
 }
 
 /** The people verified from public sources for a party (the brand and the company that signs), not withdrawn. */

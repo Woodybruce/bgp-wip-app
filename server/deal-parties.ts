@@ -32,7 +32,7 @@
 import { Router, type Request, type Response } from "express";
 import {
   DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, companyOffer, dealClientRole, isDealPartyRole, newPartyPerson, ownerContactMatch, partyGaps, partySubjectKind, personFill,
-  privateMarkInName, isTrustRecord, trustMarkInName, sameCompaniesHouseNumber, signerKindOf,
+  privateMarkInName, isTrustRecord, trustMarkInName, foundationMarkInName, sameCompaniesHouseNumber, signerKindOf,
   type DealPartyBilling, type DealPartyCompany, type DealPartyPayer, type DealPartyPerson, type DealPartyRole, type DealPartyView,
 } from "@shared/deal-parties";
 import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
@@ -144,6 +144,11 @@ const personOf = (r: any): DealPartyPerson => ({
 
 export interface DealPartiesView { deal: { id: string; name: string }; parties: DealPartyView[] }
 
+// A tenant brand's own name is a trading name ("Foundation Coffee House"):
+// only the company that signs for it is read for a foundation.
+const foundationHintFor = (brand: { name?: unknown; company_type?: unknown }, companyName: unknown): boolean =>
+  foundationMarkInName(companyName) || (!/^tenant/i.test(String(brand.company_type || "")) && foundationMarkInName(brand.name));
+
 export async function loadDealParties(db: Db, dealId: string): Promise<DealPartiesView | null> {
   const deal = await readDeal(db, dealId);
   if (!deal) return null;
@@ -151,7 +156,7 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
   const brandIds = [...new Set(roles.map(r => String(deal[DEAL_PARTY_COLUMNS[r].brand])))];
   if (!brandIds.length) return { deal: { id: deal.id, name: deal.name }, parties: [] };
   const [brands, companies, people] = await Promise.all([
-    db.query(`SELECT id, name, companies_house_number, aml_subject_type,
+    db.query(`SELECT id, name, companies_house_number, aml_subject_type, company_type,
                      COALESCE(NULLIF(companies_house_data->'profile'->>'companyName', ''), NULLIF(companies_house_data->>'company_name', ''), NULLIF(uk_entity_name, '')) AS legal_name
                 FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds]),
     db.query(`SELECT id, parent_company_id, name, companies_house_number, is_default, xero_contact_id, xero_contact_name, entity_kind, contact_id FROM crm_trading_entities
@@ -198,7 +203,9 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
       role, label: DEAL_PARTY_LABEL[role],
       brand: { id: String(brandRow.id), name: text(brandRow.name), companiesHouseNumber: text(brandRow.companies_house_number) || null, kind,
         recordIndividual: String(brandRow.aml_subject_type || "").toLowerCase() === "individual", privateMark: privateMarkInName(brandRow.name),
-        recordTrust: isTrustRecord(brandRow.aml_subject_type), trustHint: trustMarkInName(brandRow.name) || trustMarkInName(company?.name) },
+        recordTrust: isTrustRecord(brandRow.aml_subject_type),
+        trustHint: trustMarkInName(brandRow.name) || trustMarkInName(company?.name) || foundationHintFor(brandRow, company?.name),
+        foundationHint: foundationHintFor(brandRow, company?.name) },
       company,
       offer: company ? null : companyOffer(filed, role === "tenant" ? lease : null),
       brandOwn,
@@ -458,8 +465,8 @@ router.put("/api/deals/:id/parties/:role/trust", async (req: Request, res: Respo
       const after = wanted ? "trust" : null;
       await pool.query(`UPDATE crm_companies SET aml_subject_type = $2 WHERE id = $1`, [brandId, after]);
       const words = wanted
-        ? `${text(brand.name)} recorded as a trust: enhanced due diligence, sent to KYC4U in full, signed off by the Nominated Officer or a Deputy`
-        : `${text(brand.name)} no longer recorded as a trust`;
+        ? `${text(brand.name)} recorded as a trust or foundation: enhanced due diligence, sent to KYC4U in full, signed off by the Nominated Officer or a Deputy`
+        : `${text(brand.name)} no longer recorded as a trust or foundation`;
       await audit(pool, deal.id, "aml_subject_type", before, after, words, me);
       await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'aml_subject_type', $2, $3)`,
         [brandId, me.name || me.id, `${words} (on ${deal.name})`]).catch((e: any) => console.warn(`[deal-parties] KYC history line not written: ${e?.message}`));
@@ -497,7 +504,7 @@ router.post("/api/deals/:id/parties/:role/owner", async (req: Request, res: Resp
     const signer = text(deal[col.company]) ? (await pool.query(`SELECT entity_kind FROM crm_trading_entities WHERE id = $1`, [deal[col.company]])).rows[0] || { entity_kind: null } : null;
     const kind = partySubjectKind(brand.aml_subject_type, signer ? { kind: signer.entity_kind } : null);
     const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
-    const people = await partyPeopleFor({ companyId: brandId, entityId: text(deal[col.company]) || null, kind }, await dealPeopleRequests(deal.id));
+    const people = await partyPeopleFor({ companyId: brandId, entityId: text(deal[col.company]) || null, kind, dealId: String(deal.id) }, await dealPeopleRequests(deal.id));
     const who = people?.people.find(p => p.key === key);
     if (!who) return res.status(400).json({ message: "That person is not one of the people this party's checks need." });
     const name = personDisplayName(who.name);

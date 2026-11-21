@@ -15,6 +15,8 @@
 //   POST /api/deals/:id/parties/:role/kyc4u-result/read   multipart: files[]: where each will be filed and what KYC4U's report says (saves nothing)
 //   POST /api/deals/:id/parties/:role/public-figure       multipart: key, note, links, files[]: a person verified from public sources
 //   POST /api/deals/:id/parties/:role/public-figure/:checkId/withdraw
+//   POST /api/deals/:id/parties/:role/reliance            multipart: the firm, its supervisor, the date it agreed, the confirmations, note, files[]
+//   POST /api/deals/:id/parties/:role/reliance/:relianceId/withdraw
 //   POST /api/deals/:id/parties/:role/not-required        { reason, comment }: no checks needed on this party
 //   POST /api/deals/:id/parties/:role/not-required/undo   takes the marker off
 //
@@ -45,6 +47,7 @@ import {
 import { KYC4U_PACK_MAX_ZIP_BYTES, kyc4uAssessmentRecord, kyc4uResultPrefill, kyc4uRiskLevel } from "@shared/kyc4u-result-pack";
 import { amlFileDocWords } from "@shared/aml-file";
 import { PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN } from "@shared/kyc-people";
+import { relianceInput, relianceWords } from "@shared/aml-reliance";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -160,10 +163,12 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
   const signer = party.entityId ? (await db.query(`SELECT entity_kind FROM crm_trading_entities WHERE id = $1`, [party.entityId]).catch(() => ({ rows: [] as any[] }))).rows[0] || { entity_kind: null } : null;
   const kind = partySubjectKind(held?.aml_subject_type, signer ? { kind: signer.entity_kind } : null);
   const people = await import("./kyc-people")
-    .then(async m => m.partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind }, await m.dealPeopleRequests(party.dealId, db)))
+    .then(async m => m.partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId }, await m.dealPeopleRequests(party.dealId, db)))
     .catch(() => null);
   // People that could not be read count as outstanding: a note is asked for.
   const outstanding = people ? people.outstanding : ["the people to check could not be read"];
+  // Another firm's checks the officers rely on (reg 39) stand in for the client checks.
+  const reliance = people?.reliance?.words || null;
   const finished = mainFinished && !outstanding.length;
   return {
     rejected: party.state.status === "rejected",
@@ -179,6 +184,7 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
     clientChecksOutstanding: mainFinished ? outstanding : [],
     sanctionsOnly: party.regime === "sanctions_only",
     ownersAbroad: precheck.ownersAbroad || [],
+    reliance,
     level: flags?.levels?.[party.brandId] || null,
   };
 }
@@ -187,8 +193,8 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
 export function signOffView(facts: Omit<SignOffFacts, "note">): { blocked: string | null; needsNote: boolean; outstanding: string[] } {
   return {
     blocked: signOffDenial({ ...facts, note: "x".repeat(SIGN_OFF_NOTE_MIN) }),
-    needsNote: !facts.clientChecksFinished && !facts.sanctionsOnly,
-    outstanding: facts.sanctionsOnly ? [] : facts.clientChecksOutstanding || [],
+    needsNote: !facts.clientChecksFinished && !facts.sanctionsOnly && !facts.reliance,
+    outstanding: facts.sanctionsOnly || facts.reliance ? [] : facts.clientChecksOutstanding || [],
   };
 }
 
@@ -288,7 +294,7 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
       DUE_DILIGENCE_LABEL[level].toLowerCase(),
       party.regime === "sanctions_only" ? "sanctions checks only (a letting under £10,000 a month)" : null,
       facts.precheck ? `BGP's checks before asking ${facts.precheck.ranAt.slice(0, 10)}` : null,
-      party.regime === "sanctions_only" ? null : facts.clientChecksFinished ? "client checks finished" : `client checks not finished${facts.clientChecksOutstanding?.length ? ` (still to come: ${facts.clientChecksOutstanding.join("; ")})` : ""}`,
+      party.regime === "sanctions_only" ? null : facts.reliance ? `${facts.reliance} (MLR 2017 reg 39)` : facts.clientChecksFinished ? "client checks finished" : `client checks not finished${facts.clientChecksOutstanding?.length ? ` (still to come: ${facts.clientChecksOutstanding.join("; ")})` : ""}`,
       note ? `note: ${note}` : null,
     ].filter(Boolean).join("; ");
     const who = me.as === "agent" ? `${me.name} (agent on the deal)` : `${me.name}${me.officerRole === "nominated" ? " (Nominated Officer)" : me.officerRole === "deputy" ? " (Deputy Nominated Officer)" : ""}`;
@@ -573,7 +579,7 @@ router.post("/api/deals/:id/parties/:role/public-figure", deciderFirst, takeFile
 
     const kind = await partyKindOf(pool, party);
     const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
-    const people = await partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind }, await dealPeopleRequests(party.dealId));
+    const people = await partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId }, await dealPeopleRequests(party.dealId));
     const person = people.people.find(p => p.key === String(req.body?.key || ""));
     if (!person) return res.status(404).json({ message: `That person is not on the list of people to check for ${partyName(party)}.` });
     if (person.publicFigure) return res.status(409).json({ message: `${person.name} is already verified from public sources (by ${person.publicFigure.by}).` });
@@ -634,6 +640,91 @@ router.post("/api/deals/:id/parties/:role/public-figure/:checkId/withdraw", asyn
     res.json({ ok: true });
   } catch (err: any) {
     console.error("[deal-party-aml] public figure withdraw failed:", err?.message);
+    res.status(500).json({ message: "It could not be withdrawn." });
+  }
+});
+
+// Relying on another firm's checks (Woody, 21 November 2026: MLR 2017 reg 39,
+// "Yes go ahead"). The Nominated Officer or a Deputy records, for a party on
+// this deal, the firm whose customer due diligence BGP relies on (the client's
+// UK solicitors, say), its anti-money laundering supervisor, the day it agreed,
+// what it checked, the regulation's conditions confirmed one by one
+// (shared/aml-reliance.ts), and the firm's letter or email agreeing, filed on
+// the party's KYC record. While it stands the people to check owe nothing
+// (server/kyc-people.ts) and BGP's sign-off needs no note. BGP stays
+// responsible (reg 39(1)), and reliance does not cover enhanced due diligence
+// (HMRC), so a party with red flags still goes to KYC4U. It can be withdrawn;
+// a new one on the same party replaces the last.
+router.post("/api/deals/:id/parties/:role/reliance", deciderFirst, takeFiles, async (req: Request, res: Response) => {
+  try {
+    const me = (req as any).amlDecider as { id: string; name: string };
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
+    const said = relianceInput(req.body || {});
+    if (!said.ok) return res.status(400).json({ message: said.message });
+    const party = await loadAmlParty(pool, String(req.params.id), role);
+    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    const { unpackKyc4uFiles } = await import("./kyc4u-result-pack");
+    const { entries, skipped } = await unpackKyc4uFiles(((req as any).files || []) as UploadedFile[]);
+    if (skipped.length) return res.status(400).json({ message: `Not a file that can be kept: ${skipped.slice(0, 3).map(sk => `${sk.path} (${sk.reason})`).join("; ")}.` });
+    if (!entries.length) return res.status(400).json({ message: "Add the firm's letter or email agreeing to BGP relying on its checks (a PDF of the email is fine)." });
+
+    const v = said.value;
+    const { saveFile } = await import("./file-storage");
+    const documentIds: string[] = [];
+    for (const f of entries) {
+      const stored = `kyc-reliance-${Date.now()}-${crypto.randomBytes(6).toString("hex")}-${safeFileName(f.name)}`;
+      await saveFile(`chat-media/${stored}`, f.buffer, f.mime, f.name);
+      const row = (await pool.query(
+        `INSERT INTO kyc_documents (company_id, trading_entity_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
+         VALUES ($1, $2, $3, 'reliance_letter', $4, $5, $6, $7, $8, $9) RETURNING id`,
+        [party.brandId, party.entityId, party.dealId, `/api/chat-media/${stored}`, f.name, f.buffer.length, f.mime,
+          `${v.firm} agreeing to BGP relying on its checks (MLR 2017 reg 39), recorded by ${me.name}`, me.id])).rows[0];
+      documentIds.push(String(row.id));
+    }
+    const saved = (await pool.query(
+      `INSERT INTO kyc_reliance (deal_id, company_id, trading_entity_id, firm, firm_kind, firm_where, firm_country, regulator, regulator_ref, contact, agreed_on, note,
+                                 document_ids, recorded_by, recorded_by_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date, $12, $13::jsonb, $14, $15) RETURNING id`,
+      [party.dealId, party.brandId, party.entityId, v.firm, v.kind, v.where, v.country, v.regulator, v.regulatorRef, v.contact, v.agreedOn, v.note,
+        JSON.stringify(documentIds), me.id, me.name])).rows[0];
+    // One reliance stands for a party on a deal: a new one replaces the last.
+    await pool.query(
+      `UPDATE kyc_reliance SET withdrawn_at = now(), withdrawn_by = $5, withdrawn_by_name = $6
+        WHERE deal_id = $1 AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3::varchar AND withdrawn_at IS NULL AND id <> $4`,
+      [party.dealId, party.brandId, party.entityId, saved.id, me.id, me.name]);
+    const words = relianceWords(v);
+    await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'reliance', $2, $3, $4, $5)`,
+      [party.brandId, me.name, `${words}, on ${party.dealName} (${DEAL_PARTY_LABEL[role].toLowerCase()}), recorded by ${me.name} under MLR 2017 reg 39: ${v.note}`,
+        party.entityId ? "trading_entity" : null, party.entityId]).catch(() => {});
+    await dealAudit(party.dealId, "aml_reliance", null, `recorded by ${me.name}`, `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${words} · ${v.note}`, me);
+    res.json({ ok: true, id: String(saved.id), words });
+  } catch (err: any) {
+    console.error("[deal-party-aml] reliance failed:", err?.message);
+    res.status(500).json({ message: "It could not be recorded." });
+  }
+});
+
+router.post("/api/deals/:id/parties/:role/reliance/:relianceId/withdraw", async (req: Request, res: Response) => {
+  try {
+    const me = await decider(req);
+    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
+    const party = await loadAmlParty(pool, String(req.params.id), role);
+    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    const row = (await pool.query(
+      `UPDATE kyc_reliance SET withdrawn_at = now(), withdrawn_by = $5, withdrawn_by_name = $6
+        WHERE id = $1 AND deal_id = $2 AND company_id = $3 AND trading_entity_id IS NOT DISTINCT FROM $4::varchar AND withdrawn_at IS NULL
+        RETURNING firm`, [Number(req.params.relianceId) || 0, party.dealId, party.brandId, party.entityId, me.id, me.name])).rows[0];
+    if (!row) return res.status(404).json({ message: "That reliance was not found on this party, or was already withdrawn." });
+    await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'reliance_withdrawn', $2, $3, $4, $5)`,
+      [party.brandId, me.name, `Reliance on ${row.firm}'s checks withdrawn on ${party.dealName} by ${me.name}: the client checks are needed again`,
+        party.entityId ? "trading_entity" : null, party.entityId]).catch(() => {});
+    await dealAudit(party.dealId, "aml_reliance", "relying", `withdrawn by ${me.name}`, `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · reliance on ${row.firm}'s checks withdrawn`, me);
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error("[deal-party-aml] reliance withdraw failed:", err?.message);
     res.status(500).json({ message: "It could not be withdrawn." });
   }
 });

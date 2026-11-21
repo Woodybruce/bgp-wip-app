@@ -6934,6 +6934,107 @@ only". Do not re-litigate. Guards: `qa/regression/finance-one-rule.test.mjs`.
   schedule's own view, every WIP status at full fee), and the commission
   statements' billings (fee due at exchange or completion, Woody's scheme).
 
+## Foreign companies, foundations, reliance and stopping acting (Woody, 2026-11-21)
+
+Woody asked "Does the app manage all the overseas questions and process",
+then answered "Yes go ahead" to four builds: a foreign company with no UK
+record looked up in GLEIF; foundations treated like trusts; relying on
+another firm's checks (MLR 2017 reg 39); and a Stop acting (AML) button.
+Do not re-litigate. Tests: `server/aml-reliance.test.ts`,
+`server/aml-stop.test.ts` (both in `npm test`), cases in
+`server/kyc-abroad.test.ts` and `server/aml-second-read.test.ts`; guards
+`qa/regression/aml-reliance-stop-guards.test.mjs`.
+
+- **A company with no UK record** (no Companies House number and no entity on
+  the Register of Overseas Entities): BGP's checks before asking look it up in
+  GLEIF by its name, narrowed by the CRM's country when it holds one
+  (`traceAbroadParty` in `server/kyc-abroad.ts`), and follow its parents as
+  for a company abroad. The run stores it as `result.abroad` with `party:
+  true`, and it shows in the company facts and KYC4U's note. Its people to
+  check read `abroad_company`: the people behind it are recorded under Owners
+  abroad. It is screened as a company. The rule that sends a party owned from
+  abroad to KYC4U is unchanged.
+- **Foundations** (MLR 2017 reg 6: a foundation has no shareholders, so the
+  people who control it and the people it benefits are its beneficial
+  owners):
+  - The name rule is `foundationMarkInName` in `shared/deal-parties.ts`:
+    foundation, fondation, fonden, stichting, fundación, fondazione,
+    fundação, fundacja, nadace, nadácia, Stiftung, stiftelse.
+  - It never reads a name ending in a company form (Ltd, Limited, A/S, GmbH
+    …), and never a tenant brand's own name, which is a trading name
+    ("Foundation Coffee House").
+  - The party box and the AML box suggest **Record as a foundation**, which
+    sets the trust record (`aml_subject_type = 'trust'`). It is never
+    applied by itself.
+  - A foundation in the ownership is the policy's trust factor
+    (`policy_trust`: enhanced, KYC4U). That covers one on the register, one
+    owning from abroad, and a GLEIF parent above a company abroad. The
+    factor asks for the charter and by-laws, the founder, the board or
+    council, any protector and who benefits.
+- **Relying on another firm's checks** (MLR 2017 reg 39). Rules:
+  `shared/aml-reliance.ts`; routes in `server/deal-party-aml.ts`; table
+  `kyc_reliance` (a boot migration).
+  - **Who and for what**: the Nominated Officer or a Deputy records it for a
+    party on ONE deal. Reliance is agreed per transaction, so it is never
+    carried to the party's other deals.
+  - **What is recorded**: the firm (its kind, the UK or abroad and its
+    country, its AML supervisor and number, a contact, the day it agreed),
+    and what it checked.
+  - **Each condition is ticked**:
+    - the firm agreed in writing;
+    - BGP holds from it who the customer is, its beneficial owners and
+      anyone acting for it (reg 39(2)(a));
+    - the firm gives copies of its documents immediately on request and
+      keeps them five years (reg 39(2)(b));
+    - abroad, the firm is under equivalent rules and supervision (reg
+      39(3)).
+  - A firm in a FATF call-for-action country is refused (reg 39(4)).
+  - The firm's letter or email is required, filed as `reliance_letter`.
+  - **While it stands**:
+    - every person to check owes nothing ("Covered by reliance");
+    - the Client checks line reads "Not needed: relying on …";
+    - the sign-off needs no note, and its line names the firm;
+    - the AML dashboard stage is **Relying on another firm** (in progress,
+      waiting on BGP's sign-off);
+    - the risk assessment and KYC4U's note carry it.
+  - **It does not cover enhanced due diligence** (HMRC). The KYC4U, trust,
+    owners-abroad and red flag steps come first, and BGP stays responsible
+    (reg 39(1)).
+  - Withdraw puts the client checks back; a new reliance replaces the last.
+    Five-year deletion and company merges cover the table.
+- **Stop acting (AML)** (MLR 2017 reg 31). Rules: `shared/aml-stop.ts`;
+  server: `server/aml-stop.ts`; columns `crm_deals.aml_stopped_*` (boot
+  migrations, not in `shared/schema.ts`).
+  - **The button**: **Stop acting** in the AML box header, for the officers.
+    They give a reason (the checks cannot be completed, or another AML
+    reason) and a note only the officers read. They may also move the deal
+    to Withdrawn (WIT, through the letting service, mirrored to the
+    tracker).
+  - **While stopped, the deal**:
+    - moves only to Withdrawn, through every status door
+      (`amlStopDenial`, asked by `dealStatusTransitionDenial`, the deal save
+      and the bulk update);
+    - cannot be invoiced (`POST /api/xero/invoices` answers 409);
+    - cannot be deleted (single and bulk delete answer 409);
+    - keeps its AML file.
+  - **What people are told**: refusals use neutral words
+    (`AML_STOP_REFUSAL`, "on hold by BGP's compliance team"), safe for a
+    client login. The deal's agents and the officers are emailed without the
+    reason (`amlStoppedEmail`): telling anyone why risks tipping off.
+  - **The banner**: BGP staff see a red banner on every pill of the deal
+    page. The officers also see why, and **Release**, which puts back the
+    status the stop withdrew it from, through the ordinary gates.
+  - It is the officers' own decision, never set by a report or a consent
+    request. It is not the hold while the NCA decides, which Woody declined
+    on 20 November 2026.
+- **A client login's deal History leaves out every AML and KYC line**
+  (`aml…`, `kyc…`, `client_checks…`), not only the old fixed list. The
+  sign-off, red flags set aside and the AML file lines had reached Landsec's
+  History before (found 21 November 2026).
+- Not built: stopped deals as a list on the AML dashboard (a stopped deal
+  that is withdrawn leaves it); ChatBGP saying a deal is stopped; reliance
+  while the client checks are switched off.
+
 ## Document design preferences (the "house style" pattern)
 
 For Claude-driven document generation (Why Buy decks initially, Document

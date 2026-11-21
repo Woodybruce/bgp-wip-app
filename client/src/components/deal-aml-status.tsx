@@ -32,6 +32,8 @@ import { DealSolicitorsAmlPanel, solicitorsSummary, useDealSolicitorsAml } from 
 import type { RiskAssessment } from "@shared/aml-risk-assessment";
 import { AmlFileButton } from "@/components/aml-file-button";
 import { AbroadTrace, abroadSummary, useDealAbroad } from "@/components/aml-abroad";
+import { RelianceButton, RelianceCard } from "@/components/aml-reliance";
+import { AmlStopButton } from "@/components/aml-stop";
 
 export interface DealAmlStatus {
   dealId: string;
@@ -91,6 +93,8 @@ export interface PartyPrecheck {
   lines: PrecheckCardLine[];
   errors: string[];
   company?: PrecheckCompany | null;
+  // What the app traced past Companies House, also for a company with no UK record.
+  trace?: string[];
   unfinished?: string | null;
   retryAt?: string | null;
 }
@@ -556,6 +560,7 @@ export const AML_STAGE_TONE: Record<AmlStage, string> = {
   bgp_checked: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
   client_sent: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
   client_finished: "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-200",
+  relied: "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-200",
   with_kyc4u: "bg-orange-100 text-orange-900 dark:bg-orange-900/40 dark:text-orange-200",
   approved: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
   rejected: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
@@ -694,7 +699,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
   // Owned through a company registered abroad: KYC4U find the people behind it (Woody, 21 November 2026).
   const ownedAbroad = pre?.company?.ownersAbroad || [];
   // What the app traced past Companies House and what BGP recorded (21 November 2026).
-  const traceLines = pre?.company?.trace || [];
+  const traceLines = pre?.company?.trace || pre?.trace || [];
   const showAbroad = staff && (party ? party.brand.kind === "company" : true) && (ownedAbroad.length > 0 || traceLines.length > 0);
   const abroadQ = useDealAbroad(dealId, cp.role, showAbroad);
   const companyMissing = party ? party.brand.kind === "company" && !party.company && !isTrust : pre?.state === "needs_company";
@@ -726,6 +731,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     billingDiffers: !!party?.client && party.billing?.state === "different",
     trust: isTrust,
     ownersAbroad: ownedAbroad.length ? ownedAbroad.map(a => `${a.name}, ${a.country}`).join("; ") : null,
+    reliance: people?.reliance?.words || null,
   };
   const step = amlNextStep(facts);
 
@@ -809,6 +815,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
       const n = people.people.length + people.directors.length;
       return { tone: possible ? "flag" : "done", summary: `${plural(n, "person", "people")} screened, sanctions only: ${possible ? "a possible match" : "no match"}` };
     }
+    // Another firm's checks relied on (reg 39, 21 November 2026): nobody owes BGP anything.
+    if (people.reliance) {
+      const n = people.people.length;
+      return { tone: "done", summary: `${n ? `${plural(n, "person", "people")} · ` : ""}covered: ${onInSentence(people.reliance.words)}${people.directors.length ? ` · ${plural(people.directors.length, "director")}, sanctions only` : ""}` };
+    }
     if (people.basis === "not_read") return { tone: "wait", summary: "Not read yet: the owners come from Companies House" };
     // A company registered abroad owns it: KYC4U find the people behind it (21 November 2026).
     // Once someone is recorded behind each company abroad, the line counts their checks.
@@ -831,6 +842,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
 
   const clientLine: { tone: BoxTone; summary: string } | null = !data.clientChecks || cp.notRequired ? null
     : companyMissing ? { tone: "info", summary: "Start once the company that signs is set" }
+    : people?.reliance ? { tone: "done", summary: `Not needed: ${onInSentence(people.reliance.words)}` }
     : !request ? (sanctionsOnly ? { tone: "done", summary: "Not needed: sanctions checks only" }
       : { tone: "act", summary: (checks?.requests || []).some(r => r.companyId === cp.id && r.person && r.status !== "cancelled")
           ? "Not sent to the person dealing with us yet (the owners have links of their own)" : "Not sent yet" })
@@ -909,7 +921,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
             <div className="font-semibold uppercase tracking-wide text-[11px]">Not yet with KYC4U</div>
             {step.action === "kyc4u_form"
               ? "Prepared, but not on KYC4U's portal yet. Download the pack, raise it on KYC4U's portal, then press Submitted on KYC4U's portal here."
-              : `${isTrust ? "This party is a trust" : flags.length ? "This party has red flags" : factors.length + dealFactors.length ? "This party needs enhanced due diligence" : "This party is owned through a company registered abroad"}: press Request KYC4U check, download the pack and raise it on KYC4U's portal, then record it here. Nothing goes to KYC4U until it is submitted there.`}
+              : `${isTrust ? "This party is a trust or foundation" : flags.length ? "This party has red flags" : factors.length + dealFactors.length ? "This party needs enhanced due diligence" : "This party is owned through a company registered abroad"}: press Request KYC4U check, download the pack and raise it on KYC4U's portal, then record it here. Nothing goes to KYC4U until it is submitted there.`}
             {step.action === "request_kyc4u" && (
               <div className="mt-1.5"><Kyc4uSubmittedButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} className="h-7 text-xs" /> <span className="text-xs">if it was already raised on the portal.</span></div>
             )}
@@ -987,7 +999,13 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
               {companyMissing
                 ? <p className="text-xs text-muted-foreground" data-testid={`kyc-actions-wait-${cp.id}`}>The client checks and a KYC4U request start once the company that signs is set.</p>
                 : <>
-                    <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label={request ? "Send them again" : "Send client checks"} />
+                    {people?.reliance
+                      ? <RelianceCard dealId={dealId} role={cp.role} reliance={people.reliance} canDecide={canDecide} />
+                      : <div className="flex flex-wrap items-center gap-1.5">
+                          <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label={request ? "Send them again" : "Send client checks"} />
+                          {/* Another regulated firm's checks, relied on under MLR 2017 reg 39 (21 November 2026): the officers only. */}
+                          {canDecide && !sanctionsOnly && !settled && <RelianceButton dealId={dealId} role={cp.role} partyName={partyName} />}
+                        </div>}
                     <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="requests" />
                   </>}
             </BoxSection>
@@ -1099,6 +1117,8 @@ export function DealAmlStatusCard({ dealId, dealStatus, focusCompanyId }: { deal
           )}
           {/* The officers' AML file for the whole deal (20 November 2026). */}
           {data.decisions?.canDecide && data.counterparties.length > 0 && <AmlFileButton dealId={dealId} />}
+          {/* BGP stops acting on the deal (MLR 2017 reg 31; 21 November 2026): the officers, or a mark once stopped. */}
+          {staffView && <AmlStopButton dealId={dealId} />}
         </div>
 
         {data.counterparties.length < 2 && (

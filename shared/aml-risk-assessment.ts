@@ -187,7 +187,14 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
     : trading?.trading ? { label: "Trading company", value: "Yes: it files trading accounts", tone: "ok" }
     : { label: "Trading company", value: "Not shown yet", tone: "info" };
   const nonTrading: RiskRow = { label: "Non-trading risk", value: trading?.words ? "To weigh: is this the company doing the deal, and is it funded for it?" : "Low", tone: trading?.words ? "attention" : "info" };
-  const diligence = [structureChart, authority, adverse, accounts, jointAgency, certified, sourceOfFunds, tradingRow, nonTrading];
+  // Another firm's checks BGP relies on (MLR 2017 reg 39; 21 November 2026).
+  const relied = p.people?.reliance || null;
+  const reliance: RiskRow[] = relied ? [{
+    label: "Reliance on another firm (MLR 2017 reg 39)",
+    value: `${relied.words}. Recorded by ${relied.by}, ${day(relied.at)}. ${relied.note} BGP stays responsible for the checks and can ask the firm for copies of its documents at once.`,
+    tone: "info",
+  }] : [];
+  const diligence = [structureChart, authority, adverse, accounts, jointAgency, certified, sourceOfFunds, tradingRow, nonTrading, ...reliance];
 
   // ── The structure and its evidence.
   const structure: RiskEntity[] = [];
@@ -231,6 +238,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   const owners: RiskOwner[] = ownerRows.map(x => {
     const reg = c?.ownerDetails?.find(o => personNamesMatch(o.name, x.name)) || null;
     const idMethod = x.publicFigure ? `Public figure: verified from public sources by ${x.publicFigure.by}, ${day(x.publicFigure.at)}`
+      : x.reliedOn ? `Checked by ${relied?.firm || "another firm"}, relied on under MLR 2017 reg 39`
       : x.id.state === "passed" ? "Online identity check (Veriff)"
       : x.id.state === "waiting" ? "Online identity check done, waiting for Veriff's result"
       : x.id.state === "document" ? "Photo ID sent, for the Nominated Officer to check"
@@ -246,7 +254,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
         x.ownerDetail ? cap(x.ownerDetail) : "",
         x.born ? `Born ${x.born}` : "",
         x.publicFigure ? `Public sources: ${x.publicFigure.note}` : "",
-        x.address.done ? `Proof of address: ${x.address.proof?.summary || "received"}` : x.publicFigure ? "" : "Proof of address not received yet",
+        x.address.done ? `Proof of address: ${x.address.proof?.summary || "received"}` : x.publicFigure || x.reliedOn ? "" : "Proof of address not received yet",
         `Sanctions: ${x.sanctions === "clear" ? "no match" : x.sanctions === "discounted" ? "a namesake, set aside on the date of birth" : x.sanctions === "possible" ? "possible match: see the red flags" : "not screened yet"}`,
         reg && reg.name !== x.name ? `On the register as ${reg.name}` : "",
       ].filter(Boolean),
@@ -268,6 +276,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
     ...p.aside.map(a => `${a.flag.label}: set aside by ${a.review.by || "an officer"}${a.review.at ? ` on ${day(a.review.at)}` : ""}: "${a.review.comment}"`),
     ...(c?.listing ? ["Listed on a regulated market: simplified due diligence may apply (MLR 2017 reg 37)"] : []),
     ...people.filter(x => x.publicFigure).map(x => `${x.name} verified from public sources by ${x.publicFigure!.by}`),
+    ...(relied ? [`${relied.words}: the firm's checks are relied on under MLR 2017 reg 39`] : []),
     ...(p.kyc4u?.assessment?.levelOfRisk ? [`KYC4U rated the party ${p.kyc4u.assessment.levelOfRisk.toLowerCase()} risk${p.kyc4u.assessment.jobId ? ` (${p.kyc4u.assessment.jobId})` : ""}`] : []),
   ];
   const status = String(p.state?.status || "").toLowerCase();

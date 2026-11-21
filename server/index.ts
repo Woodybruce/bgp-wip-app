@@ -3141,6 +3141,43 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       removed_by_name text
     )`,
     `CREATE INDEX IF NOT EXISTS kyc_abroad_records_party_idx ON kyc_abroad_records (company_id) WHERE removed_at IS NULL`,
+    // Another firm's checks BGP relies on for a party on one deal (MLR 2017
+    // reg 39; Woody, 21 November 2026): the firm, its supervisor, the date it
+    // agreed, the officer's note, its letter. withdrawn_at when taken back.
+    // server/deal-party-aml.ts writes it; server/kyc-people.ts reads it.
+    `CREATE TABLE IF NOT EXISTS kyc_reliance (
+      id serial PRIMARY KEY,
+      deal_id varchar NOT NULL,
+      company_id varchar NOT NULL,
+      trading_entity_id varchar,
+      firm text NOT NULL,
+      firm_kind text NOT NULL,
+      firm_where text NOT NULL,
+      firm_country text,
+      regulator text NOT NULL,
+      regulator_ref text,
+      contact text,
+      agreed_on date NOT NULL,
+      note text NOT NULL,
+      document_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+      recorded_by varchar,
+      recorded_by_name text,
+      recorded_at timestamptz NOT NULL DEFAULT now(),
+      withdrawn_at timestamptz,
+      withdrawn_by varchar,
+      withdrawn_by_name text
+    )`,
+    `CREATE INDEX IF NOT EXISTS kyc_reliance_party_idx ON kyc_reliance (deal_id, company_id) WHERE withdrawn_at IS NULL`,
+    // BGP stops acting on a deal for AML reasons (MLR 2017 reg 31; Woody,
+    // 21 November 2026): who, when and why (the officers only), the status it
+    // had and whether the stop withdrew it. server/aml-stop.ts.
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_stopped_at timestamptz`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_stopped_by varchar`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_stopped_by_name text`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_stopped_reason text`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_stopped_note text`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_stopped_prev_status text`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_stopped_withdrew boolean`,
     // The other side's solicitors checked on a deal (Woody, 21 November 2026,
     // "do 7"; BGP's AML policy, counterparties: "Is there any negative media
     // around the agent and / or solicitor?"): the SRA register and the web,
@@ -4443,6 +4480,7 @@ import kycPrecheckRouter from "./kyc-prechecks";
 import dealPartiesRouter from "./deal-parties";
 import dealPartyAmlRouter from "./deal-party-aml";
 import kycAbroadRouter from "./kyc-abroad";
+import amlStopRouter from "./aml-stop";
 import amlDashboardRouter from "./aml-dashboard";
 import amlFileRouter from "./aml-file";
 import amlSecondReadRouter from "./aml-second-read";
@@ -5818,6 +5856,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(dealPartyAmlRouter);
   // Companies owned from abroad: what BGP records against them (21 November 2026).
   app.use(kycAbroadRouter);
+  // BGP stops acting on a deal for AML reasons, and is released (21 November 2026).
+  app.use(amlStopRouter);
   app.use(amlDashboardRouter);
   // The officers' AML file: a report and every document, for HMRC or KYC4U (20 November 2026).
   app.use(amlFileRouter);

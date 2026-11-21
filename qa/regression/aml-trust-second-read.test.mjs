@@ -19,7 +19,8 @@ test("a trust is recorded by BGP staff, and a name is only a suggestion", () => 
   const s = read("server/deal-parties.ts");
   assert.match(s, /router\.put\("\/api\/deals\/:id\/parties\/:role\/trust"[\s\S]{0,120}const me = await staffMe\(req\);\s*if \(!me\) return res\.status\(403\)/);
   assert.match(s, /trustHint: trustMarkInName\(brandRow\.name\) \|\| trustMarkInName\(company\?\.name\)/);
-  assert.match(read("server/kyc4u.ts"), /trustNote, flagNote, checkedNote\]/);
+  // The trust's checklist leads KYC4U's note; a reliance on another firm (21 November 2026) follows it.
+  assert.match(read("server/kyc4u.ts"), /trustNote, relianceNote, flagNote, checkedNote\]/);
 });
 
 test("the AML box and the dashboard carry the red mark until KYC4U has it", () => {

@@ -8,13 +8,15 @@
 
 import { legacyToCode } from "./deal-status";
 
-export type AmlStage = "not_started" | "bgp_checked" | "client_sent" | "client_finished" | "with_kyc4u" | "approved" | "rejected" | "expiring" | "expired" | "not_required";
+export type AmlStage = "not_started" | "bgp_checked" | "client_sent" | "client_finished" | "relied" | "with_kyc4u" | "approved" | "rejected" | "expiring" | "expired" | "not_required";
 
 export const AML_STAGE_LABEL: Record<AmlStage, string> = {
   not_started: "Not started",
   bgp_checked: "BGP checked",
   client_sent: "Client checks sent",
   client_finished: "Client finished",
+  // Another firm's checks relied on (MLR 2017 reg 39; 21 November 2026).
+  relied: "Relying on another firm",
   with_kyc4u: "With KYC4U",
   approved: "Approved",
   rejected: "Rejected",
@@ -58,6 +60,9 @@ export interface AmlPartyFacts {
   kyc4uInReview: boolean;
   // Marked Not required on this deal by the Nominated Officer or the Deputy.
   notRequired?: boolean;
+  // When the officers recorded relying on another firm's checks for the
+  // party (MLR 2017 reg 39), not withdrawn: BGP signs it off on them.
+  reliedAt?: string | Date | null;
 }
 
 const time = (v: string | Date | null | undefined): number | null => {
@@ -77,6 +82,7 @@ export function amlStage(f: AmlPartyFacts, now: Date = new Date()): AmlStage {
     return "approved";
   }
   if (f.kyc4uOpen || (f.kyc.status === "in_review" && f.kyc4uInReview)) return "with_kyc4u";
+  if (time(f.reliedAt) !== null) return "relied";
   if (time(f.clientFinishedAt) !== null) return "client_finished";
   if (time(f.clientSentAt) !== null) return "client_sent";
   const pre = time(f.precheckAt);
@@ -106,7 +112,7 @@ export function amlBucket(stage: AmlStage, due: boolean, closed = false): AmlBuc
   // ago; one never decided is a gap of its own.
   if (closed) return stage === "expiring" || stage === "expired" ? "done" : "closed";
   if (stage === "expiring" || stage === "expired") return "expiring";
-  if (stage === "client_sent" || stage === "client_finished" || stage === "with_kyc4u") return "in_progress";
+  if (stage === "client_sent" || stage === "client_finished" || stage === "relied" || stage === "with_kyc4u") return "in_progress";
   return due ? "todo" : "not_due";
 }
 
@@ -116,7 +122,8 @@ export function amlWaitingOn(stage: AmlStage, redFlags: number): string {
     case "not_started": return "BGP: start the checks";
     case "bgp_checked": return redFlags ? "BGP: raise it with KYC4U" : "BGP: send the client checks or sign off";
     case "client_sent": return "The client";
-    case "client_finished": return redFlags ? "BGP: raise it with KYC4U" : "BGP: sign off";
+    case "client_finished":
+    case "relied": return redFlags ? "BGP: raise it with KYC4U" : "BGP: sign off";
     case "with_kyc4u": return "KYC4U";
     case "approved": return "Nobody";
     case "not_required": return "Nobody";
@@ -133,7 +140,8 @@ export function amlWaitingOn(stage: AmlStage, redFlags: number): string {
  */
 export function amlNeedsKyc4u(level: "simplified" | "standard" | "enhanced", stage: AmlStage, ownedAbroad = false): boolean {
   // Owned through a company registered abroad goes to KYC4U too (Woody, 21 November 2026).
-  return (level === "enhanced" || ownedAbroad) && (stage === "not_started" || stage === "bgp_checked" || stage === "client_sent" || stage === "client_finished");
+  // Reliance does not cover enhanced due diligence (HMRC), so a relied-on party still goes.
+  return (level === "enhanced" || ownedAbroad) && (stage === "not_started" || stage === "bgp_checked" || stage === "client_sent" || stage === "client_finished" || stage === "relied");
 }
 
 /** Whole days since the latest of the given moments, or null when there is none. */

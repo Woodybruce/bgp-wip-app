@@ -30,7 +30,7 @@
 import crypto from "crypto";
 import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
-import {
+import { abroadTraceLines,
   KYC_PRECHECK_FRESH_DAYS, KYC_PRECHECK_MAX_WEB_PEOPLE, KYC_PRECHECK_VERSION, PRECHECK_AUTO_RUNS_A_DAY, PRECHECK_RETRY_MINUTES,
   askInputFrom, checkWebAnswer, chooseScreened, idvOf, isOffshoreCountry, ownerRegister, ownersAbroadOf, personNameOfRecord,
   isPrecheckResult, listingFromExemptions, nameTokens, ownerKind, personNamesMatch, precheckCardLines, precheckCompany, precheckSanctionsMatch,
@@ -767,6 +767,16 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     } catch (e: any) {
       errors.push(`Owners abroad: ${words(e)}`);
     }
+  } else if (!companiesHouse && !number && subjectKind === "company") {
+    // No UK record at all: the company itself looked up in GLEIF.
+    try {
+      const name = entity ? clean(entity.name, 160) : clean(company.uk_entity_name, 160) || clean(company.name, 160);
+      const country = entity ? null : clean((await pool.query(`SELECT head_office_address->>'country' AS country FROM crm_companies WHERE id = $1`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.country, 60) || null;
+      const { traceAbroadParty } = await import("./kyc-abroad");
+      if (name) abroad = await withTimeout(traceAbroadParty({ name, country }), 60_000, "Looking the company up in GLEIF");
+    } catch (e: any) {
+      errors.push(`GLEIF: ${words(e)}`);
+    }
   }
 
   // Who is screened: the company, every officer and owner, the companies and
@@ -914,6 +924,8 @@ export interface PartyPrecheckView {
   errors: string[];
   // What the register says about the company checked.
   company: PrecheckCompany | null;
+  // What the app traced past Companies House, in lines (21 November 2026).
+  trace?: string[];
   // Why the last check did not finish (Companies House busy), and when a
   // view may run it again.
   unfinished: string | null;
@@ -952,6 +964,8 @@ export async function dealPrechecks(dealId: string, parties: Array<{ companyId: 
       lines: stored ? precheckCardLines(stored.result) : [],
       errors: stored?.result.errors.slice(0, 6) || [],
       company: precheckCompany(stored?.result || null),
+      // What the app traced past Companies House, also for a company with no UK record.
+      trace: abroadTraceLines(stored?.result || null),
       unfinished,
       retryAt,
     };

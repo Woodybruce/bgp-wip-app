@@ -97,7 +97,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   const { loadPartyKyc } = await import("./deal-gates");
   const { loadFlagReviews, reviewsForDeal, reviewsForParty } = await import("./kyc-red-flags");
   const { loadNotRequired } = await import("./aml-policy");
-  const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired] = await Promise.all([
+  const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired, reliances] = await Promise.all([
     loadPartyKyc(pool, parties.map(p => ({ role: p.key, brandId: p.brandId, entityId: p.entityId }))),
     read("KYC records", async () => (await pool.query(
       `SELECT id, name, company_type, aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason, aml_subject_type FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds])).rows, none),
@@ -143,6 +143,11 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     read("flags set aside", () => loadFlagReviews(pool, brandIds, dealIds), [] as Awaited<ReturnType<typeof loadFlagReviews>>),
     // Parties the Nominated Officer or the Deputy marked Not required.
     read("parties marked Not required", () => loadNotRequired(pool, dealIds), new Map() as Awaited<ReturnType<typeof loadNotRequired>>),
+    // Another firm's checks the officers rely on (MLR 2017 reg 39), not withdrawn.
+    read("reliance on another firm", async () => (await pool.query(
+      `SELECT DISTINCT ON (deal_id, company_id, trading_entity_id) deal_id, company_id, trading_entity_id, firm, recorded_at
+         FROM kyc_reliance WHERE deal_id = ANY($1::varchar[]) AND withdrawn_at IS NULL
+        ORDER BY deal_id, company_id, trading_entity_id, recorded_at DESC`, [dealIds])).rows, none),
   ]);
   const { kyc4uVerdict } = await import("./kyc4u");
   const meName = me.name.toLowerCase();
@@ -189,10 +194,11 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const personOpen = liveTokens.some((t: any) => t.request?.person && !t.completed_at && new Date(t.expires_at).getTime() > now.getTime());
     const finished = personOpen ? null : liveTokens.filter((t: any) => !t.request?.person).map((t: any) => t.completed_at).filter(Boolean).sort().pop() || null;
     const sent = liveTokens.map((t: any) => t.created_at).filter(Boolean).sort().pop() || null;
+    const relied = reliances.find((r: any) => String(r.deal_id) === String(p.deal.id) && r.company_id === p.brandId && (r.trading_entity_id || null) === (p.entityId || null)) || null;
     const stage = amlStage({
       role: p.role, dealStatus: p.deal.status, kyc: { status: state.status, expiresAt: state.expiresAt },
       precheckAt: pre?.conducted_at || null, clientSentAt: sent, clientFinishedAt: finished, kyc4uOpen, kyc4uInReview,
-      notRequired: markHolds,
+      notRequired: markHolds, reliedAt: relied?.recorded_at || null,
     }, now);
     const due = amlDue(p.role, p.deal.status);
     const allFlags = [...flags, ...onDeal.map(f => `Deal: ${f.label}`)];
@@ -212,7 +218,8 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       signsAs: state.source === "company" || state.source === "same_company" ? state.name : null,
       ownersAbroad: ownersAbroadOf((pre?.result as any)?.companiesHouse).map(a => `${a.name}, ${a.country}`),
       level: level.level,
-      levelWhy: markHolds ? [`Not required: ${mark!.reasonWords}${mark!.by ? ` (${mark!.by})` : ""}`] : level.why,
+      levelWhy: markHolds ? [`Not required: ${mark!.reasonWords}${mark!.by ? ` (${mark!.by})` : ""}`]
+        : relied ? [...level.why, `Relying on ${text(relied.firm)}'s checks (MLR 2017 reg 39)`] : level.why,
       stage,
       bucket: amlBucket(stage, due, amlDealClosed(p.deal.status)),
       due,

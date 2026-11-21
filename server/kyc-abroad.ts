@@ -216,6 +216,20 @@ export async function traceAbroad(ch: NonNullable<KycPrecheckResult["companiesHo
   return { accounts, traced, checkedAt: new Date().toISOString() };
 }
 
+/**
+ * A company with no UK record (no Companies House number, not on the Register
+ * of Overseas Entities): the party itself looked up in GLEIF, and its parents
+ * followed up (Woody, 21 November 2026, "Yes go ahead"). The country, when
+ * the CRM holds one, narrows the look-up; without it only exactly the name,
+ * once, is taken. Never throws.
+ */
+export async function traceAbroadParty(q: { name: string; country: string | null }, deps: { trace?: typeof import("./gleif").traceGleif } = {}): Promise<PrecheckAbroad> {
+  const trace = deps.trace || (await import("./gleif")).traceGleif;
+  const gleif = await trace({ name: q.name, country: q.country, registrationNumber: null });
+  const country = q.country || gleif.entity?.jurisdiction || gleif.entity?.country || "country not known";
+  return { accounts: null, traced: [{ name: q.name, country, registrationNumber: null, via: "party", foundAt: null, gleif }], checkedAt: new Date().toISOString(), party: true };
+}
+
 // ── What is recorded against a company abroad ───────────────────────────────
 
 const recordFrom = (r: any): AbroadRecord => ({

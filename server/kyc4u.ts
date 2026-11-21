@@ -19,6 +19,7 @@ import { pool } from "./db";
 import { loadDealRedFlags } from "./kyc-red-flags";
 import { redFlagNote } from "@shared/kyc-red-flags";
 import { trustChecklistNote } from "@shared/aml-policy";
+import { relianceWords } from "@shared/aml-reliance";
 import { precheckNote } from "@shared/kyc-prechecks";
 import { refileKyc4uArchive, registerKyc4uArchiveRoutes } from "./kyc4u-archive";
 
@@ -739,6 +740,9 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
   // A party recorded as a trust carries BGP's trust checklist to KYC4U (Jack, 20 November 2026).
   const subject = (await pool.query(`SELECT aml_subject_type FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
   const trustNote = String(subject?.aml_subject_type || "").toLowerCase() === "trust" ? trustChecklistNote() : "";
+  // Another firm's checks BGP relies on for this party on the deal (MLR 2017 reg 39; 21 November 2026).
+  const relied = dealId ? await import("./kyc-people").then(m => m.relianceFor(dealId, companyId, entityId)).catch(() => null) : null;
+  const relianceNote = relied ? `${relianceWords(relied)} (MLR 2017 reg 39). ${relied.note}` : "";
   return {
     fields: {
       partyType: isClient ? "Client" : "Counterparty",
@@ -756,7 +760,7 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
       note: [deal ? `BGP deal ${deal.deal_ref ? "#" + deal.deal_ref + " " : ""}${deal.name || ""}`.trim() : "", dt ? `Deal type: ${dt}` : "", role ? `Role: ${role}${isClient ? " (BGP's client)" : " (counterparty)"}` : "",
         entity ? (signsAsPerson ? `Contracting party: ${entity.name}, a private individual, for ${company.name}` : `Contracting company: ${entity.name}${entity.companies_house_number ? ` (Companies House ${entity.companies_house_number})` : ""}, trading as ${company.name}`) : "",
         !isClient && partyPerson ? `Person to ask: ${[partyPerson.name, partyPerson.email, partyPerson.mobile].filter(Boolean).join(", ")}` : "",
-        trustNote, flagNote, checkedNote].filter(Boolean).join("\n").slice(0, 4000),
+        trustNote, relianceNote, flagNote, checkedNote].filter(Boolean).join("\n").slice(0, 4000),
     },
     docs,
   };

@@ -83,6 +83,11 @@ export interface AmlBoxFacts {
   // (Denmark)"): KYC4U find the owners behind it (Woody, 21 November 2026:
   // "foreign companies I think we will send to KYC4U").
   ownersAbroad?: string | null;
+  // Another firm's checks the officers rely on (MLR 2017 reg 39), in words
+  // ("Relying on Smith & Co's checks (...)"). It stands in for the client
+  // checks, not for enhanced due diligence, which is why it comes after the
+  // KYC4U, trust, owners abroad and red flag steps.
+  reliance?: string | null;
 }
 
 export interface AmlNextStep { tone: AmlBoxTone; who: AmlBoxWho; words: string; action: AmlBoxAction | null }
@@ -185,6 +190,17 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
       return { tone: "act", who: "bgp", words: "A letting under £10,000 a month: sanctions checks only, and they are clear. Sign it off.", action: "sign_off" };
     }
     return { tone: "wait", who: "bgp", words: `A letting under £10,000 a month: sanctions checks only.${f.signOffBlocked ? ` Before it can be signed off: ${lowerFirst(stop(f.signOffBlocked))}` : ""}`, action: null };
+  }
+  if (f.reliance) {
+    if (f.billingDiffers) return BILLING_STEP;
+    if (f.canSignOff && f.signOffBlocked === null) {
+      return { tone: "act", who: "bgp", words: `${stop(f.reliance)} The client checks are not needed: sign it off.`, action: "sign_off" };
+    }
+    return {
+      tone: "wait", who: f.canSignOff ? "bgp" : "officers",
+      words: `${stop(f.reliance)}${f.signOffBlocked ? ` Before it can be signed off: ${lowerFirst(stop(f.signOffBlocked))}` : " An agent on the deal, the Nominated Officer or a Deputy signs it off."}`,
+      action: null,
+    };
   }
   if (f.due === false && !f.request) {
     return { tone: "wait", who: "nobody", words: `Not due yet. ${DUE_WORDS[f.role] || "HMRC does not expect these checks yet."}`, action: null };

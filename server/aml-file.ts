@@ -102,7 +102,7 @@ export interface AmlFileData {
   madeAt: string;
 }
 
-const HISTORY_FIELDS = ["aml_sign_off", "kyc4u_result", "aml_red_flag", "aml_person_contact", "aml_not_required", "client_checks_sent", "client_checks_link", "aml_file"];
+const HISTORY_FIELDS = ["aml_sign_off", "kyc4u_result", "aml_red_flag", "aml_person_contact", "aml_not_required", "aml_reliance", "aml_public_figure", "aml_stopped", "client_checks_sent", "client_checks_link", "aml_file"];
 
 /** Everything BGP holds on the checks of the deal's parties (all of them, or the roles given). */
 export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | null, me: { id: string; name: string }): Promise<AmlFileData | null> {
@@ -171,7 +171,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       console.warn(`[aml-file] could not read ${what} for ${brandId}: ${e?.message}`);
       return empty;
     });
-    const people = peopleRequests ? await read("the people to check", partyPeopleFor({ companyId: brandId, entityId, kind }, peopleRequests), null) : null;
+    const people = peopleRequests ? await read("the people to check", partyPeopleFor({ companyId: brandId, entityId, kind, dealId }, peopleRequests), null) : null;
     if (!peopleRequests) unread.push("the people to check");
     const [drafts, records, kycHistory, dealHistory, docs] = await Promise.all([
       read("the KYC4U requests raised", pool.query(
