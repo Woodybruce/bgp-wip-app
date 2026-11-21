@@ -288,6 +288,22 @@ test("owners behind a company registered abroad: the client is asked who they ar
   const people = partyPeople({ kind: "company", companyId: "c1", precheck, requests: [] } as any);
   assert.equal(people.basis, "owners_abroad");
   assert.deepEqual(people.ownersAbroad, [{ name: "Scp Aaa Invest", country: "Monaco", foundAt: null }]);
-  assert.match(PARTY_PEOPLE_BASIS_WORDS.owners_abroad, /structure chart up to the people/);
+  // Since 21 November 2026 a company abroad goes to KYC4U (Woody: "foreign companies I think we will send to KYC4U").
+  assert.match(PARTY_PEOPLE_BASIS_WORDS.owners_abroad, /It goes to KYC4U to find them; the client can also be asked for a structure chart/);
   assert.ok(people.outstanding.some(o => /The people behind Scp Aaa Invest \(Monaco\)/.test(o)), "owed until the client sends the chart");
+});
+
+test("a person verified from public sources owes nothing more (KYC4U's Public figure method, 21 November 2026)", () => {
+  const base: PartyPeopleInput = { companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) as any }, requests: [request({})] };
+  const before = partyPeople(base).people.find(p => p.name === "Huseyn Mirhadiyev")!;
+  assert.deepEqual(before.outstanding, ["identity check", "proof of address"]);
+  assert.equal(before.publicFigure, null);
+  const after = partyPeople({ ...base, publicFigures: [{ id: "1", name: "Mr Huseyn Mirhadiyev", note: "Named with photograph in the group's annual report", by: "Jack Barratt", at: "2026-11-21T10:00:00Z", links: ["https://example.org/annual-report"], documents: 1 }] });
+  const huseyn = after.people.find(p => p.name === "Huseyn Mirhadiyev")!;
+  assert.equal(huseyn.publicFigure?.by, "Jack Barratt");
+  assert.deepEqual(huseyn.outstanding, []);
+  assert.equal(huseyn.canSend, false);
+  assert.ok(!after.outstanding.some(o => o.startsWith("Huseyn Mirhadiyev")), "the party no longer owes anything for him");
+  assert.ok(after.outstanding.some(o => o.startsWith("Woody Bruce")), "the others still do");
+  assert.deepEqual(personRequestAsks(huseyn, true), { needsIdCheck: false, docs: [] });
 });

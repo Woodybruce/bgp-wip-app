@@ -11,7 +11,10 @@
 // themselves.
 //
 //   POST /api/deals/:id/parties/:role/sign-off            { note }: signs the party off for the policy's re-check period
-//   POST /api/deals/:id/parties/:role/kyc4u-result        multipart: verdict, date, reference, note, files[]
+//   POST /api/deals/:id/parties/:role/kyc4u-result        multipart: verdict, date, reference, note, files[] (KYC4U's zip opened)
+//   POST /api/deals/:id/parties/:role/kyc4u-result/read   multipart: files[]: where each will be filed and what KYC4U's report says (saves nothing)
+//   POST /api/deals/:id/parties/:role/public-figure       multipart: key, note, links, files[]: a person verified from public sources
+//   POST /api/deals/:id/parties/:role/public-figure/:checkId/withdraw
 //   POST /api/deals/:id/parties/:role/not-required        { reason, comment }: no checks needed on this party
 //   POST /api/deals/:id/parties/:role/not-required/undo   takes the marker off
 //
@@ -39,6 +42,9 @@ import {
   DUE_DILIGENCE_LABEL, NOT_REQUIRED_REASONS, RECHECK_YEARS, amlRegime, deputyNames, isDealAgent, notRequiredInput, officerWords,
   type AmlOfficers, type AmlRegime, type PartyDueDiligence,
 } from "@shared/aml-policy";
+import { KYC4U_PACK_MAX_ZIP_BYTES, kyc4uAssessmentRecord, kyc4uResultPrefill, kyc4uRiskLevel } from "@shared/kyc4u-result-pack";
+import { amlFileDocWords } from "@shared/aml-file";
+import { PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN } from "@shared/kyc-people";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -111,7 +117,7 @@ export interface KnownFacts {
     setAside?: Record<string, Array<{ flag: { key: string } }>>;
     levels?: Record<string, PartyDueDiligence>;
   } | null;
-  precheck?: { ranAt: string | null; running: boolean } | null;
+  precheck?: { ranAt: string | null; running: boolean; ownersAbroad?: string[] } | null;
 }
 
 /** What BGP's sign-off rule needs, read from the records (the note aside), and the party's level under the policy. */
@@ -135,7 +141,11 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
   if (!precheck) {
     const { latestPrecheck, precheckRunning } = await import("./kyc-prechecks");
     const stored = await latestPrecheck(party.brandId, party.entityId).catch(() => null);
-    precheck = { ranAt: stored?.ranAt || null, running: !!precheckRunning(party.brandId, party.entityId) };
+    const { ownersAbroadOf } = await import("@shared/kyc-prechecks");
+    precheck = {
+      ranAt: stored?.ranAt || null, running: !!precheckRunning(party.brandId, party.entityId),
+      ownersAbroad: ownersAbroadOf(stored?.result?.companiesHouse).map(a => `${a.name}, ${a.country}`),
+    };
   }
   // The request to the person acting finished, and every person to check
   // has sent what they owe (Woody, 19 November 2026: the owners and the
@@ -168,6 +178,7 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
     clientChecksFinished: finished,
     clientChecksOutstanding: mainFinished ? outstanding : [],
     sanctionsOnly: party.regime === "sanctions_only",
+    ownersAbroad: precheck.ownersAbroad || [],
     level: flags?.levels?.[party.brandId] || null,
   };
 }
@@ -368,8 +379,10 @@ router.post("/api/deals/:id/red-flags/put-back", async (req: Request, res: Respo
   }
 });
 
-// KYC4U's result: who may add it is checked before any file is read.
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: KYC4U_RESULT_MAX_BYTES, files: KYC4U_RESULT_MAX_FILES } });
+// KYC4U's result: who may add it is checked before any file is read. A zip
+// (KYC4U's whole pack) may be up to 100MB; every other file, and every file
+// inside a zip, 25MB (checked as the files are unpacked).
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: KYC4U_PACK_MAX_ZIP_BYTES, files: KYC4U_RESULT_MAX_FILES } });
 async function deciderFirst(req: Request, res: Response, next: NextFunction) {
   const me = await decider(req).catch(() => ({ refusal: "Could not check who you are.", status: 500 }));
   if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
@@ -379,14 +392,47 @@ async function deciderFirst(req: Request, res: Response, next: NextFunction) {
 function takeFiles(req: Request, res: Response, next: NextFunction) {
   upload.array("files", KYC4U_RESULT_MAX_FILES)(req, res, (err: any) => {
     if (!err) return next();
-    const message = err?.code === "LIMIT_FILE_SIZE" ? "Each file must be 25MB or less."
-      : err?.code === "LIMIT_FILE_COUNT" || err?.code === "LIMIT_UNEXPECTED_FILE" ? `Add up to ${KYC4U_RESULT_MAX_FILES} files.`
+    const message = err?.code === "LIMIT_FILE_SIZE" ? `A zip can be up to ${KYC4U_PACK_MAX_ZIP_BYTES / (1024 * 1024)}MB and any other file ${KYC4U_RESULT_MAX_BYTES / (1024 * 1024)}MB.`
+      : err?.code === "LIMIT_FILE_COUNT" || err?.code === "LIMIT_UNEXPECTED_FILE" ? `Add up to ${KYC4U_RESULT_MAX_FILES} files, or KYC4U's zip.`
       : "The files could not be read.";
     res.status(400).json({ message });
   });
 }
 
 const safeFileName = (name: string) => String(name || "file").replace(/[^\w.\- ]+/g, "_").replace(/\s+/g, "_").slice(-120) || "file";
+
+type UploadedFile = { originalname: string; mimetype: string; buffer: Buffer; size: number };
+
+/** The files as they will be filed: a zip opened, each with the heading of its folder in KYC4U's pack. */
+async function packFrom(req: Request) {
+  const files = ((req as any).files || []) as UploadedFile[];
+  const { unpackKyc4uFiles, readKyc4uPack } = await import("./kyc4u-result-pack");
+  const { entries, skipped } = await unpackKyc4uFiles(files);
+  const read = await readKyc4uPack(entries).catch(() => ({ report: null, reportPath: null, fileReference: null }));
+  return { chosen: files.length, entries, skipped, ...read };
+}
+
+// What KYC4U's pack holds and what its risk report says, before anything is
+// saved: the dialog fills the result from it for the officer to check.
+router.post("/api/deals/:id/parties/:role/kyc4u-result/read", deciderFirst, takeFiles, async (req: Request, res: Response) => {
+  try {
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
+    const party = await loadAmlParty(pool, String(req.params.id), role);
+    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    const pack = await packFrom(req);
+    res.json({
+      files: pack.entries.map(e => ({ path: e.path, name: e.name, size: e.buffer.length, heading: e.place.heading, kind: e.place.kind, docType: e.place.docType, docWords: amlFileDocWords(e.place.docType) })),
+      skipped: pack.skipped,
+      report: pack.report,
+      reportPath: pack.reportPath,
+      prefill: kyc4uResultPrefill(pack.report, pack.fileReference),
+    });
+  } catch (err: any) {
+    console.error("[deal-party-aml] KYC4U pack read failed:", err?.message);
+    res.status(500).json({ message: "KYC4U's files could not be read." });
+  }
+});
 
 router.post("/api/deals/:id/parties/:role/kyc4u-result", deciderFirst, takeFiles, async (req: Request, res: Response) => {
   try {
@@ -403,7 +449,11 @@ router.post("/api/deals/:id/parties/:role/kyc4u-result", deciderFirst, takeFiles
     const on = day.toISOString().slice(0, 10) === today ? new Date() : day;
     const note = text(req.body?.note).slice(0, 1000);
     const reference = text(req.body?.reference).slice(0, 60);
-    const files = ((req as any).files || []) as Array<{ originalname: string; mimetype: string; buffer: Buffer; size: number }>;
+    const pack = await packFrom(req);
+    const files = pack.entries;
+    if (pack.chosen && !files.length) {
+      return res.status(400).json({ message: `None of the files can be filed: ${pack.skipped.slice(0, 3).map(sk => `${sk.path} (${sk.reason})`).join("; ")}.` });
+    }
     // An approval is evidenced by KYC4U's own report or email; any other
     // result by a file or a note that says what KYC4U asked for.
     if (verdict === "approved" && !files.length) return res.status(400).json({ message: "Attach KYC4U's report or their email approving the party." });
@@ -411,40 +461,55 @@ router.post("/api/deals/:id/parties/:role/kyc4u-result", deciderFirst, takeFiles
     const party = await loadAmlParty(pool, String(req.params.id), role);
     if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
     // The re-check the approval carries: the policy's years for the party's
-    // level now (1 when it needs enhanced due diligence, else 3).
+    // level now (1 when it needs enhanced due diligence, else 3), and 1 when
+    // KYC4U's own report rates it high risk.
     const flagsNow = await (await import("./kyc-red-flags"))
       .loadDealRedFlags(party.dealId, [party.brandId], party.entityId ? { [party.brandId]: party.entityId } : {}).catch(() => null);
     const levelNow = flagsNow?.levels?.[party.brandId]?.level || "enhanced";
-    const recheckYears = RECHECK_YEARS[levelNow];
+    const kyc4uHigh = kyc4uRiskLevel(pack.report?.levelOfRisk) === "high";
+    const recheckYears = kyc4uHigh ? RECHECK_YEARS.enhanced : RECHECK_YEARS[levelNow];
+    const ref = reference || pack.report?.jobId || pack.fileReference || "";
 
-    // The files, filed on the party's KYC record (the company that signs when set).
+    // The files, filed on the party's KYC record (the company that signs when
+    // set), each under the heading of its folder in KYC4U's pack. A file
+    // already on the record (the same name and size) is not filed again.
     const { saveFile } = await import("./file-storage");
-    let classify: (name: string) => string = () => "other";
-    try { classify = (await import("./kyc-pack-intake")).classifyPackFile; } catch {}
     const label = KYC4U_RESULTS[verdict];
+    const onFile = new Set((await pool.query(
+      `SELECT lower(file_name) AS name, file_size FROM kyc_documents
+        WHERE company_id = $1 AND trading_entity_id IS NOT DISTINCT FROM $2::varchar AND deleted_at IS NULL`,
+      [party.brandId, party.entityId])).rows.map((r: any) => `${r.name}|${r.file_size}`));
+    const already: string[] = [];
+    let filed = 0;
     for (const f of files) {
-      const stored = `kyc4u-${Date.now()}-${crypto.randomBytes(6).toString("hex")}-${safeFileName(f.originalname)}`;
-      await saveFile(`chat-media/${stored}`, f.buffer, f.mimetype || "application/octet-stream", f.originalname);
-      const kind = classify(f.originalname);
+      const seen = `${f.name.toLowerCase()}|${f.buffer.length}`;
+      if (onFile.has(seen)) { already.push(f.path); continue; }
+      onFile.add(seen);
+      const stored = `kyc4u-${Date.now()}-${crypto.randomBytes(6).toString("hex")}-${safeFileName(f.name)}`;
+      await saveFile(`chat-media/${stored}`, f.buffer, f.mime, f.name);
+      const under = f.place.kind === "report" || f.place.heading === "KYC4U's pack" ? "" : `: ${f.place.heading}`;
       await pool.query(
         `INSERT INTO kyc_documents (company_id, trading_entity_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [party.brandId, party.entityId, party.dealId, kind && kind !== "other" ? kind : "kyc4u_report", `/api/chat-media/${stored}`, f.originalname, f.size || f.buffer.length,
-          f.mimetype || null, `KYC4U result (${label}, ${day.toISOString().slice(0, 10)}${reference ? `, ${reference}` : ""}) on ${partyName(party)}, added by ${me.name}`, me.id]);
+        [party.brandId, party.entityId, party.dealId, f.place.docType, `/api/chat-media/${stored}`, f.name, f.buffer.length,
+          f.mime, `KYC4U result (${label}, ${day.toISOString().slice(0, 10)}${ref ? `, ${ref}` : ""}) on ${partyName(party)}${under}, added by ${me.name}`, me.id]);
+      filed += 1;
     }
 
     // The result as a KYC4U request row, applied by the mirror. A result about
     // a company that is not the brand's own legal company is filed on that
-    // company only (no company_id), never on the brand.
+    // company only (no company_id), never on the brand. KYC4U's own reading
+    // of the party (their risk assessment report) is kept on it.
     const itemId = `${party.brandId}:${party.entityId || "brand"}:${Date.now()}`;
     await pool.query(
       `INSERT INTO kyc4u_requests (list_id, item_id, list_name, title, status, entity_name, company_id, company_id_manual, trading_entity_id,
                                    fields, created_at_source, modified_at_source, synced_at)
        VALUES ('manual', $1, 'Recorded in the app', $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $9, NOW())`,
-      [itemId, `${reference || "KYC4U result"} ${partyName(party)}`.trim(), label, partyName(party),
+      [itemId, `${ref || "KYC4U result"} ${partyName(party)}`.trim(), label, partyName(party),
         party.entityId && !party.sameCompany ? null : party.brandId, party.brandId, party.entityId,
-        JSON.stringify({ "Recorded by": me.name, Note: note || null, Reference: reference || null, Deal: party.dealName, Files: files.length,
-          "Due diligence": DUE_DILIGENCE_LABEL[levelNow], "Re-check years": recheckYears }), on]);
+        JSON.stringify({ "Recorded by": me.name, Note: note || null, Reference: ref || null, Deal: party.dealName, Files: filed,
+          "Due diligence": DUE_DILIGENCE_LABEL[levelNow], "Re-check years": recheckYears,
+          ...(pack.report ? { "Level of risk": pack.report.levelOfRisk, "KYC4U assessment": kyc4uAssessmentRecord(pack.report) } : {}) }), on]);
     // A request prepared on this deal and sent to KYC4U is answered by it.
     await pool.query(
       `UPDATE kyc4u_drafts SET request_list_id = 'manual', request_item_id = $3, status = 'submitted'
@@ -454,19 +519,122 @@ router.post("/api/deals/:id/parties/:role/kyc4u-result", deciderFirst, takeFiles
     await mirrorKyc4uStatuses().catch((e: any) => console.warn("[deal-party-aml] KYC4U mirror failed:", e?.message));
 
     await dealAudit(party.dealId, "kyc4u_result", party.state.status || "no checks", label,
-      `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · KYC4U ${label.toLowerCase()} on ${day.toISOString().slice(0, 10)}${reference ? ` (${reference})` : ""}${files.length ? ` · ${files.length} file${files.length === 1 ? "" : "s"}` : ""}${note ? ` · ${note}` : ""}`, me);
+      `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · KYC4U ${label.toLowerCase()} on ${day.toISOString().slice(0, 10)}${ref ? ` (${ref})` : ""}${pack.report?.levelOfRisk ? ` · KYC4U rate it ${pack.report.levelOfRisk.toLowerCase()} risk` : ""}${filed ? ` · ${filed} file${filed === 1 ? "" : "s"}` : ""}${note ? ` · ${note}` : ""}`, me);
     const after = await loadAmlParty(pool, party.dealId, role);
     const want = verdict === "approved" ? "approved" : verdict === "rejected" ? "rejected" : null;
     // A later KYC4U request for the party decides its status, as for any
     // result: say so rather than claim this one took effect.
     const applied = !want || after?.state.status === want;
+    const notes = [
+      applied ? null : "Saved and filed, but KYC4U's list has a later request for this party, which decides its status.",
+      already.length ? `${already.length} file${already.length === 1 ? " was" : "s were"} already on the party's record and not filed again.` : null,
+      pack.skipped.length ? `Not filed: ${pack.skipped.slice(0, 4).map(sk => `${sk.path} (${sk.reason})`).join("; ")}${pack.skipped.length > 4 ? ` and ${pack.skipped.length - 4} more` : ""}.` : null,
+    ].filter(Boolean);
     res.json({
-      ok: true, state: after?.state || null, applied,
-      message: applied ? null : "Saved and filed, but KYC4U's list has a later request for this party, which decides its status.",
+      ok: true, state: after?.state || null, applied, filed, already, skipped: pack.skipped,
+      message: notes.length ? notes.join(" ") : null,
     });
   } catch (err: any) {
     console.error("[deal-party-aml] KYC4U result failed:", err?.message);
     res.status(500).json({ message: "KYC4U's result could not be saved." });
+  }
+});
+
+// A person to check verified from public sources (Woody, 21 November 2026:
+// KYC4U's "Public figure" method, "yes lets do 1 to 4"). The Nominated
+// Officer or a Deputy records what makes them a public figure, with the pages
+// (each copied to PDF on the party's KYC record) and any files; it then counts
+// for that person's identity check and proof of address, on every deal with
+// the party (server/kyc-people.ts). It can be withdrawn.
+async function partyKindOf(db: Db, party: AmlParty) {
+  const held = (await db.query(`SELECT aml_subject_type FROM crm_companies WHERE id = $1`, [party.brandId]).catch(() => ({ rows: [] as any[] }))).rows[0] || null;
+  const signer = party.entityId ? (await db.query(`SELECT entity_kind FROM crm_trading_entities WHERE id = $1`, [party.entityId]).catch(() => ({ rows: [] as any[] }))).rows[0] || { entity_kind: null } : null;
+  return partySubjectKind(held?.aml_subject_type, signer ? { kind: signer.entity_kind } : null);
+}
+
+router.post("/api/deals/:id/parties/:role/public-figure", deciderFirst, takeFiles, async (req: Request, res: Response) => {
+  try {
+    const me = (req as any).amlDecider as { id: string; name: string };
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
+    const party = await loadAmlParty(pool, String(req.params.id), role);
+    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    const note = text(req.body?.note).slice(0, 1000);
+    if (note.length < PUBLIC_FIGURE_NOTE_MIN) return res.status(400).json({ message: "Say what makes them a public figure and what the sources show (at least a sentence)." });
+    const { copyAddress, fileWebCopies } = await import("./web-page-copy");
+    const rawLinks = String(req.body?.links || "").split(/[\s,]+/).map(l => l.trim()).filter(Boolean);
+    const links = [...new Set(rawLinks.map(copyAddress).filter((l): l is string => !!l))];
+    if (rawLinks.length && links.length < new Set(rawLinks).size) return res.status(400).json({ message: "Each link must be a web address (http or https)." });
+    if (links.length > PUBLIC_FIGURE_MAX_LINKS) return res.status(400).json({ message: `Give up to ${PUBLIC_FIGURE_MAX_LINKS} links.` });
+    const { unpackKyc4uFiles } = await import("./kyc4u-result-pack");
+    const { entries, skipped } = await unpackKyc4uFiles(((req as any).files || []) as UploadedFile[]);
+    if (skipped.length) return res.status(400).json({ message: `Not a file that can be kept: ${skipped.slice(0, 3).map(sk => `${sk.path} (${sk.reason})`).join("; ")}.` });
+    if (!links.length && !entries.length) return res.status(400).json({ message: "Give the pages or files that show who they are." });
+
+    const kind = await partyKindOf(pool, party);
+    const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
+    const people = await partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind }, await dealPeopleRequests(party.dealId));
+    const person = people.people.find(p => p.key === String(req.body?.key || ""));
+    if (!person) return res.status(404).json({ message: `That person is not on the list of people to check for ${partyName(party)}.` });
+    if (person.publicFigure) return res.status(409).json({ message: `${person.name} is already verified from public sources (by ${person.publicFigure.by}).` });
+
+    const { saveFile } = await import("./file-storage");
+    const documentIds: string[] = [];
+    for (const f of entries) {
+      const stored = `kyc-public-${Date.now()}-${crypto.randomBytes(6).toString("hex")}-${safeFileName(f.name)}`;
+      await saveFile(`chat-media/${stored}`, f.buffer, f.mime, f.name);
+      const row = (await pool.query(
+        `INSERT INTO kyc_documents (company_id, trading_entity_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
+         VALUES ($1, $2, $3, 'public_source', $4, $5, $6, $7, $8, $9) RETURNING id`,
+        [party.brandId, party.entityId, party.dealId, `/api/chat-media/${stored}`, f.name, f.buffer.length, f.mime,
+          `Public source for ${person.name}, verified from public sources by ${me.name}`, me.id])).rows[0];
+      documentIds.push(String(row.id));
+    }
+    const check = (await pool.query(
+      `INSERT INTO kyc_public_figure_checks (deal_id, company_id, trading_entity_id, person_key, person_name, note, links, document_ids, verified_by, verified_by_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10) RETURNING id`,
+      [party.dealId, party.brandId, party.entityId, person.key, person.name, note, JSON.stringify(links), JSON.stringify(documentIds), me.id, me.name])).rows[0];
+    await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'public_figure', $2, $3, $4, $5)`,
+      [party.brandId, me.name, `${person.name} verified from public sources on ${party.dealName}: ${note}${links.length ? ` (${links.length} page${links.length === 1 ? "" : "s"})` : ""}${documentIds.length ? ` (${documentIds.length} file${documentIds.length === 1 ? "" : "s"})` : ""}`,
+        party.entityId ? "trading_entity" : null, party.entityId]).catch(() => {});
+    await dealAudit(party.dealId, "aml_public_figure", null, `verified by ${me.name}`, `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${person.name} verified from public sources · ${note}`, me);
+    // The pages, copied to PDF on the party's record after the reply.
+    if (links.length) {
+      void fileWebCopies({ companyId: party.brandId, entityId: party.entityId, dealId: party.dealId, pages: links.map(url => ({ url, about: `public source for ${person.name}` })),
+        by: { id: me.id, name: me.name }, source: `Public figure: ${person.name}, verified by ${me.name}` })
+        .then(async done => {
+          if (done.filed.length) await pool.query(`UPDATE kyc_public_figure_checks SET document_ids = document_ids || $2::jsonb WHERE id = $1`, [check.id, JSON.stringify(done.filed.map(f => f.documentId))]);
+          if (done.failed.length) console.warn(`[deal-party-aml] public figure pages not copied: ${done.failed.map(f => `${f.url} (${f.reason})`).join("; ").slice(0, 400)}`);
+        })
+        .catch((e: any) => console.warn("[deal-party-aml] public figure copies:", e?.message));
+    }
+    res.json({ ok: true, id: String(check.id), copying: links.length });
+  } catch (err: any) {
+    console.error("[deal-party-aml] public figure failed:", err?.message);
+    res.status(500).json({ message: "It could not be recorded." });
+  }
+});
+
+router.post("/api/deals/:id/parties/:role/public-figure/:checkId/withdraw", async (req: Request, res: Response) => {
+  try {
+    const me = await decider(req);
+    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
+    const party = await loadAmlParty(pool, String(req.params.id), role);
+    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    const row = (await pool.query(
+      `UPDATE kyc_public_figure_checks SET withdrawn_at = now(), withdrawn_by = $4, withdrawn_by_name = $5
+        WHERE id = $1 AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3::varchar AND withdrawn_at IS NULL
+        RETURNING person_name`, [Number(req.params.checkId) || 0, party.brandId, party.entityId, me.id, me.name])).rows[0];
+    if (!row) return res.status(404).json({ message: "That verification was not found on this party, or was already withdrawn." });
+    await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'public_figure_withdrawn', $2, $3, $4, $5)`,
+      [party.brandId, me.name, `${row.person_name}: verification from public sources withdrawn on ${party.dealName}`, party.entityId ? "trading_entity" : null, party.entityId]).catch(() => {});
+    await dealAudit(party.dealId, "aml_public_figure", "verified", `withdrawn by ${me.name}`, `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${row.person_name}: verification from public sources withdrawn`, me);
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error("[deal-party-aml] public figure withdraw failed:", err?.message);
+    res.status(500).json({ message: "It could not be withdrawn." });
   }
 });
 

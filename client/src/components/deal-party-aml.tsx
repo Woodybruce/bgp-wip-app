@@ -77,6 +77,16 @@ function SignOffDialog({ dealId, role, partyName, needsNote, levelWords, onClose
   );
 }
 
+interface Kyc4uPackReading {
+  files: Array<{ path: string; name: string; size: number; heading: string; kind: string; docType: string; docWords: string }>;
+  skipped: Array<{ path: string; reason: string }>;
+  report: null | {
+    jobId: string | null; levelOfRisk: string | null; conclusion: string | null;
+    risks: Array<{ label: string; value: string | null; details: string | null }>;
+  };
+  prefill: { verdict: Kyc4uResultKey | null; date: string | null; reference: string | null; note: string; highRisk: boolean; lines: string[] };
+}
+
 function Kyc4uResultDialog({ dealId, role, partyName, onClose }: { dealId: string; role: string; partyName: string; onClose: () => void }) {
   const { toast } = useToast();
   const [verdict, setVerdict] = useState<Kyc4uResultKey | "">("");
@@ -84,20 +94,44 @@ function Kyc4uResultDialog({ dealId, role, partyName, onClose }: { dealId: strin
   const [reference, setReference] = useState("");
   const [note, setNote] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [reading, setReading] = useState<Kyc4uPackReading | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const missing = !verdict ? "Choose KYC4U's result."
     : !date ? "Give the date of KYC4U's result."
     : verdict === "approved" && !files.length ? "Attach KYC4U's report or their email approving the party."
     : verdict !== "approved" && !files.length && note.trim().length < SIGN_OFF_NOTE_MIN ? "Attach KYC4U's email or say what they said."
     : null;
+  const formWith = (chosen: File[]) => {
+    const fd = new FormData();
+    for (const f of chosen) fd.append("files", f);
+    return fd;
+  };
+  // KYC4U's pack is read as soon as it is chosen: where each file will be
+  // filed, and what their risk report says, filled in below for you to check.
+  const read = useMutation({
+    mutationFn: async (chosen: File[]) => {
+      const res = await fetch(`/api/deals/${dealId}/parties/${role}/kyc4u-result/read`, { method: "POST", body: formWith(chosen), credentials: "include", headers: getAuthHeaders() });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.message || "KYC4U's files could not be read.");
+      return body as Kyc4uPackReading;
+    },
+    onSuccess: (r) => {
+      setReading(r);
+      const p = r.prefill;
+      if (p.verdict) setVerdict(v => v || p.verdict!);
+      if (p.date) setDate(p.date);
+      if (p.reference) setReference(v => v.trim() ? v : p.reference!);
+      if (p.note) setNote(v => v.trim() ? v : p.note);
+    },
+    onError: (e: any) => { setReading(null); toast({ title: "Not read", description: plain(e), variant: "destructive" }); },
+  });
   const save = useMutation({
     mutationFn: async () => {
-      const fd = new FormData();
+      const fd = formWith(files);
       fd.append("verdict", verdict);
       fd.append("date", date);
       if (reference.trim()) fd.append("reference", reference.trim());
       if (note.trim()) fd.append("note", note.trim());
-      for (const f of files) fd.append("files", f);
       const res = await fetch(`/api/deals/${dealId}/parties/${role}/kyc4u-result`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.message || "KYC4U's result could not be saved.");
@@ -105,21 +139,84 @@ function Kyc4uResultDialog({ dealId, role, partyName, onClose }: { dealId: strin
     },
     onSuccess: (r: any) => {
       refreshAfterDecision(dealId);
-      toast({ title: "KYC4U's result added", description: r?.message || `${partyName}: ${verdict ? KYC4U_RESULTS[verdict] : ""}. The files are on its KYC record.` });
+      toast({ title: "KYC4U's result added", description: r?.message || `${partyName}: ${verdict ? KYC4U_RESULTS[verdict] : ""}. ${r?.filed ? `${r.filed} file${r.filed === 1 ? " is" : "s are"} on its KYC record.` : ""}`.trim() });
       onClose();
     },
     onError: (e: any) => toast({ title: "Not added", description: plain(e), variant: "destructive" }),
   });
+  const groups = reading ? Array.from(reading.files.reduce((m, f) => m.set(f.heading, [...(m.get(f.heading) || []), f]), new Map<string, Kyc4uPackReading["files"]>())) : [];
+  const report = reading?.report || null;
   return (
     <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md" data-testid={`aml-kyc4u-result-dialog-${role}`}>
+      <DialogContent className="max-w-lg max-h-[88vh] overflow-y-auto" data-testid={`aml-kyc4u-result-dialog-${role}`}>
         <DialogHeader>
           <DialogTitle>Add KYC4U's result</DialogTitle>
           <DialogDescription>
-            For {partyName}. KYC4U are BGP's outsourced KYC provider: you record their result as the Nominated Officer or the Deputy, and a later KYC4U request for the party replaces this one. An approval lasts 1 year when the party needs enhanced due diligence, otherwise 3.
+            For {partyName}. KYC4U are BGP's outsourced KYC provider: you record their result as the Nominated Officer or a Deputy, and a later KYC4U request for the party replaces this one. An approval lasts 1 year when the party needs enhanced due diligence or KYC4U rate it high risk, otherwise 3.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label className="block">KYC4U's pack or files</Label>
+            <input ref={fileRef} type="file" multiple className="hidden" accept=".zip,.pdf,.png,.jpg,.jpeg,.heic,.doc,.docx,.xls,.xlsx,.csv,.msg,.eml,.txt"
+              onChange={e => {
+                const chosen = Array.from(e.target.files || []).slice(0, KYC4U_RESULT_MAX_FILES);
+                setFiles(chosen);
+                setReading(null);
+                if (chosen.length) read.mutate(chosen);
+              }} data-testid={`aml-kyc4u-files-${role}`} />
+            <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()} disabled={read.isPending}>
+              <FileUp className="w-3.5 h-3.5 mr-1.5" />{files.length ? "Choose again" : "Choose KYC4U's zip or files"}
+            </Button>
+            <p className="text-[11px] text-muted-foreground">KYC4U's zip as they send it (up to 100MB), or up to {KYC4U_RESULT_MAX_FILES} files of 25MB each. Each file is filed on the party's KYC record under its folder: the heads of terms, the company, each holding company, each owner.</p>
+            {read.isPending && (
+              <p className="text-[11px] text-muted-foreground flex items-center gap-1.5" data-testid={`aml-kyc4u-reading-${role}`}><Loader2 className="w-3 h-3 animate-spin" />Reading KYC4U's files…</p>
+            )}
+            {!reading && !read.isPending && files.length > 0 && (
+              <ul className="text-[11px] text-muted-foreground space-y-0.5" data-testid={`aml-kyc4u-file-list-${role}`}>
+                {files.map(f => <li key={`${f.name}-${f.size}`} className="truncate">{f.name}</li>)}
+              </ul>
+            )}
+          </div>
+          {report && (
+            <div className="rounded-md border bg-muted/40 p-2.5 space-y-1.5 text-xs" data-testid={`aml-kyc4u-report-${role}`}>
+              <p className="font-medium">
+                KYC4U's risk assessment{report.jobId ? ` ${report.jobId}` : ""}{report.levelOfRisk ? `: ${report.levelOfRisk} risk` : ""}
+              </p>
+              {report.risks.some(r => r.value) && (
+                <div className="flex flex-wrap gap-1">
+                  {report.risks.filter(r => r.value).map(r => (
+                    <span key={r.label} className="rounded-full border bg-background px-2 py-0.5 text-[11px]">{r.label}: {r.value}{r.details ? ` (${r.details})` : ""}</span>
+                  ))}
+                </div>
+              )}
+              {report.conclusion && <p className="text-muted-foreground">{report.conclusion}</p>}
+              {reading!.prefill.lines.filter(l => !/^(KYC4U reference|Level of risk|Client Risk|Geographic Risk|Other Risk|PEP Involved Risk)/.test(l)).map(l => (
+                <p key={l} className="text-muted-foreground">{l}</p>
+              ))}
+              {reading!.prefill.highRisk && <p className="text-amber-700 dark:text-amber-400">KYC4U rate it high risk: the approval lasts 1 year.</p>}
+              <p className="text-[11px] text-muted-foreground">Read from KYC4U's report and filled in below: check it before you save.</p>
+            </div>
+          )}
+          {reading && reading.files.length > 0 && (
+            <div className="space-y-1" data-testid={`aml-kyc4u-pack-files-${role}`}>
+              <p className="text-xs font-medium">Where the files go ({reading.files.length})</p>
+              {groups.map(([heading, list]) => (
+                <div key={heading} className="text-[11px]">
+                  <p className="font-medium text-foreground/80">{heading}</p>
+                  <ul className="text-muted-foreground pl-3">
+                    {list.map(f => <li key={f.path} className="truncate">{f.name} <span className="opacity-70">· {f.docWords}</span></li>)}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+          {reading && reading.skipped.length > 0 && (
+            <div className="text-[11px] text-amber-700 dark:text-amber-400" data-testid={`aml-kyc4u-pack-skipped-${role}`}>
+              <p className="font-medium">Not filed ({reading.skipped.length})</p>
+              <ul className="pl-3">{reading.skipped.slice(0, 8).map(sk => <li key={sk.path} className="truncate">{sk.path}: {sk.reason}</li>)}</ul>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>Result</Label>
             <Select value={verdict} onValueChange={v => setVerdict(v as Kyc4uResultKey)}>
@@ -140,29 +237,15 @@ function Kyc4uResultDialog({ dealId, role, partyName, onClose }: { dealId: strin
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label className="block">KYC4U's report and documents</Label>
-            <input ref={fileRef} type="file" multiple className="hidden" accept=".pdf,.png,.jpg,.jpeg,.heic,.doc,.docx,.msg,.eml,.txt"
-              onChange={e => { setFiles(Array.from(e.target.files || []).slice(0, KYC4U_RESULT_MAX_FILES)); }} data-testid={`aml-kyc4u-files-${role}`} />
-            <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
-              <FileUp className="w-3.5 h-3.5 mr-1.5" />{files.length ? "Choose again" : "Choose files"}
-            </Button>
-            {files.length > 0 && (
-              <ul className="text-[11px] text-muted-foreground space-y-0.5" data-testid={`aml-kyc4u-file-list-${role}`}>
-                {files.map(f => <li key={`${f.name}-${f.size}`} className="truncate">{f.name}</li>)}
-              </ul>
-            )}
-            <p className="text-[11px] text-muted-foreground">Up to {KYC4U_RESULT_MAX_FILES} files, 25MB each. They are filed on the party's KYC record.</p>
-          </div>
-          <div className="space-y-1.5">
             <Label htmlFor={`aml-kyc4u-note-${role}`}>Note</Label>
-            <Textarea id={`aml-kyc4u-note-${role}`} value={note} onChange={e => setNote(e.target.value)} rows={2} maxLength={1000}
+            <Textarea id={`aml-kyc4u-note-${role}`} value={note} onChange={e => setNote(e.target.value)} rows={3} maxLength={1000}
               placeholder={verdict === "more_info" ? "What KYC4U asked for" : "Anything to add"} data-testid={`aml-kyc4u-note-${role}`} />
           </div>
           {missing && <p className="text-[11px] text-muted-foreground">{missing}</p>}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-          <Button type="button" disabled={!!missing || save.isPending} onClick={() => save.mutate()} data-testid={`aml-kyc4u-save-${role}`}>
+          <Button type="button" disabled={!!missing || save.isPending || read.isPending} onClick={() => save.mutate()} data-testid={`aml-kyc4u-save-${role}`}>
             {save.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}Add result
           </Button>
         </DialogFooter>

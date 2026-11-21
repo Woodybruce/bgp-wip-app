@@ -129,3 +129,13 @@ test("names read as a list", () => {
   assert.equal(andList(["A", "B"]), "A and B");
   assert.equal(andList(["A", "B", "C"]), "A, B and C");
 });
+
+test("a party owned through a company registered abroad goes to KYC4U (Woody, 21 November 2026)", () => {
+  const step = amlNextStep({ ...base, ownersAbroad: "Example Holding A/S, Denmark" });
+  assert.equal(step.action, "request_kyc4u");
+  assert.equal(step.who, "bgp");
+  assert.match(step.words, /^Owned through a company registered abroad \(Example Holding A\/S, Denmark\): KYC4U find the people behind it/);
+  // Once raised with KYC4U, it waits on them as any party does.
+  assert.equal(amlNextStep({ ...base, ownersAbroad: "Example Holding A/S, Denmark", kyc4u: "raised" }).who, "kyc4u");
+  assert.notEqual(amlNextStep({ ...base, ownersAbroad: null }).action, "request_kyc4u");
+});

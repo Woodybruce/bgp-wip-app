@@ -12,17 +12,22 @@ const DOC_WORDS: Record<string, string> = {
   company_accounts: "Accounts",
   company_cert: "Certificate of incorporation",
   confirmation_statement: "Confirmation statement",
+  credit_report: "Credit report",
   driving_licence: "Driving licence",
+  heads_of_terms: "Heads of terms",
   id_document: "Identity document",
   kyc4u_report: "KYC4U report",
   onfido_report: "Identity check result",
   other: "Other document",
   passport: "Passport",
   proof_of_address: "Proof of address",
+  public_source: "Public source",
   register_extract: "Register extract",
+  screening_report: "Screening report",
   source_of_funds: "Source of funds",
   structure_chart: "Structure chart",
   ubo_declaration: "Owners",
+  web_source: "Web page (copy)",
 };
 
 /** A stored document type in words: "proof_of_address" is "Proof of address". */

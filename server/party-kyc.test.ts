@@ -160,3 +160,10 @@ test("the sign-off names the people still to send something (19 November 2026)",
   assert.match(denial || "", /still to come: Huseyn Mirhadiyev: identity check and proof of address/);
   assert.equal(signOffDenial(facts({ clientChecksFinished: false, clientChecksOutstanding: ["Huseyn Mirhadiyev: proof of address"], note: "Owner verified by KYC4U on another deal" })), null);
 });
+
+test("BGP does not sign off a party owned through a company registered abroad: it goes to KYC4U", () => {
+  assert.match(signOffDenial(facts({ ownersAbroad: ["Example Holding A/S, Denmark"] }))!, /^Owned through a company registered abroad \(Example Holding A\/S, Denmark\): it goes to KYC4U/);
+  assert.equal(signOffDenial(facts({ ownersAbroad: [] })), null);
+  // Approved by KYC4U already: the approval is what is said.
+  assert.match(signOffDenial(facts({ ownersAbroad: ["X, Denmark"], current: { by: "KYC4U", until: null } }))!, /^Already approved by KYC4U/);
+});

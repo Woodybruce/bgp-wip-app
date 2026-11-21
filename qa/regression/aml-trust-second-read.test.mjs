@@ -26,5 +26,6 @@ test("the AML box and the dashboard carry the red mark until KYC4U has it", () =
   const box = read("client/src/components/deal-aml-status.tsx");
   assert.match(box, /data-testid=\{`aml-kyc4u-needed-\$\{cp\.role\}`\}/);
   assert.match(box, /<SecondReadPanel dealId=\{dealId\} role=\{cp\.role\} partyName=\{partyName\} trust=\{isTrust\} \/>/);
-  assert.match(read("client/src/pages/aml-dashboard.tsx"), /amlNeedsKyc4u\(row\.level, row\.stage\)/);
+  // Since 21 November 2026 a party owned through a company abroad carries the mark too.
+  assert.match(read("client/src/pages/aml-dashboard.tsx"), /amlNeedsKyc4u\(row\.level, row\.stage, !!row\.ownersAbroad\?\.length\)/);
 });

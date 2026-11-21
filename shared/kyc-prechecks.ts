@@ -105,6 +105,8 @@ export interface RegisterOwner {
   // declared sanctioned on its latest filing (the Register of Overseas
   // Entities' is_sanctioned, read since 19 November 2026).
   sanctioned?: boolean | null;
+  // An individual owner's identity verification at Companies House (read since 21 November 2026).
+  idv?: PrecheckIdv | null;
 }
 
 export function ownerKind(chKind: unknown): RegisterOwnerKind {
@@ -401,6 +403,97 @@ export interface PrecheckOfficer {
   appointedOn: string | null;
   dob: { month?: number | null; year?: number | null } | null;
   nationality: string | null;
+  // Companies House identity verification (read since 21 November 2026).
+  idv?: PrecheckIdv | null;
+}
+
+// ── Identity verification at Companies House ─────────────────────────────────
+//
+// Since 18 November 2025 every director and person with significant control
+// must verify their identity with Companies House (Economic Crime and
+// Corporate Transparency Act 2023). The free API's officer and PSC lists carry
+// identity_verification_details: identity_verified_on (filled only when an
+// authorised corporate service provider did the check), and the dates the
+// verification statement was supplied (appointment_verification_start_on),
+// removed (…_end_on) and is due by (…_statement_due_on). A supplied statement
+// that was not removed is read as verified (Companies House developer forum,
+// January 2026: most verified appointments show no identity_verified_on).
+// It is information for BGP's file, never BGP's own identity check.
+export interface PrecheckIdv { verifiedOn: string | null; statementOn: string | null; dueOn: string | null; endedOn: string | null }
+export type IdvState = "verified" | "due" | "overdue" | "not_shown";
+
+/** The register's identity verification details, as the API gives them; null when it gives none. */
+export function idvOf(details: unknown): PrecheckIdv | null {
+  const d: any = details && typeof details === "object" ? details : null;
+  if (!d) return null;
+  const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
+  const out = {
+    verifiedOn: day(d.identity_verified_on),
+    statementOn: day(d.appointment_verification_start_on),
+    dueOn: day(d.appointment_verification_statement_due_on),
+    endedOn: day(d.appointment_verification_end_on),
+  };
+  return out.verifiedOn || out.statementOn || out.dueOn || out.endedOn ? out : null;
+}
+
+const idvDay = (iso: string | null): string => {
+  if (!iso) return "";
+  const d = new Date(`${iso}T12:00:00Z`);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" });
+};
+
+/** Where one person's identity verification at Companies House stands, in words. */
+export function idvState(idv: PrecheckIdv | null | undefined, today: Date = new Date()): { state: IdvState; words: string } {
+  if (!idv) return { state: "not_shown", words: "no identity verification shown by Companies House" };
+  if (idv.verifiedOn) return { state: "verified", words: `identity verified with Companies House on ${idvDay(idv.verifiedOn)}` };
+  if (idv.statementOn && !idv.endedOn) return { state: "verified", words: `identity verified with Companies House (statement given ${idvDay(idv.statementOn)})` };
+  if (idv.dueOn) {
+    const overdue = idv.dueOn < today.toISOString().slice(0, 10);
+    return overdue
+      ? { state: "overdue", words: `identity verification overdue at Companies House (was due ${idvDay(idv.dueOn)})` }
+      : { state: "due", words: `identity verification due at Companies House by ${idvDay(idv.dueOn)}` };
+  }
+  return { state: "not_shown", words: idv.endedOn ? `identity verification statement removed at Companies House on ${idvDay(idv.endedOn)}` : "no identity verification shown by Companies House" };
+}
+
+/** The directors and individual owners, each with their identity verification at Companies House. */
+export function precheckIdentity(ch: KycPrecheckResult["companiesHouse"] | null | undefined, today: Date = new Date()): Array<{ name: string; role: string; state: IdvState; words: string }> {
+  if (!ch) return [];
+  const out: Array<{ name: string; role: string; state: IdvState; words: string }> = [];
+  for (const o of ch.officers.filter(x => /director|member/i.test(x.role))) {
+    if (o.idv === undefined) continue; // a check from before this was read
+    out.push({ name: o.name, role: o.role.replace(/-/g, " "), ...idvState(o.idv, today) });
+  }
+  for (const o of ch.owners.filter(x => x.kind === "individual")) {
+    if (o.idv === undefined) continue;
+    const same = out.find(x => personNamesMatch(x.name, o.name));
+    if (same) { if (same.state === "not_shown" && o.idv) Object.assign(same, idvState(o.idv, today)); continue; }
+    out.push({ name: o.name, role: "owner", ...idvState(o.idv, today) });
+  }
+  return out;
+}
+
+// ── Is it trading? (KYC4U's "Is a trading company?" and "Non trading risk") ──
+//
+// Woody, 21 November 2026 ("and 8"): a dormant, non-trading or newly formed
+// company is a warning on the file, read from the register: accounts filed as
+// dormant or business code 99999 (dormant company), business code 74990
+// (non-trading company), or incorporated in the last year with no accounts
+// filed yet. A warning to weigh, not a red flag: BGP's AML policy does not
+// list it among the higher-risk factors.
+export function tradingState(ch: KycPrecheckResult["companiesHouse"] | null | undefined, today: Date = new Date()): { trading: boolean | null; kind: "dormant" | "non_trading" | "new" | null; words: string | null } {
+  if (!ch) return { trading: null, kind: null, words: null };
+  const sic = (ch.sicCodes || []).map(c => String(c).trim());
+  if (/dormant/i.test(String(ch.lastAccountsType || ""))) return { trading: false, kind: "dormant", words: `Dormant: its latest accounts${ch.lastAccountsMadeUpTo ? ` (made up to ${ch.lastAccountsMadeUpTo})` : ""} were filed as dormant` };
+  if (sic.includes("99999")) return { trading: false, kind: "dormant", words: "Dormant: its business code at Companies House is 99999, dormant company" };
+  if (sic.includes("74990")) return { trading: false, kind: "non_trading", words: "Not trading: its business code at Companies House is 74990, non-trading company" };
+  if (!ch.lastAccountsMadeUpTo && ch.incorporatedOn) {
+    const inc = new Date(`${ch.incorporatedOn.slice(0, 10)}T12:00:00Z`);
+    if (!Number.isNaN(inc.getTime()) && today.getTime() - inc.getTime() < 366 * 86400000) {
+      return { trading: null, kind: "new", words: `Newly formed: incorporated on ${ch.incorporatedOn.slice(0, 10)}, no accounts filed yet` };
+    }
+  }
+  return { trading: ch.lastAccountsMadeUpTo ? true : null, kind: null, words: null };
 }
 
 // A profile ComplyAdvantage matched, as its alert describes it (kept since
@@ -717,6 +810,16 @@ export interface PrecheckCompany {
   registerUrl: string;
   // On the Register of Overseas Entities (an OE number), in words.
   overseasEntity?: string | null;
+  // Corporate owners registered abroad, on the register or up the chain: the
+  // party goes to KYC4U (Woody, 21 November 2026).
+  ownersAbroad?: Array<{ name: string; country: string; foundAt: string | null }>;
+  // Each director's and individual owner's identity verification at Companies House.
+  identity?: Array<{ name: string; role: string; state: IdvState; words: string }>;
+  // Whether it trades, as the register shows (dormant, non-trading, newly formed).
+  trading?: { trading: boolean | null; words: string | null };
+  // Each individual owner's nationality and country of residence, on the
+  // register and up the chain, for the risk assessment's owners table.
+  ownerDetails?: Array<{ name: string; nationality: string | null; residence: string | null }>;
 }
 
 export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompany | null {
@@ -733,11 +836,16 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
         listingSettled(ch.listing.market) ? "" : "KYC4U to confirm the market's disclosure rules are equivalent.",
       ].filter(Boolean).join(" ")
     : null;
+  const trading = tradingState(ch);
+  const identity = precheckIdentity(ch);
+  const overdueIdv = identity.filter(i => i.state === "overdue");
   const warnings = [
     ch.status && ch.status !== "active" ? `Companies House shows it as ${status}` : "",
     ch.hasInsolvencyHistory ? `Insolvency history${ch.insolvencyCases ? ` (${ch.insolvencyCases} case${ch.insolvencyCases === 1 ? "" : "s"})` : ""}` : "",
     ch.accountsOverdue ? "Accounts overdue at Companies House" : "",
     ch.confirmationOverdue ? "Confirmation statement overdue" : "",
+    trading.words || "",
+    overdueIdv.length ? `Identity verification overdue at Companies House: ${overdueIdv.map(i => i.name).join(", ")}` : "",
     ...ownersAbroadOf(ch).map(a => `Owned through ${a.name}, registered in ${a.country}${a.foundAt ? ` (owner of ${a.foundAt})` : ""}: Companies House cannot show who owns it`),
   ].filter(Boolean);
   return {
@@ -758,6 +866,13 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     warnings,
     documents: ch.documents.map(d => ({ title: d.title, onFile: !!d.kycDocumentId })),
     registerUrl: `https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(ch.number)}`,
+    ownersAbroad: ownersAbroadOf(ch).map(a => ({ name: a.name, country: a.country, foundAt: a.foundAt })),
+    identity,
+    trading: { trading: trading.trading, words: trading.words },
+    ownerDetails: [
+      ...ch.owners.filter(o => o.kind === "individual").map(o => ({ name: o.name, nationality: o.nationality || null, residence: o.residence || null })),
+      ...ch.peopleUpChain.map(u => ({ name: u.name, nationality: u.nationality || null, residence: null })),
+    ],
     overseasEntity: isOverseasEntityNumber(ch.number)
       ? `An overseas entity on the Register of Overseas Entities${result?.overseasEntity?.number ? ", found by its name: check it is the same company" : ""}. Its home register's extract is still asked for.`
       : null,
@@ -1255,9 +1370,14 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
     }
     if (ch.chain.length) lines.push(`- Ownership chain: ${ch.chain.map(c => `${c.name} (${c.number})`).join(" > ")}.${ch.peopleUpChain.length ? ` People with control up the chain: ${list(ch.peopleUpChain.map(p => p.name), 4)}.` : ""}`);
     const abroadNote = ownersAbroadOf(ch);
-    if (abroadNote.length) lines.push(`- Owned through a company registered abroad: ${ownersAbroadWords(abroadNote)}. Companies House cannot show who owns ${abroadNote.length === 1 ? "it" : "them"}; the client is asked for a structure chart up to the people, the register extract, and each owner's ID.`);
+    // Foreign companies go to KYC4U (Woody, 21 November 2026: "foreign companies I think we will send to KYC4U").
+    if (abroadNote.length) lines.push(`- Owned through a company registered abroad: ${ownersAbroadWords(abroadNote)}. Companies House cannot show who owns ${abroadNote.length === 1 ? "it" : "them"}, and BGP does not read foreign registers: please identify the beneficial owners behind ${abroadNote.length === 1 ? "it" : "them"} from the home register and verify them.`);
     const filed = ch.documents.filter(d => d.kycDocumentId);
     if (filed.length) lines.push(`- Downloaded from Companies House and attached: ${filed.map(d => d.title).join("; ")}.`);
+    const tradingNote = tradingState(ch);
+    if (tradingNote.words) lines.push(`- ${tradingNote.words}.`);
+    const identityNote = precheckIdentity(ch);
+    if (identityNote.length) lines.push(`- Identity verification at Companies House: ${identityNote.map(i => `${i.name}, ${i.words}`).join("; ")}.`);
     const found = ch.disqualified.filter(d => d.dobMatches !== false);
     const setAside = ch.disqualified.length - found.length;
     const director = found.length ? found.map(d => `${d.officer} (${d.dobMatches ? "name and date of birth match" : "name only, to verify"})`).join(", ") : "none found";
@@ -1339,7 +1459,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
         key: "owners", label: ch.owners.length ? `Owners on the register: ${list(ch.owners.map(o => o.name), 4)}` : "No owners on the register",
         state: concern ? "attention" : ch.owners.length ? "ok" : "info",
         detail: [ch.owners.map(o => `${o.name}: ${ownerControlLine(o) || "significant control"}`).join("; "), ch.statements.map(s => s.words).join("; "), ch.chain.length ? `Chain: ${ch.chain.map(c => c.name).join(" > ")}` : "",
-          abroad.length ? `Registered abroad, so Companies House cannot show who owns ${abroad.length === 1 ? "it" : "them"}: ${ownersAbroadWords(abroad)}. The client is asked for a structure chart up to the people, and their IDs` : ""].filter(Boolean).join(". ") || null,
+          abroad.length ? `Registered abroad, so Companies House cannot show who owns ${abroad.length === 1 ? "it" : "them"}: ${ownersAbroadWords(abroad)}. It goes to KYC4U to find the people behind ${abroad.length === 1 ? "it" : "them"}` : ""].filter(Boolean).join(". ") || null,
         links: [],
       });
     }
@@ -1350,6 +1470,19 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
       detail: ch.disqualified.length ? `Disqualified register: ${ch.disqualified.map(d => `${d.officer} ↔ ${d.match} (${d.dobMatches ? "same date of birth" : d.dobMatches === false ? "different date of birth, set aside" : "name only"})`).join("; ")}` : "None on the disqualified directors register.",
       links: [],
     });
+    // Identity verification at Companies House (21 November 2026): information, never BGP's own check.
+    const identity = precheckIdentity(ch);
+    if (identity.length) {
+      const verified = identity.filter(i => i.state === "verified").length;
+      out.push({
+        key: "identity_verification", label: `Identity verified at Companies House: ${verified} of ${identity.length}`,
+        state: identity.some(i => i.state === "overdue") ? "attention" : verified === identity.length ? "ok" : "info",
+        detail: identity.map(i => `${i.name} (${i.role}): ${i.words}`).join("; "),
+        links: [],
+      });
+    }
+    const trading = tradingState(ch);
+    if (trading.words) out.push({ key: "trading", label: trading.kind === "new" ? "Newly formed" : "Not trading", state: "attention", detail: `${trading.words}. A warning to weigh: is the company the one doing the deal, and is it funded for it?`, links: [] });
   } else {
     out.push({ key: "companies_house", label: "Companies House", state: "info", detail: result.notAtCompaniesHouse, links: [] });
     const oe = result.overseasEntity;

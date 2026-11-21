@@ -4799,6 +4799,141 @@ in `server/companies-house.ts`. Tests: `server/kyc-prechecks.test.ts`,
   People to check by hand (still "Not built: adding a person by hand"); a
   minority corporate owner the walk does not follow.
 
+## What KYC4U do, brought into the app (Woody, 2026-11-21)
+
+Woody sent KYC4U's whole pack for a counterparty (LEGO, REQ112444: their AML
+Risk Assessment Report, the heads of terms, Creditsafe reports, screening
+reports, the Danish register extract, public sources on the owner) and asked
+"this is all the stuff KYC4U do. are we missing anything in the app?". Of the
+gaps listed he chose "yes lets do 1 to 4", then "do 7", "and 8", and
+"foreign companies I think we will send to KYC4U". A credit report (item 6)
+was not chosen: BGP's AML policy (Issue 2) lists "Report from an aggregator
+database (e.g., Creditsafe/SmartSearch/D&B/Dow Jones etc)" among the evidence
+for a limited company, and the app has a Creditsafe stub waiting for an
+account (`server/aml-market.ts`). Do not re-litigate. Tests:
+`server/kyc4u-result-pack.test.ts`, `server/web-page-copy.test.ts`,
+`server/aml-risk-assessment.test.ts` (all in `npm test`), with cases added to
+`server/kyc-prechecks.test.ts`, `server/kyc-people.test.ts`,
+`server/aml-box.test.ts`, `server/party-kyc.test.ts`,
+`server/aml-dashboard.test.ts`; guard `qa/regression/kyc4u-gaps-guards.test.mjs`.
+
+- **KYC4U's pack in one go (1).** Add KYC4U result takes KYC4U's zip as they
+  send it (up to 100MB, opened on the server: at most 120 files inside, 25MB
+  each, 250MB unpacked, documents and pictures only; junk, programs and zips
+  inside a zip are listed as not filed), or up to 40 files. Rules:
+  `shared/kyc4u-result-pack.ts`; unpacking and reading:
+  `server/kyc4u-result-pack.ts`. Each file is filed on the party's KYC record
+  under its folder's heading in the note (`kyc4uPackPlace`: "1.0 HOTs" is
+  Heads of terms, "2.0 <company>" the company, "3.0 Holding Cos/1.0 <co>"
+  Holding companies, "4.0 UBOs/1.0 <person>" Owners) with a type read from
+  the name (`heads_of_terms`, `credit_report`, `screening_report`,
+  `register_extract`, `public_source`, `kyc4u_report`); a file already on the
+  record (the same name and size) is not filed twice. KYC4U's AML Risk
+  Assessment Report is read by rules, never AI (`readKyc4uRiskReport`: the
+  job, the level of risk, the four risk headings, the due diligence answers,
+  each company and owner with the evidence, the conclusion, the counterparty
+  answers, the approvals with their dates). Choosing the files posts them to
+  `POST /api/deals/:id/parties/:role/kyc4u-result/read` (the officers only;
+  saves nothing), and the dialog shows where each file goes and fills the
+  result (`kyc4uResultPrefill`: Approved only when KYC4U's own internal
+  approval is dated in the report; the date of that approval; the job ID as
+  the reference; the level of risk and conclusion as the note) for the
+  officer to check before Add result. The reading is kept on the result's
+  `kyc4u_requests.fields` ("KYC4U assessment", "Level of risk"). KYC4U rating
+  a party high risk makes the approval last 1 year, as enhanced due diligence
+  does.
+- **Verified from public sources (2).** KYC4U's "Public figure" method. On a
+  person's line in People to check, the Nominated Officer or a Deputy presses
+  **Verified from public sources**: a note of at least a sentence and the
+  pages (up to 6 links, each copied to PDF on the KYC record after the reply)
+  or files. Stored in `kyc_public_figure_checks` (boot migration in
+  `server/index.ts`), read for the party (the brand and the company that
+  signs) by `publicFiguresFor` in `server/kyc-people.ts`, so it holds on every
+  deal with that party. It counts for that person's identity check and proof
+  of address (`publicFigure` on the person in `shared/kyc-people.ts`; nothing
+  is asked of them after). `POST /api/deals/:id/parties/:role/public-figure`
+  and `…/public-figure/:checkId/withdraw` (`decider`, in
+  `server/deal-party-aml.ts`); lines on the KYC and deal histories.
+- **PDF copies of web sources (3).** `server/web-page-copy.ts`
+  (`fileWebCopies`) with `renderPagePdf` in `server/render-page.ts`: the app's
+  own headless browser, every request the page makes checked against the
+  private-address guard (`assertPublicHost`, `isPrivateIp`, now exported from
+  `server/safe-fetch.ts`), downloads refused, "Copy of <address> · taken
+  <date> for BGP's AML checks" at the top of every page. Filed as
+  `web_source` on the party's record, once per page per party, one copy at a
+  time across the app, at most 8 a run. After every run of BGP's checks
+  before asking, the source of each web finding is copied (red flags before
+  possible namesakes, `precheckPagesToCopy`), never holding the run up; and
+  the public-figure links. `KYC_WEB_COPIES=off` stops them. Tried from a
+  build machine on 21 November 2026: a public page (example.org) copied to a
+  75 KB PDF, a missing page refused with the site's 404, and this machine,
+  private addresses, the cloud metadata address and file: links refused
+  before any browser started.
+- **The risk assessment in KYC4U's shape, and the HOTs (4).**
+  `shared/aml-risk-assessment.ts` (`buildRiskAssessment`): the job (deal,
+  property, party, client or counterparty, work type, BGP's agents, the
+  checks needed, the level of risk), the four risk headings (each live flag
+  under one, `riskHeadingOf`; owners abroad and factors to weigh as details),
+  the due diligence checklist (structure chart, authority to instruct,
+  adverse media, financial statements, joint agency, certified documents,
+  source of funds, a trading company, non-trading risk), the structure with
+  its evidence, the owners with nationality, residence and how each was
+  verified, certified documents from KYC4U's reading, risk identified,
+  mitigating factors (flags set aside with their comments, a listing, public
+  figures, KYC4U's rating) and the conclusion, the other side's agents and
+  solicitors and the lender question from BGP's policy, and the approvals.
+  Built by `riskAssessmentFor` in `server/aml-file.ts` from what the AML file
+  already gathers; printed first in each party's section of the AML report,
+  and shown on request in the AML box's **Assessment** section
+  (`GET /api/deals/:id/aml-risk-assessment?role=`, BGP staff, reads only).
+  The AML file now carries the deal's heads of terms: the tracker unit's
+  final agreed file (`unit_marketing_files`, read from
+  `/uploads/marketing-files/`), else the text drawn up in the app as a text
+  file, at the top of the ZIP and named in the report's deal section.
+- **The other side's solicitors (7).** `shared/solicitor-aml.ts`,
+  `server/solicitor-aml.ts`, `client/src/components/solicitor-aml.tsx`: the
+  AML box's **Solicitors** line (BGP staff) takes the firm's name (the deal's
+  own `solicitor_firm` is offered) and **Check** runs two Perplexity
+  searches: the SRA register, read only from sra.org.uk and the Law Society's
+  Find a Solicitor and believed only when the register page is among the
+  pages read (`checkRegisterAnswer`); and the web for SRA interventions,
+  fines, Solicitors Disciplinary Tribunal findings, fraud or misconduct, kept
+  only where the source was read (`checkMediaAnswer`). Each check is a
+  `kyc_solicitor_checks` row (boot migration); the risk assessment and the
+  AML file read the latest per firm. The SRA's own data API needs a key the
+  app does not hold, and its operations could not be read without one: an
+  SRA key is Woody's to get (free, registration on the SRA's developer
+  portal) if he wants the register read directly.
+- **Trading status and identity verification at Companies House (8).**
+  `tradingState` in `shared/kyc-prechecks.ts`: accounts filed as dormant or
+  business code 99999 (dormant), 74990 (non-trading), or incorporated in the
+  last year with no accounts filed: a warning on the company and a factor to
+  weigh (`policyFactorsToWeigh`), never a red flag (BGP's policy does not
+  list it). Identity verification (ECCTA, from 18 November 2025): the free
+  API's `identity_verification_details` on officers and PSCs is now read
+  (`idvOf`, `idvState`, `precheckIdentity`): verified when
+  `identity_verified_on` is set or a verification statement was supplied and
+  not removed (most verified appointments carry no `identity_verified_on`,
+  per Companies House's developer forum), due, overdue (a warning on the
+  company), or not shown. Information for the file, never BGP's own identity
+  check. A check from before this reads as nothing shown until Run again.
+- **Foreign holding companies go to KYC4U (Woody's answer to 5).** A party
+  owned through a corporate owner registered abroad (on the register or up
+  the chain, `ownersAbroadOf`) gets Request KYC4U check as its Next step
+  (`ownersAbroad` in `shared/aml-box.ts`), the red Not yet with KYC4U box and
+  the dashboard's Not with KYC4U mark (`amlNeedsKyc4u(level, stage,
+  ownedAbroad)`), and BGP's own sign-off refused until KYC4U's result
+  (`ownersAbroad` in `signOffDenial`). KYC4U's note asks them to identify
+  the owners from the home register. This supersedes "the client is asked
+  for a structure chart" as the next step in the section above; the client
+  checks still ask for the chart when they are sent. A foreign owner is not
+  by itself higher risk: Monaco and the other secrecy places stay red flags.
+- **Five-year deletion** covers the two new tables (`kyc_public_figure_checks`
+  with the party, `kyc_solicitor_checks` with the deal's AML fields).
+- Not built: Creditsafe (a contract and keys are Woody's); reading a foreign
+  register in the app (KYC4U do it); the SRA's data API (needs a key); a
+  lender on the deal and its checks.
+
 ## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
 
 Woody, on the deal page: "Needs a chat box too no and how the negotiations

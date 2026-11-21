@@ -32,7 +32,7 @@ import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
 import {
   KYC_PRECHECK_FRESH_DAYS, KYC_PRECHECK_MAX_WEB_PEOPLE, KYC_PRECHECK_VERSION, PRECHECK_AUTO_RUNS_A_DAY, PRECHECK_RETRY_MINUTES,
-  askInputFrom, checkWebAnswer, chooseScreened, isOffshoreCountry, ownerRegister, ownersAbroadOf, personNameOfRecord,
+  askInputFrom, checkWebAnswer, chooseScreened, idvOf, isOffshoreCountry, ownerRegister, ownersAbroadOf, personNameOfRecord,
   isPrecheckResult, listingFromExemptions, nameTokens, ownerKind, personNamesMatch, precheckCardLines, precheckCompany, precheckSanctionsMatch,
   looksOverseasName, pickOverseasEntity, precheckUnfinished, sanctionsLine, sanctionsListCode, sanctionsListName, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput, type PrecheckCardLine, type PrecheckCompany, type PrecheckDocument, type PrecheckListing,
@@ -394,6 +394,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
   const officers = rawOfficers.slice(0, 50).map((o: any) => ({
     name: clean(o.name, 120), role: clean(o.officer_role, 60), appointedOn: o.appointed_on || null,
     dob: dobOf(o.date_of_birth), nationality: clean(o.nationality, 60) || null,
+    idv: idvOf(o.identity_verification_details),
   }));
   const owners: RegisterOwner[] = rawPscs.slice(0, 30).map((p: any) => ({
     name: clean(p.name || [p.name_elements?.title, p.name_elements?.forename, p.name_elements?.middle_name, p.name_elements?.surname].filter(Boolean).join(" ") || "Name withheld", 160),
@@ -406,6 +407,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
     residence: clean(p.country_of_residence, 80) || null,
     dob: dobOf(p.date_of_birth),
     ...(p.is_sanctioned === true ? { sanctioned: true } : {}),
+    ...(ownerKind(p.kind) === "individual" ? { idv: idvOf(p.identity_verification_details) } : {}),
   }));
   const statements = rawStatements.slice(0, 10).map((s: any) => ({ statement: clean(s.statement, 120), words: statementWords(s.statement), concern: statementIsConcern(s.statement), notifiedOn: s.notified_on || null }));
 
@@ -855,6 +857,14 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   if (precheckUnfinished(result)) backoff.set(partyKey(companyId, entityId), Date.now() + PRECHECK_RETRY_MINUTES * 60_000);
   else backoff.delete(partyKey(companyId, entityId));
   console.log(`[kyc-prechecks] ${partyName}: ${summary}`);
+  // A PDF copy of each page the web search relied on, filed on the party's
+  // record after the run (21 November 2026); it never holds the run up.
+  void import("./web-page-copy").then(async m => {
+    const pages = m.precheckPagesToCopy(result);
+    if (!pages.length) return;
+    const done = await m.fileWebCopies({ companyId, entityId, dealId: opts.dealId || null, pages, by: { id: opts.userId || null, name: "BGP's checks before asking" }, source: "BGP's checks before asking (web search)" });
+    if (done.failed.length) console.warn(`[kyc-prechecks] ${partyName}: ${done.failed.length} page${done.failed.length === 1 ? "" : "s"} not copied: ${done.failed.map(f => `${f.url} (${f.reason})`).join("; ").slice(0, 400)}`);
+  }).catch((e: any) => console.warn(`[kyc-prechecks] web copies for ${partyName}: ${e?.message}`));
   return { id: Number(inserted.id), ranAt: new Date(inserted.conducted_at || result.ranAt).toISOString(), result };
 }
 

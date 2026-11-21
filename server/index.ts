@@ -3088,6 +3088,43 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       undone_by_name text
     )`,
     `CREATE INDEX IF NOT EXISTS kyc_party_exemptions_deal_idx ON kyc_party_exemptions (deal_id) WHERE undone_at IS NULL`,
+    // A person to check verified from public sources by the Nominated Officer
+    // or a Deputy (Woody, 21 November 2026: KYC4U's "Public figure" method):
+    // the note, the links (copied to PDF on the KYC record) and the files.
+    // withdrawn_at when it is taken back. server/deal-party-aml.ts writes it;
+    // server/kyc-people.ts reads it for the party (brand and company that signs).
+    `CREATE TABLE IF NOT EXISTS kyc_public_figure_checks (
+      id serial PRIMARY KEY,
+      deal_id varchar,
+      company_id varchar NOT NULL,
+      trading_entity_id varchar,
+      person_key text NOT NULL,
+      person_name text NOT NULL,
+      note text NOT NULL,
+      links jsonb NOT NULL DEFAULT '[]'::jsonb,
+      document_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+      verified_by varchar,
+      verified_by_name text,
+      verified_at timestamptz NOT NULL DEFAULT now(),
+      withdrawn_at timestamptz,
+      withdrawn_by varchar,
+      withdrawn_by_name text
+    )`,
+    `CREATE INDEX IF NOT EXISTS kyc_public_figure_checks_party_idx ON kyc_public_figure_checks (company_id) WHERE withdrawn_at IS NULL`,
+    // The other side's solicitors checked on a deal (Woody, 21 November 2026,
+    // "do 7"; BGP's AML policy, counterparties: "Is there any negative media
+    // around the agent and / or solicitor?"): the SRA register and the web,
+    // with sources. One row per check; the latest per firm is shown.
+    `CREATE TABLE IF NOT EXISTS kyc_solicitor_checks (
+      id serial PRIMARY KEY,
+      deal_id varchar NOT NULL,
+      firm text NOT NULL,
+      result jsonb NOT NULL,
+      checked_by varchar,
+      checked_by_name text,
+      checked_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS kyc_solicitor_checks_deal_idx ON kyc_solicitor_checks (deal_id)`,
     // Deal contracting entities + shadow gate comparison log:
     `CREATE TABLE IF NOT EXISTS crm_deal_entities (
       id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -4344,6 +4381,7 @@ import amlPolicyRouter from "./aml-policy";
 import amlRegisterRouter from "./aml-register";
 import amlTrainingRouter from "./aml-training";
 import agentAmlRouter from "./agent-aml";
+import solicitorAmlRouter from "./solicitor-aml";
 import amlRetentionRouter from "./aml-records-retention";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
@@ -5720,6 +5758,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(amlRegisterRouter);
   app.use(amlTrainingRouter);
   app.use(agentAmlRouter);
+  // The other side's solicitors: the SRA register and the web (21 November 2026).
+  app.use(solicitorAmlRouter);
   app.use(amlRetentionRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);

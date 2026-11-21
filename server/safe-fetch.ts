@@ -13,7 +13,7 @@ import { fetchWithChainRepair } from "./tls-chain-repair";
 const MAX_REDIRECTS = 5;
 export const MAX_INGEST_BYTES = 50 * 1024 * 1024;
 
-function isPrivateIp(ip: string): boolean {
+export function isPrivateIp(ip: string): boolean {
   if (net.isIPv4(ip)) {
     const [a, b] = ip.split(".").map(Number);
     return a === 0 || a === 127 || a === 10
@@ -41,7 +41,7 @@ function isPrivateIp(ip: string): boolean {
     || low.startsWith("fe8") || low.startsWith("fe9") || low.startsWith("fea") || low.startsWith("feb");
 }
 
-async function assertPublicHost(url: URL): Promise<void> {
+export async function assertPublicHost(url: URL): Promise<void> {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`Refusing to fetch a ${url.protocol.replace(":", "")} URL`);
   }

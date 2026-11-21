@@ -23,7 +23,7 @@ import { amlBucket, amlDealClosed, amlDue, amlStage, amlWaitingOn, daysSince, ty
 import { applyFlagReviews, dealRedFlags, partyRedFlags, type KycRedFlag } from "@shared/kyc-red-flags";
 import { payerRedFlags } from "@shared/deal-billing";
 import { dealClientRole } from "@shared/deal-parties";
-import { isPrecheckResult } from "@shared/kyc-prechecks";
+import { isPrecheckResult, ownersAbroadOf } from "@shared/kyc-prechecks";
 import { dueDiligenceLevel, simplifiedBasis } from "@shared/aml-policy";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
 
@@ -210,6 +210,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       brandId: p.brandId,
       brandName: state.brandName,
       signsAs: state.source === "company" || state.source === "same_company" ? state.name : null,
+      ownersAbroad: ownersAbroadOf((pre?.result as any)?.companiesHouse).map(a => `${a.name}, ${a.country}`),
       level: level.level,
       levelWhy: markHolds ? [`Not required: ${mark!.reasonWords}${mark!.by ? ` (${mark!.by})` : ""}`] : level.why,
       stage,

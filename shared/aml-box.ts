@@ -79,6 +79,10 @@ export interface AmlBoxFacts {
   billingDiffers?: boolean;
   // Recorded as a trust (Jack, 20 November 2026): KYC4U checks it in full.
   trust?: boolean;
+  // Owned through a company registered abroad, in words ("Kirkbi A/S
+  // (Denmark)"): KYC4U find the owners behind it (Woody, 21 November 2026:
+  // "foreign companies I think we will send to KYC4U").
+  ownersAbroad?: string | null;
 }
 
 export interface AmlNextStep { tone: AmlBoxTone; who: AmlBoxWho; words: string; action: AmlBoxAction | null }
@@ -151,6 +155,13 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
     return {
       tone: "flag", who: "bgp",
       words: "A trust: KYC4U checks it in full (the trust deed, its Trust Registration Service entry, the settlor's source of wealth, and ID for the settlor, trustees, any protector and beneficiaries entitled to 25% or more). Request the KYC4U check and submit it on KYC4U's portal. The Nominated Officer or a Deputy approves the result.",
+      action: "request_kyc4u",
+    };
+  }
+  if (f.ownersAbroad) {
+    return {
+      tone: "act", who: "bgp",
+      words: `Owned through a company registered abroad (${f.ownersAbroad}): KYC4U find the people behind it from the home register. Request the KYC4U check and submit it on KYC4U's portal. The Nominated Officer or a Deputy adds KYC4U's result.`,
       action: "request_kyc4u",
     };
   }

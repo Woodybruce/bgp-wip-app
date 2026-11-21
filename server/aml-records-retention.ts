@@ -40,6 +40,7 @@ const PARTY_TABLES: Array<{ table: string; party: string; at: string }> = [
   { table: "kyc4u_drafts", party: "company_id", at: "created_at" },
   { table: "kyc_flag_reviews", party: "company_id", at: "COALESCE(restored_at, set_aside_at)" },
   { table: "kyc_party_exemptions", party: "company_id", at: "COALESCE(undone_at, set_at)" },
+  { table: "kyc_public_figure_checks", party: "company_id", at: "COALESCE(withdrawn_at, verified_at)" },
   { table: "kyc_audit_log", party: "company_id", at: "created_at" },
   { table: "aml_recheck_reminders", party: "company_id", at: "COALESCE(completed_at, created_at)" },
 ];
@@ -223,6 +224,7 @@ async function deleteParty(client: PoolClient, companyId: string): Promise<Recor
   if (tables.has("kyc4u_drafts")) await del("kyc4u_drafts", `DELETE FROM kyc4u_drafts WHERE company_id = $1`);
   if (tables.has("kyc_flag_reviews")) await del("kyc_flag_reviews", `DELETE FROM kyc_flag_reviews WHERE company_id = $1`);
   if (tables.has("kyc_party_exemptions")) await del("kyc_party_exemptions", `DELETE FROM kyc_party_exemptions WHERE company_id = $1`);
+  if (tables.has("kyc_public_figure_checks")) await del("kyc_public_figure_checks", `DELETE FROM kyc_public_figure_checks WHERE company_id = $1`);
   if (tables.has("kyc_audit_log")) {
     await del("kyc_audit_log", tables.has("crm_trading_entities")
       ? `DELETE FROM kyc_audit_log WHERE company_id = $1 OR (entity_kind = 'trading_entity' AND entity_id::text IN (SELECT id::text FROM crm_trading_entities WHERE parent_company_id = $1))`
@@ -245,7 +247,11 @@ async function deleteDealFields(client: PoolClient, dealId: string): Promise<Rec
   const counts: Record<string, number> = {};
   const n = await clearColumns(client, "crm_deals", DEAL_AML_COLUMNS, "id = $1", [dealId]);
   if (n) counts.deal_fields = n;
-  const tables = await existingTables(client, ["deal_events", "deal_audit_log"]);
+  const tables = await existingTables(client, ["deal_events", "deal_audit_log", "kyc_solicitor_checks"]);
+  if (tables.has("kyc_solicitor_checks")) {
+    const r = await client.query(`DELETE FROM kyc_solicitor_checks WHERE deal_id = $1`, [dealId]);
+    if (r.rowCount) counts.solicitor_checks = r.rowCount;
+  }
   if (tables.has("deal_events")) {
     const r = await client.query(`DELETE FROM deal_events WHERE deal_id = $1 AND (event_type ILIKE 'aml%' OR event_type ILIKE 'kyc%')`, [dealId]);
     if (r.rowCount) counts.deal_events = r.rowCount;

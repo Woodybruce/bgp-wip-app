@@ -19,7 +19,7 @@
 // server/kyc-red-flags.ts, server/deal-party-aml.ts).
 
 import type { KycRedFlag } from "./kyc-red-flags";
-import type { KycPrecheckResult } from "./kyc-prechecks";
+import { tradingState, type KycPrecheckResult } from "./kyc-prechecks";
 import { isInvestmentDeal } from "./deal-status";
 import { ALL_LETTING_TYPES, TENANT_REP_TYPES } from "./letting-rules";
 
@@ -474,8 +474,13 @@ export function policyFactorFlags(input: { precheck?: KycPrecheckResult | null; 
 
 /** Factors the risk assessment says to weigh that are not enhanced by themselves. */
 export function policyFactorsToWeigh(input: { precheck?: KycPrecheckResult | null; companyType?: string | null }): string[] {
-  return sectorMatches({ sicCodes: input.precheck?.companiesHouse?.sicCodes || [], companyType: input.companyType })
-    .filter(m => !m.enhanced).map(m => `${m.label} (${m.via})`);
+  // A dormant, non-trading or newly formed company (Woody, 21 November 2026, "and 8").
+  const trading = tradingState(input.precheck?.companiesHouse || null);
+  return [
+    ...sectorMatches({ sicCodes: input.precheck?.companiesHouse?.sicCodes || [], companyType: input.companyType })
+      .filter(m => !m.enhanced).map(m => `${m.label} (${m.via})`),
+    ...(trading.words ? [trading.words] : []),
+  ];
 }
 
 const PUBLIC_BODY = /\b(council|london borough of|royal borough of|city of london corporation|greater london authority|transport for london|combined authority|nhs|ministry of|department (?:for|of)|homes england|police and crime commissioner|fire and rescue authority)\b/i;

@@ -1506,7 +1506,7 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
           const view = prechecks?.[c.id];
           const facts = await aml.signOffFacts(pool, party, {
             redFlags,
-            precheck: view ? { ranAt: view.ranAt, running: view.state === "running" } : null,
+            precheck: view ? { ranAt: view.ranAt, running: view.state === "running", ownersAbroad: (view.company?.ownersAbroad || []).map(a => `${a.name}, ${a.country}`) } : null,
           });
           parties[c.id] = aml.signOffView(facts);
         } catch (e: any) { console.warn("[deal-party-aml] sign-off view:", e?.message); }

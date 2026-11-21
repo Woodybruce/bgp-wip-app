@@ -95,3 +95,11 @@ test("days since anything moved, and the search", () => {
   for (const q of ["bakery", "OPERATIONS", "unit 9", "westgate", "#1234", "victoria", ""]) assert.ok(rowMatches(row, q), q);
   assert.ok(!rowMatches(row, "pret"));
 });
+
+test("the Not with KYC4U mark covers a party owned through a company abroad", async () => {
+  const { amlNeedsKyc4u } = await import("../shared/aml-dashboard");
+  assert.equal(amlNeedsKyc4u("standard", "bgp_checked"), false);
+  assert.equal(amlNeedsKyc4u("standard", "bgp_checked", true), true);
+  assert.equal(amlNeedsKyc4u("standard", "with_kyc4u", true), false);
+  assert.equal(amlNeedsKyc4u("enhanced", "client_sent"), true);
+});

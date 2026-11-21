@@ -5,7 +5,7 @@
 // the person it was.
 
 import { pool } from "./db";
-import { partyPeople, verifiedPersonDob, type PartyPeople, type PeopleRequest } from "@shared/kyc-people";
+import { partyPeople, verifiedPersonDob, type PartyPeople, type PeopleRequest, type PublicFigureCheck } from "@shared/kyc-people";
 import { verifiedPersonName } from "@shared/kyc-prechecks";
 import { isKycDocKey, kycIdStateFor, type KycPartyKind, type KycRequestPerson } from "@shared/kyc-request";
 
@@ -72,5 +72,19 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
     const { latestPrecheck } = await import("./kyc-prechecks");
     precheck = (await latestPrecheck(party.companyId, party.entityId).catch(() => null))?.result || null;
   }
-  return partyPeople({ companyId: party.companyId, kind: party.kind, precheck, requests });
+  return partyPeople({ companyId: party.companyId, kind: party.kind, precheck, requests, publicFigures: await publicFiguresFor(party.companyId, party.entityId) });
+}
+
+/** The people verified from public sources for a party (the brand and the company that signs), not withdrawn. */
+export async function publicFiguresFor(companyId: string, entityId: string | null, db: Db = pool): Promise<PublicFigureCheck[]> {
+  const rows = (await db.query(
+    `SELECT id, person_name, note, links, document_ids, verified_by_name, verified_at FROM kyc_public_figure_checks
+      WHERE company_id = $1 AND trading_entity_id IS NOT DISTINCT FROM $2::varchar AND withdrawn_at IS NULL ORDER BY verified_at DESC`,
+    [companyId, entityId]).catch(() => ({ rows: [] as any[] }))).rows;
+  return rows.map((r: any) => ({
+    id: String(r.id), name: String(r.person_name), note: String(r.note || ""), by: String(r.verified_by_name || "an officer"),
+    at: new Date(r.verified_at).toISOString(),
+    links: Array.isArray(r.links) ? r.links.filter((l: unknown) => typeof l === "string") : [],
+    documents: Array.isArray(r.document_ids) ? r.document_ids.length : 0,
+  }));
 }

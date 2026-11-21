@@ -131,8 +131,9 @@ export function amlWaitingOn(stage: AmlStage, redFlags: number): string {
  * requests only on its own portal, so "a big red mark against it" until the
  * agent has submitted it there).
  */
-export function amlNeedsKyc4u(level: "simplified" | "standard" | "enhanced", stage: AmlStage): boolean {
-  return level === "enhanced" && (stage === "not_started" || stage === "bgp_checked" || stage === "client_sent" || stage === "client_finished");
+export function amlNeedsKyc4u(level: "simplified" | "standard" | "enhanced", stage: AmlStage, ownedAbroad = false): boolean {
+  // Owned through a company registered abroad goes to KYC4U too (Woody, 21 November 2026).
+  return (level === "enhanced" || ownedAbroad) && (stage === "not_started" || stage === "bgp_checked" || stage === "client_sent" || stage === "client_finished");
 }
 
 /** Whole days since the latest of the given moments, or null when there is none. */
@@ -153,6 +154,8 @@ export interface AmlDashboardRow {
   brandId: string;
   brandName: string;
   signsAs: string | null;              // the company that signs, when the deal names one
+  // Corporate owners registered abroad ("Kirkbi A/S, Denmark"): KYC4U find the people behind them.
+  ownersAbroad?: string[];
   // The level of due diligence BGP's AML policy gives the party (Issue 2),
   // and why: the flags and higher-risk factors that count, or the basis.
   level: "simplified" | "standard" | "enhanced";

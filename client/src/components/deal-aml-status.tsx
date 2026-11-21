@@ -28,6 +28,8 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { RaiseReportButton } from "@/components/aml-register";
 import { DealAgentsAml, useDealAgentsAml } from "@/components/agent-aml";
+import { DealSolicitorsAmlPanel, solicitorsSummary, useDealSolicitorsAml } from "@/components/solicitor-aml";
+import type { RiskAssessment } from "@shared/aml-risk-assessment";
 import { AmlFileButton } from "@/components/aml-file-button";
 
 export interface DealAmlStatus {
@@ -129,8 +131,79 @@ function PartyCompanyFacts({ data, companyId }: { data: DealAmlStatus; companyId
         {c.ownerNote && <div><dt className="inline text-muted-foreground">Owners: </dt><dd className="inline">{c.ownerNote}</dd></div>}
         {c.chain.length > 0 && <div><dt className="inline text-muted-foreground">Owned through: </dt><dd className="inline">{c.chain.join(" › ")}</dd></div>}
         {c.accounts && <div><dt className="inline text-muted-foreground">Latest accounts: </dt><dd className="inline">{c.accounts}</dd></div>}
+        {c.trading && (
+          <div data-testid={`kyc-company-trading-${companyId}`}><dt className="inline text-muted-foreground">Trading: </dt>
+            <dd className="inline">{c.trading.words || (c.trading.trading ? "Yes: it files trading accounts" : "Not shown: no accounts filed yet")}</dd></div>
+        )}
+        {(c.identity?.length ?? 0) > 0 && (
+          <div data-testid={`kyc-company-idv-${companyId}`}><dt className="inline text-muted-foreground">Identity verified at Companies House: </dt>
+            <dd className="inline">{c.identity!.map((i, n) => (
+              <span key={`${i.name}-${n}`} className={i.state === "overdue" ? "text-red-700 dark:text-red-400" : i.state === "verified" ? "" : "text-muted-foreground"}>
+                {n ? "; " : ""}{i.name}: {i.state === "verified" ? "yes" : i.words}
+              </span>
+            ))}. <span className="text-muted-foreground">Information only: BGP still checks identity itself.</span></dd></div>
+        )}
         {c.documents.some(d => d.onFile) && <div><dt className="inline text-muted-foreground">On the KYC record: </dt><dd className="inline">{c.documents.filter(d => d.onFile).map(d => d.title).join("; ")}</dd></div>}
       </dl>
+    </div>
+  );
+}
+
+// BGP's written risk assessment for the party, in KYC4U's shape (Woody,
+// 21 November 2026: "yes lets do 1 to 4"). The same builder as the AML file
+// (shared/aml-risk-assessment.ts), read from GET /api/deals/:id/aml-risk-assessment.
+function PartyRiskAssessment({ dealId, role }: { dealId: string; role: string }) {
+  const { data, isLoading, error } = useQuery<{ riskAssessment: RiskAssessment | null; unread: string[] }>({
+    queryKey: ["/api/deals", dealId, "aml-risk-assessment", role],
+    queryFn: async () => {
+      const res = await fetch(`/api/deals/${encodeURIComponent(dealId)}/aml-risk-assessment?role=${encodeURIComponent(role)}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("The risk assessment could not be read");
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+  if (isLoading) return <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" />Reading the checks…</p>;
+  if (error || !data?.riskAssessment) return <p className="text-xs text-amber-800 dark:text-amber-300">The risk assessment could not be read. Try again in a moment.</p>;
+  const ra = data.riskAssessment;
+  const toneCls = (t: string) => (t === "attention" ? "text-amber-800 dark:text-amber-300" : t === "ok" ? "text-emerald-800 dark:text-emerald-300" : "");
+  const Rows = ({ rows }: { rows: Array<{ label: string; value: string; tone: string }> }) => (
+    <dl className="grid grid-cols-1 gap-y-1 text-xs">
+      {rows.map(r => <div key={`${r.label}-${r.value.slice(0, 20)}`}><dt className="inline text-muted-foreground">{r.label}: </dt><dd className={`inline ${toneCls(r.tone)}`}>{r.value}</dd></div>)}
+    </dl>
+  );
+  const H = ({ children }: { children: ReactNode }) => <p className="pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{children}</p>;
+  return (
+    <div className="space-y-1.5" data-testid={`aml-risk-assessment-${role}`}>
+      <p className="text-[11px] text-muted-foreground">BGP's written assessment in the shape of KYC4U's report, read from the checks above. The AML file prints it first.</p>
+      <Rows rows={ra.job} />
+      <H>Risk details</H>
+      <ul className="text-xs space-y-0.5">
+        {ra.risks.map(h => <li key={h.factor}><span className="text-muted-foreground">{h.label}: </span><span className={h.value === "Higher" ? "font-medium text-amber-800 dark:text-amber-300" : ""}>{h.value}</span>{h.details.length ? <span className="text-muted-foreground"> · {h.details.join("; ")}</span> : null}</li>)}
+      </ul>
+      <H>Due diligence</H>
+      <Rows rows={ra.diligence} />
+      {ra.structure.length > 0 && <>
+        <H>Structure and evidence</H>
+        <ul className="text-xs space-y-1">
+          {ra.structure.map(e => <li key={e.name}><span className="font-medium">{e.name}</span> <span className="text-muted-foreground">· {e.location} · country risk {e.countryRisk.toLowerCase()} · {e.orgType.toLowerCase()}</span>
+            {e.evidence.length > 0 && <ul className="pl-3 text-muted-foreground">{e.evidence.map(x => <li key={x} className="break-words">{x}</li>)}</ul>}</li>)}
+        </ul>
+      </>}
+      <H>Beneficial owners</H>
+      {ra.ownersNote && <p className="text-xs text-muted-foreground">{ra.ownersNote}</p>}
+      <ul className="text-xs space-y-1">
+        {ra.owners.map(o => <li key={o.name}><span className="font-medium">{o.name}</span> <span className="text-muted-foreground">· {o.nationality} · {o.residence}</span> · <span className={o.idMethod.startsWith("Not verified") ? "text-amber-800 dark:text-amber-300" : ""}>{o.idMethod}</span> <span className="text-muted-foreground">· risk {o.risk.toLowerCase()} · PEP {o.pep.toLowerCase()}</span></li>)}
+      </ul>
+      <H>Risk identified</H>
+      <ul className="text-xs space-y-0.5">{(ra.riskIdentified.length ? ra.riskIdentified : ["No risk identified."]).map(x => <li key={x} className={ra.riskIdentified.length ? "text-amber-800 dark:text-amber-300" : ""}>{x}</li>)}</ul>
+      {ra.mitigating.length > 0 && <><H>Mitigating factors</H><ul className="text-xs space-y-0.5">{ra.mitigating.map(x => <li key={x}>{x}</li>)}</ul></>}
+      <H>Conclusion</H>
+      <ul className="text-xs space-y-0.5">{ra.conclusion.map(x => <li key={x}>{x}</li>)}</ul>
+      <H>Counterparty</H>
+      <Rows rows={ra.counterparty} />
+      <H>Approvals</H>
+      <Rows rows={ra.approvals} />
+      {data.unread.length > 0 && <p className="text-xs text-amber-800 dark:text-amber-300">Could not be read: {data.unread.join("; ")}.</p>}
     </div>
   );
 }
@@ -534,8 +607,8 @@ const readOpenAll = (): boolean => { try { return window.localStorage.getItem(OP
 const writeOpenAll = (on: boolean) => { try { if (on) window.localStorage.setItem(OPEN_ALL_KEY, "1"); else window.localStorage.removeItem(OPEN_ALL_KEY); } catch { /* per browser only */ } };
 type OpenAll = { all: boolean; at: number };
 
-type SectionKey = "company" | "payer" | "checks" | "level" | "people" | "client" | "flags" | "kyc4u" | "decision";
-const SECTION_KEYS: SectionKey[] = ["company", "payer", "checks", "level", "people", "client", "flags", "kyc4u", "decision"];
+type SectionKey = "company" | "payer" | "checks" | "level" | "people" | "client" | "flags" | "kyc4u" | "decision" | "assessment";
+const SECTION_KEYS: SectionKey[] = ["company", "payer", "checks", "level", "people", "client", "flags", "kyc4u", "assessment", "decision"];
 
 function useOpenSections<K extends string>(keys: K[], openAll: OpenAll) {
   const [open, setOpen] = useState<Set<K>>(() => new Set(openAll.all ? keys : []));
@@ -617,6 +690,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
   const sanctionsOnly = data.regime?.regime === "sanctions_only";
   const isCompany = party ? party.brand.kind === "company" : true;
   const isTrust = !!party?.brand.recordTrust;
+  // Owned through a company registered abroad: KYC4U find the people behind it (Woody, 21 November 2026).
+  const ownedAbroad = pre?.company?.ownersAbroad || [];
   const companyMissing = party ? party.brand.kind === "company" && !party.company && !isTrust : pre?.state === "needs_company";
   const people = checks?.people?.[cp.id] || null;
   const requests = (checks?.requests || []).filter(r => r.companyId === cp.id && !r.person);
@@ -645,6 +720,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     needsNote: !!decision?.needsNote,
     billingDiffers: !!party?.client && party.billing?.state === "different",
     trust: isTrust,
+    ownersAbroad: ownedAbroad.length ? ownedAbroad.map(a => `${a.name}, ${a.country}`).join("; ") : null,
   };
   const step = amlNextStep(facts);
 
@@ -812,7 +888,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
       </div>
 
       {party && !settled && <TrustLine dealId={dealId} party={party} compact />}
-      {(step.action === "kyc4u_form" || (step.action === "request_kyc4u" && (isTrust || flags.length + factors.length + dealFactors.length > 0))) && (
+      {(step.action === "kyc4u_form" || (step.action === "request_kyc4u" && (isTrust || ownedAbroad.length > 0 || flags.length + factors.length + dealFactors.length > 0))) && (
         // Jack, 20 November 2026: KYC4U takes requests only on its own portal,
         // so a big red mark until the agent has sent it there.
         <div className="flex items-start gap-2 rounded-md border-2 border-red-600 bg-red-50 px-2.5 py-2 text-red-900 dark:bg-red-950/40 dark:text-red-200" data-testid={`aml-kyc4u-needed-${cp.role}`}>
@@ -821,7 +897,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
             <div className="font-semibold uppercase tracking-wide text-[11px]">Not yet with KYC4U</div>
             {step.action === "kyc4u_form"
               ? "Prepared, but not on KYC4U's portal yet. Download the pack, raise it on KYC4U's portal, then press Submitted on KYC4U's portal here."
-              : `${isTrust ? "This party is a trust" : flags.length ? "This party has red flags" : "This party needs enhanced due diligence"}: press Request KYC4U check, download the pack and raise it on KYC4U's portal, then record it here. Nothing goes to KYC4U until it is submitted there.`}
+              : `${isTrust ? "This party is a trust" : flags.length ? "This party has red flags" : factors.length + dealFactors.length ? "This party needs enhanced due diligence" : "This party is owned through a company registered abroad"}: press Request KYC4U check, download the pack and raise it on KYC4U's portal, then record it here. Nothing goes to KYC4U until it is submitted there.`}
             {step.action === "request_kyc4u" && (
               <div className="mt-1.5"><Kyc4uSubmittedButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} className="h-7 text-xs" /> <span className="text-xs">if it was already raised on the portal.</span></div>
             )}
@@ -918,6 +994,14 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
                   </div>}
             </BoxSection>
           )}
+          {/* BGP's written risk assessment in KYC4U's shape (21 November 2026), read when opened. */}
+          {!cp.notRequired && (
+            <BoxSection id={sid("assessment")} testId={tid("assessment")} label="Assessment" tone="info"
+              summary={level ? `${level.level === "enhanced" ? "Higher risk" : level.level === "simplified" ? "Low risk" : "Standard"}: KYC4U's headings, the owners and how each was verified` : "KYC4U's headings, the owners and how each was verified"}
+              open={open.has("assessment")} onToggle={() => toggle("assessment")}>
+              {open.has("assessment") && <PartyRiskAssessment dealId={dealId} role={cp.role} />}
+            </BoxSection>
+          )}
           <BoxSection id={sid("decision")} testId={tid("decision")} label="Sign-off" tone={decisionLine.tone} summary={decisionLine.summary} open={open.has("decision")} onToggle={() => toggle("decision")}>
             <PartyNotRequiredBox cp={cp} />
             <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} />
@@ -948,8 +1032,9 @@ export function DealAmlStatusCard({ dealId, dealStatus, focusCompanyId }: { deal
   const { data: checks } = useClientChecks(dealId, staffView && !!data?.clientChecks);
   const { data: board } = useDealAmlRows(dealId, staffView);
   const { data: agents } = useDealAgentsAml(dealId, staffView);
+  const { data: solicitors } = useDealSolicitorsAml(dealId, staffView);
   const [openAll, setOpenAll] = useState<OpenAll>(() => ({ all: readOpenAll(), at: 0 }));
-  const deal = useOpenSections<"deal" | "agents">(["deal", "agents"], openAll);
+  const deal = useOpenSections<"deal" | "agents" | "solicitors">(["deal", "agents", "solicitors"], openAll);
   const [howOpen, setHowOpen] = useState(false);
 
   if (isLoading) return (
@@ -1004,7 +1089,7 @@ export function DealAmlStatusCard({ dealId, dealStatus, focusCompanyId }: { deal
         )}
         <DealRegime data={data} />
 
-        {staffView && (dealFlags.length > 0 || dealAside.length > 0 || agentList.length > 0) && (
+        {staffView && data.counterparties.length > 0 && (
           <div className="rounded-md border border-border/70 px-2.5" data-testid="aml-deal-sections">
             {(dealFlags.length > 0 || dealAside.length > 0) && (
               <BoxSection id={`aml-${dealId}-deal`} testId="aml-section-deal" label="Deal record" tone={dealFlags.some(f => !f.factor) ? "flag" : dealFlags.length ? "act" : "done"}
@@ -1019,6 +1104,11 @@ export function DealAmlStatusCard({ dealId, dealStatus, focusCompanyId }: { deal
                 {staffView && <DealAgentsAml dealId={dealId} bare />}
               </BoxSection>
             )}
+            {/* The other side's solicitors (21 November 2026, "do 7"). */}
+            <BoxSection id={`aml-${dealId}-solicitors`} testId="aml-section-solicitors" label="Solicitors" tone={solicitorsSummary(solicitors).tone} summary={solicitorsSummary(solicitors).words}
+              open={deal.open.has("solicitors")} onToggle={() => deal.toggle("solicitors")}>
+              <DealSolicitorsAmlPanel dealId={dealId} />
+            </BoxSection>
           </div>
         )}
 

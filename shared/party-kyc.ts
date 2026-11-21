@@ -93,6 +93,9 @@ export interface SignOffFacts {
   // A letting under £10,000 a month: sanctions checks only (AML policy A), so
   // the client checks are not needed and no note stands in for them.
   sanctionsOnly?: boolean;
+  // Owned through a company registered abroad, in words: it goes to KYC4U
+  // (Woody, 21 November 2026: "foreign companies I think we will send to KYC4U").
+  ownersAbroad?: string[];
   note: string;
   now?: Date;
 }
@@ -110,6 +113,7 @@ export function signOffDenial(f: SignOffFacts): string | null {
   if (f.redFlags > 0) return "This party needs enhanced due diligence (a red flag or a higher-risk factor in the AML policy): raise it with KYC4U; the Nominated Officer or the Deputy adds KYC4U's result.";
   if (f.dealRedFlags > 0) return "The deal needs enhanced due diligence (a red flag or a higher-risk factor on the deal record): raise it with KYC4U; the Nominated Officer or the Deputy adds KYC4U's result.";
   if (f.higherRisk) return "This is a higher-risk file (high risk, enhanced due diligence or a public role): it goes to KYC4U.";
+  if (f.ownersAbroad?.length) return `Owned through a company registered abroad (${f.ownersAbroad.join(", ")}): it goes to KYC4U, who find the people behind it; the Nominated Officer or a Deputy adds KYC4U's result.`;
   if (f.precheckRunning) return "BGP's checks before asking are still running. Sign off once they finish.";
   if (!f.precheck) return "BGP's checks before asking have not run for this party. Press Run again on the card first.";
   if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) {
@@ -135,7 +139,10 @@ export const KYC4U_RESULTS = {
 export type Kyc4uResultKey = keyof typeof KYC4U_RESULTS;
 export const isKyc4uResultKey = (v: unknown): v is Kyc4uResultKey => typeof v === "string" && Object.prototype.hasOwnProperty.call(KYC4U_RESULTS, v);
 
-export const KYC4U_RESULT_MAX_FILES = 10;
+// Since 21 November 2026 KYC4U's whole pack can be added at once: a zip (up
+// to 100MB, opened on the server) or many files; each file 25MB at most
+// (shared/kyc4u-result-pack.ts).
+export const KYC4U_RESULT_MAX_FILES = 40;
 export const KYC4U_RESULT_MAX_BYTES = 25 * 1024 * 1024;
 
 /** A KYC4U result's date: yyyy-mm-dd, not in the future, not before 2015; else null. */

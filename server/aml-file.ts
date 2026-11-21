@@ -25,12 +25,14 @@ import * as fs from "fs";
 import * as path from "path";
 import { pool } from "./db";
 import { getFile, saveFile } from "./file-storage";
-import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, isDealPartyRole, type DealPartyRole } from "@shared/deal-parties";
+import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, dealClientRole, isDealPartyRole, type DealPartyRole } from "@shared/deal-parties";
 import { amlRegime, type PartyDueDiligence } from "@shared/aml-policy";
 import { AML_FILE_DOC_TYPE, amlFileName, amlFileDocWords, amlFileSafeName, amlFileStateWords } from "@shared/aml-file";
 import type { KycRedFlag, SetAsideFlag } from "@shared/kyc-red-flags";
 import type { PartyPeople } from "@shared/kyc-people";
 import type { PartyKycState } from "@shared/party-kyc";
+import { buildRiskAssessment, type RiskAssessment } from "@shared/aml-risk-assessment";
+import type { SolicitorCheck } from "@shared/solicitor-aml";
 
 const router = Router();
 const text = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();
@@ -71,6 +73,11 @@ export interface AmlFileParty {
   documents: AmlFileDoc[];
   // A record that could not be read: the report says so, never that there was nothing.
   unread: string[];
+  // BGP acts for this party (dealClientRole), and it is recorded as a trust.
+  client: boolean;
+  trust: boolean;
+  // The written risk assessment in KYC4U's shape (shared/aml-risk-assessment.ts, 21 November 2026).
+  riskAssessment: RiskAssessment | null;
 }
 
 export interface AmlFileData {
@@ -84,6 +91,11 @@ export interface AmlFileData {
   dealAside: SetAsideFlag[];
   unchecked: string[];
   parties: AmlFileParty[];
+  // The other side's solicitors as checked (server/solicitor-aml.ts), and the
+  // deal's heads of terms: the unit's final agreed file, else the text made in
+  // the app (21 November 2026).
+  solicitors: SolicitorCheck[];
+  hots: { file: { name: string; url: string } | null; text: string | null; version: number | null } | null;
   madeBy: string;
   madeAt: string;
 }
@@ -94,7 +106,7 @@ const HISTORY_FIELDS = ["aml_sign_off", "kyc4u_result", "aml_red_flag", "aml_per
 export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | null, me: { id: string; name: string }): Promise<AmlFileData | null> {
   const partyCols = DEAL_PARTY_ROLES.flatMap(r => [`d.${DEAL_PARTY_COLUMNS[r].brand}`, `d.${DEAL_PARTY_COLUMNS[r].company}`]);
   const deal = (await pool.query(
-    `SELECT d.id, d.name, d.deal_ref, d.deal_type, d.status, d.team, d.rent_pa, d.internal_agent, d.internal_agent_ids,
+    `SELECT d.id, d.name, d.deal_ref, d.deal_type, d.status, d.team, d.rent_pa, d.internal_agent, d.internal_agent_ids, d.bgp_acting_for,
             ${partyCols.join(", ")}, p.name AS property_name, p.postcode AS property_postcode
        FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id WHERE d.id = $1`, [dealId])).rows[0];
   if (!deal) return null;
@@ -127,6 +139,19 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
     clientChecksForDeal(dealId).catch((e: any) => { console.warn(`[aml-file] could not read the client checks: ${e?.message}`); return null; }),
     dealAgentsAml(pool, dealId).catch(() => null),
   ]);
+  const { dealSolicitorsAml } = await import("./solicitor-aml");
+  const solicitors = (await dealSolicitorsAml(pool, dealId).catch(() => null))?.checks || [];
+  const hotsRow = (await pool.query(
+    `SELECT au.hots_content, au.hots_version, f.file_name AS final_name, f.file_path AS final_path
+       FROM available_units au LEFT JOIN unit_marketing_files f ON f.id = au.hots_final_file_id AND f.unit_id = au.id
+      WHERE au.deal_id = $1 ORDER BY (au.hots_final_file_id IS NOT NULL) DESC, au.updated_at DESC NULLS LAST LIMIT 1`, [dealId]).catch(() => ({ rows: [] as any[] }))).rows[0] || null;
+  const hots = hotsRow && (hotsRow.final_path || text(hotsRow.hots_content))
+    ? { file: hotsRow.final_path ? { name: text(hotsRow.final_name) || "Final heads of terms", url: String(hotsRow.final_path) } : null,
+        text: hotsRow.final_path ? null : String(hotsRow.hots_content || ""), version: hotsRow.hots_version == null ? null : Number(hotsRow.hots_version) }
+    : null;
+  const clientRole = dealClientRole({ dealType: deal.deal_type, bgpActingFor: deal.bgp_acting_for, team: deal.team });
+  const trusts = new Set((await pool.query(
+    `SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) = 'trust'`, [brandIds]).catch(() => ({ rows: [] as any[] }))).rows.map((r: any) => String(r.id)));
 
   const parties: AmlFileParty[] = [];
   for (const role of present) {
@@ -200,9 +225,12 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
         onCompany: !!d.trading_entity_id,
       })),
       unread,
+      client: role === clientRole,
+      trust: trusts.has(brandId),
+      riskAssessment: null,
     });
   }
-  return {
+  const data: AmlFileData = {
     deal: {
       id: String(deal.id), name: text(deal.name) || "Untitled deal", ref: deal.deal_ref == null ? null : String(deal.deal_ref),
       type: text(deal.deal_type) || null, status: text(deal.status) || null,
@@ -215,9 +243,54 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
     dealAside: flags?.dealSetAside || [],
     unchecked: flags?.unchecked || [],
     parties,
+    solicitors,
+    hots,
     madeBy: me.name,
     madeAt: new Date().toISOString(),
   };
+  for (const p of data.parties) {
+    try { p.riskAssessment = riskAssessmentFor(data, p); }
+    catch (e: any) { p.unread.push("the risk assessment"); console.warn(`[aml-file] risk assessment for ${p.brand.id}: ${e?.message}`); }
+  }
+  return data;
+}
+
+/** KYC4U's latest result for the party: the reading of their report kept on a result added in the app, else their latest status. */
+function latestKyc4u(records: any[]): RiskAssessmentKyc4uInput {
+  const latest = records[0];
+  if (!latest) return null;
+  const withReading = records.find(r => r?.fields && typeof r.fields === "object" && r.fields["KYC4U assessment"]);
+  const pick = withReading || latest;
+  const fields = pick.fields && typeof pick.fields === "object" ? pick.fields : {};
+  return {
+    status: text(pick.status) || null,
+    at: pick.modified_at_source || pick.created_at_source || pick.synced_at ? new Date(pick.modified_at_source || pick.created_at_source || pick.synced_at).toISOString() : null,
+    recordedBy: String(pick.list_id || "").startsWith("manual") ? text(fields["Recorded by"]) || null : null,
+    assessment: fields["KYC4U assessment"] || null,
+  };
+}
+type RiskAssessmentKyc4uInput = Parameters<typeof buildRiskAssessment>[0]["party"]["kyc4u"];
+
+/** The written risk assessment for one party, from what the file gathered. */
+export function riskAssessmentFor(data: AmlFileData, p: AmlFileParty): RiskAssessment {
+  return buildRiskAssessment({
+    deal: { name: data.deal.name, ref: data.deal.ref, type: data.deal.type, property: data.deal.property, agents: data.deal.agents, regimeWhy: data.regime.why },
+    party: {
+      roleLabel: DEAL_PARTY_LABEL[p.role], name: p.company?.name || p.brand.name, brandName: p.brand.name, client: p.client,
+      individual: p.individual, trust: p.trust, person: p.person ? { name: p.person.name } : null,
+      company: p.precheck?.company || null,
+      precheckRan: !!p.precheck?.ranAt,
+      webRan: !!p.precheck?.lines?.some(l => l.state !== "not_run" && /^Public roles and adverse media/.test(l.label)),
+      flags: p.flags, aside: p.aside, level: p.level, people: p.people, requests: p.requests,
+      state: p.state ? { status: p.state.status, approvedBy: p.state.approvedBy, approvedAt: p.state.approvedAt ?? null, expiresAt: p.state.expiresAt } : null,
+      notRequired: p.notRequired ? { reasonWords: p.notRequired.reasonWords } : null,
+      documents: p.documents.map(d => ({ type: d.type, name: d.name })),
+      kyc4u: latestKyc4u(p.kyc4u.records),
+    },
+    dealFlags: data.dealFlags,
+    agents: data.agents,
+    solicitors: data.solicitors,
+  });
 }
 
 // ── The documents themselves ────────────────────────────────────────────────
@@ -230,6 +303,13 @@ export async function amlFileDocBytes(doc: AmlFileDoc): Promise<{ data: Buffer; 
     const stored = await getFile(`chat-media/${decodeURIComponent(media[1])}`).catch(() => null);
     if (!stored) return { missing: "not found in the app's file store" };
     return { data: stored.data, ext: path.extname(media[1]) || path.extname(doc.name) || "" };
+  }
+  // A unit's own files (the final agreed heads of terms, 21 November 2026).
+  const unitFile = url.match(/^\/uploads\/marketing-files\/([^/?#]+)$/);
+  if (unitFile) {
+    const stored = await getFile(`marketing-files/${decodeURIComponent(unitFile[1])}`).catch(() => null);
+    if (!stored) return { missing: "not found in the app's file store" };
+    return { data: stored.data, ext: path.extname(unitFile[1]) || path.extname(doc.name) || "" };
   }
   const veriff = url.match(/^\/api\/veriff\/sessions\/([^/?#]+)\/report$/);
   if (veriff) {
@@ -345,10 +425,45 @@ class Writer {
   }
 }
 
+const RISK_COLOUR = { ok: GREEN, attention: AMBER, info: INK } as const;
+
+/** BGP's written risk assessment, in KYC4U's shape (21 November 2026). */
+function writeRiskAssessment(w: Writer, ra: RiskAssessment) {
+  w.sub("Risk assessment");
+  w.para("BGP's written assessment, in the shape of KYC4U's AML Risk Assessment Report. Every line is read from the checks below.", MUTED, 8.5);
+  for (const r of ra.job) w.kv(r.label, r.value, RISK_COLOUR[r.tone]);
+  w.sub("Risk details");
+  for (const h of ra.risks) w.kv(`${h.label}: ${h.value}`, h.details.join("\n") || "None", h.value === "Higher" ? AMBER : INK);
+  w.sub("Standard or enhanced due diligence");
+  for (const r of ra.diligence) w.kv(r.label, r.value, RISK_COLOUR[r.tone]);
+  if (ra.structure.length) {
+    w.sub("The structure, its ownership and the evidence");
+    for (const e of ra.structure) w.item("•", `${e.name}: ${e.location}, country risk ${e.countryRisk.toLowerCase()}, ${e.orgType.toLowerCase()}`, INK, e.evidence.join("\n"));
+  }
+  w.sub("Beneficial owners");
+  if (ra.ownersNote) w.para(ra.ownersNote, MUTED);
+  for (const o of ra.owners) {
+    w.item("•", `${o.name}: nationality ${o.nationality}, residence ${o.residence}. Verified by: ${o.idMethod}. Owner risk ${o.risk.toLowerCase()}; PEP ${o.pep.toLowerCase()}`, o.risk === "Higher" ? AMBER : INK, o.evidence.join("\n"));
+  }
+  if (ra.certified.length) { w.sub("Certified documents"); for (const c of ra.certified) w.item("•", c); }
+  w.sub("Detailed risk assessment");
+  w.kv("Risk identified", ra.riskIdentified.join("\n") || "No risk identified.", ra.riskIdentified.length ? AMBER : GREEN);
+  w.kv("Mitigating factors", ra.mitigating.join("\n") || (ra.riskIdentified.length ? "None recorded." : "Not required, as no risk has been identified."));
+  w.kv("Overall conclusion", ra.conclusion.join("\n"));
+  w.sub("Counterparty details");
+  for (const r of ra.counterparty) w.kv(r.label, r.value, RISK_COLOUR[r.tone]);
+  w.sub("Approvals");
+  for (const r of ra.approvals) w.kv(r.label, r.value, RISK_COLOUR[r.tone]);
+}
+
 function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map<string, string>) {
   const doc = w.doc;
   const name = p.company?.name || p.brand.name;
   w.title(`${DEAL_PARTY_LABEL[p.role]}: ${name}`);
+  if (p.riskAssessment) {
+    writeRiskAssessment(w, p.riskAssessment);
+    w.sub("The checks in detail");
+  }
   w.kv("Brand on the deal", p.brand.name);
   w.kv(p.individual ? "Who signs" : "Company that signs", p.individual ? (p.company ? `${p.company.name}, a private individual` : "A private individual") : p.company ? `${p.company.name}${p.company.number ? ` (Companies House ${p.company.number})` : ""}` : "Not set on the deal", p.individual || p.company ? INK : AMBER);
   w.kv("Person dealing with BGP", p.person ? `${p.person.name}${p.person.email ? `, ${p.person.email}` : ""}` : null);
@@ -514,6 +629,9 @@ export async function renderAmlReport(data: AmlFileData, docNames: Map<string, s
   w.kv("BGP's agents", data.deal.agents.join(", ") || null);
   w.kv("Checks needed", data.regime.why);
   if (data.agents.length) w.kv("Other agents", data.agents.map(a => `${a.roleWords}: ${a.name}. ${a.words}`).join("\n"));
+  w.kv("Heads of terms", data.hots?.file ? `${data.hots.file.name}: the final agreed heads of terms${docNames.get("hots") ? `, in this file as ${docNames.get("hots")}` : ""}`
+    : data.hots?.text ? `Drawn up in the app${data.hots.version ? ` (version ${data.hots.version})` : ""}${docNames.get("hots") ? `, in this file as ${docNames.get("hots")}` : ""}`
+    : "None held in the app for this deal (any on a party's KYC record are listed with its documents)");
   for (const f of data.dealFlags) w.item("!", `On the deal record: ${f.label}`, f.factor ? AMBER : RED, f.detail);
   for (const a of data.dealAside) w.item("•", `Set aside on the deal record: ${a.flag.label}`, MUTED, `${a.review.by || ""}${a.review.at ? `, ${day(a.review.at)}` : ""}: "${a.review.comment}"`);
   if (data.unchecked.length) w.para(`Red flags could not be checked against: ${data.unchecked.join(", ")}.`, AMBER);
@@ -544,6 +662,23 @@ export async function buildAmlZip(data: AmlFileData, capBytes = 200 * 1024 * 102
   const docNames = new Map<string, string>();
   const files: Array<{ path: string; data: Buffer }> = [];
   let total = 0, included = 0, missing = 0;
+  // The deal's heads of terms (21 November 2026): the final agreed file, else the text drawn up in the app.
+  if (data.hots?.file) {
+    const got = await amlFileDocBytes({ id: "hots", type: "heads_of_terms", name: data.hots.file.name, at: null, note: null, url: data.hots.file.url, mime: null, size: null, onCompany: false });
+    if ("missing" in got) missing += 1;
+    else {
+      const name = `00 Heads of terms - ${amlFileSafeName(data.hots.file.name.replace(/\.[A-Za-z0-9]{1,6}$/, ""))}${path.extname(data.hots.file.name) || got.ext}`;
+      files.push({ path: `${top}/${name}`, data: got.data });
+      docNames.set("hots", name);
+      total += got.data.length;
+      included += 1;
+    }
+  } else if (data.hots?.text) {
+    const name = `00 Heads of terms${data.hots.version ? ` version ${data.hots.version}` : ""}.txt`;
+    files.push({ path: `${top}/${name}`, data: Buffer.from(data.hots.text, "utf8") });
+    docNames.set("hots", name);
+    included += 1;
+  }
   for (const p of data.parties) {
     const folder = data.parties.length > 1 ? `${top}/${amlFileSafeName(`${DEAL_PARTY_LABEL[p.role]} - ${p.company?.name || p.brand.name}`)}` : top;
     let n = 0;
@@ -616,6 +751,29 @@ router.get("/api/deals/:id/aml-file", async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error("[aml-file] not made:", err?.message);
     if (!res.headersSent) res.status(500).json({ message: "The AML file could not be made." });
+  }
+});
+
+// The written risk assessment for one party, for the AML box (21 November
+// 2026). BGP staff signed in as themselves: it says nothing the box does not
+// already show them; it only reads.
+router.get("/api/deals/:id/aml-risk-assessment", async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).session?.userId || (req as any).tokenUserId;
+    if (!userId) return res.status(401).json({ message: "Not signed in." });
+    const { contactViewer } = await import("./contact-viewer");
+    if (!(await contactViewer(req)).staff) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
+    const role = text(req.query.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Which party?" });
+    const u = (await pool.query(`SELECT name, email FROM users WHERE id = $1`, [userId])).rows[0];
+    const data = await gatherAmlFile(String(req.params.id), [role as DealPartyRole], { id: String(userId), name: text(u?.name) || text(u?.email) || "BGP" });
+    if (!data) return res.status(404).json({ message: "No such deal." });
+    const p = data.parties[0];
+    if (!p) return res.status(404).json({ message: "The deal has no such party." });
+    res.json({ riskAssessment: p.riskAssessment, unread: p.unread });
+  } catch (err: any) {
+    console.error("[aml-file] risk assessment failed:", err?.message);
+    res.status(500).json({ message: "The risk assessment could not be read." });
   }
 });
 

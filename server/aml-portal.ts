@@ -636,7 +636,7 @@ export async function createPersonCheck(dealId: string, input: z.infer<typeof pe
       key: personKey(name), name, roles: ["joint"], ownerDetail: null, born: null,
       id: { state: "not_started", ref: null, elsewhere: null, someoneElse: null, asked: false },
       address: { done: false, ref: null, asked: false, proof: null },
-      sanctions: "not_screened", own: null, outstanding: ["identity check", "proof of address"], canSend: true,
+      sanctions: "not_screened", publicFigure: null, own: null, outstanding: ["identity check", "proof of address"], canSend: true,
     };
   } else {
     person = people.people.find(p => p.key === input.key);

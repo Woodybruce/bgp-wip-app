@@ -7,7 +7,7 @@
 // otherwise KYC4U does the checks.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileText, UserPlus } from "lucide-react";
+import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Globe, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileText, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -22,7 +22,7 @@ import {
   type KycDocKey, type KycIdState, type KycOwnersAnswer, type KycPartyKind, type KycPepAnswer,
 } from "@shared/kyc-request";
 import { precheckAsks, precheckDay, type PrecheckAskInput } from "@shared/kyc-prechecks";
-import { PARTY_PEOPLE_BASIS_WORDS, personRequestAsks, type KycPartyPerson, type PartyPeople, type PersonIdState, type PersonSanctions } from "@shared/kyc-people";
+import { PARTY_PEOPLE_BASIS_WORDS, PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personRequestAsks, type KycPartyPerson, type PartyPeople, type PersonIdState, type PersonSanctions } from "@shared/kyc-people";
 import type { KycPersonRole } from "@shared/kyc-request";
 
 interface PartyContact { id: string; name: string; email: string | null; mobile: string | null }
@@ -318,7 +318,7 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
       ))}
       {!!people.ownersAbroad?.length && (
         <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200" data-testid="people-owners-abroad">
-          Owned through {people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: registered abroad, so Companies House cannot show the people behind {people.ownersAbroad.length === 1 ? "it" : "them"}. Ask the client for a structure chart up to the people and each one's ID; then send each their own link.
+          Owned through {people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: registered abroad, so Companies House cannot show the people behind {people.ownersAbroad.length === 1 ? "it" : "them"}. It goes to KYC4U to find them (Request KYC4U check). If the client sends a structure chart naming them, each can be sent their own link.
         </p>
       )}
       <p className="text-[11px] text-muted-foreground">{PARTY_PEOPLE_BASIS_WORDS[people.basis]} Each gets a link of their own: an identity check (Veriff) and a proof of address from the last three months.</p>
@@ -331,10 +331,13 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
   const [details, setDetails] = useState(false);
   const [sending, setSending] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const ownRequest = person.own && !person.own.isMain ? data.requests.find(r => r.token === person.own!.token) || null : null;
-  const idOk = person.id.state === "passed" || person.id.state === "waiting" || person.id.state === "document";
+  // Verified from public sources by the officers (21 November 2026): counts for the identity check and the proof of address.
+  const pf = person.publicFigure || null;
+  const idOk = !!pf || person.id.state === "passed" || person.id.state === "waiting" || person.id.state === "document";
   const testKey = person.key.replace(/\s+/g, "-");
-  const proofToCheck = !!person.address.proof && !person.address.done;
+  const proofToCheck = !pf && !!person.address.proof && !person.address.done;
   return (
     <div className="rounded border px-2 py-1.5 space-y-1" data-testid={`person-${testKey}`}>
       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
@@ -343,11 +346,17 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
           {person.roles.map(r => <span key={r} className={`${pillMetrics} bg-muted text-muted-foreground border border-border`}>{ROLE_WORDS[r]}</span>)}
           <span className="inline-flex items-center gap-0.5 text-muted-foreground"><Tick ok={idOk} />ID</span>
           <span className={`inline-flex items-center gap-0.5 ${proofToCheck ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"}`}>
-            {proofToCheck ? <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" /> : <Tick ok={person.address.done} />}{proofToCheck ? "Address to check" : "Address"}
+            {proofToCheck ? <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" /> : <Tick ok={!!pf || person.address.done} />}{proofToCheck ? "Address to check" : "Address"}
           </span>
+          {pf && <span className={`${pillMetrics} bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900`} data-testid={`person-public-figure-${testKey}`}>Public figure</span>}
           {person.sanctions === "possible" && <span className={SANCTIONS_WORDS.possible.cls}>{SANCTIONS_WORDS.possible.text}</span>}
           <ChevronDown className={`ml-auto w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${details ? "rotate-180" : ""}`} />
         </button>
+        {canDecide && !pf && person.outstanding.length > 0 && (
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setVerifying(true)} data-testid={`person-verify-public-${testKey}`}>
+            <Globe className="w-3 h-3 mr-1" />Verified from public sources
+          </Button>
+        )}
         {(person.canSend || (ownRequest && !ownRequest.sentAt && ownRequest.status !== "finished")) && (
           <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setSending(true)} data-testid={`person-send-${testKey}`}>
             <Send className="w-3 h-3 mr-1" />{person.canSend ? "Send them a link" : "Email their link"}
@@ -357,6 +366,7 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
       {details && <>
       {person.born && <p className="text-muted-foreground">Born {person.born}</p>}
       {person.ownerDetail && <p className="text-muted-foreground">{person.ownerDetail[0].toUpperCase() + person.ownerDetail.slice(1)}</p>}
+      {pf && <PublicFigureLine dealId={dealId} role={party.role} person={person} canDecide={canDecide} />}
       <ul className="space-y-0.5">
         <li className="flex items-start gap-1" data-testid={`person-id-${person.key.replace(/\s+/g, "-")}`}>
           <Tick ok={idOk} />
@@ -386,6 +396,106 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
       {open && ownRequest && <ClientCheckRow dealId={dealId} request={ownRequest} startOpen />}
       </>}
       {sending && <PersonLinkDialog dealId={dealId} data={data} party={party} person={person} onClose={() => setSending(false)} />}
+      {verifying && <PublicFigureDialog dealId={dealId} role={party.role} person={person} onClose={() => setVerifying(false)} />}
+    </div>
+  );
+}
+
+const refreshPeople = (dealId: string) => {
+  queryClient.invalidateQueries({ queryKey: keyFor(dealId) });
+  queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+};
+
+// Verified from public sources (Woody, 21 November 2026: KYC4U's "Public
+// figure" method). The Nominated Officer or a Deputy says what makes them a
+// public figure and gives the pages (copied to PDF on the KYC record) or
+// files; it counts for their identity check and proof of address.
+function PublicFigureDialog({ dealId, role, person, onClose }: { dealId: string; role: string; person: KycPartyPerson; onClose: () => void }) {
+  const { toast } = useToast();
+  const [note, setNote] = useState("");
+  const [links, setLinks] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const linkList = links.split(/[\s,]+/).map(l => l.trim()).filter(Boolean);
+  const badLink = linkList.find(l => !/^https?:\/\/\S+\.\S+/i.test(l));
+  const missing = note.trim().length < PUBLIC_FIGURE_NOTE_MIN ? "Say what makes them a public figure (at least a sentence)."
+    : badLink ? `Not a web address: ${badLink}`
+    : linkList.length > PUBLIC_FIGURE_MAX_LINKS ? `Give up to ${PUBLIC_FIGURE_MAX_LINKS} links.`
+    : !linkList.length && !files.length ? "Give the pages or files that show who they are."
+    : null;
+  const save = useMutation({
+    mutationFn: async () => {
+      const fd = new FormData();
+      fd.append("key", person.key);
+      fd.append("note", note.trim());
+      fd.append("links", linkList.join("\n"));
+      for (const f of files) fd.append("files", f);
+      const res = await fetch(`/api/deals/${dealId}/parties/${role}/public-figure`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.message || "It could not be recorded.");
+      return body;
+    },
+    onSuccess: (r: any) => {
+      refreshPeople(dealId);
+      toast({ title: `${person.name}: verified from public sources`, description: r?.copying ? `A PDF copy of ${r.copying === 1 ? "the page" : `each of the ${r.copying} pages`} is being saved to the KYC record.` : undefined });
+      onClose();
+    },
+    onError: (e: any) => toast({ title: "Not recorded", description: String(e?.message || e), variant: "destructive" }),
+  });
+  return (
+    <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md" data-testid="public-figure-dialog">
+        <DialogHeader>
+          <DialogTitle>{person.name}: verified from public sources</DialogTitle>
+          <DialogDescription>
+            For a well-known person whose identity public sources establish (KYC4U's "Public figure" method). It counts for their identity check and proof of address. Only the Nominated Officer or a Deputy records it, and it can be withdrawn.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="public-figure-note">What makes them a public figure, and what the sources show</Label>
+            <Textarea id="public-figure-note" value={note} onChange={e => setNote(e.target.value)} rows={3} maxLength={1000}
+              placeholder="For example: owner of the group, named with his photograph in its annual report, Forbes and Wikipedia" data-testid="public-figure-note" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="public-figure-links">Links (one per line, up to {PUBLIC_FIGURE_MAX_LINKS})</Label>
+            <Textarea id="public-figure-links" value={links} onChange={e => setLinks(e.target.value)} rows={3} placeholder="https://…" data-testid="public-figure-links" />
+            <p className="text-[11px] text-muted-foreground">A PDF copy of each page is saved to the party's KYC record, with when it was taken.</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="block">Files (optional)</Label>
+            <input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.heic,.doc,.docx" onChange={e => setFiles(Array.from(e.target.files || []).slice(0, 10))} data-testid="public-figure-files" className="text-xs" />
+          </div>
+          {missing && <p className="text-[11px] text-muted-foreground">{missing}</p>}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+          <Button type="button" disabled={!!missing || save.isPending} onClick={() => save.mutate()} data-testid="public-figure-save">
+            {save.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}Record it
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PublicFigureLine({ dealId, role, person, canDecide }: { dealId: string; role: string; person: KycPartyPerson; canDecide: boolean }) {
+  const { toast } = useToast();
+  const pf = person.publicFigure!;
+  const withdraw = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/public-figure/${pf.id}/withdraw`, {})).json(),
+    onSuccess: () => { refreshPeople(dealId); toast({ title: "Withdrawn", description: `${person.name} needs their identity check and proof of address again.` }); },
+    onError: (e: any) => toast({ title: "Not withdrawn", description: String(e?.message || e).replace(/^\d+:\s*/, ""), variant: "destructive" }),
+  });
+  return (
+    <div className="rounded border border-emerald-200 bg-emerald-50/60 px-2 py-1 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200" data-testid={`public-figure-line-${person.key.replace(/\s+/g, "-")}`}>
+      <p><span className="font-medium">Verified from public sources</span> by {pf.by} on {new Date(pf.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" })}: {pf.note}</p>
+      {pf.links.length > 0 && (
+        <ul className="mt-0.5 space-y-0.5">{pf.links.map(l => <li key={l} className="truncate"><a href={l} target="_blank" rel="noreferrer" className="underline">{l}</a></li>)}</ul>
+      )}
+      <p className="text-[11px] opacity-80">{pf.documents ? `${pf.documents} document${pf.documents === 1 ? "" : "s"} on the KYC record (the files, and a PDF copy of each page).` : pf.links.length ? "PDF copies of the pages are being saved to the KYC record." : ""}
+        {canDecide && <button type="button" className="ml-2 underline" disabled={withdraw.isPending} onClick={() => withdraw.mutate()} data-testid={`public-figure-withdraw-${person.key.replace(/\s+/g, "-")}`}>Withdraw</button>}
+      </p>
     </div>
   );
 }

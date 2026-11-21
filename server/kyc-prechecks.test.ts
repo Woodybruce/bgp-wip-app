@@ -553,3 +553,73 @@ test("a company registered abroad that owns the party: asked for, not stood in f
   assert.equal(screen.basis, "owners_abroad");
   assert.deepEqual(screen.full.map(c => c.name), ["TUREDDI GROUP LIMITED", "Scp Aaa Invest", "A, One"]);
 });
+
+// ── Identity verification at Companies House, trading status, owners abroad (21 November 2026)
+
+test("identity verification at Companies House is read from the register's details", async () => {
+  const { idvOf, idvState } = await import("../shared/kyc-prechecks");
+  assert.equal(idvOf(undefined), null);
+  assert.equal(idvOf({}), null);
+  assert.deepEqual(idvOf({ identity_verified_on: "2025-12-03", appointment_verification_start_on: "2025-12-04" }),
+    { verifiedOn: "2025-12-03", statementOn: "2025-12-04", dueOn: null, endedOn: null });
+  const today = new Date("2026-11-21T12:00:00Z");
+  assert.equal(idvState({ verifiedOn: "2025-12-03", statementOn: null, dueOn: null, endedOn: null }, today).state, "verified");
+  // A statement supplied and not removed reads as verified (most verified appointments carry no identity_verified_on).
+  assert.equal(idvState({ verifiedOn: null, statementOn: "2026-02-01", dueOn: null, endedOn: null }, today).state, "verified");
+  assert.equal(idvState({ verifiedOn: null, statementOn: "2026-02-01", dueOn: null, endedOn: "2026-03-01" }, today).state, "not_shown");
+  assert.deepEqual(idvState({ verifiedOn: null, statementOn: null, dueOn: "2026-12-12", endedOn: null }, today),
+    { state: "due", words: "identity verification due at Companies House by 12 Dec 2026" });
+  assert.equal(idvState({ verifiedOn: null, statementOn: null, dueOn: "2026-11-01", endedOn: null }, today).state, "overdue");
+  assert.equal(idvState(null, today).state, "not_shown");
+});
+
+test("the company summary lists each director's and owner's verification, and an overdue one is a warning", async () => {
+  const { precheckIdentity } = await import("../shared/kyc-prechecks");
+  const ch = result().companiesHouse!;
+  const withIdv = result({ companiesHouse: {
+    ...ch,
+    officers: [
+      { ...ch.officers[0], idv: { verifiedOn: null, statementOn: "2026-01-10", dueOn: null, endedOn: null } },
+      { name: "ROE, Richard", role: "director", appointedOn: "2010-01-01", dob: null, nationality: "British", idv: { verifiedOn: null, statementOn: null, dueOn: "2026-01-01", endedOn: null } },
+    ],
+    owners: [{ ...ch.owners[0], idv: null }],
+  } });
+  const identity = precheckIdentity(withIdv.companiesHouse, new Date("2026-11-21T12:00:00Z"));
+  assert.deepEqual(identity.map(i => [i.name, i.state]), [["DOE, Jane", "verified"], ["ROE, Richard", "overdue"]], "Jane Doe the owner is the director already listed");
+  const c = precheckCompany(withIdv)!;
+  assert.ok(c.warnings.some(w => /Identity verification overdue at Companies House: ROE, Richard/.test(w)));
+  assert.ok(precheckCardLines(withIdv).some(l => l.key === "identity_verification" && l.state === "attention"));
+  assert.match(precheckNote(withIdv, "done"), /Identity verification at Companies House: DOE, Jane, identity verified/);
+  // A check from before this was read says nothing about it.
+  assert.equal(precheckIdentity(result().companiesHouse).length, 0);
+  assert.ok(!precheckCardLines(result()).some(l => l.key === "identity_verification"));
+});
+
+test("a dormant, non-trading or newly formed company is a warning to weigh", async () => {
+  const { tradingState } = await import("../shared/kyc-prechecks");
+  const { policyFactorsToWeigh } = await import("../shared/aml-policy");
+  const ch = result().companiesHouse!;
+  const today = new Date("2026-11-21T12:00:00Z");
+  assert.deepEqual(tradingState(ch, today), { trading: true, kind: null, words: null });
+  assert.equal(tradingState({ ...ch, lastAccountsType: "dormant" }, today).kind, "dormant");
+  assert.equal(tradingState({ ...ch, sicCodes: ["99999"] }, today).kind, "dormant");
+  assert.equal(tradingState({ ...ch, sicCodes: ["74990"] }, today).kind, "non_trading");
+  const fresh = tradingState({ ...ch, incorporatedOn: "2026-06-01", lastAccountsMadeUpTo: null, lastAccountsType: null }, today);
+  assert.equal(fresh.kind, "new");
+  assert.match(fresh.words!, /incorporated on 2026-06-01, no accounts filed yet/);
+  assert.equal(tradingState({ ...ch, incorporatedOn: "2020-06-01", lastAccountsMadeUpTo: null, lastAccountsType: null }, today).kind, null, "an old company with no accounts read is not called new");
+  const dormant = result({ companiesHouse: { ...ch, lastAccountsType: "dormant" } });
+  assert.ok(precheckCompany(dormant)!.warnings.some(w => /^Dormant: its latest accounts/.test(w)));
+  assert.ok(precheckCardLines(dormant).some(l => l.key === "trading" && l.state === "attention"));
+  assert.ok(policyFactorsToWeigh({ precheck: dormant }).some(w => /^Dormant/.test(w)));
+  assert.deepEqual(precheckRedFlags(dormant, { sanctionsCurrent: true }), [], "a warning, never a red flag");
+});
+
+test("a company owned through one registered abroad goes to KYC4U", () => {
+  const ch = result().companiesHouse!;
+  const abroad = result({ companiesHouse: { ...ch, owners: [{ name: "EXAMPLE HOLDING A/S", kind: "company", controls: ["ownership-of-shares-75-to-100-percent"], notifiedOn: "2016-06-30", country: "Denmark" }] } });
+  assert.deepEqual(precheckCompany(abroad)!.ownersAbroad, [{ name: "EXAMPLE HOLDING A/S", country: "Denmark", foundAt: null }]);
+  assert.match(precheckNote(abroad, "done"), /BGP does not read foreign registers: please identify the beneficial owners behind it/);
+  assert.match(precheckCardLines(abroad).find(l => l.key === "owners")!.detail || "", /It goes to KYC4U to find the people behind it/);
+  assert.deepEqual(precheckCompany(result())!.ownersAbroad, []);
+});

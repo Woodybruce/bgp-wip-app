@@ -88,9 +88,22 @@ export interface PeopleRequest {
   }>;
 }
 
+/**
+ * A person verified from public sources by the Nominated Officer or a Deputy
+ * (Woody, 21 November 2026: KYC4U's "Public figure" method, "copies of
+ * publicly available sources attached are sufficient to establish
+ * public-figure status"). It counts for their identity check and their proof
+ * of address.
+ */
+export interface PublicFigureCheck { id: string; name: string; note: string; by: string; at: string; links: string[]; documents: number }
+export const PUBLIC_FIGURE_NOTE_MIN = 10;
+export const PUBLIC_FIGURE_MAX_LINKS = 6;
+
 export interface PartyPeopleInput {
   companyId: string;
   kind: KycPartyKind;
+  // Verified from public sources, for this party (the brand and the company that signs).
+  publicFigures?: PublicFigureCheck[];
   // The party's latest checks before asking (the register read and the sanctions screen).
   precheck: Pick<KycPrecheckResult, "companiesHouse" | "sanctions"> | null;
   // Every request on the deal, each party's: an identity check passed on
@@ -133,6 +146,8 @@ export interface KycPartyPerson {
     } | null;
   };
   sanctions: PersonSanctions;
+  // Verified from public sources by the officers: counts for the identity check and the proof of address.
+  publicFigure: PublicFigureCheck | null;
   // Their own live request (their own link before the request to the person acting): their link, if they have one.
   own: { token: string; ref: string; isMain: boolean; sentAt: string | null } | null;
   outstanding: Array<"identity check" | "proof of address">;
@@ -162,7 +177,7 @@ export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
   no_owners: "The register names no person who owns or controls the company. Ask the client who does; the person dealing with us still does their own check.",
   not_read: "BGP's checks before asking have not read the register yet, so the owners are not known. The person dealing with us does their own check.",
   individual: "Private individuals: each person named on the deal does an identity check and sends a proof of address. When more than one person is buying, selling or renting together, add each of them.",
-  owners_abroad: "A company registered outside the UK owns or controls it, so Companies House cannot show the people behind it. The client is asked for a structure chart up to the people, and each of them then does their own check.",
+  owners_abroad: "A company registered outside the UK owns or controls it, so Companies House cannot show the people behind it. It goes to KYC4U to find them; the client can also be asked for a structure chart, and each person it names then does their own check.",
 };
 
 const samePerson = (a: string | null | undefined, b: string | null | undefined): boolean => !!a && !!b && personNamesMatch(a, b);
@@ -282,12 +297,13 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
       } : null,
     };
 
-    const outstanding: KycPartyPerson["outstanding"] = [...(idDone ? [] : ["identity check" as const]), ...(address.done ? [] : ["proof of address" as const])];
+    const publicFigure = (input.publicFigures || []).find(f => samePerson(f.name, d.name)) || null;
+    const outstanding: KycPartyPerson["outstanding"] = publicFigure ? [] : [...(idDone ? [] : ["identity check" as const]), ...(address.done ? [] : ["proof of address" as const])];
     const ownLink = live.find(r => r.person) || live.find(r => !r.person) || null;
     return {
       key: personKey(d.name), name, roles,
       ownerDetail: d.ownerDetail.length ? d.ownerDetail.join("; ") : null,
-      born: bornWords(d.dob), id, address, sanctions: sanctionsFor(d.name),
+      born: bornWords(d.dob), id, address, sanctions: sanctionsFor(d.name), publicFigure,
       own: ownLink ? { token: ownLink.token, ref: ownLink.ref, isMain: !ownLink.person, sentAt: ownLink.sentAt } : null,
       outstanding,
       canSend: outstanding.some(o => o === "identity check" ? !id.asked : !address.asked),
@@ -315,7 +331,8 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
 }
 
 /** What a person's own request asks for: only what is still outstanding. */
-export function personRequestAsks(person: Pick<KycPartyPerson, "id" | "address">, veriff: boolean): { needsIdCheck: boolean; docs: KycDocKey[] } {
+export function personRequestAsks(person: Pick<KycPartyPerson, "id" | "address"> & { publicFigure?: KycPartyPerson["publicFigure"] }, veriff: boolean): { needsIdCheck: boolean; docs: KycDocKey[] } {
+  if (person.publicFigure) return { needsIdCheck: false, docs: [] };
   const idDone = person.id.state === "passed" || person.id.state === "waiting" || person.id.state === "document";
   return {
     needsIdCheck: veriff && !idDone,
