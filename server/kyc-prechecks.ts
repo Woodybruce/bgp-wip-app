@@ -38,6 +38,7 @@ import {
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput, type PrecheckCardLine, type PrecheckCompany, type PrecheckDocument, type PrecheckListing,
   type OwnerAbroad, type PrecheckOverseasEntity, type ProviderLine, type RegisterOwner, type SanctionsLine, type WebSearchLine,
 } from "@shared/kyc-prechecks";
+import type { PrecheckAbroad } from "@shared/foreign-owners";
 import type { KycPartyKind } from "@shared/kyc-request";
 import { partySubjectKind } from "@shared/deal-parties";
 
@@ -753,6 +754,21 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     }
   }
 
+  // Past Companies House (Woody, 21 November 2026): the parent note in the
+  // accounts, and each company abroad followed up GLEIF (server/kyc-abroad.ts).
+  // A foreign parent the accounts name joins the owners abroad when the
+  // register names no owner. Never holds the run up for long.
+  let abroad: PrecheckAbroad | null = null;
+  if (companiesHouse && subjectKind === "company") {
+    try {
+      const previous = (await latestPrecheck(companyId, entityId).catch(() => null))?.result?.abroad || null;
+      const { traceAbroad } = await import("./kyc-abroad");
+      abroad = await withTimeout(traceAbroad(companiesHouse, previous), 150_000, "Tracing the owners abroad");
+    } catch (e: any) {
+      errors.push(`Owners abroad: ${words(e)}`);
+    }
+  }
+
   // Who is screened: the company, every officer and owner, the companies and
   // people up the chain, and the contact the deal names.
   const partyName = companiesHouse?.name || (entity ? clean(entity.name, 160) : clean(company.uk_entity_name, 160) || clean(company.name, 160));
@@ -800,6 +816,22 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   for (const a of (companiesHouse?.ownersAbroad || []).filter(x => x.foundAt)) {
     add({ name: a.name, role: "owning company up the chain", person: false, abroad: true, dobYear: null, context: `company registered in ${a.country} that owns ${a.foundAt}, in the ownership chain of ${where}` });
   }
+  // A company abroad named only in the accounts, and the parents GLEIF gives
+  // above each company abroad (21 November 2026).
+  for (const a of (companiesHouse?.ownersAbroad || []).filter(x => x.via === "accounts")) {
+    add({ name: a.name, role: "parent company abroad (named in the accounts)", person: false, abroad: true, dobYear: null, context: `company registered in ${a.country}, named in the accounts of ${where} as its parent` });
+  }
+  for (const t of abroad?.traced || []) for (const g of t.gleif.parents) {
+    add({ name: g.name, role: `parent of ${t.name} (GLEIF)`, person: false, abroad: true, dobYear: null, context: `company in ${g.jurisdiction || "another country"}, the parent of ${t.name} in GLEIF, in the ownership chain of ${where}` });
+  }
+  // The people recorded behind a company abroad are beneficial owners.
+  if (subjectKind === "company") {
+    const { abroadPeopleFor } = await import("./kyc-abroad");
+    for (const p of await abroadPeopleFor(companyId, entityId).catch(() => [])) {
+      add({ name: p.name, role: `owner behind ${p.ownerName}`, person: true, owner: true, dobYear: p.dob?.year || null, dobMonth: p.dob?.month || null, nationality: p.nationality || null,
+        context: `beneficial owner behind ${p.ownerName}${p.ownerCountry ? ` (${p.ownerCountry})` : ""}, which owns ${where}${p.dob?.year ? `, born ${p.dob.month ? `${p.dob.month}/` : ""}${p.dob.year}` : ""}${p.nationality ? `, ${p.nationality}` : ""}` });
+    }
+  }
 
   // Who is screened for public roles and adverse media (Woody, 19 November
   // 2026: "At that point need to work out who needs to be AML/KYC"): the
@@ -825,6 +857,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     companiesHouse, notAtCompaniesHouse, sanctions, web, complyAdvantage,
     screened: { basis: screen.basis, people: screen.full.filter(s => s.person).map(s => s.name), sanctionsOnly: screen.sanctionsOnly.map(s => s.name) },
     ...(overseasEntity ? { overseasEntity } : {}),
+    ...(abroad ? { abroad } : {}),
     errors,
   };
 

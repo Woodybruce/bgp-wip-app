@@ -31,6 +31,7 @@ import { DealAgentsAml, useDealAgentsAml } from "@/components/agent-aml";
 import { DealSolicitorsAmlPanel, solicitorsSummary, useDealSolicitorsAml } from "@/components/solicitor-aml";
 import type { RiskAssessment } from "@shared/aml-risk-assessment";
 import { AmlFileButton } from "@/components/aml-file-button";
+import { AbroadTrace, abroadSummary, useDealAbroad } from "@/components/aml-abroad";
 
 export interface DealAmlStatus {
   dealId: string;
@@ -607,8 +608,8 @@ const readOpenAll = (): boolean => { try { return window.localStorage.getItem(OP
 const writeOpenAll = (on: boolean) => { try { if (on) window.localStorage.setItem(OPEN_ALL_KEY, "1"); else window.localStorage.removeItem(OPEN_ALL_KEY); } catch { /* per browser only */ } };
 type OpenAll = { all: boolean; at: number };
 
-type SectionKey = "company" | "payer" | "checks" | "level" | "people" | "client" | "flags" | "kyc4u" | "decision" | "assessment";
-const SECTION_KEYS: SectionKey[] = ["company", "payer", "checks", "level", "people", "client", "flags", "kyc4u", "assessment", "decision"];
+type SectionKey = "company" | "abroad" | "payer" | "checks" | "level" | "people" | "client" | "flags" | "kyc4u" | "decision" | "assessment";
+const SECTION_KEYS: SectionKey[] = ["company", "abroad", "payer", "checks", "level", "people", "client", "flags", "kyc4u", "assessment", "decision"];
 
 function useOpenSections<K extends string>(keys: K[], openAll: OpenAll) {
   const [open, setOpen] = useState<Set<K>>(() => new Set(openAll.all ? keys : []));
@@ -692,6 +693,10 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
   const isTrust = !!party?.brand.recordTrust;
   // Owned through a company registered abroad: KYC4U find the people behind it (Woody, 21 November 2026).
   const ownedAbroad = pre?.company?.ownersAbroad || [];
+  // What the app traced past Companies House and what BGP recorded (21 November 2026).
+  const traceLines = pre?.company?.trace || [];
+  const showAbroad = staff && (party ? party.brand.kind === "company" : true) && (ownedAbroad.length > 0 || traceLines.length > 0);
+  const abroadQ = useDealAbroad(dealId, cp.role, showAbroad);
   const companyMissing = party ? party.brand.kind === "company" && !party.company && !isTrust : pre?.state === "needs_company";
   const people = checks?.people?.[cp.id] || null;
   const requests = (checks?.requests || []).filter(r => r.companyId === cp.id && !r.person);
@@ -806,9 +811,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     }
     if (people.basis === "not_read") return { tone: "wait", summary: "Not read yet: the owners come from Companies House" };
     // A company registered abroad owns it: KYC4U find the people behind it (21 November 2026).
-    const abroad = people.ownersAbroad?.length
-      ? `owned through ${people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: KYC4U find who is behind it`
-      : null;
+    // Once someone is recorded behind each company abroad, the line counts their checks.
+    const openAbroad = (people.ownersAbroad || []).filter(o => !o.answered);
+    const abroad = openAbroad.length
+      ? `owned through ${openAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: KYC4U find who is behind it`
+      : people.ownersAbroad?.length ? `owned through ${people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}` : null;
     if (abroad && !people.people.some(p => p.roles.includes("owner"))) return { tone: "act", summary: abroad[0].toUpperCase() + abroad.slice(1) };
     const n = people.people.length;
     const done = n - owing.length;
@@ -941,6 +948,14 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
                 : <p className="text-xs text-muted-foreground">BGP's checks before asking read the company from Companies House.</p>}
             </BoxSection>
           )}
+          {showAbroad && (() => {
+            const line = abroadSummary(abroadQ.data, ownedAbroad, traceLines);
+            return (
+              <BoxSection id={sid("abroad")} testId={tid("abroad")} label="Owners abroad" tone={line.tone} summary={line.words} open={open.has("abroad")} onToggle={() => toggle("abroad")}>
+                <AbroadTrace dealId={dealId} role={cp.role} query={abroadQ} />
+              </BoxSection>
+            );
+          })()}
           {payLine && party && (
             <BoxSection id={sid("payer")} testId={tid("payer")} label="Who pays" tone={payLine.tone} summary={payLine.summary} open={open.has("payer")} onToggle={() => toggle("payer")}>
               <PartyBillingDetail dealId={dealId} party={party} />

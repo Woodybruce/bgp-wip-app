@@ -5249,6 +5249,97 @@ our system and check along side what KYC4U did to see if we get the same".
     - **Small, by the policy's evidence lists**: a copy of the listing page for
       a listed company, and of the SRA page in the file.
 
+## Companies owned from abroad, traced in the app (Woody, 2026-11-21)
+
+Woody asked how BGP could research companies owned from abroad, then how
+KYC4U do it. Their LEGO pack (REQ112444) showed four steps: Creditsafe's group
+structure for the UK company, the parent's Danish register page printed by
+hand (legal owners public; the beneficial owners section locked behind an
+access request), the family foundation's register page, and the owner
+verified as a public figure. His answer: "Ok so let's make sure all of that is
+built and then need to work out if a credit safe report international is
+required." **The rule that sends a party owned from abroad to KYC4U is
+unchanged** (the Next step, the red box, BGP's sign-off refused until
+KYC4U's result): the trace gathers, it does not decide. Letting the officers
+sign off a fully traced chain without KYC4U waits on Woody's Creditsafe
+decision. Rules: `shared/foreign-owners.ts` (and its display words,
+`shared/foreign-owner-words.ts`, apart so `shared/kyc-prechecks.ts` can use
+them without a loop); server: `server/kyc-abroad.ts`, `server/gleif.ts`,
+`server/kyc-structure-chart.ts`; screen: `client/src/components/aml-abroad.tsx`.
+Tests: `server/foreign-owners.test.ts`, `server/kyc-abroad.test.ts` (both in
+`npm test`), `qa/regression/foreign-owners-guards.test.mjs`.
+
+- **The parent note in the accounts** (Companies Act 2006 s.409 and the
+  accounts regulations): the ultimate parent, the parents of the largest and
+  smallest groups that consolidate it, the ultimate controlling party, or none.
+  BGP's checks before asking read it from the accounts they already file: a
+  filing with text by rules (`readParentNote`), a scanned filing (LEGO's 2025
+  accounts are 41 pages of image) only when the register names no owner,
+  from its pages 2 to 6 and last four, by the reader (Anthropic, called
+  directly, forced tool `read_parent_note`, `ACCOUNTS_PARENT_READER_DAILY_CAP`
+  a day, default 40, 0 = off), each name kept only when its own words hold it
+  (`checkParentNoteAnswer`). The same filing is not read twice.
+- **When the register names no owner**, the top foreign parent the accounts
+  name (the ultimate parent or controlling party, else the parent named)
+  joins the owners abroad (`via: "accounts"`), so the party reads as owned
+  from abroad. On live on 21 November 2026 only one of 801 parties was flagged
+  owned from abroad (35 Dover St, owned through Scp Aaa Invest, Monaco): LEGO
+  Company Limited (00368236) tells Companies House no one has significant
+  control, and its accounts name KIRKBI A/S, Denmark. When the register names
+  owners, a foreign parent in the accounts is traced and shown, not added.
+- **GLEIF** (`server/gleif.ts`): the free worldwide register of legal entity
+  identifiers, no key, open data. Each company abroad (at most four a run) is
+  found by its registration number, else exactly its name in its country
+  (`pickGleifRecord`: two of one name is no pick), then each direct parent in
+  turn up to six, and the reason at the top (`gleifTop`: owned by individuals,
+  no known person, not consolidated, not disclosed). Requests are paced one a
+  second, each time-limited, never throw; `GLEIF=off` stops them. Run live from
+  a build machine on 21 November 2026: KIRKBI A/S, LEI 5493005XXPWUMR2E5305,
+  owned by individuals; LEGO A/S has no LEI; Scp Aaa Invest, LEI
+  2549002JBQR12CTXAH84, owned by individuals.
+- The trace is stored on the run (`result.abroad`: the accounts' reading and
+  each company traced), screened like the chain (the companies abroad and
+  their GLEIF parents against the sanctions lists, the web and
+  ComplyAdvantage), and shown as lines in the company facts
+  (`abroadTraceLines`), KYC4U's note and the AML file's risk assessment.
+- **What BGP records against a company abroad** (`kyc_abroad_records`, boot
+  migration; BGP staff signed in as themselves): its register page (a link
+  copied to PDF through the web-page copier, filed as `web_source`), a
+  register extract or a structure chart (filed as `register_extract` or
+  `structure_chart`), a note, or **a person behind it** (name, how they own or
+  control it, nationality, month and year of birth). A person recorded joins
+  People to check as an owner ("behind KIRKBI A/S (Denmark): …"), is screened
+  as a beneficial owner on a fresh run started at once, and answers the
+  company abroad's "the people behind …" line (also when recorded behind a
+  parent GLEIF found above it); they then need their identity check (their own
+  link) or verifying from public sources. Records can be taken off; five-year
+  deletion and company merges cover the table.
+- **The client's structure chart** (the client checks' ownership step, or one
+  BGP adds) is read once (`server/kyc-structure-chart.ts`, Anthropic,
+  `STRUCTURE_CHART_READER_DAILY_CAP`, default 40) and compared with what the
+  app found (`compareChart`: matches, on the chart only, found by the app only;
+  company names compared with their legal form, `sameCompany`, so "LEGO A/S"
+  is not "LEGO Company Limited"). It lists; it never decides.
+- **The screen**: an **Owners abroad** section in each party's AML box, after
+  Company, when the party is owned from abroad or its accounts name a parent:
+  each company abroad with what was found, who is recorded behind it, what is
+  still to find, and **Add its register page**, **Add a register extract**,
+  **Record a person behind it**, **Add a note**, **Add a structure chart**; then
+  what the app traced (the accounts' words, each GLEIF line with a link to its
+  record) and the structure charts with their comparison.
+- **Free registers abroad** (checked 21 November 2026): Denmark's CVR shows a
+  company's legal owners (shares and votes) to anyone; its beneficial owners
+  are behind an access request. Most EU beneficial ownership registers closed
+  to the public after the EU court's ruling of 22 November 2022; under the EU's
+  new rules (Directive 2024/1640, Article 12, due by 10 July 2026) a firm in a
+  non-EU country under AML rules, such as BGP, may apply for access for its
+  customer due diligence. Monaco's register is by request. Scripted reads of
+  CVR are blocked (a browser check), so a person saves the page.
+- Not run against Anthropic from a build machine (the scan and chart
+  readers). Not built: Creditsafe (Woody's decision), the officers signing off
+  a traced chain without KYC4U, reading foreign registers by API, applying for
+  EU access.
+
 ## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
 
 Woody, on the deal page: "Needs a chat box too no and how the negotiations

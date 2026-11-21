@@ -15,6 +15,8 @@
 // (BGP's outsourced KYC provider) for enhanced due diligence.
 
 import { defaultKycDocs, type KycDocKey, type KycPartyKind } from "./kyc-request";
+import type { PrecheckAbroad } from "./foreign-owners";
+import { gleifTraceWords, parentLineWords } from "./foreign-owner-words";
 import type { KycFlagFact, KycRedFlag } from "./kyc-red-flags";
 import { companyTypeWords } from "./company-facts";
 
@@ -577,7 +579,7 @@ export interface PrecheckScreened {
   sanctionsOnly: string[];
 }
 export const SCREEN_BASIS_WORDS: Record<ScreenBasis, string> = {
-  owners: "the company and the people who own or control it (its beneficial owners, found on the register and up the ownership chain)",
+  owners: "the company and the people who own or control it (its beneficial owners: found on the register and up the ownership chain, or recorded behind a company abroad that owns it)",
   managers: "the company and its directors, standing in for the owners because none could be named (MLR 2017 reg 28(6))",
   listed: "the company only: a company listed on a regulated market has no beneficial owners to identify (MLR 2017 reg 28(5))",
   individual: "the person",
@@ -684,6 +686,9 @@ export interface KycPrecheckResult {
   // The Register of Overseas Entities, searched by name when the party had no
   // UK company number (since 19 November 2026).
   overseasEntity?: PrecheckOverseasEntity | null;
+  // The parent note in the accounts and the GLEIF trace of each company
+  // abroad (since 21 November 2026; shared/foreign-owners.ts).
+  abroad?: PrecheckAbroad | null;
   errors: string[];
 }
 
@@ -843,7 +848,9 @@ export interface PrecheckCompany {
   overseasEntity?: string | null;
   // Corporate owners registered abroad, on the register or up the chain: the
   // party goes to KYC4U (Woody, 21 November 2026).
-  ownersAbroad?: Array<{ name: string; country: string; foundAt: string | null }>;
+  ownersAbroad?: Array<{ name: string; country: string; foundAt: string | null; via?: OwnerAbroad["via"] }>;
+  // What the accounts' parent note and GLEIF show (21 November 2026), in words.
+  trace?: string[];
   // Each director's and individual owner's identity verification at Companies House.
   identity?: Array<{ name: string; role: string; state: IdvState; words: string }>;
   // Whether it trades, as the register shows (dormant, non-trading, newly formed).
@@ -877,7 +884,7 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     ch.confirmationOverdue ? "Confirmation statement overdue" : "",
     trading.words || "",
     overdueIdv.length ? `Identity verification overdue at Companies House: ${overdueIdv.map(i => i.name).join(", ")}` : "",
-    ...ownersAbroadOf(ch).map(a => `Owned through ${a.name}, registered in ${a.country}${a.foundAt ? ` (owner of ${a.foundAt})` : ""}: Companies House cannot show who owns it`),
+    ...ownersAbroadOf(ch).map(a => `Owned through ${a.name}, registered in ${a.country}${a.foundAt ? ` (owner of ${a.foundAt})` : a.via === "accounts" ? " (named in its accounts; the register names no owner)" : ""}: Companies House cannot show who owns it`),
   ].filter(Boolean);
   return {
     name: ch.name,
@@ -897,7 +904,8 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     warnings,
     documents: ch.documents.map(d => ({ title: d.title, onFile: !!d.kycDocumentId })),
     registerUrl: `https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(ch.number)}`,
-    ownersAbroad: ownersAbroadOf(ch).map(a => ({ name: a.name, country: a.country, foundAt: a.foundAt })),
+    ownersAbroad: ownersAbroadOf(ch).map(a => ({ name: a.name, country: a.country, foundAt: a.foundAt, ...(a.via ? { via: a.via } : {}) })),
+    trace: abroadTraceLines(result),
     identity,
     trading: { trading: trading.trading, words: trading.words },
     ownerDetails: [
@@ -1227,6 +1235,9 @@ export interface OwnerAbroad {
   controls: string[];
   // The company up the chain it owns, when it is not the party itself.
   foundAt: string | null;
+  // Where it was found: the register, up the chain, or named in the party's
+  // accounts when the register names no owner (since 21 November 2026).
+  via?: "register" | "chain" | "accounts";
 }
 
 /**
@@ -1272,6 +1283,30 @@ export const ownersAbroadWords = (owners: ReadonlyArray<Pick<OwnerAbroad, "name"
   const one = owners.map(o => `${o.name} (${o.country})`);
   return one.length < 2 ? one.join("") : `${one.slice(0, -1).join(", ")} and ${one[one.length - 1]}`;
 };
+
+/**
+ * What the app traced past Companies House, in lines: the accounts' parent
+ * note (with the words it read) and each company abroad in GLEIF (Woody,
+ * 21 November 2026). For the AML box, KYC4U's note and the AML file.
+ */
+export function abroadTraceLines(result: Pick<KycPrecheckResult, "abroad"> | null | undefined): string[] {
+  const a = result?.abroad;
+  if (!a) return [];
+  const lines: string[] = [];
+  const note = a.accounts;
+  if (note) {
+    const when = note.madeUpTo ? ` to ${precheckDay(note.madeUpTo)}` : "";
+    if (note.status === "found") {
+      for (const l of note.lines.slice(0, 4)) lines.push(`The accounts${when}${note.via === "scan" ? `, read from the scanned filing${l.page ? ` (page ${l.page})` : ""}` : ""}: ${parentLineWords(l)} ("${l.words}")`);
+    } else if (note.status === "none") {
+      lines.push(`The accounts${when} name no parent or controlling party.`);
+    } else if (note.unread) {
+      lines.push(`The accounts${when} were not read for a parent: ${note.unread}.`);
+    }
+  }
+  for (const t of a.traced) lines.push(`GLEIF: ${gleifTraceWords(t)}`);
+  return lines;
+}
 
 const DISTRESS = /liquidation|receivership|administration|insolvency|voluntary-arrangement|dissolved|removed|struck|closed/i;
 
@@ -1470,6 +1505,8 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
     const abroadNote = ownersAbroadOf(ch);
     // Foreign companies go to KYC4U (Woody, 21 November 2026: "foreign companies I think we will send to KYC4U").
     if (abroadNote.length) lines.push(`- Owned through a company registered abroad: ${ownersAbroadWords(abroadNote)}. Companies House cannot show who owns ${abroadNote.length === 1 ? "it" : "them"}, and BGP does not read foreign registers: please identify the beneficial owners behind ${abroadNote.length === 1 ? "it" : "them"} from the home register and verify them.`);
+    // What the app traced itself (21 November 2026): the accounts' parent note and GLEIF.
+    for (const line of abroadTraceLines(result)) lines.push(`- ${line}`);
     const filed = ch.documents.filter(d => d.kycDocumentId);
     if (filed.length) lines.push(`- Downloaded from Companies House and attached: ${filed.map(d => d.title).join("; ")}.`);
     const tradingNote = tradingState(ch);

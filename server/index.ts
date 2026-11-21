@@ -3111,6 +3111,36 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       withdrawn_by_name text
     )`,
     `CREATE INDEX IF NOT EXISTS kyc_public_figure_checks_party_idx ON kyc_public_figure_checks (company_id) WHERE withdrawn_at IS NULL`,
+    // What BGP records against a company abroad that owns a party (Woody,
+    // 21 November 2026: the free route to what KYC4U do): its register page
+    // (copied to PDF), a register extract or structure chart (with the chart's
+    // reading), a note, or a person behind it, who joins the people to check.
+    // removed_at when it is taken off. server/kyc-abroad.ts writes it.
+    `CREATE TABLE IF NOT EXISTS kyc_abroad_records (
+      id serial PRIMARY KEY,
+      deal_id varchar,
+      company_id varchar NOT NULL,
+      trading_entity_id varchar,
+      owner_name text NOT NULL,
+      owner_country text,
+      kind text NOT NULL,
+      document_id varchar,
+      source_url text,
+      note text,
+      person_name text,
+      person_detail text,
+      person_nationality text,
+      person_dob_month integer,
+      person_dob_year integer,
+      reading jsonb,
+      added_by varchar,
+      added_by_name text,
+      added_at timestamptz NOT NULL DEFAULT now(),
+      removed_at timestamptz,
+      removed_by varchar,
+      removed_by_name text
+    )`,
+    `CREATE INDEX IF NOT EXISTS kyc_abroad_records_party_idx ON kyc_abroad_records (company_id) WHERE removed_at IS NULL`,
     // The other side's solicitors checked on a deal (Woody, 21 November 2026,
     // "do 7"; BGP's AML policy, counterparties: "Is there any negative media
     // around the agent and / or solicitor?"): the SRA register and the web,
@@ -4412,6 +4442,7 @@ import kycRequestRouter from "./aml-portal";
 import kycPrecheckRouter from "./kyc-prechecks";
 import dealPartiesRouter from "./deal-parties";
 import dealPartyAmlRouter from "./deal-party-aml";
+import kycAbroadRouter from "./kyc-abroad";
 import amlDashboardRouter from "./aml-dashboard";
 import amlFileRouter from "./aml-file";
 import amlSecondReadRouter from "./aml-second-read";
@@ -5785,6 +5816,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // Each deal party's company that signs and the person to ask (BGP staff only).
   app.use(dealPartiesRouter);
   app.use(dealPartyAmlRouter);
+  // Companies owned from abroad: what BGP records against them (21 November 2026).
+  app.use(kycAbroadRouter);
   app.use(amlDashboardRouter);
   // The officers' AML file: a report and every document, for HMRC or KYC4U (20 November 2026).
   app.use(amlFileRouter);

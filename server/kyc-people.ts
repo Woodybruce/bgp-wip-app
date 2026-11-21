@@ -72,7 +72,9 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
     const { latestPrecheck } = await import("./kyc-prechecks");
     precheck = (await latestPrecheck(party.companyId, party.entityId).catch(() => null))?.result || null;
   }
-  return partyPeople({ companyId: party.companyId, kind: party.kind, precheck, requests, publicFigures: await publicFiguresFor(party.companyId, party.entityId) });
+  const { abroadPeopleFor } = await import("./kyc-abroad");
+  const abroadPeople = party.kind === "company" ? await abroadPeopleFor(party.companyId, party.entityId).catch(() => []) : [];
+  return partyPeople({ companyId: party.companyId, kind: party.kind, precheck, requests, publicFigures: await publicFiguresFor(party.companyId, party.entityId), abroadPeople });
 }
 
 /** The people verified from public sources for a party (the brand and the company that signs), not withdrawn. */

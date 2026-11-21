@@ -289,8 +289,30 @@ test("owners behind a company registered abroad: the client is asked who they ar
   assert.equal(people.basis, "owners_abroad");
   assert.deepEqual(people.ownersAbroad, [{ name: "Scp Aaa Invest", country: "Monaco", foundAt: null }]);
   // Since 21 November 2026 a company abroad goes to KYC4U (Woody: "foreign companies I think we will send to KYC4U").
-  assert.match(PARTY_PEOPLE_BASIS_WORDS.owners_abroad, /It goes to KYC4U to find them; the client can also be asked for a structure chart/);
+  assert.match(PARTY_PEOPLE_BASIS_WORDS.owners_abroad, /It goes to KYC4U to find them\. The app traces what it can/);
   assert.ok(people.outstanding.some(o => /The people behind Scp Aaa Invest \(Monaco\)/.test(o)), "owed until the client sends the chart");
+
+  // Someone recorded behind it (21 November 2026) is an owner to check, and
+  // the company abroad is answered: what is owed is that person's own checks.
+  const recorded = partyPeople({ kind: "company", companyId: "c1", precheck, requests: [],
+    abroadPeople: [{ name: "Anna Rossi", ownerName: "SCP AAA INVEST", ownerCountry: "Monaco", detail: "100% of the shares", dob: { month: 3, year: 1975 } }] } as any);
+  assert.equal(recorded.basis, "owners_abroad");
+  const anna = recorded.people.find(p => p.name === "Anna Rossi")!;
+  assert.deepEqual(anna.roles, ["owner"]);
+  assert.equal(anna.ownerDetail, "behind SCP AAA INVEST (Monaco): 100% of the shares");
+  assert.equal(anna.born, "March 1975");
+  assert.ok(!recorded.outstanding.some(o => /The people behind/.test(o)));
+  assert.ok(recorded.outstanding.includes("Anna Rossi: identity check and proof of address"));
+
+  // Recorded behind a parent GLEIF found above the owner abroad also answers it.
+  const withTrace = { ...precheck, abroad: { accounts: null, checkedAt: "2026-11-21T00:00:00Z", traced: [{ name: "Scp Aaa Invest", country: "Monaco", registrationNumber: null, via: "register", foundAt: null,
+    gleif: { status: "found", entity: null, parents: [{ lei: "X".repeat(20), name: "AAA Holdings SAM", jurisdiction: "MC", country: "MC", registeredAs: null, status: "ACTIVE", leiStatus: "ISSUED", lastUpdate: null }], top: null, candidates: 1, error: null } }] } };
+  const viaParent = partyPeople({ kind: "company", companyId: "c1", precheck: withTrace, requests: [],
+    abroadPeople: [{ name: "Anna Rossi", ownerName: "AAA Holdings SAM", ownerCountry: "Monaco", detail: "owns AAA Holdings SAM", dob: null }] } as any);
+  assert.ok(!viaParent.outstanding.some(o => /The people behind/.test(o)));
+  // A private individual's side takes no one recorded behind a company.
+  const individual = partyPeople({ kind: "individual", companyId: "c1", precheck: null, requests: [], abroadPeople: [{ name: "Anna Rossi", ownerName: "X", ownerCountry: null, detail: "x", dob: null }] } as any);
+  assert.equal(individual.people.length, 0);
 });
 
 test("a person verified from public sources owes nothing more (KYC4U's Public figure method, 21 November 2026)", () => {

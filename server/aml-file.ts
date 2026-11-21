@@ -78,6 +78,8 @@ export interface AmlFileParty {
   trust: boolean;
   // The written risk assessment in KYC4U's shape (shared/aml-risk-assessment.ts, 21 November 2026).
   riskAssessment: RiskAssessment | null;
+  // What BGP recorded against a company abroad that owns it (21 November 2026).
+  abroadRecords?: Array<{ ownerName: string; kind: string; note: string | null; personName: string | null; detail: string | null; by: string; at: string }>;
 }
 
 export interface AmlFileData {
@@ -198,6 +200,8 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
     ]);
     const pre = (prechecks as Record<string, any>)[brandId] || null;
     if (!pre) unread.push("BGP's checks before asking");
+    const abroadRecords = kind === "company" ? await read("what BGP recorded about companies abroad",
+      import("./kyc-abroad").then(m => m.abroadRecordsFor(brandId, entityId)), []) : [];
     if (!Array.isArray(requests)) unread.push("the client checks");
     if (!flags) unread.push("the red flags");
     parties.push({
@@ -228,6 +232,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       client: role === clientRole,
       trust: trusts.has(brandId),
       riskAssessment: null,
+      abroadRecords: abroadRecords.map(r => ({ ownerName: r.ownerName, kind: r.kind, note: r.note, personName: r.person?.name || null, detail: r.person?.detail || null, by: r.by, at: r.at })),
     });
   }
   const data: AmlFileData = {
@@ -286,6 +291,7 @@ export function riskAssessmentFor(data: AmlFileData, p: AmlFileParty): RiskAsses
       notRequired: p.notRequired ? { reasonWords: p.notRequired.reasonWords } : null,
       documents: p.documents.map(d => ({ type: d.type, name: d.name })),
       kyc4u: latestKyc4u(p.kyc4u.records),
+      abroadRecords: p.abroadRecords || [],
     },
     dealFlags: data.dealFlags,
     agents: data.agents,

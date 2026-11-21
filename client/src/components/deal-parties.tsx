@@ -352,7 +352,10 @@ function PartyPeopleToCheck({ dealId, party, busy, aml, onAsk }: { dealId: strin
       </p>
       {!!people.ownersAbroad?.length && (
         <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200" data-testid="deal-party-owners-abroad">
-          Owned through {people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: registered abroad, so Companies House cannot show who owns {people.ownersAbroad.length === 1 ? "it" : "them"}. The client checks ask for a structure chart up to the people and their IDs.
+          Owned through {people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: registered abroad, so Companies House cannot show who owns {people.ownersAbroad.length === 1 ? "it" : "them"}.{" "}
+          {people.ownersAbroad.every(o => o.answered)
+            ? "The people recorded behind it in the AML box (Owners abroad) are listed below."
+            : "The AML box's Owners abroad section traces what it can, and the client checks ask for a structure chart up to the people and their IDs."}
         </p>
       )}
       {people.people.length > 0 && <ul className="space-y-1.5">{people.people.map(p => <PersonToReach key={p.key} dealId={dealId} party={party} person={p} busy={busy} quiet={!!quiet} onAsk={onAsk} />)}</ul>}

@@ -15,6 +15,7 @@ import type { KycRedFlag, SetAsideFlag } from "./kyc-red-flags";
 import type { PartyDueDiligence } from "./aml-policy";
 import type { PartyPeople } from "./kyc-people";
 import { isOffshoreCountry, isRegisterDirector, personNamesMatch, type PrecheckCompany } from "./kyc-prechecks";
+import { sameCompany } from "./foreign-owners";
 import { solicitorCheckWords, type SolicitorCheck } from "./solicitor-aml";
 import { SRA_ATTRIBUTION_URL, SRA_ATTRIBUTION_WORDS } from "./sra-register";
 
@@ -78,6 +79,8 @@ export interface RiskAssessmentInput {
     notRequired: { reasonWords: string } | null;
     documents: Array<{ type: string; name: string }>;
     kyc4u: RiskAssessmentKyc4u | null;
+    // What BGP recorded against a company abroad that owns it (21 November 2026).
+    abroadRecords?: Array<{ ownerName: string; kind: string; note: string | null; personName: string | null; detail: string | null; by: string; at: string }>;
   };
   dealFlags: KycRedFlag[];
   agents: Array<{ roleWords: string; name: string; words: string }>;
@@ -197,15 +200,26 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
         c.listing ? `${c.listing}${c.listingNote ? `. ${c.listingNote}` : ""}` : "",
         c.owners?.length ? `Owners on the register: ${c.owners.map(o => `${o.name} (${o.control})`).join("; ")}` : c.ownerNote ? `Owners: ${c.ownerNote}` : "",
         c.accounts ? `Latest accounts: ${c.accounts}` : "",
+        ...(c.trace || []).filter(l => l.startsWith("The accounts")),
         ...(c.warnings || []).map(w => `Warning: ${w}`),
         `Companies House register: ${c.registerUrl}`,
       ].filter(Boolean),
     });
     for (const link of c.chain || []) structure.push({ name: link, location: "UK", countryRisk: "Standard", orgType: "Company up the ownership chain", evidence: ["Read from Companies House's register of people with significant control"] });
+    // What the app traced and BGP recorded for each (21 November 2026).
+    const recs = p.abroadRecords || [];
     for (const a of abroad) {
+      const mine = recs.filter(r => sameCompany(r.ownerName, a.name));
       structure.push({
         name: a.name, location: a.country, countryRisk: isOffshoreCountry(a.country) ? "Higher (secrecy or higher-risk place)" : "Standard", orgType: "Company registered abroad",
-        evidence: [`Owns ${a.foundAt || c.name}`, "Registered abroad: Companies House cannot show who owns it. KYC4U to identify the owners from its home register"],
+        evidence: [
+          a.via === "accounts" ? `Named in ${c.name}'s accounts as its parent (the register names no owner)` : `Owns ${a.foundAt || c.name}`,
+          ...(c.trace || []).filter(l => l.startsWith("GLEIF:") && l.includes(a.name)),
+          ...mine.filter(r => r.kind === "person" && r.personName).map(r => `Recorded behind it: ${r.personName}${r.detail ? ` (${r.detail})` : ""}, by ${r.by}, ${day(r.at)}`),
+          ...mine.filter(r => r.kind === "register_page" || r.kind === "document").map(r => `${r.kind === "register_page" ? "Its register page, copied to PDF" : "A register extract"}, filed by ${r.by}, ${day(r.at)}`),
+          ...mine.filter(r => r.kind === "note" && r.note).map(r => `Note by ${r.by}, ${day(r.at)}: ${r.note}`),
+          "Registered abroad: Companies House cannot show who owns it. KYC4U to identify the owners from its home register",
+        ],
       });
     }
   }

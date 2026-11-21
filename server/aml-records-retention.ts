@@ -41,6 +41,7 @@ const PARTY_TABLES: Array<{ table: string; party: string; at: string }> = [
   { table: "kyc_flag_reviews", party: "company_id", at: "COALESCE(restored_at, set_aside_at)" },
   { table: "kyc_party_exemptions", party: "company_id", at: "COALESCE(undone_at, set_at)" },
   { table: "kyc_public_figure_checks", party: "company_id", at: "COALESCE(withdrawn_at, verified_at)" },
+  { table: "kyc_abroad_records", party: "company_id", at: "COALESCE(removed_at, added_at)" },
   { table: "kyc4u_archive_files", party: "company_id", at: "COALESCE(modified_at, copied_at, listed_at)" },
   { table: "kyc_audit_log", party: "company_id", at: "created_at" },
   { table: "aml_recheck_reminders", party: "company_id", at: "COALESCE(completed_at, created_at)" },
@@ -226,6 +227,7 @@ async function deleteParty(client: PoolClient, companyId: string): Promise<Recor
   if (tables.has("kyc_flag_reviews")) await del("kyc_flag_reviews", `DELETE FROM kyc_flag_reviews WHERE company_id = $1`);
   if (tables.has("kyc_party_exemptions")) await del("kyc_party_exemptions", `DELETE FROM kyc_party_exemptions WHERE company_id = $1`);
   if (tables.has("kyc_public_figure_checks")) await del("kyc_public_figure_checks", `DELETE FROM kyc_public_figure_checks WHERE company_id = $1`);
+  if (tables.has("kyc_abroad_records")) await del("kyc_abroad_records", `DELETE FROM kyc_abroad_records WHERE company_id = $1`);
   if (tables.has("kyc4u_archive_files")) {
     // Files copied from KYC4U's site for this party, with their stored copies.
     const keys = (await client.query(`SELECT storage_key FROM kyc4u_archive_files WHERE company_id = $1 AND storage_key IS NOT NULL`, [companyId])).rows.map((r: any) => String(r.storage_key));

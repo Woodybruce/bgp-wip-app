@@ -318,7 +318,10 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
       ))}
       {!!people.ownersAbroad?.length && (
         <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200" data-testid="people-owners-abroad">
-          Owned through {people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: registered abroad, so Companies House cannot show the people behind {people.ownersAbroad.length === 1 ? "it" : "them"}. It goes to KYC4U to find them (Request KYC4U check). If the client sends a structure chart naming them, each can be sent their own link.
+          Owned through {people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: registered abroad, so Companies House cannot show the people behind {people.ownersAbroad.length === 1 ? "it" : "them"}.{" "}
+          {people.ownersAbroad.every(o => o.answered)
+            ? <>The people recorded behind {people.ownersAbroad.length === 1 ? "it" : "them"} (under Owners abroad) are listed here, each with their own checks. It still goes to KYC4U (Request KYC4U check).</>
+            : <>It goes to KYC4U to find them (Request KYC4U check). The app traces what it can under Owners abroad; if the client sends a structure chart naming them, each can be sent their own link.</>}
         </p>
       )}
       <p className="text-[11px] text-muted-foreground">{PARTY_PEOPLE_BASIS_WORDS[people.basis]} Each gets a link of their own: an identity check (Veriff) and a proof of address from the last three months.</p>

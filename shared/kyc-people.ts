@@ -22,6 +22,7 @@
 // the answer.
 
 import { controlWords, nameTokens, ownersAbroadOf, personDisplayName, personNamesMatch, type KycPrecheckResult } from "./kyc-prechecks";
+import { sameCompany } from "./foreign-owners";
 import type { KycDocKey, KycIdState, KycPartyKind, KycPersonRole } from "./kyc-request";
 import { checkAddressProof, type AddressProofAcceptance, type AddressProofReading } from "./kyc-address-proof";
 
@@ -104,8 +105,12 @@ export interface PartyPeopleInput {
   kind: KycPartyKind;
   // Verified from public sources, for this party (the brand and the company that signs).
   publicFigures?: PublicFigureCheck[];
-  // The party's latest checks before asking (the register read and the sanctions screen).
-  precheck: Pick<KycPrecheckResult, "companiesHouse" | "sanctions"> | null;
+  // The party's latest checks before asking (the register read, the sanctions
+  // screen, and the trace past Companies House).
+  precheck: (Pick<KycPrecheckResult, "companiesHouse" | "sanctions"> & Partial<Pick<KycPrecheckResult, "abroad">>) | null;
+  // The people BGP recorded behind a company abroad that owns the party
+  // (21 November 2026: server/kyc-abroad.ts). Each is an owner to check.
+  abroadPeople?: Array<{ name: string; ownerName: string; ownerCountry: string | null; detail: string; dob: { month: number | null; year: number | null } | null }>;
   // Every request on the deal, each party's: an identity check passed on
   // someone else's link still counts for the person it was.
   requests: PeopleRequest[];
@@ -167,8 +172,9 @@ export interface PartyPeople {
   // "Huseyn Mirhadiyev: identity check and proof of address", per person.
   outstanding: string[];
   // Companies registered abroad that own the party: Companies House cannot
-  // show who owns them, so the client is asked (20 November 2026).
-  ownersAbroad?: Array<{ name: string; country: string; foundAt: string | null }>;
+  // show who owns them, so the client is asked (20 November 2026). answered:
+  // someone is recorded behind it (21 November 2026).
+  ownersAbroad?: Array<{ name: string; country: string; foundAt: string | null; answered?: boolean }>;
 }
 
 export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
@@ -177,7 +183,7 @@ export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
   no_owners: "The register names no person who owns or controls the company. Ask the client who does; the person dealing with us still does their own check.",
   not_read: "BGP's checks before asking have not read the register yet, so the owners are not known. The person dealing with us does their own check.",
   individual: "Private individuals: each person named on the deal does an identity check and sends a proof of address. When more than one person is buying, selling or renting together, add each of them.",
-  owners_abroad: "A company registered outside the UK owns or controls it, so Companies House cannot show the people behind it. It goes to KYC4U to find them; the client can also be asked for a structure chart, and each person it names then does their own check.",
+  owners_abroad: "A company registered outside the UK owns or controls it, so Companies House cannot show the people behind it. It goes to KYC4U to find them. The app traces what it can (the accounts and GLEIF, under Owners abroad), the client can be asked for a structure chart, and each person found is recorded there and does their own check.",
 };
 
 const samePerson = (a: string | null | undefined, b: string | null | undefined): boolean => !!a && !!b && personNamesMatch(a, b);
@@ -219,6 +225,11 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     for (const p of ch.peopleUpChain) {
       const line = [...new Set(p.controls.map(controlWords))].join("; ");
       add(p.name, "owner", { detail: `up the ownership chain, in ${p.foundAt}${line ? `: ${line}` : ""}`, dob: p.dob, register: true });
+    }
+  }
+  if (input.kind !== "individual") {
+    for (const p of input.abroadPeople || []) {
+      add(p.name, "owner", { detail: `behind ${p.ownerName}${p.ownerCountry ? ` (${p.ownerCountry})` : ""}: ${p.detail}`, dob: p.dob });
     }
   }
   const party = input.requests.filter(r => r.companyId === input.companyId && !r.cancelled);
@@ -318,15 +329,19 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     .map(r => ({ ref: r.ref, files: r.files.filter(f => f.docKey === "owner_ids").length, names: r.ownerNames.map(personDisplayName) }))
     .filter(l => l.files > 0);
   const abroad = ownersAbroadOf(ch);
-  const basis: PartyPeopleBasis = input.kind === "individual" ? "individual" : !ch ? "not_read" : ch.listing ? "listed" : people.some(p => p.roles.includes("owner")) ? "owners" : abroad.length ? "owners_abroad" : "no_owners";
+  // A company abroad is answered once someone is recorded behind it, or
+  // behind a parent GLEIF found above it (21 November 2026).
+  const above = (name: string): string[] => [name, ...((input.precheck?.abroad?.traced || []).filter(t => sameCompany(t.name, name)).flatMap(t => t.gleif.parents.map(g => g.name)))];
+  const unanswered = abroad.filter(a => !(input.abroadPeople || []).some(p => above(a.name).some(n => sameCompany(n, p.ownerName))));
+  const basis: PartyPeopleBasis = input.kind === "individual" ? "individual" : !ch ? "not_read" : ch.listing ? "listed" : abroad.length ? "owners_abroad" : people.some(p => p.roles.includes("owner")) ? "owners" : "no_owners";
   return {
     basis, people, directors, loose,
     outstanding: [
       ...people.filter(p => p.outstanding.length).map(p => `${p.name}: ${p.outstanding.join(" and ")}`),
       // Until the client names them, the people behind a company abroad are owed.
-      ...(abroad.length && !party.some(r => !r.person && r.files.some(f => f.docKey === "ownership")) ? [`The people behind ${abroad.map(a => `${a.name} (${a.country})`).join(" and ")}: a structure chart and their IDs`] : []),
+      ...(unanswered.length && !party.some(r => !r.person && r.files.some(f => f.docKey === "ownership")) ? [`The people behind ${unanswered.map(a => `${a.name} (${a.country})`).join(" and ")}: a structure chart and their IDs`] : []),
     ],
-    ...(abroad.length ? { ownersAbroad: abroad.map(a => ({ name: a.name, country: a.country, foundAt: a.foundAt })) } : {}),
+    ...(abroad.length ? { ownersAbroad: abroad.map(a => ({ name: a.name, country: a.country, foundAt: a.foundAt, ...(unanswered.includes(a) ? {} : { answered: true }) })) } : {}),
   };
 }
 
