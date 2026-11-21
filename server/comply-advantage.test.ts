@@ -438,12 +438,26 @@ test("the check says what each configuration screens and how closely", async () 
       { name: "PEPs", match_threshold: 0.6, risks: [{ taxonomy: "r_political_exposure", source_types: [] }],
         exclusion_filters: [{ key: "FILTER_ATTRIBUTE_YEAR_OF_BIRTH", mismatch: { tolerance: "P1Y" } }] },
     ],
-  }), "sanctions exposure: match threshold 50; PEPs: match threshold 60 (leaves out year of birth mismatch); up to 50 results");
+  }), "sanctions exposure: match threshold 50; PEPs [political exposure]: match threshold 60 (leaves out year of birth mismatch over 1 year); up to 50 results");
   // An older (fuzziness) configuration, as Mesh's v2 list gives it.
   assert.equal(ca.describeMeshConfiguration({
     name: "Default", country_filters: ["GB"],
     source_collections: [{ name: "Sanctions", fuzziness: 0.5, aml_types: ["sanction"], options: ["remove_deceased"], source_identifiers: [], description: "" }],
-  }), "Sanctions: fuzziness 50% (options remove_deceased); countries GB");
+  }), "Sanctions [sanction]: fuzziness 50% (options remove_deceased); countries GB");
+  // A named collection still says what it screens, so a collection that holds every risk shows as one.
+  assert.equal(ca.describeMeshConfiguration({
+    source_collections: [
+      { name: "Chat", match_threshold: 0.5, risks: [
+        { taxonomy: "r_sanctions_exposure.r_direct_sanctions_exposure" }, { taxonomy: "r_sanctions_exposure.r_indirect_sanctions_exposure" },
+        { taxonomy: "r_political_exposure" }, { taxonomy: "r_adverse_media.r_financial_crime" },
+      ] },
+      { name: "rest", match_threshold: 0.9, risks: [{ taxonomy: "r_adverse_media" }], exclusion_filters: [
+        { key: "FILTER_ATTRIBUTE_YEAR_OF_BIRTH", mismatch: { tolerance: "P0Y" } },
+        { key: "FILTER_ATTRIBUTE_COUNTRY", mismatch: {} },
+        { key: "FILTER_ATTRIBUTE_YEAR_OF_BIRTH", absent: {} },
+      ] },
+    ],
+  }), "Chat [sanctions exposure, political exposure, adverse media]: match threshold 50; rest [adverse media]: match threshold 90 (leaves out year of birth mismatch; leaves out country mismatch; leaves out year of birth missing)");
   assert.equal(ca.describeMeshConfiguration({ name: "Empty" }), "");
   assert.equal(ca.describeMeshConfiguration(null), "");
 

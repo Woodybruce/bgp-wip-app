@@ -637,16 +637,27 @@ export function describeMeshConfiguration(configuration: any): string {
     return Number.isFinite(n) ? Math.round(n <= 1 ? n * 100 : n) : null;
   };
   const words = (t: unknown) => String(t || "").split(".")[0].replace(/^[a-z]_/, "").replace(/_/g, " ").trim();
+  // A mismatch can carry a tolerance in whole years (ISO 8601, "P1Y" is plus or minus a year).
+  const years = (iso: unknown): number | null => {
+    const m = /^P(\d+)Y$/i.exec(String(iso ?? "").trim());
+    return m ? Number(m[1]) : null;
+  };
   const filterWords = (filters: unknown): string[] => (Array.isArray(filters) ? filters : []).map((f: any) => {
     const what = FILTER_WORDS[String(f?.key || "")] || String(f?.key || "").replace(/^FILTER_ATTRIBUTE_/, "").replace(/_/g, " ").toLowerCase();
-    const how = f?.mismatch ? "mismatch" : f?.absent ? "missing" : f?.older_than ? `older than ${f.older_than?.threshold || "a set time"}` : "";
+    const within = f?.mismatch ? years(f.mismatch?.tolerance) : null;
+    const how = f?.mismatch ? (within ? `mismatch over ${within} year${within === 1 ? "" : "s"}` : "mismatch")
+      : f?.absent ? "missing" : f?.older_than ? `older than ${f.older_than?.threshold || "a set time"}` : "";
     return `${what} ${how}`.trim();
   }).filter(Boolean);
   const parts: string[] = [];
   for (const c of cols.slice(0, 12)) {
     const risks = [...new Set((Array.isArray(c?.risks) ? c.risks : []).map((r: any) => words(r?.taxonomy)).filter(Boolean))];
     const aml = Array.isArray(c?.aml_types) ? c.aml_types.slice(0, 4).map(String) : [];
-    const label = String(c?.name || "").trim() || risks.join(", ") || aml.join(", ") || "a collection";
+    // What a collection screens is shown whether or not it has a name (Woody, 21 November 2026, after
+    // splitting the collections: "can you check ive done it correctly?").
+    const kinds = (risks.length ? risks : aml).slice(0, 10);
+    const name = String(c?.name || "").trim();
+    const label = name ? (kinds.length ? `${name} [${kinds.join(", ")}]` : name) : kinds.join(", ") || "a collection";
     const threshold = scale(c?.match_threshold);
     const fuzziness = scale(c?.fuzziness);
     const level = threshold !== null ? `match threshold ${threshold}` : fuzziness !== null ? `fuzziness ${fuzziness}%` : "";
