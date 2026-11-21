@@ -370,14 +370,18 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
       <ul className="space-y-0.5">
         <li className="flex items-start gap-1" data-testid={`person-id-${person.key.replace(/\s+/g, "-")}`}>
           <Tick ok={idOk} />
+          {pf ? <span>Identity: verified from public sources (above)</span> : (
           <span>
             {ID_STATE_WORDS[person.id.state]}
             {person.id.elsewhere ? <span className="text-muted-foreground"> {person.id.elsewhere}</span> : null}
             {!idOk && person.id.someoneElse ? <span className="text-amber-800"> (the check on their link was {person.id.someoneElse}'s)</span> : null}
             {!idOk && person.id.asked ? <span className="text-muted-foreground"> · asked</span> : null}
           </span>
+          )}
         </li>
-        <AddressProofLine dealId={dealId} person={person} canDecide={canDecide} />
+        {pf
+          ? <li className="flex items-start gap-1" data-testid={`person-address-public-${testKey}`}><Tick ok /><span>Proof of address: covered by the verification from public sources</span></li>
+          : <AddressProofLine dealId={dealId} person={person} canDecide={canDecide} />}
         <li className={SANCTIONS_WORDS[person.sanctions].cls}>{SANCTIONS_WORDS[person.sanctions].text}</li>
       </ul>
       <div className="flex flex-wrap items-center gap-1">
