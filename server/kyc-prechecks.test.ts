@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import {
   askInputFrom, checkWebAnswer, chooseScreened, companyNamesMatch, controlWords, idCheckIsThePerson, isOffshoreCountry, isRegisterDirector, listingFromExemptions, verifiedPersonName,
   ownerControlLine, ownerKind, personNamesMatch, precheckAsks, precheckCardLines, precheckNamesakes, precheckNote, precheckRedFlags, providerMatchFlags,
+  nameSpeltAsTheirs, precheckSpellingVariants, splitProviderMatches,
   precheckSanctionsMatch, sanctionsLine, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput,
   precheckCompany, precheckUnfinished,
@@ -404,6 +405,55 @@ test("a person screened with their date of birth is flagged only on a profile wh
   const namesakes = precheckNamesakes(run);
   assert.equal(namesakes.length, 2);
   assert.match(namesakes[0].what, /no date of birth on the profile/);
+});
+
+// Woody, 21 November 2026: "comply advantage keeps hitting miss spells of the names and picking up adverse media on
+// things not spelt the same but are similar", then "Yes want it".
+test("adverse media under a name spelt differently is set aside unless the date of birth agrees; sanctions and public roles never are", () => {
+  // A person: the surname all there, every other word one of their names (initials aside).
+  assert.equal(nameSpeltAsTheirs("BARRATT, Jack William", "Jack Barratt", true), true);
+  assert.equal(nameSpeltAsTheirs("BARRATT, Jack William", "J Barratt", true), true, "an initial");
+  assert.equal(nameSpeltAsTheirs("Jack Barratt", "Barratt Jack", true), true, "the other way round");
+  assert.equal(nameSpeltAsTheirs("Jack Barratt", "Jack Barrett", true), false, "a letter different");
+  assert.equal(nameSpeltAsTheirs("Charlotte Roberts", "Caroline Roberts", true), false, "another first name");
+  assert.equal(nameSpeltAsTheirs("BENTLEY-SMITH, Rupert", "Rupert Smith", true), false, "half the surname");
+  assert.equal(nameSpeltAsTheirs("BENTLEY-SMITH, Rupert", "Rupert Bentley Smith", true), true, "a hyphen is a space");
+  assert.equal(nameSpeltAsTheirs("Mr José Núñez", "Jose Nunez Jr", true), true, "accents, titles and suffixes aside");
+  // A company: the legal form aside, every word of one name in the other.
+  assert.equal(nameSpeltAsTheirs("ACME LIMITED", "Acme Ltd", false), true);
+  assert.equal(nameSpeltAsTheirs("TESCO STORES LIMITED", "Tesco", false), true, "a shorter name, spelt the same");
+  assert.equal(nameSpeltAsTheirs("TESCO STORES LIMITED", "Tesko Stores", false), false);
+
+  const line = { ...caLine("BARRATT, Jack", [
+    caMatch({ name: "Jack Barrett", kind: "adverse_media", score: 0.2, profileId: "p-1" }),
+    caMatch({ name: "Jack Barratt", kind: "adverse_media", score: 0.7, profileId: "p-2" }),
+    caMatch({ name: "Jack Barret", kind: "adverse_media", score: 0.3, profileId: "p-3", birthYearAgrees: true }),
+    caMatch({ name: "Jak Barrat", kind: "sanctions", score: 0.4, profileId: "p-4" }),
+    caMatch({ name: "Jack Barrett", kind: "pep", score: 0.5, profileId: "p-5" }),
+  ]), person: true, dobKnown: true };
+  const sp = splitProviderMatches(line);
+  assert.deepEqual(sp.variants.map(m => m.profileId), ["p-1"], "only adverse media spelt differently with nothing tying it to him");
+  assert.deepEqual(sp.flagged.map(m => m.profileId).sort(), ["p-3", "p-4"], "the date of birth agrees; sanctions whatever the spelling");
+  assert.deepEqual(sp.namesakes.map(m => m.profileId).sort(), ["p-2", "p-5"], "a public role is never judged on spelling");
+
+  const run = result({ complyAdvantage: { ran: true, skipped: null, lines: [line] } });
+  assert.deepEqual(precheckSpellingVariants(run), [{ name: "BARRATT, Jack", profile: "Jack Barrett", source: null, score: 0.2 }]);
+  assert.equal(precheckNamesakes(run).length, 2, "the variant is not a namesake to check");
+  const card = precheckCardLines(run).find(l => l.key === "spelling_variants")!;
+  assert.equal(card.label, "Set aside, spelt differently: 1");
+  assert.equal(card.state, "info");
+  assert.match(card.detail!, /BARRATT, Jack: "Jack Barrett", match 20%/);
+  assert.match(precheckNote(run, "done"), /ComplyAdvantage adverse media under names spelt differently, set aside/);
+  const flag = precheckRedFlags(run, { sanctionsCurrent: true }).find(f => f.kind === "provider_screen")!;
+  assert.ok(flag.facts!.some(f => f.label === "Set aside, spelt differently"));
+
+  // Only a variant on the line: no red flag, whatever ComplyAdvantage scored it.
+  const only = result({ complyAdvantage: { ran: true, skipped: null, lines: [
+    { ...caLine("Charlotte Roberts", [caMatch({ name: "Caroline Roberts", kind: "adverse_media", score: 0.95, profileId: "p-cr" })]), person: true, dobKnown: false },
+    { ...caLine("ACME LIMITED", [caMatch({ name: "Akme Ltd", kind: "adverse_media", score: 0.93, profileId: "p-ak" })]), person: false },
+  ] } });
+  assert.equal(precheckRedFlags(only, { sanctionsCurrent: true }).filter(f => f.kind === "provider_screen").length, 0);
+  assert.equal(precheckSpellingVariants(only).length, 2);
 });
 
 test("whose identity check it was: the name Veriff read set against the person the request was for", () => {

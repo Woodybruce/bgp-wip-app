@@ -170,7 +170,7 @@ const COMPANY_WORDS = new Set(["ltd", "limited", "llc", "llp", "lp", "plc", "inc
 export function nameTokens(name: string, company = false): string[] {
   return String(name || "")
     .toLowerCase()
-    .normalize("NFKD").replace(/[̀-ͯ]/g, "")
+    .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
     .replace(/&/g, " and ")
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
@@ -1055,14 +1055,80 @@ export function providerMatchFlags(m: ProviderMatch, line?: Pick<ProviderLine, "
   return m.score != null && m.score >= (kind === "pep" ? PROVIDER_FLAG_BARS.pep : PROVIDER_FLAG_BARS.other);
 }
 
-/** A ComplyAdvantage line's matches, split into red flags and possible namesakes. */
-export function splitProviderMatches(line: ProviderLine): { flagged: ProviderMatch[]; namesakes: ProviderMatch[]; unjudged: boolean } {
-  if (line.status !== "possible") return { flagged: [], namesakes: [], unjudged: false };
-  const matches = line.matches || [];
-  // An older check kept only the kinds of profile matched: nothing to judge, so it stays a flag.
-  if (!matches.length) return { flagged: [], namesakes: [], unjudged: true };
-  return { flagged: matches.filter(m => providerMatchFlags(m, line)), namesakes: matches.filter(m => !providerMatchFlags(m, line)), unjudged: false };
+// ── Adverse media on a name spelt differently (Woody, 21 November 2026:
+// "comply advantage keeps hitting miss spells of the names and picking up
+// adverse media on things not spelt the same but are similar", then "Yes want
+// it"). ComplyAdvantage's fuzzy matching brings back profiles whose names are
+// only like the person's ("Jack Barrett" for Jack Barratt, "Caroline Roberts"
+// for Charlotte Roberts). An adverse media profile is kept only when its name
+// is spelt as theirs: for a person, their surname is all there and every other
+// word of the profile's name is one of their names (initials aside); for
+// a company, every word of one name is in the other once the legal form
+// ("Limited", "plc") is left out. Anything else is a spelling variant: set
+// aside, counted and listed for the officers, never a red flag or a namesake
+// to check. A profile whose date of birth agrees with the person's is kept
+// however it is spelt. Sanctions, public roles, warning lists and fitness and
+// probity are never set aside on spelling: people on those lists are often
+// recorded under other spellings and transliterations of their names.
+const NAME_SUFFIXES = new Set(["jr", "jnr", "junior", "sr", "snr", "senior", "ii", "iii", "iv", "aka"]);
+const personWords = (s: string): string[] => nameTokens(s).filter(w => !NAME_SUFFIXES.has(w));
+
+/** A person's name as forenames and surname: the register's "SURNAME, Forenames", else the last word is the surname. */
+export function personNameParts(raw: string): { forenames: string[]; surname: string[] } {
+  const text = String(raw || "");
+  const comma = text.indexOf(",");
+  if (comma > 0) {
+    const surname = personWords(text.slice(0, comma)), forenames = personWords(text.slice(comma + 1));
+    if (surname.length && forenames.length) return { forenames, surname };
+  }
+  const words = personWords(text);
+  return { forenames: words.slice(0, -1), surname: words.slice(-1) };
 }
+
+/** Whether a profile's name is spelt as the screened name: the same words in any order (initials and legal forms aside), nothing spelt differently. */
+export function nameSpeltAsTheirs(screened: string, profile: string, person: boolean): boolean {
+  if (person) {
+    const s = personNameParts(screened);
+    const p = personWords(profile);
+    if (!s.surname.length || !p.length) return true;
+    const own = new Set([...s.forenames, ...s.surname]);
+    return s.surname.every(w => p.includes(w)) && p.every(w => own.has(w));
+  }
+  const a = nameTokens(screened, true), b = nameTokens(profile, true);
+  if (!a.length || !b.length) return true;
+  return a.every(w => b.includes(w)) || b.every(w => a.includes(w));
+}
+
+const providerLineIsPerson = (line: Pick<ProviderLine, "name" | "person">): boolean =>
+  line.person === true || (line.person === undefined && !CORPORATE_NAME.test(line.name));
+
+/** An adverse media profile spelt differently from the person or company screened, with no date of birth tying it to them. */
+export function providerSpellingVariant(m: ProviderMatch, line: Pick<ProviderLine, "name" | "person">): boolean {
+  if (String(m.kind || "") !== "adverse_media") return false;
+  if (m.birthYearAgrees === true) return false;
+  // A profile that could not be read has no name to judge: it stays as the bars say.
+  if ((m.unread ?? !m.profileId) || !m.name) return false;
+  return !nameSpeltAsTheirs(line.name, m.name, providerLineIsPerson(line));
+}
+
+/** A ComplyAdvantage line's matches, split into red flags, possible namesakes and spelling variants set aside. */
+export function splitProviderMatches(line: ProviderLine): { flagged: ProviderMatch[]; namesakes: ProviderMatch[]; variants: ProviderMatch[]; unjudged: boolean } {
+  if (line.status !== "possible") return { flagged: [], namesakes: [], variants: [], unjudged: false };
+  const all = line.matches || [];
+  // An older check kept only the kinds of profile matched: nothing to judge, so it stays a flag.
+  if (!all.length) return { flagged: [], namesakes: [], variants: [], unjudged: true };
+  const variants = all.filter(m => providerSpellingVariant(m, line));
+  const matches = all.filter(m => !variants.includes(m));
+  return { flagged: matches.filter(m => providerMatchFlags(m, line)), namesakes: matches.filter(m => !providerMatchFlags(m, line)), variants, unjudged: false };
+}
+
+export interface PrecheckSpellingVariant { name: string; profile: string; source: string | null; score: number | null }
+
+/** The adverse media profiles a run set aside because their names are spelt differently. */
+export function precheckSpellingVariants(result: Pick<KycPrecheckResult, "complyAdvantage">): PrecheckSpellingVariant[] {
+  return result.complyAdvantage.lines.flatMap(line => splitProviderMatches(line).variants.map(m => ({ name: line.name, profile: m.name, source: m.source, score: m.score })));
+}
+const variantWords = (v: PrecheckSpellingVariant) => `${v.name}: "${v.profile}"${v.source ? `, ${v.source}` : ""}${v.score != null ? `, match ${Math.round(v.score * 100)}%` : ""}`;
 
 const CORPORATE_NAME = /\b(limited|ltd|llp|plc|lp|inc|corp|corporation|company|holdings|group|partnership|trust|estates)\b/i;
 /** A web line about a company, not a person (older lines are read from the name). */
@@ -1204,7 +1270,7 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
     }
     for (const line of result.complyAdvantage.lines) {
       // Only the matches over the bars (providerMatchFlags); the rest are possible namesakes.
-      const { flagged, namesakes, unjudged } = splitProviderMatches(line);
+      const { flagged, namesakes, variants, unjudged } = splitProviderMatches(line);
       if (!flagged.length && !unjudged) continue;
       const matches = flagged;
       const types = unjudged ? line.types : [...new Set(flagged.map(m => m.kind).filter(Boolean))];
@@ -1219,6 +1285,7 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
         facts.push({ label: "Profiles", value: "This check kept only the kinds of profile ComplyAdvantage matched, not the profiles themselves. Run the check again to see them here, or look the name up in ComplyAdvantage Mesh." });
       }
       if (namesakes.length) facts.push({ label: "Also matched, below the bars", value: `${namesakes.length} possible namesake${namesakes.length === 1 ? "" : "s"}, listed under Checked before asking` });
+      if (variants.length) facts.push({ label: "Set aside, spelt differently", value: `${variants.length} adverse media profile${variants.length === 1 ? "" : "s"} under a name spelt differently from ${line.name}'s, listed under Checked before asking` });
       if (line.customerId) facts.push({ label: "ComplyAdvantage customer", value: line.customerId });
       flags.push({
         kind: "provider_screen",
@@ -1409,6 +1476,8 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
   } else if (result.complyAdvantage.skipped) {
     lines.push(`- ComplyAdvantage: not used (${result.complyAdvantage.skipped}).`);
   }
+  const variants = precheckSpellingVariants(result);
+  if (variants.length) lines.push(`- ComplyAdvantage adverse media under names spelt differently, set aside (no date of birth ties them to the person): ${variants.slice(0, 6).map(variantWords).join("; ")}${variants.length > 6 ? `; and ${variants.length - 6} more` : ""}.`);
   const namesakes = precheckNamesakes(result);
   if (namesakes.length) lines.push(`- Possible namesakes, not treated as red flags (ComplyAdvantage profiles with no date of birth to set against the person's, or under its bars where the person's is not known, and web results that may be about someone else): ${namesakes.slice(0, 6).map(n => `${n.name}: ${n.what}`).join("; ")}${namesakes.length > 6 ? `; and ${namesakes.length - 6} more` : ""}.`);
   return lines.join("\n").slice(0, 2800);
@@ -1541,6 +1610,15 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
       key: "namesakes", label: `Possible namesakes to check: ${namesakes.length}`, state: "info",
       detail: `ComplyAdvantage profiles nothing ties to the person (no date of birth to set against the one Companies House gives, or under its bars of 60% for a public role and 90% for anything else when the person's date of birth is not known) and web results that may be about someone else of the same name. Not red flags. ${namesakes.filter(n => !n.url).slice(0, 8).map(n => `${n.name}: ${n.what}`).join("; ")}`.trim(),
       links: namesakes.filter(n => n.url).slice(0, 8).map(n => ({ label: `${n.name}: ${n.what}`.slice(0, 140), url: n.url! })),
+    });
+  }
+  // Adverse media under a name spelt differently: set aside, listed for the officers (Woody, 21 November 2026).
+  const variants = precheckSpellingVariants(result);
+  if (variants.length) {
+    out.push({
+      key: "spelling_variants", label: `Set aside, spelt differently: ${variants.length}`, state: "info",
+      detail: `ComplyAdvantage adverse media profiles under a name spelt differently from the person's or company's, with no date of birth matching theirs. Not red flags or namesakes to check. ${variants.slice(0, 10).map(variantWords).join("; ")}${variants.length > 10 ? `; and ${variants.length - 10} more` : ""}`.trim(),
+      links: [],
     });
   }
   return out;

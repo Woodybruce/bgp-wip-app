@@ -71,3 +71,20 @@ test('only the company and its beneficial owners go to ComplyAdvantage and the w
   // Each ComplyAdvantage line says whether a person was screened with a date of birth.
   assert.match(pre, /person: !!subjectOf\(r\.name, i\)\?\.person, dobKnown: !!\(subjectOf\(r\.name, i\)\?\.person && subjectOf\(r\.name, i\)\?\.dobYear\),/);
 });
+
+// Woody, 21 November 2026: "comply advantage keeps hitting miss spells of the names and picking up adverse media
+// on things not spelt the same but are similar", then "Yes want it". Rules tested in server/kyc-prechecks.test.ts.
+test('adverse media under a name spelt differently is set aside, never sanctions or public roles, and the officers still see it', () => {
+  const rules = read('shared/kyc-prechecks.ts');
+  const fn = rules.slice(rules.indexOf('export function providerSpellingVariant'), rules.indexOf('/** A ComplyAdvantage line'));
+  assert.match(fn, /if \(String\(m\.kind \|\| ""\) !== "adverse_media"\) return false;/, 'adverse media only');
+  assert.match(fn, /if \(m\.birthYearAgrees === true\) return false;/, 'a date of birth that agrees keeps it');
+  assert.match(rules, /const variants = all\.filter\(m => providerSpellingVariant\(m, line\)\);/);
+  // Set aside, not hidden: the deal card, KYC4U's note and the red flag's facts all list them.
+  for (const where of ['export function precheckCardLines', 'export function precheckNote']) {
+    const at = rules.indexOf(where);
+    const body = rules.slice(at, rules.indexOf('\nexport ', at + where.length));
+    assert.ok(body.includes('precheckSpellingVariants('), `${where} lists the spelling variants`);
+  }
+  assert.match(rules, /label: "Set aside, spelt differently"/);
+});

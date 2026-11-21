@@ -4148,6 +4148,44 @@ chain walk keeps each owner's date of birth). Tests:
   "chat bgp" configuration, which Mesh's screens did not offer Woody; its API
   ("Update screening configuration") or ComplyAdvantage can switch it on.
 
+## Adverse media under a name spelt differently (Woody, 2026-11-21)
+
+Woody: "comply advantage keeps hitting miss spells of the names and picking up
+adverse media on things not spelt the same but are similar. is there a way of
+sorting that?", then "Yes want it". Do not re-litigate. Rules:
+`providerSpellingVariant`, `nameSpeltAsTheirs`, `personNameParts`,
+`splitProviderMatches` (now `variants` as well) and `precheckSpellingVariants`
+in `shared/kyc-prechecks.ts`. Tests: `server/kyc-prechecks.test.ts` (in
+`npm test`), `qa/regression/kyc-screening-bars.test.mjs`.
+
+- **The cause** is the Mesh configuration: "chat bgp" screens every risk at
+  50, and ComplyAdvantage's own starting points are 50 for sanctions, 60 for
+  PEPs and 90 for adverse media, so at 50 adverse media brings back names
+  that are only like the person's. Woody was advised to split it into
+  collections in Mesh (Settings → Screening configurations; up to four
+  collections, each with its own threshold): sanctions 50, PEPs 60, adverse
+  media and the rest 90, with Jack agreeing the figures. If that is done as a
+  new configuration, its id goes on Railway as
+  `COMPLY_ADVANTAGE_SCREENING_CONFIG_ID`.
+- **The app's backstop**: an adverse media profile is kept only when its name
+  is spelt as theirs. For a person, their surname is all there and every
+  other word of the profile's name is one of their names (initials, titles
+  and suffixes aside; the register's "SURNAME, Forenames" read either way;
+  `nameTokens`, so accents and hyphens do not count). For a company, every
+  word of one name is in the other once the legal form is left out. Anything
+  else is a **spelling variant**: set aside, never a red flag or a possible
+  namesake, whatever ComplyAdvantage scored it. A profile whose date of birth
+  agrees with the person's is kept however it is spelt; a profile that could
+  not be read stays as the bars say. **Sanctions, public roles, warning lists
+  and fitness and probity are never set aside on spelling**: people on those
+  lists are recorded under other spellings and transliterations.
+- **Set aside, not hidden**: the AML box's BGP's checks line counts them
+  ("set aside, spelt differently: N"), the card's **Set aside, spelt
+  differently** line lists each (the name screened, the profile's name, its
+  source and score), KYC4U's note carries them, and a red flag on the same
+  line names how many were set aside. It is worked out when the checks are
+  read, so stored checks change without a re-run.
+
 ## Whose identity check it was (Woody, 2026-11-19)
 
 Woody: "this is email about jack barrat but its actually after woody bruce

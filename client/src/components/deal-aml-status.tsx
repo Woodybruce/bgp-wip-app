@@ -770,6 +770,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
 
   const attention = pre ? pre.lines.filter(l => l.state === "attention").length : 0;
   const namesakes = pre?.lines.find(l => l.key === "namesakes") || null;
+  const variants = pre?.lines.find(l => l.key === "spelling_variants") || null;
   const checksLine: { tone: BoxTone; summary: string } | null = !pre || pre.state === "off" ? null
     : pre.state === "running" ? { tone: "wait", summary: "Running now: Companies House, the sanctions lists and a web search" }
     : pre.state === "needs_company" ? { tone: "info", summary: "Waiting for the company that signs" }
@@ -778,7 +779,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     : pre.unfinished || pre.state === "waiting" ? { tone: "act", summary: "Not finished: Companies House did not answer. They run again by themselves" }
     : {
         tone: attention ? "flag" : "done",
-        summary: `${pre.ranAt ? `${precheckDay(pre.ranAt)} · ` : ""}${attention ? `${attention} to review` : "nothing to review"}${namesakes ? ` · ${namesakes.label.toLowerCase()}` : ""}`,
+        summary: `${pre.ranAt ? `${precheckDay(pre.ranAt)} · ` : ""}${attention ? `${attention} to review` : "nothing to review"}${namesakes ? ` · ${namesakes.label.toLowerCase()}` : ""}${variants ? ` · ${variants.label.toLowerCase()}` : ""}`,
       };
 
   const levelLine: { tone: BoxTone; summary: string } | null = !level || cp.notRequired ? null : {
