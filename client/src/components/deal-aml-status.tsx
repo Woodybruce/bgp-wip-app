@@ -804,19 +804,21 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
       return { tone: possible ? "flag" : "done", summary: `${plural(n, "person", "people")} screened, sanctions only: ${possible ? "a possible match" : "no match"}` };
     }
     if (people.basis === "not_read") return { tone: "wait", summary: "Not read yet: the owners come from Companies House" };
-    // A company registered abroad owns it: the people behind it are the client's to name (20 November 2026).
+    // A company registered abroad owns it: KYC4U find the people behind it (21 November 2026).
     const abroad = people.ownersAbroad?.length
-      ? `owned through ${people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: the client is asked who is behind it`
+      ? `owned through ${people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: KYC4U find who is behind it`
       : null;
     if (abroad && !people.people.some(p => p.roles.includes("owner"))) return { tone: "act", summary: abroad[0].toUpperCase() + abroad.slice(1) };
     const n = people.people.length;
     const done = n - owing.length;
     const directors = people.directors.length ? ` · ${plural(people.directors.length, "director")}, sanctions only` : "";
     if (!n) return { tone: "info", summary: `No one to verify${directors}` };
+    // The owners behind a company abroad are still to find, whoever else is done.
+    const lead = abroad ? `${abroad[0].toUpperCase()}${abroad.slice(1)} · ` : "";
     const summary = owing.length
-      ? `${done} of ${n} done · waiting on ${andList(owing.map(p => personDisplayName(p.name)))}${directors}`
-      : `${n === 1 ? "Done" : `All ${n} done`}${directors}`;
-    return { tone: possible ? "flag" : unreachable.length || owing.some(p => !p.own) ? "act" : owing.length ? "wait" : "done", summary: possible ? `${summary} · a possible sanctions match` : summary };
+      ? `${lead}${done} of ${n} done · waiting on ${andList(owing.map(p => personDisplayName(p.name)))}${directors}`
+      : `${lead}${abroad ? `${n === 1 ? "the named person" : `the ${n} named people`} done` : n === 1 ? "Done" : `All ${n} done`}${directors}`;
+    return { tone: possible ? "flag" : abroad || unreachable.length || owing.some(p => !p.own) ? "act" : owing.length ? "wait" : "done", summary: possible ? `${summary} · a possible sanctions match` : summary };
   })();
 
   const clientLine: { tone: BoxTone; summary: string } | null = !data.clientChecks || cp.notRequired ? null
@@ -844,7 +846,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     : draft?.status === "filled" ? { tone: "wait", summary: `Filled on KYC4U's form ${day(draft.filled_at)}` }
     : draft ? { tone: "wait", summary: `With KYC4U${draft.submitted_at ? ` since ${day(draft.submitted_at)}` : ""}${draft.submitted_ref ? ` · ref ${draft.submitted_ref}` : ""} · ${draft.request_status || "no status from KYC4U yet"}` }
     : kyc4uReq ? { tone: "info", summary: `KYC4U's record: ${kyc4uReq.status || "no status yet"}` }
-    : { tone: flags.length || factors.length ? "act" : "info", summary: flags.length || factors.length ? "Not raised: the red flags go to KYC4U" : "Not raised: needed only for a red flag or enhanced due diligence" };
+    : flags.length || factors.length ? { tone: "act", summary: "Not raised: the red flags go to KYC4U" }
+    : ownedAbroad.length ? { tone: "act", summary: "Not raised: owned through a company registered abroad, so it goes to KYC4U" }
+    : { tone: "info", summary: "Not raised: needed only for a red flag, enhanced due diligence or an owner registered abroad" };
 
   const decisionLine: { tone: BoxTone; summary: string } = stage === "rejected" ? { tone: "flag", summary: "Rejected" }
     : cp.notRequired ? { tone: "done", summary: `Not required: ${cp.notRequired.reasonWords}` }

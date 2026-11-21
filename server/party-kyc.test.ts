@@ -8,7 +8,7 @@ import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  isKyc4uResultKey, kyc4uResultDate, kycVerdict, partyKycState, sameLegalCompany, signOffDenial,
+  approverWords, isKyc4uResultKey, kyc4uResultDate, kycVerdict, partyKycState, sameLegalCompany, signOffDenial,
   type PartyKycInput, type SignOffFacts,
 } from "../shared/party-kyc";
 import { loadPartyKyc } from "./deal-gates";
@@ -20,6 +20,16 @@ const brand = (over: Partial<PartyKycInput["brand"]> = {}): PartyKycInput["brand
 });
 const company = (over: Partial<NonNullable<PartyKycInput["company"]>> = {}): NonNullable<PartyKycInput["company"]> => ({
   id: "e1", name: "The Test Bakery Operations Limited", companiesHouseNumber: "12345678", kyc: null, ...over,
+});
+
+test("KYC4U's approvals read as KYC4U's, never the MLRO's (BGP's AML policy, Issue 2)", () => {
+  assert.equal(approverWords("KYC4U (MLRO)"), "KYC4U");
+  assert.equal(approverWords("Jack Barratt"), "Jack Barratt");
+  assert.equal(approverWords(null), null);
+  // A brand approved before 21 November 2026 still holds the old name.
+  assert.equal(partyKycState({ brand: brand(), company: null }).approvedBy, "KYC4U");
+  const viaCompany = partyKycState({ brand: brand(), company: company({ kyc: { status: "approved", expiresAt: null, approvedBy: "KYC4U (MLRO)" } }) });
+  assert.equal(viaCompany.approvedBy, "KYC4U");
 });
 
 test("a party is judged on the company that signs when the deal names one", () => {
@@ -65,7 +75,7 @@ const facts = (over: Partial<SignOffFacts> = {}): SignOffFacts => ({
 test("BGP signs off a routine party only; anything else goes to KYC4U or waits", () => {
   assert.equal(signOffDenial(facts()), null);
   assert.match(signOffDenial(facts({ rejected: true }))!, /rejected by the Nominated Officer or KYC4U/);
-  assert.match(signOffDenial(facts({ current: { by: "KYC4U (MLRO)", until: "2027-05-19T00:00:00Z" } }))!, /Already approved by KYC4U \(MLRO\) until 19 May 2027/);
+  assert.match(signOffDenial(facts({ current: { by: "KYC4U", until: "2027-05-19T00:00:00Z" } }))!, /Already approved by KYC4U until 19 May 2027/);
   assert.match(signOffDenial(facts({ unchecked: ["the sanctions screening"] }))!, /could not be checked against the sanctions screening/);
   assert.match(signOffDenial(facts({ withKyc4u: true }))!, /raised with KYC4U on this deal/);
   assert.match(signOffDenial(facts({ redFlags: 1 }))!, /needs enhanced due diligence \(a red flag or a higher-risk factor in the AML policy\): raise it with KYC4U/);

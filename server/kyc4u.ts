@@ -304,19 +304,22 @@ export function kyc4uRecheckYears(fields: any): number {
   return Number.isInteger(n) && n >= 1 && n <= 5 ? n : 1;
 }
 
-// ── KYC4U is BGP's MLRO (Woody, 2026-10-05) ────────────────────────────
+// ── KYC4U's request grid is the source of truth (Woody, 2026-10-05) ────
 // "KYC4U are the MLRO, we pay for that service … once they approve, that's
-// the MLRO sign-off." Their request grid is the source of truth: after
-// every sync/import each matched company takes the status of its latest
-// KYC4U request, like a deal following its Xero invoice.
-//   approved / passed / cleared / signed off → approved by "KYC4U (MLRO)",
+// the MLRO sign-off." Superseded on 19 November 2026 by BGP's AML policy,
+// Issue 2: KYC4U are BGP's outsourced KYC provider, not its MLRO; Jack
+// Barratt is the Nominated Officer. After every sync/import each matched
+// company still takes the status of its latest KYC4U request, like a deal
+// following its Xero invoice.
+//   approved / passed / cleared / signed off → approved by "KYC4U" (stored
+//     as "KYC4U (MLRO)" until 21 November 2026: approverWords reads it),
 //     dated by KYC4U, re-check on the AML settings cycle, deals re-derived
 //   failed / rejected / declined / do not proceed → rejected
 //   anything else → in_review — but a still-valid approval is kept while a
 //     re-check is in progress, so a renewal never blocks live deals
 // Idempotent: a company only changes when its latest request or that
 // request's status changes (kyc4u_request_key).
-export const KYC4U_APPROVER = "KYC4U (MLRO)";
+export const KYC4U_APPROVER = "KYC4U";
 export function kyc4uVerdict(status: string | null): "approved" | "rejected" | "in_review" {
   const s = String(status || "").toLowerCase();
   if (/(fail|reject|declin|do not proceed|not approved|unable to verify)/.test(s)) return "rejected";
@@ -1080,7 +1083,7 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
 
   // KYC4U signed off but it isn't on anything the bookmark can read (e.g. an
   // email from them): an admin records it, and the mirror applies it like
-  // any KYC4U approval — "Approved by KYC4U (MLRO)", audited with who
+  // any KYC4U approval — "Approved by KYC4U", audited with who
   // recorded it. A later KYC4U status for the company replaces it.
   app.post("/api/kyc4u/company/:companyId/signoff", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {

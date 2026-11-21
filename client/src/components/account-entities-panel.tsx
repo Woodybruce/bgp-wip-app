@@ -32,6 +32,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Building2, AlertTriangle, CheckCircle2, AlertCircle, XCircle, ShieldCheck, Clock, ChevronRight, ExternalLink, FileText } from "lucide-react";
+import { approverWords } from "@shared/party-kyc";
 
 interface GroupEntityKyc {
   status: string;
@@ -596,7 +597,7 @@ function EntityReview({
     <div className="shrink-0 border-t border-border pt-3 space-y-2">
       <p className="text-[11px] text-muted-foreground">
         {bucket === "current"
-          ? `Approved${kyc?.approvedBy ? ` by ${kyc.approvedBy}` : ""}${kyc?.nextReviewAt ? ` — re-check due ${fmtDate(kyc.nextReviewAt)}` : ""}.`
+          ? `Approved${kyc?.approvedBy ? ` by ${approverWords(kyc.approvedBy)}` : ""}${kyc?.nextReviewAt ? ` — re-check due ${fmtDate(kyc.nextReviewAt)}` : ""}.`
           : "KYC runs from the deal's Parties & AML: BGP's checks, the client checks, and KYC4U, BGP's outsourced KYC provider."}
       </p>
     </div>

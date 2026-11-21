@@ -4930,6 +4930,13 @@ account (`server/aml-market.ts`). Do not re-litigate. Tests:
   by itself higher risk: Monaco and the other secrecy places stay red flags.
 - **Five-year deletion** covers the two new tables (`kyc_public_figure_checks`
   with the party, `kyc_solicitor_checks` with the deal's AML fields).
+- **KYC4U's approvals read "Approved by KYC4U"** (found on the box the same
+  day): the mirror stored "KYC4U (MLRO)" as the approver (`KYC4U_APPROVER` in
+  `server/kyc4u.ts`), against the policy's "not its MLRO". New approvals store
+  "KYC4U", and a stored "KYC4U (MLRO)" reads as "KYC4U" (`approverWords` in
+  `shared/party-kyc.ts`, in `partyKycState` and on the group entities panel);
+  no row was rewritten, and the KYC history keeps what it said. A party owned
+  through a company abroad says so on its People and KYC4U lines too.
 - Not built: Creditsafe (a contract and keys are Woody's); reading a foreign
   register in the app (KYC4U do it); the SRA's data API (needs a key); a
   lender on the deal and its checks.

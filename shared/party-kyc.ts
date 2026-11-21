@@ -45,13 +45,21 @@ export function sameLegalCompany(brand: PartyKycInput["brand"], company: NonNull
   return !!nameKey(brand.legalName) && nameKey(brand.legalName) === nameKey(company.name);
 }
 
+// KYC4U are BGP's outsourced KYC provider, not its MLRO (BGP's AML policy,
+// Issue 2). Their approvals were stored as "KYC4U (MLRO)" until 21 November
+// 2026; a stored row is read as "KYC4U". The KYC history keeps what it said.
+export function approverWords(by: string | null | undefined): string | null {
+  if (!by) return null;
+  return by.trim() === "KYC4U (MLRO)" ? "KYC4U" : by;
+}
+
 export function partyKycState(input: PartyKycInput): PartyKycState {
   const { brand, company } = input;
-  const brandFacts: KycFacts = { status: brand.status, expiresAt: brand.expiresAt, approvedBy: brand.approvedBy, approvedAt: brand.approvedAt ?? null };
+  const brandFacts: KycFacts = { status: brand.status, expiresAt: brand.expiresAt, approvedBy: approverWords(brand.approvedBy), approvedAt: brand.approvedAt ?? null };
   const about = { brandName: brand.name, brandStatus: brand.status };
   if (!company) return { name: brand.name, source: "brand", ...brandFacts, ...about };
   if (brand.status === "rejected") return { name: brand.name, source: "brand_rejected", ...brandFacts, ...about };
-  if (company.kyc) return { name: company.name, source: "company", ...company.kyc, ...about };
+  if (company.kyc) return { name: company.name, source: "company", ...company.kyc, approvedBy: approverWords(company.kyc.approvedBy), ...about };
   if (sameLegalCompany(brand, company)) return { name: company.name, source: "same_company", ...brandFacts, ...about };
   return { name: company.name, source: "company", status: null, expiresAt: null, approvedBy: null, approvedAt: null, ...about };
 }
