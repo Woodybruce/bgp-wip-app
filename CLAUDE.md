@@ -5214,10 +5214,13 @@ our system and check along side what KYC4U did to see if we get the same".
   - **Rent not recorded on a deal**, so the app cannot tell a sanctions-only
     letting (under £10,000 a month) from a full one (Choux, Brasserie
     Bordelaise).
-  - **Smaller gaps**: none is required by the Money Laundering Regulations. Two
-    are required by BGP's own AML policy (Issue 2) as written, and one in some
-    cases. HMRC holds a firm to its own policy (MLR reg 19). Woody was told so
-    on 21 November 2026, correcting an earlier "none needed for compliance".
+  - **Smaller gaps**: none is required by the Money Laundering Regulations or
+    HMRC's guidance, and that is the test Woody applies (2026-11-21: "It's not
+    really our policy it's HMRC that's all we care about"; do not re-litigate).
+    Two are required by BGP's own AML policy (Issue 2) as written, and one in
+    some cases. HMRC checks that a firm follows its own written procedures (MLR
+    reg 19), so the policy's wording should follow what the app does: that is a
+    new issue for Jack to sign, not a build.
     - **A report from an aggregator database** ("Creditsafe/SmartSearch/D&B/Dow
       Jones etc"). The policy lists it under Evidence Required for a limited
       company, a partnership or LLP, a listed company and a regulated
