@@ -768,12 +768,16 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
       errors.push(`Owners abroad: ${words(e)}`);
     }
   } else if (!companiesHouse && !number && subjectKind === "company") {
-    // No UK record at all: the company itself looked up in GLEIF.
+    // No UK record at all: the company itself looked up in GLEIF, only when it
+    // reads as registered abroad (a foreign legal form in its name, or a
+    // country outside the UK on the CRM). A UK company filed without its
+    // number is read as it always was (Woody, 21 November 2026: "Don't want to
+    // break what we've built").
     try {
       const name = entity ? clean(entity.name, 160) : clean(company.uk_entity_name, 160) || clean(company.name, 160);
       const country = entity ? null : clean((await pool.query(`SELECT head_office_address->>'country' AS country FROM crm_companies WHERE id = $1`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.country, 60) || null;
       const { traceAbroadParty } = await import("./kyc-abroad");
-      if (name) abroad = await withTimeout(traceAbroadParty({ name, country }), 60_000, "Looking the company up in GLEIF");
+      if (name && (looksOverseasName(name) || ownerRegister(country) === "abroad")) abroad = await withTimeout(traceAbroadParty({ name, country }), 60_000, "Looking the company up in GLEIF");
     } catch (e: any) {
       errors.push(`GLEIF: ${words(e)}`);
     }

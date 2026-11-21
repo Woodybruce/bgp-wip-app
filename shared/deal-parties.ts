@@ -128,12 +128,17 @@ export const trustMarkInName = (name: unknown): boolean =>
  * trust, so BGP treats it as one. A suggestion a person confirms, never
  * applied by itself: a UK charity company called "… Foundation" is not one.
  */
-export const foundationMarkInName = (name: unknown): boolean => {
+export const foundationMarkInName = (name: unknown, opts: { abroad?: boolean } = {}): boolean => {
   const t = text(name);
   // A company form at the end ("… Foundation Limited", "Foundation Coffee
   // House Ltd") makes it a company, whose owners the register shows.
   if (!t || COMPANY_FORM_AT_END.test(t)) return false;
-  return /\b(foundation|fondation|fonden|stichting|fundaci[oó]n|fondazione|funda[cç][aã]o|fundacja|nadace|nad[aá]cia)\b|stiftung|stiftelse/i.test(t);
+  // English law has no foundation: "The X Foundation" registered in the UK is
+  // a charity company or a charitable trust, read by the register's own rules
+  // as it always was. The English word counts only for one registered abroad
+  // (Jersey, Guernsey, Liechtenstein, Panama ...), which the caller says.
+  return /\b(fondation|fonden|stichting|fundaci[oó]n|fondazione|funda[cç][aã]o|fundacja|nadace|nad[aá]cia)\b|stiftung|stiftelse/i.test(t)
+    || (!!opts.abroad && /\bfoundation\b/i.test(t));
 };
 const COMPANY_FORM_AT_END = /\b(ltd|limited|plc|llp|llc|inc|incorporated|corp|corporation|gmbh|ag|a\/s|aps|ab|oy|sa|sas|sarl|s\.a\.r\.l|spa|s\.p\.a|srl|bv|b\.v|nv|n\.v|kg|lp)\.?$/i;
 

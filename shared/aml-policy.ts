@@ -19,7 +19,7 @@
 // server/kyc-red-flags.ts, server/deal-party-aml.ts).
 
 import type { KycRedFlag } from "./kyc-red-flags";
-import { tradingState, type KycPrecheckResult } from "./kyc-prechecks";
+import { ownerRegister, tradingState, type KycPrecheckResult } from "./kyc-prechecks";
 import { isInvestmentDeal } from "./deal-status";
 import { foundationMarkInName } from "./deal-parties";
 import { ALL_LETTING_TYPES, TENANT_REP_TYPES } from "./letting-rules";
@@ -399,9 +399,10 @@ export function policyFactorFlags(input: { precheck?: KycPrecheckResult | null; 
   // A foundation in the ownership, on the register, abroad, or above a
   // company abroad in GLEIF (Woody, 21 November 2026): treated as a trust.
   const foundationOwners = [
-    ...(ch?.owners || []).filter(o => o.kind !== "individual" && foundationMarkInName(o.name)).map(o => o.name),
-    ...(ch?.ownersAbroad || []).filter(o => foundationMarkInName(o.name)).map(o => o.name),
-    ...(input.precheck?.abroad?.traced || []).flatMap(t => t.gleif.parents.map(g => g.name)).filter(foundationMarkInName),
+    ...(ch?.owners || []).filter(o => o.kind !== "individual" && foundationMarkInName(o.name, { abroad: ownerRegister(o.country) === "abroad" })).map(o => o.name),
+    ...(ch?.ownersAbroad || []).filter(o => foundationMarkInName(o.name, { abroad: true })).map(o => o.name),
+    ...(input.precheck?.abroad?.traced || []).flatMap(t => t.gleif.parents)
+      .filter(g => foundationMarkInName(g.name, { abroad: String(g.country || g.jurisdiction || "").toUpperCase().slice(0, 2) !== "GB" })).map(g => g.name),
   ];
   if (trustOwners.length || foundationOwners.length || /trust/i.test(String(input.subjectType || ""))) {
     const names = [...new Set([...trustOwners, ...foundationOwners])];

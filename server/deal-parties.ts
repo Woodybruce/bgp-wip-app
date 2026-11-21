@@ -35,7 +35,7 @@ import {
   privateMarkInName, isTrustRecord, trustMarkInName, foundationMarkInName, sameCompaniesHouseNumber, signerKindOf,
   type DealPartyBilling, type DealPartyCompany, type DealPartyPayer, type DealPartyPerson, type DealPartyRole, type DealPartyView,
 } from "@shared/deal-parties";
-import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
+import { ownerRegister, personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
 import { billingState, billingWords, payerInput, payerRelationshipWords, PAYER_RELATIONSHIPS } from "@shared/deal-billing";
 import { kycPersonRoleWords } from "@shared/kyc-request";
 
@@ -145,9 +145,12 @@ const personOf = (r: any): DealPartyPerson => ({
 export interface DealPartiesView { deal: { id: string; name: string }; parties: DealPartyView[] }
 
 // A tenant brand's own name is a trading name ("Foundation Coffee House"):
-// only the company that signs for it is read for a foundation.
-const foundationHintFor = (brand: { name?: unknown; company_type?: unknown }, companyName: unknown): boolean =>
-  foundationMarkInName(companyName) || (!/^tenant/i.test(String(brand.company_type || "")) && foundationMarkInName(brand.name));
+// only the company that signs for it is read for a foundation. The English
+// word counts only when the CRM records the party abroad.
+const foundationHintFor = (brand: { name?: unknown; company_type?: unknown; ho_country?: unknown }, companyName: unknown): boolean => {
+  const abroad = ownerRegister(typeof brand.ho_country === "string" ? brand.ho_country : null) === "abroad";
+  return foundationMarkInName(companyName, { abroad }) || (!/^tenant/i.test(String(brand.company_type || "")) && foundationMarkInName(brand.name, { abroad }));
+};
 
 export async function loadDealParties(db: Db, dealId: string): Promise<DealPartiesView | null> {
   const deal = await readDeal(db, dealId);
@@ -156,7 +159,7 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
   const brandIds = [...new Set(roles.map(r => String(deal[DEAL_PARTY_COLUMNS[r].brand])))];
   if (!brandIds.length) return { deal: { id: deal.id, name: deal.name }, parties: [] };
   const [brands, companies, people] = await Promise.all([
-    db.query(`SELECT id, name, companies_house_number, aml_subject_type, company_type,
+    db.query(`SELECT id, name, companies_house_number, aml_subject_type, company_type, head_office_address->>'country' AS ho_country,
                      COALESCE(NULLIF(companies_house_data->'profile'->>'companyName', ''), NULLIF(companies_house_data->>'company_name', ''), NULLIF(uk_entity_name, '')) AS legal_name
                 FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds]),
     db.query(`SELECT id, parent_company_id, name, companies_house_number, is_default, xero_contact_id, xero_contact_name, entity_kind, contact_id FROM crm_trading_entities

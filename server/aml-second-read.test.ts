@@ -19,12 +19,17 @@ test("a name that reads like a trust is spotted, as a suggestion only", () => {
 });
 
 test("a foundation is spotted by name in its own languages, never a company that carries the word (21 November 2026)", () => {
-  for (const n of ["Holm Fonden", "LEGO Fonden", "Stichting Pensioenfonds ABP", "Fondation Hoffmann", "Kirkbi Stiftung", "Stiftelsen Ikano", "The Smith Foundation", "Fundación Amancio Ortega"]) {
+  for (const n of ["Holm Fonden", "LEGO Fonden", "Stichting Pensioenfonds ABP", "Fondation Hoffmann", "Kirkbi Stiftung", "Stiftelsen Ikano", "Fundación Amancio Ortega"]) {
     assert.equal(foundationMarkInName(n), true, n);
   }
   for (const n of ["Foundation Coffee House Ltd", "The X Foundation Limited", "Holm Fonden A/S", "Fond Restaurant", "Gail's Bakery", "The Wellcome Trust"]) {
     assert.equal(foundationMarkInName(n), false, n);
   }
+  // English law has no foundation: the English word counts only for one registered abroad
+  // (Woody, 21 November 2026: "Don't want to break what we've built").
+  assert.equal(foundationMarkInName("The Smith Foundation"), false);
+  assert.equal(foundationMarkInName("The Smith Foundation", { abroad: true }), true);
+  assert.equal(foundationMarkInName("Foundation Coffee House Ltd", { abroad: true }), false);
 });
 
 test("a foundation in the ownership, on the register, abroad or above a company abroad, is the trust factor", () => {
@@ -45,6 +50,11 @@ test("a foundation in the ownership, on the register, abroad or above a company 
   assert.ok(abroad.some(x => x.kind === "policy_trust"));
   const company = policyFactorFlags({ precheck: precheck({ owners: [{ name: "Foundation Coffee Holdings Ltd", kind: "company", controls: [], notifiedOn: null, country: "England" }] }) });
   assert.ok(!company.some(x => x.kind === "policy_trust"), "a company with the word in its name is not a foundation");
+  // A UK charity called "… Foundation" owning a UK company reads as it always did.
+  const ukCharity = policyFactorFlags({ precheck: precheck({ owners: [{ name: "The Smith Family Foundation", kind: "company", controls: ["ownership-of-shares-75-to-100-percent"], notifiedOn: null, country: "England" }] }) });
+  assert.ok(!ukCharity.some(x => x.kind === "policy_trust"), "a UK-registered foundation is read by the register's own rules");
+  const jersey = policyFactorFlags({ precheck: precheck({ owners: [{ name: "The Smith Family Foundation", kind: "company", controls: ["ownership-of-shares-75-to-100-percent"], notifiedOn: null, country: "Jersey" }] }) });
+  assert.ok(jersey.some(x => x.kind === "policy_trust"), "a Jersey foundation is one");
 });
 
 test("a party recorded as a trust is enhanced, and needs no company that signs", () => {

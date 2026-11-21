@@ -6946,10 +6946,14 @@ Do not re-litigate. Tests: `server/aml-reliance.test.ts`,
 `qa/regression/aml-reliance-stop-guards.test.mjs`.
 
 - **A company with no UK record** (no Companies House number and no entity on
-  the Register of Overseas Entities): BGP's checks before asking look it up in
-  GLEIF by its name, narrowed by the CRM's country when it holds one
-  (`traceAbroadParty` in `server/kyc-abroad.ts`), and follow its parents as
-  for a company abroad. The run stores it as `result.abroad` with `party:
+  the Register of Overseas Entities) that reads as registered abroad (a
+  foreign legal form in its name, `looksOverseasName`, or a country outside
+  the UK on the CRM): BGP's checks before asking look it up in GLEIF by its
+  name, narrowed by that country (`traceAbroadParty` in
+  `server/kyc-abroad.ts`), and follow its parents as for a company abroad. A
+  UK company filed without its number is read as it always was (Woody,
+  21 November 2026: "This is just international? Don't want to break what
+  we've built"). The run stores it as `result.abroad` with `party:
   true`, and it shows in the company facts and KYC4U's note. Its people to
   check read `abroad_company`: the people behind it are recorded under Owners
   abroad. It is screened as a company. The rule that sends a party owned from
@@ -6958,8 +6962,12 @@ Do not re-litigate. Tests: `server/aml-reliance.test.ts`,
   people who control it and the people it benefits are its beneficial
   owners):
   - The name rule is `foundationMarkInName` in `shared/deal-parties.ts`:
-    foundation, fondation, fonden, stichting, fundación, fondazione,
-    fundação, fundacja, nadace, nadácia, Stiftung, stiftelse.
+    fondation, fonden, stichting, fundación, fondazione, fundação, fundacja,
+    nadace, nadácia, Stiftung, stiftelse. The English word "Foundation"
+    counts only for one registered abroad (Jersey, Guernsey, Liechtenstein,
+    Panama ...): English law has no foundation, and a UK "… Foundation" is a
+    charity company or a charitable trust, read as it always was. The caller
+    says where it is registered (the owner's register, the CRM country).
   - It never reads a name ending in a company form (Ltd, Limited, A/S, GmbH
     …), and never a tenant brand's own name, which is a trading name
     ("Foundation Coffee House").

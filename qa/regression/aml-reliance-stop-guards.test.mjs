@@ -75,6 +75,14 @@ test("stopping and releasing are the officers'; the banner is BGP staff's; the r
   assert.doesNotMatch(read("shared/aml-stop.ts").match(/AML_STOP_REFUSAL = "([^"]+)"/)[1], /AML|money laundering|Nominated Officer/);
 });
 
+test("the international pieces stay international: a UK company is read as it always was", () => {
+  // GLEIF looks a company up only when it reads as registered abroad.
+  assert.match(read("server/kyc-prechecks.ts"), /if \(name && \(looksOverseasName\(name\) \|\| ownerRegister\(country\) === "abroad"\)\) abroad = await withTimeout\(traceAbroadParty/);
+  // The English word "Foundation" counts only abroad.
+  assert.match(read("shared/deal-parties.ts"), /\|\| \(!!opts\.abroad && \/\\bfoundation\\b\/i\.test\(t\)\)/);
+  assert.match(read("shared/aml-policy.ts"), /foundationMarkInName\(o\.name, \{ abroad: ownerRegister\(o\.country\) === "abroad" \}\)/);
+});
+
 test("a client login's deal history never shows BGP's AML lines", () => {
   const crm = read("server/crm.ts");
   assert.match(crm, /!CLIENT_HIDDEN_AUDIT_FIELDS\.has\(l\.field\) && !\/\^\(aml\|kyc\|client_checks\)\/i\.test/);
