@@ -20,6 +20,7 @@ import { loadDealRedFlags } from "./kyc-red-flags";
 import { redFlagNote } from "@shared/kyc-red-flags";
 import { trustChecklistNote } from "@shared/aml-policy";
 import { precheckNote } from "@shared/kyc-prechecks";
+import { refileKyc4uArchive, registerKyc4uArchiveRoutes } from "./kyc4u-archive";
 
 const TENANT = process.env.KYC4U_TENANT || "kyc4ultd.onmicrosoft.com";
 const SITE_HOST = process.env.KYC4U_SITE_HOST || "kyc4ultd.sharepoint.com";
@@ -230,6 +231,8 @@ export async function ingestKyc4uLists(lists: Array<{ id: string; name: string; 
     [JSON.stringify({ at: new Date().toISOString(), source, userId, lists: lists.length, items, matched })]);
   console.log(`[kyc4u] imported ${items} requests from ${lists.length} lists via ${source} (${matched} matched)`);
   await mirrorKyc4uStatuses().catch((e: any) => console.warn("[kyc4u] status mirror failed:", e?.message));
+  // Files already copied from KYC4U's site follow their requests' matches.
+  await refileKyc4uArchive().catch((e: any) => console.warn("[kyc4u] filing kept files failed:", e?.message));
   return { lists: lists.length, items, matched };
 }
 
@@ -815,7 +818,7 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
   });
 
   app.get("/api/kyc4u/callback", async (req: Request, res: Response) => {
-    const back = (msg: string) => res.redirect(`/kyc-clouseau?tab=kyc4u&kyc4u=${encodeURIComponent(msg)}`);
+    const back = (msg: string) => res.redirect(`/subscriptions?section=kyc4u&kyc4u=${encodeURIComponent(msg)}`);
     try {
       // KYC4U's admin approving the app for their tenant (the admin-consent
       // link) comes back here with no code — say so, then Connect works.
@@ -862,6 +865,8 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
               at: new Date().toISOString(), site: req.body?.site || null,
               webs: (Array.isArray(diag.webs) ? diag.webs : []).slice(0, 20).map((w: any) => ({ url: w?.url, error: w?.error || null, lists: (Array.isArray(w?.lists) ? w.lists : []).slice(0, 100) })),
               links: (Array.isArray(diag.links) ? diag.links : []).slice(0, 80),
+              // The page the bookmark was clicked on, and the status rows it read there.
+              page: diag.page && typeof diag.page === "object" ? { url: String(diag.page.url || "").slice(0, 300), rows: Number(diag.page.rows) || 0 } : null,
             })],
           ).catch((e: any) => console.warn("[kyc4u] saving diag failed:", e?.message));
       }
@@ -888,7 +893,7 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
         return folded ? [{ ...folded, replaces: l.id }] : [];
       });
       for (const l of clean) if ((l as any).replaces) await pool.query(`DELETE FROM kyc4u_requests WHERE list_id = $1 AND company_id_manual IS NULL`, [(l as any).replaces]);
-      if (!clean.length) return res.status(400).json({ message: "KYC4U's files came through without their folder names — drag the new Send to ChatBGP bookmark from the KYC4U panel and try again." });
+      if (!clean.length) return res.status(400).json({ message: "KYC4U's files came through without their folder names — drag the new Send to ChatBGP bookmark from Subscriptions & APIs → KYC4U and try again." });
       res.json(await ingestKyc4uLists(clean, "bookmark", req.session.userId || (req as any).tokenUserId || null));
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -1120,6 +1125,7 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
         }
       }
       await mirrorKyc4uStatuses().catch(() => {});
+      await refileKyc4uArchive().catch((e: any) => console.warn("[kyc4u] filing kept files failed:", e?.message));
       res.json({ requests: rows.length, matched, changed });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -1137,9 +1143,13 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
       if (companyId) await rememberEntity(String(req.params.listId), String(req.params.itemId), companyId)
         .catch((e: any) => console.warn("[kyc4u] saving the entity on the company failed:", e?.message));
       await mirrorKyc4uStatuses().catch(() => {});
+      // The request folder's files kept in the app follow the match.
+      await refileKyc4uArchive({ reqRef: String(req.params.itemId) }).catch((e: any) => console.warn("[kyc4u] filing kept files failed:", e?.message));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
+
+  registerKyc4uArchiveRoutes(app, requireAuth, requireAdmin);
 
   setInterval(() => {
     loadConnection().then(conn => { if (conn) return syncKyc4u(); }).catch((e: any) => console.warn("[kyc4u] scheduled sync failed:", e?.message));

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { KycEmailsAdmin } from "@/components/kyc-emails-admin";
+import { Kyc4uArchiveCard } from "@/components/kyc4u-archive-card";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Loader2, ExternalLink, Bookmark, Upload, Plug, Unplug, RefreshCw, Copy, Download, CheckCircle2 } from "lucide-react";
@@ -61,9 +61,18 @@ return Promise.all(webs.map(function(u){var info={url:u,lists:[]};diag.webs.push
 return get(u+"/_api/web/lists?$filter=Hidden eq false&$select=Id,Title,ItemCount,BaseType,BaseTemplate,DefaultViewUrl").then(function(d){
 var ls=(d.value||[]);info.lists=ls.map(function(l){return{title:l.Title,count:l.ItemCount,type:l.BaseType,template:l.BaseTemplate};});
 ls=ls.filter(function(l){return l.ItemCount>0&&(l.BaseType===0||(l.BaseType===1&&l.BaseTemplate!==119&&!SYS.test(l.Title)));});
-return Promise.all(ls.map(function(l){var lib=l.BaseType===1;return all(u+"/_api/web/lists(guid'"+l.Id+"')/items?$top=500"+(lib?"&$select=Id,Title,FileLeafRef,FileRef,FileDirRef,FSObjType,Created,Modified":""),[]).then(function(its){return{id:l.Id,name:l.Title,library:lib,items:its.map(function(i){var f={};for(var k in i){if(k.indexOf('odata')<0&&(i[k]===null||typeof i[k]!=='object'))f[k]=i[k];}return{id:String(i.Id),fields:f,created:i.Created,modified:i.Modified,url:location.origin+(lib&&i.FileRef?i.FileRef:(l.DefaultViewUrl||''))};})};}).catch(function(e){info.error=e.message;return null;});}));
+return Promise.all(ls.map(function(l){var lib=l.BaseType===1;return all(u+"/_api/web/lists(guid'"+l.Id+"')/items?$top=500"+(lib?"&$select=Id,Title,FileLeafRef,FileRef,FileDirRef,FSObjType,Created,Modified":""),[]).then(function(its){return{id:l.Id,name:l.Title,library:lib,web:u,items:its.map(function(i){var f={};for(var k in i){if(k.indexOf('odata')<0&&(i[k]===null||typeof i[k]!=='object'))f[k]=i[k];}return{id:String(i.Id),fields:f,created:i.Created,modified:i.Modified,url:location.origin+(lib&&i.FileRef?i.FileRef:(l.DefaultViewUrl||''))};})};}).catch(function(e){info.error=e.message;return null;});}));
 }).catch(function(e){info.error=e.message;return [];});}));
-}).then(function(per){var lists=[].concat.apply([],per).filter(Boolean);var pg=pageGrid();if(pg)lists.push(pg);var sent=false;window.addEventListener('message',function(e){if(e.origin===APP&&e.data&&e.data.type==='kyc4u-ready'&&!sent){sent=true;w.postMessage({type:'kyc4u-data',lists:lists,site:web,diag:diag},APP);}});
+}).then(function(per){var lists=[].concat.apply([],per).filter(Boolean);var pg=pageGrid();if(pg)lists.push(pg);var sent=false;window.addEventListener('message',function(e){if(e.origin===APP&&e.data&&e.data.type==='kyc4u-ready'&&!sent){sent=true;w.postMessage({type:'kyc4u-data',v:2,lists:lists,site:web,diag:diag},APP);}});
+var libs=lists.filter(function(l){return l.library&&l.web;});
+function afiles(){var S="$select=Id,UniqueId,FileRef,FileLeafRef,FSObjType,Modified,Created,File_x0020_Size";var S0="$select=Id,FileRef,FileLeafRef,FSObjType,Modified,Created";
+return Promise.all(libs.map(function(l){var b=l.web+"/_api/web/lists(guid'"+l.id+"')/items?$top=500&";return all(b+S,[]).catch(function(){return all(b+S0,[]);}).then(function(its){return its.filter(function(i){return Number(i.FSObjType)===0&&i.FileRef;}).map(function(i){var sz=i.File_x0020_Size;return{uniqueId:i.UniqueId||null,path:i.FileRef,name:i.FileLeafRef||String(i.FileRef).split('/').pop(),web:l.web,modified:i.Modified||null,created:i.Created||null,size:(sz===undefined||sz===null||sz==='')?null:Number(sz)};});}).catch(function(){return [];});})).then(function(per){return [].concat.apply([],per);});}
+function abytes(f){var p=String(f.path||'').replace(/'/g,"''");var u=String(f.web||web)+"/_api/web/GetFileByServerRelativePath(decodedurl='"+encodeURIComponent(p)+"')/$value";
+return fetch(u,{credentials:'include'}).then(function(r){return r.ok?r:fetch(location.origin+encodeURI(String(f.path||''))+'?download=1',{credentials:'include'});}).then(function(r){if(!r.ok)throw new Error('KYC4U answered '+r.status);var t=r.headers.get('content-type')||'';return r.arrayBuffer().then(function(b){return{b:b,t:t};});});}
+window.addEventListener('message',function(e){if(e.origin!==APP||e.source!==w||!e.data)return;var d=e.data;
+if(d.type==='kyc4u-archive-list'){afiles().then(function(fs){w.postMessage({type:'kyc4u-archive-files',files:fs},APP);}).catch(function(err){w.postMessage({type:'kyc4u-archive-files',files:[],error:String(err&&err.message||err)},APP);});}
+if(d.type==='kyc4u-archive-get'){var f=d.file||{};var max=Number(d.max)||26214400;abytes(f).then(function(x){var nm=String(f.name||'').toLowerCase();if(x.t.toLowerCase().indexOf('text/html')>=0&&!/[.]html?$/.test(nm))throw new Error('KYC4U sent a web page, not the file');if(x.b.byteLength>max){w.postMessage({type:'kyc4u-archive-bytes',key:f.key,error:'too_large',size:x.b.byteLength},APP);return;}w.postMessage({type:'kyc4u-archive-bytes',key:f.key,mime:x.t,size:x.b.byteLength,bytes:x.b},APP,[x.b]);}).catch(function(err){w.postMessage({type:'kyc4u-archive-bytes',key:f.key,error:String(err&&err.message||err)},APP);});}
+});
 }).catch(function(e){alert('ChatBGP could not read KYC4U: '+e.message);});})();`;
   return `javascript:${encodeURIComponent(code.replace(/\n/g, ""))}`;
 }
@@ -236,8 +245,6 @@ export default function Kyc4uPanel() {
         </section>
       )}
 
-      {isAdmin && <KycEmailsAdmin />}
-
       {isAdmin && (
         <section className="rounded-xl border bg-card p-4" data-testid="kyc4u-bookmark">
           <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Send from KYC4U — no approval needed</p>
@@ -245,8 +252,9 @@ export default function Kyc4uPanel() {
           <ol className="text-sm mt-2 space-y-1 list-decimal pl-5">
             <li>Drag this button to your browser's bookmarks bar: <a ref={bookmarkRef} className="inline-flex items-center gap-1 rounded-full bg-primary text-primary-foreground px-3 py-1 text-xs font-semibold cursor-grab no-underline" onClick={(e) => { e.preventDefault(); toast({ title: "Drag it to your bookmarks bar", description: "Then click it while you're on KYC4U's site." }); }} data-testid="link-kyc4u-bookmarklet"><Bookmark className="w-3 h-3" />Send to ChatBGP</a></li>
             <li>Open the <a href={status.site} target="_blank" rel="noopener" className="text-primary underline-offset-2 hover:underline">KYC4U site</a> and sign in as usual.</li>
-            <li>Click <strong>Send to ChatBGP</strong> in your bookmarks bar. A small window confirms how many requests came across.</li>
+            <li>Click <strong>Send to ChatBGP</strong> in your bookmarks bar. A small window brings across the requests, then copies every file on KYC4U's site that the app does not hold yet. Keep it and KYC4U's tab open until it finishes; clicking again carries on.</li>
           </ol>
+          <p className="text-xs text-muted-foreground mt-2">The bookmark changed on 21 November 2026 to copy KYC4U's files: drag it to your bookmarks bar again, in place of the old one.</p>
           <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t">
             <span className="text-xs text-muted-foreground">Or upload an export of the grid (CSV or Excel):</span>
             <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadExport(f); }} />
@@ -255,6 +263,8 @@ export default function Kyc4uPanel() {
           </div>
         </section>
       )}
+
+      {isAdmin && <Kyc4uArchiveCard />}
 
       {requests.length > 0 && (
         <section className="rounded-xl border bg-card p-4">

@@ -203,8 +203,8 @@ const microsoftNav = [
 // matches the list Woody dictated (AML → Enrichment Hub).
 const unfinishedNav = [
   { title: "Portfolios", url: "/portfolios", icon: Layers },
-  // KYC4U is a pill on My BGP for admins (Woody, 2026-11-17: "KYC4U put in
-  // the People and HR page"); /kyc-clouseau still opens it.
+  // KYC4U is a section of Subscriptions & APIs (Woody, 2026-11-21: "Move
+  // KYC4U into subscriptions and APIS"); /kyc-clouseau still opens it.
   { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target },

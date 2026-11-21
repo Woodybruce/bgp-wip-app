@@ -62,6 +62,7 @@ export const COMPANY_REFS: Array<{ table: string; column: string }> = [
   { table: "investment_tracker_clients", column: "company_id" },
   { table: "kyc4u_requests",           column: "company_id" },
   { table: "kyc4u_requests",           column: "company_id_manual" },
+  { table: "kyc4u_archive_files",      column: "company_id" },
   { table: "investment_offers",        column: "company_id" },
   { table: "investment_distributions", column: "company_id" },
   { table: "investment_viewings",      column: "company_id" },

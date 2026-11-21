@@ -6,9 +6,9 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
 
 const TasksPage = lazy(() => import("./tasks"));
-// My BGP's two folded-in pages (Woody, 2026-11-16), and KYC4U, a pill on the
-// people page for admins (Woody, 2026-11-17: "KYC4U put in the People and HR page").
-const Kyc4uPanel = lazy(() => import("@/components/kyc4u-panel"));
+// My BGP's two folded-in pages (Woody, 2026-11-16). KYC4U was a pill here for
+// admins (2026-11-17) until it moved to Subscriptions & APIs (Woody,
+// 2026-11-21: "Move KYC4U into subscriptions and APIS"); ?section=kyc4u goes there.
 const MyCardAndExpenses = lazy(() => import("./my-expenses").then(m => ({ default: m.MyCardAndExpenses })));
 const BusinessCardPanel = lazy(() => import("./business-card").then(m => ({ default: m.BusinessCardPanel })));
 const AmlTrainingPanel = lazy(() => import("@/components/aml-training").then(m => ({ default: m.AmlTrainingPanel })));
@@ -6702,9 +6702,11 @@ export default function HRPage() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
   const isAdmin = !!currentUser?.isAdmin;
-  // ?section= opens one of the page's pills (a link to KYC4U names it).
+  // ?section= opens one of the page's pills. An old link to the KYC4U pill
+  // opens KYC4U in Subscriptions & APIs.
   const sectionParam = new URLSearchParams(window.location.search).get("section") || "";
-  const initialSection = ["overview", "policies", ...(isAdmin ? ["holidays", "xero-payroll", "kyc4u"] : [])].includes(sectionParam) ? sectionParam : "overview";
+  useEffect(() => { if (sectionParam === "kyc4u") navigate("/subscriptions?section=kyc4u", { replace: true }); }, [sectionParam]);
+  const initialSection = ["overview", "policies", ...(isAdmin ? ["holidays", "xero-payroll"] : [])].includes(sectionParam) ? sectionParam : "overview";
 
   const { data: allStaff = [], isLoading } = useQuery<StaffMember[]>({
     queryKey: ["/api/hr/staff"],
@@ -6826,7 +6828,6 @@ export default function HRPage() {
             ...(isAdmin ? [{ value: "holidays", label: "Holiday approvals" }] : []),
             { value: "policies", label: "Policies" },
             ...(isAdmin ? [{ value: "xero-payroll", label: "Xero Payroll" }] : []),
-            ...(isAdmin ? [{ value: "kyc4u", label: "KYC4U" }] : []),
           ].map(t => (
             <TabsTrigger
               key={t.value}
@@ -6861,15 +6862,6 @@ export default function HRPage() {
           </TabsContent>
         )}
 
-        {isAdmin && (
-          <TabsContent value="kyc4u">
-            <div className="pb-6 -mx-4">
-              <Suspense fallback={<div className="p-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>}>
-                <Kyc4uPanel />
-              </Suspense>
-            </div>
-          </TabsContent>
-        )}
       </Tabs>
       </div>
 

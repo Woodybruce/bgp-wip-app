@@ -63,9 +63,15 @@ test('My BGP is People & HR renamed, with My Card and Business card folded in', 
   // The page is titled My BGP, and your own profile carries the heading from it too.
   assert.match(hr, /data-testid="text-hr-title">\s*My BGP\s*<\/h1>/);
   assert.match(hr, /\{\(myBgp \|\| isOwn\) && \(/);
-  // KYC4U is a pill there for admins, and off the menus (Woody, 2026-11-17).
-  assert.match(hr, /\.\.\.\(isAdmin \? \[\{ value: "kyc4u", label: "KYC4U" \}\] : \[\]\)/);
-  assert.match(hr, /<Kyc4uPanel \/>/);
+  // KYC4U was a pill there for admins (Woody, 2026-11-17) and moved to
+  // Subscriptions & APIs (Woody, 2026-11-21: "Move KYC4U into subscriptions
+  // and APIS"); an old link to the pill goes there. It stays off the menus.
+  assert.ok(!/value: "kyc4u"/.test(hr) && !/<Kyc4uPanel \/>/.test(hr), 'KYC4U is no longer a My BGP pill');
+  assert.match(hr, /if \(sectionParam === "kyc4u"\) navigate\("\/subscriptions\?section=kyc4u", \{ replace: true \}\)/);
+  const subs = source('client/src/pages/subscriptions.tsx');
+  assert.match(subs, /<Kyc4uPanel \/>/);
+  assert.match(subs, /new URLSearchParams\(window\.location\.search\)\.get\("section"\) === "kyc4u"/);
+  assert.match(source('client/src/pages/kyc-hub.tsx'), /params\.set\("section", "kyc4u"\);\s*navigate\(`\/subscriptions\?\$\{params\.toString\(\)\}`, \{ replace: true \}\)/);
   for (const items of [core, phone]) assert.ok(!items.some(i => i.url === '/kyc-clouseau'), 'KYC4U off the menu');
   const unfinished = find(SIDEBAR, node => ts.isVariableStatement(node) && node.getText().startsWith('const unfinishedNav ='));
   assert.ok(!unfinished.includes('url: "/kyc-clouseau"'));

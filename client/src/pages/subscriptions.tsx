@@ -3,11 +3,18 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ExternalLink, Search, Building2, FileText, MapPin, Newspaper, ShieldCheck, Mail, HardDrive, Rocket, LineChart, Palette, Globe, ChevronDown, ChevronUp, KeyRound, CheckCircle2, XCircle, RefreshCw, Zap, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Pill } from "@/components/ui/pill";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, startXeroConnect } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+
+// KYC4U, BGP's outsourced KYC provider, lives here (Woody, 21 November 2026:
+// "Move KYC4U into subscriptions and APIS when done as we shouldn't need it
+// again really"): its requests, the Send to ChatBGP bookmark that copies
+// every file on its site into the app, and the automatic sync. Folded until
+// opened; ?section=kyc4u (and /kyc-clouseau) opens it.
+const Kyc4uPanel = lazy(() => import("@/components/kyc4u-panel"));
 
 type IntegrationItem = {
   key: string;
@@ -71,7 +78,7 @@ const subscriptions: Subscription[] = [
   {
     name: "KYC4U",
     category: "Compliance",
-    description: "Know Your Customer checks and anti-money laundering compliance for property transactions.",
+    description: "BGP's outsourced KYC provider: their checks on a deal's party, sent from the deal's AML box. Their requests and every file on their site are kept in the app: open KYC4U below.",
     url: "https://www.kyc4u.com",
     icon: ShieldCheck,
     color: "bg-red-500/10 text-red-600 dark:text-red-400",
@@ -223,6 +230,11 @@ export default function Subscriptions() {
     },
   });
   const isAdmin = !!currentUser?.isAdmin;
+
+  const [kyc4uOpen, setKyc4uOpen] = useState(() => new URLSearchParams(window.location.search).get("section") === "kyc4u");
+  const kyc4uRef = useRef<HTMLDivElement>(null);
+  const openKyc4u = () => { setKyc4uOpen(true); setTimeout(() => kyc4uRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
+  useEffect(() => { if (kyc4uOpen) setTimeout(() => kyc4uRef.current?.scrollIntoView({ block: "start" }), 300); }, []);
 
   const { data: pipnetStatus, refetch: refetchPipnet } = useQuery<{ configured: boolean; source: "db" | "env" | "none"; usernameMasked: string; emailMasked: string }>({
     queryKey: ["/api/admin/integrations/pipnet"],
@@ -531,6 +543,33 @@ export default function Subscriptions() {
         </CardContent>
       </Card>
 
+      <Card ref={kyc4uRef} className="scroll-mt-4" data-testid="subscriptions-kyc4u">
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold">KYC4U</h2>
+                <p className="text-xs text-muted-foreground">BGP's outsourced KYC provider: their requests, every file on their site kept in the app, and the bookmark that brings them across.</p>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => (kyc4uOpen ? setKyc4uOpen(false) : openKyc4u())} data-testid="button-toggle-kyc4u">
+              {kyc4uOpen ? <ChevronUp className="w-3.5 h-3.5 mr-1.5" /> : <ChevronDown className="w-3.5 h-3.5 mr-1.5" />}
+              {kyc4uOpen ? "Hide" : "Open KYC4U"}
+            </Button>
+          </div>
+          {kyc4uOpen && (
+            <div className="-mx-4 -mb-4 border-t">
+              <Suspense fallback={<div className="p-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>}>
+                <Kyc4uPanel />
+              </Suspense>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -591,6 +630,11 @@ export default function Subscriptions() {
                       {sub.category}
                     </Badge>
                     <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{sub.description}</p>
+                    {sub.name === "KYC4U" && isExpanded && (
+                      <button type="button" className="mt-1.5 text-xs text-primary hover:underline" onClick={(e) => { e.stopPropagation(); openKyc4u(); }} data-testid="button-open-kyc4u-from-card">
+                        Open KYC4U
+                      </button>
+                    )}
                     {sub.apiNote && isExpanded && (
                       <p className="text-xs text-primary/80 mt-1.5 italic">{sub.apiNote}</p>
                     )}

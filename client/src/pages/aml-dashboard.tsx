@@ -18,6 +18,7 @@ import { AmlPolicyPanel } from "@/components/aml-policy-panel";
 import { AmlRegisterBoard, MyRegisterReports, RaiseReportButton } from "@/components/aml-register";
 import { AmlTrainingBoard, AmlTrainingPanel } from "@/components/aml-training";
 import { AmlRetentionBoard } from "@/components/aml-retention";
+import { KycEmailsAdmin } from "@/components/kyc-emails-admin";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { AML_BUCKETS, AML_STAGE_LABEL, amlNeedsKyc4u, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow } from "@shared/aml-dashboard";
@@ -60,12 +61,16 @@ const isBucket = (v: string | null): v is AmlBucket => !!v && AML_BUCKETS.some(b
 // The page's sections (19 November 2026): the checks for everyone; the AML
 // register and the five-year deletion for the Nominated Officer and the
 // Deputy; training for everyone (the officers and admins see everyone's).
-type Section = "checks" | "reports" | "training" | "records";
-const SECTIONS: Array<{ key: Section; label: string; officer?: boolean }> = [
+// Client check emails for admins (21 November 2026: the preview and test of
+// the emails BGP's own client checks send, moved here from the KYC4U page
+// when KYC4U went to Subscriptions & APIs).
+type Section = "checks" | "reports" | "training" | "records" | "emails";
+const SECTIONS: Array<{ key: Section; label: string; officer?: boolean; admin?: boolean }> = [
   { key: "checks", label: "Checks" },
   { key: "reports", label: "Reports", officer: true },
   { key: "training", label: "Training" },
   { key: "records", label: "Records", officer: true },
+  { key: "emails", label: "Client check emails", admin: true },
 ];
 const isSection = (v: string | null): v is Section => !!v && SECTIONS.some(x => x.key === v);
 interface PolicyRoles { isOfficer?: boolean; managesTraining?: boolean }
@@ -194,7 +199,8 @@ export default function AmlDashboard() {
   const [open, setOpen] = useState<AmlDashboardRow | null>(null);
   const { data, isLoading, error } = useQuery<Feed>({ queryKey: ["/api/aml-dashboard"], enabled: section === "checks" });
   const { data: roles } = useQuery<PolicyRoles>({ queryKey: ["/api/aml-policy"] });
-  const sections = SECTIONS.filter(x => !x.officer || roles?.isOfficer);
+  const { data: me } = useQuery<{ isAdmin?: boolean } | null>({ queryKey: ["/api/auth/me"] });
+  const sections = SECTIONS.filter(x => (!x.officer || roles?.isOfficer) && (!x.admin || me?.isAdmin));
   const shownSection: Section = sections.some(x => x.key === section) ? section : "checks";
 
   // The view in the address, replaced (a pill change is never a Back step).
@@ -234,6 +240,7 @@ export default function AmlDashboard() {
       {shownSection === "records" && <AmlRetentionBoard />}
       {shownSection === "training" && (roles?.managesTraining ? <AmlTrainingBoard /> : <AmlTrainingPanel userId="me" isOwn />)}
       {shownSection === "checks" && <MyRegisterReports />}
+      {shownSection === "emails" && <KycEmailsAdmin />}
 
       {shownSection === "checks" && <>
       <div className="flex flex-wrap items-center gap-2">

@@ -3274,8 +3274,9 @@ page's rules `shared/kyc-request.ts`; client page
 `client/src/pages/kyc-upload.tsx` (public, `/kyc-upload/:token`); agent
 dialog and request rows `client/src/components/kyc-client-checks.tsx` (on
 the deal's KYC card per party, and the deal form's Kick off AML step);
-admin card `client/src/components/kyc-emails-admin.tsx` (My BGP → KYC4U
-pill). Tests: `server/kyc-request.test.ts` (in `npm test`),
+admin card `client/src/components/kyc-emails-admin.tsx` (the AML
+dashboard's **Client check emails** pill, admins, since 21 November 2026;
+on the KYC4U pill of My BGP before). Tests: `server/kyc-request.test.ts` (in `npm test`),
 `qa/regression/kyc-client-checks.test.mjs`.
 
 - **What was wrong, and the rule now** (do not undo): it sent from
@@ -3846,7 +3847,8 @@ screens: `client/src/components/deal-party-aml.tsx`. Tests:
   The card says "Checks on <company>, the company that signs", says when a
   different company has no checks though the brand is approved, and hides
   "Before the checks can start" once a party is approved.
-- **Connect KYC4U is back** (My BGP → KYC4U pill, admins, "Automatic sync"):
+- **Connect KYC4U is back** (Subscriptions & APIs → KYC4U since 21 November
+  2026, on My BGP before; admins, "Automatic sync"):
   Connect, Sync now, Disconnect and **Copy the approval link for KYC4U's IT
   admin** (`GET /api/kyc4u/admin-consent-link`: Microsoft's v2.0 admin
   consent for `Sites.Read.All`, `User.Read` and `offline_access` only, never
@@ -3924,7 +3926,7 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   KYC4U request, Sign off, Add KYC4U result), the documents on the party's
   KYC record and its history (the KYC audit log and the deal's AML lines).
   The view is kept in the address (`?view=`, `?who=mine`), replaced, so a pill
-  is never a Back step. The KYC4U grid stays on the KYC4U pill of My BGP.
+  is never a Back step. The KYC4U grid is in Subscriptions & APIs → KYC4U.
 - Checked in a browser against a local copy on 18 November 2026 (desktop and
   an iPhone profile). Not built: the stage on the deal page's own card (it
   shows the state, not this chain), and a count of To do on the side bar.
@@ -4940,6 +4942,74 @@ account (`server/aml-market.ts`). Do not re-litigate. Tests:
 - Not built: Creditsafe (a contract and keys are Woody's); reading a foreign
   register in the app (KYC4U do it); the SRA's data API (needs a key); a
   lender on the deal and its checks.
+
+## KYC4U's files kept in the app, and KYC4U in Subscriptions & APIs (Woody, 2026-11-21)
+
+Woody, on KYC4U's site holding every file of BGP's requests (10,813 items
+on 21 November 2026): "can we get everything kept on our server from
+them?", then "yes build it so we keep all documents in the app", and "Move
+KYC4U into subscriptions and APIS when done as we shouldn't need it again
+really". Do not re-litigate. Rules: `shared/kyc4u-archive.ts`; server:
+`server/kyc4u-archive.ts`; the bookmark's window:
+`client/src/pages/kyc4u-import.tsx`; the card:
+`client/src/components/kyc4u-archive-card.tsx`. Tests:
+`server/kyc4u-archive.test.ts` (in `npm test`),
+`qa/regression/kyc4u-archive-guards.test.mjs`.
+
+- **The copy runs in the Send to ChatBGP bookmark** (version 2, `v:2` on its
+  message; the October bookmark has to be dragged again). After it sends the
+  requests, its window asks it to list every file in KYC4U's document
+  libraries (`$select` with `UniqueId` and `File_x0020_Size`, read again
+  without them if SharePoint refuses), sends the list to `POST
+  /api/kyc4u/archive/plan`, and for each file the app does not hold asks the
+  bookmark for its bytes (`GetFileByServerRelativePath(...)/$value`, then
+  `?download=1`) and hands them to `POST /api/kyc4u/archive/file`, three at a
+  time. Reads only on KYC4U's side, with the user's own login; the bookmark
+  answers only the app's window (`e.source===w`) and the window only KYC4U's
+  tab. Stop, a closed tab or a closed window lose nothing: a second click
+  copies only what is missing, and retries files that failed.
+- **What is kept** (`kyc4u_archive_files`, boot migration): one row per file
+  version (`archiveKey`: SharePoint's UniqueId, else the path, with the time
+  it changed: a changed file is kept as well as the earlier one), its place,
+  REQ reference and entity (`archiveFileFacts`: the request folder at any
+  depth, a folder named just the REQ number skipped), heading and document
+  type (`kyc4uPackPlace`, the zip's rules), status (listed, copied, too_large
+  over 25 MB, failed), and the stored copy (`chat-media/kyc4u-arc-…`, in the
+  app's database). Only paths on KYC4U's own site are listed
+  (`listedFileProblem`).
+- **Filing**: a copied file in a request folder goes on the KYC record
+  (`kyc_documents`) of the company its KYC4U request is matched to
+  (`REQUEST_COMPANY_SQL`: the request row with that REQ, or a KYC4U result
+  recorded in the app with that reference; a hand-set match first), with the
+  deal when a request was raised from one. A document the company already
+  has (same name and size, e.g. from KYC4U's zip) is linked, not filed twice.
+  `refileKyc4uArchive` files and moves them when a request is matched or
+  re-matched: after every bookmark import, after Rematch, after a hand match
+  (`PATCH /api/kyc4u/requests/…`). Unmatched folders are listed on the card
+  with **Match to a company** (that PATCH); files outside a request folder and
+  files not copied are listed too. Files open through
+  `GET /api/kyc4u/archive/files/:id` (nosniff, a download unless an image).
+  Every archive route is admins only.
+- **Five-year deletion and merges** cover the table (`PARTY_TABLES`,
+  `deleteParty` deleting the stored copies; `COMPANY_REFS`). Unmatched files
+  are not on the five-year list until they are matched.
+- **KYC4U in Subscriptions & APIs**: the KYC4U section of `/subscriptions`
+  (folded; **Open KYC4U**, or `?section=kyc4u`, opens `Kyc4uPanel`); the KYC4U
+  card in the list links to it. `/kyc-clouseau` and its aliases
+  (`client/src/pages/kyc-hub.tsx`) and `/hr?section=kyc4u` forward there with
+  what the address carried; Microsoft's return after Connect lands there. The
+  **client check emails** card (`KycEmailsAdmin`, BGP's own client checks, not
+  KYC4U) moved to the AML dashboard's **Client check emails** pill (admins).
+- **The status table**: a bookmark run on 21 November 2026 brought 482
+  request folders and no verdicts. KYC4U's verdicts come only from the table
+  on their View Requests Status page; the import now saves which page the
+  bookmark ran on and how many status rows it read (`diag.page`).
+- Tried end to end on 21 November 2026 against a stand-in KYC4U site in a
+  browser (the real bookmark code, the window and a local copy): 8 files
+  listed, 6 copied, 3 filed on the company a recorded result named, 1 over
+  25 MB and 1 refused listed, a second run copying nothing again, a hand
+  match filing its folder's files, and no request to KYC4U but reads. Not
+  run against KYC4U's real site from a build machine.
 
 ## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
 
@@ -6382,11 +6452,11 @@ rep". Do not re-litigate. Guards: `qa/regression/staff-menu.test.mjs`.
   for the phone's My Profile row and old links). Your own profile carries
   the My BGP heading whether opened from the people page (with Back) or at
   `/my-bgp` (`myBgp || isOwn` in `StaffProfile`).
-- **KYC4U is a pill on My BGP for admins** (Woody, same day: "KYC4U put in
-  the People and HR page"): `Kyc4uPanel` in the people page's tabs
-  (`?section=kyc4u` opens it), off the More group and the phone list.
-  `/kyc-clouseau` and its old aliases still open the KYC4U page, so the
-  bookmark install and old links work.
+- **KYC4U was a pill on My BGP for admins** (Woody, same day: "KYC4U put in
+  the People and HR page"), off the More group and the phone list. Since
+  21 November 2026 it is a section of Subscriptions & APIs (see "KYC4U's
+  files kept in the app"); `/hr?section=kyc4u`, `/kyc-clouseau` and its old
+  aliases open it there, so the bookmark install and old links work.
 - **Website** is in the Admin group (`adminNavBase`; admin only on the phone
   list). Its routes are unchanged (`requireAuth`): the page still opens by
   its address.

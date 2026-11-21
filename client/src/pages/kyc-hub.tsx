@@ -1,21 +1,18 @@
-import { lazy, Suspense } from "react";
-import { Loader2 } from "lucide-react";
+import { useEffect } from "react";
+import { useLocation } from "wouter";
 
-// KYC4U is BGP's MLRO (Woody, 2026-10-05): "we just won't AML or KYC in the
-// app itself". The hub's in-app tabs (Compliance Board, Investigator,
-// Training, Firm Settings) are gone; /kyc-clouseau, /aml-compliance,
-// /compliance-board and /aml-training all land on the KYC4U page, so old
-// links and the Send to ChatBGP bookmark install keep working.
-const Kyc4uPanel = lazy(() => import("@/components/kyc4u-panel"));
-
+// KYC4U lives in Subscriptions & APIs (Woody, 21 November 2026: "Move KYC4U
+// into subscriptions and APIS when done as we shouldn't need it again
+// really"). /kyc-clouseau, /aml-compliance, /compliance-board and
+// /aml-training still work: they open that section, keeping what the address
+// carried (Microsoft's ?kyc4u= note after Connect, for one).
 export default function KycHub() {
-  return (
-    <div className="flex flex-col h-full min-h-screen">
-      <div className="flex-1 overflow-y-auto">
-        <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}>
-          <Kyc4uPanel />
-        </Suspense>
-      </div>
-    </div>
-  );
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.delete("tab");
+    params.set("section", "kyc4u");
+    navigate(`/subscriptions?${params.toString()}`, { replace: true });
+  }, [navigate]);
+  return null;
 }

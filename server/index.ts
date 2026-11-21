@@ -3125,6 +3125,44 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       checked_at timestamptz NOT NULL DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS kyc_solicitor_checks_deal_idx ON kyc_solicitor_checks (deal_id)`,
+    // Every file on KYC4U's site, kept in the app (Woody, 21 November 2026:
+    // "yes build it so we keep all documents in the app";
+    // server/kyc4u-archive.ts). One row per file version the bookmark
+    // listed; status listed / copied / too_large / failed. A copied file in
+    // a matched request folder is also a kyc_documents row on the company.
+    `CREATE TABLE IF NOT EXISTS kyc4u_archive_files (
+      id serial PRIMARY KEY,
+      file_key text NOT NULL UNIQUE,
+      unique_id text,
+      web_url text,
+      file_ref text NOT NULL,
+      file_name text NOT NULL,
+      req_ref text,
+      req_entity text,
+      section text,
+      doc_type text,
+      size bigint,
+      modified_at timestamptz,
+      created_at_source timestamptz,
+      first_listed_at timestamptz NOT NULL DEFAULT now(),
+      listed_at timestamptz NOT NULL DEFAULT now(),
+      status text NOT NULL DEFAULT 'listed',
+      error text,
+      storage_key text,
+      stored_size bigint,
+      mime_type text,
+      copied_at timestamptz,
+      copied_by varchar,
+      company_id varchar,
+      trading_entity_id varchar,
+      deal_id varchar,
+      kyc_document_id varchar,
+      filed_new boolean,
+      filed_at timestamptz
+    )`,
+    `CREATE INDEX IF NOT EXISTS kyc4u_archive_files_req_idx ON kyc4u_archive_files (upper(req_ref))`,
+    `CREATE INDEX IF NOT EXISTS kyc4u_archive_files_status_idx ON kyc4u_archive_files (status)`,
+    `CREATE INDEX IF NOT EXISTS kyc4u_archive_files_company_idx ON kyc4u_archive_files (company_id)`,
     // Deal contracting entities + shadow gate comparison log:
     `CREATE TABLE IF NOT EXISTS crm_deal_entities (
       id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
