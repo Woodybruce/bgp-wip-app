@@ -5182,11 +5182,48 @@ our system and check along side what KYC4U did to see if we get the same".
   name. A loose file is filed by its name (KYC4U's 2023 packs keep every file
   loose); only an email is KYC4U's report by default. Tests:
   `server/kyc4u-result-pack.test.ts`.
-- KYC4U's own tools, read from the packs: ComplyCube for each person (Document
-  Check, Multi-Bureau Check, Proof of Address Check, Extensive Screening) and
-  Creditsafe for each company. KYC4U marked "Structure Chart: Not required -
-  simple structure" on every pack with a UK structure, Sushidog's holding
-  company included.
+- **KYC4U's own tools, read from the packs**:
+  - **Creditsafe**, for every company and parent: a credit report whose
+    Compliance Alerts screen at 90%, and an "AML Screen" report (Acuris data,
+    threshold 95). The parent's Creditsafe report was used on 1, 3 and 6.
+  - **ComplyCube**, for each person on packs 6 and 922: Document Check,
+    Multi-Bureau Check, Proof of Address Check, Extensive Screening at 90%.
+    KYC4U's analyst uploaded copies of the documents, so no face match or
+    liveness check was run on the person, unlike Veriff. The Multi-Bureau
+    check matches name, date of birth and address at a credit agency.
+  - **Famous owners** were verified as a "Public figure" from press pages, with
+    no ID documents (LEGO, Otherworld, Brasserie Bordelaise).
+  - **What no pack did**: no source of funds or structure chart was asked
+    ("Not required - simple structure", Sushidog's holding company included),
+    and no pack records the Nominated Officer's approval.
+  - **Errors in KYC4U's packs**:
+    - Sushidog's risk text names "Sushidog (Victoria) Limited".
+    - Its ComplyCube checks were run under another request (REQ113960).
+    - Its address proofs about 15 months old were accepted.
+    - Choux's report gives "3 Loxton Walk" where the heads of terms are 20 New
+      Quebec Street.
+    - LTMM Group Ltd was checked where the heads of terms name "Michael Morgan
+      t/a Piece of Velvet", after an agent's email that could not be read.
+- **Where the app falls short of KYC4U** (told to Woody; none built yet):
+  - **Foreign parents** (LEGO's Kirkbi A/S, from the Danish register). The app
+    reads no foreign register. Where the UK register says no one has
+    significant control, it does not know a foreign parent exists: it asks the
+    client for a structure chart. Woody's rule sends foreign-owned parties to
+    KYC4U. A build could read the "ultimate parent" note in the accounts the app
+    already downloads.
+  - **Rent not recorded on a deal**, so the app cannot tell a sanctions-only
+    letting (under £10,000 a month) from a full one (Choux, Brasserie
+    Bordelaise).
+  - **Smaller gaps**:
+    - an electronic multi-bureau check, which needs a provider;
+    - a Creditsafe credit report, which needs a contract;
+    - the parent company's accounts and confirmation statement;
+    - the FCA register for regulated owners or investors;
+    - an owner's other Companies House appointments;
+    - the agent's note on the client's background and whether they were met
+      face to face (KYC4U's "Client Background");
+    - an individual solicitor at the SRA (the data share holds firms);
+    - a PDF copy of the SRA page in the file.
 
 ## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
 
