@@ -5214,16 +5214,37 @@ our system and check along side what KYC4U did to see if we get the same".
   - **Rent not recorded on a deal**, so the app cannot tell a sanctions-only
     letting (under £10,000 a month) from a full one (Choux, Brasserie
     Bordelaise).
-  - **Smaller gaps**:
-    - an electronic multi-bureau check, which needs a provider;
-    - a Creditsafe credit report, which needs a contract;
-    - the parent company's accounts and confirmation statement;
-    - the FCA register for regulated owners or investors;
-    - an owner's other Companies House appointments;
-    - the agent's note on the client's background and whether they were met
-      face to face (KYC4U's "Client Background");
-    - an individual solicitor at the SRA (the data share holds firms);
-    - a PDF copy of the SRA page in the file.
+  - **Smaller gaps**: none is required by the Money Laundering Regulations. Two
+    are required by BGP's own AML policy (Issue 2) as written, and one in some
+    cases. HMRC holds a firm to its own policy (MLR reg 19). Woody was told so
+    on 21 November 2026, correcting an earlier "none needed for compliance".
+    - **A report from an aggregator database** ("Creditsafe/SmartSearch/D&B/Dow
+      Jones etc"). The policy lists it under Evidence Required for a limited
+      company, a partnership or LLP, a listed company and a regulated
+      institution. The app has none. Either take a Creditsafe (or similar)
+      account, or a new issue of the policy accepts the app's Companies House
+      reading and screening in its place.
+    - **Whether the person was met face to face.** The policy ("Compliance
+      Report for all Individuals (Non-face to face)") says that, if we have not
+      met them, all documents must be certified, or a video call can stand in
+      "provided the individual can be identified and validated against the
+      document supplied". The app records neither the meeting nor that Veriff
+      stands in for it. The fix is the agent's note (KYC4U's "Client
+      Background"), or a new issue of the policy naming Veriff's face match.
+    - **The FCA register**, only when a party is itself an FCA-regulated firm.
+      The policy's "Regulated Credit or Financial Institutions" asks for a copy
+      of the regulator's web page. It is not needed for minority investors like
+      Otherworld's.
+    - **Not needed**:
+      - an electronic multi-bureau check (the policy's "electronic ID
+        verification service" is met by Veriff);
+      - an owner's other directorships;
+      - an individual solicitor at the SRA.
+    - **Advisable only for a newly formed subsidiary with no accounts**: the
+      parent's accounts and confirmation statement. The policy asks for
+      "Annual accounts" and "Share registers"; KYC4U used Sushidog's parent.
+    - **Small, by the policy's evidence lists**: a copy of the listing page for
+      a listed company, and of the SRA page in the file.
 
 ## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
 
