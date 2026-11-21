@@ -4,13 +4,19 @@
 // (boot migration in server/index.ts); the AML box, the risk assessment and
 // the AML file read the latest per firm.
 //
+// The register is the SRA's own data (server/sra-register.ts, with Woody's key
+// of 21 November 2026). When a name matches several entries and none stands
+// out, the check asks the person which firm it is before it runs anything.
+//
 //   GET  /api/deals/:id/solicitors-aml          the firms on the deal and their latest checks
-//   POST /api/deals/:id/solicitors-aml/check    { firm }: runs the check
+//   POST /api/deals/:id/solicitors-aml/check    { firm, sraNumber?, none? }: runs the check,
+//                                               or answers { choose, candidates } first
 import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
 import {
-  SOLICITOR_REGISTER_SITES, checkMediaAnswer, checkRegisterAnswer, solicitorFirmName, type SolicitorCheck,
+  SOLICITOR_REGISTER_SITES, checkMediaAnswer, checkRegisterAnswer, registerFromSra, solicitorFirmName, type SolicitorCheck,
 } from "@shared/solicitor-aml";
+import { findSraFirm, sraChoice, type SraChoice, type SraLookup } from "@shared/sra-register";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 const text = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();
@@ -59,25 +65,67 @@ const parseJson = (answer: unknown) => {
   return JSON.parse(start >= 0 && end > start ? t.slice(start, end + 1) : t);
 };
 
-/** Runs both searches for a firm. Never throws: what could not be searched says so. */
-export async function runSolicitorCheck(firm: string): Promise<SolicitorCheck> {
+/** The firm in the SRA's data, when the key is set. Never throws: a read that failed says why. */
+async function sraLookup(firm: string, sraNumber: string | null): Promise<{ lookup: SraLookup; readAt: string } | { error: string } | null> {
+  const { sraConfigured, sraRegister } = await import("./sra-register");
+  if (!sraConfigured()) return null;
+  try {
+    const state = await sraRegister();
+    return { lookup: findSraFirm(state.index, firm, { sraNumber }), readAt: state.readAt };
+  } catch (err: any) {
+    return { error: text(err?.message) || "The SRA's data could not be read." };
+  }
+}
+
+/** The entries to choose from when a name matches several and none stands out; null when there is nothing to choose. */
+export async function solicitorChoices(firm: string, sraNumber: string | null): Promise<{ candidates: SraChoice[]; more: number; readAt: string } | null> {
+  if (sraNumber) return null;
+  const sra = await sraLookup(firm, null);
+  if (!sra || "error" in sra || sra.lookup.firm || !sra.lookup.candidates.length) return null;
+  return { candidates: sra.lookup.candidates.map(c => sraChoice(c, firm)), more: sra.lookup.more, readAt: sra.readAt };
+}
+
+/**
+ * Runs the check for a firm: the SRA's data for the register when the key is
+ * set (the web search of the register otherwise, or when the SRA's data cannot
+ * be read), then the web search for regulatory action or misconduct, under the
+ * SRA's name for the firm when it has one. Never throws: what could not be
+ * searched says so.
+ */
+export async function runSolicitorCheck(firm: string, opts: { sraNumber?: string | null; noneOfThese?: boolean } = {}): Promise<SolicitorCheck> {
   const check: SolicitorCheck = {
     firm, ranAt: new Date().toISOString(),
     register: { status: "not_run", firmName: null, sraNumber: null, authorisation: null, office: null, url: null, unsourced: 0 },
     media: { ran: false, status: "none_found", findings: [], unsourced: 0 },
     errors: [],
   };
+  const sra = await sraLookup(firm, opts.sraNumber || null);
+  let registerOnWeb = true;
+  if (sra && "lookup" in sra) {
+    check.register = registerFromSra(sra.lookup, sra.readAt, { declined: !!opts.noneOfThese });
+    registerOnWeb = false;
+  } else if (sra && "error" in sra) {
+    check.errors.push(`${sra.error} The register was searched on the web instead.`);
+  }
   const { askPerplexity, isPerplexityConfigured } = await import("./perplexity");
-  if (!isPerplexityConfigured()) { check.errors.push("The web search is not set up (no Perplexity key)."); return check; }
-  const prompt = `Law firm: ${firm.replace(/[<>]/g, " ")} (England and Wales)\n\nReturn the JSON object now.`;
+  if (!isPerplexityConfigured()) {
+    check.errors.push(registerOnWeb ? "The web search is not set up (no Perplexity key)." : "The web search for negative media is not set up (no Perplexity key).");
+    return check;
+  }
+  const name = check.register.source === "sra_data" && check.register.firmName ? check.register.firmName : firm;
+  const prompt = `Law firm: ${name.replace(/[<>]/g, " ")} (England and Wales)\n\nReturn the JSON object now.`;
   const [reg, media] = await Promise.allSettled([
-    askPerplexity(prompt, { systemPrompt: REGISTER_PROMPT, model: "sonar-pro", maxTokens: 700, temperature: 0.1, jsonSchema: REGISTER_SCHEMA, searchDomains: SOLICITOR_REGISTER_SITES }),
+    registerOnWeb
+      ? askPerplexity(prompt, { systemPrompt: REGISTER_PROMPT, model: "sonar-pro", maxTokens: 700, temperature: 0.1, jsonSchema: REGISTER_SCHEMA, searchDomains: SOLICITOR_REGISTER_SITES })
+      : Promise.resolve(null),
     askPerplexity(prompt, { systemPrompt: MEDIA_PROMPT, model: "sonar-pro", maxTokens: 1200, temperature: 0.1, jsonSchema: MEDIA_SCHEMA }),
   ]);
-  if (reg.status === "fulfilled") {
-    try { check.register = checkRegisterAnswer(parseJson(reg.value.answer), reg.value.citations || []); }
-    catch { check.errors.push("The register search's answer could not be read."); }
-  } else check.errors.push(`The register search failed: ${text(reg.reason?.message || reg.reason).slice(0, 200)}`);
+  if (registerOnWeb) {
+    if (reg.status === "fulfilled" && reg.value) {
+      try { check.register = { ...checkRegisterAnswer(parseJson(reg.value.answer), reg.value.citations || []), source: "web" }; }
+      catch { check.errors.push("The register search's answer could not be read."); }
+    } else if (reg.status === "rejected") check.errors.push(`The register search failed: ${text(reg.reason?.message || reg.reason).slice(0, 200)}`);
+  }
   if (media.status === "fulfilled") {
     try { check.media = { ran: true, ...checkMediaAnswer(parseJson(media.value.answer), media.value.citations || []) }; }
     catch { check.errors.push("The web search's answer could not be read."); }
@@ -122,7 +170,14 @@ router.post("/api/deals/:id/solicitors-aml/check", async (req: Request, res: Res
     if (!firm) return res.status(400).json({ message: "Give the firm's name." });
     const deal = (await pool.query(`SELECT id, name FROM crm_deals WHERE id = $1`, [req.params.id])).rows[0];
     if (!deal) return res.status(404).json({ message: "No such deal." });
-    const check = await runSolicitorCheck(firm);
+    const sraNumber = text(req.body?.sraNumber).replace(/[^0-9]/g, "").slice(0, 10) || null;
+    const noneOfThese = req.body?.none === true;
+    // Several entries match and none stands out: the person chooses before anything runs.
+    if (!noneOfThese) {
+      const choices = await solicitorChoices(firm, sraNumber);
+      if (choices) return res.json({ choose: true, firm, ...choices });
+    }
+    const check = await runSolicitorCheck(firm, { sraNumber, noneOfThese });
     const row = (await pool.query(
       `INSERT INTO kyc_solicitor_checks (deal_id, firm, result, checked_by, checked_by_name) VALUES ($1, $2, $3::jsonb, $4, $5) RETURNING id`,
       [deal.id, firm, JSON.stringify(check), me.id, me.name])).rows[0];

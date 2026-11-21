@@ -33,7 +33,7 @@ type IntegrationsStatus = {
   grouped: Record<string, IntegrationItem[]>;
 };
 type PingResult = { ok: boolean; status?: number; message: string };
-type PingResponse = { apollo: PingResult; companiesHouse: PingResult; xero: PingResult; complyAdvantage?: PingResult };
+type PingResponse = { apollo: PingResult; companiesHouse: PingResult; xero: PingResult; complyAdvantage?: PingResult; sra?: PingResult };
 
 interface Subscription {
   name: string;
@@ -396,7 +396,7 @@ export default function Subscriptions() {
                 data-testid="button-ping-integrations"
               >
                 {pinging ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1.5" />}
-                Test Apollo / Xero / CH / ComplyAdvantage
+                Test Apollo / Xero / CH / ComplyAdvantage / SRA
               </Button>
               <Button
                 variant="outline"
@@ -431,6 +431,7 @@ export default function Subscriptions() {
                 // Signs in to Mesh and reads its screening configurations:
                 // nothing is created and no screen is charged (2026-11-18).
                 ...(pingResult.complyAdvantage ? [{ label: "ComplyAdvantage", result: pingResult.complyAdvantage, testId: "ping-comply-advantage" }] : []),
+                ...(pingResult.sra ? [{ label: "SRA data share", result: pingResult.sra, testId: "ping-sra" }] : []),
               ]).map(({ label, result, testId }) => (
                 <div
                   key={label}

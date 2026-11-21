@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { pingComplyAdvantage } from "./comply-advantage";
+import { pingSra } from "./sra-register";
 
 async function requireAdmin(req: Request, res: Response, next: Function) {
   const userId = (req.session as any)?.userId || (req as any).tokenUserId;
@@ -66,6 +67,7 @@ const KEYS: KeyDef[] = [
   { name: "COMPLY_ADVANTAGE_USERNAME", label: "ComplyAdvantage Username (older login, used without API keys)", group: "KYC" },
   { name: "COMPLY_ADVANTAGE_PASSWORD", label: "ComplyAdvantage Password (older login)", group: "KYC" },
   { name: "COMPLY_ADVANTAGE_REALM", label: "ComplyAdvantage Realm (older login)", group: "KYC" },
+  { name: "SRA_API_KEY", label: "SRA data share key (law firms on the SRA register, for the AML box's solicitors check)", group: "KYC" },
 
   // Web search / research
   { name: "PERPLEXITY_API_KEY", label: "Perplexity", group: "Research", fallbacks: ["PERPLEXITY_API", "PERPLEXITY API", "PERPLEXITY"] },
@@ -393,7 +395,7 @@ export function registerIntegrationsStatusRoutes(app: Express) {
 
   // Live connectivity checks — actually hit each upstream API.
   app.get("/api/integrations/ping", requireAuth, requireAdmin, async (req: Request, res: Response) => {
-    const [apollo, companiesHouse, xero, veriff, perplexity, exa, osPlaces, fal, complyAdvantage] = await Promise.all([
+    const [apollo, companiesHouse, xero, veriff, perplexity, exa, osPlaces, fal, complyAdvantage, sra] = await Promise.all([
       pingApollo(),
       pingCompaniesHouse(),
       pingXero(req),
@@ -403,7 +405,8 @@ export function registerIntegrationsStatusRoutes(app: Express) {
       pingOsPlaces(),
       pingFal(),
       pingComplyAdvantage(),
+      pingSra(),
     ]);
-    res.json({ apollo, companiesHouse, xero, veriff, perplexity, exa, osPlaces, fal, complyAdvantage });
+    res.json({ apollo, companiesHouse, xero, veriff, perplexity, exa, osPlaces, fal, complyAdvantage, sra });
   });
 }

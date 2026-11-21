@@ -3664,7 +3664,7 @@ from Mesh's own documentation (docs.mesh.complyadvantage.com, read
 - **Connection check** (reads only, creates nothing in Mesh):
   `checkComplyAdvantage`, behind `GET /api/admin/comply-advantage/check`
   (admins) and the ComplyAdvantage card of **Test Apollo / Xero / CH /
-  ComplyAdvantage** on Subscriptions & APIs (`/subscriptions`, Admin; the
+  ComplyAdvantage / SRA** on Subscriptions & APIs (`/subscriptions`, Admin; the
   ping always ran it, the page now shows it): signs in and lists the
   screening configurations (Mesh's `/v2` list, and its `/v3` list for
   accounts on its newer pipeline when the first is empty), and says whether
@@ -4902,10 +4902,9 @@ account (`server/aml-market.ts`). Do not re-litigate. Tests:
   fines, Solicitors Disciplinary Tribunal findings, fraud or misconduct, kept
   only where the source was read (`checkMediaAnswer`). Each check is a
   `kyc_solicitor_checks` row (boot migration); the risk assessment and the
-  AML file read the latest per firm. The SRA's own data API needs a key the
-  app does not hold, and its operations could not be read without one: an
-  SRA key is Woody's to get (free, registration on the SRA's developer
-  portal) if he wants the register read directly.
+  AML file read the latest per firm. Since the same evening the register is
+  the SRA's own data (next section); the web search of the register is the
+  fallback without the key.
 - **Trading status and identity verification at Companies House (8).**
   `tradingState` in `shared/kyc-prechecks.ts`: accounts filed as dormant or
   business code 99999 (dormant), 74990 (non-trading), or incorporated in the
@@ -4942,6 +4941,73 @@ account (`server/aml-market.ts`). Do not re-litigate. Tests:
 - Not built: Creditsafe (a contract and keys are Woody's); reading a foreign
   register in the app (KYC4U do it); the SRA's data API (needs a key); a
   lender on the deal and its checks.
+
+## The SRA's data on law firms (Woody, 2026-11-21)
+
+Woody took out a key on the SRA's developer portal (product "Data Sharing",
+subscription "Chat BGP"; "ive done the solcitors api btw") and put it on
+Railway as `SRA_API_KEY` ("i used you suggestion yes"). The SRA's data share
+has one operation, `GET https://sra-prod-apim.azure-api.net/datashare/api/V1/organisation/GetAll`
+(header `Ocp-Apim-Subscription-Key`): every organisation on the SRA's register
+in one answer, 25,310 entries and 24 MB on 21 November 2026, refreshed by the
+SRA every 24 hours. Rules: `shared/sra-register.ts`; read and kept:
+`server/sra-register.ts`; the check: `shared/solicitor-aml.ts`,
+`server/solicitor-aml.ts`, `client/src/components/solicitor-aml.tsx`. Tests:
+`server/sra-register.test.ts` (in `npm test`),
+`qa/regression/sra-register-guards.test.mjs`.
+
+- **The SRA's terms** (Firm data web service, 1 July 2020): free; the data may
+  be combined and shown; where it is used the app must link to the SRA's
+  attribution statement ("ChatBGP includes data supplied by the Solicitors
+  Regulation Authority", `SRA_ATTRIBUTION_WORDS` / `SRA_ATTRIBUTION_URL`: at
+  the foot of the Solicitors panel and as a row of the risk assessment in the
+  AML file); nothing may suggest the SRA endorses BGP; the key stays
+  confidential (sent only to the SRA's host, never logged). The terms cap
+  reads a day, so the app reads the data at most once a day, on the first
+  check or connection test after that, keeps it in memory (about 35 MB),
+  waits ten minutes after a failed read, and uses the copy it holds
+  meanwhile. Never at boot or on a timer.
+- **Which firm a name means** (`findSraFirm`): an SRA number or a web or
+  email address finds the entry; a name is read without case, punctuation,
+  "&" or the legal form, and loosely without the words every law firm uses
+  ("Solicitors", "Law", "& Co", "UK", "International"). A firm stands out when
+  it is the one regulated firm under exactly that name; else the one SRA firm
+  of that exact name that has closed, is closing or was closed down; else,
+  when the exact name holds only entries not regulated for legal services (a
+  big firm's international partnership or offices abroad), the one regulated
+  firm under the looser name (Eversheds Sutherland is Eversheds Sutherland
+  (International) LLP), or that entry itself with no regulated firm near; else
+  the one firm trading or formerly trading under the name. Anything else is
+  the person's choice: the check answers `{ choose, candidates }` before it
+  runs anything (regulated firms first, then by size), with **This one** and
+  **None of these**; a firm the check settled on offers **Not them?** with
+  the other entries. Some firms are not in the SRA's data under the name
+  people use (Taylor Wessing's firm in England and Wales was not, on
+  21 November 2026), so not found and not regulated read as "needs a look",
+  never as a red flag by themselves.
+- **The words are the SRA register's own** (`sraStatus`, read from its
+  organisation pages): SRA-regulated firm (ok); SRA-regulated freelance;
+  Regulated by an approved regulator for legal services (the CLC and others,
+  ok); Firm is closing (a look); Not regulated by an approved regulator for
+  legal services, and Not an SRA-regulated firm (a look: they cannot provide
+  reserved legal activities such as conveyancing); SRA-regulated firm,
+  conditions apply, Firm has closed, and Closed down by the SRA (an
+  intervention) are red. The panel shows the head office, phone, email and
+  website with "check the email address and phone number you have for them
+  match the SRA's: fraudsters pose as real law firms", other names, the work
+  the firm lists, its Companies House number and its SRA page.
+- The web search for regulatory action or misconduct (Perplexity) still runs,
+  under the SRA's name for the firm. Without the key, or when the SRA's data
+  cannot be read, the register is searched on the web as before and the
+  check says why.
+- The connection test on Subscriptions & APIs (**Test Apollo / Xero / CH /
+  ComplyAdvantage / SRA**) says how many entries the app holds and when it
+  read them; `SRA_API_KEY` is on the KYC group of the integrations list.
+- Tried end to end on 21 November 2026 against the SRA's real data on a local
+  copy (Forsters, DLA Piper's 36 entries, Glen Solicitors closed down by the
+  SRA, a firm not in the data), with the key the session's proxy added. In
+  that sandbox Node's fetch needed the proxy set as its dispatcher; on
+  Railway the app calls the SRA directly. Not run on live yet.
 
 ## KYC4U's files kept in the app, and KYC4U in Subscriptions & APIs (Woody, 2026-11-21)
 

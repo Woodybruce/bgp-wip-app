@@ -16,6 +16,7 @@ import type { PartyDueDiligence } from "./aml-policy";
 import type { PartyPeople } from "./kyc-people";
 import { isOffshoreCountry, isRegisterDirector, personNamesMatch, type PrecheckCompany } from "./kyc-prechecks";
 import { solicitorCheckWords, type SolicitorCheck } from "./solicitor-aml";
+import { SRA_ATTRIBUTION_URL, SRA_ATTRIBUTION_WORDS } from "./sra-register";
 
 export type RiskTone = "ok" | "attention" | "info";
 export interface RiskRow { label: string; value: string; tone: RiskTone }
@@ -276,6 +277,10 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
     ...(input.solicitors.length
       ? input.solicitors.map(sc => { const w = solicitorCheckWords(sc); return { label: "Solicitors", value: `${w.words} (checked ${day(sc.ranAt)})`, tone: w.tone }; })
       : [{ label: "Solicitors", value: "Not checked yet: add the other side's solicitors in the AML box", tone: "attention" as const }]),
+    // The SRA's terms: where its data is used, say so with a link to its attribution statement.
+    ...(input.solicitors.some(sc => sc.register.source === "sra_data")
+      ? [{ label: "Source of the SRA data", value: `${SRA_ATTRIBUTION_WORDS} (${SRA_ATTRIBUTION_URL})`, tone: "info" as const }]
+      : []),
     { label: "Lender", value: "Not recorded in the app: if a bank lends on the deal, BGP's AML policy asks for checks on the lender", tone: "info" },
   ];
 
