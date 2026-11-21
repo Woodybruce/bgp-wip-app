@@ -37,7 +37,7 @@ export function kyc4uPackJunk(path: string): boolean {
   return String(path || "").split("/").some(part => part === "__MACOSX" || part === ".DS_Store" || part === "Thumbs.db" || part === "desktop.ini" || part.startsWith("._") || part.startsWith("~$"));
 }
 
-export type Kyc4uPackKind = "report" | "hots" | "company" | "holding" | "owner" | "other";
+export type Kyc4uPackKind = "report" | "hots" | "company" | "holding" | "owner" | "adviser" | "other";
 
 export interface Kyc4uPackPlace {
   heading: string;           // where it is filed: "Holding companies · Kirkbi AS"
@@ -62,17 +62,25 @@ export function kyc4uReferenceIn(name: string): string | null {
 
 function docTypeFor(kind: Kyc4uPackKind, fileName: string): string {
   const name = fileName.replace(/\.[a-z0-9]{1,5}$/i, "");
-  if (isKyc4uRiskReportName(name)) return "kyc4u_report";
-  if (kind === "hots" || /\b(heads?\s+of\s+terms|hots)\b/i.test(name)) return "heads_of_terms";
-  if (/compliance\s+(alert|report)|aml\s+screen|screening|sanctions?\s+(check|report)|pep\s+check/i.test(name)) return "screening_report";
+  if (isKyc4uRiskReportName(name) || /kyc\s+verification\s+form/i.test(name)) return "kyc4u_report";
+  if (kind === "hots" || /\b(heads?\s+of\s+terms|hot[\u2019']?s)\b/i.test(name)) return "heads_of_terms";
+  // KYC4U's electronic checks on a person (seen in their packs, November 2026).
+  if (/multi[\s-]*bureau|electronic\s+(id|identity)\s+(check|verification)/i.test(name)) return "electronic_id_check";
+  if (/\bdocument\s+check\b|\bid\s+document\s+check\b/i.test(name)) return "id_check_report";
+  if (/compliance\s+(alert|report)|aml\s+screen|screening|sanctions?\s+(check|report)|pep\s+check|\bclient\s+(aml\s+)?report\b|\baml\s+report\b/i.test(name)) return "screening_report";
   if (/credit\s*-?\s*safe|credit\s+report|experian|dun\s+(and|&)\s+bradstreet/i.test(name)) return "credit_report";
-  if (/certificate\s+of\s+incorporation/i.test(name)) return "company_cert";
+  if (/certificate\s+of\s+incorporation|incorporation\s+certificate/i.test(name)) return "company_cert";
+  if (/confirmation\s+statement/i.test(name)) return "confirmation_statement";
+  if (/annual\s+accounts|\baccounts\b|financial\s+statements/i.test(name)) return "company_accounts";
+  if (/\bagent'?s?\s+(confirmation|on\s+company\s+background)|confirmation\s+on\s+request\s+type/i.test(name)) return "agent_confirmation";
+  if (/\bfca\s+(regulation|register)|financial\s+conduct\s+authority/i.test(name)) return "regulator_register";
+  if (/law\s+society|\bsra\b|solicitors?\s+regulation/i.test(name) || kind === "adviser") return "adviser_check";
   if (/structure\s+chart|group\s+structure|organogram/i.test(name)) return "structure_chart";
   if (/passport|driv(ing|er'?s)\s+licen[cs]e|national\s+id|identity\s+card|\bid\s+card\b/i.test(name)) return "passport";
   if (/proof\s+of\s+(address|residence)|utility|council\s+tax|bank\s+statement/i.test(name)) return "proof_of_address";
   if (/source\s+of\s+(funds|wealth)/i.test(name)) return "source_of_funds";
-  if (/regist(er|ry|ration)|\bcvr\b|companies\s+house|business\s+registry|chamber\s+of\s+commerce|handelsregister|kbis/i.test(name)) return "register_extract";
-  if (kind === "owner") return "public_source";
+  if (/regist(er|ry|ration)|\bcvr\b|companies\s+house|business\s+registry|chamber\s+of\s+commerce|handelsregister|kbis|personal\s+appointments|find\s+and\s+update\s+company\s+information/i.test(name)) return "register_extract";
+  if (kind === "owner" || /\bnews\b|\barticle\b|wikipedia|interview|the\s+guardian|\bindependent\b|press\s+release|\blaunch\b|investment\s+report/i.test(name)) return "public_source";
   return "other";
 }
 
@@ -87,15 +95,20 @@ export function kyc4uPackPlace(path: string): Kyc4uPackPlace {
   const folders = parts.map(unnumbered).filter(Boolean);
   if (!folders.length) {
     if (isKyc4uRiskReportName(fileName)) return { heading: "KYC4U's risk assessment", kind: "report", subject: null, docType: "kyc4u_report" };
-    // A loose file (KYC4U's email, their report under another name) is KYC4U's report unless its name says otherwise.
+    // A loose file is filed by its name. KYC4U's email is their report; any other loose file is not
+    // (KYC4U's older packs, from 2023, kept every document loose in one folder).
     const loose = docTypeFor("other", fileName);
-    return { heading: "KYC4U's pack", kind: "other", subject: null, docType: loose === "other" ? "kyc4u_report" : loose };
+    return { heading: "KYC4U's pack", kind: "other", subject: null, docType: loose === "other" && /\.(msg|eml)$/i.test(fileName) ? "kyc4u_report" : loose };
   }
   const top = folders[0];
   if (/^(hots?|heads?\s+of\s+terms)$/i.test(top)) return { heading: "Heads of terms", kind: "hots", subject: null, docType: docTypeFor("hots", fileName) };
   if (/^holding\s*(co'?s?|compan(y|ies))$|^parent\s+compan(y|ies)$|^group\s+compan(y|ies)$/i.test(top)) {
     const subject = folders[1] || null;
     return { heading: subject ? `Holding companies · ${subject}` : "Holding companies", kind: "holding", subject, docType: docTypeFor("holding", fileName) };
+  }
+  if (/^(advis[eo]rs?|solicitors?|lawyers?|legal\s+advis[eo]rs?)$/i.test(top)) {
+    const subject = folders[1] || null;
+    return { heading: subject ? `Advisers · ${subject}` : "Advisers", kind: "adviser", subject, docType: docTypeFor("adviser", fileName) };
   }
   if (/^(ubo'?s?|ultimate\s+beneficial\s+owners?|beneficial\s+owners?|owners|directors?|individuals?|people)$/i.test(top)) {
     const subject = folders[1] || null;
@@ -105,16 +118,18 @@ export function kyc4uPackPlace(path: string): Kyc4uPackPlace {
 }
 
 /**
- * Takes off the one folder a whole zip is wrapped in ("LEGO/1.0 HOTs/x.docx"
- * → "1.0 HOTs/x.docx"), when every file sits inside it and it is not itself
- * one of KYC4U's numbered folders.
+ * Takes off the folders a whole zip is wrapped in ("LEGO/1.0 HOTs/x.docx" →
+ * "1.0 HOTs/x.docx"), while every file sits inside the same one and it is not
+ * itself one of KYC4U's numbered folders. A pack downloaded from KYC4U's site
+ * comes wrapped twice ("REQ113570  The Abigail Scheuer Trading Company
+ * Limited/REQ113570/1.0 HOTs/…", seen 21 November 2026), so both are taken off.
  */
 export function unwrapPackPaths(paths: string[]): string[] {
-  const split = paths.map(p => String(p || "").split("/").filter(Boolean));
-  if (!split.length || split.some(s => s.length < 2)) return paths.map(p => String(p || "").split("/").filter(Boolean).join("/"));
-  const first = split[0][0];
-  if (split.some(s => s[0] !== first) || /^\d+(\.\d+)*\s/.test(first)) return split.map(s => s.join("/"));
-  return split.map(s => s.slice(1).join("/"));
+  let split = paths.map(p => String(p || "").split("/").filter(Boolean));
+  while (split.length && split.every(s => s.length >= 2) && split.every(s => s[0] === split[0][0]) && !/^\d+(\.\d+)*\s/.test(split[0][0])) {
+    split = split.map(s => s.slice(1));
+  }
+  return split.map(s => s.join("/"));
 }
 
 // ── KYC4U's AML Risk Assessment Report ───────────────────────────────────────
@@ -141,6 +156,8 @@ export interface Kyc4uRiskReport {
   riskIdentified: string | null;
   mitigatingFactors: string | null;
   conclusion: string | null;
+  /** The risks and their mitigation came as a two-column table, which plain text runs together: the server reads its columns by position. */
+  assessmentTable?: boolean;
   counterparty: Kyc4uLabelled[];
   approvals: Kyc4uApproval[];
 }
@@ -273,6 +290,50 @@ const APPROVAL_LABELS: Array<[Kyc4uApproval["team"], string]> = [
   ["nominated_officer", "Nominated Officer Approval for higher Risk Clients"],
 ];
 
+/**
+ * KYC4U's "Detailed Risk Assessment", in the three layouts their reports use
+ * (all seen in November 2026): RISK IDENTIFIED, MITIGATING FACTORS and
+ * OVERALL CONCLUSION one under another; a "Risk Identified | Mitigation" table
+ * then "Overall Conclusion", whose two columns plain text runs together (the
+ * server splits them by position, then this keeps the two apart); or, on a
+ * sanctions-only check, one paragraph with no headings, which is the
+ * conclusion. A heading counts only on a line of its own, never inside a
+ * sentence ("Considering the mitigating factors, ...").
+ */
+export function readKyc4uAssessment(lines: string[] | undefined): { riskIdentified: string | null; mitigatingFactors: string | null; conclusion: string | null; table: boolean } {
+  // KYC4U's own text carries a written "\n" between points.
+  const ls = (lines || []).map(l => text(String(l).replace(/\\n/g, " "))).filter(Boolean);
+  const tableHead = (t: string) => /^risk\s+identified\s+mitigation$/i.test(t);
+  const riskHead = (t: string) => /^risk\s+identified\b/i.test(t) && !tableHead(t);
+  const mitigationHead = (t: string) => /^mitigating\s+factors\b/i.test(t);
+  const conclusionHead = (t: string) => /^overall\s+conclusion\b/i.test(t);
+  const join = (part: string[]) => text(part.join(" ")) || null;
+  const after = (t: string, re: RegExp) => text(t.replace(re, ""));
+  const table = ls.some(tableHead);
+  const ci = ls.findIndex(conclusionHead);
+  const conclusion = ci >= 0 ? join([after(ls[ci], /^overall\s+conclusion\b/i), ...ls.slice(ci + 1)]) : null;
+  const body = ci >= 0 ? ls.slice(0, ci) : ls;
+  if (table) {
+    const both = join(body.filter(t => !tableHead(t)));
+    return { riskIdentified: both ? `Risk and mitigation, as KYC4U's table gives them: ${both}` : null, mitigatingFactors: null, conclusion, table: true };
+  }
+  const ri = body.findIndex(riskHead);
+  const mi = body.findIndex(mitigationHead);
+  if (ri < 0 && mi < 0 && ci < 0) return { riskIdentified: null, mitigatingFactors: null, conclusion: join(ls), table: false };
+  const riskIdentified = ri >= 0 ? join([after(body[ri], /^risk\s+identified\b/i), ...body.slice(ri + 1, mi > ri ? mi : body.length)]) : null;
+  const mitigatingFactors = mi >= 0 ? join([after(body[mi], /^mitigating\s+factors\b/i), ...body.slice(mi + 1)]) : null;
+  return { riskIdentified, mitigatingFactors, conclusion, table: false };
+}
+
+/** The table's two columns, read by position on the server: each cell's text in the right field. */
+export function withKyc4uRiskTable(report: Kyc4uRiskReport, columns: { risk: string; mitigation: string } | null): Kyc4uRiskReport {
+  if (!report.assessmentTable || !columns) return report;
+  const clean = (v: string) => text(v.replace(/\\n/g, " ")) || null;
+  const risk = clean(columns.risk), mitigation = clean(columns.mitigation);
+  if (!risk && !mitigation) return report;
+  return { ...report, riskIdentified: risk, mitigatingFactors: mitigation };
+}
+
 /** KYC4U's AML Risk Assessment Report, read from its text; null when the text is not one. */
 export function readKyc4uRiskReport(raw: string): Kyc4uRiskReport | null {
   if (!/Risk\s+Assessment/i.test(raw) || !/KYC4U/i.test(raw)) return null;
@@ -284,7 +345,7 @@ export function readKyc4uRiskReport(raw: string): Kyc4uRiskReport | null {
   const risk = labelled(riskBody, RISK_LABELS.map(([, l]) => l));
   const dil = labelled(flat(s.diligence), DILIGENCE_LABELS);
   const counter = labelled(flat(s.counterparty), COUNTERPARTY_LABELS);
-  const assess = labelled(flat(s.assessment), ["RISK IDENTIFIED", "MITIGATING FACTORS", "OVERALL CONCLUSION"]);
+  const assess = readKyc4uAssessment(s.assessment);
   const recBody = flat(s.recommendation).replace(/^Team\s+Approver\s+Date\s*/i, "");
   const rec = labelled(recBody, APPROVAL_LABELS.map(([, l]) => l));
 
@@ -311,9 +372,10 @@ export function readKyc4uRiskReport(raw: string): Kyc4uRiskReport | null {
     certified: rowsWithEvidence(s.certified, 2, /^Name\s+Qualification\s+Organi[sz]ation$/i).map(r => ({
       name: r.cells[0], qualification: r.cells[1] || null, organisation: r.cells.slice(2).join(" ") || null,
     })),
-    riskIdentified: assess.get("RISK IDENTIFIED") ?? null,
-    mitigatingFactors: assess.get("MITIGATING FACTORS") ?? null,
-    conclusion: assess.get("OVERALL CONCLUSION") ?? null,
+    riskIdentified: assess.riskIdentified,
+    mitigatingFactors: assess.mitigatingFactors,
+    conclusion: assess.conclusion,
+    ...(assess.table ? { assessmentTable: true } : {}),
     counterparty: COUNTERPARTY_LABELS.map(label => ({ label, value: counter.get(label) ?? null })),
     approvals: APPROVAL_LABELS.map(([team, label]) => {
       const v = rec.get(label) ?? null;

@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import {
   askInputFrom, checkWebAnswer, chooseScreened, companyNamesMatch, controlWords, idCheckIsThePerson, isOffshoreCountry, isRegisterDirector, listingFromExemptions, verifiedPersonName,
   ownerControlLine, ownerKind, personNamesMatch, precheckAsks, precheckCardLines, precheckNamesakes, precheckNote, precheckRedFlags, providerMatchFlags,
-  nameSpeltAsTheirs, precheckSpellingVariants, splitProviderMatches,
+  nameSpeltAsTheirs, precheckSpellingVariants, splitProviderMatches, webFindingSaysNothing, webFindingsOf, idvOf, idvState,
   precheckSanctionsMatch, sanctionsLine, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput,
   precheckCompany, precheckUnfinished,
@@ -540,10 +540,10 @@ test("web results: one flag per person and kind with every source, and a company
   });
   const web = precheckRedFlags(run, { sanctionsCurrent: true }).filter(x => x.kind === "web_pep");
   assert.equal(web.length, 2, "one flag for the two sources about the same company");
-  assert.equal(web[0].label, "Possibly owned or controlled by the state or a public figure: BRUCE GILLINGHAM POLLARD LIMITED");
+  assert.equal(web[0].label, "Possibly owned or controlled by the state or a politically exposed person: BRUCE GILLINGHAM POLLARD LIMITED");
   assert.deepEqual(web[0].evidence, ["url:https://a.example/1", "url:https://b.example/2"]);
   assert.equal(web[0].facts.filter(x => x.label === "Source").length, 2);
-  assert.match(web[1].label, /^Possibly owned or controlled by the state or a public figure: Acme Holdings Limited$/, "an older line is read from the name");
+  assert.match(web[1].label, /^Possibly owned or controlled by the state or a politically exposed person: Acme Holdings Limited$/, "an older line is read from the name");
 });
 
 // Owners behind a company registered abroad (Woody, 20 November 2026, on
@@ -672,4 +672,37 @@ test("a company owned through one registered abroad goes to KYC4U", () => {
   assert.match(precheckNote(abroad, "done"), /BGP does not read foreign registers: please identify the beneficial owners behind it/);
   assert.match(precheckCardLines(abroad).find(l => l.key === "owners")!.detail || "", /It goes to KYC4U to find the people behind it/);
   assert.deepEqual(precheckCompany(result())!.ownersAbroad, []);
+});
+
+test("a web finding that only says nothing was found is no finding, and raises no flag (21 November 2026)", () => {
+  // As the search answered on Brasserie Bordelaise: it made the party enhanced.
+  const nothing = "Companies House lists Jane Example as the company's active director. The search found no source establishing that the company is government/state-owned or controlled, or that its director is a politically exposed person. The available record lists the director, but does not establish the compa";
+  assert.equal(webFindingSaysNothing(nothing), true);
+  assert.equal(webFindingSaysNothing("There is no evidence of adverse media about the company."), true);
+  assert.equal(webFindingSaysNothing("No credible reports were found."), true);
+  // Anything that says something keeps the finding.
+  assert.equal(webFindingSaysNothing("Jane Example served as Minister of Finance of Exampleland until March 2026 (Reuters)."), false);
+  assert.equal(webFindingSaysNothing("No evidence of sanctions, but the director was convicted of fraud in 2019."), false);
+  assert.equal(webFindingSaysNothing("The company was fined £2m by the FCA in 2024."), false);
+  assert.equal(webFindingSaysNothing("Companies House lists her as a director. She is the daughter of the President of Exampleland."), false);
+  assert.equal(webFindingSaysNothing("The company is owned by the Kirk Example family."), false, "an owner named is kept for a person to judge");
+  assert.equal(webFindingSaysNothing(""), false);
+
+  // At run time it is dropped; a check stored before is read the same way.
+  const cited = [{ url: "https://find-and-update.company-information.service.gov.uk/company/1/officers" }];
+  const answer = checkWebAnswer({ publicRole: { status: "possible", findings: [{ summary: nothing, url: cited[0].url }] }, adverseMedia: { status: "none_found", findings: [] } }, cited);
+  assert.equal(answer.findings.length, 0);
+  assert.equal(answer.publicRole, "none_found");
+  const stored: any = { name: "EXAMPLE BRASSERIE LIMITED", role: "company", person: false, ran: true, publicRole: "possible", adverseMedia: "none_found", unsourced: 0,
+    findings: [{ kind: "public_role", summary: nothing, url: cited[0].url, source: "Companies House", date: "2026-11-16", category: null, unsureIdentity: false }] };
+  assert.deepEqual(webFindingsOf(stored), []);
+  const flags = precheckRedFlags(result({ web: { ran: true, skipped: null, lines: [stored] } } as any), { sanctionsCurrent: true });
+  assert.equal(flags.filter(f => f.kind === "web_pep").length, 0);
+});
+
+test("Companies House's open-ended date, 9999-12-31, is no date (21 November 2026)", () => {
+  assert.equal(idvOf({ appointment_verification_end_on: "9999-12-31" }), null);
+  assert.equal(idvState({ verifiedOn: null, statementOn: null, dueOn: null, endedOn: "9999-12-31" }).words, "no identity verification shown by Companies House", "a stored check reads the same");
+  assert.equal(idvState({ verifiedOn: null, statementOn: "2025-08-04", dueOn: null, endedOn: "9999-12-31" }).state, "verified");
+  assert.match(idvState({ verifiedOn: null, statementOn: "2025-08-04", dueOn: null, endedOn: "2026-01-02" }).words, /removed/);
 });

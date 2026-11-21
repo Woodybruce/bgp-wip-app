@@ -7,6 +7,8 @@
 export const AML_FILE_DOC_TYPE = "aml_file";
 
 const DOC_WORDS: Record<string, string> = {
+  adviser_check: "Adviser check",
+  agent_confirmation: "Agent's confirmation",
   aml_file: "AML file",
   authority_to_act: "Authority to act",
   company_accounts: "Accounts",
@@ -14,7 +16,9 @@ const DOC_WORDS: Record<string, string> = {
   confirmation_statement: "Confirmation statement",
   credit_report: "Credit report",
   driving_licence: "Driving licence",
+  electronic_id_check: "Electronic identity check",
   heads_of_terms: "Heads of terms",
+  id_check_report: "Identity document check",
   id_document: "Identity document",
   kyc4u_report: "KYC4U report",
   onfido_report: "Identity check result",
@@ -23,6 +27,7 @@ const DOC_WORDS: Record<string, string> = {
   proof_of_address: "Proof of address",
   public_source: "Public source",
   register_extract: "Register extract",
+  regulator_register: "Regulator's register",
   screening_report: "Screening report",
   source_of_funds: "Source of funds",
   structure_chart: "Structure chart",

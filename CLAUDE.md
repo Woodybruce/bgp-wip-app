@@ -5115,6 +5115,79 @@ really". Do not re-litigate. Rules: `shared/kyc4u-archive.ts`; server:
   match filing its folder's files, and no request to KYC4U but reads. Not
   run against KYC4U's real site from a build machine.
 
+## KYC4U's packs checked against BGP's own checks (Woody, 2026-11-21)
+
+Woody uploaded seven of KYC4U's packs (REQ112444 LEGO, REQ101253 Otherworld
+Piccadilly, REQ114157 Brasserie Bordelaise, REQ114299 Sushidog (Bluewater),
+REQ113998 LTMM Group (Piece of Velvet), REQ113922 Addington, REQ113570 The
+Abigail Scheuer Trading Company (Choux)): "can you check these all and make
+sure we are covering everyhting in these", "that if we didnt use KYC4U we
+would be fine and where the gaos are", and "can you run all those checks via
+our system and check along side what KYC4U did to see if we get the same".
+
+- **BGP's checks were run on live** on the four that are on deals, as Woody
+  (the QA token), on 21 November 2026. On three, the deal named no company
+  that signs, so KYC4U's entity was added under the brand from Companies House
+  with no Xero contact (`POST /api/billing-entities`, `xero: false`) and set as
+  the tenant's company that signs: SUSHIDOG (BLUEWATER) LIMITED (17434171) on
+  d4fbec63 (Bluewater EVL02), BRASSERIE BORDELAISE LIMITED (17510452) on
+  15e9db11 (89 Charterhouse Street; db755474 is a second live SOL deal for the
+  same letting, a duplicate left as it was), THE ABIGAIL SCHEUER TRADING
+  COMPANY LIMITED (09275764) on 2201c032 (Portman Estate - Choux T2, whose
+  brand also has T2 TEA (UK) LIMITED filed under it, probably wrongly). LEGO
+  (79f1333a) already signed as LEGO COMPANY LIMITED. LTMM, Addington and
+  Otherworld are on no deal in the app, so they were not run.
+- **What matched**: the company, its owners (Claude Bosi; Abigail Scheuer;
+  Sushidog Limited and, behind it, Nicholas Goldstein and Gregory Ilsen, whom
+  the app screened as the directors standing in under reg 28(6) and KYC4U as
+  the largest shareholders who are directors), nationality and date of birth,
+  no sanctions match, no adverse media, and the cash-intensive restaurant risk.
+  The app also warns of a newly formed company with no accounts (KYC4U did
+  not) and showed both Sushidog directors' Companies House identity
+  verification.
+- **What did not, and was fixed**: (1) the web search returned "found no
+  source establishing that the company is ... state-owned ..., or that its
+  director is a politically exposed person" as a public-role finding on
+  Brasserie Bordelaise, and the app raised it as a red flag and made the party
+  enhanced. A finding whose every sentence says nothing was found, or only
+  restates the register, is now no finding (`webFindingSaysNothing`,
+  `webFindingsOf` in `shared/kyc-prechecks.ts`), at run time and when stored
+  checks are read; a sentence with "but" and something found keeps it, and
+  anything else keeps it, so a real finding is never dropped. Both web prompts
+  say a finding never states that nothing was found. The company flag reads
+  "Possibly owned or controlled by the state or a politically exposed person"
+  (it read "a public figure", which is not the question asked; the flag's key
+  is unchanged, so set-asides stand). LEGO carried the same kind of flag; its
+  words were not read (that would have started a paid check on the landlord).
+  (2) Companies House writes 9999-12-31 for a date not set: the app read it
+  as "identity verification statement removed on 31 Dec 9999" (Choux). It is
+  no date now (`idvOf`, `idvState`).
+- **The pack reader, run over the seven real packs** (`shared/kyc4u-result-pack.ts`,
+  `server/kyc4u-result-pack.ts`): a pack downloaded from KYC4U's site is
+  wrapped twice (`REQ113570  Name/REQ113570/…`), and every shared wrapper now
+  comes off (`unwrapPackPaths`; before, only one did, so headings read
+  "REQ114157 · HOTs"). KYC4U's assessment comes in three layouts
+  (`readKyc4uAssessment`): RISK IDENTIFIED / MITIGATING FACTORS / OVERALL
+  CONCLUSION one under another; a "Risk Identified | Mitigation" table and an
+  "Overall Conclusion", whose columns plain text runs together, read by
+  position on the server (`kyc4uRiskTable`, pdf.js: each piece of text goes to
+  the column it sits under, divided halfway between the two headings' centres,
+  across a page break); and on a sanctions-only check one paragraph, which is
+  the conclusion. A heading counts only on a line of its own ("Considering the
+  mitigating factors" in a conclusion was read as one). New document types:
+  `id_check_report` (ComplyCube's Document Check), `electronic_id_check`
+  (Multi-Bureau Check), `agent_confirmation`, `adviser_check` (an Advisors
+  folder, Law Society or SRA proof), `regulator_register` (FCA register),
+  and accounts, confirmation statements and incorporation certificates by
+  name. A loose file is filed by its name (KYC4U's 2023 packs keep every file
+  loose); only an email is KYC4U's report by default. Tests:
+  `server/kyc4u-result-pack.test.ts`.
+- KYC4U's own tools, read from the packs: ComplyCube for each person (Document
+  Check, Multi-Bureau Check, Proof of Address Check, Extensive Screening) and
+  Creditsafe for each company. KYC4U marked "Structure Chart: Not required -
+  simple structure" on every pack with a UK structure, Sushidog's holding
+  company included.
+
 ## The deal page (Woody, 2026-11-18) — docs/deal-page-review-2026-11-18.md
 
 Woody, on the deal page: "Needs a chat box too no and how the negotiations

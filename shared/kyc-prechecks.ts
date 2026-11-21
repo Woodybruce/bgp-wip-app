@@ -354,6 +354,34 @@ const clip = (value: unknown, max: number): string => String(value ?? "").replac
 // What the search said, kept only where it gave a source that is among the
 // pages it actually read (its citations). A status with no source left
 // behind it reads as nothing found.
+// A "finding" that only says nothing was found (Woody, 21 November 2026, run
+// against KYC4U's packs: on Brasserie Bordelaise the search returned "The
+// search found no source establishing that the company is government/state-
+// owned or controlled, or that its director is a politically exposed person"
+// as a finding, and the app raised it as a red flag and made the party
+// enhanced). Every sentence must say nothing was found, or only restate the
+// register, for a finding to be dropped: anything else in it keeps it, so a
+// real finding is never lost.
+const NOTHING_FOUND = /\b(found|finds|identified|located)\s+no\b|\bno\s+(source|sources|evidence|record|records|indication|indications|information|mention|mentions|report|reports|result|results|link|links|connection|suggestion|credible)\b|\b(does|did|do)\s+not\s+(establish|show|indicate|suggest|appear|identify|find|reveal|confirm)\b|\bnot\s+(identified|found|listed|named|known)\s+(as|to\s+be)\b|\bthere\s+(is|was|are|were)\s+no\b|\bnothing\s+(was\s+)?(found|identified|suggest|indicat)|\bnone\s+(was\s+|were\s+)?(found|identified)\b|\b(could|can)\s*n[o']t\s+(find|identify|establish|confirm)\b|\bunable\s+to\s+(find|identify|establish|confirm|verify)\b|\bis\s+not\s+(a\s+)?(politically\s+exposed|pep\b|state[-\s]owned|government[-\s]owned)/i;
+const REGISTER_ONLY = /\b(companies\s+house|the\s+register|public\s+register|registry)\b.*\b(lists?|shows?|names?|records?)\b|\b(lists?|shows?|names?|records?)\b.*\b(as\s+(the\s+)?(company'?s\s+)?(active\s+)?(sole\s+)?(director|officer|secretary|member|person\s+with\s+significant\s+control|shareholder))\b|\b(available|public)\s+records?\s+(lists?|shows?|names?)\b|\bwas\s+incorporated\s+(on|in)\b/i;
+const BUT_THEN = /\b(but|however|although|though|yet|whereas)\b(.*)$/i;
+export function webFindingSaysNothing(summary: string | null | undefined): boolean {
+  const sentences = String(summary || "").split(/(?<=[.!?;])\s+/).map(t => t.trim()).filter(t => t.length > 2);
+  if (!sentences.length) return false;
+  let negative = false;
+  for (const t of sentences) {
+    const contrast = BUT_THEN.exec(t);
+    // "No evidence of sanctions, but the director was convicted of fraud" says something.
+    if (NOTHING_FOUND.test(t) && !(contrast && contrast[2].trim() && !NOTHING_FOUND.test(contrast[2]) && !REGISTER_ONLY.test(contrast[2]))) { negative = true; continue; }
+    if (REGISTER_ONLY.test(t) && !/\b(convict|charg|fin(ed|e\s+of)|sentenc|ban(ned)?\b|disqualif|sanction|fraud|brib|corrupt|launder|minister|parliament|ambassador|judge|state[-\s]owned|government[-\s]owned|politically\s+exposed)/i.test(t)) continue;
+    return false;
+  }
+  return negative;
+}
+
+/** The web search's findings for one line, less any that only says nothing was found (read so, as stored checks are). */
+export const webFindingsOf = (line: Pick<WebSearchLine, "findings">): WebFinding[] => (line.findings || []).filter(f => !webFindingSaysNothing(f.summary));
+
 export function checkWebAnswer(raw: unknown, citations: Array<{ url: string }>): Pick<WebSearchLine, "publicRole" | "adverseMedia" | "findings" | "unsourced"> {
   const cited = new Set(citations.map(c => hostOf(c?.url || "")).filter((h): h is string => !!h));
   const findings: WebFinding[] = [];
@@ -366,7 +394,7 @@ export function checkWebAnswer(raw: unknown, citations: Array<{ url: string }>):
       const url = clip(item?.url, 500);
       const host = hostOf(url);
       const summary = clip(item?.summary, 300);
-      if (!summary) continue;
+      if (!summary || webFindingSaysNothing(summary)) continue;
       if (!host || !cited.has(host)) { unsourced++; continue; }
       findings.push({
         kind, summary, url, source: clip(item?.source, 80) || host,
@@ -426,7 +454,8 @@ export type IdvState = "verified" | "due" | "overdue" | "not_shown";
 export function idvOf(details: unknown): PrecheckIdv | null {
   const d: any = details && typeof details === "object" ? details : null;
   if (!d) return null;
-  const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
+  // Companies House writes 9999-12-31 for a date not set (seen 21 November 2026: "removed on 31 Dec 9999").
+  const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) && v.slice(0, 4) < "9000" ? v.slice(0, 10) : null);
   const out = {
     verifiedOn: day(d.identity_verified_on),
     statementOn: day(d.appointment_verification_start_on),
@@ -445,6 +474,8 @@ const idvDay = (iso: string | null): string => {
 /** Where one person's identity verification at Companies House stands, in words. */
 export function idvState(idv: PrecheckIdv | null | undefined, today: Date = new Date()): { state: IdvState; words: string } {
   if (!idv) return { state: "not_shown", words: "no identity verification shown by Companies House" };
+  // A check stored before the open-ended date was read as none keeps 9999-12-31: it is no date.
+  if (idv.endedOn && idv.endedOn.slice(0, 4) >= "9000") idv = { ...idv, endedOn: null };
   if (idv.verifiedOn) return { state: "verified", words: `identity verified with Companies House on ${idvDay(idv.verifiedOn)}` };
   if (idv.statementOn && !idv.endedOn) return { state: "verified", words: `identity verified with Companies House (statement given ${idvDay(idv.statementOn)})` };
   if (idv.dueOn) {
@@ -1151,8 +1182,8 @@ export function precheckNamesakes(result: Pick<KycPrecheckResult, "complyAdvanta
     }
   }
   for (const line of result.web.lines) {
-    for (const f of line.findings.filter(x => x.unsureIdentity)) {
-      out.push({ name: line.name, via: "web search", url: f.url, what: `${f.kind === "public_role" ? (webLineIsCompany(line) ? "ownership by the state or a public figure" : "public role") : "adverse media"}: ${f.summary}` });
+    for (const f of webFindingsOf(line).filter(x => x.unsureIdentity)) {
+      out.push({ name: line.name, via: "web search", url: f.url, what: `${f.kind === "public_role" ? (webLineIsCompany(line) ? "ownership by the state or a politically exposed person" : "public role") : "adverse media"}: ${f.summary}` });
     }
   }
   return out;
@@ -1301,11 +1332,11 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
   }
   for (const line of result.web.lines) {
     for (const kind of ["public_role", "adverse_media"] as const) {
-      const sure = line.findings.filter(f => f.kind === kind && !f.unsureIdentity);
+      const sure = webFindingsOf(line).filter(f => f.kind === kind && !f.unsureIdentity);
       if (!sure.length) continue;
-      // For a company the search asks whether the state or a public figure owns or controls it.
+      // For a company the search asks whether the state or a politically exposed person owns or controls it.
       const label = kind === "adverse_media" ? `Adverse media about ${line.name}`
-        : webLineIsCompany(line) ? `Possibly owned or controlled by the state or a public figure: ${line.name}` : `Possible public role for ${line.name}`;
+        : webLineIsCompany(line) ? `Possibly owned or controlled by the state or a politically exposed person: ${line.name}` : `Possible public role for ${line.name}`;
       flags.push({
         kind: kind === "public_role" ? "web_pep" : "web_adverse",
         label,
@@ -1465,7 +1496,7 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
   if (result.screened) lines.push(`- ${screenedLine(result.screened)}`);
   if (result.web.ran) {
     const searched = result.web.lines.filter(l => l.ran);
-    const found = searched.flatMap(l => l.findings.map(f => `${l.name}: ${f.summary} (${f.url})`));
+    const found = searched.flatMap(l => webFindingsOf(l).map(f => `${l.name}: ${f.summary} (${f.url})`));
     lines.push(`- Public roles and adverse media (web search with sources, ${searched.length} searched): ${found.length ? found.slice(0, 5).join("; ") : "nothing found"}.`);
   } else if (result.web.skipped) {
     lines.push(`- Public roles and adverse media: not searched (${result.web.skipped}).`);
@@ -1585,7 +1616,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
   }
   if (result.web.ran) {
     const searched = result.web.lines.filter(l => l.ran);
-    const findings = searched.flatMap(l => l.findings.filter(f => !f.unsureIdentity).map(f => ({ l, f })));
+    const findings = searched.flatMap(l => webFindingsOf(l).filter(f => !f.unsureIdentity).map(f => ({ l, f })));
     const failed = result.web.lines.filter(l => !l.ran);
     out.push({
       key: "web", label: `Public roles and adverse media: ${searched.length} searched, ${findings.length ? `${findings.length} to review` : "nothing found"}`,

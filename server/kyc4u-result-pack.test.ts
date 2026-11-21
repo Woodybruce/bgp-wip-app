@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import AdmZip from "adm-zip";
 import {
-  isKyc4uRiskReportName, kyc4uPackPlace, kyc4uReferenceIn, kyc4uResultPrefill, kyc4uRiskLevel, readKyc4uRiskReport, unwrapPackPaths,
+  isKyc4uRiskReportName, kyc4uPackPlace, kyc4uReferenceIn, kyc4uResultPrefill, kyc4uRiskLevel, readKyc4uAssessment, readKyc4uRiskReport, unwrapPackPaths, withKyc4uRiskTable,
 } from "../shared/kyc4u-result-pack";
 import { readKyc4uPack, unpackKyc4uFiles } from "./kyc4u-result-pack";
 
@@ -245,6 +245,68 @@ test("a zip wrapped in one folder is unwrapped; KYC4U's numbered folders are not
   assert.deepEqual(unwrapPackPaths(["Example/1.0 HOTs/a.docx", "Example/Report.pdf"]), ["1.0 HOTs/a.docx", "Report.pdf"]);
   assert.deepEqual(unwrapPackPaths(["1.0 HOTs/a.docx", "Report.pdf"]), ["1.0 HOTs/a.docx", "Report.pdf"]);
   assert.deepEqual(unwrapPackPaths(["2.0 Co/a.pdf", "2.0 Co/b.pdf"]), ["2.0 Co/a.pdf", "2.0 Co/b.pdf"]);
+});
+
+test("a pack downloaded from KYC4U's site is wrapped twice, and both wrappers come off (21 November 2026)", () => {
+  assert.deepEqual(unwrapPackPaths([
+    "REQ100002  Example Trading Limited/REQ100002/AMLRiskAssessmentReport-REQ100002.pdf",
+    "REQ100002  Example Trading Limited/REQ100002/1.0 HOTs/HOTs Example.docx",
+    "REQ100002  Example Trading Limited/REQ100002/3.0 UBOs/Jane Example - Compliance Report.pdf",
+  ]), ["AMLRiskAssessmentReport-REQ100002.pdf", "1.0 HOTs/HOTs Example.docx", "3.0 UBOs/Jane Example - Compliance Report.pdf"]);
+  // Files all in one older-style folder come out loose.
+  assert.deepEqual(unwrapPackPaths(["REQ100003  Example Ltd/REQ100003/a.pdf", "REQ100003  Example Ltd/REQ100003/b.xlsx"]), ["a.pdf", "b.xlsx"]);
+});
+
+test("KYC4U's electronic checks, advisers, agent's confirmations and filings each have their own type", () => {
+  const place = (p: string) => { const x = kyc4uPackPlace(p); return [x.heading, x.kind, x.docType]; };
+  const ubo = "2.0 UBOs/1.0 Jane Example";
+  assert.deepEqual(place(`${ubo}/AML check/Document Check.pdf`), ["Owners · Jane Example", "owner", "id_check_report"]);
+  assert.deepEqual(place(`${ubo}/AML check/Multi-Bureau Check.pdf`), ["Owners · Jane Example", "owner", "electronic_id_check"]);
+  assert.deepEqual(place(`${ubo}/AML check/Proof of Address Check.pdf`), ["Owners · Jane Example", "owner", "proof_of_address"]);
+  assert.deepEqual(place(`${ubo}/AML check/Extensive Screening.pdf`), ["Owners · Jane Example", "owner", "screening_report"]);
+  assert.deepEqual(place(`${ubo}/Jane Example - Client AML Report.pdf`), ["Owners · Jane Example", "owner", "screening_report"]);
+  assert.deepEqual(place(`${ubo}/Jane Example - bank statement.pdf`), ["Owners · Jane Example", "owner", "proof_of_address"]);
+  assert.deepEqual(place("3.0 Holding Cos/Example Holdings Limited/Example Holdings Limited - annual accounts.pdf"), ["Holding companies · Example Holdings Limited", "holding", "company_accounts"]);
+  assert.deepEqual(place("3.0 Holding Cos/Example Holdings Limited/Example Holdings Limited - confirmation statement.pdf"), ["Holding companies · Example Holdings Limited", "holding", "confirmation_statement"]);
+  assert.deepEqual(place("2.0 KYC Entity/Example Ltd - Agent's Confirmation on Request Type and Entity Name.pdf"), ["KYC Entity", "company", "agent_confirmation"]);
+  assert.deepEqual(place("2.0 KYC Entity/Example Limited - Agent on Company Background.pdf"), ["KYC Entity", "company", "agent_confirmation"]);
+  assert.deepEqual(place("2.0 KYC Entity/Jane EXAMPLE personal appointments - Find and update company information - GOV.UK.pdf"), ["KYC Entity", "company", "register_extract"]);
+  assert.deepEqual(place("5.0 Advisors/Example Law LLP - The Law Society.pdf"), ["Advisers", "adviser", "adviser_check"]);
+  assert.deepEqual(place("4.0 Advisors/Example LLP - SRA Regulation Proof.pdf"), ["Advisers", "adviser", "adviser_check"]);
+  // KYC4U's older packs (2023) kept every document loose: each is filed by its name, never all as KYC4U's report.
+  assert.deepEqual(place("Example Limited - Incorporation Certificate.pdf"), ["KYC4U's pack", "other", "company_cert"]);
+  assert.deepEqual(place("Example Growth LLP - FCA Regulation.pdf"), ["KYC4U's pack", "other", "regulator_register"]);
+  assert.deepEqual(place("Example Founders News Report.pdf"), ["KYC4U's pack", "other", "public_source"]);
+  assert.deepEqual(place("Example Ltd - KYC verification form Standard 1 (1).xlsx"), ["KYC4U's pack", "other", "kyc4u_report"]);
+  assert.deepEqual(place("Example HOT's 26.03.2023.doc"), ["KYC4U's pack", "other", "heads_of_terms"]);
+  assert.deepEqual(place("Something else.pdf"), ["KYC4U's pack", "other", "other"]);
+});
+
+test("KYC4U's assessment is read in each of its three layouts, and a heading never inside a sentence", () => {
+  // One under another (the first layout read, July 2026).
+  assert.deepEqual(readKyc4uAssessment(["RISK IDENTIFIED", "No risk identified.", "MITIGATING FACTORS", "Not required, as no risk has been identified.", "OVERALL CONCLUSION", "The client is deemed to be lower risk."]),
+    { riskIdentified: "No risk identified.", mitigatingFactors: "Not required, as no risk has been identified.", conclusion: "The client is deemed to be lower risk.", table: false });
+  // A two-column table: plain text runs the columns together, so they are kept as one until the server splits them,
+  // and "the mitigating factors" inside the conclusion is not taken for a heading.
+  const table = readKyc4uAssessment(["Risk Identified \tMitigation", "The client is a restaurant, a cash", "intensive business.", "We have mitigated the risk factor as", "there is no alert. \\nIn addition, the owner is well known.",
+    "Overall Conclusion", "Since no other high-risk factor has been identified. Considering the mitigating factors, the client is assessed as low risk."]);
+  assert.equal(table.table, true);
+  assert.equal(table.mitigatingFactors, null);
+  assert.equal(table.conclusion, "Since no other high-risk factor has been identified. Considering the mitigating factors, the client is assessed as low risk.");
+  assert.match(table.riskIdentified!, /^Risk and mitigation, as KYC4U's table gives them: The client is a restaurant/);
+  assert.doesNotMatch(table.riskIdentified!, /\\n/, "KYC4U's written \\n is taken out");
+  // A sanctions-only check: one paragraph and no headings is the conclusion.
+  assert.deepEqual(readKyc4uAssessment(["No sanctions alerts were identified for the entity or its connected parties."]),
+    { riskIdentified: null, mitigatingFactors: null, conclusion: "No sanctions alerts were identified for the entity or its connected parties.", table: false });
+  assert.deepEqual(readKyc4uAssessment(undefined), { riskIdentified: null, mitigatingFactors: null, conclusion: null, table: false });
+
+  // The server's columns, read by position, go in their own fields.
+  const report: any = { assessmentTable: true, riskIdentified: "Risk and mitigation, as KYC4U's table gives them: x", mitigatingFactors: null, conclusion: "c" };
+  const split = withKyc4uRiskTable(report, { risk: "The client is a restaurant.", mitigation: "We have mitigated it. \\nNo alert." });
+  assert.equal(split.riskIdentified, "The client is a restaurant.");
+  assert.equal(split.mitigatingFactors, "We have mitigated it. No alert.");
+  assert.equal(withKyc4uRiskTable(report, null), report, "no columns: the reading stands, said as one");
+  assert.equal(withKyc4uRiskTable({ ...report, assessmentTable: false }, { risk: "a", mitigation: "b" }).riskIdentified, report.riskIdentified);
 });
 
 test("the report's name and reference are recognised", () => {
