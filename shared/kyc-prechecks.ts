@@ -583,7 +583,7 @@ export const SCREEN_BASIS_WORDS: Record<ScreenBasis, string> = {
   owners: "the company and the people who own or control it (its beneficial owners: found on the register and up the ownership chain, or recorded behind a company abroad that owns it)",
   managers: "the company and its directors, standing in for the owners because none could be named",
   listed: "the company only: a company listed on a regulated market has no beneficial owners to identify",
-  individual: "the person",
+  individual: "the person, and anyone named alongside them",
   company: "the company only: no owner or director could be named from the register",
   owners_abroad: "the company, the company registered abroad that owns it, and its directors meanwhile: Companies House cannot show who owns that company, so the client is asked for the people behind it",
   trustees: "the charity and its trustees, who control it, as the Charity Commission's register names them",
@@ -613,7 +613,7 @@ export function chooseScreened<T extends ScreenCandidate>(candidates: T[], ctx: 
   let people: T[];
   if (ctx.individual) {
     basis = "individual";
-    people = candidates.filter(c => c.person && roles(c).includes("the party"));
+    people = candidates.filter(c => c.person && (roles(c).includes("the party") || roles(c).includes("named alongside the party")));
   } else if (candidates.some(c => c.person && c.owner)) {
     basis = "owners";
     // A charity's trustees control it alongside any owner the register names.
@@ -1731,14 +1731,17 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
   if (result.sanctions.ran) {
     const possible = result.sanctions.lines.filter(l => l.outcome === "possible");
     const discounted = result.sanctions.lines.filter(l => l.outcome === "discounted");
+    // The UK list is the one the law requires: screened without it is not a
+    // clear screen (22 November 2026).
+    const ukMissing = !result.sanctions.lists.some(l => l.includes(SANCTIONS_LIST_NAME.UK));
     out.push({
       key: "sanctions", label: `Sanctions: ${result.sanctions.lines.length} names screened, ${possible.length ? `${possible.length} possible match${possible.length === 1 ? "" : "es"}` : "no match"}`,
-      state: possible.length ? "attention" : "ok",
-      detail: [`Screened against ${result.sanctions.lists.join(" and ")}`, possible.map(l => `${l.name} ↔ ${l.matches[0]?.name}: ${String(l.matches[0]?.why || "").replace(/\.\s*$/, "")}`).join("; "), discounted.length ? `Set aside on date of birth: ${discounted.map(l => `${l.name} ↔ ${l.matches[0]?.name}`).join("; ")}` : ""].filter(Boolean).join(". ") + ".",
+      state: possible.length ? "attention" : "ok", ...(ukMissing ? { failed: true } : {}),
+      detail: [ukMissing ? "The UK Sanctions List could not be downloaded: run the checks again" : "", `Screened against ${result.sanctions.lists.join(" and ")}`, possible.map(l => `${l.name} ↔ ${l.matches[0]?.name}: ${String(l.matches[0]?.why || "").replace(/\.\s*$/, "")}`).join("; "), discounted.length ? `Set aside on date of birth: ${discounted.map(l => `${l.name} ↔ ${l.matches[0]?.name}`).join("; ")}` : ""].filter(Boolean).join(". ") + ".",
       links: [],
     });
   } else {
-    out.push({ key: "sanctions", label: "Sanctions: not screened", state: "not_run", detail: result.sanctions.error, links: [] });
+    out.push({ key: "sanctions", label: "Sanctions: not screened", state: "not_run", failed: true, detail: result.sanctions.error, links: [] });
   }
   if (result.screened) {
     const s = result.screened;

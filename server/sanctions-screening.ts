@@ -40,6 +40,9 @@ export interface SanctionEntry {
 let sanctionsCache: SanctionEntry[] = [];
 let cacheLoadedAt = 0;
 let loadPromise: Promise<void> | null = null;
+// A list failed to download: try all three again sooner than a day.
+let retrySoon = false;
+const RETRY_FAILED_LIST_MS = 15 * 60 * 1000;
 
 export function isSanctionsListLoaded(): boolean {
   return sanctionsCache.length > 0;
@@ -432,25 +435,27 @@ async function doLoadSanctionsList(): Promise<void> {
     loadEuEntries(),
   ]);
 
+  // A list that fails to download keeps the copy held before, and the lists
+  // are tried again within 15 minutes (22 November 2026: after a restart the
+  // US list failed and a day's screening ran without it).
+  const previous = sanctionsCache;
   const merged: SanctionEntry[] = [];
-  if (ofsiRes.status === "fulfilled") {
-    merged.push(...ofsiRes.value);
-    console.log(`[sanctions] UK OFSI loaded: ${ofsiRes.value.length} entries`);
-  } else {
-    console.error("[sanctions] UK OFSI load failed:", ofsiRes.reason?.message || ofsiRes.reason);
-  }
-  if (ofacRes.status === "fulfilled") {
-    merged.push(...ofacRes.value);
-    console.log(`[sanctions] US OFAC loaded: ${ofacRes.value.length} entries`);
-  } else {
-    console.error("[sanctions] US OFAC load failed:", ofacRes.reason?.message || ofacRes.reason);
-  }
-  if (euRes.status === "fulfilled") {
-    merged.push(...euRes.value);
-    console.log(`[sanctions] EU consolidated list loaded: ${euRes.value.length} entries`);
-  } else {
-    console.error("[sanctions] EU consolidated list load failed:", euRes.reason?.message || euRes.reason);
-  }
+  const failed: string[] = [];
+  const take = (source: SanctionSource, label: string, res: PromiseSettledResult<SanctionEntry[]>) => {
+    if (res.status === "fulfilled" && res.value.length) {
+      merged.push(...res.value);
+      console.log(`[sanctions] ${label} loaded: ${res.value.length} entries`);
+      return;
+    }
+    failed.push(label);
+    const kept = previous.filter(e => e.source === source);
+    merged.push(...kept);
+    console.error(`[sanctions] ${label} load failed:`, res.status === "rejected" ? res.reason?.message || res.reason : "no entries",
+      kept.length ? `(kept the last copy: ${kept.length} entries)` : "(no copy held)");
+  };
+  take("UK-OFSI", "UK OFSI", ofsiRes);
+  take("US-OFAC", "US OFAC", ofacRes);
+  take("EU-FSF", "EU consolidated list", euRes);
 
   if (merged.length === 0) {
     console.error("[sanctions] EVERY sanctions source failed — screening will return no results");
@@ -459,11 +464,13 @@ async function doLoadSanctionsList(): Promise<void> {
 
   sanctionsCache = merged;
   cacheLoadedAt = Date.now();
-  console.log(`[sanctions] Total sanctions entries loaded: ${merged.length} (OFSI + OFAC + EU)`);
+  retrySoon = failed.length > 0;
+  console.log(`[sanctions] Total sanctions entries loaded: ${merged.length} (OFSI + OFAC + EU)${failed.length ? `; tried again within 15 minutes: ${failed.join(", ")}` : ""}`);
 }
 
+
 export async function loadSanctionsList(): Promise<void> {
-  if (sanctionsCache.length > 0 && Date.now() - cacheLoadedAt < CACHE_TTL_MS) return;
+  if (sanctionsCache.length > 0 && Date.now() - cacheLoadedAt < (retrySoon ? RETRY_FAILED_LIST_MS : CACHE_TTL_MS)) return;
   if (loadPromise) return loadPromise;
   loadPromise = doLoadSanctionsList().finally(() => { loadPromise = null; });
   return loadPromise;

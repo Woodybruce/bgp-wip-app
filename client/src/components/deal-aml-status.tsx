@@ -911,8 +911,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     if (pre.state === "none") return { state: "wait", text: "Not run yet" };
     if (pre.unfinished || pre.state === "waiting") return { state: "act", text: "Not finished: trying again" };
     if (attention) return { state: "flag", text: `${attention} to look at` };
-    // ComplyAdvantage refused or failed someone: not a clear screen (22 November 2026).
-    if (pre.lines.some(l => l.failed)) return { state: "act", text: "ComplyAdvantage didn't screen everyone" };
+    // A list or ComplyAdvantage failed someone: not a clear screen (22 November 2026).
+    const failedLine = pre.lines.find(l => l.failed);
+    if (failedLine) return { state: "act", text: failedLine.key === "sanctions" ? "Sanctions lists not read: run again" : "ComplyAdvantage didn't screen everyone" };
     const extra = [level?.level === "enhanced" ? "higher risk" : null, flagAside ? `${flagAside} set aside` : null, unchecked.length ? "some records not read" : null].filter(Boolean);
     return { state: level?.level === "enhanced" ? "act" : "done", text: `Clear${pre.ranAt ? ` · ${precheckDay(pre.ranAt)}` : ""}${extra.length ? ` · ${extra.join(" · ")}` : ""}` };
   })();

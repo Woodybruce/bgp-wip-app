@@ -897,6 +897,21 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   const where = companiesHouse ? `${companiesHouse.name} (Companies House ${companiesHouse.number})` : partyName;
   if (subjectKind === "individual") add({ name: personNameOfRecord(entity ? entity.name : company.name), role: "the party", person: true, dobYear: null, context: "a private individual dealing in UK commercial property" });
   else add({ name: partyName, role: "the company", person: false, dobYear: null, context: companiesHouse ? `UK company ${companiesHouse.number}, registered office ${companiesHouse.registeredOffice || "not given"}` : "a company in a UK property transaction" });
+  // Everyone on a private individual's side, as People to check lists them
+  // (22 November 2026: someone added alongside was never screened): each
+  // person named alongside them in full, and whoever the checks went to.
+  if (subjectKind === "individual") {
+    const asked = (await pool.query(
+      `SELECT contact_name, request->'person'->>'name' AS person_name FROM kyc_upload_tokens
+        WHERE company_id = $1 AND trading_entity_id IS NOT DISTINCT FROM $2 AND request IS NOT NULL
+          AND COALESCE(request->>'audience', '') <> 'joint_agent' AND revoked_at IS NULL AND is_test IS NOT TRUE
+        ORDER BY created_at`, [companyId, entityId]).catch(() => ({ rows: [] as any[] }))).rows;
+    for (const r of asked) {
+      const alongside = clean(r.person_name, 160);
+      if (alongside) add({ name: alongside, role: "named alongside the party", person: true, dobYear: null, context: `a private individual named alongside ${partyName} in a UK property transaction` });
+      else if (clean(r.contact_name, 160)) add({ name: clean(r.contact_name, 160), role: "asked for the party's checks", person: true, dobYear: null, context: `the person asked for the checks of ${partyName}, a private individual in a UK property transaction` });
+    }
+  }
   if (subjectKind === "company" && clean(company.name, 160) && clean(company.name, 160).toLowerCase() !== partyName.toLowerCase()) {
     add({ name: clean(company.name, 160), role: "the company (trading name)", person: false, dobYear: null, context: `trading name of ${where}` });
   }

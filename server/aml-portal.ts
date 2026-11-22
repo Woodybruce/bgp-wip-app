@@ -734,6 +734,12 @@ export async function createPersonCheck(dealId: string, input: z.infer<typeof pe
     );
     row = (await tokenRow(token))!;
     created = true;
+    // Someone added alongside a private individual is screened on a fresh run
+    // of BGP's checks at once (22 November 2026).
+    if (input.name) {
+      const { startPrecheck } = await import("./kyc-prechecks");
+      void startPrecheck(party.companyId, { dealId, userId: me ? me.id : null, force: true, entityId: party.entityId }).catch(() => {});
+    }
   }
 
   let sent: KycSendResult | null = null;
@@ -1255,6 +1261,11 @@ kycRequestRouter.post("/api/aml/deal/:id/client-checks/people/rename", signedIn,
     await pool.query(`UPDATE kyc_upload_tokens SET contact_name = $2, request = $3::jsonb WHERE token = $1`, [row.token, name, JSON.stringify(request)]);
     if (row.company_id) await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_checks_renamed', $2, $3)`,
       [row.company_id, me.name || me.id, `Name on client checks ref ${row.request.ref} changed from ${before} to ${name}`]).catch(() => {});
+    // The name put right is screened on a fresh run (22 November 2026).
+    if (row.company_id) {
+      const { startPrecheck } = await import("./kyc-prechecks");
+      void startPrecheck(String(row.company_id), { dealId: String(req.params.id), userId: me.id, force: true, entityId: row.trading_entity_id || null }).catch(() => {});
+    }
     res.json({ ok: true, name });
   } catch (err: any) {
     res.status(500).json({ message: err?.message || "Could not change the name" });

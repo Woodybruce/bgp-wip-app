@@ -74,7 +74,9 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
   // signs (21 November 2026): its checks are read too.
   const ownRecord = party.kind === "company" && !party.entityId
     && (await pool.query(`SELECT 1 FROM crm_companies WHERE id = $1 AND lower(COALESCE(aml_subject_type, '')) = 'trust'`, [party.companyId]).catch(() => ({ rows: [] as any[] }))).rows.length > 0;
-  if (party.kind === "company" && (party.entityId || ownRecord)) {
+  // A private individual's own record is checked too: its sanctions lines name
+  // the people on that side (22 November 2026: People read "not screened").
+  if (party.kind === "individual" || (party.kind === "company" && (party.entityId || ownRecord))) {
     const { latestPrecheck } = await import("./kyc-prechecks");
     precheck = (await latestPrecheck(party.companyId, party.entityId).catch(() => null))?.result || null;
   }

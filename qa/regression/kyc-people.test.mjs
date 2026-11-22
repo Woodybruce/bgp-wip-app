@@ -88,3 +88,21 @@ test('the deal card lists the people to check first, and their own requests only
   assert.match(page, /<OwnerLinksCard n=\{step\} token=\{token\} people=\{view\.people\} onView=\{setView\} \/>/);
   assert.match(page, /fetch\(`\/api\/kyc-upload\/\$\{encodeURIComponent\(token\)\}\/people`/);
 });
+
+// Found by the live tests of 22 November 2026: a private individual's People
+// read "not screened" though BGP's checks had screened them, and someone added
+// alongside them was never screened at all.
+test("a private individual's side is screened: People reads the checks, and adding or renaming someone starts a fresh run", () => {
+  const people = read('server/kyc-people.ts');
+  assert.match(people, /if \(party\.kind === "individual" \|\| \(party\.kind === "company" && \(party\.entityId \|\| ownRecord\)\)\) \{\s*const \{ latestPrecheck \}/);
+  const run = read('server/kyc-prechecks.ts');
+  assert.match(run, /if \(subjectKind === "individual"\) \{\s*const asked = \(await pool\.query\(/);
+  assert.match(run, /role: "named alongside the party", person: true/);
+  assert.match(run, /role: "asked for the party's checks", person: true/);
+  assert.match(read('shared/kyc-prechecks.ts'), /roles\(c\)\.includes\("the party"\) \|\| roles\(c\)\.includes\("named alongside the party"\)/);
+  const portal = read('server/aml-portal.ts');
+  const create = portal.slice(portal.indexOf('export async function createPersonCheck'), portal.indexOf('// ── What the agents see on the deal'));
+  assert.match(create, /created = true;\s*\/\/ Someone added alongside[\s\S]{0,120}if \(input\.name\) \{\s*const \{ startPrecheck \} = await import\("\.\/kyc-prechecks"\);\s*void startPrecheck\(party\.companyId, \{ dealId, userId: me \? me\.id : null, force: true, entityId: party\.entityId \}\)/);
+  const rename = portal.slice(portal.indexOf('"/api/aml/deal/:id/client-checks/people/rename"'), portal.indexOf('async function addressProofRow'));
+  assert.match(rename, /void startPrecheck\(String\(row\.company_id\), \{ dealId: String\(req\.params\.id\), userId: me\.id, force: true, entityId: row\.trading_entity_id \|\| null \}\)/);
+});

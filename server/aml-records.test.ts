@@ -5,7 +5,7 @@
 import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { delimitedRows, parseEuSanctionsCsv } from "./sanctions-screening";
+import { delimitedRows, loadSanctionsList, loadedSanctionsLists, parseEuSanctionsCsv, screenName } from "./sanctions-screening";
 import { odsRowCells, readRegisterRows } from "./hmrc-register";
 import { storageKeyFromUrl } from "./aml-records-retention";
 import {
@@ -268,4 +268,59 @@ test("only the tool's own items, and only the app's stored files", () => {
   assert.equal(storageKeyFromUrl("/api/chat-media/kyc-1.pdf"), "chat-media/kyc-1.pdf");
   assert.equal(storageKeyFromUrl("https://chatbgp.app/api/chat-media/a%20b.pdf?x=1"), "chat-media/a b.pdf");
   assert.equal(storageKeyFromUrl("https://sharepoint.example/file.pdf"), null);
+});
+
+// ── A sanctions list that fails to download (22 November 2026) ──────────────
+// After a restart on live the US list failed and a day's screening ran
+// without it: a list that fails keeps the copy held before, and all three are
+// tried again within 15 minutes.
+
+test("a sanctions list that fails to download keeps its last copy and is tried again within 15 minutes", async () => {
+  const UK_CSV = "Report Date: 22/11/2026\nUnique ID,Name 6,Name 1,Name 2,Name type,Regime Name,Designation Type,Sanctions Imposed,Nationality(/ies),D.O.B,Type of entity,Date Designated\nRUS0001,Testov,Ivan,,Primary Name,Russia,Individual,Asset freeze,Russia,01/01/1970,,01/01/2022\n";
+  const OFAC_CSV = (name: string) => `1,"${name}","individual","SDGT","","","","","","","",""\n`;
+  const EU_CSV = [EU_HEADER, "22/11/2026;99;EU.99.1;enterprise;RUS;2022-07-21;;;;Example Bank PJSC;;;;;"].join("\n");
+  let ofac: string | null = null; // null: the US download fails
+  let fetches = 0;
+  const realFetch = globalThis.fetch, realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  globalThis.fetch = (async (url: any) => {
+    fetches++;
+    const u = String(url);
+    if (/UK-Sanctions-List/i.test(u)) return new Response(UK_CSV, { status: 200 });
+    if (/sdn\.csv/i.test(u)) return ofac === null ? new Response("busy", { status: 503 }) : new Response(ofac, { status: 200 });
+    return new Response(EU_CSV, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await loadSanctionsList();
+    assert.deepEqual(loadedSanctionsLists(), ["the UK Sanctions List", "the EU consolidated list"]);
+
+    // Within 15 minutes nothing is downloaded again; after it, all three are.
+    fetches = 0; now += 10 * 60_000;
+    await loadSanctionsList();
+    assert.equal(fetches, 0);
+    ofac = OFAC_CSV("TESTER, Olga"); now += 6 * 60_000;
+    await loadSanctionsList();
+    assert.equal(fetches, 3);
+    assert.deepEqual(loadedSanctionsLists(), ["the UK Sanctions List", "the US OFAC list", "the EU consolidated list"]);
+    assert.ok(screenName("Olga Tester").length > 0);
+
+    // A day on, the US download fails: its last copy is kept, and it is tried again soon.
+    ofac = null; now += 25 * 3600_000;
+    await loadSanctionsList();
+    assert.deepEqual(loadedSanctionsLists(), ["the UK Sanctions List", "the US OFAC list", "the EU consolidated list"]);
+    assert.ok(screenName("Olga Tester").length > 0);
+    ofac = OFAC_CSV("NEWNAME, Petra"); fetches = 0; now += 16 * 60_000;
+    await loadSanctionsList();
+    assert.equal(fetches, 3);
+    assert.ok(screenName("Petra Newname").length > 0);
+
+    // Everything read: the next download is a day away.
+    fetches = 0; now += 16 * 60_000;
+    await loadSanctionsList();
+    assert.equal(fetches, 0);
+  } finally {
+    globalThis.fetch = realFetch;
+    Date.now = realNow;
+  }
 });

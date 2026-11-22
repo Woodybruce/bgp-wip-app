@@ -499,6 +499,31 @@ test("who is screened for public roles and adverse media: the company and its be
   assert.match(precheckNote(run, "done"), /Screened for public roles and adverse media \(ComplyAdvantage and a web search\): the company and the people who own or control it/);
 });
 
+test("a private individual's side: the person and anyone named alongside them in full, whoever the checks went to for sanctions", () => {
+  const c = (name: string, role: string) => ({ name, role, person: true, owner: false });
+  const side = chooseScreened([
+    c("Jonathan Miller", "the party"), c("Sarah Miller", "named alongside the party"),
+    c("Pat Adviser", "asked for the party's checks"), c("Jonathan Miller", "the party, asked for the party's checks"),
+  ], { individual: true, listed: false, maxPeople: 10 });
+  assert.equal(side.basis, "individual");
+  assert.deepEqual(side.full.map(s => s.name), ["Jonathan Miller", "Sarah Miller", "Jonathan Miller"]);
+  assert.deepEqual(side.sanctionsOnly.map(s => s.name), ["Pat Adviser"]);
+});
+
+test("sanctions screened without the UK list, or not at all, is never a clear screen", () => {
+  const line = (over: Partial<KycPrecheckResult>) => precheckCardLines(result(over)).find(l => l.key === "sanctions")!;
+  const both = line({});
+  assert.equal(both.failed, undefined);
+  assert.equal(both.state, "ok");
+  const noUk = line({ sanctions: { ran: true, lists: ["the US OFAC list", "the EU consolidated list"], lines: [{ name: "ACME LIMITED", role: "the company", outcome: "clear", matches: [] }], error: null } });
+  assert.equal(noUk.failed, true);
+  assert.match(noUk.detail!, /^The UK Sanctions List could not be downloaded: run the checks again\. Screened against the US OFAC list and the EU consolidated list\./);
+  const ukOnly = line({ sanctions: { ran: true, lists: ["the UK Sanctions List"], lines: [], error: null } });
+  assert.equal(ukOnly.failed, undefined, "the US or EU list missing is named in the words, not a failure");
+  const none = line({ sanctions: { ran: false, lists: [], lines: [], error: "the sanctions lists could not be downloaded" } });
+  assert.deepEqual([none.label, none.failed], ["Sanctions: not screened", true]);
+});
+
 test("possible namesakes are listed on the card and in KYC4U's note, never as red flags", () => {
   const run = result({
     complyAdvantage: { ran: true, skipped: null, lines: [

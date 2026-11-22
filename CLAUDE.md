@@ -4161,7 +4161,8 @@ chain walk keeps each owner's date of birth). Tests:
   of each company up its ownership chain (MLR 2017 reg 5). A company listed
   on a regulated market: the company alone (reg 28(5)). No owner who can be
   named: the directors or LLP members stand in (reg 28(6)). A private
-  individual: themselves. Everyone the run lists, directors, the secretary
+  individual: themselves and anyone named alongside them (since 22 November
+  2026). Everyone the run lists, directors, the secretary
   and the deal's contact included, is still screened against the UK and US
   sanctions lists. The run stores who was screened (`result.screened`: the
   basis, the people, the sanctions-only names); the AML box shows it
@@ -4377,6 +4378,18 @@ their sanctions result only". Do not re-litigate. Rules (pure):
   email). There is no table: an added person is their own request. Not
   built: adding a person by hand to a company party (an owner the register
   does not name), and asking each owner the source of funds.
+  **Everyone on that side is screened** (found by the live tests of
+  22 November 2026: someone added alongside was never screened, and the
+  private client's own row on People read "not screened" though BGP's
+  checks had screened them). BGP's checks on a private individual now list
+  the people on their side from the party's requests (`runPrecheck`): each
+  person named alongside them is screened in full like the person (sanctions,
+  ComplyAdvantage, the web search; `chooseScreened` takes role "named
+  alongside the party"), and whoever the checks went to is screened against
+  the sanctions lists. Adding someone, or putting a typed name right, starts
+  a fresh run at once (`startPrecheck` with `force` in `createPersonCheck`
+  and the rename route), and People reads the private individual's own
+  checks (`partyPeopleFor`). Guard: `qa/regression/kyc-people.test.mjs`.
 - **The party box names them and asks for their details** (Woody,
   20 November 2026: "where it says who to ask it should really say these
   owners need to AML and prompt for contact details at that stage", and
@@ -4982,6 +4995,16 @@ EU parts of `shared/kyc-prechecks.ts`. Tests: `server/aml-records.test.ts` (in
   Sanctions Files CSV, about 6,300 entities and 24,600 names, screened beside
   the UK and US lists in BGP's checks before asking and named as itself
   (`sanctionsListName`, never the UK/US two-way label).
+  **A list that fails to download** keeps the copy held before, and all
+  three are tried again within 15 minutes, not a day (`retrySoon` in
+  `server/sanctions-screening.ts`; found on 22 November 2026, when the US
+  list failed after a restart and a run screened the UK and EU lists only).
+  A run without the UK list is not a clear screen: its Sanctions line is
+  amber ("The UK Sanctions List could not be downloaded: run the checks
+  again") and the AML box's Screening step reads "Sanctions lists not read:
+  run again", as it does when no list could be read ("Sanctions: not
+  screened", which until then read as Clear). Tests: `server/aml-records.test.ts`,
+  `server/kyc-prechecks.test.ts`.
 - **The Register of Overseas Entities** (in `runPrecheck`): a company party
   with no UK number is searched by name (`searchOverseasEntities`: the
   advanced search filtered to the register's type, else the ordinary
