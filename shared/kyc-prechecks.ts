@@ -1167,6 +1167,14 @@ export function providerSpellingVariant(m: ProviderMatch, line: Pick<ProviderLin
   return !nameSpeltAsTheirs(line.name, m.name, providerLineIsPerson(line));
 }
 
+/** The subjects ComplyAdvantage was asked to screen and did not (Mesh refused or failed them). */
+export function providerNotScreened(result: Pick<KycPrecheckResult, "complyAdvantage">): ProviderLine[] {
+  return result.complyAdvantage.ran ? result.complyAdvantage.lines.filter(l => l.status === "error") : [];
+}
+const notScreenedWords = (l: ProviderLine) => `${l.name}${l.detail ? ` (${l.detail})` : ""}`;
+/** ComplyAdvantage left out because it is not set up is not a failure; refused or not answering is. */
+export const caSkipIsFailure = (skipped: string | null | undefined): boolean => !!skipped && !/^no ComplyAdvantage keys/i.test(skipped);
+
 /** A ComplyAdvantage line's matches, split into red flags, possible namesakes and spelling variants set aside. */
 export function splitProviderMatches(line: ProviderLine): { flagged: ProviderMatch[]; namesakes: ProviderMatch[]; variants: ProviderMatch[]; unjudged: boolean } {
   if (line.status !== "possible") return { flagged: [], namesakes: [], variants: [], unjudged: false };
@@ -1606,7 +1614,8 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
   }
   if (result.complyAdvantage.ran) {
     const hits = result.complyAdvantage.lines.filter(l => { const sp = splitProviderMatches(l); return sp.flagged.length > 0 || sp.unjudged; });
-    lines.push(`- ComplyAdvantage: ${hits.length ? `matches for ${hits.map(l => l.name).join(", ")}` : "no matches over its bars"}.`);
+    const missed = providerNotScreened(result);
+    lines.push(`- ComplyAdvantage: ${hits.length ? `matches for ${hits.map(l => l.name).join(", ")}` : missed.length ? "no matches over its bars among those screened" : "no matches over its bars"}${missed.length ? `; not screened: ${missed.map(notScreenedWords).join("; ")}` : ""}.`);
   } else if (result.complyAdvantage.skipped) {
     lines.push(`- ComplyAdvantage: not used (${result.complyAdvantage.skipped}).`);
   }
@@ -1621,6 +1630,9 @@ export interface PrecheckCardLine {
   key: string;
   label: string;
   state: "ok" | "attention" | "info" | "not_run";
+  // A screen that should have run and did not (ComplyAdvantage refused or
+  // failed someone): never read as clear (22 November 2026).
+  failed?: boolean;
   detail: string | null;
   links: Array<{ label: string; url: string }>;
 }
@@ -1751,10 +1763,15 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
   }
   if (result.complyAdvantage.ran) {
     const hits = result.complyAdvantage.lines.map(l => ({ l, sp: splitProviderMatches(l) })).filter(({ sp }) => sp.flagged.length > 0 || sp.unjudged);
-    out.push({ key: "comply_advantage", label: `ComplyAdvantage: ${hits.length ? `${hits.length} to review` : "no matches over its bars"}`, state: hits.length ? "attention" : "ok",
-      detail: hits.map(({ l, sp }) => `${l.name}: ${(sp.unjudged ? l.types : [...new Set(sp.flagged.map(m => m.kind))]).map(providerKindWords).join(", ")}`).join("; ") || null, links: [] });
+    // A subject Mesh refused or failed was not screened: never "no matches".
+    const missed = providerNotScreened(result);
+    const said = [hits.length ? `${hits.length} to review` : null, missed.length ? `${missed.length} not screened` : null].filter(Boolean).join(", ");
+    out.push({ key: "comply_advantage", label: `ComplyAdvantage: ${said || "no matches over its bars"}`, state: hits.length ? "attention" : missed.length ? "not_run" : "ok",
+      ...(missed.length ? { failed: true } : {}),
+      detail: [hits.map(({ l, sp }) => `${l.name}: ${(sp.unjudged ? l.types : [...new Set(sp.flagged.map(m => m.kind))]).map(providerKindWords).join(", ")}`).join("; "),
+        missed.length ? `Not screened: ${missed.map(notScreenedWords).join("; ")}` : ""].filter(Boolean).join(". ") || null, links: [] });
   } else if (result.complyAdvantage.skipped) {
-    out.push({ key: "comply_advantage", label: "ComplyAdvantage: not used", state: "not_run", detail: result.complyAdvantage.skipped, links: [] });
+    out.push({ key: "comply_advantage", label: "ComplyAdvantage: not used", state: "not_run", ...(caSkipIsFailure(result.complyAdvantage.skipped) ? { failed: true } : {}), detail: result.complyAdvantage.skipped, links: [] });
   }
   // Possible namesakes: listed to look at, never a red flag (Woody, 19 November 2026).
   const namesakes = precheckNamesakes(result);

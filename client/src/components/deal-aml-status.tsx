@@ -288,9 +288,10 @@ function PartyPrechecks({ dealId, data, companyId }: { dealId: string; data: Dea
   });
   if (!view || view.state === "off" || view.state === "needs_company") return null;
   const running = view.state === "running" || again.isPending;
-  const rank = (l: PrecheckCardLine) => (l.state === "attention" ? 0 : l.state === "ok" ? 2 : 1);
+  const rank = (l: PrecheckCardLine) => (l.state === "attention" ? 0 : l.failed ? 1 : l.state === "ok" ? 3 : 2);
   const icon = (l: PrecheckCardLine) => l.state === "ok" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
     : l.state === "attention" ? <Flag className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+    : l.failed ? <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
     : l.state === "not_run" ? <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
     : <AlertCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />;
   return (
@@ -320,7 +321,7 @@ function PartyPrechecks({ dealId, data, companyId }: { dealId: string; data: Dea
             <li key={l.key} className="flex items-start gap-1.5">
               {icon(l)}
               <div className="min-w-0">
-                <div className="text-foreground">{l.label}</div>
+                <div className={l.failed ? "text-amber-800 dark:text-amber-300" : "text-foreground"}>{l.label}</div>
                 {l.detail && <div className="text-muted-foreground break-words">{l.detail}</div>}
                 {l.links.map(link => (
                   <a key={link.url} href={link.url} target="_blank" rel="noreferrer" className="block underline underline-offset-2 text-muted-foreground hover:text-foreground break-words">{link.label}</a>
@@ -908,6 +909,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     if (pre.state === "none") return { state: "wait", text: "Not run yet" };
     if (pre.unfinished || pre.state === "waiting") return { state: "act", text: "Not finished: trying again" };
     if (attention) return { state: "flag", text: `${attention} to look at` };
+    // ComplyAdvantage refused or failed someone: not a clear screen (22 November 2026).
+    if (pre.lines.some(l => l.failed)) return { state: "act", text: "ComplyAdvantage didn't screen everyone" };
     const extra = [level?.level === "enhanced" ? "higher risk" : null, flagAside ? `${flagAside} set aside` : null, unchecked.length ? "some records not read" : null].filter(Boolean);
     return { state: level?.level === "enhanced" ? "act" : "done", text: `Clear${pre.ranAt ? ` · ${precheckDay(pre.ranAt)}` : ""}${extra.length ? ` · ${extra.join(" · ")}` : ""}` };
   })();

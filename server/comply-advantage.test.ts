@@ -142,13 +142,15 @@ test("the older login's 429 lockout pauses for an hour; API keys' 429 for five m
   assert.equal(api.calls.length, 2);
 });
 
-test("the screen request: a person by full name, a company by legal name, monitoring off", () => {
+test("the screen request: a person by surname and given names, a company by legal name, monitoring off", () => {
   const person = ca.meshScreenBody({ name: "DOE, Jane Mary", role: "director" }, "bgp-p-x", null);
-  // Mesh's person record requires last_name (ol_Person); the register's "SURNAME, Forenames" gives it.
-  assert.deepEqual(person.customer.person, { full_name: "Jane Mary DOE", last_name: "DOE", first_name: "Jane", middle_name: "Mary" });
+  // Mesh takes exactly one of full_name or last_name (22 November 2026: sending both was refused for every person).
+  assert.deepEqual(person.customer.person, { last_name: "DOE", first_name: "Jane", middle_name: "Mary" });
+  assert.equal("full_name" in person.customer.person, false);
   assert.deepEqual(person.monitoring, { entity_screening: { enabled: false } });
   assert.equal(person.configuration, undefined);
-  assert.deepEqual(ca.meshScreenBody({ name: "Mrs Jane Doe", kind: "person" }, "id", null).customer.person, { full_name: "Jane Doe", last_name: "Doe", first_name: "Jane" });
+  assert.deepEqual(ca.meshScreenBody({ name: "Mrs Jane Doe", kind: "person" }, "id", null).customer.person, { last_name: "Doe", first_name: "Jane" });
+  assert.deepEqual(ca.meshScreenBody({ name: "Madonna", kind: "person" }, "id", null).customer.person, { last_name: "Madonna" });
   const company = ca.meshScreenBody({ name: "ACME HOLDINGS LIMITED", role: "owner" }, "bgp-c-x", "cfg-1");
   assert.deepEqual(company.customer.company, { legal_name: "ACME HOLDINGS LIMITED" });
   assert.deepEqual(company.configuration, { screening_configuration_identifier: "cfg-1" });
@@ -221,8 +223,8 @@ test("a person goes to Mesh with their birth month and year and a UK nationality
   assert.deepEqual(ca.meshPersonDetails({ name: "Jane Doe", birthYear: 1985, birthMonth: 13, nationality: "British" }), { date_of_birth: { year: 1985, month: null, day: null } });
   assert.deepEqual(ca.meshPersonDetails({ name: "Jane Doe" }), {});
   const body = ca.meshScreenBody({ name: "Jane Doe", kind: "person", birthYear: 1985, nationality: "GB" }, "x");
-  assert.deepEqual(body.customer.person, { full_name: "Jane Doe", last_name: "Doe", first_name: "Jane", date_of_birth: { year: 1985, month: null, day: null }, nationality: ["GB"] });
-  assert.deepEqual(ca.meshScreenBody({ name: "Jane Doe", kind: "person", birthYear: 1985 }, "x", null, { bare: true }).customer.person, { full_name: "Jane Doe", last_name: "Doe", first_name: "Jane" });
+  assert.deepEqual(body.customer.person, { last_name: "Doe", first_name: "Jane", date_of_birth: { year: 1985, month: null, day: null }, nationality: ["GB"] });
+  assert.deepEqual(ca.meshScreenBody({ name: "Jane Doe", kind: "person", birthYear: 1985 }, "x", null, { bare: true }).customer.person, { last_name: "Doe", first_name: "Jane" });
   assert.deepEqual(ca.meshScreenBody({ name: "Acme Limited", kind: "company", birthYear: 1985 }, "x").customer.company, { legal_name: "Acme Limited" });
   // Mesh refuses the details: the same screen goes again on the name alone, and the next one starts bare.
   const m = mesh(c => {

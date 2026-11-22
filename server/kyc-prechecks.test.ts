@@ -528,6 +528,26 @@ test("possible namesakes are listed on the card and in KYC4U's note, never as re
   assert.match(precheckNote(run, "done"), /Possible namesakes, not treated as red flags/);
 });
 
+test("someone ComplyAdvantage did not screen is said, never read as clear (22 Nov 2026)", () => {
+  const run = result({
+    complyAdvantage: { ran: true, skipped: null, lines: [
+      { name: "ACME LIMITED", status: "clear", types: [], detail: null },
+      { name: "DOE, Jane", status: "error", types: [], detail: "ComplyAdvantage answered 400: failed semantic checks" },
+    ] },
+  });
+  const ca = precheckCardLines(run).find(l => l.key === "comply_advantage")!;
+  assert.equal(ca.label, "ComplyAdvantage: 1 not screened");
+  assert.equal(ca.state, "not_run");
+  assert.equal(ca.failed, true);
+  assert.match(ca.detail!, /^Not screened: DOE, Jane \(ComplyAdvantage answered 400: failed semantic checks\)$/);
+  assert.match(precheckNote(run, "done"), /ComplyAdvantage: no matches over its bars among those screened; not screened: DOE, Jane/);
+  const clear = result({ complyAdvantage: { ran: true, skipped: null, lines: [{ name: "ACME LIMITED", status: "clear", types: [], detail: null }] } });
+  assert.equal(precheckCardLines(clear).find(l => l.key === "comply_advantage")!.failed, undefined);
+  assert.equal(precheckCardLines(result()).find(l => l.key === "comply_advantage")!.failed, true, "a refused login screened nobody");
+  const notSetUp = result({ complyAdvantage: { ran: false, lines: [], skipped: "no ComplyAdvantage keys are set" } });
+  assert.equal(precheckCardLines(notSetUp).find(l => l.key === "comply_advantage")!.failed, undefined, "not set up is not a failure");
+});
+
 test("web results: one flag per person and kind with every source, and a company's public role worded as ownership", () => {
   const f = (summary: string, url: string, unsureIdentity = false) => ({ kind: "public_role" as const, summary, url, source: "Site", date: null, category: null, unsureIdentity });
   const run = result({

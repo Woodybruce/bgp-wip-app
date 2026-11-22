@@ -3660,8 +3660,10 @@ from Mesh's own documentation (docs.mesh.complyadvantage.com, read
   the older login's 429 lockout, 5 minutes for API keys' 429 (Mesh's ordinary
   rate limit). New keys start afresh at once.
 - **Screening**: `POST /v2/workflows/sync/create-and-screen?last_sync_step=ALERTING`.
-  A person goes as `person.full_name` (a register's "DOE, Jane" turned round,
-  a leading Mr or Mrs dropped), a company as `company.legal_name`, a subject
+  A person goes as `person.last_name` with `first_name` and `middle_name`
+  (`meshNameParts`: the register's "DOE, Jane", else the last word as the
+  surname; a leading Mr or Mrs dropped), never with `full_name` beside them
+  (see "Who is screened" below), a company as `company.legal_name`, a subject
   of unknown kind as Mesh's `undefined.name` (`subjectKind`: the caller's
   kind, else a corporate word, else a person's role). Ongoing monitoring is
   off (`monitoring.entity_screening.enabled: false`): the app screens again
@@ -4160,14 +4162,28 @@ chain walk keeps each owner's date of birth). Tests:
   carries it.
 - **Everyone screened goes with a date of birth**: owners, people up the
   chain (since this day; before, the chain walk dropped it) and directors,
-  the month and year Companies House gives. Mesh's person record requires
-  `last_name` (its `ol_Person` schema; the app sent `full_name` alone, the
-  likeliest reason Mesh refused the date of birth sent with it), so every
-  person screen carries first, middle and last names (`meshNameParts`: the
-  register's "SURNAME, Forenames", else the last word; titles dropped), the
-  bare retry too. A refusal keeps Mesh's own words (`meshRefusedDetails`),
-  shown by the admin connection check (Test ComplyAdvantage on
-  Subscriptions & APIs); still in memory, a day, as before.
+  the month and year Companies House gives. Every person screen carries
+  first, middle and last names (`meshNameParts`: the register's "SURNAME,
+  Forenames", else the last word; titles dropped), the bare retry too. A
+  refusal keeps Mesh's own words (`meshRefusedDetails`), shown by the admin
+  connection check (Test ComplyAdvantage on Subscriptions & APIs); still in
+  memory, a day, as before.
+- **Mesh takes exactly one of `full_name` or `last_name`** (its
+  create-and-screen page, read 22 November 2026: "not both, not neither";
+  with `full_name`, the first, middle and last names are left out). The
+  change of 19 November sent `full_name` AND the parts, so Mesh refused every
+  person ("failed semantic checks"), the bare retry too, from then until the
+  fix of 22 November (found by Woody's live tests on #4561 and #4562): only
+  companies were screened by ComplyAdvantage, while the UK, US and EU
+  sanctions lists and the web search still ran for everyone. A person now
+  goes by the parts alone. **A screen that did not run is never read as
+  clear**: `providerNotScreened` lists the people Mesh refused or failed, the
+  card's ComplyAdvantage line says "N not screened" with each name and
+  Mesh's words (`failed` on the line, drawn in amber), KYC4U's note names
+  them, and the AML box's Screening step reads "ComplyAdvantage didn't
+  screen everyone"; ComplyAdvantage refused or not answering is a failure
+  too (`caSkipIsFailure`), not set up is not. Press Run again on a party
+  checked from 19 to 22 November to screen its people.
 - **The date of birth decides** (`providerMatchFlags(m, line)`, the line
   carrying `person` and `dobKnown`): for a person screened with a date of
   birth, a profile whose date of birth differs is set aside before it is

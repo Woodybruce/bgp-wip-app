@@ -210,12 +210,14 @@ export function meshExternalId(s: ScreenSubject, kind: MeshSubjectKind | null, n
   return `bgp-${kind ? kind[0] : "u"}-${hash}-${londonDay(nowMs)}`;
 }
 
-// Mesh's person record needs a last name: its schema (ol_Person in
-// createCustomerAndScreenSync) requires last_name, and until 19 November 2026
-// the app sent only full_name, the likeliest reason Mesh refused the date of
-// birth sent with it (Woody: "comply advantage not picking up DOB"). The
-// register writes a director "SURNAME, Forenames"; any other name is read as
-// forenames and then a surname, a leading Mr or Mrs dropped.
+// Mesh's person record takes exactly one of full_name or last_name ("not
+// both, not neither"; with full_name, first_name, middle_name and last_name
+// must be left out: its create-and-screen page, read 22 November 2026). From
+// 19 to 22 November 2026 the app sent both, so Mesh refused every person
+// ("failed semantic checks") and only companies were screened. A person now
+// goes by these parts alone. The register writes a director "SURNAME,
+// Forenames"; any other name is read as forenames and then a surname, a
+// leading Mr or Mrs dropped.
 export function meshNameParts(s: ScreenSubject): { first_name?: string; middle_name?: string; last_name: string } {
   const raw = s.name.replace(/\s+/g, " ").trim();
   const comma = /^([^,]+),\s*(.+)$/.exec(raw);
@@ -246,7 +248,7 @@ export function meshScreenBody(s: ScreenSubject, externalId: string, screeningCo
   const kind = subjectKind(s);
   const name = meshName(s, kind);
   const customer: Record<string, any> = { external_identifier: externalId };
-  if (kind === "person") customer.person = { full_name: name, ...meshNameParts(s), ...(opts.bare ? {} : meshPersonDetails(s)) };
+  if (kind === "person") customer.person = { ...meshNameParts(s), ...(opts.bare ? {} : meshPersonDetails(s)) };
   else if (kind === "company") customer.company = { legal_name: name };
   else customer.undefined = { name };
   const body: Record<string, any> = { customer, monitoring: { entity_screening: { enabled: false } } };

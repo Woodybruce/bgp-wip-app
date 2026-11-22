@@ -51,8 +51,9 @@ test('a person goes to Mesh with their birth month, year and a UK nationality, a
   assert.match(ca, /if \(s\.nationality && \/\^\[A-Z\]\{2\}\$\/\.test\(s\.nationality\)\) out\.nationality = \[s\.nationality\];/);
   assert.match(ca, /if \(!bare && \(call\.status === 400 \|\| call\.status === 422\)\) \{/);
   assert.match(ca, /noteMeshRefusedDetails\(deps\.now\(\), words \|\| `answered \$\{call\.status\}`\);/);
-  // Mesh's person record requires last_name: every person screen carries it, the bare one too.
-  assert.match(ca, /customer\.person = \{ full_name: name, \.\.\.meshNameParts\(s\), \.\.\.\(opts\.bare \? \{\} : meshPersonDetails\(s\)\) \};/);
+  // Mesh takes exactly one of full_name or last_name: a person goes by last_name and given names, never both (22 Nov 2026).
+  assert.match(ca, /customer\.person = \{ \.\.\.meshNameParts\(s\), \.\.\.\(opts\.bare \? \{\} : meshPersonDetails\(s\)\) \};/);
+  assert.doesNotMatch(ca, /customer\.person = \{[^}]*full_name/);
   // Mesh's screens score 0 to 100.
   assert.match(ca, /\(raw <= 1 \? raw : raw <= 100 \? raw \/ 100 : undefined\)/);
   const pre = read('server/kyc-prechecks.ts');
