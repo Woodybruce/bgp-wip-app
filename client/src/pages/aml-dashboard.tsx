@@ -18,6 +18,7 @@ import { AmlPolicyPanel } from "@/components/aml-policy-panel";
 import { AmlRegisterBoard, MyRegisterReports, RaiseReportButton } from "@/components/aml-register";
 import { AmlTrainingBoard, AmlTrainingPanel } from "@/components/aml-training";
 import { AmlRetentionBoard } from "@/components/aml-retention";
+import { AmlRulesBoard } from "@/components/aml-rules";
 import { KycEmailsAdmin } from "@/components/kyc-emails-admin";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getAuthHeaders } from "@/lib/queryClient";
@@ -65,9 +66,11 @@ const isBucket = (v: string | null): v is AmlBucket => !!v && AML_BUCKETS.some(b
 // Client check emails for admins (21 November 2026: the preview and test of
 // the emails BGP's own client checks send, moved here from the KYC4U page
 // when KYC4U went to Subscriptions & APIs).
-type Section = "checks" | "reports" | "training" | "records" | "emails";
+type Section = "checks" | "rules" | "reports" | "training" | "records" | "emails";
 const SECTIONS: Array<{ key: Section; label: string; officer?: boolean; admin?: boolean }> = [
   { key: "checks", label: "Checks" },
+  // HMRC's rules in short, checked against HMRC every three months (22 November 2026).
+  { key: "rules", label: "Rules" },
   { key: "reports", label: "Reports", officer: true },
   { key: "training", label: "Training" },
   { key: "records", label: "Records", officer: true },
@@ -237,6 +240,7 @@ export default function AmlDashboard() {
         <div className="md:ml-auto"><RaiseReportButton label="Report to the Nominated Officer" officer={!!roles?.isOfficer} testId="aml-raise-report" /></div>
       </div>
 
+      {shownSection === "rules" && <AmlRulesBoard />}
       {shownSection === "reports" && <AmlRegisterBoard />}
       {shownSection === "records" && <AmlRetentionBoard />}
       {shownSection === "training" && (roles?.managesTraining ? <AmlTrainingBoard /> : <AmlTrainingPanel userId="me" isOwn />)}

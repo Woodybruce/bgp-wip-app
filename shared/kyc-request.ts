@@ -702,6 +702,24 @@ export function amlRegisterNoticeEmail(ctx: { raisedBy: string | null; link: str
   };
 }
 
+// HMRC changed a page behind BGP's AML rules in short (shared/aml-rules.ts):
+// to the officers, from the quarterly check (server/aml-rules.ts).
+export function amlRulesChangedEmail(ctx: { changes: Array<{ label: string; at: string; note: string | null }>; error: string | null; link: string; sentFrom: string }): { subject: string; html: string } {
+  const when = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" });
+  const rows = ctx.changes.map(c => `<li style="margin:0 0 8px">${escHtml(c.label)}, updated ${escHtml(when(c.at))}${c.note ? `: ${escHtml(c.note)}` : ""}</li>`).join("");
+  const inner = [
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3">${ctx.changes.length ? "HMRC has changed its AML guidance" : "HMRC's AML guidance could not be checked"}</h1>`,
+    ctx.changes.length
+      ? `<ul style="margin:0 0 14px;padding-left:18px">${rows}</ul>` + p("Read the changes and check BGP's rules still match. Then mark them reviewed.")
+      : p(`${escHtml(ctx.error || "GOV.UK did not answer.")} Check again from the Rules page.`),
+    button("Open the rules", ctx.link),
+  ].join("\n");
+  return {
+    subject: ctx.changes.length ? "AML: HMRC has changed its guidance" : "AML: HMRC's guidance could not be checked",
+    html: frame("AML rules", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP to BGP's Nominated Officer and Deputies.`, false, "the Nominated Officer and the Deputies receive"),
+  };
+}
+
 // The message an agent sends from their own WhatsApp (a wa.me link opens it
 // written out). The app does not send WhatsApp itself: WhatsApp refuses a
 // business's first message unless it is an approved template, so the old

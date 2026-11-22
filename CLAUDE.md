@@ -4558,6 +4558,38 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
   screening; the FCA register for simplified due diligence; deleting records
   five years on.
 
+## AML rules in short, checked against HMRC every 3 months (Woody, 2026-11-22)
+
+Woody: "a summary of the rules and put an auto refresh in there for any hmrc
+updates every 3 months. Make it simplistic and to the point try and stop AI
+slang". Rules: `shared/aml-rules.ts`; check: `server/aml-rules.ts`; page:
+`client/src/components/aml-rules.tsx`, the **Rules** pill on Deals → AML
+(every BGP person). Tests: `server/aml-rules.test.ts` (in `npm test`),
+`qa/regression/aml-rules-guards.test.mjs`.
+
+- **The rules** are about 20 short lines in eight groups (who we check and
+  when, joint agents, what we check, higher risk, if the checks can't be
+  finished, suspicion, relying on another firm, records), each naming the HMRC
+  page it comes from (AMLG2200, AMLG2300, AMLG3200, AMLG11100 to AMLG11700),
+  MLR 2017 reg 5, OFSI or BGP policy. Written from HMRC's pages on 22 November
+  2026 (`AML_RULES_WRITTEN_ON`). The test refuses a line over 30 words or
+  padding words ("ensure", "robust", "leverage" and the like). Change a rule
+  there, never on the page.
+- **The quarterly check** (job `aml-rules-hmrc`, the 2nd of January, April,
+  July and October, 06:40; `HMRC_RULES_CHECK=off` stops it) reads each cited
+  page's update date and the manual's change notes from GOV.UK's content API
+  (no key, no AI), keeps them in `system_settings.aml_rules_hmrc_check`, and
+  emails the Nominated Officer and the Deputies once for the same changes
+  (`aml_rules_hmrc_emailed`) when HMRC changed a page after the last review
+  (or after the day the rules were written). A page that cannot be read keeps
+  its last date. **It never rewrites the rules**: the Nominated Officer
+  approves the wording.
+- **The officers** have **Check HMRC now** (`POST /api/aml-rules/check`),
+  **Approve these rules** the first time and **Rules still right** after a
+  change (`POST /api/aml-rules/reviewed`, kept in `aml_rules_review`).
+- Read against GOV.UK for real from a build machine on 22 November 2026: 11
+  pages, no change since the rules were written.
+
 ## The AML register, training, agents, EU list, overseas entities and five-year deletion (Woody, 2026-11-19)
 
 Woody answered "Go ahead and build" to the list left out of the AML policy

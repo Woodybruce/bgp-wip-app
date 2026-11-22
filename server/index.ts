@@ -4486,6 +4486,7 @@ import amlFileRouter from "./aml-file";
 import amlSecondReadRouter from "./aml-second-read";
 import amlPolicyRouter from "./aml-policy";
 import amlRegisterRouter from "./aml-register";
+import amlRulesRouter from "./aml-rules";
 import amlTrainingRouter from "./aml-training";
 import agentAmlRouter from "./agent-aml";
 import solicitorAmlRouter from "./solicitor-aml";
@@ -5867,6 +5868,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // The AML register, training, agents' HMRC registration and the five-year
   // deletion (BGP staff; the officers where each route says).
   app.use(amlRegisterRouter);
+  app.use(amlRulesRouter);
   app.use(amlTrainingRouter);
   app.use(agentAmlRouter);
   // The other side's solicitors: the SRA register and the web (21 November 2026).
@@ -7148,6 +7150,12 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             // while in-app AML is off (server/aml-portal.ts).
             { key: "kyc-client-reminders", due: dailyAt(10), run: () =>
               import("./aml-portal").then(m => m.sendKycReminders()).then(() => undefined) },
+            // HMRC's AML guidance behind BGP's rules in short — the 2nd of
+            // January, April, July and October, 06:40. Reads GOV.UK's page
+            // dates (no AI) and emails the officers only when HMRC changed a
+            // page since the rules were last reviewed. HMRC_RULES_CHECK=off stops it.
+            { key: "aml-rules-hmrc", due: (now) => [1, 4, 7, 10].includes(Number(now.month.slice(5))) ? monthlyAt(2, 6, 40)(now) : null, run: () =>
+              import("./aml-rules").then(m => m.quarterlyHmrcRulesCheck()) },
             // Weekly client report — Monday 09:00 (sends email).
             { key: "weekly-client-reports", due: weeklyAt(1, 9), run: () => runWeeklyClientReports() },
           );
