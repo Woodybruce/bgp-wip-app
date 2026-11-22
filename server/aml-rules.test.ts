@@ -17,9 +17,19 @@ test("every rule is short, plain and names where it comes from", () => {
       assert.doesNotMatch(rule.text, padding, rule.text);
     }
   }
-  // The joint agent rule says what HMRC's estate agency guidance (section 21) says.
+  // The joint agent rule says what HMRC's estate agency guidance (section 21) says,
+  // and only for sales: the letting guidance (AMLG2300) has no such exception, so
+  // a tenant the other agent found is checked, or relied on under a reliance agreement.
   const joint = AML_RULES.find(g => g.title === "Joint agents")!;
-  assert.ok(joint.rules.some(r => /ask them for their checks/.test(r.text) && /record that you asked/.test(r.text)));
+  const sales = joint.rules.find(r => /ask them for their checks/.test(r.text) && /record that you asked/.test(r.text))!;
+  assert.match(sales.text, /^Sales:/);
+  assert.doesNotMatch(sales.text, /tenant/);
+  assert.deepEqual(sales.refs, ["amlg2200"]);
+  const lettings = joint.rules.find(r => /^Lettings:/.test(r.text))!;
+  assert.match(lettings.text, /reliance agreement/);
+  assert.ok(lettings.refs.includes("amlg2300") && lettings.refs.includes("amlg11410"));
+  // Registration with HMRC is a condition of working with an agent, not a reason to skip checks.
+  assert.ok(joint.rules.some(r => /registered with HMRC/.test(r.text) && /tell HMRC/.test(r.text)));
 });
 
 test("the cited HMRC pages are the ones the check reads", () => {

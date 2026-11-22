@@ -53,10 +53,12 @@ export const AML_RULES: AmlRuleGroup[] = [
   {
     title: "Joint agents",
     rules: [
-      { text: "Each agent checks the client.", refs: ["amlg2200"] },
-      { text: "The agent who finds the buyer or tenant checks them. If that was the other agent, ask them for their checks. If they don't send them, record that you asked.", refs: ["amlg2200"] },
-      { text: "Agents who share a fee check each other.", refs: ["amlg2200"] },
-      { text: "Only work with agents registered with HMRC for AML.", refs: ["amlg2200", "amlg11300"] },
+      { text: "Each agent checks the client. To use the other agent's checks instead, you need a reliance agreement.", refs: ["amlg2200", "amlg11410"] },
+      { text: "Sales: the agent who finds the buyer checks them. If that was the other agent, ask them for their checks. If they don't send them, record that you asked.", refs: ["amlg2200"] },
+      { text: "Lettings: HMRC has no such exception. Every party to the lease is verified, so use the joint agent's checks on the tenant only under a reliance agreement.", refs: ["amlg2300", "amlg11410"] },
+      { text: "BGP's policy (Issue 2) goes further than HMRC: no checks on a party the joint agent found and negotiated with, for a sale or a letting.", refs: ["bgp_policy"] },
+      { text: "Agents who share a fee check each other.", refs: ["amlg2200", "amlg2300"] },
+      { text: "Only work with agents registered with HMRC for AML. If one isn't, stop working with them and tell HMRC.", refs: ["amlg2200", "amlg11300"] },
     ],
   },
   {
@@ -93,7 +95,8 @@ export const AML_RULES: AmlRuleGroup[] = [
   {
     title: "Relying on another firm",
     rules: [
-      { text: "Allowed with a UK firm under the same rules: agreed in writing, their documents on request. We stay responsible.", refs: ["amlg11410"] },
+      { text: "Allowed with a UK firm under the same rules. Get their checks straight away, and their agreement to send documents on request and keep them 5 years. We stay responsible.", refs: ["amlg11410"] },
+      { text: "Never on a firm's simplified checks, or on a firm in a high-risk country.", refs: ["amlg11410"] },
     ],
   },
   {

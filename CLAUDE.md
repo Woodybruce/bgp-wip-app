@@ -4611,7 +4611,7 @@ slang". Rules: `shared/aml-rules.ts`; check: `server/aml-rules.ts`; page:
 (every BGP person). Tests: `server/aml-rules.test.ts` (in `npm test`),
 `qa/regression/aml-rules-guards.test.mjs`.
 
-- **The rules** are about 20 short lines in eight groups (who we check and
+- **The rules** are about 25 short lines in eight groups (who we check and
   when, joint agents, what we check, higher risk, if the checks can't be
   finished, suspicion, relying on another firm, records), each naming the HMRC
   page it comes from (AMLG2200, AMLG2300, AMLG3200, AMLG11100 to AMLG11700),
@@ -4619,6 +4619,18 @@ slang". Rules: `shared/aml-rules.ts`; check: `server/aml-rules.ts`; page:
   2026 (`AML_RULES_WRITTEN_ON`). The test refuses a line over 30 words or
   padding words ("ensure", "robust", "leverage" and the like). Change a rule
   there, never on the page.
+- **Joint agents** (Woody asked the same day whether a registered joint
+  agent's checks can be relied on): HMRC's "ask the other agent for their
+  checks on the buyer, and record it if they don't send them" is in the sales
+  guidance only (AMLG2200 s21; MLR 2017 reg 4(3) treats an estate agent as in
+  a business relationship with the buyer once the offer is accepted). The
+  letting guidance (AMLG2300 s17 to s19, s23) has no joint agent exception:
+  every party to the lease is verified, so a tenant the other agent found is
+  checked, or relied on under a reliance agreement (reg 39, AMLG11410). HMRC
+  registration is a condition of working with an agent and of a reliance
+  agreement, never a reason to skip a check. The rules name BGP's policy
+  (Issue 2, and Jack's joint agency file note) as going further: no checks on
+  a party the joint agent found and negotiated with, sales or lettings.
 - **The quarterly check** (job `aml-rules-hmrc`, the 2nd of January, April,
   July and October, 06:40; `HMRC_RULES_CHECK=off` stops it) reads each cited
   page's update date and the manual's change notes from GOV.UK's content API
