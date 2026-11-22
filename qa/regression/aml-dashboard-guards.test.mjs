@@ -76,13 +76,15 @@ test('the top folds once the table scrolls, keeping the title and pills (Woody, 
   const page = read('client/src/pages/aml-dashboard.tsx');
   assert.match(page, /const foldedTop = folded && !isMobile && shownSection === "checks";/);
   assert.match(page, /if \(table\.scrollTop > 48\) setFolded\(/);
-  assert.match(page, /\{!foldedTop && <AmlPolicyPanel \/>\}/);
+  // The policy line has its own pill, so the table starts at the top (22 November 2026).
+  assert.match(page, /\{ key: "policy", label: "Policy" \},/);
+  assert.match(page, /\{shownSection === "policy" && <AmlPolicyPanel \/>\}/);
   // The title sits beside the section pills, folded or not.
   assert.match(page, /<h1 className=\{`\$\{foldedTop \? "text-lg" : "text-xl"\} font-semibold whitespace-nowrap`\}>AML checks<\/h1>/);
   // The table measures the room below it again once the fold has drawn.
   assert.match(page, /window\.dispatchEvent\(new Event\("resize"\)\)/);
-  // The policy is one line; its documents, officers and settings open in a dialog.
+  // The Policy pill shows the officers, the documents and the settings on the page, not in a pop-up.
   const panel = read('client/src/components/aml-policy-panel.tsx');
-  assert.match(panel, /data-testid="aml-policy-open">Policy and settings<\/button>/);
-  assert.match(panel, /<DialogContent className="max-w-2xl max-h-\[85vh\] overflow-y-auto" data-testid="aml-policy-dialog">/);
+  assert.match(panel, /<div className="max-w-3xl space-y-4 text-sm" data-testid="aml-policy-panel">/);
+  assert.doesNotMatch(panel, /data-testid="aml-policy-open"/);
 });

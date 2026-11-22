@@ -108,8 +108,11 @@ test('the page: one frame, the AML card only in its own section, no whole lists 
   const partiesCard = page.slice(page.indexOf('function DealPartiesCard('));
   assert.match(partiesCard.slice(0, partiesCard.indexOf('\n}\n')), /useDealAmlStatus\(dealId, !isClientDeal\)/, 'only the Parties card reads it');
   assert.equal((page.match(/<DealPartiesCard\b/g) || []).length, 1);
-  const partiesSection = page.slice(page.indexOf('const parties = ('), page.indexOf('<DealPartiesCard'));
-  assert.ok(partiesSection.length < 200, 'the Parties card is drawn only in the Parties & AML section');
+  assert.equal((page.match(/<StaffPartiesAml\b/g) || []).length, 1);
+  // Both are drawn only in the Parties & AML section: BGP staff get the parties in the AML box (22 November 2026).
+  const partiesSection = page.slice(page.indexOf('const parties = ('), page.indexOf('{!jointAgent && <LinkedContactsCard deal={deal} />}'));
+  assert.ok(partiesSection.includes('<StaffPartiesAml') && partiesSection.includes('<DealPartiesCard'), 'the Parties card is drawn only in the Parties & AML section');
+  assert.ok(partiesSection.length < 2400);
   const top = page.slice(page.indexOf('export function DealDetail('), page.indexOf('function DealPartiesCard('));
   for (const list of ['"/api/crm/companies"', '"/api/crm/contacts"', '"/api/crm/properties"', '"/api/property-units"']) {
     assert.doesNotMatch(top, new RegExp(`useQuery<[^(]*\\(\\{\\s*queryKey: \\[${list.replace(/[/]/g, '\\/')}\\]`), `${list} is not downloaded on every deal page`);

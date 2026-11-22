@@ -373,7 +373,7 @@ function Kyc4uSignoffButton({ companyId }: { companyId: string }) {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Record KYC4U sign-off</DialogTitle>
-            <DialogDescription>Only when KYC4U have signed this company off (e.g. by email) and it isn't on their request status page yet. It shows as Approved by KYC4U, noted with your name.</DialogDescription>
+            <DialogDescription>When KYC4U signed it off by email and it isn't on their status page yet.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <label className="block text-sm">Signed off on<Input type="date" value={date} onChange={e => setDate(e.target.value)} className="mt-1" /></label>
@@ -461,7 +461,7 @@ export function Kyc4uSubmittedButton({ dealId, companyId, role, partyName, class
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Submitted on KYC4U's portal: {partyName}</DialogTitle>
-            <DialogDescription>Record it once the request is submitted on KYC4U's portal, so the deal shows it is with KYC4U.</DialogDescription>
+            <DialogDescription>Once it's submitted on KYC4U's portal.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div>
@@ -487,7 +487,7 @@ export function Kyc4uSubmittedButton({ dealId, companyId, role, partyName, class
 
 // buttonOnly: the button and its dialog, without the status line (the AML
 // box's Next line, where the KYC4U row beside it already says where it stands).
-export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label = "Request KYC4U check", buttonOnly }: { dealId?: string; companyId: string; role?: string; partyName: string; label?: string; buttonOnly?: boolean }) {
+export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label = "Request KYC4U check", buttonOnly, quiet }: { dealId?: string; companyId: string; role?: string; partyName: string; label?: string; buttonOnly?: boolean; quiet?: boolean }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [fields, setFields] = useState<DraftFields>({});
@@ -531,7 +531,7 @@ export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label =
   return (
     <div className="space-y-1" data-testid={`kyc4u-request-${companyId}`}>
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="outline" className="h-8 rounded-full" onClick={() => setOpen(true)} data-testid="button-kyc4u-request">
+        <Button size="sm" variant={quiet ? "ghost" : "outline"} className={quiet ? "h-7 px-2 text-xs" : "h-8 rounded-full"} onClick={() => setOpen(true)} data-testid="button-kyc4u-request">
           <Upload className="w-3.5 h-3.5 mr-1.5" />{label}
         </Button>
         {buttonOnly ? null : <>
@@ -547,15 +547,15 @@ export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label =
         <DialogContent className="max-w-2xl max-h-[85dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Request a KYC4U check — {partyName}</DialogTitle>
-            <DialogDescription>{savedId ? "Prepared. KYC4U takes requests only on its own portal." : "These are the answers to KYC4U's Raise New Service Request form. Check them, then press Download for KYC4U: a ZIP with the questions and answers, the note and the documents, to put into KYC4U's portal."}</DialogDescription>
+            <DialogDescription>{savedId ? "Prepared. KYC4U take requests only on their portal." : "KYC4U's form, filled in from the deal. Check it, then download the pack."}</DialogDescription>
           </DialogHeader>
           {savedId ? (
             <ol className="space-y-3 text-sm" data-testid="kyc4u-next-steps">
-              <li><span className="font-medium">1. The pack has downloaded</span> (a ZIP): the request sheet with KYC4U's questions and these answers, the note, BGP's AML report and the documents to upload. Not there? Download it again.
+              <li><span className="font-medium">1. The pack has downloaded.</span> Not there? Download it again.
                 <div className="mt-1.5"><Kyc4uPackButton draftId={savedId} className="h-8" /></div></li>
-              <li><span className="font-medium">2. Open KYC4U's portal</span> and raise a new service request: type in the sheet's answers and upload the documents. Submit it there.
+              <li><span className="font-medium">2. Raise it on KYC4U's portal</span> with the sheet's answers and the documents.
                 <div className="mt-1.5"><Button size="sm" variant="outline" className="h-8" asChild><a href={KYC4U_FORM_URL} target="_blank" rel="noopener noreferrer"><ExternalLink className="w-3.5 h-3.5 mr-1" />Open KYC4U's portal</a></Button></div></li>
-              <li><span className="font-medium">3. Record it here</span> once submitted, with KYC4U's reference. Until then the deal shows it is not yet with KYC4U.
+              <li><span className="font-medium">3. Record it here</span> with KYC4U's reference.
                 <div className="mt-1.5"><Kyc4uSubmittedButton dealId={dealId} companyId={companyId} role={role} partyName={partyName} className="h-8" /></div></li>
             </ol>
           ) : prefill.isLoading ? <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />Filling from the deal…</p> : <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

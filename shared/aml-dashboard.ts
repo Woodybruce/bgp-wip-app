@@ -12,17 +12,17 @@ export type AmlStage = "not_started" | "bgp_checked" | "joint_asked" | "client_s
 
 export const AML_STAGE_LABEL: Record<AmlStage, string> = {
   not_started: "Not started",
-  bgp_checked: "BGP checked",
+  bgp_checked: "Screened",
   client_sent: "Client checks sent",
-  client_finished: "Client finished",
+  client_finished: "Documents in",
   // The joint agent asked for their checks on the party (22 November 2026),
   // and their checks in: BGP's officers then decide.
   joint_asked: "Joint agent asked",
-  joint_in: "Joint agent's checks in",
+  joint_in: "Joint agent's files in",
   // Another firm's checks relied on (MLR 2017 reg 39; 21 November 2026).
   relied: "Relying on another firm",
   with_kyc4u: "With KYC4U",
-  approved: "Approved",
+  approved: "Cleared",
   rejected: "Rejected",
   expiring: "Expiring",
   expired: "Expired",

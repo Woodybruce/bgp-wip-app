@@ -77,7 +77,7 @@ export function AgentCheckDialog({ companyId, companyName, record, onClose }: { 
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="agent-aml-dialog">
         <DialogHeader>
           <DialogTitle>{companyName}: HMRC registration</DialogTitle>
-          <DialogDescription>BGP's AML policy: an agent BGP shares a fee or has an agreement with must be registered with HMRC for AML supervision, with an agreement saying who does the client due diligence.</DialogDescription>
+          <DialogDescription>Agents BGP works with must be registered with HMRC.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 text-sm">
           <div className="flex gap-2">
@@ -158,7 +158,7 @@ export function AgentAmlCard({ companyId, companyName }: { companyId: string; co
         <ToneIcon tone={tone} />
         <div className="min-w-0 flex-1">
           <div className="font-medium">AML supervision</div>
-          <div className="text-xs mt-0.5">{data.record ? data.state.words : "Not checked on HMRC's register yet. BGP's AML policy needs it verified before BGP shares a fee or has an agreement with them."}</div>
+          <div className="text-xs mt-0.5">{data.record ? data.state.words : "Not checked on HMRC's register yet."}</div>
           {data.record?.agreementInPlace && <div className="text-xs mt-0.5 text-muted-foreground">Agreement: {data.record.agreementNote || "in place"}</div>}
         </div>
         <Button type="button" size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => setChecking(true)} data-testid="agent-aml-check">{data.record ? "Check again" : "Check HMRC's register"}</Button>

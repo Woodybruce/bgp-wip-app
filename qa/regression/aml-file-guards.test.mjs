@@ -46,7 +46,8 @@ test('it reads the party the way the AML box does, and every document as stored'
 
 test('the button is drawn only for the officers', () => {
   const box = read('client/src/components/deal-aml-status.tsx');
-  assert.match(box, /\{data\.decisions\?\.canDecide && data\.counterparties\.length > 0 && <AmlFileButton dealId=\{dealId\} \/>\}/);
+  assert.match(box, /\{officer && data\.counterparties\.length > 0 && <AmlFileButton dealId=\{dealId\} \/>\}/);
+  assert.match(box, /const officer = !!data\.decisions\?\.canDecide;/);
   assert.match(box, /\{canDecide && \(\s*<div[^>]*data-testid=\{`aml-file-line-\$\{cp\.role\}`\}>\s*<AmlFileButton dealId=\{dealId\} role=\{cp\.role\} partyName=\{partyName\} \/>/);
   const page = read('client/src/pages/aml-dashboard.tsx');
   assert.match(page, /<PartyTrail row=\{open\} onClose=\{\(\) => setOpen\(null\)\} officer=\{!!roles\?\.isOfficer\} \/>/);

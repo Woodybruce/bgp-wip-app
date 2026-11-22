@@ -51,7 +51,7 @@ test("no clear relationship is a red flag; the payer's own findings count too", 
   assert.equal(none.length, 1);
   assert.equal(none[0].kind, "third_party_payer");
   assert.equal(none[0].key, "payer:e1:relationship");
-  assert.match(none[0].detail || "", /AMLG3200/);
+  assert.match(none[0].detail || "", /HMRC treats a payment from a third party with no link to the customer as high risk/);
   assert.equal(payerRedFlags({ payer: { id: "e1", name: "X LTD" }, relationship: "group", note: null, precheck: null }).length, 0);
 });
 

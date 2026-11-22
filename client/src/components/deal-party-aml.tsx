@@ -59,8 +59,8 @@ function SignOffDialog({ dealId, role, partyName, needsNote, levelWords, edd, on
           <DialogTitle>Sign off {partyName}</DialogTitle>
           <DialogDescription>
             {edd
-              ? "Enhanced due diligence by BGP (the officers' setting, not KYC4U): you approve this party for a year (BGP's AML policy), and the deal's AML gate reads it as approved."
-              : <>{levelWords ? `${levelWords}. ` : ""}BGP approves this party until its re-check date (3 years, BGP's AML policy), and the deal's AML gate reads it as approved.</>}
+              ? "Enhanced checks: cleared for a year."
+              : <>{levelWords ? `${levelWords}. ` : ""}Cleared for three years.</>}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-1.5">
@@ -69,9 +69,9 @@ function SignOffDialog({ dealId, role, partyName, needsNote, levelWords, edd, on
             placeholder="For example: listed plc, register owners confirmed, ID seen in person on 12 Nov"
             data-testid={`aml-sign-off-note-${role}`} />
           {edd ? (
-            <p className="text-[11px] text-muted-foreground" data-testid={`aml-sign-off-edd-${role}`}>Say what was checked and why the risk is acceptable: each red flag or factor, the source of funds and of wealth where it matters, who is behind any company abroad or trust (at least a couple of sentences).</p>
+            <p className="text-[11px] text-muted-foreground" data-testid={`aml-sign-off-edd-${role}`}>What was checked and why the risk is acceptable: each flag, where the money comes from, who is behind it. A couple of sentences.</p>
           ) : needsNote && (
-            <p className="text-[11px] text-muted-foreground">The client checks are not finished for this party, so say what you relied on instead (at least a sentence).</p>
+            <p className="text-[11px] text-muted-foreground">The client checks aren't finished: say what you relied on.</p>
           )}
         </div>
         <DialogFooter>
@@ -160,7 +160,7 @@ function Kyc4uResultDialog({ dealId, role, partyName, onClose }: { dealId: strin
         <DialogHeader>
           <DialogTitle>Add KYC4U's result</DialogTitle>
           <DialogDescription>
-            For {partyName}. KYC4U are BGP's outsourced KYC provider: you record their result as the Nominated Officer or a Deputy, and a later KYC4U request for the party replaces this one. An approval lasts 1 year when the party needs enhanced due diligence or KYC4U rate it high risk, otherwise 3.
+            KYC4U's result for {partyName}. An approval lasts a year if KYC4U rate it high risk, otherwise three.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -326,7 +326,7 @@ export function NotRequiredDialog({ dealId, role, companyId, partyName, jointRul
         <DialogHeader>
           <DialogTitle>No checks needed on {partyName}?</DialogTitle>
           <DialogDescription>
-            When a joint agent found the other side of a sale (HMRC: ask them for their checks and record what came back), or no deal is done. Never for BGP's own client. It stays on the deal with your name and the reason.
+            The joint agent dealt with this party on a sale, or no deal was done. It stays on the deal with your name.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -342,7 +342,7 @@ export function NotRequiredDialog({ dealId, role, companyId, partyName, jointRul
           {refused && <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" data-testid={`aml-not-required-refused-${role}`}>{refused}</p>}
           {reason === "joint_agent" && rule === "sale" && (
             <div className="space-y-2 rounded border p-2" data-testid={`aml-not-required-asked-${role}`}>
-              <p className="text-xs font-medium">The record of asking the joint agent (HMRC, AMLG2200 s21)</p>
+              <p className="text-xs font-medium">How BGP asked the joint agent</p>
               <Select value={askedBy} onValueChange={v => setAskedBy(v as "app" | "other")}>
                 <SelectTrigger className="h-8 text-xs" data-testid={`aml-not-required-asked-by-${role}`}><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -358,7 +358,7 @@ export function NotRequiredDialog({ dealId, role, companyId, partyName, jointRul
                       {requests.map(r => <SelectItem key={r.ref} value={r.ref}>{r.firm}, ref {r.ref} · {r.files.length} file{r.files.length === 1 ? "" : "s"}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                ) : <p className="text-[11px] text-muted-foreground">{joint.isLoading ? "Loading the requests…" : "No request to the joint agent on this party yet: ask them from the Joint agent line, or record how you asked."}</p>
+                ) : <p className="text-[11px] text-muted-foreground">{joint.isLoading ? "Loading the requests…" : "No request to them yet. Ask from the Joint agent line, or say how you asked."}</p>
               ) : (
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div className="space-y-1">
@@ -431,7 +431,7 @@ export function JointNotRequiredButton({ dealId, role, companyId, partyName, joi
   return (
     <>
       <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => setOpen(true)} data-testid={`joint-not-required-${role}`}>
-        <CircleSlash className="w-3.5 h-3.5 mr-1" />Not required, with this record
+        <CircleSlash className="w-3.5 h-3.5 mr-1" />Mark Not required
       </Button>
       {open && <NotRequiredDialog dealId={dealId} role={role} companyId={companyId} partyName={partyName} jointRule="sale" initialRef={jointRef} onClose={() => setOpen(false)} />}
     </>

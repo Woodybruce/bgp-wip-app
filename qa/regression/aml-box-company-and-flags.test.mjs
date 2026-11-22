@@ -57,7 +57,8 @@ test('no check runs on a company party until the deal names the company that sig
   const kyc4u = read('server/kyc4u.ts');
   assert.match(kyc4u, /if \(deal && partyRole && !entity\) \{/, 'the KYC4U request refuses it');
   const card = read('client/src/components/deal-aml-status.tsx');
-  assert.match(card, /companyMissing\s*\?\s*<p[^>]*>The client checks and a KYC4U request start once the company that signs is set\./);
+  // The Documents step waits for it (22 November 2026: four steps per party).
+  assert.match(card, /\{companyMissing && !current\s*\?\s*<p[^>]*>Starts once the company that signs is set\.<\/p>/);
 });
 
 test('the brand\'s own company is offered, saved without a Xero contact, never assumed', () => {

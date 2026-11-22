@@ -79,7 +79,8 @@ import {
 import { PropertyFoldersPanel } from "@/pages/properties";
 import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { AIActivityCard, pickTouchDates } from "@/components/ai-activity-card";
-import { DealAmlStatusCard, useDealAmlStatus } from "@/components/deal-aml-status";
+import { DealAmlStatusCard, useDealAmlStatus, type PartySlot } from "@/components/deal-aml-status";
+import { dealClientRole } from "@shared/deal-parties";
 import { DealPartyLines, partyAmlFacts } from "@/components/deal-parties";
 import { JointAgencyNoteCard } from "@/components/joint-agency-aml";
 import { useIsLandsecView, DaysAtStage, NerFigure, BriefCheck } from "@/components/landsec/deal-clock";
@@ -335,6 +336,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     try {
       await apiRequest("PUT", `/api/crm/deals/${id}`, { bgpActingFor: side });
       invalidateDealCaches(id);
+      refreshDealAml(id);
     } catch (e: any) {
       toast({
         title: "Couldn't change who BGP acts for",
@@ -346,6 +348,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const handlePartySave = async (field: "tenantId" | "landlordId" | "vendorId" | "purchaserId", value: string | null) => {
     await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
     invalidateDealCaches(id);
+    refreshDealAml(id);
     // No in-app AML run on linking a party any more — KYC4U is BGP's MLRO
     // (2026-10-05); raise the party with Request KYC4U check on the KYC card.
   };
@@ -824,20 +827,17 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
               const parties = (
                 <div className="grid grid-cols-1 gap-3 min-w-0">
-                  <DealPartiesCard
-                    dealId={id} deal={deal} names={names} isClientDeal={isClientDeal} ddUser={ddUser} dealBgpTeam={dealBgpTeam}
-                    onPartySave={handlePartySave} onActingFor={handleActingForSave} onCreate={createCounterparty}
-                  />
                   {/* KYC/AML is BGP-internal compliance — never shown to clients.
                       Opening this section reads the AML status, which starts BGP's
-                      checks before asking for a party with none in 30 days. */}
-                  {staffView && (
+                      checks before asking for a party with none in 30 days. For
+                      BGP staff the parties are inside the AML box (Woody,
+                      22 November 2026: one card per party). */}
+                  {staffView ? (
                     <div className="space-y-3" data-testid="deal-kyc">
-                      <div className="flex items-center gap-2 px-0.5">
-                        <ShieldCheck className="w-4 h-4 text-muted-foreground" />
-                        <h3 className="text-sm font-semibold">AML and KYC</h3>
-                      </div>
-                      <DealAmlStatusCard dealId={id} dealStatus={deal.status} />
+                      <StaffPartiesAml
+                        dealId={id} deal={deal} names={names} dealBgpTeam={dealBgpTeam}
+                        onPartySave={handlePartySave} onActingFor={handleActingForSave} onCreate={createCounterparty}
+                      />
                       <JointAgencyNoteCard
                         dealId={id}
                         canAdd={!jointAgent}
@@ -850,6 +850,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                         }}
                       />
                     </div>
+                  ) : (
+                    <DealPartiesCard
+                      dealId={id} deal={deal} names={names} isClientDeal={isClientDeal} ddUser={ddUser} dealBgpTeam={dealBgpTeam}
+                      onPartySave={handlePartySave} onActingFor={handleActingForSave} onCreate={createCounterparty}
+                    />
                   )}
                   {!jointAgent && <LinkedContactsCard deal={deal} />}
                   {!jointAgent && brandParties.length > 0 && (
@@ -1112,6 +1117,108 @@ function DealPartiesCard({ dealId, deal, names, isClientDeal, ddUser, dealBgpTea
         )}
       </CardContent>
     </Card>
+  );
+}
+
+
+type PartyField = "landlordId" | "tenantId" | "vendorId" | "purchaserId";
+
+// A party or BGP's side changed: the AML box reads the parties, their checks and the board's stage.
+function refreshDealAml(dealId: string) {
+  queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+  queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/aml/deal", dealId] });
+}
+
+// The deal's party slots: leasing deals have Landlord/Tenant; investment
+// (Sale/Purchase) deals have Vendor/Purchaser — the unused pair is clutter
+// that invites mis-linking (UX #19). Already-linked slots stay either way so
+// existing data is never hidden.
+function partySlotDefs(deal: CrmDeal) {
+  const partiesInvestment = deal.dealType === "Sale" || deal.dealType === "Purchase";
+  const slots: Array<{
+    role: "landlord" | "tenant" | "vendor" | "purchaser"; label: string; field: PartyField;
+    value: string | null | undefined; keep: (c: CrmCompany) => boolean; createType: string;
+  }> = [
+    ...(!partiesInvestment || deal.landlordId ? [{ role: "landlord" as const, label: "Landlord", field: "landlordId" as const, value: deal.landlordId, createType: "Landlord",
+      keep: (c: CrmCompany) => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" }] : []),
+    ...(!partiesInvestment || deal.tenantId ? [{ role: "tenant" as const, label: "Tenant", field: "tenantId" as const, value: deal.tenantId, createType: "Tenant",
+      keep: (c: CrmCompany) => !!c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" }] : []),
+    ...(partiesInvestment || deal.vendorId ? [{ role: "vendor" as const, label: "Vendor", field: "vendorId" as const, value: deal.vendorId, createType: "Vendor",
+      keep: (c: CrmCompany) => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" }] : []),
+    ...(partiesInvestment || deal.purchaserId ? [{ role: "purchaser" as const, label: "Purchaser", field: "purchaserId" as const, value: deal.purchaserId, createType: "Purchaser",
+      keep: (c: CrmCompany) => c.companyType === "Purchaser" || c.companyType === "Investor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType === "Vendor" }] : []),
+  ];
+  return { partiesInvestment, slots };
+}
+
+// BGP staff: the Parties card inside the AML box (Woody, 22 November 2026:
+// "yes go ahead"), one card per party slot with its picker, and who BGP acts
+// for in the box's heading. The BGP team stays above it.
+function StaffPartiesAml({ dealId, deal, names, dealBgpTeam, onPartySave, onActingFor, onCreate }: {
+  dealId: string; deal: CrmDeal; names: DealPageNames | null; dealBgpTeam: BgpTeamPerson[];
+  onPartySave: (field: PartyField, value: string | null) => Promise<void>;
+  onActingFor: (side: "landlord" | "tenant") => Promise<void>;
+  onCreate: (field: PartyField, companyType: string, name: string) => Promise<void>;
+}) {
+  const { data: companies = [] } = useQuery<CrmCompany[]>({ queryKey: ["/api/crm/companies"] });
+  const { partiesInvestment, slots: defs } = partySlotDefs(deal);
+  const actingFor = ((deal as any).bgpActingFor || "landlord") as "landlord" | "tenant";
+  const clientRole = dealClientRole({ dealType: deal.dealType, bgpActingFor: actingFor, team: (deal as any).team });
+  const companyOptions = (keep: (c: CrmCompany) => boolean, current: string | null | undefined) => {
+    const list = companies.filter(c => keep(c) || c.id === current).map(c => ({ id: c.id, name: c.name }));
+    // Until the list arrives the current party still shows by name.
+    if (current && !list.some(c => c.id === current)) {
+      const known = (["landlord", "tenant", "vendor", "purchaser"] as const).map(r => names?.parties[r]).find(p => p?.id === current);
+      if (known) list.push({ id: current, name: known.name });
+    }
+    return list;
+  };
+  const slots: PartySlot[] = defs.map(slot => ({
+    role: slot.role, label: slot.label, companyId: slot.value || null, client: clientRole === slot.role,
+    picker: (
+      <div data-testid={`deal-party-${slot.role}`}>
+        <InlineLinkSelect
+          value={slot.value}
+          options={companyOptions(slot.keep, slot.value)}
+          href={slot.value ? `/companies/${slot.value}` : undefined}
+          onSave={(v) => onPartySave(slot.field, v || null)}
+          onCreate={(name) => onCreate(slot.field, slot.createType, name)}
+          placeholder={`Link ${slot.label.toLowerCase()}`}
+        />
+      </div>
+    ),
+  }));
+  // Which side BGP acts for on a leasing deal: drives instruction vs related
+  // activity on the landlord and brand pages (Woody, 2026-09-26).
+  const actingForControl = !partiesInvestment ? (
+    <span className="flex items-center gap-1.5" data-testid="deal-bgp-acting-for">
+      <span className="text-[11px] text-muted-foreground">BGP acts for</span>
+      {(["landlord", "tenant"] as const).map(side => (
+        <Pill key={side} active={actingFor === side} onClick={() => onActingFor(side)} data-testid={`deal-acting-for-${side}`}>
+          {side === "landlord" ? "Landlord" : "Tenant"}
+        </Pill>
+      ))}
+    </span>
+  ) : null;
+  // The deal's own invoice contact in Xero, from before each party had its
+  // own billing contact: shown only when one is held.
+  const footer = (deal as any).xeroContactName ? (
+    <p className="text-xs text-muted-foreground" data-testid="deal-xero-contact">
+      Invoice contact (Xero): <span className="font-medium text-foreground">{(deal as any).xeroContactName}</span>
+      {(deal as any).xeroAccountNumber && <> · A/C <span className="font-mono tabular-nums">{(deal as any).xeroAccountNumber}</span></>}
+    </p>
+  ) : null;
+  return (
+    <>
+      {dealBgpTeam.length > 0 && (
+        <Card><CardContent className="p-4" data-testid="deal-bgp-team">
+          <BgpTeamGroup people={dealBgpTeam} addControl={<span className="text-[11px] text-muted-foreground">Change in Fees &amp; invoicing</span>} />
+        </CardContent></Card>
+      )}
+      <DealAmlStatusCard dealId={dealId} dealStatus={deal.status} slots={slots} actingFor={actingForControl} footer={footer} />
+    </>
   );
 }
 

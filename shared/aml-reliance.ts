@@ -76,7 +76,7 @@ export function relianceInput(raw: Record<string, unknown>, today: Date = new Da
   const country = where === "abroad" ? clean(raw.country, 60) : null;
   if (where === "abroad" && !country) return { ok: false, message: "Name the country the firm is in." };
   if (country && countryRisk(countryOf(country)) === "fatf_call_for_action") {
-    return { ok: false, message: `BGP cannot rely on a firm in ${country}: it is on FATF's call-for-action list (MLR 2017 reg 39(4)).` };
+    return { ok: false, message: `BGP cannot rely on a firm in ${country}: it is on FATF's call-for-action list.` };
   }
   const regulator = clean(raw.regulator, 80);
   if (regulator.length < 2) return { ok: false, message: "Name the firm's anti-money laundering supervisor (for example the SRA, the FCA, the ICAEW or HMRC)." };

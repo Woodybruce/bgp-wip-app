@@ -1,22 +1,22 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, ChevronRight, TrendingUp, TrendingDown, FolderOpen, Flag, AlertTriangle } from "lucide-react";
-import { Link } from "wouter";
+import { Check, CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, ChevronRight, TrendingUp, TrendingDown, FolderOpen, Flag, AlertTriangle, Pencil } from "lucide-react";
+import { Link, useLocation } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
 import { KYC4U_FORM_URL, Kyc4uPackButton, Kyc4uRequestButton, Kyc4uSubmittedButton } from "@/components/kyc4u-panel";
 import { kyc4uDraftState } from "@shared/kyc4u-portal";
 import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks } from "@/components/kyc-client-checks";
 import { SecondReadPanel } from "@/components/aml-second-read";
-import { DealPartyEditor, PartyBillingDetail, PartyReadyToStart, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
+import { DealPartyEditor, DealPartyLines, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { JointNotRequiredButton, PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
 import { FLAG_REVIEW_COMMENT_MIN, isSanctionsFlag, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
 import { personDisplayName, personNamesMatch, precheckDay, type PrecheckCardLine, type PrecheckCompany } from "@shared/kyc-prechecks";
 import { type AmlRegime, type JointAgentRule, type JointAskRecord, type PartyDueDiligence } from "@shared/aml-policy";
-import { AML_BOX_WHO_WORDS, amlBoxDay, amlNextStep, andList, type AmlBoxFacts, type AmlBoxTone } from "@shared/aml-box";
-import { AML_STAGE_LABEL, type AmlDashboardRow, type AmlStage } from "@shared/aml-dashboard";
-import { SIGNING_COMPANY_WORDS, peopleToReach, type DealPartyRole, type DealPartyView } from "@shared/deal-parties";
+import { AML_BOX_WHO_WORDS, amlBoxDay, amlNextStep, firmShort, shortReason, type AmlBoxFacts, type AmlBoxTone } from "@shared/aml-box";
+import { type AmlDashboardRow, type AmlStage } from "@shared/aml-dashboard";
+import { peopleToReach, type DealPartyRole, type DealPartyView } from "@shared/deal-parties";
 import { getAuthHeaders, queryClient, apiRequest } from "@/lib/queryClient";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
@@ -26,7 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { RaiseReportButton } from "@/components/aml-register";
+import { RaiseReportButton, RaiseReportDialog } from "@/components/aml-register";
 import { DealAgentsAml, useDealAgentsAml } from "@/components/agent-aml";
 import { DealSolicitorsAmlPanel, solicitorsSummary, useDealSolicitorsAml } from "@/components/solicitor-aml";
 import type { RiskAssessment } from "@shared/aml-risk-assessment";
@@ -34,8 +34,9 @@ import { CHARITY_ATTRIBUTION, type CharityFacts } from "@shared/charity-register
 import { AmlFileButton } from "@/components/aml-file-button";
 import { AbroadTrace, abroadSummary, useDealAbroad } from "@/components/aml-abroad";
 import { JointRelianceButton, RelianceButton, RelianceCard } from "@/components/aml-reliance";
-import { JointAgentPanel, currentJointRequest, jointApplies, jointBoxFacts, jointSectionLine, useJointChecks } from "@/components/joint-agent-checks";
-import { AmlStopButton } from "@/components/aml-stop";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { AskJointAgentButton, JointAgentPanel, JointChaseButton, currentJointRequest, jointApplies, jointBoxFacts, useJointChecks } from "@/components/joint-agent-checks";
+import { AmlStopDialog, useAmlStop } from "@/components/aml-stop";
 
 export interface DealAmlStatus {
   dealId: string;
@@ -610,15 +611,15 @@ export function useDealAmlStatus(dealId: string, enabled = true) {
   });
 }
 
-// ── The AML box, shortened (Woody, 20 November 2026) ─────────────────────────
-// "on this page can you build to minimise each section with the detail to pop
-// out so people can clearly see whats happening and whats needed its pretty
-// overwhelming for them but clearly we need that info displayed for the AML
-// officers". Each party opens on its stage (the AML dashboard's rule, read for
-// this deal), a Next line (what happens next, who it waits on, and the one
-// button that moves it on: shared/aml-box.ts) and one line per section; a line
-// opens its detail. Show all detail opens every section of every party,
-// remembered per browser, for the officers who want everything in front of them.
+// ── The AML box (Woody, 20 November 2026: "minimise each section with the
+// detail to pop out"; 22 November 2026: "there is a large amount of text some
+// of which is very AI and its very crowded", then "yes go ahead" to four steps
+// per party and the Parties card merged into the box). Each party is one
+// card: its name, any red flags and the level of checks when it is not
+// standard, one Next line (who it waits on or what to do, a few words and one
+// button: shared/aml-box.ts) and four steps: Who signs, Screening, Documents
+// and Sign-off, each one line that opens its detail. The officers' tools are
+// in the box's menu. A status, not an explanation.
 
 export const AML_STAGE_TONE: Record<AmlStage, string> = {
   not_started: "bg-muted text-muted-foreground",
@@ -648,40 +649,67 @@ function BoxToneIcon({ tone }: { tone: BoxTone }) {
 }
 
 const NEXT_BOX: Record<AmlBoxTone, string> = {
-  done: "border-emerald-200 bg-emerald-50/70 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-100",
-  act: "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/20 dark:text-amber-100",
-  flag: "border-red-300 bg-red-50 text-red-950 dark:border-red-900 dark:bg-red-950/20 dark:text-red-100",
-  wait: "border-sky-200 bg-sky-50/70 text-sky-950 dark:border-sky-900 dark:bg-sky-950/20 dark:text-sky-100",
+  done: "bg-emerald-50 text-emerald-950 dark:bg-emerald-950/20 dark:text-emerald-100",
+  act: "bg-amber-50 text-amber-950 dark:bg-amber-950/20 dark:text-amber-100",
+  flag: "bg-red-50 text-red-950 dark:bg-red-950/30 dark:text-red-100",
+  wait: "bg-sky-50 text-sky-950 dark:bg-sky-950/20 dark:text-sky-100",
 };
 
-// One section of a party (or of the deal): one line, the detail on press.
-function BoxSection({ id, label, tone, summary, open, onToggle, children, testId }: {
-  id: string; label: string; tone: BoxTone; summary: ReactNode; open: boolean; onToggle: () => void; children?: ReactNode; testId: string;
+type StepState = "done" | "act" | "wait" | "flag" | "todo";
+
+function StepIcon({ n, state }: { n?: number; state: StepState }) {
+  const base = "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold";
+  if (state === "done") return <span className={`${base} bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300`}><Check className="h-3 w-3" /></span>;
+  if (state === "flag") return <span className={`${base} bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300`}><Flag className="h-3 w-3" /></span>;
+  const tone = state === "act" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200"
+    : state === "wait" ? "bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-200"
+    : "bg-muted text-muted-foreground";
+  return <span className={`${base} ${tone}`}>{n ?? <span className="h-1.5 w-1.5 rounded-full bg-current" />}</span>;
+}
+
+// One step of a party, or one of the deal's own checks: one line, the detail on press.
+function StepRow({ id, n, label, state, summary, open, onToggle, children, testId }: {
+  id: string; n?: number; label: string; state: StepState; summary: ReactNode; open: boolean; onToggle: () => void; children?: ReactNode; testId: string;
 }) {
   return (
     <div id={id} className="border-t border-border/60 first:border-t-0 scroll-mt-4" data-testid={testId}>
-      <button type="button" className="flex w-full min-w-0 items-start gap-2 py-1.5 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      <button type="button" className="flex w-full min-w-0 items-center gap-2.5 rounded px-2.5 py-2 text-left hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-expanded={open} onClick={onToggle} data-testid={`${testId}-toggle`}>
-        <BoxToneIcon tone={tone} />
+        <StepIcon n={n} state={state} />
         {/* On a phone the label sits over its line, so the line has the width. */}
-        <span className="min-w-0 flex-1 sm:flex sm:items-start sm:gap-2">
-          <span className="block sm:w-[6.25rem] sm:shrink-0 text-[11px] font-semibold uppercase tracking-wider leading-[18px] text-muted-foreground">{label}</span>
-          <span className="block min-w-0 sm:flex-1 break-words text-xs leading-[18px] text-foreground">{summary}</span>
+        <span className="min-w-0 flex-1 sm:flex sm:items-center sm:gap-2.5">
+          <span className="block text-[13px] font-semibold sm:w-[5.75rem] sm:shrink-0">{label}</span>
+          <span className="block min-w-0 break-words text-[13px] leading-snug sm:flex-1">{summary}</span>
         </span>
-        <ChevronDown className={`mt-[2px] h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
-      {open && <div className="space-y-2 pb-3 pl-[1.375rem]" data-testid={`${testId}-detail`}>{children}</div>}
+      {open && <div className="space-y-2.5 pb-3 pl-[2.6rem] pr-2.5" data-testid={`${testId}-detail`}>{children}</div>}
     </div>
   );
 }
+
+// A part of a step's detail that stays folded until pressed.
+function Folded({ label, children, testId }: { label: string; children: ReactNode; testId?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div data-testid={testId}>
+      <button type="button" data-no-min-touch className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        <ChevronRight className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-90" : ""}`} />{label}
+      </button>
+      {open && <div className="mt-1.5 space-y-2 pl-4">{children}</div>}
+    </div>
+  );
+}
+
+const SubHead = ({ children }: { children: ReactNode }) => <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{children}</p>;
 
 const OPEN_ALL_KEY = "bgp:aml-box:open-all";
 const readOpenAll = (): boolean => { try { return window.localStorage.getItem(OPEN_ALL_KEY) === "1"; } catch { return false; } };
 const writeOpenAll = (on: boolean) => { try { if (on) window.localStorage.setItem(OPEN_ALL_KEY, "1"); else window.localStorage.removeItem(OPEN_ALL_KEY); } catch { /* per browser only */ } };
 type OpenAll = { all: boolean; at: number };
 
-type SectionKey = "company" | "abroad" | "payer" | "checks" | "level" | "people" | "joint" | "client" | "flags" | "kyc4u" | "decision" | "assessment";
-const SECTION_KEYS: SectionKey[] = ["company", "abroad", "payer", "checks", "level", "people", "joint", "client", "flags", "kyc4u", "assessment", "decision"];
+type StepKey = "signs" | "screening" | "documents" | "decision";
+const STEP_KEYS: StepKey[] = ["signs", "screening", "documents", "decision"];
 
 function useOpenSections<K extends string>(keys: K[], openAll: OpenAll) {
   const [open, setOpen] = useState<Set<K>>(() => new Set(openAll.all ? keys : []));
@@ -714,26 +742,32 @@ function fallbackStage(cp: Counterparty): AmlStage | null {
   return null;
 }
 
-const REQUEST_WORDS: Record<string, string> = {
-  not_sent: "Not sent", sent: "Sent", opened: "Opened", in_progress: "In progress", finished: "Finished", expired: "Link ran out",
-};
 const day = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Europe/London" }) : "");
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-// "BGP's checks" keeps its capitals mid-sentence; "Enhanced due diligence" reads on.
-const onInSentence = (t: string) => (!t || /^[A-Z][A-Z]/.test(t) ? t : t.charAt(0).toLowerCase() + t.slice(1));
 const LEVEL_WORDS: Record<PartyDueDiligence["level"], string> = { simplified: "Simplified", standard: "Standard", enhanced: "Enhanced" };
+const NOT_REQUIRED_SHORT: Record<string, string> = { joint_agent: "the joint agent's party", no_deal: "no deal with this party" };
 
-function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen }: {
+/** A party slot on the deal (the Parties card merged into the box, 22 November 2026). */
+export interface PartySlot {
+  role: DealPartyRole;
+  label: string;
+  companyId: string | null;
+  client: boolean;
+  // The deal page's picker: link, change or add the party.
+  picker: ReactNode;
+}
+
+function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen, slot }: {
   dealId: string; data: DealAmlStatus; cp: Counterparty; row: AmlDashboardRow | null; party: DealPartyView | null;
-  checks: ClientChecks | undefined; openAll: OpenAll; startOpen?: boolean;
+  checks: ClientChecks | undefined; openAll: OpenAll; startOpen?: boolean; slot?: PartySlot | null;
 }) {
   const staff = !!data.prechecks;
-  const { open, toggle, show } = useOpenSections(SECTION_KEYS, openAll);
-  // One row per party, as on the AML board; its checks open under it
-  // (22 November 2026: Jack found the box overwhelming).
+  const { open, toggle, show } = useOpenSections(STEP_KEYS, openAll);
+  // A party still being checked opens on its four steps; a cleared one is one line until opened.
   const [folded, setFolded] = useState(!startOpen && !openAll.all);
   useEffect(() => { if (openAll.at) setFolded(!openAll.all); }, [openAll.at]);
   const [editing, setEditing] = useState(false);
+  const [changing, setChanging] = useState(false);
   const drafts = useQuery<any[]>({
     enabled: staff,
     queryKey: ["/api/kyc4u/drafts", dealId, cp.id],
@@ -744,7 +778,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen 
   const jointQ = useJointChecks(dealId, staff && !!data.jointRule && data.jointRule !== "letting_under" && data.jointRule !== "advisory");
   const jointParty = jointApplies(jointQ.data, cp.id);
 
-  const reveal = (k: SectionKey) => {
+  const reveal = (k: StepKey) => {
     setFolded(false);
     show(k);
     window.setTimeout(() => document.getElementById(`aml-${cp.id}-${k}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 60);
@@ -786,11 +820,13 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen 
   const draftState = kyc4uDraftState(draft);
   const kyc4uState: AmlBoxFacts["kyc4u"] = draftState === "prepared" ? "queued" : draftState === "submitted" ? "raised" : "none";
   const gaps = (party?.gaps || []).filter(g => g.key !== "company")
-    .map(g => (g.key === "person" ? "Set who to ask for the checks: their name and email" : `Add an email for ${party?.person?.name || "the person to ask"}`));
+    .map(g => (g.key === "person" ? "Set who to ask" : `Add an email for ${party?.person?.name || "the person to ask"}`));
+  const current = jointParty ? currentJointRequest(jointParty) : null;
 
   const facts: AmlBoxFacts = {
     role: cp.role, stage, due: row ? row.due : null,
     approvedBy: cp.kyc_approved_by, expiresAt: cp.kyc_expires_at, notRequiredWords: cp.notRequired?.reasonWords || null,
+    notRequiredReason: cp.notRequired?.reason || null,
     company: isCompany, companyMissing, gaps, askName: party?.person?.name || null,
     precheckRunning: pre?.state === "running",
     redFlags: flags.length, factors: factors.length + dealFactors.length,
@@ -804,385 +840,340 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen 
     trust: isTrust,
     ownersAbroad: ownedAbroad.length ? ownedAbroad.map(a => `${a.name}, ${a.country}`).join("; ") : null,
     reliance: people?.reliance?.words || null,
+    relianceFirm: people?.reliance?.firm || null,
     inHouseEdd: !!data.decisions?.inHouseEdd,
     sanctionsFlags: [...flags, ...(data.redFlags?.deal || [])].filter(isSanctionsFlag).length,
     joint: jointBoxFacts(jointQ.data, cp.id),
   };
   const step = amlNextStep(facts);
+  const kyc4uNeeded = step.lead === "Not yet with KYC4U";
 
   const nextAction: ReactNode = (() => {
+    const quiet = "h-7 text-xs bg-background";
     switch (step.action) {
       case "fill_in": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid={`aml-next-fill-${cp.role}`}>Fill in</Button>;
-      case "add_details": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid={`aml-next-details-${cp.role}`}>Add their details</Button>;
-      case "send_client_checks": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} />;
-      case "people": return <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => reveal("people")} data-testid={`aml-next-people-${cp.role}`}>Open People</Button>;
+      case "add_details": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid={`aml-next-details-${cp.role}`}>Add details</Button>;
+      case "send_client_checks": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} />;
+      case "people": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("documents")} data-testid={`aml-next-people-${cp.role}`}>Open</Button>;
       case "request_kyc4u": return <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} buttonOnly />;
       case "kyc4u_form": return <>
         {draft?.id && <Kyc4uPackButton draftId={String(draft.id)} />}
-        <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" asChild><a href={KYC4U_FORM_URL} target="_blank" rel="noopener noreferrer">Open KYC4U's portal</a></Button>
         <Kyc4uSubmittedButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} />
       </>;
       case "kyc4u_result": return <PartyDecisionButton dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} kind="kyc4u_result" />;
       case "sign_off": return <PartyDecisionButton dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} kind="sign_off" />;
-      case "red_flags": return <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => reveal("flags")}>See the red flags</Button>;
-      case "billing": return <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => reveal("payer")} data-testid={`aml-next-billing-${cp.role}`}>Who pays</Button>;
-      case "joint": return <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => reveal("joint")} data-testid={`aml-next-joint-${cp.role}`}>Open Joint agent</Button>;
+      case "red_flags": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("screening")}>See flags</Button>;
+      case "billing": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("signs")} data-testid={`aml-next-billing-${cp.role}`}>Who pays</Button>;
+      case "joint": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("documents")} data-testid={`aml-next-joint-${cp.role}`}>Open</Button>;
+      case "joint_remind": return jointParty && current
+        ? <JointChaseButton dealId={dealId} party={jointParty} request={current} label={facts.joint?.chasing ? "Remind now" : "Ask for them"} onNoEmail={() => reveal("documents")} />
+        : null;
       default: return null;
     }
   })();
 
-  // ── Each section's line.
+  // ── The four steps' lines.
   const reg = pre?.company || null;
-  const companyLine: { tone: BoxTone; summary: ReactNode } = party?.company
-    ? {
-        tone: reg?.warnings.length ? "flag" : "done",
-        summary: <><span className="font-medium">{party.company.name}</span>{party.company.companiesHouseNumber ? <span className="ml-1 font-mono tabular-nums text-muted-foreground">{party.company.companiesHouseNumber}</span> : null}
-          {reg ? <span className="text-muted-foreground"> · {[reg.status && reg.status.toLowerCase(), reg.listing ? "listed" : null, reg.owners.length ? plural(reg.owners.length, "owner") : null].filter(Boolean).join(" · ")}</span> : null}
-          {reg?.warnings.length ? <span className="text-red-700 dark:text-red-400"> · {reg.warnings[0]}</span> : null}</>,
-      }
-    : companyMissing
-      ? { tone: settled ? "info" : "act", summary: <span className={settled ? "text-muted-foreground" : "text-amber-800 dark:text-amber-300"}>Not set: {SIGNING_COMPANY_WORDS[cp.role as DealPartyRole] || "the company that signs"}</span> }
-      : pre?.charity?.state === "found"
-        ? {
-            tone: pre.charity.warnings.length ? "flag" : "done",
-            summary: <><span className="font-medium">{pre.charity.name}</span><span className="ml-1 font-mono tabular-nums text-muted-foreground">charity {pre.charity.number}</span>
-              <span className="text-muted-foreground"> · {plural(pre.charity.trustees.length, "trustee")}</span>
-              {pre.charity.warnings.length ? <span className="text-red-700 dark:text-red-400"> · {pre.charity.warnings[0]}</span> : null}</>,
-          }
-        : { tone: "info", summary: <span className="text-muted-foreground">{cp.signsAs || "Not read yet"}</span> };
-
-  // Who pays BGP's invoice (20 November 2026): BGP's client only.
-  const billing = party?.client ? party.billing || null : null;
-  const payLine: { tone: BoxTone; summary: string } | null = !billing || billing.state === "individual" ? null : {
-    tone: billing.tone === "flag" ? "flag" : billing.tone === "act" ? "act" : "done",
-    summary: billing.state === "same" ? `${billing.billed?.name || party?.company?.name || "The company"}, the company that signs`
-      : billing.state === "signing" ? `${party?.company?.name || "The company that signs"}, the company that signs`
-      : billing.state === "different" ? `${billing.billed?.name || "Another company"}: not the company that signs`
-      : billing.state === "payer" ? `${billing.payer?.name || "A third party"} pays (${(billing.payer?.relationshipWords || "relationship not recorded").toLowerCase()})`
-      : "Set the company that signs: BGP bills it",
-  };
+  const charity = pre?.charity?.state === "found" ? pre.charity : null;
+  const regWarning = reg?.warnings[0] || charity?.warnings[0] || null;
+  const askMissing = !!party && !party.person;
+  const askNoEmail = !!party?.person && !party.person.email;
+  const signs: { state: StepState; text: ReactNode } = companyMissing
+    ? { state: settled ? "todo" : "act", text: <span className="text-amber-800 dark:text-amber-300">Not set</span> }
+    : {
+        state: regWarning ? "flag" : !settled && (askMissing || askNoEmail || facts.billingDiffers) ? "act" : "done",
+        text: <>
+          {!isCompany && !party?.company
+            ? <>{partyName} <span className="text-muted-foreground">· a person</span></>
+            : <><span className="font-medium">{party?.company?.name || charity?.name || cp.signsAs || partyName}</span>
+                {(party?.company?.companiesHouseNumber || charity) && <span className="ml-1 whitespace-nowrap font-mono tabular-nums text-muted-foreground">{party?.company?.companiesHouseNumber || `charity ${charity!.number}`}</span>}</>}
+          {isTrust && <span className="text-muted-foreground"> · a trust</span>}
+          {ownedAbroad.length > 0 && <span className="text-muted-foreground"> · owned from abroad</span>}
+          {regWarning && <span className="text-red-700 dark:text-red-400"> · {shortReason(regWarning, 50)}</span>}
+          {!settled && askMissing && <span className="text-amber-800 dark:text-amber-300"> · who to ask not set</span>}
+          {!settled && askNoEmail && <span className="text-amber-800 dark:text-amber-300"> · no email for {party!.person!.name}</span>}
+          {!settled && facts.billingDiffers && <span className="text-amber-800 dark:text-amber-300"> · BGP bills another company</span>}
+        </>,
+      };
 
   const attention = pre ? pre.lines.filter(l => l.state === "attention").length : 0;
-  const namesakes = pre?.lines.find(l => l.key === "namesakes") || null;
-  const variants = pre?.lines.find(l => l.key === "spelling_variants") || null;
-  const checksLine: { tone: BoxTone; summary: string } | null = !pre || pre.state === "off" ? null
-    : pre.state === "running" ? { tone: "wait", summary: "Running" }
-    : pre.state === "needs_company" ? { tone: "info", summary: "Waiting for the company that signs" }
-    : pre.state === "cap" ? { tone: "wait", summary: "Daily limit reached: runs tomorrow" }
-    : pre.state === "none" ? { tone: "wait", summary: "Not run yet" }
-    : pre.unfinished || pre.state === "waiting" ? { tone: "act", summary: "Not finished: retrying" }
-    : {
-        tone: attention ? "flag" : "done",
-        summary: `${pre.ranAt ? `${precheckDay(pre.ranAt)} · ` : ""}${attention ? `${attention} to review` : "nothing to review"}${namesakes ? ` · ${namesakes.label.toLowerCase()}` : ""}${variants ? ` · ${variants.label.toLowerCase()}` : ""}`,
-      };
-
-  const levelLine: { tone: BoxTone; summary: string } | null = !level || cp.notRequired ? null : {
-    tone: level.level === "enhanced" ? "act" : "done",
-    summary: [
-      `${LEVEL_WORDS[level.level]} · ${plural(level.recheckYears, "year")}`,
-      factors.length + dealFactors.length ? plural(factors.length + dealFactors.length, "factor") : null,
-      level.toWeigh.length ? `${level.toWeigh.length} to weigh` : null,
-    ].filter(Boolean).join(" · "),
-  };
-
-  const peopleLine: { tone: BoxTone; summary: string } | null = (() => {
-    if (!data.clientChecks || !people || cp.notRequired) return null;
-    // A private individual (Jack, 20 November 2026): everyone named on their
-    // side, each with their own checks, and Add another person.
-    if (people.basis === "individual" && !sanctionsOnly && !people.people.length) {
-      return { tone: "info", summary: "See Client checks" };
-    }
-    if (people.basis !== "individual" && !isCompany) return null;
-    const possible = [...people.people.map(p => p.sanctions), ...people.directors.map(d => d.sanctions), ...(people.trustees || []).map(t => t.sanctions)].includes("possible");
-    if (sanctionsOnly) {
-      const n = people.people.length + people.directors.length;
-      return { tone: possible ? "flag" : "done", summary: `${plural(n, "person", "people")} screened, sanctions only: ${possible ? "a possible match" : "no match"}` };
-    }
-    // Another firm's checks relied on (reg 39, 21 November 2026): nobody owes BGP anything.
-    if (people.reliance) {
-      const n = people.people.length;
-      return { tone: "done", summary: `${n ? `${plural(n, "person", "people")} · ` : ""}covered: ${onInSentence(people.reliance.words)}${people.directors.length ? ` · ${plural(people.directors.length, "director")}, sanctions only` : ""}` };
-    }
-    if (people.basis === "not_read") return { tone: "wait", summary: "Not read yet" };
-    // A company registered abroad owns it: KYC4U find the people behind it (21 November 2026).
-    // Once someone is recorded behind each company abroad, the line counts their checks.
-    const openAbroad = (people.ownersAbroad || []).filter(o => !o.answered);
-    const abroad = openAbroad.length
-      ? `owned through ${openAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: ${facts.inHouseEdd ? "find who is behind it" : "KYC4U find who is behind it"}`
-      : people.ownersAbroad?.length ? `owned through ${people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}` : null;
-    if (abroad && !people.people.some(p => p.roles.includes("owner"))) return { tone: "act", summary: abroad[0].toUpperCase() + abroad.slice(1) };
-    const n = people.people.length;
-    const done = n - owing.length;
-    // A registered charity's trustees, from the Charity Commission's register (21 November 2026).
-    const trustees = people.trustees?.length ? ` · ${plural(people.trustees.length, "trustee")} screened` : "";
-    const directors = (people.directors.length ? ` · ${plural(people.directors.length, "director")}, sanctions only` : "") + trustees;
-    if (!n) return { tone: possible ? "flag" : "info", summary: `No one to verify${directors}${possible ? " · a possible sanctions match" : ""}` };
-    // The owners behind a company abroad are still to find, whoever else is done.
-    const lead = abroad ? `${abroad[0].toUpperCase()}${abroad.slice(1)} · ` : "";
-    const summary = owing.length
-      ? `${lead}${done} of ${n} done · waiting on ${andList(owing.map(p => personDisplayName(p.name)))}${directors}`
-      : `${lead}${abroad ? `${n === 1 ? "the named person" : `the ${n} named people`} done` : n === 1 ? "Done" : `All ${n} done`}${directors}`;
-    return { tone: possible ? "flag" : abroad || unreachable.length || owing.some(p => !p.own) ? "act" : owing.length ? "wait" : "done", summary: possible ? `${summary} · a possible sanctions match` : summary };
-  })();
-
-  const clientLine: { tone: BoxTone; summary: string } | null = !data.clientChecks || cp.notRequired ? null
-    : companyMissing ? { tone: "info", summary: "Waiting for the company that signs" }
-    : people?.reliance ? { tone: "done", summary: `Not needed: ${onInSentence(people.reliance.words)}` }
-    : !request ? (sanctionsOnly ? { tone: "done", summary: "Not needed: sanctions checks only" }
-      : { tone: "act", summary: (checks?.requests || []).some(r => r.companyId === cp.id && r.person && r.status !== "cancelled")
-          ? "Not sent yet (owners have their own links)" : "Not sent yet" })
-    : {
-        tone: request.status === "finished" ? "done" : request.status === "not_sent" || request.status === "expired" ? "act" : "wait",
-        summary: [REQUEST_WORDS[request.status] || request.status, request.recipientName || request.recipientEmail, request.sentAt ? `sent ${day(request.sentAt)}` : null,
-          request.finishedAt ? `finished ${day(request.finishedAt)}` : null].filter(Boolean).join(" · "),
-      };
-
   const unchecked = data.redFlags?.unchecked || [];
   const flagAside = aside.filter(a => !a.flag.factor).length;
-  const flagsLine: { tone: BoxTone; summary: string } | null = !data.redFlags ? null
-    : flags.length
-      ? { tone: "flag", summary: `${plural(flags.length, "red flag")}: ${flags[0].label}${flags.length > 1 ? `, and ${flags.length - 1} more` : ""}` }
-      : { tone: unchecked.length ? "act" : "done", summary: `None${flagAside ? ` · ${flagAside} set aside` : ""}${unchecked.length ? " · some records could not be read" : ""}` };
+  const screening: { state: StepState; text: ReactNode } | null = (() => {
+    if (flags.length) return { state: "flag", text: <span className="text-red-700 dark:text-red-400">{plural(flags.length, "red flag")}: {shortReason(flags[0].label, 60)}</span> };
+    if (!pre || pre.state === "off") return data.redFlags ? { state: "done", text: "No red flags" } : null;
+    if (pre.state === "needs_company") return { state: "todo", text: <span className="text-muted-foreground">After the company that signs is set</span> };
+    if (pre.state === "running") return { state: "wait", text: "Running now" };
+    if (pre.state === "cap") return { state: "wait", text: "Runs tomorrow: today's limit is used" };
+    if (pre.state === "none") return { state: "wait", text: "Not run yet" };
+    if (pre.unfinished || pre.state === "waiting") return { state: "act", text: "Not finished: trying again" };
+    if (attention) return { state: "flag", text: `${attention} to look at` };
+    const extra = [level?.level === "enhanced" ? "higher risk" : null, flagAside ? `${flagAside} set aside` : null, unchecked.length ? "some records not read" : null].filter(Boolean);
+    return { state: level?.level === "enhanced" ? "act" : "done", text: `Clear${pre.ranAt ? ` · ${precheckDay(pre.ranAt)}` : ""}${extra.length ? ` · ${extra.join(" · ")}` : ""}` };
+  })();
 
-  const kyc4uReq = kyc4uCompany.data?.requests?.[0] || null;
-  const kyc4uLine: { tone: BoxTone; summary: string } | null = !staff || cp.notRequired ? null
-    : draftState === "prepared" ? { tone: "act", summary: "Prepared, not submitted" }
-    : draftState === "stale" ? { tone: "act", summary: `Prepared ${day(draft.created_at)}, never submitted` }
-    : draft?.status === "filled" ? { tone: "wait", summary: `Filled on KYC4U's form ${day(draft.filled_at)}` }
-    : draft ? { tone: "wait", summary: `With KYC4U${draft.submitted_at ? ` since ${day(draft.submitted_at)}` : ""}${draft.submitted_ref ? ` · ref ${draft.submitted_ref}` : ""} · ${draft.request_status || "no status from KYC4U yet"}` }
-    : kyc4uReq ? { tone: "info", summary: `KYC4U's record: ${kyc4uReq.status || "no status yet"}` }
-    // The officers do enhanced checks in-house (21 and 22 November 2026): no
-    // KYC4U line unless a request or KYC4U's own record already exists.
-    : facts.inHouseEdd ? null
-    : flags.length || factors.length || ownedAbroad.length ? { tone: "act", summary: "Not raised" }
-    : { tone: "info", summary: "Not needed" };
+  const jointMissing = jointParty && current && current.files.length ? Math.max(0, jointParty.gaps.filter(g => !/reliance terms$/.test(g)).length - (jointParty.unread ? 1 : 0)) : 0;
+  const letting = data.jointRule === "letting" || data.jointRule === "other";
+  const documents: { state: StepState; text: ReactNode } = (() => {
+    if (cp.notRequired) return { state: "done", text: "Not needed" };
+    if (sanctionsOnly) return { state: "done", text: "Not needed: sanctions checks only" };
+    if (people?.reliance) return { state: "done", text: `Relying on ${firmShort(people.reliance.firm)}` };
+    if (current && jointParty) {
+      const firm = firmShort(current.firm);
+      if (current.status === "not_sent") return { state: "act", text: `Asked ${firm}: the email didn't go` };
+      if (current.status === "expired") return { state: "act", text: `The link to ${firm} ran out` };
+      if (current.status === "sent" || current.status === "opened") return { state: "wait", text: `Asked ${firm} ${day(current.sentAt)} · nothing back yet` };
+      if (jointParty.unread) return { state: "act", text: `From ${firm} · ${plural(jointParty.unread, "file")} not read yet` };
+      if (jointMissing) return { state: current.nextChaseAt ? "wait" : "act", text: <>From {firm} (joint agent) · <span className="font-medium text-amber-800 dark:text-amber-300">{jointMissing} missing</span></> };
+      if (letting && !current.reliance) return { state: "wait", text: `From ${firm} · terms not agreed yet` };
+      return { state: "done", text: `From ${firm} · all in` };
+    }
+    if (draftState === "submitted" || stage === "with_kyc4u") return { state: "wait", text: `With KYC4U${draft?.submitted_at ? ` since ${day(draft.submitted_at)}` : ""}` };
+    if (draftState === "prepared" || draftState === "stale") return { state: "flag", text: "KYC4U: prepared, not submitted" };
+    if (request) {
+      const n = people?.people.length || 0;
+      const who = request.recipientName || request.recipientEmail || "the client";
+      if (request.status === "not_sent") return { state: "act", text: "The client checks email didn't go" };
+      if (request.status === "expired") return { state: "act", text: "The client checks link ran out" };
+      if (request.status === "finished" && !owing.length) return { state: "done", text: `From ${who} · all in` };
+      return { state: "wait", text: `Sent to ${who}${request.sentAt ? ` ${day(request.sentAt)}` : ""}${n > 1 ? ` · ${n - owing.length} of ${n} people done` : ""}` };
+    }
+    if (companyMissing) return { state: "todo", text: <span className="text-muted-foreground">After the company that signs is set</span> };
+    if (!data.clientChecks) return { state: "act", text: "Send it to KYC4U" };
+    return { state: "act", text: "Not asked yet" };
+  })();
 
-  const decisionLine: { tone: BoxTone; summary: string } = stage === "rejected" ? { tone: "flag", summary: "Rejected" }
-    : cp.notRequired ? { tone: "done", summary: `Not required: ${cp.notRequired.reasonWords}` }
-    : approved ? { tone: "done", summary: `Approved${cp.kyc_approved_by ? ` by ${cp.kyc_approved_by}` : ""}${cp.kyc_expires_at ? `, valid until ${amlBoxDay(cp.kyc_expires_at)}` : ""}` }
-    : cp.isExpired ? { tone: "flag", summary: `Expired${cp.kyc_expires_at ? ` on ${amlBoxDay(cp.kyc_expires_at)}` : ""}: check it again` }
-    : !data.decisions ? { tone: "info", summary: "An agent or an officer signs it off" }
-    : !decision ? { tone: "wait", summary: "Not yet: this party could not be read" }
-    : decision.blocked !== null ? { tone: "wait", summary: `Not yet: ${onInSentence(decision.blocked)}` }
-    // It can be signed off now: by this viewer, or (when they cannot) by those who can.
-    // Enhanced due diligence by BGP: the officers sign it off, with a note of what was checked (21 November 2026).
-    : decision.edd ? (canDecide ? { tone: "act", summary: "Ready: sign off with a note (enhanced)" } : { tone: "info", summary: "For the Nominated Officer or a Deputy" })
-    : !canSignOff ? { tone: "info", summary: "Ready for an agent or an officer" }
-    : decision.needsNote ? { tone: "info", summary: "Ready: sign off with a note" }
-    : { tone: "act", summary: "Ready to sign off" };
+  const decisionStep: { state: StepState; text: ReactNode } = stage === "rejected" ? { state: "flag", text: "Rejected" }
+    : cp.notRequired ? { state: "done", text: `Not required${NOT_REQUIRED_SHORT[cp.notRequired.reason || ""] ? `: ${NOT_REQUIRED_SHORT[cp.notRequired.reason || ""]}` : ""}` }
+    : approved ? { state: "done", text: `Cleared${cp.kyc_approved_by ? ` by ${cp.kyc_approved_by}` : ""}${cp.kyc_expires_at ? ` until ${amlBoxDay(cp.kyc_expires_at)}` : ""}` }
+    : cp.isExpired ? { state: "flag", text: `Expired${cp.kyc_expires_at ? ` ${amlBoxDay(cp.kyc_expires_at)}` : ""}` }
+    // The steps before it come first: their own lines say what is still to do.
+    : screening && (screening.state === "todo" || screening.state === "wait") ? { state: "todo", text: <span className="text-muted-foreground">After screening</span> }
+    : documents.state !== "done" || !decision ? { state: "todo", text: <span className="text-muted-foreground">After the documents</span> }
+    : decision.blocked !== null ? { state: "todo", text: <span className="text-muted-foreground">{shortReason(decision.blocked)}</span> }
+    : decision.edd ? (canDecide ? { state: "act", text: "Ready: an officer signs off, with a note" } : { state: "wait", text: "Ready: for an officer" })
+    : !canSignOff ? { state: "wait", text: "Ready: for an agent or an officer" }
+    : { state: "act", text: decision.needsNote ? "Ready: sign off with a note" : "Ready to sign off" };
 
   const aml = partyAmlFacts(data, cp.id);
-  const sid = (k: SectionKey) => `aml-${cp.id}-${k}`;
-  const tid = (k: SectionKey) => `aml-section-${cp.role}-${k}`;
+  const sid = (k: StepKey) => `aml-${cp.id}-${k}`;
+  const tid = (k: StepKey) => `aml-step-${cp.role}-${k}`;
+  const roleLabel = slot?.label || (cp.role.charAt(0).toUpperCase() + cp.role.slice(1));
 
-  // The row (22 November 2026): the same pieces as the AML board's row (the
-  // party, the stage, the level, red flags, what happens next and its
-  // button); the checks open under it.
-  const levelChip = level && !cp.notRequired ? (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${level.level === "enhanced" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-muted text-muted-foreground"}`} data-testid={`aml-box-level-${cp.role}`}>{LEVEL_WORDS[level.level]}</span>
+  // The joint agent route: the officers' button beside the evidence.
+  const jointDecide = canDecide && current && jointQ.data ? (
+    jointQ.data.rule === "sale"
+      ? (current.sentAt || current.openedAt || current.manual
+          ? <JointNotRequiredButton dealId={dealId} role={cp.role} companyId={cp.id} partyName={partyName} jointRef={current.ref} />
+          : null)
+      : current.reliance && !people?.reliance
+        ? <JointRelianceButton dealId={dealId} role={cp.role} partyName={partyName} gaps={jointParty?.gaps || []} joint={{
+            ref: current.ref, firm: current.reliance.firm, supervisor: current.reliance.supervisor, registration: current.reliance.registration,
+            contact: [current.reliance.name, current.reliance.position].filter(Boolean).join(", "), agreedOn: current.reliance.agreedAt.slice(0, 10),
+          }} />
+        : null
   ) : null;
+  const kyc4uActive = !!draft || stage === "with_kyc4u";
+  const clientRoute = !!request || (!current && !people?.reliance && !kyc4uActive);
+
+  const statusPill = stage === "rejected" ? <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-900/40 dark:text-red-200">Rejected</span>
+    : cp.notRequired ? <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Not required</span>
+    : approved ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"><Check className="h-3 w-3" />Cleared{cp.kyc_expires_at ? ` until ${amlBoxDay(cp.kyc_expires_at)}` : ""}</span>
+    : cp.isExpired ? <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-900/40 dark:text-red-200">Expired</span>
+    : null;
+  const showNext = !(stage === "approved" || stage === "not_required");
+
+  const nextLine = (
+    <div className={`flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md px-2.5 py-1.5 ${NEXT_BOX[step.tone]} ${kyc4uNeeded ? "border-2 border-red-600" : ""}`} data-testid={`aml-next-${cp.role}`}>
+      <BoxToneIcon tone={step.tone} />
+      <span className="min-w-0 flex-1 basis-40 text-[13px] leading-snug" data-testid={`aml-next-words-${cp.role}`}>
+        <span className="sr-only">{AML_BOX_WHO_WORDS[step.who]}: </span>
+        <span className="font-semibold">{step.lead}</span>{step.words ? <> · {step.words}</> : null}
+      </span>
+      {nextAction && <span className="flex flex-wrap items-center gap-1.5">{nextAction}</span>}
+    </div>
+  );
+
   return (
     <div className="min-w-0 rounded-lg border border-border bg-card" data-testid={`counterparty-${cp.id}`}>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
-        <div className="flex min-w-0 flex-1 basis-56 items-start gap-1.5">
+      <div className="space-y-2 px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {staff ? (
-            <button type="button" data-no-min-touch onClick={() => setFolded(f => !f)} aria-expanded={!folded} aria-label={folded ? "Show this party's checks" : "Hide this party's checks"} className="mt-0.5 shrink-0 rounded text-muted-foreground hover:text-foreground" data-testid={`aml-box-unfold-${cp.role}`}>
+            <button type="button" data-no-min-touch onClick={() => setFolded(f => !f)} aria-expanded={!folded} aria-label={folded ? "Show this party's checks" : "Hide this party's checks"} className="shrink-0 rounded text-muted-foreground hover:text-foreground" data-testid={`aml-box-unfold-${cp.role}`}>
               <ChevronRight className={`h-4 w-4 transition-transform ${folded ? "" : "rotate-90"}`} />
             </button>
           ) : null}
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Badge variant="outline" className="text-[10px] uppercase">{cp.role}</Badge>
-              <Link href={`/companies/${cp.id}`} className="font-medium text-sm hover:underline truncate">{cp.name}</Link>
-            </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5 break-words" data-testid={`counterparty-signs-as-${cp.id}`}>
-              {party?.company || cp.signsAs
-                ? <>Signs as <span className="text-foreground">{party?.company?.name || cp.signsAs}</span></>
-                : isCompany ? <span className="text-amber-700 dark:text-amber-400">Company that signs not set</span> : "A private individual"}
-              {party && <> · {party.person
-                ? <>Ask <span className="text-foreground">{party.person.name}</span>{party.person.email ? null : <span className="text-amber-700 dark:text-amber-400"> (no email)</span>}</>
-                : <span className="text-amber-700 dark:text-amber-400">nobody to ask yet</span>}</>}
-              {party && staff && <> · <button type="button" data-no-min-touch className="underline underline-offset-2 hover:text-foreground" onClick={() => setEditing(true)} data-testid={`aml-party-change-${cp.role}`}>Change</button></>}
-            </div>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {stage
-            ? <span className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${AML_STAGE_TONE[stage]}`} data-testid={`aml-box-stage-${cp.role}`}>
-                {stage === "expiring" && cp.kyc_expires_at ? `Expires ${amlBoxDay(cp.kyc_expires_at)}` : AML_STAGE_LABEL[stage]}
-              </span>
-            : <Badge variant="secondary" className="shrink-0 text-[11px]">In progress</Badge>}
-          {levelChip}
-          {flags.length > 0 && (
-            <button type="button" data-no-min-touch onClick={() => reveal("flags")} className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-950/40 dark:text-red-200" data-testid={`aml-box-flags-${cp.role}`}>
-              <Flag className="h-3 w-3" />{flags.length}
+          <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{roleLabel}</span>
+          <Link href={`/companies/${cp.id}`} className="min-w-0 truncate text-sm font-semibold hover:underline">{cp.name}</Link>
+          {(slot?.client ?? party?.client) && <span className="text-xs text-muted-foreground">BGP's client</span>}
+          {staff && slot?.picker && (
+            <button type="button" data-no-min-touch onClick={() => setChanging(c => !c)} className="rounded p-0.5 text-muted-foreground hover:text-foreground" title={`Change the ${roleLabel.toLowerCase()}`} aria-label={`Change the ${roleLabel.toLowerCase()}`} data-testid={`aml-party-relink-${cp.role}`}>
+              <Pencil className="h-3.5 w-3.5" />
             </button>
           )}
+          <span className="ml-auto flex flex-wrap items-center gap-1.5">
+            {flags.length > 0 && (
+              <button type="button" data-no-min-touch onClick={() => reveal("screening")} className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-950/40 dark:text-red-200" data-testid={`aml-box-flags-${cp.role}`}>
+                <Flag className="h-3 w-3" />{flags.length}
+              </button>
+            )}
+            {level && level.level !== "standard" && !cp.notRequired && (
+              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${level.level === "enhanced" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-muted text-muted-foreground"}`} data-testid={`aml-box-level-${cp.role}`}>{LEVEL_WORDS[level.level]}</span>
+            )}
+            {statusPill && <span data-testid={`aml-box-stage-${cp.role}`}>{statusPill}</span>}
+          </span>
         </div>
-        <div className={`flex min-w-0 flex-1 basis-64 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md border px-2 py-1.5 ${NEXT_BOX[step.tone]}`} data-testid={`aml-next-${cp.role}`}>
-          <BoxToneIcon tone={step.tone} />
-          <div className="min-w-0 flex-1 basis-40">
-            <span className="sr-only">{step.tone === "done" ? "Done" : AML_BOX_WHO_WORDS[step.who]}: </span>
-            <span className="text-[13px] leading-snug" data-testid={`aml-next-words-${cp.role}`}>{step.words}</span>
+        {changing && slot?.picker && (
+          <div className="flex flex-wrap items-center gap-2" data-testid={`aml-party-picker-${cp.role}`}>
+            <div className="min-w-0 flex-1">{slot.picker}</div>
+            <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setChanging(false)}>Done</Button>
           </div>
-          {nextAction && <div className="flex flex-wrap items-center gap-1.5">{nextAction}</div>}
-        </div>
+        )}
+        {showNext && (kyc4uNeeded
+          ? <div data-testid={`aml-kyc4u-needed-${cp.role}`}>{nextLine}</div>
+          : nextLine)}
       </div>
 
       {staff && !folded && (
-      <div className="space-y-2.5 border-t border-border/70 px-3 pb-3 pt-2.5">
-      {party && !settled && <TrustLine dealId={dealId} party={party} compact />}
-      {!facts.inHouseEdd && (step.action === "kyc4u_form" || (step.action === "request_kyc4u" && (isTrust || ownedAbroad.length > 0 || flags.length + factors.length + dealFactors.length > 0))) && (
-        // Jack, 20 November 2026: KYC4U takes requests only on its own portal,
-        // so a big red mark until the agent has sent it there.
-        <div className="flex items-start gap-2 rounded-md border-2 border-red-600 bg-red-50 px-2.5 py-2 text-red-900 dark:bg-red-950/40 dark:text-red-200" data-testid={`aml-kyc4u-needed-${cp.role}`}>
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
-          <div className="text-[13px] leading-snug">
-            <div className="font-semibold uppercase tracking-wide text-[11px]">Not yet with KYC4U</div>
-            {step.action === "kyc4u_form" ? "Prepared, not on KYC4U's portal yet." : "Request the KYC4U check, then submit it on KYC4U's portal."}
-            {step.action === "request_kyc4u" && (
-              <div className="mt-1.5"><Kyc4uSubmittedButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} className="h-7 text-xs" /> <span className="text-xs">if already submitted.</span></div>
-            )}
-          </div>
-        </div>
-      )}
-        <div className="rounded-md border border-border/70 px-2.5" data-testid={`aml-sections-${cp.role}`}>
-          {isCompany && (
-            <BoxSection id={sid("company")} testId={tid("company")} label="Company" tone={companyLine.tone} summary={companyLine.summary} open={open.has("company")} onToggle={() => toggle("company")}>
-              {companyMissing
-                ? (settled ? <p className="text-xs text-muted-foreground">Not set on this deal.</p> : <PartyReadyToStart dealId={dealId} companyId={cp.id} aml={aml} />)
-                : reg ? <><PartyCompanyFacts data={data} companyId={cp.id} /><PartyCharityFacts data={data} companyId={cp.id} /></>
-                : pre?.charity ? <><PartyCharityFacts data={data} companyId={cp.id} />{pre.gleif && <p className="text-xs text-muted-foreground">{pre.gleif}</p>}</>
-                : pre?.gleif ? <p className="text-xs text-muted-foreground">{pre.gleif}</p>
-                : <p className="text-xs text-muted-foreground">BGP's checks before asking read the company from Companies House.</p>}
-            </BoxSection>
-          )}
-          {showAbroad && (() => {
-            const line = abroadSummary(abroadQ.data, ownedAbroad, traceLines);
-            return (
-              <BoxSection id={sid("abroad")} testId={tid("abroad")} label="Owners abroad" tone={line.tone} summary={line.words} open={open.has("abroad")} onToggle={() => toggle("abroad")}>
+        <div className="mx-3 mb-3 rounded-md border border-border/70" data-testid={`aml-steps-${cp.role}`}>
+          <StepRow id={sid("signs")} testId={tid("signs")} n={1} label="Who signs" state={signs.state} summary={signs.text} open={open.has("signs")} onToggle={() => toggle("signs")}>
+            {settled && companyMissing
+              ? <p className="text-xs text-muted-foreground">Not set on this deal.</p>
+              : <DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />}
+            {party && !settled && <TrustLine dealId={dealId} party={party} compact />}
+            {showAbroad && (
+              <div className="space-y-1.5" data-testid={`aml-abroad-${cp.role}`}>
+                <SubHead>Owners abroad</SubHead>
                 <AbroadTrace dealId={dealId} role={cp.role} query={abroadQ} />
-              </BoxSection>
-            );
-          })()}
-          {payLine && party && (
-            <BoxSection id={sid("payer")} testId={tid("payer")} label="Who pays" tone={payLine.tone} summary={payLine.summary} open={open.has("payer")} onToggle={() => toggle("payer")}>
-              <PartyBillingDetail dealId={dealId} party={party} />
-            </BoxSection>
-          )}
-          {checksLine && (
-            <BoxSection id={sid("checks")} testId={tid("checks")} label="BGP's checks" tone={checksLine.tone} summary={checksLine.summary} open={open.has("checks")} onToggle={() => toggle("checks")}>
-              <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
-            </BoxSection>
-          )}
-          {levelLine && (
-            <BoxSection id={sid("level")} testId={tid("level")} label="Due diligence" tone={levelLine.tone} summary={levelLine.summary} open={open.has("level")} onToggle={() => toggle("level")}>
-              <PartyLevel data={data} companyId={cp.id} />
-              <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="factors" />
-            </BoxSection>
-          )}
-          {peopleLine && (
-            <BoxSection id={sid("people")} testId={tid("people")} label="People" tone={peopleLine.tone} summary={peopleLine.summary} open={open.has("people")} onToggle={() => toggle("people")}>
-              {unreachable.length > 0 && (
-                <p className="text-xs text-amber-800 dark:text-amber-300">
-                  No email or mobile held for {andList(unreachable.map(p => personDisplayName(p.name)))}. <button type="button" data-no-min-touch className="underline underline-offset-2" onClick={() => setEditing(true)}>Add their details</button>
-                </p>
+              </div>
+            )}
+            {reg
+              ? <Folded label="Company details" testId={`aml-company-details-${cp.role}`}><PartyCompanyFacts data={data} companyId={cp.id} /><PartyCharityFacts data={data} companyId={cp.id} /></Folded>
+              : pre?.charity ? <PartyCharityFacts data={data} companyId={cp.id} /> : null}
+            {!reg && pre?.gleif && <p className="text-xs text-muted-foreground">{pre.gleif}</p>}
+          </StepRow>
+          {screening && (
+            <StepRow id={sid("screening")} testId={tid("screening")} n={2} label="Screening" state={screening.state} summary={screening.text} open={open.has("screening")} onToggle={() => toggle("screening")}>
+              {(flags.length > 0 || flagAside > 0) && <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="flags" />}
+              {unchecked.length > 0 && <p className="text-xs text-amber-800 dark:text-amber-300">Not read: {unchecked.join(", ")}.</p>}
+              {level && !cp.notRequired && (
+                <div className="space-y-1.5">
+                  <PartyLevel data={data} companyId={cp.id} />
+                  <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="factors" />
+                </div>
               )}
-              <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="people" />
-            </BoxSection>
+              <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
+            </StepRow>
           )}
-          {jointParty && jointQ.data && !settled && (() => {
-            const line = jointSectionLine(jointParty);
-            const current = currentJointRequest(jointParty);
-            // On a sale the request is the record once it reached them (sent, opened, or their files
-            // added from an email); on a letting the record is their own agreement on the page.
-            const decide = canDecide && current ? (
-              jointQ.data.rule === "sale"
-                ? (current.sentAt || current.openedAt || current.manual
-                    ? <JointNotRequiredButton dealId={dealId} role={cp.role} companyId={cp.id} partyName={partyName} jointRef={current.ref} />
-                    : null)
-                : current.reliance && !people?.reliance
-                  ? <JointRelianceButton dealId={dealId} role={cp.role} partyName={partyName} gaps={jointParty.gaps} joint={{
-                      ref: current.ref, firm: current.reliance.firm, supervisor: current.reliance.supervisor, registration: current.reliance.registration,
-                      contact: [current.reliance.name, current.reliance.position].filter(Boolean).join(", "), agreedOn: current.reliance.agreedAt.slice(0, 10),
-                    }} />
-                  : null
-            ) : null;
-            return (
-              <BoxSection id={sid("joint")} testId={tid("joint")} label="Joint agent" tone={line.tone} summary={line.summary} open={open.has("joint")} onToggle={() => toggle("joint")}>
-                <JointAgentPanel dealId={dealId} view={jointQ.data} party={jointParty} decide={decide} />
-              </BoxSection>
-            );
-          })()}
-          {clientLine && (
-            <BoxSection id={sid("client")} testId={tid("client")} label="Client checks" tone={clientLine.tone} summary={clientLine.summary} open={open.has("client")} onToggle={() => toggle("client")}>
-              {companyMissing
-                ? <p className="text-xs text-muted-foreground" data-testid={`kyc-actions-wait-${cp.id}`}>The client checks and a KYC4U request start once the company that signs is set.</p>
-                : <>
-                    {people?.reliance
-                      ? <RelianceCard dealId={dealId} role={cp.role} reliance={people.reliance} canDecide={canDecide} />
-                      : <div className="flex flex-wrap items-center gap-1.5">
-                          <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label={request ? "Send them again" : "Send client checks"} />
-                          {/* Another regulated firm's checks, relied on under MLR 2017 reg 39 (21 November 2026): the officers only. */}
-                          {canDecide && !sanctionsOnly && !settled && <RelianceButton dealId={dealId} role={cp.role} partyName={partyName} />}
-                        </div>}
-                    <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="requests" />
-                  </>}
-            </BoxSection>
-          )}
-          {flagsLine && (
-            <BoxSection id={sid("flags")} testId={tid("flags")} label="Red flags" tone={flagsLine.tone} summary={flagsLine.summary} open={open.has("flags")} onToggle={() => toggle("flags")}>
-              {flags.length || flagAside ? <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="flags" /> : <p className="text-xs text-muted-foreground">None found.</p>}
-              {unchecked.length > 0 && <p className="text-xs text-amber-800 dark:text-amber-300">Red flags could not be checked against: {unchecked.join(", ")}.</p>}
-            </BoxSection>
-          )}
-          {kyc4uLine && (
-            <BoxSection id={sid("kyc4u")} testId={tid("kyc4u")} label="KYC4U" tone={kyc4uLine.tone} summary={kyc4uLine.summary} open={open.has("kyc4u")} onToggle={() => toggle("kyc4u")}>
-              {companyMissing
-                ? <p className="text-xs text-muted-foreground">The client checks and a KYC4U request start once the company that signs is set.</p>
-                : <div className="space-y-2">
-                    <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} />
-                    {draftState !== "submitted" && (
-                      <div className="flex flex-wrap items-center gap-1.5" data-testid={`aml-kyc4u-portal-${cp.role}`}>
-                        {draft?.id && draftState === "prepared" && <Kyc4uPackButton draftId={String(draft.id)} />}
-                        <Kyc4uSubmittedButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} />
-                        <span className="text-xs text-muted-foreground">once it is submitted on KYC4U's portal.</span>
-                      </div>
-                    )}
-                  </div>}
-            </BoxSection>
-          )}
-          {/* BGP's written risk assessment in KYC4U's shape (21 November 2026), read when opened. */}
-          {!cp.notRequired && (
-            <BoxSection id={sid("assessment")} testId={tid("assessment")} label="Assessment" tone="info"
-              summary={level ? (level.level === "enhanced" ? "Higher risk" : level.level === "simplified" ? "Low risk" : "Standard risk") : "Open"}
-              open={open.has("assessment")} onToggle={() => toggle("assessment")}>
-              {open.has("assessment") && <PartyRiskAssessment dealId={dealId} role={cp.role} />}
-            </BoxSection>
-          )}
-          <BoxSection id={sid("decision")} testId={tid("decision")} label="Sign-off" tone={decisionLine.tone} summary={decisionLine.summary} open={open.has("decision")} onToggle={() => toggle("decision")}>
+          <StepRow id={sid("documents")} testId={tid("documents")} n={3} label="Documents" state={documents.state} summary={documents.text} open={open.has("documents")} onToggle={() => toggle("documents")}>
+            {companyMissing && !current
+              ? <p className="text-xs text-muted-foreground" data-testid={`kyc-actions-wait-${cp.id}`}>Starts once the company that signs is set.</p>
+              : <>
+                  {people?.reliance && <RelianceCard dealId={dealId} role={cp.role} reliance={people.reliance} canDecide={canDecide} />}
+                  {jointParty && jointQ.data && current && !settled && <JointAgentPanel dealId={dealId} view={jointQ.data} party={jointParty} decide={jointDecide} />}
+                  {kyc4uActive && (
+                    <div className="space-y-1.5" data-testid={`aml-kyc4u-${cp.role}`}>
+                      <SubHead>KYC4U</SubHead>
+                      <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} />
+                      {draftState !== "submitted" && (
+                        <div className="flex flex-wrap items-center gap-1.5" data-testid={`aml-kyc4u-portal-${cp.role}`}>
+                          {draft?.id && draftState === "prepared" && <Kyc4uPackButton draftId={String(draft.id)} />}
+                          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" asChild><a href={KYC4U_FORM_URL} target="_blank" rel="noopener noreferrer">KYC4U's portal</a></Button>
+                          <Kyc4uSubmittedButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {data.clientChecks && clientRoute && !people?.reliance && (
+                    <div className="space-y-1.5" data-testid={`aml-client-route-${cp.role}`}>
+                      {(request || (people && people.people.length > 0)) && (current || kyc4uActive) && <SubHead>Client checks</SubHead>}
+                      {!request && !cp.notRequired && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className="h-7 text-xs" />}
+                      <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="people" />
+                      <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="requests" />
+                      {request && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Send them again" className="h-7 text-xs" />}
+                    </div>
+                  )}
+                  {!settled && (
+                    <div className="flex flex-wrap items-center gap-1 border-t border-border/60 pt-2 text-xs text-muted-foreground" data-testid={`aml-other-ways-${cp.role}`}>
+                      <span className="mr-1">Other ways:</span>
+                      {!clientRoute && data.clientChecks && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Client checks" className="h-7 px-2 text-xs" quiet />}
+                      {!current && jointQ.data && jointQ.data.firm && jointParty && <AskJointAgentButton dealId={dealId} view={jointQ.data} party={jointParty} label="Joint agent" quiet />}
+                      {canDecide && !sanctionsOnly && !people?.reliance && <RelianceButton dealId={dealId} role={cp.role} partyName={partyName} label="Another firm" />}
+                      {!kyc4uActive && <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} label="KYC4U" buttonOnly quiet />}
+                    </div>
+                  )}
+                </>}
+          </StepRow>
+          <StepRow id={sid("decision")} testId={tid("decision")} n={4} label="Sign-off" state={decisionStep.state} summary={decisionStep.text} open={open.has("decision")} onToggle={() => toggle("decision")}>
             <PartyNotRequiredBox cp={cp} />
             <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} />
+            {canDecide && !cp.notRequired && (
+              <Folded label="Risk assessment" testId={`aml-assessment-${cp.role}`}><PartyRiskAssessment dealId={dealId} role={cp.role} /></Folded>
+            )}
             {canDecide && level?.level === "enhanced" && !cp.notRequired && <SecondReadPanel dealId={dealId} role={cp.role} partyName={partyName} trust={isTrust} />}
             {canDecide && (
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-file-line-${cp.role}`}>
                 <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />
-                <span>Report and documents</span>
               </div>
             )}
-            {!data.decisions && <p className="text-xs text-muted-foreground">Standard: an agent or an officer signs off. Enhanced: an officer.</p>}
-          </BoxSection>
+          </StepRow>
         </div>
-      </div>
       )}
       {editing && <DealPartyEditor dealId={dealId} role={cp.role as DealPartyRole} aml={aml} onClose={() => setEditing(false)} />}
     </div>
   );
 }
 
-// focusCompanyId: the AML checks page's party (its trail), drawn first and in
-// full; the deal's other parties follow, each on its Next line until opened.
-export function DealAmlStatusCard({ dealId, dealStatus, focusCompanyId }: { dealId: string; dealStatus?: string | null; focusCompanyId?: string | null }) {
+// A slot with no party yet: its role and the picker to link one.
+function UnsetPartyRow({ slot }: { slot: PartySlot }) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-dashed border-border bg-card px-3 py-2.5" data-testid={`aml-party-unset-${slot.role}`}>
+      <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{slot.label}</span>
+      {slot.client && <span className="text-xs text-muted-foreground">BGP's client</span>}
+      <div className="min-w-0 flex-1">{slot.picker}</div>
+    </div>
+  );
+}
+
+// The box's menu: everyone's tools, then the officers'.
+function AmlBoxMenu({ dealId, openAll, onToggleAll, officer, staff }: { dealId: string; openAll: boolean; onToggleAll: () => void; officer: boolean; staff: boolean }) {
+  const [, navigate] = useLocation();
+  const [report, setReport] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const stop = useAmlStop(dealId, staff);
+  if (!staff) return null;
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" data-testid="aml-box-menu">More<ChevronDown className="ml-1 h-3.5 w-3.5" /></Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64">
+          <DropdownMenuItem onSelect={onToggleAll} data-testid="aml-box-open-all">{openAll ? "Hide the detail" : "Show all detail"}</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => navigate("/deals/aml?section=rules")} data-testid="aml-box-rules">The rules in short</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setReport(true)} data-testid="deal-aml-raise-report">Report a concern to the Nominated Officer</DropdownMenuItem>
+          {officer && stop.data && !stop.data.stopped && stop.data.canDecide && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-red-700 focus:text-red-800 dark:text-red-400" onSelect={() => setStopping(true)} data-testid="aml-stop-open">Stop acting on this deal</DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {report && <RaiseReportDialog dealId={dealId} officer={officer} onClose={() => setReport(false)} />}
+      {stopping && <AmlStopDialog dealId={dealId} onClose={() => setStopping(false)} />}
+    </>
+  );
+}
+
+// focusCompanyId: the AML checks page's party (its trail), drawn first and open;
+// the deal's other parties follow, each on its Next line until opened.
+// slots: on the deal page, the Parties card merged in (22 November 2026): one
+// card per party slot, an unset one with its picker; actingFor: BGP acts for.
+export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, footer }: {
+  dealId: string; dealStatus?: string | null; focusCompanyId?: string | null;
+  slots?: PartySlot[] | null; actingFor?: ReactNode; footer?: ReactNode;
+}) {
   const { data, isLoading } = useDealAmlStatus(dealId);
   // BGP's own reads (the checks before asking) come only to BGP staff: the
   // party lines follow them.
@@ -1192,9 +1183,9 @@ export function DealAmlStatusCard({ dealId, dealStatus, focusCompanyId }: { deal
   const { data: board } = useDealAmlRows(dealId, staffView);
   const { data: agents } = useDealAgentsAml(dealId, staffView);
   const { data: solicitors } = useDealSolicitorsAml(dealId, staffView);
+  const stopQ = useAmlStop(dealId, staffView);
   const [openAll, setOpenAll] = useState<OpenAll>(() => ({ all: readOpenAll(), at: 0 }));
   const deal = useOpenSections<"deal" | "agents" | "solicitors">(["deal", "agents", "solicitors"], openAll);
-  const [howOpen, setHowOpen] = useState(false);
 
   if (isLoading) return (
     <Card><CardContent className="py-4 flex justify-center"><Loader2 className="w-4 h-4 animate-spin" /></CardContent></Card>
@@ -1202,133 +1193,94 @@ export function DealAmlStatusCard({ dealId, dealStatus, focusCompanyId }: { deal
   if (!data) return null;
 
   const toggleAll = () => setOpenAll(o => { const all = !o.all; writeOpenAll(all); return { all, at: o.at + 1 }; });
+  const officer = !!data.decisions?.canDecide;
   const cps = focusCompanyId
     ? [...data.counterparties].sort((a, b) => Number(b.id === focusCompanyId) - Number(a.id === focusCompanyId))
     : data.counterparties;
-  const settled = data.counterparties.filter(cp => (cp.isApproved && !cp.isExpired) || cp.notRequired).length;
+  const isSettled = (cp: Counterparty) => (cp.isApproved && !cp.isExpired) || !!cp.notRequired;
+  const settled = data.counterparties.filter(isSettled).length;
   const dealFlags = data.redFlags?.deal || [];
   const dealAside = data.redFlags?.dealSetAside || [];
   const agentList = agents?.agents || [];
-  const agentTone: BoxTone = agentList.some(a => a.state.tone === "red") ? "flag" : agentList.some(a => a.state.tone === "amber") ? "act" : agentList.every(a => a.state.tone === "ok") ? "done" : "info";
+  const agentState: StepState = agentList.some(a => a.state.tone === "red") ? "flag" : agentList.some(a => a.state.tone === "amber") ? "act" : agentList.every(a => a.state.tone === "ok") ? "done" : "todo";
   const agentSummary = agentList.length === 1
-    ? `${agentList[0].roleWords}: ${agentList[0].name}${agentTone === "done" ? ", checked" : agentTone === "flag" ? ", not on HMRC's register" : agentTone === "act" ? ", to check on HMRC's register" : ""}`
-    : `${plural(agentList.length, "agent")}${agentTone === "flag" ? " · one is not on HMRC's register" : agentTone === "act" ? ` · ${agentList.filter(a => a.state.tone === "amber").length} to check on HMRC's register` : agentTone === "done" ? " · all checked" : ""}`;
+    ? `${agentList[0].name}${agentState === "done" ? ": on HMRC's register" : agentState === "flag" ? ": not on HMRC's register" : agentState === "act" ? ": check HMRC's register" : ""}`
+    : `${plural(agentList.length, "agent")}${agentState === "flag" ? " · one not on HMRC's register" : agentState === "act" ? ` · ${agentList.filter(a => a.state.tone === "amber").length} to check` : agentState === "done" ? " · all on HMRC's register" : ""}`;
+  const sol = solicitorsSummary(solicitors);
+  const solState: StepState = sol.tone === "done" ? "done" : sol.tone === "flag" ? "flag" : sol.tone === "act" ? "act" : "todo";
+  const box = (cp: Counterparty, slot: PartySlot | null) => (
+    <PartyAmlBox
+      key={`${cp.role}-${cp.id}`}
+      dealId={dealId}
+      data={data}
+      cp={cp}
+      row={board?.rows.find(r => r.brandId === cp.id && r.role === cp.role) || null}
+      party={parties?.parties.find(p => p.brand.id === cp.id && p.role === cp.role) || parties?.parties.find(p => p.brand.id === cp.id) || null}
+      checks={checks}
+      openAll={openAll}
+      startOpen={focusCompanyId ? cp.id === focusCompanyId : !isSettled(cp)}
+      slot={slot}
+    />
+  );
 
   return (
     <Card data-testid="deal-aml-status-card">
       <CardContent className="p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <ShieldCheck className={`w-4 h-4 ${data.allApproved ? "text-emerald-600" : "text-muted-foreground"}`} />
-          <h3 className="font-semibold text-sm">AML</h3>
-          {data.allApproved ? (
-            <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200" data-testid="badge-deal-aml-clear">
-              <CheckCircle2 className="w-3 h-3 mr-1" />
-              AML clear: invoice unlocked
-            </Badge>
-          ) : (
-            <Badge variant="secondary" data-testid="badge-deal-aml-blocked">
-              <Clock className="w-3 h-3 mr-1" />
-              {data.counterparties.length ? `${settled} of ${data.counterparties.length} done` : "AML pending"}
-            </Badge>
-          )}
-          {staffView && (
-            <Button type="button" variant="ghost" size="sm" className="ml-auto h-7 px-2 text-xs" onClick={toggleAll} data-testid="aml-box-open-all">
-              {openAll.all ? <ChevronUp className="w-3.5 h-3.5 mr-1" /> : <ChevronDown className="w-3.5 h-3.5 mr-1" />}{openAll.all ? "Hide the detail" : "Show all detail"}
-            </Button>
-          )}
-          {/* The officers' AML file for the whole deal (20 November 2026). */}
-          {data.decisions?.canDecide && data.counterparties.length > 0 && <AmlFileButton dealId={dealId} />}
-          {/* BGP stops acting on the deal (MLR 2017 reg 31; 21 November 2026): the officers, or a mark once stopped. */}
-          {staffView && <AmlStopButton dealId={dealId} />}
+          <h3 className="font-semibold text-sm">{slots ? "Parties and AML" : "AML"}</h3>
+          {data.counterparties.length > 0 && (data.allApproved
+            ? <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200" data-testid="badge-deal-aml-clear"><CheckCircle2 className="w-3 h-3 mr-1" />All cleared</Badge>
+            : <Badge variant="secondary" data-testid="badge-deal-aml-blocked">{settled} of {data.counterparties.length} cleared</Badge>)}
+          {data.regime?.regime === "sanctions_only" && <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground" title={data.regime.why} data-testid="deal-aml-regime">Sanctions only</span>}
+          {stopQ.data?.stopped && <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-900/40 dark:text-red-200" data-testid="aml-stop-mark">BGP stopped acting</span>}
+          <span className="ml-auto flex flex-wrap items-center gap-2">
+            {actingFor}
+            {officer && data.counterparties.length > 0 && <AmlFileButton dealId={dealId} />}
+            <AmlBoxMenu dealId={dealId} openAll={openAll.all} onToggleAll={toggleAll} officer={officer} staff={staffView} />
+          </span>
         </div>
 
-        {data.counterparties.length < 2 && (
-          <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-md text-sm dark:bg-amber-950/20 dark:border-amber-900" data-testid="deal-aml-status-incomplete">
-            <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-            <span>{data.counterparties.length === 0 ? "No parties on this deal yet" : "Only one party on this deal so far"}: set them on the deal record, and each gets its checks here.</span>
-          </div>
+        {!slots && data.counterparties.length < 2 && (
+          <p className="text-xs text-muted-foreground" data-testid="deal-aml-status-incomplete">
+            {data.counterparties.length === 0 ? "No parties on this deal yet." : "Only one party on this deal so far."}
+          </p>
         )}
-        <DealRegime data={data} />
+
+        <div className="grid grid-cols-1 gap-2">
+          {slots
+            ? slots.map(slot => {
+                const cp = slot.companyId ? data.counterparties.find(c => c.id === slot.companyId && c.role === slot.role) || data.counterparties.find(c => c.id === slot.companyId) : null;
+                return cp ? box(cp, slot) : <UnsetPartyRow key={`unset-${slot.role}`} slot={slot} />;
+              })
+            : cps.map(cp => box(cp, null))}
+        </div>
 
         {staffView && data.counterparties.length > 0 && (
-          <div className="rounded-md border border-border/70 px-2.5" data-testid="aml-deal-sections">
+          <div className="rounded-md border border-border/70" data-testid="aml-deal-sections">
             {(dealFlags.length > 0 || dealAside.length > 0) && (
-              <BoxSection id={`aml-${dealId}-deal`} testId="aml-section-deal" label="Deal record" tone={dealFlags.some(f => !f.factor) ? "flag" : dealFlags.length ? "act" : "done"}
-                summary={dealFlags.length ? `${plural(dealFlags.length, "red flag")} on the deal itself: ${dealFlags[0].label}` : `None · ${dealAside.length} set aside`}
+              <StepRow id={`aml-${dealId}-deal`} testId="aml-section-deal" label="The deal" state={dealFlags.some(f => !f.factor) ? "flag" : dealFlags.length ? "act" : "done"}
+                summary={dealFlags.length ? `${plural(dealFlags.length, "red flag")}: ${shortReason(dealFlags[0].label, 60)}` : `${dealAside.length} set aside`}
                 open={deal.open.has("deal")} onToggle={() => deal.toggle("deal")}>
                 <DealRedFlags dealId={dealId} data={data} />
-              </BoxSection>
+              </StepRow>
             )}
             {agentList.length > 0 && (
-              <BoxSection id={`aml-${dealId}-agents`} testId="aml-section-agents" label="Agents" tone={agentTone} summary={agentSummary}
+              <StepRow id={`aml-${dealId}-agents`} testId="aml-section-agents" label="Agents" state={agentState} summary={agentSummary}
                 open={deal.open.has("agents")} onToggle={() => deal.toggle("agents")}>
-                {staffView && <DealAgentsAml dealId={dealId} bare />}
-              </BoxSection>
+                <DealAgentsAml dealId={dealId} bare />
+              </StepRow>
             )}
             {/* The other side's solicitors (21 November 2026, "do 7"). */}
-            <BoxSection id={`aml-${dealId}-solicitors`} testId="aml-section-solicitors" label="Solicitors" tone={solicitorsSummary(solicitors).tone} summary={solicitorsSummary(solicitors).words}
+            <StepRow id={`aml-${dealId}-solicitors`} testId="aml-section-solicitors" label="Solicitors" state={solState} summary={sol.words}
               open={deal.open.has("solicitors")} onToggle={() => deal.toggle("solicitors")}>
               <DealSolicitorsAmlPanel dealId={dealId} />
-            </BoxSection>
+            </StepRow>
           </div>
         )}
-
-        {/* grid-cols-1, not a bare grid: an implicit column grows to its
-            widest line, which pushed the boxes past a phone's width. */}
-        <div className="grid grid-cols-1 gap-2">
-          {cps.map(cp => (
-            <PartyAmlBox
-              key={cp.id}
-              dealId={dealId}
-              data={data}
-              cp={cp}
-              row={board?.rows.find(r => r.brandId === cp.id && r.role === cp.role) || null}
-              party={parties?.parties.find(p => p.brand.id === cp.id) || null}
-              checks={checks}
-              openAll={openAll}
-              startOpen={focusCompanyId ? cp.id === focusCompanyId : cps.length === 1}
-            />
-          ))}
-        </div>
-
-        {/* "Invoice locked" read as false on deals already Invoiced/Completed
-            (and invoices can be drafted before AML clears) — say plainly what
-            is outstanding instead (Woody, 2026-09-27). */}
-        {!data.allApproved && data.missing.length > 0 && (
-          <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2 text-xs" data-testid="deal-aml-blocker">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span><span className="font-medium">{dealStatus && ["INV", "COM"].includes(legacyToCode(dealStatus) || "") ? "AML sign-off still outstanding" : "Still to approve"}:</span> {data.missing.join(", ")}.</span>
-              <button type="button" data-no-min-touch className="text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setHowOpen(o => !o)} data-testid="deal-aml-how">
-                {howOpen ? "Hide" : "How a party clears"}
-              </button>
-            </div>
-            {howOpen && (
-              <p className="mt-1.5 text-muted-foreground">
-                {data.decisions?.inHouseEdd
-                  ? <>Send the client checks. Standard: an agent or an officer signs off. Enhanced: an officer signs off.</>
-                  : data.clientChecks
-                  ? <>Send the client checks. Standard: an agent or an officer signs off. Enhanced: KYC4U, then an officer adds their result.</>
-                  : <>Request a KYC4U check; an officer adds their result. Standard: an agent or an officer can sign off.</>}
-              </p>
-            )}
-          </div>
-        )}
-
-        {staffView && <DealSuspicionLine dealId={dealId} officer={!!data.decisions?.canDecide} />}
+        {footer}
       </CardContent>
     </Card>
-  );
-}
-
-// Anything that seems wrong about the deal goes to the Nominated Officer, in
-// confidence (BGP's AML policy, I.b): never discussed with the client or
-// colleagues.
-function DealSuspicionLine({ dealId, officer }: { dealId: string; officer: boolean }) {
-  return (
-    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-testid="deal-aml-suspicion">
-      Something about this deal seems wrong? Tell the Nominated Officer in confidence, not the client or colleagues.
-      <RaiseReportButton dealId={dealId} officer={officer} label="Report to the Nominated Officer" className="h-7 text-xs" testId="deal-aml-raise-report" />
-    </p>
   );
 }
 

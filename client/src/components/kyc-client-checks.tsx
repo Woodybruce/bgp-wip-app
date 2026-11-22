@@ -470,7 +470,7 @@ function PublicFigureDialog({ dealId, role, person, onClose }: { dealId: string;
         <DialogHeader>
           <DialogTitle>{person.name}: verified from public sources</DialogTitle>
           <DialogDescription>
-            For a well-known person whose identity public sources establish (KYC4U's "Public figure" method). It counts for their identity check and proof of address. Only the Nominated Officer or a Deputy records it, and it can be withdrawn.
+            A well-known person whose identity public sources establish. It counts for their ID and address.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -663,7 +663,7 @@ function AddPersonDialog({ dealId, data, party, onClose }: { dealId: string; dat
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid="person-add-dialog">
         <DialogHeader>
           <DialogTitle>{done ? (done.error ? "Added, not emailed" : done.emailed ? `Sent to ${done.person}` : `${done.person}'s link`) : `Add another person alongside ${party.name}`}</DialogTitle>
-          {!done && <DialogDescription>For a second buyer, seller or tenant who is a private individual. They get a page of their own: {what.join(", ")}. They are added to the CRM under {party.name} when their link is emailed.</DialogDescription>}
+          {!done && <DialogDescription>Another person on this side. Their own page asks for {what.join(", ")}.</DialogDescription>}
         </DialogHeader>
         {done ? (
           <div className="space-y-2 text-sm">
@@ -735,7 +735,7 @@ function PersonLinkDialog({ dealId, data, party, person, onClose }: { dealId: st
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid="person-link-dialog">
         <DialogHeader>
           <DialogTitle>{done ? (done.error ? "Not emailed" : done.emailed ? "Sent" : "Their link") : `${person.name}'s own checks`}</DialogTitle>
-          {!done && <DialogDescription>A page of their own for {party.name}: they are asked for {what.join(", ")}. Nothing they have already done is asked again.</DialogDescription>}
+          {!done && <DialogDescription>Their own page asks for {what.join(", ")}.</DialogDescription>}
         </DialogHeader>
         {done ? (
           <div className="space-y-3 text-sm">
@@ -785,13 +785,13 @@ function PersonLinkDialog({ dealId, data, party, person, onClose }: { dealId: st
 
 // "Send client checks" for one party: pick the person, choose what to ask
 // for, see the email, send.
-export function SendClientChecksButton({ dealId, companyId, partyName, label = "Send client checks", size = "sm", className }: {
-  dealId: string; companyId: string; partyName: string; label?: string; size?: "sm" | "default"; className?: string;
+export function SendClientChecksButton({ dealId, companyId, partyName, label = "Send client checks", size = "sm", className, quiet }: {
+  dealId: string; companyId: string; partyName: string; label?: string; size?: "sm" | "default"; className?: string; quiet?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button type="button" size={size} variant="outline" className={className} onClick={() => setOpen(true)} data-testid={`button-client-checks-${companyId}`}>
+      <Button type="button" size={size} variant={quiet ? "ghost" : "outline"} className={className} onClick={() => setOpen(true)} data-testid={`button-client-checks-${companyId}`}>
         <ShieldCheck className="w-3.5 h-3.5 mr-1.5" />{label}
       </Button>
       {open && <SendClientChecksDialog dealId={dealId} companyId={companyId} partyName={partyName} onClose={() => setOpen(false)} />}
@@ -882,7 +882,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
       <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto" data-testid="client-checks-dialog">
         <DialogHeader>
           <DialogTitle>{sent ? (sent.error ? "Not sent" : "Sent") : `Send client checks to ${shownName}`}</DialogTitle>
-          {!sent && <DialogDescription>One email asking for an identity check and the documents you choose, with a link to a page of their own.</DialogDescription>}
+          {!sent && <DialogDescription>One email with a link to their own page.</DialogDescription>}
         </DialogHeader>
 
         {isLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground py-6"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div>}

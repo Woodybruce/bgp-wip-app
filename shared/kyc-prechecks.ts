@@ -581,12 +581,12 @@ export interface PrecheckScreened {
 }
 export const SCREEN_BASIS_WORDS: Record<ScreenBasis, string> = {
   owners: "the company and the people who own or control it (its beneficial owners: found on the register and up the ownership chain, or recorded behind a company abroad that owns it)",
-  managers: "the company and its directors, standing in for the owners because none could be named (MLR 2017 reg 28(6))",
-  listed: "the company only: a company listed on a regulated market has no beneficial owners to identify (MLR 2017 reg 28(5))",
+  managers: "the company and its directors, standing in for the owners because none could be named",
+  listed: "the company only: a company listed on a regulated market has no beneficial owners to identify",
   individual: "the person",
   company: "the company only: no owner or director could be named from the register",
   owners_abroad: "the company, the company registered abroad that owns it, and its directors meanwhile: Companies House cannot show who owns that company, so the client is asked for the people behind it",
-  trustees: "the charity and its trustees, who control it, as the Charity Commission's register names them (MLR 2017 reg 6 for a charitable trust; for a charitable company or CIO, the people who control it, reg 5 and 28(6))",
+  trustees: "the charity and its trustees, who control it, as the Charity Commission's register names them",
 };
 // One person or company a run screens, as the server lists them: the roles
 // they were found in ("the company", "owner", "owner of <company up the
@@ -885,7 +885,7 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     : null;
   const listingNote = ch.listing
     ? [
-        "No beneficial owners to identify (MLR 2017 reg 28(5)): the company itself is identified and verified from the register, and simplified due diligence may apply (reg 37).",
+        "No beneficial owners to identify: the company itself is identified and verified from the register, and simplified due diligence may apply.",
         ch.listing.viaParent ? "KYC4U to confirm the chain." : "",
         listingSettled(ch.listing.market) ? "" : "KYC4U to confirm the market's disclosure rules are equivalent.",
       ].filter(Boolean).join(" ")
@@ -1019,7 +1019,7 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: { kind: KycPar
       input.listing.viaParent ? " KYC4U to confirm the chain." : "",
       listingSettled(input.listing.market) ? "" : " KYC4U to confirm the market's disclosure rules are equivalent.",
     ].join("");
-    const reason = `${who} (Companies House PSC exemption${input.listing.since ? ` since ${input.listing.since}` : ""}): no beneficial owners to identify (MLR 2017 reg 28(5)).${check}`;
+    const reason = `${who} (Companies House PSC exemption${input.listing.since ? ` since ${input.listing.since}` : ""}): no beneficial owners to identify.${check}`;
     drop("ownership", reason);
     drop("owner_ids", reason);
   } else if (input.owners.length && input.ownersAbroad?.length) {
@@ -1652,7 +1652,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
     if (ch.listing) {
       out.push({
         key: "listing", label: ch.listing.viaParent ? `Owned by ${ch.listing.company}, ${LISTING_WORDS[ch.listing.market]}` : `Listed: ${LISTING_WORDS[ch.listing.market]}`, state: "info",
-        detail: [`No beneficial owners to ask for (MLR 2017 reg 28(5)).`, ch.listing.viaParent ? `Owned through: ${ch.chain.map(c => c.name).join(" > ") || ch.listing.company}. KYC4U to confirm the chain.` : "", listingSettled(ch.listing.market) ? "" : "KYC4U to confirm the market's disclosure rules are equivalent."].filter(Boolean).join(" "),
+        detail: [`No beneficial owners to ask for.`, ch.listing.viaParent ? `Owned through: ${ch.chain.map(c => c.name).join(" > ") || ch.listing.company}. KYC4U to confirm the chain.` : "", listingSettled(ch.listing.market) ? "" : "KYC4U to confirm the market's disclosure rules are equivalent."].filter(Boolean).join(" "),
         links: [],
       });
     } else {

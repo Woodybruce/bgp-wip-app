@@ -96,8 +96,11 @@ test('agents: BGP staff record the check, and the deal box lists every agent on 
   assert.match(h, /unzipper\.ParseOne\(\/\^content\\\.xml\$\/\)/);
   assert.doesNotMatch(h, /readFile|xlsx/);
   const card = read('client/src/components/deal-aml-status.tsx');
-  assert.match(card, /\{staffView && <DealAgentsAml dealId=\{dealId\} bare \/>\}/);
-  assert.match(card, /\{staffView && <DealSuspicionLine dealId=\{dealId\} officer=\{!!data\.decisions\?\.canDecide\} \/>\}/);
+  assert.match(card, /<DealAgentsAml dealId=\{dealId\} bare \/>/);
+  assert.match(card, /\{staffView && data\.counterparties\.length > 0 && \(\s*<div className="rounded-md border border-border\/70" data-testid="aml-deal-sections">/);
+  // Reporting a concern is in the box's menu for every BGP person (22 November 2026).
+  assert.match(card, /<DropdownMenuItem onSelect=\{\(\) => setReport\(true\)\} data-testid="deal-aml-raise-report">Report a concern to the Nominated Officer<\/DropdownMenuItem>/);
+  assert.match(card, /\{report && <RaiseReportDialog dealId=\{dealId\} officer=\{officer\} onClose=\{\(\) => setReport\(false\)\} \/>\}/);
   assert.match(read('client/src/components/brand-profile-panel.tsx'), /<AgentAmlCard companyId=\{companyId\} companyName=\{c\.name\} \/>/);
 });
 

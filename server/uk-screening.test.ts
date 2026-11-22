@@ -293,7 +293,8 @@ test("the Next line: KYC4U while the setting is off; in-house, the client checks
   assert.equal(agent.who, "officers");
   const officer = amlNextStep(box({ ...done, canDecide: true }));
   assert.equal(officer.action, "sign_off");
-  assert.match(officer.words, /Enhanced checks: the Nominated Officer or a Deputy signs it off/);
+  assert.equal(`${officer.lead} · ${officer.words}`, "Ready to sign off · enhanced: add a note");
+  assert.equal(officer.who, "officers");
 });
 
 test("in-house, KYC4U holds nothing up: the Next line, the board's stage and who it waits on (22 November 2026)", () => {

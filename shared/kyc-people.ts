@@ -192,8 +192,8 @@ export interface PartyPeople {
 }
 
 export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
-  owners: "The owners the register names, up the ownership chain, and the person dealing with us each do an identity check and send a proof of address (MLR 2017 reg 5 and 28; BGP's AML policy).",
-  listed: "Listed on a regulated market: no owners to identify (MLR 2017 reg 28(5)). The person dealing with us still does their own check.",
+  owners: "The owners the register names, up the ownership chain, and the person dealing with us each do an identity check and send a proof of address.",
+  listed: "Listed on a regulated market: no owners to identify. The person dealing with us still does their own check.",
   no_owners: "The register names no person who owns or controls the company. Ask the client who does; the person dealing with us still does their own check.",
   not_read: "BGP's checks before asking have not read the register yet, so the owners are not known. The person dealing with us does their own check.",
   individual: "Private individuals: each person named on the deal does an identity check and sends a proof of address. When more than one person is buying, selling or renting together, add each of them.",

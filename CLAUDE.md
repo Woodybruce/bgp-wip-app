@@ -3953,9 +3953,9 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   table on a computer (its rows scroll inside `ScrollableTable` with a scroll
   bar above and below and the heading row fixed: Woody, 2026-11-20, "can you
   put a scroll bar at the top and fix the heading as scroll down") and cards
-  on a phone; the title sits beside the section pills, the policy is one line (officers,
-  enhanced checks in-house or KYC4U) with **Policy and settings** opening the
-  officers, documents, the in-house switch and how the app applies it, and the
+  on a phone; the title sits beside the section pills, the policy has its own
+  **Policy** pill (since 22 November 2026: the officers, the in-house switch,
+  the documents and how the app applies it, on the page), and the
   top folds to the title and pills once the table is scrolled, so the table
   gets the room (Woody, 2026-11-22: "the top of the pages shrink and the table
   is larger when start scrolling but keep the main headings"; the Investment
@@ -4592,15 +4592,10 @@ boards". Do not re-litigate.
   Tried end to end on a local copy on 22 November 2026: a trust landlord with
   a submitted KYC4U request was held (off), then signed off by the Nominated
   Officer with a note for one year (on); a short note is refused.
-- **The deal's AML box is one row per party** (`PartyAmlBox`), with the same
-  pieces as the AML board's row: the party and the company that signs, the
-  stage chip, the level chip, a red-flag count, and the Next step with its
-  button. The checks (Company, Who pays, BGP's checks, Due diligence, People,
-  Client checks, Red flags, KYC4U, Assessment, Sign-off) open under the row,
-  each line a few words. Rows start folded (`startOpen`: the AML trail's
-  party, or a deal's only party); **Show all detail** opens and folds them.
-  The Next line's words are one short sentence (`amlNextStep`). Keep new
-  words short: a status, not an explanation.
+- **The deal's AML box** was one row per party with ten check lines; later
+  the same day it became four steps per party (see "The AML redesign: four
+  steps per party" below). Keep new words short: a status, not an
+  explanation.
 - `useAmlInHouse()` (`aml-policy-panel.tsx`) reads the switch where a
   screen's words depend on it.
 
@@ -4801,6 +4796,74 @@ the joint agent mode of `client/src/pages/kyc-upload.tsx`. Tests:
   readings on the local copy were written in the reader's shape.
 - Not built: a joint agent's screening match as a red flag on the party (it
   is listed on the Joint agent line); reading a reliance letter's own words.
+
+## The AML redesign: four steps per party (Woody, 2026-11-22)
+
+Woody, on the AML box: "there is a large amount of text some of which is very
+AI and its very croded generally without much thought for the simplicity iof
+designn and userbility", and "i want you conmsider the whole AML apporach";
+shown a drawn mock of four steps per party, with the Parties card merged into
+the AML box, he answered "yes go ahead". Do not re-litigate. Rules (pure):
+`shared/aml-box.ts`; screens: `client/src/components/deal-aml-status.tsx`
+(`PartyAmlBox`, `StepRow`, `AmlBoxMenu`, `UnsetPartyRow`) and
+`StaffPartiesAml` in `client/src/components/deal-detail.tsx`. Tests:
+`server/aml-box.test.ts` (in `npm test`), `qa/regression/aml-box-sections.test.mjs`.
+
+- **Each party is one card**: its kind chip, name, "BGP's client" where it is,
+  a pencil (the party box), the status chip, then the **Next** line and four
+  steps. The Next line is a bold lead and a few words with at most one button
+  (`amlNextStep` returns `{ tone, who, lead, words, action }`): "To do · Set
+  the company that signs [Fill in]", "Waiting on Savills · 2 documents missing
+  [Remind now]", "Not yet with KYC4U · 2 red flags [Request KYC4U check]",
+  "Ready to sign off · add a note [Sign off]", "Cleared · until 20 Nov 2029".
+  Twelve words or fewer and no regulation numbers (the test holds both).
+  `firmShort` drops a firm's legal form ("Savills (UK) Limited" is Savills),
+  `shortReason` keeps a reason's first clause.
+- **The four steps** (`aml-step-<role>-signs|screening|documents|decision`),
+  each a tick or a number and a few words, opening on press:
+  - **Who signs**: the company that signs, billed to and who to ask
+    (`DealPartyLines` with `fullBilling`), the trust line, Owners abroad and
+    **Company details** (the register facts).
+  - **Screening**: BGP's checks before asking, the red flags and the due
+    diligence level with the policy's factors.
+  - **Documents**: the route the documents come by, the client checks, the
+    joint agent (`JointAgentPanel`: a grid of what their files cover, what is
+    missing, the chase), another firm (reliance) or KYC4U, with the people to
+    check and the requests; the routes not taken sit under **Other ways** as
+    quiet buttons.
+  - **Sign-off**: the decision buttons, the second read, the risk assessment
+    and the AML file. A step not reached yet says what it waits on ("After
+    screening", "After the documents").
+  A party still being checked opens on its steps; a settled one (cleared, not
+  required) is folded to its line. Nothing the old sections showed was
+  dropped: a new piece goes into a step's detail.
+- **The deal's own lines** stay under the parties: Deal record (red flags),
+  Agents and Solicitors.
+- **More** (`aml-box-menu`) holds what was spread across the box: Show all
+  detail, The rules in short (`/deals/aml?section=rules`), Report a concern to
+  the Nominated Officer, and for the officers Stop acting on this deal. The
+  **AML file** button stays beside it for the officers.
+- **The Parties card is in the box for BGP staff** (`StaffPartiesAml`): one
+  card per party slot (landlord and tenant, or vendor and purchaser, by deal
+  type, `partySlotDefs`), **BGP acts for** in the box's heading on a letting,
+  the BGP team card above it and the deal's own Xero contact under it when
+  one is held. A slot with no party shows its picker (`UnsetPartyRow`); a
+  party change refreshes the box (`refreshDealAml`). Client logins keep the
+  read-only Parties card (`DealPartiesCard`).
+- **One set of status words** for the box and the AML board
+  (`AML_STAGE_LABEL`: Screened, Documents in, Joint agent's files in,
+  Cleared). The AML board's policy is its own **Policy** pill, and its button
+  reads **Report a concern**.
+- **Shorter words everywhere else**: every AML dialog leads with one line; the
+  client's page, the joint agent's page and every AML email were cut to plain
+  sentences; regulation numbers came off screens, emails and refusals (the
+  Rules page, the AML file's risk assessment, the reliance terms and KYC4U's
+  note keep them). The regulation-41 data statement (`KYC_DATA_USE`) keeps its
+  words: "only to prevent money laundering and terrorist financing" and "five
+  years after our work with you ends".
+- Checked in a browser against a local copy on 22 November 2026 (a sale with
+  a joint agent, a letting, the board and its Policy pill, the client's page
+  and the joint agent's page on an iPhone profile, three emails).
 
 ## The AML register, training, agents, EU list, overseas entities and five-year deletion (Woody, 2026-11-19)
 
@@ -5028,7 +5091,9 @@ Tests: `server/aml-box.test.ts`, `server/aml-file.test.ts` (both in
   Open KYC4U's form, Add KYC4U result, Sign off), read from the facts the box
   already holds: the AML status, the parties, the client checks, KYC4U's
   drafts. Change the order of steps there, with a test, never in the box.
-- **The sections**: Company, BGP's checks, Due diligence, People, Client
+- **The sections** (superseded on 22 November 2026 by four steps per party:
+  see "The AML redesign: four steps per party"; what each section held is now
+  inside a step): Company, BGP's checks, Due diligence, People, Client
   checks, Red flags, KYC4U, Sign-off (`BoxSection`). Each is one line with a
   tone and a summary; pressing it opens what the box showed before
   (`PartyCompanyFacts`, `PartyPrechecks`, `PartyLevel` with the policy's
@@ -5039,7 +5104,8 @@ Tests: `server/aml-box.test.ts`, `server/aml-file.test.ts` (both in
   each too (`PersonRow`, `ClientCheckRow`), with any warning (someone else's
   identity check, a public role, the register's owners disputed, a possible
   sanctions match, a proof of address to check) kept on the line.
-- **Show all detail** opens every section of every party, remembered per
+- **Show all detail** (since 22 November 2026 in the box's **More** menu)
+  opens every step of every party, remembered per
   browser (`bgp:aml-box:open-all`, read and written in try/catch; never
   relied on). The deal-level rows (Deal record red flags, Agents) fold the same
   way. On the AML checks page the trail opens on its own party

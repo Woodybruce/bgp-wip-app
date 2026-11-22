@@ -43,7 +43,7 @@ test("a sale or purchase takes HMRC's ask-and-record route; a letting at £10,00
 });
 
 test("the joint agent reason is refused on a letting in scope and on anything but a sale, in HMRC's terms", () => {
-  assert.match(jointAgentNotRequiredRefusal("letting") || "", /no joint agent exception/);
+  assert.match(jointAgentNotRequiredRefusal("letting") || "", /every party is checked/);
   assert.match(jointAgentNotRequiredRefusal("other") || "", /Only a sale/);
   assert.equal(jointAgentNotRequiredRefusal("sale"), null);
   assert.equal(jointAgentNotRequiredRefusal("letting_under"), null);
@@ -90,7 +90,7 @@ test("a request made in the app is the record: sent, on this party, and with fil
 });
 
 test("the joint agent reason is refused on a letting in scope; a letting under £10,000 a month and no deal need no record", () => {
-  assert.match(problem({ outcome: "received", jointRef: "7K2Q9M" }, "letting"), /no joint agent exception/);
+  assert.match(problem({ outcome: "received", jointRef: "7K2Q9M" }, "letting"), /every party is checked/);
   const under = notRequiredInput({ reason: "joint_agent", comment }, { rule: "letting_under", today });
   assert.ok(!("problem" in under) && under.asked === null);
   const noDeal = notRequiredInput({ reason: "no_deal", comment }, { rule: "letting", today });
@@ -98,8 +98,8 @@ test("the joint agent reason is refused on a letting in scope; a letting under �
 });
 
 test("a mark made before the rule lapses on a letting, and on a sale with no record of asking", () => {
-  assert.match(notRequiredLapse({ reason: "joint_agent", asked: null }, "letting") || "", /no joint agent exception/);
-  assert.match(notRequiredLapse({ reason: "joint_agent", asked: null }, "sale") || "", /record that the joint agent was asked/);
+  assert.match(notRequiredLapse({ reason: "joint_agent", asked: null }, "letting") || "", /every party is checked/);
+  assert.match(notRequiredLapse({ reason: "joint_agent", asked: null }, "sale") || "", /No record of asking the joint agent/);
   assert.equal(notRequiredLapse({ reason: "joint_agent", asked: { askedOn: "2026-11-20", how: "app", whom: "Savills", outcome: "received", ref: "7K2Q9M" } }, "sale"), null);
   assert.equal(notRequiredLapse({ reason: "joint_agent", asked: null }, "letting_under"), null);
   assert.equal(notRequiredLapse({ reason: "no_deal", asked: null }, "letting"), null);
@@ -130,12 +130,14 @@ test("the email to the joint agent names the party, the reference and HMRC's rea
   };
   const sale = jointAgentRequestEmail({ ...base, letting: false });
   assert.match(sale.subject, /\(ref 7K2Q9M\)/);
-  assert.match(sale.html, /AMLG2200, section 21/);
+  assert.match(sale.html, /HMRC asks us, as the joint agent who didn&#39;t deal with the buyer|HMRC asks us, as the joint agent who didn't deal with the buyer/);
+  assert.doesNotMatch(sale.html, /AMLG|regulation \d|reg \d/, "no regulation numbers in the email");
   assert.match(sale.html, /https:\/\/chatbgp\.app\/kyc-upload\/abc/);
   assert.doesNotMatch(sale.html, /<script>/);
   assert.doesNotMatch(sale.html, /<b>Smith<\/b>/);
   const letting = jointAgentRequestEmail({ ...base, partyRole: "tenant", letting: true });
-  assert.match(letting.html, /regulation 39/);
+  assert.match(letting.html, /we&#39;d like to rely on your checks|we'd like to rely on your checks/);
+  assert.doesNotMatch(letting.html, /AMLG|regulation \d|reg \d/);
   assert.ok(jointAgentAsks({ kind: "company", letting: true }).some(a => a.title === "The reliance terms"));
   assert.ok(!jointAgentAsks({ kind: "company", letting: false }).some(a => a.title === "The reliance terms"));
   assert.ok(!jointAgentAsks({ kind: "individual", letting: false }).some(a => a.title === "The company"));
@@ -337,7 +339,8 @@ test("a file not read yet: the joint agent is asked for nothing it may hold; a f
   // The Next line: read their file first.
   const next = amlNextStep(facts({ stage: "joint_in", joint: { firm: "Savills", rule: "letting", reliance: true, missing: 3, unread: 1, status: "in" } }));
   assert.equal(next.who, "bgp");
-  assert.match(next.words, /^1 file from Savills is not read yet\. Press Read again, or check it by eye, before asking them for anything else\.$/);
+  assert.equal(`${next.lead} · ${next.words}`, "To do · read the file from Savills");
+  assert.equal(next.action, "joint");
 });
 
 // ── Where the party stands ──────────────────────────────────────────────────
@@ -369,16 +372,19 @@ test("the Next line follows the joint agent: waiting on them, then the officers 
   const waiting = amlNextStep(facts({ joint: { ...sale, status: "sent" } }));
   assert.equal(waiting.who, "joint_agent");
   assert.equal(waiting.action, "joint");
-  assert.match(waiting.words, /records that you asked/);
+  assert.equal(`${waiting.lead} · ${waiting.words}`, "Waiting on Savills · for their checks");
   const inSale = amlNextStep(facts({ stage: "joint_in", joint: { ...sale, status: "in", missing: 0 } }));
   assert.equal(inSale.who, "officers");
-  assert.match(inSale.words, /Not required/);
+  assert.equal(`${inSale.lead} · ${inSale.words}`, "For the officers · Savills' checks are in: mark Not required");
   const gapsSale = amlNextStep(facts({ stage: "joint_in", joint: { ...sale, status: "in", missing: 2 } }));
   assert.equal(gapsSale.who, "bgp");
-  assert.match(gapsSale.words, /2 things are still missing\. Ask them for what's missing\. An officer can also record what came/);
-  const letting = { firm: "Savills", rule: "letting" as const, missing: 0 };
-  assert.equal(amlNextStep(facts({ joint: { ...letting, status: "in", reliance: false } })).who, "joint_agent");
-  assert.match(amlNextStep(facts({ joint: { ...letting, status: "finished", reliance: true } })).words, /records the reliance/);
+  assert.equal(gapsSale.action, "joint_remind");
+  assert.equal(`${gapsSale.lead} · ${gapsSale.words}`, "To do · ask Savills for 2 missing documents");
+  const letting = { firm: "Savills (UK) Limited", rule: "letting" as const, missing: 0 };
+  const terms = amlNextStep(facts({ joint: { ...letting, status: "in", reliance: false } }));
+  assert.equal(terms.who, "joint_agent");
+  assert.equal(`${terms.lead} · ${terms.words}`, "Waiting on Savills · to agree the reliance terms", "the firm without its legal form");
+  assert.equal(amlNextStep(facts({ joint: { ...letting, status: "finished", reliance: true } })).words, "Savills' checks are in: record the reliance");
   // A link that ran out goes back to the client checks.
   assert.equal(amlNextStep(facts({ stage: "not_started", joint: { ...sale, status: "expired" } })).action, "send_client_checks");
   // Red flags still come first.
@@ -523,9 +529,9 @@ test("the Next line says what is still missing and that the app is chasing", () 
   const f = facts({ stage: "joint_in", joint: { firm: "Savills", rule: "sale", reliance: false, missing: 2, status: "in", chasing: true } });
   const step = amlNextStep(f);
   assert.equal(step.who, "joint_agent");
-  assert.match(step.words, /2 things are still missing/);
-  assert.match(step.words, /chasing them every three days/);
+  assert.equal(`${step.lead} · ${step.words}`, "Waiting on Savills · 2 documents missing");
+  assert.equal(step.action, "joint_remind", "Remind now");
   const notChasing = amlNextStep(facts({ stage: "joint_in", joint: { firm: "Savills", rule: "letting", reliance: true, missing: 1, status: "finished", chasing: false } }));
   assert.equal(notChasing.who, "bgp");
-  assert.match(notChasing.words, /1 thing is still missing\. Ask them for what's missing\. BGP can't rely on their checks until everything is in, unless an officer checked the rest by hand\.$/);
+  assert.equal(`${notChasing.lead} · ${notChasing.words}`, "To do · ask Savills for the missing document");
 });

@@ -66,11 +66,14 @@ const isBucket = (v: string | null): v is AmlBucket => !!v && AML_BUCKETS.some(b
 // Client check emails for admins (21 November 2026: the preview and test of
 // the emails BGP's own client checks send, moved here from the KYC4U page
 // when KYC4U went to Subscriptions & APIs).
-type Section = "checks" | "rules" | "reports" | "training" | "records" | "emails";
+type Section = "checks" | "rules" | "policy" | "reports" | "training" | "records" | "emails";
 const SECTIONS: Array<{ key: Section; label: string; officer?: boolean; admin?: boolean }> = [
   { key: "checks", label: "Checks" },
   // HMRC's rules in short, checked against HMRC every three months (22 November 2026).
   { key: "rules", label: "Rules" },
+  // The officers, the documents and the in-house switch: their own pill, so the
+  // table starts at the top (Woody, 22 November 2026: "yes go ahead").
+  { key: "policy", label: "Policy" },
   { key: "reports", label: "Reports", officer: true },
   { key: "training", label: "Training" },
   { key: "records", label: "Records", officer: true },
@@ -273,10 +276,10 @@ export default function AmlDashboard() {
             <Pill key={x.key} active={shownSection === x.key} onClick={() => setSection(x.key)} data-testid={`aml-section-${x.key}`}>{x.label}</Pill>
           ))}
         </div>
-        <div className="md:ml-auto"><RaiseReportButton label="Report to the Nominated Officer" officer={!!roles?.isOfficer} testId="aml-raise-report" /></div>
+        <div className="md:ml-auto"><RaiseReportButton label="Report a concern" officer={!!roles?.isOfficer} testId="aml-raise-report" /></div>
       </div>
 
-      {!foldedTop && <AmlPolicyPanel />}
+      {shownSection === "policy" && <AmlPolicyPanel />}
 
       {shownSection === "rules" && <AmlRulesBoard />}
       {shownSection === "reports" && <AmlRegisterBoard />}

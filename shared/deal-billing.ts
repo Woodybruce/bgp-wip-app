@@ -153,7 +153,7 @@ export function payerRedFlags(input: {
       kind: "third_party_payer",
       key: `payer:${id}:relationship`,
       label: `${name} pays BGP's invoice with no clear relationship to the client`,
-      detail: "HMRC (AMLG3200): a payment from a third party with no link to the customer is a red flag and is treated as high risk. BGP's AML policy: establish how they are related, and identify and verify the payer's owners.",
+      detail: "HMRC treats a payment from a third party with no link to the customer as high risk. Find out how they are related, and check the payer's owners.",
       source: "the deal's billing",
       at: null,
       evidence: [`payer:${id}`, `relationship:${input.relationship || "not recorded"}`],

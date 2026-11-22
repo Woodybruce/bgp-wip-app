@@ -118,7 +118,7 @@ export function AmlStopButton({ dealId }: { dealId: string }) {
   );
 }
 
-function AmlStopDialog({ dealId, onClose }: { dealId: string; onClose: () => void }) {
+export function AmlStopDialog({ dealId, onClose }: { dealId: string; onClose: () => void }) {
   const { toast } = useToast();
   const [reason, setReason] = useState<AmlStopReason>("checks_incomplete");
   const [note, setNote] = useState("");
@@ -142,7 +142,7 @@ function AmlStopDialog({ dealId, onClose }: { dealId: string; onClose: () => voi
         <DialogHeader>
           <DialogTitle>Stop BGP acting on this deal</DialogTitle>
           <DialogDescription>
-            When BGP cannot complete the checks, it must not go ahead with the deal (MLR 2017 reg 31). BGP cannot stop the parties exchanging through their solicitors, but it stops its own part: the deal cannot move on in the app (only to Withdrawn), cannot be invoiced or deleted, and its AML file is kept. The deal's agents and the officers are emailed, without the reason.
+            BGP stops its part. The deal can only be withdrawn and can't be invoiced or deleted. The agents are told, without the reason.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -157,11 +157,11 @@ function AmlStopDialog({ dealId, onClose }: { dealId: string; onClose: () => voi
             <Label htmlFor="aml-stop-note">What has happened</Label>
             <Textarea id="aml-stop-note" value={note} onChange={e => setNote(e.target.value)} rows={3} maxLength={1500}
               placeholder="For example: the buyer will not say who owns the company, after three requests" data-testid="aml-stop-note" />
-            <p className="text-[11px] text-muted-foreground">Only the Nominated Officer and the Deputies read this. If you suspect money laundering, record it in the AML register as well: a report to the National Crime Agency is the Nominated Officer's decision.</p>
+            <p className="text-[11px] text-muted-foreground">Only the officers read this. A suspicion also goes in the AML register.</p>
           </div>
           <label className="flex items-start gap-2 text-xs">
             <Checkbox checked={withdraw} onCheckedChange={v => setWithdraw(v === true)} data-testid="aml-stop-withdraw" />
-            <span>Move the deal to Withdrawn as well (BGP's client cannot be checked, so BGP ends the instruction). Releasing the stop puts it back.</span>
+            <span>Move the deal to Withdrawn too. Releasing the stop puts it back.</span>
           </label>
           {!checked.ok && <p className="text-[11px] text-muted-foreground" data-testid="aml-stop-missing">{checked.message}</p>}
         </div>

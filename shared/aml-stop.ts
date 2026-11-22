@@ -18,7 +18,7 @@
 // Pure: the routes and the guards are server/aml-stop.ts.
 
 export const AML_STOP_REASONS = {
-  checks_incomplete: "The checks cannot be completed (MLR 2017 reg 31)",
+  checks_incomplete: "The checks can't be completed",
   other: "Another AML reason",
 } as const;
 export type AmlStopReason = keyof typeof AML_STOP_REASONS;
@@ -43,7 +43,7 @@ export function amlStopInput(raw: Record<string, unknown>): { ok: true; value: {
   const reason = String(raw.reason ?? "") as AmlStopReason;
   if (!(reason in AML_STOP_REASONS)) return { ok: false, message: "Say why BGP is stopping." };
   const note = String(raw.note ?? "").replace(/\s+/g, " ").trim().slice(0, 1500);
-  if (note.length < AML_STOP_NOTE_MIN) return { ok: false, message: "Say what has happened (at least a sentence). Only the Nominated Officer and the Deputies read it." };
+  if (note.length < AML_STOP_NOTE_MIN) return { ok: false, message: "Say what has happened, in a sentence or more." };
   return { ok: true, value: { reason, note, withdraw: raw.withdraw === true || raw.withdraw === "true" } };
 }
 

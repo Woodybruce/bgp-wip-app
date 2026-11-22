@@ -56,7 +56,7 @@ export function RaiseReportDialog({ onClose, dealId, role, companyId, kind: star
       <DialogContent className="max-w-lg" data-testid="aml-raise-dialog">
         <DialogHeader>
           <DialogTitle>Report to the Nominated Officer</DialogTitle>
-          <DialogDescription>It goes to the Nominated Officer and the Deputy only. They decide what happens next and whether it is reported to {REGISTER_KIND_INFO[kind].reportedTo}.</DialogDescription>
+          <DialogDescription>Only the Nominated Officer and the Deputies see it. Don't tell the client.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 text-sm">
           <div className="space-y-1.5">
@@ -287,7 +287,7 @@ export function AmlRegisterBoard() {
   const shown = status === "all" ? entries : entries.filter(e => e.status === status);
   return (
     <div className="space-y-3" data-testid="aml-register-board">
-      <p className="text-sm text-muted-foreground">Reports to the Nominated Officer and what was done with them: suspicions (to the NCA), sanctions (to OFSI), register discrepancies (to Companies House or HMRC) and unregistered agents (to HMRC). Only the Nominated Officer and the Deputy see this.</p>
+      <p className="text-sm text-muted-foreground">Reports to the Nominated Officer and what was done with each. Only the officers see this.</p>
       <div className="flex flex-wrap items-center gap-1.5">
         {(["open", "reported", "no_report", "closed", "all"] as const).map(s => (
           <Pill key={s} active={status === s} onClick={() => setStatus(s)} data-testid={`aml-register-pill-${s}`}>

@@ -1,9 +1,12 @@
 // The AML box, shortened (Woody, 20 November 2026, on the AML checks page:
 // "minimise each section with the detail to pop out so people can clearly see
 // whats happening and whats needed its pretty overwhelming for them but
-// clearly we need that info displayed for the AML officers"). Each party
-// opens on one line, what happens next and who it waits on, and each of its
-// sections on one line of its own; the detail opens when a line is pressed.
+// clearly we need that info displayed for the AML officers"), then made
+// simple (Woody, 22 November 2026: "there is a large amount of text some of
+// which is very AI and its very crowded"; "yes go ahead" to four steps per
+// party). Each party opens on its Next line: a bold lead (who it waits on, or
+// what to do) and a few words, with one button. A status, not an explanation:
+// the reasons live on the Rules page and in each step's detail.
 //
 // Pure rules. The facts come from what the box already reads: the deal's AML
 // status (GET /api/kyc/deal/:id/status), its parties (GET /api/deals/:id/
@@ -29,7 +32,8 @@ export type AmlBoxAction =
   | "sign_off"
   | "red_flags"          // open Red flags
   | "billing"            // open Who pays: BGP's invoice goes to another company
-  | "joint";             // open Joint agent: their checks, Not required on a sale, the reliance on a letting
+  | "joint"              // open the Documents step on the joint agent's checks
+  | "joint_remind";      // email the joint agent what is still missing
 
 export const AML_BOX_WHO_WORDS: Record<AmlBoxWho, string> = {
   nobody: "Nothing to do",
@@ -104,13 +108,26 @@ export interface AmlBoxFacts {
   // cover yet (server/joint-agent-checks.ts).
   // chasing: the app is emailing them what is missing every three days.
   joint?: { status: "not_sent" | "sent" | "opened" | "in" | "finished" | "expired"; firm: string; rule: "sale" | "letting" | "other"; reliance: boolean; missing: number; chasing?: boolean; unread?: number } | null;
+  // The Not required reason's key ("joint_agent", "no_deal"), for its short words.
+  notRequiredReason?: string | null;
+  // The firm relied on (MLR 2017 reg 39), by name.
+  relianceFirm?: string | null;
 }
 
-export interface AmlNextStep { tone: AmlBoxTone; who: AmlBoxWho; words: string; action: AmlBoxAction | null }
+export interface AmlNextStep {
+  tone: AmlBoxTone;
+  who: AmlBoxWho;
+  // The bold start of the line: who it waits on, or what to do ("Waiting on
+  // Savills", "To do", "Ready to sign off", "Cleared").
+  lead: string;
+  // A few words after it; may be empty.
+  words: string;
+  action: AmlBoxAction | null;
+}
 
 const DUE_WORDS: Record<string, string> = {
-  tenant: "HMRC expects the tenant's checks once the landlord accepts their offer, before any agreement.",
-  purchaser: "HMRC expects the buyer's checks before an offer is accepted, and at the latest before exchange.",
+  tenant: "once the landlord accepts their offer",
+  purchaser: "before an offer is accepted",
 };
 
 export function andList(names: readonly string[]): string {
@@ -126,37 +143,48 @@ export function amlBoxDay(iso: string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" });
 }
 
-// "BGP's checks" keeps its capitals; "Enhanced due diligence" reads on in a sentence.
-const lowerFirst = (t: string) => (!t || /^[A-Z][A-Z]/.test(t) ? t : t.charAt(0).toLowerCase() + t.slice(1));
-const stop = (t: string) => (/[.!?]$/.test(t) ? t : `${t}.`);
-
-/** "Huseyn Mirhadiyev (identity check and proof of address)". */
-function owed(people: readonly AmlBoxPerson[]): string {
-  return andList(people.map(p => (p.needs.length ? `${p.name} (${andList(p.needs)})` : p.name)));
+/** A firm's name without its legal form, for a line on the screen: "Savills (UK) Limited" is "Savills". */
+export function firmShort(name: string | null | undefined): string {
+  const n = String(name || "").replace(/\s*\((?:UK|U\.K\.|GB)\)\s*/gi, " ")
+    .replace(/[,\s]+(?:limited|ltd\.?|llp|plc|lp|inc\.?|llc|gmbh|s\.?a\.?|b\.?v\.?)$/i, "").replace(/\s+/g, " ").trim();
+  return n || String(name || "").trim();
 }
+
+/** The first clause of a longer reason, for the Next line: the rest is in the step. */
+export function shortReason(t: string | null | undefined, max = 70): string {
+  const first = String(t || "").split(/(?<=[a-z0-9)])[.:;](?:\s|$)/i)[0].trim().replace(/[.:;]$/, "");
+  return first.length > max ? `${first.slice(0, max - 1).replace(/\s+\S*$/, "")}…` : first;
+}
+
+// "Savills' checks", "Knight Frank's checks".
+const possessive = (name: string) => (/s$/i.test(name) ? `${name}'` : `${name}'s`);
+
+const NOT_REQUIRED_SHORT: Record<string, string> = {
+  joint_agent: "the joint agent's party",
+  no_deal: "no deal with this party",
+};
+
+const step = (tone: AmlBoxTone, who: AmlBoxWho, lead: string, words: string, action: AmlBoxAction | null = null): AmlNextStep =>
+  ({ tone, who, lead, words, action });
 
 // BGP's invoice goes to another company than the one the checks are on
 // (shared/deal-billing.ts): HMRC expects BGP to know who pays and why.
-const BILLING_STEP: AmlNextStep = {
-  tone: "act", who: "bgp",
-  words: "BGP's invoice goes to another company than the one that signs: record who pays and how they are related, or confirm it is the same company.",
-  action: "billing",
-};
+const BILLING_STEP: AmlNextStep = step("act", "bgp", "To do", "Say who pays BGP's invoice", "billing");
 
-/** The one line a party opens on: what happens next, and who it waits on. */
+/** The one line a party opens on: who it waits on or what to do, in a few words, and one button. */
 export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
   const until = amlBoxDay(f.expiresAt);
   switch (f.stage) {
     case "rejected":
-      return { tone: "flag", who: "officers", words: "Rejected. Don't go ahead unless the Nominated Officer says so.", action: null };
+      return step("flag", "officers", "Rejected", "don't go ahead without the Nominated Officer");
     case "not_required":
-      return { tone: "done", who: "nobody", words: `Not required${f.notRequiredWords ? `: ${lowerFirst(f.notRequiredWords)}` : ""}.`, action: null };
+      return step("done", "nobody", "Not required", NOT_REQUIRED_SHORT[f.notRequiredReason || ""] || "");
     case "approved":
-      return { tone: "done", who: "nobody", words: `Approved${f.approvedBy ? ` by ${f.approvedBy}` : ""}${until ? `, valid until ${until}` : ""}.`, action: null };
+      return step("done", "nobody", "Cleared", until ? `until ${until}` : "");
     case "expiring":
-      return { tone: "act", who: "bgp", words: `Approved until ${until || "soon"}: check again before then.`, action: f.clientChecks ? "send_client_checks" : f.inHouseEdd ? null : "request_kyc4u" };
+      return step("act", "bgp", `Expires ${until || "soon"}`, "check again", f.clientChecks ? "send_client_checks" : f.inHouseEdd ? null : "request_kyc4u");
     case "expired":
-      return { tone: "flag", who: "bgp", words: `Approval ran out${until ? ` on ${until}` : ""}: check again.`, action: f.clientChecks ? "send_client_checks" : f.inHouseEdd ? null : "request_kyc4u" };
+      return step("flag", "bgp", "Expired", "check again", f.clientChecks ? "send_client_checks" : f.inHouseEdd ? null : "request_kyc4u");
     default:
       break;
   }
@@ -164,171 +192,110 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
   // comes before BGP's own checks on the company that signs.
   const jointRunning = !!f.joint && f.joint.status !== "expired" && f.joint.status !== "not_sent";
   if (f.company && f.companyMissing && !jointRunning) {
-    return { tone: "act", who: "bgp", words: "Set the company that signs.", action: "fill_in" };
+    return step("act", "bgp", "To do", "Set the company that signs", "fill_in");
   }
   if (f.precheckRunning) {
-    return { tone: "wait", who: "bgp", words: "BGP's checks are running (a minute or two).", action: null };
+    return step("wait", "bgp", "Screening", "running now");
   }
-  // With the officers doing enhanced checks in-house, a KYC4U request holds
-  // nothing up (Woody, 22 November 2026): the steps below carry on.
+  // Jack, 20 November 2026: a big red mark until the request is on KYC4U's
+  // portal. With the officers doing enhanced checks in-house, a KYC4U request
+  // holds nothing up (Woody, 22 November 2026).
   if (f.kyc4u === "queued" && !f.inHouseEdd) {
-    return { tone: "act", who: "bgp", words: "KYC4U request prepared: submit it on KYC4U's portal.", action: "kyc4u_form" };
+    return step("flag", "bgp", "Not yet with KYC4U", "submit it on their portal", "kyc4u_form");
   }
   if ((f.kyc4u === "raised" || f.stage === "with_kyc4u") && !f.inHouseEdd) {
-    return { tone: "wait", who: "kyc4u", words: `With KYC4U. ${f.canDecide ? "Add their result when it comes." : "An officer adds their result."}`, action: f.canDecide ? "kyc4u_result" : null };
+    return step("wait", "kyc4u", "Waiting on KYC4U", f.canDecide ? "add their result when it comes" : "", f.canDecide ? "kyc4u_result" : null);
   }
   const edd = !!f.inHouseEdd && (!!f.trust || !!f.ownersAbroad || f.redFlags > 0 || f.factors > 0);
   if (edd && (f.sanctionsFlags || 0) > 0) {
-    return {
-      tone: "flag", who: "officers",
-      words: "Possible sanctions match: check it first. Set it aside if it isn't them; if it is, tell the Nominated Officer.",
-      action: "red_flags",
-    };
+    return step("flag", "officers", "Possible sanctions match", "check it first", "red_flags");
   }
-  if (f.trust && !edd) {
-    return {
-      tone: "flag", who: "bgp",
-      words: "A trust: goes to KYC4U in full. Request the KYC4U check.",
-      action: "request_kyc4u",
-    };
-  }
-  if (f.ownersAbroad && !edd) {
-    return {
-      tone: "act", who: "bgp",
-      words: `Owned from abroad (${f.ownersAbroad}): goes to KYC4U. Request the KYC4U check.`,
-      action: "request_kyc4u",
-    };
-  }
-  if (f.redFlags > 0 && !edd) {
-    return {
-      tone: "flag", who: "bgp",
-      words: `${f.redFlags} red flag${s(f.redFlags)}: raise it with KYC4U${f.canDecide ? ", or set aside any that do not apply, with a comment" : ""}.`,
-      action: "request_kyc4u",
-    };
-  }
-  if (f.factors > 0 && !edd) {
-    return {
-      tone: "flag", who: "bgp",
-      words: `Enhanced due diligence (${f.factors} higher-risk factor${s(f.factors)}): raise it with KYC4U.`,
-      action: "request_kyc4u",
-    };
+  // Higher risk goes to KYC4U, unless the officers do it in-house.
+  if (!edd) {
+    const why = f.trust ? "a trust"
+      : f.ownersAbroad ? `owned from abroad (${shortReason(f.ownersAbroad, 50)})`
+      : f.redFlags > 0 ? `${f.redFlags} red flag${s(f.redFlags)}`
+      : f.factors > 0 ? "higher risk"
+      : null;
+    if (why) return step("flag", "bgp", "Not yet with KYC4U", why, "request_kyc4u");
   }
   // Enhanced due diligence by BGP is the officers' to sign off, not an agent's.
   const canSign = edd ? f.canDecide : f.canSignOff;
-  const eddWords = "Enhanced checks: the Nominated Officer or a Deputy signs it off.";
+  const ready = (words: string) => step("act", edd ? "officers" : "bgp", "Ready to sign off", words, "sign_off");
+  const blocked = () => step("wait", canSign ? "bgp" : "officers", "Not ready to sign off", shortReason(f.signOffBlocked));
   if (f.sanctionsOnly) {
     if (f.billingDiffers) return BILLING_STEP;
-    if (canSign && f.signOffBlocked === null) {
-      return { tone: "act", who: "bgp", words: "Letting under £10,000 a month: sanctions only, all clear. Sign it off.", action: "sign_off" };
-    }
-    return { tone: "wait", who: "bgp", words: `Letting under £10,000 a month: sanctions only.${f.signOffBlocked ? ` Before it can be signed off: ${lowerFirst(stop(f.signOffBlocked))}` : ""}`, action: null };
+    if (canSign && f.signOffBlocked === null) return ready("sanctions only, all clear");
+    return f.signOffBlocked ? blocked() : step("wait", "officers", "Sanctions only", "an agent or an officer signs off");
   }
   if (f.reliance) {
+    const firm = firmShort(f.relianceFirm) || "another firm";
     if (f.billingDiffers) return BILLING_STEP;
-    if (canSign && f.signOffBlocked === null) {
-      return { tone: "act", who: "bgp", words: `${stop(f.reliance)} The client checks are not needed: sign it off${edd ? " (enhanced due diligence by BGP, with a note)" : ""}.`, action: "sign_off" };
-    }
-    return {
-      tone: "wait", who: canSign ? "bgp" : "officers",
-      words: `${stop(f.reliance)}${f.signOffBlocked ? ` Before it can be signed off: ${lowerFirst(stop(f.signOffBlocked))}` : edd ? ` ${eddWords}` : " An agent on the deal, the Nominated Officer or a Deputy signs it off."}`,
-      action: null,
-    };
+    if (canSign && f.signOffBlocked === null) return ready(`relying on ${firm}${edd ? "; add a note" : ""}`);
+    return f.signOffBlocked ? blocked() : step("wait", "officers", `Relying on ${firm}`, edd ? "an officer signs off" : "an agent or an officer signs off");
   }
   // The joint agent asked for their checks (HMRC: on a sale, ask and record
-  // what came back, AMLG2200 s21; on a letting, their checks only under a
-  // reliance agreement). A request that ran out falls back to the client checks.
+  // what came back; on a letting, their checks only under a reliance
+  // agreement). A request that ran out falls back to the client checks.
   const joint = f.joint && f.joint.status !== "expired" ? f.joint : null;
   const clientGoing = !!f.request && f.request.status !== "expired" && f.request.status !== "not_sent";
   if (joint && (joint.status === "in" || joint.status === "finished")) {
+    const firm = firmShort(joint.firm);
     // A file from them not read yet: read it before asking them for anything else.
-    if (joint.unread) {
-      return { tone: "act", who: "bgp", words: `${joint.unread} file${s(joint.unread)} from ${joint.firm} ${joint.unread === 1 ? "is" : "are"} not read yet. Press Read again, or check ${joint.unread === 1 ? "it" : "them"} by eye, before asking them for anything else.`, action: "joint" };
-    }
-    // Something still missing (22 November 2026: "explain whats missing and keep emailing").
+    if (joint.unread) return step("act", "bgp", "To do", `read ${joint.unread === 1 ? "the file" : `${joint.unread} files`} from ${firm}`, "joint");
     if (joint.missing) {
-      const count = `${joint.missing} thing${s(joint.missing)} ${joint.missing === 1 ? "is" : "are"} still missing`;
-      const chase = joint.chasing ? " The app is chasing them every three days." : " Ask them for what's missing.";
-      const then = joint.rule === "sale"
-        ? " An officer can also record what came."
-        : " BGP can't rely on their checks until everything is in, unless an officer checked the rest by hand.";
-      return { tone: joint.chasing ? "wait" : "act", who: joint.chasing ? "joint_agent" : "bgp", words: `${joint.firm} sent their checks, but ${count}.${chase}${then}`, action: "joint" };
+      const n = `${joint.missing} document${s(joint.missing)} missing`;
+      return joint.chasing
+        ? step("wait", "joint_agent", `Waiting on ${firm}`, n, "joint_remind")
+        : step("act", "bgp", "To do", `ask ${firm} for ${joint.missing === 1 ? "the missing document" : `${joint.missing} missing documents`}`, "joint_remind");
     }
-    if (joint.rule === "sale") {
-      return { tone: "act", who: "officers", words: `${joint.firm}'s checks are in and cover everyone. An officer checks them and marks the party Not required, with this request as the record.`, action: "joint" };
-    }
-    if (joint.reliance) {
-      return { tone: "act", who: "officers", words: `${joint.firm} sent their checks and agreed to the reliance terms. An officer checks them and records the reliance.`, action: "joint" };
-    }
-    return { tone: "wait", who: "joint_agent", words: `${joint.firm} sent their checks but has not agreed to the reliance terms${joint.chasing ? ": the app is chasing them" : ": remind them"}, or send the client checks.`, action: "joint" };
+    if (joint.rule === "sale") return step("act", "officers", "For the officers", `${possessive(firm)} checks are in: mark Not required`, "joint");
+    if (joint.reliance) return step("act", "officers", "For the officers", `${possessive(firm)} checks are in: record the reliance`, "joint");
+    return step("wait", "joint_agent", `Waiting on ${firm}`, "to agree the reliance terms", "joint_remind");
   }
   if (joint && joint.status === "not_sent" && !clientGoing) {
-    return { tone: "act", who: "bgp", words: `The email to ${joint.firm} did not go: ask again.`, action: "joint" };
+    return step("act", "bgp", "To do", `the email to ${firmShort(joint.firm)} didn't go: ask again`, "joint");
   }
   if (joint && (joint.status === "sent" || joint.status === "opened") && !clientGoing) {
-    return {
-      tone: "wait", who: "joint_agent",
-      words: joint.rule === "sale"
-        ? `Waiting on ${joint.firm} for their checks. If they don't send them, an officer records that you asked and marks the party Not required.`
-        : `Waiting on ${joint.firm} for their checks and their agreement to the reliance terms.`,
-      action: "joint",
-    };
+    return step("wait", "joint_agent", `Waiting on ${firmShort(joint.firm)}`, joint.rule === "sale" ? "for their checks" : "for their checks and the terms", "joint");
   }
   if (f.due === false && !f.request) {
-    return { tone: "wait", who: "nobody", words: `Not due yet. ${DUE_WORDS[f.role] || "HMRC does not expect these checks yet."}`, action: null };
+    return step("wait", "nobody", "Not due yet", DUE_WORDS[f.role] || "");
   }
   if (!f.clientChecks) {
     return f.inHouseEdd
-      ? { tone: "act", who: "officers", words: "Client checks are off: an officer signs it off with a note.", action: f.canDecide ? "sign_off" : null }
-      : { tone: "act", who: "bgp", words: "Raise it with KYC4U.", action: "request_kyc4u" };
+      ? step("act", "officers", "For the officers", "sign it off with a note", f.canDecide ? "sign_off" : null)
+      : step("act", "bgp", "To do", "send it to KYC4U", "request_kyc4u");
   }
-  // In-house enhanced due diligence: the client checks run as any party's,
-  // with the officers' sign-off at the end.
   if (f.gaps.length) {
-    return { tone: "act", who: "bgp", words: `${andList(f.gaps.map(g => g.replace(/\.$/, "")))}.`, action: "fill_in" };
+    return step("act", "bgp", "To do", f.gaps[0].replace(/\.$/, ""), "fill_in");
   }
   const unreachable = f.people.filter(p => !p.reachable && !p.linked);
   if (!f.request || f.request.status === "not_sent" || f.request.status === "expired") {
-    const lead = !f.request
-      ? `Send the client checks${f.askName ? ` to ${f.askName}` : ""}.`
-      : f.request.status === "not_sent" ? "The client checks email did not go: send it again." : "The client checks link ran out: send a new one.";
-    const also = unreachable.length ? ` ${andList(unreachable.map(p => p.name))} also need${unreachable.length === 1 ? "s" : ""} an email or mobile for a link of their own.` : "";
-    return { tone: "act", who: "bgp", words: lead + also, action: "send_client_checks" };
+    const words = !f.request
+      ? `Send the client checks${f.askName ? ` to ${f.askName}` : ""}`
+      : f.request.status === "not_sent" ? "The client checks email didn't go: send it again" : "The link ran out: send a new one";
+    return step("act", "bgp", "To do", words, "send_client_checks");
   }
   if (unreachable.length) {
-    return {
-      tone: "act", who: "bgp",
-      words: `${andList(unreachable.map(p => p.name))} need${unreachable.length === 1 ? "s" : ""} to do their own checks: no email or mobile is held for them yet.`,
-      action: "add_details",
-    };
+    return step("act", "bgp", "To do", `Add contact details for ${andList(unreachable.map(p => p.name))}`, "add_details");
   }
   const noLink = f.people.filter(p => !p.linked);
   if (noLink.length) {
-    return { tone: "act", who: "bgp", words: `Send ${andList(noLink.map(p => p.name))} a link of their own.`, action: "people" };
+    return step("act", "bgp", "To do", `Send ${andList(noLink.map(p => p.name))} their own link`, "people");
   }
   if (f.request.status !== "finished") {
     const to = f.request.to;
     const others = f.people.filter(p => !to || !personNamesMatch(p.name, to));
-    return {
-      tone: "wait", who: "client",
-      words: `Waiting on ${f.request.to || "the client"} to finish the client checks${others.length ? `, and on ${owed(others)}` : ""}.`,
-      action: null,
-    };
+    return step("wait", "client", `Waiting on ${to || "the client"}`, others.length ? `and ${andList(others.map(p => p.name))}` : "");
   }
   if (f.people.length) {
-    return { tone: "wait", who: "client", words: `Waiting on ${owed(f.people)}.`, action: null };
+    return step("wait", "client", `Waiting on ${andList(f.people.map(p => p.name))}`, "");
   }
   if (f.billingDiffers) return BILLING_STEP;
-  if (f.signOffBlocked === null && canSign) {
-    return {
-      tone: "act", who: "bgp",
-      words: edd ? `Everything asked for is in. ${eddWords}` : f.needsNote ? "Everything asked for is in: sign it off, with a note." : "Everything asked for is in: sign it off.",
-      action: "sign_off",
-    };
-  }
-  if (f.signOffBlocked) {
-    return { tone: "wait", who: canSign ? "bgp" : "officers", words: `Everything asked for is in. Before it can be signed off: ${lowerFirst(stop(f.signOffBlocked))}`, action: null };
-  }
+  if (f.signOffBlocked === null && canSign) return ready(edd ? "enhanced: add a note" : f.needsNote ? "add a note" : "");
+  if (f.signOffBlocked) return blocked();
   return edd
-    ? { tone: "wait", who: "officers", words: `Everything asked for is in. ${eddWords}`, action: null }
-    : { tone: "act", who: "bgp", words: "Everything asked for is in: an agent on the deal, the Nominated Officer or a Deputy signs it off.", action: null };
+    ? step("wait", "officers", "For the officers", "everything is in: an officer signs off")
+    : step("wait", "officers", "Everything is in", "an agent or an officer signs off");
 }

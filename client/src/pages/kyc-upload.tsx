@@ -252,7 +252,7 @@ function OwnerLinksCard({ n, token, people, onView }: {
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold text-base leading-snug">{KYC_OWNER_LINKS_TITLE}</h3>
           <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
-            Each person who owns or controls the company does their own identity check and sends a proof of address, on a page of their own. Copy their link and send it to them, or give us their email address and we'll send it.
+            Each owner does their own identity check and proof of address, on their own page. Send them their link, or give us their email and we'll send it.
           </p>
           <ul className="mt-3 space-y-3">
             {people.map(person => <OwnerLinkRow key={person.key} token={token} person={person} onView={onView} />)}
@@ -446,8 +446,8 @@ function JointAgentPage({ token, view, setView, load }: { token: string; view: K
       <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="joint-intro">
         We are joint agents with {joint.firm} on <strong className="text-foreground">{view.dealName}</strong>, and you dealt with <strong className="text-foreground">{view.partyName}</strong>{noun ? `, the ${noun}` : ""}.{" "}
         {joint.letting
-          ? "HMRC's guidance for letting agents requires every party to a letting at £10,000 a month or more to be verified. Rather than ask them again, we would like to rely on your checks (Money Laundering Regulations 2017, regulation 39)."
-          : `HMRC's guidance asks the joint agent who did not deal with the ${noun || "other side"} to ask the one who did for their checks, and to record what comes back.`}
+          ? "Every party to a letting of £10,000 a month or more must be checked. Rather than ask them again, we'd like to rely on your checks."
+          : `HMRC asks us to get your checks on the ${noun || "other side"} and record what comes back.`}
       </p>
 
       {view.note && (
@@ -567,7 +567,7 @@ function JointAgentPage({ token, view, setView, load }: { token: string; view: K
           <h2 className="text-sm font-semibold mb-2">Questions?</h2>
           <AgentContact agents={view.agents} />
         </div>
-        <p className="text-xs text-muted-foreground">What you send is used only for our anti-money laundering checks, stored securely and kept for five years, as the regulations require. Our <a href={KYC_PRIVACY_URL} target="_blank" rel="noreferrer" className="underline hover:text-foreground">privacy notice</a> explains more.</p>
+        <p className="text-xs text-muted-foreground">We use what you send only for our anti-money laundering checks, and keep it securely for five years. Our <a href={KYC_PRIVACY_URL} target="_blank" rel="noreferrer" className="underline hover:text-foreground">privacy notice</a> has more.</p>
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Lock className="w-3.5 h-3.5" />Bruce Gillingham Pollard · Reference {view.ref}</p>
       </div>
     </Shell>
@@ -747,15 +747,15 @@ export default function KycUploadPage() {
       {view.person ? (
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="kyc-person-intro">
           {view.person.roles.includes("owner")
-            ? <>Companies House lists you as someone who owns or controls <strong className="text-foreground">{view.partyName}</strong>, which is a party to {view.dealName}. Before the deal can go ahead, the law requires us to confirm your identity too.</>
-            : <>You are {view.person.words}. Before the deal can go ahead, the law requires us to confirm your identity.</>}
-          {" "}This page is just for you, and it should take about five minutes.
+            ? <>Companies House lists you as someone who owns or controls <strong className="text-foreground">{view.partyName}</strong>, a party to {view.dealName}. The law requires us to confirm your identity too.</>
+            : <>You are {view.person.words}. The law requires us to confirm your identity.</>}
+          {" "}It takes about five minutes.
         </p>
       ) : (
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-          Before the deal can go ahead, the law requires us to confirm who we are dealing with
-          {view.kind === "company" ? <> for <strong className="text-foreground">{view.partyName}</strong></> : null}. This page is just for you, and it should take about ten minutes.
-          {view.kind === "company" ? " We read the company's details from Companies House ourselves, so you don't need to send anything filed there." : ""}
+          Before the deal can go ahead, the law requires us to confirm who we're dealing with
+          {view.kind === "company" ? <> for <strong className="text-foreground">{view.partyName}</strong></> : null}. It takes about ten minutes.
+          {view.kind === "company" ? " We read the company's Companies House record ourselves." : ""}
         </p>
       )}
 
@@ -855,13 +855,13 @@ export default function KycUploadPage() {
         </div>
         <div>
           <button type="button" className="flex items-center gap-1 text-sm font-semibold" onClick={() => setShowWhy(v => !v)} aria-expanded={showWhy}>
-            Why we ask, and how we look after your information <ChevronDown className={`w-4 h-4 transition-transform ${showWhy ? "rotate-180" : ""}`} />
+            Why we ask <ChevronDown className={`w-4 h-4 transition-transform ${showWhy ? "rotate-180" : ""}`} />
           </button>
           {showWhy && (
             <div className="mt-2 space-y-2 text-sm text-muted-foreground leading-relaxed">
               <p>{KYC_WHY_WE_ASK}</p>
-              <p>{KYC_DATA_USE} It goes straight to Bruce Gillingham Pollard over a secure connection and is seen only by the people at BGP who handle these checks.</p>
-              <p>Our <a href={KYC_PRIVACY_URL} target="_blank" rel="noreferrer" className="underline hover:text-foreground">privacy notice</a> explains how we handle your information and your rights.</p>
+              <p>{KYC_DATA_USE} Only the people at BGP who handle these checks see it.</p>
+              <p>Our <a href={KYC_PRIVACY_URL} target="_blank" rel="noreferrer" className="underline hover:text-foreground">privacy notice</a> has more.</p>
             </div>
           )}
         </div>

@@ -53,7 +53,7 @@ test("each of the regulation's conditions must be confirmed, and the firm named 
 test("a firm abroad names its country, confirms equivalent rules, and is never in a FATF call-for-action country (reg 39(4))", () => {
   assert.match(refused({ where: "abroad" }), /Name the country/);
   assert.match(refused({ where: "abroad", country: "France" }), /equivalent money laundering rules/);
-  assert.match(refused({ where: "abroad", country: "Iran", equivalent: true }), /cannot rely on a firm in Iran: it is on FATF's call-for-action list \(MLR 2017 reg 39\(4\)\)/);
+  assert.match(refused({ where: "abroad", country: "Iran", equivalent: true }), /cannot rely on a firm in Iran: it is on FATF's call-for-action list\./);
   const fr = relianceInput({ ...form, where: "abroad", country: "France", regulator: "Ordre des avocats de Paris", regulatorRef: "", equivalent: true }, today);
   assert.ok(fr.ok);
   assert.equal(relianceWords(fr.value), "Relying on Smith & Co LLP's checks (solicitors in France, Ordre des avocats de Paris), agreed 20 Nov 2026");
@@ -124,23 +124,24 @@ const box: AmlBoxFacts = {
   role: "purchaser", stage: "relied", due: true, approvedBy: null, expiresAt: null, notRequiredWords: null,
   company: true, companyMissing: false, gaps: [], askName: "Anna Smith", precheckRunning: false,
   redFlags: 0, factors: 0, sanctionsOnly: false, clientChecks: true, request: null, people: [], kyc4u: "none",
-  canSignOff: true, canDecide: true, signOffBlocked: null, needsNote: false, reliance: relianceWords(relied),
+  canSignOff: true, canDecide: true, signOffBlocked: null, needsNote: false, reliance: relianceWords(relied), relianceFirm: relied.firm,
 };
 
 test("the Next line: sign it off on the firm's checks, after the KYC4U, red flag and billing steps", () => {
   const step = amlNextStep(box);
   assert.equal(step.action, "sign_off");
-  assert.equal(step.words, "Relying on Smith & Co LLP's checks (solicitors, SRA 123456), agreed 20 Nov 2026. The client checks are not needed: sign it off.");
+  // A short line (22 November 2026): the firm's details are in the Documents step.
+  assert.equal(`${step.lead} · ${step.words}`, "Ready to sign off · relying on Smith & Co");
   assert.equal(amlNextStep({ ...box, redFlags: 2 }).action, "request_kyc4u");
   assert.equal(amlNextStep({ ...box, ownersAbroad: "Kirkbi A/S, Denmark" }).action, "request_kyc4u");
   assert.equal(amlNextStep({ ...box, kyc4u: "raised" }).who, "kyc4u");
   assert.equal(amlNextStep({ ...box, billingDiffers: true }).action, "billing");
   const blocked = amlNextStep({ ...box, signOffBlocked: "BGP's checks before asking have not run for this party. Press Run again on the card first." });
   assert.equal(blocked.action, null);
-  assert.match(blocked.words, /Before it can be signed off: BGP's checks before asking have not run/);
+  assert.equal(`${blocked.lead} · ${blocked.words}`, "Not ready to sign off · BGP's checks before asking have not run for this party");
   const agentOnly = amlNextStep({ ...box, canSignOff: false });
   assert.equal(agentOnly.who, "officers");
-  assert.match(agentOnly.words, /An agent on the deal, the Nominated Officer or a Deputy signs it off\.$/);
+  assert.equal(`${agentOnly.lead} · ${agentOnly.words}`, "Relying on Smith & Co · an agent or an officer signs off");
 });
 
 test("the AML dashboard: its own stage, in progress, waiting on BGP's sign-off; an enhanced party still needs KYC4U", () => {

@@ -59,7 +59,7 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
   },
   source_of_funds: {
     title: "Where the money is coming from",
-    detail: "Something that shows where the money for this deal comes from, not only which bank it is paid from: for example a recent bank statement, a mortgage or loan offer, the sale of another property, or a letter from your accountant or solicitor. For a company, its latest accounts or a recent bank statement.",
+    detail: "Something showing where the money comes from, not only which bank it is paid from: a bank statement, a mortgage or loan offer, the sale of another property, or a letter from your accountant or solicitor. For a company, its latest accounts or a bank statement.",
     docType: "source_of_funds",
   },
   ownership: {
@@ -155,17 +155,17 @@ export const kycPepWords = (answer: KycPepAnswer | null | undefined): string =>
 // When HMRC expects each party's checks (AMLG2200 sections 15 and 17, estate
 // agency; AMLG2300 section 19, letting agency).
 export const KYC_TIMING: Record<string, string> = {
-  landlord: "HMRC expects the landlord's identity checks to be done before you agree terms of engagement and before the unit is marketed.",
-  tenant: "HMRC expects the tenant's identity checks once the landlord accepts their offer, and before any agreement or contract is made. No deposit can be taken before they are done.",
-  vendor: "HMRC expects the seller's checks as soon as possible after first contact, before the property is marketed.",
-  purchaser: "HMRC expects the buyer's checks as soon as possible, before an offer is accepted, and at the latest before exchange.",
+  landlord: "Due before you agree terms of engagement and before the unit is marketed.",
+  tenant: "Due once the landlord accepts their offer, and before any agreement or contract. No deposit before then.",
+  vendor: "Due as soon as possible after first contact, before the property is marketed.",
+  purchaser: "Due before an offer is accepted, and at the latest before exchange.",
 };
 // A letting is in scope at a rent of £10,000 a month or more for at least
 // part of the term, turnover rent included (AMLG2300 sections 2, 11, 12).
 // Sanctions have no threshold: estate agents, and letting agents since
 // 14 May 2025, must report a designated person to OFSI (OFSI's guidance for
 // letting agents; the UK Sanctions List is the one list since 28 January 2026).
-export const KYC_LETTING_SCOPE = "A letting needs these checks when the rent is £10,000 a month (£120,000 a year) or more for any part of the term, turnover rent included, or is likely to rise above that. Every sale needs them. Sanctions apply whatever the rent: never deal with someone on the UK Sanctions List, and report them to OFSI.";
+export const KYC_LETTING_SCOPE = "Lettings need these checks at £10,000 a month or more, turnover rent included; every sale does. Sanctions apply whatever the rent: report a listed person to OFSI.";
 export const KYC_PRIVACY_URL = "https://www.brucegillinghampollard.com/privacy/";
 
 // Every request has a short code that goes in the subject line, so a reply
@@ -387,9 +387,9 @@ function linkFallback(link: string): string {
 // told their data is used only to prevent money laundering and terrorist
 // financing, and where the GDPR information is (the privacy notice). The
 // five years run from the end of the relationship (HMRC, AMLG11700).
-export const KYC_WHY_WE_ASK = "As estate and letting agents we must follow the UK Money Laundering Regulations 2017, which require us to confirm who we are dealing with before a deal goes ahead.";
-export const KYC_DATA_USE = "We will use what you send only to prevent money laundering and terrorist financing. It is stored securely and kept for five years after our work with you ends, as the law requires.";
-const whyWeAsk = () => h2("Why we ask") + p(`${escHtml(KYC_WHY_WE_ASK)} ${escHtml(KYC_DATA_USE)} Our <a href="${escHtml(KYC_PRIVACY_URL)}" style="color:${ACCENT}">privacy notice</a> explains how we handle your information and your rights.`, `font-size:13px;color:${BODY}`);
+export const KYC_WHY_WE_ASK = "The Money Laundering Regulations require estate and letting agents to confirm who they are dealing with.";
+export const KYC_DATA_USE = "We use what you send only to prevent money laundering and terrorist financing, and keep it securely for five years after our work with you ends.";
+const whyWeAsk = () => h2("Why we ask") + p(`${escHtml(KYC_WHY_WE_ASK)} ${escHtml(KYC_DATA_USE)} Our <a href="${escHtml(KYC_PRIVACY_URL)}" style="color:${ACCENT}">privacy notice</a> has more.`, `font-size:13px;color:${BODY}`);
 
 function noteBlock(note: string | null | undefined, agents: KycAgent[]): string {
   const text = String(note || "").trim();
@@ -405,18 +405,18 @@ const subjectFor = (ctx: Pick<KycEmailContext, "dealName" | "ref" | "test">, lea
 export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: string } {
   const steps = kycSteps(ctx);
   const forWhom = ctx.kind === "company"
-    ? ` That includes you, as the person dealing with us for <strong>${escHtml(ctx.partyName)}</strong>, and the people who own the company.`
+    ? ` That's you, for <strong>${escHtml(ctx.partyName)}</strong>, and the company's owners.`
     : "";
   // A person's own request: an owner may not know the deal at all.
   const opening = ctx.person?.roles.includes("owner")
-    ? `<strong>${escHtml(ctx.partyName)}</strong> is a party to <strong>${escHtml(ctx.dealName)}</strong>, which we are working on. Companies House lists you as someone who owns or controls ${escHtml(ctx.partyName)}, so before the deal can go ahead the law requires us to confirm your identity too.`
+    ? `Companies House lists you as someone who owns or controls ${escHtml(ctx.partyName)}, a party to <strong>${escHtml(ctx.dealName)}</strong>. The law requires us to confirm your identity too.`
     : ctx.person?.roles.includes("joint")
-      ? `You are named alongside <strong>${escHtml(withoutPrivateMark(ctx.partyName))}</strong> on <strong>${escHtml(ctx.dealName)}</strong>, which we are working on, so before the deal can go ahead the law requires us to confirm your identity too.`
+      ? `You're named alongside <strong>${escHtml(withoutPrivateMark(ctx.partyName))}</strong> on <strong>${escHtml(ctx.dealName)}</strong>. The law requires us to confirm your identity too.`
     : ctx.person
-      ? `You are dealing with us for <strong>${escHtml(ctx.partyName)}</strong> on <strong>${escHtml(ctx.dealName)}</strong>, so before the deal can go ahead the law requires us to confirm your identity.`
-      : `We're working with you on <strong>${escHtml(ctx.dealName)}</strong>. Before the deal can go ahead, the law requires us to confirm who we are dealing with.${forWhom}`;
+      ? `You're dealing with us for <strong>${escHtml(ctx.partyName)}</strong> on <strong>${escHtml(ctx.dealName)}</strong>. The law requires us to confirm your identity.`
+      : `Before <strong>${escHtml(ctx.dealName)}</strong> can go ahead, the law requires us to confirm who we're dealing with.${forWhom}`;
   const companiesHouse = ctx.kind === "company"
-    ? p("We read the company's details from Companies House ourselves, so you don't need to send anything that is filed there.", `font-size:14px;color:${BODY}`)
+    ? p("We read the company's Companies House record ourselves.", `font-size:14px;color:${BODY}`)
     : "";
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Identity checks for ${escHtml(ctx.dealName)}</h1>`,
@@ -426,7 +426,7 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
     stepsList(steps),
     companiesHouse,
     button("Start your checks", ctx.link),
-    p(`The link is personal to you and works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>. You can use it on your phone or computer, and come back to it as often as you need.`, `font-size:13px;color:${MUTED}`),
+    p(`Your personal link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>, on your phone or computer.`, `font-size:13px;color:${MUTED}`),
     noteBlock(ctx.note, ctx.agents),
     whyWeAsk(),
     h2("Questions?"),
@@ -479,9 +479,9 @@ export function kycIdCheckEmail(ctx: Omit<KycEmailContext, "docs" | "needsIdChec
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">A quick identity check</h1>`,
     p(greeting(ctx.recipientName)),
-    p(`Before we can go ahead${ctx.dealName ? ` with <strong>${escHtml(ctx.dealName)}</strong>` : ""}, the law requires us to confirm who we are dealing with. Please complete a short identity check: a photo of your passport or driving licence and a short selfie. It takes about two minutes on your phone or computer.`),
+    p(`Before we can go ahead${ctx.dealName ? ` with <strong>${escHtml(ctx.dealName)}</strong>` : ""}, the law requires us to confirm who we're dealing with. It takes about two minutes: a photo of your passport or driving licence, and a selfie.`),
     button("Start the identity check", ctx.link),
-    p("The check is run for us by Veriff, an identity verification service. The link is personal to you.", `font-size:13px;color:${MUTED}`),
+    p("Veriff runs the check for us. The link is personal to you.", `font-size:13px;color:${MUTED}`),
     whyWeAsk(),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
@@ -536,8 +536,8 @@ export function jointAgentAsks(ctx: Pick<JointAgentEmailContext, "kind" | "letti
 export function jointAgentRequestEmail(ctx: JointAgentEmailContext): { subject: string; html: string } {
   const noun = ROLE_NOUN[ctx.partyRole || ""] || "other party";
   const why = ctx.letting
-    ? `HMRC's guidance for letting agents requires every party to a letting at £10,000 a month or more to be verified. Rather than ask ${escHtml(ctx.partyName)} again, we would like to rely on your checks under the Money Laundering Regulations 2017 (regulation 39).`
-    : `HMRC's guidance for estate agents asks the joint agent who did not deal with the ${noun} to ask the one who did for their customer due diligence, and to record what comes back (AMLG2200, section 21).`;
+    ? `Every party to a letting of £10,000 a month or more must be checked. Rather than ask ${escHtml(ctx.partyName)} again, we'd like to rely on your checks.`
+    : `HMRC asks us, as the joint agent who didn't deal with the ${noun}, to get your checks on them and record what comes back.`;
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Your AML checks on ${escHtml(ctx.partyName)}</h1>`,
     p(greeting(ctx.recipientName)),
@@ -545,9 +545,9 @@ export function jointAgentRequestEmail(ctx: JointAgentEmailContext): { subject: 
     h2("Please send us"),
     stepsList(jointAgentAsks(ctx)),
     button("Send your checks", ctx.link),
-    p(`Or reply to this email with the files attached, keeping the reference in the subject. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
+    p(`Or reply with the files attached, keeping the reference in the subject. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
     noteBlock(ctx.note, ctx.agents),
-    p(`What you send is used only for our anti-money laundering checks, stored securely and kept for five years, as the regulations require.`, `font-size:13px;color:${BODY}`),
+    p(`We use what you send only for our anti-money laundering checks, and keep it securely for five years.`, `font-size:13px;color:${BODY}`),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
@@ -575,7 +575,7 @@ export function jointAgentMissingEmail(ctx: JointAgentEmailContext & { missing: 
     ctx.nothingYet ? stepsList(jointAgentAsks(ctx)) : list(ctx.missing),
     p(why, `font-size:14px;color:${BODY}`),
     button(ctx.nothingYet ? "Send your checks" : "Send what's missing", ctx.link),
-    p(`Or reply to this email with the files attached, keeping the reference in the subject. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
+    p(`Or reply with the files attached, keeping the reference in the subject. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
@@ -590,7 +590,7 @@ export function jointAgentChaseStoppedEmail(ctx: {
 }): { subject: string; html: string } {
   const next = ctx.letting
     ? "BGP can't rely on their checks while these are missing. Chase them yourself, or send the client checks."
-    : "Chase them yourself, or an officer records what came on the deal's AML: Not required, with \"they sent part of their checks\" or \"they did not provide them\" (HMRC, AMLG2200 section 21).";
+    : "Chase them yourself, or an officer records on the deal that \"they sent part of their checks\" or \"they did not provide them\".";
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Still missing after ${ctx.chases} reminders</h1>`,
     p(`The app has asked ${escHtml(ctx.firm)} ${ctx.chases} times for what is missing from their checks on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong>, and has stopped chasing.`),
@@ -608,9 +608,9 @@ export function jointAgentFinishedEmail(ctx: {
 }): { subject: string; html: string } {
   const next = ctx.letting
     ? (ctx.reliance
-        ? "Next: the Nominated Officer or a Deputy checks what they sent and records the reliance on the deal's AML."
+        ? "Next: an officer checks what they sent and records the reliance."
         : `${escHtml(ctx.firm)} has not agreed to the reliance terms yet: ask them to, or send the client checks.`)
-    : "Next: the Nominated Officer or a Deputy checks what they sent and records it on the deal's AML (Not required, with this request as the record).";
+    : "Next: an officer checks what they sent and records it on the deal.";
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">${escHtml(ctx.firm)} has sent their checks</h1>`,
     p(`${escHtml(ctx.recipientName || ctx.firm)} has sent ${escHtml(ctx.firm)}'s anti-money laundering checks on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong>.`),
@@ -681,17 +681,17 @@ export function kycFinishedEmail(ctx: {
     ctx.missing.length ? h2("Not sent") + p(escHtml(ctx.missing.join(", "))) : "",
     ctx.pep !== undefined ? h2("Public roles") + p(`${escHtml(kycPepWords(ctx.pep))}${ctx.pepDetail ? `: ${escHtml(ctx.pepDetail)}` : ""}`) : "",
     ctx.pep === "yes" || ctx.pep === "unsure"
-      ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>Enhanced due diligence.</strong> A politically exposed person, or a family member or close associate of one, needs senior management approval (a director or the MLRO) before the deal goes ahead, their source of wealth and source of funds established, and closer monitoring (MLR 2017 reg 35; HMRC AMLG11650). A UK one starts as lower risk, so the checks can be lighter and use public information unless something else raises the risk (FCA FG25/3). Screening must confirm whether the answer is right.</div>`
+      ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>Enhanced due diligence.</strong> A public role, or a relative or close associate of someone with one, needs senior management approval before the deal goes ahead, their source of wealth and source of funds, and closer monitoring. A UK one starts as lower risk. Check the answer against the screening.</div>`
       : "",
     ctx.owners?.list.length ? h2("Owners on the register") + p(`${ctx.owners.list.map(o => `${escHtml(o.name)} (${escHtml(o.detail)})`).join("; ")}.<br><strong>${escHtml(kycOwnersWords(ctx.owners.reply?.answer))}</strong>${ctx.owners.reply?.detail ? `: ${escHtml(ctx.owners.reply.detail)}` : ""}`) : "",
     ctx.owners?.reply?.answer === "no"
-      ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>A difference from the register.</strong> The client says the owners Companies House lists are not right. Find out who the owners are, and report the difference to Companies House (HMRC, AMLG11400 14.8).</div>`
+      ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>A difference from the register.</strong> The client says the owners Companies House lists are wrong. Find out who the owners are and report the difference to Companies House.</div>`
       : "",
     ctx.redFlags?.length ? redFlagBox(ctx.redFlags, !!ctx.inHouse) : "",
     ctx.peopleOutstanding?.length
       ? h2(`Still to come from the people to check for ${ctx.partyName}`) + `<ul style="margin:4px 0 14px 18px;padding:0;font-size:14px;color:${INK}">${ctx.peopleOutstanding.map(line => `<li style="margin:0 0 4px">${escHtml(line)}</li>`).join("")}</ul>`
       : "",
-    ctx.kind === "company" && !ctx.owners?.list.length ? p("Check the owners they list against the PSC register at Companies House. A difference must be reported to Companies House (HMRC, AMLG11400 14.8).", `font-size:13px;color:${BODY}`) : "",
+    ctx.kind === "company" && !ctx.owners?.list.length ? p("Check the owners they list against the PSC register. Report any difference to Companies House.", `font-size:13px;color:${BODY}`) : "",
     button("Open the deal's AML", ctx.dealLink),
     p("The files are on the client's KYC record. Review them and sign off in the app as usual.", `font-size:13px;color:${MUTED}`),
   ].join("\n");
@@ -705,8 +705,8 @@ export function kycFinishedEmail(ctx: {
 
 // How BGP handles a red flag (Woody, 17 November 2026: "basically we do the
 // normal checks expected and if there is a red flag then we get KYC4U").
-export const KYC_RED_FLAG_RULE = "The routine checks are done in the app. A red flag, or a higher-risk factor in BGP's AML policy, goes to KYC4U, BGP's outsourced KYC provider, for enhanced due diligence, and the Nominated Officer or the Deputy approves the result before the deal goes ahead.";
-export const KYC_RED_FLAG_STEP = "Open the deal's AML card and press Request KYC4U check on this party: the red flags are already in the request's note.";
+export const KYC_RED_FLAG_RULE = "A red flag goes to KYC4U for enhanced checks, and an officer approves their result before the deal goes ahead.";
+export const KYC_RED_FLAG_STEP = "On the deal's AML, press Request KYC4U check: the flags are in the request's note.";
 
 // The client checks run on their own switch (Woody, 18 November 2026,
 // choosing "client checks only"): on unless KYC_CLIENT_CHECKS is "off",
@@ -726,8 +726,8 @@ export const KYC_CLIENT_CHECK_ROUTES: readonly RegExp[] = [
 
 // With the officers doing enhanced checks in-house (22 November 2026), a red
 // flag goes to the Nominated Officer or a Deputy, not KYC4U.
-export const KYC_RED_FLAG_RULE_IN_HOUSE = "A red flag, or a higher-risk factor in BGP's AML policy, needs enhanced checks: the Nominated Officer or a Deputy reviews them and signs the party off before the deal goes ahead.";
-export const KYC_RED_FLAG_STEP_IN_HOUSE = "Open the deal's AML and look at the flags: an officer signs it off, or sets aside a flag that does not apply, with a comment.";
+export const KYC_RED_FLAG_RULE_IN_HOUSE = "A red flag needs enhanced checks, and an officer signs the party off before the deal goes ahead.";
+export const KYC_RED_FLAG_STEP_IN_HOUSE = "On the deal's AML, an officer signs it off, or sets a flag aside with a comment.";
 
 function redFlagBox(flags: KycRedFlag[], inHouse = false): string {
   const items = flags.map(f => `<li style="margin:0 0 6px">${escHtml(f.label)}${f.detail ? `: ${escHtml(f.detail)}` : ""} <span style="color:${MUTED}">(${escHtml(f.source)})</span></li>`).join("");
@@ -785,7 +785,7 @@ export function amlOutstandingAtCompletionEmail(ctx: {
     h2("Not approved"),
     `<ul style="margin:0 0 14px 18px;padding:0">${ctx.parties.map(c => `<li style="margin:0 0 6px">${escHtml(roleWord(c.role))}: <strong>${escHtml(c.name)}</strong> <span style="color:${MUTED}">(${escHtml(c.reason)})</span></li>`).join("")}</ul>`,
     h2("What to do"),
-    p("Open the deal's Parties & AML and decide each party: sign it off, add KYC4U's result, or, for the other side of a deal a joint agent negotiated, mark it Not required. If anything is suspicious, it is reported to the National Crime Agency, and nobody tells the client."),
+    p("Decide each party on the deal's AML: sign it off, add KYC4U's result, or mark the joint agent's party Not required. Anything suspicious goes to the National Crime Agency, and the client is not told."),
     button("Open the deal's AML", ctx.link),
   ].join("\n");
   return {
@@ -835,7 +835,7 @@ export function amlRegisterNoticeEmail(ctx: { raisedBy: string | null; link: str
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3">A new report is waiting for you</h1>`,
     p(`${ctx.raisedBy ? `${escHtml(ctx.raisedBy)} has` : "Someone has"} raised a report for the Nominated Officer in BGP's AML register. What it is about is not in this email: open it in ChatBGP (Deals, AML, Reports).`),
     button("Open the AML register", ctx.link),
-    p("Only the Nominated Officer and the Deputy can read it.", `font-size:13px;color:${MUTED}`),
+    p("Only the officers can read it.", `font-size:13px;color:${MUTED}`),
   ].join("\n");
   return {
     subject: "AML: a new report is waiting for you",

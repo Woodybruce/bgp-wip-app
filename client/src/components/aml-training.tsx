@@ -73,7 +73,7 @@ export function AmlTrainingPanel({ userId, isOwn }: { userId: string; isOwn: boo
   const s = data.standing;
   return (
     <div className="space-y-3" data-testid="aml-training-panel">
-      <p className="text-sm text-muted-foreground">BGP's AML policy (section L): everyone is kept up to date on the Regulations, HMRC's guidance, the risks to BGP and BGP's own procedures. Records are kept for five years.</p>
+      <p className="text-sm text-muted-foreground">Who has had AML training and confirmed the current policy. Kept for five years.</p>
       <div className="flex flex-wrap gap-2 text-sm">
         <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${s.due ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"}`} data-testid="aml-training-last">
           {s.due ? <Clock className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}

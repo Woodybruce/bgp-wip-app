@@ -73,7 +73,10 @@ test("a trust goes to KYC4U in full, and the red mark shows until it is with the
   };
   const step = amlNextStep(facts);
   assert.equal(step.action, "request_kyc4u");
-  assert.match(step.words, /^A trust: goes to KYC4U in full\./);
+  // The red mark (Jack, 20 November 2026) is the Next line's own, in a few words (22 November 2026).
+  assert.equal(step.lead, "Not yet with KYC4U");
+  assert.equal(step.words, "a trust");
+  assert.equal(step.tone, "flag");
   assert.equal(amlNextStep({ ...facts, kyc4u: "queued" }).action, "kyc4u_form");
   assert.equal(amlNextStep({ ...facts, kyc4u: "raised" }).who, "kyc4u");
   assert.equal(amlNeedsKyc4u("enhanced", "bgp_checked"), true);

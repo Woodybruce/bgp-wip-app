@@ -14,8 +14,8 @@ test("the officers say why and what happened; withdrawing is their choice", () =
   const noReason = amlStopInput({ reason: "suspicion", note: "Something long enough to count." });
   assert.equal(noReason.ok, false);
   const short = amlStopInput({ reason: "other", note: "Odd." });
-  assert.ok(!short.ok && /at least a sentence/.test(short.message));
-  assert.match(AML_STOP_REASONS.checks_incomplete, /reg 31/);
+  assert.ok(!short.ok && /in a sentence or more/.test(short.message));
+  assert.match(AML_STOP_REASONS.checks_incomplete, /checks can't be completed/);
 });
 
 test("a stopped deal moves only to Withdrawn, or stays where it is", () => {

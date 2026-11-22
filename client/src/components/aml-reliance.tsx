@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
-import { RELIANCE_FIRM_KINDS, RELIANCE_TERMS, relianceInput, type PartyReliance, type RelianceFirmKind } from "@shared/aml-reliance";
+import { RELIANCE_FIRM_KINDS, relianceInput, type PartyReliance, type RelianceFirmKind } from "@shared/aml-reliance";
 
 const refresh = (dealId: string) => {
   queryClient.invalidateQueries({ queryKey: ["/api/aml/deal", dealId, "client-checks"] });
@@ -77,12 +77,12 @@ export function JointRelianceButton({ dealId, role, partyName, joint, gaps = [] 
 const BY_HAND_MIN = 20;
 
 /** The officers' button and form. */
-export function RelianceButton({ dealId, role, partyName }: { dealId: string; role: string; partyName: string }) {
+export function RelianceButton({ dealId, role, partyName, label }: { dealId: string; role: string; partyName: string; label?: string }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setOpen(true)} data-testid={`reliance-open-${role}`}>
-        <Handshake className="w-3.5 h-3.5 mr-1" />Rely on another firm's checks
+        <Handshake className="w-3.5 h-3.5 mr-1" />{label || "Rely on another firm's checks"}
       </Button>
       {open && <RelianceDialog dealId={dealId} role={role} partyName={partyName} onClose={() => setOpen(false)} />}
     </>
@@ -135,12 +135,9 @@ function RelianceDialog({ dealId, role, partyName, joint, gaps = [], onClose }: 
         <DialogHeader>
           <DialogTitle>{partyName}: rely on another firm's checks</DialogTitle>
           <DialogDescription>
-            When another regulated firm on this deal (the client's solicitors, say) has checked the customer and agrees to BGP relying on its checks (MLR 2017 reg 39). The client checks are then not needed. Only the Nominated Officer or a Deputy records it.
+            Another regulated firm on this deal has checked the customer and agrees to BGP relying on its checks. BGP stays responsible, and it doesn't cover a higher-risk party.
           </DialogDescription>
         </DialogHeader>
-        <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-muted-foreground" data-testid="reliance-terms">
-          {RELIANCE_TERMS.map(t => <li key={t}>{t}</li>)}
-        </ul>
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5 sm:col-span-2">
@@ -199,7 +196,7 @@ function RelianceDialog({ dealId, role, partyName, joint, gaps = [], onClose }: 
           </div>
           {gaps.length > 0 && (
             <div className="space-y-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" data-testid="reliance-joint-gaps">
-              <p className="font-medium">Their files do not cover everything BGP needs to rely on them (MLR 2017 reg 39(2)(a)):</p>
+              <p className="font-medium">Their files don't cover:</p>
               <ul className="list-disc pl-4">{gaps.map(g => <li key={g}>{g}</li>)}</ul>
               <Label htmlFor="reliance-by-hand" className="text-[11px]">How you checked these by hand</Label>
               <Textarea id="reliance-by-hand" value={byHand} onChange={e => setByHand(e.target.value)} rows={2} maxLength={1000}
@@ -208,7 +205,7 @@ function RelianceDialog({ dealId, role, partyName, joint, gaps = [], onClose }: 
           )}
           {joint && (
             <p className="rounded border border-violet-200 bg-violet-50/60 px-2 py-1.5 text-xs text-violet-950 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-100" data-testid="reliance-joint-source">
-              {joint.contact || joint.firm} agreed to the terms on BGP's page on {day(joint.agreedOn)} (ref {joint.ref}). That agreement is filed as a PDF on the party's KYC record as the firm's agreement in writing. Tick each line only once you have checked what they sent.
+              {joint.contact || joint.firm} agreed on BGP's page on {day(joint.agreedOn)} (ref {joint.ref}), filed as a PDF. Tick each line once you've checked what they sent.
             </p>
           )}
           <div className="space-y-1.5">

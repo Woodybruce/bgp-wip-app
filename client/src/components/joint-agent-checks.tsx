@@ -13,7 +13,7 @@
 // server/joint-agent-checks.ts; the rules shared/joint-agent-checks.ts.
 import { useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Copy, FileText, Loader2, Mail, RefreshCw, Send, Upload, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, Copy, FileText, Loader2, Mail, RefreshCw, Send, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,7 +26,13 @@ import { JOINT_DOC_KINDS, type JointAgentChecksView, type JointAgentPartyView, t
 import type { AmlBoxFacts } from "@shared/aml-box";
 
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "").replace(/^\{"message":"(.*)"(,.*)?\}$/, "$1");
-const day = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : "");
+// The year only when it is not this year: "25 Nov", "2 Apr 2023".
+const day = (iso: string | null | undefined) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const thisYear = d.getUTCFullYear() === new Date().getUTCFullYear();
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(thisYear ? {} : { year: "numeric" as const }), timeZone: "Europe/London" });
+};
 const born = (ym: string | null | undefined) => {
   if (!ym) return "";
   const [y, m] = ym.split("-");
@@ -95,11 +101,6 @@ export function jointSectionLine(p: JointAgentPartyView): { tone: "done" | "wait
   return { tone: "wait", summary: p.line };
 }
 
-const STATUS_WORDS: Record<JointAgentRequestView["status"], string> = {
-  not_sent: "Email not sent", sent: "Asked, nothing back yet", opened: "They opened the link", in: "Their checks came in",
-  finished: "They pressed Finish", expired: "The link ran out", cancelled: "Cancelled",
-};
-
 function readingWords(r: JointFileReading): string {
   const kind = r.kind ? JOINT_DOC_KINDS[r.kind] : "Document";
   const bits = [
@@ -111,9 +112,11 @@ function readingWords(r: JointFileReading): string {
     r.addressVerified ? "address verified" : null,
     r.certified ? "certified copy" : null,
   ].filter(Boolean);
-  return bits.join(", ");
+  const people = (r.people || []).map(p => `${p.name}${p.born ? ` (born ${born(p.born)})` : ""}`);
+  return [bits.join(", "), ...people, ...(r.companies || [])].filter(Boolean).join(" · ");
 }
 
+// One file on one line: its name, what it was read as, and Read again when it was not read.
 function FileRow({ dealId, token, file }: { dealId: string; token: string; file: JointAgentRequestView["files"][number] }) {
   const { toast } = useToast();
   const reread = useMutation({
@@ -122,164 +125,182 @@ function FileRow({ dealId, token, file }: { dealId: string; token: string; file:
     onError: (e: any) => toast({ title: "Not read", description: plain(e), variant: "destructive" }),
   });
   const r = file.reading;
+  const kind = r?.state === "read" ? (r.title || (r.kind ? JOINT_DOC_KINDS[r.kind] : "Document")) : null;
   return (
-    <li className="text-xs" data-testid="joint-file">
-      <div className="flex items-start gap-1.5">
-        <FileText className="w-3.5 h-3.5 mt-[1px] shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          {file.url ? <a href={file.url} target="_blank" rel="noreferrer" className="underline underline-offset-2 break-all">{file.name}</a> : <span className="break-all">{file.name}</span>}
-          <span className="text-muted-foreground"> · {day(file.uploadedAt)}</span>
-          {!r && <div className="text-muted-foreground"><Loader2 className="inline w-3 h-3 mr-1 animate-spin" />Reading…</div>}
-          {r?.state === "read" && (
-            <div className="text-muted-foreground">
-              {readingWords(r)}
-              {(r.people || []).length > 0 && <> · {(r.people || []).map(p => `${p.name}${p.born ? ` (born ${born(p.born)})` : ""}`).join(", ")}</>}
-              {(r.companies || []).length > 0 && <> · {(r.companies || []).join(", ")}</>}
-              {r.summary && <div>{r.summary}</div>}
-            </div>
+    <li className="flex min-w-0 items-center gap-1.5 text-xs" data-testid="joint-file">
+      <FileText className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+      {file.url ? <a href={file.url} target="_blank" rel="noreferrer" className="min-w-0 truncate underline underline-offset-2">{file.name}</a> : <span className="min-w-0 truncate">{file.name}</span>}
+      {!r && <span className="shrink-0 text-muted-foreground"><Loader2 className="inline w-3 h-3 mr-1 animate-spin" />reading</span>}
+      {kind && <span className="min-w-0 truncate text-muted-foreground" title={readingWords(r!)}>· {kind}</span>}
+      {r && r.state !== "read" && (
+        <span className="shrink-0 text-amber-800 dark:text-amber-300" title={r.why || undefined}>
+          · {r.unreadable ? "could not be opened" : "not read"}
+          {file.documentId && !r.unreadable && (
+            <button type="button" data-no-min-touch className="ml-1.5 underline underline-offset-2" disabled={reread.isPending} onClick={() => reread.mutate()} data-testid="joint-file-reread">
+              {reread.isPending ? "Reading…" : "Read again"}
+            </button>
           )}
-          {r && r.state !== "read" && (
-            <div className="text-amber-800 dark:text-amber-300">
-              Not read: {r.why}.
-              {file.documentId && (
-                <button type="button" data-no-min-touch className="ml-1.5 underline underline-offset-2" disabled={reread.isPending} onClick={() => reread.mutate()} data-testid="joint-file-reread">
-                  {reread.isPending ? "Reading…" : "Read again"}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+        </span>
+      )}
     </li>
   );
 }
 
-function RequestRow({ dealId, companyId, request }: { dealId: string; companyId: string; request: JointAgentRequestView }) {
+const REQUEST_STATE: Record<JointAgentRequestView["status"], string> = {
+  not_sent: "the email didn't go", sent: "nothing back yet", opened: "opened", in: "files in", finished: "finished", expired: "link ran out", cancelled: "cancelled",
+};
+
+// One request on one line: who was asked and when, what came back, Link and Cancel.
+function RequestLine({ dealId, companyId, request }: { dealId: string; companyId: string; request: JointAgentRequestView }) {
   const { toast } = useToast();
   const cancel = useMutation({
     mutationFn: async () => (await apiRequest("DELETE", `/api/aml/client-checks/${encodeURIComponent(request.token)}`)).json(),
     onSuccess: () => { refreshJointChecks(dealId); toast({ title: "Cancelled", description: `The link to ${request.firm} no longer opens.` }); },
     onError: (e: any) => toast({ title: "Not cancelled", description: plain(e), variant: "destructive" }),
   });
-  const copy = () => { void navigator.clipboard?.writeText(request.link).then(() => toast({ title: "Link copied", description: "Send it to the joint agent yourself if the email did not reach them." })); };
+  const copy = () => { void navigator.clipboard?.writeText(request.link).then(() => toast({ title: "Link copied" })); };
   const live = request.status !== "cancelled" && request.status !== "expired";
+  const lastChase = request.chases[request.chases.length - 1];
+  const bits = [
+    request.manual ? `From ${request.to ? `${request.to}'s` : "their"} email, added by ${request.sentBy || "BGP"}` : `Asked ${request.to || request.firm}${request.sentAt ? ` ${day(request.sentAt)}` : ""}`,
+    REQUEST_STATE[request.status],
+    request.openedAt && !request.manual && request.status !== "opened" ? `opened ${day(request.openedAt)}` : null,
+    request.finishedAt ? `finished ${day(request.finishedAt)}` : null,
+    request.chases.length ? `reminded ${request.chases.length}× (last ${day(lastChase.at)}${lastChase.auto ? "" : `, ${lastChase.by}`})` : null,
+    `ref ${request.ref}`,
+  ].filter(Boolean);
   return (
-    <div className={`rounded border px-2.5 py-2 text-xs ${request.status === "cancelled" ? "opacity-60" : ""}`} data-testid={`joint-request-${request.ref}`}>
+    <div className={`space-y-1 text-xs ${request.status === "cancelled" ? "opacity-60" : ""}`} data-testid={`joint-request-${request.ref}`}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="font-medium">{request.manual ? "Added from their email" : `Asked ${request.firm}`}</span>
-        <span className="text-muted-foreground">ref {request.ref}</span>
-        <span className="rounded bg-muted px-1.5 py-0.5">{STATUS_WORDS[request.status]}</span>
-        <span className="ml-auto flex flex-wrap gap-1">
-          {live && !request.manual && (
-            <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[11px]" onClick={copy} data-testid={`joint-copy-${request.ref}`}><Copy className="w-3 h-3 mr-1" />Link</Button>
-          )}
-          {request.status !== "cancelled" && (
-            <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[11px]" disabled={cancel.isPending} onClick={() => cancel.mutate()} data-testid={`joint-cancel-${request.ref}`}>
-              <X className="w-3 h-3 mr-1" />Cancel
-            </Button>
-          )}
-        </span>
+        <span className="text-muted-foreground" title={request.sendError || undefined}>{bits.join(" · ")}</span>
+        {live && !request.manual && (
+          <Button type="button" size="sm" variant="ghost" className="h-6 px-1.5 text-[11px]" onClick={copy} data-testid={`joint-copy-${request.ref}`}><Copy className="w-3 h-3 mr-1" />Link</Button>
+        )}
+        {request.status !== "cancelled" && (
+          <Button type="button" size="sm" variant="ghost" className="h-6 px-1.5 text-[11px]" disabled={cancel.isPending} onClick={() => cancel.mutate()} data-testid={`joint-cancel-${request.ref}`}>
+            <X className="w-3 h-3 mr-1" />Cancel
+          </Button>
+        )}
       </div>
-      <div className="mt-1 text-muted-foreground">
-        {request.manual
-          ? `Files ${request.to ? `from ${request.to}` : "the joint agent"} emailed to BGP, added by ${request.sentBy || "BGP"}`
-          : request.sentAt ? `To ${request.to || "the joint agent"}${request.toEmail ? ` <${request.toEmail}>` : ""}, ${day(request.sentAt)}${request.sentBy ? ` by ${request.sentBy}` : ""}`
-          : `Not sent${request.sendError ? `: ${request.sendError}` : ""}`}
-        {request.openedAt && !request.manual ? ` · opened ${day(request.openedAt)}` : ""}
-        {request.finishedAt ? ` · finished ${day(request.finishedAt)}` : ""}
-      </div>
-      {request.chases.length > 0 && (
-        <div className="mt-1 text-muted-foreground" data-testid={`joint-chases-${request.ref}`}>
-          Asked for what's missing {request.chases.length} time{request.chases.length === 1 ? "" : "s"}, last {day(request.chases[request.chases.length - 1].at)}
-          {request.chases[request.chases.length - 1].auto ? " (by the app)" : ` by ${request.chases[request.chases.length - 1].by}`}
-          {request.chaseStoppedAt ? ` · the app stopped chasing on ${day(request.chaseStoppedAt)}` : ""}
-        </div>
-      )}
+      {request.chases.length > 0 && <span className="sr-only" data-testid={`joint-chases-${request.ref}`}>Reminded {request.chases.length} times</span>}
       {request.reliance && (
-        <div className="mt-1.5 rounded border border-violet-200 bg-violet-50/60 px-2 py-1 text-violet-950 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-100" data-testid={`joint-reliance-${request.ref}`}>
-          Agreed to BGP relying on their checks: {[request.reliance.name, request.reliance.position].filter(Boolean).join(", ")} of {request.reliance.firm}, {day(request.reliance.agreedAt)}.
-          {" "}Supervised by {request.reliance.supervisor}{request.reliance.registration ? ` (${request.reliance.registration})` : ""}.
-          {" "}<a className="underline underline-offset-2" target="_blank" rel="noreferrer" href={`/api/deals/${dealId}/joint-agent-checks/${request.ref}/reliance.pdf?companyId=${encodeURIComponent(companyId)}`}>Confirmation (PDF)</a>
+        <div className="text-violet-900 dark:text-violet-200" data-testid={`joint-reliance-${request.ref}`}>
+          Terms agreed by {[request.reliance.name, request.reliance.position].filter(Boolean).join(", ")}, {day(request.reliance.agreedAt)}
+          {" · "}<a className="underline underline-offset-2" target="_blank" rel="noreferrer" href={`/api/deals/${dealId}/joint-agent-checks/${request.ref}/reliance.pdf?companyId=${encodeURIComponent(companyId)}`}>PDF</a>
         </div>
       )}
-      {request.files.length > 0 && <ul className="mt-1.5 space-y-1">{request.files.map((f, i) => <FileRow key={`${f.documentId || f.name}-${i}`} dealId={dealId} token={request.token} file={f} />)}</ul>}
     </div>
   );
 }
 
-function Coverage({ p }: { p: JointAgentPartyView }) {
+// "UK passport, 2 Apr 2023 (address verified)" reads as "UK passport" in a cell; the rest is on hover.
+const shortEvidence = (e: string) => {
+  const first = e.split(",")[0].replace(/\s*\((?:address|identity) verified\)\s*$/i, "").trim();
+  return first.length > 30 ? `${first.slice(0, 29)}…` : first;
+};
+
+// What their files cover, as ticks (Woody, 22 November 2026: "very crowded";
+// the drawing he agreed): a row per person (ID, address), the company
+// (register, owners) and the screening. Anything to look at under it.
+function CoverageGrid({ p, dealId, request }: { p: JointAgentPartyView; dealId: string; request: JointAgentRequestView }) {
   const c = p.coverage;
-  if (!c || !currentJointRequest(p)?.files.length) return null;
+  if (!c || !request.files.length) return null;
+  const have = (v: string | null, label?: string) => (
+    <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400" title={v || undefined}><Check className="h-3.5 w-3.5 shrink-0" />{label || shortEvidence(v || "")}</span>
+  );
+  const miss = (label = "Missing") => <span className="font-medium text-amber-800 dark:text-amber-300">{label}</span>;
+  const cell = "py-1 pr-5 align-top";
+  const unreadFiles = request.files.filter(f => f.reading && f.reading.state !== "read");
   return (
-    <div className="space-y-1 text-xs" data-testid={`joint-coverage-${p.companyId}`}>
-      <div className="font-medium">Against the people the checks need</div>
-      {c.people.map(person => (
-        <div key={person.name} className="flex items-start gap-1.5">
-          {person.missing.length ? <AlertTriangle className="w-3.5 h-3.5 mt-[1px] shrink-0 text-amber-600" /> : <CheckCircle2 className="w-3.5 h-3.5 mt-[1px] shrink-0 text-emerald-600" />}
-          <span>
-            <span className="font-medium">{person.name}</span>
-            {person.missing.length ? <span className="text-amber-800 dark:text-amber-300">: no {person.missing.join(" or ")} yet</span> : null}
-            {(person.id || person.address) && <span className="text-muted-foreground"> · {[person.id ? `ID: ${person.id}` : null, person.address ? `address: ${person.address}` : null].filter(Boolean).join("; ")}</span>}
-          </span>
-        </div>
-      ))}
-      {c.company && (
-        <div className={c.company.register && c.company.ownership ? "text-muted-foreground" : "text-amber-800 dark:text-amber-300"}>
-          The company: {c.company.register ? `register (${c.company.register})` : "no register entry yet"}; {c.company.ownership ? `ownership (${c.company.ownership})` : "who owns it not sent yet"}
-        </div>
-      )}
-      <div className={c.screening ? "text-muted-foreground" : "text-amber-800 dark:text-amber-300"}>Screening: {c.screening || "not sent yet"}</div>
-      {c.flags.map(f => <div key={f} className="flex items-start gap-1.5 text-red-700 dark:text-red-300"><AlertTriangle className="w-3.5 h-3.5 mt-[1px] shrink-0" />{f}</div>)}
-      {c.others.length > 0 && <div className="text-muted-foreground">Also named in their files: {c.others.join(", ")}</div>}
-      {c.unread > 0 && <div className="text-muted-foreground">{c.unread} file{c.unread === 1 ? "" : "s"} not read yet.</div>}
-      {(c.unopened || []).length > 0 && <div className="text-amber-800 dark:text-amber-300">Could not be opened: {(c.unopened || []).join(", ")}. They are asked to send {(c.unopened || []).length === 1 ? "it" : "them"} again.</div>}
-      {c.complete && <div className="text-emerald-700 dark:text-emerald-300">Their files cover everyone the checks need.</div>}
+    <div className="space-y-1.5" data-testid={`joint-coverage-${p.companyId}`}>
+      <div className="overflow-x-auto">
+        <table className="text-xs" data-testid={`joint-grid-${p.role}`}>
+          <thead>
+            <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+              <th className={`${cell} font-semibold`}><span className="sr-only">Who</span></th><th className={`${cell} font-semibold`}>ID</th><th className={`${cell} font-semibold`}>Address</th>
+            </tr>
+          </thead>
+          <tbody>
+            {c.people.map(person => (
+              <tr key={person.name} className="border-t border-border/60">
+                <td className={cell}>{person.name}</td>
+                <td className={cell}>{person.id ? have(person.id) : miss()}</td>
+                <td className={cell}>{person.address ? have(person.address) : miss()}</td>
+              </tr>
+            ))}
+            {c.company && (
+              <tr className="border-t border-border/60">
+                <td className={cell}>Company</td>
+                <td className={cell}>{c.company.register ? have(c.company.register, "Register") : miss("Register missing")}</td>
+                <td className={cell}>{c.company.ownership ? have(c.company.ownership, "Owners") : miss("Owners missing")}</td>
+              </tr>
+            )}
+            <tr className="border-t border-border/60">
+              <td className={cell}>Screening</td>
+              <td className={cell} colSpan={2}>{c.screening ? have(c.screening, /: clear$/.test(c.screening) ? "Clear" : undefined) : miss()}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {c.flags.map(f => <p key={f} className="flex items-start gap-1.5 text-xs text-red-700 dark:text-red-300"><AlertTriangle className="w-3.5 h-3.5 mt-[1px] shrink-0" />{f}</p>)}
+      {unreadFiles.length > 0 && <ul className="space-y-1">{unreadFiles.map((f, i) => <FileRow key={`${f.documentId || f.name}-${i}`} dealId={dealId} token={request.token} file={f} />)}</ul>}
+      {c.others.length > 0 && <p className="text-xs text-muted-foreground">Also named in their files: {c.others.join(", ")}</p>}
     </div>
   );
 }
 
 /**
- * What the joint agent still has to send, in plain lines, with the chase: Ask
- * for what's missing emails them the list (and starts the app chasing every
- * three days), or Remind them when nothing has come yet.
+ * Email the joint agent what is still missing (or remind them when nothing
+ * has come). With no address on the request it asks for one first.
  */
-function StillMissing({ dealId, party, request }: { dealId: string; party: JointAgentPartyView; request: JointAgentRequestView }) {
+export function JointChaseButton({ dealId, party, request, label, variant = "outline", onNoEmail }: {
+  dealId: string; party: JointAgentPartyView; request: JointAgentRequestView; label?: string; variant?: "outline" | "default"; onNoEmail?: () => void;
+}) {
+  const { toast } = useToast();
+  const chase = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/joint-agent-checks/${request.ref}/chase`, {})).json(),
+    onSuccess: () => { refreshJointChecks(dealId); toast({ title: "Sent", description: `${request.to || request.firm} has the list of what's still needed.` }); },
+    onError: (e: any) => toast({ title: "Not sent", description: plain(e), variant: "destructive" }),
+  });
+  if (!party.askable) return null;
+  const nothingYet = !request.files.length;
+  return (
+    <Button type="button" size="sm" variant={variant} className={`h-7 text-xs ${variant === "outline" ? "bg-background" : ""}`} disabled={chase.isPending}
+      onClick={() => (request.toEmail ? chase.mutate() : onNoEmail?.())} data-testid={`joint-chase-${party.role}`}>
+      {chase.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Mail className="w-3.5 h-3.5 mr-1" />}{label || (nothingYet ? "Remind them" : "Ask for what's missing")}
+    </Button>
+  );
+}
+
+// The chase, its date, and an address when the request has none.
+function ChaseRow({ dealId, party, request }: { dealId: string; party: JointAgentPartyView; request: JointAgentRequestView }) {
   const { toast } = useToast();
   const [askEmail, setAskEmail] = useState(false);
   const [email, setEmail] = useState("");
   const [name, setName] = useState(request.to || "");
-  const nothingYet = !request.files.length;
-  const chase = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/joint-agent-checks/${request.ref}/chase`, request.toEmail ? {} : { email: email.trim(), name: name.trim() })).json(),
-    onSuccess: () => { refreshJointChecks(dealId); setAskEmail(false); toast({ title: "Sent", description: `${request.to || request.firm} has the list of what's still needed. The app chases them every three days until everything is in.` }); },
+  const send = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/joint-agent-checks/${request.ref}/chase`, { email: email.trim(), name: name.trim() })).json(),
+    onSuccess: () => { refreshJointChecks(dealId); setAskEmail(false); toast({ title: "Sent" }); },
     onError: (e: any) => toast({ title: "Not sent", description: plain(e), variant: "destructive" }),
   });
   if (!party.gaps.length) {
-    return request.files.length ? <p className="text-xs text-emerald-700 dark:text-emerald-300" data-testid={`joint-nothing-missing-${party.role}`}>Nothing missing: their files cover everyone the checks need.</p> : null;
+    return request.files.length ? <p className="text-xs text-emerald-700 dark:text-emerald-300" data-testid={`joint-nothing-missing-${party.role}`}>Nothing missing</p> : null;
   }
-  const press = () => (request.toEmail ? chase.mutate() : setAskEmail(true));
+  const status = !party.askable ? "Read their files first"
+    : request.chaseStoppedAt ? `Reminders stopped ${day(request.chaseStoppedAt)}: ask again to restart`
+    : request.nextChaseAt ? `Next reminder ${day(request.nextChaseAt)}`
+    : !request.toEmail ? "No email address for them" : "";
   return (
-    <div className="rounded border border-amber-300 bg-amber-50/70 px-2.5 py-2 text-xs text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" data-testid={`joint-still-missing-${party.role}`}>
-      <div className="font-medium">{nothingYet ? "Nothing has come from them yet" : "Still missing from their checks"}</div>
-      {!nothingYet && <ul className="mt-1 list-disc space-y-0.5 pl-4">{party.gaps.map(g => <li key={g}>{g}</li>)}</ul>}
-      <div className="mt-1.5 flex flex-wrap items-center gap-2">
-        {party.askable && (
-          <Button type="button" size="sm" className="h-7 text-xs" disabled={chase.isPending} onClick={press} data-testid={`joint-chase-${party.role}`}>
-            {chase.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Mail className="w-3.5 h-3.5 mr-1" />}{nothingYet ? "Remind them" : "Ask for what's missing"}
-          </Button>
-        )}
-        <span className="opacity-80" data-testid={`joint-chase-status-${party.role}`}>
-          {!party.askable ? "Nothing is asked for until their files are read: press Read again on each file below."
-            : request.chaseStoppedAt ? `The app stopped chasing on ${day(request.chaseStoppedAt)}: ask again to start it again.`
-            : request.nextChaseAt ? `The app chases them every three days; next ${day(request.nextChaseAt)}.`
-            : !request.toEmail ? "No email address for them yet." : "The app chases them every three days once asked."}
-        </span>
+    <div className="space-y-1.5" data-testid={`joint-still-missing-${party.role}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <JointChaseButton dealId={dealId} party={party} request={request} onNoEmail={() => setAskEmail(true)} />
+        {status && <span className="text-xs text-muted-foreground" data-testid={`joint-chase-status-${party.role}`}>{status}</span>}
       </div>
       {askEmail && (
-        <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+        <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
           <Input value={name} onChange={e => setName(e.target.value)} placeholder="Their name" className="h-8 text-xs" />
           <Input value={email} onChange={e => setEmail(e.target.value)} type="email" placeholder="Their email" className="h-8 text-xs" data-testid={`joint-chase-email-${party.role}`} />
-          <Button type="button" size="sm" className="h-8 text-xs" disabled={!/^\S+@\S+\.\S+$/.test(email.trim()) || chase.isPending} onClick={() => chase.mutate()}>Send</Button>
+          <Button type="button" size="sm" className="h-8 text-xs" disabled={!/^\S+@\S+\.\S+$/.test(email.trim()) || send.isPending} onClick={() => send.mutate()}>Send</Button>
         </div>
       )}
     </div>
@@ -287,11 +308,11 @@ function StillMissing({ dealId, party, request }: { dealId: string; party: Joint
 }
 
 /** Ask the joint agent: an email from the KYC mailbox with a page of their own. */
-export function AskJointAgentButton({ dealId, view, party, label }: { dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; label?: string }) {
+export function AskJointAgentButton({ dealId, view, party, label, quiet }: { dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; label?: string; quiet?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid={`joint-ask-${party.role}`}>
+      <Button type="button" size="sm" variant={quiet ? "ghost" : "default"} className={quiet ? "h-7 px-2 text-xs" : "h-7 text-xs"} onClick={() => setOpen(true)} data-testid={`joint-ask-${party.role}`}>
         <Send className="w-3.5 h-3.5 mr-1" />{label || `Ask ${view.firm?.name || "the joint agent"} for their checks`}
       </Button>
       {open && <AskDialog dealId={dealId} view={view} party={party} onClose={() => setOpen(false)} />}
@@ -332,8 +353,8 @@ function AskDialog({ dealId, view, party, onClose }: { dealId: string; view: Joi
           <DialogTitle>Ask the joint agent about {party.name}</DialogTitle>
           <DialogDescription>
             {letting
-              ? "A letting at £10,000 a month or more: HMRC wants every party verified. They send their checks and agree on the page to BGP relying on them (MLR 2017 reg 39)."
-              : "A sale: HMRC asks the joint agent who did not deal with this party to ask the one who did for their checks, and to record what comes back (AMLG2200 s21)."}
+              ? "They send their checks and agree on their page to BGP relying on them."
+              : "They send their checks on this party. What comes back is recorded."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -369,7 +390,7 @@ function AskDialog({ dealId, view, party, onClose }: { dealId: string; view: Joi
             <Label htmlFor="joint-note">A note to them (optional)</Label>
             <Textarea id="joint-note" value={note} onChange={e => setNote(e.target.value)} rows={2} maxLength={2000} data-testid="joint-note" />
           </div>
-          <p className="text-[11px] text-muted-foreground">They get an email from BGP's KYC mailbox with a link to upload their checks, copied to the deal's agents. They can also reply with the files attached.</p>
+          <p className="text-[11px] text-muted-foreground">They get an email with a link to upload their checks. The deal's agents are copied.</p>
           {missing && <p className="text-[11px] text-muted-foreground" data-testid="joint-ask-missing">{missing}</p>}
         </div>
         <DialogFooter>
@@ -389,7 +410,7 @@ export function AddJointFilesButton({ dealId, view, party }: { dealId: string; v
   return (
     <>
       <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => setOpen(true)} data-testid={`joint-add-files-${party.role}`}>
-        <Upload className="w-3.5 h-3.5 mr-1" />Add files they emailed you
+        <Upload className="w-3.5 h-3.5 mr-1" />Add files
       </Button>
       {open && <AddFilesDialog dealId={dealId} view={view} party={party} onClose={() => setOpen(false)} />}
     </>
@@ -435,7 +456,7 @@ function AddFilesDialog({ dealId, view, party, onClose }: { dealId: string; view
         <DialogHeader>
           <DialogTitle>The joint agent's checks on {party.name}</DialogTitle>
           <DialogDescription>
-            The files they emailed you: ID, address proofs, the company's register entry, their screening and risk assessment. A zip is fine. Each is filed on {party.name}'s KYC record and read.
+            The files they emailed you. A zip is fine.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -478,10 +499,10 @@ function AddFilesDialog({ dealId, view, party, onClose }: { dealId: string; view
 }
 
 /**
- * The section's detail: HMRC's route for the deal, each request with its
- * files as read, what the files cover, and the officers' next step.
- * `decide` renders the officers' buttons (Not required on a sale, the
- * reliance on a letting), which live with the other decisions.
+ * The joint agent's checks inside a party's Documents step: HMRC's route in
+ * a line, what their files cover as ticks, the chase, then the request on one
+ * line and the files folded. `decide` is the officers' button (Not required
+ * on a sale, the reliance on a letting).
  */
 export function JointAgentPanel({ dealId, view, party, decide }: {
   dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; decide?: React.ReactNode;
@@ -489,19 +510,39 @@ export function JointAgentPanel({ dealId, view, party, decide }: {
   const current = currentJointRequest(party);
   // Asked and the email went (or their files were added): no second request.
   const open = !!current && current.status !== "expired" && current.status !== "not_sent";
+  const earlier = party.requests.filter(r => r !== current);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [earlierOpen, setEarlierOpen] = useState(false);
+  const readFiles = current ? current.files.filter(f => !f.reading || f.reading.state === "read") : [];
   return (
-    <div className="space-y-2" data-testid={`joint-panel-${party.role}`}>
-      <p className="text-[11px] text-muted-foreground">{view.ruleWords}</p>
+    <div className="space-y-2.5" data-testid={`joint-panel-${party.role}`}>
+      <p className="text-xs text-muted-foreground">{view.ruleWords}</p>
+      {current && <CoverageGrid p={party} dealId={dealId} request={current} />}
+      {current && open && <ChaseRow dealId={dealId} party={party} request={current} />}
       <div className="flex flex-wrap items-center gap-1.5">
         {!open && <AskJointAgentButton dealId={dealId} view={view} party={party} label={current ? "Ask them again" : undefined} />}
         <AddJointFilesButton dealId={dealId} view={view} party={party} />
         {decide}
       </div>
-      {current && open && <StillMissing dealId={dealId} party={party} request={current} />}
-      {party.requests.map(r => <RequestRow key={r.ref} dealId={dealId} companyId={party.companyId} request={r} />)}
-      <Coverage p={party} />
+      {current && <RequestLine dealId={dealId} companyId={party.companyId} request={current} />}
+      {readFiles.length > 0 && (
+        <div>
+          <button type="button" data-no-min-touch className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" aria-expanded={filesOpen} onClick={() => setFilesOpen(o => !o)} data-testid={`joint-files-toggle-${party.role}`}>
+            <ChevronRight className={`h-3.5 w-3.5 transition-transform ${filesOpen ? "rotate-90" : ""}`} />{readFiles.length} file{readFiles.length === 1 ? "" : "s"}
+          </button>
+          {filesOpen && <ul className="mt-1 space-y-1 pl-4">{readFiles.map((f, i) => <FileRow key={`${f.documentId || f.name}-${i}`} dealId={dealId} token={current!.token} file={f} />)}</ul>}
+        </div>
+      )}
+      {earlier.length > 0 && (
+        <div>
+          <button type="button" data-no-min-touch className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" aria-expanded={earlierOpen} onClick={() => setEarlierOpen(o => !o)}>
+            <ChevronRight className={`h-3.5 w-3.5 transition-transform ${earlierOpen ? "rotate-90" : ""}`} />{earlier.length} earlier request{earlier.length === 1 ? "" : "s"}
+          </button>
+          {earlierOpen && <div className="mt-1 space-y-1.5 pl-4">{earlier.map(r => <RequestLine key={r.ref} dealId={dealId} companyId={party.companyId} request={r} />)}</div>}
+        </div>
+      )}
       {party.requests.some(r => r.status !== "cancelled" && r.files.some(f => !f.reading)) && (
-        <p className="text-[11px] text-muted-foreground"><RefreshCw className="inline w-3 h-3 mr-1" />Reading their files: this updates by itself.</p>
+        <p className="text-[11px] text-muted-foreground"><RefreshCw className="inline w-3 h-3 mr-1" />Reading their files</p>
       )}
     </div>
   );

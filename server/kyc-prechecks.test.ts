@@ -114,7 +114,7 @@ test("a listed company is not asked for an owners chart or owner IDs", () => {
     { kind: "company", role: "tenant", idCheck: true, contactName: null, today: TODAY });
   assert.deepEqual(asks.docs, ["proof_of_address", "authority", "source_of_funds"]);
   assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids"]);
-  assert.match(asks.notAsked[0].reason, /UK regulated market.*since 2016-06-30.*reg 28\(5\)/);
+  assert.match(asks.notAsked[0].reason, /UK regulated market.*since 2016-06-30.*no beneficial owners to identify/);
   assert.equal(asks.confirmOwners, null);
   // Through a parent, and a market abroad: KYC4U to confirm the market.
   const viaParent = precheckAsks(input({ listing: { market: "listed_market", since: null, company: "BIG INC", companyNumber: "FC000001", viaParent: true } }),
@@ -315,7 +315,7 @@ test("the AML box shows what the register says about the company checked", () =>
   const plc = precheckCompany(result({ companiesHouse: { ...ch, type: "plc", owners: [], listing: { market: "uk_regulated", since: "2016-06-30", company: "ACME PLC", companyNumber: "01234567", viaParent: false } } }))!;
   assert.equal(plc.type, "Public limited company");
   assert.match(plc.listing!, /^Listed on a UK regulated market/);
-  assert.match(plc.listingNote!, /reg 28\(5\)/);
+  assert.match(plc.listingNote!, /No beneficial owners to identify/);
   assert.match(plc.listingNote!, /simplified due diligence/);
   assert.equal(plc.ownerNote, null);
   assert.equal(precheckCompany(result({ companiesHouse: null })), null);

@@ -205,16 +205,16 @@ export const LETTING_AML_MONTHLY_RENT = 10_000;
  */
 export function amlRegime(deal: { dealType?: string | null; team?: string[] | string | null; rentPa?: number | string | null }): { regime: AmlRegime; why: string } {
   const type = String(deal.dealType || "").trim();
-  if (isInvestmentDeal(type, deal.team ?? null)) return { regime: "full", why: "A sale or purchase: full checks on every party (MLR 2017)." };
+  if (isInvestmentDeal(type, deal.team ?? null)) return { regime: "full", why: "A sale or purchase: full checks on every party." };
   if (/^(rent review|dilapidations|service charge)$/i.test(type)) {
     return { regime: "advisory", why: `${type} is advisory work, not estate or letting agency: the policy's checks are for sales, purchases and lettings.` };
   }
   const letting = ALL_LETTING_TYPES.includes(type) || (TENANT_REP_TYPES as readonly string[]).includes(type) || /^(lease renewal|regear)$/i.test(type);
-  if (!letting) return { regime: "full", why: "Full checks on every party (MLR 2017)." };
+  if (!letting) return { regime: "full", why: "Full checks on every party." };
   const rent = Number(deal.rentPa);
   if (!Number.isFinite(rent) || rent <= 0) return { regime: "full", why: "A letting with no rent recorded: full checks until the rent shows it is under £10,000 a month." };
-  if (rent / 12 >= LETTING_AML_MONTHLY_RENT) return { regime: "full", why: `A letting at £${Math.round(rent / 12).toLocaleString("en-GB")} a month: full checks on every party (MLR 2017, £10,000 a month or more).` };
-  return { regime: "sanctions_only", why: `A letting at £${Math.round(rent / 12).toLocaleString("en-GB")} a month: sanctions checks on every party (SAML 2018). The owners are identified and screened, not verified, and no client documents are needed.` };
+  if (rent / 12 >= LETTING_AML_MONTHLY_RENT) return { regime: "full", why: `A letting at £${Math.round(rent / 12).toLocaleString("en-GB")} a month: full checks on every party.` };
+  return { regime: "sanctions_only", why: `A letting at £${Math.round(rent / 12).toLocaleString("en-GB")} a month: sanctions checks only. The owners are screened, and no client documents are needed.` };
 }
 
 // ── Countries (risk assessment: geography; policy appendix 3.2) ─────────────
@@ -322,8 +322,8 @@ export function countryRisk(country: string | null): CountryRisk | null {
 export const sellsCitizenship = (country: string | null): boolean => !!country && CBI_COUNTRIES.includes(country);
 
 const COUNTRY_RISK_WORDS: Record<CountryRisk, string> = {
-  fatf_call_for_action: `on FATF's call for action list (${FATF_LISTS_AS_OF}): enhanced due diligence is required by law (MLR 2017 reg 33)`,
-  fatf_increased_monitoring: `on FATF's increased monitoring list (${FATF_LISTS_AS_OF}): a high-risk third country, so enhanced due diligence is required by law (MLR 2017 reg 33)`,
+  fatf_call_for_action: `on FATF's call for action list (${FATF_LISTS_AS_OF}): enhanced due diligence is required by law`,
+  fatf_increased_monitoring: `on FATF's increased monitoring list (${FATF_LISTS_AS_OF}): a high-risk third country, so enhanced due diligence is required by law`,
   fwra_eurasia_africa: "named in BGP's risk assessment among the countries linked to corruption and fraud laundered through UK property: refer it to the Nominated Officer",
 };
 
@@ -411,7 +411,7 @@ export function policyFactorFlags(input: { precheck?: KycPrecheckResult | null; 
       ...base, kind: "policy_trust",
       label: names.length ? `A ${anyFoundation && !trustOwners.length ? "foundation" : anyFoundation ? "trust or foundation" : "trust"} in the ownership: ${names.slice(0, 3).join(", ")}${names.length > 3 ? ` and ${names.length - 3} more` : ""}` : "The party is a trust or foundation",
       detail: anyFoundation
-        ? "Ask for the foundation's charter and by-laws, its founder, the members of its board or council, any protector, and who benefits from it (MLR 2017 reg 6); for a trust, the trust deed, the settlor, trustees, any protector and beneficiaries of 25% or more, and its Trust Registration Service entry (policy 4.7)."
+        ? "Ask for the foundation's charter and by-laws, its founder, the members of its board or council, any protector, and who benefits from it; for a trust, the trust deed, the settlor, trustees, any protector and beneficiaries of 25% or more, and its Trust Registration Service entry (policy 4.7)."
         : "Ask for the trust deed, the settlor, trustees, any protector and beneficiaries of 25% or more, and its Trust Registration Service entry (policy 4.7).",
       key: "policy:trust", evidence: names.length ? names.map(n => `owner:${keyPart(n)}`) : ["party:trust"],
       facts: names.map(n => ({ label: "Held for a trust", value: n })),
@@ -504,7 +504,7 @@ export function simplifiedBasis(input: { precheck?: KycPrecheckResult | null; pa
   if (listing) {
     if (listing.viaParent) return `Owned through ${listing.company}, a company listed on a regulated market: simplified due diligence (policy 4.2), the chain confirmed by KYC4U.`;
     if (listing.market === "other_regulated" || listing.market === "listed_market") return `Listed on a market outside the UK and EU: simplified due diligence when that market is equivalent to the London Stock Exchange (policy 4.2).`;
-    return `Listed on a regulated market: simplified due diligence, no beneficial owners to verify (policy 4.2, MLR 2017 reg 28(5)).`;
+    return `Listed on a regulated market: simplified due diligence, no beneficial owners to verify (policy 4.2).`;
   }
   if (ch?.type && ICVC_TYPES.has(ch.type)) return "An open-ended investment company authorised by the FCA: simplified due diligence (policy 4.1).";
   const name = String(input.partyName || ch?.name || "");
@@ -593,18 +593,20 @@ export function jointAgentRule(deal: { dealType?: string | null; team?: string[]
   return letting ? "letting" : "other";
 }
 
+// One line each (Woody, 22 November 2026: a status, not an explanation; the
+// HMRC references are on the Rules page).
 export const JOINT_AGENT_RULE_WORDS: Record<JointAgentRule, string> = {
-  sale: "HMRC (AMLG2200, section 21): if the joint agent found this party, ask them for their checks. If they don't send them, record that you asked.",
-  letting: "HMRC's letting guidance has no joint agent exception: the tenant is checked. Use the joint agent's checks under a reliance agreement, or send the client checks.",
+  sale: "A sale: ask the joint agent for their checks and record what comes back.",
+  letting: "A letting: rely on the joint agent's checks under the reliance terms, or check this party yourself.",
   letting_under: "A letting under £10,000 a month: sanctions checks only.",
   advisory: "Advisory work: no checks on the other side.",
-  other: "Only a sale has HMRC's joint agent route: this party is checked by BGP, or through a reliance agreement with the joint agent.",
+  other: "Not a sale: rely on the joint agent's checks under the reliance terms, or check this party yourself.",
 };
 
 /** Why the joint agent reason cannot be used on this deal, in HMRC's terms, or null when it can. */
 export function jointAgentNotRequiredRefusal(rule: JointAgentRule): string | null {
-  if (rule === "letting") return "HMRC's letting guidance has no joint agent exception: every party to a letting at £10,000 a month or more is verified. Ask the joint agent for their checks under a reliance agreement, or send the client checks.";
-  if (rule === "other") return "Only a sale has HMRC's joint agent route (AMLG2200, section 21). Check this party, or rely on the joint agent's checks under a reliance agreement.";
+  if (rule === "letting") return "Not on a letting of £10,000 a month or more: every party is checked. Rely on the joint agent's checks under the reliance terms, or send the client checks.";
+  if (rule === "other") return "Only a sale has the joint agent route. Check this party, or rely on the joint agent's checks under the reliance terms.";
   return null;
 }
 
@@ -717,7 +719,7 @@ export function notRequiredLapse(mark: { reason: NotRequiredReason; asked?: Join
   if (mark.reason !== "joint_agent") return null;
   const refused = jointAgentNotRequiredRefusal(rule);
   if (refused) return refused;
-  if (rule === "sale" && !mark.asked) return "HMRC asks for a record that the joint agent was asked for their checks, and what came back (AMLG2200, section 21). Take this off and mark it again with the record.";
+  if (rule === "sale" && !mark.asked) return "No record of asking the joint agent for their checks. Take this off and mark it again with the record.";
   return null;
 }
 
