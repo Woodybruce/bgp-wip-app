@@ -153,6 +153,7 @@ import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { SendClientChecksButton } from "@/components/kyc-client-checks";
 import { DealPartyEditor, PartyBillingDetail, PartyReadyToStart, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, dealClientRole, invoiceContactFor, type InvoiceContact } from "@shared/deal-parties";
+import { buildInvoiceDraft, type InvoiceDraft, type InvoiceTemplateFacts } from "@shared/invoice-template";
 import { PartyDecisions } from "@/components/deal-party-aml";
 import { useDealAmlStatus } from "@/components/deal-aml-status";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
@@ -5510,6 +5511,25 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
   const [amount, setAmount] = useState<number>(0);
   const [currency, setCurrency] = useState<"GBP" | "USD">(deal.feeCurrency === "USD" ? "USD" : "GBP");
   const [poNumber, setPoNumber] = useState(deal.poNumber || "");
+  // Layla's invoice template filled from the deal (shared/invoice-template.ts,
+  // 20 November 2026): the words follow the PO and the amount until someone
+  // types over them.
+  const [description, setDescription] = useState("");
+  const [descriptionTyped, setDescriptionTyped] = useState(false);
+  const [referenceTyped, setReferenceTyped] = useState(false);
+  const { data: draftData, isLoading: draftLoading } = useQuery<{ facts: InvoiceTemplateFacts; draft: InvoiceDraft }>({
+    queryKey: ["/api/xero/invoice-draft", dealId],
+    enabled: creating,
+    staleTime: 0,
+  });
+  const liveDraft: InvoiceDraft | null = draftData?.facts
+    ? buildInvoiceDraft({ ...draftData.facts, poNumber: poNumber || null, fee: amount || null, currency })
+    : null;
+  useEffect(() => {
+    if (!liveDraft) return;
+    if (!descriptionTyped) setDescription(liveDraft.description);
+    if (!referenceTyped) setReference(liveDraft.reference);
+  }, [liveDraft?.description, liveDraft?.reference, descriptionTyped, referenceTyped]);
 
   const xeroContactId = (deal as any).xeroContactId || null;
   const xeroContactName = (deal as any).xeroContactName || null;
@@ -5615,12 +5635,12 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
         // No AccountCode: the server applies the live sales nominal (4000 on
         // the Sept 2026 chart) so a stale client can't post to a retired code.
         lineItems: [{
-          Description: deal.name || "Professional fees",
+          Description: description.trim() || deal.name || "Professional fees",
           Quantity: 1,
           UnitAmount: amount || deal.fee || 0,
           TaxType: "OUTPUT2",
         }],
-        reference: reference || deal.name,
+        reference: reference.trim() || deal.name,
       });
       return res.json();
     },
@@ -5631,6 +5651,9 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId, "po-check"] });
       setReference("");
       setAmount(0);
+      setDescription("");
+      setDescriptionTyped(false);
+      setReferenceTyped(false);
       refetchInvoices();
       invalidateDealCaches();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
@@ -5733,7 +5756,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => { setCreating(true); setAmount(deal.fee || 0); setCurrency(deal.feeCurrency === "USD" ? "USD" : "GBP"); setReference(deal.name || ""); }}
+                onClick={() => { setCreating(true); setAmount(deal.fee || 0); setCurrency(deal.feeCurrency === "USD" ? "USD" : "GBP"); setReference(""); setDescription(""); setDescriptionTyped(false); setReferenceTyped(false); }}
                 data-testid="button-create-xero-invoice"
               >
                 <Send className="w-3.5 h-3.5 mr-1" />
@@ -5815,15 +5838,56 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
 
         {creating && (
           <div className="border rounded-md p-3 mb-3 space-y-3 bg-muted/30">
+            {draftLoading && <p className="text-xs text-muted-foreground">Filling the invoice from the deal…</p>}
+            {liveDraft && (
+              <p className="text-xs text-muted-foreground" data-testid="xero-invoice-template-note">
+                {liveDraft.template === "letting"
+                  ? "Filled from the deal. Check it before you create the draft."
+                  : "The template covers New Lettings for a landlord. Type the invoice text."}
+              </p>
+            )}
             <div>
               <Label className="text-xs mb-1 block">Reference</Label>
               <Input
                 value={reference}
-                onChange={(e) => setReference(e.target.value)}
+                onChange={(e) => { setReference(e.target.value); setReferenceTyped(true); }}
                 placeholder={deal.name || "Invoice reference"}
                 data-testid="input-xero-reference"
               />
             </div>
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <Label className="text-xs block">What the invoice says</Label>
+                {(descriptionTyped || referenceTyped) && liveDraft && (
+                  <button type="button" className="text-xs underline underline-offset-2 text-muted-foreground hover:text-foreground" onClick={() => { setDescriptionTyped(false); setReferenceTyped(false); }} data-testid="xero-invoice-refill">
+                    Fill again from the deal
+                  </button>
+                )}
+              </div>
+              <Textarea
+                value={description}
+                onChange={(e) => { setDescription(e.target.value); setDescriptionTyped(true); }}
+                rows={liveDraft?.template === "letting" ? 8 : 3}
+                className="text-sm"
+                placeholder={deal.name || "Professional fees"}
+                data-testid="input-xero-description"
+              />
+            </div>
+            {liveDraft && (liveDraft.missing.length > 0 || liveDraft.warnings.length > 0 || liveDraft.workedOut.length > 0) && (
+              <div className="space-y-1 text-xs" data-testid="xero-invoice-template-gaps">
+                {liveDraft.missing.length > 0 && (
+                  <p className="text-amber-800 dark:text-amber-300" data-testid="xero-invoice-template-missing">
+                    Missing from the deal: {liveDraft.missing.join("; ")}.
+                  </p>
+                )}
+                {liveDraft.warnings.map(w => (
+                  <p key={w} className="text-amber-800 dark:text-amber-300" data-testid="xero-invoice-template-warning">{w}</p>
+                ))}
+                {liveDraft.workedOut.length > 0 && (
+                  <p className="text-muted-foreground">Worked out: {liveDraft.workedOut.join("; ")}.</p>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <div className="flex items-center justify-between gap-2 mb-1">

@@ -4616,12 +4616,21 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
                 const currency = feeCurrencyOf(deal.feeCurrency);
                 const currencyFields = await invoiceCurrencyFields(req.session, currency);
+                // Layla's invoice template filled from the deal (20 November
+                // 2026, shared/invoice-template.ts); the deal's name where the
+                // template is not for this kind of deal.
+                const { invoiceTemplateFactsFor } = await import("./invoice-template");
+                const { buildInvoiceDraft, descriptionHoldsPo } = await import("@shared/invoice-template");
+                const facts = await invoiceTemplateFactsFor(deal.id).catch(() => null);
+                const filled = facts ? buildInvoiceDraft(facts) : null;
+                const lineDescription = filled?.description || deal.name || "Professional fees";
+                const baseReference = filled?.reference || deal.name;
                 const invoicePayload = {
                   Invoices: [{
                     Type: "ACCREC",
                     Contact: { ContactID: xeroContactId },
                     LineItems: [{
-                      Description: deal.name || "Professional fees",
+                      Description: lineDescription,
                       Quantity: 1,
                       UnitAmount: deal.fee || 0,
                       AccountCode: SALES_ACCOUNT_CODE,
@@ -4629,7 +4638,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                     }],
                     Date: new Date().toISOString().split("T")[0],
                     // No DueDate: Xero applies the org's default terms (by return).
-                    Reference: deal.poNumber ? `${deal.name} | PO: ${deal.poNumber}` : deal.name,
+                    Reference: deal.poNumber && !descriptionHoldsPo([lineDescription], deal.poNumber) ? `${baseReference} | PO: ${deal.poNumber}` : baseReference,
                     Status: "DRAFT",
                     ...currencyFields,
                     LineAmountTypes: "Exclusive",
@@ -4649,7 +4658,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                   invoicingEntityName: contactName || null,
                   contactName: xeroInvoice?.Contact?.Name ?? contactName ?? null,
                   invoiceNumber: xeroInvoice?.InvoiceNumber,
-                  reference: deal.name,
+                  reference: baseReference,
                   status: xeroInvoice?.Status || "DRAFT",
                   totalAmount: xeroInvoice?.Total || deal.fee || 0,
                   currency,

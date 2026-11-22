@@ -1065,6 +1065,23 @@ export function setupXeroRoutes(app: Express) {
     }
   });
 
+  // Layla's invoice template filled from the deal (shared/invoice-template.ts),
+  // for the deal page's Send to Xero form to show, check and edit. Reads only;
+  // BGP staff signed in as themselves.
+  app.get("/api/xero/invoice-draft/:dealId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { contactViewer } = await import("./contact-viewer");
+      if (!(await contactViewer(req)).staff) return res.status(403).json({ message: "BGP staff only" });
+      const { invoiceDraftFor } = await import("./invoice-template");
+      const out = await invoiceDraftFor(String(req.params.dealId));
+      if (!out) return res.status(404).json({ message: "Deal not found" });
+      res.json(out);
+    } catch (err: any) {
+      console.error("[Xero] Invoice draft error:", err);
+      res.status(500).json({ message: "Could not fill the invoice from the deal" });
+    }
+  });
+
   app.post("/api/xero/invoices", requireAuth, async (req: Request, res: Response) => {
     try {
       const parsed = createInvoiceSchema.safeParse(req.body);
@@ -1117,25 +1134,36 @@ export function setupXeroRoutes(app: Express) {
         }
       }
 
+      // With no lines sent, the words are Layla's template filled from the
+      // deal (shared/invoice-template.ts; the deal's name for a deal it is
+      // not for). The deal page's form sends the lines it showed.
+      const resolvedPoNumber = poNumber || deal.poNumber || null;
+      let filled: { reference: string; description: string } | null = null;
+      if (!(lineItems && lineItems.length > 0)) {
+        const { invoiceTemplateFactsFor } = await import("./invoice-template");
+        const { buildInvoiceDraft } = await import("@shared/invoice-template");
+        const facts = await invoiceTemplateFactsFor(dealId).catch(() => null);
+        filled = facts ? buildInvoiceDraft({ ...facts, poNumber: resolvedPoNumber }) : null;
+      }
       const invoiceLines = (lineItems && lineItems.length > 0 ? lineItems : [{
-        Description: deal.name || "Professional fees",
+        Description: filled?.description || deal.name || "Professional fees",
         Quantity: 1,
         UnitAmount: deal.fee || 0,
         AccountCode: accountCode,
         TaxType: "OUTPUT2",
       }]).map((l) => ({ ...l, AccountCode: salesAccountCode(l.AccountCode || accountCode) }));
 
-      const resolvedPoNumber = poNumber || deal.poNumber || null;
       if (resolvedPoNumber && !deal.poNumber) {
         await db.update(crmDeals).set({ poNumber: resolvedPoNumber, updatedAt: new Date() }).where(eq(crmDeals.id, dealId));
       }
 
+      const invoiceReference = reference || filled?.reference || deal.name;
       const xeroInvoiceObj: Record<string, any> = {
         Type: "ACCREC",
         Contact: { ContactID: xeroContactId },
         LineItems: invoiceLines,
         Date: new Date().toISOString().split("T")[0],
-        Reference: reference || deal.name,
+        Reference: invoiceReference,
         Status: "DRAFT",
         ...currencyFields,
         LineAmountTypes: "Exclusive",
@@ -1145,7 +1173,10 @@ export function setupXeroRoutes(app: Express) {
       // old +30 days here was overriding that on every invoice (Accounts,
       // 2026-09-21).
       if (dueDate) xeroInvoiceObj.DueDate = dueDate;
-      if (resolvedPoNumber) {
+      // The PO goes on the reference unless a line of the invoice already
+      // carries it, as Layla's template does ("PO – 123" under the address).
+      const { descriptionHoldsPo } = await import("@shared/invoice-template");
+      if (resolvedPoNumber && !descriptionHoldsPo(invoiceLines.map(l => l.Description), resolvedPoNumber)) {
         xeroInvoiceObj.Reference = `${xeroInvoiceObj.Reference} | PO: ${resolvedPoNumber}`;
       }
 
@@ -1166,7 +1197,7 @@ export function setupXeroRoutes(app: Express) {
         invoicingEntityId: null,
         invoicingEntityName: resolvedContactName || null,
         invoiceNumber: xeroInvoice?.InvoiceNumber,
-        reference: reference || deal.name,
+        reference: invoiceReference,
         status: xeroInvoice?.Status || "DRAFT",
         totalAmount: xeroInvoice?.Total || deal.fee || 0,
         currency,

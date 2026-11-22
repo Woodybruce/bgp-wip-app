@@ -3101,6 +3101,38 @@ contact too. Rules: `shared/deal-parties.ts`; server:
 - Not run against Xero from a build machine; checked in a browser against a
   local copy on 20 November 2026 with Xero not connected.
 
+## Layla's invoice template (2026-11-22)
+
+Layla, to Woody: "This is the template I use for majority of invoices – would
+be great if it could autofill over to Xero!" Woody asked for it to be filled
+in when Layla bills. Rule: `shared/invoice-template.ts`; read:
+`server/invoice-template.ts`. Tests: `server/invoice-template.test.ts` (in
+`npm test`), `qa/regression/invoice-template.test.mjs`.
+
+- **For a New Letting where BGP acts for the landlord** (`usesLettingTemplate`)
+  the draft reads: Reference `FAO <client contact>`; then the tenant, the
+  address (Letting Tracker unit, property, address, postcode), `PO – <number>`
+  when there is one, "To: Acting on behalf of <landlord>, in negotiating a new
+  letting to <tenant> in respect of the above property." and "To: Fee <x>% of
+  the agreed annual rent of £<rent> = £<fee> plus VAT". One line item; the
+  amount is the deal's fee. Parties are named as they sign (the company that
+  signs), else by their CRM name. The FAO is the deal's client contact, else
+  the client's own contact on the deal.
+- **Anything missing stays as in her template** (NAME, TENANT, ADDRESS,
+  LANDLORD, `?`) and the form lists it. A fee percentage is worked out from the
+  fee and rent only when it is a clean figure. A percentage, rent and fee that
+  do not agree are flagged, never changed. A joint agent's share is flagged.
+- **Other deals keep the deal's name** as before: Layla's other templates are
+  not known.
+- **Where**: the deal page's Send to Xero form (`GET
+  /api/xero/invoice-draft/:dealId`, BGP staff, reads only) shows the reference
+  and the text to check and edit; the text follows the PO and amount until
+  someone types over it, and Fill again starts over. The automatic draft at
+  exchange or completion uses the same rule. A PO already in the text is not
+  added to the reference again (`descriptionHoldsPo`).
+- Not run against Xero from a build machine; checked in a browser on a local
+  copy on 22 November 2026.
+
 ## Who BGP bills and who pays (Woody, 2026-11-20)
 
 Woody: "the Xero billing entity and the aml entity need to be flagged if they
