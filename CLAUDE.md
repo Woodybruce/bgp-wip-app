@@ -3331,6 +3331,12 @@ on the KYC4U pill of My BGP before). Tests: `server/kyc-request.test.ts` (in `np
   link opens the agent's own WhatsApp); Veriff's event webhook wrote a blank
   status over a session (it now records started / submitted and never
   overwrites a decision).
+- **Clients and joint agents read "transaction", never "deal"** (Woody,
+  2026-11-22, on the client's page: "Can we call the deal the
+  transaction"): the client's page, the joint agent's page, a person's own
+  link and every email and WhatsApp text to them. BGP's own screens and
+  emails keep "deal", and the deal's name still names the transaction.
+  Tests in `server/kyc-request.test.ts` and `server/joint-agent-checks.test.ts`.
 - **One email, one page.** The request email has the logo inline (cid), a
   numbered list of what is needed, one **Start your checks** button, the
   agent's note, Why we ask, the agent's phone and email, and the reference

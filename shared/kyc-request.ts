@@ -28,7 +28,7 @@ export interface KycRequestPerson {
 const withoutPrivateMark = (name: string) => name.replace(/\s*\((private|private client|individual)\)\s*$/i, "").trim() || name;
 export const kycPersonRoleWords = (roles: KycPersonRole[], partyName: string): string =>
   roles.includes("owner") ? `an owner of ${partyName}`
-    : roles.includes("joint") ? `named on this deal alongside ${withoutPrivateMark(partyName)}`
+    : roles.includes("joint") ? `named on this transaction alongside ${withoutPrivateMark(partyName)}`
     : roles.includes("acting") ? `the person dealing with us for ${partyName}` : `a director of ${partyName}`;
 
 export const KYC_DOC_KEYS: KycDocKey[] = ["photo_id", "proof_of_address", "source_of_funds", "ownership", "owner_ids", "authority", "company_documents", "other"];

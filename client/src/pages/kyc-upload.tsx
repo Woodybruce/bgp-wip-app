@@ -753,7 +753,7 @@ export default function KycUploadPage() {
         </p>
       ) : (
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-          Before the deal can go ahead, the law requires us to confirm who we're dealing with
+          Before the transaction can go ahead, the law requires us to confirm who we're dealing with
           {view.kind === "company" ? <> for <strong className="text-foreground">{view.partyName}</strong></> : null}. It takes about ten minutes.
           {view.kind === "company" ? " We read the company's Companies House record ourselves." : ""}
         </p>

@@ -149,6 +149,8 @@ test("the email to the joint agent names the party, the reference and HMRC's rea
   assert.match(still.html, /Daniel North: a proof of address/);
   assert.doesNotMatch(still.html, /<b>x<\/b>/);
   assert.match(still.html, /HMRC asks us to record what was and wasn't provided/);
+  // Outside parties read "transaction", never "deal" (Woody, 22 November 2026).
+  for (const e of [sale, letting, nudge, still]) assert.doesNotMatch(`${e.subject} ${e.html}`, /\bdeals?\b(?!\s+with)/i);
   const stopped = jointAgentChaseStoppedEmail({ firm: "Savills", partyName: "Acme Ltd", dealName: "12 Example Street", ref: "7K2Q9M", dealLink: "https://chatbgp.app/deals/1",
     missing: ["their sanctions and PEP screening"], chases: 10, letting: false, sentFrom: "kyc@chatbgp.app" });
   assert.match(stopped.subject, /has not sent what is missing/);

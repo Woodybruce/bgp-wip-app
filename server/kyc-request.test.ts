@@ -7,8 +7,9 @@ import {
   clientChecksSwitchOn, KYC_CLIENT_CHECK_ROUTES,
   KYC_DATA_USE, KYC_DOCS, KYC_LETTING_SCOPE, KYC_LOGO_CID, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_TIMING, defaultKycDocs, isKycDocKey, isKycPepAnswer,
   kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycSteps, kycUploadAllowed,
-  kycWhatsAppHref, kycWhatsAppText, type KycEmailContext,
+  kycPersonRoleWords, kycWhatsAppHref, kycWhatsAppText, type KycEmailContext,
 } from "../shared/kyc-request";
+import { readFileSync } from "node:fs";
 import { reminderDue } from "./aml-portal";
 
 const ctx = (over: Partial<KycEmailContext> = {}): KycEmailContext => ({
@@ -272,4 +273,19 @@ test("an owner's own request says why they are asked, and the agents hear who st
     peopleOutstanding: ["Huseyn Mirhadiyev: identity check and proof of address (link emailed)"] });
   assert.match(acting.html, /Still to come from the people to check for BRUCE GILLINGHAM POLLARD LIMITED/);
   assert.match(acting.html, /Huseyn Mirhadiyev: identity check and proof of address \(link emailed\)/);
+});
+
+test("clients read \"transaction\", never \"deal\" (Woody, 22 November 2026)", () => {
+  const noDeal = (text: string) => assert.doesNotMatch(text, /\bdeals?\b(?!\s+with)/i);
+  for (const e of [
+    kycRequestEmail(ctx()), kycRequestEmail(ctx({ kind: "individual", docs: ["proof_of_address"] })),
+    kycReminderEmail({ ...ctx(), progress: { idDone: false, docsDone: [] } }),
+    kycIdCheckEmail({ recipientName: "Jane Smith", partyName: "Jane Smith", kind: "individual", dealName: "12 Example Street", link: "https://magic.veriff.me/v/abc", agents: [], sentFrom: "kyc@chatbgp.app" }),
+  ]) noDeal(`${e.subject} ${e.html}`);
+  noDeal(kycWhatsAppText({ recipientName: "Jane Smith", dealName: "12 Example Street", link: "https://chatbgp.app/kyc-upload/abc", expiresAt: "2026-12-01T12:00:00Z" }));
+  assert.equal(kycPersonRoleWords(["joint"], "Jane Smith (private)"), "named on this transaction alongside Jane Smith");
+  const page = readFileSync(new URL("../client/src/pages/kyc-upload.tsx", import.meta.url), "utf8")
+    .split("\n").filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  assert.doesNotMatch(page, /\b(the|this|a|your|our) deal\b/i);
+  assert.match(page, /Before the transaction can go ahead/);
 });
