@@ -948,6 +948,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     : approved ? { state: "done", text: `Cleared${cp.kyc_approved_by ? ` by ${cp.kyc_approved_by}` : ""}${cp.kyc_expires_at ? ` until ${amlBoxDay(cp.kyc_expires_at)}` : ""}` }
     : cp.isExpired ? { state: "flag", text: `Expired${cp.kyc_expires_at ? ` ${amlBoxDay(cp.kyc_expires_at)}` : ""}` }
     // The steps before it come first: their own lines say what is still to do.
+    : companyMissing ? { state: "todo", text: <span className="text-muted-foreground">After the company that signs is set</span> }
     : screening && (screening.state === "todo" || screening.state === "wait") ? { state: "todo", text: <span className="text-muted-foreground">After screening</span> }
     : documents.state !== "done" || !decision ? { state: "todo", text: <span className="text-muted-foreground">After the documents</span> }
     : decision.blocked !== null ? { state: "todo", text: <span className="text-muted-foreground">{shortReason(decision.blocked)}</span> }

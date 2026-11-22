@@ -152,7 +152,9 @@ export function firmShort(name: string | null | undefined): string {
 
 /** The first clause of a longer reason, for the Next line: the rest is in the step. */
 export function shortReason(t: string | null | undefined, max = 70): string {
-  const first = String(t || "").split(/(?<=[a-z0-9)])[.:;](?:\s|$)/i)[0].trim().replace(/[.:;]$/, "");
+  let first = String(t || "").split(/(?<=[a-z0-9)])[.:;](?:\s|$)/i)[0].trim().replace(/[.:;]$/, "");
+  // Too long for the line: a bracketed aside is detail, so it goes first.
+  if (first.length > max && first.indexOf(" (") >= 12) first = first.slice(0, first.indexOf(" (")).trim();
   return first.length > max ? `${first.slice(0, max - 1).replace(/\s+\S*$/, "")}…` : first;
 }
 

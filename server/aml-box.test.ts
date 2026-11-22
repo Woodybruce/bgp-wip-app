@@ -161,6 +161,10 @@ test("names read as a list; a firm without its legal form; a reason to its first
   assert.equal(firmShort("CBRE"), "CBRE");
   assert.equal(shortReason("Possible sanctions match: check it first. Then the rest."), "Possible sanctions match");
   assert.ok(shortReason("a".repeat(30) + " " + "b".repeat(60), 40).endsWith("…"));
+  // A reason too long for the line loses its bracketed aside before it is cut (T4 on live, 22 November 2026).
+  assert.equal(shortReason("This party needs enhanced due diligence (a red flag or a higher-risk factor): only the officers sign it off."), "This party needs enhanced due diligence");
+  // A short one keeps it.
+  assert.equal(shortReason("Owned through KIRKBI A/S (Denmark)"), "Owned through KIRKBI A/S (Denmark)");
 });
 
 test("a party owned through a company registered abroad goes to KYC4U (Woody, 21 November 2026)", () => {
