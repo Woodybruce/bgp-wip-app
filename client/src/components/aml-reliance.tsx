@@ -54,6 +54,25 @@ export function RelianceCard({ dealId, role, reliance, canDecide }: {
   );
 }
 
+/**
+ * The joint agent agreed to the reliance terms on its page (22 November 2026):
+ * the officers record the reliance with that agreement as the firm's letter
+ * (a PDF the server makes), what it says filled in.
+ */
+export interface JointRelianceSource { ref: string; firm: string; supervisor: string; registration: string | null; contact: string | null; agreedOn: string }
+
+export function JointRelianceButton({ dealId, role, partyName, joint }: { dealId: string; role: string; partyName: string; joint: JointRelianceSource }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid={`joint-reliance-record-${role}`}>
+        <Handshake className="w-3.5 h-3.5 mr-1" />Record the reliance
+      </Button>
+      {open && <RelianceDialog dealId={dealId} role={role} partyName={partyName} joint={joint} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
 /** The officers' button and form. */
 export function RelianceButton({ dealId, role, partyName }: { dealId: string; role: string; partyName: string }) {
   const [open, setOpen] = useState(false);
@@ -74,33 +93,34 @@ const CONFIRMS: Array<{ key: "agreed" | "informationHeld" | "copiesOnRequest" | 
   { key: "equivalent", words: "The firm is under money laundering rules and supervision equivalent to the UK's.", abroadOnly: true },
 ];
 
-function RelianceDialog({ dealId, role, partyName, onClose }: { dealId: string; role: string; partyName: string; onClose: () => void }) {
+function RelianceDialog({ dealId, role, partyName, joint, onClose }: { dealId: string; role: string; partyName: string; joint?: JointRelianceSource; onClose: () => void }) {
   const { toast } = useToast();
-  const [firm, setFirm] = useState("");
-  const [kind, setKind] = useState<RelianceFirmKind>("solicitor");
+  const [firm, setFirm] = useState(joint?.firm || "");
+  const [kind, setKind] = useState<RelianceFirmKind>(joint ? "estate_agent" : "solicitor");
   const [where, setWhere] = useState<"uk" | "abroad">("uk");
   const [country, setCountry] = useState("");
-  const [regulator, setRegulator] = useState("");
-  const [regulatorRef, setRegulatorRef] = useState("");
-  const [contact, setContact] = useState("");
-  const [agreedOn, setAgreedOn] = useState("");
+  const [regulator, setRegulator] = useState(joint?.supervisor || "");
+  const [regulatorRef, setRegulatorRef] = useState(joint?.registration || "");
+  const [contact, setContact] = useState(joint?.contact || "");
+  const [agreedOn, setAgreedOn] = useState(joint?.agreedOn || "");
   const [note, setNote] = useState("");
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
   const [files, setFiles] = useState<File[]>([]);
   const fields = { firm, kind, where, country, regulator, regulatorRef, contact, agreedOn, note, ...confirmed };
   const checked = relianceInput(fields);
-  const missing = !checked.ok ? checked.message : !files.length ? "Add the firm's letter or email agreeing to it (a PDF of the email is fine)." : null;
+  const missing = !checked.ok ? checked.message : !files.length && !joint ? "Add the firm's letter or email agreeing to it (a PDF of the email is fine)." : null;
   const save = useMutation({
     mutationFn: async () => {
       const fd = new FormData();
       for (const [k, v] of Object.entries(fields)) fd.append(k, typeof v === "boolean" ? String(v) : v);
+      if (joint) fd.append("jointRef", joint.ref);
       for (const f of files) fd.append("files", f);
       const res = await fetch(`/api/deals/${dealId}/parties/${role}/reliance`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.message || "It could not be recorded.");
       return body;
     },
-    onSuccess: (r: any) => { refresh(dealId); toast({ title: "Reliance recorded", description: r?.words }); onClose(); },
+    onSuccess: (r: any) => { refresh(dealId); queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "joint-agent-checks"] }); toast({ title: "Reliance recorded", description: r?.words }); onClose(); },
     onError: (e: any) => toast({ title: "Not recorded", description: String(e?.message || e), variant: "destructive" }),
   });
   return (
@@ -171,8 +191,13 @@ function RelianceDialog({ dealId, role, partyName, onClose }: { dealId: string; 
               </label>
             ))}
           </div>
+          {joint && (
+            <p className="rounded border border-violet-200 bg-violet-50/60 px-2 py-1.5 text-xs text-violet-950 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-100" data-testid="reliance-joint-source">
+              {joint.contact || joint.firm} agreed to the terms on BGP's page on {day(joint.agreedOn)} (ref {joint.ref}). That agreement is filed as a PDF on the party's KYC record as the firm's agreement in writing. Tick each line only once you have checked what they sent.
+            </p>
+          )}
           <div className="space-y-1.5">
-            <Label className="block">The firm's letter or email agreeing to it</Label>
+            <Label className="block">{joint ? "Anything else from the firm (optional)" : "The firm's letter or email agreeing to it"}</Label>
             <input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.heic,.doc,.docx" onChange={e => setFiles(Array.from(e.target.files || []).slice(0, 10))} data-testid="reliance-files" className="text-xs" />
             <p className="text-[11px] text-muted-foreground">Filed on the party's KYC record.</p>
           </div>

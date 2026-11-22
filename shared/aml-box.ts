@@ -16,7 +16,7 @@ import type { AmlStage } from "./aml-dashboard";
 import { personNamesMatch } from "./kyc-prechecks";
 
 export type AmlBoxTone = "done" | "wait" | "act" | "flag";
-export type AmlBoxWho = "nobody" | "bgp" | "client" | "kyc4u" | "officers";
+export type AmlBoxWho = "nobody" | "bgp" | "client" | "kyc4u" | "officers" | "joint_agent";
 /** What the Next line's button does. */
 export type AmlBoxAction =
   | "fill_in"            // the party box: the company that signs, who to ask, an email
@@ -28,7 +28,8 @@ export type AmlBoxAction =
   | "kyc4u_result"       // the Nominated Officer or a Deputy adds KYC4U's result
   | "sign_off"
   | "red_flags"          // open Red flags
-  | "billing";           // open Who pays: BGP's invoice goes to another company
+  | "billing"            // open Who pays: BGP's invoice goes to another company
+  | "joint";             // open Joint agent: their checks, Not required on a sale, the reliance on a letting
 
 export const AML_BOX_WHO_WORDS: Record<AmlBoxWho, string> = {
   nobody: "Nothing to do",
@@ -36,6 +37,7 @@ export const AML_BOX_WHO_WORDS: Record<AmlBoxWho, string> = {
   client: "Waiting on the client",
   kyc4u: "Waiting on KYC4U",
   officers: "For the Nominated Officer",
+  joint_agent: "Waiting on the joint agent",
 };
 
 /** One person the checks need who still owes something. */
@@ -95,6 +97,12 @@ export interface AmlBoxFacts {
   // off with a note. A possible sanctions match is resolved first.
   inHouseEdd?: boolean;
   sanctionsFlags?: number;
+  // The joint agent asked for their checks on the party (22 November 2026),
+  // the latest request not cancelled: HMRC's route for the deal (a sale: ask
+  // and record; a letting: their checks under a reliance agreement), whether
+  // they agreed to the reliance terms, and how many things their files do not
+  // cover yet (server/joint-agent-checks.ts).
+  joint?: { status: "not_sent" | "sent" | "opened" | "in" | "finished" | "expired"; firm: string; rule: "sale" | "letting" | "other"; reliance: boolean; missing: number } | null;
 }
 
 export interface AmlNextStep { tone: AmlBoxTone; who: AmlBoxWho; words: string; action: AmlBoxAction | null }
@@ -151,7 +159,10 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
     default:
       break;
   }
-  if (f.company && f.companyMissing) {
+  // The joint agent asked for their checks (22 November 2026): their route
+  // comes before BGP's own checks on the company that signs.
+  const jointRunning = !!f.joint && f.joint.status !== "expired" && f.joint.status !== "not_sent";
+  if (f.company && f.companyMissing && !jointRunning) {
     return { tone: "act", who: "bgp", words: "Set the company that signs.", action: "fill_in" };
   }
   if (f.precheckRunning) {
@@ -220,6 +231,33 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
       tone: "wait", who: canSign ? "bgp" : "officers",
       words: `${stop(f.reliance)}${f.signOffBlocked ? ` Before it can be signed off: ${lowerFirst(stop(f.signOffBlocked))}` : edd ? ` ${eddWords}` : " An agent on the deal, the Nominated Officer or a Deputy signs it off."}`,
       action: null,
+    };
+  }
+  // The joint agent asked for their checks (HMRC: on a sale, ask and record
+  // what came back, AMLG2200 s21; on a letting, their checks only under a
+  // reliance agreement). A request that ran out falls back to the client checks.
+  const joint = f.joint && f.joint.status !== "expired" ? f.joint : null;
+  const clientGoing = !!f.request && f.request.status !== "expired" && f.request.status !== "not_sent";
+  if (joint && (joint.status === "in" || joint.status === "finished")) {
+    const gap = joint.missing ? ` Their files do not cover ${joint.missing} thing${s(joint.missing)} yet.` : "";
+    if (joint.rule === "sale") {
+      return { tone: "act", who: "officers", words: `${joint.firm}'s checks are in.${gap} An officer checks them and marks the party Not required, with this request as the record.`, action: "joint" };
+    }
+    if (joint.reliance) {
+      return { tone: "act", who: "officers", words: `${joint.firm} sent their checks and agreed to the reliance terms.${gap} An officer checks them and records the reliance.`, action: "joint" };
+    }
+    return { tone: "wait", who: "joint_agent", words: `${joint.firm} sent their checks but has not agreed to the reliance terms: remind them, or send the client checks.`, action: "joint" };
+  }
+  if (joint && joint.status === "not_sent" && !clientGoing) {
+    return { tone: "act", who: "bgp", words: `The email to ${joint.firm} did not go: ask again.`, action: "joint" };
+  }
+  if (joint && (joint.status === "sent" || joint.status === "opened") && !clientGoing) {
+    return {
+      tone: "wait", who: "joint_agent",
+      words: joint.rule === "sale"
+        ? `Waiting on ${joint.firm} for their checks. If they don't send them, an officer records that you asked and marks the party Not required.`
+        : `Waiting on ${joint.firm} for their checks and their agreement to the reliance terms.`,
+      action: "joint",
     };
   }
   if (f.due === false && !f.request) {

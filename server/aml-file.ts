@@ -20,6 +20,7 @@
 // party (the company that signs when the deal names one), so Request KYC4U
 // check offers it with the other documents and the bookmark attaches it.
 
+import type { JointAgentPartyView } from "@shared/joint-agent-checks";
 import { Router, type Request, type Response } from "express";
 import * as fs from "fs";
 import * as path from "path";
@@ -80,6 +81,8 @@ export interface AmlFileParty {
   riskAssessment: RiskAssessment | null;
   // What BGP recorded against a company abroad that owns it (21 November 2026).
   abroadRecords?: Array<{ ownerName: string; kind: string; note: string | null; personName: string | null; detail: string | null; by: string; at: string }>;
+  // The joint agent asked for their checks on this party, and what came back (22 November 2026).
+  joint?: JointAgentPartyView | null;
 }
 
 export interface AmlFileData {
@@ -146,6 +149,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
     clientChecksForDeal(dealId).catch((e: any) => { console.warn(`[aml-file] could not read the client checks: ${e?.message}`); return null; }),
     dealAgentsAml(pool, dealId).catch(() => null),
   ]);
+  const jointView = await import("./joint-agent-checks").then(m => m.jointChecksForDeal(dealId)).catch((e: any) => { console.warn(`[aml-file] could not read the joint agent's checks: ${e?.message}`); return null; });
   const { dealSolicitorsAml } = await import("./solicitor-aml");
   const solicitors = (await dealSolicitorsAml(pool, dealId).catch(() => null))?.checks || [];
   const hotsRow = (await pool.query(
@@ -238,6 +242,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       trust: trusts.has(brandId),
       riskAssessment: null,
       abroadRecords: abroadRecords.map(r => ({ ownerName: r.ownerName, kind: r.kind, note: r.note, personName: r.person?.name || null, detail: r.person?.detail || null, by: r.by, at: r.at })),
+      joint: jointView?.parties.find(j => j.companyId === brandId && j.requests.length) || null,
     });
   }
   const data: AmlFileData = {
@@ -471,6 +476,35 @@ function writeRiskAssessment(w: Writer, ra: RiskAssessment) {
   for (const r of ra.approvals) w.kv(r.label, r.value, RISK_COLOUR[r.tone]);
 }
 
+const JOINT_STATUS_WORDS: Record<string, string> = {
+  not_sent: "the email did not go", sent: "asked, nothing back yet", opened: "they opened the link", in: "their checks came in",
+  finished: "they finished", expired: "the link ran out", cancelled: "cancelled",
+};
+
+function writeJointAgent(w: Writer, j: JointAgentPartyView) {
+  w.sub("The joint agent's checks");
+  for (const r of j.requests) {
+    w.item("•", `${r.manual ? "Added from their email" : "Request"} ${r.ref} to ${r.firm}${r.to ? ` (${r.to}${r.toEmail ? ` <${r.toEmail}>` : ""})` : ""}: ${JOINT_STATUS_WORDS[r.status] || r.status}`, r.status === "cancelled" ? MUTED : INK, [
+      r.manual ? "Files the joint agent emailed to BGP, added by BGP" : r.sentAt ? `asked ${when(r.sentAt)}${r.sentBy ? ` by ${r.sentBy}` : ""}` : `not sent${r.sendError ? `: ${r.sendError}` : ""}`,
+      r.openedAt ? `opened ${when(r.openedAt)}` : null,
+      r.finishedAt ? `finished ${when(r.finishedAt)}` : null,
+      r.reliance ? `reliance terms agreed by ${[r.reliance.name, r.reliance.position].filter(Boolean).join(", ")} of ${r.reliance.firm} on ${when(r.reliance.agreedAt)}; supervised by ${r.reliance.supervisor}${r.reliance.registration ? ` (${r.reliance.registration})` : ""}` : null,
+      ...r.files.map(f => `${f.name} (${day(f.uploadedAt)}): ${f.reading?.state === "read" ? [f.reading.title || f.reading.kind, (f.reading.people || []).map(x => x.name).join(", ") || null, f.reading.result || null].filter(Boolean).join(", ") : f.reading?.why || "not read yet"}`),
+    ].filter(Boolean).join("\n"));
+  }
+  const c = j.coverage;
+  if (!c) return;
+  for (const person of c.people) {
+    w.item(person.missing.length ? "!" : "•", `${person.name}: ${person.missing.length ? `not covered: ${person.missing.join(" and ")}` : "identity and address covered"}`, person.missing.length ? AMBER : INK,
+      [person.id ? `identity: ${person.id}` : null, person.address ? `address: ${person.address}` : null].filter(Boolean).join("\n") || null);
+  }
+  if (c.company) w.kv("The company", [c.company.register ? `register: ${c.company.register}` : "register entry not sent", c.company.ownership ? `ownership: ${c.company.ownership}` : "ownership not sent"].join("; "), c.company.register && c.company.ownership ? INK : AMBER);
+  w.kv("Screening", c.screening || "not sent", c.screening ? INK : AMBER);
+  for (const f of c.flags) w.item("!", f, RED, null);
+  if (c.others.length) w.kv("Also named in their files", c.others.join(", "));
+  if (c.unread) w.kv("Not read", `${c.unread} file${c.unread === 1 ? "" : "s"}: open them on the deal`, AMBER);
+}
+
 function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map<string, string>) {
   const doc = w.doc;
   const name = p.company?.name || p.brand.name;
@@ -577,6 +611,9 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
         files.length ? `files: ${files.join("; ")}` : null,
       ].filter(Boolean).join("\n"));
   }
+
+  // The joint agent's checks (HMRC: AMLG2200 s21 on a sale; a reliance agreement on a letting).
+  if (p.joint) writeJointAgent(w, p.joint);
 
   // KYC4U.
   w.sub("KYC4U");

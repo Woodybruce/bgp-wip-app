@@ -20,7 +20,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { IN_HOUSE_EDD_NOTE_MIN, KYC4U_RESULTS, KYC4U_RESULT_MAX_FILES, SIGN_OFF_NOTE_MIN, type Kyc4uResultKey } from "@shared/party-kyc";
-import { DUE_DILIGENCE_LABEL, NOT_REQUIRED_COMMENT_MIN, NOT_REQUIRED_REASONS, type NotRequiredReason } from "@shared/aml-policy";
+import {
+  DUE_DILIGENCE_LABEL, JOINT_ASKED_HOW, JOINT_OUTCOMES, NOT_REQUIRED_REASONS, jointAgentNotRequiredRefusal, notRequiredInput,
+  type JointAgentRule, type JointAskedHow, type JointOutcome, type NotRequiredReason,
+} from "@shared/aml-policy";
+import { useJointChecks } from "@/components/joint-agent-checks";
 import type { DealAmlStatus } from "@/components/deal-aml-status";
 
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "").replace(/^\{"message":"(.*)"(,.*)?\}$/, "$1");
@@ -260,23 +264,52 @@ function Kyc4uResultDialog({ dealId, role, partyName, onClose }: { dealId: strin
 
 // "Not required" (BGP's AML policy, G and F.f): the other side of a deal a
 // joint agent found and negotiated, or one where no deal was done.
-function NotRequiredDialog({ dealId, role, partyName, onClose }: { dealId: string; role: string; partyName: string; onClose: () => void }) {
+// HMRC's rules (Woody, 22 November 2026: "We have to do what HMRC say"): on a
+// sale the joint agent reason needs the record of asking the joint agent for
+// their checks and what came back (AMLG2200 s21): a request made in the app
+// (server/joint-agent-checks.ts), or how, when and whom BGP asked otherwise.
+// On a letting at £10,000 a month or more the reason is not offered.
+export function NotRequiredDialog({ dealId, role, companyId, partyName, jointRule, initialRef, onClose }: {
+  dealId: string; role: string; companyId?: string; partyName: string; jointRule?: JointAgentRule | null; initialRef?: string | null; onClose: () => void;
+}) {
   const { toast } = useToast();
-  const [reason, setReason] = useState<NotRequiredReason | "">("");
+  const rule: JointAgentRule = jointRule || "other";
+  const [reason, setReason] = useState<NotRequiredReason | "">(initialRef ? "joint_agent" : "");
   const [comment, setComment] = useState("");
-  const missing = !reason ? "Choose why." : comment.trim().length < NOT_REQUIRED_COMMENT_MIN ? "Say what happened (at least a sentence)." : null;
+  const joint = useJointChecks(dealId, reason === "joint_agent" && rule === "sale");
+  const requests = (joint.data?.parties.find(p => p.companyId === companyId)?.requests || []).filter(r => r.status !== "cancelled" && (r.sentAt || r.openedAt || r.manual));
+  const [askedBy, setAskedBy] = useState<"app" | "other">(initialRef ? "app" : "other");
+  const [jointRef, setJointRef] = useState(initialRef || "");
+  const [askedOn, setAskedOn] = useState("");
+  const [askedHow, setAskedHow] = useState<JointAskedHow | "">("");
+  const [askedWhom, setAskedWhom] = useState("");
+  const [outcome, setOutcome] = useState<JointOutcome | "">("");
+  const body = {
+    reason, comment: comment.trim(),
+    ...(reason === "joint_agent" && rule === "sale" ? {
+      outcome,
+      ...(askedBy === "app" ? { jointRef } : { askedOn, askedHow, askedWhom: askedWhom.trim() }),
+    } : {}),
+  };
+  const forRecord = requests.map(r => ({
+    ref: r.ref, sentAt: r.manual ? r.files[0]?.uploadedAt || new Date().toISOString() : r.sentAt || r.openedAt,
+    whom: `${r.firm}${r.to ? ` (${r.to})` : ""}`, how: r.manual ? "email" as const : "app" as const, files: r.files.length,
+  }));
+  const checked = reason ? notRequiredInput(body, { rule, requests: forRecord }) : null;
+  const refused = reason === "joint_agent" ? jointAgentNotRequiredRefusal(rule) : null;
+  const missing = !reason ? "Choose why." : checked && "problem" in checked ? checked.problem : null;
   const save = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/not-required`, { reason, comment: comment.trim() })).json(),
-    onSuccess: () => { refreshAfterDecision(dealId); toast({ title: "Marked Not required", description: `${partyName} needs no checks on this deal.` }); onClose(); },
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/not-required`, body)).json(),
+    onSuccess: () => { refreshAfterDecision(dealId); queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "joint-agent-checks"] }); toast({ title: "Marked Not required", description: `${partyName} needs no checks on this deal.` }); onClose(); },
     onError: (e: any) => toast({ title: "Not marked", description: plain(e), variant: "destructive" }),
   });
   return (
     <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md" data-testid={`aml-not-required-dialog-${role}`}>
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" data-testid={`aml-not-required-dialog-${role}`}>
         <DialogHeader>
           <DialogTitle>No checks needed on {partyName}?</DialogTitle>
           <DialogDescription>
-            BGP's AML policy: no checks are needed on the other side of a deal when a joint agent found and negotiated it, or when no deal is done. Never for BGP's own client. It stays on the deal with your name and the reason.
+            When a joint agent found the other side of a sale (HMRC: ask them for their checks and record what came back), or no deal is done. Never for BGP's own client. It stays on the deal with your name and the reason.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -289,13 +322,62 @@ function NotRequiredDialog({ dealId, role, partyName, onClose }: { dealId: strin
               </SelectContent>
             </Select>
           </div>
+          {refused && <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" data-testid={`aml-not-required-refused-${role}`}>{refused}</p>}
+          {reason === "joint_agent" && rule === "sale" && (
+            <div className="space-y-2 rounded border p-2" data-testid={`aml-not-required-asked-${role}`}>
+              <p className="text-xs font-medium">The record of asking the joint agent (HMRC, AMLG2200 s21)</p>
+              <Select value={askedBy} onValueChange={v => setAskedBy(v as "app" | "other")}>
+                <SelectTrigger className="h-8 text-xs" data-testid={`aml-not-required-asked-by-${role}`}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="app">The request in the app</SelectItem>
+                  <SelectItem value="other">Asked another way</SelectItem>
+                </SelectContent>
+              </Select>
+              {askedBy === "app" ? (
+                requests.length ? (
+                  <Select value={jointRef} onValueChange={setJointRef}>
+                    <SelectTrigger className="h-8 text-xs" data-testid={`aml-not-required-ref-${role}`}><SelectValue placeholder="Choose the request" /></SelectTrigger>
+                    <SelectContent>
+                      {requests.map(r => <SelectItem key={r.ref} value={r.ref}>{r.firm}, ref {r.ref} · {r.files.length} file{r.files.length === 1 ? "" : "s"}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                ) : <p className="text-[11px] text-muted-foreground">{joint.isLoading ? "Loading the requests…" : "No request to the joint agent on this party yet: ask them from the Joint agent line, or record how you asked."}</p>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label htmlFor={`aml-asked-on-${role}`} className="text-[11px]">When you asked</Label>
+                    <Input id={`aml-asked-on-${role}`} type="date" value={askedOn} onChange={e => setAskedOn(e.target.value)} max={todayLondon()} className="h-8 text-xs" data-testid={`aml-not-required-asked-on-${role}`} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px]">How</Label>
+                    <Select value={askedHow} onValueChange={v => setAskedHow(v as JointAskedHow)}>
+                      <SelectTrigger className="h-8 text-xs" data-testid={`aml-not-required-asked-how-${role}`}><SelectValue placeholder="Choose" /></SelectTrigger>
+                      <SelectContent>
+                        {(Object.keys(JOINT_ASKED_HOW) as JointAskedHow[]).filter(k => k !== "app").map(k => <SelectItem key={k} value={k}>{JOINT_ASKED_HOW[k]}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1 sm:col-span-2">
+                    <Label htmlFor={`aml-asked-whom-${role}`} className="text-[11px]">Whom, at the joint agent</Label>
+                    <Input id={`aml-asked-whom-${role}`} value={askedWhom} onChange={e => setAskedWhom(e.target.value)} maxLength={160} placeholder="Savills (Jane Smith)" className="h-8 text-xs" data-testid={`aml-not-required-asked-whom-${role}`} />
+                  </div>
+                </div>
+              )}
+              <Select value={outcome} onValueChange={v => setOutcome(v as JointOutcome)}>
+                <SelectTrigger className="h-8 text-xs" data-testid={`aml-not-required-outcome-${role}`}><SelectValue placeholder="What came back" /></SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(JOINT_OUTCOMES) as JointOutcome[]).map(k => <SelectItem key={k} value={k}>{JOINT_OUTCOMES[k][0].toUpperCase() + JOINT_OUTCOMES[k].slice(1)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label htmlFor={`aml-not-required-comment-${role}`}>What happened</Label>
             <Textarea id={`aml-not-required-comment-${role}`} value={comment} onChange={e => setComment(e.target.value)} rows={3} maxLength={1000}
-              placeholder="For example: Savills found the tenant and ran the negotiation; BGP acted for the landlord only"
+              placeholder="For example: Savills found the buyer and ran the negotiation; BGP acted for the seller only"
               data-testid={`aml-not-required-comment-${role}`} />
           </div>
-          {missing && <p className="text-[11px] text-muted-foreground">{missing}</p>}
+          {missing && !refused && <p className="text-[11px] text-muted-foreground" data-testid={`aml-not-required-missing-${role}`}>{missing}</p>}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
@@ -305,6 +387,19 @@ function NotRequiredDialog({ dealId, role, partyName, onClose }: { dealId: strin
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The officers' button on the Joint agent line of a sale: Not required, with the request as the record. */
+export function JointNotRequiredButton({ dealId, role, companyId, partyName, jointRef }: { dealId: string; role: string; companyId: string; partyName: string; jointRef: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => setOpen(true)} data-testid={`joint-not-required-${role}`}>
+        <CircleSlash className="w-3.5 h-3.5 mr-1" />Not required, with this record
+      </Button>
+      {open && <NotRequiredDialog dealId={dealId} role={role} companyId={companyId} partyName={partyName} jointRule="sale" initialRef={jointRef} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 
@@ -368,7 +463,7 @@ export function PartyDecisions({ dealId, data, companyId, role, partyName, appro
       {open === "sign-off" && <SignOffDialog dealId={dealId} role={role} partyName={partyName} needsNote={!!view?.needsNote} edd={!!view?.edd}
         levelWords={level && level.level !== "enhanced" ? DUE_DILIGENCE_LABEL[level.level] : null} onClose={() => setOpen(null)} />}
       {open === "kyc4u" && <Kyc4uResultDialog dealId={dealId} role={role} partyName={partyName} onClose={() => setOpen(null)} />}
-      {open === "not-required" && <NotRequiredDialog dealId={dealId} role={role} partyName={partyName} onClose={() => setOpen(null)} />}
+      {open === "not-required" && <NotRequiredDialog dealId={dealId} role={role} companyId={companyId} partyName={partyName} jointRule={data?.jointRule || null} onClose={() => setOpen(null)} />}
     </div>
   );
 }

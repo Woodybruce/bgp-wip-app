@@ -4538,7 +4538,9 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
   `recordAmlGateWarning` filters again), the deal's `kyc_approved`
   (`recomputeDeals` passes the id), the status feed (`allApproved`, `missing`,
   `notRequired`) and the dashboard (stage `not_required`, bucket Done) read
-  it. A rejected party is never exempt.
+  it. A rejected party is never exempt. Since 22 November 2026 the
+  `joint_agent` reason follows HMRC (see "The joint agent's checks, and
+  HMRC's joint agent rules" below).
 - **Escalations**: a move to Exchanged or Completed with a party not
   approved records the warning as before and emails the officers once per
   deal and stage (`alertOfficersOfOutstandingChecks`, `deal_events`
@@ -4646,6 +4648,114 @@ slang". Rules: `shared/aml-rules.ts`; check: `server/aml-rules.ts`; page:
 - Read against GOV.UK for real from a build machine on 22 November 2026: 11
   pages, no change since the rules were written.
 
+## The joint agent's checks, and HMRC's joint agent rules (Woody, 2026-11-22)
+
+Woody, asked whether BGP can rely on a registered joint agent's AML: "We have
+to do what HMRC say so what's that?", then "Let's get the app to follow HMRC
+rules and also send them an email so they can load everything up or email the
+aml? If they email or upload it can we then upload it and check it in the
+app?". Do not re-litigate. HMRC's guidance, read on GOV.UK on 22 November
+2026: a sale (AMLG2200 s21): "The EAB who did not identify the buyer should
+request the CDD documentation from the other EAB. If the CDD documentation is
+not provided by the other EAB, the EAB should document in writing that it has
+been requested and not provided"; a letting at £10,000 a month or more
+(AMLG2300 s17): "LABs must verify that all parties to the rental agreement are
+who they say they are", with no joint agent exception (s23 lists the only
+cases needing no checks), so a joint agent's checks count only under a
+reliance agreement (MLR 2017 reg 39, AMLG11410). Joint agents check each other
+(AMLG2200, AMLG2300) and work only with registered agents (AMLG11300). Rules:
+`shared/aml-policy.ts` (`jointAgentRule`, `notRequiredInput`,
+`notRequiredLapse`), `shared/joint-agent-checks.ts`; server:
+`server/joint-agent-checks.ts`, with the page and mailbox in
+`server/aml-portal.ts`; screens: `client/src/components/joint-agent-checks.tsx`,
+the joint agent mode of `client/src/pages/kyc-upload.tsx`. Tests:
+`server/joint-agent-checks.test.ts` (in `npm test`),
+`qa/regression/joint-agent-checks-guards.test.mjs`.
+
+- **HMRC's route for the deal** (`jointAgentRule`): `sale` (an investment
+  deal), `letting` (a letting at £10,000 a month or more, or no rent
+  recorded), `letting_under` (sanctions only), `advisory`, `other` (treated as
+  a letting: checked, or relied on). Shown in words on each party's Joint
+  agent line (`JOINT_AGENT_RULE_WORDS`) and on the AML status
+  (`jointRule`, BGP staff only).
+- **Not required, joint agent reason**: refused on `letting` and `other`
+  (`jointAgentNotRequiredRefusal`); on a sale it needs the record of asking
+  and what came back (`kyc_party_exemptions.asked_on`, `asked_how`,
+  `asked_whom`, `asked_outcome`, `joint_ref`, boot migrations): a request made
+  in the app (`jointRef`, which must have reached them: sent, opened, or files
+  added from their email; "they sent their checks" needs files on it), or how,
+  when and whom BGP asked otherwise; `jointAskWords` writes it into the
+  reason. A mark made before the rule that no longer meets it
+  (`notRequiredLapse`) is no longer honoured anywhere `loadNotRequired` is
+  read (the gate, the deal's approval, the board, the AML file) and shows in
+  amber on the party (`notRequiredLapsed`, BGP staff). Live had no Not
+  required marks on 22 November 2026, so no deal moved.
+- **Every joint agent's HMRC registration** is required on the deal's
+  Agents line (`agentAmlState`), not only one BGP shares the fee with.
+- **Jack's joint agency note** (`server/joint-agency-aml.ts`) words a letting
+  at £10,000 a month or more by HMRC: BGP relies on the co-agent's checks
+  under a reliance agreement, or checks the tenant itself; under that, the
+  letting is outside CDD and sanctions screening still applies. Notes saved
+  before keep their own words.
+- **The request** is a client checks request (`kyc_upload_tokens`) with
+  `request.audience = "joint_agent"` and `request.jointAgent` (firm, CRM ids,
+  the rule, the reliance agreed, the readings). It is never the party's own
+  client checks: the people to check (`dealPeopleRequests`), the sign-off
+  (`mainFinished`), the red flags, the client checks list and the AML board's
+  client stages leave it out (`NOT_JOINT_SQL`, `isJointRequest`), and its page
+  cannot hand out the owners' links. **Ask** (`POST
+  /api/deals/:id/joint-agent-checks`, BGP staff signed in as themselves, while
+  the client checks are on): not about BGP's own client (`dealClientRole`) or
+  on `letting_under` / `advisory` (`jointAskRefusal`), one open request per
+  party (one whose email never went is replaced), never a BGP address. The
+  email (`jointAgentRequestEmail`) is from the KYC mailbox, copied to the
+  deal's agents, with the reference in the subject; reminders at 3 and 7
+  days while nothing has come (or, on a letting, the terms are not agreed),
+  live deals only. **Their page**: one upload for everything (a zip is opened
+  and each file filed), and on a letting the reliance terms
+  (`jointRelianceTerms`: reg 39(1) and (2), five years, their supervisor)
+  agreed with a tick, a full name and their supervisor (`POST
+  /api/kyc-upload/:token/reliance`, saved on that key alone), then Finish,
+  which emails the deal's agents what came and what it does not cover.
+  **By email**: a reply with the reference is filed from the address asked or
+  a colleague at the same firm (`sameFirmDomain`, never a free mail service),
+  a zip opened. **Files emailed to someone at BGP**: **Add files they emailed
+  you** (`POST …/joint-agent-checks/upload`, files or a zip) files them on the
+  open request, or on a request of their own marked `manual` (no email goes;
+  the record says "by email").
+- **Reading and coverage**: each file is read once by Anthropic, called
+  directly, one forced tool call (`read_aml_document`), sent the file alone,
+  capped a day (`JOINT_AGENT_READER_DAILY_CAP`, default 200, 0 = off), kept
+  only in its own shape (`checkJointReading`) on `request.jointAgent.readings`
+  (jsonb_set on that key; the page's other saves touch only their own keys).
+  A file not read (a restart, the allowance) is read when BGP opens the deal
+  (`readUnreadJointFiles`); **Read again** per file. `jointCoverage` sets them
+  against the people to check (owners, the person acting, someone named
+  alongside; directors only screened), by name and date of birth: identity (a
+  photo ID in date, or an electronic check that passed), address (a proof
+  naming them, or an electronic check that verified it), the company's
+  register entry and ownership, the screening; an expired ID, a failed or
+  referred check, a screening match and the same name with another date of
+  birth are listed to look at. With no people read by BGP, the owners their
+  own register or chart names are the people. It lists; it decides nothing.
+- **The officers decide** (the Joint agent line's buttons): **Not required,
+  with this record** on a sale; **Record the reliance** on a letting once
+  they agreed the terms: the reliance route (`jointRef`) files their
+  agreement as a PDF (`relianceConfirmationPdf`) as the firm's agreement in
+  writing and fills the form from it; the officer still ticks each condition.
+- **Where it shows**: the AML box's **Joint agent** line and its Next step
+  (`amlNextStep`: after red flags and KYC4U, before BGP's own step of setting
+  the company that signs while their route runs); the AML board's stages
+  `joint_asked` and `joint_in` (in progress); the deal's timeline; the AML
+  file's "The joint agent's checks" per party.
+- Checked in a browser against a local copy on 22 November 2026 (a sale and a
+  letting with a joint agent, the joint agent's page on a phone, Not
+  required, the reliance, the board, the AML file). The email and the reader
+  were not run from a build machine (no Microsoft or Anthropic keys): the
+  readings on the local copy were written in the reader's shape.
+- Not built: a joint agent's screening match as a red flag on the party (it
+  is listed on the Joint agent line); reading a reliance letter's own words.
+
 ## The AML register, training, agents, EU list, overseas entities and five-year deletion (Woody, 2026-11-19)
 
 Woody answered "Go ahead and build" to the list left out of the AML policy
@@ -4708,9 +4818,10 @@ EU parts of `shared/kyc-prechecks.ts`. Tests: `server/aml-records.test.ts` (in
   acquiring agents) searches it by name (`registerMatches`) and records the
   entry, Not on the register (how it was checked), or a professional body,
   and whether an agreement says who does the client due diligence. Required
-  (amber until done) for a joint agent BGP shares the fee with
-  (`joint_agent_fee_pct`); for the other agents it is the policy's
-  counterparty question. HMRC's Expired status reads as not registered, and a
+  (amber until done) for every joint agent since 22 November 2026 (HMRC:
+  agents who work together check each other; until then only one BGP shares
+  the fee with, `joint_agent_fee_pct`); for the other agents it is the
+  policy's counterparty question. HMRC's Expired status reads as not registered, and a
   check is due again after a year. An unregistered agent offers **Tell the
   Nominated Officer** (the register's unregistered agent kind).
 - **The EU consolidated list** (`server/sanctions-screening.ts`,

@@ -189,7 +189,10 @@ export function JointAgencyWidget({ value, onChange, defaults, signedBy, showErr
         <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
           The file note is saved against this deal and added to the Joint agency AML register. It states that {value.coAgent.trim() || "the co-agent"} is
           HMRC-registered, introduced {value.tenant.trim() || "the tenant"} and managed all dealings with them, and that BGP only advised its client.
-          Signed: {signedBy || "you"}. Reviewed: Jack Barratt. Only switch this on if that is what happened.
+          {(rent || 0) >= 120000
+            ? ` At £10,000 a month or more it also says ${value.tenant.trim() || "the tenant"} is still checked: HMRC's letting rules have no joint agent exception, so BGP relies on ${value.coAgent.trim() || "the co-agent"}'s checks under a reliance agreement, or checks them itself (Parties & AML).`
+            : rent ? " Under £10,000 a month it says the letting needs sanctions checks only." : ""}
+          {" "}Signed: {signedBy || "you"}. Reviewed: Jack Barratt. Only switch this on if that is what happened.
         </p>
       </div>
     </div>

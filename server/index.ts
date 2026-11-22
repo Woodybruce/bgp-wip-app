@@ -3088,6 +3088,15 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       undone_by_name text
     )`,
     `CREATE INDEX IF NOT EXISTS kyc_party_exemptions_deal_idx ON kyc_party_exemptions (deal_id) WHERE undone_at IS NULL`,
+    // On a sale, the record HMRC asks for when the joint agent found the
+    // other side (Woody, 22 November 2026: "We have to do what HMRC say";
+    // AMLG2200 section 21): when, how and whom BGP asked for the joint
+    // agent's checks, what came back, and the app's request when it was one.
+    `ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS asked_on date`,
+    `ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS asked_how text`,
+    `ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS asked_whom text`,
+    `ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS asked_outcome text`,
+    `ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS joint_ref text`,
     // A person to check verified from public sources by the Nominated Officer
     // or a Deputy (Woody, 21 November 2026: KYC4U's "Public figure" method):
     // the note, the links (copied to PDF on the KYC record) and the files.
@@ -4476,6 +4485,7 @@ import websiteContentRouter from "./website-content";
 import wpListingsSyncRouter, { startWpListingsSync } from "./wp-listings-sync";
 import veriffRouter from "./veriff";
 import kycRequestRouter from "./aml-portal";
+import { jointAgentRouter } from "./joint-agent-checks";
 import kycPrecheckRouter from "./kyc-prechecks";
 import dealPartiesRouter from "./deal-parties";
 import dealPartyAmlRouter from "./deal-party-aml";
@@ -5850,6 +5860,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(wpListingsSyncRouter);
   app.use(veriffRouter);
   app.use(kycRequestRouter);
+  // The joint agent asked for their checks on a party (BGP staff only, 22 November 2026).
+  app.use(jointAgentRouter);
   // BGP's checks before asking: Run again on the deal's AML card (BGP staff only).
   app.use(kycPrecheckRouter);
   // Each deal party's company that signs and the person to ask (BGP staff only).

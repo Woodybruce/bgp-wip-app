@@ -19,7 +19,8 @@ test('a person gets a link of their own from BGP staff, or from the person actin
   // Staff: signed in as themselves, while the client checks are on.
   assert.match(portal, /kycRequestRouter\.post\("\/api\/aml\/deal\/:id\/client-checks\/people", signedIn, async[\s\S]{0,200}const me = await staffMe\(req\);\s*if \(!me\) return res\.status\(403\)[\s\S]{0,120}if \(!clientChecksOn\(\)\) return res\.status\(410\)/);
   // The client page: the request to the person acting only, never a test or a person's own page.
-  assert.match(portal, /if \(row\.is_test \|\| request\.person \|\| request\.kind !== "company" \|\| !row\.company_id\) \{\s*return res\.status\(400\)/);
+  // Nor the joint agent's page (22 November 2026).
+  assert.match(portal, /if \(row\.is_test \|\| request\.person \|\| isJointRequest\(request\) \|\| request\.kind !== "company" \|\| !row\.company_id\) \{\s*return res\.status\(400\)/);
   assert.match(portal, /if \(!person\.roles\.includes\("owner"\)\) throw Object\.assign\(new Error\("Only the owners' links are passed on from this page\."\)/);
   assert.match(portal, /if \(personNamesMatch\(person\.name, main\.contact_name \|\| ""\)\) throw Object\.assign\(new Error\("Your own checks are on this page\."\)/);
   // A page can email a link only a few times a day, not twice in two minutes.
@@ -54,7 +55,8 @@ test('the old owners step is never ticked by files on the deal card, and the req
 
 test("a party's checks are finished only when every person to check has sent what they owe", () => {
   const signOff = read('server/deal-party-aml.ts');
-  assert.match(signOff, /AND COALESCE\(jsonb_typeof\(request->'person'\), 'null'\) <> 'object' LIMIT 1`/);
+  // Never the joint agent's request (22 November 2026).
+  assert.match(signOff, /AND COALESCE\(jsonb_typeof\(request->'person'\), 'null'\) <> 'object'\s*AND COALESCE\(request->>'audience', 'client'\) <> 'joint_agent' LIMIT 1`/);
   assert.match(signOff, /const outstanding = people \? people\.outstanding : \["the people to check could not be read"\];/);
   assert.match(signOff, /const finished = mainFinished && !outstanding\.length;/);
   const dashboard = read('server/aml-dashboard.ts');

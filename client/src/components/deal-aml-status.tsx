@@ -9,11 +9,11 @@ import { kyc4uDraftState } from "@shared/kyc4u-portal";
 import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks } from "@/components/kyc-client-checks";
 import { SecondReadPanel } from "@/components/aml-second-read";
 import { DealPartyEditor, PartyBillingDetail, PartyReadyToStart, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
-import { PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
+import { JointNotRequiredButton, PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
 import { FLAG_REVIEW_COMMENT_MIN, isSanctionsFlag, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
 import { personDisplayName, personNamesMatch, precheckDay, type PrecheckCardLine, type PrecheckCompany } from "@shared/kyc-prechecks";
-import { type AmlRegime, type PartyDueDiligence } from "@shared/aml-policy";
+import { type AmlRegime, type JointAgentRule, type JointAskRecord, type PartyDueDiligence } from "@shared/aml-policy";
 import { AML_BOX_WHO_WORDS, amlBoxDay, amlNextStep, andList, type AmlBoxFacts, type AmlBoxTone } from "@shared/aml-box";
 import { AML_STAGE_LABEL, type AmlDashboardRow, type AmlStage } from "@shared/aml-dashboard";
 import { SIGNING_COMPANY_WORDS, peopleToReach, type DealPartyRole, type DealPartyView } from "@shared/deal-parties";
@@ -33,7 +33,8 @@ import type { RiskAssessment } from "@shared/aml-risk-assessment";
 import { CHARITY_ATTRIBUTION, type CharityFacts } from "@shared/charity-register";
 import { AmlFileButton } from "@/components/aml-file-button";
 import { AbroadTrace, abroadSummary, useDealAbroad } from "@/components/aml-abroad";
-import { RelianceButton, RelianceCard } from "@/components/aml-reliance";
+import { JointRelianceButton, RelianceButton, RelianceCard } from "@/components/aml-reliance";
+import { JointAgentPanel, currentJointRequest, jointApplies, jointBoxFacts, jointSectionLine, useJointChecks } from "@/components/joint-agent-checks";
 import { AmlStopButton } from "@/components/aml-stop";
 
 export interface DealAmlStatus {
@@ -56,7 +57,11 @@ export interface DealAmlStatus {
     signsAs?: string | null;
     // Marked Not required on this deal by the Nominated Officer or the
     // Deputy (BGP's AML policy, 19 November 2026).
-    notRequired?: { reason?: string; reasonWords: string; comment?: string; by?: string | null; at?: string | null } | null;
+    notRequired?: { reason?: string; reasonWords: string; comment?: string; by?: string | null; at?: string | null; asked?: JointAskRecord | null } | null;
+    // A Not required mark that no longer counts under HMRC's rules (22
+    // November 2026): the joint agent reason on a letting, or on a sale with
+    // no record of asking the joint agent. BGP staff only.
+    notRequiredLapsed?: { reasonWords: string; comment?: string; by?: string | null; at?: string | null; why: string } | null;
   }>;
   allApproved: boolean;
   canInvoice: boolean;
@@ -86,6 +91,8 @@ export interface DealAmlStatus {
   } | null;
   // Which checks the deal needs under BGP's AML policy (BGP staff only).
   regime?: { regime: AmlRegime; why: string } | null;
+  // HMRC's joint agent route for the deal (22 November 2026; BGP staff only).
+  jointRule?: JointAgentRule | null;
 }
 
 export interface PartyPrecheck {
@@ -527,6 +534,16 @@ function PartyLevel({ data, companyId }: { data: DealAmlStatus; companyId: strin
 // A party marked Not required (the other side of a deal a joint agent
 // negotiated, or where no deal was done).
 function PartyNotRequiredBox({ cp }: { cp: DealAmlStatus["counterparties"][number] }) {
+  if (cp.notRequiredLapsed) {
+    const l = cp.notRequiredLapsed;
+    return (
+      <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" data-testid={`aml-not-required-lapsed-${cp.id}`}>
+        <div className="font-semibold">Marked Not required, but it no longer counts</div>
+        <div>{l.why}</div>
+        <div className="opacity-80">{l.reasonWords}{l.comment ? `: “${l.comment}”` : ""}{l.by ? ` (${l.by}${l.at ? `, ${precheckDay(l.at)}` : ""})` : ""}</div>
+      </div>
+    );
+  }
   if (!cp.notRequired) return null;
   const n = cp.notRequired;
   return (
@@ -607,6 +624,8 @@ export const AML_STAGE_TONE: Record<AmlStage, string> = {
   not_started: "bg-muted text-muted-foreground",
   bgp_checked: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
   client_sent: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
+  joint_asked: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
+  joint_in: "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-200",
   client_finished: "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-200",
   relied: "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-200",
   with_kyc4u: "bg-orange-100 text-orange-900 dark:bg-orange-900/40 dark:text-orange-200",
@@ -661,8 +680,8 @@ const readOpenAll = (): boolean => { try { return window.localStorage.getItem(OP
 const writeOpenAll = (on: boolean) => { try { if (on) window.localStorage.setItem(OPEN_ALL_KEY, "1"); else window.localStorage.removeItem(OPEN_ALL_KEY); } catch { /* per browser only */ } };
 type OpenAll = { all: boolean; at: number };
 
-type SectionKey = "company" | "abroad" | "payer" | "checks" | "level" | "people" | "client" | "flags" | "kyc4u" | "decision" | "assessment";
-const SECTION_KEYS: SectionKey[] = ["company", "abroad", "payer", "checks", "level", "people", "client", "flags", "kyc4u", "assessment", "decision"];
+type SectionKey = "company" | "abroad" | "payer" | "checks" | "level" | "people" | "joint" | "client" | "flags" | "kyc4u" | "decision" | "assessment";
+const SECTION_KEYS: SectionKey[] = ["company", "abroad", "payer", "checks", "level", "people", "joint", "client", "flags", "kyc4u", "assessment", "decision"];
 
 function useOpenSections<K extends string>(keys: K[], openAll: OpenAll) {
   const [open, setOpen] = useState<Set<K>>(() => new Set(openAll.all ? keys : []));
@@ -721,6 +740,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen 
     queryFn: async () => (await apiRequest("GET", `/api/kyc4u/drafts?${new URLSearchParams({ dealId, companyId: cp.id })}`)).json(),
   });
   const kyc4uCompany = useQuery<{ requests: Array<{ status: string | null }> }>({ queryKey: ["/api/kyc4u/company", cp.id], enabled: staff, staleTime: 5 * 60_000 });
+  // The joint agent asked for their checks on the party (22 November 2026).
+  const jointQ = useJointChecks(dealId, staff && !!data.jointRule && data.jointRule !== "letting_under" && data.jointRule !== "advisory");
+  const jointParty = jointApplies(jointQ.data, cp.id);
 
   const reveal = (k: SectionKey) => {
     setFolded(false);
@@ -784,6 +806,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen 
     reliance: people?.reliance?.words || null,
     inHouseEdd: !!data.decisions?.inHouseEdd,
     sanctionsFlags: [...flags, ...(data.redFlags?.deal || [])].filter(isSanctionsFlag).length,
+    joint: jointBoxFacts(jointQ.data, cp.id),
   };
   const step = amlNextStep(facts);
 
@@ -803,6 +826,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen 
       case "sign_off": return <PartyDecisionButton dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} kind="sign_off" />;
       case "red_flags": return <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => reveal("flags")}>See the red flags</Button>;
       case "billing": return <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => reveal("payer")} data-testid={`aml-next-billing-${cp.role}`}>Who pays</Button>;
+      case "joint": return <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => reveal("joint")} data-testid={`aml-next-joint-${cp.role}`}>Open Joint agent</Button>;
       default: return null;
     }
   })();
@@ -1067,6 +1091,29 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen 
               <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="people" />
             </BoxSection>
           )}
+          {jointParty && jointQ.data && !settled && (() => {
+            const line = jointSectionLine(jointParty);
+            const current = currentJointRequest(jointParty);
+            // On a sale the request is the record once it reached them (sent, opened, or their files
+            // added from an email); on a letting the record is their own agreement on the page.
+            const decide = canDecide && current ? (
+              jointQ.data.rule === "sale"
+                ? (current.sentAt || current.openedAt || current.manual
+                    ? <JointNotRequiredButton dealId={dealId} role={cp.role} companyId={cp.id} partyName={partyName} jointRef={current.ref} />
+                    : null)
+                : current.reliance && !people?.reliance
+                  ? <JointRelianceButton dealId={dealId} role={cp.role} partyName={partyName} joint={{
+                      ref: current.ref, firm: current.reliance.firm, supervisor: current.reliance.supervisor, registration: current.reliance.registration,
+                      contact: [current.reliance.name, current.reliance.position].filter(Boolean).join(", "), agreedOn: current.reliance.agreedAt.slice(0, 10),
+                    }} />
+                  : null
+            ) : null;
+            return (
+              <BoxSection id={sid("joint")} testId={tid("joint")} label="Joint agent" tone={line.tone} summary={line.summary} open={open.has("joint")} onToggle={() => toggle("joint")}>
+                <JointAgentPanel dealId={dealId} view={jointQ.data} party={jointParty} decide={decide} />
+              </BoxSection>
+            );
+          })()}
           {clientLine && (
             <BoxSection id={sid("client")} testId={tid("client")} label="Client checks" tone={clientLine.tone} summary={clientLine.summary} open={open.has("client")} onToggle={() => toggle("client")}>
               {companyMissing

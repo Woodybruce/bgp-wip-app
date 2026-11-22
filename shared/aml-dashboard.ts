@@ -8,13 +8,17 @@
 
 import { legacyToCode } from "./deal-status";
 
-export type AmlStage = "not_started" | "bgp_checked" | "client_sent" | "client_finished" | "relied" | "with_kyc4u" | "approved" | "rejected" | "expiring" | "expired" | "not_required";
+export type AmlStage = "not_started" | "bgp_checked" | "joint_asked" | "client_sent" | "joint_in" | "client_finished" | "relied" | "with_kyc4u" | "approved" | "rejected" | "expiring" | "expired" | "not_required";
 
 export const AML_STAGE_LABEL: Record<AmlStage, string> = {
   not_started: "Not started",
   bgp_checked: "BGP checked",
   client_sent: "Client checks sent",
   client_finished: "Client finished",
+  // The joint agent asked for their checks on the party (22 November 2026),
+  // and their checks in: BGP's officers then decide.
+  joint_asked: "Joint agent asked",
+  joint_in: "Joint agent's checks in",
   // Another firm's checks relied on (MLR 2017 reg 39; 21 November 2026).
   relied: "Relying on another firm",
   with_kyc4u: "With KYC4U",
@@ -68,6 +72,11 @@ export interface AmlPartyFacts {
   // holds a party at With KYC4U (Woody, 22 November 2026: "I dont actually
   // think KYC4U is doing anything we cant").
   inHouse?: boolean;
+  // The joint agent asked for their checks on the party (not cancelled), and
+  // when their files (or, on a letting, their agreement to the reliance
+  // terms) came in (server/joint-agent-checks.ts).
+  jointAskedAt?: string | Date | null;
+  jointInAt?: string | Date | null;
 }
 
 const time = (v: string | Date | null | undefined): number | null => {
@@ -89,7 +98,9 @@ export function amlStage(f: AmlPartyFacts, now: Date = new Date()): AmlStage {
   if (!f.inHouse && (f.kyc4uOpen || (f.kyc.status === "in_review" && f.kyc4uInReview))) return "with_kyc4u";
   if (time(f.reliedAt) !== null) return "relied";
   if (time(f.clientFinishedAt) !== null) return "client_finished";
+  if (time(f.jointInAt) !== null) return "joint_in";
   if (time(f.clientSentAt) !== null) return "client_sent";
+  if (time(f.jointAskedAt) !== null) return "joint_asked";
   const pre = time(f.precheckAt);
   if (pre !== null && now.getTime() - pre <= AML_PRECHECK_DAYS * 86400000) return "bgp_checked";
   return "not_started";
@@ -117,7 +128,7 @@ export function amlBucket(stage: AmlStage, due: boolean, closed = false): AmlBuc
   // ago; one never decided is a gap of its own.
   if (closed) return stage === "expiring" || stage === "expired" ? "done" : "closed";
   if (stage === "expiring" || stage === "expired") return "expiring";
-  if (stage === "client_sent" || stage === "client_finished" || stage === "relied" || stage === "with_kyc4u") return "in_progress";
+  if (stage === "client_sent" || stage === "client_finished" || stage === "joint_asked" || stage === "joint_in" || stage === "relied" || stage === "with_kyc4u") return "in_progress";
   return due ? "todo" : "not_due";
 }
 
@@ -128,6 +139,8 @@ export function amlWaitingOn(stage: AmlStage, redFlags: number, inHouse = false)
     case "not_started": return "BGP: start the checks";
     case "bgp_checked": return redFlags ? (inHouse ? "BGP: send the client checks" : flagged) : "BGP: send the client checks or sign off";
     case "client_sent": return "The client";
+    case "joint_asked": return "The joint agent";
+    case "joint_in": return redFlags ? flagged : "Officers: decide on the joint agent's checks";
     case "client_finished":
     case "relied": return redFlags ? flagged : "BGP: sign off";
     case "with_kyc4u": return "KYC4U";
@@ -147,7 +160,7 @@ export function amlWaitingOn(stage: AmlStage, redFlags: number, inHouse = false)
 export function amlNeedsKyc4u(level: "simplified" | "standard" | "enhanced", stage: AmlStage, ownedAbroad = false): boolean {
   // Owned through a company registered abroad goes to KYC4U too (Woody, 21 November 2026).
   // Reliance does not cover enhanced due diligence (HMRC), so a relied-on party still goes.
-  return (level === "enhanced" || ownedAbroad) && (stage === "not_started" || stage === "bgp_checked" || stage === "client_sent" || stage === "client_finished" || stage === "relied");
+  return (level === "enhanced" || ownedAbroad) && (stage === "not_started" || stage === "bgp_checked" || stage === "client_sent" || stage === "client_finished" || stage === "joint_asked" || stage === "joint_in" || stage === "relied");
 }
 
 /** Whole days since the latest of the given moments, or null when there is none. */

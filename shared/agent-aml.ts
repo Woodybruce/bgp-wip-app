@@ -121,21 +121,25 @@ export const AGENT_ROLE_WORDS: Record<AgentRole, string> = {
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : "");
 
 /**
- * What the deal card says about one agent firm. Required: a joint agent BGP
- * shares the fee with (a financial agreement, so the policy needs HMRC
- * registration verified and an agreement in place). Every other agent on the
- * deal is the policy's counterparty question: worth knowing, not a must.
+ * What the deal card says about one agent firm. Required: every joint agent
+ * (Woody, 22 November 2026: "We have to do what HMRC say"; HMRC, AMLG2200
+ * section 21: "both agents would be expected to conduct CDD upon each other
+ * as they both receive a commission or percentage of the fee", and a joint
+ * agent not registered with HMRC means the relationship stops and HMRC is
+ * told). An agreement saying who does the client due diligence is BGP's
+ * policy where BGP shares the fee. Every other agent on the deal is the
+ * policy's counterparty question: worth knowing, not a must.
  */
 export function agentAmlState(input: { role: AgentRole; feeShared: boolean; record: AgentSupervision | null; now?: Date }): { tone: "ok" | "amber" | "red" | "info"; words: string; required: boolean } {
-  const required = input.role === "joint_agent" && input.feeShared;
+  const required = input.role === "joint_agent";
   const r = input.record;
   const now = input.now || new Date();
   if (!r) {
     return required
-      ? { tone: "amber", required, words: "HMRC registration not checked. BGP shares the fee, so the AML policy needs it verified on HMRC's register, with an agreement saying who does the client due diligence." }
-      : { tone: "info", required, words: input.role === "joint_agent"
-          ? "HMRC registration not checked. If BGP shares the fee or has an agreement with them, the AML policy needs it verified."
-          : "HMRC registration not checked (the policy's counterparty question)." };
+      ? { tone: "amber", required, words: input.feeShared
+          ? "HMRC registration not checked. HMRC expects joint agents to check each other: verify it on HMRC's register, and record the agreement saying who does the client due diligence (BGP shares the fee)."
+          : "HMRC registration not checked. HMRC expects joint agents to check each other: verify it on HMRC's register." }
+      : { tone: "info", required, words: "HMRC registration not checked (the policy's counterparty question)." };
   }
   if (r.status === "not_registered") {
     return { tone: "red", required, words: required
@@ -153,7 +157,7 @@ export function agentAmlState(input: { role: AgentRole; feeShared: boolean; reco
   const base = `Registered with HMRC${r.registrationNumber ? `, ${r.registrationNumber}` : ""}${r.registerStatus && !/^approved$/i.test(r.registerStatus) ? ` (${r.registerStatus.toLowerCase()} on HMRC's register)` : ""}, checked ${day(r.checkedAt)}${r.checkedByName ? ` by ${r.checkedByName}` : ""}.`;
   if (stale) return { tone: "amber", required, words: `${base} More than a year ago: check the register again.` };
   if (r.registerStatus && !/^approved$/i.test(r.registerStatus)) return { tone: "amber", required, words: `${base} HMRC has not approved it yet: check again before relying on it.` };
-  if (required && r.agreementInPlace !== true) return { tone: "amber", required, words: `${base} No agreement recorded saying who does the client due diligence.` };
+  if (required && input.feeShared && r.agreementInPlace !== true) return { tone: "amber", required, words: `${base} No agreement recorded saying who does the client due diligence.` };
   return { tone: "ok", required, words: base };
 }
 

@@ -47,10 +47,11 @@ test("BGP's own records stay BGP's", () => {
   for (const table of ['FROM deal_audit_log\n        WHERE deal_id = $1 AND field = ANY', 'FROM kyc_upload_tokens', 'FROM kyc4u_drafts', 'FROM xero_invoices']) {
     const at = feed.indexOf(table);
     assert.ok(at > 0, table);
-    assert.match(feed.slice(at - 200, at), /staff \? pool\.query\(/, `${table} is read for staff only`);
+    assert.match(feed.slice(at - 420, at), /staff \? pool\.query\(/, `${table} is read for staff only`);
   }
   // A client check's token is the client's key: never selected.
-  assert.match(feed, /`SELECT contact_name, contact_email, created_at, completed_at, revoked_at, request->'person'->>'name' AS person_name, request->>'sentAt' AS sent_at FROM kyc_upload_tokens/);
+  // The joint agent's request (22 November 2026) adds its firm and the party's name; still no token.
+  assert.match(feed, /`SELECT contact_name, contact_email, created_at, completed_at, revoked_at, request->'person'->>'name' AS person_name, request->>'sentAt' AS sent_at,\s*request->>'audience' AS audience, request->'jointAgent'->>'firm' AS joint_firm, request->>'partyName' AS party_name,\s*COALESCE\(\(request->>'manual'\)::boolean, false\) AS manual FROM kyc_upload_tokens/);
   // Tasks: BGP staff read every task on the deal; anyone else only their own.
   assert.match(feed, /AND \(\$2::boolean OR t\.user_id = \$3\)/);
   // A joint agent: company names with no ids, and a contact's name only on its own offer.

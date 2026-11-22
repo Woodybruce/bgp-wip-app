@@ -16,8 +16,8 @@ import { existsSync } from "fs";
 import path from "path";
 import { pool } from "./db";
 import {
-  AML_POLICY_DOCUMENTS, FATF_LISTS_AS_OF, LETTING_AML_MONTHLY_RENT, MAX_AML_DEPUTIES, NOT_REQUIRED_REASONS, POLICY_OFFICER_NAMES, RECHECK_YEARS,
-  amlPolicyDocument, type NotRequiredReason, type PartyNotRequired,
+  AML_POLICY_DOCUMENTS, FATF_LISTS_AS_OF, JOINT_ASKED_HOW, JOINT_OUTCOMES, LETTING_AML_MONTHLY_RENT, MAX_AML_DEPUTIES, NOT_REQUIRED_REASONS, POLICY_OFFICER_NAMES, RECHECK_YEARS,
+  amlPolicyDocument, jointAgentRule, jointAskWords, notRequiredLapse, type JointAskRecord, type NotRequiredReason, type PartyNotRequired,
 } from "@shared/aml-policy";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
@@ -36,23 +36,47 @@ async function staffMe(req: Request): Promise<{ id: string; name: string; isAdmi
 
 // ── Not required: the deal parties the officers marked ──────────────────────
 
-/** The live "Not required" markers on some deals, by deal id and role, for the party each was set for. */
-export async function loadNotRequired(db: Db, dealIds: string[]): Promise<Map<string, PartyNotRequired & { companyId: string }>> {
-  const out = new Map<string, PartyNotRequired & { companyId: string }>();
+type NotRequiredMark = PartyNotRequired & { companyId: string };
+
+/**
+ * Every "Not required" marker on some deals, by deal id and role, for the
+ * party each was set for, with why it no longer counts under HMRC's rules
+ * (notRequiredLapse: the joint agent reason on a letting at £10,000 a month
+ * or more, or on a sale with no record of asking the joint agent).
+ */
+export async function loadNotRequiredMarks(db: Db, dealIds: string[]): Promise<Map<string, NotRequiredMark & { lapsed: string | null }>> {
+  const out = new Map<string, NotRequiredMark & { lapsed: string | null }>();
   if (!dealIds.length) return out;
   const { rows } = await db.query(
-    `SELECT id, deal_id, role, company_id, reason, comment, set_by_name, set_at
-       FROM kyc_party_exemptions WHERE deal_id = ANY($1::varchar[]) AND undone_at IS NULL
-      ORDER BY set_at DESC`, [dealIds]);
+    `SELECT x.id, x.deal_id, x.role, x.company_id, x.reason, x.comment, x.set_by_name, x.set_at,
+            x.asked_on, x.asked_how, x.asked_whom, x.asked_outcome, x.joint_ref,
+            d.deal_type, d.team, d.rent_pa
+       FROM kyc_party_exemptions x LEFT JOIN crm_deals d ON d.id = x.deal_id
+      WHERE x.deal_id = ANY($1::varchar[]) AND x.undone_at IS NULL
+      ORDER BY x.set_at DESC`, [dealIds]);
   for (const r of rows) {
     const key = `${r.deal_id}:${r.role}`;
     if (out.has(key)) continue;
     const reason = (Object.prototype.hasOwnProperty.call(NOT_REQUIRED_REASONS, r.reason) ? r.reason : "joint_agent") as NotRequiredReason;
-    out.set(key, {
-      id: Number(r.id), reason, reasonWords: NOT_REQUIRED_REASONS[reason], comment: String(r.comment || ""),
+    const askedOn = r.asked_on ? (r.asked_on instanceof Date ? r.asked_on.toISOString().slice(0, 10) : String(r.asked_on).slice(0, 10)) : null;
+    const asked: JointAskRecord | null = askedOn && r.asked_how && r.asked_outcome && Object.prototype.hasOwnProperty.call(JOINT_ASKED_HOW, r.asked_how) && Object.prototype.hasOwnProperty.call(JOINT_OUTCOMES, r.asked_outcome)
+      ? { askedOn, how: r.asked_how, whom: text(r.asked_whom) || "the joint agent", outcome: r.asked_outcome, ref: r.joint_ref || null }
+      : null;
+    const mark: NotRequiredMark = {
+      id: Number(r.id), reason,
+      reasonWords: asked ? `${NOT_REQUIRED_REASONS[reason]}. ${jointAskWords(asked)}` : NOT_REQUIRED_REASONS[reason],
+      comment: String(r.comment || ""), asked,
       by: r.set_by_name || null, at: r.set_at ? new Date(r.set_at).toISOString() : null, companyId: String(r.company_id),
-    });
+    };
+    out.set(key, { ...mark, lapsed: notRequiredLapse(mark, jointAgentRule({ dealType: r.deal_type, team: r.team, rentPa: r.rent_pa })) });
   }
+  return out;
+}
+
+/** The "Not required" markers that count, by deal id and role, for the party each was set for. */
+export async function loadNotRequired(db: Db, dealIds: string[]): Promise<Map<string, NotRequiredMark>> {
+  const out = new Map<string, NotRequiredMark>();
+  for (const [key, { lapsed, ...mark }] of await loadNotRequiredMarks(db, dealIds)) if (!lapsed) out.set(key, mark);
   return out;
 }
 

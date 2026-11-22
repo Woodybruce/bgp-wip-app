@@ -563,25 +563,135 @@ export function superPrimeFlag(deal: { dealType?: string | null; team?: string[]
   };
 }
 
+// ── Joint agents: what HMRC asks (Woody, 22 November 2026) ──────────────────
+//
+// "We have to do what HMRC say", then "Let's get the app to follow HMRC
+// rules". HMRC's guidance, read on GOV.UK on 22 November 2026:
+// - a sale (estate agency, AMLG2200 section 21, joint sole agency): "The EAB
+//   who did not identify the buyer should request the CDD documentation from
+//   the other EAB. If the CDD documentation is not provided by the other EAB,
+//   the EAB should document in writing that it has been requested and not
+//   provided." So the other side of a sale the joint agent found needs no
+//   checks of BGP's own, once BGP has asked and recorded the answer;
+// - a letting at £10,000 a month or more (AMLG2300 section 17): "LABs must
+//   verify that all parties to the rental agreement are who they say they
+//   are", with no joint agent exception (section 23 lists the only cases
+//   needing no checks). So the tenant is checked by BGP, or BGP relies on the
+//   joint agent's checks under a reliance agreement (MLR 2017 reg 39);
+// - a letting under that: sanctions checks only (amlRegime).
+
+export type JointAgentRule = "sale" | "letting" | "letting_under" | "advisory" | "other";
+
+/** Which of HMRC's joint agent routes a deal is on. */
+export function jointAgentRule(deal: { dealType?: string | null; team?: string[] | string | null; rentPa?: number | string | null }): JointAgentRule {
+  const { regime } = amlRegime(deal);
+  if (regime === "advisory") return "advisory";
+  if (regime === "sanctions_only") return "letting_under";
+  const type = String(deal.dealType || "").trim();
+  if (isInvestmentDeal(type, deal.team ?? null)) return "sale";
+  const letting = ALL_LETTING_TYPES.includes(type) || (TENANT_REP_TYPES as readonly string[]).includes(type) || /^(lease renewal|regear)$/i.test(type);
+  return letting ? "letting" : "other";
+}
+
+export const JOINT_AGENT_RULE_WORDS: Record<JointAgentRule, string> = {
+  sale: "HMRC (AMLG2200, section 21): if the joint agent found this party, ask them for their checks. If they don't send them, record that you asked.",
+  letting: "HMRC's letting guidance has no joint agent exception: the tenant is checked. Use the joint agent's checks under a reliance agreement, or send the client checks.",
+  letting_under: "A letting under £10,000 a month: sanctions checks only.",
+  advisory: "Advisory work: no checks on the other side.",
+  other: "Only a sale has HMRC's joint agent route: this party is checked by BGP, or through a reliance agreement with the joint agent.",
+};
+
+/** Why the joint agent reason cannot be used on this deal, in HMRC's terms, or null when it can. */
+export function jointAgentNotRequiredRefusal(rule: JointAgentRule): string | null {
+  if (rule === "letting") return "HMRC's letting guidance has no joint agent exception: every party to a letting at £10,000 a month or more is verified. Ask the joint agent for their checks under a reliance agreement, or send the client checks.";
+  if (rule === "other") return "Only a sale has HMRC's joint agent route (AMLG2200, section 21). Check this party, or rely on the joint agent's checks under a reliance agreement.";
+  return null;
+}
+
 // ── Not required: the other side of a deal (policy G note; F.f) ─────────────
 
 export const NOT_REQUIRED_REASONS = {
-  joint_agent: "A joint agent found and negotiated the deal with this party, so BGP has no business relationship with it",
+  joint_agent: "The joint agent found and dealt with this party",
   no_deal: "No deal was done with this party",
 } as const;
 export type NotRequiredReason = keyof typeof NOT_REQUIRED_REASONS;
 export const NOT_REQUIRED_COMMENT_MIN = 10;
 
-export function notRequiredInput(body: unknown): { reason: NotRequiredReason; comment: string } | { problem: string } {
+// How BGP asked the joint agent for their checks, and what came back (HMRC:
+// "document in writing that it has been requested and not provided").
+export const JOINT_ASKED_HOW = { app: "through the app", email: "by email", phone: "by phone", letter: "by letter", meeting: "in a meeting" } as const;
+export type JointAskedHow = keyof typeof JOINT_ASKED_HOW;
+export const JOINT_OUTCOMES = { received: "they sent their checks", not_provided: "they did not provide them" } as const;
+export type JointOutcome = keyof typeof JOINT_OUTCOMES;
+export interface JointAskRecord { askedOn: string; how: JointAskedHow; whom: string; outcome: JointOutcome; ref: string | null }
+
+/** "Asked Savills (Jane Smith) for their checks on 22 Nov 2026, through the app: they sent their checks". */
+export function jointAskWords(a: JointAskRecord): string {
+  const day = new Date(`${a.askedOn}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return `Asked ${a.whom} for their checks on ${day}, ${JOINT_ASKED_HOW[a.how]}: ${JOINT_OUTCOMES[a.outcome]}`;
+}
+
+/**
+ * A joint agent request made in the app, as the Not required form can name
+ * it. how: "email" for files the joint agent emailed to someone at BGP and BGP
+ * added (sentAt is then the day they were added). files: how many came back.
+ */
+export interface JointRequestForRecord { ref: string; sentAt: string | null; whom: string; how?: "app" | "email"; files?: number }
+
+export function notRequiredInput(
+  body: unknown,
+  ctx: { rule?: JointAgentRule; today?: Date; requests?: JointRequestForRecord[] } = {},
+): { reason: NotRequiredReason; comment: string; asked: JointAskRecord | null } | { problem: string } {
   const b = (body || {}) as Record<string, unknown>;
   const reason = String(b.reason || "");
   if (!Object.prototype.hasOwnProperty.call(NOT_REQUIRED_REASONS, reason)) return { problem: "Choose why no checks are needed on this party." };
   const comment = String(b.comment ?? "").replace(/\s+/g, " ").trim().slice(0, 1000);
   if (comment.length < NOT_REQUIRED_COMMENT_MIN) return { problem: `Say what happened (at least ${NOT_REQUIRED_COMMENT_MIN} characters): it is kept on the deal.` };
-  return { reason: reason as NotRequiredReason, comment };
+  if (reason !== "joint_agent") return { reason: reason as NotRequiredReason, comment, asked: null };
+  const rule = ctx.rule || "other";
+  const refused = jointAgentNotRequiredRefusal(rule);
+  if (refused) return { problem: refused };
+  // A letting under £10,000 a month or advisory work needs no record of asking.
+  if (rule !== "sale") return { reason: "joint_agent", comment, asked: null };
+  const outcome = String(b.outcome || "") as JointOutcome;
+  if (!(outcome in JOINT_OUTCOMES)) return { problem: "Say what came back from the joint agent: their checks, or nothing." };
+  const ref = String(b.jointRef || "").trim().toUpperCase();
+  if (ref) {
+    const req = (ctx.requests || []).find(r => r.ref === ref);
+    if (!req) return { problem: "That request to the joint agent is not on this party." };
+    if (!req.sentAt) return { problem: "That request to the joint agent was not sent: send it, or record how you asked." };
+    if (outcome === "received" && req.files === 0) return { problem: "Nothing has come back on that request yet: wait for their checks, or record that they did not provide them." };
+    return { reason: "joint_agent", comment, asked: { askedOn: req.sentAt.slice(0, 10), how: req.how || "app", whom: req.whom, outcome, ref } };
+  }
+  const askedOn = String(b.askedOn || "").trim();
+  const when = /^\d{4}-\d{2}-\d{2}$/.test(askedOn) ? new Date(`${askedOn}T12:00:00Z`) : null;
+  if (!when || Number.isNaN(when.getTime())) return { problem: "Give the date you asked the joint agent for their checks." };
+  if (when.getTime() > (ctx.today || new Date()).getTime() + 86400000) return { problem: "The date you asked cannot be in the future." };
+  const how = String(b.askedHow || "") as JointAskedHow;
+  if (!(how in JOINT_ASKED_HOW) || how === "app") return { problem: "Say how you asked: by email, phone, letter or in a meeting." };
+  const whom = String(b.askedWhom || "").replace(/\s+/g, " ").trim().slice(0, 160);
+  if (whom.length < 2) return { problem: "Say who you asked at the joint agent." };
+  return { reason: "joint_agent", comment, asked: { askedOn, how, whom, outcome, ref: null } };
 }
 
-export interface PartyNotRequired { id: number; reason: NotRequiredReason; reasonWords: string; comment: string; by: string | null; at: string | null }
+export interface PartyNotRequired {
+  id: number; reason: NotRequiredReason; reasonWords: string; comment: string; by: string | null; at: string | null;
+  // On a sale: when, how and whom BGP asked for the joint agent's checks, and what came back.
+  asked?: JointAskRecord | null;
+}
+
+/**
+ * Whether a Not required mark still counts under HMRC's rules: the joint
+ * agent reason holds on a sale only with the record of asking, and never on
+ * a letting at £10,000 a month or more. Null when it counts; else why not.
+ */
+export function notRequiredLapse(mark: { reason: NotRequiredReason; asked?: JointAskRecord | null }, rule: JointAgentRule): string | null {
+  if (mark.reason !== "joint_agent") return null;
+  const refused = jointAgentNotRequiredRefusal(rule);
+  if (refused) return refused;
+  if (rule === "sale" && !mark.asked) return "HMRC asks for a record that the joint agent was asked for their checks, and what came back (AMLG2200, section 21). Take this off and mark it again with the record.";
+  return null;
+}
 
 // ── Heads of terms and marketing (policy 3.8) ───────────────────────────────
 

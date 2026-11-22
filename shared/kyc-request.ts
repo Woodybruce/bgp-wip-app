@@ -491,6 +491,106 @@ export function kycIdCheckEmail(ctx: Omit<KycEmailContext, "docs" | "needsIdChec
   return { subject, html: frame("Identity check", inner, footerFor({ sentFrom: ctx.sentFrom, ref: ref || "none", agents: ctx.agents }), ctx.test) };
 }
 
+// ── The joint agent's request (Woody, 22 November 2026) ─────────────────────
+//
+// "send them an email so they can load everything up or email the aml". A
+// sale: HMRC asks the agent who did not find the buyer to ask the agent who
+// did for their checks (AMLG2200, section 21). A letting at £10,000 a month
+// or more: every party is verified (AMLG2300), so BGP asks to rely on the
+// joint agent's checks (MLR 2017 reg 39). The rules are
+// shared/joint-agent-checks.ts.
+
+export interface JointAgentEmailContext {
+  recipientName: string | null;
+  firm: string;
+  partyName: string;
+  partyRole: string | null;           // tenant, purchaser, landlord, vendor
+  kind: KycPartyKind;
+  dealName: string;
+  ref: string;
+  link: string;
+  expiresAt: Date | string;
+  letting: boolean;                   // a letting at £10,000 a month or more: the reliance terms
+  note?: string | null;
+  agents: KycAgent[];
+  sentFrom: string;
+  test?: boolean;
+}
+
+const ROLE_NOUN: Record<string, string> = { tenant: "tenant", purchaser: "buyer", landlord: "landlord", vendor: "seller" };
+
+/** What the joint agent is asked for, in the order the page shows it. */
+export function jointAgentAsks(ctx: Pick<JointAgentEmailContext, "kind" | "letting">): Array<{ title: string; detail: string }> {
+  return [
+    { title: "Identity", detail: ctx.kind === "company"
+      ? "For each owner you identified and the person acting for the company: their ID document, or your electronic identity check report."
+      : "For each person: their ID document, or your electronic identity check report." },
+    { title: "Address", detail: "A proof of address for each of them, or your electronic check confirming it." },
+    ...(ctx.kind === "company" ? [{ title: "The company", detail: "Its register entry and who owns it, with a structure chart if it is owned through other companies." }] : []),
+    { title: "Screening and risk", detail: "Your sanctions, PEP and adverse media screening, and your risk assessment or CDD summary." },
+    { title: "Source of funds", detail: "If you checked it: what you hold." },
+    ...(ctx.letting ? [{ title: "The reliance terms", detail: "Confirm on the page that we may rely on your checks: one tick, your name and your supervisor." }] : []),
+  ];
+}
+
+export function jointAgentRequestEmail(ctx: JointAgentEmailContext): { subject: string; html: string } {
+  const noun = ROLE_NOUN[ctx.partyRole || ""] || "other party";
+  const why = ctx.letting
+    ? `HMRC's guidance for letting agents requires every party to a letting at £10,000 a month or more to be verified. Rather than ask ${escHtml(ctx.partyName)} again, we would like to rely on your checks under the Money Laundering Regulations 2017 (regulation 39).`
+    : `HMRC's guidance for estate agents asks the joint agent who did not deal with the ${noun} to ask the one who did for their customer due diligence, and to record what comes back (AMLG2200, section 21).`;
+  const inner = [
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Your AML checks on ${escHtml(ctx.partyName)}</h1>`,
+    p(greeting(ctx.recipientName)),
+    p(`We are joint agents with ${escHtml(ctx.firm)} on <strong>${escHtml(ctx.dealName)}</strong>, and you dealt with <strong>${escHtml(ctx.partyName)}</strong>, the ${escHtml(noun)}. ${why}`),
+    h2("Please send us"),
+    stepsList(jointAgentAsks(ctx)),
+    button("Send your checks", ctx.link),
+    p(`Or reply to this email with the files attached, keeping the reference in the subject. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
+    noteBlock(ctx.note, ctx.agents),
+    p(`What you send is used only for our anti-money laundering checks, stored securely and kept for five years, as the regulations require.`, `font-size:13px;color:${BODY}`),
+    h2("Questions?"),
+    p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
+    linkFallback(ctx.link),
+  ].join("\n");
+  return { subject: subjectFor({ dealName: ctx.dealName, ref: ctx.ref, test: ctx.test }, `Your AML checks on ${ctx.partyName}:`), html: frame("AML checks", inner, footerFor(ctx), ctx.test, "a joint agent receives") };
+}
+
+export function jointAgentReminderEmail(ctx: JointAgentEmailContext): { subject: string; html: string } {
+  const inner = [
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">A reminder: your checks on ${escHtml(ctx.partyName)}</h1>`,
+    p(greeting(ctx.recipientName)),
+    p(`We have not had your anti-money laundering checks on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong> yet.${ctx.letting ? " We need them, and your agreement to us relying on them, before the deal goes ahead." : ""}`),
+    button("Send your checks", ctx.link),
+    p("Or reply to this email with the files attached, keeping the reference in the subject.", `font-size:13px;color:${MUTED}`),
+    h2("Questions?"),
+    p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
+    linkFallback(ctx.link),
+  ].join("\n");
+  return { subject: subjectFor({ dealName: ctx.dealName, ref: ctx.ref, test: ctx.test }, `Reminder: your AML checks on ${ctx.partyName}:`), html: frame("AML checks reminder", inner, footerFor(ctx), ctx.test, "a joint agent receives") };
+}
+
+/** To the deal's agents when the joint agent has sent their checks. */
+export function jointAgentFinishedEmail(ctx: {
+  firm: string; recipientName: string | null; partyName: string; dealName: string; ref: string; dealLink: string;
+  files: string[]; letting: boolean; reliance: { name: string; at: string } | null; missing: string[]; sentFrom: string;
+}): { subject: string; html: string } {
+  const next = ctx.letting
+    ? (ctx.reliance
+        ? "Next: the Nominated Officer or a Deputy checks what they sent and records the reliance on the deal's AML."
+        : `${escHtml(ctx.firm)} has not agreed to the reliance terms yet: ask them to, or send the client checks.`)
+    : "Next: the Nominated Officer or a Deputy checks what they sent and records it on the deal's AML (Not required, with this request as the record).";
+  const inner = [
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">${escHtml(ctx.firm)} has sent their checks</h1>`,
+    p(`${escHtml(ctx.recipientName || ctx.firm)} has sent ${escHtml(ctx.firm)}'s anti-money laundering checks on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong>.`),
+    ctx.files.length ? h2("Files") + `<ul style="margin:0 0 14px;padding-left:20px">${ctx.files.map(f => `<li style="margin:2px 0">${escHtml(f)}</li>`).join("")}</ul>` : p("No files came with it.", `color:${ACCENT}`),
+    ctx.letting ? p(ctx.reliance ? `Reliance terms agreed by ${escHtml(ctx.reliance.name)} on ${escHtml(kycLongDate(ctx.reliance.at))}.` : "The reliance terms are not agreed yet.") : "",
+    ctx.missing.length ? h2("Not covered yet") + `<ul style="margin:0 0 14px;padding-left:20px">${ctx.missing.map(m => `<li style="margin:2px 0">${escHtml(m)}</li>`).join("")}</ul>` : "",
+    p(next),
+    button("Open the deal", ctx.dealLink),
+  ].join("\n");
+  return { subject: `${ctx.firm} sent their AML checks on ${ctx.partyName}: ${ctx.dealName} (ref ${ctx.ref})`, html: frame("Joint agent's checks", inner, `Bruce Gillingham Pollard. Sent from ${escHtml(ctx.sentFrom)}. Reference ${escHtml(ctx.ref)}.`, false) };
+}
+
 export interface KycFinishedFile {
   name: string;
   docKey: KycDocKey | null;
@@ -776,6 +876,16 @@ export interface KycPortalView {
   agents: KycAgent[];
   finishedAt: string | null;
   maxFileMb: number;
+  // The joint agent's request (22 November 2026): its own page, with the
+  // reliance terms to agree on a letting at £10,000 a month or more.
+  joint?: {
+    firm: string;
+    partyRole: string | null;
+    letting: boolean;
+    asks: Array<{ title: string; detail: string }>;
+    terms: string[] | null;
+    reliance: { name: string; position: string | null; supervisor: string; registration: string | null; agreedAt: string } | null;
+  } | null;
 }
 
 // Files the client page accepts: documents and photos a phone takes.

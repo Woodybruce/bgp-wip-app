@@ -42,8 +42,8 @@ import {
 } from "@shared/party-kyc";
 import { isSanctionsFlag } from "@shared/kyc-red-flags";
 import {
-  DUE_DILIGENCE_LABEL, NOT_REQUIRED_REASONS, RECHECK_YEARS, amlRegime, deputyNames, isDealAgent, notRequiredInput, officerWords,
-  type AmlOfficers, type AmlRegime, type PartyDueDiligence,
+  DUE_DILIGENCE_LABEL, NOT_REQUIRED_REASONS, RECHECK_YEARS, amlRegime, deputyNames, isDealAgent, jointAgentRule, jointAskWords, notRequiredInput, officerWords,
+  type AmlOfficers, type AmlRegime, type JointAgentRule, type PartyDueDiligence,
 } from "@shared/aml-policy";
 import { KYC4U_PACK_MAX_ZIP_BYTES, kyc4uAssessmentRecord, kyc4uResultPrefill, kyc4uRiskLevel } from "@shared/kyc4u-result-pack";
 import { amlFileDocWords } from "@shared/aml-file";
@@ -65,6 +65,7 @@ export interface AmlParty {
   sameCompany: boolean;      // that company is the brand's own legal company
   state: PartyKycState;
   regime: AmlRegime;         // which checks the deal needs (AML policy A)
+  jointRule: JointAgentRule; // HMRC's joint agent route for the deal (22 November 2026)
   agents: { ids: string[]; names: string[] }; // the deal's agents (internal_agent_ids / internal_agent)
 }
 
@@ -92,6 +93,7 @@ export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole):
     entityId: entity ? String(entity.id) : null, entityName: entity ? text(entity.name) : null,
     sameCompany, state,
     regime: amlRegime({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }).regime,
+    jointRule: jointAgentRule({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }),
     agents: {
       ids: Array.isArray(deal.internal_agent_ids) ? deal.internal_agent_ids.filter(Boolean).map(String) : [],
       names: Array.isArray(deal.internal_agent) ? deal.internal_agent.map(text).filter(Boolean) : [],
@@ -159,7 +161,8 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
     `SELECT 1 FROM kyc_upload_tokens
       WHERE deal_id = $1 AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3
         AND completed_at IS NOT NULL AND COALESCE(is_test, false) = false
-        AND COALESCE(jsonb_typeof(request->'person'), 'null') <> 'object' LIMIT 1`,
+        AND COALESCE(jsonb_typeof(request->'person'), 'null') <> 'object'
+        AND COALESCE(request->>'audience', 'client') <> 'joint_agent' LIMIT 1`,
     [party.dealId, party.brandId, party.entityId]).catch(() => ({ rows: [] as any[] }))).rows.length > 0;
   const signer = party.entityId ? (await db.query(`SELECT entity_kind FROM crm_trading_entities WHERE id = $1`, [party.entityId]).catch(() => ({ rows: [] as any[] }))).rows[0] || { entity_kind: null } : null;
   const kind = partySubjectKind(held?.aml_subject_type, signer ? { kind: signer.entity_kind } : null);
@@ -671,19 +674,33 @@ router.post("/api/deals/:id/parties/:role/reliance", deciderFirst, takeFiles, as
     const me = (req as any).amlDecider as { id: string; name: string };
     const role = String(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
-    const said = relianceInput(req.body || {});
-    if (!said.ok) return res.status(400).json({ message: said.message });
     const party = await loadAmlParty(pool, String(req.params.id), role);
     if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    // The joint agent agreed to the reliance terms on its page (22 November
+    // 2026): that agreement, as a PDF, is the firm's agreement in writing, and
+    // what it says fills what the officer left blank.
+    const jointRef = String(req.body?.jointRef || "").trim();
+    let jointPdf: { name: string; mime: string; buffer: Buffer } | null = null;
+    let body: Record<string, unknown> = req.body || {};
+    if (jointRef) {
+      const { jointRelianceForRecord } = await import("./joint-agent-checks");
+      const joint = await jointRelianceForRecord(pool, party.dealId, party.brandId, jointRef);
+      if ("problem" in joint) return res.status(400).json({ message: joint.problem });
+      jointPdf = joint.pdf;
+      body = { ...joint.defaults, ...Object.fromEntries(Object.entries(body).filter(([, v]) => v != null && String(v).trim() !== "")) };
+    }
+    const said = relianceInput(body);
+    if (!said.ok) return res.status(400).json({ message: said.message });
     const { unpackKyc4uFiles } = await import("./kyc4u-result-pack");
     const { entries, skipped } = await unpackKyc4uFiles(((req as any).files || []) as UploadedFile[]);
     if (skipped.length) return res.status(400).json({ message: `Not a file that can be kept: ${skipped.slice(0, 3).map(sk => `${sk.path} (${sk.reason})`).join("; ")}.` });
-    if (!entries.length) return res.status(400).json({ message: "Add the firm's letter or email agreeing to BGP relying on its checks (a PDF of the email is fine)." });
+    const filed = jointPdf ? [jointPdf, ...entries] : entries;
+    if (!filed.length) return res.status(400).json({ message: "Add the firm's letter or email agreeing to BGP relying on its checks (a PDF of the email is fine)." });
 
     const v = said.value;
     const { saveFile } = await import("./file-storage");
     const documentIds: string[] = [];
-    for (const f of entries) {
+    for (const f of filed) {
       const stored = `kyc-reliance-${Date.now()}-${crypto.randomBytes(6).toString("hex")}-${safeFileName(f.name)}`;
       await saveFile(`chat-media/${stored}`, f.buffer, f.mime, f.name);
       const row = (await pool.query(
@@ -747,29 +764,37 @@ router.post("/api/deals/:id/parties/:role/reliance/:relianceId/withdraw", async 
 // when, holds only while that party is on the role, and the party then needs
 // nothing: the AML gate, the deal's approval and the AML dashboard read it
 // (server/aml-policy.ts, loadNotRequired).
+// HMRC's rules (Woody, 22 November 2026: "We have to do what HMRC say"): the
+// joint agent reason holds on a sale only with the record of asking the joint
+// agent for their checks and what came back (AMLG2200, section 21), and is
+// refused on a letting at £10,000 a month or more, where every party to the
+// lease is verified (AMLG2300).
 router.post("/api/deals/:id/parties/:role/not-required", async (req: Request, res: Response) => {
   try {
     const me = await decider(req);
     if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
     const role = String(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
-    const said = notRequiredInput(req.body);
-    if ("problem" in said) return res.status(400).json({ message: said.problem });
     const party = await loadAmlParty(pool, String(req.params.id), role);
     if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    const { jointRequestsForRecord } = await import("./joint-agent-checks");
+    const said = notRequiredInput(req.body, { rule: party.jointRule, requests: await jointRequestsForRecord(pool, party.dealId, party.brandId).catch(() => []) });
+    if ("problem" in said) return res.status(400).json({ message: said.problem });
+    const askedWords = said.asked ? ` ${jointAskWords(said.asked)}.` : "";
     await pool.query(
       `UPDATE kyc_party_exemptions SET undone_at = now(), undone_by = $3, undone_by_name = $4 WHERE deal_id = $1 AND role = $2 AND undone_at IS NULL`,
       [party.dealId, role, me.id, me.name]);
     await pool.query(
-      `INSERT INTO kyc_party_exemptions (deal_id, role, company_id, trading_entity_id, reason, comment, set_by, set_by_name)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [party.dealId, role, party.brandId, party.entityId, said.reason, said.comment, me.id, me.name]);
+      `INSERT INTO kyc_party_exemptions (deal_id, role, company_id, trading_entity_id, reason, comment, set_by, set_by_name, asked_on, asked_how, asked_whom, asked_outcome, joint_ref)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11, $12, $13)`,
+      [party.dealId, role, party.brandId, party.entityId, said.reason, said.comment, me.id, me.name,
+        said.asked?.askedOn || null, said.asked?.how || null, said.asked?.whom || null, said.asked?.outcome || null, said.asked?.ref || null]);
     await pool.query(
       `INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'party_not_required', $2, $3, $4, $5)`,
-      [party.brandId, me.name, `Not required on ${party.dealName} (${DEAL_PARTY_LABEL[role].toLowerCase()}), marked by ${me.name}: ${NOT_REQUIRED_REASONS[said.reason]}. ${said.comment}`,
+      [party.brandId, me.name, `Not required on ${party.dealName} (${DEAL_PARTY_LABEL[role].toLowerCase()}), marked by ${me.name}: ${NOT_REQUIRED_REASONS[said.reason]}.${askedWords} ${said.comment}`,
         party.entityId ? "trading_entity" : null, party.entityId]).catch(() => {});
     await dealAudit(party.dealId, "aml_not_required", party.state.status || "no checks", `not required, marked by ${me.name}`,
-      `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${NOT_REQUIRED_REASONS[said.reason]} · ${said.comment}`, me);
+      `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${NOT_REQUIRED_REASONS[said.reason]}${said.asked ? ` · ${jointAskWords(said.asked)}` : ""} · ${said.comment}`, me);
     const { recomputeDealKycApproved } = await import("./deal-gates");
     await recomputeDealKycApproved(party.brandId, me.name).catch((e: any) => console.warn("[deal-party-aml] deal recompute failed:", e?.message));
     res.json({ ok: true });

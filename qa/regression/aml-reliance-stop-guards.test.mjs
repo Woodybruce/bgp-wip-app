@@ -12,7 +12,9 @@ test("reliance is the officers' to record and withdraw, on one deal, with the fi
   assert.match(s, /router\.post\("\/api\/deals\/:id\/parties\/:role\/reliance", deciderFirst, takeFiles/);
   const withdraw = s.slice(s.indexOf('"/api/deals/:id/parties/:role/reliance/:relianceId/withdraw"'));
   assert.match(withdraw.slice(0, 400), /await decider\(req\)/);
-  assert.match(s, /relianceInput\(req\.body \|\| \{\}\)/);
+  // The officer's form, or what the joint agent agreed on its page filling what was left blank (22 November 2026).
+  assert.match(s, /let body: Record<string, unknown> = req\.body \|\| \{\};/);
+  assert.match(s, /const said = relianceInput\(body\);/);
   assert.match(s, /Add the firm's letter or email/);
   assert.match(s, /'reliance_letter'/);
   // Agreed for one deal: read by the deal, never carried to the party's other deals.

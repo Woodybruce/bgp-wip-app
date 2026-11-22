@@ -112,9 +112,11 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
          FROM kyc_investigations WHERE crm_company_id = ANY($1::varchar[]) AND result->>'kind' = 'precheck'
         ORDER BY crm_company_id, trading_entity_id, conducted_at DESC NULLS LAST, id DESC`, [brandIds])).rows, none),
     read("client checks", async () => (await pool.query(
-      `SELECT deal_id, company_id, request, created_at, completed_at, last_used_at, revoked_at, expires_at FROM kyc_upload_tokens
-        WHERE deal_id = ANY($1::varchar[]) AND is_test IS NOT TRUE AND request IS NOT NULL
-        ORDER BY created_at DESC`, [dealIds])).rows, none),
+      `SELECT u.deal_id, u.company_id, u.request, u.created_at, u.completed_at, u.last_used_at, u.revoked_at, u.expires_at,
+              (SELECT count(*)::int FROM kyc_upload_files f WHERE f.token = u.token) AS files
+         FROM kyc_upload_tokens u
+        WHERE u.deal_id = ANY($1::varchar[]) AND u.is_test IS NOT TRUE AND u.request IS NOT NULL
+        ORDER BY u.created_at DESC`, [dealIds])).rows, none),
     read("identity checks", async () => (await pool.query(
       `SELECT company_id, status, decision_reason, received_at, first_name, last_name FROM veriff_sessions
         WHERE company_id = ANY($1::varchar[]) AND lower(COALESCE(status, '')) = 'declined'
@@ -168,8 +170,14 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     // No company that signs: no checks before asking to read (the deal card's rule).
     const needsCompany = !p.entityId && !["individual", "trust"].includes(String(companyRow?.aml_subject_type || "").toLowerCase());
     const pre = needsCompany ? null : prechecks.find((r: any) => own(r) && isPrecheckResult(r.result)) || null;
-    const partyTokens = tokens.filter((t: any) => String(t.deal_id) === String(p.deal.id) && t.company_id === p.brandId);
+    const allTokens = tokens.filter((t: any) => String(t.deal_id) === String(p.deal.id) && t.company_id === p.brandId);
+    // The joint agent's request (22 November 2026) is not the party's own client checks.
+    const isJoint = (t: any) => t.request?.audience === "joint_agent";
+    const partyTokens = allTokens.filter((t: any) => !isJoint(t));
     const liveTokens = partyTokens.filter((t: any) => !t.revoked_at);
+    const jointLive = allTokens.filter((t: any) => isJoint(t) && !t.revoked_at);
+    const jointAskedAt = jointLive.map((t: any) => t.request?.sentAt || (t.request?.manual ? t.created_at : null)).filter(Boolean).sort().pop() || null;
+    const jointInAt = jointLive.map((t: any) => t.request?.jointAgent?.reliance?.agreedAt || (Number(t.files) > 0 ? t.last_used_at || t.created_at : null)).filter(Boolean).sort().pop() || null;
     const live = applyFlagReviews(withPayerFlags(p, prechecks, partyRedFlags({
       company: companyRow,
       latestInvestigation: latest ? { sanctions_match: latest.sanctions_match, conducted_at: latest.conducted_at, precheck: !!latest.precheck } : null,
@@ -200,7 +208,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const stage = amlStage({
       role: p.role, dealStatus: p.deal.status, kyc: { status: state.status, expiresAt: state.expiresAt },
       precheckAt: pre?.conducted_at || null, clientSentAt: sent, clientFinishedAt: finished, kyc4uOpen, kyc4uInReview,
-      notRequired: markHolds, reliedAt: relied?.recorded_at || null, inHouse,
+      notRequired: markHolds, reliedAt: relied?.recorded_at || null, inHouse, jointAskedAt, jointInAt,
     }, now);
     const due = amlDue(p.role, p.deal.status);
     const allFlags = [...flags, ...onDeal.map(f => `Deal: ${f.label}`)];

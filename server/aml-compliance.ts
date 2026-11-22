@@ -1459,12 +1459,20 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
 
     // Parties the Nominated Officer or the Deputy marked Not required on this
     // deal (BGP's AML policy): they need nothing, unless rejected.
-    const { loadNotRequired } = await import("./aml-policy");
-    const marks = await loadNotRequired(pool, [String(d.id)]).catch(() => new Map());
+    // A mark that no longer counts under HMRC's rules (22 November 2026: the
+    // joint agent reason on a letting at £10,000 a month or more, or on a
+    // sale with no record of asking the joint agent) is shown to BGP staff
+    // with why, and the party needs its checks again.
+    const { loadNotRequiredMarks } = await import("./aml-policy");
+    const marks = await loadNotRequiredMarks(pool, [String(d.id)]).catch(() => new Map());
     for (const c of counterparties) {
       const mark = marks.get(`${d.id}:${c.role}`);
-      c.notRequired = mark && mark.companyId === String(c.id) && c.kyc_status !== "rejected"
-        ? (staff ? { reason: mark.reason, reasonWords: mark.reasonWords, comment: mark.comment, by: mark.by, at: mark.at } : { reasonWords: "No checks needed on this party" })
+      const holds = !!mark && mark.companyId === String(c.id) && c.kyc_status !== "rejected";
+      c.notRequired = holds && !mark.lapsed
+        ? (staff ? { reason: mark.reason, reasonWords: mark.reasonWords, comment: mark.comment, by: mark.by, at: mark.at, asked: mark.asked || null } : { reasonWords: "No checks needed on this party" })
+        : null;
+      c.notRequiredLapsed = holds && mark.lapsed && staff
+        ? { reasonWords: mark.reasonWords, comment: mark.comment, by: mark.by, at: mark.at, why: mark.lapsed }
         : null;
     }
     const settled = (c: any) => (c.isApproved && !c.isExpired) || !!c.notRequired;
@@ -1537,6 +1545,10 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
       decisions,
       // Which checks the deal needs under BGP's AML policy (BGP staff only).
       regime: staff ? (await import("@shared/aml-policy")).amlRegime({ dealType: d.deal_type, team: d.team, rentPa: d.rent_pa }) : null,
+      // HMRC's joint agent route for the deal (22 November 2026): a sale asks
+      // and records; a letting at £10,000 a month or more checks the tenant
+      // or relies on the joint agent's checks under a reliance agreement.
+      jointRule: staff ? (await import("@shared/aml-policy")).jointAgentRule({ dealType: d.deal_type, team: d.team, rentPa: d.rent_pa }) : null,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

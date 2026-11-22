@@ -39,6 +39,8 @@ import { partySubjectKind } from "@shared/deal-parties";
 import { ADDRESS_PROOF_ACCEPT_NOTE_MIN } from "@shared/kyc-address-proof";
 import { officerWords } from "@shared/aml-policy";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
+import { jointAgentAsks, jointAgentFinishedEmail, jointAgentReminderEmail } from "@shared/kyc-request";
+import { jointRelianceInput, jointRelianceTerms, type JointAgentRequestDetails } from "@shared/joint-agent-checks";
 
 export const KYC_MAILBOX = (process.env.KYC_MAILBOX || process.env.BGP_AML_MAILBOX || "kyc@chatbgp.app").trim();
 const LINK_BASE = (process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
@@ -105,9 +107,24 @@ export interface KycRequestDetails {
   // A person's own request emailed from the person acting's page: when, so
   // one page cannot send it more than a few times.
   clientSends?: string[];
+  // Who the request is to (22 November 2026): the party's own people (absent,
+  // "client"), or the joint agent asked for their checks on the party
+  // (server/joint-agent-checks.ts). A joint agent's request is never the
+  // party's client checks: the people to check, the sign-off and the AML
+  // board read it apart.
+  audience?: "client" | "joint_agent";
+  jointAgent?: JointAgentRequestDetails;
+  // Files the joint agent emailed to someone at BGP, added by BGP: no email
+  // went from the app.
+  manual?: boolean;
 }
 
-interface TokenRow {
+/** A joint agent's request (server/joint-agent-checks.ts), not the party's own client checks. */
+export const isJointRequest = (request: Pick<KycRequestDetails, "audience"> | null | undefined): boolean => request?.audience === "joint_agent";
+/** SQL: a request row that is not a joint agent's (u is the kyc_upload_tokens alias, or none). */
+export const NOT_JOINT_SQL = (alias = "") => `COALESCE(${alias ? `${alias}.` : ""}request->>'audience', 'client') <> 'joint_agent'`;
+
+export interface TokenRow {
   token: string;
   deal_id: string;
   contact_email: string | null;
@@ -147,6 +164,14 @@ export function kycLogoBase64(): string {
 
 const cleanEmail = (value: unknown): string => String(value || "").trim().toLowerCase();
 const isEmail = (value: string) => /^[^\s@<>()",;]+@[^\s@<>()",;]+\.[^\s@<>()",;]+$/.test(value);
+
+// Free mail services: two people on one of these are not one firm.
+const FREE_MAIL = new Set(["gmail.com", "googlemail.com", "hotmail.com", "hotmail.co.uk", "outlook.com", "live.com", "live.co.uk", "yahoo.com", "yahoo.co.uk", "icloud.com", "me.com", "aol.com", "btinternet.com", "protonmail.com", "proton.me", "msn.com", "mail.com", "gmx.com", "gmx.co.uk", "sky.com", "virginmedia.com", "talktalk.net"]);
+/** Two addresses at the same firm: the same domain, not a free mail service. */
+export function sameFirmDomain(a: string, b: string): boolean {
+  const da = cleanEmail(a).split("@")[1] || "", db = cleanEmail(b).split("@")[1] || "";
+  return !!da && da === db && !FREE_MAIL.has(da);
+}
 
 export interface KycSendResult { ok: boolean; from: string | null; fellBack: boolean; error: string | null }
 
@@ -212,7 +237,7 @@ const STAFF_ONLY = "Only BGP staff, signed in as themselves, send client checks.
 
 // ── Tokens ──────────────────────────────────────────────────────────────────
 
-async function newRef(): Promise<string> {
+export async function newRef(): Promise<string> {
   for (let attempt = 0; attempt < 8; attempt++) {
     const bytes = crypto.randomBytes(6);
     const ref = Array.from(bytes, b => KYC_REF_ALPHABET[b % KYC_REF_ALPHABET.length]).join("");
@@ -222,18 +247,18 @@ async function newRef(): Promise<string> {
   throw new Error("Could not make a reference for the request");
 }
 
-async function tokenRow(token: string): Promise<TokenRow | null> {
+export async function tokenRow(token: string): Promise<TokenRow | null> {
   if (!/^[A-Za-z0-9_-]{20,64}$/.test(token)) return null;
   const r = await pool.query(`SELECT * FROM kyc_upload_tokens WHERE token = $1`, [token]);
   return (r.rows[0] as TokenRow) || null;
 }
 
-async function saveRequest(token: string, request: KycRequestDetails): Promise<void> {
+export async function saveRequest(token: string, request: KycRequestDetails): Promise<void> {
   await pool.query(`UPDATE kyc_upload_tokens SET request = $2 WHERE token = $1`, [token, JSON.stringify(request)]);
 }
 
 // Why a link no longer opens, in the words the client page shows.
-function closedReason(row: TokenRow | null): string | null {
+export function closedReason(row: TokenRow | null): string | null {
   if (!row || !row.request) return "This link is not recognised. Please check you have the whole address, or ask your contact at Bruce Gillingham Pollard for a new one.";
   if (row.revoked_at) return "This link has been cancelled. If you still need to send something, please contact Bruce Gillingham Pollard.";
   if (new Date(row.expires_at) < new Date()) return "This link has expired. Please ask your contact at Bruce Gillingham Pollard for a new one.";
@@ -322,8 +347,8 @@ async function linkedPeople(row: TokenRow): Promise<Set<string>> {
 // The people to check for the request's party (a company's request only).
 async function partyPeopleForRow(row: TokenRow): Promise<PartyPeople | null> {
   // The request to the party itself (a company's person acting, or a private
-  // individual), never a person's own request.
-  if (!row.company_id || row.is_test || !row.request || row.request.person) return null;
+  // individual), never a person's own request or the joint agent's.
+  if (!row.company_id || row.is_test || !row.request || row.request.person || isJointRequest(row.request)) return null;
   const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
   return partyPeopleFor({ companyId: row.company_id, entityId: row.trading_entity_id, kind: row.request.kind === "company" ? "company" : "individual", dealId: row.deal_id }, await dealPeopleRequests(row.deal_id));
 }
@@ -347,6 +372,26 @@ async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycPro
 export async function portalView(row: TokenRow): Promise<KycPortalView> {
   const request = row.request!;
   const progress = await progressOf(row);
+  // The joint agent's page (22 November 2026): what to send, and on a
+  // letting the reliance terms to agree.
+  if (isJointRequest(request)) {
+    const joint = request.jointAgent;
+    const letting = joint?.rule === "letting" || joint?.rule === "other";
+    return {
+      test: !!row.is_test, ref: request.ref, recipientName: row.contact_name, partyName: request.partyName, kind: request.kind,
+      dealName: request.dealName, expiresAt: new Date(row.expires_at).toISOString(),
+      idCheck: null, question: null, owners: null, docs: [],
+      otherFiles: progress.files.map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
+      person: null, people: null, note: request.note, agents: request.agents,
+      finishedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null, maxFileMb: KYC_MAX_FILE_MB,
+      joint: {
+        firm: joint?.firm || "your firm", partyRole: request.role, letting,
+        asks: jointAgentAsks({ kind: request.kind, letting }),
+        terms: letting ? jointRelianceTerms(request.partyName) : null,
+        reliance: joint?.reliance ? { name: joint.reliance.name, position: joint.reliance.position, supervisor: joint.reliance.supervisor, registration: joint.reliance.registration, agreedAt: joint.reliance.agreedAt } : null,
+      },
+    };
+  }
   let idCheck: KycPortalView["idCheck"] = null;
   if (request.needsIdCheck) {
     const state = progress.idState || "not_started";
@@ -741,8 +786,9 @@ export async function createPersonCheck(dealId: string, input: z.infer<typeof pe
 export type ClientCheckStatus = "not_sent" | "sent" | "opened" | "in_progress" | "finished" | "expired" | "cancelled";
 
 export async function clientChecksForDeal(dealId: string) {
+  // The joint agent's requests are listed apart (server/joint-agent-checks.ts).
   const rows = (await pool.query(
-    `SELECT * FROM kyc_upload_tokens WHERE deal_id = $1 AND request IS NOT NULL AND is_test IS NOT TRUE ORDER BY created_at DESC`, [dealId])).rows as TokenRow[];
+    `SELECT * FROM kyc_upload_tokens WHERE deal_id = $1 AND request IS NOT NULL AND is_test IS NOT TRUE AND ${NOT_JOINT_SQL()} ORDER BY created_at DESC`, [dealId])).rows as TokenRow[];
   const out = [];
   for (const row of rows) {
     const request = row.request!;
@@ -787,10 +833,22 @@ export async function clientChecksForDeal(dealId: string) {
 
 // ── Reminders ───────────────────────────────────────────────────────────────
 
-async function sendReminder(row: TokenRow): Promise<KycSendResult> {
+export async function sendReminder(row: TokenRow): Promise<KycSendResult> {
   const request = row.request!;
   const progress = await progressOf(row);
   const link = kycLinkFor(row.token);
+  if (isJointRequest(request)) {
+    const sent = await sendKycEmail({
+      to: [row.contact_email || ""], cc: request.cc,
+      build: sentFrom => jointAgentReminderEmail({
+        recipientName: row.contact_name, firm: request.jointAgent?.firm || "your firm", partyName: request.partyName, partyRole: request.role,
+        kind: request.kind, dealName: request.dealName, ref: request.ref, link, expiresAt: row.expires_at,
+        letting: request.jointAgent?.rule === "letting" || request.jointAgent?.rule === "other", agents: request.agents, sentFrom,
+      }),
+    });
+    if (sent.ok) await pool.query(`UPDATE kyc_upload_tokens SET reminders_sent = COALESCE(reminders_sent, 0) + 1, last_reminded_at = now() WHERE token = $1`, [row.token]);
+    return sent;
+  }
   const sent = await sendKycEmail({
     to: [row.contact_email || ""], cc: request.cc,
     build: sentFrom => kycReminderEmail({
@@ -833,7 +891,12 @@ export async function sendKycReminders(now = new Date()): Promise<{ sent: number
   for (const row of rows) {
     if (!reminderDue(row, now)) continue;
     const progress = await progressOf(row);
-    if ((!row.request!.needsIdCheck || progress.idDone) && progress.docsDone.length === row.request!.docs.length && progress.pepAnswered && progress.ownersAnswered && progress.ownersLinked !== false) { skipped++; continue; }
+    // The joint agent is chased until they have sent something (and, on a
+    // letting, agreed the reliance terms); BGP added files by hand: never.
+    if (isJointRequest(row.request)) {
+      const letting = row.request!.jointAgent?.rule === "letting" || row.request!.jointAgent?.rule === "other";
+      if (row.request!.manual || (progress.files.length && (!letting || row.request!.jointAgent?.reliance))) { skipped++; continue; }
+    } else if ((!row.request!.needsIdCheck || progress.idDone) && progress.docsDone.length === row.request!.docs.length && progress.pepAnswered && progress.ownersAnswered && progress.ownersLinked !== false) { skipped++; continue; }
     const result = await sendReminder(row);
     if (result.ok) sent++; else { failed++; console.warn(`[kyc] reminder for ${row.request!.ref} failed: ${result.error}`); }
   }
@@ -846,15 +909,22 @@ export async function sendKycReminders(now = new Date()): Promise<{ sent: number
 const safeFileName = (name: string) => path.basename(String(name || "file")).replace(/[^a-zA-Z0-9_.\-]/g, "_").slice(-120) || "file";
 
 // Store a file the client sent and file it on the party's KYC record (a
-// test request records the name only and keeps nothing).
-async function fileClientDocument(row: TokenRow, file: { name: string; mime: string; buffer: Buffer }, docKey: KycDocKey | null, how: string): Promise<void> {
+// test request records the name only and keeps nothing). A joint agent's
+// file (22 November 2026) is filed the same way, said to be theirs, and read
+// against the people the checks need (server/joint-agent-checks.ts).
+export async function fileClientDocument(row: TokenRow, file: { name: string; mime: string; buffer: Buffer }, docKey: KycDocKey | null, how: string, addedBy?: { id: string; name: string | null }): Promise<string | null> {
   const request = row.request!;
+  const joint = isJointRequest(request);
+  const sender = addedBy
+    ? `${addedBy.name || "BGP"}, from ${request.jointAgent?.firm || "the joint agent"}`
+    : joint ? `${row.contact_name || "the joint agent"} of ${request.jointAgent?.firm || "the joint agent"} <${row.contact_email || "unknown"}>`
+    : `${row.contact_name || "the client"} <${row.contact_email || "unknown"}>`;
   if (row.is_test) {
     await pool.query(
       `INSERT INTO kyc_upload_files (token, deal_id, original_filename, content_type, size_bytes, doc_type) VALUES ($1, $2, $3, $4, $5, $6)`,
       [row.token, row.deal_id, file.name, file.mime || null, file.buffer.length, docKey],
     );
-    return;
+    return null;
   }
   const { saveFile } = await import("./file-storage");
   const safeName = `kyc-${Date.now()}-${crypto.randomBytes(6).toString("hex")}-${safeFileName(file.name)}`;
@@ -865,9 +935,9 @@ async function fileClientDocument(row: TokenRow, file: { name: string; mime: str
   }
   const doc = await pool.query(
     `INSERT INTO kyc_documents (company_id, trading_entity_id, contact_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL) RETURNING id`,
-    [row.company_id, row.trading_entity_id || null, row.contact_id, row.deal_id, docType, `/api/chat-media/${safeName}`, file.name, file.buffer.length, file.mime || null,
-      `${how} by ${row.contact_name || "the client"} <${row.contact_email || "unknown"}> (client checks ref ${request.ref}${docKey ? `, as ${KYC_DOCS[docKey].title}` : ""})`],
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+    [row.company_id, row.trading_entity_id || null, joint ? null : row.contact_id, row.deal_id, docType, `/api/chat-media/${safeName}`, file.name, file.buffer.length, file.mime || null,
+      `${how} by ${sender} (${joint ? "the joint agent's checks" : "client checks"}, ref ${request.ref}${docKey ? `, as ${KYC_DOCS[docKey].title}` : ""})`, addedBy?.id || null],
   );
   await pool.query(
     `INSERT INTO kyc_upload_files (token, deal_id, original_filename, content_type, size_bytes, doc_type, kyc_document_id)
@@ -887,13 +957,24 @@ async function fileClientDocument(row: TokenRow, file: { name: string; mime: str
         const { tickChecklistItems } = await import("./kyc-orchestrator");
         await tickChecklistItems(row.company_id, Object.fromEntries(Object.entries(evidence).map(([key, list]) => [key, {
           source: "system" as const, tickedBy: null,
-          evidence: { documents: list, source: `client checks ${request.ref}` },
-          notes: `Evidence sent by the client through client checks (ref ${request.ref}): ${list.join(", ").replace(/_/g, " ")}. MLRO to confirm.`,
+          evidence: { documents: list, source: `${joint ? "joint agent's checks" : "client checks"} ${request.ref}` },
+          notes: `Evidence sent ${joint ? `by the joint agent, ${request.jointAgent?.firm || "the joint agent"},` : "by the client through client checks"} (ref ${request.ref}): ${list.join(", ").replace(/_/g, " ")}. MLRO to confirm.`,
         }])));
       }
     } catch (e: any) { console.warn(`[kyc] checklist update after an upload failed: ${e?.message}`); }
-    await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_document_received', $2, $3)`,
-      [row.company_id, row.contact_name || row.contact_email, `${file.name} (${docType}) ${how.toLowerCase()}, ref ${request.ref}`]).catch(() => {});
+    await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, $2, $3, $4)`,
+      [row.company_id, joint ? "joint_agent_document_received" : "client_document_received", addedBy?.name || row.contact_name || row.contact_email,
+        `${file.name} (${docType}) ${how.toLowerCase()}${joint ? ` from ${request.jointAgent?.firm || "the joint agent"}` : ""}, ref ${request.ref}`]).catch(() => {});
+  }
+
+  if (joint) {
+    // Read and set against the people the checks need (22 November 2026).
+    // After the file is safe; a failed read only says so.
+    const documentId = String(doc.rows[0].id);
+    void import("./joint-agent-checks")
+      .then(async m => m.recordJointReading(pool, row.token, documentId, await m.readJointFile({ buffer: file.buffer, mime: file.mime || null, name: file.name })))
+      .catch((e: any) => console.warn(`[kyc] joint agent file reading not kept: ${e?.message}`));
+    return documentId;
   }
 
   if (docKey === "proof_of_address") {
@@ -929,6 +1010,18 @@ async function fileClientDocument(row: TokenRow, file: { name: string; mime: str
       }
     })();
   }
+  return String(doc.rows[0].id);
+}
+
+// The files in a joint agent's zip that can be kept: documents and photos,
+// none over the size limit (the KYC4U pack reader opens it).
+async function jointZipFiles(name: string, mime: string | null | undefined, buffer: Buffer): Promise<Array<{ name: string; mime: string; buffer: Buffer }>> {
+  const { unpackKyc4uFiles } = await import("./kyc4u-result-pack");
+  const { entries } = await unpackKyc4uFiles([{ originalname: name, mimetype: mime || "application/zip", buffer }]);
+  return entries
+    .filter(e => e.buffer.length <= KYC_MAX_FILE_MB * 1024 * 1024 && kycUploadAllowed(e.name, e.mime))
+    .slice(0, KYC_MAX_FILES_PER_REQUEST)
+    .map(e => ({ name: e.name, mime: e.mime || "application/octet-stream", buffer: e.buffer }));
 }
 
 // ── Finishing ───────────────────────────────────────────────────────────────
@@ -938,6 +1031,27 @@ async function finishRequest(row: TokenRow): Promise<void> {
   await pool.query(`UPDATE kyc_upload_tokens SET completed_at = now() WHERE token = $1 AND completed_at IS NULL`, [row.token]);
   const request = row.request!;
   const progress = await progressOf(row);
+  // The joint agent finished (22 November 2026): the deal's agents hear what
+  // came in, what it does not cover yet, and what happens next.
+  if (isJointRequest(request)) {
+    const letting = request.jointAgent?.rule === "letting" || request.jointAgent?.rule === "other";
+    const missing = await import("./joint-agent-checks").then(m => m.coverageForToken(row.token)).then(c => c?.missing || []).catch(() => [] as string[]);
+    const sent = await sendKycEmail({
+      to: kycReplyAddresses(row, request.cc),
+      build: sentFrom => jointAgentFinishedEmail({
+        firm: request.jointAgent?.firm || "The joint agent", recipientName: row.contact_name, partyName: request.partyName, dealName: request.dealName,
+        ref: request.ref, dealLink: row.is_test ? LINK_BASE : dealLinkFor(row.deal_id), files: progress.files.map(f => f.name), letting,
+        reliance: request.jointAgent?.reliance ? { name: request.jointAgent.reliance.name, at: request.jointAgent.reliance.agreedAt } : null,
+        missing, sentFrom,
+      }),
+    });
+    if (!sent.ok) console.warn(`[kyc] the joint agent's finished note for ${request.ref} was not sent: ${sent.error}`);
+    if (row.company_id && !row.is_test) {
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'joint_agent_finished', $2, $3)`,
+        [row.company_id, row.contact_name || row.contact_email, `${request.jointAgent?.firm || "The joint agent"} finished, ref ${request.ref}: ${progress.files.length} file(s)${letting ? (request.jointAgent?.reliance ? "; reliance terms agreed" : "; reliance terms not agreed") : ""}`]).catch(() => {});
+    }
+    return;
+  }
   const otherPerson = progress.idPerson?.isThePerson === false;
   const missing = [
     ...(request.needsIdCheck && !progress.idDone ? [otherPerson ? `${row.contact_name || "The client"}'s own identity check` : "Identity check"] : []),
@@ -1013,21 +1127,36 @@ export async function pollKycMailbox(): Promise<{ scanned: number; filed: number
       if (!row || !row.request || row.revoked_at || row.is_test) {
         unmatched++; warnings.push(`"${msg.subject}" from ${from}: no open request with that reference`); await tag(msg, UNMATCHED); continue;
       }
-      if (!from || from !== cleanEmail(row.contact_email)) {
+      // A joint agent's colleague at the same firm may send it (22 November
+      // 2026): the same domain, never a free mail service.
+      const sameFirm = isJointRequest(row.request) && sameFirmDomain(from, cleanEmail(row.contact_email));
+      if (!from || (from !== cleanEmail(row.contact_email) && !sameFirm)) {
         unmatched++; warnings.push(`"${msg.subject}" came from ${from}, not the address the request went to`); await tag(msg, UNMATCHED); continue;
       }
       const list: any = await graphRequest(`/users/${mailbox}/messages/${msg.id}/attachments?$select=id,name,contentType,size,isInline`);
       for (const a of list?.value || []) {
         if (a.isInline || a["@odata.type"] === "#microsoft.graph.itemAttachment") continue;
         if (a.size > KYC_MAX_FILE_MB * 1024 * 1024) { warnings.push(`${a.name} is over ${KYC_MAX_FILE_MB}MB`); continue; }
-        if (!kycUploadAllowed(a.name || "", a.contentType)) { warnings.push(`${a.name}: not a document or photo`); continue; }
+        const zip = isJointRequest(row.request) && /\.zip$/i.test(a.name || "");
+        if (!zip && !kycUploadAllowed(a.name || "", a.contentType)) { warnings.push(`${a.name}: not a document or photo`); continue; }
         // A message whose mark could not be saved is read again next time:
         // a file already filed from it is not filed twice.
         const already = await pool.query(`SELECT 1 FROM kyc_upload_files WHERE token = $1 AND original_filename = $2 AND size_bytes = $3 LIMIT 1`, [row.token, a.name, a.size]);
         if (already.rowCount) continue;
         const att: any = await graphRequest(`/users/${mailbox}/messages/${msg.id}/attachments/${a.id}`);
         if (!att?.contentBytes) continue;
-        await fileClientDocument(row, { name: a.name, mime: a.contentType, buffer: Buffer.from(att.contentBytes, "base64") }, null, "Emailed");
+        const how = from === cleanEmail(row.contact_email) ? "Emailed" : `Emailed from ${from}`;
+        if (zip) {
+          // The joint agent's zip: each file in it, once.
+          for (const f of await jointZipFiles(a.name, a.contentType, Buffer.from(att.contentBytes, "base64"))) {
+            const dup = await pool.query(`SELECT 1 FROM kyc_upload_files WHERE token = $1 AND original_filename = $2 AND size_bytes = $3 LIMIT 1`, [row.token, f.name, f.buffer.length]);
+            if (dup.rowCount) continue;
+            await fileClientDocument(row, f, null, `${how} (in ${a.name})`);
+            filed++;
+          }
+          continue;
+        }
+        await fileClientDocument(row, { name: a.name, mime: a.contentType, buffer: Buffer.from(att.contentBytes, "base64") }, null, how);
         filed++;
       }
       await tag(msg, FILED);
@@ -1261,8 +1390,10 @@ kycRequestRouter.get("/api/kyc-upload/:token", async (req: Request, res: Respons
     const row = await openRow(req, res);
     if (!row) return;
     if (!row.request!.openedAt) {
+      // Only that key: a file's reading may be saved on the request meanwhile.
       row.request!.openedAt = new Date().toISOString();
-      await saveRequest(row.token, row.request!);
+      await pool.query(`UPDATE kyc_upload_tokens SET request = jsonb_set(request, '{openedAt}', to_jsonb($2::text)) WHERE token = $1 AND request->>'openedAt' IS NULL`,
+        [row.token, row.request!.openedAt]);
     }
     res.json(await portalView(row));
   } catch (err: any) {
@@ -1276,6 +1407,15 @@ kycRequestRouter.post("/api/kyc-upload/:token/file", portalUpload, async (req: R
     if (!row) return;
     const file = (req as any).file as { originalname: string; mimetype: string; buffer: Buffer } | undefined;
     if (!file?.buffer?.length) return res.status(400).json({ message: "Choose a file to upload." });
+    // A joint agent may send a zip of its checks (22 November 2026): each file in it is filed.
+    if (isJointRequest(row.request) && /\.zip$/i.test(file.originalname)) {
+      const keep = await jointZipFiles(file.originalname, file.mimetype, file.buffer);
+      if (!keep.length) return res.status(400).json({ message: "Nothing in that zip could be read. Please send PDFs, photos or Word documents." });
+      const held = (await pool.query(`SELECT count(*)::int AS n FROM kyc_upload_files WHERE token = $1`, [row.token])).rows[0].n;
+      if (held + keep.length > KYC_MAX_FILES_PER_REQUEST) return res.status(409).json({ message: "That's more files than this link takes. Please email the rest to your contact." });
+      for (const f of keep) await fileClientDocument(row, f, null, "Uploaded on the joint agent's page (from a zip)");
+      return res.json(await portalView((await tokenRow(row.token))!));
+    }
     if (!kycUploadAllowed(file.originalname, file.mimetype)) {
       return res.status(400).json({ message: "That type of file can't be uploaded. Please send a PDF, a photo (JPG, PNG or HEIC) or a Word document." });
     }
@@ -1383,7 +1523,7 @@ kycRequestRouter.post("/api/kyc-upload/:token/people", async (req: Request, res:
     const row = await openRow(req, res);
     if (!row) return;
     const request = row.request!;
-    if (row.is_test || request.person || request.kind !== "company" || !row.company_id) {
+    if (row.is_test || request.person || isJointRequest(request) || request.kind !== "company" || !row.company_id) {
       return res.status(400).json({ message: "There's no one to pass a link to from this page." });
     }
     if (!clientChecksOn()) return res.status(409).json({ message: "Please ask your contact at Bruce Gillingham Pollard to send it." });
@@ -1395,6 +1535,31 @@ kycRequestRouter.post("/api/kyc-upload/:token/people", async (req: Request, res:
   } catch (err: any) {
     const status = Number(err?.status) || 500;
     res.status(status).json({ message: status < 500 ? err.message : "Something went wrong. Please try again." });
+  }
+});
+
+// The joint agent agrees to BGP relying on its checks (22 November 2026: a
+// letting at £10,000 a month or more; MLR 2017 reg 39). Kept on the request
+// with who agreed and when; the officers then record the reliance on the
+// deal (server/deal-party-aml.ts, with this request's reference).
+kycRequestRouter.post("/api/kyc-upload/:token/reliance", async (req: Request, res: Response) => {
+  try {
+    const row = await openRow(req, res);
+    if (!row) return;
+    const request = row.request!;
+    if (!isJointRequest(request) || !request.jointAgent) return res.status(400).json({ message: "There are no reliance terms on this page." });
+    const said = jointRelianceInput(req.body || {}, request.jointAgent.firm);
+    if (!said.ok) return res.status(400).json({ message: said.message });
+    request.jointAgent = { ...request.jointAgent, reliance: said.value };
+    // Only that key: a file's reading may be saved on the request meanwhile.
+    await pool.query(`UPDATE kyc_upload_tokens SET request = jsonb_set(request, '{jointAgent,reliance}', $2::jsonb) WHERE token = $1`, [row.token, JSON.stringify(said.value)]);
+    if (row.company_id && !row.is_test) {
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'joint_agent_reliance_agreed', $2, $3)`,
+        [row.company_id, said.value.name, `${said.value.name}${said.value.position ? `, ${said.value.position},` : ""} of ${said.value.firm} agreed to BGP relying on its checks on ${request.partyName} (ref ${request.ref}; supervised by ${said.value.supervisor}${said.value.registration ? `, ${said.value.registration}` : ""})`]).catch(() => {});
+    }
+    res.json(await portalView((await tokenRow(row.token))!));
+  } catch (err: any) {
+    res.status(500).json({ message: "Something went wrong. Please try again." });
   }
 });
 

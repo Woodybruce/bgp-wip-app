@@ -468,7 +468,9 @@ export async function buildDealTimeline(ctx: DealContext): Promise<DealEvent[]> 
       `SELECT id, field, old_value, new_value, reason, changed_by_name, created_at FROM deal_audit_log
         WHERE deal_id = $1 AND field = ANY($2::text[]) ORDER BY created_at`, [deal.id, Object.keys(AML_LINE_TITLES)]) : none(),
     staff ? pool.query(
-      `SELECT contact_name, contact_email, created_at, completed_at, revoked_at, request->'person'->>'name' AS person_name, request->>'sentAt' AS sent_at FROM kyc_upload_tokens
+      `SELECT contact_name, contact_email, created_at, completed_at, revoked_at, request->'person'->>'name' AS person_name, request->>'sentAt' AS sent_at,
+              request->>'audience' AS audience, request->'jointAgent'->>'firm' AS joint_firm, request->>'partyName' AS party_name,
+              COALESCE((request->>'manual')::boolean, false) AS manual FROM kyc_upload_tokens
         WHERE deal_id = $1 AND COALESCE(is_test, false) = false ORDER BY created_at`, [deal.id]).catch(none) : none(),
     staff ? pool.query(`SELECT id, role, created_at, status FROM kyc4u_drafts WHERE deal_id = $1`, [deal.id]).catch(none) : none(),
     staff ? pool.query(`SELECT id, invoice_number, status, created_at FROM xero_invoices WHERE deal_id = $1`, [deal.id]).catch(none) : none(),
@@ -543,6 +545,18 @@ export async function buildDealTimeline(ctx: DealContext): Promise<DealEvent[]> 
   }
   // The request's token is the client's key to its page: never sent, not even as an id.
   tokens.rows.forEach((t: any, n: number) => {
+    // The joint agent asked for their checks on a party (22 November 2026).
+    if (t.audience === "joint_agent") {
+      const firm = text(t.joint_firm) || "the joint agent";
+      const party = text(t.party_name);
+      push({
+        id: `kyc-sent:${n}`, at: at(t.manual ? t.created_at : t.sent_at || t.created_at), kind: "aml",
+        title: t.manual ? `${firm}'s checks${party ? ` on ${party}` : ""} added from their email` : `${firm} asked for their checks${party ? ` on ${party}` : ""}`,
+        detail: t.revoked_at ? "Cancelled" : null, open: { to: "section", section: "parties" },
+      });
+      push({ id: `kyc-done:${n}`, at: at(t.completed_at), kind: "aml", title: `${firm} sent their checks${party ? ` on ${party}` : ""}`, open: { to: "section", section: "parties" } });
+      return;
+    }
     const who = text(t.contact_name) || text(t.contact_email) || "the client";
     // A person's own link (19 November 2026): made, and emailed when it was.
     const person = text(t.person_name);

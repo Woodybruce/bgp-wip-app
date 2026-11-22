@@ -167,8 +167,12 @@ test("super-prime sales: £5m in London and the South East, over £1m elsewhere"
 test("Not required: one of the policy's two reasons and a comment", () => {
   assert.ok("problem" in notRequiredInput({ reason: "other", comment: "A long enough comment" }));
   assert.ok("problem" in notRequiredInput({ reason: "joint_agent", comment: "short" }));
-  const ok = notRequiredInput({ reason: "joint_agent", comment: "Savills found and negotiated the tenant." });
+  // Since 22 November 2026 HMRC's route for the deal decides the joint agent
+  // reason (server/joint-agent-checks.test.ts): refused on a letting at
+  // £10,000 a month or more, open on one under it.
+  const ok = notRequiredInput({ reason: "joint_agent", comment: "Savills found and negotiated the tenant." }, { rule: "letting_under" });
   assert.ok("reason" in ok && ok.reason === "joint_agent");
+  assert.ok("problem" in notRequiredInput({ reason: "joint_agent", comment: "Savills found and negotiated the tenant." }, { rule: "letting" }));
   assert.equal(Object.keys(NOT_REQUIRED_REASONS).length, 2);
   assert.equal(amlStage({ role: "tenant", dealStatus: "SOL", kyc: { status: null, expiresAt: null }, precheckAt: null, clientSentAt: null, clientFinishedAt: null, kyc4uOpen: false, kyc4uInReview: false, notRequired: true }), "not_required");
   assert.equal(amlBucket("not_required", true), "done");

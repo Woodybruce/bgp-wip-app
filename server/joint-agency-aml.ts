@@ -22,7 +22,6 @@ import { requireAuth } from "./auth";
 
 export const JOINT_AGENCY_EVENT = "joint_agency_aml_note";
 export const JOINT_AGENCY_REVIEWER = "Jack Barratt";
-const POLICY_NOTE_DATE = "2 November 2026";
 
 export interface JointAgencyFacts {
   property: string;
@@ -37,12 +36,33 @@ const pounds = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
 const longDate = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" });
 
 /** The note's paragraphs, in order: title, facts, statement, sign-off. */
+// A letting at this rent or more is letting agency work under the money
+// laundering regulations (HMRC, AMLG2300): £10,000 a month.
+const LETTING_SCOPE_PA = 120_000;
+
+/**
+ * The note's paragraphs, in order: title, facts, statement, sign-off.
+ * The statement follows HMRC (Woody, 22 November 2026: "We have to do what
+ * HMRC say"). HMRC's letting guidance has no joint agent exception ("LABs
+ * must verify that all parties to the rental agreement are who they say they
+ * are", AMLG2300): at £10,000 a month or more the tenant is verified, by BGP
+ * or through the co-agent's checks under a reliance agreement (MLR 2017 reg
+ * 39). Under that, the letting is outside the customer due diligence the
+ * regulations require of letting agents, and sanctions checks still apply.
+ * Until 22 November 2026 every note said BGP had formed no business
+ * relationship with the tenant and no CDD was required (Jack's note of
+ * 11 November, from BGP's internal note on joint agency of 2 November 2026).
+ */
 export function jointAgencyNoteParagraphs(f: JointAgencyFacts, signedBy: string, on: Date): string[] {
   const date = longDate(on);
+  const role = `BGP was instructed with ${f.coAgent} as joint sole agents on this transaction under separate terms of engagement with the client. ${f.coAgent} is registered with HMRC for anti-money laundering supervision. The ${f.tenant}, was introduced by ${f.coAgent}, and ${f.coAgent} managed all dealings and negotiations with them. BGP's role was limited to advising our client. BGP did not introduce the counterparty, did not negotiate with or act as go-between with them, and did not take over the transaction from ${f.coAgent}.`;
+  const checks = f.rentPa >= LETTING_SCOPE_PA
+    ? `HMRC's guidance for letting agents (AMLG2300) requires every party to a letting at £10,000 a month or more to be verified, with no exception where a joint agent found the tenant. BGP therefore relies on ${f.coAgent}'s customer due diligence on the ${f.tenant} under a reliance agreement (Money Laundering Regulations 2017, regulation 39), or checks the ${f.tenant} itself, and records which on the deal. BGP remains responsible for those checks.`
+    : `The rent is under £10,000 a month, so the letting is outside the customer due diligence the Money Laundering Regulations 2017 require of letting agents (HMRC, AMLG2300). Every party is still screened against the UK sanctions list.`;
   return [
     "AML file note: joint sole agency",
     `Property: ${f.property}. Client: ${f.client}. Co-agent: ${f.coAgent}. Transaction: letting at ${pounds(f.rentPa)} per annum. Tenant: ${f.tenant}`,
-    `BGP was instructed with ${f.coAgent} as joint sole agents on this transaction under separate terms of engagement with the client. ${f.coAgent} is registered with HMRC for anti-money laundering supervision. The ${f.tenant}, was introduced by ${f.coAgent}, and ${f.coAgent} managed all dealings and negotiations with them. BGP's role was limited to advising our client. BGP did not introduce the counterparty, did not negotiate with or act as go-between with them, and did not take over the transaction from ${f.coAgent}. In accordance with BGP's internal note on joint agency instructions dated ${POLICY_NOTE_DATE}, BGP has therefore not formed a business relationship with the counterparty, and no CDD was required in respect of them. The transaction was recorded at heads of terms stage and this position was confirmed at that point. No knowledge or suspicion of money laundering arose on this transaction.`,
+    `${role} ${checks} The transaction was recorded at heads of terms stage and this position was confirmed at that point. No knowledge or suspicion of money laundering arose on this transaction.`,
     `Signed: ${signedBy}, ${date}. Reviewed: ${JOINT_AGENCY_REVIEWER}, ${date}.`,
   ];
 }

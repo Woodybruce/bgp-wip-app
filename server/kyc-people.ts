@@ -16,7 +16,8 @@ type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>
 export async function dealPeopleRequests(dealId: string, db: Db = pool): Promise<PeopleRequest[]> {
   const rows = (await db.query(
     `SELECT token, company_id, contact_name, request, revoked_at, expires_at, completed_at
-       FROM kyc_upload_tokens WHERE deal_id = $1 AND request IS NOT NULL AND is_test IS NOT TRUE ORDER BY created_at`, [dealId])).rows;
+       FROM kyc_upload_tokens WHERE deal_id = $1 AND request IS NOT NULL AND is_test IS NOT TRUE
+        AND COALESCE(request->>'audience', 'client') <> 'joint_agent' ORDER BY created_at`, [dealId])).rows;
   if (!rows.length) return [];
   const tokens = rows.map((r: any) => r.token);
   const files = (await db.query(

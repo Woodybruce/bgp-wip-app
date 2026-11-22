@@ -337,6 +337,223 @@ const ID_COPY: Record<string, { line: string; button: string | null }> = {
   approved: { line: "Done, thank you. Your identity has been confirmed.", button: null },
 };
 
+// The joint agent's page (22 November 2026): BGP asks the other agent on the
+// deal for their anti-money laundering checks on a party. One upload area for
+// everything they hold, and on a letting at £10,000 a month or more the terms
+// for BGP to rely on their checks (MLR 2017 reg 39), agreed with a tick and a
+// name. The words are shared/kyc-request.ts; the rules
+// shared/joint-agent-checks.ts.
+const ROLE_NOUN: Record<string, string> = { tenant: "tenant", purchaser: "buyer", landlord: "landlord", vendor: "seller" };
+const JOINT_ACCEPT = `${ACCEPT},.zip,application/zip`;
+
+function JointAgentPage({ token, view, setView, load }: { token: string; view: KycPortalView; setView: (v: KycPortalView) => void; load: () => Promise<void> }) {
+  const joint = view.joint!;
+  const input = useRef<HTMLInputElement>(null);
+  const [over, setOver] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [finishing, setFinishing] = useState(false);
+  const [confirmFinish, setConfirmFinish] = useState(false);
+  const [name, setName] = useState(view.recipientName || "");
+  const [position, setPosition] = useState("");
+  const [supervisor, setSupervisor] = useState("HMRC");
+  const [registration, setRegistration] = useState("");
+  const [agree, setAgree] = useState(false);
+  const [relyBusy, setRelyBusy] = useState(false);
+  const [relyError, setRelyError] = useState<string | null>(null);
+  const noun = ROLE_NOUN[joint.partyRole || ""] || null;
+  const files = view.otherFiles;
+  const contactName = firstName(view.agents[0]?.name) || "your contact at Bruce Gillingham Pollard";
+  const outstanding = [...(!files.length ? ["your checks"] : []), ...(joint.letting && !joint.reliance ? ["your agreement to the reliance terms"] : [])];
+
+  const upload = async (list: FileList | File[]) => {
+    setError(null);
+    setBusy(true);
+    try {
+      for (const file of Array.from(list)) {
+        const zip = /\.zip$/i.test(file.name);
+        if (!zip && !KYC_UPLOAD_EXTENSIONS.test(file.name)) { setError(`${file.name}: please send a PDF, a photo (JPG, PNG or HEIC), a Word document or a zip of them.`); continue; }
+        if (file.size > view.maxFileMb * 1024 * 1024) { setError(`${file.name} is over ${view.maxFileMb}MB. Please send it in smaller parts, or reply to our email with it attached.`); continue; }
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch(`/api/kyc-upload/${encodeURIComponent(token)}/file`, { method: "POST", body: form });
+        const body = await readJson(res);
+        if (!res.ok) { setError(body.message || "The upload didn't work. Please try again."); if (res.status === 410) await load(); break; }
+        setView(body);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const agreeTerms = async () => {
+    setRelyError(null);
+    setRelyBusy(true);
+    try {
+      const res = await fetch(`/api/kyc-upload/${encodeURIComponent(token)}/reliance`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agree, name, position, firm: joint.firm, supervisor, registration }),
+      });
+      const body = await readJson(res);
+      if (!res.ok) { setRelyError(body.message || "That wasn't saved. Please try again."); if (res.status === 410) await load(); return; }
+      setView(body);
+    } catch {
+      setRelyError("That wasn't saved. Please check your connection and try again.");
+    } finally {
+      setRelyBusy(false);
+    }
+  };
+
+  const finish = async () => {
+    if (outstanding.length && !confirmFinish) { setConfirmFinish(true); return; }
+    setFinishing(true);
+    try {
+      const res = await fetch(`/api/kyc-upload/${encodeURIComponent(token)}/finish`, { method: "POST" });
+      const body = await readJson(res);
+      if (res.ok) setView(body);
+      else if (res.status === 410) await load();
+    } finally {
+      setFinishing(false);
+      setConfirmFinish(false);
+    }
+  };
+
+  return (
+    <Shell>
+      {view.test && (
+        <div className="mb-5 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="kyc-test-banner">
+          <strong>Test page.</strong> This is what a joint agent sees. Files you upload here are not kept.
+        </div>
+      )}
+      {view.finishedAt && (
+        <div className="mb-6 rounded-lg border border-emerald-200 bg-emerald-50 p-4 dark:bg-emerald-950/20" data-testid="kyc-finished">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
+            <div>
+              <h2 className="font-semibold text-base">Thank you{firstName(view.recipientName) ? `, ${firstName(view.recipientName)}` : ""}.</h2>
+              <p className="mt-1 text-sm text-muted-foreground">We've let {contactName} know. You can still add files here until {kycLongDate(view.expiresAt)}.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <p className="text-base">Hello{firstName(view.recipientName) ? ` ${firstName(view.recipientName)}` : ""},</p>
+      <h1 className="mt-2 text-2xl font-bold leading-tight text-[#6E0C25] dark:text-[#e8a3b3]" data-testid="joint-title">Your AML checks on {view.partyName}</h1>
+      <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="joint-intro">
+        We are joint agents with {joint.firm} on <strong className="text-foreground">{view.dealName}</strong>, and you dealt with <strong className="text-foreground">{view.partyName}</strong>{noun ? `, the ${noun}` : ""}.{" "}
+        {joint.letting
+          ? "HMRC's guidance for letting agents requires every party to a letting at £10,000 a month or more to be verified. Rather than ask them again, we would like to rely on your checks (Money Laundering Regulations 2017, regulation 39)."
+          : `HMRC's guidance asks the joint agent who did not deal with the ${noun || "other side"} to ask the one who did for their checks, and to record what comes back.`}
+      </p>
+
+      {view.note && (
+        <div className="mt-5 border-l-[3px] border-[#6E0C25] bg-muted/50 px-4 py-3 text-sm">
+          <div className="font-semibold">A note from {contactName}</div>
+          <p className="mt-1 whitespace-pre-line text-muted-foreground">{view.note}</p>
+        </div>
+      )}
+
+      <div className="mt-6 space-y-3">
+        <div
+          className={`rounded-lg border p-4 transition-colors ${over ? "border-[#6E0C25] bg-[#6E0C25]/5" : files.length ? "border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/10" : ""}`}
+          onDragOver={e => { e.preventDefault(); setOver(true); }}
+          onDragLeave={() => setOver(false)}
+          onDrop={e => { e.preventDefault(); setOver(false); if (e.dataTransfer.files?.length) void upload(e.dataTransfer.files); }}
+          data-testid="joint-upload"
+        >
+          <div className="flex gap-3">
+            <StepNumber n={1} done={files.length > 0} />
+            <div className="min-w-0 flex-1">
+              <h3 className="font-semibold text-base leading-snug">Your checks on {view.partyName}</h3>
+              <ul className="mt-2 space-y-1.5 text-sm text-muted-foreground" data-testid="joint-asks">
+                {joint.asks.filter(a => a.title !== "The reliance terms").map(a => <li key={a.title}><strong className="text-foreground">{a.title}.</strong> {a.detail}</li>)}
+              </ul>
+              {files.length > 0 && <ul className="mt-3 space-y-1.5">{files.map((f, i) => <FileLine key={`${f.name}-${i}`} name={f.name} />)}</ul>}
+              {error && <p className="mt-2 flex items-start gap-1.5 text-sm text-red-700"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />{error}</p>}
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <Button type="button" variant={files.length ? "outline" : "default"} className={files.length ? "" : "bg-[#6E0C25] hover:bg-[#5a0a1f] text-white"} disabled={busy} onClick={() => input.current?.click()} data-testid="joint-upload-button">
+                  {busy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
+                  {busy ? "Uploading…" : files.length ? "Add more files" : "Upload"}
+                </Button>
+                <span className="hidden sm:inline text-xs text-muted-foreground">or drop files here. A zip is fine.</span>
+              </div>
+              <input ref={input} type="file" accept={JOINT_ACCEPT} multiple className="hidden"
+                onChange={e => { if (e.target.files?.length) void upload(e.target.files); e.target.value = ""; }} data-testid="joint-upload-input" />
+              <p className="mt-2 text-xs text-muted-foreground">Or reply to our email with the files attached, keeping the reference in the subject.</p>
+            </div>
+          </div>
+        </div>
+
+        {joint.letting && joint.terms && (
+          <div className={`rounded-lg border p-4 ${joint.reliance ? "border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/10" : ""}`} data-testid="joint-terms">
+            <div className="flex gap-3">
+              <StepNumber n={2} done={!!joint.reliance} />
+              <div className="min-w-0 flex-1">
+                <h3 className="font-semibold text-base leading-snug">Agree to us relying on your checks</h3>
+                <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-muted-foreground">{joint.terms.map(t => <li key={t}>{t}</li>)}</ol>
+                {joint.reliance ? (
+                  <p className="mt-3 text-sm" data-testid="joint-terms-agreed">
+                    <CheckCircle2 className="inline w-4 h-4 mr-1 text-emerald-600" />
+                    Agreed by {[joint.reliance.name, joint.reliance.position].filter(Boolean).join(", ")} on {kycLongDate(joint.reliance.agreedAt)}. Supervised by {joint.reliance.supervisor}{joint.reliance.registration ? ` (${joint.reliance.registration})` : ""}.
+                  </p>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="text-sm">Your full name
+                        <input className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm" value={name} onChange={e => setName(e.target.value)} maxLength={120} data-testid="joint-terms-name" />
+                      </label>
+                      <label className="text-sm">Your position (optional)
+                        <input className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm" value={position} onChange={e => setPosition(e.target.value)} maxLength={120} data-testid="joint-terms-position" />
+                      </label>
+                      <label className="text-sm">Your firm's AML supervisor
+                        <input className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm" value={supervisor} onChange={e => setSupervisor(e.target.value)} maxLength={80} data-testid="joint-terms-supervisor" />
+                      </label>
+                      <label className="text-sm">Registration number (optional)
+                        <input className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm" value={registration} onChange={e => setRegistration(e.target.value)} maxLength={40} placeholder="e.g. XLML00000123456" data-testid="joint-terms-registration" />
+                      </label>
+                    </div>
+                    <label className="flex items-start gap-2 text-sm">
+                      <input type="checkbox" className="mt-1" checked={agree} onChange={e => setAgree(e.target.checked)} data-testid="joint-terms-agree" />
+                      <span>I agree to these terms for {joint.firm}.</span>
+                    </label>
+                    {relyError && <p className="flex items-start gap-1.5 text-sm text-red-700"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />{relyError}</p>}
+                    <Button type="button" className="bg-[#6E0C25] hover:bg-[#5a0a1f] text-white" disabled={relyBusy || !agree || name.trim().length < 4} onClick={agreeTerms} data-testid="joint-terms-save">
+                      {relyBusy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}Agree
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-6 rounded-lg bg-muted/50 p-4">
+        {!view.finishedAt ? (
+          <>
+            <h2 className="font-semibold text-base">When you've sent everything</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Press Finish and we'll let {contactName} know. You can still add files afterwards.</p>
+            {confirmFinish && outstanding.length > 0 && <p className="mt-3 text-sm text-amber-800 dark:text-amber-300" data-testid="kyc-finish-warning">You haven't sent {outstanding.join(" or ")} yet. You can finish now and send the rest later.</p>}
+            <Button type="button" className="mt-3 bg-[#6E0C25] hover:bg-[#5a0a1f] text-white" disabled={finishing} onClick={finish} data-testid="kyc-finish">
+              {finishing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+              {confirmFinish && outstanding.length ? "Finish anyway" : "Finish"}
+            </Button>
+          </>
+        ) : <p className="text-sm text-muted-foreground">Finished. Need to add something? Use the upload button above.</p>}
+      </div>
+
+      <div className="mt-6 space-y-4 border-t pt-5">
+        <div>
+          <h2 className="text-sm font-semibold mb-2">Questions?</h2>
+          <AgentContact agents={view.agents} />
+        </div>
+        <p className="text-xs text-muted-foreground">What you send is used only for our anti-money laundering checks, stored securely and kept for five years, as the regulations require. Our <a href={KYC_PRIVACY_URL} target="_blank" rel="noreferrer" className="underline hover:text-foreground">privacy notice</a> explains more.</p>
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Lock className="w-3.5 h-3.5" />Bruce Gillingham Pollard · Reference {view.ref}</p>
+      </div>
+    </Shell>
+  );
+}
+
 export default function KycUploadPage() {
   const { token } = useParams<{ token: string }>();
   const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
@@ -390,6 +607,7 @@ export default function KycUploadPage() {
 
   const view = loaded.view;
   const setView = (next: KycPortalView) => setLoaded({ state: "open", view: next });
+  if (view.joint) return <JointAgentPage token={token} view={view} setView={setView} load={load} />;
   // Someone else's identity check on this link is not this person's (Woody,
   // 19 November 2026: an agent copied on the request did it on the link).
   const idOther = !!view.idCheck?.otherPerson;
