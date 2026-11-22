@@ -125,7 +125,7 @@ export function billingWords(state: BillingState, names: {
       const clear = PAYER_RELATIONSHIPS.find(r => r.key === names.relationship)?.clear;
       return clear
         ? { state, tone: "act", words: `${names.payer || "A third party"} pays BGP's invoice for the client (${payerRelationshipWords(names.relationship).toLowerCase()}). It is checked as a third party: BGP's checks before asking run on it.` }
-        : { state, tone: "flag", words: `${names.payer || "A third party"} pays BGP's invoice with no clear relationship to the client: HMRC treats that as high risk. Raise it with KYC4U.` };
+        : { state, tone: "flag", words: `${names.payer || "A third party"} pays BGP's invoice with no clear relationship to the client: HMRC treats that as high risk. A red flag: enhanced checks needed.` };
     }
     case "no_company":
       return { state, tone: "act", words: "Set the company that signs: BGP bills it." };

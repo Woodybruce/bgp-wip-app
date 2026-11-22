@@ -7,6 +7,7 @@
 // otherwise KYC4U does the checks.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useAmlInHouse } from "@/components/aml-policy-panel";
 import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Globe, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileText, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -285,6 +286,7 @@ function Tick({ ok }: { ok: boolean }) {
 }
 
 function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }: { dealId: string; data: ClientChecks; party: Party; people: PartyPeople; sanctionsOnly: boolean; canDecide: boolean }) {
+  const inHouse = useAmlInHouse();
   if (sanctionsOnly) {
     const everyone = [...people.people.map(p => ({ name: p.name, roles: p.roles.map(r => ROLE_WORDS[r].toLowerCase()), sanctions: p.sanctions })), ...people.directors.map(d => ({ name: d.name, roles: ["director"], sanctions: d.sanctions })),
       ...(people.trustees || []).map(t => ({ name: t.name, roles: [t.chair ? "trustee, chair" : "trustee"], sanctions: t.sanctions }))];
@@ -329,8 +331,8 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
         <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200" data-testid="people-owners-abroad">
           Owned through {people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: registered abroad, so Companies House cannot show the people behind {people.ownersAbroad.length === 1 ? "it" : "them"}.{" "}
           {people.ownersAbroad.every(o => o.answered)
-            ? <>The people recorded behind {people.ownersAbroad.length === 1 ? "it" : "them"} (under Owners abroad) are listed here, each with their own checks. It still goes to KYC4U (Request KYC4U check).</>
-            : <>It goes to KYC4U to find them (Request KYC4U check). The app traces what it can under Owners abroad; if the client sends a structure chart naming them, each can be sent their own link.</>}
+            ? <>The people recorded behind {people.ownersAbroad.length === 1 ? "it" : "them"} (under Owners abroad) are listed here, each with their own checks.{inHouse ? "" : " It still goes to KYC4U (Request KYC4U check)."}</>
+            : <>{inHouse ? "Find them under Owners abroad, or from a structure chart the client sends; each person found gets their own link." : "It goes to KYC4U to find them (Request KYC4U check). The app traces what it can under Owners abroad; if the client sends a structure chart naming them, each can be sent their own link."}</>}
         </p>
       )}
       <p className="text-[11px] text-muted-foreground">{PARTY_PEOPLE_BASIS_WORDS[people.basis]} Each gets a link of their own: an identity check (Veriff) and a proof of address from the last three months.</p>

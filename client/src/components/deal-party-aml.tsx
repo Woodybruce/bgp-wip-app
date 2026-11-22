@@ -56,7 +56,7 @@ function SignOffDialog({ dealId, role, partyName, needsNote, levelWords, edd, on
           <DialogDescription>
             {edd
               ? "Enhanced due diligence by BGP (the officers' setting, not KYC4U): you approve this party for a year (BGP's AML policy), and the deal's AML gate reads it as approved."
-              : <>{levelWords ? `${levelWords}. ` : ""}BGP approves this party until its re-check date (3 years, BGP's AML policy), and the deal's AML gate reads it as approved. A party needing enhanced due diligence goes to KYC4U instead.</>}
+              : <>{levelWords ? `${levelWords}. ` : ""}BGP approves this party until its re-check date (3 years, BGP's AML policy), and the deal's AML gate reads it as approved.</>}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-1.5">

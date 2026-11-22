@@ -957,9 +957,11 @@ async function finishRequest(row: TokenRow): Promise<void> {
   const redFlags = row.is_test || !row.company_id
     ? partyRedFlags({ company: null, latestInvestigation: null, requests: [{ ref: request.ref, answers: request.answers || null, ownersAnswer: request.ownersAnswer || null, person: request.person?.name || null }], idChecks: await requestIdChecks(request.veriffSessionIds) })
     : await loadDealRedFlags(row.deal_id, [row.company_id], row.trading_entity_id ? { [row.company_id]: row.trading_entity_id } : {}).then(r => r.parties[row.company_id!] || []).catch(() => []);
+  const inHouse = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => false);
   const sent = await sendKycEmail({
     to,
     build: sentFrom => kycFinishedEmail({
+      inHouse,
       recipientName: row.contact_name, partyName: request.partyName, dealName: request.dealName, ref: request.ref,
       dealLink: row.is_test ? LINK_BASE : dealLinkFor(row.deal_id), idState: progress.idState, idPerson: progress.idPerson,
       files: progress.files.map(f => ({ name: f.name, docKey: f.docKey })), missing, sentFrom, test: !!row.is_test,

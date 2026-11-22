@@ -548,7 +548,7 @@ export function PayerDialog({ dealId, party, onClose }: { dealId: string; party:
               {PAYER_RELATIONSHIPS.map(r => (
                 <label key={r.key} className="flex cursor-pointer items-start gap-2 text-xs">
                   <input type="radio" name="payer-relationship" className="mt-0.5" checked={relationship === r.key} onChange={() => setRelationship(r.key)} data-testid={`deal-payer-relationship-${r.key}`} />
-                  <span className={r.clear ? "" : "text-red-700 dark:text-red-400"}>{r.words}{r.clear ? "" : ": a red flag, raised with KYC4U"}</span>
+                  <span className={r.clear ? "" : "text-red-700 dark:text-red-400"}>{r.words}{r.clear ? "" : ": a red flag"}</span>
                 </label>
               ))}
             </div>

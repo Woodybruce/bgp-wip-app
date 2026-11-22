@@ -97,6 +97,8 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   const { loadPartyKyc } = await import("./deal-gates");
   const { loadFlagReviews, reviewsForDeal, reviewsForParty } = await import("./kyc-red-flags");
   const { loadNotRequired } = await import("./aml-policy");
+  // The officers' in-house switch: with it on, KYC4U holds no party (shared/aml-dashboard.ts).
+  const inHouse = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => false);
   const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired, reliances] = await Promise.all([
     loadPartyKyc(pool, parties.map(p => ({ role: p.key, brandId: p.brandId, entityId: p.entityId }))),
     read("KYC records", async () => (await pool.query(
@@ -198,7 +200,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const stage = amlStage({
       role: p.role, dealStatus: p.deal.status, kyc: { status: state.status, expiresAt: state.expiresAt },
       precheckAt: pre?.conducted_at || null, clientSentAt: sent, clientFinishedAt: finished, kyc4uOpen, kyc4uInReview,
-      notRequired: markHolds, reliedAt: relied?.recorded_at || null,
+      notRequired: markHolds, reliedAt: relied?.recorded_at || null, inHouse,
     }, now);
     const due = amlDue(p.role, p.deal.status);
     const allFlags = [...flags, ...onDeal.map(f => `Deal: ${f.label}`)];
@@ -224,7 +226,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       bucket: amlBucket(stage, due, amlDealClosed(p.deal.status)),
       due,
       redFlags: allFlags,
-      waitingOn: amlWaitingOn(stage, allFlags.length),
+      waitingOn: amlWaitingOn(stage, allFlags.length, inHouse),
       movedDays: daysSince([
         pre?.conducted_at, ...partyTokens.flatMap((t: any) => [t.created_at, t.last_used_at, t.completed_at]),
         ...openDrafts.flatMap((d: any) => [d.created_at, d.filled_at]), state.approvedAt,

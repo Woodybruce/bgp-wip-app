@@ -166,6 +166,12 @@ function InHouseEddLine({ feed }: { feed: PolicyFeed }) {
   );
 }
 
+/** The officers' switch for enhanced checks (in-house or KYC4U), read where words depend on it. */
+export function useAmlInHouse(): boolean {
+  const { data } = useQuery<{ inHouseEdd?: { on: boolean } }>({ queryKey: ["/api/aml-policy"], staleTime: 60_000 });
+  return !!data?.inHouseEdd?.on;
+}
+
 export function AmlPolicyPanel() {
   const { toast } = useToast();
   const { data: feed } = useQuery<PolicyFeed>({ queryKey: ["/api/aml-policy"] });

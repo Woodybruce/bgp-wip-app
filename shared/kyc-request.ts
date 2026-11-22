@@ -498,6 +498,8 @@ export interface KycFinishedFile {
 
 // The note to the deal's agents when a client has finished.
 export function kycFinishedEmail(ctx: {
+  // The officers do enhanced checks in-house (22 November 2026): a red flag box says so.
+  inHouse?: boolean;
   recipientName: string | null;
   partyName: string;
   dealName: string;
@@ -553,7 +555,7 @@ export function kycFinishedEmail(ctx: {
     ctx.owners?.reply?.answer === "no"
       ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>A difference from the register.</strong> The client says the owners Companies House lists are not right. Find out who the owners are, and report the difference to Companies House (HMRC, AMLG11400 14.8).</div>`
       : "",
-    ctx.redFlags?.length ? redFlagBox(ctx.redFlags) : "",
+    ctx.redFlags?.length ? redFlagBox(ctx.redFlags, !!ctx.inHouse) : "",
     ctx.peopleOutstanding?.length
       ? h2(`Still to come from the people to check for ${ctx.partyName}`) + `<ul style="margin:4px 0 14px 18px;padding:0;font-size:14px;color:${INK}">${ctx.peopleOutstanding.map(line => `<li style="margin:0 0 4px">${escHtml(line)}</li>`).join("")}</ul>`
       : "",
@@ -590,9 +592,14 @@ export const KYC_CLIENT_CHECK_ROUTES: readonly RegExp[] = [
   /^\/api\/aml\/poll-mailbox$/,
 ];
 
-function redFlagBox(flags: KycRedFlag[]): string {
+// With the officers doing enhanced checks in-house (22 November 2026), a red
+// flag goes to the Nominated Officer or a Deputy, not KYC4U.
+export const KYC_RED_FLAG_RULE_IN_HOUSE = "A red flag, or a higher-risk factor in BGP's AML policy, needs enhanced checks: the Nominated Officer or a Deputy reviews them and signs the party off before the deal goes ahead.";
+export const KYC_RED_FLAG_STEP_IN_HOUSE = "Open the deal's AML and look at the flags: an officer signs it off, or sets aside a flag that does not apply, with a comment.";
+
+function redFlagBox(flags: KycRedFlag[], inHouse = false): string {
   const items = flags.map(f => `<li style="margin:0 0 6px">${escHtml(f.label)}${f.detail ? `: ${escHtml(f.detail)}` : ""} <span style="color:${MUTED}">(${escHtml(f.source)})</span></li>`).join("");
-  return `<div style="margin:16px 0;padding:12px 16px;border-left:3px solid #b91c1c;background:#fef2f2;font-size:14px;color:${INK}"><strong>Red flag: raise with KYC4U.</strong><ul style="margin:8px 0 8px 18px;padding:0">${items}</ul>${escHtml(KYC_RED_FLAG_STEP)}</div>`;
+  return `<div style="margin:16px 0;padding:12px 16px;border-left:3px solid #b91c1c;background:#fef2f2;font-size:14px;color:${INK}"><strong>${inHouse ? "Red flag: for the Nominated Officer." : "Red flag: raise with KYC4U."}</strong><ul style="margin:8px 0 8px 18px;padding:0">${items}</ul>${escHtml(inHouse ? KYC_RED_FLAG_STEP_IN_HOUSE : KYC_RED_FLAG_STEP)}</div>`;
 }
 
 // The alert to the deal's agents the moment a client's answer or identity
@@ -606,19 +613,21 @@ export function kycRedFlagEmail(ctx: {
   flags: KycRedFlag[];
   sentFrom: string;
   test?: boolean;
+  // The officers do enhanced checks in-house: no KYC4U in the words.
+  inHouse?: boolean;
 }): { subject: string; html: string } {
   const inner = [
-    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:#b91c1c">Red flag: raise ${escHtml(ctx.partyName)} with KYC4U</h1>`,
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:#b91c1c">${ctx.inHouse ? `Red flag: ${escHtml(ctx.partyName)} needs enhanced checks` : `Red flag: raise ${escHtml(ctx.partyName)} with KYC4U`}</h1>`,
     p(`For <strong>${escHtml(ctx.dealName)}</strong>${ctx.recipientName && ctx.recipientName !== ctx.partyName ? `, from the checks sent to <strong>${escHtml(ctx.recipientName)}</strong>` : ""}.`),
     h2("What was found"),
     `<ul style="margin:0 0 14px 18px;padding:0">${ctx.flags.map(f => `<li style="margin:0 0 6px">${escHtml(f.label)}${f.detail ? `: ${escHtml(f.detail)}` : ""} <span style="color:${MUTED}">(${escHtml(f.source)})</span></li>`).join("")}</ul>`,
     h2("What to do"),
-    p(`${escHtml(KYC_RED_FLAG_RULE)} ${escHtml(KYC_RED_FLAG_STEP)}`),
+    p(ctx.inHouse ? `${escHtml(KYC_RED_FLAG_RULE_IN_HOUSE)} ${escHtml(KYC_RED_FLAG_STEP_IN_HOUSE)}` : `${escHtml(KYC_RED_FLAG_RULE)} ${escHtml(KYC_RED_FLAG_STEP)}`),
     button("Open the deal's AML", ctx.dealLink),
-    p("Nothing has been sent to the client or to KYC4U.", `font-size:13px;color:${MUTED}`),
+    p(ctx.inHouse ? "Nothing has been sent to the client." : "Nothing has been sent to the client or to KYC4U.", `font-size:13px;color:${MUTED}`),
   ].join("\n");
   return {
-    subject: `${ctx.test ? "[Test] " : ""}Red flag on ${ctx.dealName}: raise ${ctx.partyName} with KYC4U (ref ${ctx.ref})`,
+    subject: `${ctx.test ? "[Test] " : ""}Red flag on ${ctx.dealName}: ${ctx.inHouse ? `${ctx.partyName} needs enhanced checks` : `raise ${ctx.partyName} with KYC4U`} (ref ${ctx.ref})`,
     html: frame("Red flag", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the deal's agents receive"),
   };
 }

@@ -670,7 +670,7 @@ test("a company owned through one registered abroad goes to KYC4U", () => {
   const abroad = result({ companiesHouse: { ...ch, owners: [{ name: "EXAMPLE HOLDING A/S", kind: "company", controls: ["ownership-of-shares-75-to-100-percent"], notifiedOn: "2016-06-30", country: "Denmark" }] } });
   assert.deepEqual(precheckCompany(abroad)!.ownersAbroad, [{ name: "EXAMPLE HOLDING A/S", country: "Denmark", foundAt: null }]);
   assert.match(precheckNote(abroad, "done"), /BGP does not read foreign registers: please identify the beneficial owners behind it/);
-  assert.match(precheckCardLines(abroad).find(l => l.key === "owners")!.detail || "", /It goes to KYC4U to find the people behind it/);
+  assert.match(precheckCardLines(abroad).find(l => l.key === "owners")!.detail || "", /The people behind it still need finding/);
   assert.deepEqual(precheckCompany(result())!.ownersAbroad, []);
 });
 

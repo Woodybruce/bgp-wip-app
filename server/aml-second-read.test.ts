@@ -73,7 +73,7 @@ test("a trust goes to KYC4U in full, and the red mark shows until it is with the
   };
   const step = amlNextStep(facts);
   assert.equal(step.action, "request_kyc4u");
-  assert.match(step.words, /^A trust: KYC4U checks it in full/);
+  assert.match(step.words, /^A trust: goes to KYC4U in full\./);
   assert.equal(amlNextStep({ ...facts, kyc4u: "queued" }).action, "kyc4u_form");
   assert.equal(amlNextStep({ ...facts, kyc4u: "raised" }).who, "kyc4u");
   assert.equal(amlNeedsKyc4u("enhanced", "bgp_checked"), true);

@@ -20,7 +20,7 @@ test("a decision ends it: approved, not required and rejected ask nothing more o
   assert.equal(ok.action, null);
   assert.match(ok.words, /^Approved by Jack Barratt, valid until 20 Nov 2029\./);
   assert.equal(next({ stage: "not_required", notRequiredWords: "The other side of a deal a joint agent negotiated" }).words,
-    "Not required: the other side of a deal a joint agent negotiated. No checks are needed on this party.");
+    "Not required: the other side of a deal a joint agent negotiated.");
   const no = next({ stage: "rejected" });
   assert.equal(no.tone, "flag");
   assert.equal(no.who, "officers");
@@ -134,7 +134,7 @@ test("a party owned through a company registered abroad goes to KYC4U (Woody, 21
   const step = amlNextStep({ ...base, ownersAbroad: "Example Holding A/S, Denmark" });
   assert.equal(step.action, "request_kyc4u");
   assert.equal(step.who, "bgp");
-  assert.match(step.words, /^Owned through a company registered abroad \(Example Holding A\/S, Denmark\): KYC4U find the people behind it/);
+  assert.match(step.words, /^Owned from abroad \(Example Holding A\/S, Denmark\): goes to KYC4U\./);
   // Once raised with KYC4U, it waits on them as any party does.
   assert.equal(amlNextStep({ ...base, ownersAbroad: "Example Holding A/S, Denmark", kyc4u: "raised" }).who, "kyc4u");
   assert.notEqual(amlNextStep({ ...base, ownersAbroad: null }).action, "request_kyc4u");

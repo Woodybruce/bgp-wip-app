@@ -3806,8 +3806,10 @@ export function DealFormDialog({
             <div className="space-y-2">
               {amlStep.parties.map(p => {
                 // A party with a red flag already goes to KYC4U, not the
-                // routine client checks (Woody, 2026-11-17).
+                // routine client checks (Woody, 2026-11-17), unless the
+                // officers do enhanced checks in-house (2026-11-22).
                 const flags = amlStepStatus?.redFlags?.parties[p.id] || [];
+                const inHouse = !!amlStepStatus?.decisions?.inHouseEdd;
                 return (
                   <div key={`${p.role}:${p.id}`} className="space-y-1.5 rounded-md border px-3 py-2" data-testid={`deal-aml-party-${p.role}`}>
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3815,13 +3817,13 @@ export function DealFormDialog({
                         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{p.label}</div>
                         <div className="text-sm font-medium break-words">{p.name}</div>
                       </div>
-                      {clientChecks && !flags.length
+                      {clientChecks && (!flags.length || inHouse)
                         ? <SendClientChecksButton dealId={amlStep.dealId} companyId={p.id} partyName={p.name} label="Kick off AML" />
                         : <Kyc4uRequestButton dealId={amlStep.dealId} companyId={p.id} role={p.role} partyName={p.name} label="Kick off AML" />}
                     </div>
                     {flags.length > 0 && (
                       <p className="text-xs text-red-800" data-testid={`deal-aml-party-flags-${p.role}`}>
-                        Red flag: {flags.map(f => f.label).join("; ")}. Raise it with KYC4U: the red flags go in the request's note.
+                        Red flag: {flags.map(f => f.label).join("; ")}. {inHouse ? "Enhanced checks: an officer signs it off." : "Raise it with KYC4U: the red flags go in the request's note."}
                       </p>
                     )}
                     {/* The company that signs and the person to ask, and
@@ -3839,7 +3841,7 @@ export function DealFormDialog({
             </div>
             <p className="text-[11px] text-muted-foreground">
               {clientChecks
-                ? "Each button opens the client checks: pick who to ask, choose what to ask for, see the email, send. It goes from the KYC mailbox with the deal's agents copied, and progress shows on the deal's AML card."
+                ? "Each button opens the client checks: pick who to ask, see the email, send. Progress shows on the deal's AML."
                 : "Each button fills in KYC4U's request from the deal: check it and save. Then, on KYC4U's Raise New Service Request page, click your Send to ChatBGP bookmark and press Submit there. KYC4U's answer comes back to the deal after the next sync."}
             </p>
             <DialogFooter className="flex items-center gap-2">

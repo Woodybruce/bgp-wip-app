@@ -23,6 +23,7 @@ import { partyPeople } from "../shared/kyc-people";
 import { signOffDenial, signOffEnhanced, IN_HOUSE_EDD_NOTE_MIN, type SignOffFacts } from "../shared/party-kyc";
 import { amlNextStep, type AmlBoxFacts } from "../shared/aml-box";
 import { isSanctionsFlag } from "../shared/kyc-red-flags";
+import { amlStage, amlWaitingOn } from "../shared/aml-dashboard";
 
 const { lookupCharities } = await import("./charity-register");
 
@@ -265,7 +266,9 @@ test("off, an enhanced party goes to KYC4U as before; on, the officers sign it o
   assert.equal(signOffDenial(facts({ ...on, redFlags: 0, ownersAbroad: ["KIRKBI A/S, Denmark"], note: eddNote })), null);
   // The same freshness rules as any sign-off.
   assert.match(signOffDenial(facts({ ...on, precheck: null, note: eddNote })) || "", /have not run/);
-  assert.match(signOffDenial(facts({ ...on, withKyc4u: true, note: eddNote })) || "", /raised with KYC4U/);
+  // In-house, a KYC4U request raised earlier no longer holds the party (22 November 2026); off, it does.
+  assert.equal(signOffDenial(facts({ ...on, withKyc4u: true, note: eddNote })), null);
+  assert.match(signOffDenial(facts({ withKyc4u: true, note: eddNote })) || "", /raised with KYC4U/);
   assert.ok(isSanctionsFlag({ kind: "provider_screen", evidence: ["type:sanctions"] }));
   assert.ok(!isSanctionsFlag({ kind: "provider_screen", evidence: ["type:pep"] }));
 });
@@ -290,5 +293,25 @@ test("the Next line: KYC4U while the setting is off; in-house, the client checks
   assert.equal(agent.who, "officers");
   const officer = amlNextStep(box({ ...done, canDecide: true }));
   assert.equal(officer.action, "sign_off");
-  assert.match(officer.words, /Enhanced due diligence by BGP/);
+  assert.match(officer.words, /Enhanced checks: the Nominated Officer or a Deputy signs it off/);
+});
+
+test("in-house, KYC4U holds nothing up: the Next line, the board's stage and who it waits on (22 November 2026)", () => {
+  // A request prepared or raised with KYC4U earlier: off, it is the next step; in-house, the checks carry on.
+  assert.equal(amlNextStep(box({ kyc4u: "queued" })).action, "kyc4u_form");
+  assert.equal(amlNextStep(box({ kyc4u: "raised" })).who, "kyc4u");
+  assert.equal(amlNextStep(box({ kyc4u: "queued", inHouseEdd: true })).action, "send_client_checks");
+  assert.equal(amlNextStep(box({ kyc4u: "raised", inHouseEdd: true })).action, "send_client_checks");
+  assert.notEqual(amlNextStep(box({ stage: "with_kyc4u", inHouseEdd: true })).who, "kyc4u");
+  // Client checks switched off: KYC4U, or in-house the officers with a note.
+  assert.equal(amlNextStep(box({ clientChecks: false, trust: false, factors: 0 })).action, "request_kyc4u");
+  assert.equal(amlNextStep(box({ clientChecks: false, trust: false, factors: 0, inHouseEdd: true, canDecide: true })).action, "sign_off");
+  // An approval running out never sends anyone to KYC4U in-house.
+  assert.equal(amlNextStep(box({ stage: "expired", clientChecks: false, inHouseEdd: true })).action, null);
+  const facts = { role: "landlord", dealStatus: "SOL", kyc: { status: "in_review", expiresAt: null }, precheckAt: null, clientSentAt: null, clientFinishedAt: null, kyc4uOpen: true, kyc4uInReview: true };
+  assert.equal(amlStage(facts as any), "with_kyc4u");
+  assert.equal(amlStage({ ...facts, inHouse: true } as any), "not_started");
+  assert.equal(amlWaitingOn("client_finished", 2), "BGP: raise it with KYC4U");
+  assert.equal(amlWaitingOn("client_finished", 2, true), "Officers: sign off");
+  assert.equal(amlWaitingOn("bgp_checked", 1, true), "BGP: send the client checks");
 });

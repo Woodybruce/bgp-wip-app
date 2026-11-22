@@ -63,6 +63,11 @@ export interface AmlPartyFacts {
   // When the officers recorded relying on another firm's checks for the
   // party (MLR 2017 reg 39), not withdrawn: BGP signs it off on them.
   reliedAt?: string | Date | null;
+  // BGP's officers do enhanced checks themselves (the in-house switch,
+  // server/aml-authority.ts): a KYC4U request or KYC4U's own status no longer
+  // holds a party at With KYC4U (Woody, 22 November 2026: "I dont actually
+  // think KYC4U is doing anything we cant").
+  inHouse?: boolean;
 }
 
 const time = (v: string | Date | null | undefined): number | null => {
@@ -81,7 +86,7 @@ export function amlStage(f: AmlPartyFacts, now: Date = new Date()): AmlStage {
     if (until !== null && until - now.getTime() <= AML_EXPIRING_DAYS * 86400000) return "expiring";
     return "approved";
   }
-  if (f.kyc4uOpen || (f.kyc.status === "in_review" && f.kyc4uInReview)) return "with_kyc4u";
+  if (!f.inHouse && (f.kyc4uOpen || (f.kyc.status === "in_review" && f.kyc4uInReview))) return "with_kyc4u";
   if (time(f.reliedAt) !== null) return "relied";
   if (time(f.clientFinishedAt) !== null) return "client_finished";
   if (time(f.clientSentAt) !== null) return "client_sent";
@@ -116,14 +121,15 @@ export function amlBucket(stage: AmlStage, due: boolean, closed = false): AmlBuc
   return due ? "todo" : "not_due";
 }
 
-/** Who or what the party waits on, in a few words. */
-export function amlWaitingOn(stage: AmlStage, redFlags: number): string {
+/** Who or what the party waits on, in a few words. inHouse: the officers do enhanced checks, not KYC4U. */
+export function amlWaitingOn(stage: AmlStage, redFlags: number, inHouse = false): string {
+  const flagged = inHouse ? "Officers: sign off" : "BGP: raise it with KYC4U";
   switch (stage) {
     case "not_started": return "BGP: start the checks";
-    case "bgp_checked": return redFlags ? "BGP: raise it with KYC4U" : "BGP: send the client checks or sign off";
+    case "bgp_checked": return redFlags ? (inHouse ? "BGP: send the client checks" : flagged) : "BGP: send the client checks or sign off";
     case "client_sent": return "The client";
     case "client_finished":
-    case "relied": return redFlags ? "BGP: raise it with KYC4U" : "BGP: sign off";
+    case "relied": return redFlags ? flagged : "BGP: sign off";
     case "with_kyc4u": return "KYC4U";
     case "approved": return "Nobody";
     case "not_required": return "Nobody";

@@ -4564,6 +4564,44 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
   screening; the FCA register for simplified due diligence; deleting records
   five years on.
 
+## Running without KYC4U, and the AML box as rows (Woody, 2026-11-22)
+
+Woody: "I dont actually think KYC4U is doing anything we cant unless you
+disagree? in which case we need the structure to work very well", and Jack
+found the AML screens "very overwhelming lots of continous text and lots of
+AI style commentry"; the boards "should be the same in AML and the deal
+boards". Do not re-litigate.
+
+- **The officers' in-house switch is "no KYC4U"** (Deals → AML → Policy and
+  settings; still off until an officer turns it on). With it on:
+  - an open or submitted KYC4U request no longer holds a party: the sign-off
+    (`signOffDenial`: `withKyc4u && !inHouseEdd`), the Next line (no KYC4U
+    form or "With KYC4U" step) and the AML board (`amlStage` takes
+    `inHouse`; never With KYC4U);
+  - who a flagged party waits on is the officers (`amlWaitingOn(stage,
+    flags, inHouse)`);
+  - the red-flag emails, the risk assessment and the AML file name the
+    officers, not KYC4U, and count an officer's in-house sign-off as the
+    approval;
+  - Kick off AML sends a flagged party the client checks;
+  - the WIP report's "Not raised with KYC4U" list is empty;
+  - the AML box shows no KYC4U line unless a request or KYC4U's own record
+    exists.
+  Tried end to end on a local copy on 22 November 2026: a trust landlord with
+  a submitted KYC4U request was held (off), then signed off by the Nominated
+  Officer with a note for one year (on); a short note is refused.
+- **The deal's AML box is one row per party** (`PartyAmlBox`), with the same
+  pieces as the AML board's row: the party and the company that signs, the
+  stage chip, the level chip, a red-flag count, and the Next step with its
+  button. The checks (Company, Who pays, BGP's checks, Due diligence, People,
+  Client checks, Red flags, KYC4U, Assessment, Sign-off) open under the row,
+  each line a few words. Rows start folded (`startOpen`: the AML trail's
+  party, or a deal's only party); **Show all detail** opens and folds them.
+  The Next line's words are one short sentence (`amlNextStep`). Keep new
+  words short: a status, not an explanation.
+- `useAmlInHouse()` (`aml-policy-panel.tsx`) reads the switch where a
+  screen's words depend on it.
+
 ## AML rules in short, checked against HMRC every 3 months (Woody, 2026-11-22)
 
 Woody: "a summary of the rules and put an auto refresh in there for any hmrc

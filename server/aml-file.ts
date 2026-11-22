@@ -88,6 +88,8 @@ export interface AmlFileData {
     agents: string[]; rentPa: number | null;
   };
   regime: { regime: string; why: string };
+  // The officers do enhanced checks in-house (22 November 2026).
+  inHouse?: boolean;
   agents: Array<{ roleWords: string; name: string; words: string }>;
   dealFlags: KycRedFlag[];
   dealAside: SetAsideFlag[];
@@ -246,6 +248,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       agents, rentPa: deal.rent_pa == null ? null : Number(deal.rent_pa),
     },
     regime: amlRegime({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }),
+    inHouse: await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => false),
     agents: (agentRows?.agents || []).map((a: any) => ({ roleWords: text(a.roleWords), name: text(a.name), words: text(a.state?.words) })),
     dealFlags: flags?.deal || [],
     dealAside: flags?.dealSetAside || [],
@@ -282,6 +285,7 @@ type RiskAssessmentKyc4uInput = Parameters<typeof buildRiskAssessment>[0]["party
 /** The written risk assessment for one party, from what the file gathered. */
 export function riskAssessmentFor(data: AmlFileData, p: AmlFileParty): RiskAssessment {
   return buildRiskAssessment({
+    inHouse: !!data.inHouse,
     deal: { name: data.deal.name, ref: data.deal.ref, type: data.deal.type, property: data.deal.property, agents: data.deal.agents, regimeWhy: data.regime.why },
     party: {
       roleLabel: DEAL_PARTY_LABEL[p.role], name: p.company?.name || p.brand.name, brandName: p.brand.name, client: p.client,

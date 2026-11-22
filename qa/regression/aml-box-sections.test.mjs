@@ -43,7 +43,9 @@ test('the officers can open everything, remembered per browser and never relied 
 test('the AML checks page opens the trail on its own party, the others folded to their Next line', () => {
   const page = read('client/src/pages/aml-dashboard.tsx');
   assert.match(page, /<DealAmlStatusCard dealId=\{row\.dealId\} dealStatus=\{row\.dealStatus\} focusCompanyId=\{row\.brandId\} \/>/);
-  assert.match(box, /startFolded=\{!!focusCompanyId && cp\.id !== focusCompanyId\}/);
+  // One row per party; the trail's party (or the deal's only one) opens on its checks (22 November 2026).
+  assert.match(box, /startOpen=\{focusCompanyId \? cp\.id === focusCompanyId : cps\.length === 1\}/);
+  assert.match(box, /const \[folded, setFolded\] = useState\(!startOpen && !openAll\.all\);/);
   // One set of stage colours for the page and the box.
   assert.match(page, /import \{ AML_STAGE_TONE, DealAmlStatusCard \} from "@\/components\/deal-aml-status";/);
   assert.doesNotMatch(page, /const STAGE_TONE/);

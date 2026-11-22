@@ -60,5 +60,6 @@ test("a party owned from abroad still goes to KYC4U: the trace gathers, it does 
   assert.match(box, /ownersAbroad/);
   assert.match(read("shared/party-kyc.ts"), /ownersAbroad/);
   const ui = read("client/src/components/aml-abroad.tsx");
-  assert.match(ui, /Parties owned from abroad still go to KYC4U/);
+  // Off, the trace goes into KYC4U's note; in-house (22 November 2026), only the AML file.
+  assert.match(ui, /What is traced and recorded here goes into the AML file\{inHouse \? "" : " and KYC4U's note"\}/);
 });

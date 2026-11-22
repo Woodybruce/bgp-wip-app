@@ -481,7 +481,7 @@ router.put("/api/deals/:id/parties/:role/trust", async (req: Request, res: Respo
       const after = wanted ? "trust" : null;
       await pool.query(`UPDATE crm_companies SET aml_subject_type = $2 WHERE id = $1`, [brandId, after]);
       const words = wanted
-        ? `${text(brand.name)} recorded as a trust or foundation: enhanced due diligence, sent to KYC4U in full, signed off by the Nominated Officer or a Deputy`
+        ? `${text(brand.name)} recorded as a trust or foundation: enhanced due diligence, signed off by the Nominated Officer or a Deputy`
         : `${text(brand.name)} no longer recorded as a trust or foundation`;
       await audit(pool, deal.id, "aml_subject_type", before, after, words, me);
       await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'aml_subject_type', $2, $3)`,

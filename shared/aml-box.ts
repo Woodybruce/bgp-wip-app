@@ -139,49 +139,51 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
   const until = amlBoxDay(f.expiresAt);
   switch (f.stage) {
     case "rejected":
-      return { tone: "flag", who: "officers", words: "Rejected. BGP does not go ahead with this party unless the Nominated Officer says otherwise.", action: null };
+      return { tone: "flag", who: "officers", words: "Rejected. Don't go ahead unless the Nominated Officer says so.", action: null };
     case "not_required":
-      return { tone: "done", who: "nobody", words: `Not required${f.notRequiredWords ? `: ${lowerFirst(f.notRequiredWords)}` : ""}. No checks are needed on this party.`, action: null };
+      return { tone: "done", who: "nobody", words: `Not required${f.notRequiredWords ? `: ${lowerFirst(f.notRequiredWords)}` : ""}.`, action: null };
     case "approved":
-      return { tone: "done", who: "nobody", words: `Approved${f.approvedBy ? ` by ${f.approvedBy}` : ""}${until ? `, valid until ${until}` : ""}. Nothing more is needed.`, action: null };
+      return { tone: "done", who: "nobody", words: `Approved${f.approvedBy ? ` by ${f.approvedBy}` : ""}${until ? `, valid until ${until}` : ""}.`, action: null };
     case "expiring":
-      return { tone: "act", who: "bgp", words: `Approved until ${until || "soon"}: the checks are due again before then.`, action: f.clientChecks ? "send_client_checks" : "request_kyc4u" };
+      return { tone: "act", who: "bgp", words: `Approved until ${until || "soon"}: check again before then.`, action: f.clientChecks ? "send_client_checks" : f.inHouseEdd ? null : "request_kyc4u" };
     case "expired":
-      return { tone: "flag", who: "bgp", words: `The approval ran out${until ? ` on ${until}` : ""}: the checks need doing again.`, action: f.clientChecks ? "send_client_checks" : "request_kyc4u" };
+      return { tone: "flag", who: "bgp", words: `Approval ran out${until ? ` on ${until}` : ""}: check again.`, action: f.clientChecks ? "send_client_checks" : f.inHouseEdd ? null : "request_kyc4u" };
     default:
       break;
   }
   if (f.company && f.companyMissing) {
-    return { tone: "act", who: "bgp", words: "Set the company that signs. The checks are about that company, not the brand.", action: "fill_in" };
+    return { tone: "act", who: "bgp", words: "Set the company that signs.", action: "fill_in" };
   }
   if (f.precheckRunning) {
-    return { tone: "wait", who: "bgp", words: "BGP's checks are running: Companies House, the sanctions lists and a web search. It takes a minute or two.", action: null };
+    return { tone: "wait", who: "bgp", words: "BGP's checks are running (a minute or two).", action: null };
   }
-  if (f.kyc4u === "queued") {
-    return { tone: "act", who: "bgp", words: "The KYC4U request is prepared. Download the pack, raise it on KYC4U's portal (type in the sheet, upload the documents), then press Submitted on KYC4U's portal.", action: "kyc4u_form" };
+  // With the officers doing enhanced checks in-house, a KYC4U request holds
+  // nothing up (Woody, 22 November 2026): the steps below carry on.
+  if (f.kyc4u === "queued" && !f.inHouseEdd) {
+    return { tone: "act", who: "bgp", words: "KYC4U request prepared: submit it on KYC4U's portal.", action: "kyc4u_form" };
   }
-  if (f.kyc4u === "raised" || f.stage === "with_kyc4u") {
-    return { tone: "wait", who: "kyc4u", words: `With KYC4U. When their result comes, ${f.canDecide ? "add it here" : "the Nominated Officer or a Deputy adds it here"}.`, action: f.canDecide ? "kyc4u_result" : null };
+  if ((f.kyc4u === "raised" || f.stage === "with_kyc4u") && !f.inHouseEdd) {
+    return { tone: "wait", who: "kyc4u", words: `With KYC4U. ${f.canDecide ? "Add their result when it comes." : "An officer adds their result."}`, action: f.canDecide ? "kyc4u_result" : null };
   }
   const edd = !!f.inHouseEdd && (!!f.trust || !!f.ownersAbroad || f.redFlags > 0 || f.factors > 0);
   if (edd && (f.sanctionsFlags || 0) > 0) {
     return {
       tone: "flag", who: "officers",
-      words: "A possible sanctions match: check whether it is them before anything else. Set it aside with a comment if it is not; if it is, tell the Nominated Officer (an OFSI report and legal advice follow).",
+      words: "Possible sanctions match: check it first. Set it aside if it isn't them; if it is, tell the Nominated Officer.",
       action: "red_flags",
     };
   }
   if (f.trust && !edd) {
     return {
       tone: "flag", who: "bgp",
-      words: "A trust: KYC4U checks it in full (the trust deed, its Trust Registration Service entry, the settlor's source of wealth, and ID for the settlor, trustees, any protector and beneficiaries entitled to 25% or more). Request the KYC4U check and submit it on KYC4U's portal. The Nominated Officer or a Deputy approves the result.",
+      words: "A trust: goes to KYC4U in full. Request the KYC4U check.",
       action: "request_kyc4u",
     };
   }
   if (f.ownersAbroad && !edd) {
     return {
       tone: "act", who: "bgp",
-      words: `Owned through a company registered abroad (${f.ownersAbroad}): KYC4U find the people behind it from the home register. Request the KYC4U check and submit it on KYC4U's portal. The Nominated Officer or a Deputy adds KYC4U's result.`,
+      words: `Owned from abroad (${f.ownersAbroad}): goes to KYC4U. Request the KYC4U check.`,
       action: "request_kyc4u",
     };
   }
@@ -195,19 +197,19 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
   if (f.factors > 0 && !edd) {
     return {
       tone: "flag", who: "bgp",
-      words: `Enhanced due diligence (${f.factors} higher-risk factor${s(f.factors)} in BGP's AML policy): raise it with KYC4U. The Nominated Officer or a Deputy approves the result.`,
+      words: `Enhanced due diligence (${f.factors} higher-risk factor${s(f.factors)}): raise it with KYC4U.`,
       action: "request_kyc4u",
     };
   }
   // Enhanced due diligence by BGP is the officers' to sign off, not an agent's.
   const canSign = edd ? f.canDecide : f.canSignOff;
-  const eddWords = "Enhanced due diligence by BGP: the Nominated Officer or a Deputy reviews the checks and documents and signs it off with a note of what was checked.";
+  const eddWords = "Enhanced checks: the Nominated Officer or a Deputy signs it off.";
   if (f.sanctionsOnly) {
     if (f.billingDiffers) return BILLING_STEP;
     if (canSign && f.signOffBlocked === null) {
-      return { tone: "act", who: "bgp", words: "A letting under £10,000 a month: sanctions checks only, and they are clear. Sign it off.", action: "sign_off" };
+      return { tone: "act", who: "bgp", words: "Letting under £10,000 a month: sanctions only, all clear. Sign it off.", action: "sign_off" };
     }
-    return { tone: "wait", who: "bgp", words: `A letting under £10,000 a month: sanctions checks only.${f.signOffBlocked ? ` Before it can be signed off: ${lowerFirst(stop(f.signOffBlocked))}` : ""}`, action: null };
+    return { tone: "wait", who: "bgp", words: `Letting under £10,000 a month: sanctions only.${f.signOffBlocked ? ` Before it can be signed off: ${lowerFirst(stop(f.signOffBlocked))}` : ""}`, action: null };
   }
   if (f.reliance) {
     if (f.billingDiffers) return BILLING_STEP;
@@ -224,7 +226,9 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
     return { tone: "wait", who: "nobody", words: `Not due yet. ${DUE_WORDS[f.role] || "HMRC does not expect these checks yet."}`, action: null };
   }
   if (!f.clientChecks) {
-    return { tone: "act", who: "bgp", words: "Raise it with KYC4U, BGP's outsourced KYC provider.", action: "request_kyc4u" };
+    return f.inHouseEdd
+      ? { tone: "act", who: "officers", words: "Client checks are off: an officer signs it off with a note.", action: f.canDecide ? "sign_off" : null }
+      : { tone: "act", who: "bgp", words: "Raise it with KYC4U.", action: "request_kyc4u" };
   }
   // In-house enhanced due diligence: the client checks run as any party's,
   // with the officers' sign-off at the end.

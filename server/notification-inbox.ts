@@ -101,7 +101,7 @@ export async function bellFor(userId: string): Promise<BellItem[]> {
     if (others.length && !dismissed.has(id)) {
       firmItems.push({ id, kind: "firm", type: "kyc_gap", read: false, url: "/wip-report",
         title: `${others.length} deal${others.length === 1 ? "" : "s"} at solicitors or exchanged without KYC`,
-        description: `${exchanged} exchanged · ${others.length - exchanged} with solicitors · raise them with KYC4U from each deal's AML panel`,
+        description: `${exchanged} exchanged · ${others.length - exchanged} with solicitors · open each deal's Parties & AML`,
         severity: "urgent", createdAt: new Date().toISOString() });
     }
   }

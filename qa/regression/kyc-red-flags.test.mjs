@@ -66,5 +66,6 @@ test('the deal card shows each party its red flags beside Request KYC4U check; t
   assert.equal((card.match(/<DealRedFlags dealId=\{dealId\} data=\{data\} \/>/g) || []).length, 1);
   assert.match(card, /Red flags could not be checked against/);
   assert.match(deals, /const flags = amlStepStatus\?\.redFlags\?\.parties\[p\.id\] \|\| \[\];/);
-  assert.match(deals, /\{clientChecks && !flags\.length\s*\? <SendClientChecksButton/);
+  // In-house (22 November 2026) a flagged party gets the client checks too.
+  assert.match(deals, /\{clientChecks && \(!flags\.length \|\| inHouse\)\s*\? <SendClientChecksButton/);
 });

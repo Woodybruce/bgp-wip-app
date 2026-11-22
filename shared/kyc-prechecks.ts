@@ -1662,7 +1662,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
         key: "owners", label: ch.owners.length ? `Owners on the register: ${list(ch.owners.map(o => o.name), 4)}` : "No owners on the register",
         state: concern ? "attention" : ch.owners.length ? "ok" : "info",
         detail: [ch.owners.map(o => `${o.name}: ${ownerControlLine(o) || "significant control"}`).join("; "), ch.statements.map(s => s.words).join("; "), ch.chain.length ? `Chain: ${ch.chain.map(c => c.name).join(" > ")}` : "",
-          abroad.length ? `Registered abroad, so Companies House cannot show who owns ${abroad.length === 1 ? "it" : "them"}: ${ownersAbroadWords(abroad)}. It goes to KYC4U to find the people behind ${abroad.length === 1 ? "it" : "them"}` : ""].filter(Boolean).join(". ") || null,
+          abroad.length ? `Registered abroad, so Companies House cannot show who owns ${abroad.length === 1 ? "it" : "them"}: ${ownersAbroadWords(abroad)}. The people behind ${abroad.length === 1 ? "it" : "them"} still need finding` : ""].filter(Boolean).join(". ") || null,
         links: [],
       });
     }

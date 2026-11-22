@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, TrendingUp, TrendingDown, FolderOpen, Flag, AlertTriangle } from "lucide-react";
+import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, ChevronRight, TrendingUp, TrendingDown, FolderOpen, Flag, AlertTriangle } from "lucide-react";
 import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
 import { KYC4U_FORM_URL, Kyc4uPackButton, Kyc4uRequestButton, Kyc4uSubmittedButton } from "@/components/kyc4u-panel";
@@ -704,14 +704,16 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 const onInSentence = (t: string) => (!t || /^[A-Z][A-Z]/.test(t) ? t : t.charAt(0).toLowerCase() + t.slice(1));
 const LEVEL_WORDS: Record<PartyDueDiligence["level"], string> = { simplified: "Simplified", standard: "Standard", enhanced: "Enhanced" };
 
-function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolded }: {
+function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen }: {
   dealId: string; data: DealAmlStatus; cp: Counterparty; row: AmlDashboardRow | null; party: DealPartyView | null;
-  checks: ClientChecks | undefined; openAll: OpenAll; startFolded?: boolean;
+  checks: ClientChecks | undefined; openAll: OpenAll; startOpen?: boolean;
 }) {
   const staff = !!data.prechecks;
   const { open, toggle, show } = useOpenSections(SECTION_KEYS, openAll);
-  const [folded, setFolded] = useState(!!startFolded && !openAll.all);
-  useEffect(() => { if (openAll.at && openAll.all) setFolded(false); }, [openAll.at]);
+  // One row per party, as on the AML board; its checks open under it
+  // (22 November 2026: Jack found the box overwhelming).
+  const [folded, setFolded] = useState(!startOpen && !openAll.all);
+  useEffect(() => { if (openAll.at) setFolded(!openAll.all); }, [openAll.at]);
   const [editing, setEditing] = useState(false);
   const drafts = useQuery<any[]>({
     enabled: staff,
@@ -840,11 +842,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
   const namesakes = pre?.lines.find(l => l.key === "namesakes") || null;
   const variants = pre?.lines.find(l => l.key === "spelling_variants") || null;
   const checksLine: { tone: BoxTone; summary: string } | null = !pre || pre.state === "off" ? null
-    : pre.state === "running" ? { tone: "wait", summary: "Running now: Companies House, the sanctions lists and a web search" }
+    : pre.state === "running" ? { tone: "wait", summary: "Running" }
     : pre.state === "needs_company" ? { tone: "info", summary: "Waiting for the company that signs" }
-    : pre.state === "cap" ? { tone: "wait", summary: "Today's limit is used: they run tomorrow" }
-    : pre.state === "none" ? { tone: "wait", summary: "Not run yet: they start when this box opens" }
-    : pre.unfinished || pre.state === "waiting" ? { tone: "act", summary: "Not finished: Companies House did not answer. They run again by themselves" }
+    : pre.state === "cap" ? { tone: "wait", summary: "Daily limit reached: runs tomorrow" }
+    : pre.state === "none" ? { tone: "wait", summary: "Not run yet" }
+    : pre.unfinished || pre.state === "waiting" ? { tone: "act", summary: "Not finished: retrying" }
     : {
         tone: attention ? "flag" : "done",
         summary: `${pre.ranAt ? `${precheckDay(pre.ranAt)} · ` : ""}${attention ? `${attention} to review` : "nothing to review"}${namesakes ? ` · ${namesakes.label.toLowerCase()}` : ""}${variants ? ` · ${variants.label.toLowerCase()}` : ""}`,
@@ -853,8 +855,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
   const levelLine: { tone: BoxTone; summary: string } | null = !level || cp.notRequired ? null : {
     tone: level.level === "enhanced" ? "act" : "done",
     summary: [
-      `${LEVEL_WORDS[level.level]}, approval lasts ${plural(level.recheckYears, "year")}`,
-      factors.length + dealFactors.length ? plural(factors.length + dealFactors.length, "higher-risk factor") : null,
+      `${LEVEL_WORDS[level.level]} · ${plural(level.recheckYears, "year")}`,
+      factors.length + dealFactors.length ? plural(factors.length + dealFactors.length, "factor") : null,
       level.toWeigh.length ? `${level.toWeigh.length} to weigh` : null,
     ].filter(Boolean).join(" · "),
   };
@@ -864,7 +866,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     // A private individual (Jack, 20 November 2026): everyone named on their
     // side, each with their own checks, and Add another person.
     if (people.basis === "individual" && !sanctionsOnly && !people.people.length) {
-      return { tone: "info", summary: "Their own checks are under Client checks · add anyone buying, selling or renting with them" };
+      return { tone: "info", summary: "See Client checks" };
     }
     if (people.basis !== "individual" && !isCompany) return null;
     const possible = [...people.people.map(p => p.sanctions), ...people.directors.map(d => d.sanctions), ...(people.trustees || []).map(t => t.sanctions)].includes("possible");
@@ -877,12 +879,12 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
       const n = people.people.length;
       return { tone: "done", summary: `${n ? `${plural(n, "person", "people")} · ` : ""}covered: ${onInSentence(people.reliance.words)}${people.directors.length ? ` · ${plural(people.directors.length, "director")}, sanctions only` : ""}` };
     }
-    if (people.basis === "not_read") return { tone: "wait", summary: "Not read yet: the owners come from Companies House" };
+    if (people.basis === "not_read") return { tone: "wait", summary: "Not read yet" };
     // A company registered abroad owns it: KYC4U find the people behind it (21 November 2026).
     // Once someone is recorded behind each company abroad, the line counts their checks.
     const openAbroad = (people.ownersAbroad || []).filter(o => !o.answered);
     const abroad = openAbroad.length
-      ? `owned through ${openAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: KYC4U find who is behind it`
+      ? `owned through ${openAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: ${facts.inHouseEdd ? "find who is behind it" : "KYC4U find who is behind it"}`
       : people.ownersAbroad?.length ? `owned through ${people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}` : null;
     if (abroad && !people.people.some(p => p.roles.includes("owner"))) return { tone: "act", summary: abroad[0].toUpperCase() + abroad.slice(1) };
     const n = people.people.length;
@@ -900,11 +902,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
   })();
 
   const clientLine: { tone: BoxTone; summary: string } | null = !data.clientChecks || cp.notRequired ? null
-    : companyMissing ? { tone: "info", summary: "Start once the company that signs is set" }
+    : companyMissing ? { tone: "info", summary: "Waiting for the company that signs" }
     : people?.reliance ? { tone: "done", summary: `Not needed: ${onInSentence(people.reliance.words)}` }
     : !request ? (sanctionsOnly ? { tone: "done", summary: "Not needed: sanctions checks only" }
       : { tone: "act", summary: (checks?.requests || []).some(r => r.companyId === cp.id && r.person && r.status !== "cancelled")
-          ? "Not sent to the person dealing with us yet (the owners have links of their own)" : "Not sent yet" })
+          ? "Not sent yet (owners have their own links)" : "Not sent yet" })
     : {
         tone: request.status === "finished" ? "done" : request.status === "not_sent" || request.status === "expired" ? "act" : "wait",
         summary: [REQUEST_WORDS[request.status] || request.status, request.recipientName || request.recipientEmail, request.sentAt ? `sent ${day(request.sentAt)}` : null,
@@ -920,60 +922,91 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
 
   const kyc4uReq = kyc4uCompany.data?.requests?.[0] || null;
   const kyc4uLine: { tone: BoxTone; summary: string } | null = !staff || cp.notRequired ? null
-    : draftState === "prepared" ? { tone: "act", summary: "Prepared, not yet submitted on KYC4U's portal" }
-    : draftState === "stale" ? { tone: "act", summary: `Prepared ${day(draft.created_at)} and never submitted: cancel it, or prepare a new one` }
+    : draftState === "prepared" ? { tone: "act", summary: "Prepared, not submitted" }
+    : draftState === "stale" ? { tone: "act", summary: `Prepared ${day(draft.created_at)}, never submitted` }
     : draft?.status === "filled" ? { tone: "wait", summary: `Filled on KYC4U's form ${day(draft.filled_at)}` }
     : draft ? { tone: "wait", summary: `With KYC4U${draft.submitted_at ? ` since ${day(draft.submitted_at)}` : ""}${draft.submitted_ref ? ` · ref ${draft.submitted_ref}` : ""} · ${draft.request_status || "no status from KYC4U yet"}` }
     : kyc4uReq ? { tone: "info", summary: `KYC4U's record: ${kyc4uReq.status || "no status yet"}` }
-    // The officers do enhanced due diligence in-house (21 November 2026): KYC4U is optional.
-    : facts.inHouseEdd && (flags.length || factors.length || ownedAbroad.length || isTrust) ? { tone: "info", summary: "Not needed: BGP's officers do enhanced due diligence in-house (KYC4U stays available)" }
-    : flags.length || factors.length ? { tone: "act", summary: "Not raised: the red flags go to KYC4U" }
-    : ownedAbroad.length ? { tone: "act", summary: "Not raised: owned through a company registered abroad, so it goes to KYC4U" }
-    : { tone: "info", summary: "Not raised: needed only for a red flag, enhanced due diligence or an owner registered abroad" };
+    // The officers do enhanced checks in-house (21 and 22 November 2026): no
+    // KYC4U line unless a request or KYC4U's own record already exists.
+    : facts.inHouseEdd ? null
+    : flags.length || factors.length || ownedAbroad.length ? { tone: "act", summary: "Not raised" }
+    : { tone: "info", summary: "Not needed" };
 
   const decisionLine: { tone: BoxTone; summary: string } = stage === "rejected" ? { tone: "flag", summary: "Rejected" }
     : cp.notRequired ? { tone: "done", summary: `Not required: ${cp.notRequired.reasonWords}` }
     : approved ? { tone: "done", summary: `Approved${cp.kyc_approved_by ? ` by ${cp.kyc_approved_by}` : ""}${cp.kyc_expires_at ? `, valid until ${amlBoxDay(cp.kyc_expires_at)}` : ""}` }
     : cp.isExpired ? { tone: "flag", summary: `Expired${cp.kyc_expires_at ? ` on ${amlBoxDay(cp.kyc_expires_at)}` : ""}: check it again` }
-    : !data.decisions ? { tone: "info", summary: "An agent on the deal, the Nominated Officer or a Deputy signs it off" }
+    : !data.decisions ? { tone: "info", summary: "An agent or an officer signs it off" }
     : !decision ? { tone: "wait", summary: "Not yet: this party could not be read" }
     : decision.blocked !== null ? { tone: "wait", summary: `Not yet: ${onInSentence(decision.blocked)}` }
     // It can be signed off now: by this viewer, or (when they cannot) by those who can.
     // Enhanced due diligence by BGP: the officers sign it off, with a note of what was checked (21 November 2026).
-    : decision.edd ? (canDecide ? { tone: "act", summary: "Ready for enhanced due diligence by BGP: sign it off with a note of what was checked" } : { tone: "info", summary: "Enhanced due diligence by BGP: the Nominated Officer or a Deputy signs it off" })
-    : !canSignOff ? { tone: "info", summary: "Ready for an agent on the deal, the Nominated Officer or a Deputy to sign off" }
-    : decision.needsNote ? { tone: "info", summary: "Can be signed off now, with a note: the client checks are not finished" }
+    : decision.edd ? (canDecide ? { tone: "act", summary: "Ready: sign off with a note (enhanced)" } : { tone: "info", summary: "For the Nominated Officer or a Deputy" })
+    : !canSignOff ? { tone: "info", summary: "Ready for an agent or an officer" }
+    : decision.needsNote ? { tone: "info", summary: "Ready: sign off with a note" }
     : { tone: "act", summary: "Ready to sign off" };
 
   const aml = partyAmlFacts(data, cp.id);
   const sid = (k: SectionKey) => `aml-${cp.id}-${k}`;
   const tid = (k: SectionKey) => `aml-section-${cp.role}-${k}`;
 
+  // The row (22 November 2026): the same pieces as the AML board's row (the
+  // party, the stage, the level, red flags, what happens next and its
+  // button); the checks open under it.
+  const levelChip = level && !cp.notRequired ? (
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${level.level === "enhanced" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-muted text-muted-foreground"}`} data-testid={`aml-box-level-${cp.role}`}>{LEVEL_WORDS[level.level]}</span>
+  ) : null;
   return (
-    <div className="min-w-0 rounded-lg border border-border bg-card p-3 space-y-2.5" data-testid={`counterparty-${cp.id}`}>
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge variant="outline" className="text-[10px] uppercase">{cp.role}</Badge>
-            <Link href={`/companies/${cp.id}`} className="font-medium text-sm hover:underline truncate">{cp.name}</Link>
-          </div>
-          <div className="text-[11px] text-muted-foreground mt-0.5 break-words" data-testid={`counterparty-signs-as-${cp.id}`}>
-            {party?.company || cp.signsAs
-              ? <>Signs as <span className="text-foreground">{party?.company?.name || cp.signsAs}</span></>
-              : isCompany ? <span className="text-amber-700 dark:text-amber-400">Company that signs not set</span> : "A private individual"}
-            {party && <> · {party.person
-              ? <>Ask <span className="text-foreground">{party.person.name}</span>{party.person.email ? null : <span className="text-amber-700 dark:text-amber-400"> (no email)</span>}</>
-              : <span className="text-amber-700 dark:text-amber-400">nobody to ask yet</span>}</>}
-            {party && staff && <> · <button type="button" data-no-min-touch className="underline underline-offset-2 hover:text-foreground" onClick={() => setEditing(true)} data-testid={`aml-party-change-${cp.role}`}>Change</button></>}
+    <div className="min-w-0 rounded-lg border border-border bg-card" data-testid={`counterparty-${cp.id}`}>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
+        <div className="flex min-w-0 flex-1 basis-56 items-start gap-1.5">
+          {staff ? (
+            <button type="button" data-no-min-touch onClick={() => setFolded(f => !f)} aria-expanded={!folded} aria-label={folded ? "Show this party's checks" : "Hide this party's checks"} className="mt-0.5 shrink-0 rounded text-muted-foreground hover:text-foreground" data-testid={`aml-box-unfold-${cp.role}`}>
+              <ChevronRight className={`h-4 w-4 transition-transform ${folded ? "" : "rotate-90"}`} />
+            </button>
+          ) : null}
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant="outline" className="text-[10px] uppercase">{cp.role}</Badge>
+              <Link href={`/companies/${cp.id}`} className="font-medium text-sm hover:underline truncate">{cp.name}</Link>
+            </div>
+            <div className="text-[11px] text-muted-foreground mt-0.5 break-words" data-testid={`counterparty-signs-as-${cp.id}`}>
+              {party?.company || cp.signsAs
+                ? <>Signs as <span className="text-foreground">{party?.company?.name || cp.signsAs}</span></>
+                : isCompany ? <span className="text-amber-700 dark:text-amber-400">Company that signs not set</span> : "A private individual"}
+              {party && <> · {party.person
+                ? <>Ask <span className="text-foreground">{party.person.name}</span>{party.person.email ? null : <span className="text-amber-700 dark:text-amber-400"> (no email)</span>}</>
+                : <span className="text-amber-700 dark:text-amber-400">nobody to ask yet</span>}</>}
+              {party && staff && <> · <button type="button" data-no-min-touch className="underline underline-offset-2 hover:text-foreground" onClick={() => setEditing(true)} data-testid={`aml-party-change-${cp.role}`}>Change</button></>}
+            </div>
           </div>
         </div>
-        {stage
-          ? <span className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${AML_STAGE_TONE[stage]}`} data-testid={`aml-box-stage-${cp.role}`}>
-              {stage === "expiring" && cp.kyc_expires_at ? `Expires ${amlBoxDay(cp.kyc_expires_at)}` : AML_STAGE_LABEL[stage]}
-            </span>
-          : <Badge variant="secondary" className="shrink-0 text-[11px]">In progress</Badge>}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {stage
+            ? <span className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${AML_STAGE_TONE[stage]}`} data-testid={`aml-box-stage-${cp.role}`}>
+                {stage === "expiring" && cp.kyc_expires_at ? `Expires ${amlBoxDay(cp.kyc_expires_at)}` : AML_STAGE_LABEL[stage]}
+              </span>
+            : <Badge variant="secondary" className="shrink-0 text-[11px]">In progress</Badge>}
+          {levelChip}
+          {flags.length > 0 && (
+            <button type="button" data-no-min-touch onClick={() => reveal("flags")} className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-950/40 dark:text-red-200" data-testid={`aml-box-flags-${cp.role}`}>
+              <Flag className="h-3 w-3" />{flags.length}
+            </button>
+          )}
+        </div>
+        <div className={`flex min-w-0 flex-1 basis-64 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md border px-2 py-1.5 ${NEXT_BOX[step.tone]}`} data-testid={`aml-next-${cp.role}`}>
+          <BoxToneIcon tone={step.tone} />
+          <div className="min-w-0 flex-1 basis-40">
+            <span className="sr-only">{step.tone === "done" ? "Done" : AML_BOX_WHO_WORDS[step.who]}: </span>
+            <span className="text-[13px] leading-snug" data-testid={`aml-next-words-${cp.role}`}>{step.words}</span>
+          </div>
+          {nextAction && <div className="flex flex-wrap items-center gap-1.5">{nextAction}</div>}
+        </div>
       </div>
 
+      {staff && !folded && (
+      <div className="space-y-2.5 border-t border-border/70 px-3 pb-3 pt-2.5">
       {party && !settled && <TrustLine dealId={dealId} party={party} compact />}
       {!facts.inHouseEdd && (step.action === "kyc4u_form" || (step.action === "request_kyc4u" && (isTrust || ownedAbroad.length > 0 || flags.length + factors.length + dealFactors.length > 0))) && (
         // Jack, 20 November 2026: KYC4U takes requests only on its own portal,
@@ -982,38 +1015,13 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
           <div className="text-[13px] leading-snug">
             <div className="font-semibold uppercase tracking-wide text-[11px]">Not yet with KYC4U</div>
-            {step.action === "kyc4u_form"
-              ? "Prepared, but not on KYC4U's portal yet. Download the pack, raise it on KYC4U's portal, then press Submitted on KYC4U's portal here."
-              : `${isTrust ? "This party is a trust or foundation" : flags.length ? "This party has red flags" : factors.length + dealFactors.length ? "This party needs enhanced due diligence" : "This party is owned through a company registered abroad"}: press Request KYC4U check, download the pack and raise it on KYC4U's portal, then record it here. Nothing goes to KYC4U until it is submitted there.`}
+            {step.action === "kyc4u_form" ? "Prepared, not on KYC4U's portal yet." : "Request the KYC4U check, then submit it on KYC4U's portal."}
             {step.action === "request_kyc4u" && (
-              <div className="mt-1.5"><Kyc4uSubmittedButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} className="h-7 text-xs" /> <span className="text-xs">if it was already raised on the portal.</span></div>
+              <div className="mt-1.5"><Kyc4uSubmittedButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} className="h-7 text-xs" /> <span className="text-xs">if already submitted.</span></div>
             )}
           </div>
         </div>
       )}
-      <div className={`rounded-md border px-2.5 py-2 ${NEXT_BOX[step.tone]}`} data-testid={`aml-next-${cp.role}`}>
-        <div className="flex flex-wrap items-start gap-x-2 gap-y-1.5">
-          <BoxToneIcon tone={step.tone} />
-          <div className="min-w-0 flex-1 basis-48">
-            <div className="text-[10px] font-semibold uppercase tracking-wider opacity-75">{step.tone === "done" ? "Done" : AML_BOX_WHO_WORDS[step.who]}</div>
-            <div className="text-[13px] leading-snug" data-testid={`aml-next-words-${cp.role}`}>{step.words}</div>
-          </div>
-          {(nextAction || (flags.length > 0 && step.action === "request_kyc4u")) && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              {nextAction}
-              {flags.length > 0 && step.action === "request_kyc4u" && (
-                <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => reveal("flags")} data-testid={`aml-next-see-flags-${cp.role}`}>See them</Button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {staff && (folded ? (
-        <button type="button" data-no-min-touch className="text-xs text-primary hover:underline" onClick={() => setFolded(false)} data-testid={`aml-box-unfold-${cp.role}`}>
-          Show this party's checks
-        </button>
-      ) : (
         <div className="rounded-md border border-border/70 px-2.5" data-testid={`aml-sections-${cp.role}`}>
           {isCompany && (
             <BoxSection id={sid("company")} testId={tid("company")} label="Company" tone={companyLine.tone} summary={companyLine.summary} open={open.has("company")} onToggle={() => toggle("company")}>
@@ -1077,7 +1085,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
           )}
           {flagsLine && (
             <BoxSection id={sid("flags")} testId={tid("flags")} label="Red flags" tone={flagsLine.tone} summary={flagsLine.summary} open={open.has("flags")} onToggle={() => toggle("flags")}>
-              {flags.length || flagAside ? <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="flags" /> : <p className="text-xs text-muted-foreground">Nothing found that sends this party to KYC4U.</p>}
+              {flags.length || flagAside ? <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="flags" /> : <p className="text-xs text-muted-foreground">None found.</p>}
               {unchecked.length > 0 && <p className="text-xs text-amber-800 dark:text-amber-300">Red flags could not be checked against: {unchecked.join(", ")}.</p>}
             </BoxSection>
           )}
@@ -1100,7 +1108,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
           {/* BGP's written risk assessment in KYC4U's shape (21 November 2026), read when opened. */}
           {!cp.notRequired && (
             <BoxSection id={sid("assessment")} testId={tid("assessment")} label="Assessment" tone="info"
-              summary={level ? `${level.level === "enhanced" ? "Higher risk" : level.level === "simplified" ? "Low risk" : "Standard"}: KYC4U's headings, the owners and how each was verified` : "KYC4U's headings, the owners and how each was verified"}
+              summary={level ? (level.level === "enhanced" ? "Higher risk" : level.level === "simplified" ? "Low risk" : "Standard risk") : "Open"}
               open={open.has("assessment")} onToggle={() => toggle("assessment")}>
               {open.has("assessment") && <PartyRiskAssessment dealId={dealId} role={cp.role} />}
             </BoxSection>
@@ -1112,13 +1120,14 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
             {canDecide && (
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-file-line-${cp.role}`}>
                 <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />
-                <span>This party's report and documents, for HMRC or KYC4U.</span>
+                <span>Report and documents</span>
               </div>
             )}
-            {!data.decisions && <p className="text-xs text-muted-foreground">A standard party is signed off by an agent on the deal, the Nominated Officer or a Deputy; an enhanced one by the Nominated Officer or a Deputy.</p>}
+            {!data.decisions && <p className="text-xs text-muted-foreground">Standard: an agent or an officer signs off. Enhanced: an officer.</p>}
           </BoxSection>
         </div>
-      ))}
+      </div>
+      )}
       {editing && <DealPartyEditor dealId={dealId} role={cp.role as DealPartyRole} aml={aml} onClose={() => setEditing(false)} />}
     </div>
   );
@@ -1219,7 +1228,7 @@ export function DealAmlStatusCard({ dealId, dealStatus, focusCompanyId }: { deal
 
         {/* grid-cols-1, not a bare grid: an implicit column grows to its
             widest line, which pushed the boxes past a phone's width. */}
-        <div className={`grid grid-cols-1 gap-3 ${focusCompanyId || cps.length < 2 ? "" : "xl:grid-cols-2"}`}>
+        <div className="grid grid-cols-1 gap-2">
           {cps.map(cp => (
             <PartyAmlBox
               key={cp.id}
@@ -1230,7 +1239,7 @@ export function DealAmlStatusCard({ dealId, dealStatus, focusCompanyId }: { deal
               party={parties?.parties.find(p => p.brand.id === cp.id) || null}
               checks={checks}
               openAll={openAll}
-              startFolded={!!focusCompanyId && cp.id !== focusCompanyId}
+              startOpen={focusCompanyId ? cp.id === focusCompanyId : cps.length === 1}
             />
           ))}
         </div>
@@ -1248,9 +1257,11 @@ export function DealAmlStatusCard({ dealId, dealStatus, focusCompanyId }: { deal
             </div>
             {howOpen && (
               <p className="mt-1.5 text-muted-foreground">
-                {data.clientChecks
-                  ? <>Send each party's contact the client checks; a party needing enhanced due diligence goes to KYC4U, BGP's outsourced KYC provider. A party clears when an agent on the deal, the Nominated Officer or a Deputy signs it off, or when KYC4U approves it (their result added here by the Nominated Officer or a Deputy, or after the next sync).</>
-                  : <>Raise each party with Request KYC4U check (KYC4U are BGP's outsourced KYC provider); their approval clears it here once their result is added or synced. A standard party can be signed off by an agent on the deal, the Nominated Officer or a Deputy.</>}
+                {data.decisions?.inHouseEdd
+                  ? <>Send the client checks. Standard: an agent or an officer signs off. Enhanced: an officer signs off.</>
+                  : data.clientChecks
+                  ? <>Send the client checks. Standard: an agent or an officer signs off. Enhanced: KYC4U, then an officer adds their result.</>
+                  : <>Request a KYC4U check; an officer adds their result. Standard: an agent or an officer can sign off.</>}
               </p>
             )}
           </div>

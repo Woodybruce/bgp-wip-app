@@ -56,6 +56,8 @@ export interface RiskAssessmentKyc4u {
 
 export interface RiskAssessmentInput {
   deal: { name: string; ref: string | null; type: string | null; property: string | null; agents: string[]; regimeWhy: string };
+  // The officers do enhanced checks in-house (22 November 2026): the words name them, not KYC4U.
+  inHouse?: boolean;
   party: {
     roleLabel: string;
     name: string;
@@ -309,8 +311,8 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   if (p.notRequired) conclusion.push(`No checks are needed on this party: ${p.notRequired.reasonWords}.`);
   else if (status === "rejected") conclusion.push("Rejected: BGP does not go ahead with this party unless the Nominated Officer says otherwise.");
   else if (approvedNow) conclusion.push(`Approved${p.state?.approvedBy ? ` by ${p.state.approvedBy}` : ""}${p.state?.approvedAt ? ` on ${day(p.state.approvedAt)}` : ""}${p.state?.expiresAt ? `, valid until ${day(p.state.expiresAt)}` : ""}.`);
-  else if (live.length || p.trust) conclusion.push(`Higher risk: ${live.length ? `${live.length} red flag${live.length === 1 ? "" : "s"} or higher-risk factor${live.length === 1 ? "" : "s"}` : "a trust"}. Enhanced due diligence: KYC4U's checks, and the Nominated Officer or a Deputy approves the result.`);
-  else if (abroad.length) conclusion.push("Owned through a company registered abroad: it goes to KYC4U to identify the owners; the Nominated Officer or a Deputy adds KYC4U's result.");
+  else if (live.length || p.trust) conclusion.push(`Higher risk: ${live.length ? `${live.length} red flag${live.length === 1 ? "" : "s"} or higher-risk factor${live.length === 1 ? "" : "s"}` : "a trust"}. Enhanced due diligence: ${input.inHouse ? "the Nominated Officer or a Deputy reviews the checks and signs it off." : "KYC4U's checks, and the Nominated Officer or a Deputy approves the result."}`);
+  else if (abroad.length) conclusion.push(input.inHouse ? "Owned through a company registered abroad: the officers identify the people behind it, then the Nominated Officer or a Deputy signs it off." : "Owned through a company registered abroad: it goes to KYC4U to identify the owners; the Nominated Officer or a Deputy adds KYC4U's result.");
   else if (outstanding.length) conclusion.push(`Not concluded: still to come: ${outstanding.join("; ")}.`);
   else if (!p.precheckRan) conclusion.push("Not concluded: BGP's checks before asking have not run.");
   else conclusion.push("Lower risk: no higher-risk factors identified and the checks asked for are in; ready for sign-off.");
@@ -335,7 +337,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   const k = p.kyc4u;
   const kyc4uApproval = k?.assessment?.approvals?.find(a => a.team === "kyc4u") || null;
   const approvals: RiskRow[] = [
-    { label: "KYC4U internal approval", value: kyc4uApproval?.date ? `${kyc4uApproval.approver || "KYC4U"}, ${day(kyc4uApproval.date)}` : k?.status ? `${k.status}${k.at ? `, ${day(k.at)}` : ""}` : "Not raised with KYC4U", tone: "info" },
+    ...(input.inHouse && !k ? [] : [{ label: "KYC4U internal approval", value: kyc4uApproval?.date ? `${kyc4uApproval.approver || "KYC4U"}, ${day(kyc4uApproval.date)}` : k?.status ? `${k.status}${k.at ? `, ${day(k.at)}` : ""}` : "Not raised with KYC4U", tone: "info" as const }]),
     {
       label: "Approved on the file",
       value: !approvedNow ? (status === "rejected" ? "Rejected" : "Not approved yet")
@@ -343,7 +345,15 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
         : `${p.state?.approvedBy || "Approved"}${p.state?.approvedAt ? `, ${day(p.state.approvedAt)}` : ""}`,
       tone: approvedNow ? "ok" : "info",
     },
-    { label: "Nominated Officer approval (higher risk)", value: level === "enhanced" ? (k?.recordedBy ? `KYC4U's result recorded by ${k.recordedBy}${k.at ? `, ${day(k.at)}` : ""}` : "Needed: the party needs enhanced due diligence") : "Not needed: not a higher-risk party", tone: level === "enhanced" && !k?.recordedBy ? "attention" : "info" },
+    // An in-house sign-off by an officer is the approval (22 November 2026); until then it is needed.
+    {
+      label: "Nominated Officer approval (higher risk)",
+      value: level !== "enhanced" ? "Not needed: not a higher-risk party"
+        : k?.recordedBy ? `KYC4U's result recorded by ${k.recordedBy}${k.at ? `, ${day(k.at)}` : ""}`
+        : approvedNow ? `Signed off by ${p.state?.approvedBy || "an officer"}${p.state?.approvedAt ? `, ${day(p.state.approvedAt)}` : ""}`
+        : "Needed: the party needs enhanced due diligence",
+      tone: level === "enhanced" && !k?.recordedBy && !approvedNow ? "attention" : "info",
+    },
   ];
 
   return { job, levelOfRisk, risks, diligence, structure, owners, ownersNote, certified: certifiedList, riskIdentified, mitigating, conclusion, counterparty, approvals };

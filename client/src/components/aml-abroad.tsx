@@ -7,6 +7,7 @@
 // shared/foreign-owners.ts; the routes server/kyc-abroad.ts. BGP staff only.
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useAmlInHouse } from "@/components/aml-policy-panel";
 import { ExternalLink, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -200,6 +201,7 @@ function ChartBlock({ c }: { c: DealAbroad["charts"][number] }) {
 /** The section's detail. */
 export function AbroadTrace({ dealId, role, query }: { dealId: string; role: string; query: ReturnType<typeof useDealAbroad> }) {
   const [adding, setAdding] = useState<{ owner: string; mode: Mode } | null>(null);
+  const inHouse = useAmlInHouse();
   const data = query.data;
   if (query.isLoading) return <p className="text-xs text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Reading the trace…</p>;
   if (query.isError || !data) return <p className="text-xs text-red-700">The trace could not be read.</p>;
@@ -256,7 +258,7 @@ export function AbroadTrace({ dealId, role, query }: { dealId: string; role: str
           {data.charts.map(c => <ChartBlock key={c.documentId} c={c} />)}
         </div>
       )}
-      <p className="text-muted-foreground">Parties owned from abroad still go to KYC4U. What is traced and recorded here goes into KYC4U's note and the AML file.</p>
+      <p className="text-muted-foreground">What is traced and recorded here goes into the AML file{inHouse ? "" : " and KYC4U's note"}.</p>
     </div>
   );
 }
