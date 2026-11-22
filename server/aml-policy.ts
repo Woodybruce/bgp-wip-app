@@ -49,7 +49,7 @@ export async function loadNotRequiredMarks(db: Db, dealIds: string[]): Promise<M
   if (!dealIds.length) return out;
   const { rows } = await db.query(
     `SELECT x.id, x.deal_id, x.role, x.company_id, x.reason, x.comment, x.set_by_name, x.set_at,
-            x.asked_on, x.asked_how, x.asked_whom, x.asked_outcome, x.joint_ref,
+            x.asked_on, x.asked_how, x.asked_whom, x.asked_outcome, x.joint_ref, x.asked_missing, x.asked_note,
             d.deal_type, d.team, d.rent_pa
        FROM kyc_party_exemptions x LEFT JOIN crm_deals d ON d.id = x.deal_id
       WHERE x.deal_id = ANY($1::varchar[]) AND x.undone_at IS NULL
@@ -60,11 +60,14 @@ export async function loadNotRequiredMarks(db: Db, dealIds: string[]): Promise<M
     const reason = (Object.prototype.hasOwnProperty.call(NOT_REQUIRED_REASONS, r.reason) ? r.reason : "joint_agent") as NotRequiredReason;
     const askedOn = r.asked_on ? (r.asked_on instanceof Date ? r.asked_on.toISOString().slice(0, 10) : String(r.asked_on).slice(0, 10)) : null;
     const asked: JointAskRecord | null = askedOn && r.asked_how && r.asked_outcome && Object.prototype.hasOwnProperty.call(JOINT_ASKED_HOW, r.asked_how) && Object.prototype.hasOwnProperty.call(JOINT_OUTCOMES, r.asked_outcome)
-      ? { askedOn, how: r.asked_how, whom: text(r.asked_whom) || "the joint agent", outcome: r.asked_outcome, ref: r.joint_ref || null }
+      ? {
+          askedOn, how: r.asked_how, whom: text(r.asked_whom) || "the joint agent", outcome: r.asked_outcome, ref: r.joint_ref || null,
+          missing: r.asked_missing ? String(r.asked_missing).split(/\s*;\s*/).filter(Boolean) : null, note: text(r.asked_note) || null,
+        }
       : null;
     const mark: NotRequiredMark = {
       id: Number(r.id), reason,
-      reasonWords: asked ? `${NOT_REQUIRED_REASONS[reason]}. ${jointAskWords(asked)}` : NOT_REQUIRED_REASONS[reason],
+      reasonWords: asked ? `${NOT_REQUIRED_REASONS[reason]}. ${jointAskWords(asked)}${asked.note ? `. ${asked.note}` : ""}` : NOT_REQUIRED_REASONS[reason],
       comment: String(r.comment || ""), asked,
       by: r.set_by_name || null, at: r.set_at ? new Date(r.set_at).toISOString() : null, companyId: String(r.company_id),
     };

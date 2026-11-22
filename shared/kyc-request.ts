@@ -555,18 +555,50 @@ export function jointAgentRequestEmail(ctx: JointAgentEmailContext): { subject: 
   return { subject: subjectFor({ dealName: ctx.dealName, ref: ctx.ref, test: ctx.test }, `Your AML checks on ${ctx.partyName}:`), html: frame("AML checks", inner, footerFor(ctx), ctx.test, "a joint agent receives") };
 }
 
-export function jointAgentReminderEmail(ctx: JointAgentEmailContext): { subject: string; html: string } {
+/**
+ * Asking the joint agent for what is still missing (22 November 2026: "we need
+ * to explain whats missing and keep emailing"): every gap in one plain line,
+ * or, when nothing has come, what to send. Sent by BGP staff from the deal, or
+ * by the app every three days until it is all in.
+ */
+export function jointAgentMissingEmail(ctx: JointAgentEmailContext & { missing: string[]; nothingYet: boolean; chase: number }): { subject: string; html: string } {
+  const list = (items: string[]) => `<ul style="margin:0 0 16px;padding-left:20px;font-family:${FONT};font-size:15px;line-height:1.5;color:${BODY}">${items.map(i => `<li style="margin:4px 0">${escHtml(i)}</li>`).join("")}</ul>`;
+  const why = ctx.letting
+    ? "We can't rely on your checks until these are in."
+    : "If you can't send them, please tell us: HMRC asks us to record what was and wasn't provided.";
   const inner = [
-    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">A reminder: your checks on ${escHtml(ctx.partyName)}</h1>`,
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">${ctx.nothingYet ? `A reminder: your checks on ${escHtml(ctx.partyName)}` : `What we still need on ${escHtml(ctx.partyName)}`}</h1>`,
     p(greeting(ctx.recipientName)),
-    p(`We have not had your anti-money laundering checks on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong> yet.${ctx.letting ? " We need them, and your agreement to us relying on them, before the deal goes ahead." : ""}`),
-    button("Send your checks", ctx.link),
-    p("Or reply to this email with the files attached, keeping the reference in the subject.", `font-size:13px;color:${MUTED}`),
+    ctx.nothingYet
+      ? p(`We have not had your anti-money laundering checks on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong> yet. Please send:`)
+      : p(`Thank you for what you have sent on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong>. To finish our checks we still need:`),
+    ctx.nothingYet ? stepsList(jointAgentAsks(ctx)) : list(ctx.missing),
+    p(why, `font-size:14px;color:${BODY}`),
+    button(ctx.nothingYet ? "Send your checks" : "Send what's missing", ctx.link),
+    p(`Or reply to this email with the files attached, keeping the reference in the subject. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
-  return { subject: subjectFor({ dealName: ctx.dealName, ref: ctx.ref, test: ctx.test }, `Reminder: your AML checks on ${ctx.partyName}:`), html: frame("AML checks reminder", inner, footerFor(ctx), ctx.test, "a joint agent receives") };
+  const prefix = ctx.nothingYet ? `Reminder: your AML checks on ${ctx.partyName}:` : `Still needed: your AML checks on ${ctx.partyName}:`;
+  return { subject: subjectFor({ dealName: ctx.dealName, ref: ctx.ref, test: ctx.test }, prefix), html: frame("AML checks", inner, footerFor(ctx), ctx.test, "a joint agent receives") };
+}
+
+/** To the deal's agents when the app has stopped chasing the joint agent. */
+export function jointAgentChaseStoppedEmail(ctx: {
+  firm: string; partyName: string; dealName: string; ref: string; dealLink: string; missing: string[]; chases: number; letting: boolean; sentFrom: string;
+}): { subject: string; html: string } {
+  const next = ctx.letting
+    ? "BGP can't rely on their checks while these are missing. Chase them yourself, or send the client checks."
+    : "Chase them yourself, or an officer records what came on the deal's AML: Not required, with \"they sent part of their checks\" or \"they did not provide them\" (HMRC, AMLG2200 section 21).";
+  const inner = [
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Still missing after ${ctx.chases} reminders</h1>`,
+    p(`The app has asked ${escHtml(ctx.firm)} ${ctx.chases} times for what is missing from their checks on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong>, and has stopped chasing.`),
+    ctx.missing.length ? h2("Still missing") + `<ul style="margin:0 0 14px;padding-left:20px">${ctx.missing.map(m => `<li style="margin:2px 0">${escHtml(m)}</li>`).join("")}</ul>` : "",
+    p(next),
+    button("Open the deal", ctx.dealLink),
+  ].join("\n");
+  return { subject: `${ctx.firm} has not sent what is missing on ${ctx.partyName}: ${ctx.dealName} (ref ${ctx.ref})`, html: frame("Joint agent's checks", inner, `Bruce Gillingham Pollard. Sent from ${escHtml(ctx.sentFrom)}. Reference ${escHtml(ctx.ref)}.`, false) };
 }
 
 /** To the deal's agents when the joint agent has sent their checks. */
@@ -885,6 +917,10 @@ export interface KycPortalView {
     asks: Array<{ title: string; detail: string }>;
     terms: string[] | null;
     reliance: { name: string; position: string | null; supervisor: string; registration: string | null; agreedAt: string } | null;
+    // What their files do not cover yet, one line each (empty until something comes).
+    missing?: string[];
+    // Their files not read yet: nothing is asked for while one is being read.
+    reading?: number;
   } | null;
 }
 

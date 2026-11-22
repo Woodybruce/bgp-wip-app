@@ -104,7 +104,8 @@ test("replies are filed only from the address the request went to, with its refe
   assert.match(portal, /if \(!clientChecksOn\(\)\) return \{ sent: 0/, "reminders do nothing while the client checks are switched off");
   // Woody, 19 and 20 November 2026: only a live deal is chased, never one
   // deleted, withdrawn, completed, invoiced or archived.
-  assert.match(portal, /AND expires_at > now\(\) AND COALESCE\(reminders_sent, 0\) < \$1\s*AND EXISTS \(SELECT 1 FROM crm_deals d WHERE d\.id = kyc_upload_tokens\.deal_id\s*AND NOT \(lower\(btrim\(coalesce\(d\.status, ''\)\)\) = ANY\(\$2::text\[\]\)\)\)`,\s*\[REMINDER_DAYS\.length, statusSpellingsFor\(CLOSED_STATUSES\)\]/, "reminders only for a live deal");
+  // The joint agent's requests are chased by their own rule (22 November 2026).
+  assert.match(portal, /AND expires_at > now\(\) AND COALESCE\(reminders_sent, 0\) < \$1 AND \$\{NOT_JOINT_SQL\(\)\}\s*AND EXISTS \(SELECT 1 FROM crm_deals d WHERE d\.id = kyc_upload_tokens\.deal_id\s*AND NOT \(lower\(btrim\(coalesce\(d\.status, ''\)\)\) = ANY\(\$2::text\[\]\)\)\)`,\s*\[REMINDER_DAYS\.length, statusSpellingsFor\(CLOSED_STATUSES\)\]/, "reminders only for a live deal");
   assert.match(index, /if \(!clientChecksSwitchOn\(process\.env\.KYC_CLIENT_CHECKS\)\) return;\s*import\("\.\/aml-portal"\)\.then\(m => m\.pollKycMailbox\(\)\)/, "the reply reader follows the client checks' own switch");
 });
 

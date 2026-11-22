@@ -261,6 +261,8 @@ async function dealAudit(dealId: string, field: string, oldValue: string | null,
 }
 
 const partyName = (p: AmlParty) => p.entityName || p.brandName;
+// The officer's note when recording a reliance with gaps in the joint agent's files.
+const JOINT_BY_HAND_MIN = 20;
 
 // The brand's own approval: the columns the company approval writes, the
 // re-check reminder on the AML policy's cycle for the party's level, the KYC
@@ -682,10 +684,21 @@ router.post("/api/deals/:id/parties/:role/reliance", deciderFirst, takeFiles, as
     const jointRef = String(req.body?.jointRef || "").trim();
     let jointPdf: { name: string; mime: string; buffer: Buffer } | null = null;
     let body: Record<string, unknown> = req.body || {};
+    // Their files must cover everyone first (MLR 2017 reg 39(2)(a); Woody, 22
+    // November 2026: "we need to explain whats missing"): an officer who has
+    // checked the gaps by hand says how, and that is kept with the reliance.
+    let byHand: string | null = null;
     if (jointRef) {
       const { jointRelianceForRecord } = await import("./joint-agent-checks");
       const joint = await jointRelianceForRecord(pool, party.dealId, party.brandId, jointRef);
       if ("problem" in joint) return res.status(400).json({ message: joint.problem });
+      if (joint.gaps.length) {
+        const handNote = String(req.body?.checkedByHand || "").replace(/\s+/g, " ").trim().slice(0, 1000);
+        if (handNote.length < JOINT_BY_HAND_MIN) {
+          return res.status(409).json({ message: `Their files do not cover everything BGP needs to rely on them: ${joint.gaps.join("; ")}. Ask them for what's missing, or say how you checked these by hand.`, gaps: joint.gaps });
+        }
+        byHand = `Recorded with gaps in their files (${joint.gaps.join("; ")}); checked by hand: ${handNote}`;
+      }
       jointPdf = joint.pdf;
       body = { ...joint.defaults, ...Object.fromEntries(Object.entries(body).filter(([, v]) => v != null && String(v).trim() !== "")) };
     }
@@ -697,7 +710,7 @@ router.post("/api/deals/:id/parties/:role/reliance", deciderFirst, takeFiles, as
     const filed = jointPdf ? [jointPdf, ...entries] : entries;
     if (!filed.length) return res.status(400).json({ message: "Add the firm's letter or email agreeing to BGP relying on its checks (a PDF of the email is fine)." });
 
-    const v = said.value;
+    const v = byHand ? { ...said.value, note: `${said.value.note} ${byHand}`.slice(0, 3000) } : said.value;
     const { saveFile } = await import("./file-storage");
     const documentIds: string[] = [];
     for (const f of filed) {
@@ -780,21 +793,22 @@ router.post("/api/deals/:id/parties/:role/not-required", async (req: Request, re
     const { jointRequestsForRecord } = await import("./joint-agent-checks");
     const said = notRequiredInput(req.body, { rule: party.jointRule, requests: await jointRequestsForRecord(pool, party.dealId, party.brandId).catch(() => []) });
     if ("problem" in said) return res.status(400).json({ message: said.problem });
-    const askedWords = said.asked ? ` ${jointAskWords(said.asked)}.` : "";
+    const askedWords = said.asked ? ` ${jointAskWords(said.asked)}.${said.asked.note ? ` ${said.asked.note}` : ""}` : "";
     await pool.query(
       `UPDATE kyc_party_exemptions SET undone_at = now(), undone_by = $3, undone_by_name = $4 WHERE deal_id = $1 AND role = $2 AND undone_at IS NULL`,
       [party.dealId, role, me.id, me.name]);
     await pool.query(
-      `INSERT INTO kyc_party_exemptions (deal_id, role, company_id, trading_entity_id, reason, comment, set_by, set_by_name, asked_on, asked_how, asked_whom, asked_outcome, joint_ref)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11, $12, $13)`,
+      `INSERT INTO kyc_party_exemptions (deal_id, role, company_id, trading_entity_id, reason, comment, set_by, set_by_name, asked_on, asked_how, asked_whom, asked_outcome, joint_ref, asked_missing, asked_note)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11, $12, $13, $14, $15)`,
       [party.dealId, role, party.brandId, party.entityId, said.reason, said.comment, me.id, me.name,
-        said.asked?.askedOn || null, said.asked?.how || null, said.asked?.whom || null, said.asked?.outcome || null, said.asked?.ref || null]);
+        said.asked?.askedOn || null, said.asked?.how || null, said.asked?.whom || null, said.asked?.outcome || null, said.asked?.ref || null,
+        said.asked?.missing?.length ? said.asked.missing.join("; ") : null, said.asked?.note || null]);
     await pool.query(
       `INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'party_not_required', $2, $3, $4, $5)`,
       [party.brandId, me.name, `Not required on ${party.dealName} (${DEAL_PARTY_LABEL[role].toLowerCase()}), marked by ${me.name}: ${NOT_REQUIRED_REASONS[said.reason]}.${askedWords} ${said.comment}`,
         party.entityId ? "trading_entity" : null, party.entityId]).catch(() => {});
     await dealAudit(party.dealId, "aml_not_required", party.state.status || "no checks", `not required, marked by ${me.name}`,
-      `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${NOT_REQUIRED_REASONS[said.reason]}${said.asked ? ` · ${jointAskWords(said.asked)}` : ""} · ${said.comment}`, me);
+      `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${NOT_REQUIRED_REASONS[said.reason]}${said.asked ? ` · ${jointAskWords(said.asked)}${said.asked.note ? ` · ${said.asked.note}` : ""}` : ""} · ${said.comment}`, me);
     const { recomputeDealKycApproved } = await import("./deal-gates");
     await recomputeDealKycApproved(party.brandId, me.name).catch((e: any) => console.warn("[deal-party-aml] deal recompute failed:", e?.message));
     res.json({ ok: true });

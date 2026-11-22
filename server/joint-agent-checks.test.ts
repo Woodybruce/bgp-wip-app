@@ -15,10 +15,10 @@ import {
   type JointRequestForRecord,
 } from "../shared/aml-policy";
 import {
-  bornAgrees, bornKey, checkJointReading, jointCoverage, jointLine, jointRelianceInput, jointRelianceTerms, sameJointCompany,
-  type JointFileReading,
+  JOINT_CHASE_MAX, bornAgrees, bornKey, checkJointReading, jointChaseDue, jointCoverage, jointGapLines, jointLine, jointNextChaseDay, jointRelianceInput, jointRelianceTerms, jointWorkingDay, londonDayNumber, sameJointCompany,
+  type JointChase, type JointFileReading,
 } from "../shared/joint-agent-checks";
-import { jointAgentAsks, jointAgentFinishedEmail, jointAgentReminderEmail, jointAgentRequestEmail } from "../shared/kyc-request";
+import { jointAgentAsks, jointAgentChaseStoppedEmail, jointAgentFinishedEmail, jointAgentMissingEmail, jointAgentRequestEmail } from "../shared/kyc-request";
 import { amlNextStep, type AmlBoxFacts } from "../shared/aml-box";
 import { amlBucket, amlNeedsKyc4u, amlStage, amlWaitingOn } from "../shared/aml-dashboard";
 import { agentAmlState } from "../shared/agent-aml";
@@ -72,14 +72,14 @@ test("on a sale the joint agent reason needs what came back and how BGP asked", 
   assert.match(problem({ outcome: "received", askedOn: "2026-11-20", askedHow: "phone", askedWhom: "" }), /who you asked/);
   const typed = notRequiredInput({ reason: "joint_agent", comment, outcome: "not_provided", askedOn: "2026-11-18", askedHow: "phone", askedWhom: "Savills (Jane Smith)" }, { rule: "sale", today, requests: sent });
   assert.ok(!("problem" in typed));
-  assert.deepEqual(typed.asked, { askedOn: "2026-11-18", how: "phone", whom: "Savills (Jane Smith)", outcome: "not_provided", ref: null });
+  assert.deepEqual(typed.asked, { askedOn: "2026-11-18", how: "phone", whom: "Savills (Jane Smith)", outcome: "not_provided", ref: null, missing: null, note: null });
   assert.equal(jointAskWords(typed.asked!), "Asked Savills (Jane Smith) for their checks on 18 Nov 2026, by phone: they did not provide them");
 });
 
 test("a request made in the app is the record: sent, on this party, and with files when they sent their checks", () => {
   const app = notRequiredInput({ reason: "joint_agent", comment, outcome: "received", jointRef: "7k2q9m" }, { rule: "sale", today, requests: sent });
   assert.ok(!("problem" in app));
-  assert.deepEqual(app.asked, { askedOn: "2026-11-20", how: "app", whom: "Savills (Jane Smith)", outcome: "received", ref: "7K2Q9M" });
+  assert.deepEqual(app.asked, { askedOn: "2026-11-20", how: "app", whom: "Savills (Jane Smith)", outcome: "received", ref: "7K2Q9M", missing: null, note: null });
   // Files the joint agent emailed to someone at BGP: asked by email.
   const emailed = notRequiredInput({ reason: "joint_agent", comment, outcome: "not_provided", jointRef: "ABCD12" }, { rule: "sale", today, requests: sent });
   assert.ok(!("problem" in emailed));
@@ -139,7 +139,19 @@ test("the email to the joint agent names the party, the reference and HMRC's rea
   assert.ok(jointAgentAsks({ kind: "company", letting: true }).some(a => a.title === "The reliance terms"));
   assert.ok(!jointAgentAsks({ kind: "company", letting: false }).some(a => a.title === "The reliance terms"));
   assert.ok(!jointAgentAsks({ kind: "individual", letting: false }).some(a => a.title === "The company"));
-  assert.match(jointAgentReminderEmail({ ...base, letting: true }).subject, /^Reminder/);
+  const nudge = jointAgentMissingEmail({ ...base, letting: true, missing: [], nothingYet: true, chase: 1 });
+  assert.match(nudge.subject, /^Reminder/);
+  assert.match(nudge.html, /Send your checks/);
+  const still = jointAgentMissingEmail({ ...base, letting: false, missing: ["Daniel North: a proof of address <b>x</b>", "Your sanctions and PEP screening"], nothingYet: false, chase: 2 });
+  assert.match(still.subject, /^Still needed: your AML checks on/);
+  assert.match(still.html, /Daniel North: a proof of address/);
+  assert.doesNotMatch(still.html, /<b>x<\/b>/);
+  assert.match(still.html, /HMRC asks us to record what was and wasn't provided/);
+  const stopped = jointAgentChaseStoppedEmail({ firm: "Savills", partyName: "Acme Ltd", dealName: "12 Example Street", ref: "7K2Q9M", dealLink: "https://chatbgp.app/deals/1",
+    missing: ["their sanctions and PEP screening"], chases: 10, letting: false, sentFrom: "kyc@chatbgp.app" });
+  assert.match(stopped.subject, /has not sent what is missing/);
+  assert.match(stopped.html, /Still missing after 10 reminders/);
+  assert.match(stopped.html, /they sent part of their checks/);
   const done = jointAgentFinishedEmail({ firm: "Savills", recipientName: "Jane Smith", partyName: "Acme Ltd", dealName: "12 Example Street", ref: "7K2Q9M",
     dealLink: "https://chatbgp.app/deals/1", files: ["passport.pdf"], letting: true, reliance: null, missing: ["Jane Owner: address"], sentFrom: "kyc@chatbgp.app" });
   assert.match(done.html, /not agreed yet/);
@@ -148,7 +160,8 @@ test("the email to the joint agent names the party, the reference and HMRC's rea
 
 test("the reliance terms are the regulation's conditions, agreed with a full name and a supervisor", () => {
   const terms = jointRelianceTerms("Acme Ltd");
-  assert.equal(terms.length, 5);
+  assert.equal(terms.length, 6);
+  assert.match(terms.join(" "), /not simplified due diligence/);
   assert.match(terms[0], /regulation 39/);
   assert.match(terms.join(" "), /immediately on request/);
   assert.match(terms.join(" "), /five years/);
@@ -174,7 +187,7 @@ test("a reading is kept only in its own shape: unknown kinds, results and dates 
   assert.equal(r.date, null, "30 February is no date");
   assert.equal(r.expiry, "2034-02-01");
   assert.equal(r.result, null);
-  assert.deepEqual(r.people, [{ name: "Jane Smith", born: "1980-05" }]);
+  assert.deepEqual(r.people, [{ name: "Jane Smith", born: "1980-05", idVerified: null, addressVerified: null }]);
   assert.deepEqual(r.companies, ["Acme Ltd", "42"]);
   assert.equal(r.summary, "A passport.");
   assert.equal((r as any).extra, undefined);
@@ -292,9 +305,39 @@ test("the reader is sent the file and nothing else, and a file it cannot read sa
   assert.equal(seen.length, 1, "only the file");
   const empty = await readJointFile({ buffer: Buffer.alloc(0), mime: "application/pdf", name: "empty.pdf" }, { hasKey: () => true, claim: async () => true, now: () => today });
   assert.equal(empty.state, "failed");
+  assert.equal(empty.unreadable, true, "a file that could not be opened is theirs to send again");
+  assert.ok(!off.unreadable && !capped.unreadable, "the reader off or its allowance used is BGP's to read again");
   const thrown = await readJointFile(pdf, { hasKey: () => true, claim: async () => true, now: () => today, ask: async () => { throw new Error("overloaded"); } });
   assert.equal(thrown.state, "failed");
   assert.match(thrown.why || "", /read it again later/);
+  assert.ok(!thrown.unreadable);
+});
+
+test("a file not read yet: the joint agent is asked for nothing it may hold; a file that could not be opened is asked for again", () => {
+  const people = [{ name: "Jane Smith", roles: ["owner"] }];
+  const pending = jointCoverage({ partyName: "Acme Trading Ltd", kind: "company", people, now: today, readings: [
+    { state: "off", why: "today's allowance of reads is used up; read it again tomorrow", file: "pack.pdf", readAt: "2026-11-21T10:00:00Z" },
+  ] });
+  assert.equal(pending.unread, 1);
+  assert.deepEqual(pending.unopened, []);
+  const opts = { reliance: true, agreed: false, nothingYet: false, partyName: "Acme Trading Ltd" };
+  assert.deepEqual(jointGapLines(pending, { ...opts, you: true }), ["Your agreement to the reliance terms, on the page"], "nothing their file may hold is asked for");
+  const ours = jointGapLines(pending, { ...opts, you: false });
+  assert.equal(ours[0], "1 file from them not read yet: press Read again, or check it by eye");
+  assert.ok(ours.some(l => /^Jane Smith: an ID document/.test(l)), "BGP still sees what is not covered");
+  const broken = jointCoverage({ partyName: "Acme Trading Ltd", kind: "company", people, now: today, readings: [
+    { state: "failed", why: "the file is empty", unreadable: true, file: "scan.pdf", readAt: "2026-11-21T10:00:00Z" },
+  ] });
+  assert.equal(broken.unread, 0);
+  assert.deepEqual(broken.unopened, ["scan.pdf"]);
+  assert.equal(broken.complete, false);
+  const theirs = jointGapLines(broken, { ...opts, you: true });
+  assert.equal(theirs[0], "scan.pdf could not be opened: please send it again, as a PDF or a photo");
+  assert.ok(theirs.some(l => /^Jane Smith: an ID document/.test(l)));
+  // The Next line: read their file first.
+  const next = amlNextStep(facts({ stage: "joint_in", joint: { firm: "Savills", rule: "letting", reliance: true, missing: 3, unread: 1, status: "in" } }));
+  assert.equal(next.who, "bgp");
+  assert.match(next.words, /^1 file from Savills is not read yet\. Press Read again, or check it by eye, before asking them for anything else\.$/);
 });
 
 // ── Where the party stands ──────────────────────────────────────────────────
@@ -327,10 +370,12 @@ test("the Next line follows the joint agent: waiting on them, then the officers 
   assert.equal(waiting.who, "joint_agent");
   assert.equal(waiting.action, "joint");
   assert.match(waiting.words, /records that you asked/);
-  const inSale = amlNextStep(facts({ stage: "joint_in", joint: { ...sale, status: "in", missing: 2 } }));
+  const inSale = amlNextStep(facts({ stage: "joint_in", joint: { ...sale, status: "in", missing: 0 } }));
   assert.equal(inSale.who, "officers");
   assert.match(inSale.words, /Not required/);
-  assert.match(inSale.words, /2 things/);
+  const gapsSale = amlNextStep(facts({ stage: "joint_in", joint: { ...sale, status: "in", missing: 2 } }));
+  assert.equal(gapsSale.who, "bgp");
+  assert.match(gapsSale.words, /2 things are still missing\. Ask them for what's missing\. An officer can also record what came/);
   const letting = { firm: "Savills", rule: "letting" as const, missing: 0 };
   assert.equal(amlNextStep(facts({ joint: { ...letting, status: "in", reliance: false } })).who, "joint_agent");
   assert.match(amlNextStep(facts({ joint: { ...letting, status: "finished", reliance: true } })).words, /records the reliance/);
@@ -350,4 +395,137 @@ test("a reply by email counts from the address asked or a colleague at the same 
   assert.equal(sameFirmDomain("tom@gmail.com", "jane@gmail.com"), false);
   assert.equal(sameFirmDomain("tom@savills-example.co.uk", "jane@savills-example.com"), false);
   assert.equal(sameFirmDomain("", "jane@savills-example.com"), false);
+});
+
+// ── What is missing, and chasing it (Woody, 22 November 2026: "we need to
+// explain whats missing and keep emailing") ─────────────────────────────────
+
+test("a CDD summary that says what they verified counts, without the documents themselves", () => {
+  const c = jointCoverage({
+    partyName: "Acme Trading Ltd", kind: "company", now: today,
+    people: [{ name: "Jane Smith", roles: ["owner"], born: "1980-05" }, { name: "Bob Jones", roles: ["owner"] }],
+    readings: [
+      read({ file: "cdd.pdf", kind: "risk_assessment", title: "CDD summary", people: [{ name: "Jane Smith", born: "1980-05", idVerified: true, addressVerified: true }, { name: "Bob Jones", born: null, idVerified: true, addressVerified: false }] }),
+    ],
+  });
+  assert.deepEqual(c.people.find(p => p.name === "Jane Smith")!.missing, []);
+  assert.deepEqual(c.people.find(p => p.name === "Bob Jones")!.missing, ["address"]);
+});
+
+test("simplified checks are a flag only when BGP would rely on them", () => {
+  const readings = [read({ file: "ra.pdf", kind: "risk_assessment", simplified: true })];
+  assert.equal(jointCoverage({ partyName: "Acme Ltd", kind: "company", people: [], readings, now: today }).flagItems.length, 0);
+  const relied = jointCoverage({ partyName: "Acme Ltd", kind: "company", people: [], readings, now: today, reliance: true });
+  assert.equal(relied.flagItems[0].kind, "simplified");
+  assert.match(relied.flags[0], /cannot rely on/);
+});
+
+test("what is missing is worded for the joint agent, and for BGP, one plain line each", () => {
+  const c = jointCoverage({
+    partyName: "Acme Trading Ltd", kind: "company", now: today,
+    people: [{ name: "Jane Smith", roles: ["owner"], born: "1980-05" }],
+    readings: [
+      read({ file: "old.pdf", kind: "photo_id", title: "UK passport", date: "2026-11-01", expiry: "2025-01-01", people: [{ name: "Jane Smith", born: null }] }),
+      read({ file: "s.pdf", kind: "screening", result: "match", summary: "PEP list" }),
+    ],
+  });
+  const theirs = jointGapLines(c, { you: true, reliance: true, agreed: false, nothingYet: false, partyName: "Acme Trading Ltd" });
+  assert.ok(theirs.some(l => /^Jane Smith: an ID document/.test(l) && /your electronic identity check/.test(l)));
+  assert.ok(theirs.some(l => /^Jane Smith: a proof of address/.test(l)));
+  assert.ok(theirs.includes("The company's register entry (Companies House, or its register abroad)"));
+  assert.ok(theirs.some(l => /UK passport had expired \(1 Jan 2025\): please send one in date/.test(l)));
+  assert.ok(theirs.some(l => /s\.pdf shows a possible screening match: please send how it was resolved/.test(l)));
+  assert.ok(theirs.includes("Your sanctions and PEP screening on the company and the people"));
+  assert.equal(theirs[theirs.length - 1], "Your agreement to the reliance terms, on the page");
+  const ours = jointGapLines(c, { you: false, reliance: false, agreed: false, nothingYet: false, partyName: "Acme Trading Ltd" });
+  assert.ok(ours.some(l => /their electronic identity check/.test(l)));
+  assert.ok(!ours.some(l => /reliance terms/.test(l)));
+  assert.deepEqual(jointGapLines(null, { you: true, reliance: false, agreed: false, nothingYet: true, partyName: "Acme Ltd" }), ["Your checks on Acme Ltd: nothing has come yet"]);
+  // A file not read yet is BGP's to read, never theirs to send.
+  const unread = jointCoverage({ partyName: "John Buyer", kind: "individual", people: [], now: today,
+    readings: [read({ kind: "photo_id", people: [{ name: "John Buyer", born: null }] }), read({ kind: "proof_of_address", people: [{ name: "John Buyer", born: null }] }), read({ kind: "screening", result: "clear" }),
+      { state: "failed", why: "not read yet", file: "x.pdf", readAt: "" }] });
+  assert.deepEqual(jointGapLines(unread, { you: true, reliance: false, agreed: false, nothingYet: false, partyName: "John Buyer" }), []);
+});
+
+test("the app chases what is missing every three days on weekdays, and stops after its last reminder", () => {
+  const sentAt = "2026-11-16T10:00:00.000Z";
+  const base = { sentAt, chases: [] as JointChase[], stoppedAt: null, settled: false, cancelled: false, gaps: 2, weekday: true };
+  assert.equal(jointChaseDue({ ...base, now: new Date("2026-11-18T10:00:00Z") }), null, "two days on");
+  assert.equal(jointChaseDue({ ...base, now: new Date("2026-11-19T10:00:00Z") }), "chase", "three days on");
+  assert.equal(jointChaseDue({ ...base, now: new Date("2026-11-19T10:00:00Z"), weekday: false }), null);
+  assert.equal(jointChaseDue({ ...base, now: new Date("2026-11-19T10:00:00Z"), gaps: 0 }), null, "nothing missing");
+  assert.equal(jointChaseDue({ ...base, now: new Date("2026-11-19T10:00:00Z"), settled: true }), null, "the party is decided");
+  assert.equal(jointChaseDue({ ...base, now: new Date("2026-11-19T10:00:00Z"), sentAt: null }), null, "never asked");
+  const chase = (at: string, auto = true): JointChase => ({ at, by: "the app", auto, missing: ["x"] });
+  assert.equal(jointChaseDue({ ...base, chases: [chase("2026-11-19T10:00:00Z")], now: new Date("2026-11-21T10:00:00Z") }), null, "counts from the last chase");
+  const many = Array.from({ length: JOINT_CHASE_MAX }, (_, i) => chase(new Date(Date.parse(sentAt) + (i + 1) * 3 * 86400000).toISOString()));
+  const after = new Date(Date.parse(many[many.length - 1].at) + 3 * 86400000);
+  assert.equal(jointChaseDue({ ...base, chases: many, now: after }), "stop");
+  // A chase BGP sends by hand does not use up the app's own.
+  assert.equal(jointChaseDue({ ...base, chases: [...many.slice(1), chase(many[0].at, false)], now: after }), "chase");
+  assert.equal(jointChaseDue({ ...base, chases: many, now: after, stoppedAt: after.toISOString() }), null);
+  // After the stop, BGP asking again by hand starts the app's chasing again.
+  const askedAgain = [...many, chase(after.toISOString(), false)];
+  assert.equal(jointChaseDue({ ...base, chases: askedAgain, now: new Date(after.getTime() + 3 * 86400000) }), "chase");
+});
+
+test("the next chase is three days after the last email, moved off a weekend", () => {
+  // Thursday 19 November 2026 + 3 days is Sunday: Monday.
+  assert.equal(jointNextChaseDay(["2026-11-19T10:00:00.000Z"])?.slice(0, 10), "2026-11-23");
+  assert.equal(jointNextChaseDay(["2026-11-16T10:00:00.000Z"])?.slice(0, 10), "2026-11-19");
+  assert.equal(jointNextChaseDay([null, "2026-11-16T10:00:00.000Z", "2026-11-17T09:00:00.000Z"])?.slice(0, 10), "2026-11-20", "from the last email");
+  assert.equal(jointNextChaseDay([]), null);
+});
+
+test("chasing counts London calendar days, so the date shown is the day the morning run sends it", () => {
+  // Sent on Sunday 22 November 2026 at 16:55: the 10:00 run on Wednesday 25th chases (not Thursday).
+  const base = { sentAt: "2026-11-22T16:55:00.000Z", chases: [] as JointChase[], stoppedAt: null, settled: false, cancelled: false, gaps: 1, weekday: true };
+  assert.equal(jointChaseDue({ ...base, now: new Date("2026-11-24T10:00:00Z") }), null);
+  assert.equal(jointChaseDue({ ...base, now: new Date("2026-11-25T10:00:00Z") }), "chase");
+  assert.equal(jointNextChaseDay([base.sentAt])?.slice(0, 10), "2026-11-25");
+  // British Summer Time: 23:30 UTC on 30 June is 00:30 on 1 July in London.
+  assert.equal(londonDayNumber("2026-06-30T23:30:00Z"), londonDayNumber("2026-07-01T12:00:00Z"));
+  assert.equal(londonDayNumber("not a date"), null);
+  // Bank holidays: no chase on Christmas Day; the next one is the next working day.
+  assert.equal(jointWorkingDay(new Date("2026-12-25T10:00:00Z")), false);
+  assert.equal(jointWorkingDay(new Date("2026-12-24T10:00:00Z")), true);
+  assert.equal(jointWorkingDay(new Date("2026-11-22T10:00:00Z")), false, "a Sunday");
+  // Tuesday 22 December + 3 is Christmas Day; Saturday, Sunday and Monday 28th (a bank holiday) follow.
+  assert.equal(jointNextChaseDay(["2026-12-22T09:00:00Z"])?.slice(0, 10), "2026-12-29");
+});
+
+test("on a sale the record says what did not come, and what their files showed is answered first", () => {
+  const withGaps: JointRequestForRecord[] = [{ ref: "7K2Q9M", sentAt: "2026-11-20T09:15:00.000Z", whom: "Savills", how: "app", files: 2,
+    missing: ["Daniel North: address", "their sanctions and PEP screening"], flags: ["s.pdf: the screening found a possible match"] }];
+  const ask = (b: Record<string, unknown>) => notRequiredInput({ reason: "joint_agent", comment, jointRef: "7K2Q9M", ...b }, { rule: "sale", today, requests: withGaps });
+  const flagged = ask({ outcome: "partly" });
+  assert.ok("problem" in flagged && /show something to look at/.test(flagged.problem));
+  const partly = ask({ outcome: "partly", flagNote: "The match is a namesake: different date of birth." });
+  assert.ok(!("problem" in partly));
+  assert.deepEqual(partly.asked?.missing, ["Daniel North: address", "their sanctions and PEP screening"]);
+  assert.match(jointAskWords(partly.asked!), /they sent part of their checks \(not sent: Daniel North: address; their sanctions and PEP screening\)/);
+  assert.match(partly.asked?.note || "", /namesake/);
+  const typedList = ask({ outcome: "partly", flagNote: "The match is a namesake.", missing: "Their screening\nThe register entry" });
+  assert.deepEqual(!("problem" in typedList) && typedList.asked?.missing, ["Their screening", "The register entry"]);
+  const received = ask({ outcome: "received", flagNote: "The match is a namesake." });
+  assert.ok("problem" in received && /say how you checked these by hand/.test(received.problem));
+  const byHand = ask({ outcome: "received", flagNote: "The match is a namesake.", checkedByHand: "Their CDD summary shows both, seen in their file." });
+  assert.ok(!("problem" in byHand) && /Checked by hand/.test(byHand.asked?.note || ""));
+  // Nothing came: the flags and gaps do not apply.
+  assert.ok(!("problem" in ask({ outcome: "not_provided" })));
+  // Asked another way: "part of them" needs what did not come.
+  const typed = notRequiredInput({ reason: "joint_agent", comment, outcome: "partly", askedOn: "2026-11-18", askedHow: "phone", askedWhom: "Savills" }, { rule: "sale", today });
+  assert.ok("problem" in typed && /did not send/.test(typed.problem));
+});
+
+test("the Next line says what is still missing and that the app is chasing", () => {
+  const f = facts({ stage: "joint_in", joint: { firm: "Savills", rule: "sale", reliance: false, missing: 2, status: "in", chasing: true } });
+  const step = amlNextStep(f);
+  assert.equal(step.who, "joint_agent");
+  assert.match(step.words, /2 things are still missing/);
+  assert.match(step.words, /chasing them every three days/);
+  const notChasing = amlNextStep(facts({ stage: "joint_in", joint: { firm: "Savills", rule: "letting", reliance: true, missing: 1, status: "finished", chasing: false } }));
+  assert.equal(notChasing.who, "bgp");
+  assert.match(notChasing.words, /1 thing is still missing\. Ask them for what's missing\. BGP can't rely on their checks until everything is in, unless an officer checked the rest by hand\.$/);
 });

@@ -12,8 +12,8 @@ test("every joint agent route is BGP staff's, signed in as themselves, and the r
   const s = read("server/joint-agent-checks.ts");
   const routes = [...s.matchAll(/jointAgentRouter\.(get|post)\("([^"]+)"/g)].map(m => m[2]);
   assert.deepEqual(routes.sort(), [
-    "/api/deals/:id/joint-agent-checks", "/api/deals/:id/joint-agent-checks", "/api/deals/:id/joint-agent-checks/:ref/reliance.pdf",
-    "/api/deals/:id/joint-agent-checks/read", "/api/deals/:id/joint-agent-checks/upload",
+    "/api/deals/:id/joint-agent-checks", "/api/deals/:id/joint-agent-checks", "/api/deals/:id/joint-agent-checks/:ref/chase",
+    "/api/deals/:id/joint-agent-checks/:ref/reliance.pdf", "/api/deals/:id/joint-agent-checks/read", "/api/deals/:id/joint-agent-checks/upload",
   ].sort());
   for (const block of s.split(/jointAgentRouter\.(?:get|post)\(/).slice(1)) {
     assert.match(block.slice(0, 600), /await staffMe\(req\)/, block.slice(0, 80));
@@ -84,4 +84,33 @@ test("the AML box carries the Joint agent line and its Next step", () => {
   assert.match(box, /case "joint": return <Button/);
   const page = read("client/src/pages/kyc-upload.tsx");
   assert.match(page, /if \(view\.joint\) return <JointAgentPage/);
+});
+
+test("what is missing is chased every three days by the daily job, never for a decided party, and stops with a note", () => {
+  const s = read("server/joint-agent-checks.ts");
+  assert.match(s, /settled: gaps\.length \? await partySettled\(db, row\) : true/);
+  assert.match(s, /if \(!portal\.clientChecksOn\(\) \|\| !jointWorkingDay\(now\)\) return out;/);
+  assert.match(s, /jointAgentChaseStoppedEmail\(/);
+  // Only the chase's keys of the request: a file's reading may be saved meanwhile.
+  assert.match(s, /jsonb_set\(jsonb_set\(request, '\{jointAgent,chases\}'/);
+  const portal = read("server/aml-portal.ts");
+  assert.match(portal, /AND expires_at > now\(\) AND COALESCE\(reminders_sent, 0\) < \$1 AND \$\{NOT_JOINT_SQL\(\)\}/);
+  assert.match(portal, /m\.chaseJointAgents\(now\)/);
+});
+
+test("a file not read yet is read before the chase, and nothing it may hold is asked for", () => {
+  const s = read("server/joint-agent-checks.ts");
+  // The daily chase reads a waiting file first, then works out what to ask for.
+  assert.match(s, /if \(await readPendingFiles\(db, row, files, now\)\) \{/);
+  // The deal says it is being chased only when there is something to ask them for.
+  assert.match(s, /shown\.sentAt && !shown\.chaseStoppedAt && theirs\.length\)/);
+  assert.match(s, /return \{ \.\.\.not\("failed", prepared\.unreadable\), unreadable: true \};/);
+});
+
+test("the reliance waits for their files to cover everyone, unless an officer says how they checked by hand", () => {
+  const route = read("server/deal-party-aml.ts");
+  assert.match(route, /if \(joint\.gaps\.length\) \{/);
+  assert.match(route, /if \(handNote\.length < JOINT_BY_HAND_MIN\) \{\s*return res\.status\(409\)/);
+  assert.match(route, /asked_missing, asked_note\)/);
+  assert.match(read("server/index.ts"), /ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS asked_missing text/);
 });

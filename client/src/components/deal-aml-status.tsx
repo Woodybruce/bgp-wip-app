@@ -1102,7 +1102,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen 
                     ? <JointNotRequiredButton dealId={dealId} role={cp.role} companyId={cp.id} partyName={partyName} jointRef={current.ref} />
                     : null)
                 : current.reliance && !people?.reliance
-                  ? <JointRelianceButton dealId={dealId} role={cp.role} partyName={partyName} joint={{
+                  ? <JointRelianceButton dealId={dealId} role={cp.role} partyName={partyName} gaps={jointParty.gaps} joint={{
                       ref: current.ref, firm: current.reliance.firm, supervisor: current.reliance.supervisor, registration: current.reliance.registration,
                       contact: [current.reliance.name, current.reliance.position].filter(Boolean).join(", "), agreedOn: current.reliance.agreedAt.slice(0, 10),
                     }} />

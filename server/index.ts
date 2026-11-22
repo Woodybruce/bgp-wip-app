@@ -3097,6 +3097,9 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     `ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS asked_whom text`,
     `ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS asked_outcome text`,
     `ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS joint_ref text`,
+    // What the joint agent did not send, and the officer's note (22 November 2026).
+    `ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS asked_missing text`,
+    `ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS asked_note text`,
     // A person to check verified from public sources by the Nominated Officer
     // or a Deputy (Woody, 21 November 2026: KYC4U's "Public figure" method):
     // the note, the links (copied to PDF on the KYC record) and the files.

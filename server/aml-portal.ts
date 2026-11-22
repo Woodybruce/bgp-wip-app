@@ -39,7 +39,7 @@ import { partySubjectKind } from "@shared/deal-parties";
 import { ADDRESS_PROOF_ACCEPT_NOTE_MIN } from "@shared/kyc-address-proof";
 import { officerWords } from "@shared/aml-policy";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
-import { jointAgentAsks, jointAgentFinishedEmail, jointAgentReminderEmail } from "@shared/kyc-request";
+import { jointAgentAsks, jointAgentFinishedEmail } from "@shared/kyc-request";
 import { jointRelianceInput, jointRelianceTerms, type JointAgentRequestDetails } from "@shared/joint-agent-checks";
 
 export const KYC_MAILBOX = (process.env.KYC_MAILBOX || process.env.BGP_AML_MAILBOX || "kyc@chatbgp.app").trim();
@@ -377,6 +377,8 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
   if (isJointRequest(request)) {
     const joint = request.jointAgent;
     const letting = joint?.rule === "letting" || joint?.rule === "other";
+    // What their files do not cover yet, in their words (22 November 2026).
+    const needs = await import("./joint-agent-checks").then(m => m.pageNeedsForToken(row.token)).catch(() => ({ missing: [] as string[], reading: 0 }));
     return {
       test: !!row.is_test, ref: request.ref, recipientName: row.contact_name, partyName: request.partyName, kind: request.kind,
       dealName: request.dealName, expiresAt: new Date(row.expires_at).toISOString(),
@@ -389,6 +391,7 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
         asks: jointAgentAsks({ kind: request.kind, letting }),
         terms: letting ? jointRelianceTerms(request.partyName) : null,
         reliance: joint?.reliance ? { name: joint.reliance.name, position: joint.reliance.position, supervisor: joint.reliance.supervisor, registration: joint.reliance.registration, agreedAt: joint.reliance.agreedAt } : null,
+        missing: needs.missing, reading: needs.reading,
       },
     };
   }
@@ -833,21 +836,14 @@ export async function clientChecksForDeal(dealId: string) {
 
 // ── Reminders ───────────────────────────────────────────────────────────────
 
-export async function sendReminder(row: TokenRow): Promise<KycSendResult> {
+export async function sendReminder(row: TokenRow, by?: string | null): Promise<KycSendResult> {
   const request = row.request!;
   const progress = await progressOf(row);
   const link = kycLinkFor(row.token);
+  // The joint agent is asked for what is still missing (22 November 2026).
   if (isJointRequest(request)) {
-    const sent = await sendKycEmail({
-      to: [row.contact_email || ""], cc: request.cc,
-      build: sentFrom => jointAgentReminderEmail({
-        recipientName: row.contact_name, firm: request.jointAgent?.firm || "your firm", partyName: request.partyName, partyRole: request.role,
-        kind: request.kind, dealName: request.dealName, ref: request.ref, link, expiresAt: row.expires_at,
-        letting: request.jointAgent?.rule === "letting" || request.jointAgent?.rule === "other", agents: request.agents, sentFrom,
-      }),
-    });
-    if (sent.ok) await pool.query(`UPDATE kyc_upload_tokens SET reminders_sent = COALESCE(reminders_sent, 0) + 1, last_reminded_at = now() WHERE token = $1`, [row.token]);
-    return sent;
+    const r = await import("./joint-agent-checks").then(m => m.chaseJointRequest(pool, row, { name: by || "BGP", auto: false }));
+    return { ok: r.ok, from: null, fellBack: false, error: r.error };
   }
   const sent = await sendKycEmail({
     to: [row.contact_email || ""], cc: request.cc,
@@ -883,7 +879,7 @@ export async function sendKycReminders(now = new Date()): Promise<{ sent: number
   const rows = (await pool.query(
     `SELECT * FROM kyc_upload_tokens
       WHERE request IS NOT NULL AND is_test IS NOT TRUE AND revoked_at IS NULL AND completed_at IS NULL
-        AND expires_at > now() AND COALESCE(reminders_sent, 0) < $1
+        AND expires_at > now() AND COALESCE(reminders_sent, 0) < $1 AND ${NOT_JOINT_SQL()}
         AND EXISTS (SELECT 1 FROM crm_deals d WHERE d.id = kyc_upload_tokens.deal_id
                      AND NOT (lower(btrim(coalesce(d.status, ''))) = ANY($2::text[])))`,
     [REMINDER_DAYS.length, statusSpellingsFor(CLOSED_STATUSES)])).rows as TokenRow[];
@@ -891,17 +887,14 @@ export async function sendKycReminders(now = new Date()): Promise<{ sent: number
   for (const row of rows) {
     if (!reminderDue(row, now)) continue;
     const progress = await progressOf(row);
-    // The joint agent is chased until they have sent something (and, on a
-    // letting, agreed the reliance terms); BGP added files by hand: never.
-    if (isJointRequest(row.request)) {
-      const letting = row.request!.jointAgent?.rule === "letting" || row.request!.jointAgent?.rule === "other";
-      if (row.request!.manual || (progress.files.length && (!letting || row.request!.jointAgent?.reliance))) { skipped++; continue; }
-    } else if ((!row.request!.needsIdCheck || progress.idDone) && progress.docsDone.length === row.request!.docs.length && progress.pepAnswered && progress.ownersAnswered && progress.ownersLinked !== false) { skipped++; continue; }
+    if ((!row.request!.needsIdCheck || progress.idDone) && progress.docsDone.length === row.request!.docs.length && progress.pepAnswered && progress.ownersAnswered && progress.ownersLinked !== false) { skipped++; continue; }
     const result = await sendReminder(row);
     if (result.ok) sent++; else { failed++; console.warn(`[kyc] reminder for ${row.request!.ref} failed: ${result.error}`); }
   }
   if (sent || failed) console.log(`[kyc] reminders: ${sent} sent, ${failed} failed, ${skipped} with nothing left to send`);
-  return { sent, failed, skipped };
+  // The joint agent is chased for what is missing, every three days (22 November 2026).
+  const joint = await import("./joint-agent-checks").then(m => m.chaseJointAgents(now)).catch((e: any) => { console.warn(`[kyc] joint agent chase failed: ${e?.message}`); return { chased: 0, stopped: 0, failed: 1 }; });
+  return { sent: sent + joint.chased, failed: failed + joint.failed, skipped };
 }
 
 // ── Filing a file ───────────────────────────────────────────────────────────
@@ -1035,7 +1028,7 @@ async function finishRequest(row: TokenRow): Promise<void> {
   // came in, what it does not cover yet, and what happens next.
   if (isJointRequest(request)) {
     const letting = request.jointAgent?.rule === "letting" || request.jointAgent?.rule === "other";
-    const missing = await import("./joint-agent-checks").then(m => m.coverageForToken(row.token)).then(c => c?.missing || []).catch(() => [] as string[]);
+    const missing = await import("./joint-agent-checks").then(m => m.gapsForToken(row.token, { you: false })).catch(() => [] as string[]);
     const sent = await sendKycEmail({
       to: kycReplyAddresses(row, request.cc),
       build: sentFrom => jointAgentFinishedEmail({
@@ -1338,12 +1331,13 @@ kycRequestRouter.post("/api/aml/deal/:id/client-checks", signedIn, async (req: R
 
 kycRequestRouter.post("/api/aml/client-checks/:token/remind", signedIn, async (req: Request, res: Response) => {
   try {
-    if (!(await staffMe(req))) return res.status(403).json({ message: STAFF_ONLY });
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
     if (!clientChecksOn()) return res.status(410).json({ message: CHECKS_OFF });
     const row = await tokenRow(String(req.params.token));
     if (!row || !row.request || row.is_test) return res.status(404).json({ message: "Request not found" });
     if (closedReason(row) || row.completed_at) return res.status(409).json({ message: "That request is finished, cancelled or has run out. Send a new one." });
-    const sent = await sendReminder(row);
+    const sent = await sendReminder(row, me.name);
     if (!sent.ok) return res.status(502).json({ message: `The reminder was not sent: ${sent.error}` });
     res.json({ ok: true, from: sent.from });
   } catch (err: any) {

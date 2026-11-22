@@ -621,14 +621,17 @@ export const NOT_REQUIRED_COMMENT_MIN = 10;
 // "document in writing that it has been requested and not provided").
 export const JOINT_ASKED_HOW = { app: "through the app", email: "by email", phone: "by phone", letter: "by letter", meeting: "in a meeting" } as const;
 export type JointAskedHow = keyof typeof JOINT_ASKED_HOW;
-export const JOINT_OUTCOMES = { received: "they sent their checks", not_provided: "they did not provide them" } as const;
+export const JOINT_OUTCOMES = { received: "they sent their checks", partly: "they sent part of their checks", not_provided: "they did not provide them" } as const;
 export type JointOutcome = keyof typeof JOINT_OUTCOMES;
-export interface JointAskRecord { askedOn: string; how: JointAskedHow; whom: string; outcome: JointOutcome; ref: string | null }
+// missing: what did not come (on "partly"). note: the officer's words on what
+// their files showed, or how they checked by hand (22 November 2026).
+export interface JointAskRecord { askedOn: string; how: JointAskedHow; whom: string; outcome: JointOutcome; ref: string | null; missing?: string[] | null; note?: string | null }
 
-/** "Asked Savills (Jane Smith) for their checks on 22 Nov 2026, through the app: they sent their checks". */
+/** "Asked Savills (Jane Smith) for their checks on 22 Nov 2026, through the app: they sent part of their checks (not sent: ...)". */
 export function jointAskWords(a: JointAskRecord): string {
   const day = new Date(`${a.askedOn}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
-  return `Asked ${a.whom} for their checks on ${day}, ${JOINT_ASKED_HOW[a.how]}: ${JOINT_OUTCOMES[a.outcome]}`;
+  const missing = a.outcome === "partly" && a.missing?.length ? ` (not sent: ${a.missing.join("; ")})` : "";
+  return `Asked ${a.whom} for their checks on ${day}, ${JOINT_ASKED_HOW[a.how]}: ${JOINT_OUTCOMES[a.outcome]}${missing}`;
 }
 
 /**
@@ -636,7 +639,11 @@ export function jointAskWords(a: JointAskRecord): string {
  * it. how: "email" for files the joint agent emailed to someone at BGP and BGP
  * added (sentAt is then the day they were added). files: how many came back.
  */
-export interface JointRequestForRecord { ref: string; sentAt: string | null; whom: string; how?: "app" | "email"; files?: number }
+export interface JointRequestForRecord {
+  ref: string; sentAt: string | null; whom: string; how?: "app" | "email"; files?: number;
+  // What their files do not cover, and what they show to look at, in BGP's words (shared/joint-agent-checks.ts).
+  missing?: string[]; flags?: string[];
+}
 
 export function notRequiredInput(
   body: unknown,
@@ -654,14 +661,34 @@ export function notRequiredInput(
   // A letting under £10,000 a month or advisory work needs no record of asking.
   if (rule !== "sale") return { reason: "joint_agent", comment, asked: null };
   const outcome = String(b.outcome || "") as JointOutcome;
-  if (!(outcome in JOINT_OUTCOMES)) return { problem: "Say what came back from the joint agent: their checks, or nothing." };
+  if (!(outcome in JOINT_OUTCOMES)) return { problem: "Say what came back from the joint agent: their checks, part of them, or nothing." };
+  const note = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, 1000);
+  const listOf = (v: unknown) => (Array.isArray(v) ? v : String(v ?? "").split(/\s*[;\n]\s*/)).map(x => String(x).replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 20);
+  const typedMissing = listOf(b.missing);
   const ref = String(b.jointRef || "").trim().toUpperCase();
   if (ref) {
     const req = (ctx.requests || []).find(r => r.ref === ref);
     if (!req) return { problem: "That request to the joint agent is not on this party." };
     if (!req.sentAt) return { problem: "That request to the joint agent was not sent: send it, or record how you asked." };
-    if (outcome === "received" && req.files === 0) return { problem: "Nothing has come back on that request yet: wait for their checks, or record that they did not provide them." };
-    return { reason: "joint_agent", comment, asked: { askedOn: req.sentAt.slice(0, 10), how: req.how || "app", whom: req.whom, outcome, ref } };
+    if (outcome !== "not_provided" && req.files === 0) return { problem: "Nothing has come back on that request yet: wait for their checks, or record that they did not provide them." };
+    const notes: string[] = [];
+    // Their files show something to look at: say what you did about it first.
+    if (outcome !== "not_provided" && req.flags?.length) {
+      const flagNote = note(b.flagNote);
+      if (flagNote.length < NOT_REQUIRED_COMMENT_MIN) return { problem: `Their files show something to look at: ${req.flags.join("; ")}. Say what you did about it.` };
+      notes.push(`On what their files showed: ${flagNote}`);
+    }
+    let missing: string[] | null = null;
+    if (outcome === "partly") {
+      missing = typedMissing.length ? typedMissing : req.missing || [];
+      if (!missing.length) return { problem: "Say what they did not send." };
+    }
+    if (outcome === "received" && req.missing?.length) {
+      const byHand = note(b.checkedByHand);
+      if (byHand.length < NOT_REQUIRED_COMMENT_MIN) return { problem: `Their files do not cover: ${req.missing.join("; ")}. Choose "they sent part of their checks", or say how you checked these by hand.` };
+      notes.push(`Checked by hand: ${byHand}`);
+    }
+    return { reason: "joint_agent", comment, asked: { askedOn: req.sentAt.slice(0, 10), how: req.how || "app", whom: req.whom, outcome, ref, missing, note: notes.join(" ") || null } };
   }
   const askedOn = String(b.askedOn || "").trim();
   const when = /^\d{4}-\d{2}-\d{2}$/.test(askedOn) ? new Date(`${askedOn}T12:00:00Z`) : null;
@@ -671,7 +698,8 @@ export function notRequiredInput(
   if (!(how in JOINT_ASKED_HOW) || how === "app") return { problem: "Say how you asked: by email, phone, letter or in a meeting." };
   const whom = String(b.askedWhom || "").replace(/\s+/g, " ").trim().slice(0, 160);
   if (whom.length < 2) return { problem: "Say who you asked at the joint agent." };
-  return { reason: "joint_agent", comment, asked: { askedOn, how, whom, outcome, ref: null } };
+  if (outcome === "partly" && !typedMissing.length) return { problem: "Say what they did not send." };
+  return { reason: "joint_agent", comment, asked: { askedOn, how, whom, outcome, ref: null, missing: outcome === "partly" ? typedMissing : null, note: null } };
 }
 
 export interface PartyNotRequired {

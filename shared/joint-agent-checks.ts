@@ -27,6 +27,7 @@
 
 import { personNamesMatch } from "./kyc-prechecks";
 import type { JointAgentRule } from "./aml-policy";
+import { ENGLAND_BANK_HOLIDAYS } from "./aml-register";
 
 /** What the joint agent's request carries, beside the client checks request's own fields. */
 export interface JointAgentRequestDetails {
@@ -39,6 +40,9 @@ export interface JointAgentRequestDetails {
   reliance: JointRelianceConfirmation | null;
   // Each file read once, by kyc_documents id.
   readings?: Record<string, JointFileReading>;
+  // Each email asking for what is missing, and when the app stopped chasing.
+  chases?: JointChase[];
+  chaseStoppedAt?: string | null;
 }
 
 export interface JointRelianceConfirmation {
@@ -58,6 +62,7 @@ export function jointRelianceTerms(partyName: string): string[] {
     "We have given, or will now give, Bruce Gillingham Pollard the information we hold on who the customer is, its beneficial owners and anyone acting for it.",
     "We will give Bruce Gillingham Pollard copies of the identification and verification documents immediately on request.",
     "We will keep those documents for five years after the transaction completes or our business relationship with the customer ends.",
+    `Our checks on ${partyName} were full customer due diligence, not simplified due diligence.`,
     "We are supervised for anti-money laundering in the UK, by the supervisor named below.",
   ];
 }
@@ -105,6 +110,10 @@ export type JointResult = typeof JOINT_RESULTS[number];
 export interface JointFileReading {
   state: "read" | "failed" | "off";
   why?: string | null;
+  // The file itself could not be opened (empty, too large, a picture or a
+  // Word file with nothing to read): theirs to send again. Any other failure
+  // is BGP's to read again.
+  unreadable?: boolean | null;
   file: string;
   readAt: string;
   kind?: JointDocKind;
@@ -112,12 +121,18 @@ export interface JointFileReading {
   issuer?: string | null;
   date?: string | null;     // yyyy-mm-dd: issued, the statement's date, the report's date
   expiry?: string | null;   // yyyy-mm-dd: a photo ID's expiry
-  people?: Array<{ name: string; born: string | null }>; // born: yyyy-mm
+  // born: yyyy-mm. On a CDD summary or risk assessment, whether it says the
+  // person's identity and address were verified (22 November 2026: HMRC
+  // wants the information for reliance, not copies of every document).
+  people?: Array<{ name: string; born: string | null; idVerified?: boolean | null; addressVerified?: boolean | null }>;
   companies?: string[];
   owners?: string[];
   result?: JointResult | null;
   addressVerified?: boolean | null;
   certified?: boolean | null;
+  // The document says simplified due diligence was applied: BGP cannot rely
+  // on simplified checks (HMRC, AMLG11410).
+  simplified?: boolean | null;
   summary?: string | null;
 }
 
@@ -141,10 +156,11 @@ const words = (v: unknown, n = 200): string | null => {
 /** The reader's answer, kept only in the shape above: nothing it adds reaches the screen. */
 export function checkJointReading(raw: any, file: string, now: Date = new Date()): JointFileReading {
   const kind = isJointDocKind(raw?.kind) ? raw.kind : "other";
+  const yes = (v: unknown) => (typeof v === "boolean" ? v : null);
   const people = (Array.isArray(raw?.people) ? raw.people : [])
-    .map((p: any) => ({ name: words(p?.name, 120), born: ym(p?.born) }))
+    .map((p: any) => ({ name: words(p?.name, 120), born: ym(p?.born), idVerified: yes(p?.idVerified), addressVerified: yes(p?.addressVerified) }))
     .filter((p: { name: string | null }) => !!p.name && /[a-z]/i.test(p.name!))
-    .slice(0, 12) as Array<{ name: string; born: string | null }>;
+    .slice(0, 12) as NonNullable<JointFileReading["people"]>;
   const list = (v: any) => (Array.isArray(v) ? v : []).map((x: unknown) => words(x, 160)).filter((x: string | null): x is string => !!x).slice(0, 12);
   const result = JOINT_RESULTS.includes(raw?.result) ? raw.result as JointResult : null;
   return {
@@ -155,6 +171,7 @@ export function checkJointReading(raw: any, file: string, now: Date = new Date()
     result,
     addressVerified: typeof raw?.addressVerified === "boolean" ? raw.addressVerified : null,
     certified: typeof raw?.certified === "boolean" ? raw.certified : null,
+    simplified: typeof raw?.simplified === "boolean" ? raw.simplified : null,
     summary: words(raw?.summary, 300),
   };
 }
@@ -163,13 +180,28 @@ export function checkJointReading(raw: any, file: string, now: Date = new Date()
 
 export interface JointCoveragePerson { name: string; roles: string[]; born?: string | null }
 
+/** Something in their files to look at, by kind, so it can be worded for BGP or for the joint agent. */
+export interface JointFlag {
+  kind: "expired" | "failed" | "referred" | "dob" | "match" | "simplified";
+  person: string | null;
+  file: string;
+  // The document's own name for itself, and the expiry date or the screening's words.
+  title: string | null;
+  detail: string | null;
+}
+
 export interface JointCoverage {
-  people: Array<{ name: string; id: string | null; address: string | null; missing: string[] }>;
+  people: Array<{ name: string; id: string | null; address: string | null; missing: Array<"identity" | "address"> }>;
   company: { register: string | null; ownership: string | null } | null;
   screening: string | null;
+  // In BGP's words; flagItems are the same, by kind.
   flags: string[];
+  flagItems: JointFlag[];
   others: string[];
+  // Files BGP has not read yet (to read again), and files that could not be opened (to send again).
   unread: number;
+  unopened: string[];
+  // In BGP's words: what their files do not cover yet.
   missing: string[];
   complete: boolean;
 }
@@ -213,20 +245,36 @@ function names(r: JointFileReading, p: JointCoveragePerson): boolean {
   return (r.people || []).some(x => personNamesMatch(x.name, p.name) && bornAgrees(x.born, p.born));
 }
 
+/** A flag in BGP's words. */
+export function jointFlagWords(f: JointFlag): string {
+  switch (f.kind) {
+    case "expired": return `${f.person}'s ${f.title || "photo ID"} had expired (${f.detail})`;
+    case "failed": return `${f.person}'s electronic identity check failed${f.detail ? ` (${f.detail})` : ""}`;
+    case "referred": return `${f.person}'s electronic identity check was referred${f.detail ? ` (${f.detail})` : ""}`;
+    case "dob": return `${f.file}: names ${f.person} with another date of birth`;
+    case "match": return `${f.file}: the screening found a possible match${f.detail ? ` (${f.detail})` : ""}`;
+    case "simplified": return `${f.file}: says simplified due diligence was applied, which BGP cannot rely on`;
+  }
+}
+
 /**
  * What the joint agent's files cover. A person's identity: a photo ID naming
- * them and in date at the document's date (or today), or an electronic check
- * naming them that passed. Their address: a proof of address naming them, or
- * an electronic check that verified it. A company: its register entry and
- * who owns it. Screening: a report that came back clear. A screening match,
- * a failed or referred check, an expired ID and a name with another date of
- * birth are flags. It lists; the officers decide.
+ * them and in date at the document's date (or today), an electronic check
+ * naming them that passed, or their CDD summary saying it was verified. Their
+ * address: a proof of address naming them, an electronic check that verified
+ * it, or their CDD summary saying so. A company: its register entry and who
+ * owns it. Screening: a report that came back clear. A screening match, a
+ * failed or referred check, an expired ID, a name with another date of birth
+ * and, when BGP relies on them, simplified checks are flags. It lists; the
+ * officers decide.
  */
-export function jointCoverage(input: { partyName: string; kind: "company" | "individual"; people: JointCoveragePerson[]; readings: JointFileReading[]; now?: Date }): JointCoverage {
+export function jointCoverage(input: { partyName: string; kind: "company" | "individual"; people: JointCoveragePerson[]; readings: JointFileReading[]; now?: Date; reliance?: boolean }): JointCoverage {
   const now = input.now || new Date();
   const read = input.readings.filter(r => r.state === "read");
-  const unread = input.readings.length - read.length;
-  const flags: string[] = [];
+  const unopened = input.readings.filter(r => r.state !== "read" && r.unreadable).map(r => r.file);
+  const unread = input.readings.length - read.length - unopened.length;
+  const items: JointFlag[] = [];
+  const flag = (f: JointFlag) => { if (!items.some(x => x.kind === f.kind && x.person === f.person && x.file === f.file)) items.push(f); };
   // With no people to check read by BGP (no register read for the company),
   // the owners the joint agent's own register entry or structure chart names.
   const fromFiles: JointCoveragePerson[] = [];
@@ -238,26 +286,32 @@ export function jointCoverage(input: { partyName: string; kind: "company" | "ind
   const people = (input.people.length ? input.people : fromFiles.length ? fromFiles : input.kind === "individual" ? [{ name: input.partyName, roles: ["acting"] }] : [])
     .filter(p => p.roles.some(r => r !== "director"));
   const out = people.map(p => {
-    const missing: string[] = [];
+    const missing: Array<"identity" | "address"> = [];
     let id: string | null = null, address: string | null = null;
     for (const r of read) {
-      if (!names(r, p)) {
+      const entry = (r.people || []).find(x => personNamesMatch(x.name, p.name) && bornAgrees(x.born, p.born));
+      if (!entry) {
         if ((r.people || []).some(x => personNamesMatch(x.name, p.name) && !bornAgrees(x.born, p.born))) {
-          flags.push(`${r.file}: names ${p.name} with another date of birth`);
+          flag({ kind: "dob", person: p.name, file: r.file, title: r.title || null, detail: null });
         }
         continue;
       }
       if (r.kind === "photo_id") {
         const at = r.date || now.toISOString().slice(0, 10);
-        if (r.expiry && r.expiry < at) { flags.push(`${p.name}'s ${r.title || "photo ID"} had expired (${shortDay(r.expiry)})`); continue; }
+        if (r.expiry && r.expiry < at) { flag({ kind: "expired", person: p.name, file: r.file, title: r.title || null, detail: shortDay(r.expiry) }); continue; }
         id = id || evidence(r);
       }
       if (r.kind === "electronic_id") {
-        if (r.result === "fail" || r.result === "refer") { flags.push(`${p.name}'s electronic identity check ${r.result === "fail" ? "failed" : "was referred"}${r.issuer ? ` (${r.issuer})` : ""}`); continue; }
+        if (r.result === "fail" || r.result === "refer") { flag({ kind: r.result === "fail" ? "failed" : "referred", person: p.name, file: r.file, title: r.title || null, detail: r.issuer || null }); continue; }
         id = id || evidence(r);
         if (r.addressVerified) address = address || `${evidence(r)} (address verified)`;
       }
       if (r.kind === "proof_of_address") address = address || evidence(r);
+      // Their CDD summary or risk assessment, saying what they verified.
+      if (r.kind !== "photo_id" && r.kind !== "proof_of_address") {
+        if (entry.idVerified) id = id || `${evidence(r)} (identity verified)`;
+        if (entry.addressVerified) address = address || `${evidence(r)} (address verified)`;
+      }
     }
     if (!id) missing.push("identity");
     if (!address) missing.push("address");
@@ -272,9 +326,10 @@ export function jointCoverage(input: { partyName: string; kind: "company" | "ind
   }
   let screening: string | null = null;
   for (const r of read.filter(x => x.kind === "screening")) {
-    if (r.result === "match" || r.result === "refer") flags.push(`${r.file}: the screening ${r.result === "match" ? "found a possible match" : "was referred"}${r.summary ? ` (${r.summary})` : ""}`);
+    if (r.result === "match" || r.result === "refer") flag({ kind: "match", person: null, file: r.file, title: r.title || null, detail: r.summary || (r.result === "refer" ? "referred" : null) });
     else screening = screening || `${evidence(r)}${r.result === "clear" ? ": clear" : ""}`;
   }
+  if (input.reliance) for (const r of read.filter(x => x.simplified)) flag({ kind: "simplified", person: null, file: r.file, title: r.title || null, detail: null });
   const known = [...people.map(p => p.name)];
   const others = [...new Set(read.flatMap(r => (r.people || []).map(x => x.name)).filter(n => !known.some(k => personNamesMatch(k, n))))].slice(0, 8);
   const missing = [
@@ -283,7 +338,118 @@ export function jointCoverage(input: { partyName: string; kind: "company" | "ind
     ...(company && !company.ownership ? ["who owns the company"] : []),
     ...(!screening ? ["their sanctions and PEP screening"] : []),
   ];
-  return { people: out, company, screening, flags: [...new Set(flags)], others, unread, missing, complete: !missing.length && !flags.length && !unread };
+  const flags = items.map(jointFlagWords);
+  return { people: out, company, screening, flags, flagItems: items, others, unread, unopened, missing, complete: !missing.length && !flags.length && !unread && !unopened.length };
+}
+
+/**
+ * What is still needed from the joint agent, one plain line each, for their
+ * email and page (you: true) or for BGP's screens (you: false). Nothing yet:
+ * no file has come. A file not read yet is BGP's to read, never theirs to send:
+ * until it is read they are asked for nothing it might hold (only a file that
+ * could not be opened, and the reliance terms), and BGP's list opens with it.
+ */
+export function jointGapLines(c: JointCoverage | null, opts: { you: boolean; reliance: boolean; agreed: boolean; nothingYet: boolean; partyName: string }): string[] {
+  const your = opts.you ? "your" : "their";
+  const lines: string[] = [];
+  if (opts.nothingYet || !c) lines.push(opts.you ? `Your checks on ${opts.partyName}: nothing has come yet` : `Their checks on ${opts.partyName}: nothing has come yet`);
+  else {
+    const unread = c.unread || 0;
+    if (!opts.you && unread) lines.push(`${unread} file${unread === 1 ? "" : "s"} from them not read yet: press Read again, or check ${unread === 1 ? "it" : "them"} by eye`);
+    for (const f of c.unopened || []) lines.push(opts.you ? `${f} could not be opened: please send it again, as a PDF or a photo` : `${f} could not be opened: ask them to send it again`);
+  }
+  if (!opts.nothingYet && c && !(opts.you && (c.unread || 0) > 0)) {
+    for (const p of c.people) {
+      if (p.missing.includes("identity")) lines.push(`${p.name}: an ID document (a passport, photocard driving licence or national identity card), ${your} electronic identity check showing a pass, or ${your} CDD summary saying their identity was verified`);
+      if (p.missing.includes("address")) lines.push(`${p.name}: a proof of address (a utility bill, bank or building society statement, or council tax bill), or ${your} check confirming it`);
+    }
+    if (c.company && !c.company.register) lines.push("The company's register entry (Companies House, or its register abroad)");
+    if (c.company && !c.company.ownership) lines.push("Who owns or controls the company: a structure chart, or its register of people with significant control");
+    if (!c.screening) lines.push(`${opts.you ? "Your" : "Their"} sanctions and PEP screening on the company and the people`);
+    for (const f of c.flagItems) {
+      switch (f.kind) {
+        case "expired": lines.push(`${f.person}'s ${f.title || "photo ID"} had expired (${f.detail}): ${opts.you ? "please send one in date" : "one in date is needed"}`); break;
+        case "failed": lines.push(`${f.person}'s electronic identity check failed: ${opts.you ? "please send another check or an ID document" : "another check or an ID document is needed"}`); break;
+        case "referred": lines.push(`${f.person}'s electronic identity check was referred: ${opts.you ? "please send how it was resolved" : "how it was resolved is needed"}`); break;
+        case "dob": lines.push(`${f.file} gives ${f.person} a different date of birth: ${opts.you ? "please confirm which is right" : "which is right needs confirming"}`); break;
+        case "match": lines.push(`${f.file} shows a possible screening match: ${opts.you ? "please send how it was resolved" : "how it was resolved is needed"}`); break;
+        case "simplified": lines.push(`${f.file} says simplified due diligence was applied: ${opts.you ? "we can't rely on simplified checks, so please send your full checks" : "BGP cannot rely on simplified checks"}`); break;
+      }
+    }
+  }
+  if (opts.reliance && !opts.agreed) lines.push(opts.you ? "Your agreement to the reliance terms, on the page" : "Their agreement to the reliance terms");
+  return lines;
+}
+
+// ── Chasing what is missing (Woody, 22 November 2026: "we need to explain
+// whats missing and keep emailing") ─────────────────────────────────────────
+
+/** Every this many days while something is missing, skipping weekends and bank holidays. */
+export const JOINT_CHASE_EVERY_DAYS = 3;
+/** Automatic chases before the app stops and tells the deal's agents. */
+export const JOINT_CHASE_MAX = 10;
+
+export interface JointChase { at: string; by: string; auto: boolean; missing: string[] }
+
+/**
+ * Whether the joint agent is chased today: "chase" when something is still
+ * missing and the last email (the request or a chase) went at least three
+ * days ago, on a working day (a weekday that is not an England bank holiday:
+ * the caller says, jointWorkingDay); "stop" when the app's own chases since the last one
+ * a person sent have run out (the deal's agents are then told, once); null
+ * otherwise. Never once the party is
+ * decided (approved, Not required, the reliance recorded), the request is
+ * cancelled, the app stopped, or nothing is missing.
+ */
+export function jointChaseDue(input: {
+  sentAt: string | null; chases: JointChase[]; stoppedAt: string | null; settled: boolean; cancelled: boolean;
+  gaps: number; now: Date; weekday: boolean;
+}): "chase" | "stop" | null {
+  if (!input.sentAt || input.cancelled || input.settled || input.stoppedAt || !input.gaps || !input.weekday) return null;
+  // Three London calendar days after the last email, so the daily 10:00 run
+  // chases a request sent on Monday afternoon on Thursday morning.
+  const last = lastEmailDay([input.sentAt, ...input.chases.map(c => c.at)]);
+  const today = londonDayNumber(input.now);
+  if (last === null || today === null || today - last < JOINT_CHASE_EVERY_DAYS) return null;
+  // A chase sent by a person starts the app's count again.
+  const lastByHand = input.chases.map(c => !c.auto).lastIndexOf(true);
+  return input.chases.slice(lastByHand + 1).filter(c => c.auto).length >= JOINT_CHASE_MAX ? "stop" : "chase";
+}
+
+/** A moment's London calendar day, as a count of days (for "three days later"). */
+export function londonDayNumber(t: string | Date): number | null {
+  const d = typeof t === "string" ? new Date(t) : t;
+  if (!Number.isFinite(d.getTime())) return null;
+  const [y, m, dd] = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" })
+    .format(d).split("-").map(Number);
+  return Math.floor(Date.UTC(y, m - 1, dd) / 86400000);
+}
+
+const dayKey = (day: number) => new Date(day * 86400000).toISOString().slice(0, 10);
+// Day 0 (1 January 1970) was a Thursday: (day + 4) % 7 is 0 on a Sunday, 6 on a Saturday.
+const workingDayNumber = (day: number) => ![0, 6].includes((day + 4) % 7) && !ENGLAND_BANK_HOLIDAYS.includes(dayKey(day));
+
+/** A working day in London: a weekday that is not an England bank holiday. */
+export function jointWorkingDay(d: Date): boolean {
+  const day = londonDayNumber(d);
+  return day !== null && workingDayNumber(day);
+}
+
+function lastEmailDay(moments: (string | null | undefined)[]): number | null {
+  const days = moments.filter((t): t is string => !!t).map(londonDayNumber).filter((n): n is number => n !== null);
+  return days.length ? Math.max(...days) : null;
+}
+
+/**
+ * The day the app chases next (shown on the deal): three London days after
+ * the last email, moved to the next working day, as noon UTC on that day.
+ */
+export function jointNextChaseDay(moments: (string | null | undefined)[]): string | null {
+  const last = lastEmailDay(moments);
+  if (last === null) return null;
+  let day = last + JOINT_CHASE_EVERY_DAYS;
+  while (!workingDayNumber(day)) day++;
+  return new Date(day * 86400000 + 12 * 3600000).toISOString();
 }
 
 /** The joint agent request's state, as the deal's AML box reads it. */
@@ -329,7 +495,10 @@ export interface JointAgentRequestView {
   link: string;
   reliance: JointRelianceConfirmation | null;
   files: Array<{ documentId: string | null; name: string; uploadedAt: string; url: string | null; reading: JointFileReading | null }>;
-  canRemind: boolean;
+  // Each email asking for what is missing, the app's next one, and when it stopped.
+  chases: JointChase[];
+  nextChaseAt: string | null;
+  chaseStoppedAt: string | null;
 }
 
 export interface JointAgentPartyView {
@@ -342,6 +511,12 @@ export interface JointAgentPartyView {
   requests: JointAgentRequestView[];
   // The latest request that is not cancelled, set against the people to check.
   coverage: JointCoverage | null;
+  // What it still needs, in BGP's words (jointGapLines).
+  gaps: string[];
+  // Their files not read yet, and whether there is anything to ask them for
+  // (nothing a file not read yet may hold is asked for).
+  unread: number;
+  askable: boolean;
   line: string;
 }
 

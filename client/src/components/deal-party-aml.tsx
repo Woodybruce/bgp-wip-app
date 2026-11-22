@@ -277,24 +277,41 @@ export function NotRequiredDialog({ dealId, role, companyId, partyName, jointRul
   const [reason, setReason] = useState<NotRequiredReason | "">(initialRef ? "joint_agent" : "");
   const [comment, setComment] = useState("");
   const joint = useJointChecks(dealId, reason === "joint_agent" && rule === "sale");
-  const requests = (joint.data?.parties.find(p => p.companyId === companyId)?.requests || []).filter(r => r.status !== "cancelled" && (r.sentAt || r.openedAt || r.manual));
+  const jointParty = joint.data?.parties.find(p => p.companyId === companyId) || null;
+  const requests = (jointParty?.requests || []).filter(r => r.status !== "cancelled" && (r.sentAt || r.openedAt || r.manual));
+  // What the latest request's files do not cover, and what they show (22 November 2026).
+  const currentRef = jointParty?.requests.find(r => r.status !== "cancelled")?.ref || null;
+  const gapsOf = (ref: string) => (ref && ref === currentRef && jointParty?.coverage ? { missing: jointParty.coverage.missing, flags: jointParty.coverage.flags } : { missing: [] as string[], flags: [] as string[] });
+  const [missingText, setMissingText] = useState("");
+  const [flagNote, setFlagNote] = useState("");
+  const [checkedByHand, setCheckedByHand] = useState("");
   const [askedBy, setAskedBy] = useState<"app" | "other">(initialRef ? "app" : "other");
   const [jointRef, setJointRef] = useState(initialRef || "");
   const [askedOn, setAskedOn] = useState("");
   const [askedHow, setAskedHow] = useState<JointAskedHow | "">("");
   const [askedWhom, setAskedWhom] = useState("");
   const [outcome, setOutcome] = useState<JointOutcome | "">("");
+  const selected = askedBy === "app" ? gapsOf(jointRef) : { missing: [] as string[], flags: [] as string[] };
   const body = {
     reason, comment: comment.trim(),
     ...(reason === "joint_agent" && rule === "sale" ? {
       outcome,
       ...(askedBy === "app" ? { jointRef } : { askedOn, askedHow, askedWhom: askedWhom.trim() }),
+      ...(outcome === "partly" ? { missing: missingText } : {}),
+      ...(outcome !== "not_provided" && selected.flags.length ? { flagNote: flagNote.trim() } : {}),
+      ...(outcome === "received" && selected.missing.length ? { checkedByHand: checkedByHand.trim() } : {}),
     } : {}),
   };
   const forRecord = requests.map(r => ({
     ref: r.ref, sentAt: r.manual ? r.files[0]?.uploadedAt || new Date().toISOString() : r.sentAt || r.openedAt,
     whom: `${r.firm}${r.to ? ` (${r.to})` : ""}`, how: r.manual ? "email" as const : "app" as const, files: r.files.length,
+    ...gapsOf(r.ref),
   }));
+  // "They sent part of their checks": what did not come, from their files, to check and edit.
+  const pickOutcome = (v: JointOutcome) => {
+    setOutcome(v);
+    if (v === "partly" && !missingText.trim() && selected.missing.length) setMissingText(selected.missing.join("\n"));
+  };
   const checked = reason ? notRequiredInput(body, { rule, requests: forRecord }) : null;
   const refused = reason === "joint_agent" ? jointAgentNotRequiredRefusal(rule) : null;
   const missing = !reason ? "Choose why." : checked && "problem" in checked ? checked.problem : null;
@@ -363,12 +380,30 @@ export function NotRequiredDialog({ dealId, role, companyId, partyName, jointRul
                   </div>
                 </div>
               )}
-              <Select value={outcome} onValueChange={v => setOutcome(v as JointOutcome)}>
+              <Select value={outcome} onValueChange={v => pickOutcome(v as JointOutcome)}>
                 <SelectTrigger className="h-8 text-xs" data-testid={`aml-not-required-outcome-${role}`}><SelectValue placeholder="What came back" /></SelectTrigger>
                 <SelectContent>
                   {(Object.keys(JOINT_OUTCOMES) as JointOutcome[]).map(k => <SelectItem key={k} value={k}>{JOINT_OUTCOMES[k][0].toUpperCase() + JOINT_OUTCOMES[k].slice(1)}</SelectItem>)}
                 </SelectContent>
               </Select>
+              {outcome === "partly" && (
+                <div className="space-y-1">
+                  <Label htmlFor={`aml-missing-${role}`} className="text-[11px]">What they did not send (one per line)</Label>
+                  <Textarea id={`aml-missing-${role}`} value={missingText} onChange={e => setMissingText(e.target.value)} rows={3} maxLength={1500} className="text-xs" data-testid={`aml-not-required-missing-text-${role}`} />
+                </div>
+              )}
+              {outcome === "received" && selected.missing.length > 0 && (
+                <div className="space-y-1 rounded border border-amber-300 bg-amber-50 p-1.5 text-[11px] text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
+                  <p>Their files do not cover: {selected.missing.join("; ")}. Choose "they sent part of their checks", or say how you checked these by hand.</p>
+                  <Textarea value={checkedByHand} onChange={e => setCheckedByHand(e.target.value)} rows={2} maxLength={1000} className="text-xs" data-testid={`aml-not-required-by-hand-${role}`} />
+                </div>
+              )}
+              {outcome && outcome !== "not_provided" && selected.flags.length > 0 && (
+                <div className="space-y-1 rounded border border-red-300 bg-red-50 p-1.5 text-[11px] text-red-950 dark:bg-red-950/30 dark:text-red-100" data-testid={`aml-not-required-flags-${role}`}>
+                  <p>Their files show something to look at: {selected.flags.join("; ")}. Say what you did about it.</p>
+                  <Textarea value={flagNote} onChange={e => setFlagNote(e.target.value)} rows={2} maxLength={1000} className="text-xs" data-testid={`aml-not-required-flag-note-${role}`} />
+                </div>
+              )}
             </div>
           )}
           <div className="space-y-1.5">

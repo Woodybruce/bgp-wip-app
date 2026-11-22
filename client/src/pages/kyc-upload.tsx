@@ -364,7 +364,11 @@ function JointAgentPage({ token, view, setView, load }: { token: string; view: K
   const noun = ROLE_NOUN[joint.partyRole || ""] || null;
   const files = view.otherFiles;
   const contactName = firstName(view.agents[0]?.name) || "your contact at Bruce Gillingham Pollard";
-  const outstanding = [...(!files.length ? ["your checks"] : []), ...(joint.letting && !joint.reliance ? ["your agreement to the reliance terms"] : [])];
+  const stillNeeded = joint.missing || [];
+  const outstanding = [
+    ...(!files.length ? ["your checks"] : stillNeeded.length ? [`${stillNeeded.length === 1 ? "one thing" : `${stillNeeded.length} things`} we still need`] : []),
+    ...(joint.letting && !joint.reliance ? ["your agreement to the reliance terms"] : []),
+  ];
 
   const upload = async (list: FileList | File[]) => {
     setError(null);
@@ -453,16 +457,32 @@ function JointAgentPage({ token, view, setView, load }: { token: string; view: K
         </div>
       )}
 
+      {!stillNeeded.length && (joint.reading || 0) > 0 && (
+        <div className="mt-5 rounded-lg border p-4 text-sm" data-testid="joint-reading">
+          <h2 className="font-semibold text-base">Thank you</h2>
+          <p className="mt-1 text-muted-foreground">We're reading what you've sent. If anything else is needed, we'll email you and list it here.</p>
+        </div>
+      )}
+
+      {stillNeeded.length > 0 && (
+        <div className="mt-5 rounded-lg border border-amber-300 bg-amber-50 p-4 dark:bg-amber-950/20" data-testid="joint-still-needed">
+          <h2 className="font-semibold text-base">What we still need</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Thank you for what you've sent. To finish our checks on {view.partyName}, please send:</p>
+          <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm">{stillNeeded.map(m => <li key={m}>{m}</li>)}</ul>
+          <p className="mt-2 text-xs text-muted-foreground">Upload them below, or reply to our email with them attached.</p>
+        </div>
+      )}
+
       <div className="mt-6 space-y-3">
         <div
-          className={`rounded-lg border p-4 transition-colors ${over ? "border-[#6E0C25] bg-[#6E0C25]/5" : files.length ? "border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/10" : ""}`}
+          className={`rounded-lg border p-4 transition-colors ${over ? "border-[#6E0C25] bg-[#6E0C25]/5" : files.length && !stillNeeded.length ? "border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/10" : ""}`}
           onDragOver={e => { e.preventDefault(); setOver(true); }}
           onDragLeave={() => setOver(false)}
           onDrop={e => { e.preventDefault(); setOver(false); if (e.dataTransfer.files?.length) void upload(e.dataTransfer.files); }}
           data-testid="joint-upload"
         >
           <div className="flex gap-3">
-            <StepNumber n={1} done={files.length > 0} />
+            <StepNumber n={1} done={files.length > 0 && !stillNeeded.length} />
             <div className="min-w-0 flex-1">
               <h3 className="font-semibold text-base leading-snug">Your checks on {view.partyName}</h3>
               <ul className="mt-2 space-y-1.5 text-sm text-muted-foreground" data-testid="joint-asks">

@@ -4709,9 +4709,8 @@ the joint agent mode of `client/src/pages/kyc-upload.tsx`. Tests:
   on `letting_under` / `advisory` (`jointAskRefusal`), one open request per
   party (one whose email never went is replaced), never a BGP address. The
   email (`jointAgentRequestEmail`) is from the KYC mailbox, copied to the
-  deal's agents, with the reference in the subject; reminders at 3 and 7
-  days while nothing has come (or, on a letting, the terms are not agreed),
-  live deals only. **Their page**: one upload for everything (a zip is opened
+  deal's agents, with the reference in the subject; chased for what is
+  missing (below). **Their page**: one upload for everything (a zip is opened
   and each file filed), and on a letting the reliance terms
   (`jointRelianceTerms`: reg 39(1) and (2), five years, their supervisor)
   agreed with a tick, a full name and their supervisor (`POST
@@ -4732,17 +4731,64 @@ the joint agent mode of `client/src/pages/kyc-upload.tsx`. Tests:
   (`readUnreadJointFiles`); **Read again** per file. `jointCoverage` sets them
   against the people to check (owners, the person acting, someone named
   alongside; directors only screened), by name and date of birth: identity (a
-  photo ID in date, or an electronic check that passed), address (a proof
-  naming them, or an electronic check that verified it), the company's
+  photo ID in date, an electronic check that passed, or their CDD summary or
+  risk assessment saying it was verified), address (a proof naming them, an
+  electronic check that verified it, or their CDD summary saying so: HMRC wants
+  the information for reliance, not copies of every document), the company's
   register entry and ownership, the screening; an expired ID, a failed or
-  referred check, a screening match and the same name with another date of
-  birth are listed to look at. With no people read by BGP, the owners their
-  own register or chart names are the people. It lists; it decides nothing.
+  referred check, a screening match, the same name with another date of birth
+  and, when BGP would rely on them, simplified due diligence (HMRC AMLG11410:
+  never relied on) are flags (`flagItems`, by kind). With no people read by
+  BGP, the owners their own register or chart names are the people. It lists;
+  it decides nothing.
+- **What is missing, and chasing it** (Woody, 22 November 2026: "we need to
+  explain whats missing and keep emailing do as suggested"). `jointGapLines`
+  words each gap once, for the joint agent ("Daniel North: a proof of
+  address...", "...had expired: please send one in date", "Your agreement to
+  the reliance terms") or for BGP. **A file not read yet is never theirs to
+  send**: while one waits (the reader off, its allowance used, a read that
+  failed), they are asked for nothing it may hold (`coverage.unread`; BGP's
+  list opens with "1 file from them not read yet: press Read again, or check
+  it by eye", the box's Next line says to read it first, Ask for what's
+  missing is not offered and the server refuses it with the reason, and their
+  page says "We're reading what you've sent"); the daily job reads such a
+  file again first, once a day (`readPendingFiles`). A file that could not be
+  opened at all (empty, too large, a picture or Word file with nothing to
+  read: `unreadable` on the reading, `coverage.unopened`) is asked for again.
+  Their page shows **What we still need**; the deal's Joint agent line
+  shows **Still missing** with **Ask for what's missing** (or **Remind them**
+  when nothing has come; `POST /api/deals/:id/joint-agent-checks/:ref/chase`,
+  BGP staff, takes an email address for files they emailed to BGP). Each chase
+  emails the list from the KYC mailbox (`jointAgentMissingEmail`), keeps the
+  link open another 14 days, opens a finished request again, and is kept on
+  the request (`request.jointAgent.chases`). **The app chases by itself**
+  (`chaseJointAgents`, in the client checks reminder job, 10:00): three London
+  calendar days after the last email (`londonDayNumber`: sent on a Sunday
+  afternoon, chased on Wednesday morning, the date the deal shows,
+  `jointNextChaseDay`), on working days only (no weekend or England bank
+  holiday, `jointWorkingDay` with `ENGLAND_BANK_HOLIDAYS`), live deals only, while anything is
+  missing and the party is not decided (approved, Not required, or the
+  reliance recorded) and the request is not cancelled (`jointChaseDue`). After
+  `JOINT_CHASE_MAX` (10) of its own chases since the last one a person sent it
+  stops, emails the deal's agents once (`jointAgentChaseStoppedEmail`) and
+  shows it; a person asking again starts it again.
 - **The officers decide** (the Joint agent line's buttons): **Not required,
-  with this record** on a sale; **Record the reliance** on a letting once
-  they agreed the terms: the reliance route (`jointRef`) files their
-  agreement as a PDF (`relianceConfirmationPdf`) as the firm's agreement in
-  writing and fills the form from it; the officer still ticks each condition.
+  with this record** on a sale, answering what came back: their checks, **part
+  of them** (`partly`: what did not come is written into the record,
+  `asked_missing`, prefilled from what their files do not cover) or nothing.
+  "They sent their checks" while their files leave gaps needs a note on how
+  they were checked by hand, and anything their files flag needs a note on
+  what was done about it (`asked_note`); both are kept with the record.
+  **Record the reliance** on a letting once they agreed the terms: the
+  reliance route (`jointRef`) files their agreement as a PDF
+  (`relianceConfirmationPdf`) as the firm's agreement in writing and fills the
+  form from it; the officer still ticks each condition. While their files
+  leave gaps (MLR 2017 reg 39(2)(a): BGP must have all the information on the
+  customer, its beneficial owners and anyone acting for it) the route answers
+  409 with the list unless the officer says how they checked them by hand
+  (`checkedByHand`, 20 characters; the button then reads **Record the
+  reliance anyway**), kept with the reliance. The terms they agree include
+  that their checks were not simplified due diligence.
 - **Where it shows**: the AML box's **Joint agent** line and its Next step
   (`amlNextStep`: after red flags and KYC4U, before BGP's own step of setting
   the company that signs while their route runs); the AML board's stages

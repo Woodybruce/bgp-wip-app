@@ -492,6 +492,12 @@ function writeJointAgent(w: Writer, j: JointAgentPartyView) {
       ...r.files.map(f => `${f.name} (${day(f.uploadedAt)}): ${f.reading?.state === "read" ? [f.reading.title || f.reading.kind, (f.reading.people || []).map(x => x.name).join(", ") || null, f.reading.result || null].filter(Boolean).join(", ") : f.reading?.why || "not read yet"}`),
     ].filter(Boolean).join("\n"));
   }
+  const current = j.requests.find(r => r.status !== "cancelled");
+  if (current?.chases.length) {
+    w.kv("Asked for what was missing", current.chases.map(ch => `${when(ch.at)}${ch.auto ? " (by the app)" : `, ${ch.by}`}: ${ch.missing.join("; ")}`).join("\n")
+      + (current.chaseStoppedAt ? `\nThe app stopped chasing on ${when(current.chaseStoppedAt)}.` : ""));
+  }
+  if (j.gaps.length) w.kv("Still missing", j.gaps.join("\n"), AMBER);
   const c = j.coverage;
   if (!c) return;
   for (const person of c.people) {

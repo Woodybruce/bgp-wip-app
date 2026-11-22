@@ -102,7 +102,8 @@ export interface AmlBoxFacts {
   // and record; a letting: their checks under a reliance agreement), whether
   // they agreed to the reliance terms, and how many things their files do not
   // cover yet (server/joint-agent-checks.ts).
-  joint?: { status: "not_sent" | "sent" | "opened" | "in" | "finished" | "expired"; firm: string; rule: "sale" | "letting" | "other"; reliance: boolean; missing: number } | null;
+  // chasing: the app is emailing them what is missing every three days.
+  joint?: { status: "not_sent" | "sent" | "opened" | "in" | "finished" | "expired"; firm: string; rule: "sale" | "letting" | "other"; reliance: boolean; missing: number; chasing?: boolean; unread?: number } | null;
 }
 
 export interface AmlNextStep { tone: AmlBoxTone; who: AmlBoxWho; words: string; action: AmlBoxAction | null }
@@ -239,14 +240,26 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
   const joint = f.joint && f.joint.status !== "expired" ? f.joint : null;
   const clientGoing = !!f.request && f.request.status !== "expired" && f.request.status !== "not_sent";
   if (joint && (joint.status === "in" || joint.status === "finished")) {
-    const gap = joint.missing ? ` Their files do not cover ${joint.missing} thing${s(joint.missing)} yet.` : "";
+    // A file from them not read yet: read it before asking them for anything else.
+    if (joint.unread) {
+      return { tone: "act", who: "bgp", words: `${joint.unread} file${s(joint.unread)} from ${joint.firm} ${joint.unread === 1 ? "is" : "are"} not read yet. Press Read again, or check ${joint.unread === 1 ? "it" : "them"} by eye, before asking them for anything else.`, action: "joint" };
+    }
+    // Something still missing (22 November 2026: "explain whats missing and keep emailing").
+    if (joint.missing) {
+      const count = `${joint.missing} thing${s(joint.missing)} ${joint.missing === 1 ? "is" : "are"} still missing`;
+      const chase = joint.chasing ? " The app is chasing them every three days." : " Ask them for what's missing.";
+      const then = joint.rule === "sale"
+        ? " An officer can also record what came."
+        : " BGP can't rely on their checks until everything is in, unless an officer checked the rest by hand.";
+      return { tone: joint.chasing ? "wait" : "act", who: joint.chasing ? "joint_agent" : "bgp", words: `${joint.firm} sent their checks, but ${count}.${chase}${then}`, action: "joint" };
+    }
     if (joint.rule === "sale") {
-      return { tone: "act", who: "officers", words: `${joint.firm}'s checks are in.${gap} An officer checks them and marks the party Not required, with this request as the record.`, action: "joint" };
+      return { tone: "act", who: "officers", words: `${joint.firm}'s checks are in and cover everyone. An officer checks them and marks the party Not required, with this request as the record.`, action: "joint" };
     }
     if (joint.reliance) {
-      return { tone: "act", who: "officers", words: `${joint.firm} sent their checks and agreed to the reliance terms.${gap} An officer checks them and records the reliance.`, action: "joint" };
+      return { tone: "act", who: "officers", words: `${joint.firm} sent their checks and agreed to the reliance terms. An officer checks them and records the reliance.`, action: "joint" };
     }
-    return { tone: "wait", who: "joint_agent", words: `${joint.firm} sent their checks but has not agreed to the reliance terms: remind them, or send the client checks.`, action: "joint" };
+    return { tone: "wait", who: "joint_agent", words: `${joint.firm} sent their checks but has not agreed to the reliance terms${joint.chasing ? ": the app is chasing them" : ": remind them"}, or send the client checks.`, action: "joint" };
   }
   if (joint && joint.status === "not_sent" && !clientGoing) {
     return { tone: "act", who: "bgp", words: `The email to ${joint.firm} did not go: ask again.`, action: "joint" };

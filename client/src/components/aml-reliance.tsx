@@ -61,17 +61,20 @@ export function RelianceCard({ dealId, role, reliance, canDecide }: {
  */
 export interface JointRelianceSource { ref: string; firm: string; supervisor: string; registration: string | null; contact: string | null; agreedOn: string }
 
-export function JointRelianceButton({ dealId, role, partyName, joint }: { dealId: string; role: string; partyName: string; joint: JointRelianceSource }) {
+export function JointRelianceButton({ dealId, role, partyName, joint, gaps = [] }: { dealId: string; role: string; partyName: string; joint: JointRelianceSource; gaps?: string[] }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid={`joint-reliance-record-${role}`}>
-        <Handshake className="w-3.5 h-3.5 mr-1" />Record the reliance
+      <Button type="button" size="sm" variant={gaps.length ? "outline" : "default"} className="h-7 text-xs" onClick={() => setOpen(true)} data-testid={`joint-reliance-record-${role}`}>
+        <Handshake className="w-3.5 h-3.5 mr-1" />{gaps.length ? "Record the reliance anyway" : "Record the reliance"}
       </Button>
-      {open && <RelianceDialog dealId={dealId} role={role} partyName={partyName} joint={joint} onClose={() => setOpen(false)} />}
+      {open && <RelianceDialog dealId={dealId} role={role} partyName={partyName} joint={joint} gaps={gaps} onClose={() => setOpen(false)} />}
     </>
   );
 }
+
+// An officer recording the reliance with gaps in the joint agent's files says how they checked them by hand.
+const BY_HAND_MIN = 20;
 
 /** The officers' button and form. */
 export function RelianceButton({ dealId, role, partyName }: { dealId: string; role: string; partyName: string }) {
@@ -93,7 +96,8 @@ const CONFIRMS: Array<{ key: "agreed" | "informationHeld" | "copiesOnRequest" | 
   { key: "equivalent", words: "The firm is under money laundering rules and supervision equivalent to the UK's.", abroadOnly: true },
 ];
 
-function RelianceDialog({ dealId, role, partyName, joint, onClose }: { dealId: string; role: string; partyName: string; joint?: JointRelianceSource; onClose: () => void }) {
+function RelianceDialog({ dealId, role, partyName, joint, gaps = [], onClose }: { dealId: string; role: string; partyName: string; joint?: JointRelianceSource; gaps?: string[]; onClose: () => void }) {
+  const [byHand, setByHand] = useState("");
   const { toast } = useToast();
   const [firm, setFirm] = useState(joint?.firm || "");
   const [kind, setKind] = useState<RelianceFirmKind>(joint ? "estate_agent" : "solicitor");
@@ -108,12 +112,14 @@ function RelianceDialog({ dealId, role, partyName, joint, onClose }: { dealId: s
   const [files, setFiles] = useState<File[]>([]);
   const fields = { firm, kind, where, country, regulator, regulatorRef, contact, agreedOn, note, ...confirmed };
   const checked = relianceInput(fields);
-  const missing = !checked.ok ? checked.message : !files.length && !joint ? "Add the firm's letter or email agreeing to it (a PDF of the email is fine)." : null;
+  const missing = !checked.ok ? checked.message : !files.length && !joint ? "Add the firm's letter or email agreeing to it (a PDF of the email is fine)."
+    : gaps.length && byHand.trim().length < BY_HAND_MIN ? "Their files leave gaps: say how you checked them by hand, or ask them for what's missing first." : null;
   const save = useMutation({
     mutationFn: async () => {
       const fd = new FormData();
       for (const [k, v] of Object.entries(fields)) fd.append(k, typeof v === "boolean" ? String(v) : v);
       if (joint) fd.append("jointRef", joint.ref);
+      if (gaps.length) fd.append("checkedByHand", byHand.trim());
       for (const f of files) fd.append("files", f);
       const res = await fetch(`/api/deals/${dealId}/parties/${role}/reliance`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
       const body = await res.json().catch(() => ({}));
@@ -191,6 +197,15 @@ function RelianceDialog({ dealId, role, partyName, joint, onClose }: { dealId: s
               </label>
             ))}
           </div>
+          {gaps.length > 0 && (
+            <div className="space-y-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" data-testid="reliance-joint-gaps">
+              <p className="font-medium">Their files do not cover everything BGP needs to rely on them (MLR 2017 reg 39(2)(a)):</p>
+              <ul className="list-disc pl-4">{gaps.map(g => <li key={g}>{g}</li>)}</ul>
+              <Label htmlFor="reliance-by-hand" className="text-[11px]">How you checked these by hand</Label>
+              <Textarea id="reliance-by-hand" value={byHand} onChange={e => setByHand(e.target.value)} rows={2} maxLength={1000}
+                placeholder="For example: their CDD summary names both owners and says each was verified; we hold their dates of birth" data-testid="reliance-by-hand" />
+            </div>
+          )}
           {joint && (
             <p className="rounded border border-violet-200 bg-violet-50/60 px-2 py-1.5 text-xs text-violet-950 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-100" data-testid="reliance-joint-source">
               {joint.contact || joint.firm} agreed to the terms on BGP's page on {day(joint.agreedOn)} (ref {joint.ref}). That agreement is filed as a PDF on the party's KYC record as the firm's agreement in writing. Tick each line only once you have checked what they sent.
