@@ -35,7 +35,7 @@ import { AmlFileButton } from "@/components/aml-file-button";
 import { AbroadTrace, abroadSummary, useDealAbroad } from "@/components/aml-abroad";
 import { JointRelianceButton, RelianceButton, RelianceCard } from "@/components/aml-reliance";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { AskJointAgentButton, JointAgentPanel, JointChaseButton, currentJointRequest, jointApplies, jointBoxFacts, useJointChecks } from "@/components/joint-agent-checks";
+import { AskJointAgentButton, JointAgentPanel, JointChaseButton, askAgentLabel, currentJointRequest, jointApplies, jointAskable, jointBoxFacts, useJointChecks } from "@/components/joint-agent-checks";
 import { AmlStopDialog, useAmlStop } from "@/components/aml-stop";
 
 export interface DealAmlStatus {
@@ -778,6 +778,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   // The joint agent asked for their checks on the party (22 November 2026).
   const jointQ = useJointChecks(dealId, staff && !!data.jointRule && data.jointRule !== "letting_under" && data.jointRule !== "advisory");
   const jointParty = jointApplies(jointQ.data, cp.id);
+  // Any party BGP does not act for can be asked about through an agent (22 November 2026).
+  const askParty = jointAskable(jointQ.data, cp.id);
 
   const reveal = (k: StepKey) => {
     setFolded(false);
@@ -927,7 +929,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       if (current.status === "expired") return { state: "act", text: `The link to ${firm} ran out` };
       if (current.status === "sent" || current.status === "opened") return { state: "wait", text: `Asked ${firm} ${day(current.sentAt)} · nothing back yet` };
       if (jointParty.unread) return { state: "act", text: `From ${firm} · ${plural(jointParty.unread, "file")} not read yet` };
-      if (jointMissing) return { state: current.nextChaseAt ? "wait" : "act", text: <>From {firm} (joint agent) · <span className="font-medium text-amber-800 dark:text-amber-300">{jointMissing} missing</span></> };
+      if (jointMissing) return { state: current.nextChaseAt ? "wait" : "act", text: <>From {firm} ({current.who}) · <span className="font-medium text-amber-800 dark:text-amber-300">{jointMissing} missing</span></> };
       if (letting && !current.reliance) return { state: "wait", text: `From ${firm} · terms not agreed yet` };
       return { state: "done", text: `From ${firm} · all in` };
     }
@@ -1101,7 +1103,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
                     <div className="flex flex-wrap items-center gap-1 border-t border-border/60 pt-2 text-xs text-muted-foreground" data-testid={`aml-other-ways-${cp.role}`}>
                       <span className="mr-1">Other ways:</span>
                       {!clientRoute && data.clientChecks && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Client checks" className="h-7 px-2 text-xs" quiet />}
-                      {!current && jointQ.data && jointQ.data.firm && jointParty && <AskJointAgentButton dealId={dealId} view={jointQ.data} party={jointParty} label="Joint agent" quiet />}
+                      {!current && jointQ.data && askParty && <AskJointAgentButton dealId={dealId} view={jointQ.data} party={askParty} label={askAgentLabel(jointQ.data, askParty)} quiet />}
                       {canDecide && !sanctionsOnly && !people?.reliance && <RelianceButton dealId={dealId} role={cp.role} partyName={partyName} label="Another firm" />}
                       {!kyc4uActive && <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} label="KYC4U" buttonOnly quiet />}
                     </div>

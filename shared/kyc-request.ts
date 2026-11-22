@@ -515,6 +515,10 @@ export interface JointAgentEmailContext {
   agents: KycAgent[];
   sentFrom: string;
   test?: boolean;
+  // Who is asked: the joint agent, or the party's own agent (the landlord's
+  // agent when BGP acts for the tenant; Woody, 22 November 2026). None = joint.
+  relation?: "joint" | "own" | null;
+  clientRole?: string | null;          // BGP's client's role, for "We act for the tenant"
 }
 
 const ROLE_NOUN: Record<string, string> = { tenant: "tenant", purchaser: "buyer", landlord: "landlord", vendor: "seller" };
@@ -535,13 +539,19 @@ export function jointAgentAsks(ctx: Pick<JointAgentEmailContext, "kind" | "letti
 
 export function jointAgentRequestEmail(ctx: JointAgentEmailContext): { subject: string; html: string } {
   const noun = ROLE_NOUN[ctx.partyRole || ""] || "other party";
+  const own = ctx.relation === "own";
   const why = ctx.letting
     ? `Every party to a letting of £10,000 a month or more must be checked. Rather than ask ${escHtml(ctx.partyName)} again, we'd like to rely on your checks.`
-    : `HMRC asks us, as the joint agent who didn't deal with the ${noun}, to get your checks on them and record what comes back.`;
+    : own
+      ? `We check every party to a transaction. Rather than ask ${escHtml(ctx.partyName)} again, please send us your checks on them.`
+      : `HMRC asks us, as the joint agent who didn't deal with the ${noun}, to get your checks on them and record what comes back.`;
+  const clientNoun = ROLE_NOUN[ctx.clientRole || ""] || null;
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Your AML checks on ${escHtml(ctx.partyName)}</h1>`,
     p(greeting(ctx.recipientName)),
-    p(`We are joint agents with ${escHtml(ctx.firm)} on <strong>${escHtml(ctx.dealName)}</strong>, and you dealt with <strong>${escHtml(ctx.partyName)}</strong>, the ${escHtml(noun)}. ${why}`),
+    p(own
+      ? `We act for ${clientNoun ? `the ${escHtml(clientNoun)}` : "the other side"} on <strong>${escHtml(ctx.dealName)}</strong>, and you act for <strong>${escHtml(ctx.partyName)}</strong>, the ${escHtml(noun)}. ${why}`
+      : `We are joint agents with ${escHtml(ctx.firm)} on <strong>${escHtml(ctx.dealName)}</strong>, and you dealt with <strong>${escHtml(ctx.partyName)}</strong>, the ${escHtml(noun)}. ${why}`),
     h2("Please send us"),
     stepsList(jointAgentAsks(ctx)),
     button("Send your checks", ctx.link),
@@ -552,7 +562,7 @@ export function jointAgentRequestEmail(ctx: JointAgentEmailContext): { subject: 
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
-  return { subject: subjectFor({ dealName: ctx.dealName, ref: ctx.ref, test: ctx.test }, `Your AML checks on ${ctx.partyName}:`), html: frame("AML checks", inner, footerFor(ctx), ctx.test, "a joint agent receives") };
+  return { subject: subjectFor({ dealName: ctx.dealName, ref: ctx.ref, test: ctx.test }, `Your AML checks on ${ctx.partyName}:`), html: frame("AML checks", inner, footerFor(ctx), ctx.test, own ? "the other side's agent receives" : "a joint agent receives") };
 }
 
 /**
@@ -581,7 +591,7 @@ export function jointAgentMissingEmail(ctx: JointAgentEmailContext & { missing: 
     linkFallback(ctx.link),
   ].join("\n");
   const prefix = ctx.nothingYet ? `Reminder: your AML checks on ${ctx.partyName}:` : `Still needed: your AML checks on ${ctx.partyName}:`;
-  return { subject: subjectFor({ dealName: ctx.dealName, ref: ctx.ref, test: ctx.test }, prefix), html: frame("AML checks", inner, footerFor(ctx), ctx.test, "a joint agent receives") };
+  return { subject: subjectFor({ dealName: ctx.dealName, ref: ctx.ref, test: ctx.test }, prefix), html: frame("AML checks", inner, footerFor(ctx), ctx.test, ctx.relation === "own" ? "the other side's agent receives" : "a joint agent receives") };
 }
 
 /** To the deal's agents when the app has stopped chasing the joint agent. */
@@ -914,6 +924,9 @@ export interface KycPortalView {
     firm: string;
     partyRole: string | null;
     letting: boolean;
+    // The joint agent, or the party's own agent; BGP's client's role.
+    relation?: "joint" | "own";
+    clientRole?: string | null;
     asks: Array<{ title: string; detail: string }>;
     terms: string[] | null;
     reliance: { name: string; position: string | null; supervisor: string; registration: string | null; agreedAt: string } | null;

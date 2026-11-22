@@ -29,10 +29,27 @@ import { personNamesMatch } from "./kyc-prechecks";
 import type { JointAgentRule } from "./aml-policy";
 import { ENGLAND_BANK_HOLIDAYS } from "./aml-register";
 
+/**
+ * Who BGP asks for their checks on a party: the joint agent (BGP and they act
+ * for the same client, and they dealt with this party), or the party's own
+ * agent (Woody, 22 November 2026: "we also need to AML the Landlord if we are
+ * acting for a tenant.. which might be via their agent in this way"). A
+ * request from before then has no relation and is the joint agent's.
+ */
+export type JointAgentRelation = "joint" | "own";
+const OWN_AGENT_WORDS: Record<string, string> = { landlord: "landlord's agent", tenant: "tenant's agent", vendor: "seller's agent", purchaser: "buyer's agent" };
+/** What to call the agent asked: "joint agent", or the party's own ("landlord's agent"). */
+export function agentWords(relation: JointAgentRelation | null | undefined, role: string | null | undefined): string {
+  return relation === "own" ? (OWN_AGENT_WORDS[role || ""] || "their agent") : "joint agent";
+}
+
 /** What the joint agent's request carries, beside the client checks request's own fields. */
 export interface JointAgentRequestDetails {
   firm: string;
   firmCompanyId: string | null;
+  relation?: JointAgentRelation;
+  // BGP's client's role when the request was made ("We act for the tenant").
+  clientRole?: string | null;
   // The joint agent's contact in the CRM, when one was picked.
   contactId?: string | null;
   rule: JointAgentRule;
@@ -456,11 +473,11 @@ export function jointNextChaseDay(moments: (string | null | undefined)[]): strin
 export type JointRequestStatus = "not_sent" | "sent" | "opened" | "in" | "finished" | "expired" | "cancelled";
 
 /** The one line under the party, for the joint agent's checks. */
-export function jointLine(input: { rule: JointAgentRule; firm: string | null; status: JointRequestStatus | null; files: number; reliance: boolean }): string {
-  const firm = input.firm || "the joint agent";
+export function jointLine(input: { rule: JointAgentRule; firm: string | null; status: JointRequestStatus | null; files: number; reliance: boolean; who?: string | null }): string {
+  const firm = input.firm || `the ${input.who || "joint agent"}`;
   switch (input.status) {
     case null: return input.rule === "letting" ? `Not asked: ask ${firm} for their checks under a reliance agreement` : `Not asked: ask ${firm} for their checks`;
-    case "not_sent": return "The email to the joint agent did not go: send it again";
+    case "not_sent": return `The email to ${firm} did not go: send it again`;
     case "expired": return `${firm}'s link ran out: ask again`;
     case "cancelled": return "Cancelled";
     case "sent": return `Asked ${firm}: waiting`;
@@ -481,6 +498,9 @@ export interface JointAgentRequestView {
   ref: string;
   status: JointRequestStatus;
   firm: string;
+  // The joint agent, or the party's own agent; and what to call them.
+  relation: JointAgentRelation;
+  who: string;
   to: string | null;
   toEmail: string | null;
   // Added by BGP from files the joint agent emailed to someone at BGP: no
@@ -508,6 +528,11 @@ export interface JointAgentPartyView {
   kind: "company" | "individual";
   // BGP's client on the deal (dealClientRole): its own checks, never the joint agent's.
   isClient: boolean;
+  // The party's own agent as the transaction records it (the landlord's
+  // leasing agent, the tenant's acquiring agent, the seller's or the buyer's
+  // agent), with its people; and what to call that agent.
+  agent: { companyId: string; name: string; contactId: string | null; contacts: Array<{ id: string; name: string; email: string | null }> } | null;
+  agentWords: string;
   requests: JointAgentRequestView[];
   // The latest request that is not cancelled, set against the people to check.
   coverage: JointCoverage | null;

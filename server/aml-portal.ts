@@ -40,7 +40,7 @@ import { ADDRESS_PROOF_ACCEPT_NOTE_MIN } from "@shared/kyc-address-proof";
 import { officerWords } from "@shared/aml-policy";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
 import { jointAgentAsks, jointAgentFinishedEmail } from "@shared/kyc-request";
-import { jointRelianceInput, jointRelianceTerms, type JointAgentRequestDetails } from "@shared/joint-agent-checks";
+import { agentWords, jointRelianceInput, jointRelianceTerms, type JointAgentRequestDetails } from "@shared/joint-agent-checks";
 
 export const KYC_MAILBOX = (process.env.KYC_MAILBOX || process.env.BGP_AML_MAILBOX || "kyc@chatbgp.app").trim();
 const LINK_BASE = (process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
@@ -388,6 +388,7 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
       finishedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null, maxFileMb: KYC_MAX_FILE_MB,
       joint: {
         firm: joint?.firm || "your firm", partyRole: request.role, letting,
+        relation: joint?.relation === "own" ? "own" : "joint", clientRole: joint?.clientRole || null,
         asks: jointAgentAsks({ kind: request.kind, letting }),
         terms: letting ? jointRelianceTerms(request.partyName) : null,
         reliance: joint?.reliance ? { name: joint.reliance.name, position: joint.reliance.position, supervisor: joint.reliance.supervisor, registration: joint.reliance.registration, agreedAt: joint.reliance.agreedAt } : null,
@@ -908,6 +909,8 @@ const safeFileName = (name: string) => path.basename(String(name || "file")).rep
 export async function fileClientDocument(row: TokenRow, file: { name: string; mime: string; buffer: Buffer }, docKey: KycDocKey | null, how: string, addedBy?: { id: string; name: string | null }): Promise<string | null> {
   const request = row.request!;
   const joint = isJointRequest(request);
+  // The joint agent, or the party's own agent (the landlord's agent; 22 November 2026).
+  const who = request.jointAgent?.relation === "own" ? agentWords("own", request.role) : "joint agent";
   const sender = addedBy
     ? `${addedBy.name || "BGP"}, from ${request.jointAgent?.firm || "the joint agent"}`
     : joint ? `${row.contact_name || "the joint agent"} of ${request.jointAgent?.firm || "the joint agent"} <${row.contact_email || "unknown"}>`
@@ -930,7 +933,7 @@ export async function fileClientDocument(row: TokenRow, file: { name: string; mi
     `INSERT INTO kyc_documents (company_id, trading_entity_id, contact_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
     [row.company_id, row.trading_entity_id || null, joint ? null : row.contact_id, row.deal_id, docType, `/api/chat-media/${safeName}`, file.name, file.buffer.length, file.mime || null,
-      `${how} by ${sender} (${joint ? "the joint agent's checks" : "client checks"}, ref ${request.ref}${docKey ? `, as ${KYC_DOCS[docKey].title}` : ""})`, addedBy?.id || null],
+      `${how} by ${sender} (${joint ? `the ${who}'s checks` : "client checks"}, ref ${request.ref}${docKey ? `, as ${KYC_DOCS[docKey].title}` : ""})`, addedBy?.id || null],
   );
   await pool.query(
     `INSERT INTO kyc_upload_files (token, deal_id, original_filename, content_type, size_bytes, doc_type, kyc_document_id)
@@ -950,8 +953,8 @@ export async function fileClientDocument(row: TokenRow, file: { name: string; mi
         const { tickChecklistItems } = await import("./kyc-orchestrator");
         await tickChecklistItems(row.company_id, Object.fromEntries(Object.entries(evidence).map(([key, list]) => [key, {
           source: "system" as const, tickedBy: null,
-          evidence: { documents: list, source: `${joint ? "joint agent's checks" : "client checks"} ${request.ref}` },
-          notes: `Evidence sent ${joint ? `by the joint agent, ${request.jointAgent?.firm || "the joint agent"},` : "by the client through client checks"} (ref ${request.ref}): ${list.join(", ").replace(/_/g, " ")}. MLRO to confirm.`,
+          evidence: { documents: list, source: `${joint ? `${who}'s checks` : "client checks"} ${request.ref}` },
+          notes: `Evidence sent ${joint ? `by the ${who}, ${request.jointAgent?.firm || `the ${who}`},` : "by the client through client checks"} (ref ${request.ref}): ${list.join(", ").replace(/_/g, " ")}. MLRO to confirm.`,
         }])));
       }
     } catch (e: any) { console.warn(`[kyc] checklist update after an upload failed: ${e?.message}`); }

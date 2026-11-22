@@ -4690,6 +4690,27 @@ the joint agent mode of `client/src/pages/kyc-upload.tsx`. Tests:
 `server/joint-agent-checks.test.ts` (in `npm test`),
 `qa/regression/joint-agent-checks-guards.test.mjs`.
 
+- **The other side's own agent** (Woody, the same day: "we also need to AML
+  the Landlord if we are acting for a tenant.. which might be via their agent
+  in this way"). The same request goes to the party's own agent as the
+  transaction records it (`PARTY_AGENT_COLUMNS` in
+  `server/joint-agent-checks.ts`: the landlord's leasing agent, the tenant's
+  acquiring agent, the seller's and the buyer's agents), stored as
+  `request.jointAgent.relation = "own"` with `clientRole` (a request with no
+  relation is the joint agent's, as every request before). Who is asked: what
+  BGP chose in the dialog, else the firm named, else the party's own agent
+  when no joint agent is recorded (`jointRelationFor`). Its email, page and
+  AML box say "We act for the tenant on <transaction>, and you act for <the
+  landlord>, the landlord" and call them the landlord's agent
+  (`agentWords`); on a sale "We check every party to a transaction", never
+  HMRC's joint agent line. Everything else is the joint agent's route: the
+  rule for the deal, the upload page and reliance terms, the reading and what
+  it covers, chasing, Not required and recording the reliance. The AML box
+  offers it under Other ways for any party BGP does not act for, named after
+  the agent the transaction records (Landlord's agent, Joint agent, else
+  Their agent); with both recorded the dialog chooses. The board's waiting
+  word is "Waiting on the other agent". Tests in
+  `server/joint-agent-checks.test.ts`.
 - **HMRC's route for the deal** (`jointAgentRule`): `sale` (an investment
   deal), `letting` (a letting at £10,000 a month or more, or no rent
   recorded), `letting_under` (sanctions only), `advisory`, `other` (treated as

@@ -79,7 +79,9 @@ test("the reliance is recorded by the officers, with the joint agent's agreement
 
 test("the AML box carries the Joint agent line and its Next step", () => {
   const box = read("client/src/components/deal-aml-status.tsx");
-  assert.match(box, /label="Joint agent"/);
+  // Any party BGP does not act for can be asked about through its agent (22 November 2026).
+  assert.match(box, /label=\{askAgentLabel\(jointQ\.data, askParty\)\}/);
+  assert.match(box, /const askParty = jointAskable\(jointQ\.data, cp\.id\);/);
   assert.match(box, /joint: jointBoxFacts\(jointQ\.data, cp\.id\),/);
   assert.match(box, /case "joint": return <Button/);
   const page = read("client/src/pages/kyc-upload.tsx");

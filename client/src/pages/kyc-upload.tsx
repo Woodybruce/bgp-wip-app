@@ -444,10 +444,14 @@ function JointAgentPage({ token, view, setView, load }: { token: string; view: K
       <p className="text-base">Hello{firstName(view.recipientName) ? ` ${firstName(view.recipientName)}` : ""},</p>
       <h1 className="mt-2 text-2xl font-bold leading-tight text-[#6E0C25] dark:text-[#e8a3b3]" data-testid="joint-title">Your AML checks on {view.partyName}</h1>
       <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="joint-intro">
-        We are joint agents with {joint.firm} on <strong className="text-foreground">{view.dealName}</strong>, and you dealt with <strong className="text-foreground">{view.partyName}</strong>{noun ? `, the ${noun}` : ""}.{" "}
+        {joint.relation === "own"
+          ? <>We act for {ROLE_NOUN[joint.clientRole || ""] ? `the ${ROLE_NOUN[joint.clientRole || ""]}` : "the other side"} on <strong className="text-foreground">{view.dealName}</strong>, and you act for <strong className="text-foreground">{view.partyName}</strong>{noun ? `, the ${noun}` : ""}.{" "}</>
+          : <>We are joint agents with {joint.firm} on <strong className="text-foreground">{view.dealName}</strong>, and you dealt with <strong className="text-foreground">{view.partyName}</strong>{noun ? `, the ${noun}` : ""}.{" "}</>}
         {joint.letting
           ? "Every party to a letting of £10,000 a month or more must be checked. Rather than ask them again, we'd like to rely on your checks."
-          : `HMRC asks us to get your checks on the ${noun || "other side"} and record what comes back.`}
+          : joint.relation === "own"
+            ? "We check every party to a transaction. Rather than ask them again, please send us your checks on them."
+            : `HMRC asks us to get your checks on the ${noun || "other side"} and record what comes back.`}
       </p>
 
       {view.note && (

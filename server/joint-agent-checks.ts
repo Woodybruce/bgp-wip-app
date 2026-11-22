@@ -22,8 +22,8 @@ import multer from "./utils/upload";
 import { pool } from "./db";
 import { jointAgentChaseStoppedEmail, jointAgentMissingEmail, jointAgentRequestEmail, kycReplyAddresses } from "@shared/kyc-request";
 import {
-  JOINT_CHASE_MAX, JOINT_DOC_KINDS, JOINT_RESULTS, bornKey, checkJointReading, jointChaseDue, jointCoverage, jointGapLines, jointLine, jointNextChaseDay, jointRelianceTerms, jointWorkingDay, londonDayNumber,
-  type JointAgentChecksView, type JointAgentPartyView, type JointAgentRequestView, type JointCoverage,
+  JOINT_CHASE_MAX, JOINT_DOC_KINDS, JOINT_RESULTS, agentWords, bornKey, checkJointReading, jointChaseDue, jointCoverage, jointGapLines, jointLine, jointNextChaseDay, jointRelianceTerms, jointWorkingDay, londonDayNumber,
+  type JointAgentChecksView, type JointAgentPartyView, type JointAgentRelation, type JointAgentRequestView, type JointCoverage,
   type JointChase, type JointCoveragePerson, type JointFileReading, type JointRequestStatus,
 } from "@shared/joint-agent-checks";
 import { JOINT_AGENT_RULE_WORDS, jointAgentRule, type JointAgentRule, type JointRequestForRecord } from "@shared/aml-policy";
@@ -330,11 +330,30 @@ export async function jointRequestsForRecord(db: Db, dealId: string, companyId: 
 interface JointDeal {
   id: string; name: string; rule: JointAgentRule; clientRole: DealPartyRole;
   firmId: string | null; firmName: string | null; firmContactId: string | null;
-  parties: Array<{ role: DealPartyRole; companyId: string; entityId: string | null; name: string; kind: "company" | "individual" }>;
+  parties: Array<{ role: DealPartyRole; companyId: string; entityId: string | null; name: string; kind: "company" | "individual"; agentId: string | null; agentContactId: string | null }>;
+}
+
+// Each party's own agent as the transaction records it: the landlord's leasing
+// agent, the tenant's acquiring agent (tenant rep), the seller's and the
+// buyer's agents (22 November 2026).
+const PARTY_AGENT_COLUMNS: Record<DealPartyRole, [string, string]> = {
+  landlord: ["leasing_agent_id", "leasing_agent_contact_id"],
+  tenant: ["acquisition_agent_id", "acquisition_agent_contact_id"],
+  vendor: ["vendor_agent_id", "vendor_agent_contact_id"],
+  purchaser: ["purchaser_agent_id", "purchaser_agent_contact_id"],
+};
+
+/** Who a request is to: what BGP chose, else the firm it names, else the party's own agent when no joint agent is recorded. */
+export function jointRelationFor(input: { relation?: unknown; firmCompanyId?: string | null }, deal: { firmId: string | null }, party: { agentId: string | null }): JointAgentRelation {
+  if (input.relation === "joint" || input.relation === "own") return input.relation;
+  const id = text(input.firmCompanyId);
+  if (id && party.agentId && id === party.agentId) return "own";
+  if (id && deal.firmId && id === deal.firmId) return "joint";
+  return deal.firmId ? "joint" : "own";
 }
 
 async function loadJointDeal(db: Db, dealId: string): Promise<JointDeal | null> {
-  const cols = DEAL_PARTY_ROLES.flatMap(r => [DEAL_PARTY_COLUMNS[r].brand, DEAL_PARTY_COLUMNS[r].company]);
+  const cols = [...DEAL_PARTY_ROLES.flatMap(r => [DEAL_PARTY_COLUMNS[r].brand, DEAL_PARTY_COLUMNS[r].company]), ...Object.values(PARTY_AGENT_COLUMNS).flat()];
   const d = (await db.query(
     `SELECT id, name, deal_type, team, rent_pa, bgp_acting_for, joint_agent_id, joint_agent_contact_id, ${cols.join(", ")}
        FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
@@ -349,9 +368,11 @@ async function loadJointDeal(db: Db, dealId: string): Promise<JointDeal | null> 
     const entityId = d[DEAL_PARTY_COLUMNS[role].company] || null;
     const entity = entityId ? (await db.query(
       `SELECT id, name, entity_kind FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [entityId, companyId])).rows[0] || null : null;
+    const [agentCol, agentContactCol] = PARTY_AGENT_COLUMNS[role];
     parties.push({
       role, companyId: String(companyId), entityId: entity ? String(entity.id) : null, name: text(entity?.name || c.name),
       kind: partySubjectKind(c.aml_subject_type, entity ? { kind: entity.entity_kind } : null),
+      agentId: d[agentCol] ? String(d[agentCol]) : null, agentContactId: d[agentContactCol] ? String(d[agentContactCol]) : null,
     });
   }
   return {
@@ -402,7 +423,9 @@ export async function jointChecksForDeal(dealId: string, db: Db = pool, now = ne
       const own = files.filter(f => f.token === r.token);
       const status = statusOf(r, own.length, now);
       const held = request.jointAgent?.readings || {};
+      const relation: JointAgentRelation = request.jointAgent?.relation === "own" ? "own" : "joint";
       return {
+        relation, who: agentWords(relation, request.role || p.role),
         ref: request.ref, status, firm: request.jointAgent?.firm || deal.firmName || "the joint agent",
         to: r.contact_name, toEmail: r.contact_email, manual: !!request.manual,
         sentAt: request.sentAt, sentBy: request.sentBy?.name || null, sendError: request.sendError,
@@ -430,14 +453,24 @@ export async function jointChecksForDeal(dealId: string, db: Db = pool, now = ne
     if (shown && current?.contact_email && shown.sentAt && !shown.chaseStoppedAt && theirs.length) {
       shown.nextChaseAt = jointNextChaseDay([shown.sentAt, ...shown.chases.map(c => c.at)]);
     }
+    const agentRow = p.agentId ? (await db.query(`SELECT id, name FROM crm_companies WHERE id = $1`, [p.agentId])).rows[0] || null : null;
+    const agentPeople = agentRow ? (await db.query(
+      `SELECT id, name, email FROM crm_contacts WHERE company_id = $1 ORDER BY (id = $2) DESC, (COALESCE(email, '') = '') ASC, name LIMIT 60`,
+      [agentRow.id, p.agentContactId || ""])).rows : [];
     parties.push({
+      agent: agentRow ? {
+        companyId: String(agentRow.id), name: text(agentRow.name), contactId: p.agentContactId,
+        contacts: agentPeople.map((c: any) => ({ id: String(c.id), name: text(c.name), email: c.email || null })),
+      } : null,
+      agentWords: agentWords("own", p.role),
       role: p.role, companyId: p.companyId, name: p.name, kind: p.kind, isClient: p.role === deal.clientRole,
       requests, coverage, gaps, unread: coverage?.unread || 0, askable: theirs.length > 0,
       line: p.role === deal.clientRole ? "BGP's own client: checked by BGP"
         : jointLine({
-          rule: deal.rule, firm: current?.request?.jointAgent?.firm || deal.firmName,
+          rule: deal.rule, firm: current?.request?.jointAgent?.firm || (agentRow ? text(agentRow.name) : null) || deal.firmName,
           status: current ? statusOf(current, currentFiles.length, now) : null, files: currentFiles.length,
           reliance: !!current?.request?.jointAgent?.reliance,
+          who: current?.request?.jointAgent?.relation === "own" || (!current && (agentRow || !deal.firmName)) ? agentWords("own", p.role) : "joint agent",
         }),
     });
   }
@@ -463,6 +496,8 @@ export interface JointAskInput {
   note?: string | null;
   firm?: string | null;
   firmCompanyId?: string | null;
+  // The joint agent, or the party's own agent (jointRelationFor decides when absent).
+  relation?: JointAgentRelation | null;
 }
 
 const fail = (status: number, message: string) => Object.assign(new Error(message), { status });
@@ -475,8 +510,8 @@ async function openRequestFor(db: Db, dealId: string, companyId: string): Promis
       ORDER BY created_at DESC LIMIT 1`, [dealId, companyId])).rows[0] as TokenRow) || null;
 }
 
-async function firmFor(db: Db, deal: JointDeal, input: { firm?: string | null; firmCompanyId?: string | null }): Promise<{ id: string | null; name: string }> {
-  const id = text(input.firmCompanyId) || deal.firmId;
+async function firmFor(db: Db, deal: JointDeal, input: { firm?: string | null; firmCompanyId?: string | null }, ownAgentId: string | null = null): Promise<{ id: string | null; name: string }> {
+  const id = text(input.firmCompanyId) || ownAgentId || deal.firmId;
   const row = id ? (await db.query(`SELECT id, name FROM crm_companies WHERE id = $1`, [id])).rows[0] : null;
   if (id && !row) throw fail(400, "That firm is not in the CRM.");
   const name = text(input.firm).slice(0, 160) || text(row?.name);
@@ -519,8 +554,9 @@ export async function createJointAgentRequest(dealId: string, input: JointAskInp
   if (!isEmail(email)) throw fail(400, "Enter a valid email address for the joint agent's contact.");
   if (email.endsWith(STAFF_DOMAIN)) throw fail(400, "That is a BGP address: enter the joint agent's contact.");
   const name = text(input.name).slice(0, 120);
-  if (name.length < 2) throw fail(400, "Enter the name of the person at the joint agent.");
-  const firm = await firmFor(db, deal, input);
+  if (name.length < 2) throw fail(400, "Enter the name of the person at the agent.");
+  const relation = jointRelationFor(input, deal, party);
+  const firm = await firmFor(db, deal, input, relation === "own" ? party.agentId : null);
   let contactId: string | null = text(input.contactId) || null;
   if (contactId) {
     const at = (await db.query(`SELECT company_id FROM crm_contacts WHERE id = $1`, [contactId])).rows[0];
@@ -538,7 +574,7 @@ export async function createJointAgentRequest(dealId: string, input: JointAskInp
     agents, cc, sentBy: { id: me.id, name: me.name }, sentFrom: null, sentAt: null, sendError: null,
     openedAt: null, veriffSessionIds: [], idCheckNote: null, askPep: false, answers: null,
     audience: "joint_agent",
-    jointAgent: { firm: firm.name, firmCompanyId: firm.id, contactId, rule: deal.rule, reliance: null, readings: {} },
+    jointAgent: { firm: firm.name, firmCompanyId: firm.id, relation, clientRole: deal.clientRole, contactId, rule: deal.rule, reliance: null, readings: {} },
   };
   await db.query(
     `INSERT INTO kyc_upload_tokens (token, deal_id, contact_email, contact_name, created_by, expires_at, company_id, contact_id, request, is_test, trading_entity_id)
@@ -549,7 +585,7 @@ export async function createJointAgentRequest(dealId: string, input: JointAskInp
     to: [email], cc,
     build: sentFrom => jointAgentRequestEmail({
       recipientName: name, firm: firm.name, partyName: party.name, partyRole: party.role, kind: party.kind, dealName: deal.name,
-      ref, link, expiresAt, letting: isLettingRule(deal.rule), note: request.note, agents, sentFrom,
+      ref, link, expiresAt, letting: isLettingRule(deal.rule), note: request.note, agents, sentFrom, relation, clientRole: deal.clientRole,
     }),
   });
   request.sentFrom = sent.from;
@@ -573,6 +609,7 @@ export interface JointUploadInput {
   firmCompanyId?: string | null;
   contactName?: string | null;
   contactEmail?: string | null;
+  relation?: JointAgentRelation | null;
 }
 
 /**
@@ -603,7 +640,8 @@ export async function addJointFiles(dealId: string, input: JointUploadInput, fil
   }
   let created = false;
   if (!row) {
-    const firm = await firmFor(db, deal, input);
+    const relation = jointRelationFor(input, deal, party);
+    const firm = await firmFor(db, deal, input, relation === "own" ? party.agentId : null);
     const { agents, cc } = await agentsAndCopies(dealId, me);
     const token = crypto.randomBytes(32).toString("base64url");
     const newRef = await portal.newRef();
@@ -614,7 +652,7 @@ export async function addJointFiles(dealId: string, input: JointUploadInput, fil
       agents, cc, sentBy: { id: me.id, name: me.name }, sentFrom: null, sentAt: null, sendError: null,
       openedAt: null, veriffSessionIds: [], idCheckNote: null, askPep: false, answers: null,
       audience: "joint_agent", manual: true,
-      jointAgent: { firm: firm.name, firmCompanyId: firm.id, contactId: null, rule: deal.rule, reliance: null, readings: {} },
+      jointAgent: { firm: firm.name, firmCompanyId: firm.id, relation, clientRole: deal.clientRole, contactId: null, rule: deal.rule, reliance: null, readings: {} },
     };
     // A manual request is never emailed and its link is not given out: it
     // runs out as any other, and the files stay on the party's record.
@@ -671,6 +709,7 @@ export async function chaseJointRequest(db: Db, row: TokenRow, by: { name: strin
       recipientName: row.contact_name, firm: request.jointAgent?.firm || "your firm", partyName: request.partyName, partyRole: request.role,
       kind: request.kind, dealName: request.dealName, ref: request.ref, link: portal.kycLinkFor(row.token), expiresAt,
       letting: isLettingRule(request.jointAgent?.rule), agents: request.agents, sentFrom,
+      relation: request.jointAgent?.relation === "own" ? "own" : "joint", clientRole: request.jointAgent?.clientRole || null,
       missing, nothingYet: !files.length, chase: chases.length + 1,
     }),
   });
@@ -893,6 +932,7 @@ jointAgentRouter.post("/api/deals/:id/joint-agent-checks", signedIn, async (req:
     const result = await createJointAgentRequest(String(req.params.id), {
       companyId: text(b.companyId), contactId: text(b.contactId) || null, name: text(b.name), email: text(b.email),
       note: b.note == null ? null : String(b.note), firm: text(b.firm) || null, firmCompanyId: text(b.firmCompanyId) || null,
+      relation: b.relation === "own" || b.relation === "joint" ? b.relation : null,
     }, me);
     res.json(result);
   } catch (err: any) {
@@ -932,6 +972,7 @@ jointAgentRouter.post("/api/deals/:id/joint-agent-checks/upload", signedIn, asyn
     const result = await addJointFiles(String(req.params.id), {
       companyId: text(b.companyId), ref: text(b.ref) || null, firm: text(b.firm) || null, firmCompanyId: text(b.firmCompanyId) || null,
       contactName: text(b.contactName) || null, contactEmail: text(b.contactEmail) || null,
+      relation: b.relation === "own" || b.relation === "joint" ? b.relation : null,
     }, keep, me);
     res.json({ ...result, refused });
   } catch (err: any) {

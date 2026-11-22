@@ -67,7 +67,21 @@ export function jointApplies(view: JointAgentChecksView | undefined, companyId: 
   if (!view || view.rule === "letting_under" || view.rule === "advisory") return null;
   const p = view.parties.find(x => x.companyId === companyId) || null;
   if (!p || p.isClient) return null;
-  return view.firm || p.requests.length ? p : null;
+  // A joint agent, the party's own agent on the transaction, or a request already made.
+  return view.firm || p.agent || p.requests.length ? p : null;
+}
+
+/** The party BGP could ask an agent about, even with no agent recorded yet (BGP types the firm in). */
+export function jointAskable(view: JointAgentChecksView | undefined, companyId: string): JointAgentPartyView | null {
+  if (!view || view.rule === "letting_under" || view.rule === "advisory") return null;
+  const p = view.parties.find(x => x.companyId === companyId) || null;
+  return p && !p.isClient ? p : null;
+}
+
+/** The quiet button's word: the agent the transaction records, else "Their agent". */
+export function askAgentLabel(view: JointAgentChecksView, p: JointAgentPartyView): string {
+  const words = p.agent ? p.agentWords : view.firm ? "joint agent" : "their agent";
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /** The facts the AML box's Next line reads (shared/aml-box.ts). */
@@ -313,7 +327,7 @@ export function AskJointAgentButton({ dealId, view, party, label, quiet }: { dea
   return (
     <>
       <Button type="button" size="sm" variant={quiet ? "ghost" : "default"} className={quiet ? "h-7 px-2 text-xs" : "h-7 text-xs"} onClick={() => setOpen(true)} data-testid={`joint-ask-${party.role}`}>
-        <Send className="w-3.5 h-3.5 mr-1" />{label || `Ask ${view.firm?.name || "the joint agent"} for their checks`}
+        <Send className="w-3.5 h-3.5 mr-1" />{label || `Ask ${party.agent?.name || view.firm?.name || `the ${party.agentWords}`} for their checks`}
       </Button>
       {open && <AskDialog dealId={dealId} view={view} party={party} onClose={() => setOpen(false)} />}
     </>
@@ -322,9 +336,24 @@ export function AskJointAgentButton({ dealId, view, party, label, quiet }: { dea
 
 function AskDialog({ dealId, view, party, onClose }: { dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; onClose: () => void }) {
   const { toast } = useToast();
-  const withEmail = view.contacts.filter(c => c.email);
-  const [firm, setFirm] = useState(view.firm?.name || "");
-  const [contactId, setContactId] = useState<string>(view.defaultContactId || (withEmail[0]?.id ?? "other"));
+  // The party's own agent (the landlord's agent when BGP acts for the tenant),
+  // or the joint agent: the one the transaction records, the own agent first
+  // when there is no joint agent (22 November 2026).
+  const [relation, setRelation] = useState<"own" | "joint">(view.firm && !party.agent ? "joint" : "own");
+  const recorded = relation === "own"
+    ? (party.agent ? { companyId: party.agent.companyId, name: party.agent.name, contacts: party.agent.contacts, contactId: party.agent.contactId } : null)
+    : (view.firm ? { companyId: view.firm.companyId, name: view.firm.name, contacts: view.contacts, contactId: view.defaultContactId } : null);
+  const who = relation === "own" ? party.agentWords : "joint agent";
+  const withEmail = (recorded?.contacts || []).filter(c => c.email);
+  const [firm, setFirm] = useState(recorded?.name || "");
+  const [contactId, setContactId] = useState<string>(recorded?.contactId || (withEmail[0]?.id ?? "other"));
+  const choose = (next: "own" | "joint") => {
+    setRelation(next);
+    const r = next === "own" ? party.agent : view.firm ? { name: view.firm.name, contacts: view.contacts, contactId: view.defaultContactId } : null;
+    setFirm(r?.name || "");
+    const people = (r?.contacts || []).filter(c => c.email);
+    setContactId(r?.contactId || (people[0]?.id ?? "other"));
+  };
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [note, setNote] = useState("");
@@ -332,11 +361,11 @@ function AskDialog({ dealId, view, party, onClose }: { dealId: string; view: Joi
   const letting = view.rule === "letting" || view.rule === "other";
   const toName = picked ? picked.name : name.trim();
   const toEmail = picked ? picked.email || "" : email.trim();
-  const missing = firm.trim().length < 2 ? "Name the joint agent's firm." : toName.length < 2 ? "Who at the joint agent?" : !/^\S+@\S+\.\S+$/.test(toEmail) ? "Their email address." : null;
+  const missing = firm.trim().length < 2 ? `Name the ${who}'s firm.` : toName.length < 2 ? `Who at the ${who}?` : !/^\S+@\S+\.\S+$/.test(toEmail) ? "Their email address." : null;
   const send = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/joint-agent-checks`, {
       companyId: party.companyId, contactId: picked ? picked.id : null, name: toName, email: toEmail, note: note.trim() || null,
-      firm: firm.trim(), firmCompanyId: view.firm && firm.trim() === view.firm.name ? view.firm.companyId : null,
+      firm: firm.trim(), firmCompanyId: recorded && firm.trim() === recorded.name ? recorded.companyId : null, relation,
     })).json(),
     onSuccess: (r: any) => {
       refreshJointChecks(dealId);
@@ -350,7 +379,7 @@ function AskDialog({ dealId, view, party, onClose }: { dealId: string; view: Joi
     <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className="max-w-md" data-testid="joint-ask-dialog">
         <DialogHeader>
-          <DialogTitle>Ask the joint agent about {party.name}</DialogTitle>
+          <DialogTitle>Ask the {who} about {party.name}</DialogTitle>
           <DialogDescription>
             {letting
               ? "They send their checks and agree on their page to BGP relying on them."
@@ -358,11 +387,23 @@ function AskDialog({ dealId, view, party, onClose }: { dealId: string; view: Joi
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          {party.agent && view.firm && (
+            <div className="space-y-1.5">
+              <Label>Who has their checks</Label>
+              <Select value={relation} onValueChange={v => choose(v === "joint" ? "joint" : "own")}>
+                <SelectTrigger data-testid="joint-relation"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="own">The {party.agentWords}, {party.agent.name}</SelectItem>
+                  <SelectItem value="joint">The joint agent, {view.firm.name}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="space-y-1.5">
-            <Label htmlFor="joint-firm">The joint agent's firm</Label>
+            <Label htmlFor="joint-firm">The {who}'s firm</Label>
             <Input id="joint-firm" value={firm} onChange={e => setFirm(e.target.value)} maxLength={160} placeholder="Savills" data-testid="joint-firm" />
           </div>
-          {withEmail.length > 0 && firm.trim() === view.firm?.name && (
+          {withEmail.length > 0 && firm.trim() === recorded?.name && (
             <div className="space-y-1.5">
               <Label>Who to ask</Label>
               <Select value={contactId} onValueChange={setContactId}>
@@ -420,12 +461,16 @@ export function AddJointFilesButton({ dealId, view, party }: { dealId: string; v
 function AddFilesDialog({ dealId, view, party, onClose }: { dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; onClose: () => void }) {
   const { toast } = useToast();
   const current = currentJointRequest(party);
+  // Whose files: the request's agent, else the party's own agent, else the joint agent (22 November 2026).
+  const relation: "own" | "joint" = current ? current.relation : party.agent || !view.firm ? "own" : "joint";
+  const agentWord = current ? current.who : relation === "own" ? party.agentWords : "joint agent";
+  const recorded = relation === "own" ? party.agent : view.firm;
   const [files, setFiles] = useState<File[]>([]);
-  const [firm, setFirm] = useState(view.firm?.name || "");
+  const [firm, setFirm] = useState(recorded?.name || "");
   const [who, setWho] = useState("");
   const [whoEmail, setWhoEmail] = useState("");
   const input = useRef<HTMLInputElement>(null);
-  const missing = !files.length ? "Choose the files." : !current && firm.trim().length < 2 ? "Name the joint agent's firm." : null;
+  const missing = !files.length ? "Choose the files." : !current && firm.trim().length < 2 ? `Name the ${agentWord}'s firm.` : null;
   const save = useMutation({
     mutationFn: async () => {
       const fd = new FormData();
@@ -433,7 +478,8 @@ function AddFilesDialog({ dealId, view, party, onClose }: { dealId: string; view
       if (current) fd.append("ref", current.ref);
       else {
         fd.append("firm", firm.trim());
-        if (view.firm?.companyId && firm.trim() === view.firm.name) fd.append("firmCompanyId", view.firm.companyId);
+        fd.append("relation", relation);
+        if (recorded?.companyId && firm.trim() === recorded.name) fd.append("firmCompanyId", recorded.companyId);
         if (who.trim()) fd.append("contactName", who.trim());
         if (whoEmail.trim()) fd.append("contactEmail", whoEmail.trim());
       }
@@ -454,7 +500,7 @@ function AddFilesDialog({ dealId, view, party, onClose }: { dealId: string; view
     <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className="max-w-md" data-testid="joint-files-dialog">
         <DialogHeader>
-          <DialogTitle>The joint agent's checks on {party.name}</DialogTitle>
+          <DialogTitle>The {agentWord}'s checks on {party.name}</DialogTitle>
           <DialogDescription>
             The files they emailed you. A zip is fine.
           </DialogDescription>
@@ -463,7 +509,7 @@ function AddFilesDialog({ dealId, view, party, onClose }: { dealId: string; view
           {!current && (
             <>
               <div className="space-y-1.5">
-                <Label htmlFor="joint-files-firm">The joint agent's firm</Label>
+                <Label htmlFor="joint-files-firm">The {agentWord}'s firm</Label>
                 <Input id="joint-files-firm" value={firm} onChange={e => setFirm(e.target.value)} maxLength={160} data-testid="joint-files-firm" />
               </div>
               <div className="grid gap-3 sm:grid-cols-2">

@@ -41,7 +41,7 @@ export const AML_BOX_WHO_WORDS: Record<AmlBoxWho, string> = {
   client: "Waiting on the client",
   kyc4u: "Waiting on KYC4U",
   officers: "For the Nominated Officer",
-  joint_agent: "Waiting on the joint agent",
+  joint_agent: "Waiting on the other agent",
 };
 
 /** One person the checks need who still owes something. */
