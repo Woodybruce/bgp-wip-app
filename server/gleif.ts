@@ -48,7 +48,7 @@ const recordsOf = (json: any): GleifEntity[] =>
   (Array.isArray(json?.data) ? json.data : []).map(gleifEntityFrom).filter((e: GleifEntity | null): e is GleifEntity => !!e);
 
 /** The GLEIF records that could be the company: by its registration number, then by its name in its country. */
-export async function searchGleif(q: { name: string; country: string | null; registrationNumber: string | null }, fetcher: typeof fetch = fetch): Promise<GleifEntity[]> {
+export async function searchGleif(q: { name: string; country: string | null; registrationNumber: string | null; authorities?: string[] | null }, fetcher: typeof fetch = fetch): Promise<GleifEntity[]> {
   const out: GleifEntity[] = [];
   const keep = (list: GleifEntity[]) => { for (const e of list) if (!out.some(x => x.lei === e.lei)) out.push(e); };
   const code = countryCode(q.country);
@@ -68,10 +68,11 @@ export async function searchGleif(q: { name: string; country: string | null; reg
 }
 
 /**
- * A company abroad followed up GLEIF: the record that is it, each direct
- * parent in turn (at most six), and what GLEIF says is above the last one.
+ * A company followed up GLEIF: the record that is it, each direct parent in
+ * turn (at most six), and what GLEIF says is above the last one. A company
+ * abroad since 21 November 2026, and a UK party since the same evening.
  */
-export async function traceGleif(q: { name: string; country: string | null; registrationNumber: string | null }, fetcher: typeof fetch = fetch): Promise<GleifTrace> {
+export async function traceGleif(q: { name: string; country: string | null; registrationNumber: string | null; authorities?: string[] | null }, fetcher: typeof fetch = fetch): Promise<GleifTrace> {
   const empty = (status: GleifTrace["status"], error: string | null = null, candidates = 0): GleifTrace => ({ status, entity: null, parents: [], top: null, candidates, error });
   if (!gleifOn()) return empty("skipped", "GLEIF look-ups are switched off");
   try {

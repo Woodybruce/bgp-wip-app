@@ -29,7 +29,7 @@ test('the bars: sanctions and warning lists always, a public role at 60%, anythi
   for (const where of ['export function precheckRedFlags', 'export function precheckCardLines', 'export function precheckNote']) {
     const at = rules.indexOf(where);
     assert.ok(at > 0, where);
-    assert.ok(rules.slice(at, at + 9000).includes('splitProviderMatches('), `${where} splits the matches by the bars`);
+    assert.ok(rules.slice(at, at + 12000).includes('splitProviderMatches('), `${where} splits the matches by the bars`);
   }
 });
 

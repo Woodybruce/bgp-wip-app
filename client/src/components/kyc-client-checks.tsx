@@ -286,14 +286,15 @@ function Tick({ ok }: { ok: boolean }) {
 
 function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }: { dealId: string; data: ClientChecks; party: Party; people: PartyPeople; sanctionsOnly: boolean; canDecide: boolean }) {
   if (sanctionsOnly) {
-    const everyone = [...people.people.map(p => ({ name: p.name, roles: p.roles, sanctions: p.sanctions })), ...people.directors.map(d => ({ name: d.name, roles: ["director" as const], sanctions: d.sanctions }))];
+    const everyone = [...people.people.map(p => ({ name: p.name, roles: p.roles.map(r => ROLE_WORDS[r].toLowerCase()), sanctions: p.sanctions })), ...people.directors.map(d => ({ name: d.name, roles: ["director"], sanctions: d.sanctions })),
+      ...(people.trustees || []).map(t => ({ name: t.name, roles: [t.chair ? "trustee, chair" : "trustee"], sanctions: t.sanctions }))];
     if (!everyone.length) return null;
     return (
       <div className="text-xs space-y-1.5" data-testid={`people-to-check-${party.companyId}`}>
         <p className="text-muted-foreground" data-testid={`people-sanctions-only-${party.companyId}`}>A letting under £10,000 a month: sanctions checks only (BGP's AML policy A). The owners and directors are identified and screened, not verified, so no one needs to send an identity check or a proof of address.</p>
         <ul className="space-y-0.5">
           {everyone.map(p => (
-            <li key={p.name}>{p.name} <span className="text-muted-foreground">({p.roles.map(r => ROLE_WORDS[r].toLowerCase()).join(", ")})</span> <span className={SANCTIONS_WORDS[p.sanctions].cls}>{SANCTIONS_WORDS[p.sanctions].text}</span></li>
+            <li key={p.name}>{p.name} <span className="text-muted-foreground">({p.roles.join(", ")})</span> <span className={SANCTIONS_WORDS[p.sanctions].cls}>{SANCTIONS_WORDS[p.sanctions].text}</span></li>
           ))}
         </ul>
       </div>
@@ -308,6 +309,14 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
           <span className="font-medium text-foreground">Directors, no ID needed</span> (screened against the UK, US and EU sanctions lists only):{" "}
           {people.directors.map((d, i) => (
             <span key={d.name}>{i ? "; " : ""}{d.name} <span className={SANCTIONS_WORDS[d.sanctions].cls}>({SANCTIONS_WORDS[d.sanctions].text.replace("Sanctions: ", "")})</span></span>
+          ))}.
+        </p>
+      )}
+      {!!people.trustees?.length && (
+        <p className="text-muted-foreground" data-testid={`people-trustees-${party.companyId}`}>
+          <span className="font-medium text-foreground">Trustees of {people.charity?.name || "the charity"}{people.charity?.number ? ` (charity ${people.charity.number})` : ""}</span>, from the Charity Commission's register, screened for sanctions, public roles and adverse media, no ID asked for:{" "}
+          {people.trustees.map((t, i) => (
+            <span key={t.name}>{i ? "; " : ""}{t.name}{t.chair ? " (chair)" : ""} <span className={SANCTIONS_WORDS[t.sanctions].cls}>({SANCTIONS_WORDS[t.sanctions].text.replace("Sanctions: ", "")})</span></span>
           ))}.
         </p>
       )}

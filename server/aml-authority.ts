@@ -24,6 +24,31 @@ export type AmlActor = {
 
 export const DEPUTY_SETTING_KEY = "aml_deputy_officer";
 
+// In-house enhanced due diligence (Woody, 21 November 2026: "I'm trying to
+// set this up without using kyc4u"): off unless the Nominated Officer or a
+// Deputy switch it on (PUT /api/aml-policy/in-house-edd). While on, the
+// officers sign off an enhanced, trust or owned-abroad party themselves, with
+// a note of what was checked, instead of sending it to KYC4U.
+export const IN_HOUSE_EDD_KEY = "aml_in_house_edd";
+export interface InHouseEdd { on: boolean; by: string | null; at: string | null }
+let inHouseEddCache: { at: number; value: InHouseEdd } | null = null;
+export async function readInHouseEdd(): Promise<InHouseEdd> {
+  if (inHouseEddCache && Date.now() - inHouseEddCache.at < 15_000) return inHouseEddCache.value;
+  const v = await pool.query("SELECT value FROM system_settings WHERE key = $1", [IN_HOUSE_EDD_KEY]).then(r => r.rows[0]?.value || null).catch(() => null);
+  const value: InHouseEdd = { on: v?.on === true, by: typeof v?.byName === "string" ? v.byName : null, at: typeof v?.at === "string" ? v.at : null };
+  inHouseEddCache = { at: Date.now(), value };
+  return value;
+}
+export async function writeInHouseEdd(on: boolean, by: { id: string; name: string }): Promise<InHouseEdd> {
+  const value = { on, by: by.id, byName: by.name, at: new Date().toISOString() };
+  await pool.query(
+    `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, now())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, [IN_HOUSE_EDD_KEY, JSON.stringify(value)]);
+  inHouseEddCache = null;
+  console.log(`[aml-policy] in-house enhanced due diligence switched ${on ? "on" : "off"} by ${by.name}`);
+  return { on, by: by.name, at: value.at };
+}
+
 export function requestUserId(req: Request): string | null {
   return (req.session as any)?.userId || (req as any).tokenUserId || (req as any).user?.id || null;
 }

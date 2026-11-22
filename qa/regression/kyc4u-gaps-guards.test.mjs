@@ -48,7 +48,8 @@ test("the solicitors check and the risk assessment are BGP staff's, and the AML 
 });
 
 test("a party owned through a company abroad goes to KYC4U on the box, the dashboard and the sign-off", () => {
-  assert.match(read("shared/aml-box.ts"), /if \(f\.ownersAbroad\) \{[\s\S]{0,400}action: "request_kyc4u"/);
+  // Unless the officers do enhanced due diligence in-house (21 November 2026; uk-screening-guards).
+  assert.match(read("shared/aml-box.ts"), /if \(f\.ownersAbroad && !edd\) \{[\s\S]{0,400}action: "request_kyc4u"/);
   assert.match(read("shared/party-kyc.ts"), /if \(f\.ownersAbroad\?\.length\) return `Owned through a company registered abroad/);
   assert.match(read("client/src/pages/aml-dashboard.tsx"), /amlNeedsKyc4u\(row\.level, row\.stage, !!row\.ownersAbroad\?\.length\)/);
 });

@@ -19,7 +19,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
-import { KYC4U_RESULTS, KYC4U_RESULT_MAX_FILES, SIGN_OFF_NOTE_MIN, type Kyc4uResultKey } from "@shared/party-kyc";
+import { IN_HOUSE_EDD_NOTE_MIN, KYC4U_RESULTS, KYC4U_RESULT_MAX_FILES, SIGN_OFF_NOTE_MIN, type Kyc4uResultKey } from "@shared/party-kyc";
 import { DUE_DILIGENCE_LABEL, NOT_REQUIRED_COMMENT_MIN, NOT_REQUIRED_REASONS, type NotRequiredReason } from "@shared/aml-policy";
 import type { DealAmlStatus } from "@/components/deal-aml-status";
 
@@ -35,10 +35,10 @@ function refreshAfterDecision(dealId: string) {
 
 const todayLondon = () => new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
 
-function SignOffDialog({ dealId, role, partyName, needsNote, levelWords, onClose }: { dealId: string; role: string; partyName: string; needsNote: boolean; levelWords: string | null; onClose: () => void }) {
+function SignOffDialog({ dealId, role, partyName, needsNote, levelWords, edd, onClose }: { dealId: string; role: string; partyName: string; needsNote: boolean; levelWords: string | null; edd?: boolean; onClose: () => void }) {
   const { toast } = useToast();
   const [note, setNote] = useState("");
-  const short = needsNote && note.trim().length < SIGN_OFF_NOTE_MIN;
+  const short = (edd && note.trim().length < IN_HOUSE_EDD_NOTE_MIN) || (needsNote && note.trim().length < SIGN_OFF_NOTE_MIN);
   const save = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/sign-off`, { note: note.trim() })).json(),
     onSuccess: () => {
@@ -54,7 +54,9 @@ function SignOffDialog({ dealId, role, partyName, needsNote, levelWords, onClose
         <DialogHeader>
           <DialogTitle>Sign off {partyName}</DialogTitle>
           <DialogDescription>
-            {levelWords ? `${levelWords}. ` : ""}BGP approves this party until its re-check date (3 years, BGP's AML policy), and the deal's AML gate reads it as approved. A party needing enhanced due diligence goes to KYC4U instead.
+            {edd
+              ? "Enhanced due diligence by BGP (the officers' setting, not KYC4U): you approve this party for a year (BGP's AML policy), and the deal's AML gate reads it as approved."
+              : <>{levelWords ? `${levelWords}. ` : ""}BGP approves this party until its re-check date (3 years, BGP's AML policy), and the deal's AML gate reads it as approved. A party needing enhanced due diligence goes to KYC4U instead.</>}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-1.5">
@@ -62,7 +64,9 @@ function SignOffDialog({ dealId, role, partyName, needsNote, levelWords, onClose
           <Textarea id={`aml-sign-off-note-${role}`} value={note} onChange={e => setNote(e.target.value)} rows={3} maxLength={1000}
             placeholder="For example: listed plc, register owners confirmed, ID seen in person on 12 Nov"
             data-testid={`aml-sign-off-note-${role}`} />
-          {needsNote && (
+          {edd ? (
+            <p className="text-[11px] text-muted-foreground" data-testid={`aml-sign-off-edd-${role}`}>Say what was checked and why the risk is acceptable: each red flag or factor, the source of funds and of wealth where it matters, who is behind any company abroad or trust (at least a couple of sentences).</p>
+          ) : needsNote && (
             <p className="text-[11px] text-muted-foreground">The client checks are not finished for this party, so say what you relied on instead (at least a sentence).</p>
           )}
         </div>
@@ -336,10 +340,12 @@ export function PartyDecisions({ dealId, data, companyId, role, partyName, appro
   // null: it may be signed off now (so never `??`, which would read null as missing).
   const blocked = view ? view.blocked : "This party could not be read.";
   const level = data?.redFlags?.levels?.[companyId];
+  // Enhanced due diligence by BGP is the officers' to sign off, never an agent's.
+  const mayPress = canSignOff && !(view?.edd && !decisions.canDecide);
   return (
     <div className="space-y-1" data-testid={`aml-decisions-${role}`}>
       <div className="flex flex-wrap gap-1.5">
-        {!approved && canSignOff && (
+        {!approved && mayPress && (
           <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={!!blocked} title={blocked || undefined}
             onClick={() => setOpen("sign-off")} data-testid={`aml-sign-off-${role}`}>
             <BadgeCheck className="w-3.5 h-3.5 mr-1" />Sign off
@@ -356,10 +362,10 @@ export function PartyDecisions({ dealId, data, companyId, role, partyName, appro
           </Button>
         )}
       </div>
-      {!approved && !compact && blocked && canSignOff && (
+      {!approved && !compact && blocked && mayPress && (
         <p className="text-[11px] text-muted-foreground" data-testid={`aml-sign-off-blocked-${role}`}>Sign off: {blocked}</p>
       )}
-      {open === "sign-off" && <SignOffDialog dealId={dealId} role={role} partyName={partyName} needsNote={!!view?.needsNote}
+      {open === "sign-off" && <SignOffDialog dealId={dealId} role={role} partyName={partyName} needsNote={!!view?.needsNote} edd={!!view?.edd}
         levelWords={level && level.level !== "enhanced" ? DUE_DILIGENCE_LABEL[level.level] : null} onClose={() => setOpen(null)} />}
       {open === "kyc4u" && <Kyc4uResultDialog dealId={dealId} role={role} partyName={partyName} onClose={() => setOpen(null)} />}
       {open === "not-required" && <NotRequiredDialog dealId={dealId} role={role} partyName={partyName} onClose={() => setOpen(null)} />}
@@ -380,13 +386,13 @@ export function PartyDecisionButton({ dealId, data, companyId, role, partyName, 
   if (!decisions) return null;
   if (kind === "sign_off") {
     const canSignOff = !!(decisions.canSignOff ?? decisions.canDecide);
-    if (!canSignOff || !view || view.blocked) return null;
+    if (!canSignOff || !view || view.blocked || (view.edd && !decisions.canDecide)) return null;
     return (
       <>
         <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid={`aml-next-sign-off-${role}`}>
           <BadgeCheck className="w-3.5 h-3.5 mr-1" />Sign off
         </Button>
-        {open && <SignOffDialog dealId={dealId} role={role} partyName={partyName} needsNote={!!view.needsNote}
+        {open && <SignOffDialog dealId={dealId} role={role} partyName={partyName} needsNote={!!view.needsNote} edd={!!view.edd}
           levelWords={level && level.level !== "enhanced" ? DUE_DILIGENCE_LABEL[level.level] : null} onClose={() => setOpen(false)} />}
       </>
     );

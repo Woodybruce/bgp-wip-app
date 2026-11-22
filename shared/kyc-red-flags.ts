@@ -47,7 +47,14 @@ export type KycRedFlagKind =
   | "overseas_entity_missing"
   // A third party pays BGP's invoice with no clear relationship to the client
   // (20 November 2026; shared/deal-billing.ts).
-  | "third_party_payer";
+  | "third_party_payer"
+  // The Charity Commission's register: removed, insolvent, in administration
+  // or a dissolved CIO (21 November 2026; shared/charity-register.ts).
+  | "charity_status";
+
+/** A possible sanctions match: on the UK, US or EU lists, declared on the Register of Overseas Entities, or a ComplyAdvantage sanctions profile. */
+export const isSanctionsFlag = (f: Pick<KycRedFlag, "kind" | "evidence">): boolean =>
+  f.kind === "sanctions" || (f.kind === "provider_screen" && (f.evidence || []).includes("type:sanctions"));
 
 // One line of what is behind a flag (Woody, 19 November 2026: "We also need
 // to see the detail of the red flag").

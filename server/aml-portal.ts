@@ -433,6 +433,8 @@ async function dealParties(dealId: string) {
   if (!d) return null;
   const parties: Array<{ companyId: string; name: string; brandName: string; role: string; kind: KycPartyKind; contactId: string | null;
     entityId: string | null; entityNumber: string | null; personField: string;
+    // Recorded as a trust or foundation: checked on its own record, so no company that signs is needed (21 November 2026).
+    trust: boolean;
     contacts: Array<{ id: string; name: string; email: string | null; mobile: string | null }> }> = [];
   for (const col of PARTY_COLUMNS) {
     const companyId = d[col.company];
@@ -454,6 +456,7 @@ async function dealParties(dealId: string) {
       kind: partySubjectKind(c.aml_subject_type, entity ? { kind: entity.entity_kind } : null),
       contactId: person && contacts.some((x: any) => x.id === person) ? person : null,
       entityId: entity ? String(entity.id) : null, entityNumber: entity?.companies_house_number || null, personField: col.contact,
+      trust: !entity && String(c.aml_subject_type || "").trim().toLowerCase() === "trust",
       contacts: contacts.map((x: any) => ({ id: x.id, name: x.name, email: x.email, mobile: x.mobile || null })),
     });
   }
@@ -470,7 +473,7 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   // The checks are about the company that signs, not the brand (Woody,
   // 19 November 2026: "We must have the company taking the lease or who owns
   // the property to be able to do a check").
-  if (input.kind === "company" && !party.entityId) {
+  if (input.kind === "company" && !party.entityId && !party.trust) {
     const what = party.role === "tenant" ? "the company taking the lease" : party.role === "landlord" ? "the company that owns the property" : party.role === "vendor" ? "the company selling" : "the company buying";
     throw Object.assign(new Error(`Set ${what} on the deal first: the client checks are about that company, not ${party.name}.`), { status: 409 });
   }
@@ -619,7 +622,7 @@ export async function createPersonCheck(dealId: string, input: z.infer<typeof pe
   if (!found) throw Object.assign(new Error("Deal not found"), { status: 404 });
   const party = found.parties.find(p => p.companyId === input.companyId);
   if (!party) throw Object.assign(new Error("That company is not a party to this deal."), { status: 400 });
-  if (party.kind === "company" && !party.entityId) {
+  if (party.kind === "company" && !party.entityId && !party.trust) {
     throw Object.assign(new Error("Set the company that signs on the deal first: the people to check are read from its register."), { status: 409 });
   }
   const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");

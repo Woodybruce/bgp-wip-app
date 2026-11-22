@@ -163,7 +163,10 @@ export interface DealPartyView {
     // recordTrust: recorded as a trust or foundation (KYC4U in full, enhanced);
     // trustHint: its name, or the company that signs, reads like a trust (Jack,
     // 20 November 2026) or a foundation (foundationHint, 21 November 2026).
-    recordTrust?: boolean; trustHint?: boolean; foundationHint?: boolean };
+    recordTrust?: boolean; trustHint?: boolean; foundationHint?: boolean;
+    // charityHint: a UK party with no company record whose name reads like a
+    // charity or foundation: recorded, its register entry is read (21 November 2026).
+    charityHint?: boolean };
   // The company that signs, as set on the deal.
   company: DealPartyCompany | null;
   // What to offer when none is set: the company on the unit's lease (a

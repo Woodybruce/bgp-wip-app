@@ -15,6 +15,7 @@ import type { KycRedFlag, SetAsideFlag } from "./kyc-red-flags";
 import type { PartyDueDiligence } from "./aml-policy";
 import type { PartyPeople } from "./kyc-people";
 import { isOffshoreCountry, isRegisterDirector, personNamesMatch, type PrecheckCompany } from "./kyc-prechecks";
+import { CHARITY_ATTRIBUTION, type CharityFacts } from "./charity-register";
 import { sameCompany } from "./foreign-owners";
 import { solicitorCheckWords, type SolicitorCheck } from "./solicitor-aml";
 import { SRA_ATTRIBUTION_URL, SRA_ATTRIBUTION_WORDS } from "./sra-register";
@@ -64,6 +65,9 @@ export interface RiskAssessmentInput {
     trust?: boolean;
     person: { name: string } | null;
     company: PrecheckCompany | null;
+    // The Charity Commission's register and the party's own GLEIF record (21 November 2026).
+    charity?: CharityFacts | null;
+    gleif?: string | null;
     precheckRan: boolean;
     webRan: boolean;
     flags: KycRedFlag[];        // live: set aside ones are in `aside`
@@ -208,6 +212,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
         c.owners?.length ? `Owners on the register: ${c.owners.map(o => `${o.name} (${o.control})`).join("; ")}` : c.ownerNote ? `Owners: ${c.ownerNote}` : "",
         c.accounts ? `Latest accounts: ${c.accounts}` : "",
         ...(c.trace || []).filter(l => l.startsWith("The accounts")),
+        c.gleif || "",
         ...(c.warnings || []).map(w => `Warning: ${w}`),
         `Companies House register: ${c.registerUrl}`,
       ].filter(Boolean),
@@ -229,6 +234,25 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
         ],
       });
     }
+  }
+
+  // The charity the party is, or acts for as its trustee (21 November 2026).
+  const ch = p.charity && p.charity.state === "found" ? p.charity : null;
+  if (ch) {
+    structure.push({
+      name: `${ch.name} (charity ${ch.number})`, location: "UK (England and Wales)", countryRisk: "Standard", orgType: ch.kind ? ch.kind[0].toUpperCase() + ch.kind.slice(1) : "Registered charity",
+      evidence: [
+        ch.actsAsTrustee || "",
+        `${ch.status || "Registered"}${ch.registeredOn ? `, registered ${ch.registeredOn}` : ""}`,
+        ch.accounts ? `Latest accounts: ${ch.accounts}` : "",
+        ch.trustees.length ? `Trustees on the register: ${ch.trustees.map(t => `${t.name}${t.chair ? " (chair)" : ""}`).join(", ")}` : "The register lists no trustees",
+        ...ch.warnings.map(w => `Warning: ${w}`),
+        ch.registerUrl ? `Register of charities: ${ch.registerUrl}` : "",
+        CHARITY_ATTRIBUTION,
+      ].filter(Boolean),
+    });
+  } else if (!c && p.gleif) {
+    structure.push({ name: p.name, location: "Not on Companies House", countryRisk: "Standard", orgType: p.trust ? "Trust or foundation" : "Company", evidence: [p.gleif] });
   }
 
   // ── The beneficial owners and how each was verified.

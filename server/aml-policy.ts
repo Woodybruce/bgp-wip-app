@@ -6,6 +6,7 @@
 //   GET  /api/aml-policy/documents/:key          a document as a download (BGP staff)
 //   PUT  /api/aml-policy/officers                { nominatedId, deputyIds } (admins; deputyId from a cached screen)
 //   POST /api/aml-policy/officers/from-policy    sets the officers the policy names (admins)
+//   PUT  /api/aml-policy/in-house-edd            { on }: BGP does enhanced due diligence itself, not KYC4U (the officers)
 //
 // Outside /api/aml/, which the retired in-app AML answers 410, and on no
 // client gateway list: BGP staff signed in as themselves only.
@@ -81,9 +82,10 @@ router.get("/api/aml-policy", async (req: Request, res: Response) => {
   try {
     const me = await staffMe(req);
     if (!me) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
-    const { amlOfficers, amlActor } = await import("./aml-authority");
+    const { amlOfficers, amlActor, readInHouseEdd } = await import("./aml-authority");
     const officers = await amlOfficers();
     const actor = await amlActor(req);
+    const inHouseEdd = await readInHouseEdd();
     res.json({
       documents: AML_POLICY_DOCUMENTS.map(d => ({ key: d.key, title: d.title, issue: d.issue, date: d.date, url: `/api/aml-policy/documents/${d.key}`, onFile: !!documentPath(d.file) })),
       officers: {
@@ -103,6 +105,8 @@ router.get("/api/aml-policy", async (req: Request, res: Response) => {
       recheckYears: RECHECK_YEARS,
       lettingMonthlyRent: LETTING_AML_MONTHLY_RENT,
       fatfAsOf: FATF_LISTS_AS_OF,
+      // In-house enhanced due diligence (21 November 2026): the officers switch it.
+      inHouseEdd,
     });
   } catch (err: any) {
     console.error("[aml-policy] read failed:", err?.message);
@@ -204,6 +208,25 @@ router.post("/api/aml-policy/officers/from-policy", async (req: Request, res: Re
   } catch (err: any) {
     if (!err?.status) console.error("[aml-policy] officers not saved:", err?.message);
     res.status(err?.status || 500).json({ message: err?.status ? err.message : "The officers could not be saved." });
+  }
+});
+
+// ── In-house enhanced due diligence (the officers) ─────────────────────────
+// Woody, 21 November 2026: "I'm trying to set this up without using kyc4u".
+// Off by default: until an officer switches it on, an enhanced, trust or
+// owned-abroad party goes to KYC4U as before.
+router.put("/api/aml-policy/in-house-edd", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
+    const { amlActor, officerRefusal, writeInHouseEdd } = await import("./aml-authority");
+    const actor = await amlActor(req);
+    if (!actor.isMlro) return res.status(403).json({ message: officerRefusal(actor, "change how enhanced due diligence is done") });
+    if (typeof req.body?.on !== "boolean") return res.status(400).json({ message: "Say whether BGP does enhanced due diligence itself (on: true or false)." });
+    res.json({ ok: true, inHouseEdd: await writeInHouseEdd(req.body.on, { id: me.id, name: me.name }) });
+  } catch (err: any) {
+    console.error("[aml-policy] in-house setting not saved:", err?.message);
+    res.status(500).json({ message: "The setting could not be saved." });
   }
 });
 

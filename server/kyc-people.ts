@@ -69,7 +69,11 @@ export async function dealPeopleRequests(dealId: string, db: Db = pool): Promise
  */
 export async function partyPeopleFor(party: { companyId: string; entityId: string | null; kind: KycPartyKind; dealId?: string | null }, requests: PeopleRequest[]): Promise<PartyPeople> {
   let precheck: Parameters<typeof partyPeople>[0]["precheck"] = null;
-  if (party.kind === "company" && party.entityId) {
+  // A trust or foundation is checked on its own record, with no company that
+  // signs (21 November 2026): its checks are read too.
+  const ownRecord = party.kind === "company" && !party.entityId
+    && (await pool.query(`SELECT 1 FROM crm_companies WHERE id = $1 AND lower(COALESCE(aml_subject_type, '')) = 'trust'`, [party.companyId]).catch(() => ({ rows: [] as any[] }))).rows.length > 0;
+  if (party.kind === "company" && (party.entityId || ownRecord)) {
     const { latestPrecheck } = await import("./kyc-prechecks");
     precheck = (await latestPrecheck(party.companyId, party.entityId).catch(() => null))?.result || null;
   }

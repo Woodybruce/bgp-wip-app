@@ -19,9 +19,11 @@
 // the people at the top are added by a person, who then verifies them.
 
 import { nameTokens, ownerRegister, personNamesMatch, sameToken } from "./kyc-prechecks";
-import { PARENT_ROLE_WORDS, gleifTraceWords, parentLineWords, parentRolesWords } from "./foreign-owner-words";
+import {
+  COMPANIES_HOUSE_AUTHORITIES, GLEIF_UK_REGISTERS, PARENT_ROLE_WORDS, gleifPartyWords, gleifTraceWords, gleifUkRegister, parentLineWords, parentRolesWords,
+} from "./foreign-owner-words";
 
-export { PARENT_ROLE_WORDS, gleifTraceWords, parentLineWords, parentRolesWords };
+export { COMPANIES_HOUSE_AUTHORITIES, GLEIF_UK_REGISTERS, PARENT_ROLE_WORDS, gleifPartyWords, gleifTraceWords, gleifUkRegister, parentLineWords, parentRolesWords };
 
 // ── The parent note in the accounts ─────────────────────────────────────────
 
@@ -280,6 +282,9 @@ export interface GleifEntity {
   jurisdiction: string | null;
   country: string | null;
   registeredAs: string | null;
+  // The register it is on (GLEIF's registration authority: RA000585 is
+  // Companies House, RA000589 the Charity Commission). Since 21 November 2026.
+  registeredAt?: string | null;
   // ACTIVE or INACTIVE (the entity), ISSUED or LAPSED (its LEI).
   status: string | null;
   leiStatus: string | null;
@@ -301,6 +306,17 @@ export interface GleifTrace {
   error: string | null;
 }
 
+/** The party itself in GLEIF: a UK company by its Companies House number, else any company by its name (21 November 2026). */
+export interface PrecheckGleif {
+  by: "number" | "name";
+  name: string;
+  trace: GleifTrace;
+  checkedAt: string;
+  // The Companies House number the run read came from this record, found by
+  // the party's name: someone checks it is the same company.
+  foundNumber?: boolean;
+}
+
 export interface AbroadTrace {
   name: string;
   country: string;
@@ -308,7 +324,7 @@ export interface AbroadTrace {
   // register: a person with significant control of the party; chain: found
   // up the UK chain; accounts: named in the party's accounts; party: the
   // party itself, a company with no UK record (21 November 2026).
-  via: "register" | "chain" | "accounts" | "party";
+  via: "register" | "chain" | "accounts" | "party" | "gleif";
   foundAt: string | null;
   gleif: GleifTrace;
 }
@@ -333,6 +349,7 @@ export function gleifEntityFrom(record: any): GleifEntity | null {
     jurisdiction: e.jurisdiction ? String(e.jurisdiction).slice(0, 10) : null,
     country: e.legalAddress?.country ? String(e.legalAddress.country).slice(0, 4) : null,
     registeredAs: e.registeredAs ? String(e.registeredAs).slice(0, 60) : null,
+    registeredAt: e.registeredAt?.id ? String(e.registeredAt.id).slice(0, 12) : null,
     status: e.status ? String(e.status).slice(0, 20) : null,
     leiStatus: a.registration?.status ? String(a.registration.status).slice(0, 20) : null,
     lastUpdate: a.registration?.lastUpdateDate ? String(a.registration.lastUpdateDate).slice(0, 10) : null,
@@ -348,16 +365,19 @@ const sameCountry = (code: string | null, e: GleifEntity) => !code || (e.jurisdi
  * country, else by exactly its name there. Two records of that name are
  * "ambiguous" and none is picked.
  */
-export function pickGleifRecord(query: { name: string; country: string | null; registrationNumber: string | null }, records: GleifEntity[]): { pick: GleifEntity | null; status: "found" | "not_found" | "ambiguous"; candidates: number } {
+export function pickGleifRecord(query: { name: string; country: string | null; registrationNumber: string | null; authorities?: string[] | null }, records: GleifEntity[]): { pick: GleifEntity | null; status: "found" | "not_found" | "ambiguous"; candidates: number } {
   const code = countryCode(query.country);
   const reg = regKey(query.registrationNumber);
+  // With `authorities` the record must be on one of those registers: a UK
+  // company number is not the same number on the charity register.
+  const onRegister = (r: GleifEntity) => !query.authorities?.length || (!!r.registeredAt && query.authorities.includes(r.registeredAt));
   if (reg) {
-    const byNumber = records.filter(r => regKey(r.registeredAs) === reg && sameCountry(code, r));
+    const byNumber = records.filter(r => regKey(r.registeredAs) === reg && sameCountry(code, r) && onRegister(r));
     if (byNumber.length === 1) return { pick: byNumber[0], status: "found", candidates: 1 };
   }
   const key = nameKey(query.name);
   if (!key) return { pick: null, status: "not_found", candidates: 0 };
-  const byName = records.filter(r => nameKey(r.name) === key && sameCountry(code, r));
+  const byName = records.filter(r => nameKey(r.name) === key && sameCountry(code, r) && onRegister(r));
   // Of several, one still active with a live LEI is not enough to choose: the same name twice is two companies.
   if (byName.length === 1) return { pick: byName[0], status: "found", candidates: 1 };
   return { pick: null, status: byName.length > 1 ? "ambiguous" : "not_found", candidates: byName.length };

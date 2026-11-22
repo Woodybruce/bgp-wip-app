@@ -36,10 +36,11 @@ import crypto from "crypto";
 import { pool } from "./db";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, isDealPartyRole, partySubjectKind, type DealPartyRole } from "@shared/deal-parties";
 import {
-  KYC4U_RESULTS, KYC4U_RESULT_MAX_BYTES, KYC4U_RESULT_MAX_FILES, SIGN_OFF_NOTE_MIN,
-  isKyc4uResultKey, kyc4uResultDate, kycVerdict, sameLegalCompany, signOffDenial,
+  IN_HOUSE_EDD_NOTE_MIN, KYC4U_RESULTS, KYC4U_RESULT_MAX_BYTES, KYC4U_RESULT_MAX_FILES, SIGN_OFF_NOTE_MIN,
+  isKyc4uResultKey, kyc4uResultDate, kycVerdict, sameLegalCompany, signOffDenial, signOffEnhanced,
   type PartyKycState, type SignOffFacts,
 } from "@shared/party-kyc";
+import { isSanctionsFlag } from "@shared/kyc-red-flags";
 import {
   DUE_DILIGENCE_LABEL, NOT_REQUIRED_REASONS, RECHECK_YEARS, amlRegime, deputyNames, isDealAgent, notRequiredInput, officerWords,
   type AmlOfficers, type AmlRegime, type PartyDueDiligence,
@@ -185,15 +186,19 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
     sanctionsOnly: party.regime === "sanctions_only",
     ownersAbroad: precheck.ownersAbroad || [],
     reliance,
+    inHouseEdd: (await (await import("./aml-authority")).readInHouseEdd()).on,
+    sanctionsFlags: [...(flags?.parties?.[party.brandId] || []), ...(flags?.deal || [])].filter((f: any) => isSanctionsFlag(f)).length,
     level: flags?.levels?.[party.brandId] || null,
   };
 }
 
-/** For the deal's AML card: may the party be signed off now, and is a note needed. */
-export function signOffView(facts: Omit<SignOffFacts, "note">): { blocked: string | null; needsNote: boolean; outstanding: string[] } {
+/** For the deal's AML card: may the party be signed off now, and is a note needed. edd: enhanced due diligence by BGP, the officers' to sign off. */
+export function signOffView(facts: Omit<SignOffFacts, "note">): { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[] } {
+  const edd = signOffEnhanced(facts) && !!facts.inHouseEdd;
   return {
-    blocked: signOffDenial({ ...facts, note: "x".repeat(SIGN_OFF_NOTE_MIN) }),
-    needsNote: !facts.clientChecksFinished && !facts.sanctionsOnly && !facts.reliance,
+    blocked: signOffDenial({ ...facts, note: "x".repeat(Math.max(SIGN_OFF_NOTE_MIN, IN_HOUSE_EDD_NOTE_MIN)) }),
+    needsNote: edd || (!facts.clientChecksFinished && !facts.sanctionsOnly && !facts.reliance),
+    edd,
     outstanding: facts.sanctionsOnly || facts.reliance ? [] : facts.clientChecksOutstanding || [],
   };
 }
@@ -285,13 +290,19 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
     const facts = await signOffFacts(pool, party);
     const denial = signOffDenial({ ...facts, note });
     if (denial) return res.status(409).json({ message: denial, code: "SIGN_OFF_REFUSED" });
+    // Enhanced due diligence by BGP, with the officers' setting on (21
+    // November 2026): the Nominated Officer or a Deputy only, and a year.
+    const edd = signOffEnhanced(facts) && !!facts.inHouseEdd;
+    if (edd && me.as !== "officer") return res.status(403).json({ message: "Enhanced due diligence is signed off by the Nominated Officer or a Deputy.", code: "SIGN_OFF_REFUSED" });
     // A party with nothing that counts reads standard or simplified (an
-    // enhanced one is refused above); its approval lasts the policy's 3 years.
-    const level = facts.level && facts.level.level !== "enhanced" ? facts.level.level : "standard";
+    // enhanced one is refused above unless done in-house); its approval lasts
+    // the policy's 3 years, an enhanced one's 1.
+    const level = edd ? "enhanced" : facts.level && facts.level.level !== "enhanced" ? facts.level.level : "standard";
     const years = RECHECK_YEARS[level];
 
     const relied = [
       DUE_DILIGENCE_LABEL[level].toLowerCase(),
+      edd ? "done by BGP's officers, not KYC4U" : null,
       party.regime === "sanctions_only" ? "sanctions checks only (a letting under £10,000 a month)" : null,
       facts.precheck ? `BGP's checks before asking ${facts.precheck.ranAt.slice(0, 10)}` : null,
       party.regime === "sanctions_only" ? null : facts.reliance ? `${facts.reliance} (MLR 2017 reg 39)` : facts.clientChecksFinished ? "client checks finished" : `client checks not finished${facts.clientChecksOutstanding?.length ? ` (still to come: ${facts.clientChecksOutstanding.join("; ")})` : ""}`,

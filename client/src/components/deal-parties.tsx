@@ -111,14 +111,18 @@ function useMarkTrust(dealId: string, role: DealPartyRole) {
 // presses, never applied by itself.
 export function TrustLine({ dealId, party, compact }: { dealId: string; party: DealPartyView; compact?: boolean }) {
   const mark = useMarkTrust(dealId, party.role);
+  // The officers' setting (21 November 2026): enhanced due diligence by BGP, not KYC4U.
+  const { data: policy } = useQuery<{ inHouseEdd?: { on: boolean } }>({ queryKey: ["/api/aml-policy"], staleTime: 60_000 });
+  const inHouse = !!policy?.inHouseEdd?.on;
+  const who = inHouse ? "the Nominated Officer or a Deputy checks it in full" : "KYC4U checks it in full";
   if (party.brand.kind !== "company" && !party.brand.recordTrust) return null;
   if (party.brand.recordTrust) {
     if (compact) return null;
     return (
       <div className="rounded-md border border-red-300 bg-red-50 px-2.5 py-2 text-xs text-red-900 dark:bg-red-950/30 dark:text-red-200 space-y-1" data-testid={`deal-party-trust-${party.role}`}>
         {party.brand.foundationHint
-          ? <p><strong>{party.brand.name} is recorded as a foundation.</strong> Treated as a trust (MLR 2017 reg 6): enhanced due diligence, and KYC4U checks it in full (its charter and by-laws, its founder, the members of its board or council, any protector, who benefits from it and where its money came from). The Nominated Officer or a Deputy signs it off.</p>
-          : <p><strong>{party.brand.name} is recorded as a trust.</strong> Enhanced due diligence: KYC4U checks it in full (the trust deed, its Trust Registration Service entry, the settlor's source of wealth, ID for the settlor, trustees, any protector and beneficiaries entitled to 25% or more). The Nominated Officer or a Deputy signs it off. If a company is the trustee, set it below as the company that signs, so BGP's free checks run on it.</p>}
+          ? <p><strong>{party.brand.name} is recorded as a foundation.</strong> Treated as a trust (MLR 2017 reg 6): enhanced due diligence, and {who} (its charter and by-laws, its founder, the members of its board or council, any protector, who benefits from it and where its money came from). The Nominated Officer or a Deputy signs it off. A UK charity is read from the Charity Commission's register, with its trustees screened.</p>
+          : <p><strong>{party.brand.name} is recorded as a trust.</strong> Enhanced due diligence: {who} (the trust deed, its Trust Registration Service entry, the settlor's source of wealth, ID for the settlor, trustees, any protector and beneficiaries entitled to 25% or more). The Nominated Officer or a Deputy signs it off. A registered charity is read from the Charity Commission's register, with its trustees screened. If a company is the trustee, set it below as the company that signs, so BGP's free checks run on it.</p>}
         <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={mark.isPending} onClick={() => mark.mutate(false)} data-testid={`deal-party-unmark-trust-${party.role}`}>{party.brand.foundationHint ? "Not a foundation?" : "Not a trust?"} Undo</button>
       </div>
     );
@@ -136,10 +140,12 @@ export function TrustLine({ dealId, party, compact }: { dealId: string; party: D
     <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" data-testid={`deal-party-trust-hint-${party.role}`}>
       <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-600" />
       <span className="min-w-0 flex-1">{party.brand.foundationHint
-        ? <><strong>{party.brand.name}</strong> reads like a foundation. A foundation has no shareholders: its beneficial owners are the people who control it and the people it benefits, as for a trust (MLR 2017 reg 6). If it is one, record it, and it goes to KYC4U in full. A UK charity company called "… Foundation" is not one.</>
-        : <><strong>{party.brand.name}</strong> reads like a trust. A trust is higher risk under BGP's AML policy: if it is one, or holds the property as trustee, record it, and it goes to KYC4U in full.</>}</span>
+        ? <><strong>{party.brand.name}</strong> reads like a foundation. A foundation has no shareholders: its beneficial owners are the people who control it and the people it benefits, as for a trust (MLR 2017 reg 6). If it is one, record it{inHouse ? ": the officers check it in full" : ", and it goes to KYC4U in full"}. A UK charity company called "… Foundation" is not one.</>
+        : party.brand.charityHint && !/\btrust(ees)?\b|\bsettlement\b/i.test(party.brand.name)
+          ? <><strong>{party.brand.name}</strong> reads like a UK charity or foundation, with no company record. If it is a registered charitable trust or a CIO, record it: BGP's checks then read its entry on the Charity Commission's register and screen its trustees. A charitable company is set below as the company that signs instead.</>
+          : <><strong>{party.brand.name}</strong> reads like a trust. A trust is higher risk under BGP's AML policy: if it is one, or holds the property as trustee, record it{inHouse ? ": the officers check it in full" : ", and it goes to KYC4U in full"}. A registered charity's entry and trustees are read from the Charity Commission's register.</>}</span>
       <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-trust-${party.role}`}>
-        {mark.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}{party.brand.foundationHint ? "Record as a foundation" : "Record as a trust"}
+        {mark.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}{party.brand.foundationHint ? "Record as a foundation" : party.brand.charityHint && !/\btrust(ees)?\b|\bsettlement\b/i.test(party.brand.name) ? "Record as a charity or foundation" : "Record as a trust"}
       </Button>
     </div>
   );

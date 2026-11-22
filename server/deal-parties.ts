@@ -36,6 +36,7 @@ import {
   type DealPartyBilling, type DealPartyCompany, type DealPartyPayer, type DealPartyPerson, type DealPartyRole, type DealPartyView,
 } from "@shared/deal-parties";
 import { ownerRegister, personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
+import { readsLikeCharity } from "@shared/charity-register";
 import { billingState, billingWords, payerInput, payerRelationshipWords, PAYER_RELATIONSHIPS } from "@shared/deal-billing";
 import { kycPersonRoleWords } from "@shared/kyc-request";
 
@@ -152,6 +153,17 @@ const foundationHintFor = (brand: { name?: unknown; company_type?: unknown; ho_c
   return foundationMarkInName(companyName, { abroad }) || (!/^tenant/i.test(String(brand.company_type || "")) && foundationMarkInName(brand.name, { abroad }));
 };
 
+// A UK foundation or charity with no company record (a charitable trust or a
+// CIO: Woody, 21 November 2026, "foundations in the uk"): recorded as a trust
+// or foundation, BGP's checks read its entry and trustees on the Charity
+// Commission's register. A charitable company is set as the company that
+// signs instead, so this is only for a party with no Companies House number,
+// no company that signs, and a name that is not a company's.
+const charityHintFor = (brand: { name?: unknown; company_type?: unknown; ho_country?: unknown; companies_house_number?: unknown }, company: unknown): boolean =>
+  !company && !text(brand.companies_house_number) && !/^tenant/i.test(String(brand.company_type || ""))
+  && ownerRegister(typeof brand.ho_country === "string" ? brand.ho_country : null) !== "abroad"
+  && readsLikeCharity(brand.name) && !/\b(ltd|limited|plc|llp)\.?$/i.test(text(brand.name));
+
 export async function loadDealParties(db: Db, dealId: string): Promise<DealPartiesView | null> {
   const deal = await readDeal(db, dealId);
   if (!deal) return null;
@@ -207,8 +219,9 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
       brand: { id: String(brandRow.id), name: text(brandRow.name), companiesHouseNumber: text(brandRow.companies_house_number) || null, kind,
         recordIndividual: String(brandRow.aml_subject_type || "").toLowerCase() === "individual", privateMark: privateMarkInName(brandRow.name),
         recordTrust: isTrustRecord(brandRow.aml_subject_type),
-        trustHint: trustMarkInName(brandRow.name) || trustMarkInName(company?.name) || foundationHintFor(brandRow, company?.name),
-        foundationHint: foundationHintFor(brandRow, company?.name) },
+        trustHint: trustMarkInName(brandRow.name) || trustMarkInName(company?.name) || foundationHintFor(brandRow, company?.name) || charityHintFor(brandRow, company),
+        foundationHint: foundationHintFor(brandRow, company?.name),
+        charityHint: charityHintFor(brandRow, company) },
       company,
       offer: company ? null : companyOffer(filed, role === "tenant" ? lease : null),
       brandOwn,

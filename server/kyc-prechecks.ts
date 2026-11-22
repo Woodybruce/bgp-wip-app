@@ -32,13 +32,17 @@ import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
 import { abroadTraceLines,
   KYC_PRECHECK_FRESH_DAYS, KYC_PRECHECK_MAX_WEB_PEOPLE, KYC_PRECHECK_VERSION, PRECHECK_AUTO_RUNS_A_DAY, PRECHECK_RETRY_MINUTES,
-  askInputFrom, checkWebAnswer, chooseScreened, idvOf, isOffshoreCountry, ownerRegister, ownersAbroadOf, personNameOfRecord,
+  askInputFrom, checkWebAnswer, chooseScreened, gleifOwnerAbroad, gleifPartyLine, idvOf, isOffshoreCountry, isOverseasEntityNumber, ownerRegister, ownersAbroadOf, personNameOfRecord,
   isPrecheckResult, listingFromExemptions, nameTokens, ownerKind, personNamesMatch, precheckCardLines, precheckCompany, precheckSanctionsMatch,
   looksOverseasName, pickOverseasEntity, precheckUnfinished, sanctionsLine, sanctionsListCode, sanctionsListName, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput, type PrecheckCardLine, type PrecheckCompany, type PrecheckDocument, type PrecheckListing,
   type OwnerAbroad, type PrecheckOverseasEntity, type ProviderLine, type RegisterOwner, type SanctionsLine, type WebSearchLine,
 } from "@shared/kyc-prechecks";
-import type { PrecheckAbroad } from "@shared/foreign-owners";
+import { COMPANIES_HOUSE_AUTHORITIES, gleifUkRegister, type PrecheckAbroad, type PrecheckGleif } from "@shared/foreign-owners";
+import {
+  charityFacts, charityKindWords, chTypeMayBeCharity, readsLikeCharity, trusteePersonName, trusteesInOrder,
+  type CharityFacts, type PrecheckCharity,
+} from "@shared/charity-register";
 import type { KycPartyKind } from "@shared/kyc-request";
 import { partySubjectKind } from "@shared/deal-parties";
 
@@ -506,7 +510,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
 
 // owner: a person with significant control, of the company or of one up its
 // ownership chain (a beneficial owner, MLR 2017 reg 5).
-interface Subject { name: string; role: string; person: boolean; dobYear: number | null; context: string; dobMonth?: number | null; nationality?: string | null; owner?: boolean; abroad?: boolean }
+interface Subject { name: string; role: string; person: boolean; dobYear: number | null; context: string; dobMonth?: number | null; nationality?: string | null; owner?: boolean; abroad?: boolean; trustee?: boolean }
 
 // A UK nationality as Companies House words it, as the code Mesh takes (Woody,
 // 19 November 2026: send the birth year "and UK"). Any other nationality is
@@ -691,6 +695,13 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   const subjectKind: KycPartyKind = partySubjectKind(company.aml_subject_type, entity ? { kind: entity.entity_kind } : null);
   const contactName = await dealContactName(dealId, companyId);
   let number = clean(entity ? entity.companies_house_number : company.companies_house_number, 20);
+  // A party recorded as a trust or foundation with no company that signs is
+  // checked on its own record, with the Charity Commission's register when it
+  // is a charity (Woody, 21 November 2026: "We need screening on GLEIF and
+  // foundations in the uk").
+  const isTrust = !entity && String(company.aml_subject_type || "").trim().toLowerCase() === "trust";
+  const crmCountry = entity ? null : clean((await pool.query(`SELECT head_office_address->>'country' AS country FROM crm_companies WHERE id = $1`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.country, 60) || null;
+  const partyNames = [...new Set((entity ? [clean(entity.name, 160)] : [clean(company.uk_entity_name, 160), clean(company.name, 160)]).filter(Boolean))];
   let notAtCompaniesHouse: string | null = subjectKind === "individual" ? "A private individual: there is no company record to read." : null;
 
   // A brand with no number: the brand-page lookup finds it (its website,
@@ -711,9 +722,11 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     }
   }
   if (!number && subjectKind === "company") {
-    notAtCompaniesHouse ||= entity
-      ? `No Companies House number on ${clean(entity.name, 160)}. If it is registered outside the UK, the client is asked for an extract from its own register.`
-      : "No Companies House number on the record and none found for the name. If it is registered outside the UK, the client is asked for an extract from its own register.";
+    notAtCompaniesHouse = isTrust
+      ? "Recorded as a trust or foundation, with no Companies House record. A registered charity's entry on the Charity Commission's register is read instead; for any other trust the trust deed and the trustees come from the client."
+      : notAtCompaniesHouse || (entity
+        ? `No Companies House number on ${clean(entity.name, 160)}. If it is registered outside the UK, the client is asked for an extract from its own register.`
+        : "No Companies House number on the record and none found for the name. If it is registered outside the UK, the client is asked for an extract from its own register.");
   }
 
   // No UK number: the Register of Overseas Entities, searched by the party's
@@ -741,6 +754,35 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     }
   }
 
+  // Still no UK number: the party in GLEIF by its name, in any country (21
+  // November 2026: GLEIF for UK parties too). A UK company GLEIF has on
+  // Companies House is read there; a registered charity's number goes to the
+  // Charity Commission's register; a company abroad stays the abroad path below.
+  let partyGleif: PrecheckGleif | null = null;
+  let gleifCharityNumber: string | null = null;
+  let numberFromGleif = false;
+  if (!number && subjectKind === "company") {
+    try {
+      const { traceGleif } = await import("./gleif");
+      for (const name of partyNames) {
+        const trace = await withTimeout(traceGleif({ name, country: crmCountry, registrationNumber: null }), 60_000, "Looking the party up in GLEIF");
+        partyGleif = { by: "name", name, trace, checkedAt: new Date().toISOString() };
+        if (trace.status !== "not_found") break;
+      }
+      const found = partyGleif?.trace.status === "found" ? partyGleif.trace.entity : null;
+      const register = gleifUkRegister(found);
+      if (found && register?.register === "companies_house" && clean(found.registeredAs, 20)) {
+        number = clean(found.registeredAs, 20);
+        numberFromGleif = true;
+        notAtCompaniesHouse = null;
+      } else if (found && register?.register === "charity_commission" && clean(found.registeredAs, 20)) {
+        gleifCharityNumber = clean(found.registeredAs, 20);
+      }
+    } catch (e: any) {
+      errors.push(`GLEIF: ${words(e)}`);
+    }
+  }
+
   let companiesHouse: KycPrecheckResult["companiesHouse"] = null;
   let raw: { profile: any; officers: any[]; pscs: any[] } | null = null;
   if (number) {
@@ -760,6 +802,20 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   // register names no owner. Never holds the run up for long.
   let abroad: PrecheckAbroad | null = null;
   if (companiesHouse && subjectKind === "company") {
+    // The UK company in GLEIF by its Companies House number (21 November
+    // 2026): its LEI and its parents, each screened. Its top parent abroad
+    // joins the owners abroad when the register names no person who owns it.
+    if (!isOverseasEntityNumber(companiesHouse.number) && partyGleif?.trace.status !== "found") {
+      try {
+        const { traceGleif } = await import("./gleif");
+        const trace = await withTimeout(traceGleif({ name: companiesHouse.name, country: "GB", registrationNumber: companiesHouse.number, authorities: COMPANIES_HOUSE_AUTHORITIES }), 60_000, "Looking the company up in GLEIF");
+        partyGleif = { by: "number", name: companiesHouse.name, trace, checkedAt: new Date().toISOString() };
+      } catch (e: any) {
+        errors.push(`GLEIF: ${words(e)}`);
+      }
+    }
+    const gleifParent = gleifOwnerAbroad(companiesHouse, partyGleif);
+    if (gleifParent) companiesHouse.ownersAbroad = [...ownersAbroadOf(companiesHouse), gleifParent];
     try {
       const previous = (await latestPrecheck(companyId, entityId).catch(() => null))?.result?.abroad || null;
       const { traceAbroad } = await import("./kyc-abroad");
@@ -768,18 +824,54 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
       errors.push(`Owners abroad: ${words(e)}`);
     }
   } else if (!companiesHouse && !number && subjectKind === "company") {
-    // No UK record at all: the company itself looked up in GLEIF, only when it
-    // reads as registered abroad (a foreign legal form in its name, or a
-    // country outside the UK on the CRM). A UK company filed without its
-    // number is read as it always was (Woody, 21 November 2026: "Don't want to
-    // break what we've built").
+    // No UK record at all. A company that reads as registered abroad (a
+    // foreign legal form in its name, or a country outside the UK on the CRM)
+    // is followed as a company abroad, with the GLEIF look-up made above. A
+    // UK-looking name keeps that look-up as a line only (Woody, 21 November
+    // 2026: "Don't want to break what we've built").
+    const name = partyNames[0] || "";
+    if (name && (looksOverseasName(name) || ownerRegister(crmCountry) === "abroad")) {
+      const trace = partyGleif?.trace || { status: "skipped" as const, entity: null, parents: [], top: null, candidates: 0, error: "GLEIF was not read" };
+      const country = crmCountry || trace.entity?.jurisdiction || trace.entity?.country || "country not known";
+      abroad = { accounts: null, traced: [{ name: partyGleif?.name || name, country, registrationNumber: null, via: "party", foundAt: null, gleif: trace }], checkedAt: new Date().toISOString(), party: true };
+    }
+  }
+
+  // The Charity Commission's register (21 November 2026): for a party
+  // recorded as a trust or foundation, a registered charity GLEIF names, a UK
+  // company that may be a charitable company or a charity's trustee (a
+  // company limited by guarantee, a CIO, a name with "Trustees"), and a party
+  // with no UK record whose name reads as a charity.
+  let charity: PrecheckCharity | null = null;
+  const ukCompany = !!companiesHouse && !isOverseasEntityNumber(companiesHouse.number);
+  if (subjectKind === "company" && (isTrust || !!gleifCharityNumber
+    || (ukCompany && (chTypeMayBeCharity(companiesHouse!.type) || /\btrustees?\b/i.test(companiesHouse!.name)))
+    || (!companiesHouse && !abroad?.party && partyNames.some(readsLikeCharity)))) {
     try {
-      const name = entity ? clean(entity.name, 160) : clean(company.uk_entity_name, 160) || clean(company.name, 160);
-      const country = entity ? null : clean((await pool.query(`SELECT head_office_address->>'country' AS country FROM crm_companies WHERE id = $1`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.country, 60) || null;
-      const { traceAbroadParty } = await import("./kyc-abroad");
-      if (name && (looksOverseasName(name) || ownerRegister(country) === "abroad")) abroad = await withTimeout(traceAbroadParty({ name, country }), 60_000, "Looking the company up in GLEIF");
+      const { lookupCharities } = await import("./charity-register");
+      const names = [...new Set([...(companiesHouse ? [companiesHouse.name] : []), ...partyNames])];
+      [charity] = await withTimeout(lookupCharities([{ number: gleifCharityNumber, companyNumber: ukCompany ? companiesHouse!.number : null, names, from: gleifCharityNumber ? "from GLEIF" : null }]), 180_000, "Reading the Charity Commission's register");
     } catch (e: any) {
-      errors.push(`GLEIF: ${words(e)}`);
+      errors.push(`The Charity Commission's register: ${words(e)}`);
+    }
+    // A charitable company the party's record had no number for: its
+    // Companies House record, by the number the register gives.
+    const registerNumber = charity?.status === "found" && charity.via !== "trustee" ? charity.charity?.companyNumber || null : null;
+    if (!companiesHouse && registerNumber) {
+      try {
+        const read = await withChPatience(CH_PATIENCE_MS, () => readCompaniesHouse(registerNumber, companyId, entityId, dealId, errors));
+        companiesHouse = read.data;
+        raw = read.raw;
+        number = registerNumber;
+        notAtCompaniesHouse = null;
+      } catch (e: any) {
+        errors.push(`Companies House: ${words(e)}`);
+      }
+    }
+    if (!companiesHouse && charity?.status === "found" && charity.charity) {
+      const c = charity.charity;
+      const kind = charityKindWords(c);
+      notAtCompaniesHouse = `${c.name} is a registered charity (${c.number})${kind ? `, ${kind}` : ""}, with no Companies House record: its entry on the Charity Commission's register is read instead.`;
     }
   }
 
@@ -799,6 +891,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     if (!seen.nationality && s.nationality) seen.nationality = s.nationality;
     if (s.owner) seen.owner = true;
     if (s.abroad) seen.abroad = true;
+    if (s.trustee) seen.trustee = true;
     if (s.context.length > seen.context.length) seen.context = s.context;
   };
   const where = companiesHouse ? `${companiesHouse.name} (Companies House ${companiesHouse.number})` : partyName;
@@ -838,6 +931,27 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   for (const t of abroad?.traced || []) for (const g of t.gleif.parents) {
     add({ name: g.name, role: `parent of ${t.name} (GLEIF)`, person: false, abroad: true, dobYear: null, context: `company in ${g.jurisdiction || "another country"}, the parent of ${t.name} in GLEIF, in the ownership chain of ${where}` });
   }
+  // The party's own parents in GLEIF (21 November 2026): a UK parent is
+  // screened against the sanctions lists, one abroad in full.
+  if (!abroad?.party) {
+    for (const g of partyGleif?.trace.status === "found" ? partyGleif.trace.parents : []) {
+      const parentAbroad = !gleifUkRegister(g) && ownerRegister(g.jurisdiction || g.country) === "abroad";
+      add({ name: g.name, role: "parent in GLEIF", person: false, abroad: parentAbroad, dobYear: null,
+        context: `${parentAbroad ? `company registered in ${g.jurisdiction || "another country"}` : "UK company"}, a parent of ${where} in GLEIF` });
+    }
+  }
+  // The charity the party is, or acts for as its trustee, and the trustees the
+  // register names: they control it (21 November 2026).
+  const cc = charity?.status === "found" ? charity.charity : null;
+  if (cc) {
+    const of = `${cc.name} (registered charity ${cc.number} in England and Wales)`;
+    if (charity!.via === "trustee") add({ name: cc.name, role: "the charity it acts for", person: false, dobYear: null, context: `${of}, which ${where} acts for as its trustee` });
+    else if (!companiesHouse) add({ name: cc.name, role: "the company", person: false, dobYear: null, context: `${of}, on the Charity Commission's register` });
+    for (const t of trusteesInOrder(charity!.trustees)) {
+      if (t.organisation) add({ name: t.name, role: "corporate trustee", person: false, dobYear: null, context: `corporate trustee of ${of}` });
+      else add({ name: trusteePersonName(t.name), role: t.chair ? "trustee (chair)" : "trustee", person: true, trustee: true, dobYear: null, context: `trustee${t.chair ? " and chair" : ""} of ${of}, on the Charity Commission's register` });
+    }
+  }
   // The people recorded behind a company abroad are beneficial owners.
   if (subjectKind === "company") {
     const { abroadPeopleFor } = await import("./kyc-abroad");
@@ -872,6 +986,9 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     screened: { basis: screen.basis, people: screen.full.filter(s => s.person).map(s => s.name), sanctionsOnly: screen.sanctionsOnly.map(s => s.name) },
     ...(overseasEntity ? { overseasEntity } : {}),
     ...(abroad ? { abroad } : {}),
+    // The party's own GLEIF record; a company abroad's is in its trace instead.
+    ...(partyGleif && !abroad?.party ? { gleif: { ...partyGleif, ...(numberFromGleif ? { foundNumber: true } : {}) } } : {}),
+    ...(charity ? { charity } : {}),
     errors,
   };
 
@@ -898,6 +1015,8 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     companiesHouse ? `Companies House ${companiesHouse.number} read, ${companiesHouse.documents.filter(d => d.kycDocumentId).length} documents filed` : notAtCompaniesHouse,
     sanctions.ran ? `${sanctions.lines.length} names screened, ${sanctions.lines.filter(l => l.outcome === "possible").length} possible matches` : "sanctions not screened",
     web.ran ? `${web.lines.filter(l => l.ran).length} web searches, ${web.lines.reduce((n, l) => n + l.findings.length, 0)} findings` : "no web search",
+    charity?.status === "found" && charity.charity ? `Charity Commission: ${charity.charity.name} (${charity.charity.number}), ${charity.trustees.length} trustees` : charity ? `Charity Commission: ${charity.status.replace(/_/g, " ")}` : null,
+    partyGleif?.trace.status === "found" && partyGleif.trace.entity ? `GLEIF: LEI ${partyGleif.trace.entity.lei}, ${partyGleif.trace.parents.length} parents` : null,
   ].filter(Boolean).join("; ");
   await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'precheck', $2, $3, $4, $5)`,
     [companyId, opts.userId || "ChatBGP", `BGP's checks before asking${entity ? ` on ${partyName}` : ""}: ${summary}`, entityId ? "trading_entity" : null, entityId]).catch(() => {});
@@ -930,6 +1049,10 @@ export interface PartyPrecheckView {
   company: PrecheckCompany | null;
   // What the app traced past Companies House, in lines (21 November 2026).
   trace?: string[];
+  // The Charity Commission's register, when it was read, and the party's own
+  // GLEIF record in one line (21 November 2026).
+  charity?: CharityFacts | null;
+  gleif?: string | null;
   // Why the last check did not finish (Companies House busy), and when a
   // view may run it again.
   unfinished: string | null;
@@ -970,6 +1093,8 @@ export async function dealPrechecks(dealId: string, parties: Array<{ companyId: 
       company: precheckCompany(stored?.result || null),
       // What the app traced past Companies House, also for a company with no UK record.
       trace: abroadTraceLines(stored?.result || null),
+      charity: charityFacts(stored?.result.charity),
+      gleif: gleifPartyLine(stored?.result || null),
       unfinished,
       retryAt,
     };
@@ -1002,10 +1127,11 @@ router.post("/api/kyc/deal/:id/prechecks", async (req: Request, res: Response) =
     const wanted = typeof req.body?.companyId === "string" ? [req.body.companyId] : parties;
     if (wanted.some(id => !parties.includes(id))) return res.status(400).json({ message: "That company is not a party to this deal" });
     const signs = await (await import("./deal-parties")).dealPartyCompanies(pool, d.id);
-    const individuals = new Set((await pool.query(`SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) = 'individual'`, [wanted])).rows.map((r: any) => String(r.id)));
+    // A private individual, or a trust or foundation (21 November 2026), is checked on its own record.
+    const signsItself = new Set((await pool.query(`SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust')`, [wanted])).rows.map((r: any) => String(r.id)));
     const started: Record<string, PrecheckStart> = {};
     // A company party with no company that signs is not checked: set it first.
-    for (const id of wanted) started[id] = !signs[id] && !individuals.has(id) ? "needs_company" : await startPrecheck(id, { dealId: d.id, userId, force: true, entityId: signs[id] || null });
+    for (const id of wanted) started[id] = !signs[id] && !signsItself.has(id) ? "needs_company" : await startPrecheck(id, { dealId: d.id, userId, force: true, entityId: signs[id] || null });
     res.json({ started });
   } catch (err: any) {
     res.status(500).json({ message: err?.message || "Could not start the checks" });

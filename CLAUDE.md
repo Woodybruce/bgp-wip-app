@@ -6949,11 +6949,12 @@ Do not re-litigate. Tests: `server/aml-reliance.test.ts`,
   the Register of Overseas Entities) that reads as registered abroad (a
   foreign legal form in its name, `looksOverseasName`, or a country outside
   the UK on the CRM): BGP's checks before asking look it up in GLEIF by its
-  name, narrowed by that country (`traceAbroadParty` in
-  `server/kyc-abroad.ts`), and follow its parents as for a company abroad. A
-  UK company filed without its number is read as it always was (Woody,
-  21 November 2026: "This is just international? Don't want to break what
-  we've built"). The run stores it as `result.abroad` with `party:
+  name, narrowed by that country, and follow its parents as for a company
+  abroad. A UK-looking company with no number is not followed as one abroad
+  (Woody, 21 November 2026: "This is just international? Don't want to
+  break what we've built"); since later that evening GLEIF is asked about it
+  too, as a line, and a UK match is read at Companies House (next section).
+  The run stores it as `result.abroad` with `party:
   true`, and it shows in the company facts and KYC4U's note. Its people to
   check read `abroad_company`: the people behind it are recorded under Owners
   abroad. It is screened as a company. The rule that sends a party owned from
@@ -7042,6 +7043,115 @@ Do not re-litigate. Tests: `server/aml-reliance.test.ts`,
 - Not built: stopped deals as a list on the AML dashboard (a stopped deal
   that is withdrawn leaves it); ChatBGP saying a deal is stopped; reliance
   while the client checks are switched off.
+
+## UK screening without KYC4U: GLEIF, the charity register, in-house enhanced due diligence (Woody, 2026-11-21)
+
+Woody: "We need screening on GLEIF and foundations in the uk as I'm trying
+to set this up without using kyc4u". Do not re-litigate. Rules:
+`shared/charity-register.ts`, `gleifOwnerAbroad` and `gleifPartyLine` in
+`shared/kyc-prechecks.ts`, `GLEIF_UK_REGISTERS` in
+`shared/foreign-owner-words.ts`, `signOffEnhanced` and `IN_HOUSE_EDD_NOTE_MIN`
+in `shared/party-kyc.ts`; the register: `server/charity-register.ts`; the run:
+`runPrecheck` in `server/kyc-prechecks.ts`. Tests: `server/uk-screening.test.ts`
+(in `npm test`), `qa/regression/uk-screening-guards.test.mjs`.
+
+- **GLEIF for UK parties.** GLEIF records each entity's register
+  (`GleifEntity.registeredAt`: RA000585/6/7 are Companies House, RA000589 the
+  Charity Commission, RA000590 the Scottish Charity Register; read from
+  GLEIF's list that day). A UK company is looked up by its Companies House
+  number on Companies House's registers only (`authorities`, so a charity
+  with the same number is never taken), and its LEI and parents are kept on
+  the run (`result.gleif`) and shown as a GLEIF line in the company facts,
+  the card, KYC4U's note and the risk assessment, apart from the Owners
+  abroad trace (`gleifPartyLine`), so a UK company opens no Owners abroad
+  section. Each GLEIF parent is screened: a UK one against the sanctions
+  lists, one abroad in full. The top parent abroad joins the owners abroad
+  only when the register names no person who owns the company and no owner
+  abroad is known (`gleifOwnerAbroad`, `via: "gleif"`: the accounts' rule).
+  A company with no UK number and none on the Register of Overseas Entities
+  is looked up by name in any country: a Companies House match is read there
+  (`gleif.foundNumber`, worded "check it is the same company"), a
+  Charity Commission match goes to the register by its number, and a match
+  abroad is the abroad path only when the name reads as foreign or the CRM
+  country is abroad (else it is a line).
+- **The Charity Commission's register** (England and Wales). Its API needs a
+  subscription key; its public download does not and holds the trustees: three
+  zipped JSON files (charity, trustee, other names; about 86 MB) published
+  daily, one object a line. `server/charity-register.ts` downloads them on the
+  first look-up of a day (kept in the machine's temp directory; a copy up to
+  a week old is used if the day's download fails; ten minutes' pause after a
+  failure), never at boot or on a timer, and reads them as streams (about ten
+  seconds a run, little memory). `CHARITY_REGISTER=off` stops it,
+  `CHARITY_REGISTER_URL` and `CHARITY_REGISTER_DIR` move it. It never throws.
+  - **Which charity** (`pickCharity`): its charity number, else its Companies
+    House number (a charitable company), else exactly its name or a working
+    or previous name (accents, case, punctuation and a leading "The" aside);
+    a registered charity wins over a removed one; two of a name are
+    ambiguous and none is taken. **A corporate trustee**: a company the
+    register lists as a charity's trustee (THE WELLCOME TRUST LIMITED for the
+    WELLCOME TRUST, 210183) is read as acting for that charity (`via:
+    "trustee"`); trustee of several, the charity number is needed.
+  - **When it is read**: a party recorded as a trust or foundation; a
+    charity GLEIF names; a UK company that may be a charitable company or a
+    trustee (a company limited by guarantee, a CIO type, a name with
+    "Trustees"); a party with no UK record whose name reads as a charity
+    (`readsLikeCharity`). A charitable company found by name gets its
+    Companies House record read by the register's number.
+  - **Screened**: the charity (and the one it acts for) in full; its
+    trustees (`trusteePersonName` drops titles and letters such as OBE, never
+    a surname) as its controllers, the chair first, in full up to the web
+    search's ten (basis `trustees`: MLR 2017 reg 6 for a charitable trust,
+    reg 5 and 28(6) for a charitable company or CIO); an organisation trustee
+    in full. No date of birth is published, so ComplyAdvantage keeps its
+    bars for them.
+  - **Red flags** (`charity_status`): removed from the register, insolvent,
+    in administration, a dissolved CIO. Accounts or returns overdue and
+    "double default" are warnings.
+  - **Shown**: the Company section's charity block (number, kind, status,
+    accounts, address, trustees, other names, the register's link by its
+    organisation number, the attribution line), a Charity Commission card
+    line, KYC4U's note, the risk assessment's structure; People to check
+    lists the trustees with their sanctions result (basis `charity`; a
+    director who is a trustee once), and only the person dealing with us is
+    asked for ID.
+  - **A trust or foundation needs no company that signs**: its own record is
+    checked (the deal's AML status, the AML file and Run again treat
+    `aml_subject_type = 'trust'` as they treat a private individual), and its
+    client checks can be sent. The party box suggests **Record as a charity
+    or foundation** for a UK party with no Companies House number, no
+    company that signs and a charity-like name (`charityHint`), never
+    applied by itself.
+- **In-house enhanced due diligence** (the officers' setting,
+  `system_settings.aml_in_house_edd`, OFF by default; `PUT
+  /api/aml-policy/in-house-edd { on }`, the Nominated Officer or a Deputy,
+  admins while none is set; **Do it in-house** on the AML policy panel, Deals
+  → AML). While on, an enhanced party (a red flag or factor, the party's or
+  the deal's, a higher-risk file, a trust or foundation, owners abroad) is
+  not sent to KYC4U: its client checks run as any party's, the Next line
+  ends at the officers, the red Not yet with KYC4U box and the dashboard's
+  mark are not shown, and `signOffDenial` lets the Nominated Officer or a
+  Deputy sign it off with a note of at least 40 characters saying what was
+  checked and why the risk is acceptable (an agent is refused, 403). A
+  possible sanctions match (`isSanctionsFlag`) must be resolved first. The
+  approval lasts a year (enhanced), and the sign-off line says "enhanced due
+  diligence; done by BGP's officers, not KYC4U". Tried end to end on a local
+  copy on 22 November 2026: a deal whose landlord was recorded as a
+  foundation ran the real checks (GLEIF found the Esmée Fairbairn
+  Foundation's LEI on the Charity Commission's register; the register gave
+  its 11 trustees; all 12 names screened clear), went to KYC4U with the
+  setting off, and with it on was signed off by the Nominated Officer for a
+  year. A request already submitted to KYC4U
+  still waits for its result. KYC4U stays available for any party. Switched
+  off, everything is as it was (Jack, 20 November: trusts to KYC4U in full;
+  Woody, 21 November: foreign companies to KYC4U).
+- Not built: Scotland's and Northern Ireland's charity registers (a Scottish
+  charity GLEIF names is a line only); a trust's own documents in the client
+  checks (the trust deed, a Trust Registration Service excerpt); reading a
+  charity's governing document. Not run against GLEIF's live API or the
+  register's live download from the app (tried on a build machine against
+  the real download of 21 November 2026: Esmée Fairbairn Foundation by name
+  with 11 trustees, the Wellcome Trust by number and through its corporate
+  trustee, in about 11 seconds).
 
 ## Document design preferences (the "house style" pattern)
 

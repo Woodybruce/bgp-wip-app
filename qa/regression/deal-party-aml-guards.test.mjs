@@ -52,7 +52,7 @@ test('sign-off and KYC4U\'s result are the MLRO\'s, BGP staff signed in as thems
   const allowed = index.slice(index.indexOf('const CLIENT_ALLOWED_API = ['), index.indexOf('const CLIENT_ALLOWED_WRITES = ['));
   assert.doesNotMatch(allowed, /"\/api\/deals/);
   // The card is told who may decide, for BGP staff only.
-  assert.match(compliance, /let decisions[\s\S]{0,200}if \(staff\)/);
+  assert.match(compliance, /let decisions[\s\S]{0,320}if \(staff\)/);
 });
 
 test('a result about another legal company is filed on that company, never the brand', () => {

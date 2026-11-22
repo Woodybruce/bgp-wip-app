@@ -24,6 +24,9 @@ interface PolicyFeed {
   recheckYears: { simplified: number; standard: number; enhanced: number };
   lettingMonthlyRent: number;
   fatfAsOf: string;
+  isOfficer?: boolean;
+  // In-house enhanced due diligence (21 November 2026): the officers switch it.
+  inHouseEdd?: { on: boolean; by: string | null; at: string | null };
 }
 
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "").replace(/^\{"message":"(.*)"(,.*)?\}$/, "$1");
@@ -112,6 +115,57 @@ function OfficersDialog({ feed, onClose }: { feed: PolicyFeed; onClose: () => vo
   );
 }
 
+// Who does enhanced due diligence (Woody, 21 November 2026: "I'm trying to set
+// this up without using kyc4u"): KYC4U, or BGP's own officers. Off by default.
+function InHouseEddLine({ feed }: { feed: PolicyFeed }) {
+  const { toast } = useToast();
+  const [asking, setAsking] = useState(false);
+  const on = !!feed.inHouseEdd?.on;
+  const save = useMutation({
+    mutationFn: async (next: boolean) => (await apiRequest("PUT", "/api/aml-policy/in-house-edd", { on: next })).json(),
+    onSuccess: (_r: any, next: boolean) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/aml-policy"] });
+      queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0] || "").startsWith("/api/kyc/deal/") || String(q.queryKey[0] || "").startsWith("/api/aml-dashboard") });
+      toast({ title: next ? "BGP does enhanced due diligence" : "Enhanced due diligence goes to KYC4U", description: next ? "The officers sign off enhanced parties themselves, with a note of what was checked." : "Enhanced, trust and owned-abroad parties go to KYC4U again." });
+      setAsking(false);
+    },
+    onError: (e: any) => toast({ title: "Not changed", description: plain(e), variant: "destructive" }),
+  });
+  const when = feed.inHouseEdd?.at ? new Date(feed.inHouseEdd.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" data-testid="aml-in-house-edd">
+      <span className="text-muted-foreground">Enhanced due diligence:</span>
+      <span className="text-foreground font-medium" data-testid="aml-in-house-edd-state">{on ? "done by BGP's officers" : "sent to KYC4U"}</span>
+      {feed.inHouseEdd?.by && <span className="text-muted-foreground">(set by {feed.inHouseEdd.by}{when ? `, ${when}` : ""})</span>}
+      {feed.isOfficer && (
+        <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setAsking(true)} data-testid="aml-in-house-edd-change">
+          {on ? "Send it to KYC4U again" : "Do it in-house"}
+        </Button>
+      )}
+      {asking && (
+        <Dialog open onOpenChange={o => { if (!o) setAsking(false); }}>
+          <DialogContent className="max-w-md" data-testid="aml-in-house-edd-dialog">
+            <DialogHeader>
+              <DialogTitle>{on ? "Send enhanced due diligence to KYC4U again?" : "Do enhanced due diligence in-house?"}</DialogTitle>
+              <DialogDescription>
+                {on
+                  ? "Enhanced, trust and owned-abroad parties go back to KYC4U: Request KYC4U check, then the Nominated Officer or a Deputy adds KYC4U's result."
+                  : "An enhanced party (a red flag, a higher-risk factor, a trust or foundation, or owners abroad) no longer has to go to KYC4U. The Nominated Officer or a Deputy reviews the checks and documents and signs it off, with a note of what was checked and why the risk is acceptable; agents cannot. A possible sanctions match is still resolved first. The approval lasts a year. KYC4U stays available for any party."}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setAsking(false)}>Cancel</Button>
+              <Button type="button" disabled={save.isPending} onClick={() => save.mutate(!on)} data-testid="aml-in-house-edd-confirm">
+                {save.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}{on ? "Send to KYC4U" : "Do it in-house"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+
 export function AmlPolicyPanel() {
   const { toast } = useToast();
   const { data: feed } = useQuery<PolicyFeed>({ queryKey: ["/api/aml-policy"] });
@@ -159,6 +213,7 @@ export function AmlPolicyPanel() {
           ))}
         </div>
       </div>
+      <InHouseEddLine feed={feed} />
       <button type="button" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" onClick={() => setOpen(o => !o)} data-testid="aml-policy-how">
         {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}How the app applies it
       </button>
@@ -166,7 +221,7 @@ export function AmlPolicyPanel() {
         <ul className="grid gap-x-6 gap-y-1.5 text-xs text-muted-foreground md:grid-cols-2 list-disc pl-4" data-testid="aml-policy-rules">
           <li><span className="text-foreground">Simplified</span>: a company listed on a regulated market, an FCA-authorised fund or a UK public body. No beneficial owners to verify.</li>
           <li><span className="text-foreground">Standard</span>: no higher-risk factor. The beneficial owners are identified and verified. Signed off by an agent on the deal, the Nominated Officer or the Deputy.</li>
-          <li><span className="text-foreground">Enhanced</span>: a red flag or a higher-risk factor in the policy (a public role, sanctions, adverse media, a trust, an unregulated pooled fund, a high-risk or golden-visa country, a higher-risk sector, a super-prime sale). It goes to KYC4U, and the Nominated Officer or the Deputy adds KYC4U's result.</li>
+          <li><span className="text-foreground">Enhanced</span>: a red flag or a higher-risk factor in the policy (a public role, sanctions, adverse media, a trust, an unregulated pooled fund, a high-risk or golden-visa country, a higher-risk sector, a super-prime sale). {feed.inHouseEdd?.on ? "BGP's officers do it: the Nominated Officer or a Deputy signs it off with a note of what was checked (KYC4U stays available)." : "It goes to KYC4U, and the Nominated Officer or the Deputy adds KYC4U's result."}</li>
           <li>Approvals last {feed.recheckYears.standard} years for simplified and standard, and {feed.recheckYears.enhanced} year for enhanced.</li>
           <li>Lettings under £{feed.lettingMonthlyRent.toLocaleString("en-GB")} a month need sanctions checks only: the owners screened, no client documents.</li>
           <li>A landlord or seller is checked before marketing, a tenant or buyer from Heads of Terms, and all of them before exchange or completion. A deal that exchanges or completes with checks outstanding still moves, and the officers are emailed.</li>

@@ -26,6 +26,7 @@ import { sameCompany } from "./foreign-owners";
 import { relianceWords, type PartyReliance } from "./aml-reliance";
 import type { KycDocKey, KycIdState, KycPartyKind, KycPersonRole } from "./kyc-request";
 import { checkAddressProof, type AddressProofAcceptance, type AddressProofReading } from "./kyc-address-proof";
+import { trusteePersonName, trusteesInOrder } from "./charity-register";
 
 export { personDisplayName };
 
@@ -108,7 +109,7 @@ export interface PartyPeopleInput {
   publicFigures?: PublicFigureCheck[];
   // The party's latest checks before asking (the register read, the sanctions
   // screen, and the trace past Companies House).
-  precheck: (Pick<KycPrecheckResult, "companiesHouse" | "sanctions"> & Partial<Pick<KycPrecheckResult, "abroad">>) | null;
+  precheck: (Pick<KycPrecheckResult, "companiesHouse" | "sanctions"> & Partial<Pick<KycPrecheckResult, "abroad" | "charity">>) | null;
   // The people BGP recorded behind a company abroad that owns the party
   // (21 November 2026: server/kyc-abroad.ts). Each is an owner to check.
   abroadPeople?: Array<{ name: string; ownerName: string; ownerCountry: string | null; detail: string; dob: { month: number | null; year: number | null } | null }>;
@@ -166,13 +167,18 @@ export interface KycPartyPerson {
   canSend: boolean;
 }
 
-export type PartyPeopleBasis = "owners" | "listed" | "no_owners" | "not_read" | "individual" | "owners_abroad" | "abroad_company";
+export type PartyPeopleBasis = "owners" | "listed" | "no_owners" | "not_read" | "individual" | "owners_abroad" | "abroad_company" | "charity";
 
 export interface PartyPeople {
   basis: PartyPeopleBasis;
   people: KycPartyPerson[];
   // Directors who are neither owners nor the person acting: sanctions only.
   directors: Array<{ name: string; sanctions: PersonSanctions }>;
+  // A registered charity's trustees, as the Charity Commission's register
+  // names them: they control it and are screened, not asked for ID (21
+  // November 2026). charity: the charity they are trustees of.
+  trustees?: Array<{ name: string; chair: boolean; sanctions: PersonSanctions }>;
+  charity?: { name: string; number: string; actsAsTrustee: boolean } | null;
   // Files sent on the old single owners' step, which do not say whose they are.
   loose: Array<{ ref: string; files: number; names: string[] }>;
   // "Huseyn Mirhadiyev: identity check and proof of address", per person.
@@ -193,6 +199,7 @@ export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
   individual: "Private individuals: each person named on the deal does an identity check and sends a proof of address. When more than one person is buying, selling or renting together, add each of them.",
   abroad_company: "Registered outside the UK, so Companies House has no record of it. The client is asked for an extract from its own register and the people who own or control it. The app looks it up in GLEIF (under Owners abroad), and each person found is recorded there and does their own check.",
   owners_abroad: "A company registered outside the UK owns or controls it, so Companies House cannot show the people behind it. It goes to KYC4U to find them. The app traces what it can (the accounts and GLEIF, under Owners abroad), the client can be asked for a structure chart, and each person found is recorded there and does their own check.",
+  charity: "A registered charity: the Charity Commission's register names its trustees, who control it. Each is screened (sanctions, public roles and adverse media) and listed here. The person dealing with us does their own check and confirms their authority to act for the charity.",
 };
 
 const samePerson = (a: string | null | undefined, b: string | null | undefined): boolean => !!a && !!b && personNamesMatch(a, b);
@@ -331,8 +338,14 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     };
   });
 
+  // A registered charity's trustees (the Charity Commission's register): a
+  // director who is also a trustee is listed once, as a trustee.
+  const pc = input.kind !== "individual" && input.precheck?.charity?.status === "found" ? input.precheck.charity : null;
+  const trustees = pc ? trusteesInOrder(pc.trustees).filter(t => !t.organisation).map(t => trusteePersonName(t.name))
+    .filter((name, i, all) => all.findIndex(n => samePerson(n, name)) === i && !drafts.some(d => samePerson(d.name, name))) : [];
+  const trusteeChair = new Set(pc ? pc.trustees.filter(t => t.chair).map(t => trusteePersonName(t.name)) : []);
   const directors = officers
-    .filter(o => !drafts.some(d => samePerson(d.name, o.name)))
+    .filter(o => !drafts.some(d => samePerson(d.name, o.name)) && !trustees.some(t => samePerson(t, o.name)))
     .map(o => ({ name: personDisplayName(o.name), sanctions: sanctionsFor(o.name) }));
   const loose = party
     .filter(r => !r.person)
@@ -343,9 +356,15 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
   // behind a parent GLEIF found above it (21 November 2026).
   const above = (name: string): string[] => [name, ...((input.precheck?.abroad?.traced || []).filter(t => sameCompany(t.name, name)).flatMap(t => t.gleif.parents.map(g => g.name)))];
   const unanswered = abroad.filter(a => !(input.abroadPeople || []).some(p => above(a.name).some(n => sameCompany(n, p.ownerName))));
-  const basis: PartyPeopleBasis = input.kind === "individual" ? "individual" : !ch ? (input.precheck?.abroad?.party ? "abroad_company" : "not_read") : ch.listing ? "listed" : abroad.length ? "owners_abroad" : people.some(p => p.roles.includes("owner")) ? "owners" : "no_owners";
+  const basis: PartyPeopleBasis = input.kind === "individual" ? "individual"
+    : !ch ? (input.precheck?.abroad?.party ? "abroad_company" : pc ? "charity" : "not_read")
+    : ch.listing ? "listed" : abroad.length ? "owners_abroad" : people.some(p => p.roles.includes("owner")) ? "owners" : pc ? "charity" : "no_owners";
   return {
     basis, people, directors, loose,
+    ...(pc && pc.charity ? {
+      trustees: trustees.map(name => ({ name: personDisplayName(name), chair: [...trusteeChair].some(c => samePerson(c, name)), sanctions: sanctionsFor(name) })),
+      charity: { name: pc.charity.name, number: pc.charity.number, actsAsTrustee: pc.via === "trustee" },
+    } : {}),
     outstanding: [
       ...people.filter(p => p.outstanding.length).map(p => `${p.name}: ${p.outstanding.join(" and ")}`),
       // Until the client names them, the people behind a company abroad are owed.

@@ -41,16 +41,19 @@ test('no check runs on a company party until the deal names the company that sig
   assert.match(rules, /if \(input\.kind === "company" && !input\.companySet && !input\.trust\) \{/);
   assert.doesNotMatch(rules, /brandHasNumber/, 'the brand\'s own number never stands in for the company that signs');
   const status = read('server/aml-compliance.ts');
-  assert.match(status, /needsCompany: !signs\[c\.id\] && !individuals\.has\(String\(c\.id\)\)/);
+  // A private individual, and since 21 November 2026 a trust or foundation, is checked on its own record.
+  assert.match(status, /needsCompany: !signs\[c\.id\] && !signsItself\.has\(String\(c\.id\)\)/);
+  assert.match(status, /aml_subject_type, ''\)\) IN \('individual', 'trust'\)/);
   const checks = read('server/kyc-prechecks.ts');
   assert.match(checks, /if \(needsCompany && !entityId\) \{\s*out\[companyId\] = \{ state: "needs_company"/);
-  assert.match(checks, /!signs\[id\] && !individuals\.has\(id\) \? "needs_company"/, 'Run again waits for the company too');
+  assert.match(checks, /!signs\[id\] && !signsItself\.has\(id\) \? "needs_company"/, 'Run again waits for the company too');
   const flags = read('server/kyc-red-flags.ts');
   assert.match(flags, /const pre = needsCompany \? null : prechecks\.find/);
   const board = read('server/aml-dashboard.ts');
   assert.match(board, /const pre = needsCompany \? null : prechecks\.find/);
   const portal = read('server/aml-portal.ts');
-  assert.match(portal, /if \(input\.kind === "company" && !party\.entityId\) \{/, 'the client checks refuse it');
+  // A trust or foundation is checked on its own record (21 November 2026).
+  assert.match(portal, /if \(input\.kind === "company" && !party\.entityId && !party\.trust\) \{/, 'the client checks refuse it');
   const kyc4u = read('server/kyc4u.ts');
   assert.match(kyc4u, /if \(deal && partyRole && !entity\) \{/, 'the KYC4U request refuses it');
   const card = read('client/src/components/deal-aml-status.tsx');

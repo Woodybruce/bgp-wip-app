@@ -106,6 +106,8 @@ const ent = (over: Partial<GleifEntity>): GleifEntity => ({ lei: "X".repeat(20),
 test("gleifEntityFrom keeps what the app shows; a record with no LEI is nothing", () => {
   assert.deepEqual(gleifEntityFrom(KIRKBI_RECORD), {
     lei: "5493005XXPWUMR2E5305", name: "KIRKBI A/S", jurisdiction: "DK", country: "DK", registeredAs: "18591235",
+    // The register it is on (since 21 November 2026); this record names none.
+    registeredAt: null,
     status: "ACTIVE", leiStatus: "ISSUED", lastUpdate: "2026-06-30",
   });
   assert.equal(gleifEntityFrom({ attributes: {} }), null);

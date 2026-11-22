@@ -11,7 +11,7 @@ import { SecondReadPanel } from "@/components/aml-second-read";
 import { DealPartyEditor, PartyBillingDetail, PartyReadyToStart, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
-import { FLAG_REVIEW_COMMENT_MIN, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
+import { FLAG_REVIEW_COMMENT_MIN, isSanctionsFlag, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
 import { personDisplayName, personNamesMatch, precheckDay, type PrecheckCardLine, type PrecheckCompany } from "@shared/kyc-prechecks";
 import { type AmlRegime, type PartyDueDiligence } from "@shared/aml-policy";
 import { AML_BOX_WHO_WORDS, amlBoxDay, amlNextStep, andList, type AmlBoxFacts, type AmlBoxTone } from "@shared/aml-box";
@@ -30,6 +30,7 @@ import { RaiseReportButton } from "@/components/aml-register";
 import { DealAgentsAml, useDealAgentsAml } from "@/components/agent-aml";
 import { DealSolicitorsAmlPanel, solicitorsSummary, useDealSolicitorsAml } from "@/components/solicitor-aml";
 import type { RiskAssessment } from "@shared/aml-risk-assessment";
+import { CHARITY_ATTRIBUTION, type CharityFacts } from "@shared/charity-register";
 import { AmlFileButton } from "@/components/aml-file-button";
 import { AbroadTrace, abroadSummary, useDealAbroad } from "@/components/aml-abroad";
 import { RelianceButton, RelianceCard } from "@/components/aml-reliance";
@@ -79,7 +80,9 @@ export interface DealAmlStatus {
   decisions?: {
     canDecide: boolean; canSignOff?: boolean; mlroAppointed: boolean;
     officers?: { nominated: string | null; deputy: string | null }; officerWords?: string;
-    parties: Record<string, { blocked: string | null; needsNote: boolean }>;
+    parties: Record<string, { blocked: string | null; needsNote: boolean; edd?: boolean }>;
+    // The officers' setting: BGP does enhanced due diligence itself (21 November 2026).
+    inHouseEdd?: boolean;
   } | null;
   // Which checks the deal needs under BGP's AML policy (BGP staff only).
   regime?: { regime: AmlRegime; why: string } | null;
@@ -95,6 +98,9 @@ export interface PartyPrecheck {
   company?: PrecheckCompany | null;
   // What the app traced past Companies House, also for a company with no UK record.
   trace?: string[];
+  // The Charity Commission's register, and the party's own GLEIF record (21 November 2026).
+  charity?: CharityFacts | null;
+  gleif?: string | null;
   unfinished?: string | null;
   retryAt?: string | null;
 }
@@ -149,7 +155,49 @@ function PartyCompanyFacts({ data, companyId }: { data: DealAmlStatus; companyId
             ))}. <span className="text-muted-foreground">Information only: BGP still checks identity itself.</span></dd></div>
         )}
         {c.documents.some(d => d.onFile) && <div><dt className="inline text-muted-foreground">On the KYC record: </dt><dd className="inline">{c.documents.filter(d => d.onFile).map(d => d.title).join("; ")}</dd></div>}
+        {c.gleif && <div data-testid={`kyc-company-gleif-${companyId}`}><dt className="inline text-muted-foreground">GLEIF: </dt><dd className="inline">{c.gleif.replace(/^GLEIF:\s*/, "")}</dd></div>}
       </dl>
+    </div>
+  );
+}
+
+// The Charity Commission's register (Woody, 21 November 2026: "We need
+// screening on GLEIF and foundations in the uk"): the charity the party is,
+// or acts for as its trustee, with its trustees.
+function PartyCharityFacts({ data, companyId }: { data: DealAmlStatus; companyId: string }) {
+  const [more, setMore] = useState(false);
+  const pre = data.prechecks?.[companyId];
+  const c = pre?.charity;
+  if (!c) return null;
+  if (c.state !== "found") {
+    const words = c.state === "ambiguous" ? `${c.candidates} charities could be it (${c.lookedFor}): the charity number is needed to choose.`
+      : c.state === "error" ? `The register could not be read${c.error ? ` (${c.error})` : ""}.`
+      : `Not on the register under ${c.lookedFor}.`;
+    return <p className="text-xs text-muted-foreground" data-testid={`kyc-charity-${companyId}`}>Charity Commission: {words}</p>;
+  }
+  const trustees = more ? c.trustees : c.trustees.slice(0, 8);
+  return (
+    <div className="space-y-1.5 border-t border-border/60 pt-2" data-testid={`kyc-charity-${companyId}`}>
+      {c.actsAsTrustee && <p className="text-xs">{c.actsAsTrustee}</p>}
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
+        <span className="font-semibold">{c.name}</span>
+        <span className="font-mono tabular-nums text-muted-foreground">charity {c.number}</span>
+        {c.registerUrl && <a href={c.registerUrl} target="_blank" rel="noreferrer" className="ml-auto text-[11px] text-primary hover:underline">Register of charities</a>}
+      </div>
+      <div className="text-[11px] text-muted-foreground">{[c.kind ? c.kind[0].toUpperCase() + c.kind.slice(1) : null, c.status === "Registered" && c.registeredOn ? `Registered ${c.registeredOn}` : c.status].filter(Boolean).join(" · ")}</div>
+      {c.warnings.length > 0 && <ul className="text-xs text-red-700 dark:text-red-400 space-y-0.5">{c.warnings.map(w => <li key={w}>{w}</li>)}</ul>}
+      <dl className="grid grid-cols-1 gap-y-1 text-xs">
+        {c.companyNumber && <div><dt className="inline text-muted-foreground">Companies House number: </dt><dd className="inline font-mono tabular-nums">{c.companyNumber}</dd></div>}
+        {c.accounts && <div><dt className="inline text-muted-foreground">Latest accounts: </dt><dd className="inline">{c.accounts}</dd></div>}
+        {c.address && <div><dt className="inline text-muted-foreground">Address: </dt><dd className="inline">{c.address}</dd></div>}
+        <div data-testid={`kyc-charity-trustees-${companyId}`}><dt className="inline text-muted-foreground">Trustees: </dt><dd className="inline">
+          {c.trustees.length ? trustees.map(t => `${t.name}${t.chair ? " (chair)" : ""}${t.organisation ? " (an organisation)" : ""}`).join(", ") : "none listed"}
+          {c.trustees.length > 8 && <button type="button" className="ml-1 text-primary hover:underline" onClick={() => setMore(m => !m)}>{more ? "fewer" : `and ${c.trustees.length - 8} more`}</button>}
+        </dd></div>
+        {c.otherNames.length > 0 && <div><dt className="inline text-muted-foreground">Other names: </dt><dd className="inline">{c.otherNames.join("; ")}</dd></div>}
+        {c.activities && <div><dt className="inline text-muted-foreground">What it does: </dt><dd className="inline">{c.activities}</dd></div>}
+      </dl>
+      <p className="text-[10px] text-muted-foreground">{CHARITY_ATTRIBUTION}</p>
     </div>
   );
 }
@@ -732,6 +780,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     trust: isTrust,
     ownersAbroad: ownedAbroad.length ? ownedAbroad.map(a => `${a.name}, ${a.country}`).join("; ") : null,
     reliance: people?.reliance?.words || null,
+    inHouseEdd: !!data.decisions?.inHouseEdd,
+    sanctionsFlags: [...flags, ...(data.redFlags?.deal || [])].filter(isSanctionsFlag).length,
   };
   const step = amlNextStep(facts);
 
@@ -766,7 +816,14 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
       }
     : companyMissing
       ? { tone: settled ? "info" : "act", summary: <span className={settled ? "text-muted-foreground" : "text-amber-800 dark:text-amber-300"}>Not set: {SIGNING_COMPANY_WORDS[cp.role as DealPartyRole] || "the company that signs"}</span> }
-      : { tone: "info", summary: <span className="text-muted-foreground">{cp.signsAs || "Not read yet"}</span> };
+      : pre?.charity?.state === "found"
+        ? {
+            tone: pre.charity.warnings.length ? "flag" : "done",
+            summary: <><span className="font-medium">{pre.charity.name}</span><span className="ml-1 font-mono tabular-nums text-muted-foreground">charity {pre.charity.number}</span>
+              <span className="text-muted-foreground"> · {plural(pre.charity.trustees.length, "trustee")}</span>
+              {pre.charity.warnings.length ? <span className="text-red-700 dark:text-red-400"> · {pre.charity.warnings[0]}</span> : null}</>,
+          }
+        : { tone: "info", summary: <span className="text-muted-foreground">{cp.signsAs || "Not read yet"}</span> };
 
   // Who pays BGP's invoice (20 November 2026): BGP's client only.
   const billing = party?.client ? party.billing || null : null;
@@ -810,7 +867,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
       return { tone: "info", summary: "Their own checks are under Client checks · add anyone buying, selling or renting with them" };
     }
     if (people.basis !== "individual" && !isCompany) return null;
-    const possible = [...people.people.map(p => p.sanctions), ...people.directors.map(d => d.sanctions)].includes("possible");
+    const possible = [...people.people.map(p => p.sanctions), ...people.directors.map(d => d.sanctions), ...(people.trustees || []).map(t => t.sanctions)].includes("possible");
     if (sanctionsOnly) {
       const n = people.people.length + people.directors.length;
       return { tone: possible ? "flag" : "done", summary: `${plural(n, "person", "people")} screened, sanctions only: ${possible ? "a possible match" : "no match"}` };
@@ -830,8 +887,10 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     if (abroad && !people.people.some(p => p.roles.includes("owner"))) return { tone: "act", summary: abroad[0].toUpperCase() + abroad.slice(1) };
     const n = people.people.length;
     const done = n - owing.length;
-    const directors = people.directors.length ? ` · ${plural(people.directors.length, "director")}, sanctions only` : "";
-    if (!n) return { tone: "info", summary: `No one to verify${directors}` };
+    // A registered charity's trustees, from the Charity Commission's register (21 November 2026).
+    const trustees = people.trustees?.length ? ` · ${plural(people.trustees.length, "trustee")} screened` : "";
+    const directors = (people.directors.length ? ` · ${plural(people.directors.length, "director")}, sanctions only` : "") + trustees;
+    if (!n) return { tone: possible ? "flag" : "info", summary: `No one to verify${directors}${possible ? " · a possible sanctions match" : ""}` };
     // The owners behind a company abroad are still to find, whoever else is done.
     const lead = abroad ? `${abroad[0].toUpperCase()}${abroad.slice(1)} · ` : "";
     const summary = owing.length
@@ -866,6 +925,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     : draft?.status === "filled" ? { tone: "wait", summary: `Filled on KYC4U's form ${day(draft.filled_at)}` }
     : draft ? { tone: "wait", summary: `With KYC4U${draft.submitted_at ? ` since ${day(draft.submitted_at)}` : ""}${draft.submitted_ref ? ` · ref ${draft.submitted_ref}` : ""} · ${draft.request_status || "no status from KYC4U yet"}` }
     : kyc4uReq ? { tone: "info", summary: `KYC4U's record: ${kyc4uReq.status || "no status yet"}` }
+    // The officers do enhanced due diligence in-house (21 November 2026): KYC4U is optional.
+    : facts.inHouseEdd && (flags.length || factors.length || ownedAbroad.length || isTrust) ? { tone: "info", summary: "Not needed: BGP's officers do enhanced due diligence in-house (KYC4U stays available)" }
     : flags.length || factors.length ? { tone: "act", summary: "Not raised: the red flags go to KYC4U" }
     : ownedAbroad.length ? { tone: "act", summary: "Not raised: owned through a company registered abroad, so it goes to KYC4U" }
     : { tone: "info", summary: "Not raised: needed only for a red flag, enhanced due diligence or an owner registered abroad" };
@@ -878,6 +939,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
     : !decision ? { tone: "wait", summary: "Not yet: this party could not be read" }
     : decision.blocked !== null ? { tone: "wait", summary: `Not yet: ${onInSentence(decision.blocked)}` }
     // It can be signed off now: by this viewer, or (when they cannot) by those who can.
+    // Enhanced due diligence by BGP: the officers sign it off, with a note of what was checked (21 November 2026).
+    : decision.edd ? (canDecide ? { tone: "act", summary: "Ready for enhanced due diligence by BGP: sign it off with a note of what was checked" } : { tone: "info", summary: "Enhanced due diligence by BGP: the Nominated Officer or a Deputy signs it off" })
     : !canSignOff ? { tone: "info", summary: "Ready for an agent on the deal, the Nominated Officer or a Deputy to sign off" }
     : decision.needsNote ? { tone: "info", summary: "Can be signed off now, with a note: the client checks are not finished" }
     : { tone: "act", summary: "Ready to sign off" };
@@ -912,7 +975,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
       </div>
 
       {party && !settled && <TrustLine dealId={dealId} party={party} compact />}
-      {(step.action === "kyc4u_form" || (step.action === "request_kyc4u" && (isTrust || ownedAbroad.length > 0 || flags.length + factors.length + dealFactors.length > 0))) && (
+      {!facts.inHouseEdd && (step.action === "kyc4u_form" || (step.action === "request_kyc4u" && (isTrust || ownedAbroad.length > 0 || flags.length + factors.length + dealFactors.length > 0))) && (
         // Jack, 20 November 2026: KYC4U takes requests only on its own portal,
         // so a big red mark until the agent has sent it there.
         <div className="flex items-start gap-2 rounded-md border-2 border-red-600 bg-red-50 px-2.5 py-2 text-red-900 dark:bg-red-950/40 dark:text-red-200" data-testid={`aml-kyc4u-needed-${cp.role}`}>
@@ -956,7 +1019,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startFolde
             <BoxSection id={sid("company")} testId={tid("company")} label="Company" tone={companyLine.tone} summary={companyLine.summary} open={open.has("company")} onToggle={() => toggle("company")}>
               {companyMissing
                 ? (settled ? <p className="text-xs text-muted-foreground">Not set on this deal.</p> : <PartyReadyToStart dealId={dealId} companyId={cp.id} aml={aml} />)
-                : reg ? <PartyCompanyFacts data={data} companyId={cp.id} />
+                : reg ? <><PartyCompanyFacts data={data} companyId={cp.id} /><PartyCharityFacts data={data} companyId={cp.id} /></>
+                : pre?.charity ? <><PartyCharityFacts data={data} companyId={cp.id} />{pre.gleif && <p className="text-xs text-muted-foreground">{pre.gleif}</p>}</>
+                : pre?.gleif ? <p className="text-xs text-muted-foreground">{pre.gleif}</p>
                 : <p className="text-xs text-muted-foreground">BGP's checks before asking read the company from Companies House.</p>}
             </BoxSection>
           )}

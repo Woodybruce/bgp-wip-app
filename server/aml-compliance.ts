@@ -1477,13 +1477,16 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
     // No check runs on a company party until the deal names the company that
     // signs for it (Woody, 2026-11-19: "We must have the company taking the
     // lease or who owns the property to be able to do a check").
-    const individuals = staff && counterparties.length
-      ? new Set((await pool.query(`SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) = 'individual'`,
+    // A private individual, and since 21 November 2026 a trust or foundation
+    // (its own record is checked, with the Charity Commission's register),
+    // need no company that signs.
+    const signsItself = staff && counterparties.length
+      ? new Set((await pool.query(`SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust')`,
           [counterparties.map(c => c.id)]).catch(() => ({ rows: [] as any[] }))).rows.map((r: any) => String(r.id)))
       : new Set<string>();
     const prechecks = staff
       ? await (await import("./kyc-prechecks")).dealPrechecks(d.id, counterparties.map(c => ({
-          companyId: c.id, entityId: signs[c.id] || null, needsCompany: !signs[c.id] && !individuals.has(String(c.id)),
+          companyId: c.id, entityId: signs[c.id] || null, needsCompany: !signs[c.id] && !signsItself.has(String(c.id)),
         })), {
           userId: (req as any).session?.userId || (req as any).tokenUserId || null, autoStart: true,
         }).catch((e: any) => { console.warn("[kyc-prechecks] deal view:", e?.message); return null; })
@@ -1494,11 +1497,11 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
     // BGP's sign-off and KYC4U's result on each party (step 2, 18 November
     // 2026): whether the person asking may decide, and per party whether BGP
     // may sign it off now and why not. BGP staff only.
-    let decisions: (Awaited<ReturnType<typeof import("./deal-party-aml")["canDecideAml"]>> & { parties: Record<string, { blocked: string | null; needsNote: boolean }> }) | null = null;
+    let decisions: (Awaited<ReturnType<typeof import("./deal-party-aml")["canDecideAml"]>> & { parties: Record<string, { blocked: string | null; needsNote: boolean; edd?: boolean }>; inHouseEdd?: boolean }) | null = null;
     if (staff) {
       const aml = await import("./deal-party-aml");
       const who = await aml.canDecideAml(req, d);
-      const parties: Record<string, { blocked: string | null; needsNote: boolean }> = {};
+      const parties: Record<string, { blocked: string | null; needsNote: boolean; edd?: boolean }> = {};
       for (const c of counterparties) {
         try {
           const party = await aml.loadAmlParty(pool, d.id, c.role);
@@ -1511,7 +1514,9 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
           parties[c.id] = aml.signOffView(facts);
         } catch (e: any) { console.warn("[deal-party-aml] sign-off view:", e?.message); }
       }
-      decisions = { ...who, parties };
+      // In-house enhanced due diligence (21 November 2026): the officers' setting.
+      const { readInHouseEdd } = await import("./aml-authority");
+      decisions = { ...who, parties, inHouseEdd: (await readInHouseEdd().catch(() => ({ on: false }))).on };
     }
 
     res.json({

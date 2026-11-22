@@ -15,8 +15,9 @@
 // (BGP's outsourced KYC provider) for enhanced due diligence.
 
 import { defaultKycDocs, type KycDocKey, type KycPartyKind } from "./kyc-request";
-import type { PrecheckAbroad } from "./foreign-owners";
-import { gleifTraceWords, parentLineWords } from "./foreign-owner-words";
+import type { PrecheckAbroad, PrecheckGleif } from "./foreign-owners";
+import { gleifPartyWords, gleifTraceWords, gleifUkRegister, parentLineWords } from "./foreign-owner-words";
+import { charityConcerns, charityLines, charityRegisterUrl, type PrecheckCharity } from "./charity-register";
 import type { KycFlagFact, KycRedFlag } from "./kyc-red-flags";
 import { companyTypeWords } from "./company-facts";
 
@@ -570,7 +571,7 @@ export interface ProviderLine {
 // people who manage the company stand in for them (reg 28(6)). Everyone else
 // on the register (directors, the secretary) and the deal's contact are
 // screened against the sanctions lists only.
-export type ScreenBasis = "owners" | "managers" | "listed" | "individual" | "company" | "owners_abroad";
+export type ScreenBasis = "owners" | "managers" | "listed" | "individual" | "company" | "owners_abroad" | "trustees";
 export interface PrecheckScreened {
   basis: ScreenBasis;
   // The people screened for public roles and adverse media.
@@ -585,6 +586,7 @@ export const SCREEN_BASIS_WORDS: Record<ScreenBasis, string> = {
   individual: "the person",
   company: "the company only: no owner or director could be named from the register",
   owners_abroad: "the company, the company registered abroad that owns it, and its directors meanwhile: Companies House cannot show who owns that company, so the client is asked for the people behind it",
+  trustees: "the charity and its trustees, who control it, as the Charity Commission's register names them (MLR 2017 reg 6 for a charitable trust; for a charitable company or CIO, the people who control it, reg 5 and 28(6))",
 };
 // One person or company a run screens, as the server lists them: the roles
 // they were found in ("the company", "owner", "owner of <company up the
@@ -592,7 +594,9 @@ export const SCREEN_BASIS_WORDS: Record<ScreenBasis, string> = {
 // with ", " when one person is found twice.
 // abroad: a company registered outside the UK that owns the party (on the
 // register or up the chain), screened as a company in full (20 November 2026).
-export interface ScreenCandidate { name: string; role: string; person: boolean; owner?: boolean; abroad?: boolean }
+// trustee: a trustee of the charity the party is, or acts for, from the
+// Charity Commission's register (21 November 2026).
+export interface ScreenCandidate { name: string; role: string; person: boolean; owner?: boolean; abroad?: boolean; trustee?: boolean }
 
 const roles = (c: ScreenCandidate) => c.role.split(", ");
 const isManager = (c: ScreenCandidate) => c.person && roles(c).some(r => /director|member/i.test(r) && !/corporate/i.test(r));
@@ -604,7 +608,7 @@ const isManager = (c: ScreenCandidate) => c.person && roles(c).some(r => /direct
  * the directors when no owner can be named; a private individual themselves.
  */
 export function chooseScreened<T extends ScreenCandidate>(candidates: T[], ctx: { individual: boolean; listed: boolean; maxPeople: number }): { basis: ScreenBasis; full: T[]; sanctionsOnly: T[] } {
-  const companies = candidates.filter(c => !c.person && (roles(c).some(r => r.startsWith("the company")) || !!c.abroad));
+  const companies = candidates.filter(c => !c.person && (roles(c).some(r => r.startsWith("the company") || r.startsWith("the charity") || r === "corporate trustee") || !!c.abroad));
   let basis: ScreenBasis;
   let people: T[];
   if (ctx.individual) {
@@ -612,7 +616,11 @@ export function chooseScreened<T extends ScreenCandidate>(candidates: T[], ctx: 
     people = candidates.filter(c => c.person && roles(c).includes("the party"));
   } else if (candidates.some(c => c.person && c.owner)) {
     basis = "owners";
-    people = candidates.filter(c => c.person && c.owner);
+    // A charity's trustees control it alongside any owner the register names.
+    people = [...candidates.filter(c => c.person && c.owner), ...candidates.filter(c => c.person && c.trustee && !c.owner)];
+  } else if (candidates.some(c => c.person && c.trustee)) {
+    basis = "trustees";
+    people = candidates.filter(c => c.person && c.trustee);
   } else if (ctx.listed) {
     basis = "listed";
     people = [];
@@ -689,6 +697,12 @@ export interface KycPrecheckResult {
   // The parent note in the accounts and the GLEIF trace of each company
   // abroad (since 21 November 2026; shared/foreign-owners.ts).
   abroad?: PrecheckAbroad | null;
+  // The party itself in GLEIF: a UK company by its Companies House number,
+  // else by its name (since 21 November 2026).
+  gleif?: PrecheckGleif | null;
+  // The Charity Commission's register, read for a charity, a foundation or a
+  // charity's corporate trustee (since 21 November 2026; shared/charity-register.ts).
+  charity?: PrecheckCharity | null;
   errors: string[];
 }
 
@@ -851,6 +865,8 @@ export interface PrecheckCompany {
   ownersAbroad?: Array<{ name: string; country: string; foundAt: string | null; via?: OwnerAbroad["via"] }>;
   // What the accounts' parent note and GLEIF show (21 November 2026), in words.
   trace?: string[];
+  // The company's own GLEIF record (its LEI and parents), in one line.
+  gleif?: string | null;
   // Each director's and individual owner's identity verification at Companies House.
   identity?: Array<{ name: string; role: string; state: IdvState; words: string }>;
   // Whether it trades, as the register shows (dormant, non-trading, newly formed).
@@ -884,7 +900,7 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     ch.confirmationOverdue ? "Confirmation statement overdue" : "",
     trading.words || "",
     overdueIdv.length ? `Identity verification overdue at Companies House: ${overdueIdv.map(i => i.name).join(", ")}` : "",
-    ...ownersAbroadOf(ch).map(a => `Owned through ${a.name}, registered in ${a.country}${a.foundAt ? ` (owner of ${a.foundAt})` : a.via === "accounts" ? " (named in its accounts; the register names no owner)" : ""}: Companies House cannot show who owns it`),
+    ...ownersAbroadOf(ch).map(a => `Owned through ${a.name}, registered in ${a.country}${a.foundAt ? ` (owner of ${a.foundAt})` : a.via === "accounts" ? " (named in its accounts; the register names no owner)" : a.via === "gleif" ? " (its parent in GLEIF; the register names no owner)" : ""}: Companies House cannot show who owns it`),
   ].filter(Boolean);
   return {
     name: ch.name,
@@ -906,6 +922,7 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     registerUrl: `https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(ch.number)}`,
     ownersAbroad: ownersAbroadOf(ch).map(a => ({ name: a.name, country: a.country, foundAt: a.foundAt, ...(a.via ? { via: a.via } : {}) })),
     trace: abroadTraceLines(result),
+    gleif: gleifPartyLine(result),
     identity,
     trading: { trading: trading.trading, words: trading.words },
     ownerDetails: [
@@ -1236,8 +1253,9 @@ export interface OwnerAbroad {
   // The company up the chain it owns, when it is not the party itself.
   foundAt: string | null;
   // Where it was found: the register, up the chain, or named in the party's
-  // accounts when the register names no owner (since 21 November 2026).
-  via?: "register" | "chain" | "accounts";
+  // accounts (or as its parent in GLEIF) when the register names no owner
+  // (since 21 November 2026).
+  via?: "register" | "chain" | "accounts" | "gleif";
 }
 
 /**
@@ -1289,6 +1307,34 @@ export const ownersAbroadWords = (owners: ReadonlyArray<Pick<OwnerAbroad, "name"
  * note (with the words it read) and each company abroad in GLEIF (Woody,
  * 21 November 2026). For the AML box, KYC4U's note and the AML file.
  */
+// A UK company's top parent abroad in GLEIF, as an owner abroad, when the
+// register names no person who owns it and no owner abroad is known (21
+// November 2026): the same rule as the parent the accounts name.
+export function gleifOwnerAbroad(ch: KycPrecheckResult["companiesHouse"] | null | undefined, g: PrecheckGleif | null | undefined): OwnerAbroad | null {
+  if (!ch || ch.listing || !g || g.trace.status !== "found") return null;
+  const namesOwners = ch.owners.some(o => o.kind === "individual") || ch.peopleUpChain.length > 0;
+  if (namesOwners || ownersAbroadOf(ch).length) return null;
+  const foreign = g.trace.parents.filter(p => !gleifUkRegister(p) && ownerRegister(p.jurisdiction || p.country) === "abroad");
+  const top = foreign[foreign.length - 1];
+  if (!top) return null;
+  return { name: top.name, country: countryFromCode(top.jurisdiction || top.country), registrationNumber: top.registeredAs || null, controls: [], foundAt: null, via: "gleif" };
+}
+
+/** A country from GLEIF's code ("DK" is Denmark, "US-DE" the United States). */
+export function countryFromCode(code: string | null | undefined): string {
+  const c = String(code || "").trim().toUpperCase().split("-")[0];
+  if (!/^[A-Z]{2}$/.test(c)) return String(code || "").trim() || "country not given";
+  try {
+    return new Intl.DisplayNames(["en-GB"], { type: "region" }).of(c) || c;
+  } catch {
+    return c;
+  }
+}
+
+/** The party's own GLEIF record in one line (a UK party too, since 21 November 2026), or null. */
+export const gleifPartyLine = (result: Partial<Pick<KycPrecheckResult, "gleif">> | null | undefined): string | null =>
+  result?.gleif && result.gleif.trace.status !== "skipped" ? gleifPartyWords(result.gleif) : null;
+
 export function abroadTraceLines(result: Pick<KycPrecheckResult, "abroad"> | null | undefined): string[] {
   const a = result?.abroad;
   if (!a) return [];
@@ -1450,6 +1496,20 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
       });
     }
   }
+  // The Charity Commission's register (21 November 2026): a charity removed
+  // from the register, insolvent, in administration or a dissolved CIO.
+  const cc = result.charity?.status === "found" ? result.charity.charity : null;
+  if (cc) {
+    for (const x of charityConcerns(cc).filter(x => x.red)) {
+      flags.push({
+        kind: "charity_status", label: x.label,
+        detail: `${cc.name}, registered charity ${cc.number}${result.charity!.via === "trustee" ? `, which ${result.party.name} acts for as its trustee` : ""}.`,
+        source: `${source}: the Charity Commission's register`, at,
+        key: `cc:${x.key}`, evidence: [`charity:${cc.number}`],
+        facts: [{ label: "Register of charities", value: `${cc.name} (${cc.number})`, url: charityRegisterUrl(cc.organisationNumber) }],
+      });
+    }
+  }
   // No Overseas Entity ID for a company whose name reads as registered
   // abroad: a factor to weigh, set aside where the deal does not need one.
   const oe = result.overseasEntity;
@@ -1493,7 +1553,7 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
   if (ch) {
     const directors = ch.officers.filter(o => /director|member/i.test(o.role)).map(o => o.name);
     const overseas = isOverseasEntityNumber(ch.number);
-    lines.push(`- ${overseas ? "Register of Overseas Entities" : "Companies House"}: ${ch.name} (${ch.number}), ${(ch.status || "status not given").replace(/-/g, " ")}${ch.type ? `, ${ch.type.replace(/-/g, " ")}` : ""}${ch.incorporatedOn ? `, incorporated ${ch.incorporatedOn}` : ""}.${directors.length ? ` Directors: ${list(directors)}.` : ""}${overseas && result.overseasEntity?.number ? " Found by its name: please confirm it is the same company." : ""}`);
+    lines.push(`- ${overseas ? "Register of Overseas Entities" : "Companies House"}: ${ch.name} (${ch.number}), ${(ch.status || "status not given").replace(/-/g, " ")}${ch.type ? `, ${ch.type.replace(/-/g, " ")}` : ""}${ch.incorporatedOn ? `, incorporated ${ch.incorporatedOn}` : ""}.${directors.length ? ` Directors: ${list(directors)}.` : ""}${overseas && result.overseasEntity?.number ? " Found by its name: please confirm it is the same company." : ""}${result.gleif?.foundNumber ? " Its number was found in GLEIF by its name: please confirm it is the same company." : ""}`);
     if (ch.listing) {
       lines.push(`- Listed: ${ch.listing.viaParent ? `owned through one company at each level by ${ch.listing.company}, which is` : "the company is"} ${LISTING_WORDS[ch.listing.market]} (PSC exemption${ch.listing.since ? ` since ${ch.listing.since}` : ""}). No beneficial owners asked for (MLR 2017 reg 28(5)).${ch.listing.viaParent ? " Please confirm the chain." : ""}${listingSettled(ch.listing.market) ? "" : " Please confirm the market's disclosure rules are equivalent."}`);
     } else if (ch.owners.length) {
@@ -1506,6 +1566,8 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
     // Foreign companies go to KYC4U (Woody, 21 November 2026: "foreign companies I think we will send to KYC4U").
     if (abroadNote.length) lines.push(`- Owned through a company registered abroad: ${ownersAbroadWords(abroadNote)}. Companies House cannot show who owns ${abroadNote.length === 1 ? "it" : "them"}, and BGP does not read foreign registers: please identify the beneficial owners behind ${abroadNote.length === 1 ? "it" : "them"} from the home register and verify them.`);
     // What the app traced itself (21 November 2026): the accounts' parent note and GLEIF.
+    const gleifLine = gleifPartyLine(result);
+    if (gleifLine) lines.push(`- ${gleifLine}`);
     for (const line of abroadTraceLines(result)) lines.push(`- ${line}`);
     const filed = ch.documents.filter(d => d.kycDocumentId);
     if (filed.length) lines.push(`- Downloaded from Companies House and attached: ${filed.map(d => d.title).join("; ")}.`);
@@ -1522,7 +1584,11 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
     lines.push(`- Companies House: ${result.notAtCompaniesHouse}`);
     const oe = result.overseasEntity;
     if (oe?.searched) lines.push(`- Register of Overseas Entities: ${oe.error ? `not searched (${oe.error})` : oe.candidates > 1 ? `${oe.candidates} entities of a similar name, none of exactly this name` : "no entity of this name"}.`);
+    const gleifLine = gleifPartyLine(result);
+    if (gleifLine) lines.push(`- ${gleifLine}`);
+    for (const line of abroadTraceLines(result)) lines.push(`- ${line}`);
   }
+  for (const line of charityLines(result.charity)) lines.push(`- Charity Commission: ${line}`);
   if (result.sanctions.ran) {
     const possible = result.sanctions.lines.filter(l => l.outcome === "possible");
     const discounted = result.sanctions.lines.filter(l => l.outcome === "discounted");
@@ -1569,7 +1635,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
     out.push({
       key: "companies_house", label: `${overseas ? "Register of Overseas Entities" : "Companies House"}: ${ch.name} (${ch.number})`, state: bad ? "attention" : "ok",
       detail: [`${(ch.status || "status not given").replace(/-/g, " ")}`, ch.incorporatedOn ? `incorporated ${ch.incorporatedOn}` : "", ch.accountsOverdue ? "accounts overdue" : "", ch.confirmationOverdue ? (overseas ? "update statement overdue" : "confirmation statement overdue") : "",
-        result.overseasEntity?.number ? "found by its name: check it is the same company" : ""].filter(Boolean).join(", "),
+        result.overseasEntity?.number ? "found by its name: check it is the same company" : "", result.gleif?.foundNumber ? "its number found in GLEIF by its name: check it is the same company" : ""].filter(Boolean).join(", "),
       links: [{ label: "Register", url: `https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(ch.number)}` }],
     });
     const docs = ch.documents;
@@ -1630,6 +1696,25 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
         links: [{ label: "Search the register", url: "https://find-and-update.company-information.service.gov.uk/advanced-search" }],
       });
     }
+  }
+  const pc = result.charity;
+  if (pc && pc.status !== "skipped") {
+    const c = pc.status === "found" ? pc.charity : null;
+    out.push({
+      key: "charity",
+      label: c ? `Charity Commission: ${c.name} (${c.number})${pc.via === "trustee" ? `, which it acts for as trustee` : ""}` : pc.status === "ambiguous" ? "Charity Commission: more than one charity could be it" : pc.status === "error" ? "Charity Commission: not read" : "Charity Commission: not on the register",
+      state: c ? (charityConcerns(c).length ? "attention" : "ok") : pc.status === "error" ? "not_run" : "info",
+      detail: charityLines(pc).join(" "),
+      links: c ? [{ label: "Register of charities", url: charityRegisterUrl(c.organisationNumber) }] : [],
+    });
+  }
+  const g = result.gleif;
+  if (g && g.trace.status !== "skipped" && !result.abroad?.party) {
+    out.push({
+      key: "gleif", label: g.trace.entity ? `GLEIF: LEI ${g.trace.entity.lei}` : g.trace.status === "error" ? "GLEIF: not read" : "GLEIF: no LEI",
+      state: g.trace.status === "error" ? "not_run" : "info", detail: gleifPartyWords(g),
+      links: g.trace.entity ? [{ label: "GLEIF record", url: `https://search.gleif.org/#/record/${g.trace.entity.lei}` }] : [],
+    });
   }
   if (result.sanctions.ran) {
     const possible = result.sanctions.lines.filter(l => l.outcome === "possible");

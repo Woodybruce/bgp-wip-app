@@ -76,8 +76,10 @@ test("stopping and releasing are the officers'; the banner is BGP staff's; the r
 });
 
 test("the international pieces stay international: a UK company is read as it always was", () => {
-  // GLEIF looks a company up only when it reads as registered abroad.
-  assert.match(read("server/kyc-prechecks.ts"), /if \(name && \(looksOverseasName\(name\) \|\| ownerRegister\(country\) === "abroad"\)\) abroad = await withTimeout\(traceAbroadParty/);
+  // A company with no UK record is followed as a company abroad only when it
+  // reads as registered abroad; GLEIF is also asked about a UK party since the
+  // same evening, as a line with its parents screened (uk-screening-guards).
+  assert.match(read("server/kyc-prechecks.ts"), /if \(name && \(looksOverseasName\(name\) \|\| ownerRegister\(crmCountry\) === "abroad"\)\) \{\s+const trace = partyGleif\?\.trace/);
   // The English word "Foundation" counts only abroad.
   assert.match(read("shared/deal-parties.ts"), /\|\| \(!!opts\.abroad && \/\\bfoundation\\b\/i\.test\(t\)\)/);
   assert.match(read("shared/aml-policy.ts"), /foundationMarkInName\(o\.name, \{ abroad: ownerRegister\(o\.country\) === "abroad" \}\)/);

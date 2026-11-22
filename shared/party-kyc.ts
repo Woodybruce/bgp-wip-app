@@ -84,6 +84,9 @@ export function kycVerdict(state: KycFacts, now: Date = new Date()): { approved:
 
 export const SIGN_OFF_PRECHECK_DAYS = 30;
 export const SIGN_OFF_NOTE_MIN = 10;
+// Enhanced due diligence done by BGP itself (below): the officer's note says
+// what was checked and why the risk is acceptable.
+export const IN_HOUSE_EDD_NOTE_MIN = 40;
 
 export interface SignOffFacts {
   rejected: boolean;             // the MLRO or KYC4U rejected the brand or the company that signs
@@ -107,9 +110,20 @@ export interface SignOffFacts {
   // Another firm's checks the officers rely on (MLR 2017 reg 39), in words:
   // they stand in for the client checks, so no note is asked for.
   reliance?: string | null;
+  // In-house enhanced due diligence (Woody, 21 November 2026: "I'm trying to
+  // set this up without using kyc4u"): with the officers' setting on, the
+  // Nominated Officer or a Deputy signs off an enhanced party themselves, with
+  // a note of what was checked, in place of KYC4U's result. A possible
+  // sanctions match must be resolved first: no one deals with a designated person.
+  inHouseEdd?: boolean;
+  sanctionsFlags?: number;
   note: string;
   now?: Date;
 }
+
+/** Enhanced due diligence applies: a red flag or factor (the party's or the deal's), a higher-risk file, or owners abroad. */
+export const signOffEnhanced = (f: Pick<SignOffFacts, "redFlags" | "dealRedFlags" | "higherRisk" | "ownersAbroad">): boolean =>
+  f.redFlags > 0 || f.dealRedFlags > 0 || f.higherRisk || !!f.ownersAbroad?.length;
 
 /** Why BGP may not sign the party off, or null when it may. */
 export function signOffDenial(f: SignOffFacts): string | null {
@@ -121,6 +135,16 @@ export function signOffDenial(f: SignOffFacts): string | null {
   }
   if (f.unchecked.length) return `Red flags could not be checked against ${f.unchecked.join(", ")}. Try again in a moment.`;
   if (f.withKyc4u) return "This party was raised with KYC4U on this deal: add KYC4U's result when it comes back.";
+  const edd = signOffEnhanced(f) && !!f.inHouseEdd;
+  if (edd && (f.sanctionsFlags || 0) > 0) return "A possible sanctions match stands: check whether it is the person or company, then set it aside with a comment if it is not, or tell the Nominated Officer (an OFSI report and legal advice follow) before going any further.";
+  if (edd) {
+    // Enhanced due diligence by BGP: the same freshness rules, then the officer's note.
+    if (f.precheckRunning) return "BGP's checks before asking are still running. Sign off once they finish.";
+    if (!f.precheck) return "BGP's checks before asking have not run for this party. Press Run again on the card first.";
+    if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) return `BGP's checks before asking are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again on the card first.`;
+    if (text(f.note).length < IN_HOUSE_EDD_NOTE_MIN) return "Enhanced due diligence by BGP: say what was checked and why the risk is acceptable (each red flag or factor, the source of funds and of wealth where it matters, who is behind any company abroad or trust): at least a couple of sentences.";
+    return null;
+  }
   if (f.redFlags > 0) return "This party needs enhanced due diligence (a red flag or a higher-risk factor in the AML policy): raise it with KYC4U; the Nominated Officer or the Deputy adds KYC4U's result.";
   if (f.dealRedFlags > 0) return "The deal needs enhanced due diligence (a red flag or a higher-risk factor on the deal record): raise it with KYC4U; the Nominated Officer or the Deputy adds KYC4U's result.";
   if (f.higherRisk) return "This is a higher-risk file (high risk, enhanced due diligence or a public role): it goes to KYC4U.";

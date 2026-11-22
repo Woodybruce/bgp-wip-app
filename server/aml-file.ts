@@ -62,7 +62,7 @@ export interface AmlFileParty {
   individual: boolean;
   state: PartyKycState | null;
   notRequired: { reasonWords: string; comment: string | null; by: string | null; at: string | null } | null;
-  precheck: { state: string; ranAt: string | null; lines: Array<{ label: string; state: string; detail: string | null; links: Array<{ label: string; url: string }> }>; errors: string[]; company: any } | null;
+  precheck: { state: string; ranAt: string | null; lines: Array<{ label: string; state: string; detail: string | null; links: Array<{ label: string; url: string }> }>; errors: string[]; company: any; charity?: any; gleif?: string | null } | null;
   flags: KycRedFlag[];
   aside: SetAsideFlag[];
   level: PartyDueDiligence | null;
@@ -130,12 +130,15 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
   const signs = await dealPartyCompanies(pool, dealId).catch(() => ({} as Record<string, string>));
   const view = await loadDealParties(pool, dealId).catch(() => null);
   const brandIds = present.map(r => text(deal[DEAL_PARTY_COLUMNS[r].brand]));
-  const individuals = new Set((await pool.query(
-    `SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) = 'individual'`, [brandIds])).rows.map((r: any) => String(r.id)));
+  const kinds = (await pool.query(
+    `SELECT id, lower(COALESCE(aml_subject_type, '')) AS kind FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust')`, [brandIds])).rows;
+  const individuals = new Set(kinds.filter((r: any) => r.kind === "individual").map((r: any) => String(r.id)));
+  // A trust or foundation is checked on its own record too (21 November 2026).
+  const signsItself = new Set(kinds.map((r: any) => String(r.id)));
   const [states, marks, prechecks, flags, peopleRequests, requests, agentRows] = await Promise.all([
     loadPartyKyc(pool, present.map(r => ({ role: r, brandId: text(deal[DEAL_PARTY_COLUMNS[r].brand]), entityId: signs[text(deal[DEAL_PARTY_COLUMNS[r].brand])] || null }))).catch(() => ({} as Record<string, PartyKycState>)),
     loadNotRequired(pool, [dealId]).catch(() => new Map()),
-    dealPrechecks(dealId, brandIds.map(id => ({ companyId: id, entityId: signs[id] || null, needsCompany: !signs[id] && !individuals.has(id) })), { userId: me.id, autoStart: false }).catch(() => ({} as Record<string, any>)),
+    dealPrechecks(dealId, brandIds.map(id => ({ companyId: id, entityId: signs[id] || null, needsCompany: !signs[id] && !signsItself.has(id) })), { userId: me.id, autoStart: false }).catch(() => ({} as Record<string, any>)),
     loadDealRedFlags(dealId, brandIds, signs).catch(() => null),
     dealPeopleRequests(dealId).catch(() => null),
     clientChecksForDeal(dealId).catch((e: any) => { console.warn(`[aml-file] could not read the client checks: ${e?.message}`); return null; }),
@@ -212,7 +215,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       individual: kind === "individual",
       state: (states as Record<string, PartyKycState>)[role] || null,
       notRequired: mark && mark.companyId === brandId ? { reasonWords: mark.reasonWords, comment: mark.comment || null, by: mark.by || null, at: mark.at || null } : null,
-      precheck: pre ? { state: pre.state, ranAt: pre.ranAt, lines: pre.lines || [], errors: pre.errors || [], company: pre.company || null } : null,
+      precheck: pre ? { state: pre.state, ranAt: pre.ranAt, lines: pre.lines || [], errors: pre.errors || [], company: pre.company || null, charity: pre.charity || null, gleif: pre.gleif || null } : null,
       flags: flags?.parties?.[brandId] || [],
       aside: flags?.setAside?.[brandId] || [],
       level: flags?.levels?.[brandId] || null,
@@ -284,6 +287,8 @@ export function riskAssessmentFor(data: AmlFileData, p: AmlFileParty): RiskAsses
       roleLabel: DEAL_PARTY_LABEL[p.role], name: p.company?.name || p.brand.name, brandName: p.brand.name, client: p.client,
       individual: p.individual, trust: p.trust, person: p.person ? { name: p.person.name } : null,
       company: p.precheck?.company || null,
+      charity: p.precheck?.charity || null,
+      gleif: p.precheck?.gleif || null,
       precheckRan: !!p.precheck?.ranAt,
       webRan: !!p.precheck?.lines?.some(l => l.state !== "not_run" && /^Public roles and adverse media/.test(l.label)),
       flags: p.flags, aside: p.aside, level: p.level, people: p.people, requests: p.requests,
