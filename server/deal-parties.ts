@@ -74,7 +74,7 @@ export async function checkPartyCompanies(db: Db, after: Record<string, any>, se
     if (fits) continue;
     if (f.company in sent && text(sent[f.company])) {
       throw new PartyCompanyRefusal(row
-        ? `${row.name} is not filed under the ${DEAL_PARTY_LABEL[role].toLowerCase()} on this deal. Pick a company filed under it.`
+        ? `${row.name} is not filed under the ${DEAL_PARTY_LABEL[role].toLowerCase()} on this transaction. Pick a company filed under it.`
         : `The ${DEAL_PARTY_LABEL[role].toLowerCase()}'s company was not found. Pick it again.`);
     }
     clear[f.company] = null;
@@ -315,7 +315,7 @@ router.get("/api/deals/:id/parties", async (req: Request, res: Response) => {
     if (!(await staffMe(req))) return res.status(403).json({ message: STAFF_ONLY });
     const { pool } = await import("./db");
     const view = await loadDealParties(pool, String(req.params.id));
-    if (!view) return res.status(404).json({ message: "Deal not found" });
+    if (!view) return res.status(404).json({ message: "Transaction not found" });
     res.json(view);
   } catch (err: any) {
     res.status(500).json({ message: err?.message || "Could not load the parties" });
@@ -331,10 +331,10 @@ router.put("/api/deals/:id/parties/:role", async (req: Request, res: Response) =
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const { pool } = await import("./db");
     const deal = await readDeal(pool, String(req.params.id));
-    if (!deal) return res.status(404).json({ message: "Deal not found" });
+    if (!deal) return res.status(404).json({ message: "Transaction not found" });
     const col = DEAL_PARTY_COLUMNS[role];
     const brandId = text(deal[col.brand]);
-    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the deal first.` });
+    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the transaction first.` });
 
     const sets: Record<string, string | null> = {};
     const lines: Array<[string, string | null, string | null, string]> = [];
@@ -391,10 +391,10 @@ router.post("/api/deals/:id/parties/:role/person", async (req: Request, res: Res
     if ("problem" in typed) return res.status(400).json({ message: typed.problem });
     const { pool } = await import("./db");
     const deal = await readDeal(pool, String(req.params.id));
-    if (!deal) return res.status(404).json({ message: "Deal not found" });
+    if (!deal) return res.status(404).json({ message: "Transaction not found" });
     const col = DEAL_PARTY_COLUMNS[role];
     const brandId = text(deal[col.brand]);
-    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the deal first.` });
+    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the transaction first.` });
     const person = await findOrAddPartyPerson(pool, brandId, typed.person, `Added by ${me.name || "BGP"} as the person to ask for the ${role}'s checks on ${deal.name}.`);
     await pool.query(`UPDATE crm_deals SET ${col.person} = $2, updated_at = now() WHERE id = $1`, [deal.id, person.id]);
     if ((deal[col.person] || null) !== person.id) {
@@ -426,9 +426,9 @@ router.put("/api/deals/:id/parties/:role/individual", async (req: Request, res: 
     if (typeof wanted !== "boolean") return res.status(400).json({ message: "Say whether the party is a private individual." });
     const { pool } = await import("./db");
     const deal = await readDeal(pool, String(req.params.id));
-    if (!deal) return res.status(404).json({ message: "Deal not found" });
+    if (!deal) return res.status(404).json({ message: "Transaction not found" });
     const brandId = text(deal[DEAL_PARTY_COLUMNS[role].brand]);
-    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the deal first.` });
+    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the transaction first.` });
     const brand = (await pool.query(`SELECT id, name, companies_house_number, aml_subject_type FROM crm_companies WHERE id = $1`, [brandId])).rows[0];
     if (!brand) return res.status(404).json({ message: "Party not found" });
     if (wanted && text(brand.companies_house_number)) {
@@ -470,9 +470,9 @@ router.put("/api/deals/:id/parties/:role/trust", async (req: Request, res: Respo
     if (typeof wanted !== "boolean") return res.status(400).json({ message: "Say whether the party is a trust." });
     const { pool } = await import("./db");
     const deal = await readDeal(pool, String(req.params.id));
-    if (!deal) return res.status(404).json({ message: "Deal not found" });
+    if (!deal) return res.status(404).json({ message: "Transaction not found" });
     const brandId = text(deal[DEAL_PARTY_COLUMNS[role].brand]);
-    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the deal first.` });
+    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the transaction first.` });
     const brand = (await pool.query(`SELECT id, name, aml_subject_type FROM crm_companies WHERE id = $1`, [brandId])).rows[0];
     if (!brand) return res.status(404).json({ message: "Party not found" });
     const before = text(brand.aml_subject_type) || null;
@@ -511,10 +511,10 @@ router.post("/api/deals/:id/parties/:role/owner", async (req: Request, res: Resp
     if (!key) return res.status(400).json({ message: "Pick the person." });
     const { pool } = await import("./db");
     const deal = await readDeal(pool, String(req.params.id));
-    if (!deal) return res.status(404).json({ message: "Deal not found" });
+    if (!deal) return res.status(404).json({ message: "Transaction not found" });
     const col = DEAL_PARTY_COLUMNS[role];
     const brandId = text(deal[col.brand]);
-    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the deal first.` });
+    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the transaction first.` });
     const brand = (await pool.query(`SELECT id, name, aml_subject_type FROM crm_companies WHERE id = $1`, [brandId])).rows[0];
     if (!brand) return res.status(404).json({ message: "That party was not found." });
     const signer = text(deal[col.company]) ? (await pool.query(`SELECT entity_kind FROM crm_trading_entities WHERE id = $1`, [deal[col.company]])).rows[0] || { entity_kind: null } : null;
@@ -575,12 +575,12 @@ router.post("/api/deals/:id/billing/same-company", async (req: Request, res: Res
     const me = await staffMe(req);
     if (!me) return res.status(403).json({ message: STAFF_ONLY });
     const c = await clientParty(String(req.params.id));
-    if (!c) return res.status(404).json({ message: "Deal not found" });
+    if (!c) return res.status(404).json({ message: "Transaction not found" });
     if (!c.companyId) return res.status(400).json({ message: `Set the ${c.role}'s company that signs first.` });
     const ownSet = !!(text(c.deal.xero_contact_id) || text(c.deal.xero_contact_name));
     const contactId = ownSet ? text(c.deal.xero_contact_id) : text(c.deal[c.col.xeroId]);
     const contactName = ownSet ? text(c.deal.xero_contact_name) : text(c.deal[c.col.xeroName]);
-    if (!contactId && !contactName) return res.status(400).json({ message: "There is no Xero contact on the deal to match to the company." });
+    if (!contactId && !contactName) return res.status(400).json({ message: "There is no Xero contact on the transaction to match to the company." });
     const company = (await c.pool.query(`SELECT id, name, parent_company_id, xero_contact_id FROM crm_trading_entities WHERE id = $1`, [c.companyId])).rows[0];
     if (!company || company.parent_company_id !== c.brandId) return res.status(404).json({ message: "The company that signs was not found." });
     await c.pool.query(`UPDATE crm_trading_entities SET xero_contact_id = $2, xero_contact_name = $3 WHERE id = $1`, [company.id, contactId || null, contactName || company.name]);
@@ -600,7 +600,7 @@ router.post("/api/deals/:id/billing/signing", async (req: Request, res: Response
     const me = await staffMe(req);
     if (!me) return res.status(403).json({ message: STAFF_ONLY });
     const c = await clientParty(String(req.params.id));
-    if (!c) return res.status(404).json({ message: "Deal not found" });
+    if (!c) return res.status(404).json({ message: "Transaction not found" });
     if (!c.companyId) return res.status(400).json({ message: `Set the ${c.role}'s company that signs first.` });
     const company = (await c.pool.query(`SELECT id, name, parent_company_id, xero_contact_id, xero_contact_name FROM crm_trading_entities WHERE id = $1`, [c.companyId])).rows[0];
     if (!company || company.parent_company_id !== c.brandId) return res.status(404).json({ message: "The company that signs was not found." });
@@ -625,7 +625,7 @@ router.get("/api/deals/:id/payer", async (req: Request, res: Response) => {
     const me = await staffMe(req);
     if (!me) return res.status(403).json({ message: STAFF_ONLY });
     const c = await clientParty(String(req.params.id));
-    if (!c) return res.status(404).json({ message: "Deal not found" });
+    if (!c) return res.status(404).json({ message: "Transaction not found" });
     const view = await loadDealParties(c.pool, c.deal.id);
     const payer = view?.parties.find(p => p.role === c.role)?.billing?.payer || null;
     let checks: unknown = null;
@@ -652,8 +652,8 @@ router.put("/api/deals/:id/payer", async (req: Request, res: Response) => {
     const input = payerInput(req.body);
     if ("problem" in input) return res.status(400).json({ message: input.problem });
     const c = await clientParty(String(req.params.id));
-    if (!c) return res.status(404).json({ message: "Deal not found" });
-    if (!c.brandId) return res.status(400).json({ message: `Set the ${c.role} on the deal first: BGP bills it.` });
+    if (!c) return res.status(404).json({ message: "Transaction not found" });
+    if (!c.brandId) return res.status(400).json({ message: `Set the ${c.role} on the transaction first: BGP bills it.` });
     let payer: any = null;
     if (input.companyId) {
       payer = (await c.pool.query(`SELECT id, name, parent_company_id, xero_contact_id, xero_contact_name FROM crm_trading_entities WHERE id = $1`, [input.companyId])).rows[0];
@@ -699,9 +699,9 @@ router.post("/api/deals/:id/payer/checks", async (req: Request, res: Response) =
     const me = await staffMe(req);
     if (!me) return res.status(403).json({ message: STAFF_ONLY });
     const c = await clientParty(String(req.params.id));
-    if (!c) return res.status(404).json({ message: "Deal not found" });
+    if (!c) return res.status(404).json({ message: "Transaction not found" });
     const payerId = text(c.deal.invoice_payer_entity_id);
-    if (!payerId) return res.status(400).json({ message: "No third party pays on this deal." });
+    if (!payerId) return res.status(400).json({ message: "No third party pays on this transaction." });
     const { startPrecheck } = await import("./kyc-prechecks");
     res.json({ started: await startPrecheck(c.brandId, { entityId: payerId, dealId: c.deal.id, userId: me.id, force: true }) });
   } catch (err: any) {

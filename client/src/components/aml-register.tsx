@@ -158,7 +158,7 @@ function EntryDialog({ entry, onClose }: { entry: RegisterEntry; onClose: () => 
           <div className="rounded-md border bg-muted/30 p-2.5 whitespace-pre-wrap" data-testid="aml-register-concern">{entry.concern}</div>
           {(entry.dealId || entry.companyName) && (
             <div className="text-xs text-muted-foreground">
-              {entry.dealId && <>Deal: <Link href={`/deals/${entry.dealId}?section=parties`} className="text-primary hover:underline">{entry.dealName || "the deal"}{entry.dealRef != null ? ` (#${entry.dealRef})` : ""}</Link></>}
+              {entry.dealId && <>Transaction: <Link href={`/deals/${entry.dealId}?section=parties`} className="text-primary hover:underline">{entry.dealName || "the transaction"}{entry.dealRef != null ? ` (#${entry.dealRef})` : ""}</Link></>}
               {entry.companyName && <>{entry.dealId ? " · " : ""}{entry.role ? `${entry.role}: ` : ""}{entry.companyName}{entry.tradingEntityName ? `, signing as ${entry.tradingEntityName}` : ""}</>}
             </div>
           )}

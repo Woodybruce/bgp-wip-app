@@ -12,7 +12,7 @@ export function DealsBoardWidget() {
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2">
           <Handshake className="w-4 h-4 text-muted-foreground" />
-          Deals Board
+          Transactions Board
         </CardTitle>
       </CardHeader>
       <CardContent>

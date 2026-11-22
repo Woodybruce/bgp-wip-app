@@ -164,7 +164,7 @@ export function ClientCheckRow({ dealId, request, startOpen }: { dealId: string;
       {request.askPep && (
         <p className={request.pep === "yes" || request.pep === "unsure" ? "rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900" : "text-muted-foreground"} data-testid={`client-check-pep-${request.ref}`}>
           Public roles: <strong>{kycPepWords(request.pep)}</strong>{request.pepDetail ? ` · ${request.pepDetail}` : ""}
-          {(request.pep === "yes" || request.pep === "unsure") && <> · Enhanced due diligence: senior management approval (a director or the MLRO) before the deal goes ahead, source of wealth and of funds, closer monitoring. Lighter for a UK one with no other risk.</>}
+          {(request.pep === "yes" || request.pep === "unsure") && <> · Enhanced due diligence: senior management approval (a director or the MLRO) before the transaction goes ahead, source of wealth and of funds, closer monitoring. Lighter for a UK one with no other risk.</>}
         </p>
       )}
       {request.owners && (
@@ -175,7 +175,7 @@ export function ClientCheckRow({ dealId, request, startOpen }: { dealId: string;
       )}
       {request.idOtherPerson && (
         <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900">
-          {request.recipientName || "The person it was for"} has not done their own identity check: the one on this link was {request.idVerifiedName || "someone else"}'s. Send them a new request, or record on the deal why {request.idVerifiedName || "that person"} can act for {request.partyName}.
+          {request.recipientName || "The person it was for"} has not done their own identity check: the one on this link was {request.idVerifiedName || "someone else"}'s. Send them a new request, or record on the transaction why {request.idVerifiedName || "that person"} can act for {request.partyName}.
         </p>
       )}
       {request.docs.filter(d => d.note).map(d => <p key={`note-${d.key}`} className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900">{d.title}: {d.note}</p>)}
@@ -740,7 +740,7 @@ function PersonLinkDialog({ dealId, data, party, person, onClose }: { dealId: st
         {done ? (
           <div className="space-y-3 text-sm">
             {done.error && <p className="flex items-start gap-2 text-red-700"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />The email didn't go: {done.error}. Copy the link below and send it yourself.</p>}
-            {done.emailed && <p className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-600 shrink-0" />Sent to <strong>{person.name}</strong> ({email.trim()}), copied to the deal's agents.</p>}
+            {done.emailed && <p className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-600 shrink-0" />Sent to <strong>{person.name}</strong> ({email.trim()}), copied to the transaction's agents.</p>}
             <div className="flex gap-2">
               <Input readOnly value={done.link} onFocus={e => e.currentTarget.select()} data-testid="person-link-value" />
               <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(done.link); toast({ title: "Link copied", description: `It's personal to ${person.name}: send it only to them.` }); }}><Copy className="w-3.5 h-3.5 mr-1.5" />Copy</Button>
@@ -850,7 +850,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
   const previewHtml = useMemo(() => {
     if (!preview || !party) return "";
     const { html } = kycRequestEmail({
-      recipientName: toName || "Jane Smith", partyName: party.name, kind: chosenKind, dealName: data?.dealName || "this deal", ref: "SAMPLE",
+      recipientName: toName || "Jane Smith", partyName: party.name, kind: chosenKind, dealName: data?.dealName || "this transaction", ref: "SAMPLE",
       link: "https://chatbgp.app/kyc-upload/your-link", expiresAt: new Date(Date.now() + 14 * 86400000),
       needsIdCheck: wantId, docs: chosenDocs,
       note, agents: (data?.agents || []).map(a => ({ name: a.name, email: a.email, phone: null })), sentFrom: data?.mailbox || "kyc@chatbgp.app", askPep: true,
@@ -898,12 +898,12 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
               </p>
             )}
             {sent.idCheckNote && <p className="text-muted-foreground">{sent.idCheckNote}</p>}
-            <p className="text-muted-foreground">They get a reminder after three days and again after seven if anything is still missing. You'll get an email when they press Finish. Progress shows on the deal's AML card.</p>
+            <p className="text-muted-foreground">They get a reminder after three days and again after seven if anything is still missing. You'll get an email when they press Finish. Progress shows on the transaction's AML card.</p>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(sent.link); toast({ title: "Link copied", description: "It's personal to the client: send it only to them." }); }}><Copy className="w-3.5 h-3.5 mr-1.5" />Copy their link</Button>
               {toMobile && (
                 <Button size="sm" variant="outline" asChild>
-                  <a href={kycWhatsAppHref(toMobile, kycWhatsAppText({ recipientName: toName, dealName: data?.dealName || "the deal", link: sent.link, expiresAt: new Date(Date.now() + 14 * 86400000) }))} target="_blank" rel="noreferrer"><MessageCircle className="w-3.5 h-3.5 mr-1.5" />Send on WhatsApp</a>
+                  <a href={kycWhatsAppHref(toMobile, kycWhatsAppText({ recipientName: toName, dealName: data?.dealName || "the transaction", link: sent.link, expiresAt: new Date(Date.now() + 14 * 86400000) }))} target="_blank" rel="noreferrer"><MessageCircle className="w-3.5 h-3.5 mr-1.5" />Send on WhatsApp</a>
                 </Button>
               )}
             </div>
@@ -931,7 +931,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
                     <Input placeholder="Their name" value={name} onChange={e => setName(e.target.value)} data-testid="input-client-check-name" />
                     <Input type="email" placeholder="Their email" value={email} onChange={e => setEmail(e.target.value)} data-testid="input-client-check-email" />
                   </div>
-                  <p className="text-[11px] text-muted-foreground" data-testid="client-checks-saved-to-crm">Saved to the CRM under {party.brandName || party.name}, and made the person to ask on this deal if nobody is set.</p>
+                  <p className="text-[11px] text-muted-foreground" data-testid="client-checks-saved-to-crm">Saved to the CRM under {party.brandName || party.name}, and made the person to ask on this transaction if nobody is set.</p>
                 </>
               )}
               <Input placeholder="Their mobile (optional, so you can send the link on WhatsApp)" value={mobileValue} onChange={e => setMobile(e.target.value)} />
@@ -976,7 +976,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
               </div>
             )}
             {!party.askInput && (
-              <p className="text-xs text-muted-foreground" data-testid="client-checks-no-precheck">BGP's checks before asking have not finished for {shownName} yet, so everything usual is ticked. They show on the deal's AML card when done.</p>
+              <p className="text-xs text-muted-foreground" data-testid="client-checks-no-precheck">BGP's checks before asking have not finished for {shownName} yet, so everything usual is ticked. They show on the transaction's AML card when done.</p>
             )}
 
             <p className="text-xs text-muted-foreground">Every request also asks {KYC_PEP_QUESTION.title.toLowerCase()} (politically exposed persons). A yes comes back to you and the MLRO.</p>
@@ -989,7 +989,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
             <div className="rounded-md bg-muted/60 p-3 text-xs space-y-0.5" data-testid="client-checks-summary">
               <div><span className="text-muted-foreground">From:</span> {data?.mailbox}</div>
               <div><span className="text-muted-foreground">To:</span> {toName ? `${toName} ` : ""}{toEmail ? `<${toEmail}>` : "choose someone above"}</div>
-              <div><span className="text-muted-foreground">Copied:</span> {copied.length ? `${copied.join(", ")} (the deal's agents) and you` : "you (the deal has no agents set)"}</div>
+              <div><span className="text-muted-foreground">Copied:</span> {copied.length ? `${copied.join(", ")} (the transaction's agents) and you` : "you (the transaction has no agents set)"}</div>
             </div>
 
             <Button type="button" variant="ghost" size="sm" className="px-0 h-auto text-xs" onClick={() => setPreview(v => !v)}>
@@ -998,7 +998,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
             {preview && <iframe title="Email preview" srcDoc={previewHtml} className="w-full h-[480px] rounded border bg-white" sandbox="" data-testid="client-checks-preview" />}
           </div>
         ) : !isLoading && !error ? (
-          <p className="text-sm text-muted-foreground">{shownName} isn't a party on this deal yet. Set it on the deal first.</p>
+          <p className="text-sm text-muted-foreground">{shownName} isn't a party on this transaction yet. Set it on the transaction first.</p>
         ) : null}
 
         <DialogFooter>

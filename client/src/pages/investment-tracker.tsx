@@ -1474,11 +1474,11 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
         setAmlDeal({ id: body.dealId, name: body.assetName || null, status: "SOL" });
       } else if (movedTo && BOARD_TYPES.includes(movedTo) && movedTo !== boardType) {
         setBoardType(movedTo);
-        toast({ title: `Moved to ${movedTo}`, description: "The backing deal is now a " + (movedTo === "Sales" ? "Sale" : "Purchase") + "." });
+        toast({ title: `Moved to ${movedTo}`, description: "The backing transaction is now a " + (movedTo === "Sales" ? "Sale" : "Purchase") + "." });
       } else if (body?.ownerChanged) {
         toast({ title: "Completed", description: `${(body.boardType === "Sales" ? body.buyer : body.client) || "The buyer"} is now the owner on the property record. A comp has been added to Investment Comps.` });
       } else if (body?.amlStarted) {
-        toast({ title: "Updated — AML started", description: "Checks are running on the deal's counterparties. Progress shows on the deal's Compliance panel." });
+        toast({ title: "Updated — AML started", description: "Checks are running on the transaction's counterparties. Progress shows on the transaction's Compliance panel." });
       } else if (body?.amlWarning) {
         toast({ title: "Updated — AML outstanding", description: body.amlWarning });
       } else if (vars?.data?.status && body?.amlNote === "no counterparty linked yet") {
@@ -1508,7 +1508,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
       invalidateDealCaches();
       setLinkDealOpen(null);
       setLinkDealId("");
-      toast({ title: "Deal linked" });
+      toast({ title: "Transaction linked" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1760,7 +1760,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
     } else {
       toast({
         title: `Updated ${ids.length} asset${ids.length === 1 ? "" : "s"} to ${status}`,
-        description: atSol.length > 1 ? "Set up each deal's AML from its Parties & AML, or the AML pill on its property page." : undefined,
+        description: atSol.length > 1 ? "Set up each transaction's AML from its Parties & AML, or the AML pill on its property page." : undefined,
       });
     }
   };
@@ -2365,7 +2365,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                   <TableHead className="w-[160px]">Image</TableHead>
                   <SortableTableHead sortKey="property" sort={sort} className="w-[180px]">Property</SortableTableHead>
                   <SortableTableHead sortKey="ref" sort={sort} className="w-[50px]">Ref</SortableTableHead>
-                  <FilterHead label="Deal Status" value={statusFilter} options={STATUSES} onChange={setStatusFilter} colorMap={STATUS_LABEL_COLORS} className="w-[90px]" />
+                  <FilterHead label="Transaction Status" value={statusFilter} options={STATUSES} onChange={setStatusFilter} colorMap={STATUS_LABEL_COLORS} className="w-[90px]" />
                   <FilterHead label="Asset Class" value={assetClassFilter} options={ASSET_CLASSES} onChange={setAssetClassFilter} className="w-[170px] min-w-[170px]" />
                   <FilterHead label="Tenure" value={tenureFilter} options={TENURES} onChange={setTenureFilter} className="w-[70px]" />
                   <SortableTableHead sortKey="guidePrice" sort={sort} className="w-[90px]" align="right">Guide Price</SortableTableHead>
@@ -2481,8 +2481,8 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                         // offers "Link" to attach an existing deal instead.
                         const ref = (item as any).dealRef ?? (item.dealId ? dealRefMap.get(item.dealId) : null);
                         return item.dealId && ref
-                          ? <a href={`/deals/${item.dealId}`} className="text-primary hover:underline" title="Open deal page" data-testid={`link-deal-ref-${item.id}`}>#{ref}</a>
-                          : <Button variant="ghost" size="sm" className="h-6 px-1 text-[10px]" onClick={() => { setLinkDealOpen(item); setLinkDealId(""); }} title="Link an existing deal" data-testid={`button-link-deal-${item.id}`}><Link2 className="h-3 w-3 mr-0.5" />Link</Button>;
+                          ? <a href={`/deals/${item.dealId}`} className="text-primary hover:underline" title="Open transaction page" data-testid={`link-deal-ref-${item.id}`}>#{ref}</a>
+                          : <Button variant="ghost" size="sm" className="h-6 px-1 text-[10px]" onClick={() => { setLinkDealOpen(item); setLinkDealId(""); }} title="Link an existing transaction" data-testid={`button-link-deal-${item.id}`}><Link2 className="h-3 w-3 mr-0.5" />Link</Button>;
                       })()}
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
@@ -3169,20 +3169,20 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
       <Dialog open={!!linkDealOpen} onOpenChange={(open) => { if (!open) setLinkDealOpen(null); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Link to WIP Deal</DialogTitle>
-            <DialogDescription>Link "{linkDealOpen?.assetName}" to an existing WIP deal.</DialogDescription>
+            <DialogTitle>Link to WIP Transaction</DialogTitle>
+            <DialogDescription>Link "{linkDealOpen?.assetName}" to an existing WIP transaction.</DialogDescription>
           </DialogHeader>
           <CrmPicker
             items={dealItems}
             value={linkDealId}
             valueName={dealMap.get(linkDealId) || ""}
             onSelect={(id) => setLinkDealId(id)}
-            placeholder="Select deal"
+            placeholder="Select transaction"
             testId="picker-link-deal"
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setLinkDealOpen(null)}>Cancel</Button>
-            <Button disabled={!linkDealId} onClick={() => linkDealOpen && linkDealMutation.mutate({ id: linkDealOpen.id, dealId: linkDealId })} data-testid="button-confirm-link-deal">Link Deal</Button>
+            <Button disabled={!linkDealId} onClick={() => linkDealOpen && linkDealMutation.mutate({ id: linkDealOpen.id, dealId: linkDealId })} data-testid="button-confirm-link-deal">Link Transaction</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

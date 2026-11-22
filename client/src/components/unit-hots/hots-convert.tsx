@@ -83,7 +83,7 @@ export function HotsConvertForm({ defaults, busy, onConvert, crmPicker = true }:
       <div>
         <h3 className="text-sm font-semibold">Convert to Solicitors</h3>
         <p className="text-xs text-muted-foreground">
-          This puts the agreed terms on the deal, moves the unit and the deal to Solicitors and starts AML. Check the figures against the final Heads of Terms.
+          This puts the agreed terms on the transaction, moves the unit and the transaction to Solicitors and starts AML. Check the figures against the final Heads of Terms.
         </p>
       </div>
       {!crmPicker && (
@@ -144,7 +144,7 @@ export function HotsConvertForm({ defaults, busy, onConvert, crmPicker = true }:
           <Input id="hots-convert-break" value={form.breakOption} maxLength={500} onChange={e => set("breakOption", e.target.value)} placeholder="For example: tenant break at year 5" data-testid="hots-convert-break" />
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">A figure left blank is taken from the agreed offer. Where the offer has none, the deal keeps what it has.{crmPicker ? " Fees are not changed." : ""}</p>
+      <p className="text-xs text-muted-foreground">A figure left blank is taken from the agreed offer. Where the offer has none, the transaction keeps what it has.{crmPicker ? " Fees are not changed." : ""}</p>
       <div className="flex justify-end">
         <Button type="submit" disabled={busy || !ready} data-testid="hots-convert-submit">
           {busy && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}Convert to Solicitors
@@ -160,12 +160,12 @@ export function HotsConversionResult({ conversion, isStaff }: { conversion: Hots
     <div className="space-y-2.5 rounded-lg border p-3" data-testid="hots-conversion">
       <p className={`flex items-start gap-1.5 text-sm font-semibold ${TONE_GOOD}`} data-testid="hots-conversion-title">
         <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" />
-        <span>Deal <span className="font-mono tabular-nums">{ref}</span> is now at Solicitors</span>
+        <span>Transaction <span className="font-mono tabular-nums">{ref}</span> is now at Solicitors</span>
       </p>
       {conversion.tenantName && <p className="text-sm">Tenant: {conversion.tenantName}</p>}
       {conversion.dealUrl && (
         <a href={conversion.dealUrl} className="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-2 hover:underline" data-testid="hots-conversion-deal-link">
-          Open the deal page <ExternalLink className="h-3.5 w-3.5" />
+          Open the transaction page <ExternalLink className="h-3.5 w-3.5" />
         </a>
       )}
       {conversion.statusWarning && (

@@ -63,6 +63,6 @@ export function UnitStateLegend({ counts, children, className }: { counts: Parti
 export function UnitDealTag({ deal }: { deal: PropertyUnit["deal"] }) {
   if (!deal || deal.letting) return null;
   const status = deal.code ? DEAL_STATUS_LABELS[deal.code] : null;
-  const words = [deal.type || "Deal", status].filter(Boolean).join(" · ");
+  const words = [deal.type || "Transaction", status].filter(Boolean).join(" · ");
   return <span className={cn(rowPill, "px-1.5 border-border text-muted-foreground")} title={deal.name || words} data-testid="unit-deal-tag">{words}</span>;
 }

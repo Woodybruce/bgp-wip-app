@@ -152,15 +152,15 @@ router.post("/api/deals/:id/aml-stop", async (req: Request, res: Response) => {
     if (!said.ok) return res.status(400).json({ message: said.message });
     const id = String(req.params.id);
     const deal = (await pool.query(`SELECT id, name, deal_ref, status FROM crm_deals WHERE id = $1`, [id])).rows[0];
-    if (!deal) return res.status(404).json({ message: "Deal not found." });
+    if (!deal) return res.status(404).json({ message: "Transaction not found." });
     // Set first, so nothing moves the deal on meanwhile; a second press finds it set.
     const set = await pool.query(
       `UPDATE crm_deals SET aml_stopped_at = now(), aml_stopped_by = $2, aml_stopped_by_name = $3, aml_stopped_reason = $4,
               aml_stopped_note = $5, aml_stopped_prev_status = $6, aml_stopped_withdrew = false
         WHERE id = $1 AND aml_stopped_at IS NULL`,
       [id, me.id, me.name, said.value.reason, said.value.note, deal.status || null]);
-    if (!set.rowCount) return res.status(409).json({ message: "BGP has already stopped acting on this deal." });
-    await audit(id, "aml_stopped", null, `stopped by ${me.name}`, "BGP stopped acting on this deal (AML)", me);
+    if (!set.rowCount) return res.status(409).json({ message: "BGP has already stopped acting on this transaction." });
+    await audit(id, "aml_stopped", null, `stopped by ${me.name}`, "BGP stopped acting on this transaction (AML)", me);
 
     const { legacyToCode } = await import("../shared/deal-status");
     let withdrawn = false;
@@ -176,7 +176,7 @@ router.post("/api/deals/:id/aml-stop", async (req: Request, res: Response) => {
         await mirrorFromDeal(id, "WIT", { pool, reason: "aml_stop", actorUserId: me.id })
           .catch((e: any) => console.warn("[aml-stop] tracker mirror failed:", e?.message));
       } catch (e: any) {
-        withdrawError = "BGP has stopped acting, but the deal could not be moved to Withdrawn.";
+        withdrawError = "BGP has stopped acting, but the transaction could not be moved to Withdrawn.";
         console.warn("[aml-stop] withdraw failed:", e?.message);
       }
     }
@@ -194,13 +194,13 @@ router.post("/api/deals/:id/aml-stop/resume", async (req: Request, res: Response
     if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
     const id = String(req.params.id);
     const stop = await amlStopOf(id);
-    if (!stop) return res.status(409).json({ message: "BGP has not stopped acting on this deal. Reload the page." });
+    if (!stop) return res.status(409).json({ message: "BGP has not stopped acting on this transaction. Reload the page." });
     const deal = (await pool.query(`SELECT id, name, deal_ref, status FROM crm_deals WHERE id = $1`, [id])).rows[0];
-    if (!deal) return res.status(404).json({ message: "Deal not found." });
+    if (!deal) return res.status(404).json({ message: "Transaction not found." });
     await pool.query(
       `UPDATE crm_deals SET aml_stopped_at = NULL, aml_stopped_by = NULL, aml_stopped_by_name = NULL, aml_stopped_reason = NULL,
               aml_stopped_note = NULL, aml_stopped_prev_status = NULL, aml_stopped_withdrew = NULL WHERE id = $1`, [id]);
-    await audit(id, "aml_stopped", `stopped by ${stop.by}`, `released by ${me.name}`, "BGP acts on this deal again (AML)", me);
+    await audit(id, "aml_stopped", `stopped by ${stop.by}`, `released by ${me.name}`, "BGP acts on this transaction again (AML)", me);
 
     // A deal the stop withdrew goes back where it was, through the ordinary gates.
     const { legacyToCode } = await import("../shared/deal-status");
@@ -210,7 +210,7 @@ router.post("/api/deals/:id/aml-stop/resume", async (req: Request, res: Response
       const { dealStatusTransitionDenial } = await import("./deal-gates");
       const denial = await dealStatusTransitionDenial(me.id, id, stop.prevStatus);
       if (denial) {
-        restoreError = `The deal stays Withdrawn: ${denial.error}`;
+        restoreError = `The transaction stays Withdrawn: ${denial.error}`;
       } else {
         const { updateDeal } = await import("./letting-service");
         await updateDeal(id, { status: stop.prevStatus }, { userId: me.id, source: "deal-form" });

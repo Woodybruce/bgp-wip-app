@@ -30,7 +30,7 @@ export function tagPath(type: TagType, id: string): string | null {
 export const TAG_META: Record<TagType, { icon: typeof Building2; label: string; chip: string }> = {
   property: { icon: Building2, label: "Property", chip: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300" },
   company: { icon: Briefcase, label: "Brand", chip: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300" },
-  deal: { icon: BarChart3, label: "Deal", chip: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" },
+  deal: { icon: BarChart3, label: "Transaction", chip: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" },
   unit: { icon: LayoutGrid, label: "Letting unit", chip: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" },
   contact: { icon: UserIcon, label: "Contact", chip: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300" },
   user: { icon: UserIcon, label: "Person", chip: "bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200" },

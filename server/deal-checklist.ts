@@ -45,7 +45,7 @@ import {
 } from "@shared/deal-waiting";
 
 const BGP_EMAIL_DOMAIN = "@brucegillinghampollard.com";
-const TASK_CATEGORY = "Deal checklist";
+const TASK_CATEGORY = "Transaction checklist";
 const TASK_REF = "deal_checklist:";
 const REMIND_EVERY_MS = 60 * 60 * 1000;
 
@@ -378,7 +378,7 @@ export async function tasksPathForLogin(userId: string | null | undefined, db: D
 
 const itemTaskTitle = (label: string, unit: any) => `${oneLine(label)}: ${unitPlace(unit)}`;
 const itemTaskDescription = (item: any, access: Access) =>
-  `Deal checklist, ${stageLabel(item.stage)} stage. ${item.required ? "Required" : "Not required"}. Asked by ${access.name || "a colleague"}.`;
+  `Transaction checklist, ${stageLabel(item.stage)} stage. ${item.required ? "Required" : "Not required"}. Asked by ${access.name || "a colleague"}.`;
 
 // Tell the person in the app, the way a task set from the Tasks page does.
 async function notifyTask(userId: string, access: Access, title: string, taskId: string, landsecRole: string | null = null): Promise<void> {
@@ -433,7 +433,7 @@ function emailHtml(opts: { greetingName: string; lead: string; rows: [string, st
 <p>Hello ${esc(opts.greetingName.split(" ")[0] || opts.greetingName)},</p>
 <p>${esc(opts.lead)}</p>
 <table style="border-collapse:collapse;font-size:14px">${rows}</table>
-<p><a href="${esc(link)}">Open the deal checklist</a></p>
+<p><a href="${esc(link)}">Open the transaction checklist</a></p>
 ${opts.hasLogin ? "<p>It is also on your task list in the BGP app.</p>" : ""}
 </div>`;
 }
@@ -459,8 +459,8 @@ export function itemEmail(kind: "assigned" | "reminder", item: any, unit: any, p
     html: emailHtml({
       greetingName: person.name,
       lead: kind === "reminder"
-        ? `A reminder from ${who}: this item on the deal checklist for ${place} is yours and is still open.`
-        : `${who} has made you responsible for this item on the deal checklist for ${place}.`,
+        ? `A reminder from ${who}: this item on the transaction checklist for ${place} is yours and is still open.`
+        : `${who} has made you responsible for this item on the transaction checklist for ${place}.`,
       rows, unitId: unit.id, hasLogin: person.hasLogin, way: person.way,
     }),
   };
@@ -650,7 +650,7 @@ export async function waitingFlagsForChecklists(checklistIds: string[]): Promise
   return out;
 }
 
-const CHECKLIST_AS_WRITER = "The deal checklist";
+const CHECKLIST_AS_WRITER = "The transaction checklist";
 
 async function applyWaitingChange(db: Db, dealId: string, change: WaitingChange): Promise<void> {
   if (change.action === "move") {
@@ -834,22 +834,22 @@ export async function prepareWaitingLink(req: Request, dealId: string, body: { c
   const personKey = typeof body.personKey === "string" ? body.personKey.trim() : "";
   if (itemId && newLabel) return refuse(400, "Pick an item on the checklist or type a new one, not both");
   if (!itemId && !newLabel) {
-    if (personKey) return refuse(400, "Pick what the deal is waiting for before choosing who is responsible for it");
+    if (personKey) return refuse(400, "Pick what the transaction is waiting for before choosing who is responsible for it");
     return { ok: true, itemId: null, label: null, party: null, name: null, assign: async () => null };
   }
   if (newLabel.length > 300) return refuse(400, "Keep the item to 300 characters or fewer");
 
   const unit = await unitOfDeal(dealId);
-  if (!unit) return refuse(400, "This deal is not on the Letting Tracker, so it has no checklist to link to");
+  if (!unit) return refuse(400, "This transaction is not on the Letting Tracker, so it has no checklist to link to");
   const access = await briefAccess(req, unit.property_id);
-  if (!access) return refuse(403, "This deal's checklist is outside your access");
+  if (!access) return refuse(403, "This transaction's checklist is outside your access");
   const checklist = await currentChecklist(unit);
-  if (!checklist || (checklist.deal_id || "") !== dealId) return refuse(409, "This deal has no checklist yet. Start the checklist, then pick what the deal is waiting for.");
+  if (!checklist || (checklist.deal_id || "") !== dealId) return refuse(409, "This transaction has no checklist yet. Start the checklist, then pick what the transaction is waiting for.");
 
   let item: any = null;
   if (itemId) {
     item = (await pool.query(`SELECT * FROM deal_checklist_items WHERE id = $1`, [itemId])).rows[0] || null;
-    if (!item || item.checklist_id !== checklist.id) return refuse(400, "That item is not on this deal's checklist");
+    if (!item || item.checklist_id !== checklist.id) return refuse(400, "That item is not on this transaction's checklist");
     if (item.done_at) return refuse(400, "That item is already done. Pick an open one.");
   } else if (!access.canEditTerms) {
     return refuse(403, READ_ONLY);
@@ -1114,7 +1114,7 @@ export function setupDealChecklistRoutes(app: Express) {
         if (person?.userId && person.taskList) {
           taskId = await makeTask(db, {
             userId: person.userId, title,
-            description: `You are responsible for this letting. Any item on its deal checklist with nobody on it falls to you. Asked by ${access.name || "a colleague"}.`,
+            description: `You are responsible for this letting. Any item on its transaction checklist with nobody on it falls to you. Asked by ${access.name || "a colleague"}.`,
             dueDate: null, required: false, unit, ref, access,
           });
         }
@@ -1133,7 +1133,7 @@ export function setupDealChecklistRoutes(app: Express) {
         const who = access.name || "A colleague";
         mail = await sendEmail(person.email, person.name, `${who} has made you responsible for the letting of ${unitPlace(unit)}`, emailHtml({
           greetingName: person.name,
-          lead: `${who} has made you responsible for the letting of ${unitPlace(unit)}. Any item on its deal checklist with nobody on it falls to you.`,
+          lead: `${who} has made you responsible for the letting of ${unitPlace(unit)}. Any item on its transaction checklist with nobody on it falls to you.`,
           rows: [["Letting", unitPlace(unit)], ["Stage", stageLabel(checklistStageFor(legacyToCode(unit.marketing_status)))], ["Asked by", who]],
           unitId: unit.id, hasLogin: person.taskList, way: wayOf(person),
         }), unit.landlord_name);
@@ -1328,10 +1328,10 @@ export function setupDealChecklistRoutes(app: Express) {
       const ctx = await itemCtx(req, res, String(req.params.itemId));
       if (!ctx) return;
       const { checklist, unit, access, item } = ctx;
-      if (!unit.deal_id) return res.status(409).json({ message: "This unit has no deal yet, so there is nothing to set as waiting" });
-      if (!(await mayWriteClock(req, unit.deal_id))) return res.status(403).json({ message: "Who a deal is waiting on is set by BGP staff, or by a Landsec login at the deal's scheme" });
-      if (item.done_at) return res.status(400).json({ message: "This item is done, so the deal is not waiting on it" });
-      if (lettingClosed(unit.deal_status, unit.marketing_status)) return res.status(409).json({ message: "This letting has closed, so the deal is not waiting on anything" });
+      if (!unit.deal_id) return res.status(409).json({ message: "This unit has no transaction yet, so there is nothing to set as waiting" });
+      if (!(await mayWriteClock(req, unit.deal_id))) return res.status(403).json({ message: "Who a transaction is waiting on is set by BGP staff, or by a Landsec login at the transaction's scheme" });
+      if (item.done_at) return res.status(400).json({ message: "This item is done, so the transaction is not waiting on it" });
+      if (lettingClosed(unit.deal_status, unit.marketing_status)) return res.status(409).json({ message: "This letting has closed, so the transaction is not waiting on anything" });
       const loaded = (await loadWaitingChecklists(pool, "c.id", [checklist.id]))[0] || null;
       const onList = loaded?.items.find(i => i.id === item.id) || null;
       if (!loaded || !onList) return res.status(409).json({ message: "This checklist belongs to an earlier letting of the unit" });
@@ -1352,7 +1352,7 @@ export function setupDealChecklistRoutes(app: Express) {
       res.json(await checklistJson(checklist, unit, access));
     } catch (e: any) {
       console.error("[deal-checklist waiting]", e?.message);
-      res.status(500).json({ message: e?.message || "Failed to set what the deal is waiting on" });
+      res.status(500).json({ message: e?.message || "Failed to set what the transaction is waiting on" });
     }
   });
 

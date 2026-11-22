@@ -231,7 +231,7 @@ export function PartnerRemunerationSection() {
           <p className="text-[11px] text-muted-foreground leading-relaxed" data-testid="rem-forecast">
             {forecast.share > 0
               ? <>Live forecast (from the Company outlook above): profit pool £{fmt(forecast.pool)} → £{fmt(forecast.share)} each on top of the £145k salary.</>
-              : <>No profit share on today's book yet — the deals currently on the boards don't cover the full year's costs, and deals won through the year fill this in. At last year's billing pace (£{fmt(forecast.lastFyTotal)}), the pool would be ≈ £{fmt(forecast.pacePool ?? 0)} → £{fmt(forecast.paceShare ?? 0)} each on top of the £145k salary.</>}
+              : <>No profit share on today's book yet — the transactions currently on the boards don't cover the full year's costs, and transactions won through the year fill this in. At last year's billing pace (£{fmt(forecast.lastFyTotal)}), the pool would be ≈ £{fmt(forecast.pacePool ?? 0)} → £{fmt(forecast.paceShare ?? 0)} each on top of the £145k salary.</>}
             {" "}Bonus and dividends typed above are draws against that share.
           </p>
         )}

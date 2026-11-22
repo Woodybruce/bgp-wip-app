@@ -404,7 +404,7 @@ function LendingTermsBoard({ companyId, company, canEdit }: { companyId: string;
             </div>
             <div>
               <Label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Appetite notes</Label>
-              <Textarea value={form.lendingAppetiteNotes} onChange={(e) => setForm({ ...form, lendingAppetiteNotes: e.target.value })} className="text-sm min-h-[60px] mt-1" placeholder="Sectors, deal types, current appetite…" />
+              <Textarea value={form.lendingAppetiteNotes} onChange={(e) => setForm({ ...form, lendingAppetiteNotes: e.target.value })} className="text-sm min-h-[60px] mt-1" placeholder="Sectors, transaction types, current appetite…" />
             </div>
             <div className="flex justify-end gap-2 pt-1">
               <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>

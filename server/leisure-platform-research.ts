@@ -68,7 +68,7 @@ The fund was never formally suspended. It is closed-ended with no redemption rig
 | No redemption mechanism | AREF: "The fund is closed-ended. However, the manager can raise new investment in the fund and bring in new partners." Minimum disinvestment: N/A |
 | No secondary activity | Matched bargains 0 in 2019; none 2020 to 2024. Units in issue flat at 525,461 |
 | Term extended to 2030 | LP6 filings: term to 3 Nov 2011 (Jan 2004), 31 Dec 2014 (Sep 2006), 31 Dec 2020 (Apr 2011), 31 Dec 2030 (Dec 2018). Four more years of lock-in than AREF's stale field suggests |
-| Investors now sign off deals | AREF note: "All transactions currently require investor approval". That reads as an advisory-committee or partner-consent regime, typical of a fund in managed run-off |
+| Investors now sign off transactions | AREF note: "All transactions currently require investor approval". That reads as an advisory-committee or partner-consent regime, typical of a fund in managed run-off |
 | Value has halved | NAV per unit 951p (Dec 2018) to 463p (Jun 2024) to c. 417p (Mar 2026) |
 | Debt still in place | NatWest Markets remains security agent; new charges registered Dec 2020, Mar 2021, Dec 2021, Jul 2023 and Dec 2024, so the facility has been amended or extended rather than repaid |
 
@@ -333,10 +333,10 @@ Cinema-anchored leisure parks are priced as if the cinema is dying (8.5% to 10.6
 | Route | What it buys | Pace | Pricing | Example |
 | --- | --- | --- | --- | --- |
 | Fund units | Scale in one move: 16 parks, £340m, through 23 holders and one manager | 6 to 12 months to control | 55% to 65% of NAV, i.e. 9.5% to 10.5% look-through | L&G Leisure Fund; the same play exists at other closed-ended property LPs in run-off |
-| Direct assets | Dominant single parks from motivated sellers | Deal by deal, 3 months each | 8.5% to 10.6% | Star City, Medway Valley, Freemans, Five Ways, Cornerhouse |
+| Direct assets | Dominant single parks from motivated sellers | Transaction by transaction, 3 months each | 8.5% to 10.6% | Star City, Medway Valley, Freemans, Five Ways, Cornerhouse |
 | Operators with property | Trading business plus freeholds, and an operating team | Corporate process, 6 to 9 months | EV at 5x to 7x EBITDA, property backing the debt | Showcase UK (for sale, 16 sites, 11 reported freeholds in a US affiliate); Merlin; WTW/Scott; Reel plus propco |
 
-Showcase as the worked example: a circuit the owner must sell whole, 16 sites with 11 reported freeholds including Teesside, Dudley and Birstall, £90m turnover, losing £1.9m, with a stalled £55m deal because the operator buyer (The Light) needed a property partner (Frasers) and the partner re-cut the price. That is the shape of every operator deal in this sector: the property buyer sets the price and the operator is the tenant. Double Bill should be the property partner of choice for the next Showcase, Omniplex or Everyman move rather than the operator.
+Showcase as the worked example: a circuit the owner must sell whole, 16 sites with 11 reported freeholds including Teesside, Dudley and Birstall, £90m turnover, losing £1.9m, with a stalled £55m transaction because the operator buyer (The Light) needed a property partner (Frasers) and the partner re-cut the price. That is the shape of every operator transaction in this sector: the property buyer sets the price and the operator is the tenant. Double Bill should be the property partner of choice for the next Showcase, Omniplex or Everyman move rather than the operator.
 
 Operators are wanted only where they own property. Merlin and WTW/Scott are the only freehold-rich cinema businesses and neither is for sale; the right move is a relationship, not a bid. Everyman is in play (delisting talk, Joseph Lewis on the board) but owns nothing. Savoy, Omniplex and Arc own some freeholds and are growing; they are tenants and co-investors for the parks.
 

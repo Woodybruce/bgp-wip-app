@@ -50,7 +50,7 @@ export function DealTimelinePanel({ dealId, onOpen }: { dealId: string; onOpen: 
           <Pill active={newestFirst} onClick={() => setNewestFirst(true)} data-testid="deal-timeline-newest">Newest first</Pill>
         </div>
       </div>
-      {events.length === 0 && <p className="text-sm text-muted-foreground">Nothing has been recorded on this deal yet.</p>}
+      {events.length === 0 && <p className="text-sm text-muted-foreground">Nothing has been recorded on this transaction yet.</p>}
       {groups.map(g => (
         <div key={g.label}>
           <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground mb-1">{g.label}</p>
@@ -64,7 +64,7 @@ export function DealTimelinePanel({ dealId, onOpen }: { dealId: string; onOpen: 
                   </span>
                   <span className="block min-w-0">
                     <span className="block text-sm leading-snug break-words">{e.title}</span>
-                    <span className={cn("block text-xs text-muted-foreground", !e.confirmed && "opacity-60")} title={e.confirmed ? undefined : "The date is not confirmed: a bulk update stamped it, not the day the deal moved"}>
+                    <span className={cn("block text-xs text-muted-foreground", !e.confirmed && "opacity-60")} title={e.confirmed ? undefined : "The date is not confirmed: a bulk update stamped it, not the day the transaction moved"}>
                       {[day(e.at), e.by, e.detail].filter(Boolean).join(" · ")}
                     </span>
                   </span>

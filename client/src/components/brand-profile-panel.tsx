@@ -1901,7 +1901,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 <CompanyInvoicingControls companyId={c.id} contactEmails={data.contacts.map(contact => contact.email)} />
               </>}
               {currentUser?.role !== "Client" && !isLandlord && <>
-                <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to deal</Button>
+                <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to transaction</Button>
                 {!isLandlord && !isAgentFirm && !isLender && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
               </>}
             </div>}
@@ -1948,7 +1948,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       // Brand pages, staff: the deal, requirement and contact counts read
       // here, as on the landlord card, not as chips under About.
       ...(brandFactsFirst ? [
-        activeDealCount ? <span key="live">{num(activeDealCount)} live deal{activeDealCount === 1 ? "" : "s"}</span> : null,
+        activeDealCount ? <span key="live">{num(activeDealCount)} live transaction{activeDealCount === 1 ? "" : "s"}</span> : null,
         completedDealCount ? <span key="completed">{num(completedDealCount)} completed</span> : null,
         liveRequirementCount ? <Link key="requirements" href={`/requirements?companyId=${encodeURIComponent(companyId)}`} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="link-brand-requirements-count">{num(liveRequirementCount)} requirement{liveRequirementCount === 1 ? "" : "s"}</Link> : null,
         <button key="contacts" type="button" onClick={() => setPanelSection("more")} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="button-brand-contacts-count">{num(data.contacts.length)} contact{data.contacts.length === 1 ? "" : "s"} in the CRM</button>,
@@ -2603,7 +2603,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       ...(isLandlord ? [] : [
         { key: "add-contact", label: "Add contact", onSelect: () => setAddContactOpen(true), testId: "button-add-contact-brand" },
         { key: "find-people", label: contactsFinding ? "Finding people…" : "Find people (paid search)", onSelect: runContactDiscovery, disabled: contactsFinding, testId: "button-refresh-contacts" },
-        { key: "add-deal", label: "Add to deal", onSelect: () => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`), testId: "button-add-to-deal" },
+        { key: "add-deal", label: "Add to transaction", onSelect: () => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`), testId: "button-add-to-deal" },
       ]),
       { key: "edit-facts", label: editing ? "Stop editing profile facts" : "Edit profile facts", onSelect: editing ? () => setEditing(false) : startEdit, separatorBefore: !isLandlord, testId: "button-brand-edit" },
       { key: "refresh", label: enrichMutation.isPending ? "Refreshing profile…" : "Refresh profile", onSelect: () => enrichMutation.mutate(), disabled: enrichMutation.isPending, testId: "button-brand-refresh" },
@@ -2697,9 +2697,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     return (
       <CompanyKindPage key={companyId} testId="landlord-profile">{select => ({
         top: kindPageTop(select, "Working with BGP", <>
-          <BandFigure label={tracked === 1 ? "Property we track" : "Properties we track"} value={kindFigure(tracked)} onClick={() => select("portfolio")} title="Opens Properties & deals" testId="landlord-figure-properties" />
-          <BandFigure label={`Live deal${activeDealCount === 1 ? "" : "s"}`} value={kindFigure(activeDealCount)} onClick={() => select("portfolio")} title="Opens Properties & deals" testId="landlord-figure-live-deals" />
-          <BandFigure label="Completed" title={`${completedDealCount} completed deal${completedDealCount === 1 ? "" : "s"}`} value={kindFigure(completedDealCount)} testId="landlord-figure-completed-deals" />
+          <BandFigure label={tracked === 1 ? "Property we track" : "Properties we track"} value={kindFigure(tracked)} onClick={() => select("portfolio")} title="Opens Properties & transactions" testId="landlord-figure-properties" />
+          <BandFigure label={`Live transaction${activeDealCount === 1 ? "" : "s"}`} value={kindFigure(activeDealCount)} onClick={() => select("portfolio")} title="Opens Properties & transactions" testId="landlord-figure-live-deals" />
+          <BandFigure label="Completed" title={`${completedDealCount} completed transaction${completedDealCount === 1 ? "" : "s"}`} value={kindFigure(completedDealCount)} testId="landlord-figure-completed-deals" />
           <BandFigure label={`${isClientViewer ? "Contact" : "CRM contact"}${data.contacts.length === 1 ? "" : "s"}`} value={kindFigure(data.contacts.length)} onClick={() => select("people")} title="Opens People & checks" testId="landlord-figure-contacts" />
         </>, landRegistryTitles.length > 0
           ? <p className="text-[11px] text-muted-foreground" data-testid="landlord-figure-titles"><span className="font-mono tabular-nums text-foreground">{kindFigure(landRegistryTitles.length)}</span>{landRegistryTitles.length >= 200 ? "+" : ""} registered titles at Land Registry under this company</p>
@@ -2720,7 +2720,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             {kindActivity("landlord-activity-feed")}
             {isClientViewer && <AccountNextActionsCard companyId={companyId} />}
           </> },
-          { key: "portfolio", label: "Properties & deals", count: tracked, body: <>
+          { key: "portfolio", label: "Properties & transactions", count: tracked, body: <>
             <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
             <AccountDealsBoard companyId={companyId} />
             {!isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
@@ -2822,7 +2822,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             {staffPlan && <LandlordEngagementPanel companyId={companyId} companyName={c.name} interviews={false} />}
             {kindActivity("agent-activity-feed")}
           </> }]),
-          ...(isClientViewer && !represents ? [] : [{ key: "brands", label: "Brands & deals", count: data.representing.length, body: <>
+          ...(isClientViewer && !represents ? [] : [{ key: "brands", label: "Brands & transactions", count: data.representing.length, body: <>
             {represents}
             {!isClientViewer && <div className={companyPair}>
               <AgentRelationshipCard companyId={companyId} part="dealings" />
@@ -3244,7 +3244,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     {staffPlan && c.hunter_flag && <CompanyStartStrategy companyId={companyId} companyName={c.name} variant="outline" />}
     {currentUser?.role !== "Client" && <>
       <Button size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)} data-testid="button-pitch-property"><Building2 />Pitch property</Button>
-      <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)} data-testid="button-add-to-deal"><Plus />Add to deal</Button>
+      <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)} data-testid="button-add-to-deal"><Plus />Add to transaction</Button>
     </>}
     {emailContact && <Button variant="outline" size="sm" asChild><a href={`mailto:${emailContact.email}`} data-testid="link-email"><Mail />Email</a></Button>}
     {c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
@@ -3283,8 +3283,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         onClick={() => jumpToCard("brand-key-contacts", "more")} title="Contacts in the CRM. Opens Key contacts" testId="button-brand-contacts-count" />,
       threads ? <BandFigure key="threads" label={`Email thread${threads === 1 ? "" : "s"}`} value={figure(threads)}
         onClick={stats ? () => setEmailsOpen(true) : undefined} title={stats ? "Open the email history" : undefined} testId="button-brand-emails" /> : null,
-      activeDealCount ? <BandFigure key="live" label={`Live deal${activeDealCount === 1 ? "" : "s"}`} value={figure(activeDealCount)} testId="brand-figure-live-deals" /> : null,
-      completedDealCount ? <BandFigure key="completed" label="Completed" title={`${completedDealCount} completed deal${completedDealCount === 1 ? "" : "s"}`} value={figure(completedDealCount)} testId="brand-figure-completed-deals" /> : null,
+      activeDealCount ? <BandFigure key="live" label={`Live transaction${activeDealCount === 1 ? "" : "s"}`} value={figure(activeDealCount)} testId="brand-figure-live-deals" /> : null,
+      completedDealCount ? <BandFigure key="completed" label="Completed" title={`${completedDealCount} completed transaction${completedDealCount === 1 ? "" : "s"}`} value={figure(completedDealCount)} testId="brand-figure-completed-deals" /> : null,
       liveRequirementCount ? <BandFigure key="requirements" label={`Requirement${liveRequirementCount === 1 ? "" : "s"}`} value={figure(liveRequirementCount)} testId="brand-figure-requirements" /> : null,
     ].filter(Boolean);
     const activeLine = active90 && !isClientViewer ? `${figure(active90)} ${active90 === 1 ? "person" : "people"} active in the last 90 days` : null;
@@ -3433,7 +3433,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const pillCount = (n: number) => n > 0 ? <span className="font-mono tabular-nums">{n.toLocaleString("en-GB")}</span> : null;
   const brandSectionPills = brandTop ? <>
     <Pill active={panelSection === "profile"} onClick={() => selectSection("profile")} data-testid="brand-section-profile">Overview</Pill>
-    <Pill active={panelSection === "relationship"} onClick={() => selectSection("relationship")} data-testid="brand-section-relationship">Deals &amp; space{pillCount(data.dealList?.total ?? activeDealCount + completedDealCount)}</Pill>
+    <Pill active={panelSection === "relationship"} onClick={() => selectSection("relationship")} data-testid="brand-section-relationship">Transactions &amp; space{pillCount(data.dealList?.total ?? activeDealCount + completedDealCount)}</Pill>
     {/* A client login with no mapped stores and no menu items has nothing under this pill. */}
     {(sectionContent?.stores || panelSection === "stores") && <Pill active={panelSection === "stores"} onClick={() => selectSection("stores")} data-testid="brand-section-stores">Stores &amp; menu{pillCount(stores.filter((st: any) => !st.country || st.country === "GB").length)}</Pill>}
     <Pill active={panelSection === "intel"} onClick={() => selectSection("intel")} data-testid="brand-section-intel">Expansion{pillCount(dedupedSignals.filter((sig: any) => isEstateSignal(sig)).length)}</Pill>
@@ -3520,7 +3520,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       ["capacity", "Capacity", "Whether they can pay for a rollout", "No covenant grade, funding or share price on record"],
       ["intent", "Intent", "What they are telling the market", "No requirement, tenant rep or unit enquiry on record"],
     ] as const;
-    const RELATIONSHIP_PART = ["engagement", "Relationship", "BGP's own work with the brand, not part of the Expansion score", "No deals, offers, viewings or recent contact with BGP"] as const;
+    const RELATIONSHIP_PART = ["engagement", "Relationship", "BGP's own work with the brand, not part of the Expansion score", "No transactions, offers, viewings or recent contact with BGP"] as const;
     const relationship = staff && hunter?.subScores ? Number(hunter.relationship ?? hunter.subScores.engagement ?? 0) : null;
     const scoreBody = hunter?.subScores ? (
       <div className="space-y-3" data-testid="brand-expansion-bars">
@@ -3586,7 +3586,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               <span className="font-mono tabular-nums text-xs text-muted-foreground">/100</span>
               <span className={`${pillMetrics} border ${score! >= 30 ? "bg-orange-50 text-orange-700 border-orange-200" : score! >= 20 ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-zinc-50 text-zinc-700 border-zinc-200"}`} title="Market evidence only: momentum, pipeline, capacity and intent. The Hunter board's bands: Very hot from 30, Hot from 20, Watch from 10">{expansionBand(score!)}</span>
               {relationship != null && (
-                <span className="ml-auto text-xs text-muted-foreground" title="BGP's own deals, offers, viewings and contact with the brand. Its own figure: not added to the Expansion score." data-testid="brand-relationship-value">
+                <span className="ml-auto text-xs text-muted-foreground" title="BGP's own transactions, offers, viewings and contact with the brand. Its own figure: not added to the Expansion score." data-testid="brand-relationship-value">
                   Relationship <span className="font-mono tabular-nums font-semibold text-foreground">{relationship}</span><span className="font-mono tabular-nums">/25</span> · {relationshipBand(relationship)}
                 </span>
               )}
@@ -3892,7 +3892,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             {brandTop ? brandSectionPills : <>
             <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">{isLandlord || brandOverview ? "Overview" : "Profile"}</Pill>
             <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">{isLandlord ? "Portfolio" : "Stores"}</Pill>
-            <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">{isLandlord ? "Deals & activity" : "Relationship"}</Pill>
+            <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">{isLandlord ? "Transactions & activity" : "Relationship"}</Pill>
             <Pill active={panelSection === "intel"} onClick={() => setPanelSection("intel")} data-testid="brand-section-intel">Intel</Pill>
             <Pill active={panelSection === "more"} onClick={() => setPanelSection("more")} data-testid="brand-section-more">{isLandlord ? "People" : "Contacts & media"}</Pill>
             </>}
@@ -4593,7 +4593,7 @@ export function askTopics(brandName: string, isLandlord = false, isAgentFirm = f
   if (isAgentFirm) return [
     { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} as an agent — who they act for and our relationship with them` },
     { label: "Acts for", question: `Which brands, landlords and investors does ${brandName} act for, and in which roles?` },
-    { label: "Deals", question: `What deals has BGP done with or against ${brandName}, and what's live now?` },
+    { label: "Transactions", question: `What transactions has BGP done with or against ${brandName}, and what's live now?` },
     { label: "Requirements", question: `What requirements has ${brandName} sent BGP, which are live, and what BGP space could fit them?` },
     { label: "People", question: `Who at ${brandName} should BGP be talking to, about what, and who knows them best at BGP?` },
     { label: "Email", question: `Draft a short catch-up email from BGP to our main contact at ${brandName}` },
@@ -5482,7 +5482,7 @@ export function BrandComplianceCard({
       const found = out?.success ? out?.profile?.companyName : null;
       toast({
         title: found ? `Confirmed: ${found}` : "Not found yet",
-        description: found ? "" : "Nothing on the website or in the deal records named the UK entity — enter it below.",
+        description: found ? "" : "Nothing on the website or in the transaction records named the UK entity — enter it below.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
@@ -5585,7 +5585,7 @@ export function BrandComplianceCard({
                   <div className="text-sm font-semibold leading-tight line-clamp-2 break-words" title={entity}>{entity}</div>
                 ) : (
                   <div className="text-xs italic text-muted-foreground">
-                    {rescrape.isPending ? "Checking the website and deal records…" : bcIsClient ? "Not confirmed yet — BGP is identifying the UK trading entity." : "Not found yet — enter it or refresh."}
+                    {rescrape.isPending ? "Checking the website and transaction records…" : bcIsClient ? "Not confirmed yet — BGP is identifying the UK trading entity." : "Not found yet — enter it or refresh."}
                   </div>
                 )}
                 {company.companies_house_number && (
@@ -5601,7 +5601,7 @@ export function BrandComplianceCard({
                 {hasEntity && company.ai_generated_fields?.uk_entity_source?.kind === "deal_documents"
                   && sameEntityName(company.ai_generated_fields.uk_entity_source.entityName, entity) && (
                   <div className="text-[11px] text-muted-foreground truncate mt-0.5" title={company.ai_generated_fields.uk_entity_source.quote || ""}>
-                    From deal records · {company.ai_generated_fields.uk_entity_source.fileName}
+                    From transaction records · {company.ai_generated_fields.uk_entity_source.fileName}
                   </div>
                 )}
               </div>
@@ -5619,7 +5619,7 @@ export function BrandComplianceCard({
                 onClick={() => rescrape.mutate()}
                 disabled={rescrape.isPending}
                 className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted disabled:opacity-50"
-                title="Refresh — check the website and deal records again"
+                title="Refresh — check the website and transaction records again"
               >
                 {rescrape.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "↻"}
               </button>
@@ -5745,7 +5745,7 @@ export function BrandComplianceCard({
             <p className="text-[11px] text-muted-foreground italic mt-2 leading-snug">
               {bcIsClient
                 ? "BGP is compiling these checks — covenant, accounts and AML screening appear here as they complete."
-                : "Confirm the UK trading entity above, then we'll pull Companies House, accounts and covenant against the right registered name. AML/KYC is KYC4U's — raise a request from the deal."}
+                : "Confirm the UK trading entity above, then we'll pull Companies House, accounts and covenant against the right registered name. AML/KYC is KYC4U's — raise a request from the transaction."}
             </p>
           )}
           {/* The unticked rows above already say what's still to collect —
@@ -5914,7 +5914,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
   // at, pitched, suggested) don't apply and the deals table carries them.
   if (pillsOnly) return ledgerPills.length ? (
     <div className="text-[11px] font-semibold flex flex-wrap items-center gap-2 uppercase tracking-wider text-muted-foreground" data-testid="portfolio-activity-pills">
-      <Briefcase className="w-3.5 h-3.5" /> BGP deals
+      <Briefcase className="w-3.5 h-3.5" /> BGP transactions
       {ledgerPills.map(ledgerChip)}
     </div>
   ) : null;
@@ -5940,8 +5940,8 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
             {unitName && right && <span aria-hidden="true">·</span>}
             {right}
             {dealId && <Link href={`/deals/${dealId}`} className={`ml-auto inline-flex ${compact ? "" : "min-h-9"} items-center gap-1 text-xs font-medium text-primary hover:underline whitespace-nowrap`}
-              aria-label={`Open deal for ${propertyName}${unitName ? `, ${unitName}` : ""}`} data-testid={`portfolio-open-deal-${dealId}`}>
-              Open deal <ExternalLinkIcon className="h-3 w-3" aria-hidden="true" />
+              aria-label={`Open transaction for ${propertyName}${unitName ? `, ${unitName}` : ""}`} data-testid={`portfolio-open-deal-${dealId}`}>
+              Open transaction <ExternalLinkIcon className="h-3 w-3" aria-hidden="true" />
             </Link>}
           </div>
         )}
@@ -5960,8 +5960,8 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
         <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{stackRight ? <span className="hidden md:contents">{right}</span> : right}
           {/* Same line as the property on desktop; the 44px tap target is phone-only. */}
           {dealId && <Link href={`/deals/${dealId}`} className="inline-flex min-h-11 md:min-h-0 items-center gap-1 pl-1.5 text-xs font-medium underline underline-offset-2 hover:text-primary whitespace-nowrap"
-            aria-label={`Open deal for ${propertyName}${unitName ? `, ${unitName}` : ""}`} data-testid={`portfolio-open-deal-${dealId}`}>
-            Open deal <ExternalLinkIcon className="h-3 w-3" aria-hidden="true" />
+            aria-label={`Open transaction for ${propertyName}${unitName ? `, ${unitName}` : ""}`} data-testid={`portfolio-open-deal-${dealId}`}>
+            Open transaction <ExternalLinkIcon className="h-3 w-3" aria-hidden="true" />
           </Link>}
         </span>
       </div>
@@ -6072,7 +6072,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
           <Tier tierKey="tenant" label="Tenant at" count={tenantAt.length}>
             {tenantAt.slice(0, capFor("tenant", tenantAt)).map((p: any) => pattern ? tenantRowEl(p) : (
               <Row key={`t-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name} dealId={p.dealId || undefined}
-                right={<span className={`${pillMetrics} ${pillInactive} shrink-0`}>{p.dealId ? titleWords(p.dealType) || "Deal" : "Tenant"}</span>} />
+                right={<span className={`${pillMetrics} ${pillInactive} shrink-0`}>{p.dealId ? titleWords(p.dealType) || "Transaction" : "Tenant"}</span>} />
             ))}
 
           </Tier>
@@ -6677,7 +6677,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
                 {starterPills("flex flex-wrap justify-center gap-1.5 max-w-md mx-auto")}
               </>}
               <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                {sharedProperty ? "One conversation for this property: everyone who can open it reads it, Landsec and the client team included. @ChatBGP to ask ChatBGP; @ tags Letting Tracker units and deals." : <>{starters && starters.length > 0 ? "Answers stay here for the team. " : ""}Ask anything about {companyName} — @ tags properties and deals, and teammates you @ join the conversation.</>}
+                {sharedProperty ? "One conversation for this property: everyone who can open it reads it, Landsec and the client team included. @ChatBGP to ask ChatBGP; @ tags Letting Tracker units and transactions." : <>{starters && starters.length > 0 ? "Answers stay here for the team. " : ""}Ask anything about {companyName} — @ tags properties and transactions, and teammates you @ join the conversation.</>}
               </p>
             </div>
           ) : (

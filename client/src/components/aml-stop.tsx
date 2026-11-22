@@ -28,7 +28,7 @@ export function useAmlStop(dealId: string, enabled = true) {
     queryFn: async () => {
       const res = await fetch(`/api/deals/${dealId}/aml-stop`, { credentials: "include", headers: getAuthHeaders() });
       if (res.status === 403 || res.status === 401) return null;
-      if (!res.ok) throw new Error("Could not read whether BGP is acting on this deal.");
+      if (!res.ok) throw new Error("Could not read whether BGP is acting on this transaction.");
       return res.json();
     },
   });
@@ -54,8 +54,8 @@ export function AmlStopBanner({ dealId }: { dealId: string }) {
       refresh(dealId);
       setConfirming(false);
       toast({
-        title: "BGP acts on this deal again",
-        description: r?.restoreError || (r?.restored ? "The deal is back where it was before it was withdrawn." : r?.told?.sent === false ? `The agents were not emailed: ${r.told.error}` : "The deal's agents have been told."),
+        title: "BGP acts on this transaction again",
+        description: r?.restoreError || (r?.restored ? "The transaction is back where it was before it was withdrawn." : r?.told?.sent === false ? `The agents were not emailed: ${r.told.error}` : "The transaction's agents have been told."),
       });
     },
     onError: (e: any) => toast({ title: "Not released", description: String(e?.message || e).replace(/^\d+:\s*/, ""), variant: "destructive" }),
@@ -67,21 +67,21 @@ export function AmlStopBanner({ dealId }: { dealId: string }) {
     <div className="flex items-start gap-2 rounded-md border-2 border-red-600 bg-red-50 px-3 py-2 text-red-900 dark:bg-red-950/40 dark:text-red-100" data-testid="aml-stop-banner">
       <Ban className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
       <div className="min-w-0 flex-1 text-[13px] leading-snug">
-        <div className="text-[11px] font-semibold uppercase tracking-wide">BGP has stopped acting on this deal (AML)</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wide">BGP has stopped acting on this transaction (AML)</div>
         <p>
           Stopped by {stop.by} on {day(stop.at)}. Do not move it on, invoice it or do more work on it, and do not tell the client or the other side why. Speak to the Nominated Officer.
         </p>
         {officer && stop.reasonWords && (
           <p className="mt-1 text-xs" data-testid="aml-stop-reason">
             <span className="font-medium">{stop.reasonWords}.</span> {stop.note}
-            {stop.withdrew ? ` The stop moved the deal to Withdrawn${stop.prevStatus ? ` from ${stop.prevStatus}` : ""}; releasing it puts it back.` : ""}
+            {stop.withdrew ? ` The stop moved the transaction to Withdrawn${stop.prevStatus ? ` from ${stop.prevStatus}` : ""}; releasing it puts it back.` : ""}
           </p>
         )}
         {officer && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {confirming ? (
               <>
-                <span className="text-xs">Release it, so the deal can move on and be invoiced?</span>
+                <span className="text-xs">Release it, so the transaction can move on and be invoiced?</span>
                 <Button type="button" size="sm" className="h-7 text-xs" disabled={release.isPending} onClick={() => release.mutate()} data-testid="aml-stop-release-confirm">
                   {release.isPending && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}Release
                 </Button>
@@ -129,8 +129,8 @@ export function AmlStopDialog({ dealId, onClose }: { dealId: string; onClose: ()
     onSuccess: (r: any) => {
       refresh(dealId);
       toast({
-        title: "BGP has stopped acting on this deal",
-        description: r?.withdrawError || (r?.told?.sent === false ? `The agents were not emailed: ${r.told.error}` : "The deal's agents and the officers have been told, without the reason."),
+        title: "BGP has stopped acting on this transaction",
+        description: r?.withdrawError || (r?.told?.sent === false ? `The agents were not emailed: ${r.told.error}` : "The transaction's agents and the officers have been told, without the reason."),
       });
       onClose();
     },
@@ -140,9 +140,9 @@ export function AmlStopDialog({ dealId, onClose }: { dealId: string; onClose: ()
     <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className="max-w-md" data-testid="aml-stop-dialog">
         <DialogHeader>
-          <DialogTitle>Stop BGP acting on this deal</DialogTitle>
+          <DialogTitle>Stop BGP acting on this transaction</DialogTitle>
           <DialogDescription>
-            BGP stops its part. The deal can only be withdrawn and can't be invoiced or deleted. The agents are told, without the reason.
+            BGP stops its part. The transaction can only be withdrawn and can't be invoiced or deleted. The agents are told, without the reason.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -161,7 +161,7 @@ export function AmlStopDialog({ dealId, onClose }: { dealId: string; onClose: ()
           </div>
           <label className="flex items-start gap-2 text-xs">
             <Checkbox checked={withdraw} onCheckedChange={v => setWithdraw(v === true)} data-testid="aml-stop-withdraw" />
-            <span>Move the deal to Withdrawn too. Releasing the stop puts it back.</span>
+            <span>Move the transaction to Withdrawn too. Releasing the stop puts it back.</span>
           </label>
           {!checked.ok && <p className="text-[11px] text-muted-foreground" data-testid="aml-stop-missing">{checked.message}</p>}
         </div>

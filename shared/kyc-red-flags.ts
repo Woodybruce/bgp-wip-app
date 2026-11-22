@@ -288,10 +288,10 @@ export function dealRedFlags(deal: DealRedFlagFacts | null): KycRedFlag[] {
   if (!deal) return [];
   const flags: KycRedFlag[] = [];
   const pep = pepStatusLabel(deal.aml_pep_status);
-  if (pep) flags.push({ kind: "screening", label: pep, detail: null, source: "Deal record", at: null, key: "deal:screening", evidence: [`status:${keyPart(deal.aml_pep_status)}`] });
-  if (highRisk(deal.aml_risk_level)) flags.push({ kind: "high_risk", label: riskLabel(deal.aml_risk_level!), detail: null, source: "Deal record", at: null, key: "deal:high_risk", evidence: [`level:${keyPart(deal.aml_risk_level)}`] });
+  if (pep) flags.push({ kind: "screening", label: pep, detail: null, source: "Transaction record", at: null, key: "deal:screening", evidence: [`status:${keyPart(deal.aml_pep_status)}`] });
+  if (highRisk(deal.aml_risk_level)) flags.push({ kind: "high_risk", label: riskLabel(deal.aml_risk_level!), detail: null, source: "Transaction record", at: null, key: "deal:high_risk", evidence: [`level:${keyPart(deal.aml_risk_level)}`] });
   if (deal.aml_edd_required && !deal.aml_edd_completed_at) {
-    flags.push({ kind: "edd", label: "Marked for enhanced due diligence", detail: eddReason(deal.aml_edd_reason), source: "Deal record", at: null, key: "deal:edd", evidence: [`reason:${keyPart(deal.aml_edd_reason)}`] });
+    flags.push({ kind: "edd", label: "Marked for enhanced due diligence", detail: eddReason(deal.aml_edd_reason), source: "Transaction record", at: null, key: "deal:edd", evidence: [`reason:${keyPart(deal.aml_edd_reason)}`] });
   }
   const mismatched = (deal.aml_sof_analysis?.items || []).filter(i => i?.declaredSourceMatchesDocument === false);
   if (mismatched.length) {
@@ -318,8 +318,8 @@ export const redFlagLine = (f: KycRedFlag): string => `${f.label}${f.detail ? ` 
 export function redFlagNote(party: KycRedFlag[], deal: KycRedFlag[]): string {
   if (!party.length && !deal.length) return "";
   const lines: string[] = [];
-  const found = [...party.filter(f => !f.factor).map(f => `- ${redFlagLine(f)}`), ...deal.filter(f => !f.factor).map(f => `- On the deal record: ${redFlagLine(f)}`)];
-  const factors = [...party.filter(f => f.factor).map(f => `- ${redFlagLine(f)}`), ...deal.filter(f => f.factor).map(f => `- On the deal: ${redFlagLine(f)}`)];
+  const found = [...party.filter(f => !f.factor).map(f => `- ${redFlagLine(f)}`), ...deal.filter(f => !f.factor).map(f => `- On the transaction record: ${redFlagLine(f)}`)];
+  const factors = [...party.filter(f => f.factor).map(f => `- ${redFlagLine(f)}`), ...deal.filter(f => f.factor).map(f => `- On the transaction: ${redFlagLine(f)}`)];
   if (found.length) lines.push("Red flags from BGP's checks:", ...found);
   if (factors.length) lines.push(...(found.length ? [""] : []), "Higher-risk factors in BGP's AML policy (enhanced due diligence):", ...factors);
   return lines.join("\n");

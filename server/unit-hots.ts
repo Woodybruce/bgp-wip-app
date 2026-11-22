@@ -205,7 +205,7 @@ async function amlLineFor(dealId: string): Promise<{ deal: any; aml: { ok: boole
   const deal = (await pool.query(
     `SELECT d.id, d.deal_ref, d.status, d.tenant_id, d.landlord_id, d.vendor_id, d.purchaser_id, tc.name AS tenant_name
        FROM crm_deals d LEFT JOIN crm_companies tc ON tc.id = d.tenant_id WHERE d.id = $1`, [dealId])).rows[0];
-  if (!deal) return { deal: null, aml: { ok: false, message: "The deal could not be read." } };
+  if (!deal) return { deal: null, aml: { ok: false, message: "The transaction could not be read." } };
   try {
     const { checkCounterpartyAml, formatAmlWarning } = await import("./deal-gates");
     const result = await checkCounterpartyAml({ landlordId: deal.landlord_id, tenantId: deal.tenant_id, vendorId: deal.vendor_id, purchaserId: deal.purchaser_id, dealId: deal.id });
@@ -219,7 +219,7 @@ async function amlLineFor(dealId: string): Promise<{ deal: any; aml: { ok: boole
 // What a joint agent is told about AML: that it has started, and nothing
 // about a counterparty or where its checks stand.
 const AML_STARTED = "AML checks started";
-const AML_BLOCKED = "This deal cannot go to Solicitors yet. BGP's compliance team has to clear it first: ask BGP.";
+const AML_BLOCKED = "This transaction cannot go to Solicitors yet. BGP's compliance team has to clear it first: ask BGP.";
 
 async function conversionFor(unit: any, access: Access, statusWarning?: string | null): Promise<HotsConversion | null> {
   if (!unit.deal_id) return null;
@@ -830,7 +830,7 @@ export function setupUnitHotsRoutes(app: Express) {
         if (!unit) return void res.status(404).json({ message: "That unit is not on the tracker" });
         if (unit.hots_final_file_id) {
           if (unit.final_id && CONVERTED_CODES.includes(legacyToCode(unit.marketing_status) || "")) {
-            return void res.status(409).json({ message: "The deal has been converted to Solicitors, so the final Heads of Terms stay on the record. Upload a corrected file to replace them.", code: "CONVERTED" });
+            return void res.status(409).json({ message: "The transaction has been converted to Solicitors, so the final Heads of Terms stay on the record. Upload a corrected file to replace them.", code: "CONVERTED" });
           }
           // The file itself stays in the unit's files; only the pointer goes.
           await pool.query(`UPDATE available_units SET hots_final_file_id = NULL, hots_final_at = NULL, hots_final_by_name = NULL WHERE id = $1`, [unit.id]);
@@ -854,7 +854,7 @@ export function setupUnitHotsRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!access.agentControl) return res.status(403).json({ message: `${STAFF_ONLY}: they convert the deal to Solicitors` });
+      if (!access.agentControl) return res.status(403).json({ message: `${STAFF_ONLY}: they convert the transaction to Solicitors` });
       const jointAgent = isJointAgent(access);
       const actor = await actorNameOf(access);
       const auditName = jointAgent ? `${actor || "Joint agent"}, joint agent` : access.name;
@@ -931,13 +931,13 @@ export function setupUnitHotsRoutes(app: Express) {
         if (!unit.deal_id) {
           const { ensureBackingDealForUnit } = await import("./unit-mirror");
           const backing = await ensureBackingDealForUnit(pool, unit.id);
-          if (!backing) return void res.status(409).json({ message: "This unit has no deal, and one could not be made: a live deal for the same unit sits on another tracker row. Merge the duplicate rows first.", code: "NO_DEAL" });
+          if (!backing) return void res.status(409).json({ message: "This unit has no transaction, and one could not be made: a live transaction for the same unit sits on another tracker row. Merge the duplicate rows first.", code: "NO_DEAL" });
           unit = await loadUnit(unit.id);
         }
         const dealId: string = unit.deal_id;
         const before = (await pool.query(
           `SELECT id, status, tenant_id, landlord_id, vendor_id, purchaser_id, rent_pa, lease_length, rent_free, break_option, capital_contribution, aml_check_completed FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
-        if (!before) return void res.status(409).json({ message: "This unit's deal could not be found. Open the unit on the tracker and give it a deal first.", code: "NO_DEAL" });
+        if (!before) return void res.status(409).json({ message: "This unit's transaction could not be found. Open the unit on the tracker and give it a transaction first.", code: "NO_DEAL" });
 
         // The gate, for the parties the deal is about to carry: a
         // counterparty the MLRO has rejected stops the move, before any write.
@@ -1001,16 +1001,16 @@ export function setupUnitHotsRoutes(app: Express) {
         const out = await conversionFor(after, access, statusWarning);
         const { people } = await briefAndPeople(unit.id);
         await logEvent(unit.id, access, people, "converted",
-          `converted the deal to Solicitors${after.deal_ref != null ? ` (deal #${after.deal_ref})` : ""}${out?.tenantName ? `, tenant ${out.tenantName}` : ""}${tenantText && !before.tenant_id ? " (named as text: BGP to link the company record)" : ""}${terms.rentPa != null ? `, rent ${gbp(terms.rentPa)} a year` : ""}`, unit.hots_version || null);
+          `converted the transaction to Solicitors${after.deal_ref != null ? ` (transaction #${after.deal_ref})` : ""}${out?.tenantName ? `, tenant ${out.tenantName}` : ""}${tenantText && !before.tenant_id ? " (named as text: BGP to link the company record)" : ""}${terms.rentPa != null ? `, rent ${gbp(terms.rentPa)} a year` : ""}`, unit.hots_version || null);
         res.json(out);
       });
     } catch (e: any) {
       // The deals table refuses a second live deal with the same name and
       // parties (a re-marketed unit whose earlier deal is still open).
       if (e?.code === "23505") {
-        return void res.status(409).json({ code: "DUPLICATE_DEAL", message: "Another deal for this unit with the same tenant is already open, so this one could not take the tenant. Close or withdraw the earlier deal on the Deals board, then convert again." });
+        return void res.status(409).json({ code: "DUPLICATE_DEAL", message: "Another transaction for this unit with the same tenant is already open, so this one could not take the tenant. Close or withdraw the earlier transaction on the Transactions board, then convert again." });
       }
-      fail(res, e, "Failed to convert the deal to Solicitors");
+      fail(res, e, "Failed to convert the transaction to Solicitors");
     }
   });
 
@@ -1078,21 +1078,21 @@ async function moveUnitStatus(unit: any, code: "HOT" | "SOL", access: Access, wh
     if (dealId && !opts.gated) {
       const { dealStatusTransitionDenial } = await import("./deal-gates");
       const denial = await dealStatusTransitionDenial(actorUserId, dealId, code);
-      if (denial) return jointAgent ? `The unit was not moved to ${label}. Ask BGP to check the deal.` : `The unit was not moved to ${label}: ${denial.error}`;
+      if (denial) return jointAgent ? `The unit was not moved to ${label}. Ask BGP to check the transaction.` : `The unit was not moved to ${label}: ${denial.error}`;
     }
     await storage.updateAvailableUnit(unit.id, { marketingStatus: code });
     try {
       const { mirrorFromAvailableUnit } = await import("./lease-status-mirror");
       await mirrorFromAvailableUnit(unit.id, code, { pool, reason, actorUserId });
     } catch (e: any) {
-      return `The unit is at ${label}, but syncing the Deals board and the Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
+      return `The unit is at ${label}, but syncing the Transactions board and the Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
     }
     if (dealId) {
       const now = (await pool.query(`SELECT status FROM crm_deals WHERE id = (SELECT deal_id FROM available_units WHERE id = $1)`, [unit.id])).rows[0];
       if (now && legacyToCode(now.status) !== code) {
-        if (jointAgent) return `The unit is at ${label}, but its deal did not follow. Ask BGP to check the deal.`;
+        if (jointAgent) return `The unit is at ${label}, but its transaction did not follow. Ask BGP to check the transaction.`;
         const blocked = (await pool.query(`SELECT reason FROM deal_audit_log WHERE deal_id = $1 AND field = 'status' ORDER BY created_at DESC, id DESC LIMIT 1`, [dealId])).rows[0]?.reason;
-        return `The unit is at ${label}, but its deal did not follow${blocked ? `: ${blocked}` : ""}.`;
+        return `The unit is at ${label}, but its transaction did not follow${blocked ? `: ${blocked}` : ""}.`;
       }
     }
     return null;

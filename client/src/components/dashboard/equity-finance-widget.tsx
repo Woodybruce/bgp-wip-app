@@ -72,7 +72,7 @@ export function EquityFinanceWidget() {
   if (outlook && book != null) {
     const bookFee = outlook.income.byStage.reduce((s, st) => s + st.unweighted, 0);
     stats.push({
-      label: "Deal book",
+      label: "Transaction book",
       value: money(book),
       sub: `weighted · ${money(bookFee)} at full fee`,
     });
@@ -107,7 +107,7 @@ export function EquityFinanceWidget() {
           ))}
         </div>
         <p className="text-[11px] text-muted-foreground mt-3">
-          Live from Xero · equity directors only · deal book and projection as on Finance (Negotiating and HOTs at 50%, Solicitors on at 100%) ·{" "}
+          Live from Xero · equity directors only · transaction book and projection as on Finance (Negotiating and HOTs at 50%, Solicitors on at 100%) ·{" "}
           <Link href="/wip-report"><span className="text-primary cursor-pointer" data-testid="link-equity-wip-report">WIP report</span></Link>
         </p>
       </CardContent>

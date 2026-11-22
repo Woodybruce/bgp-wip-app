@@ -132,7 +132,7 @@ export default function LandlordsPage() {
           <h1 className="text-2xl font-bold tracking-tight">
             Landlord Intelligence
           </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">The active client base — fees, deals, portfolios and acquisition targets.</p>
+          <p className="text-sm text-muted-foreground mt-0.5">The active client base — fees, transactions, portfolios and acquisition targets.</p>
         </div>
         <div className="relative w-full sm:w-64">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -176,7 +176,7 @@ export default function LandlordsPage() {
                 values in mono. */}
             {[
               { label: "Landlords", value: totals.count.toString(), icon: Briefcase },
-              { label: "Active deals", value: totals.activeDeals.toString(), icon: BarChart3 },
+              { label: "Active transactions", value: totals.activeDeals.toString(), icon: BarChart3 },
               { label: "Properties", value: totals.properties.toString(), icon: Building2 },
               // "as landlord" — fees on WIP-stage deals where the company is the
               // landlord. The WIP's "Net fees by client" buckets by who BGP
@@ -237,7 +237,7 @@ export default function LandlordsPage() {
             statusColor: "bg-amber-500",
             href: `/companies/${l.id}`,
             fields: [
-              { label: "Active deals", value: l.active_deals || 0 },
+              { label: "Active transactions", value: l.active_deals || 0 },
               { label: "Fees as landlord", value: formatGBP(Number(l.total_fee) || 0) },
               { label: "Properties", value: l.property_count || 0 },
               { label: "Contacts", value: l.contact_count || 0 },
@@ -322,7 +322,7 @@ export default function LandlordsPage() {
                         </div>
                       )}
                       <div className="flex items-center gap-3 text-xs pt-1 border-t">
-                        <span className="tabular-nums"><span className="font-semibold">{l.active_deals || 0}</span> <span className="text-muted-foreground">deals</span></span>
+                        <span className="tabular-nums"><span className="font-semibold">{l.active_deals || 0}</span> <span className="text-muted-foreground">transactions</span></span>
                         <span className="tabular-nums"><span className="font-semibold">{l.property_count || 0}</span> <span className="text-muted-foreground">props</span></span>
                         <span className="tabular-nums font-medium ml-auto">{formatGBP(Number(l.total_fee) || 0)}</span>
                       </div>

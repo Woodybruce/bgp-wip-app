@@ -181,7 +181,7 @@ export function dueDiligenceLevel(input: {
   simplifiedBasis: string | null;
   toWeigh?: string[];
 }): PartyDueDiligence {
-  const all = [...input.partyFlags, ...input.dealFlags.map(f => ({ ...f, label: `On the deal: ${f.label}` }))];
+  const all = [...input.partyFlags, ...input.dealFlags.map(f => ({ ...f, label: `On the transaction: ${f.label}` }))];
   if (all.length) {
     return { level: "enhanced", why: all.map(f => f.label), toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.enhanced };
   }
@@ -556,7 +556,7 @@ export function superPrimeFlag(deal: { dealType?: string | null; team?: string[]
   return {
     kind: "super_prime", factor: true,
     label: `Super-prime sale: ${money}, ${where}`,
-    detail: "Risk assessment: a deal above HMRC's super-prime value is high risk, with enhanced due diligence on the parties' background, the intended use and the business case.",
+    detail: "Risk assessment: a transaction above HMRC's super-prime value is high risk, with enhanced due diligence on the parties' background, the intended use and the business case.",
     source: POLICY_SOURCE, at: null,
     key: "deal:super_prime", evidence: [`price:${Math.round(price)}`, `postcode:${keyPart(deal.postcode || "unknown")}`],
     facts: [{ label: "Price", value: money }, { label: "Property postcode", value: deal.postcode || "not recorded" }],
@@ -614,7 +614,7 @@ export function jointAgentNotRequiredRefusal(rule: JointAgentRule): string | nul
 
 export const NOT_REQUIRED_REASONS = {
   joint_agent: "The joint agent found and dealt with this party",
-  no_deal: "No deal was done with this party",
+  no_deal: "No transaction was done with this party",
 } as const;
 export type NotRequiredReason = keyof typeof NOT_REQUIRED_REASONS;
 export const NOT_REQUIRED_COMMENT_MIN = 10;
@@ -655,7 +655,7 @@ export function notRequiredInput(
   const reason = String(b.reason || "");
   if (!Object.prototype.hasOwnProperty.call(NOT_REQUIRED_REASONS, reason)) return { problem: "Choose why no checks are needed on this party." };
   const comment = String(b.comment ?? "").replace(/\s+/g, " ").trim().slice(0, 1000);
-  if (comment.length < NOT_REQUIRED_COMMENT_MIN) return { problem: `Say what happened (at least ${NOT_REQUIRED_COMMENT_MIN} characters): it is kept on the deal.` };
+  if (comment.length < NOT_REQUIRED_COMMENT_MIN) return { problem: `Say what happened (at least ${NOT_REQUIRED_COMMENT_MIN} characters): it is kept on the transaction.` };
   if (reason !== "joint_agent") return { reason: reason as NotRequiredReason, comment, asked: null };
   const rule = ctx.rule || "other";
   const refused = jointAgentNotRequiredRefusal(rule);

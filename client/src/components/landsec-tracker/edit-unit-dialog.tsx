@@ -108,10 +108,10 @@ export function EditUnitDialog({ unit, onClose, onSaved }: {
           {form.marketingStatus !== start.marketingStatus && (
             <p className="text-xs text-muted-foreground" data-testid="ja-edit-unit-status-note">
               {form.marketingStatus === "HOT" || form.marketingStatus === "SOL"
-                ? "Heads of Terms and Solicitors are normally reached by issuing the Heads of Terms and converting them, which puts the agreed terms on the deal. Setting the status here moves the deal without them."
+                ? "Heads of Terms and Solicitors are normally reached by issuing the Heads of Terms and converting them, which puts the agreed terms on the transaction. Setting the status here moves the transaction without them."
                 : form.marketingStatus === "EXC" || form.marketingStatus === "COM"
                   ? "This closes the letting: the unit moves under Historic."
-                  : "The deal moves with the unit."}
+                  : "The transaction moves with the unit."}
             </p>
           )}
 

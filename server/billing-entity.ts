@@ -152,7 +152,7 @@ export async function savePersonEntity(pool: Pool, brandId: string, person: Bill
     let contactId: string | null = row?.contact_id ? String(row.contact_id) : null;
     if (!contactId) {
       contactId = (await findOrAddPartyPerson(client, brandId, { name: person.name, email: person.email, mobile: person.mobile, jobTitle: null },
-        `Added on a deal by ${actorName} as the person who signs or is billed (20 November 2026 feature: a person as the billing or contracting entity).`)).id;
+        `Added on a transaction by ${actorName} as the person who signs or is billed (20 November 2026 feature: a person as the billing or contracting entity).`)).id;
     } else if (person.email || person.mobile) {
       // Blank fields only: an email or mobile already held is kept.
       await client.query(

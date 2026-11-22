@@ -1043,7 +1043,7 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: { kind: KycPar
     // 2026: one upload step for every owner ticked itself on the first file).
     // The person acting is one of the owners when their name is on the list.
     const others = ownerNames.filter(n => !(ctx.contactName && personNamesMatch(ctx.contactName, n)));
-    if (others.length) drop("owner_ids", `Each owner gets a link of their own for their identity check and proof of address: ${others.map(personDisplayName).join(", ")}. Send them from People to check on the deal's AML card, or the client passes them on from their page.`);
+    if (others.length) drop("owner_ids", `Each owner gets a link of their own for their identity check and proof of address: ${others.map(personDisplayName).join(", ")}. Send them from People to check on the transaction's AML card, or the client passes them on from their page.`);
     else drop("owner_ids", "The person you are asking is the only owner the register names: their own identity check and proof of address cover it.");
   }
 
@@ -1697,7 +1697,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
       });
     }
     const trading = tradingState(ch);
-    if (trading.words) out.push({ key: "trading", label: trading.kind === "new" ? "Newly formed" : "Not trading", state: "attention", detail: `${trading.words}. A warning to weigh: is the company the one doing the deal, and is it funded for it?`, links: [] });
+    if (trading.words) out.push({ key: "trading", label: trading.kind === "new" ? "Newly formed" : "Not trading", state: "attention", detail: `${trading.words}. A warning to weigh: is the company the one doing the transaction, and is it funded for it?`, links: [] });
   } else {
     out.push({ key: "companies_house", label: "Companies House", state: "info", detail: result.notAtCompaniesHouse, links: [] });
     const oe = result.overseasEntity;

@@ -150,12 +150,12 @@ export function NotificationCenter() {
           {notifications.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-center px-4">
               <Bell className="w-8 h-8 text-muted-foreground/20 mb-2" />
-              <p className="text-xs text-muted-foreground">All clear. Tasks, invoice verdicts and alerts on your deals land here.</p>
+              <p className="text-xs text-muted-foreground">All clear. Tasks, invoice verdicts and alerts on your transactions land here.</p>
             </div>
           ) : (
             <>
               {forYou.length > 0 && section("For you", forYou, unread.map(n => n.id), "Mark all read")}
-              {deals.length > 0 && section("Your deals", deals, deals.map(n => n.id), "Clear all")}
+              {deals.length > 0 && section("Your transactions", deals, deals.map(n => n.id), "Clear all")}
               {firm.length > 0 && section("Firm-wide", firm, [], "")}
             </>
           )}

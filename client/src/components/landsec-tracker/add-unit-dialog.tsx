@@ -89,7 +89,7 @@ export function AddUnitDialog({ open, onOpenChange, defaultPropertyId, onStarted
       if (!result.alreadyListed && !result?.dealRef) {
         toast({
           title: "Unit added to the tracker, and the brief started",
-          description: "Its deal reference could not be made. Tell BGP, so they can give the unit its Ref #.",
+          description: "Its transaction reference could not be made. Tell BGP, so they can give the unit its Ref #.",
           variant: "destructive",
         });
       } else {
@@ -112,7 +112,7 @@ export function AddUnitDialog({ open, onOpenChange, defaultPropertyId, onStarted
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid="ja-add-unit-dialog">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Target className="h-4 w-4" /> Add unit</DialogTitle>
-          <DialogDescription>Puts the unit on the Letting Tracker with a deal reference and starts its targeting brief. The brief opens next, for the commercials, the people involved and sign-off.</DialogDescription>
+          <DialogDescription>Puts the unit on the Letting Tracker with a transaction reference and starts its targeting brief. The brief opens next, for the commercials, the people involved and sign-off.</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 min-w-0">
@@ -165,8 +165,8 @@ export function AddUnitDialog({ open, onOpenChange, defaultPropertyId, onStarted
               {(picked || isNew) && (
                 <p className="text-xs text-muted-foreground" data-testid="ja-add-unit-outcome">
                   {picked?.trackerUnitId ? "This unit is already on the tracker; its brief opens."
-                    : picked ? `The unit goes on the tracker with a deal reference, tied to its row on ${property?.name || "the property"}'s tenancy schedule, and its brief starts.`
-                    : `The unit is added to ${property?.name || "the property"}'s tenancy schedule and to the tracker with a deal reference, and its brief starts.`}
+                    : picked ? `The unit goes on the tracker with a transaction reference, tied to its row on ${property?.name || "the property"}'s tenancy schedule, and its brief starts.`
+                    : `The unit is added to ${property?.name || "the property"}'s tenancy schedule and to the tracker with a transaction reference, and its brief starts.`}
                 </p>
               )}
             </div>

@@ -321,7 +321,7 @@ export function XeroContactPicker({
             </div>
           ))}
           {!isFetching && fromApp && contacts.length > 0 && (
-            <div className="px-3 py-1.5 text-[11px] text-muted-foreground border-b">Xero is busy — these are Xero contacts already used on other deals.</div>
+            <div className="px-3 py-1.5 text-[11px] text-muted-foreground border-b">Xero is busy — these are Xero contacts already used on other transactions.</div>
           )}
           {contacts.map((c) => {
             const addr = formatAddress(c.BillingAddress);

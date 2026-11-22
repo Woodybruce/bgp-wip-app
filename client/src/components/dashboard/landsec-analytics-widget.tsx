@@ -77,7 +77,7 @@ export function LandsecOverviewCard({ data }: { data: LandsecAnalytics }) {
         <div className="flex items-center gap-2">
           <Landmark className="w-4 h-4 text-muted-foreground" />
           <CardTitle className="text-sm font-semibold">Landsec Portfolio Overview</CardTitle>
-          <Badge variant="secondary" className="text-[10px]">{data.totalDeals} deals</Badge>
+          <Badge variant="secondary" className="text-[10px]">{data.totalDeals} transactions</Badge>
         </div>
       </CardHeader>
       <CardContent className="px-4 pb-4 pt-0 flex-1 overflow-hidden space-y-3">
@@ -86,7 +86,7 @@ export function LandsecOverviewCard({ data }: { data: LandsecAnalytics }) {
           <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Total Portfolio Value</p>
           <p className="text-2xl font-bold font-mono tabular-nums">{formatCurrencyFull(totalPortfolio)}</p>
           <p className="text-[10px] text-muted-foreground mt-0.5">
-            Avg deal: {formatCurrencyShort(data.averageDealSize)}
+            Avg transaction: {formatCurrencyShort(data.averageDealSize)}
           </p>
         </div>
 
@@ -125,14 +125,14 @@ export function LandsecOverviewCard({ data }: { data: LandsecAnalytics }) {
 
         {/* Deal count by type */}
         <div>
-          <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mb-1.5">Deals by Type</p>
+          <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mb-1.5">Transactions by Type</p>
           <div className="flex flex-wrap gap-1">
             {dealTypeEntries.map(([type, { count, fees }]) => (
               <Badge
                 key={type}
                 variant="outline"
                 className="text-[10px] gap-1"
-                title={`${count} deals, ${formatCurrencyShort(fees)} total fees`}
+                title={`${count} transactions, ${formatCurrencyShort(fees)} total fees`}
               >
                 <Briefcase className="w-2.5 h-2.5" />
                 {type}: {count}
@@ -203,7 +203,7 @@ export function LandsecAgentPerformanceCard({ data }: { data: LandsecAnalytics }
                       </span>
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] text-muted-foreground">{agent.count} deal{agent.count !== 1 ? "s" : ""}</span>
+                      <span className="text-[10px] text-muted-foreground">{agent.count} transaction{agent.count !== 1 ? "s" : ""}</span>
                     </div>
                   </div>
                 </div>
@@ -244,8 +244,8 @@ export function LandsecPipelineFunnel({ data }: { data: LandsecAnalytics }) {
       <CardHeader className="pb-2 pt-4 px-4">
         <div className="flex items-center gap-2">
           <PieChart className="w-4 h-4 text-muted-foreground" />
-          <CardTitle className="text-sm font-semibold">Deal Pipeline</CardTitle>
-          <Badge variant="secondary" className="text-[10px]">{totalActive} deals</Badge>
+          <CardTitle className="text-sm font-semibold">Transaction Pipeline</CardTitle>
+          <Badge variant="secondary" className="text-[10px]">{totalActive} transactions</Badge>
         </div>
       </CardHeader>
       <CardContent className="px-4 pb-4 pt-0 flex-1 overflow-hidden flex flex-col">
@@ -283,7 +283,7 @@ export function LandsecPipelineFunnel({ data }: { data: LandsecAnalytics }) {
                 <YAxis dataKey="stage" type="category" tick={{ fontSize: 9 }} width={70} />
                 <Tooltip
                   contentStyle={{ fontSize: 11, borderRadius: 8 }}
-                  formatter={(value: number) => [`${value} deals`, "Count"]}
+                  formatter={(value: number) => [`${value} transactions`, "Count"]}
                 />
                 <Bar dataKey="count" radius={[0, 4, 4, 0]}>
                   {chartData.map((entry, i) => (
@@ -349,7 +349,7 @@ export function LandsecRecentActivity({ data }: { data: LandsecAnalytics }) {
                         )}
                       </div>
                       <p className="text-[10px] text-muted-foreground mt-0.5">
-                        {deal.dealType || "Deal"} · {timeAgo(deal.updatedAt)}
+                        {deal.dealType || "Transaction"} · {timeAgo(deal.updatedAt)}
                       </p>
                     </div>
                   </div>
@@ -392,7 +392,7 @@ export function LandsecAnalyticsWidget() {
       <Card>
         <CardContent className="py-12 text-center">
           <Landmark className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-          <p className="text-xs text-muted-foreground">No Landsec deals found</p>
+          <p className="text-xs text-muted-foreground">No Landsec transactions found</p>
         </CardContent>
       </Card>
     );

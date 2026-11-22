@@ -41,7 +41,7 @@ const shortDate = (s: string | null) => {
   return isNaN(d.getTime()) ? s : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" });
 };
 const statusLabel = (s: string | null) => { const c = legacyToCode(s); return c ? DEAL_STATUS_LABELS[c] : (s || "—"); };
-const dealLabel = (d: { dealRef: number | null; name: string | null }) => `${d.dealRef ? `#${d.dealRef} ` : ""}${d.name || "(unnamed deal)"}`;
+const dealLabel = (d: { dealRef: number | null; name: string | null }) => `${d.dealRef ? `#${d.dealRef} ` : ""}${d.name || "(unnamed transaction)"}`;
 
 function refreshAfterChange() {
   queryClient.invalidateQueries({ queryKey: UNMATCHED_KEY });
@@ -70,14 +70,14 @@ function DealFinder({ onPick, busy }: { onPick: (d: DealHit) => void; busy: bool
         autoFocus
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="Ref # or deal name…"
+        placeholder="Ref # or transaction name…"
         className="w-full sm:w-72 h-11 md:h-8 px-2.5 text-sm border border-border rounded-md bg-background focus:outline-none focus:border-ring"
         data-testid="xero-unmatched-finder-input"
       />
       {term.length >= 2 && (
         <div className="flex flex-wrap gap-1.5">
           {isFetching && hits.length === 0 && <span className="text-[11px] text-muted-foreground">Searching…</span>}
-          {!isFetching && hits.length === 0 && <span className="text-[11px] text-muted-foreground">No deal matches "{term}".</span>}
+          {!isFetching && hits.length === 0 && <span className="text-[11px] text-muted-foreground">No transaction matches "{term}".</span>}
           {hits.map(d => (
             <Pill key={d.id} onClick={() => onPick(d)} disabled={busy} className="max-w-full normal-case tracking-normal" data-testid={`xero-unmatched-hit-${d.id}`}>
               <span className="truncate">{dealLabel(d)}</span>
@@ -107,13 +107,13 @@ export function XeroUnmatchedCard() {
   const [showIgnored, setShowIgnored] = useState(false);
 
   const link = async (inv: UnmatchedInvoice, deal: { id: string; dealRef: number | null; name: string | null }) => {
-    if (!window.confirm(`Link Xero invoice ${inv.invoiceNumber || ""} (${inv.contactName || "no contact"}, ${money(inv.net)} net) to ${dealLabel(deal)}?\n\nThe deal moves to Invoiced if it isn't already.`)) return;
+    if (!window.confirm(`Link Xero invoice ${inv.invoiceNumber || ""} (${inv.contactName || "no contact"}, ${money(inv.net)} net) to ${dealLabel(deal)}?\n\nThe transaction moves to Invoiced if it isn't already.`)) return;
     setBusyId(inv.xeroInvoiceId);
     try {
       const r = await apiRequest("POST", "/api/xero/invoices/link", { xeroInvoiceId: inv.xeroInvoiceId, dealId: deal.id });
       const j = await r.json();
-      const ref = j.dealRef ? `#${j.dealRef}` : (j.dealName || "the deal");
-      toast({ title: j.promoted ? `Linked to ${ref} — deal now Invoiced` : `Linked to ${ref}`, description: j.promoted ? undefined : (j.alreadyInvoiced ? "The deal was already Invoiced." : "Invoice linked; the deal's status was left as it is.") });
+      const ref = j.dealRef ? `#${j.dealRef}` : (j.dealName || "the transaction");
+      toast({ title: j.promoted ? `Linked to ${ref} — transaction now Invoiced` : `Linked to ${ref}`, description: j.promoted ? undefined : (j.alreadyInvoiced ? "The transaction was already Invoiced." : "Invoice linked; the transaction's status was left as it is.") });
       setFinderFor(null);
       refreshAfterChange();
       invalidateDealCaches(deal.id);
@@ -125,7 +125,7 @@ export function XeroUnmatchedCard() {
   };
 
   const ignore = async (inv: UnmatchedInvoice) => {
-    const reason = window.prompt(`Set aside Xero invoice ${inv.invoiceNumber || ""} as not a deal (consultancy retainer, disbursement…)?\n\nReason (optional):`, "");
+    const reason = window.prompt(`Set aside Xero invoice ${inv.invoiceNumber || ""} as not a transaction (consultancy retainer, disbursement…)?\n\nReason (optional):`, "");
     if (reason === null) return;
     setBusyId(inv.xeroInvoiceId);
     try {
@@ -165,7 +165,7 @@ export function XeroUnmatchedCard() {
             {data && <span className="text-muted-foreground font-normal">({invoices.length}{netTotal ? ` · ${money(netTotal)} net` : ""})</span>}
           </p>
           <p className="text-[11px] text-muted-foreground">
-            Accounts put the Sage job number in the Xero reference; the app only knows job numbers that came through the WIP import, so these need a hand. Link each to its deal and it reads Invoiced.
+            Accounts put the Sage job number in the Xero reference; the app only knows job numbers that came through the WIP import, so these need a hand. Link each to its transaction and it reads Invoiced.
           </p>
         </div>
         {data && invoices.length > 0 && (
@@ -181,7 +181,7 @@ export function XeroUnmatchedCard() {
         </p>
       ) : invoices.length === 0 ? (
         <p className="px-4 py-3 text-sm text-muted-foreground" data-testid="xero-unmatched-empty">
-          Nothing waiting — every invoice approved or paid in Xero in the last {data?.sinceDays || 180} days is on a deal.
+          Nothing waiting — every invoice approved or paid in Xero in the last {data?.sinceDays || 180} days is on a transaction.
         </p>
       ) : (
         <div className="divide-y divide-border">
@@ -221,10 +221,10 @@ export function XeroUnmatchedCard() {
                     </Pill>
                   ))}
                   <Pill active={finderFor === inv.xeroInvoiceId} onClick={() => setFinderFor(f => f === inv.xeroInvoiceId ? null : inv.xeroInvoiceId)} disabled={busy} data-testid={`xero-unmatched-find-${inv.xeroInvoiceId}`}>
-                    Find deal…
+                    Find transaction…
                   </Pill>
                   <Pill onClick={() => ignore(inv)} disabled={busy} data-testid={`xero-unmatched-ignore-${inv.xeroInvoiceId}`}>
-                    Not a deal
+                    Not a transaction
                   </Pill>
                   {busy && <span className="text-[11px] text-muted-foreground">Saving…</span>}
                 </div>
@@ -255,7 +255,7 @@ export function XeroUnmatchedCard() {
       )}
       {data?.cachedAt && invoices.length > 0 && (
         <p className="px-4 pb-2 text-[10px] text-muted-foreground">
-          Xero list as of {new Date(data.cachedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} (refreshes every 10 minutes). Linked deals open from the <Link href="/deals/list"><span className="underline cursor-pointer">Deals list</span></Link>.
+          Xero list as of {new Date(data.cachedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} (refreshes every 10 minutes). Linked transactions open from the <Link href="/deals/list"><span className="underline cursor-pointer">Transactions list</span></Link>.
         </p>
       )}
     </div>

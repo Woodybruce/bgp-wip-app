@@ -375,7 +375,7 @@ export function sraStatus(f: SraFirm): SraStatusWords {
     return {
       label: "Firm is closing", tone: "info",
       line: `closing${on}: still regulated by the SRA for its existing clients`,
-      explain: "The SRA says a closing firm is still regulated to provide services to existing clients. Check it will carry on acting on this deal.",
+      explain: "The SRA says a closing firm is still regulated to provide services to existing clients. Check it will carry on acting on this transaction.",
     };
   }
   if (f.status === "CONDITION" || t.endsWith("authorisedwithconditions")) {
@@ -392,7 +392,7 @@ export function sraStatus(f: SraFirm): SraStatusWords {
     return { label: "SRA-regulated freelance", tone: "ok", line: "an SRA-regulated freelance lawyer, regulated to provide all legal services", explain: "One SRA-regulated lawyer working on their own, not a firm." };
   }
   if (t === "practicenotseparatelyauthorisedcompfund") {
-    return { label: "SRA-regulated freelance", tone: "info", line: "an SRA-regulated freelance lawyer who can only offer some legal services", explain: "One SRA-regulated lawyer working on their own, who the SRA says can only offer some legal services. Check they can act on this kind of deal." };
+    return { label: "SRA-regulated freelance", tone: "info", line: "an SRA-regulated freelance lawyer who can only offer some legal services", explain: "One SRA-regulated lawyer working on their own, who the SRA says can only offer some legal services. Check they can act on this kind of transaction." };
   }
   if (regulator && f.regulator !== "SRA") {
     return { label: "Regulated by an approved regulator for legal services", tone: "ok", line: `not an SRA-regulated firm; regulated by ${regulator}`, explain: null };
@@ -401,7 +401,7 @@ export function sraStatus(f: SraFirm): SraStatusWords {
     return {
       label: "Not an SRA-regulated firm", tone: "info",
       line: "not an SRA-regulated firm (on the SRA's register because its owner is an SRA-regulated person)",
-      explain: "The SRA does not regulate the practice, and it cannot provide reserved legal activities such as conveyancing. Check who is acting on the deal.",
+      explain: "The SRA does not regulate the practice, and it cannot provide reserved legal activities such as conveyancing. Check who is acting on the transaction.",
     };
   }
   if (f.authorisationType === "NOTSRA-F" || t.startsWith("unregulatedpractice")) {

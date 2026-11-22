@@ -114,7 +114,7 @@ export function BrandPortfolioMap({
       // Bluewater · 3 deals in flight").
       let tip = s.address ? `${s.name}<br/><span style="font-size:10px;opacity:0.7">${s.address}</span>` : s.name;
       if (s.bgpProperty) {
-        tip += `<br/><span style="color:#f59e0b;font-size:10px;font-weight:600">★ BGP active: ${s.bgpProperty.name}${s.bgpProperty.active_deals > 0 ? ` · ${s.bgpProperty.active_deals} deal${s.bgpProperty.active_deals === 1 ? "" : "s"}` : ""}</span>`;
+        tip += `<br/><span style="color:#f59e0b;font-size:10px;font-weight:600">★ BGP active: ${s.bgpProperty.name}${s.bgpProperty.active_deals > 0 ? ` · ${s.bgpProperty.active_deals} transaction${s.bgpProperty.active_deals === 1 ? "" : "s"}` : ""}</span>`;
       }
       marker.bindTooltip(tip, { direction: "top", offset: [0, -4] });
 

@@ -31,19 +31,19 @@ export function DealAmlDialog({ deal, reason, onClose }: {
             <DialogTitle>
               {reason === "solicitors" ? "At Solicitors: start the AML checks" : "AML and KYC"}
               <span className="block text-sm font-normal text-muted-foreground mt-0.5">
-                {deal.dealRef != null ? `#${deal.dealRef} ` : ""}{deal.name || "Deal"}
+                {deal.dealRef != null ? `#${deal.dealRef} ` : ""}{deal.name || "Transaction"}
               </span>
             </DialogTitle>
             <DialogDescription>
               For each party: set the company that signs and who to ask, add the owners' contact details, then send the client checks
-              or the KYC4U request. Nothing is sent until you press a button. You can come back to it from the deal's Parties &amp; AML.
+              or the KYC4U request. Nothing is sent until you press a button. You can come back to it from the transaction's Parties &amp; AML.
             </DialogDescription>
           </DialogHeader>
           <DealAmlStatusCard dealId={deal.id} dealStatus={deal.status} />
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="outline" size="sm" asChild>
               <Link href={`/deals/${deal.id}?section=parties`} data-testid="deal-aml-dialog-open-deal">
-                <ExternalLink className="w-3.5 h-3.5 mr-1" />Open the deal
+                <ExternalLink className="w-3.5 h-3.5 mr-1" />Open the transaction
               </Link>
             </Button>
             <Button size="sm" onClick={onClose} data-testid="deal-aml-dialog-done">Done</Button>

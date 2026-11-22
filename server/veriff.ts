@@ -280,7 +280,7 @@ veriffRouter.post("/api/veriff/sessions", requireAuth, async (req: Request, res:
       if (!sent.ok) console.warn("[veriff] failed to send verification email:", sent.error);
     }
     const whatsappHref = mobile
-      ? kycWhatsAppHref(String(mobile), kycWhatsAppText({ recipientName: fullName, dealName: dealName || "the deal", link: session.verificationUrl, expiresAt: new Date(Date.now() + 7 * 86400000) }))
+      ? kycWhatsAppHref(String(mobile), kycWhatsAppText({ recipientName: fullName, dealName: dealName || "the transaction", link: session.verificationUrl, expiresAt: new Date(Date.now() + 7 * 86400000) }))
       : null;
 
     res.json({ ...session, emailSent, emailError, sentFrom, whatsappHref });

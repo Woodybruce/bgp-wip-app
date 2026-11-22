@@ -122,7 +122,7 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
     `SELECT company_id, status, decision_reason, received_at, first_name, last_name FROM veriff_sessions
       WHERE company_id = ANY($1::varchar[]) AND lower(COALESCE(status, '')) = 'declined'
       ORDER BY received_at DESC NULLS LAST`, [ids])).rows, none) : none;
-  const deal = await read("the deal's AML fields", async () => (await pool.query(
+  const deal = await read("the transaction's AML fields", async () => (await pool.query(
     `SELECT d.aml_pep_status, d.aml_risk_level, d.aml_edd_required, d.aml_edd_reason, d.aml_edd_completed_at, d.aml_sof_analysis,
             d.deal_type, d.team, d.pricing, p.postcode,
             d.bgp_acting_for, d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id,

@@ -32,10 +32,10 @@ export async function renderKyc4uSheet(input: {
   const width = doc.page.width - 100;
   doc.font("Helvetica-Bold").fontSize(17).fillColor(INK).text("Request for KYC4U", { width });
   doc.font("Helvetica").fontSize(11).fillColor(INK).text(input.partyName, { width });
-  if (input.dealName) doc.fillColor(MUTED).fontSize(9.5).text(`Deal: ${input.dealName}`, { width });
+  if (input.dealName) doc.fillColor(MUTED).fontSize(9.5).text(`Transaction: ${input.dealName}`, { width });
   doc.moveDown(0.6);
   doc.fillColor(MUTED).fontSize(9).text(
-    "Type these into KYC4U's Raise New Service Request form, field by field, and upload the files in this folder's documents. Then record on the deal that it was submitted, with KYC4U's reference.",
+    "Type these into KYC4U's Raise New Service Request form, field by field, and upload the files in this folder's documents. Then record on the transaction that it was submitted, with KYC4U's reference.",
     { width });
   doc.moveDown(0.8);
   for (const f of KYC4U_FORM_FIELDS) {
@@ -97,8 +97,8 @@ export async function buildKyc4uPack(draftId: string, me: { id: string; name: st
   for (const d of docs) {
     n += 1;
     const got = await amlFileDocBytes(d).catch(() => ({ missing: "could not be read" }) as const);
-    if ("missing" in got) { missing += 1; names.push(`${d.name} (not included: ${got.missing}; download it from the deal)`); continue; }
-    if (total + got.data.length > 150 * 1024 * 1024) { missing += 1; names.push(`${d.name} (not included: the pack would be too large; download it from the deal)`); continue; }
+    if ("missing" in got) { missing += 1; names.push(`${d.name} (not included: ${got.missing}; download it from the transaction)`); continue; }
+    if (total + got.data.length > 150 * 1024 * 1024) { missing += 1; names.push(`${d.name} (not included: the pack would be too large; download it from the transaction)`); continue; }
     const base = d.name.replace(/\.[A-Za-z0-9]{1,6}$/, "");
     const name = `${String(n).padStart(2, "0")} ${amlFileSafeName(`${amlFileDocWords(d.type)} - ${base}`)}${path.extname(d.name) || got.ext}`;
     zip.addFile(`${top}/documents/${name}`, got.data);

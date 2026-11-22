@@ -133,14 +133,14 @@ export function FinanceBoardSection() {
               <Download className="w-4 h-4 mr-1" /> {downloading ? "Building…" : "Download Excel"}
             </Button>
           </CardTitle>
-          <p className="text-xs text-muted-foreground">All ex VAT. Each deal counted once; invoiced deals are Xero income only.</p>
+          <p className="text-xs text-muted-foreground">All ex VAT. Each transaction counted once; invoiced transactions are Xero income only.</p>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <Figure
-              label="Deal book — weighted"
+              label="Transaction book — weighted"
               value={money(book.weighted)}
-              sub={`${money(book.fee)} at full fee · ${book.count} live deal${book.count === 1 ? "" : "s"}`}
+              sub={`${money(book.fee)} at full fee · ${book.count} live transaction${book.count === 1 ? "" : "s"}`}
               testId="finance-board-book"
             />
             <Figure
@@ -149,7 +149,7 @@ export function FinanceBoardSection() {
               sub={[
                 book.noDate.count ? `incl. ${money(book.noDate.weighted)} with no date yet` : "",
                 book.afterYearEnd.count ? `${money(book.afterYearEnd.weighted)} more after 30 April` : "",
-              ].filter(Boolean).join(" · ") || "Every deal in the book lands this year"}
+              ].filter(Boolean).join(" · ") || "Every transaction in the book lands this year"}
               testId="finance-board-this-year"
             />
             <Figure
@@ -171,7 +171,7 @@ export function FinanceBoardSection() {
                   onToggle={() => setOpenStage(cur => (cur === s.code ? null : s.code))}
                 />
               ))}
-              {book.byStage.length === 0 && <p className="text-xs text-muted-foreground">No live deals with fees on the boards yet.</p>}
+              {book.byStage.length === 0 && <p className="text-xs text-muted-foreground">No live transactions with fees on the boards yet.</p>}
             </div>
           </div>
         </CardContent>
@@ -181,13 +181,13 @@ export function FinanceBoardSection() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">By team</CardTitle>
-            <p className="text-xs text-muted-foreground">A deal on two teams counts half to each, so the teams add up to the book.</p>
+            <p className="text-xs text-muted-foreground">A transaction on two teams counts half to each, so the teams add up to the book.</p>
           </CardHeader>
           <CardContent><ShareList rows={book.byTeam} total={book.weighted} testId="finance-board-teams" /></CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">By deal type</CardTitle>
+            <CardTitle className="text-base">By transaction type</CardTitle>
           </CardHeader>
           <CardContent><ShareList rows={book.byType} total={book.weighted} testId="finance-board-types" /></CardContent>
         </Card>
@@ -195,10 +195,10 @@ export function FinanceBoardSection() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Largest deals</CardTitle>
+          <CardTitle className="text-base">Largest transactions</CardTitle>
         </CardHeader>
         <CardContent>
-          {book.top.length === 0 ? <p className="text-xs text-muted-foreground">No live deals with fees yet.</p> : (
+          {book.top.length === 0 ? <p className="text-xs text-muted-foreground">No live transactions with fees yet.</p> : (
             <div className="divide-y" data-testid="finance-board-top">
               {book.top.map(d => (
                 <Link key={d.id} href={`/deals/${d.id}`}>
@@ -222,13 +222,13 @@ export function FinanceBoardSection() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Fees by agent</CardTitle>
-          <p className="text-xs text-muted-foreground">Each invoice and each deal shared by its fee split. BGP House is not an agent: its slice is the line below.</p>
+          <p className="text-xs text-muted-foreground">Each invoice and each transaction shared by its fee split. BGP House is not an agent: its slice is the line below.</p>
         </CardHeader>
         <CardContent>
           {data.agents.length === 0 ? <p className="text-xs text-muted-foreground">No fee splits to share yet.</p> : (
             <div data-testid="finance-board-agents">
               <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 text-[10px] uppercase tracking-widest text-muted-foreground pb-1 border-b">
-                <span>Agent</span><span className="text-right w-24">Invoiced</span><span className="text-right w-24">Deal book</span>
+                <span>Agent</span><span className="text-right w-24">Invoiced</span><span className="text-right w-24">Transaction book</span>
               </div>
               {data.agents.map(a => (
                 <div key={a.agent} className="grid grid-cols-[1fr_auto_auto] gap-x-4 text-sm py-1.5 border-b last:border-0">
@@ -245,8 +245,8 @@ export function FinanceBoardSection() {
               {invoiced && (
                 <p className="text-[11px] text-muted-foreground pt-2 leading-snug" data-testid="finance-board-agents-reconcile">
                   Of {money(invoiced.total)} invoiced: {money(agentTotalInvoiced)} to agents · {money(invoiced.house)} BGP House
-                  {invoiced.noSplit.count ? ` · ${money(invoiced.noSplit.total)} on ${invoiced.noSplit.count} deal${invoiced.noSplit.count === 1 ? "" : "s"} with no fee split` : ""}
-                  {invoiced.notLinked.count ? ` · ${money(invoiced.notLinked.total)} on ${invoiced.notLinked.count} invoice${invoiced.notLinked.count === 1 ? "" : "s"} raised in Xero and not linked to a deal` : ""}.
+                  {invoiced.noSplit.count ? ` · ${money(invoiced.noSplit.total)} on ${invoiced.noSplit.count} transaction${invoiced.noSplit.count === 1 ? "" : "s"} with no fee split` : ""}
+                  {invoiced.notLinked.count ? ` · ${money(invoiced.notLinked.total)} on ${invoiced.notLinked.count} invoice${invoiced.notLinked.count === 1 ? "" : "s"} raised in Xero and not linked to a transaction` : ""}.
                 </p>
               )}
             </div>
@@ -255,7 +255,7 @@ export function FinanceBoardSection() {
       </Card>
 
       <p className="text-[11px] text-muted-foreground" data-testid="finance-board-rule">
-        Weights: {data.rule}. Investment deals count from Solicitors. Invoiced = Xero sales invoices dated this financial year, ex VAT.
+        Weights: {data.rule}. Investment transactions count from Solicitors. Invoiced = Xero sales invoices dated this financial year, ex VAT.
       </p>
     </div>
   );

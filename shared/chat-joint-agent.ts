@@ -20,7 +20,7 @@ export interface JointAgentTagAllow {
 const NEUTRAL: Record<string, string> = {
   user: "[someone]",
   unit: "[another unit]",
-  deal: "[another deal]",
+  deal: "[another transaction]",
   company: "[a company]",
   contact: "[a contact]",
   property: "[a property]",

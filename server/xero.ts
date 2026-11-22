@@ -1074,11 +1074,11 @@ export function setupXeroRoutes(app: Express) {
       if (!(await contactViewer(req)).staff) return res.status(403).json({ message: "BGP staff only" });
       const { invoiceDraftFor } = await import("./invoice-template");
       const out = await invoiceDraftFor(String(req.params.dealId));
-      if (!out) return res.status(404).json({ message: "Deal not found" });
+      if (!out) return res.status(404).json({ message: "Transaction not found" });
       res.json(out);
     } catch (err: any) {
       console.error("[Xero] Invoice draft error:", err);
-      res.status(500).json({ message: "Could not fill the invoice from the deal" });
+      res.status(500).json({ message: "Could not fill the invoice from the transaction" });
     }
   });
 
@@ -1091,7 +1091,7 @@ export function setupXeroRoutes(app: Express) {
       const { dealId, xeroContactId: bodyContactId, contactName, contactEmail, poNumber, lineItems, reference, dueDate, accountCode, currency: bodyCurrency } = parsed.data;
 
       const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId));
-      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      if (!deal) return res.status(404).json({ message: "Transaction not found" });
       // BGP raises no invoice on a deal it stopped acting on for AML reasons (server/aml-stop.ts).
       {
         const { stoppedDealIds } = await import("./aml-stop");
@@ -1129,7 +1129,7 @@ export function setupXeroRoutes(app: Express) {
         if (!xeroContactId) {
           return res.status(409).json({
             code: "NO_BILLING_ENTITY",
-            message: `Set who is billed first: the ${DEAL_PARTY_LABEL[resolved.billing.role].toLowerCase()}'s company that signs under Parties (it is billed), or an invoice contact on this deal.`,
+            message: `Set who is billed first: the ${DEAL_PARTY_LABEL[resolved.billing.role].toLowerCase()}'s company that signs under Parties (it is billed), or an invoice contact on this transaction.`,
           });
         }
       }
@@ -1407,12 +1407,12 @@ export function setupXeroRoutes(app: Express) {
     const actorId = req.session?.userId || (req as any).tokenUserId || null;
     try {
       const [existing] = await db.select({ id: xeroInvoices.id, dealId: xeroInvoices.dealId }).from(xeroInvoices).where(eq(xeroInvoices.xeroInvoiceId, xeroInvoiceId)).limit(1);
-      if (existing) return res.status(409).json({ message: "That Xero invoice is already linked to a deal", dealId: existing.dealId });
+      if (existing) return res.status(409).json({ message: "That Xero invoice is already linked to a transaction", dealId: existing.dealId });
       const [deal] = await db.select({ id: crmDeals.id, dealRef: crmDeals.dealRef, name: crmDeals.name, status: crmDeals.status }).from(crmDeals).where(eq(crmDeals.id, dealId)).limit(1);
-      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      if (!deal) return res.status(404).json({ message: "Transaction not found" });
       const inv = (await xeroApiWithFallback(null, `/Invoices/${encodeURIComponent(xeroInvoiceId)}`))?.Invoices?.[0];
       if (!inv?.InvoiceID) return res.status(404).json({ message: "Invoice not found in Xero" });
-      if (String(inv.Type || "ACCREC") !== "ACCREC") return res.status(400).json({ message: "Only sales invoices (ACCREC) can be linked to a deal" });
+      if (String(inv.Type || "ACCREC") !== "ACCREC") return res.status(400).json({ message: "Only sales invoices (ACCREC) can be linked to a transaction" });
       await db.insert(xeroInvoices).values({
         dealId: deal.id,
         xeroInvoiceId: inv.InvoiceID,

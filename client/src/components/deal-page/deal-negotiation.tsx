@@ -62,7 +62,7 @@ export function DealNegotiation({ letting, trackerHref, onOpen }: {
     <div className="grid grid-cols-1 gap-3 min-w-0" data-testid="deal-negotiation">
       {!live && (
         <div className={cn(sectionCard, "text-sm")} data-testid="deal-letting-earlier">
-          This unit has been marketed again since this deal. Below are this letting's own offers and recommendation; the unit's Heads of Terms, brief and checklist now belong to the new letting.
+          This unit has been marketed again since this transaction. Below are this letting's own offers and recommendation; the unit's Heads of Terms, brief and checklist now belong to the new letting.
           {letting.currentDealId && <> <Link href={`/deals/${letting.currentDealId}`} className="text-primary hover:underline">Open the current letting</Link>.</>}
         </div>
       )}

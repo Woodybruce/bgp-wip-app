@@ -553,9 +553,9 @@ export async function importWipFromBuffer(
   if (layout === "sage_transactionsexpo" && (diagnostics as any).rowsWithRefAfterMap === 0) {
     throw new Error(
       `Imported ${rows.length} rows but every row has a null \`ref\` (neither HEADER_NUMBER nor Document populated). ` +
-      `This means syncWipToCrmDeals would create 0 deals. Sample raw column keys we saw: ` +
+      `This means syncWipToCrmDeals would create 0 transactions. Sample raw column keys we saw: ` +
       `${rawKeys.slice(0, 20).join(", ")}. ` +
-      `Parser tries HEADER_NUMBER → Document → Document* (case-insensitive). If the deal ref is in a different column, tell the dev which one.`
+      `Parser tries HEADER_NUMBER → Document → Document* (case-insensitive). If the transaction ref is in a different column, tell the dev which one.`
     );
   }
 
@@ -2927,7 +2927,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       let { value } = req.body;
       if (field === "status") {
         const code = legacyToCode(value);
-        if (!code) return res.status(400).json({ error: "Unknown deal status" });
+        if (!code) return res.status(400).json({ error: "Unknown transaction status" });
         value = code;
       }
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "ids array required" });
@@ -2978,7 +2978,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
         for (const id of ids) {
           const oldDeal = await storage.getCrmDeal(id);
-          if (!oldDeal) { failures.push({ id, reason: "deal not found" }); continue; }
+          if (!oldDeal) { failures.push({ id, reason: "transaction not found" }); continue; }
           if (oldDeal.status === value) { passing.push(id); continue; }
           oldStatusById.set(id, (oldDeal as any).status ?? null);
           // Stopped for AML reasons (server/aml-stop.ts): only Withdrawn.
@@ -3061,7 +3061,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const { stoppedDealIds } = await import("./aml-stop");
       const { AML_STOP_REFUSAL } = await import("@shared/aml-stop");
       const stopped = await stoppedDealIds(ids.map(String));
-      if (stopped.size) return res.status(409).json({ error: `${stopped.size === 1 ? "One of these deals" : `${stopped.size} of these deals`}: ${AML_STOP_REFUSAL}`, code: "AML_STOPPED" });
+      if (stopped.size) return res.status(409).json({ error: `${stopped.size === 1 ? "One of these transactions" : `${stopped.size} of these transactions`}: ${AML_STOP_REFUSAL}`, code: "AML_STOPPED" });
       for (const id of ids) {
         await storage.deleteCrmDeal(id);
       }
@@ -3203,7 +3203,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         [req.params.id]
       );
       if ((links.rows[0]?.n || 0) > 0) {
-        return res.status(409).json({ error: `Entity is linked to ${links.rows[0].n} deal(s) — unlink first.` });
+        return res.status(409).json({ error: `Entity is linked to ${links.rows[0].n} transaction(s) — unlink first.` });
       }
       // Nor while a schedule row has it as the company on the lease, a
       // property bills it, or a KYC record is filed against it. A database
@@ -3724,7 +3724,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     try {
       if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const check = await dealPoCheck(pool, String(req.params.id));
-      if (!check) return res.status(404).json({ error: "Deal not found" });
+      if (!check) return res.status(404).json({ error: "Transaction not found" });
       res.json({ ...check, message: check.missing ? poMissingMessage(check) : null });
     } catch (e: any) {
       res.status(500).json({ error: e?.message });
@@ -3890,10 +3890,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
             WHERE LOWER(name) = LOWER($1) AND COALESCE(landlord_id, '') = COALESCE($2, '') AND COALESCE(tenant_id, '') = COALESCE($3, '')
               AND status NOT IN ('ARCH', 'COM') ORDER BY created_at DESC LIMIT 1`,
           [String(b.name || ""), b.landlordId || null, b.tenantId || null]).catch(() => ({ rows: [] as any[] }))).rows[0];
-        const name = same?.name || String(b.name || "this deal");
+        const name = same?.name || String(b.name || "this transaction");
         return res.status(409).json({
           code: "DUPLICATE_DEAL",
-          message: `There is already a live deal called "${name}"${same?.deal_ref ? ` (#${same.deal_ref})` : ""}. Open it, or give this one another name.`,
+          message: `There is already a live transaction called "${name}"${same?.deal_ref ? ` (#${same.deal_ref})` : ""}. Open it, or give this one another name.`,
           existingDealId: same?.id || null, existingDealRef: same?.deal_ref ?? null,
         });
       }
@@ -3942,7 +3942,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
       if (!text) return res.status(400).json({ error: "Comment text required" });
       const deal = await storage.getCrmDeal(req.params.id);
-      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      if (!deal) return res.status(404).json({ error: "Transaction not found" });
       const scope = await resolveCompanyScope(req);
       if (scope && !(await isDealInScope(scope, req.params.id))) {
         return res.status(403).json({ error: "Not available for client accounts" });
@@ -4084,7 +4084,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
               changedByName,
             });
           } catch (_) {}
-          return res.status(403).json({ error: `Senior approval required to mark deals as ${req.body.status}` });
+          return res.status(403).json({ error: `Senior approval required to mark transactions as ${req.body.status}` });
         }
       }
 
@@ -4094,7 +4094,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const was = (oldDeal as any)?.[field] ?? null;
         const now = req.body[field] ?? null;
         if (String(!!now && now) !== String(!!was && was)) {
-          return res.status(400).json({ error: "Suspicion reports go to the MLRO via Compliance → Report a concern, not on the deal", code: "SAR_REGISTER" });
+          return res.status(400).json({ error: "Suspicion reports go to the MLRO via Compliance → Report a concern, not on the transaction", code: "SAR_REGISTER" });
         }
         delete req.body[field];
       }
@@ -4104,7 +4104,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (amlSignOffChanged) {
         const { amlActor } = await import("./aml-authority");
         if (!(await amlActor(req)).isMlro) {
-          return res.status(403).json({ error: "Only the MLRO can sign off a deal's AML / KYC", code: "MLRO_ONLY" });
+          return res.status(403).json({ error: "Only the MLRO can sign off a transaction's AML / KYC", code: "MLRO_ONLY" });
         }
       }
 
@@ -4241,7 +4241,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
               VALUES ($1, 'news', $2, $3, $4, now(), 'medium', 'positive', false)`,
             [
               oldDeal.tenantId,
-              `Deal learning: ${oldDeal.name || req.params.id}`.slice(0, 500),
+              `Transaction learning: ${oldDeal.name || req.params.id}`.slice(0, 500),
               learning,
               `bgp-deal:${req.params.id}`,
             ]
@@ -4572,7 +4572,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                 comments: deal.comments || null,
                 sourceEvidence: "BGP Direct",
                 verified: true,
-                verifiedBy: "Auto (Deal Completed)",
+                verifiedBy: "Auto (Transaction Completed)",
                 verifiedDate: new Date().toISOString().split("T")[0],
                 createdBy: "Auto-Promotion",
                 useClass: deal.assetClass || null,
@@ -4734,7 +4734,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   app.get("/api/crm/deals/:id/related-emails", requireAuth, async (req, res) => {
     try {
       const deal = await storage.getCrmDeal(req.params.id as string);
-      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      if (!deal) return res.status(404).json({ error: "Transaction not found" });
 
       const { getValidMsToken } = await import("./microsoft");
       const token = await getValidMsToken(req);
@@ -4794,7 +4794,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   app.get("/api/crm/deals/:id/related-events", requireAuth, async (req, res) => {
     try {
       const deal = await storage.getCrmDeal(req.params.id as string);
-      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      if (!deal) return res.status(404).json({ error: "Transaction not found" });
 
       const { getValidMsToken } = await import("./microsoft");
       const token = await getValidMsToken(req);
@@ -4999,13 +4999,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
           const body = `
             <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:900px;margin:0 auto;">
-              <h2 style="color:#111;margin-bottom:4px;">Rent Analysis Report — Lease Deals</h2>
-              <p style="color:#666;font-size:14px;margin-top:0;">Generated ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} · ${results.length} deals analysed · ${updated} updated</p>
+              <h2 style="color:#111;margin-bottom:4px;">Rent Analysis Report — Lease Transactions</h2>
+              <p style="color:#666;font-size:14px;margin-top:0;">Generated ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} · ${results.length} transactions analysed · ${updated} updated</p>
               <p style="color:#666;font-size:13px;">Net Effective Rent calculated using straight-line amortisation: <em>(Headline Rent × Paying Months − Capital Contribution) ÷ Total Lease Months</em>. Where area is available, the figure is per sq ft p.a.</p>
               <table style="width:100%;border-collapse:collapse;margin:16px 0;">
                 <thead>
                   <tr style="background:#f3f4f6;">
-                    <th style="padding:8px 10px;text-align:left;font-size:12px;font-weight:600;border-bottom:2px solid #d1d5db;">Deal</th>
+                    <th style="padding:8px 10px;text-align:left;font-size:12px;font-weight:600;border-bottom:2px solid #d1d5db;">Transaction</th>
                     <th style="padding:8px 10px;text-align:left;font-size:12px;font-weight:600;border-bottom:2px solid #d1d5db;">Type</th>
                     <th style="padding:8px 10px;text-align:left;font-size:12px;font-weight:600;border-bottom:2px solid #d1d5db;">Status</th>
                     <th style="padding:8px 10px;text-align:right;font-size:12px;font-weight:600;border-bottom:2px solid #d1d5db;">Rent PA</th>
@@ -5025,7 +5025,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
           await sendSharedMailboxEmail({
             to: "tom@brucegillinghampollard.com",
-            subject: `Rent Analysis Report — ${results.length} Lease Deals for Review`,
+            subject: `Rent Analysis Report — ${results.length} Lease Transactions for Review`,
             body,
           });
           emailSent = true;
@@ -5036,7 +5036,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       }
 
       res.json({
-        message: `Rent analysis complete: ${results.length} deals analysed, ${updated} updated`,
+        message: `Rent analysis complete: ${results.length} transactions analysed, ${updated} updated`,
         analysed: results.length,
         updated,
         emailSent,
@@ -5801,7 +5801,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
       if (!seen) return { status: 403, error: "Choose an agent from your contacts" };
     }
     if ((!existing || changed("dealId")) && data.dealId && !(await isDealInScope(scopeCompanyId, String(data.dealId)))) {
-      return { status: 403, error: "Choose one of your own deals" };
+      return { status: 403, error: "Choose one of your own transactions" };
     }
     return { data };
   }
@@ -6834,7 +6834,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
       );
 
       if (unlinkedDeals.length === 0) {
-        return res.json({ suggestions: [], message: "All deals already have links" });
+        return res.json({ suggestions: [], message: "All transactions already have links" });
       }
 
       const allContacts = await db.select({
@@ -9688,7 +9688,7 @@ Rules:
     }).join("\n");
 
     const hotLines = hotRows.map((h: any) =>
-      `- ${h.name} (${h.deal_count} deal${h.deal_count !== "1" ? "s" : ""}, ${h.req_count} req${h.req_count !== "1" ? "s" : ""} in last 90d)`
+      `- ${h.name} (${h.deal_count} transaction${h.deal_count !== "1" ? "s" : ""}, ${h.req_count} req${h.req_count !== "1" ? "s" : ""} in last 90d)`
     ).join("\n");
 
     const newsLines = newsRows.map((n: any) => {
@@ -10255,7 +10255,7 @@ Rules:
         { header: "Tenant", key: "tenant", width: 22 },
         { header: "Team", key: "team", width: 14 },
         { header: "Agent", key: "agent", width: 20 },
-        { header: "Deal Type", key: "dealType", width: 16 },
+        { header: "Transaction Type", key: "dealType", width: 16 },
         { header: "Asset Class", key: "assetClass", width: 16 },
         { header: "WIP Amount", key: "amtWip", width: 16 },
         { header: "Invoice Amount", key: "amtInvoice", width: 16 },

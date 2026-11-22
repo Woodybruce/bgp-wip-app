@@ -27,7 +27,7 @@ export function useDealSolicitorsAml(dealId: string, enabled = true) {
 /** The section's line: the latest check's words, or what is missing. */
 export function solicitorsSummary(data: DealSolicitorsAml | undefined): { tone: "done" | "act" | "flag" | "info"; words: string } {
   if (!data) return { tone: "info", words: "Not read yet" };
-  if (!data.checks.length) return { tone: "act", words: data.onDeal ? `${data.onDeal} on the deal: not checked yet` : "Add the other side's solicitors and check them" };
+  if (!data.checks.length) return { tone: "act", words: data.onDeal ? `${data.onDeal} on the transaction: not checked yet` : "Add the other side's solicitors and check them" };
   const lines = data.checks.map(solicitorCheckWords);
   const worst = lines.some(l => l.tone === "attention") ? "flag" : lines.some(l => l.tone === "info") ? "act" : "done";
   return { tone: worst, words: data.checks.length === 1 ? lines[0].words : `${data.checks.length} firms checked${worst === "flag" ? " · one needs a look" : ""}` };
@@ -135,7 +135,7 @@ export function DealSolicitorsAmlPanel({ dealId }: { dealId: string }) {
       <p className="text-muted-foreground">BGP's AML policy asks whether the other side has solicitors, and whether there is negative media about them. The check reads the SRA's own data on the firms on its register and searches the web for regulatory action or misconduct; it keeps only what a source it read says.</p>
       {data.onDeal && !checkedNames.has(data.onDeal.toLowerCase()) && !choice && (
         <div className="flex flex-wrap items-center gap-2">
-          <span>On the deal: <span className="font-medium">{data.onDeal}</span></span>
+          <span>On the transaction: <span className="font-medium">{data.onDeal}</span></span>
           <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={check.isPending} onClick={() => run({ firm: data.onDeal! })} data-testid="solicitors-check-on-deal">
             {busyFor(data.onDeal) ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Search className="w-3 h-3 mr-1" />}Check them
           </Button>

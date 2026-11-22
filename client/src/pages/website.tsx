@@ -291,7 +291,7 @@ function EditDialog({ kind, row, onClose, onSave, saving }: { kind: Kind; row: a
                 </>
               ) : (
                 <>
-                  <Field label="Category"><Input value={f.category || ""} onChange={(e) => upd("category", e.target.value)} placeholder="Deals, Opinion, News…" /></Field>
+                  <Field label="Category"><Input value={f.category || ""} onChange={(e) => upd("category", e.target.value)} placeholder="Transactions, Opinion, News…" /></Field>
                   <Field label="Date (as shown)"><Input value={f.date || ""} onChange={(e) => upd("date", e.target.value)} placeholder="12 June 2026" /></Field>
                   <Field label="Author"><Input value={f.author || ""} onChange={(e) => upd("author", e.target.value)} /></Field>
                   <Field label="Image URL"><Input value={f.imageUrl || ""} onChange={(e) => upd("imageUrl", e.target.value)} placeholder="https://…" /></Field>

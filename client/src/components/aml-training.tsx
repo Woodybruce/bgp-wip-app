@@ -85,7 +85,7 @@ export function AmlTrainingPanel({ userId, isOwn }: { userId: string; isOwn: boo
       </div>
       {isOwn && !s.readPolicy && (
         <div className="rounded-lg border bg-card p-3 text-sm space-y-2" data-testid="aml-training-read-box">
-          <div>Read BGP's AML policy (Deals, AML: download it there), then confirm here.</div>
+          <div>Read BGP's AML policy (Transactions, AML: download it there), then confirm here.</div>
           <Button type="button" size="sm" disabled={read.isPending} onClick={() => read.mutate()} data-testid="aml-training-read-policy">
             {read.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}I have read it: {data.policyReadTitle.replace(/^Read /, "")}
           </Button>

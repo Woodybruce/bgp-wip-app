@@ -78,7 +78,7 @@ const subscriptions: Subscription[] = [
   {
     name: "KYC4U",
     category: "Compliance",
-    description: "BGP's outsourced KYC provider: their checks on a deal's party, sent from the deal's AML box. Their requests and every file on their site are kept in the app: open KYC4U below.",
+    description: "BGP's outsourced KYC provider: their checks on a transaction's party, sent from the transaction's AML box. Their requests and every file on their site are kept in the app: open KYC4U below.",
     url: "https://www.kyc4u.com",
     icon: ShieldCheck,
     color: "bg-red-500/10 text-red-600 dark:text-red-400",
@@ -194,7 +194,7 @@ const subscriptions: Subscription[] = [
   {
     name: "Property Week",
     category: "News & Research",
-    description: "UK commercial property news, deals, and market intelligence.",
+    description: "UK commercial property news, transactions, and market intelligence.",
     url: "https://www.propertyweek.com",
     icon: Newspaper,
     color: "bg-red-500/10 text-red-600 dark:text-red-400",

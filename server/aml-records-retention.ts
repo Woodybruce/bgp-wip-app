@@ -175,13 +175,13 @@ export async function previewRetention(db: Db, now = new Date()): Promise<{ cuto
       WHERE ${DEAL_HAS_AML} AND COALESCE(completed_at, invoiced_at, updated_at) < $1::date`, [cutoff]).catch(() => ({ rows: [] as any[] }));
   for (const d of deals) {
     const verdict = dealRetention({ closed: isClosed(d.status), endedAt: isoDay(d.completed_at || d.invoiced_at || d.updated_at) }, cutoff);
-    if (verdict.due) items.push({ id: retentionItemId("deal", d.id), category: "deal", label: text(d.name) || "A deal", why: verdict.why });
+    if (verdict.due) items.push({ id: retentionItemId("deal", d.id), category: "deal", label: text(d.name) || "A transaction", why: verdict.why });
   }
   if (tables.has("aml_retention_archive")) {
     const { rows } = await db.query(`SELECT id, entity_type, archived_at, retain_until, data->>'name' AS name FROM aml_retention_archive WHERE retain_until < now() ORDER BY archived_at`);
     for (const r of rows) items.push({
       id: retentionItemId("archive", r.id), category: "archive",
-      label: `${r.entity_type === "crm_deals" ? "A deleted deal" : "A deleted company"}${r.name ? `: ${text(r.name)}` : ""}`,
+      label: `${r.entity_type === "crm_deals" ? "A deleted transaction" : "A deleted company"}${r.name ? `: ${text(r.name)}` : ""}`,
       why: `Kept until ${isoDay(r.retain_until)}`,
     });
   }
@@ -300,7 +300,7 @@ export async function applyRetentionItem(rawId: string, by: { id: string | null;
       why = verdict.why;
     } else if (item.category === "deal") {
       const d = (await client.query(`SELECT id, status, completed_at, invoiced_at, updated_at FROM crm_deals WHERE id = $1 FOR UPDATE`, [item.id])).rows[0];
-      const verdict = d ? dealRetention({ closed: isClosed(d.status), endedAt: isoDay(d.completed_at || d.invoiced_at || d.updated_at) }, cutoff) : { due: false, why: "The deal has gone" };
+      const verdict = d ? dealRetention({ closed: isClosed(d.status), endedAt: isoDay(d.completed_at || d.invoiced_at || d.updated_at) }, cutoff) : { due: false, why: "The transaction has gone" };
       if (!verdict.due) { await client.query("ROLLBACK"); return { id: rawId, deleted: false, why: verdict.why }; }
       counts = await deleteDealFields(client, item.id);
       why = verdict.why;

@@ -451,7 +451,7 @@ export default function BrandsHub() {
                         </div>
                         <div className="text-right shrink-0">
                           <div className="flex items-center gap-1 justify-end">
-                            {(parseInt(b.deal_count) || 0) > 0 && <Badge variant="secondary" className="text-[9px] px-1">{b.deal_count} deal{parseInt(b.deal_count) > 1 ? "s" : ""}</Badge>}
+                            {(parseInt(b.deal_count) || 0) > 0 && <Badge variant="secondary" className="text-[9px] px-1">{b.deal_count} transaction{parseInt(b.deal_count) > 1 ? "s" : ""}</Badge>}
                             {(parseInt(b.req_count) || 0) > 0 && <Badge className="text-[9px] px-1">{b.req_count} req</Badge>}
                           </div>
                           <p className="text-[9px] text-muted-foreground mt-0.5">{daysAgo === 0 ? "today" : `${daysAgo}d ago`}</p>

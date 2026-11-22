@@ -88,7 +88,7 @@ export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole):
     { id: deal.brand_id, name: entity.brand_name, companiesHouseNumber: entity.brand_number || null, legalName: entity.uk_entity_name || entity.ch_name || null, status: null, expiresAt: null, approvedBy: null },
     { id: entity.id, name: entity.name, companiesHouseNumber: entity.companies_house_number || null, kyc: null });
   return {
-    dealId: deal.id, dealName: text(deal.name) || "this deal", role,
+    dealId: deal.id, dealName: text(deal.name) || "this transaction", role,
     brandId: String(deal.brand_id), brandName: state.brandName,
     entityId: entity ? String(entity.id) : null, entityName: entity ? text(entity.name) : null,
     sameCompany, state,
@@ -235,7 +235,7 @@ async function signOffActor(req: Request, party: AmlParty): Promise<Decider | { 
     const actor = await amlActor(req);
     return { id: String(me.id), name: text(me.name) || text(me.email), mlroAppointed: actor.mlroAppointed, as: "agent", officerRole: null };
   }
-  return { refusal: "Only an agent on this deal, the Nominated Officer or the Deputy can sign this party off.", status: 403 };
+  return { refusal: "Only an agent on this transaction, the Nominated Officer or the Deputy can sign this party off.", status: 403 };
 }
 
 /** What the person asking may do on a deal's AML: decide (the officers), sign off (the officers and the deal's agents). */
@@ -288,7 +288,7 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
     const role = String(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
     const party = await loadAmlParty(pool, String(req.params.id), role);
-    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
     const me = await signOffActor(req, party);
     if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
     const note = text(req.body?.note).slice(0, 1000);
@@ -313,7 +313,7 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
       party.regime === "sanctions_only" ? null : facts.reliance ? `${facts.reliance} (MLR 2017 reg 39)` : facts.clientChecksFinished ? "client checks finished" : `client checks not finished${facts.clientChecksOutstanding?.length ? ` (still to come: ${facts.clientChecksOutstanding.join("; ")})` : ""}`,
       note ? `note: ${note}` : null,
     ].filter(Boolean).join("; ");
-    const who = me.as === "agent" ? `${me.name} (agent on the deal)` : `${me.name}${me.officerRole === "nominated" ? " (Nominated Officer)" : me.officerRole === "deputy" ? " (Deputy Nominated Officer)" : ""}`;
+    const who = me.as === "agent" ? `${me.name} (agent on the transaction)` : `${me.name}${me.officerRole === "nominated" ? " (Nominated Officer)" : me.officerRole === "deputy" ? " (Deputy Nominated Officer)" : ""}`;
     const line = `BGP sign-off on ${party.dealName} (${DEAL_PARTY_LABEL[role].toLowerCase()}) by ${who}: ${relied}`;
     const before = party.state.status || "no checks";
     if (party.entityId) {
@@ -358,17 +358,17 @@ router.post("/api/deals/:id/red-flags/set-aside", async (req: Request, res: Resp
     const roleRaw = req.body?.role == null || req.body.role === "" ? null : String(req.body.role);
     let brandId: string | null = null;
     let entityId: string | null = null;
-    let partyWords = "the deal record";
+    let partyWords = "the transaction record";
     if (roleRaw) {
       if (!isDealPartyRole(roleRaw)) return res.status(400).json({ message: "Unknown party." });
       const party = await loadAmlParty(pool, String(req.params.id), roleRaw);
-      if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[roleRaw].toLowerCase()}.` });
+      if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[roleRaw].toLowerCase()}.` });
       brandId = party.brandId;
       entityId = party.entityId;
       partyWords = `${DEAL_PARTY_LABEL[roleRaw]}: ${partyName(party)}`;
     } else {
       const deal = (await pool.query(`SELECT id FROM crm_deals WHERE id = $1`, [String(req.params.id)])).rows[0];
-      if (!deal) return res.status(404).json({ message: "Deal not found." });
+      if (!deal) return res.status(404).json({ message: "Transaction not found." });
     }
     const { setFlagAside } = await import("./kyc-red-flags");
     const done = await setFlagAside({ dealId: String(req.params.id), brandId, entityId, key, comment: said.comment, me });
@@ -388,7 +388,7 @@ router.post("/api/deals/:id/red-flags/put-back", async (req: Request, res: Respo
     const reviewId = Number(req.body?.reviewId);
     if (!Number.isInteger(reviewId) || reviewId <= 0) return res.status(400).json({ message: "Which red flag?" });
     const deal = (await pool.query(`SELECT id, landlord_id, tenant_id, vendor_id, purchaser_id FROM crm_deals WHERE id = $1`, [String(req.params.id)])).rows[0];
-    if (!deal) return res.status(404).json({ message: "Deal not found." });
+    if (!deal) return res.status(404).json({ message: "Transaction not found." });
     const partyIds = [deal.landlord_id, deal.tenant_id, deal.vendor_id, deal.purchaser_id].filter(Boolean).map(String);
     const { putFlagBack } = await import("./kyc-red-flags");
     const back = await putFlagBack({ dealId: deal.id, partyIds, reviewId, me });
@@ -441,7 +441,7 @@ router.post("/api/deals/:id/parties/:role/kyc4u-result/read", deciderFirst, take
     const role = String(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
     const party = await loadAmlParty(pool, String(req.params.id), role);
-    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
     const pack = await packFrom(req);
     res.json({
       files: pack.entries.map(e => ({ path: e.path, name: e.name, size: e.buffer.length, heading: e.place.heading, kind: e.place.kind, docType: e.place.docType, docWords: amlFileDocWords(e.place.docType) })),
@@ -481,7 +481,7 @@ router.post("/api/deals/:id/parties/:role/kyc4u-result", deciderFirst, takeFiles
     if (verdict === "approved" && !files.length) return res.status(400).json({ message: "Attach KYC4U's report or their email approving the party." });
     if (verdict !== "approved" && !files.length && note.length < SIGN_OFF_NOTE_MIN) return res.status(400).json({ message: "Attach KYC4U's email or say what they said." });
     const party = await loadAmlParty(pool, String(req.params.id), role);
-    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
     // The re-check the approval carries: the policy's years for the party's
     // level now (1 when it needs enhanced due diligence, else 3), and 1 when
     // KYC4U's own report rates it high risk.
@@ -580,7 +580,7 @@ router.post("/api/deals/:id/parties/:role/public-figure", deciderFirst, takeFile
     const role = String(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
     const party = await loadAmlParty(pool, String(req.params.id), role);
-    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
     const note = text(req.body?.note).slice(0, 1000);
     if (note.length < PUBLIC_FIGURE_NOTE_MIN) return res.status(400).json({ message: "Say what makes them a public figure and what the sources show (at least a sentence)." });
     const { copyAddress, fileWebCopies } = await import("./web-page-copy");
@@ -644,7 +644,7 @@ router.post("/api/deals/:id/parties/:role/public-figure/:checkId/withdraw", asyn
     const role = String(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
     const party = await loadAmlParty(pool, String(req.params.id), role);
-    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
     const row = (await pool.query(
       `UPDATE kyc_public_figure_checks SET withdrawn_at = now(), withdrawn_by = $4, withdrawn_by_name = $5
         WHERE id = $1 AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3::varchar AND withdrawn_at IS NULL
@@ -677,7 +677,7 @@ router.post("/api/deals/:id/parties/:role/reliance", deciderFirst, takeFiles, as
     const role = String(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
     const party = await loadAmlParty(pool, String(req.params.id), role);
-    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
     // The joint agent agreed to the reliance terms on its page (22 November
     // 2026): that agreement, as a PDF, is the firm's agreement in writing, and
     // what it says fills what the officer left blank.
@@ -753,7 +753,7 @@ router.post("/api/deals/:id/parties/:role/reliance/:relianceId/withdraw", async 
     const role = String(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
     const party = await loadAmlParty(pool, String(req.params.id), role);
-    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
     const row = (await pool.query(
       `UPDATE kyc_reliance SET withdrawn_at = now(), withdrawn_by = $5, withdrawn_by_name = $6
         WHERE id = $1 AND deal_id = $2 AND company_id = $3 AND trading_entity_id IS NOT DISTINCT FROM $4::varchar AND withdrawn_at IS NULL
@@ -789,7 +789,7 @@ router.post("/api/deals/:id/parties/:role/not-required", async (req: Request, re
     const role = String(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
     const party = await loadAmlParty(pool, String(req.params.id), role);
-    if (!party) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
     const { jointRequestsForRecord } = await import("./joint-agent-checks");
     const said = notRequiredInput(req.body, { rule: party.jointRule, requests: await jointRequestsForRecord(pool, party.dealId, party.brandId).catch(() => []) });
     if ("problem" in said) return res.status(400).json({ message: said.problem });

@@ -343,7 +343,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       <CardContent className="p-3 pt-0 space-y-2">
         <div className="grid grid-cols-3 gap-2">
           <div>
-            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Deals</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Transactions</div>
             <div className="text-sm font-mono tabular-nums">{data.bgpSummary.totalDeals}</div>
             {data.bgpSummary.completedDeals ? <div className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{data.bgpSummary.completedDeals}</span> done</div> : null}
           </div>
@@ -727,7 +727,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       <div className={brandPage ? "flex gap-1.5 overflow-x-auto -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0" : "flex flex-wrap gap-1.5"} data-testid="company-phone-sections">
         {brandPage ? <>
         <Pill active={section === "chat"} onClick={() => setSection("chat")} data-testid="company-section-chat">Overview</Pill>
-        <Pill active={section === "deals"} onClick={() => setSection("deals")} data-testid="company-section-deals">Deals &amp; space</Pill>
+        <Pill active={section === "deals"} onClick={() => setSection("deals")} data-testid="company-section-deals">Transactions &amp; space</Pill>
         {/* As on desktop: a client login with no mapped stores and no menu items has nothing under this pill. */}
         {(!isClientViewer || (data.stores || []).length > 0 || menuItemCount > 0 || section === "stores") && <Pill active={section === "stores"} onClick={() => setSection("stores")} data-testid="company-section-stores">Stores &amp; menu</Pill>}
         <Pill active={section === "intel"} onClick={() => setSection("intel")} data-testid="company-section-intel">Expansion</Pill>

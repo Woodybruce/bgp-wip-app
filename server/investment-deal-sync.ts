@@ -147,17 +147,17 @@ const AML_START = new Set(["HOT", "SOL"]);
 export async function startAmlOnStatus(dealId: string, fromStatus: string | null | undefined, toStatus: string | null | undefined,
   actor: { id?: string | null; name?: string | null } = {}, deps: { pool?: Querier; launch?: (dealId: string, actorId: string | null, actorName: string | null) => Promise<void> } = {}) {
   // Retired 2026-10-05 — KYC4U is BGP's MLRO; the app starts no AML of its own.
-  if (!process.env.IN_APP_AML_ENABLED) return { started: false, reason: "AML/KYC is raised with KYC4U from the deal's AML panel" };
+  if (!process.env.IN_APP_AML_ENABLED) return { started: false, reason: "AML/KYC is raised with KYC4U from the transaction's AML panel" };
   const to = legacyToCode(toStatus);
   if (!to || !AML_START.has(to) || legacyToCode(fromStatus) === to) return { started: false, reason: "not a HOTs / Solicitors move" };
   const q = deps.pool ?? (await import("./db")).pool;
   const { rows: [d] } = await q.query(`SELECT tenant_id, landlord_id, vendor_id, purchaser_id, aml_check_completed FROM crm_deals WHERE id = $1`, [dealId]);
-  if (!d) return { started: false, reason: "deal not found" };
+  if (!d) return { started: false, reason: "transaction not found" };
   if (d.aml_check_completed === "YES") return { started: false, reason: "AML already signed off" };
   if (![d.tenant_id, d.landlord_id, d.vendor_id, d.purchaser_id].some(Boolean)) return { started: false, reason: "no counterparty linked yet" };
   const recent = await q.query(`SELECT 1 FROM deal_events WHERE deal_id = $1 AND event_type IN ('kyc_orchestrator_run', 'kyc_auto_started')
       AND occurred_at > NOW() - INTERVAL '90 days' LIMIT 1`, [dealId]);
-  if (recent.rows.length) return { started: false, reason: "AML already running for this deal" };
+  if (recent.rows.length) return { started: false, reason: "AML already running for this transaction" };
   await q.query(`INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name) VALUES ($1, 'kyc_auto_started', $2, $3, $4)`,
     [dealId, JSON.stringify({ status: to }), actor.id || null, actor.name || null]).catch(() => {});
   const launch = deps.launch ?? (await import("./deal-stages")).autoLaunchAmlForDeal;

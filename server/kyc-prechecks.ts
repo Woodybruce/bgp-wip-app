@@ -896,11 +896,11 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   };
   const where = companiesHouse ? `${companiesHouse.name} (Companies House ${companiesHouse.number})` : partyName;
   if (subjectKind === "individual") add({ name: personNameOfRecord(entity ? entity.name : company.name), role: "the party", person: true, dobYear: null, context: "a private individual dealing in UK commercial property" });
-  else add({ name: partyName, role: "the company", person: false, dobYear: null, context: companiesHouse ? `UK company ${companiesHouse.number}, registered office ${companiesHouse.registeredOffice || "not given"}` : "a company in a UK property deal" });
+  else add({ name: partyName, role: "the company", person: false, dobYear: null, context: companiesHouse ? `UK company ${companiesHouse.number}, registered office ${companiesHouse.registeredOffice || "not given"}` : "a company in a UK property transaction" });
   if (subjectKind === "company" && clean(company.name, 160) && clean(company.name, 160).toLowerCase() !== partyName.toLowerCase()) {
     add({ name: clean(company.name, 160), role: "the company (trading name)", person: false, dobYear: null, context: `trading name of ${where}` });
   }
-  if (contactName) add({ name: contactName, role: "the deal's contact", person: true, dobYear: null, context: `the contact for ${where} in a UK property deal` });
+  if (contactName) add({ name: contactName, role: "the deal's contact", person: true, dobYear: null, context: `the contact for ${where} in a UK property transaction` });
   const abroadNames = new Set(ownersAbroadOf(companiesHouse).map(a => a.name.toLowerCase()));
   for (const o of companiesHouse?.owners || []) {
     const person = o.kind === "individual";
@@ -1122,10 +1122,10 @@ router.post("/api/kyc/deal/:id/prechecks", async (req: Request, res: Response) =
     const { contactViewer } = await import("./contact-viewer");
     if (!(await contactViewer(req)).staff) return res.status(403).json({ message: "BGP staff only" });
     const d = (await pool.query(`SELECT id, landlord_id, tenant_id, vendor_id, purchaser_id FROM crm_deals WHERE id = $1`, [String(req.params.id)])).rows[0];
-    if (!d) return res.status(404).json({ message: "Deal not found" });
+    if (!d) return res.status(404).json({ message: "Transaction not found" });
     const parties = [d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id].filter(Boolean) as string[];
     const wanted = typeof req.body?.companyId === "string" ? [req.body.companyId] : parties;
-    if (wanted.some(id => !parties.includes(id))) return res.status(400).json({ message: "That company is not a party to this deal" });
+    if (wanted.some(id => !parties.includes(id))) return res.status(400).json({ message: "That company is not a party to this transaction" });
     const signs = await (await import("./deal-parties")).dealPartyCompanies(pool, d.id);
     // A private individual, or a trust or foundation (21 November 2026), is checked on its own record.
     const signsItself = new Set((await pool.query(`SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust')`, [wanted])).rows.map((r: any) => String(r.id)));

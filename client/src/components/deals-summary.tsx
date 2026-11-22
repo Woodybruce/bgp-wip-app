@@ -40,7 +40,7 @@ function useBoardDeals(propertyId?: string, propertyIds?: string[]) {
     queryKey: ["/api/crm/deals", { excludeTracker: true }],
     queryFn: async () => {
       const r = await fetch("/api/crm/deals?excludeTrackerDeals=true", { credentials: "include", headers: getAuthHeaders() });
-      if (!r.ok) throw new Error(`Deals lookup failed (${r.status})`);
+      if (!r.ok) throw new Error(`Transactions lookup failed (${r.status})`);
       return r.json();
     },
   });
@@ -93,8 +93,8 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
   // Exchange - Inception T2" reads "Inception T2" (no extra fetch).
   const { data: ownProperty } = useQuery<any>({ queryKey: ["/api/crm/properties", propertyId], enabled: false });
   const dealLabel = (name: string | null) => name ? withoutPropertyName(name, ownProperty?.name) : name;
-  if (isError) return <div className="space-y-2" role="status"><p className="text-xs text-muted-foreground">Deals data could not be loaded.</p><Button variant="outline" size="sm" onClick={() => refetch()}>Retry deals</Button><Link href={boardHref(propertyId)} className="text-xs hover:underline">Open Deals board</Link></div>;
-  if (isLoading) return <p className="text-xs text-muted-foreground">Loading deals…</p>;
+  if (isError) return <div className="space-y-2" role="status"><p className="text-xs text-muted-foreground">Transactions data could not be loaded.</p><Button variant="outline" size="sm" onClick={() => refetch()}>Retry transactions</Button><Link href={boardHref(propertyId)} className="text-xs hover:underline">Open Transactions board</Link></div>;
+  if (isLoading) return <p className="text-xs text-muted-foreground">Loading transactions…</p>;
 
   if (variant === "strip") {
     return (
@@ -104,7 +104,7 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
             key={code}
             href={boardHref(propertyId, code)}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${counts[code] ? "bg-card" : "opacity-40"}`}
-            title={`${DEAL_STATUS_LABELS[code]} — open on the Deals board`}
+            title={`${DEAL_STATUS_LABELS[code]} — open on the Transactions board`}
           >
             <span className={`w-1.5 h-1.5 rounded-full ${DEAL_STATUS_DOT_COLORS[code] || "bg-muted-foreground"}`} />
             <span className="font-semibold tabular-nums">{counts[code]}</span>
@@ -120,10 +120,10 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs">
           <span className="font-semibold font-mono tabular-nums">{live.length}</span>
-          <span className="text-muted-foreground"> live deal{live.length === 1 ? "" : "s"}</span>
+          <span className="text-muted-foreground"> live transaction{live.length === 1 ? "" : "s"}</span>
         </div>
         <Link href={boardHref(propertyId)} className="text-[11px] text-primary hover:underline inline-flex items-center shrink-0">
-          Deals board <ChevronRight className="w-3 h-3" />
+          Transactions board <ChevronRight className="w-3 h-3" />
         </Link>
       </div>
       <SchemePillRow schemes={schemes} items={allLive.map(d => ({ label: d.scheme, name: d.name }))} value={schemeFilter} onChange={setSchemeFilter} testId="deals-scheme-pills" />
@@ -137,11 +137,11 @@ export function DealsSummary({ propertyId, propertyIds, variant }: {
         ))}
       </div>
       {isLoading ? (
-        <p className="text-xs text-muted-foreground italic">Loading deals…</p>
+        <p className="text-xs text-muted-foreground italic">Loading transactions…</p>
       ) : live.length === 0 ? (
         // Sales / purchases run on the Investment board and are left out
         // here — "nothing live" read as wrong on a property that's for sale.
-        <p className="text-xs text-muted-foreground">No live leasing deals. Sales and purchases show under Investment.</p>
+        <p className="text-xs text-muted-foreground">No live leasing transactions. Sales and purchases show under Investment.</p>
       ) : (
         <div className="space-y-1 max-h-[300px] overflow-y-auto pr-1">
           {live.map(d => (

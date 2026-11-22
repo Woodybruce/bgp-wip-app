@@ -1768,7 +1768,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           {landlordName && <p className="text-xs text-muted-foreground">{landlordName}</p>}
           {((currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId) && (
             <p className="text-xs text-muted-foreground">
-              The leasing strategy board — zone positioning, target brands and priorities for each key unit, plus live deals mirrored from the Letting Tracker. Unit facts (tenant, rent, dates) pull live from the Tenancy Schedule.
+              The leasing strategy board — zone positioning, target brands and priorities for each key unit, plus live transactions mirrored from the Letting Tracker. Unit facts (tenant, rent, dates) pull live from the Tenancy Schedule.
             </p>
           )}
         </div>
@@ -3730,7 +3730,7 @@ export default function LeasingSchedulePage() {
           <p className="text-sm text-muted-foreground">
             {filtered.length} {filtered.length === 1 ? "property" : "properties"} · {stats.totalUnits} units
             {isClientBoard && (
-              <span> — the leasing strategy per property: positioning, target brands and priorities, plus live deals from the Letting Tracker</span>
+              <span> — the leasing strategy per property: positioning, target brands and priorities, plus live transactions from the Letting Tracker</span>
             )}
           </p>
         </div>

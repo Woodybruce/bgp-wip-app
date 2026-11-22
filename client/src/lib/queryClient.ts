@@ -135,7 +135,7 @@ export async function apiRequest(
   if (amlWarning) {
     import("@/hooks/use-toast").then(({ toast }) => toast({
       title: "Moved — AML still outstanding",
-      description: `${decodeURIComponent(amlWarning)} Logged on the deal and sent to the MLRO's queue; CDD must be complete before exchange.`,
+      description: `${decodeURIComponent(amlWarning)} Logged on the transaction and sent to the MLRO's queue; CDD must be complete before exchange.`,
     })).catch(() => {});
   }
   return res;

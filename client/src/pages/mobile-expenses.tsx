@@ -850,19 +850,19 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
           {/* Related deal */}
           <div className="space-y-2">
             <Label className="text-xs flex items-center gap-1.5">
-              <Briefcase className="w-3.5 h-3.5" /> Related deal
+              <Briefcase className="w-3.5 h-3.5" /> Related transaction
               <span className="text-[10px] font-normal text-muted-foreground">(optional)</span>
             </Label>
             {relatedDealId && (
               <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
                 <span className="text-sm truncate">
-                  {deals.find((d) => d.id === relatedDealId)?.name || "Deal"}
+                  {deals.find((d) => d.id === relatedDealId)?.name || "Transaction"}
                 </span>
                 <button
                   type="button"
                   onClick={() => setRelatedDealId(null)}
                   className="p-1 -mr-1 rounded-full active:bg-muted"
-                  aria-label="Clear deal"
+                  aria-label="Clear transaction"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -875,7 +875,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
                   <Input
                     value={dealSearch}
                     onChange={(e) => setDealSearch(e.target.value)}
-                    placeholder="Search deals…"
+                    placeholder="Search transactions…"
                     className="h-10 pl-8 text-sm"
                     disabled={isPosted}
                     data-testid="m-deal-search"

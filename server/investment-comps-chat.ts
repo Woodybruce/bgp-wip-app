@@ -54,7 +54,7 @@ export async function fileCompsFromChat(args: { comps: ChatComp[]; sourceDocumen
     // Comps are completed sales (Jack, 2026-11-16): a deal still under offer
     // or quoting belongs on the Investment Tracker until it completes.
     if (evidenceStatus === "under offer" || evidenceStatus === "quoting") {
-      out.push({ propertyName: name, error: `Not filed: ${evidenceStatus} is a live deal. Add it to the Investment Tracker instead (U/O - Not BGP for someone else's deal under offer, Available when quoting), and file it here once it has sold.` });
+      out.push({ propertyName: name, error: `Not filed: ${evidenceStatus} is a live transaction. Add it to the Investment Tracker instead (U/O - Not BGP for someone else's transaction under offer, Available when quoting), and file it here once it has sold.` });
       continue;
     }
     // Keep the file name with the label so the brochure can be found again.

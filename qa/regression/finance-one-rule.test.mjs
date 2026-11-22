@@ -162,7 +162,7 @@ test('the board pack Excel holds the same numbers', async () => {
   const ExcelJS = createRequire(import.meta.url)('exceljs');
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(await boardWorkbook(b));
-  assert.deepEqual(wb.worksheets.map(w => w.name), ['Summary', 'By stage', 'By team', 'By deal type', 'Deals', 'Fees by agent', 'Invoiced by month']);
+  assert.deepEqual(wb.worksheets.map(w => w.name), ['Summary', 'By stage', 'By team', 'By transaction type', 'Transactions', 'Fees by agent', 'Invoiced by month']);
   const team = wb.getWorksheet('By team');
   const totalRow = team.getRow(team.rowCount);
   assert.equal(totalRow.getCell(1).value, 'Total');

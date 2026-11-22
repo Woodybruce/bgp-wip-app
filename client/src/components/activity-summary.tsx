@@ -66,7 +66,7 @@ function dayBucket(date: string): string {
 }
 
 const KIND_ICON: Record<string, typeof Mail> = { email: Mail, call: Phone, meeting: Users, deal: Handshake };
-const KIND_WORD: Record<string, string> = { email: "Email", call: "Call", meeting: "Meeting", deal: "Deal move" };
+const KIND_WORD: Record<string, string> = { email: "Email", call: "Call", meeting: "Meeting", deal: "Transaction move" };
 const kindWord = (a: RecentItem) => a.kind === "email" ? (a.direction === "outbound" ? "Email sent" : a.direction === "inbound" ? "Email received" : "Email") : KIND_WORD[a.kind] || "Activity";
 
 // One row shape for the whole feed (Woody, 2026-11-15: "bring the design up
@@ -191,8 +191,8 @@ function ActivityDetail({ opened, onClose, propertyId, feedDealId, summaries, se
               )}
               {isDealMove && a?.stage && <DetailLine label="Stage">Now at {a.stage}</DetailLine>}
               {dealId && (
-                <DetailLine label="Deal">
-                  <Link href={`/deals/${dealId}`} className={linkCls} onClick={onClose} data-testid="activity-detail-deal">{a?.deal_name || "Open the deal"}</Link>
+                <DetailLine label="Transaction">
+                  <Link href={`/deals/${dealId}`} className={linkCls} onClick={onClose} data-testid="activity-detail-deal">{a?.deal_name || "Open the transaction"}</Link>
                 </DetailLine>
               )}
               {propName && (
@@ -237,7 +237,7 @@ function ActivityDetail({ opened, onClose, propertyId, feedDealId, summaries, se
                 <Button size="sm" variant="ghost" asChild><Link href={`/contacts/${a.contact_id}`} onClick={onClose}><UserRound className="w-3.5 h-3.5 mr-1" />Contact</Link></Button>
               )}
               {dealId && (
-                <Button size="sm" variant="ghost" asChild><Link href={`/deals/${dealId}`} onClick={onClose}><Handshake className="w-3.5 h-3.5 mr-1" />Deal</Link></Button>
+                <Button size="sm" variant="ghost" asChild><Link href={`/deals/${dealId}`} onClick={onClose}><Handshake className="w-3.5 h-3.5 mr-1" />Transaction</Link></Button>
               )}
               {propId && propId !== propertyId && (
                 <Button size="sm" variant="ghost" asChild><Link href={`/properties/${propId}`} onClick={onClose}><Building className="w-3.5 h-3.5 mr-1" />Property</Link></Button>
@@ -338,7 +338,7 @@ export function ActivitySummary({ propertyId, companyId, contactId, dealId, vari
     );
   }
 
-  const KIND_LABEL: Record<string, string> = { email: "emails", meeting: "meetings", call: "calls", deal: "deal moves" };
+  const KIND_LABEL: Record<string, string> = { email: "emails", meeting: "meetings", call: "calls", deal: "transaction moves" };
   return (
     <div className="space-y-2" data-testid="activity-summary">
       {variant === "both" && (Object.keys(kindCounts).length > 1 || (allUpcoming.length > 0 && allRecent.length > 0)) && (

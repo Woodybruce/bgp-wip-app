@@ -125,7 +125,7 @@ export function propertyBgpTeam(
     if (t.some(x => /retail|f&b|leasing|landsec|shopping centre|london estate|high street|^city$/.test(x))) return "Leasing";
     if (t.includes("development")) return "Development";
     if (t.includes("tenant rep")) return "Tenant rep";
-    return "On deals";
+    return "On transactions";
   };
   const accountRole = new Map(account.map(a => [String(a.id), a.role || null]));
   const out: Array<{ id: string; user_id: string; name: string; email: string | null; role: string; side: "bgp"; source: "property" | "deals" | "account"; via: string }> = [];
@@ -138,7 +138,7 @@ export function propertyBgpTeam(
     entry.teams.push(...(Array.isArray(r.team) ? r.team : r.team ? [r.team] : []));
     teamsByAgent.set(String(r.id), entry);
   }
-  for (const [id, { row, teams }] of teamsByAgent) add({ id: `u-${id}`, user_id: id, name: row.name, email: row.email || null, role: accountRole.get(id) || teamRole(teams), side: "bgp", source: "deals", via: "on deals" });
+  for (const [id, { row, teams }] of teamsByAgent) add({ id: `u-${id}`, user_id: id, name: row.name, email: row.email || null, role: accountRole.get(id) || teamRole(teams), side: "bgp", source: "deals", via: "on transactions" });
   if (!explicit.length) for (const r of account) add({ id: `u-${r.id}`, user_id: String(r.id), name: r.name, email: r.email || null, role: r.role || "Account team", side: "bgp", source: "account", via: r.company_name ? `${r.company_name} account team` : "account team" });
   return out;
 }
@@ -244,7 +244,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
           AND COALESCE(d.status, '') NOT IN (${CLOSED_SQL})
         ORDER BY d.updated_at DESC NULLS LAST`,
       [propertyId]
-    ).catch(unavailable("deals", "Active deals could not be loaded. Pipeline counts are unavailable."));
+    ).catch(unavailable("deals", "Active transactions could not be loaded. Pipeline counts are unavailable."));
     const activeDeals = dealsQ.rows.map(d => ({
       id: d.id,
       name: d.name,
@@ -311,7 +311,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       const bucket = d.stage_bucket;
       if (pipeline[bucket] !== undefined) {
         pipeline[bucket]++;
-        pipelineItems[bucket].push({ label: d.tenant_name || d.name || "Deal", sub: d.unit_name || d.stage_label || null });
+        pipelineItems[bucket].push({ label: d.tenant_name || d.name || "Transaction", sub: d.unit_name || d.stage_label || null });
       }
     }
     // Letting Tracker units progressing WITHOUT a crm_deals row were
@@ -497,7 +497,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       risks.push({
         kind: "vacant",
         severity: "med",
-        message: `${vacantNoDeal.length} unit${vacantNoDeal.length === 1 ? "" : "s"} vacant with no active deal (${names}${more})${withDeal > 0 ? `; ${withDeal} more vacant ${withDeal === 1 ? "unit has a" : "units have"} live deal${withDeal === 1 ? "" : "s"}` : ""}`,
+        message: `${vacantNoDeal.length} unit${vacantNoDeal.length === 1 ? "" : "s"} vacant with no active transaction (${names}${more})${withDeal > 0 ? `; ${withDeal} more vacant ${withDeal === 1 ? "unit has a" : "units have"} live transaction${withDeal === 1 ? "" : "s"}` : ""}`,
       });
     }
     for (const u of lsuQ.rows) {
@@ -508,7 +508,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
         const months = (e.getFullYear() - n.getFullYear()) * 12 + e.getMonth() - n.getMonth();
         const when = months <= 0 ? "expires this month" : `expires in ${months} month${months === 1 ? "" : "s"}`;
         // The name shoppers know (trading name) before the lease entity.
-        risks.push({ kind: "expiry_no_renewal", severity: months < 6 ? "high" : "med", message: `${u.trading_name || u.tenant_name || u.unit_name} ${when} with no live deal`, unit_id: u.id, unit_name: u.unit_name });
+        risks.push({ kind: "expiry_no_renewal", severity: months < 6 ? "high" : "med", message: `${u.trading_name || u.tenant_name || u.unit_name} ${when} with no live transaction`, unit_id: u.id, unit_name: u.unit_name });
       }
       // Tenant in admin / sanctioned — pulled from the linked
       // crm_companies row's KYC fields.
@@ -1419,7 +1419,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
     // without the property's own name — "Royal Exchange - Inception T2" was
     // cut to "Royal Exchange - Inc…" in the chip.
     const pname = propertyName.rows[0]?.name || "";
-    const stage = (status: any) => DEAL_STATUS_LABELS[legacyToCode(status) as keyof typeof DEAL_STATUS_LABELS] || "On a deal";
+    const stage = (status: any) => DEAL_STATUS_LABELS[legacyToCode(status) as keyof typeof DEAL_STATUS_LABELS] || "On a transaction";
     const context = (label: any, ...skip: any[]) => {
       const short = withoutPropertyName(label, pname);
       return short && !skip.some(s => s && String(s).trim().toLowerCase() === short.toLowerCase()) ? short : null;
@@ -1580,7 +1580,7 @@ router.post("/api/properties/:id/adopt-deal", requireAuth, async (req: Request, 
     );
     if (propRes.rows.length === 0) return res.status(404).json({ error: "Property not found" });
     const landlordId = propRes.rows[0].landlord_id;
-    if (!landlordId) return res.status(400).json({ error: "Property has no landlord — can't adopt orphan deals" });
+    if (!landlordId) return res.status(400).json({ error: "Property has no landlord — can't adopt orphan transactions" });
 
     // Confirm the deal is genuinely an orphan of this landlord.
     const dealRes = await pool.query<{ id: string; tenant_id: string | null }>(
@@ -1593,7 +1593,7 @@ router.post("/api/properties/:id/adopt-deal", requireAuth, async (req: Request, 
       [dealId, landlordId]
     );
     if (dealRes.rows.length === 0) {
-      return res.status(400).json({ error: "Deal is not an adoptable orphan on this property's landlord" });
+      return res.status(400).json({ error: "Transaction is not an adoptable orphan on this property's landlord" });
     }
     const tenantId = dealRes.rows[0].tenant_id;
 
@@ -1633,7 +1633,7 @@ router.post("/api/properties/:id/adopt-deal", requireAuth, async (req: Request, 
       params
     );
     if ((updRes.rowCount || 0) === 0) {
-      return res.status(409).json({ error: "Deal was adopted by another request in the meantime — refresh and check the deal's current property." });
+      return res.status(409).json({ error: "Transaction was adopted by another request in the meantime — refresh and check the transaction's current property." });
     }
     res.json({ ok: true, unitId, tenancyUnitId });
   } catch (err: any) {

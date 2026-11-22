@@ -166,9 +166,9 @@ router.post("/api/deals/:id/parties/:role/second-read", async (req: Request, res
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Which party?" });
     const { gatherAmlFile } = await import("./aml-file");
     const data = await gatherAmlFile(String(req.params.id), [role as DealPartyRole], me);
-    if (!data) return res.status(404).json({ message: "No such deal." });
+    if (!data) return res.status(404).json({ message: "No such transaction." });
     const p = data.parties[0];
-    if (!p) return res.status(404).json({ message: "The deal has no such party." });
+    if (!p) return res.status(404).json({ message: "The transaction has no such party." });
     if (p.level?.level !== "enhanced") return res.status(409).json({ message: "The second read is for an enhanced party." });
     const subject = (await pool.query(`SELECT aml_subject_type FROM crm_companies WHERE id = $1`, [p.brand.id])).rows[0];
     const checklist: SecondReadChecklist = String(subject?.aml_subject_type || "").toLowerCase() === "trust" ? "trust" : "enhanced";

@@ -139,7 +139,7 @@ function PartyTrail({ row, onClose, officer }: { row: AmlDashboardRow; onClose: 
           <DialogTitle>{row.signsAs || row.brandName}</DialogTitle>
           <DialogDescription>
             {roleWords(row.role)} on {row.dealName}{row.signsAs ? ` (${row.brandName})` : ""}.{" "}
-            <Link href={`/deals/${row.dealId}`} className="text-primary hover:underline inline-flex items-center gap-1" data-testid="aml-trail-open-deal">Open the deal <ExternalLink className="w-3 h-3" /></Link>
+            <Link href={`/deals/${row.dealId}`} className="text-primary hover:underline inline-flex items-center gap-1" data-testid="aml-trail-open-deal">Open the transaction <ExternalLink className="w-3 h-3" /></Link>
           </DialogDescription>
           {officer && (
             <div className="pt-1" data-testid="aml-trail-file">
@@ -302,7 +302,7 @@ export default function AmlDashboard() {
           <Pill active={mine} onClick={() => setMine(true)} data-testid="aml-who-mine">Mine</Pill>
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Party, deal, property, agent" className="h-8 pl-7 w-56 text-sm" data-testid="aml-search" />
+            <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Party, transaction, property, agent" className="h-8 pl-7 w-56 text-sm" data-testid="aml-search" />
           </div>
         </div>
       </div>
@@ -314,11 +314,11 @@ export default function AmlDashboard() {
       )}
 
       {isLoading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Reading every live deal's parties…</div>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Reading every live transaction's parties…</div>
       ) : error ? (
         <p className="text-sm text-destructive">The AML dashboard could not be read.</p>
       ) : !shown.length ? (
-        <p className="text-sm text-muted-foreground" data-testid="aml-empty">Nothing here{mine ? " on your deals" : ""}{query ? " for that search" : ""}.</p>
+        <p className="text-sm text-muted-foreground" data-testid="aml-empty">Nothing here{mine ? " on your transactions" : ""}{query ? " for that search" : ""}.</p>
       ) : isMobile ? (
         <ul className="space-y-2" data-testid="aml-cards">
           {shown.map(r => (
@@ -347,7 +347,7 @@ export default function AmlDashboard() {
             <thead className="bg-muted/50 text-[11px] uppercase tracking-wider text-muted-foreground">
               <tr>
                 <th className="text-left font-medium px-3 py-2">Party</th>
-                <th className="text-left font-medium px-3 py-2">Deal</th>
+                <th className="text-left font-medium px-3 py-2">Transaction</th>
                 <th className="text-left font-medium px-3 py-2">Stage</th>
                 <th className="text-left font-medium px-3 py-2">Due diligence</th>
                 <th className="text-left font-medium px-3 py-2">Red flags</th>

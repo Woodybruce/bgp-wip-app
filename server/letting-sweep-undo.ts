@@ -249,7 +249,7 @@ export async function previewSweepUndo(scope: Scope, opts: { relink?: boolean } 
       else if (rowCode && TRACKER_LIVE_STATUSES.includes(rowCode) && partnerRank < trackerRank(rowCode)) note = `not relinked: ${o.name} is at ${o.statusCode}, behind the row's ${rowCode}`;
       else relinkTo = { id: o.id, dealRef: o.dealRef, name: o.name, statusCode: o.statusCode };
     } else if (r.tracker_row_id && strictLive.length > 1) {
-      note = `${strictLive.length} live letting deals on this unit — the team decides`;
+      note = `${strictLive.length} live letting transactions on this unit — the team decides`;
     }
 
     let action: Candidate["action"];
@@ -276,7 +276,7 @@ export async function previewSweepUndo(scope: Scope, opts: { relink?: boolean } 
   for (const c of candidates) {
     if (c.action === "relink" && c.relinkTo && wanted[c.relinkTo.id] > 1) {
       c.action = "unlink";
-      c.note = `not relinked: ${c.relinkTo.name} is the only live deal for ${wanted[c.relinkTo.id]} tracker rows`;
+      c.note = `not relinked: ${c.relinkTo.name} is the only live transaction for ${wanted[c.relinkTo.id]} tracker rows`;
       c.relinkTo = null;
     }
   }
@@ -387,7 +387,7 @@ export async function applySweepUndo(scope: Scope, by: string | null, opts: { sk
         const t = target.rows[0];
         const code = t ? legacyToCode(t.status) : null;
         if (!t || t.linked_row_id || isHistoricStatus(t.status) || trackerRank(code) < 0) {
-          const why = !t ? "partner deal gone" : t.linked_row_id ? "partner deal now on another row" : "partner deal no longer at a tracker status";
+          const why = !t ? "partner transaction gone" : t.linked_row_id ? "partner transaction now on another row" : "partner transaction no longer at a tracker status";
           entry.note = `not relinked: ${why}`;
           failed.push({ dealId: c.dealId, step: "relink", error: why });
           await append("failed", { dealId: c.dealId, step: "relink", error: why });

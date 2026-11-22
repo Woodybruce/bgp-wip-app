@@ -33,8 +33,8 @@ test("what everyone else is told never says AML, a suspicion or the Nominated Of
 test("the agents' email says what to do and nothing of why", () => {
   const stopped = amlStoppedEmail({ dealName: "Unit 4, Westgate", dealRef: 4521, by: "Jack Barratt", resumed: false, withdrawn: true, link: "https://chatbgp.app/deals/d1", sentFrom: "kyc@example.org" });
   assert.equal(stopped.subject, "AML: BGP has stopped acting on Unit 4, Westgate");
-  assert.match(stopped.html, /Deal #4521, Unit 4, Westgate is on hold for anti-money laundering reasons: Jack Barratt stopped BGP acting on it\. The deal has been moved to Withdrawn\./);
-  assert.match(stopped.html, /Do not move the deal on, raise or send an invoice/);
+  assert.match(stopped.html, /Transaction #4521, Unit 4, Westgate is on hold for anti-money laundering reasons: Jack Barratt stopped BGP acting on it\. The transaction has been moved to Withdrawn\./);
+  assert.match(stopped.html, /Do not move the transaction on, raise or send an invoice/);
   assert.match(stopped.html, /Do not tell the client, the other side or their advisers why/);
   assert.doesNotMatch(stopped.html, /reg 31|cannot be completed|suspic/i);
   const resumed = amlStoppedEmail({ dealName: "Unit 4, Westgate", dealRef: null, by: "Layla O'Driscoll", resumed: true, withdrawn: false, link: "https://chatbgp.app/deals/d1", sentFrom: "kyc@example.org" });

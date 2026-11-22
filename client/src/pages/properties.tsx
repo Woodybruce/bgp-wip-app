@@ -1287,7 +1287,7 @@ export function InlineDeals({
     let label = propertyName ? dropPropWord(dealDisplayTitle({ name: d.name, propertyName, propertyAddress, tenantName })) : d.name;
     if (propertyName && titleIsOnlyProperty(label, propertyName, propertyAddress)) {
       const code = legacyToCode(d.status);
-      label = (full?.dealType || d.dealType || (code ? DEAL_STATUS_LABELS[code] : d.status) || "Deal").trim();
+      label = (full?.dealType || d.dealType || (code ? DEAL_STATUS_LABELS[code] : d.status) || "Transaction").trim();
     }
     const g = dealGroups.find(x => x.label === label);
     if (g) g.deals.push(d); else dealGroups.push({ label, deals: [d] });
@@ -1307,7 +1307,7 @@ export function InlineDeals({
       invalidateDealCaches();
     },
     onError: (err: any) => {
-      toast({ title: "Failed to link deal", description: err.message, variant: "destructive" });
+      toast({ title: "Failed to link transaction", description: err.message, variant: "destructive" });
     },
   });
 
@@ -1320,7 +1320,7 @@ export function InlineDeals({
       invalidateDealCaches();
     },
     onError: (err: any) => {
-      toast({ title: "Failed to unlink deal", description: err.message, variant: "destructive" });
+      toast({ title: "Failed to unlink transaction", description: err.message, variant: "destructive" });
     },
   });
 
@@ -1389,7 +1389,7 @@ export function InlineDeals({
         <DropdownMenuContent align="start" className="w-64">
           <div className="p-2">
             <Input
-              placeholder="Search deals..."
+              placeholder="Search transactions..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="h-7 text-xs"
@@ -1398,7 +1398,7 @@ export function InlineDeals({
           </div>
           <div className="max-h-48 overflow-y-auto">
             {filteredDeals.length === 0 ? (
-              <DropdownMenuItem disabled>No deals found</DropdownMenuItem>
+              <DropdownMenuItem disabled>No transactions found</DropdownMenuItem>
             ) : (
               filteredDeals.map(deal => (
                 <DropdownMenuItem
@@ -2630,7 +2630,7 @@ export function LinkedDealsPanel({ propertyId, bare = false }: { propertyId: str
       <CardContent className="p-4">
         <div className="flex items-center gap-2 mb-3">
           <Handshake className="w-4 h-4" />
-          <h3 className="text-sm font-semibold">Linked Deals</h3>
+          <h3 className="text-sm font-semibold">Linked Transactions</h3>
         </div>
         <DealsSummary variant="card" propertyId={propertyId} />
       </CardContent>
@@ -3025,7 +3025,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
         {total === 0 && !trackerUnlinked.length ? (
           <div className="text-center py-6">
             <Users className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-            <p className="text-xs text-muted-foreground">Nobody actively involved yet — contacts appear here from the property team, deals, viewings, offers and the tenancy schedule.</p>
+            <p className="text-xs text-muted-foreground">Nobody actively involved yet — contacts appear here from the property team, transactions, viewings, offers and the tenancy schedule.</p>
           </div>
         ) : (
           <div className="space-y-1.5 max-h-[480px] overflow-y-auto pr-1">
@@ -3043,7 +3043,7 @@ export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: 
             )}
             {(dealsAndTracker.length > 0 || trackerUnlinked.length > 0) && (
               <div>
-                {groupHeader("deals", "On deals & tracker", dealsAndTracker.length + trackerUnlinked.length, "text-emerald-700")}
+                {groupHeader("deals", "On transactions & tracker", dealsAndTracker.length + trackerUnlinked.length, "text-emerald-700")}
                 {(openGroups.deals ?? false) && (
                   <div className="space-y-0.5 mt-0.5">
                     {dealsAndTracker.map(c => personRow(c, true))}
@@ -5439,7 +5439,7 @@ function PropertiesBoardHeader({ items, landsec }: { items: CrmProperty[]; lands
           <LandsecStagePills
             tracker={landsec.tracker}
             hrefFor={code => `/deals/list?status=${code}`}
-            titleFor={label => (landsecRestricted ? `Live lettings at ${label} on your schemes. Opens Deals at ${label}` : `Live lettings at ${label} on the schemes. Opens Deals at ${label}, which also lists other deal types and any deal outside the schemes`)}
+            titleFor={label => (landsecRestricted ? `Live lettings at ${label} on your schemes. Opens Transactions at ${label}` : `Live lettings at ${label} on the schemes. Opens Transactions at ${label}, which also lists other transaction types and any transaction outside the schemes`)}
             stuck={landsec.stuck} stuckHref="/deals/list?clock=stuck"
             testId="properties-landsec-stages"
           />
@@ -5449,10 +5449,10 @@ function PropertiesBoardHeader({ items, landsec }: { items: CrmProperty[]; lands
           <span className="font-mono tabular-nums">{liveLettings}</span>
           <span className="text-muted-foreground"><span className="hidden sm:inline">live </span>letting{liveLettings === 1 ? "" : "s"}</span>
         </Link>
-        <Link href="/deals/list" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveDeals ? "bg-card" : "opacity-40"}`} title="Open the Deals board">
+        <Link href="/deals/list" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveDeals ? "bg-card" : "opacity-40"}`} title="Open the Transactions board">
           <Handshake className="w-3 h-3 text-muted-foreground" />
           <span className="font-mono tabular-nums">{liveDeals}</span>
-          <span className="text-muted-foreground"><span className="hidden sm:inline">live </span>deal{liveDeals === 1 ? "" : "s"}</span>
+          <span className="text-muted-foreground"><span className="hidden sm:inline">live </span>transaction{liveDeals === 1 ? "" : "s"}</span>
         </Link>
         </>)}
         <button
@@ -6381,7 +6381,7 @@ function PropertiesList({
                       { label: "Tenure", value: item.tenure },
                       { label: "BGP Contacts", value: agentNames },
                       { label: "Sq Ft", value: item.sqft ? Math.round(Number(item.sqft)).toLocaleString("en-GB") : null },
-                      { label: "Deals", value: dealCount ? String(dealCount) : null },
+                      { label: "Transactions", value: dealCount ? String(dealCount) : null },
                     ],
                   };
                 })}

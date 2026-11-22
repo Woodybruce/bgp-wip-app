@@ -20,9 +20,9 @@ export function ChecklistChip({ summary, onClick, testId }: { summary: Checklist
   const cls = tone === "done" ? "border-emerald-600/60 text-emerald-700 dark:text-emerald-400"
     : tone === "required" ? "border-amber-500/60 text-amber-700 dark:text-amber-400"
     : "border-border text-muted-foreground hover:text-foreground";
-  const title = !summary ? "Start the deal checklist for this unit"
-    : summary.responsibleName ? `Responsible for the deal: ${summary.responsibleName}`
-    : "Nobody is responsible for this deal yet";
+  const title = !summary ? "Start the transaction checklist for this unit"
+    : summary.responsibleName ? `Responsible for the transaction: ${summary.responsibleName}`
+    : "Nobody is responsible for this transaction yet";
   return (
     <button
       type="button"

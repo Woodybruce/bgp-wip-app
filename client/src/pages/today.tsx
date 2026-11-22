@@ -132,7 +132,7 @@ export default function TodayPage() {
             <div className="text-[22px] font-bold text-foreground tracking-tight">
               {stats?.activeDeals ?? 0}
             </div>
-            <div className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wide">Active Deals</div>
+            <div className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wide">Active Transactions</div>
           </button>
           <button
             onClick={() => setShowAddTask(true)}
@@ -266,7 +266,7 @@ export default function TodayPage() {
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-muted-foreground" />
-              <h2 className="text-[15px] font-semibold text-foreground">Recent Deals</h2>
+              <h2 className="text-[15px] font-semibold text-foreground">Recent Transactions</h2>
             </div>
             <button
               onClick={() => navigate("/deals")}

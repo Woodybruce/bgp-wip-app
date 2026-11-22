@@ -362,7 +362,7 @@ function Kyc4uSignoffButton({ companyId }: { companyId: string }) {
     onSuccess: () => {
       setOpen(false); setNote("");
       queryClient.invalidateQueries();
-      toast({ title: "KYC4U sign-off recorded", description: "Approved by KYC4U, BGP's outsourced KYC provider — the company's deals update now." });
+      toast({ title: "KYC4U sign-off recorded", description: "Approved by KYC4U, BGP's outsourced KYC provider — the company's transactions update now." });
     },
     onError: (e: any) => toast({ title: "Couldn't record it", description: e?.message, variant: "destructive" }),
   });
@@ -547,7 +547,7 @@ export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label =
         <DialogContent className="max-w-2xl max-h-[85dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Request a KYC4U check — {partyName}</DialogTitle>
-            <DialogDescription>{savedId ? "Prepared. KYC4U take requests only on their portal." : "KYC4U's form, filled in from the deal. Check it, then download the pack."}</DialogDescription>
+            <DialogDescription>{savedId ? "Prepared. KYC4U take requests only on their portal." : "KYC4U's form, filled in from the transaction. Check it, then download the pack."}</DialogDescription>
           </DialogHeader>
           {savedId ? (
             <ol className="space-y-3 text-sm" data-testid="kyc4u-next-steps">
@@ -558,7 +558,7 @@ export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label =
               <li><span className="font-medium">3. Record it here</span> with KYC4U's reference.
                 <div className="mt-1.5"><Kyc4uSubmittedButton dealId={dealId} companyId={companyId} role={role} partyName={partyName} className="h-8" /></div></li>
             </ol>
-          ) : prefill.isLoading ? <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />Filling from the deal…</p> : <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          ) : prefill.isLoading ? <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />Filling from the transaction…</p> : <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {DRAFT_FIELDS.map(f => (
               <div key={f.key} className={f.long || f.key === "propertyAddress" || f.key === "note" ? "sm:col-span-2" : ""}>
                 <label className="text-xs font-medium" htmlFor={`kyc4u-${f.key}`}>{f.label}{f.required ? " *" : ""}</label>

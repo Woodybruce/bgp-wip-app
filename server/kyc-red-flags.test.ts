@@ -105,7 +105,7 @@ test("KYC4U's note lists the party's flags, then the deal record's", () => {
   assert.equal(note, [
     "Red flags from BGP's checks:",
     "- Said yes to the question about public roles (Minister). Source: Client checks, ref 7K2Q9M.",
-    "- On the deal record: Risk rated high. Source: Deal record.",
+    "- On the transaction record: Risk rated high. Source: Transaction record.",
   ].join("\n"));
   // One alert per flag: the key holds the kind and the words.
   assert.equal(redFlagAlertKey(party[0]), "client_pep:Said yes to the question about public roles");
@@ -128,7 +128,7 @@ test("the alert to the agents: what was found, what to do, nothing sent to the c
   assert.match(email.html, new RegExp(`cid:${KYC_LOGO_CID}`));
   const test = kycRedFlagEmail({ partyName: "X", recipientName: null, dealName: "Y", ref: "7K2Q9M", dealLink: "https://chatbgp.app", flags, sentFrom: "kyc@chatbgp.app", test: true });
   assert.match(test.subject, /^\[Test\] /);
-  assert.match(test.html, /This is what the deal&#39;s agents receive\. Nothing has been sent to anyone else/);
+  assert.match(test.html, /This is what the transaction&#39;s agents receive\. Nothing has been sent to anyone else/);
 });
 
 test("the finished note carries the red flags when there are any", () => {

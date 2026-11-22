@@ -161,7 +161,7 @@ export const LANDSEC_WAITING_PARTIES = [
   "Tenant's solicitors",
   "BGP",
   "Joint agent",
-  "Another deal",
+  "Another transaction",
 ] as const;
 
 export interface LandsecDealClock {

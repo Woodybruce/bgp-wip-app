@@ -22,7 +22,7 @@ test('a duplicate deal is answered in words with the deal it duplicates, never t
   const route = crm.slice(crm.indexOf('app.post("/api/crm/deals", async'), crm.indexOf('function calculateRentAnalysis'));
   assert.match(route, /dbErr\?\.code === "23505" && \/idx_crm_deals_dedupe\//);
   assert.match(route, /code: "DUPLICATE_DEAL"/);
-  assert.match(route, /There is already a live deal called/);
+  assert.match(route, /There is already a live transaction called/);
   const deals = read('client/src/pages/deals.tsx');
   assert.match(deals, /body\?\.code === "DUPLICATE_DEAL"\)\) \{/);
   assert.match(deals, /refusal\.code === "LIVE_LETTING_EXISTS" \|\| refusal\.code === "DUPLICATE_DEAL"\) && refusal\.existingDealId/);

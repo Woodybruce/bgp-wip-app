@@ -50,7 +50,7 @@ test('only BGP staff signed in as themselves start or see a run', () => {
   assert.match(body, /prechecks,\s*decisions,\s*\/\/[^\n]*\n\s*regime: staff \? /);
   const again = checks.slice(checks.indexOf('router.post("/api/kyc/deal/:id/prechecks"'));
   assert.match(again, /if \(!\(await contactViewer\(req\)\)\.staff\) return res\.status\(403\)/);
-  assert.match(again, /That company is not a party to this deal/);
+  assert.match(again, /That company is not a party to this transaction/);
   assert.match(index, /app\.use\(kycPrecheckRouter\);/);
 });
 

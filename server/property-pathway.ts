@@ -3164,7 +3164,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     initialOwnership?.proprietorName
       ? `Owner: ${initialOwnership.proprietorName} (title ${initialOwnership.titleNumber}${initialOwnership.titleVerified === false ? " — unverified" : ""}).`
       : `Ownership not resolved.`,
-    deals.length ? `${deals.length} deal(s) in pipeline/history.` : null,
+    deals.length ? `${deals.length} transaction(s) in pipeline/history.` : null,
     tenancy?.units?.length ? `${tenancy.units.length} unit(s) on file — ${tenancy.status}.` : null,
     engagements.length ? `${engagements.length} viewing(s)/interaction(s) logged.` : null,
     emailHits.length ? `${emailHits.length} email(s) in shared mailbox.` : null,

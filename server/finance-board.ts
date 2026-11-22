@@ -189,7 +189,7 @@ export async function buildFinanceBoard(today: Date = new Date()): Promise<Finan
       t.fee += d.fee * share; t.weighted += w * share; t.deals++;
       teamAcc.set(team, t);
     }
-    const typeName = d.dealType || "No deal type";
+    const typeName = d.dealType || "No transaction type";
     const ty = typeAcc.get(typeName) || { fee: 0, weighted: 0, deals: 0 };
     ty.fee += d.fee; ty.weighted += w; ty.deals++;
     typeAcc.set(typeName, ty);
@@ -342,52 +342,52 @@ async function boardWorkbook(board: FinanceBoard): Promise<Buffer> {
   summary.addRow({});
   const lines: Array<[string, number | string, boolean?]> = [
     ["Invoiced this year (Xero, ex VAT)", board.invoiced ? board.invoiced.total : "Xero not available", true],
-    ["Deal book at full fee", board.book.fee, true],
-    ["Deal book weighted", board.book.weighted, true],
+    ["Transaction book at full fee", board.book.fee, true],
+    ["Transaction book weighted", board.book.weighted, true],
     ["  expected this year", board.book.thisYear, true],
     ["  no date yet", board.book.noDate.weighted, true],
     ["  after 30 April", board.book.afterYearEnd.weighted, true],
-    ["Live deals in the book", board.book.count],
+    ["Live transactions in the book", board.book.count],
   ];
   for (const [label, value, money] of lines) {
     const row = summary.addRow({ label, value });
     if (money && typeof value === "number") row.getCell("value").numFmt = GBP;
   }
   summary.addRow({});
-  summary.addRow({ label: `Weights: ${board.rule}. Invoiced deals are Xero income only. A deal on several teams is shared equally between them.` });
+  summary.addRow({ label: `Weights: ${board.rule}. Invoiced transactions are Xero income only. A transaction on several teams is shared equally between them.` });
 
   const stageRows = board.book.byStage.map(s => ({ stage: s.label, deals: s.count, fee: s.fee, weight: `${s.weightPct}%`, weighted: s.weighted }));
   table("By stage", [
-    { header: "Stage", key: "stage", width: 26 }, { header: "Deals", key: "deals", width: 10 },
+    { header: "Stage", key: "stage", width: 26 }, { header: "Transactions", key: "deals", width: 10 },
     { header: "Fee", key: "fee", width: 16, money: true }, { header: "Weight", key: "weight", width: 10 },
     { header: "Weighted", key: "weighted", width: 16, money: true },
   ], stageRows, { stage: "Total", deals: board.book.count, fee: board.book.fee, weighted: board.book.weighted });
   table("By team", [
-    { header: "Team", key: "name", width: 26 }, { header: "Deals", key: "deals", width: 10 },
+    { header: "Team", key: "name", width: 26 }, { header: "Transactions", key: "deals", width: 10 },
     { header: "Fee (shared)", key: "fee", width: 16, money: true }, { header: "Weighted (shared)", key: "weighted", width: 18, money: true },
   ], board.book.byTeam, { name: "Total", fee: board.book.fee, weighted: board.book.weighted });
-  table("By deal type", [
-    { header: "Deal type", key: "name", width: 26 }, { header: "Deals", key: "deals", width: 10 },
+  table("By transaction type", [
+    { header: "Transaction type", key: "name", width: 26 }, { header: "Transactions", key: "deals", width: 10 },
     { header: "Fee", key: "fee", width: 16, money: true }, { header: "Weighted", key: "weighted", width: 16, money: true },
   ], board.book.byType, { name: "Total", deals: board.book.count, fee: board.book.fee, weighted: board.book.weighted });
-  table("Deals", [
-    { header: "Deal", key: "name", width: 40 }, { header: "Status", key: "status", width: 16 },
+  table("Transactions", [
+    { header: "Transaction", key: "name", width: 40 }, { header: "Status", key: "status", width: 16 },
     { header: "Fee", key: "fee", width: 14, money: true }, { header: "Weight", key: "weightPct", width: 9 },
     { header: "Weighted", key: "weighted", width: 14, money: true }, { header: "Team", key: "team", width: 22 },
-    { header: "Deal type", key: "dealType", width: 16 }, { header: "Expected", key: "expected", width: 12 },
+    { header: "Transaction type", key: "dealType", width: 16 }, { header: "Expected", key: "expected", width: 12 },
     { header: "Lands", key: "when", width: 14 },
   ], board.deals.map(d => ({ ...d, weightPct: `${d.weightPct}%` })), { name: "Total", fee: board.book.fee, weighted: board.book.weighted });
 
   const agentRows: any[] = board.agents.map(a => ({ agent: a.agent, invoiced: a.invoiced, book: a.book }));
   if (board.invoiced) {
     agentRows.push({ agent: "BGP House (15% slice)", invoiced: board.invoiced.house });
-    if (board.invoiced.noSplit.total) agentRows.push({ agent: "Deals with no fee split", invoiced: board.invoiced.noSplit.total });
-    if (board.invoiced.notLinked.total) agentRows.push({ agent: "Invoices not linked to a deal", invoiced: board.invoiced.notLinked.total });
+    if (board.invoiced.noSplit.total) agentRows.push({ agent: "Transactions with no fee split", invoiced: board.invoiced.noSplit.total });
+    if (board.invoiced.notLinked.total) agentRows.push({ agent: "Invoices not linked to a transaction", invoiced: board.invoiced.notLinked.total });
   }
   table("Fees by agent", [
     { header: "Agent", key: "agent", width: 32 },
     { header: "Invoiced this year", key: "invoiced", width: 18, money: true },
-    { header: "Deal book (weighted)", key: "book", width: 20, money: true },
+    { header: "Transaction book (weighted)", key: "book", width: 20, money: true },
   ], agentRows, board.invoiced ? { agent: "Total invoiced", invoiced: board.invoiced.total } : undefined);
   if (board.invoiced) {
     table("Invoiced by month", [

@@ -10,7 +10,7 @@ const brand = { name: 'Bunsik' };
 test('HoTs deals, PIPnet requirements, coming-soon sites and interest all score, each under its own label', () => {
   const out = computeExpansionScoreV2({ brand, facts: [], bgp: { committedDeals: 1, liveDeals: 1, completedDeals24m: 1, pipnetRequirements: 2, activeRequirements: 0, comingSoonUk: 2, interest90d: 1, offers90d: 0, viewings90d: 0, interactions90d: 6, representedBy: 1 } });
   const labels = out.lines.map(l => l.label);
-  assert.ok(labels.includes('1 deal at HoTs or beyond with BGP'));
+  assert.ok(labels.includes('1 transaction at HoTs or beyond with BGP'));
   assert.ok(labels.includes('2 market listings (PIPnet / The Requirement List), not confirmed by BGP'));
   assert.ok(!labels.some(l => /\blive\b/i.test(l) && /requirement|listing/i.test(l)), 'an unconfirmed listing is never called live');
   assert.ok(labels.includes('2 UK sites "coming soon" on its own website'));

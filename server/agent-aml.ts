@@ -171,11 +171,11 @@ router.get("/api/deals/:id/agents-aml", async (req: Request, res: Response) => {
   try {
     if (!(await staffMe(req))) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
     const out = await dealAgentsAml(pool, String(req.params.id));
-    if (!out) return res.status(404).json({ message: "No such deal." });
+    if (!out) return res.status(404).json({ message: "No such transaction." });
     res.json(out);
   } catch (err: any) {
     console.error("[agent-aml] deal agents failed:", err?.message);
-    res.status(500).json({ message: "The deal's agents could not be read." });
+    res.status(500).json({ message: "The transaction's agents could not be read." });
   }
 });
 

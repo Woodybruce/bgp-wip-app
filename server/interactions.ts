@@ -1389,7 +1389,7 @@ export function registerInteractionRoutes(app: Express) {
         return res.status(403).json({ error: "This email is private and cannot be filed in the app." });
       }
       if (!contactId && !companyId && !dealId) {
-        return res.status(400).json({ error: "link the interaction to a contact, company, or deal" });
+        return res.status(400).json({ error: "link the interaction to a contact, company, or transaction" });
       }
       if (microsoftId) {
         const blocked = await pool.query("SELECT 1 FROM private_mail_blocked_messages WHERE microsoft_id = ANY($1::text[]) LIMIT 1", [[String(microsoftId), `email_${String(microsoftId)}`]]);

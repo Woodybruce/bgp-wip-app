@@ -590,13 +590,13 @@ export function jointAgentChaseStoppedEmail(ctx: {
 }): { subject: string; html: string } {
   const next = ctx.letting
     ? "BGP can't rely on their checks while these are missing. Chase them yourself, or send the client checks."
-    : "Chase them yourself, or an officer records on the deal that \"they sent part of their checks\" or \"they did not provide them\".";
+    : "Chase them yourself, or an officer records on the transaction that \"they sent part of their checks\" or \"they did not provide them\".";
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Still missing after ${ctx.chases} reminders</h1>`,
     p(`The app has asked ${escHtml(ctx.firm)} ${ctx.chases} times for what is missing from their checks on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong>, and has stopped chasing.`),
     ctx.missing.length ? h2("Still missing") + `<ul style="margin:0 0 14px;padding-left:20px">${ctx.missing.map(m => `<li style="margin:2px 0">${escHtml(m)}</li>`).join("")}</ul>` : "",
     p(next),
-    button("Open the deal", ctx.dealLink),
+    button("Open the transaction", ctx.dealLink),
   ].join("\n");
   return { subject: `${ctx.firm} has not sent what is missing on ${ctx.partyName}: ${ctx.dealName} (ref ${ctx.ref})`, html: frame("Joint agent's checks", inner, `Bruce Gillingham Pollard. Sent from ${escHtml(ctx.sentFrom)}. Reference ${escHtml(ctx.ref)}.`, false) };
 }
@@ -610,7 +610,7 @@ export function jointAgentFinishedEmail(ctx: {
     ? (ctx.reliance
         ? "Next: an officer checks what they sent and records the reliance."
         : `${escHtml(ctx.firm)} has not agreed to the reliance terms yet: ask them to, or send the client checks.`)
-    : "Next: an officer checks what they sent and records it on the deal.";
+    : "Next: an officer checks what they sent and records it on the transaction.";
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">${escHtml(ctx.firm)} has sent their checks</h1>`,
     p(`${escHtml(ctx.recipientName || ctx.firm)} has sent ${escHtml(ctx.firm)}'s anti-money laundering checks on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong>.`),
@@ -618,7 +618,7 @@ export function jointAgentFinishedEmail(ctx: {
     ctx.letting ? p(ctx.reliance ? `Reliance terms agreed by ${escHtml(ctx.reliance.name)} on ${escHtml(kycLongDate(ctx.reliance.at))}.` : "The reliance terms are not agreed yet.") : "",
     ctx.missing.length ? h2("Not covered yet") + `<ul style="margin:0 0 14px;padding-left:20px">${ctx.missing.map(m => `<li style="margin:2px 0">${escHtml(m)}</li>`).join("")}</ul>` : "",
     p(next),
-    button("Open the deal", ctx.dealLink),
+    button("Open the transaction", ctx.dealLink),
   ].join("\n");
   return { subject: `${ctx.firm} sent their AML checks on ${ctx.partyName}: ${ctx.dealName} (ref ${ctx.ref})`, html: frame("Joint agent's checks", inner, `Bruce Gillingham Pollard. Sent from ${escHtml(ctx.sentFrom)}. Reference ${escHtml(ctx.ref)}.`, false) };
 }
@@ -675,13 +675,13 @@ export function kycFinishedEmail(ctx: {
       : `For <strong>${escHtml(ctx.dealName)}</strong>${ctx.recipientName && ctx.partyName !== ctx.recipientName ? `, on behalf of <strong>${escHtml(ctx.partyName)}</strong>` : ""}.`),
     idLine ? p(escHtml(idLine)) : "",
     someoneElse
-      ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>${escHtml(who)} has not done their own identity check.</strong> The check on this link was ${escHtml(someoneElse)}'s. Send ${escHtml(who)} a new request from the deal's AML card, or, if ${escHtml(someoneElse)} can act for ${escHtml(ctx.partyName)}, record why on the deal.</div>`
+      ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>${escHtml(who)} has not done their own identity check.</strong> The check on this link was ${escHtml(someoneElse)}'s. Send ${escHtml(who)} a new request from the transaction's AML card, or, if ${escHtml(someoneElse)} can act for ${escHtml(ctx.partyName)}, record why on the transaction.</div>`
       : "",
     ctx.files.length ? h2(`Files received (${ctx.files.length})`) + `<table role="presentation" cellspacing="0" cellpadding="0" border="0">${fileRows}</table>` : p("No files were uploaded."),
     ctx.missing.length ? h2("Not sent") + p(escHtml(ctx.missing.join(", "))) : "",
     ctx.pep !== undefined ? h2("Public roles") + p(`${escHtml(kycPepWords(ctx.pep))}${ctx.pepDetail ? `: ${escHtml(ctx.pepDetail)}` : ""}`) : "",
     ctx.pep === "yes" || ctx.pep === "unsure"
-      ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>Enhanced due diligence.</strong> A public role, or a relative or close associate of someone with one, needs senior management approval before the deal goes ahead, their source of wealth and source of funds, and closer monitoring. A UK one starts as lower risk. Check the answer against the screening.</div>`
+      ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>Enhanced due diligence.</strong> A public role, or a relative or close associate of someone with one, needs senior management approval before the transaction goes ahead, their source of wealth and source of funds, and closer monitoring. A UK one starts as lower risk. Check the answer against the screening.</div>`
       : "",
     ctx.owners?.list.length ? h2("Owners on the register") + p(`${ctx.owners.list.map(o => `${escHtml(o.name)} (${escHtml(o.detail)})`).join("; ")}.<br><strong>${escHtml(kycOwnersWords(ctx.owners.reply?.answer))}</strong>${ctx.owners.reply?.detail ? `: ${escHtml(ctx.owners.reply.detail)}` : ""}`) : "",
     ctx.owners?.reply?.answer === "no"
@@ -692,21 +692,21 @@ export function kycFinishedEmail(ctx: {
       ? h2(`Still to come from the people to check for ${ctx.partyName}`) + `<ul style="margin:4px 0 14px 18px;padding:0;font-size:14px;color:${INK}">${ctx.peopleOutstanding.map(line => `<li style="margin:0 0 4px">${escHtml(line)}</li>`).join("")}</ul>`
       : "",
     ctx.kind === "company" && !ctx.owners?.list.length ? p("Check the owners they list against the PSC register. Report any difference to Companies House.", `font-size:13px;color:${BODY}`) : "",
-    button("Open the deal's AML", ctx.dealLink),
+    button("Open the transaction's AML", ctx.dealLink),
     p("The files are on the client's KYC record. Review them and sign off in the app as usual.", `font-size:13px;color:${MUTED}`),
   ].join("\n");
   return {
     subject: someoneElse
       ? `${ctx.test ? "[Test] " : ""}The checks sent to ${who} were finished with ${someoneElse}'s identity check, for ${ctx.dealName} (ref ${ctx.ref})`
       : `${ctx.test ? "[Test] " : ""}${who} has finished their identity checks for ${ctx.dealName} (ref ${ctx.ref})`,
-    html: frame("Checks finished", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the deal's agents receive"),
+    html: frame("Checks finished", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the transaction's agents receive"),
   };
 }
 
 // How BGP handles a red flag (Woody, 17 November 2026: "basically we do the
 // normal checks expected and if there is a red flag then we get KYC4U").
-export const KYC_RED_FLAG_RULE = "A red flag goes to KYC4U for enhanced checks, and an officer approves their result before the deal goes ahead.";
-export const KYC_RED_FLAG_STEP = "On the deal's AML, press Request KYC4U check: the flags are in the request's note.";
+export const KYC_RED_FLAG_RULE = "A red flag goes to KYC4U for enhanced checks, and an officer approves their result before the transaction goes ahead.";
+export const KYC_RED_FLAG_STEP = "On the transaction's AML, press Request KYC4U check: the flags are in the request's note.";
 
 // The client checks run on their own switch (Woody, 18 November 2026,
 // choosing "client checks only"): on unless KYC_CLIENT_CHECKS is "off",
@@ -726,8 +726,8 @@ export const KYC_CLIENT_CHECK_ROUTES: readonly RegExp[] = [
 
 // With the officers doing enhanced checks in-house (22 November 2026), a red
 // flag goes to the Nominated Officer or a Deputy, not KYC4U.
-export const KYC_RED_FLAG_RULE_IN_HOUSE = "A red flag needs enhanced checks, and an officer signs the party off before the deal goes ahead.";
-export const KYC_RED_FLAG_STEP_IN_HOUSE = "On the deal's AML, an officer signs it off, or sets a flag aside with a comment.";
+export const KYC_RED_FLAG_RULE_IN_HOUSE = "A red flag needs enhanced checks, and an officer signs the party off before the transaction goes ahead.";
+export const KYC_RED_FLAG_STEP_IN_HOUSE = "On the transaction's AML, an officer signs it off, or sets a flag aside with a comment.";
 
 function redFlagBox(flags: KycRedFlag[], inHouse = false): string {
   const items = flags.map(f => `<li style="margin:0 0 6px">${escHtml(f.label)}${f.detail ? `: ${escHtml(f.detail)}` : ""} <span style="color:${MUTED}">(${escHtml(f.source)})</span></li>`).join("");
@@ -755,12 +755,12 @@ export function kycRedFlagEmail(ctx: {
     `<ul style="margin:0 0 14px 18px;padding:0">${ctx.flags.map(f => `<li style="margin:0 0 6px">${escHtml(f.label)}${f.detail ? `: ${escHtml(f.detail)}` : ""} <span style="color:${MUTED}">(${escHtml(f.source)})</span></li>`).join("")}</ul>`,
     h2("What to do"),
     p(ctx.inHouse ? `${escHtml(KYC_RED_FLAG_RULE_IN_HOUSE)} ${escHtml(KYC_RED_FLAG_STEP_IN_HOUSE)}` : `${escHtml(KYC_RED_FLAG_RULE)} ${escHtml(KYC_RED_FLAG_STEP)}`),
-    button("Open the deal's AML", ctx.dealLink),
+    button("Open the transaction's AML", ctx.dealLink),
     p(ctx.inHouse ? "Nothing has been sent to the client." : "Nothing has been sent to the client or to KYC4U.", `font-size:13px;color:${MUTED}`),
   ].join("\n");
   return {
     subject: `${ctx.test ? "[Test] " : ""}Red flag on ${ctx.dealName}: ${ctx.inHouse ? `${ctx.partyName} needs enhanced checks` : `raise ${ctx.partyName} with KYC4U`} (ref ${ctx.ref})`,
-    html: frame("Red flag", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the deal's agents receive"),
+    html: frame("Red flag", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the transaction's agents receive"),
   };
 }
 
@@ -781,12 +781,12 @@ export function amlOutstandingAtCompletionEmail(ctx: {
   const roleWord = (r: string) => r === "landlord" ? "Landlord" : r === "tenant" ? "Tenant" : r === "vendor" ? "Seller" : r === "purchaser" ? "Buyer" : r;
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:#b91c1c">${escHtml(ctx.dealName)} moved to ${escHtml(ctx.stage)} with checks outstanding</h1>`,
-    p(`${ctx.dealRef != null ? `Deal #${escHtml(ctx.dealRef)}` : "The deal"} was moved to <strong>${escHtml(ctx.stage)}</strong>${ctx.movedBy ? ` by ${escHtml(ctx.movedBy)}` : ""}. BGP's AML policy says the checks are finished before contracts exchange or a lease completes.`),
+    p(`${ctx.dealRef != null ? `Transaction #${escHtml(ctx.dealRef)}` : "The transaction"} was moved to <strong>${escHtml(ctx.stage)}</strong>${ctx.movedBy ? ` by ${escHtml(ctx.movedBy)}` : ""}. BGP's AML policy says the checks are finished before contracts exchange or a lease completes.`),
     h2("Not approved"),
     `<ul style="margin:0 0 14px 18px;padding:0">${ctx.parties.map(c => `<li style="margin:0 0 6px">${escHtml(roleWord(c.role))}: <strong>${escHtml(c.name)}</strong> <span style="color:${MUTED}">(${escHtml(c.reason)})</span></li>`).join("")}</ul>`,
     h2("What to do"),
-    p("Decide each party on the deal's AML: sign it off, add KYC4U's result, or mark the joint agent's party Not required. Anything suspicious goes to the National Crime Agency, and the client is not told."),
-    button("Open the deal's AML", ctx.link),
+    p("Decide each party on the transaction's AML: sign it off, add KYC4U's result, or mark the joint agent's party Not required. Anything suspicious goes to the National Crime Agency, and the client is not told."),
+    button("Open the transaction's AML", ctx.link),
   ].join("\n");
   return {
     subject: `AML: ${ctx.dealName} moved to ${ctx.stage} with checks outstanding`,
@@ -806,24 +806,24 @@ export function amlStoppedEmail(ctx: {
   link: string;
   sentFrom: string;
 }): { subject: string; html: string } {
-  const deal = ctx.dealRef != null ? `Deal #${escHtml(ctx.dealRef)}, ${escHtml(ctx.dealName)}` : escHtml(ctx.dealName);
+  const deal = ctx.dealRef != null ? `Transaction #${escHtml(ctx.dealRef)}, ${escHtml(ctx.dealName)}` : escHtml(ctx.dealName);
   const inner = ctx.resumed
     ? [
         `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3">BGP is acting on ${escHtml(ctx.dealName)} again</h1>`,
         p(`${deal} is no longer on hold: ${escHtml(ctx.by)} released it. It can move on and be invoiced as before.`),
-        button("Open the deal", ctx.link),
+        button("Open the transaction", ctx.link),
       ]
     : [
         `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:#b91c1c">BGP has stopped acting on ${escHtml(ctx.dealName)}</h1>`,
-        p(`${deal} is on hold for anti-money laundering reasons: ${escHtml(ctx.by)} stopped BGP acting on it.${ctx.withdrawn ? " The deal has been moved to Withdrawn." : ""}`),
+        p(`${deal} is on hold for anti-money laundering reasons: ${escHtml(ctx.by)} stopped BGP acting on it.${ctx.withdrawn ? " The transaction has been moved to Withdrawn." : ""}`),
         h2("What this means"),
-        p("Do not move the deal on, raise or send an invoice, or do more work on it until the Nominated Officer releases it. The deal and its AML file are kept."),
-        p("Do not tell the client, the other side or their advisers why. If they ask, say the deal is on hold and pass them to the Nominated Officer."),
-        button("Open the deal", ctx.link),
+        p("Do not move the transaction on, raise or send an invoice, or do more work on it until the Nominated Officer releases it. The transaction and its AML file are kept."),
+        p("Do not tell the client, the other side or their advisers why. If they ask, say the transaction is on hold and pass them to the Nominated Officer."),
+        button("Open the transaction", ctx.link),
       ];
   return {
     subject: ctx.resumed ? `AML: ${ctx.dealName} is no longer on hold` : `AML: BGP has stopped acting on ${ctx.dealName}`,
-    html: frame("AML", inner.join("\n"), `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP to the deal's agents, BGP's Nominated Officer and the Deputies.`, false, "the deal's agents and the officers receive"),
+    html: frame("AML", inner.join("\n"), `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP to the transaction's agents, BGP's Nominated Officer and the Deputies.`, false, "the transaction's agents and the officers receive"),
   };
 }
 
@@ -833,7 +833,7 @@ export function amlStoppedEmail(ctx: {
 export function amlRegisterNoticeEmail(ctx: { raisedBy: string | null; link: string; sentFrom: string }): { subject: string; html: string } {
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3">A new report is waiting for you</h1>`,
-    p(`${ctx.raisedBy ? `${escHtml(ctx.raisedBy)} has` : "Someone has"} raised a report for the Nominated Officer in BGP's AML register. What it is about is not in this email: open it in ChatBGP (Deals, AML, Reports).`),
+    p(`${ctx.raisedBy ? `${escHtml(ctx.raisedBy)} has` : "Someone has"} raised a report for the Nominated Officer in BGP's AML register. What it is about is not in this email: open it in ChatBGP (Transactions, AML, Reports).`),
     button("Open the AML register", ctx.link),
     p("Only the officers can read it.", `font-size:13px;color:${MUTED}`),
   ].join("\n");

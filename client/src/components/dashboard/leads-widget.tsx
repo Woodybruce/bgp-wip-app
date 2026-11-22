@@ -142,7 +142,7 @@ export function MyLeadsWidget() {
               </div>
               <div className="flex-1">
                 <p className="text-xs text-muted-foreground mb-2">
-                  Describe who you are and what kind of leads you're looking for. The AI will scan your news, deals, properties, and market data to find personalised opportunities.
+                  Describe who you are and what kind of leads you're looking for. The AI will scan your news, transactions, properties, and market data to find personalised opportunities.
                 </p>
                 <Textarea
                   value={customPrompt}
@@ -190,7 +190,7 @@ export function MyLeadsWidget() {
               <span className="text-[10px] font-medium text-primary bg-primary/10 rounded-full px-1.5 py-0.5">{stats.new} new</span>
             )}
           </div>
-          <p className="text-[10px] text-muted-foreground mt-0.5 ml-6">AI-generated opportunities from your news, deals, and market data</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5 ml-6">AI-generated opportunities from your news, transactions, and market data</p>
         </div>
         <div className="flex items-center gap-1.5">
           <Button
@@ -356,7 +356,7 @@ export function MyLeadsWidget() {
                               className="h-6 text-[10px] px-2"
                               onClick={() => {
                                 actionMutation.mutate({ leadId: lead.id, action: "converted" });
-                                const prompt = `I want to act on this lead: "${lead.title}". ${lead.suggestedAction || ""}\n\nContext: ${lead.sourceContext || lead.summary || ""}${lead.area ? `\nArea: ${lead.area}` : ""}${lead.assetClass ? `\nAsset class: ${lead.assetClass}` : ""}${lead.opportunityType ? `\nType: ${lead.opportunityType}` : ""}\n\nPlease help me take the next step — create a deal, add a contact, or whatever is most appropriate.`;
+                                const prompt = `I want to act on this lead: "${lead.title}". ${lead.suggestedAction || ""}\n\nContext: ${lead.sourceContext || lead.summary || ""}${lead.area ? `\nArea: ${lead.area}` : ""}${lead.assetClass ? `\nAsset class: ${lead.assetClass}` : ""}${lead.opportunityType ? `\nType: ${lead.opportunityType}` : ""}\n\nPlease help me take the next step — create a transaction, add a contact, or whatever is most appropriate.`;
                                 window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
                               }}
                               data-testid={`button-convert-lead-${lead.id}`}
@@ -382,7 +382,7 @@ export function MyLeadsWidget() {
                               className="h-6 text-[10px] px-2"
                               onClick={() => {
                                 actionMutation.mutate({ leadId: lead.id, action: "converted" });
-                                const prompt = `I want to act on this lead: "${lead.title}". ${lead.suggestedAction || ""}\n\nContext: ${lead.sourceContext || lead.summary || ""}${lead.area ? `\nArea: ${lead.area}` : ""}${lead.assetClass ? `\nAsset class: ${lead.assetClass}` : ""}${lead.opportunityType ? `\nType: ${lead.opportunityType}` : ""}\n\nPlease help me take the next step — create a deal, add a contact, or whatever is most appropriate.`;
+                                const prompt = `I want to act on this lead: "${lead.title}". ${lead.suggestedAction || ""}\n\nContext: ${lead.sourceContext || lead.summary || ""}${lead.area ? `\nArea: ${lead.area}` : ""}${lead.assetClass ? `\nAsset class: ${lead.assetClass}` : ""}${lead.opportunityType ? `\nType: ${lead.opportunityType}` : ""}\n\nPlease help me take the next step — create a transaction, add a contact, or whatever is most appropriate.`;
                                 window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
                               }}
                               data-testid={`button-convert-lead-${lead.id}`}

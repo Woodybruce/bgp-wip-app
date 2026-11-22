@@ -154,11 +154,11 @@ router.get("/api/deals/:id/solicitors-aml", async (req: Request, res: Response) 
   try {
     if (!(await staffMe(req))) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
     const out = await dealSolicitorsAml(pool, String(req.params.id));
-    if (!out) return res.status(404).json({ message: "No such deal." });
+    if (!out) return res.status(404).json({ message: "No such transaction." });
     res.json(out);
   } catch (err: any) {
     console.error("[solicitor-aml] read failed:", err?.message);
-    res.status(500).json({ message: "The deal's solicitors could not be read." });
+    res.status(500).json({ message: "The transaction's solicitors could not be read." });
   }
 });
 
@@ -169,7 +169,7 @@ router.post("/api/deals/:id/solicitors-aml/check", async (req: Request, res: Res
     const firm = solicitorFirmName(req.body?.firm);
     if (!firm) return res.status(400).json({ message: "Give the firm's name." });
     const deal = (await pool.query(`SELECT id, name FROM crm_deals WHERE id = $1`, [req.params.id])).rows[0];
-    if (!deal) return res.status(404).json({ message: "No such deal." });
+    if (!deal) return res.status(404).json({ message: "No such transaction." });
     const sraNumber = text(req.body?.sraNumber).replace(/[^0-9]/g, "").slice(0, 10) || null;
     const noneOfThese = req.body?.none === true;
     // Several entries match and none stands out: the person chooses before anything runs.

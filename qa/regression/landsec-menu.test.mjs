@@ -38,7 +38,7 @@ const tabs = evaluate([
 ].join('\n'), BINDINGS);
 const phone = which => plain(tabs[which]).map(i => [i.label, i.path]);
 
-const FULL_MENU = [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Letting Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['CRM', '/contacts']];
+const FULL_MENU = [['Properties', '/deals/properties'], ['Transactions', '/deals'], ['Letting Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['CRM', '/contacts']];
 const GONE = ['Portfolio', 'Scheme', 'Lettings', 'Ask'];
 
 test('a full Landsec login, a leasing manager and an asset manager have Properties, Deals, Letting Tracker, Tasks, Brands', () => {
@@ -102,7 +102,7 @@ test('an asset manager takes the ordinary client routes: the route guard does no
 // less Brands, with its own tracker (BGP's notes on target brands left out) and its Brand CRM.
 test('a joint agent has the real Properties and Deals, its own Letting Tracker, the Calendar, Tasks and Brand CRM', () => {
   assert.deepEqual(menu('joint_agent'), [
-    ['Properties', '/deals/properties'], ['Deals', '/deals'],
+    ['Properties', '/deals/properties'], ['Transactions', '/deals'],
     ['Letting Tracker', '/landsec/tracker'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'],
     ['Brand CRM', '/landsec/brand-crm'],
   ]);
@@ -126,16 +126,16 @@ test('a joint agent has no Brands entry on either menu', () => {
 });
 
 test('phone tabs: Properties, Deals, Tracker, Calendar, Tasks, Brands, Chat for a Landsec login', () => {
-  assert.deepEqual(phone('full'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['Chat', '/messages']]);
+  assert.deepEqual(phone('full'), [['Properties', '/deals/properties'], ['Transactions', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['Chat', '/messages']]);
 });
 
 test('phone tabs: staff viewing as Landsec keep Home, the way out of the Landsec view, in place of Brands', () => {
-  assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/tasks'], ['Chat', '/messages']]);
+  assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Transactions', '/deals'], ['Tracker', '/deals/letting'], ['Calendar', '/landsec/calendar'], ['Tasks', '/tasks'], ['Chat', '/messages']]);
 });
 
 // Woody, 2026-11-13, asked whether to build chat for joint agents: "yes go ahead".
 test('phone tabs: a joint agent has its own Chat tab, never Messages', () => {
-  assert.deepEqual(phone('jointAgent'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/landsec/tracker'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks']]);
+  assert.deepEqual(phone('jointAgent'), [['Properties', '/deals/properties'], ['Transactions', '/deals'], ['Tracker', '/landsec/tracker'], ['Calendar', '/landsec/calendar'], ['Tasks', '/landsec/tasks']]);
   // CRM and Chat are added where the tabs are chosen. Chat is the joint
   // agent's own page, not /messages (the staff and client chat).
   const tabsSource = source(TABS);

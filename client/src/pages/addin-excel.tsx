@@ -55,7 +55,7 @@ const QUICK_ACTIONS = [
   { label: "Explain this model", prompt: "Walk me through how this workbook works — inputs, key calculations and outputs.", icon: FileSpreadsheet, color: "text-muted-foreground" },
   { label: "Check for errors", prompt: "Audit this workbook: find formula errors, broken links, hard-coded numbers in formulas and anything that doesn't tie, then fix what's safe to fix.", icon: BarChart3, color: "text-muted-foreground" },
   { label: "Build a model", prompt: "Build me a model for ", icon: Building2, color: "text-muted-foreground" },
-  { label: "Pull BGP data", prompt: "Pull BGP comps / deal data for ", icon: Users, color: "text-muted-foreground" },
+  { label: "Pull BGP data", prompt: "Pull BGP comps / transaction data for ", icon: Users, color: "text-muted-foreground" },
 ];
 
 function CodeBlock({ code, language }: { code: string; language: string }) {
@@ -2183,7 +2183,7 @@ function AddinExcel() {
                 welcomeContent += `  Columns: ${sheet.headers.slice(0, 12).join(", ")}${sheet.headers.length > 12 ? ` (+${sheet.headers.length - 12} more)` : ""}\n`;
               }
             }
-            welcomeContent += `\nI can also cross-reference this against **BGP's CRM** — properties, deals, contacts, and companies.\n\n`;
+            welcomeContent += `\nI can also cross-reference this against **BGP's CRM** — properties, transactions, contacts, and companies.\n\n`;
             welcomeContent += `How can I help you with this workbook?`;
 
             setMessages([{

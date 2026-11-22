@@ -32,7 +32,7 @@ type IngestTargetOrAuto = IngestTarget | "auto";
 const TARGET_LABELS: Record<IngestTargetOrAuto, string> = {
   auto: "Auto-detect (recommended)",
   leasing_schedule_units: "Leasing schedule",
-  crm_deals: LETTING_REPAIR_TOOLS_ENABLED ? "Deals" : "Deals (preview only)",
+  crm_deals: LETTING_REPAIR_TOOLS_ENABLED ? "Transactions" : "Transactions (preview only)",
   crm_companies: "Companies / Brands",
   crm_contacts: "Contacts",
   crm_properties: "Properties",
@@ -218,7 +218,7 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "auto
   // Lettings cleanup: a Deals file previews but doesn't commit — the server
   // answers 409 with the same message (universal-ingest ingestCommitRefusal).
   const commitRefusal = preview && !preview.folderIngest && preview.target === "crm_deals" && !LETTING_REPAIR_TOOLS_ENABLED
-    ? `${LETTING_REPAIR_PAUSED} — create the deal on the Deals board`
+    ? `${LETTING_REPAIR_PAUSED} — create the transaction on the Transactions board`
     : null;
 
   return (

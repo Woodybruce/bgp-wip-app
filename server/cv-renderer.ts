@@ -139,7 +139,7 @@ export async function renderCvPdf(cv: CvData): Promise<Buffer> {
   }
 
   if (cv.notableDeals.length > 0) {
-    section("Notable BGP deals");
+    section("Notable BGP transactions");
     bullets(cv.notableDeals.map(d => {
       const tail = [d.year, d.description].filter(Boolean).join(" · ");
       return tail ? `${d.name} — ${tail}` : d.name;
@@ -241,7 +241,7 @@ export async function renderCvDocx(cv: CvData): Promise<Buffer> {
     cv.specialisms.forEach(bullet);
   }
   if (cv.notableDeals.length) {
-    section("Notable BGP deals");
+    section("Notable BGP transactions");
     for (const d of cv.notableDeals) {
       const tail = [d.year, d.description].filter(Boolean).join(" · ");
       bullet(tail ? `${d.name} — ${tail}` : d.name);

@@ -47,7 +47,7 @@ export function lastContactCell(value: string | Date | null | undefined, now: nu
   { kind: "none" | "last" | "next" | "unread" | "activity"; label: string; title: string; days: number | null } {
   const r = readLastContact(value, now);
   if (source === "edit") {
-    const changed = r.kind === "last" || r.kind === "next" ? ` Deal last changed ${ukDay(r.at, true)}` : "";
+    const changed = r.kind === "last" || r.kind === "next" ? ` Transaction last changed ${ukDay(r.at, true)}` : "";
     return { kind: "unread", label: NO_CONTACT_READ, title: `No email or meeting read yet.${changed}`, days: null };
   }
   if (r.kind === "none" || r.kind === "text") return { kind: "none", label: "—", title: "", days: null };
@@ -55,7 +55,7 @@ export function lastContactCell(value: string | Date | null | undefined, now: nu
   const d = r.days;
   const label = d === 0 ? "today" : d < 30 ? `${d}d` : d < 365 ? `${Math.round(d / 7)}w` : `${Math.round(d / 365)}y`;
   if (source === "event") {
-    return { kind: "activity", label, title: `Latest activity on the deal ${ukDay(r.at, true)} (a stage change, heads of terms or a document). No email or meeting read yet`, days: d };
+    return { kind: "activity", label, title: `Latest activity on the transaction ${ukDay(r.at, true)} (a stage change, heads of terms or a document). No email or meeting read yet`, days: d };
   }
   return { kind: "last", label, title: `Last contact ${ukDay(r.at, true)}, from the app's reading of emails and meetings`, days: d };
 }

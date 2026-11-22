@@ -865,7 +865,7 @@ export default function TenantRep() {
                 )}
                 {editTarget.deal_id && (
                   <Link href={`/deals/${editTarget.deal_id}`} className="text-xs text-primary flex items-center gap-1 hover:underline" target="_blank">
-                    Deal <ExternalLink className="w-2.5 h-2.5" />
+                    Transaction <ExternalLink className="w-2.5 h-2.5" />
                   </Link>
                 )}
               </div>

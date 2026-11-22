@@ -28,7 +28,7 @@ export const PAYER_RELATIONSHIPS = [
   { key: "vehicle", words: "Its purchase vehicle: a company the client owns or controls", clear: true },
   { key: "group", words: "Its parent company, or another company in the same group", clear: true },
   { key: "owners", words: "Owned or controlled by the same people", clear: true },
-  { key: "guarantor", words: "Its guarantor on this deal", clear: true },
+  { key: "guarantor", words: "Its guarantor on this transaction", clear: true },
   { key: "agent", words: "Its agent or managing agent, paying for it", clear: true },
   { key: "other", words: "Another relationship (the note says what)", clear: true },
   { key: "none", words: "No clear relationship", clear: false },

@@ -548,10 +548,10 @@ function Conversation({ kind, thread, loading, failed, myId, title, onThread, on
       <div className="relative border-t px-2 py-2">
         {menu && (
           <div className="absolute bottom-full left-2 right-2 mb-1 max-h-56 overflow-y-auto rounded-md border bg-background shadow-md" data-testid="ja-chat-tag-menu">
-            {menu.length === 0 && <p className="px-3 py-2 text-xs text-muted-foreground">Type a name: people in this conversation, and units and deals at your schemes.</p>}
+            {menu.length === 0 && <p className="px-3 py-2 text-xs text-muted-foreground">Type a name: people in this conversation, and units and transactions at your schemes.</p>}
             {menu.map(r => (
               <button key={`${r.type}-${r.id}`} type="button" onClick={() => pickTag(r)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted" data-testid={`ja-chat-tag-option-${r.type}`}>
-                <span className="w-12 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{r.type === "user" ? "Person" : r.type === "unit" ? "Unit" : "Deal"}</span>
+                <span className="w-12 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{r.type === "user" ? "Person" : r.type === "unit" ? "Unit" : "Transaction"}</span>
                 <span className="truncate">{r.name}</span>
               </button>
             ))}
@@ -581,7 +581,7 @@ function Conversation({ kind, thread, loading, failed, myId, title, onThread, on
             onChange={e => setText(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !menu?.length) { e.preventDefault(); void send(); } }}
             rows={1}
-            placeholder={ai ? "Ask about your schemes" : "Message. @ tags a person, unit or deal"}
+            placeholder={ai ? "Ask about your schemes" : "Message. @ tags a person, unit or transaction"}
             className="max-h-32 min-h-[36px] flex-1 resize-none py-2 text-sm"
             data-testid="ja-chat-input"
           />

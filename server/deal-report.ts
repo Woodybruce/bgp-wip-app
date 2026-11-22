@@ -373,7 +373,7 @@ async function renderDealReportPdf(
   const masthead = () => {
     doc.rect(0, 0, 595, 8).fill(BGP_GREEN);
     if (logoExists) { try { doc.image(logoPath, leftM, 18, { width: 70 }); } catch {} }
-    doc.font("Helvetica").fontSize(7).fillColor("#666").text("DEAL REPORT", leftM, 16, { align: "right", width: pageW });
+    doc.font("Helvetica").fontSize(7).fillColor("#666").text("TRANSACTION REPORT", leftM, 16, { align: "right", width: pageW });
     doc.fontSize(6).fillColor("#888").text(window.until.toLocaleDateString("en-GB"), leftM, 27, { align: "right", width: pageW });
   };
   masthead();
@@ -381,7 +381,7 @@ async function renderDealReportPdf(
 
   let y = 55;
   doc.rect(leftM, y, pageW, 2).fill(BGP_GREEN); y += 12;
-  doc.font("Helvetica-Bold").fontSize(22).fillColor(BGP_DARK_GREEN).text("New deals", leftM, y, { width: pageW });
+  doc.font("Helvetica-Bold").fontSize(22).fillColor(BGP_DARK_GREEN).text("New transactions", leftM, y, { width: pageW });
   y = doc.y + 2;
   doc.font("Helvetica").fontSize(9).fillColor("#888")
     .text(`${window.since.toLocaleDateString("en-GB")} – ${window.until.toLocaleDateString("en-GB")}`, leftM, y);
@@ -389,7 +389,7 @@ async function renderDealReportPdf(
 
   const totalDeals = groups.reduce((n, g) => n + g.deals.length, 0);
   doc.rect(leftM, y, pageW, 50).fill("#F4F7F5");
-  doc.font("Helvetica-Bold").fontSize(7).fillColor("#888").text("DEALS ADDED", leftM + 10, y + 10);
+  doc.font("Helvetica-Bold").fontSize(7).fillColor("#888").text("TRANSACTIONS ADDED", leftM + 10, y + 10);
   doc.font("Helvetica-Bold").fontSize(18).fillColor(BGP_DARK_GREEN).text(String(totalDeals), leftM + 10, y + 22);
   doc.font("Helvetica-Bold").fontSize(7).fillColor("#888").text("TEAMS", leftM + pageW / 2, y + 10);
   doc.font("Helvetica-Bold").fontSize(18).fillColor(BGP_DARK_GREEN).text(String(groups.length), leftM + pageW / 2, y + 22);
@@ -470,7 +470,7 @@ async function renderDealReportPdf(
   }
 
   if (!totalDeals) {
-    doc.font("Helvetica-Oblique").fontSize(10).fillColor("#777").text("No deals were added in the last two weeks.", leftM, y, { width: pageW });
+    doc.font("Helvetica-Oblique").fontSize(10).fillColor("#777").text("No transactions were added in the last two weeks.", leftM, y, { width: pageW });
   }
 
   // Footer sits below the bottom margin — writing there makes pdfkit add a
@@ -483,7 +483,7 @@ async function renderDealReportPdf(
     const oldBottom = doc.page.margins.bottom;
     doc.page.margins.bottom = 0;
     doc.font("Helvetica").fontSize(6.5).fillColor("#999")
-      .text(`Deal Report — Bruce Gillingham Pollard — Confidential — Page ${i + 1} of ${range.count}`, leftM, 810, { width: pageW, align: "center", lineBreak: false });
+      .text(`Transaction Report — Bruce Gillingham Pollard — Confidential — Page ${i + 1} of ${range.count}`, leftM, 810, { width: pageW, align: "center", lineBreak: false });
     doc.page.margins.bottom = oldBottom;
   }
 
@@ -644,7 +644,7 @@ router.post("/api/deal-report/pdf", requireAuth, async (req: Request, res: Respo
       until: new Date(),
     }, comments);
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="bgp-deal-report-${new Date().toISOString().slice(0, 10)}.pdf"`);
+    res.setHeader("Content-Disposition", `attachment; filename="bgp-transaction-report-${new Date().toISOString().slice(0, 10)}.pdf"`);
     res.send(pdf);
   } catch (err: any) {
     console.error("[deal-report] pdf error:", err);

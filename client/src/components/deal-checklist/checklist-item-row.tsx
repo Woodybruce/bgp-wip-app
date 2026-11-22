@@ -69,10 +69,10 @@ export function ChecklistItemRow({ item, checklist, quiet, first, last, busy, pi
                 <Chip
                   tone="amber" className="px-2 py-[3px] text-[10px]" data-testid={`checklist-waiting-${item.id}`}
                   title={w.derived
-                    ? `Nobody has set who the deal is waiting on, so it is read from this checklist: the first required item still open${waitingWho ? ` (${waitingWho})` : ""}`
-                    : waitingWho ? `The deal's clock says it is waiting on ${waitingWho}` : "The deal's clock points at this item"}
+                    ? `Nobody has set who the transaction is waiting on, so it is read from this checklist: the first required item still open${waitingWho ? ` (${waitingWho})` : ""}`
+                    : waitingWho ? `The transaction's clock says it is waiting on ${waitingWho}` : "The transaction's clock points at this item"}
                 >
-                  The deal is waiting on this{w.days != null ? ` · ${w.days}d` : ""}
+                  The transaction is waiting on this{w.days != null ? ` · ${w.days}d` : ""}
                 </Chip>
               )}
             </p>
@@ -91,8 +91,8 @@ export function ChecklistItemRow({ item, checklist, quiet, first, last, busy, pi
                 on the derived one too: pressing it keeps it. */}
             {!done && viewer.canSetWaiting && !(w && !w.derived) && (
               <Button type="button" variant="ghost" size="sm" className="-ml-2 h-7 px-2 text-xs text-muted-foreground" disabled={!!busy} onClick={() => onSetWaiting(item)}
-                title="Set this item as what the deal is waiting on. It shows on the deal's clock, with who is responsible for it." data-testid={`checklist-set-waiting-${item.id}`}>
-                {busy === `waiting:${item.id}` ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Hourglass className="mr-1 h-3 w-3" />}Deal is waiting on this
+                title="Set this item as what the transaction is waiting on. It shows on the transaction's clock, with who is responsible for it." data-testid={`checklist-set-waiting-${item.id}`}>
+                {busy === `waiting:${item.id}` ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Hourglass className="mr-1 h-3 w-3" />}Transaction is waiting on this
               </Button>
             )}
           </div>

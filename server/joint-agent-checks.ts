@@ -502,9 +502,9 @@ async function audit(db: Db, companyId: string, action: string, by: string, note
 /** Emails the joint agent's contact a link to send their checks (and, on a letting, agree the reliance terms). */
 export async function createJointAgentRequest(dealId: string, input: JointAskInput, me: Staff, db: Db = pool): Promise<{ token: string; ref: string; link: string; sent: KycSendResult }> {
   const deal = await loadJointDeal(db, dealId);
-  if (!deal) throw fail(404, "Deal not found");
+  if (!deal) throw fail(404, "Transaction not found");
   const party = deal.parties.find(p => p.companyId === input.companyId);
-  if (!party) throw fail(400, "That company is not a party to this deal.");
+  if (!party) throw fail(400, "That company is not a party to this transaction.");
   const refused = jointAskRefusal(deal, party.role);
   if (refused) throw fail(409, refused);
   const open = await openRequestFor(db, dealId, party.companyId);
@@ -582,9 +582,9 @@ export interface JointUploadInput {
  */
 export async function addJointFiles(dealId: string, input: JointUploadInput, files: Array<{ name: string; mime: string; buffer: Buffer }>, me: Staff, db: Db = pool): Promise<{ ref: string; filed: number; created: boolean }> {
   const deal = await loadJointDeal(db, dealId);
-  if (!deal) throw fail(404, "Deal not found");
+  if (!deal) throw fail(404, "Transaction not found");
   const party = deal.parties.find(p => p.companyId === input.companyId);
-  if (!party) throw fail(400, "That company is not a party to this deal.");
+  if (!party) throw fail(400, "That company is not a party to this transaction.");
   if (party.role === deal.clientRole) throw fail(409, "This is BGP's own client, checked by BGP: add its documents with the client checks.");
   if (!files.length) throw fail(400, "Choose the files the joint agent sent.");
   const portal = await import("./aml-portal");
@@ -793,7 +793,7 @@ export async function relianceConfirmationPdf(row: TokenRow, files: string[]): P
     doc.font("Helvetica").fontSize(10.5).fillColor(INK).text(value, { width });
     doc.moveDown(0.4);
   };
-  line("Deal", request.dealName);
+  line("Transaction", request.dealName);
   line("Party", `${request.partyName}${request.role ? `, the ${request.role}` : ""}`);
   line("Agreed by", [r.name, r.position, r.firm].filter(Boolean).join(", "));
   line("The firm's anti-money laundering supervisor", [r.supervisor, r.registration].filter(Boolean).join(", registration "));
@@ -876,7 +876,7 @@ jointAgentRouter.get("/api/deals/:id/joint-agent-checks", signedIn, async (req: 
     const dealId = String(req.params.id);
     void readUnreadJointFiles(pool, dealId).catch(() => {});
     const view = await jointChecksForDeal(dealId);
-    if (!view) return res.status(404).json({ message: "Deal not found" });
+    if (!view) return res.status(404).json({ message: "Transaction not found" });
     res.json(view);
   } catch (err: any) {
     res.status(500).json({ message: err?.message || "Could not load the joint agent's checks" });
@@ -945,9 +945,9 @@ jointAgentRouter.post("/api/deals/:id/joint-agent-checks/read", signedIn, async 
     const token = text(req.body?.token).slice(0, 100), documentId = text(req.body?.documentId).slice(0, 100);
     const owned = token && documentId ? (await pool.query(
       `SELECT 1 FROM kyc_upload_tokens WHERE token = $1 AND deal_id = $2 AND request->>'audience' = 'joint_agent' AND is_test IS NOT TRUE`, [token, String(req.params.id)])).rows[0] : null;
-    if (!owned) return res.status(404).json({ message: "That file is not on this deal's joint agent checks." });
+    if (!owned) return res.status(404).json({ message: "That file is not on this transaction's joint agent checks." });
     const reading = await rereadJointFile(pool, token, documentId);
-    if (!reading) return res.status(404).json({ message: "That file is not on this deal's joint agent checks." });
+    if (!reading) return res.status(404).json({ message: "That file is not on this transaction's joint agent checks." });
     res.json({ ok: true, reading });
   } catch (err: any) {
     res.status(500).json({ message: err?.message || "Could not read it again" });
@@ -967,7 +967,7 @@ jointAgentRouter.post("/api/deals/:id/joint-agent-checks/:ref/chase", signedIn, 
       `SELECT token FROM kyc_upload_tokens WHERE deal_id = $1 AND request->>'ref' = $2 AND request->>'audience' = 'joint_agent' AND is_test IS NOT TRUE AND revoked_at IS NULL`,
       [String(req.params.id), text(req.params.ref).toUpperCase()])).rows[0];
     let row = found ? await tokenRow(String(found.token)) : null;
-    if (!row?.request) return res.status(404).json({ message: "That request to the joint agent is not open on this deal." });
+    if (!row?.request) return res.status(404).json({ message: "That request to the joint agent is not open on this transaction." });
     if (!row.contact_email) {
       const email = cleanEmail(req.body?.email);
       if (!isEmail(email) || email.endsWith(STAFF_DOMAIN)) return res.status(400).json({ message: "Give the joint agent's email address to send it to." });

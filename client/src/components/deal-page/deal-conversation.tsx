@@ -108,7 +108,7 @@ export function DealConversation({ dealId, dealLabel, dealLive, propertyId, prop
       // Tagged with the deal and its unit. A joint agent tags a deal only
       // while it is live at its schemes (server/chat-joint-agent.ts).
       const lead = [jointAgent && !dealLive ? null : buildTagToken("deal", dealId, dealLabel), unit ? buildTagToken("unit", unit.id, unit.name) : null].filter(Boolean).join(" ");
-      if (!lead) throw new Error("This deal has closed and has no unit to tag the message with.");
+      if (!lead) throw new Error("This transaction has closed and has no unit to tag the message with.");
       await apiRequest("POST", `/api/chat/threads/${threadId}/messages`, { content: `${lead} ${text}` });
       setDraft("");
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
@@ -127,21 +127,21 @@ export function DealConversation({ dealId, dealLabel, dealLive, propertyId, prop
         <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="text-sm font-semibold shrink-0">Conversation</span>
         <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
-          {!propertyId ? "Link this deal to a property to start its conversation."
+          {!propertyId ? "Link this transaction to a property to start its conversation."
             : s?.last ? <>{s.count} message{s.count === 1 ? "" : "s"} · <span className="text-foreground">{s.last.sender || "Someone"}</span>, {when(s.last.at)}: {dealMessageText(s.last.text, dealId, unitId)}</>
-            : s ? "No messages yet. Write to the team about this deal."
-            : "Messages about this deal, in the property's conversation."}
+            : s ? "No messages yet. Write to the team about this transaction."
+            : "Messages about this transaction, in the property's conversation."}
         </span>
         {propertyId && (open ? <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />)}
       </button>
       {open && propertyId && (
         <div className="border-t px-3 py-2 space-y-2">
           <p className="text-[11px] text-muted-foreground">
-            Messages that name this deal{unit ? ` or ${unit.name}` : ""}, in {propertyName ? <Link href={`/properties/${propertyId}`} className="text-primary hover:underline">{propertyName}</Link> : "the property"}'s conversation. Everyone who can open the property reads it.
+            Messages that name this transaction{unit ? ` or ${unit.name}` : ""}, in {propertyName ? <Link href={`/properties/${propertyId}`} className="text-primary hover:underline">{propertyName}</Link> : "the property"}'s conversation. Everyone who can open the property reads it.
           </p>
           <div className="max-h-80 overflow-y-auto space-y-1.5" data-testid="deal-conversation-messages">
             {!threadId || thread.isLoading ? <p className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Loading…</p>
-              : messages.length === 0 ? <p className="text-xs text-muted-foreground">No messages about this deal yet.</p>
+              : messages.length === 0 ? <p className="text-xs text-muted-foreground">No messages about this transaction yet.</p>
               : messages.map(m => (
                 <div key={m.id} className="rounded-md bg-muted/50 px-2 py-1.5">
                   <p className="text-[10px] text-muted-foreground">{nameOf(m.userId)} · {when(m.createdAt || m.created_at)}</p>
@@ -163,7 +163,7 @@ export function DealConversation({ dealId, dealLabel, dealLive, propertyId, prop
       {notes.length > 0 && (
         <div className="border-t px-3 py-1.5" data-testid="deal-earlier-notes">
           <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setNotesOpen(o => !o)} aria-expanded={notesOpen}>
-            Earlier notes on the deal ({notes.length}){notesOpen ? "" : ": show"}
+            Earlier notes on the transaction ({notes.length}){notesOpen ? "" : ": show"}
           </button>
           {notesOpen && (
             <div className="mt-1.5 space-y-1.5 pb-1">

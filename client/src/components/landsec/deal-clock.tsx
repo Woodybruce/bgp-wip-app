@@ -204,10 +204,10 @@ export function ClockFilterPills({ filter, onFilter, counts, stuckFirstOn, onStu
         No one named <PillCount n={counts.none} active={filter === "none"} />
       </Pill>
       <span className="mx-1 h-4 w-px bg-border" aria-hidden />
-      <Pill active={stuckFirstOn} onClick={() => onStuckFirst(!stuckFirstOn)} aria-pressed={stuckFirstOn} title="Put the stuck deals at the top, the longest at its stage first" data-testid="deals-clock-stuck-first">
+      <Pill active={stuckFirstOn} onClick={() => onStuckFirst(!stuckFirstOn)} aria-pressed={stuckFirstOn} title="Put the stuck transactions at the top, the longest at its stage first" data-testid="deals-clock-stuck-first">
         <ArrowDownWideNarrow className="w-3 h-3" /> Stuck first
       </Pill>
-      {failed && <span className="text-xs text-muted-foreground" data-testid="deals-clock-failed">The deal clock could not be loaded.</span>}
+      {failed && <span className="text-xs text-muted-foreground" data-testid="deals-clock-failed">The transaction clock could not be loaded.</span>}
     </div>
   );
 }
@@ -312,11 +312,11 @@ function StageDateForm({ dealId, stage, confirmed, stageSet, since, onDone }: {
       </label>
       <p className="text-xs text-muted-foreground" data-testid="stage-date-source">
         {stageSet ? `Set by ${stageSet.byName || "a person"}.`
-          : confirmed === false ? `The app does not know when this deal reached ${stage || "this stage"}${since ? `. Its own date is ${ukDate(since)}, from a bulk update or from when the deal was added` : ""}.`
-          : since ? `From the deal's history: ${ukDate(since)}.` : "No date is recorded."}
+          : confirmed === false ? `The app does not know when this transaction reached ${stage || "this stage"}${since ? `. Its own date is ${ukDate(since)}, from a bulk update or from when the transaction was added` : ""}.`
+          : since ? `From the transaction's history: ${ukDate(since)}.` : "No date is recorded."}
       </p>
       <div className="flex justify-end gap-1">
-        <Button size="sm" variant="outline" disabled={!stageSet || save.isPending} onClick={() => send(null)} title={stageSet ? "Remove the date set by hand and go back to the deal's own history" : "No date has been set by hand"} data-testid="stage-date-clear">Clear</Button>
+        <Button size="sm" variant="outline" disabled={!stageSet || save.isPending} onClick={() => send(null)} title={stageSet ? "Remove the date set by hand and go back to the transaction's own history" : "No date has been set by hand"} data-testid="stage-date-clear">Clear</Button>
         <Button size="sm" disabled={!date || date > today || date === stageSet?.date || save.isPending} onClick={() => send(date)} data-testid="stage-date-save">
           {save.isPending && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}Save
         </Button>
@@ -363,7 +363,7 @@ export function NerFigure({ ner, incentivesRecorded, prefix, suffix, dash = true
     return (
       <span
         className="text-[11px] text-muted-foreground whitespace-nowrap"
-        title={`${formatCurrency(ner.headlinePa)} headline rent. No rent free or capital contribution is recorded on the deal, so a Net Effective Rent is not shown.`}
+        title={`${formatCurrency(ner.headlinePa)} headline rent. No rent free or capital contribution is recorded on the transaction, so a Net Effective Rent is not shown.`}
         data-testid="landsec-ner-not-recorded"
       >
         Incentives not recorded
@@ -382,7 +382,7 @@ export function BriefCheck({ brief, check }: { brief: "agreed" | "drafted" | nul
     return (
       <span
         className={cn(rowPill, "border-border px-1.5 text-muted-foreground")}
-        title="The brief has a Net Effective Rent floor, but no rent free or capital contribution is recorded on the deal, so it cannot be checked yet."
+        title="The brief has a Net Effective Rent floor, but no rent free or capital contribution is recorded on the transaction, so it cannot be checked yet."
         data-testid="landsec-brief-not-checked"
       >
         Not checked
@@ -404,8 +404,8 @@ const waitingWho = (c: WaitingClock): { lead: string; rest: string } => ({
 const waitingFor = (c: WaitingClock): { text: string; title: string } | null => {
   const text = c.waitingNote || c.checklistItemLabel || "";
   if (!text) return null;
-  if (c.derived) return { text: `From the checklist: ${text}`, title: `Read from the deal checklist, because nobody has set who this deal is waiting on: ${text}` };
-  return { text, title: c.checklistItemId ? `On the deal checklist: ${c.checklistItemLabel || text}` : text };
+  if (c.derived) return { text: `From the checklist: ${text}`, title: `Read from the transaction checklist, because nobody has set who this transaction is waiting on: ${text}` };
+  return { text, title: c.checklistItemId ? `On the transaction checklist: ${c.checklistItemLabel || text}` : text };
 };
 
 // Who a deal is waiting on, read only: party, name and days, with what it is
@@ -454,7 +454,7 @@ export function DependsOn({ clock, linkDeals = true }: { clock: WaitingClock | n
     if (!linkDeals) return <span data-testid="landsec-depends-on-text">{text}</span>;
     return <Link href={`/deals/${clock.dependsOn.id}`} className="hover:underline">{text}</Link>;
   }
-  if (clock?.dependsOnHidden) return <span data-testid="landsec-depends-on-hidden">another deal</span>;
+  if (clock?.dependsOnHidden) return <span data-testid="landsec-depends-on-hidden">another transaction</span>;
   return null;
 }
 
@@ -551,11 +551,11 @@ function WaitingForm({ clock, dealId, schemeDeals, onSave, onCancel, saving, tes
     <div className="grid sm:grid-cols-2 gap-1.5 text-sm" data-testid={`${testId}-form`}>
       {clock?.derived && (
         <p className="sm:col-span-2 text-xs text-muted-foreground" data-testid={`${testId}-derived`}>
-          This is read from the deal checklist because nobody has set it. Save to keep it, or change it first.
+          This is read from the transaction checklist because nobody has set it. Save to keep it, or change it first.
         </p>
       )}
       {dealId && opts?.started && (
-        <label className="text-xs text-muted-foreground sm:col-span-2">Waiting for (deal checklist)
+        <label className="text-xs text-muted-foreground sm:col-span-2">Waiting for (transaction checklist)
           <select className={selectClass} value={form.item} onChange={e => pickItem(e.target.value)} data-testid={`${testId}-item`}>
             <option value="">— not a checklist item —</option>
             {form.item && form.item !== NEW_ITEM && !picked && <option value={form.item}>{clock?.checklistItemLabel || "The item it is linked to now"}</option>}
@@ -574,13 +574,13 @@ function WaitingForm({ clock, dealId, schemeDeals, onSave, onCancel, saving, tes
       )}
       {form.item === NEW_ITEM && (
         <label className="text-xs text-muted-foreground sm:col-span-2">New checklist item
-          <Input value={form.newLabel} maxLength={300} onChange={e => setForm(p => ({ ...p, newLabel: e.target.value }))} placeholder="What the deal is waiting for" className="h-8 text-sm" data-testid={`${testId}-new-item`} />
-          <span className="mt-0.5 block text-[11px]">It is added to the checklist at the deal's current stage, not required.</span>
+          <Input value={form.newLabel} maxLength={300} onChange={e => setForm(p => ({ ...p, newLabel: e.target.value }))} placeholder="What the transaction is waiting for" className="h-8 text-sm" data-testid={`${testId}-new-item`} />
+          <span className="mt-0.5 block text-[11px]">It is added to the checklist at the transaction's current stage, not required.</span>
         </label>
       )}
       {dealId && opts && !opts.started && opts.trackerUnitId && (
         <p className="sm:col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-testid={`${testId}-no-checklist`}>
-          <span>This deal has no checklist yet{opts.canStart ? ". Start it to pick what the deal is waiting for from it." : "."}</span>
+          <span>This transaction has no checklist yet{opts.canStart ? ". Start it to pick what the transaction is waiting for from it." : "."}</span>
           {opts.canStart && (
             <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={starting} onClick={startChecklist} data-testid={`${testId}-start-checklist`}>
               {starting && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}Start the checklist
@@ -613,10 +613,10 @@ function WaitingForm({ clock, dealId, schemeDeals, onSave, onCancel, saving, tes
       </label>
       <label className="text-xs text-muted-foreground">Who (name)<Input value={form.name} onChange={e => typeName(e.target.value)} placeholder="e.g. the asset manager's name" className="h-8 text-sm" /></label>
       <label className="text-xs text-muted-foreground">Since<Input type="date" value={form.since} onChange={e => setForm(p => ({ ...p, since: e.target.value }))} className="h-8 text-sm" /></label>
-      <label className="text-xs text-muted-foreground">Depends on deal
+      <label className="text-xs text-muted-foreground">Depends on transaction
         <select className={selectClass} value={form.dependsOn} onChange={e => setForm(p => ({ ...p, dependsOn: e.target.value }))}>
           <option value="">— none —</option>
-          {clock?.dependsOnHidden && <option value={HIDDEN_DEAL}>Another deal (not one you can open)</option>}
+          {clock?.dependsOnHidden && <option value={HIDDEN_DEAL}>Another transaction (not one you can open)</option>}
           {current && <option value={current.id}>{label(current)}</option>}
           {schemeDeals.map(d => <option key={d.id} value={d.id}>{label(d)}</option>)}
         </select>
@@ -658,7 +658,7 @@ export function WaitingOn({ clock, dealId, schemeDeals, onSave, saving, variant 
   if (variant === "cell") {
     // The whole cell opens the form, filled or empty (Woody, 2026-11-13:
     // "can click empty spaces and add / edit").
-    const action = isSet ? "Change who this deal is waiting on" : "Set who this deal is waiting on";
+    const action = isSet ? "Change who this transaction is waiting on" : "Set who this transaction is waiting on";
     return (
       <Popover open={editing} onOpenChange={setEditing}>
         <PopoverTrigger asChild>
@@ -741,8 +741,8 @@ export function DependsOnCell({ deal, feed, onSave, saving, linkDeals = true }: 
           <button
             type="button" data-no-min-touch
             className={cn("shrink-0 rounded text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", set ? "p-0.5" : "inline-flex items-center gap-0.5 px-1 py-0.5 text-[11px] hover:bg-accent")}
-            title={set ? "Change the deal this one depends on" : "Set a deal this one depends on"}
-            aria-label={set ? "Change the deal this one depends on" : "Set a deal this one depends on"}
+            title={set ? "Change the transaction this one depends on" : "Set a transaction this one depends on"}
+            aria-label={set ? "Change the transaction this one depends on" : "Set a transaction this one depends on"}
             data-testid={`${testId}-edit`}
           >
             {set ? <Pencil className="w-3 h-3" /> : <><Plus className="w-3 h-3" /> Set</>}

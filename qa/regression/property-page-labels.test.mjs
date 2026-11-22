@@ -74,7 +74,7 @@ test('the BGP team is never empty while BGP people work the property', () => {
     ['Evie North', 'Leasing', 'deals'],
   ], 'once the property team is set, the account team no longer fills in');
   assert.deepEqual(plain(propertyBgpTeam([], [{ id: 'x', name: 'X', team: ['Investment'] }], []).map(p => p.role)), ['Investment']);
-  assert.deepEqual(plain(propertyBgpTeam([], [{ id: 'x', name: 'X', team: ['Landlord'] }], []).map(p => p.role)), ['On deals']);
+  assert.deepEqual(plain(propertyBgpTeam([], [{ id: 'x', name: 'X', team: ['Landlord'] }], []).map(p => p.role)), ['On transactions']);
 });
 
 function linkedContacts(rowsFor, { staff = true } = {}) {

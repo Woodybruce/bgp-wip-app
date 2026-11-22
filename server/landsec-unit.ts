@@ -146,7 +146,7 @@ const canSetStageSince = (_viewer: LandsecViewer): boolean => true;
 // `visible` is the property records whose deals a "depends on" may name
 // (null: any deal). The clock route and the checklist's "Deal is waiting on
 // this" both ask it.
-export const CLOCK_REFUSED = "Who this deal is waiting on is set by BGP staff, or by a Landsec login at the deal's scheme";
+export const CLOCK_REFUSED = "Who this transaction is waiting on is set by BGP staff, or by a Landsec login at the transaction's scheme";
 export type ClockWriter =
   | { kind: "landsec"; access: LandsecViewer & { schemeKey: string | null }; visible: Set<string> }
   | { kind: "staff"; visible: null };
@@ -662,7 +662,7 @@ export function setupLandsecUnitRoutes(app: Express) {
       if (sol && typeof sol === "object") {
         const dealId = String(b.dealId || "");
         const own = dealId ? (await pool.query(`SELECT id FROM crm_deals WHERE id = $1 AND (tenancy_unit_id = $2 OR id = $3 OR id = (SELECT deal_id FROM available_units WHERE tenancy_unit_id = $2 LIMIT 1))`, [dealId, id, unit.deal_id || ""])).rows[0] : null;
-        if (!own) return res.status(400).json({ error: "That deal is not on this unit" });
+        if (!own) return res.status(400).json({ error: "That transaction is not on this unit" });
         const date = (v: any) => (v === undefined ? undefined : v ? new Date(v) : null);
         await pool.query(
           `UPDATE crm_deals SET
@@ -749,7 +749,7 @@ export function setupLandsecUnitRoutes(app: Express) {
       res.json(feed);
     } catch (e: any) {
       console.error("[/api/landsec/deals]", e?.message);
-      res.status(500).json({ error: e?.message || "Failed to load the deals" });
+      res.status(500).json({ error: e?.message || "Failed to load the transactions" });
     }
   });
 
@@ -760,7 +760,7 @@ export function setupLandsecUnitRoutes(app: Express) {
     try {
       const dealId = String(req.params.id);
       const deal = (await pool.query(`SELECT id, property_id, deal_type FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
-      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      if (!deal) return res.status(404).json({ error: "Transaction not found" });
       if (!(await clockWriterFor(req, deal))) return res.status(403).json({ error: CLOCK_REFUSED });
       res.json(await waitingOptionsForDeal(req, dealId));
     } catch (e: any) {
@@ -781,7 +781,7 @@ export function setupLandsecUnitRoutes(app: Express) {
     try {
       const dealId = String(req.params.id);
       const deal = (await pool.query(`SELECT id, property_id, deal_type, status, stage_entered_at, created_at FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
-      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      if (!deal) return res.status(404).json({ error: "Transaction not found" });
       const writer = await clockWriterFor(req, deal);
       if (!writer) return res.status(403).json({ error: CLOCK_REFUSED });
       const b = req.body || {};
@@ -790,8 +790,8 @@ export function setupLandsecUnitRoutes(app: Express) {
       const stageCode = legacyToCode(deal.status);
       let stageSince: string | null = null;
       if (settingStage) {
-        if (writer.kind === "landsec" && !canSetStageSince(writer.access)) return res.status(403).json({ error: "This login cannot set the date a deal reached its stage" });
-        if (!stageCode || CLOSED_STATUSES.includes(stageCode)) return res.status(400).json({ error: "The date can only be set on a live deal" });
+        if (writer.kind === "landsec" && !canSetStageSince(writer.access)) return res.status(403).json({ error: "This login cannot set the date a transaction reached its stage" });
+        if (!stageCode || CLOSED_STATUSES.includes(stageCode)) return res.status(400).json({ error: "The date can only be set on a live transaction" });
         const checked = checkStageSinceInput(b.stageSince, { today: londonDay(), createdAt: deal.created_at });
         if (!checked.ok) return res.status(400).json({ error: checked.error });
         stageSince = checked.date;
@@ -803,10 +803,10 @@ export function setupLandsecUnitRoutes(app: Express) {
       const txt = (v: any) => (v === undefined ? undefined : v === null || v === "" ? null : String(v));
       const dependsOn = txt(b.dependsOnDealId);
       if (dependsOn) {
-        if (dependsOn === dealId) return res.status(400).json({ error: "A deal cannot depend on itself" });
+        if (dependsOn === dealId) return res.status(400).json({ error: "A transaction cannot depend on itself" });
         const dep = (await pool.query(`SELECT property_id FROM crm_deals WHERE id = $1`, [dependsOn])).rows[0];
-        if (!dep) return res.status(400).json({ error: "The deal it depends on was not found" });
-        if (writer.kind === "landsec" && !(await unitAccess(req, dep.property_id))) return res.status(400).json({ error: "The deal it depends on is not on a Landsec scheme you can see" });
+        if (!dep) return res.status(400).json({ error: "The transaction it depends on was not found" });
+        if (writer.kind === "landsec" && !(await unitAccess(req, dep.property_id))) return res.status(400).json({ error: "The transaction it depends on is not on a Landsec scheme you can see" });
       }
       // The link to the deal's checklist, checked before anything is written:
       // the item is on this deal's own checklist and still open.
@@ -878,7 +878,7 @@ export function setupLandsecUnitRoutes(app: Express) {
       const stage = settingStage ? dealClock(deal.status, (await stageSinceFor([dealId])).get(dealId), deal.stage_entered_at || deal.created_at) : undefined;
       res.json({ ok: true, clock: waitingClockFor(stored.get(dealId) || null, checklists.get(dealId) || null, dealId), checklistItemId: linked?.itemId ?? undefined, assigned, stage });
     } catch (e: any) {
-      res.status(500).json({ error: e?.message || "Failed to save the deal clock" });
+      res.status(500).json({ error: e?.message || "Failed to save the transaction clock" });
     }
   });
 

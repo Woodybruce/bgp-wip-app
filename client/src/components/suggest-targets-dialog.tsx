@@ -63,7 +63,7 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
             Suggested brands — {unit?.unitName}{data?.unit?.sqft ? ` (${Number(data.unit.sqft).toLocaleString()} sq ft)` : ""}
           </DialogTitle>
           <DialogDescription>
-            Requirements that fit this unit (confirmed ones first, each with its date), brands with evidence for this centre (Brand Gap, top centres, openings, BGP conversations and deals) and brands in matching categories — ranked by AI.
+            Requirements that fit this unit (confirmed ones first, each with its date), brands with evidence for this centre (Brand Gap, top centres, openings, BGP conversations and transactions) and brands in matching categories — ranked by AI.
           </DialogDescription>
         </DialogHeader>
         {isFetching ? (

@@ -1219,12 +1219,12 @@ export default function Dashboard() {
     "portfolio-kpis": "Headline metrics across your portfolio",
     "portfolio-team": "The BGP people working across your portfolio and their properties",
     "portfolio-properties": "Every property linked to your account",
-    "portfolio-relationship": "Your account with BGP — coverage, contacts, last touch and live deals",
+    "portfolio-relationship": "Your account with BGP — coverage, contacts, last touch and live transactions",
     "portfolio-leasing": "Every unit — tenant, occupancy, rent and expiry",
     "portfolio-contacts": "Your key contacts on the account",
-    "portfolio-deals": "Your portfolio on the map with active properties and live deals below",
+    "portfolio-deals": "Your portfolio on the map with active properties and live transactions below",
     "portfolio-lease-expiry": "Units with leases expiring over the next five years, by quarter",
-    "portfolio-vacancy-pipeline": "Vacant units per property vs the letting deals working to fill them",
+    "portfolio-vacancy-pipeline": "Vacant units per property vs the letting transactions working to fill them",
   };
 
   const handleHideWidget = useCallback((widgetId: string) => {
@@ -1557,7 +1557,7 @@ export default function Dashboard() {
                       </p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800" data-testid="kpi-deals">
-                      <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium uppercase tracking-wider">Active Deals</p>
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium uppercase tracking-wider">Active Transactions</p>
                       <p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{stats.activeDeals}</p>
                     </div>
                     <Popover>
@@ -1794,16 +1794,16 @@ export default function Dashboard() {
           },
           {
             id: "portfolio-deals",
-            label: "Properties & Deals",
+            label: "Properties & Transactions",
             defaultW: 12, defaultH: 18, minW: 6, minH: 8,
             content: (
               <Card className="h-full flex flex-col">
                 <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <MapPin className="w-3.5 h-3.5 text-teal-500" />
-                    Properties & Deals
+                    Properties & Transactions
                   </h3>
-                  <p className="text-[10px] text-muted-foreground -mt-1">Your portfolio on the map, with active properties and their live lettings and deals below — pins and chips open everything pre-filtered.</p>
+                  <p className="text-[10px] text-muted-foreground -mt-1">Your portfolio on the map, with active properties and their live lettings and transactions below — pins and chips open everything pre-filtered.</p>
                   {(portfolioData.properties || []).some((p: any) => p.lat != null && p.lng != null) && (
                     <div className="flex-none h-[42%] min-h-[180px] rounded-lg overflow-hidden border">
                       <BrandPortfolioMap
@@ -1835,7 +1835,7 @@ export default function Dashboard() {
                       <div className="border rounded-lg overflow-hidden mt-2">
                         <div className="flex items-center gap-2 p-2 bg-muted/50">
                           <BarChart3 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          <p className="text-xs font-medium">Other Deals</p>
+                          <p className="text-xs font-medium">Other Transactions</p>
                           <Badge variant="outline" className="text-[10px] shrink-0 ml-auto">{unlinkedDeals.length}</Badge>
                         </div>
                         <div className="divide-y">
@@ -2026,7 +2026,7 @@ export default function Dashboard() {
                       <TrendingUp className="w-3.5 h-3.5 text-teal-500" />
                       Vacancy Pipeline
                     </h3>
-                    <p className="text-[10px] text-muted-foreground -mt-1">Vacant units per property vs the active deals working to fill them.</p>
+                    <p className="text-[10px] text-muted-foreground -mt-1">Vacant units per property vs the active transactions working to fill them.</p>
                     <ScrollArea className="flex-1">
                       <div className="space-y-2 pr-2">
                         {propStats.filter(p => p.vacantUnits > 0 || p.activeDeals > 0).map(({ propId, propName, vacantUnits, totalUnits, activeDeals }) => {
@@ -2039,7 +2039,7 @@ export default function Dashboard() {
                                   <span className="text-xs font-medium text-teal-700 dark:text-teal-300 hover:underline cursor-pointer">{propName}</span>
                                 </Link>
                                 <span className="text-[10px] text-muted-foreground">
-                                  {vacantUnits} vacant unit{vacantUnits !== 1 ? "s" : ""} · {activeDeals} active deal{activeDeals !== 1 ? "s" : ""}
+                                  {vacantUnits} vacant unit{vacantUnits !== 1 ? "s" : ""} · {activeDeals} active transaction{activeDeals !== 1 ? "s" : ""}
                                 </span>
                               </div>
                               {/* Vacancy bar */}
@@ -2071,7 +2071,7 @@ export default function Dashboard() {
                     </ScrollArea>
                     <div className="border-t pt-2 mt-auto">
                       <p className="text-[10px] text-muted-foreground text-center">
-                        {totalVacant} total vacant unit{totalVacant !== 1 ? "s" : ""} across {propertiesWithVacancy} propert{propertiesWithVacancy !== 1 ? "ies" : "y"} · {totalActiveDeals} letting deal{totalActiveDeals !== 1 ? "s" : ""} working the voids
+                        {totalVacant} total vacant unit{totalVacant !== 1 ? "s" : ""} across {propertiesWithVacancy} propert{propertiesWithVacancy !== 1 ? "ies" : "y"} · {totalActiveDeals} letting transaction{totalActiveDeals !== 1 ? "s" : ""} working the voids
                       </p>
                     </div>
                   </CardContent>
@@ -2211,7 +2211,7 @@ export default function Dashboard() {
           // === Landsec Deal Analytics: Pipeline Funnel ===
           landsecAnalytics && landsecAnalytics.totalDeals > 0 ? {
             id: "portfolio-landsec-pipeline",
-            label: "Deal Pipeline",
+            label: "Transaction Pipeline",
             defaultW: 6, defaultH: 14, minW: 4, minH: 8,
             content: <LandsecPipelineFunnel data={landsecAnalytics} />,
           } : null,
@@ -2869,7 +2869,7 @@ export default function Dashboard() {
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5" data-testid="text-properties-deals-title">
                     <Building2 className="w-3.5 h-3.5 text-teal-500" />
-                    Properties & Deals
+                    Properties & Transactions
                   </h3>
                 </div>
                 <PropertiesSummary onlyActive />

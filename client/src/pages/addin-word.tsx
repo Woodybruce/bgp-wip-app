@@ -260,9 +260,9 @@ function WordTemplates() {
 
 const WORD_PROMPTS = [
   { label: "Review this", prompt: "Read this document and review it — structure, tone, weak arguments and anything missing — as comments where they apply." },
-  { label: "Check the facts", prompt: "Check every name, figure, date and deal term in this document against BGP's records and correct anything wrong." },
+  { label: "Check the facts", prompt: "Check every name, figure, date and transaction term in this document against BGP's records and correct anything wrong." },
   { label: "Tighten it", prompt: "Tighten the writing throughout in BGP house style, keeping the meaning." },
-  { label: "Fill the gaps", prompt: "Find placeholders, blanks and [TBC]s in this document and fill them from BGP's CRM, deals and comps." },
+  { label: "Fill the gaps", prompt: "Find placeholders, blanks and [TBC]s in this document and fill them from BGP's CRM, transactions and comps." },
 ];
 
 async function readWordDoc(): Promise<AgentDoc | null> {
@@ -291,7 +291,7 @@ function WordChat({ token, onUnauthorised }: { token: string; onUnauthorised: ()
       host="word" token={token} onUnauthorised={onUnauthorised}
       readDoc={readWordDoc} runTool={runTool}
       prompts={WORD_PROMPTS}
-      intro="ChatBGP reads and edits this document with BGP's CRM, deals, comps and your memory behind it."
+      intro="ChatBGP reads and edits this document with BGP's CRM, transactions, comps and your memory behind it."
       placeholder="Ask ChatBGP about this document…"
       heightOffset={112}
       toolbar={

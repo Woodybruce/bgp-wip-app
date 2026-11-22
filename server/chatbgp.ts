@@ -869,8 +869,8 @@ function getToolProgressLabel(toolName: string): string {
     get_aged_receivables: "Pulling invoice positions from Xero...",
     search_food_hygiene: "Checking the FSA hygiene register...",
     run_kyc_check: "Running KYC check...",
-    create_deal: "Creating deal...",
-    update_deal: "Updating deal...",
+    create_deal: "Creating transaction...",
+    update_deal: "Updating transaction...",
     create_contact: "Creating contact...",
     update_contact: "Updating contact...",
     create_company: "Creating company...",
@@ -915,7 +915,7 @@ function getToolProgressLabel(toolName: string): string {
     query_leasing_schedule: "Querying leasing schedule...",
     get_property_units: "Reading the property's units...",
     get_market_research: "Reading the team's research...",
-    get_deal_waiting_on: "Checking what the deal is waiting on...",
+    get_deal_waiting_on: "Checking what the transaction is waiting on...",
     import_leasing_schedule: "Importing leasing schedule...",
     query_turnover: "Querying turnover data...",
     tfl_nearby: "Finding nearby stations...",
@@ -1663,7 +1663,7 @@ These are starting cues only — if save_learning memories or past chats contrad
 You have search_knowledge_base and search_chat_history. The memory bank holds ~10k+ indexed SharePoint files, archived emails, and Dropbox docs. Use them. If a user asks about a document, email, deal memo, or "what did we say about X last month" — SEARCH FIRST before admitting you don't know. The memory is genuinely large; your default assumption should be that the answer is in there somewhere.
 
 ## General-purpose assistance
-You are ChatBGP, BGP's general-purpose AI colleague with property expertise. Help with writing, analysis, research, strategy, coding, maths and other work; do not limit an answer to CRM operations. Match the depth to the task and deliver a complete, useful result. Use available tools when evidence or actions are needed; distinguish supplied facts, calculated figures and assumptions. Latest user corrections take precedence over earlier drafts and saved context. Make reasonable routine assumptions and complete authorized work without unnecessary permission questions, while preserving the specific access, sending and paid-action rules above.
+You are ChatBGP, BGP's general-purpose AI colleague with property expertise. BGP calls deals "transactions" in the app (Woody, 22 November 2026): the side bar entry is Transactions, the button is New Transaction and each one has a transaction page. Say "transaction" in your replies; people may still say "deal", and it means the same thing. Tool names, fields and addresses keep "deal" (dealId, /deals). Help with writing, analysis, research, strategy, coding, maths and other work; do not limit an answer to CRM operations. Match the depth to the task and deliver a complete, useful result. Use available tools when evidence or actions are needed; distinguish supplied facts, calculated figures and assumptions. Latest user corrections take precedence over earlier drafts and saved context. Make reasonable routine assumptions and complete authorized work without unnecessary permission questions, while preserving the specific access, sending and paid-action rules above.
 
 ## App navigation reference
 The full desktop and phone app guide is available through search_app_guide. Search it before giving in-app directions; use the returned sectionId/offset to read more when needed. The guide is reference material, not an additional user request.
@@ -1722,7 +1722,7 @@ Drizzle: camelCase (JS) = snake_case (SQL). dealType = deal_type, assetClass = a
 const PERSONALISATION_CACHE = new Map<string, { ctx: string; expires: number }>();
 const DEPARTMENT_FOCUS: Record<string, string> = {
   "Investment": "Investment-led: deal pipeline, yields, vendor dynamics, off-market opportunities, capital sources. Lead with investment_tracker, comps with capital values, recent transactions. Suggest matched buyer mandates when properties come up.",
-  "Lease Advisory": "Lease Advisory-led: rent reviews, lease renewals, dilapidations, ITZA, net effective. Lead with PLA matters and lease_events. Comps default to leasing — Zone A rents, deal incentives, recent lettings.",
+  "Lease Advisory": "Lease Advisory-led: rent reviews, lease renewals, dilapidations, ITZA, net effective. Lead with PLA matters and lease_events. Comps default to leasing — Zone A rents, transaction incentives, recent lettings.",
   "London Estate": "London estate leasing-led: West End retail / F&B / leisure flow across the London estates, requirements vs available units, target tenants, brand activity, restaurant operators and new entrants. Lead with brand intel and active requirements.",
   "City": "City leasing-led: Square Mile and City-fringe retail, F&B and leisure, office-led schemes' ground floors, occupier amenity. Lead with active requirements, brand intel and recent City lettings.",
   "Shopping Centre": "Shopping centre leasing-led: centre and retail-park mandates, anchor strategy, tenant mix, footfall, multi-site brand footprints. Cross-reference brand_stores for footprint and target tenants for expansion intent.",
@@ -1769,7 +1769,7 @@ export async function getMemoryContext(userId: string): Promise<string> {
 
     let ctx = "\n\n## Your Memory — What You Know About This User\n";
     ctx += "These facts were learned from past conversations with this specific user. Use them proactively:\n";
-    ctx += "- Reference their deals, properties, and clients when relevant\n";
+    ctx += "- Reference their transactions, properties, and clients when relevant\n";
     ctx += "- Adapt your communication style to their preferences\n";
     ctx += "- Connect new questions to their ongoing work and interests\n\n";
 
@@ -2182,7 +2182,7 @@ export async function getCrmContext(): Promise<string> {
           FROM crm_comps WHERE verified = true ORDER BY created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
       ]);
       if (reqRows.rows.length > 0) {
-        requirementsCtx = "\n### Leasing requirements (Live and To confirm, no deal linked). Only [Live] is a live requirement: a named BGP person confirmed it within 90 days\n";
+        requirementsCtx = "\n### Leasing requirements (Live and To confirm, no transaction linked). Only [Live] is a live requirement: a named BGP person confirmed it within 90 days\n";
         for (const r of reqRows.rows) {
           const uses = Array.isArray(r.use) ? r.use.join("/") : "";
           const sizes = Array.isArray(r.size) ? r.size.join(", ") : "";
@@ -2191,7 +2191,7 @@ export async function getCrmContext(): Promise<string> {
         }
       }
       if (invReqRows.rows.length > 0) {
-        requirementsCtx += "\n### Open Investment Requirements (active, no deal linked)\n";
+        requirementsCtx += "\n### Open Investment Requirements (active, no transaction linked)\n";
         for (const r of invReqRows.rows) {
           const uses = Array.isArray(r.use) ? r.use.join("/") : "";
           const sizes = Array.isArray(r.size) ? r.size.join(", ") : "";
@@ -2224,7 +2224,7 @@ export async function getCrmContext(): Promise<string> {
     }
 
     let ctx = "\n\n## CRM Data Summary\n";
-    ctx += `Total: ${properties.length} properties, ${deals.length} deals, ${companies.length} companies, ${contacts.length} contacts\n`;
+    ctx += `Total: ${properties.length} properties, ${deals.length} transactions, ${companies.length} companies, ${contacts.length} contacts\n`;
 
     if (deals.length > 0) {
       const activeDeals = deals.filter((d: any) => {
@@ -2238,10 +2238,10 @@ export async function getCrmContext(): Promise<string> {
         byStage[stage] = (byStage[stage] || 0) + 1;
         if (d.fee) totalFees += Number(d.fee) || 0;
       }
-      ctx += `\n**Pipeline snapshot**: ${activeDeals.length} active deals, total fees £${totalFees.toLocaleString()}\n`;
+      ctx += `\n**Pipeline snapshot**: ${activeDeals.length} active transactions, total fees £${totalFees.toLocaleString()}\n`;
       ctx += `**By status**: ${Object.entries(byStage).map(([s, c]) => `${s}: ${c}`).join(", ")}\n`;
 
-      ctx += "\n### Active Deals (latest 30)\n";
+      ctx += "\n### Active Transactions (latest 30)\n";
       for (const d of activeDeals.slice(0, 30)) {
         ctx += `- ${d.name} | ${d.dealType || ""} | ${d.status || ""} | Fee: ${d.fee ? "£" + Number(d.fee).toLocaleString() : "TBC"} | Team: ${d.team || ""} | Agent: ${(d.internalAgent || []).join(", ") || "Unassigned"}\n`;
       }
@@ -2460,6 +2460,7 @@ export async function chatCrmWriteDenial(req: Request, fnName: string, fnArgs: a
 }
 
 export const CLIENT_SYSTEM_PROMPT = `You are ChatBGP, the AI assistant of Bruce Gillingham Pollard (BGP), currently speaking with a CLIENT of BGP — not a BGP staff member.
+BGP calls deals "transactions" (since 22 November 2026): say "transaction" in your replies; the client may still say "deal", and it means the same thing.
 
 Strict rules:
 - You may only discuss this client's own properties, units, deals and the tenants on them. You have NO access to other clients' data, BGP's wider pipeline, BGP fees, or internal firm information — never speculate about or acknowledge details of any other client or BGP internal matters.
@@ -2526,7 +2527,7 @@ export async function getClientCrmContext(scopeCompanyId: string): Promise<strin
         }
       }
       if (dealsQ.rows.length > 0) {
-        ctx += `\n### Active deals on your properties\n`;
+        ctx += `\n### Active transactions on your properties\n`;
         for (const d of dealsQ.rows) {
           ctx += `- ${d.name}${d.property_name ? " at " + d.property_name : ""} | ${d.deal_type || ""} | ${d.status || ""}${d.tenant_name ? " | Tenant: " + d.tenant_name : ""}\n`;
         }
@@ -2702,7 +2703,7 @@ export async function getAvailableTools(): Promise<{
             },
             name: {
               type: "string",
-              description: "A name for this model run, e.g. the property name or deal",
+              description: "A name for this model run, e.g. the property name or transaction",
             },
             inputValues: {
               type: "object",
@@ -2759,7 +2760,7 @@ export async function getAvailableTools(): Promise<{
       description: `Generate a polished BGP document from the brief registry — the new path that uses Claude design + the imagery layer. Use this when the user asks for a Brochure, Why Buy memo, Heads of Terms, Rent Review Representations, or Market Report on a specific property or matter. Available briefs:
 - "why-buy-memo" — PE-style 4-page investment memo (best with a Pathway run)
 - "brochure" — letting/sale marketing brochure with hero + internals + floor plan + location plan
-- "heads-of-terms" — concise 2-page HoT for a deal
+- "heads-of-terms" — concise 2-page HoT for a transaction
 - "rent-review-representations" — Tom + Pete's RR pack (REQUIRES matterId)
 - "market-report" — area / asset-class market report with comps chart
 
@@ -2971,7 +2972,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           },
           destinationFolderPath: {
             type: "string",
-            description: "The path to the destination folder where the item should be moved to (e.g. 'Investment/New Folder', 'London Retail/Active Deals'). Use '/' for root.",
+            description: "The path to the destination folder where the item should be moved to (e.g. 'Investment/New Folder', 'London Retail/Active Transactions'). Use '/' for root.",
           },
           newName: {
             type: "string",
@@ -3013,23 +3014,23 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_deal",
-      description: `Create a new deal in the BGP CRM. Use when the user asks to add a deal, log a transaction, or start tracking a new piece of work.\n\nIMPORTANT — client side picks the right counterparty:\n  • Tenant Rep / Lease Acquisition / Lease Disposal → tenantId is the client.\n  • New Letting → landlordId is the client.\n  • Sale → vendorId is the client. Purchase → purchaserId is the client.\nAlways set whichever of landlordId / tenantId / vendorId / purchaserId is the client BEFORE creating, otherwise the WIP report will show 'Unknown' for client. If the user names a client company that doesn't exist yet in the CRM, call create_company first, then pass the new id here.\n\nIMPORTANT — property linking + disambiguation: if the user gives an address, ALWAYS call search_crm({entityType:'properties'}) first. If it returns more than one property at that address, STOP and ask the user which one — show the candidates with their id, name, status, and any postcode/area. Do not pick the first one yourself. Once the user has picked, pass propertyId here.\n\nIMPORTANT — lettings need a unit: for ${LETTING_DEAL_TYPES.join(" / ")} pass unitName (or unitId) with propertyId. The server refuses a letting with no unit, and refuses a second live letting on a unit that already has one — it answers with the existing Ref #; open or update that deal instead.`,
+      description: `Create a new transaction in the BGP CRM. Use when the user asks to add a transaction, log a transaction, or start tracking a new piece of work.\n\nIMPORTANT — client side picks the right counterparty:\n  • Tenant Rep / Lease Acquisition / Lease Disposal → tenantId is the client.\n  • New Letting → landlordId is the client.\n  • Sale → vendorId is the client. Purchase → purchaserId is the client.\nAlways set whichever of landlordId / tenantId / vendorId / purchaserId is the client BEFORE creating, otherwise the WIP report will show 'Unknown' for client. If the user names a client company that doesn't exist yet in the CRM, call create_company first, then pass the new id here.\n\nIMPORTANT — property linking + disambiguation: if the user gives an address, ALWAYS call search_crm({entityType:'properties'}) first. If it returns more than one property at that address, STOP and ask the user which one — show the candidates with their id, name, status, and any postcode/area. Do not pick the first one yourself. Once the user has picked, pass propertyId here.\n\nIMPORTANT — lettings need a unit: for ${LETTING_DEAL_TYPES.join(" / ")} pass unitName (or unitId) with propertyId. The server refuses a letting with no unit, and refuses a second live letting on a unit that already has one — it answers with the existing Ref #; open or update that transaction instead.`,
       parameters: {
         type: "object",
         properties: {
-          name: { type: "string", description: "Deal name (usually the property address)" },
+          name: { type: "string", description: "Transaction name (usually the property address)" },
           propertyId: { type: "string", description: "CRM property UUID. Set after the user has confirmed which property when multiple share the address." },
           unitName: { type: "string", description: "The unit on the property, e.g. 'Unit 12', 'Ground Floor'. Required for every letting type; matched to the property's existing unit (tenancy schedule / Letting Tracker) by name, added when none exists." },
           unitId: { type: "string", description: "Instead of unitName: a property unit id, or a Letting Tracker unit id from search_crm({entityType:'units'})." },
-          landlordId: { type: "string", description: "CRM company UUID of the landlord. The client on New Letting deals." },
-          tenantId: { type: "string", description: "CRM company UUID of the tenant. The client on Tenant Rep / Lease Acquisition / Lease Disposal deals." },
-          vendorId: { type: "string", description: "CRM company UUID of the vendor. The client on Sale deals." },
-          purchaserId: { type: "string", description: "CRM company UUID of the purchaser. The client on Purchase deals." },
+          landlordId: { type: "string", description: "CRM company UUID of the landlord. The client on New Letting transactions." },
+          tenantId: { type: "string", description: "CRM company UUID of the tenant. The client on Tenant Rep / Lease Acquisition / Lease Disposal transactions." },
+          vendorId: { type: "string", description: "CRM company UUID of the vendor. The client on Sale transactions." },
+          purchaserId: { type: "string", description: "CRM company UUID of the purchaser. The client on Purchase transactions." },
           team: { type: "array", items: { type: "string" }, description: "Team(s): Shopping Centre, London Estate, High Street, City, Investment, Tenant Rep, Lease Advisory" },
           groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
           dealType: { type: "string", description: `Type: ${DEAL_TYPE_HINT}` },
-          status: { type: "string", description: "Status of the deal" },
-          pricing: { type: "number", description: "Deal value/price in GBP" },
+          status: { type: "string", description: "Status of the transaction" },
+          pricing: { type: "number", description: "Transaction value/price in GBP" },
           fee: { type: "number", description: "BGP fee in GBP" },
           rentPa: { type: "number", description: "Annual rent in GBP" },
           totalAreaSqft: { type: "number", description: "Total area in sq ft" },
@@ -3044,11 +3045,11 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "update_deal",
-      description: "Update an existing deal in the CRM — name, price, parties, dates, areas and other fields. Deal STATUS changes are not made from chat (approval and AML gates run on the deal page); if asked to change a status, direct the user to the deal page instead of calling this. A deal that falls through is deleted, not withdrawn (Woody, 2026-11-20): Withdrawn is offered only on the Investment Tracker; a letting on the Letting Tracker is ended by deleting its unit there (its deal at Negotiating, HOTs or Solicitors moves to Withdrawn, keeping its Ref #, fee and history), any other deal by the deal page's More → Delete.",
+      description: "Update an existing transaction in the CRM — name, price, parties, dates, areas and other fields. Transaction STATUS changes are not made from chat (approval and AML gates run on the transaction page); if asked to change a status, direct the user to the transaction page instead of calling this. A transaction that falls through is deleted, not withdrawn (Woody, 2026-11-20): Withdrawn is offered only on the Investment Tracker; a letting on the Letting Tracker is ended by deleting its unit there (its transaction at Negotiating, HOTs or Solicitors moves to Withdrawn, keeping its Ref #, fee and history), any other transaction by the transaction page's More → Delete.",
       parameters: {
         type: "object",
         properties: {
-          id: { type: "string", description: "The deal ID (UUID)" },
+          id: { type: "string", description: "The transaction ID (UUID)" },
           name: { type: "string" },
           team: { type: "array", items: { type: "string" } },
           groupName: { type: "string" },
@@ -3167,7 +3168,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "search_crm",
-      description: "Search across the BGP CRM for deals, contacts, companies, properties, investment tracker items, and available units by keyword. Searches broadly — splits multi-word queries to find partial matches (e.g. '16 Tottenham Court Road' will find '6-17 Tottenham Court Road'). Use this to find records before updating or to answer user questions about specific items.",
+      description: "Search across the BGP CRM for transactions, contacts, companies, properties, investment tracker items, and available units by keyword. Searches broadly — splits multi-word queries to find partial matches (e.g. '16 Tottenham Court Road' will find '6-17 Tottenham Court Road'). Use this to find records before updating or to answer user questions about specific items.",
       parameters: {
         type: "object",
         properties: {
@@ -3183,7 +3184,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "get_brand_profile",
-      description: "Get the full BGP brand bible for a retail brand — covenant (Companies House health, traffic light), rollout velocity (openings/closures last 12m), store footprint, rent affordability vs peer comps, turnover history, active requirements, pitched-to history (every leasing schedule this brand has been a target on), completed + active deals, agent representations, contacts with last touchpoint, and the AI-classified signals timeline. Use this when the user asks 'who should pitch for X', 'is brand Y expanding', 'what's their covenant', 'when did we last touch them', or anything about a specific retail brand.",
+      description: "Get the full BGP brand bible for a retail brand — covenant (Companies House health, traffic light), rollout velocity (openings/closures last 12m), store footprint, rent affordability vs peer comps, turnover history, active requirements, pitched-to history (every leasing schedule this brand has been a target on), completed + active transactions, agent representations, contacts with last touchpoint, and the AI-classified signals timeline. Use this when the user asks 'who should pitch for X', 'is brand Y expanding', 'what's their covenant', 'when did we last touch them', or anything about a specific retail brand.",
       parameters: {
         type: "object",
         properties: {
@@ -3204,7 +3205,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         properties: {
           id: { type: "string", description: "The investment tracker item ID (UUID)" },
           assetName: { type: "string" },
-          status: { type: "string", description: "Deal status code: REP (reporting), AVA (marketing), NEG, HOT (heads of terms), SOL (solicitors), EXC (exchanged), COM (completed), WIT (withdrawn). HOT / SOL starts AML; EXC / COM make the investment comp and COM hands ownership to the buyer." },
+          status: { type: "string", description: "Transaction status code: REP (reporting), AVA (marketing), NEG, HOT (heads of terms), SOL (solicitors), EXC (exchanged), COM (completed), WIT (withdrawn). HOT / SOL starts AML; EXC / COM make the investment comp and COM hands ownership to the buyer." },
           client: { type: "string" },
           clientContact: { type: "string" },
           vendor: { type: "string" },
@@ -3327,7 +3328,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "start_property_pathway",
-      description: "Start a new end-to-end Property Pathway investigation on an address. This orchestrates all BGP app modules — email + SharePoint search, CRM lookup, Land Registry, brand enrichment, property intelligence, image studio, model studio, and Why Buy document generation. Returns a runId to use with advance_property_pathway and get_property_pathway. Always use this instead of ad-hoc tool chaining when the user asks for a comprehensive property investigation, deal briefing, or Why Buy document.\n\n**LAND REGISTRY GATE — DO NOT SKIP.** The whole pathway is built on a specific Land Registry title (freehold or leasehold). Picking the wrong title means every downstream stage — tenant schedule, owner, valuation, Why Buy — is wrong. The first call to this tool with just an address triggers a LandReg lookup and returns candidate titles WITHOUT creating the run. You MUST show those candidates to the user, ask them to pick the right one, and only then call this tool again with `confirmedTitleNumber` set. If LandReg returns nothing (no postcode match, off-register estate, big multi-title campus), you may pass `skipLandRegConfirmation: true` BUT you must first tell the user you couldn't find a clean title match and get them to explicitly agree to proceed without one.",
+      description: "Start a new end-to-end Property Pathway investigation on an address. This orchestrates all BGP app modules — email + SharePoint search, CRM lookup, Land Registry, brand enrichment, property intelligence, image studio, model studio, and Why Buy document generation. Returns a runId to use with advance_property_pathway and get_property_pathway. Always use this instead of ad-hoc tool chaining when the user asks for a comprehensive property investigation, transaction briefing, or Why Buy document.\n\n**LAND REGISTRY GATE — DO NOT SKIP.** The whole pathway is built on a specific Land Registry title (freehold or leasehold). Picking the wrong title means every downstream stage — tenant schedule, owner, valuation, Why Buy — is wrong. The first call to this tool with just an address triggers a LandReg lookup and returns candidate titles WITHOUT creating the run. You MUST show those candidates to the user, ask them to pick the right one, and only then call this tool again with `confirmedTitleNumber` set. If LandReg returns nothing (no postcode match, off-register estate, big multi-title campus), you may pass `skipLandRegConfirmation: true` BUT you must first tell the user you couldn't find a clean title match and get them to explicitly agree to proceed without one.",
       parameters: {
         type: "object",
         properties: {
@@ -3766,7 +3767,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         properties: {
           assetName: { type: "string", description: "Property/asset name" },
           address: { type: "string", description: "Full address" },
-          status: { type: "string", description: "Deal status code: REP (reporting), AVA (marketing), NEG, HOT (heads of terms), SOL (solicitors), EXC (exchanged), COM (completed), WIT (withdrawn). HOT / SOL starts AML; EXC / COM make the investment comp and COM hands ownership to the buyer." },
+          status: { type: "string", description: "Transaction status code: REP (reporting), AVA (marketing), NEG, HOT (heads of terms), SOL (solicitors), EXC (exchanged), COM (completed), WIT (withdrawn). HOT / SOL starts AML; EXC / COM make the investment comp and COM hands ownership to the buyer." },
           boardType: { type: "string", enum: ["Purchases", "Sales"], description: "Which board" },
           client: { type: "string", description: "Client name" },
           clientContact: { type: "string" },
@@ -3815,7 +3816,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_available_unit",
-      description: "Add a unit to the Letting Tracker — the complete add, the same as the Add Unit form: duplicate guard, property unit, leasing schedule row, backing deal, BGP agents, lease terms, the brochure filed under the unit with one of its pages as the listing photo, and the website switched on when the five website fields (address, rent or POA, size, photo, lease terms) are all in. Use whenever the user wants a unit on the tracker / marketed / on the website. Read the brochure first (read_document), search_crm for the property (create_property if it doesn't exist — the unit's own building, never a whole estate), then call this ONCE with everything the brochure gives. Report the result's websiteLive / websiteMissing and agentsNotMatched honestly.",
+      description: "Add a unit to the Letting Tracker — the complete add, the same as the Add Unit form: duplicate guard, property unit, leasing schedule row, backing transaction, BGP agents, lease terms, the brochure filed under the unit with one of its pages as the listing photo, and the website switched on when the five website fields (address, rent or POA, size, photo, lease terms) are all in. Use whenever the user wants a unit on the tracker / marketed / on the website. Read the brochure first (read_document), search_crm for the property (create_property if it doesn't exist — the unit's own building, never a whole estate), then call this ONCE with everything the brochure gives. Report the result's websiteLive / websiteMissing and agentsNotMatched honestly.",
       parameters: {
         type: "object",
         properties: {
@@ -3836,7 +3837,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           epcRating: { type: "string" },
           notes: { type: "string", description: "Anything else from the brochure worth keeping (joint agent, floor split, planning)." },
           fee: { type: "number", description: "Fee percentage" },
-          agentNames: { type: "array", items: { type: "string" }, description: "The BGP people named on the brochure, e.g. ['Tracey Pollard', 'Lizzie Knights']. They become the unit's agents (and the deal's). Names that aren't BGP logins are reported back, not guessed." },
+          agentNames: { type: "array", items: { type: "string" }, description: "The BGP people named on the brochure, e.g. ['Tracey Pollard', 'Lizzie Knights']. They become the unit's agents (and the transaction's). Names that aren't BGP logins are reported back, not guessed." },
           brochureChatMediaFilename: { type: "string", description: "The brochure's chat-media filename (from the chat context) or its original file name. Filed under the unit, and one page becomes the listing photo." },
           photoPage: { type: "number", description: "Which brochure page to use as the photo (default 1 — usually the hero shot). Pick the page with the best photograph." },
           showOnWebsite: { type: "boolean", description: "Default true: switch the website on as soon as the listing is complete. false keeps it off the website." },
@@ -3863,7 +3864,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "find_duplicate_properties",
-      description: "Find duplicate property records (same normalised name) with counts of linked deals, tenancy units and files on each, so the right keeper can be chosen before merging. Use before merge_properties.",
+      description: "Find duplicate property records (same normalised name) with counts of linked transactions, tenancy units and files on each, so the right keeper can be chosen before merging. Use before merge_properties.",
       parameters: {
         type: "object",
         properties: {
@@ -3877,7 +3878,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "merge_properties",
-      description: "Merge a duplicate property into the canonical one. Re-points every linked record (deals, units, schedules, files, briefs, threads, etc.) to the keeper, fills any blank fields on the keeper from the duplicate, then deletes the duplicate. IRREVERSIBLE — always run find_duplicate_properties first, tell the user which record will be kept and which removed (with their linked-record counts), and get their explicit confirmation before calling this.",
+      description: "Merge a duplicate property into the canonical one. Re-points every linked record (transactions, units, schedules, files, briefs, threads, etc.) to the keeper, fills any blank fields on the keeper from the duplicate, then deletes the duplicate. IRREVERSIBLE — always run find_duplicate_properties first, tell the user which record will be kept and which removed (with their linked-record counts), and get their explicit confirmation before calling this.",
       parameters: {
         type: "object",
         properties: {
@@ -3981,7 +3982,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           useClass: { type: "string" },
           condition: { type: "string" },
           availableDate: { type: "string" },
-          marketingStatus: { type: "string", description: `Tracker status code: ${TRACKER_STATUS_HINT}. A legacy label such as 'Under Offer' or 'Let' is normalised to its code; an unknown one is refused. Withdrawn is not offered (Woody, 2026-11-20): when a letting falls through, tell the user to delete the unit on the Letting Tracker (More actions → Delete unit), which moves a deal at Negotiating, HOTs or Solicitors to Withdrawn and keeps its Ref #, fee and history.` },
+          marketingStatus: { type: "string", description: `Tracker status code: ${TRACKER_STATUS_HINT}. A legacy label such as 'Under Offer' or 'Let' is normalised to its code; an unknown one is refused. Withdrawn is not offered (Woody, 2026-11-20): when a letting falls through, tell the user to delete the unit on the Letting Tracker (More actions → Delete unit), which moves a transaction at Negotiating, HOTs or Solicitors to Withdrawn and keeps its Ref #, fee and history.` },
           epcRating: { type: "string" },
           notes: { type: "string" },
           fee: { type: "number" },
@@ -4378,7 +4379,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           comments: { type: "string" },
           rentAnalysis: { type: "string", description: "Detailed rent analysis notes" },
           propertyId: { type: "string", description: "Link to CRM property ID if known" },
-          dealId: { type: "string", description: "Link to CRM deal ID if known" },
+          dealId: { type: "string", description: "Link to CRM transaction ID if known" },
         },
         required: ["name"],
       },
@@ -4427,7 +4428,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
                 propertyId: { type: "string", description: "CRM property id, when known" },
                 trackerId: { type: "string", description: "Investment Tracker row id when this evidence is already (wrongly) on the tracker — it is moved through Sold - Comp and leaves the live board" },
                 assetClass: { type: "string", enum: ["Retail - High Street", "Retail - Shopping Centre", "London Shopping Centre", "Retail - London", "Retail Parks", "Portfolios", "Office London", "Office National", "Industrial", "Mixed Use", "F&B - High Street", "Leisure Schemes", "Residential", "Educational/Social"], description: "The Investment Tracker class it files under" },
-                evidenceStatus: { type: "string", enum: ["sold", "exchanged", "under offer", "quoting"], description: "As the source states it. Only completed sales are comps: a deal still under offer or quoting is refused here and goes on the Investment Tracker instead (create_investment_tracker; status U/O - Not BGP for someone else's deal under offer, Available when quoting)." },
+                evidenceStatus: { type: "string", enum: ["sold", "exchanged", "under offer", "quoting"], description: "As the source states it. Only completed sales are comps: a transaction still under offer or quoting is refused here and goes on the Investment Tracker instead (create_investment_tracker; status U/O - Not BGP for someone else's transaction under offer, Available when quoting)." },
                 price: { type: "number", description: "£ — achieved for sold/exchanged, asking for under offer/quoting" },
                 yieldPct: { type: "number", description: "NIY as a PERCENT, e.g. 4.01 for 4.01%" },
                 pricePsf: { type: "number", description: "Capital value £ per sq ft" },
@@ -4485,13 +4486,13 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "link_entities",
-      description: "Create a relationship between CRM records — link a contact or company to a deal, property, or requirement. Use when the user says a contact is involved in a deal, a company owns a property, etc.",
+      description: "Create a relationship between CRM records — link a contact or company to a transaction, property, or requirement. Use when the user says a contact is involved in a transaction, a company owns a property, etc.",
       parameters: {
         type: "object",
         properties: {
           linkType: { type: "string", enum: ["contact-deal", "contact-property", "contact-requirement", "company-property", "company-deal"], description: "Type of relationship to create" },
           sourceId: { type: "string", description: "ID of the contact or company" },
-          targetId: { type: "string", description: "ID of the deal, property, or requirement to link to" },
+          targetId: { type: "string", description: "ID of the transaction, property, or requirement to link to" },
         },
         required: ["linkType", "sourceId", "targetId"],
       },
@@ -4954,7 +4955,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "sql_write",
-      description: "Run an INSERT, UPDATE, or DELETE on the BGP database. Use whenever the user asks to add, change, archive, or remove rows in any operational table — images, properties, deals, contacts, companies, comps, lease events, PLA matters, available units, tasks, diary, etc. Off-limits: users, sessions, api_keys, msal_token_cache, file_storage, deleted_sharepoint_images. Every write is audited. SAFETY RULE: before any DELETE that could affect more than a handful of rows, run sql_query first to count and show the user what's about to be deleted, get explicit confirmation in chat, then run the sql_write. UPDATE and DELETE both require a `where` clause — refusing to mutate the entire table is the only built-in guardrail.",
+      description: "Run an INSERT, UPDATE, or DELETE on the BGP database. Use whenever the user asks to add, change, archive, or remove rows in any operational table — images, properties, transactions, contacts, companies, comps, lease events, PLA matters, available units, tasks, diary, etc. Off-limits: users, sessions, api_keys, msal_token_cache, file_storage, deleted_sharepoint_images. Every write is audited. SAFETY RULE: before any DELETE that could affect more than a handful of rows, run sql_query first to count and show the user what's about to be deleted, get explicit confirmation in chat, then run the sql_write. UPDATE and DELETE both require a `where` clause — refusing to mutate the entire table is the only built-in guardrail.",
       parameters: {
         type: "object",
         properties: {
@@ -5349,14 +5350,14 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "query_wip",
-      description: "Query the WIP (Work In Progress) pipeline data. Use when the user asks about pipeline value, deal counts, team performance, overdue deals, or wants a summary of current deals. Can filter by team, status, or deal type.",
+      description: "Query the WIP (Work In Progress) pipeline data. Use when the user asks about pipeline value, transaction counts, team performance, overdue transactions, or wants a summary of current transactions. Can filter by team, status, or transaction type.",
       parameters: {
         type: "object",
         properties: {
           team: { type: "string", description: "Filter by team: Shopping Centre, London Estate, High Street, City, Investment, Tenant Rep, Lease Advisory" },
           status: { type: "string", description: "Filter by status/stage e.g. Under Offer, Exchanged, Completed, New Instructions" },
-          dealType: { type: "string", description: `Filter by deal type: ${DEAL_TYPE_HINT}` },
-          summaryOnly: { type: "boolean", description: "If true, return just totals and counts. If false, return deal details." },
+          dealType: { type: "string", description: `Filter by transaction type: ${DEAL_TYPE_HINT}` },
+          summaryOnly: { type: "boolean", description: "If true, return just totals and counts. If false, return transaction details." },
         },
         required: [],
       },
@@ -5367,12 +5368,12 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "query_xero",
-      description: "Look up Xero invoices linked to CRM deals. Use when the user asks about invoicing status, whether a fee has been invoiced, or payment status.",
+      description: "Look up Xero invoices linked to CRM transactions. Use when the user asks about invoicing status, whether a fee has been invoiced, or payment status.",
       parameters: {
         type: "object",
         properties: {
-          dealId: { type: "string", description: "CRM deal ID to check invoices for" },
-          query: { type: "string", description: "Search term to find invoices by reference, number, or deal name" },
+          dealId: { type: "string", description: "CRM transaction ID to check invoices for" },
+          query: { type: "string", description: "Search term to find invoices by reference, number, or transaction name" },
         },
         required: [],
       },
@@ -5403,7 +5404,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         type: "object",
         properties: {
           category: { type: "string", enum: ["client_intel", "market_knowledge", "bgp_process", "property_insight", "team_preference", "general"], description: "Category of the learning" },
-          learning: { type: "string", description: "The specific knowledge or insight to remember. Be concise but include enough context to be useful in future conversations. E.g. 'The Cadogan Estate (SW1) prefer to deal directly with Charlotte Roberts for any leasing enquiries.'" },
+          learning: { type: "string", description: "The specific knowledge or insight to remember. Be concise but include enough context to be useful in future conversations. E.g. 'The Cadogan Estate (SW1) prefer to transaction directly with Charlotte Roberts for any leasing enquiries.'" },
           subjectPropertyId: { type: "string", description: "Optional. The crm_properties.id this learning is about. Use when saving a fact about a specific property (e.g. ownership, tenant, lease terms) so subsequent HMLR-verified data can supersede stale entries." },
           subjectCompanyNumber: { type: "string", description: "Optional. Companies House number (or OE / OC number) the learning is about. Use for company-specific facts (UBOs, group structure)." },
         },
@@ -5423,7 +5424,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           category: { type: "string", enum: ["bug", "suggestion", "complaint", "praise", "error"], description: "Type of feedback" },
           summary: { type: "string", description: "Short one-line summary of the feedback" },
           detail: { type: "string", description: "Detailed description including what the user said, what page/feature it relates to, and any context about what went wrong or what they'd like improved" },
-          pageContext: { type: "string", description: "Which page or feature this relates to, e.g. 'Deals', 'Dashboard', 'ChatBGP', 'Properties', 'WIP Report'" },
+          pageContext: { type: "string", description: "Which page or feature this relates to, e.g. 'Transactions', 'Dashboard', 'ChatBGP', 'Properties', 'WIP Report'" },
         },
         required: ["category", "summary"],
       },
@@ -5434,7 +5435,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "transcribe_audio",
-      description: "Transcribe audio or video files to text using AI speech recognition (Whisper). Use when a user uploads a voice note, meeting recording, Teams recording, or any audio/video file and wants it transcribed. Accepts three source types: (1) chat-media uploads (e.g. '/api/chat-media/filename.mp4'), (2) SharePoint or OneDrive share links (any 'https://...sharepoint.com/...' or 'https://...-my.sharepoint.com/...' URL — auto-resolved via Microsoft Graph and streamed server-side, no need to download first), or (3) any public https URL. Supports MP3, MP4, M4A, WAV, WEBM, OGG, MOV, AVI, MKV and other common formats. After transcription, you can use the transcript to update CRM deals, create diary notes, log viewings, update trackers, or take any follow-up actions the user requests.",
+      description: "Transcribe audio or video files to text using AI speech recognition (Whisper). Use when a user uploads a voice note, meeting recording, Teams recording, or any audio/video file and wants it transcribed. Accepts three source types: (1) chat-media uploads (e.g. '/api/chat-media/filename.mp4'), (2) SharePoint or OneDrive share links (any 'https://...sharepoint.com/...' or 'https://...-my.sharepoint.com/...' URL — auto-resolved via Microsoft Graph and streamed server-side, no need to download first), or (3) any public https URL. Supports MP3, MP4, M4A, WAV, WEBM, OGG, MOV, AVI, MKV and other common formats. After transcription, you can use the transcript to update CRM transactions, create diary notes, log viewings, update trackers, or take any follow-up actions the user requests.",
       parameters: {
         type: "object",
         properties: {
@@ -5458,7 +5459,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "query_leasing_schedule",
-      description: "Search and query the leasing schedule board — unit-level data across all managed properties (Bluewater, Cardiff, White Rose, Trinity Leeds, Westgate Oxford, Lewisham, Finchley Road, Gunwharf Quays, Clark's Village, Braintree Village). Use when the user asks about tenants, vacant units, upcoming lease expiries, rent levels, zones, occupancy costs, or any leasing schedule data. Can filter by property, status (Occupied/Vacant), zone, tenant name, or date range. For who is in one unit, its lease dates or what its letting is waiting on, use get_property_units and get_deal_waiting_on first: they read the current tenancy schedule and deal clock, which this older board can lag.",
+      description: "Search and query the leasing schedule board — unit-level data across all managed properties (Bluewater, Cardiff, White Rose, Trinity Leeds, Westgate Oxford, Lewisham, Finchley Road, Gunwharf Quays, Clark's Village, Braintree Village). Use when the user asks about tenants, vacant units, upcoming lease expiries, rent levels, zones, occupancy costs, or any leasing schedule data. Can filter by property, status (Occupied/Vacant), zone, tenant name, or date range. For who is in one unit, its lease dates or what its letting is waiting on, use get_property_units and get_deal_waiting_on first: they read the current tenancy schedule and transaction clock, which this older board can lag.",
       parameters: {
         type: "object",
         properties: {
@@ -5511,7 +5512,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "import_wip_excel",
-      description: "Import a Sage WIP (Work-in-Progress) Excel export end-to-end. Auto-detects either Sage layout: legacy 'WIP by deal' (Ref, Amt WIP, Amt invoice, …) or current Sage TransactionsExpo (HEADER_NUMBER, NetAmount, NAME, ADDRESS_*, STOCK_CODE, DealStatus, …). Wipes wip_entries and reloads (or appends with mode='append'), then on the TransactionsExpo layout ALSO populates: (1) crm_deals via syncWipToCrmDeals, (2) cached billing name + address from NAME + ADDRESS_* onto each deal as `xero_contact_name` / `xero_billing_address` (Xero is the source of truth for the actual contact link, picked by the user via the deal form), (3) deal_fee_allocations from per-Agent NetAmount slices (CON049 STOCK_CODE tagged as BGP House), (4) tenant_rep_searches kanban entries for any NEG-status deals. Idempotent — safe to re-run on each Sage export. Pass either `chatMediaFilename` (file dragged into chat) OR `sharepointUrl` (a SharePoint share link the user pastes). By default REPLACES wip_entries — use mode='append' only for incremental updates between full Sage exports.",
+      description: "Import a Sage WIP (Work-in-Progress) Excel export end-to-end. Auto-detects either Sage layout: legacy 'WIP by transaction' (Ref, Amt WIP, Amt invoice, …) or current Sage TransactionsExpo (HEADER_NUMBER, NetAmount, NAME, ADDRESS_*, STOCK_CODE, DealStatus, …). Wipes wip_entries and reloads (or appends with mode='append'), then on the TransactionsExpo layout ALSO populates: (1) crm_deals via syncWipToCrmDeals, (2) cached billing name + address from NAME + ADDRESS_* onto each transaction as `xero_contact_name` / `xero_billing_address` (Xero is the source of truth for the actual contact link, picked by the user via the transaction form), (3) deal_fee_allocations from per-Agent NetAmount slices (CON049 STOCK_CODE tagged as BGP House), (4) tenant_rep_searches kanban entries for any NEG-status transactions. Idempotent — safe to re-run on each Sage export. Pass either `chatMediaFilename` (file dragged into chat) OR `sharepointUrl` (a SharePoint share link the user pastes). By default REPLACES wip_entries — use mode='append' only for incremental updates between full Sage exports.",
       parameters: {
         type: "object",
         properties: {
@@ -5529,7 +5530,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "wipe_crm_deals",
-      description: "ADMIN ONLY. Wipe ALL crm_deals from the database so the user can start fresh with a clean WIP import. Clears deal_id/property_id references in wip_entries first, then deletes all deals. Use when the user says 'nuke all deals', 'delete all deals', 'clean reload', or equivalent. After wiping, tell the user to re-import their WIP Excel to repopulate.",
+      description: "ADMIN ONLY. Wipe ALL crm_deals from the database so the user can start fresh with a clean WIP import. Clears deal_id/property_id references in wip_entries first, then deletes all transactions. Use when the user says 'nuke all transactions', 'delete all transactions', 'clean reload', or equivalent. After wiping, tell the user to re-import their WIP Excel to repopulate.",
       parameters: {
         type: "object",
         properties: {
@@ -5596,7 +5597,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "bulk_update_crm",
-      description: "Update multiple CRM records at once. Use when you need to apply the same change to several deals, contacts, companies, or properties — e.g. updating status on a batch of deals, adding notes to multiple contacts, or changing an agent assignment across records. Much faster than updating one at a time.",
+      description: "Update multiple CRM records at once. Use when you need to apply the same change to several transactions, contacts, companies, or properties — e.g. updating status on a batch of transactions, adding notes to multiple contacts, or changing an agent assignment across records. Much faster than updating one at a time.",
       parameters: {
         type: "object",
         properties: {
@@ -5621,7 +5622,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "summarise_gossip",
-      description: "Summarise BGP's 'Gossip & market intel' channel in Messages — the all-staff group where people post industry people moves and market intel. Returns a digest grouped into People moves, Deals & market, Brands & occupiers, Landlords & investors, and To verify, with who posted each item. Use when someone asks what's been said in gossip / market intel, who's moving, or for a weekly/monthly intel round-up. Staff only.",
+      description: "Summarise BGP's 'Gossip & market intel' channel in Messages — the all-staff group where people post industry people moves and market intel. Returns a digest grouped into People moves, Transactions & market, Brands & occupiers, Landlords & investors, and To verify, with who posted each item. Use when someone asks what's been said in gossip / market intel, who's moving, or for a weekly/monthly intel round-up. Staff only.",
       parameters: {
         type: "object",
         properties: {
@@ -5639,12 +5640,12 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "prepare_kyc4u_request",
-      description: "Prepare KYC4U service request(s) for a deal's parties — exactly what the deal's AML panel 'Request KYC4U check' → 'Ready for KYC4U' does. Fields (party type client/counterparty, legal entity, property address, instructing contact, joint agent, fee earner emails, expected completion, note with the deal ref) are prefilled from the deal. Use when the user asks to raise / start / request a KYC4U (AML/KYC) check on a deal's landlord, tenant, vendor or purchaser. It does NOT submit to KYC4U: afterwards tell the user to open KYC4U's Raise New Service Request page and click the Send to ChatBGP bookmark, which fills the form for them to check and Submit. Parties that already have a queued or filled request are skipped.",
+      description: "Prepare KYC4U service request(s) for a transaction's parties — exactly what the transaction's AML panel 'Request KYC4U check' → 'Ready for KYC4U' does. Fields (party type client/counterparty, legal entity, property address, instructing contact, joint agent, fee earner emails, expected completion, note with the transaction ref) are prefilled from the transaction. Use when the user asks to raise / start / request a KYC4U (AML/KYC) check on a transaction's landlord, tenant, vendor or purchaser. It does NOT submit to KYC4U: afterwards tell the user to open KYC4U's Raise New Service Request page and click the Send to ChatBGP bookmark, which fills the form for them to check and Submit. Parties that already have a queued or filled request are skipped.",
       parameters: {
         type: "object",
         properties: {
-          deal_id: { type: "string", description: "The deal's ID (UUID) or its deal number / ref" },
-          parties: { type: "array", items: { type: "string", enum: ["landlord", "tenant", "vendor", "purchaser"] }, description: "Which parties to raise. Omit for every party set on the deal." },
+          deal_id: { type: "string", description: "The transaction's ID (UUID) or its transaction number / ref" },
+          parties: { type: "array", items: { type: "string", enum: ["landlord", "tenant", "vendor", "purchaser"] }, description: "Which parties to raise. Omit for every party set on the transaction." },
           request_type: { type: "string", description: "KYC4U request type, if the user said (e.g. Standard, Enhanced)" },
           met_face_to_face: { type: "string", description: "Yes / No, if known" },
           how_long_known: { type: "string", description: "How long BGP has known the party, if known" },
@@ -5804,7 +5805,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           dueDate: { type: "string", description: "Due date in ISO format (for create)" },
           category: { type: "string", enum: ["follow-up", "meeting", "deal", "admin", "client", "research", "viewing", "personal"], description: "Task category (for create)" },
           taskId: { type: "string", description: "Task ID (for complete/delete)" },
-          linkedDealId: { type: "string", description: "Link task to a deal by deal ID (for create)" },
+          linkedDealId: { type: "string", description: "Link task to a transaction by transaction ID (for create)" },
           linkedPropertyId: { type: "string", description: "Link task to a property by property ID (for create)" },
         },
         required: ["action"],
@@ -5858,7 +5859,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           templateKey: { type: "string", enum: ["why_buy", "am_im", "leasing_pitch", "rent_review", "brand_pack"], description: "Which template to base the deck on. Picks the default card set and the PDF design scope." },
           propertyId: { type: "string", description: "Optional crm_properties.id to anchor the deck to a property — surfaces it on the property page and lets the assembler pick the right map." },
           companyId: { type: "string", description: "Optional crm_companies.id (landlord or brand) to anchor the deck to a company — useful for brand packs and rent reviews." },
-          dealId: { type: "string", description: "Optional crm_deals.id to anchor the deck to a specific live deal." },
+          dealId: { type: "string", description: "Optional crm_deals.id to anchor the deck to a specific live transaction." },
           notes: { type: "string", description: "Free-text brief / one-liner. Visible on the deck list view." },
           cards: {
             type: "array",
@@ -5919,7 +5920,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "list_decks",
-      description: "List existing decks, optionally filtered by template, status, property, company, or deal. Use when the user asks 'what decks do I have', 'show me the Why Buy decks', or wants to find a deck to update.",
+      description: "List existing decks, optionally filtered by template, status, property, company, or transaction. Use when the user asks 'what decks do I have', 'show me the Why Buy decks', or wants to find a deck to update.",
       parameters: {
         type: "object",
         properties: {
@@ -5927,7 +5928,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           status: { type: "string", enum: ["draft", "ready", "archived"] },
           propertyId: { type: "string", description: "Filter by anchor property." },
           companyId: { type: "string", description: "Filter by anchor company." },
-          dealId: { type: "string", description: "Filter by anchor deal." },
+          dealId: { type: "string", description: "Filter by anchor transaction." },
         },
       },
     },
@@ -7406,14 +7407,14 @@ export async function executeCrmToolRaw(
     const ref = String(fnArgs.deal_id || "").replace(/^#/, "").trim();
     const deal = (await pool.query(
       `SELECT id, name, deal_ref, landlord_id, tenant_id, vendor_id, purchaser_id FROM crm_deals WHERE id = $1 OR deal_ref::text = $1 LIMIT 1`, [ref])).rows[0];
-    if (!deal) return { data: { success: false, error: `No deal found for "${ref}"` } };
+    if (!deal) return { data: { success: false, error: `No transaction found for "${ref}"` } };
     const wanted: string[] = Array.isArray(fnArgs.parties) && fnArgs.parties.length ? fnArgs.parties : ["landlord", "tenant", "vendor", "purchaser"];
     const userId = (req as any)?.session?.userId || (req as any)?.tokenUserId || null;
     const { kyc4uPrefill, createKyc4uDraft } = await import("./kyc4u");
     const prepared: any[] = [], skipped: any[] = [];
     for (const role of wanted) {
       const companyId = deal[`${role}_id`];
-      if (!companyId) { if (fnArgs.parties?.length) skipped.push({ role, reason: `no ${role} on the deal` }); continue; }
+      if (!companyId) { if (fnArgs.parties?.length) skipped.push({ role, reason: `no ${role} on the transaction` }); continue; }
       const open = (await pool.query(`SELECT status FROM kyc4u_drafts WHERE deal_id = $1 AND company_id = $2 AND status IN ('queued','filled') LIMIT 1`, [deal.id, companyId])).rows[0];
       const pre = await kyc4uPrefill(deal.id, companyId, role, userId);
       if (open) { skipped.push({ role, party: pre.fields.partyName, reason: `already ${open.status === "queued" ? "waiting to be filled on KYC4U's form" : "filled on KYC4U's form"}` }); continue; }
@@ -7428,7 +7429,7 @@ export async function executeCrmToolRaw(
     return {
       data: {
         success: prepared.length > 0, deal: { id: deal.id, ref: deal.deal_ref, name: deal.name }, prepared, skipped,
-        nextStep: prepared.length ? "Prepared, NOT submitted. Open KYC4U's Raise New Service Request page (https://kyc4ultd.sharepoint.com/sites/customers/CST1092/SitePages/Raise-New-Service-Request.aspx) and click the Send to ChatBGP bookmark once per request — it fills the form; check it (add any ID documents), then press Submit. The deal then shows 'Filled on KYC4U's form'." : undefined,
+        nextStep: prepared.length ? "Prepared, NOT submitted. Open KYC4U's Raise New Service Request page (https://kyc4ultd.sharepoint.com/sites/customers/CST1092/SitePages/Raise-New-Service-Request.aspx) and click the Send to ChatBGP bookmark once per request — it fills the form; check it (add any ID documents), then press Submit. The transaction then shows 'Filled on KYC4U's form'." : undefined,
       },
       action: prepared.length ? { type: "crm_updated", entityType: "deal", id: deal.id } : undefined,
     };
@@ -7444,14 +7445,14 @@ export async function executeCrmToolRaw(
       // Deal status moves carry senior-approval, AML and audit obligations the
       // deal page enforces; chat must not write them raw. (Everything else on
       // the deal stays editable from chat.)
-      return { data: { success: false, error: "Deal status changes aren't made from chat — use the deal page, where approval and AML checks run. Other fields can still be updated here." } };
+      return { data: { success: false, error: "Transaction status changes aren't made from chat — use the transaction page, where approval and AML checks run. Other fields can still be updated here." } };
     }
     if (!id) return { data: { success: false, error: "id is required" } };
     // PUT /api/crm/deals/:id (crm.ts): client scope, fee stripping, audit and
     // the investment-tracker sync run there, once — the same path as the
     // deal page.
     const r = await callOwnRoute(req, "PUT", `/api/crm/deals/${encodeURIComponent(String(id))}`, cleanUpdates);
-    if (!r.ok) return { data: { success: false, error: routeError(r, "Couldn't update the deal") } };
+    if (!r.ok) return { data: { success: false, error: routeError(r, "Couldn't update the transaction") } };
     return { data: { success: true, action: "updated", entity: "deal", id, fields: Object.keys(cleanUpdates) }, action: { type: "crm_updated", entityType: "deal", id } };
   }
 
@@ -7570,7 +7571,7 @@ export async function executeCrmToolRaw(
       totalAreaSqft: fnArgs.totalAreaSqft,
       comments: fnArgs.comments,
     });
-    if (!r.ok) return { data: { success: false, error: routeError(r, "Couldn't create the deal") } };
+    if (!r.ok) return { data: { success: false, error: routeError(r, "Couldn't create the transaction") } };
     const created = r.json;
     return { data: { success: true, action: "created", entity: "deal", id: created.id, name: created.name }, action: { type: "crm_created", entityType: "deal", id: created.id } };
   }
@@ -7615,7 +7616,7 @@ export async function executeCrmToolRaw(
     // Market evidence is not BGP pipeline (Jack, 2026-11-12): the 19 Oct
     // Bucknall comps were filed here as Completed purchases.
     if (/comparable|\bcomp\b|not (a )?bgp (transaction|instruction|deal)|historical (sale|investment)/i.test(String(fields.notes || ""))) {
-      return { data: { success: false, error: "This looks like comparable evidence (the notes call it a comparable / not a BGP deal). Use file_investment_comps — it files it on Investment Comps like Sold - Comp. Only a BGP instruction or live opportunity goes on the Investment Tracker." } };
+      return { data: { success: false, error: "This looks like comparable evidence (the notes call it a comparable / not a BGP transaction). Use file_investment_comps — it files it on Investment Comps like Sold - Comp. Only a BGP instruction or live opportunity goes on the Investment Tracker." } };
     }
     fields.boardType = fields.boardType || "Purchases";
     const created = await createTrackerAsset(await linkTrackerNames(fields));
@@ -9692,7 +9693,7 @@ export async function executeCrmToolRaw(
         success: true, action: "ingested", title, contentLength: extractedText.length, content: truncated,
         ...(dealFacts ? {
           dealFacts,
-          dealFactsNote: "Structured transactions extracted from this article. Offer to save the relevant ones — lettings to retail_leasing_comps, investment deals to the comps board (sql_write) — citing this URL as the source. Ask before writing.",
+          dealFactsNote: "Structured transactions extracted from this article. Offer to save the relevant ones — lettings to retail_leasing_comps, investment transactions to the comps board (sql_write) — citing this URL as the source. Ask before writing.",
         } : {}),
       } };
     } catch (err: any) {
@@ -13990,7 +13991,7 @@ export async function handleCrmToolCall(
     const summary = { totalDeals: deals.length, totalPipeline, totalFees, byStage };
     const responseData = fnArgs.summaryOnly ? { success: true, summary } : { success: true, summary, deals: deals.slice(0, 50) };
     const reply = await summaryHelper(responseData);
-    return { handled: true, response: { reply: reply || `Found ${deals.length} deals. Total pipeline: £${totalPipeline.toLocaleString()}, total fees: £${totalFees.toLocaleString()}.` } };
+    return { handled: true, response: { reply: reply || `Found ${deals.length} transactions. Total pipeline: £${totalPipeline.toLocaleString()}, total fees: £${totalFees.toLocaleString()}.` } };
   }
 
   if (fnName === "query_xero") {
@@ -16329,7 +16330,7 @@ export function setupChatBGPRoutes(app: Express) {
               if (prop.sqft) threadContext += `Total area: ${Number(prop.sqft).toLocaleString()} sqft\n`;
               threadContext += `Units: ${prop.unit_count} total, ${prop.available_count} available\n`;
               if (dealRows.rows.length > 0) {
-                threadContext += `\n**Active deals on this property:**\n`;
+                threadContext += `\n**Active transactions on this property:**\n`;
                 for (const d of dealRows.rows) {
                   const feeText = chatGuard.isClient ? "" : ` | Fee: ${d.fee ? "£" + Number(d.fee).toLocaleString() : "TBC"}`;
                   threadContext += `- ${d.name} | ${d.deal_type || ""} | ${d.status}${feeText} | ${d.team || ""}\n`;
@@ -16361,7 +16362,7 @@ export function setupChatBGPRoutes(app: Express) {
               FROM crm_deals d LEFT JOIN crm_properties p ON d.property_id = p.id WHERE d.id = $1`, [thread.linkedId]).catch(() => ({ rows: [] }));
             const deal = dealRows.rows[0];
             if (deal) {
-              threadContext += `\n\n## ACTIVE DEAL CONTEXT — You are chatting about this deal\n`;
+              threadContext += `\n\n## ACTIVE TRANSACTION CONTEXT — You are chatting about this transaction\n`;
               threadContext += `**${deal.name}** | ${deal.deal_type || ""} | Status: ${deal.status || "Unknown"}\n`;
               if (deal.property_name) threadContext += `Property: ${deal.property_name}\n`;
               if (deal.tenant_name) threadContext += `Tenant: ${deal.tenant_name}\n`;
@@ -16369,7 +16370,7 @@ export function setupChatBGPRoutes(app: Express) {
               if (deal.fee && !chatGuard.isClient) threadContext += `Fee: £${Number(deal.fee).toLocaleString()}\n`;
               if (deal.team) threadContext += `Team: ${deal.team}\n`;
               if (deal.internal_agent) threadContext += `Agent: ${Array.isArray(deal.internal_agent) ? deal.internal_agent.join(", ") : deal.internal_agent}\n`;
-              threadContext += `All questions in this thread should be assumed to relate to this deal unless the user specifies otherwise.\n`;
+              threadContext += `All questions in this thread should be assumed to relate to this transaction unless the user specifies otherwise.\n`;
             }
           }
         } catch (e) {
@@ -16922,7 +16923,7 @@ export function setupChatBGPRoutes(app: Express) {
       const excelSupplement = `
 
 ## EXCEL ADD-IN — you are the FULL ChatBGP, inside Excel
-You're running in the Microsoft Excel task pane, but you are the SAME ChatBGP as the main app — the full brain, with all your BGP knowledge and tools: CRM (companies, properties, deals, contacts), SharePoint, property pathways, KYC, market data, news, document generation, sql_query, all of it. Answer strategy, market, CRM, deal and "tell me about X" questions as fully and thoughtfully as you would in the main app, using your tools to pull real BGP data. You are NOT a cut-down formula bot — don't reduce everything to formulas, and don't be terse when the question deserves a proper answer.
+You're running in the Microsoft Excel task pane, but you are the SAME ChatBGP as the main app — the full brain, with all your BGP knowledge and tools: CRM (companies, properties, transactions, contacts), SharePoint, property pathways, KYC, market data, news, document generation, sql_query, all of it. Answer strategy, market, CRM, transaction and "tell me about X" questions as fully and thoughtfully as you would in the main app, using your tools to pull real BGP data. You are NOT a cut-down formula bot — don't reduce everything to formulas, and don't be terse when the question deserves a proper answer.
 
 On top of that, you have live read/write access to the user's OPEN workbook:
 - You see the workbook structure (all sheets, headers, dimensions) plus each sheet's data (provided below as "Workbook Data" when available — that's the whole workbook, not just the active sheet).
@@ -17306,9 +17307,9 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
       const pptSupplement = `
 
 ## POWERPOINT ADD-IN — you are the FULL ChatBGP, inside PowerPoint
-You're running in the Microsoft PowerPoint task pane, but you are the SAME ChatBGP as the main app — the full brain, with all your BGP knowledge and tools: CRM (companies, properties, deals, contacts), SharePoint, property pathways, KYC, market data, comparables, news, document generation, sql_query, all of it. Answer strategy, market, CRM, deal and "tell me about X" questions as fully and thoughtfully as you would in the main app, using your tools to pull real BGP data. You are NOT a cut-down slide bot — don't be terse when the question deserves a proper answer.
+You're running in the Microsoft PowerPoint task pane, but you are the SAME ChatBGP as the main app — the full brain, with all your BGP knowledge and tools: CRM (companies, properties, transactions, contacts), SharePoint, property pathways, KYC, market data, comparables, news, document generation, sql_query, all of it. Answer strategy, market, CRM, transaction and "tell me about X" questions as fully and thoughtfully as you would in the main app, using your tools to pull real BGP data. You are NOT a cut-down slide bot — don't be terse when the question deserves a proper answer.
 
-You're here to help build a deck. Typical asks: "pull the comps for X and draft a slide", "summarise this deal for the investment committee", "three bullets on the tenant covenant", "what's our available space in Soho — make a slide". Use your tools to get the REAL BGP data first, then turn it into clean, presentation-ready slide copy.
+You're here to help build a deck. Typical asks: "pull the comps for X and draft a slide", "summarise this transaction for the investment committee", "three bullets on the tenant covenant", "what's our available space in Soho — make a slide". Use your tools to get the REAL BGP data first, then turn it into clean, presentation-ready slide copy.
 
 ### Inserting content into the open presentation
 When the user wants something put ON a slide (draft / write / add / make a slide / insert / put this on a slide), respond with one or more JSON action blocks — the add-in renders an "Insert into slide" button per block (plus "Insert all"). The text drops into the currently selected text box / placeholder on the active slide:
@@ -17324,7 +17325,7 @@ Use \\n for line breaks and • for bullets. Keep slide text tight and scannable
 Don't invent other verbs (\`addSlide\`, \`setLayout\`, \`insertImage\`, \`setFont\`…) — the add-in drops them. For multiple slides, emit multiple \`insertText\` blocks and remind the user to click into the target placeholder before inserting each.
 
 ### Response style
-- **Match depth to the question.** Analysis / strategy / CRM / "tell me about this deal" → a full, considered answer (you're the real ChatBGP). "Draft a slide / write bullets / make a slide" → lead with the insertText block(s), each with a one-line note on what it covers.
+- **Match depth to the question.** Analysis / strategy / CRM / "tell me about this transaction" → a full, considered answer (you're the real ChatBGP). "Draft a slide / write bullets / make a slide" → lead with the insertText block(s), each with a one-line note on what it covers.
 - When you draft slide copy, ALWAYS emit it as an \`insertText\` block so it's one click to place — don't just paste the text and stop.
 - UK English and UK number formatting. Keep it boardroom-clean.
 

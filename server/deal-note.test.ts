@@ -52,7 +52,7 @@ test("every value must be the note's own words; a kind of deal must be one of th
   assert.match(reasons.Vendor, /not a name/);
   const bad = checkDealNoteAnswer(NOTE, { deal_type: { value: "Letting", quote: "lettering" } });
   assert.equal(bad.proposal.dealType, null);
-  assert.match(bad.dropped[0].reason, /not one of the deal form's types/);
+  assert.match(bad.dropped[0].reason, /not one of the transaction form's types/);
 });
 
 test("one name in two roles, or the address as a party, is used for neither", () => {

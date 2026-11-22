@@ -561,7 +561,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
   const groupBrandIds = uniq(Array.from(groups.values()).map(g => g.companyId));
   const requirementBrandIds = brandIds || uniq([...groupBrandIds, ...(input.alsoBrandIds || [])]);
   const [clockRows, requirementRows, actionRows] = await Promise.all([
-    dealIds.length === 0 ? [] : guarded("Deal clocks", async () => (await q.query(
+    dealIds.length === 0 ? [] : guarded("Transaction clocks", async () => (await q.query(
       `/* brand-plan:clocks */ SELECT deal_id, waiting_on_party, waiting_on_name, ${iso("waiting_since")} AS waiting_since FROM landsec_deal_clock
         WHERE deal_id = ANY($1) AND waiting_on_party IS NOT NULL`, [dealIds])).rows, [] as any[]),
     requirementBrandIds.length === 0 ? [] : guarded("Requirements", async () => (await q.query(

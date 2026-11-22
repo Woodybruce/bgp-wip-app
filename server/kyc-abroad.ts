@@ -293,7 +293,7 @@ async function partyCtx(req: Request, res: Response): Promise<PartyCtx | null> {
   if (!isDealPartyRole(role)) { res.status(400).json({ message: "Unknown party." }); return null; }
   const { loadAmlParty } = await import("./deal-party-aml");
   const party = await loadAmlParty(pool, String(req.params.id), role);
-  if (!party) { res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` }); return null; }
+  if (!party) { res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` }); return null; }
   const { latestPrecheck } = await import("./kyc-prechecks");
   const precheck = (await latestPrecheck(party.brandId, party.entityId).catch(() => null))?.result || null;
   return { party, precheck };

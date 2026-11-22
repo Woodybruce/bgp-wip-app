@@ -58,7 +58,7 @@ export async function getAccountLeasing(
       WHERE c.id=ANY($1::text[])`, [entityIds], "Saved account teams"),
     read(`SELECT d.id,d.name,d.property_id,d.deal_type,d.bgp_acting_for,d.status,d.internal_agent_ids
       FROM crm_deals d WHERE d.property_id=ANY($1::text[]) AND d.updated_at>= $2::timestamptz - interval '24 months'
-      ORDER BY d.updated_at DESC,d.id`, [propertyIds,now.toISOString()], "Leasing deal history"),
+      ORDER BY d.updated_at DESC,d.id`, [propertyIds,now.toISOString()], "Leasing transaction history"),
     read(`SELECT v.id,v.unit_id,v.company_id,COALESCE(c.name,v.company_name) brand_name,v.owner_user_id,
       COALESCE(u.name,u.username) owner_name,u.email owner_email,v.viewing_date,v.viewing_time,v.status,v.outcome,
       v.details_confirmed_at,v.next_action,v.follow_up_date,v.source_details,v.attendees,v.deleted_at,

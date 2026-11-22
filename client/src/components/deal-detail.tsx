@@ -322,7 +322,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       await apiRequest("DELETE", `/api/crm/deals/${id}`);
     },
     onSuccess: () => {
-      toast({ title: "Deal deleted" });
+      toast({ title: "Transaction deleted" });
       invalidateDealCaches();
       navigate(isComps ? "/comps" : "/deals");
     },
@@ -340,7 +340,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     } catch (e: any) {
       toast({
         title: "Couldn't change who BGP acts for",
-        description: /unique|duplicate/i.test(e?.message || "") ? "This unit already has a live deal where BGP acts for the landlord." : e?.message,
+        description: /unique|duplicate/i.test(e?.message || "") ? "This unit already has a live transaction where BGP acts for the landlord." : e?.message,
         variant: "destructive",
       });
     }
@@ -389,7 +389,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   if (!deal) {
     return (
       <div className="p-4 sm:p-6 text-center space-y-4">
-        <h2 className="text-lg font-semibold">Deal not found</h2>
+        <h2 className="text-lg font-semibold">Transaction not found</h2>
         <Link href={isComps ? "/comps" : "/deals"}>
           <Button variant="outline" data-testid="button-back-deals-notfound">
             <ArrowLeft className="w-4 h-4 mr-2" />
@@ -462,7 +462,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       <div className="px-4 sm:px-6 pt-4 sm:pt-5">
         <Breadcrumbs
           items={[
-            { label: isComps ? "Comps" : "Deals", href: isComps ? "/comps" : "/deals" },
+            { label: isComps ? "Comps" : "Transactions", href: isComps ? "/comps" : "/deals" },
             { label: pageTitle },
           ]}
         />
@@ -493,7 +493,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                         buttons must wrap below instead. */}
                     <div className="flex-1 min-w-[16rem]">
                       <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-primary mb-1" data-testid="deal-eyebrow">
-                        <span className="w-2 h-2 rounded-full bg-primary" /> Deal{deal.dealType ? ` · ${deal.dealType}` : ""}
+                        <span className="w-2 h-2 rounded-full bg-primary" /> Transaction{deal.dealType ? ` · ${deal.dealType}` : ""}
                         {(deal as any).dealRef ? <span className="font-mono tabular-nums normal-case" data-testid="deal-ref">#{(deal as any).dealRef}</span> : null}
                       </div>
                       <div className="flex items-center gap-2 flex-wrap">
@@ -565,7 +565,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                             type="button"
                             onClick={() => { goTo("fees"); setTimeout(() => document.querySelector('[data-testid="xero-invoice-section"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 150); }}
                             className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
-                            title="The deal is marked invoiced/completed but its Xero invoice hasn't been approved yet"
+                            title="The transaction is marked invoiced/completed but its Xero invoice hasn't been approved yet"
                             data-testid="chip-invoice-still-draft"
                           >
                             <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
@@ -607,7 +607,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                             // staff can still Resolve from the property page).
                             <span
                               className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700"
-                              title="This deal isn't yet linked to a tenancy schedule row. It will auto-link on the nightly sweep, or use Resolve on the property page."
+                              title="This transaction isn't yet linked to a tenancy schedule row. It will auto-link on the nightly sweep, or use Resolve on the property page."
                               data-testid="chip-off-tenancy-spine"
                             >
                               <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
@@ -650,7 +650,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                             )}
                             {!isClientLogin && (
                               <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteOpen(true)} data-testid="button-delete-deal">
-                                <Trash2 className="w-4 h-4 mr-2" />Delete deal
+                                <Trash2 className="w-4 h-4 mr-2" />Delete transaction
                               </DropdownMenuItem>
                             )}
                           </DropdownMenuContent>
@@ -681,7 +681,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                   {page && (
                     <div className={sectionCard} data-testid="deal-clock-card">
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Deal clock</span>
+                        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Transaction clock</span>
                         <span className="rounded-full bg-foreground text-background px-2 py-px text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap">{page.stage.label || "No stage"}</span>
                         {live && <DaysAtStage code={page.stage.code} days={page.stage.days} long confirmed={page.stage.confirmed} stageSet={page.stage.set} since={page.stage.since}
                           dealId={id} canSet={page.viewer.canSetStage} testId="deal-clock-days" />}
@@ -817,7 +817,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                   )}
                   {/* AI-curated activity — BGP staff's emails and meetings, staff only.
                       Deal moves are on the Timeline, not in this feed. */}
-                  {staffView && <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />}
+                  {staffView && <AIActivityCard subjectType="deal" subjectId={id} title="Transaction Activity (AI curated)" />}
                   <div className={`${sectionCard} space-y-2`} data-testid="deal-activity-feed">
                     <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Emails, calls and meetings</span>
                     <ActivitySummary dealId={id} />
@@ -914,7 +914,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                       />
                     )}
                     {isClientDeal && <p className="text-xs text-muted-foreground italic">Documents are managed by the BGP team.</p>}
-                    {!linkedProperty && !isClientDeal && <p className="text-xs text-muted-foreground italic">Link this deal to a property to see its folders.</p>}
+                    {!linkedProperty && !isClientDeal && <p className="text-xs text-muted-foreground italic">Link this transaction to a property to see its folders.</p>}
                   </div>
                 </div>
               );
@@ -962,7 +962,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Deal</AlertDialogTitle>
+            <AlertDialogTitle>Delete Transaction</AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to delete "{deal.name}"? This action cannot be undone.
             </AlertDialogDescription>
@@ -1362,7 +1362,7 @@ function UnitEditDialog({ dealId, deal, linkedUnit, onClose }: {
               onChange={(v) => setForm(f => ({ ...f, propertyId: v, switchToUnitId: v === f.propertyId ? f.switchToUnitId : "" }))}
               onCreated={() => queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] })}
             />
-            {!deal.propertyId && <p className="text-xs text-muted-foreground mt-1">This deal isn't linked to a property yet — pick or create one here.</p>}
+            {!deal.propertyId && <p className="text-xs text-muted-foreground mt-1">This transaction isn't linked to a property yet — pick or create one here.</p>}
           </div>
           <div>
             <Label className="text-xs">Switch unit</Label>

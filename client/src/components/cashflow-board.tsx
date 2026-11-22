@@ -196,7 +196,7 @@ export function CashflowBoardSection() {
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs border rounded-lg p-3">
             {([
               ["Opening", unified.byMonth[mobileMonth].open],
-              ["Deals (weighted)", unified.byMonth[mobileMonth].dealsIn],
+              ["Transactions (weighted)", unified.byMonth[mobileMonth].dealsIn],
               ["Xero AR due", unified.byMonth[mobileMonth].arIn],
               ["Costs", unified.byMonth[mobileMonth].out],
               ["Closing", unified.byMonth[mobileMonth].close],
@@ -295,7 +295,7 @@ export function CashflowBoardSection() {
               <tbody className="divide-y divide-border">
                 <tr className="bg-muted/30"><td colSpan={1 + unified.months.length * 2} className="px-3 py-1 text-[10px] uppercase tracking-widest text-muted-foreground sticky left-0">Cash in — from the app</td></tr>
                 {appRow(
-                  `Deals pipeline, weighted${data?.deals?.undated.count ? ` (+£${fmt(data.deals.undated.weighted)} Unscheduled / TBC, ${data.deals.undated.count} deal${data.deals.undated.count === 1 ? "" : "s"})` : ""}`,
+                  `Transactions pipeline, weighted${data?.deals?.undated.count ? ` (+£${fmt(data.deals.undated.weighted)} Unscheduled / TBC, ${data.deals.undated.count} transaction${data.deals.undated.count === 1 ? "" : "s"})` : ""}`,
                   m => data?.deals?.byMonth[m]?.weighted, "cf-app-deals")}
                 {data?.xero && appRow("Xero invoices due (AR)", m => data.xero!.arByMonth?.[m], "cf-app-ar")}
                 {legacyLine && (

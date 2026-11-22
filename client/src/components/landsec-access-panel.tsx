@@ -27,10 +27,10 @@ function leftoversNote(who: string, lead: string, r: { removed?: Leftovers | nul
   if (held.viewingsCleared) lines.push(`${plural(held.viewingsCleared, "viewing", "viewings")} ${where} ${held.viewingsCleared === 1 ? "now has" : "now have"} no agent.`);
   const still: string[] = [];
   if (held.checklistItems) still.push(`${plural(held.checklistItems, "open checklist item", "open checklist items")}`);
-  if (held.dealsResponsible) still.push(`${plural(held.dealsResponsible, "deal", "deals")} they are responsible for`);
+  if (held.dealsResponsible) still.push(`${plural(held.dealsResponsible, "transaction", "transactions")} they are responsible for`);
   if (held.briefs) still.push(`a place on ${plural(held.briefs, "brief", "briefs")}`);
   if (still.length) lines.push(`${who} still has ${still.length > 1 ? `${still.slice(0, -1).join(", ")} and ${still[still.length - 1]}` : still[0]} ${where}.`);
-  if (!lines.length) return `${lead} ${who} holds no viewings, checklist items, deals or briefs ${where}.`;
+  if (!lines.length) return `${lead} ${who} holds no viewings, checklist items, transactions or briefs ${where}.`;
   return `${lead} ${lines.join(" ")} Reassign these on the tracker.`;
 }
 

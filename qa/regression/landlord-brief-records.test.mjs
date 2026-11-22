@@ -20,9 +20,9 @@ test('landlord brief states linked-record counts and named properties without im
   assert.match(text, /Hammerson — linked CRM records/);
   assert.match(text, /4 linked CRM properties shown, including Bullring, Brent Cross, Cabot Circus/);
   assert.doesNotMatch(text, /Victoria Gate/);
-  assert.match(text, /2 most recently updated deal records shown/);
+  assert.match(text, /2 most recently updated transaction records shown/);
   assert.match(text, /2 listed CRM contacts included/);
-  assert.match(text, /Review the latest deal stages with the BGP team/);
+  assert.match(text, /Review the latest transaction stages with the BGP team/);
   assert.doesNotMatch(text, /confirmed decision-makers|active leasing momentum|live mandates|expansion strategy|CEO|Director/i);
 });
 
@@ -33,7 +33,7 @@ test('property, deal and contact samples are bounded and cannot become portfolio
       contacts: Array.from({ length: 28 }, (_, i) => ({ name: `Contact ${i}` })) },
   });
   assert.match(text, /30 linked CRM properties shown \(up to 30\)/);
-  assert.match(text, /10 most recently updated deal records shown/);
+  assert.match(text, /10 most recently updated transaction records shown/);
   assert.match(text, /12 listed CRM contacts included/);
   assert.doesNotMatch(text, /45|22|28|Property 3(?:,|;|\.)/);
 });
@@ -55,7 +55,7 @@ test('bogus activity counts, future timestamps and reused AI interpretations can
 test('missing records produce honest empty sample language and a useful next action without a profile-approval demand', () => {
   const text = landlordBriefFromRecords({ name: 'Hammerson', recorded_properties: null, activity: null });
   assert.match(text, /No properties linked in this CRM summary/);
-  assert.match(text, /No deal records in this summary; no CRM contacts in this summary/);
+  assert.match(text, /No transaction records in this summary; no CRM contacts in this summary/);
   assert.match(text, /Next step/);
   assert.doesNotMatch(text, /approve|verify profile|manual review|strategy is unconfirmed|confirm.*requirement|weak|distress/i);
   assert.equal(text.split('\n').length, 4);

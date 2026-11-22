@@ -139,7 +139,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
           WHERE trading_entity_id = ANY($2::varchar[]) AND list_id NOT LIKE '%:requests'
           ORDER BY trading_entity_id, COALESCE(modified_at_source, created_at_source, synced_at) DESC NULLS LAST, synced_at DESC NULLS LAST) e`,
       [brandIds, [...new Set(parties.map(p => p.entityId).filter((x): x is string => !!x))]])).rows, none),
-    read("the deals' agents", async () => {
+    read("the transactions' agents", async () => {
       const ids = [...new Set(deals.flatMap((d: any) => Array.isArray(d.internal_agent_ids) ? d.internal_agent_ids : []).filter(Boolean))];
       return ids.length ? (await pool.query(`SELECT id, name FROM users WHERE id = ANY($1::varchar[])`, [ids])).rows : none;
     }, none),
@@ -211,14 +211,14 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       notRequired: markHolds, reliedAt: relied?.recorded_at || null, inHouse, jointAskedAt, jointInAt,
     }, now);
     const due = amlDue(p.role, p.deal.status);
-    const allFlags = [...flags, ...onDeal.map(f => `Deal: ${f.label}`)];
+    const allFlags = [...flags, ...onDeal.map(f => `Transaction: ${f.label}`)];
     const agentIds: string[] = Array.isArray(p.deal.internal_agent_ids) ? p.deal.internal_agent_ids.filter(Boolean) : [];
     const agentNames: string[] = Array.isArray(p.deal.internal_agent) ? p.deal.internal_agent.map(text).filter(Boolean) : [];
     const agents = [...new Set([...agentNames, ...agentIds.map(id => text(agentUsers.find((u: any) => String(u.id) === String(id))?.name)).filter(Boolean)])];
     rows.push({
       key: p.key,
       dealId: String(p.deal.id),
-      dealName: text(p.deal.name) || "Untitled deal",
+      dealName: text(p.deal.name) || "Untitled transaction",
       dealRef: p.deal.deal_ref ?? null,
       dealStatus: p.deal.status || null,
       propertyName: text(p.deal.property_name) || null,
@@ -269,10 +269,10 @@ router.get("/api/aml-dashboard/party", async (req: Request, res: Response) => {
     if (!me) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
     const dealId = text(req.query.dealId);
     const role = text(req.query.role);
-    if (!dealId || !isDealPartyRole(role)) return res.status(400).json({ message: "Which deal and party?" });
+    if (!dealId || !isDealPartyRole(role)) return res.status(400).json({ message: "Which transaction and party?" });
     const col = DEAL_PARTY_COLUMNS[role];
     const deal = (await pool.query(`SELECT id, ${col.brand} AS brand_id, ${col.company} AS entity_id FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
-    if (!deal?.brand_id) return res.status(404).json({ message: `This deal has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    if (!deal?.brand_id) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
     const entityId = deal.entity_id
       ? (await pool.query(`SELECT id FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [deal.entity_id, deal.brand_id])).rows[0]?.id || null
       : null;

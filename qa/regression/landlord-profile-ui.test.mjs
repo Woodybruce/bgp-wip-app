@@ -106,7 +106,7 @@ test('landlord page opens on Overview: the staff brief with the meeting summarie
   assert.ok(code.indexOf('landlord-relationship-brief') < code.indexOf('<LandlordEngagementPanel'));
   assert.ok(code.indexOf('<LandlordEngagementPanel') < code.indexOf('kindActivity("landlord-activity-feed")'));
   assert.ok(code.indexOf('kindActivity("landlord-activity-feed")') < code.indexOf('<CompanyPropertiesBoard'));
-  assert.deepEqual(sectionKeys(code), ['overview:Overview', 'portfolio:Properties & deals', 'people:People & checks', 'news:News & media', 'files:Files']);
+  assert.deepEqual(sectionKeys(code), ['overview:Overview', 'portfolio:Properties & transactions', 'people:People & checks', 'news:News & media', 'files:Files']);
   // Every card the page had is still on it, once.
   for (const card of ['<CompanyPropertiesBoard', '<AccountDealsBoard', '<AccountTeamViewsCard', '<LandlordCompanyChecksCard', '<StockSnapshotCard', '<AccountFolderTreeCard', '<AccountNextActionsCard', '<InvestmentRequirementsCard',
     'only={["contacts"]}', 'only={["news", "feed"]}', 'only={["gallery"]}', 'only={["files"]}']) assert.equal(code.split(card).length - 1, 1, card);
@@ -116,7 +116,7 @@ test('landlord page opens on Overview: the staff brief with the meeting summarie
 
 test('agent firm and lender pages use the same frame, each with its own pills, and gain the activity feed for staff', () => {
   const agent = branchOf('isAgentFirm && flat'), lender = branchOf('isLender && flat');
-  assert.deepEqual(sectionKeys(agent), ['overview:Overview', 'brands:Brands & deals', 'people:People', 'news:News & media']);
+  assert.deepEqual(sectionKeys(agent), ['overview:Overview', 'brands:Brands & transactions', 'people:People', 'news:News & media']);
   assert.deepEqual(sectionKeys(lender), ['overview:Overview', 'loans:Loans & properties', 'people:People & checks', 'news:News & media']);
   for (const code of [agent, lender]) {
     assert.match(code, /<CompanyKindPage key=\{companyId\} testId="(agent|lender)-profile">/);

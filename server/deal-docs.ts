@@ -54,7 +54,7 @@ async function loadDealSnapshot(dealId: string) {
 router.get("/api/deal/:dealId/doc-data", requireAuth, async (req, res) => {
   try {
     const data = await loadDealSnapshot(String(req.params.dealId));
-    if (!data.deal) return res.status(404).json({ error: "Deal not found" });
+    if (!data.deal) return res.status(404).json({ error: "Transaction not found" });
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -155,7 +155,7 @@ function money(n: number | null | undefined, prefix = "£") {
 router.get("/api/deal/:dealId/hots.pdf", requireAuth, async (req, res) => {
   try {
     const { deal, hots } = await loadDealSnapshot(String(req.params.dealId));
-    if (!deal) return res.status(404).json({ error: "Deal not found" });
+    if (!deal) return res.status(404).json({ error: "Transaction not found" });
 
     // @ts-ignore — pdfkit ships without d.ts
     const PDFDocument = (await import("pdfkit")).default;
@@ -290,7 +290,7 @@ router.get("/api/deal/:dealId/hots.pdf", requireAuth, async (req, res) => {
 router.get("/api/deal/:dealId/offer-summary.pdf", requireAuth, async (req, res) => {
   try {
     const { deal } = await loadDealSnapshot(String(req.params.dealId));
-    if (!deal) return res.status(404).json({ error: "Deal not found" });
+    if (!deal) return res.status(404).json({ error: "Transaction not found" });
 
     // @ts-ignore — pdfkit ships without d.ts
     const PDFDocument = (await import("pdfkit")).default;
@@ -366,7 +366,7 @@ router.get("/api/deal/:dealId/offer-summary.pdf", requireAuth, async (req, res) 
 router.get("/api/deal/:dealId/completion.pdf", requireAuth, async (req, res) => {
   try {
     const { deal, events } = await loadDealSnapshot(String(req.params.dealId));
-    if (!deal) return res.status(404).json({ error: "Deal not found" });
+    if (!deal) return res.status(404).json({ error: "Transaction not found" });
 
     // @ts-ignore — pdfkit ships without d.ts
     const PDFDocument = (await import("pdfkit")).default;
@@ -403,7 +403,7 @@ router.get("/api/deal/:dealId/completion.pdf", requireAuth, async (req, res) => 
 
     // Timeline
     if (events.length) {
-      doc.font("Helvetica-Bold").fontSize(10).fillColor(BGP_GREEN).text("DEAL TIMELINE", leftM, y);
+      doc.font("Helvetica-Bold").fontSize(10).fillColor(BGP_GREEN).text("TRANSACTION TIMELINE", leftM, y);
       y = doc.y + 6;
       for (const e of events.slice().reverse()) {
         if (y > 760) { doc.addPage(); y = 60; }

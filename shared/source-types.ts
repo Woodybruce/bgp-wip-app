@@ -31,7 +31,7 @@ export const SOURCE_TYPES: Record<SourceType, SourceMeta> = {
   "Pathway":    { label: "Pathway",   badgeClass: "bg-violet-100 text-violet-700 border-violet-200",     description: "Surfaced by Property Pathway research" },
   "Manual":     { label: "Manual",    badgeClass: "bg-slate-100 text-slate-700 border-slate-200",        description: "Manually entered by user" },
   "ChatBGP":    { label: "ChatBGP",   badgeClass: "bg-indigo-100 text-indigo-700 border-indigo-200",     description: "Created via ChatBGP AI" },
-  "BGP Direct": { label: "BGP",       badgeClass: "bg-emerald-100 text-emerald-700 border-emerald-200",  description: "BGP-originated deal" },
+  "BGP Direct": { label: "BGP",       badgeClass: "bg-emerald-100 text-emerald-700 border-emerald-200",  description: "BGP-originated transaction" },
 };
 
 export const SOURCE_LIST: SourceType[] = Object.keys(SOURCE_TYPES) as SourceType[];

@@ -77,7 +77,7 @@ test('nothing live on a property is one line with the add inline; closed stages 
   assert.match(html, /1.*Completed/);
   assert.doesNotMatch(html, /live letting/, 'no "0 live lettings" headline over the same fact');
   const deals = fixture('deals', { deals: [] }).render({ propertyId: 'property', variant: 'card' });
-  assert.match(deals, /No live leasing deals/);
+  assert.match(deals, /No live leasing transactions/);
 });
 
 test('summary query errors throw instead of returning an apparently empty board', async () => {

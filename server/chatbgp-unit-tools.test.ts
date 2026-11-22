@@ -151,11 +151,11 @@ test("a deal's clock: stage, days, who and since when, the checklist item, and n
 
   const derived: any = tools.waitingLine({ ...clockRow(), clock: { ...clockRow().clock, derived: true, dependsOnHidden: true } });
   assert.match(derived.waitingOn.source, /next open item on the deal checklist/);
-  assert.equal(derived.dependsOn, "Another deal");
+  assert.equal(derived.dependsOn, "Another transaction");
   const nobody: any = tools.waitingLine({ ...clockRow(), clock: null, waitingDays: null });
   assert.equal("waitingOn" in nobody, false);
   assert.match(nobody.waitingOnNote, /Nobody is named/);
-  assert.deepEqual(tools.checklistLines({ ...options(), started: false, items: [] }), { started: false, note: "No deal checklist has been started for this letting." });
+  assert.deepEqual(tools.checklistLines({ ...options(), started: false, items: [] }), { started: false, note: "No transaction checklist has been started for this letting." });
 });
 
 test("units tool: only a property the caller may open is read, and it is cut for the caller", async () => {
@@ -203,7 +203,7 @@ test("waiting-on tool: 'the Burger King unit at Bluewater' finds the letting run
   // A unit with no live deal is said to be waiting on no one.
   const none = await tools.runUnitTool("get_deal_waiting_on", { property: "Bluewater", search: "Gourmet Burger Kitchen" }, {} as any, deps());
   assert.equal(none.data.found, false);
-  assert.match(none.data.message, /No live deal on: SVL05/);
+  assert.match(none.data.message, /No live transaction on: SVL05/);
 });
 
 test("waiting-on tool: by Ref, by who it waits on, and a deal the caller may not open is not found", async () => {
@@ -216,7 +216,7 @@ test("waiting-on tool: by Ref, by who it waits on, and a deal the caller may not
   // Ref 9999 is on a property this caller is refused: its units are never loaded.
   const d = deps();
   const refused = await tools.runUnitTool("get_deal_waiting_on", { dealRef: "9999" }, {} as any, d);
-  assert.deepEqual(refused.data, { found: false, message: "No live deal with that reference is open to this account." });
+  assert.deepEqual(refused.data, { found: false, message: "No live transaction with that reference is open to this account." });
   assert.equal(d.calls.includes("units:prop-other"), false);
   // No Landsec view (another client) and no property named: it asks, it does not guess.
   const noClock = await tools.runUnitTool("get_deal_waiting_on", { search: "Burger King" }, {} as any, deps({ landsecDealsFeed: async () => null }));

@@ -83,7 +83,7 @@ export async function bellFor(userId: string): Promise<BellItem[]> {
   }
   if (noFee && !dismissed.has(`no-fee-${noFee}`)) {
     dealItems.push({ id: `no-fee-${noFee}`, kind: "deal", type: "no_fee", read: false, url: "/deals",
-      title: `${noFee} of your live deal${noFee === 1 ? " has" : "s have"} no fee set`, description: "Add the fee on each deal",
+      title: `${noFee} of your live transaction${noFee === 1 ? " has" : "s have"} no fee set`, description: "Add the fee on each transaction",
       severity: "info", createdAt: new Date().toISOString() });
   }
   const order: Record<string, number> = { urgent: 0, warning: 1, info: 2 };
@@ -100,8 +100,8 @@ export async function bellFor(userId: string): Promise<BellItem[]> {
     const id = `firm-kyc-${others.length}`;
     if (others.length && !dismissed.has(id)) {
       firmItems.push({ id, kind: "firm", type: "kyc_gap", read: false, url: "/wip-report",
-        title: `${others.length} deal${others.length === 1 ? "" : "s"} at solicitors or exchanged without KYC`,
-        description: `${exchanged} exchanged · ${others.length - exchanged} with solicitors · open each deal's Parties & AML`,
+        title: `${others.length} transaction${others.length === 1 ? "" : "s"} at solicitors or exchanged without KYC`,
+        description: `${exchanged} exchanged · ${others.length - exchanged} with solicitors · open each transaction's Parties & AML`,
         severity: "urgent", createdAt: new Date().toISOString() });
     }
   }

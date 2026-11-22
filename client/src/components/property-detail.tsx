@@ -832,7 +832,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   size="sm"
                   className="h-7 text-xs gap-1.5"
                   onClick={() => {
-                    const prompt = `Tell me about ${property.name || "this property"} — occupancy, live deals, letting activity and anything notable in the CRM.`;
+                    const prompt = `Tell me about ${property.name || "this property"} — occupancy, live transactions, letting activity and anything notable in the CRM.`;
                     window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
                   }}
                   data-testid="button-ask-ai-property" title="Ask ChatBGP" aria-label="Ask ChatBGP"
@@ -1000,10 +1000,10 @@ export function PropertyDetail({ id }: { id: string }) {
                   <span className={factPill} data-testid="property-field-competitor"><span className={factLabel}>Joint agent</span><InlineCompetitorAgent propertyId={id} competitorAgentId={(property as any).competitorAgentId} competitorAgent={property.competitorAgent} allCompanies={allCompanies} /></span>
                   {/* AML for each open deal here: the deal's own AML box in a window. */}
                   {!isClientViewer && amlDeals.slice(0, 4).map((d: any) => (
-                    <button key={d.id} type="button" className={`${factPill} hover:border-primary hover:text-foreground`} title={`AML and KYC for ${d.name || "the deal"}`}
+                    <button key={d.id} type="button" className={`${factPill} hover:border-primary hover:text-foreground`} title={`AML and KYC for ${d.name || "the transaction"}`}
                       onClick={() => setAmlDeal({ id: d.id, name: d.name, dealRef: d.dealRef ?? d.deal_ref ?? null, status: d.status })} data-testid={`property-aml-${d.id}`}>
                       <ShieldCheck className="w-3 h-3 text-muted-foreground" /><span className={factLabel}>AML</span>
-                      <span className="truncate max-w-[12rem]">{d.dealRef != null ? `#${d.dealRef}` : (d.name || "Deal")}</span>
+                      <span className="truncate max-w-[12rem]">{d.dealRef != null ? `#${d.dealRef}` : (d.name || "Transaction")}</span>
                     </button>
                   ))}
                 </div>
@@ -1082,7 +1082,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-section-tenancy">Tenancy</Pill>
                 <Pill active={phoneSection === "plans"} onClick={() => setPhoneSection("plans")} data-testid="property-section-plans">Plans</Pill>
               </> : <Pill active={phoneSection === "boards"} onClick={() => setPhoneSection("boards")} data-testid="property-section-boards">Boards</Pill>}
-              <Pill active={phoneSection === "deals"} onClick={() => setPhoneSection("deals")} data-testid="property-section-deals">Deals &amp; units</Pill>
+              <Pill active={phoneSection === "deals"} onClick={() => setPhoneSection("deals")} data-testid="property-section-deals">Transactions &amp; units</Pill>
               {uiJointAgent ? <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-section-files">Brochures</Pill> : <>
               <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-section-files">Files &amp; contacts</Pill>
               <Pill active={phoneSection === "kyc"} onClick={() => setPhoneSection("kyc")} data-testid="property-section-kyc">KYC</Pill>
@@ -1645,7 +1645,7 @@ export function PropertyDetail({ id }: { id: string }) {
 {!planLayout && (
               <PropertySection name={"deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
-                title="Deals"
+                title="Transactions"
                 icon={Handshake}
                 open={sidebarSections.deals}
                 onToggle={() => toggleSection("deals")}
@@ -1772,7 +1772,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 onToggle={() => toggleSection("linkage")}
                 testId="toggle-linkage-section"
               >
-                <p className="text-[11px] text-muted-foreground mb-2">How well this property's records are joined up — tenants matched to CRM brands, deals and tasks attached to the property. The nightly sweep fixes most of it automatically; these buttons fix the rest now.</p>
+                <p className="text-[11px] text-muted-foreground mb-2">How well this property's records are joined up — tenants matched to CRM brands, transactions and tasks attached to the property. The nightly sweep fixes most of it automatically; these buttons fix the rest now.</p>
                 <ErrorBoundary compact name="Property linkage audit">
                   <PropertyLinkageCard propertyId={property.id} />
                 </ErrorBoundary>
@@ -1805,7 +1805,7 @@ function PropertyBgpTeamFromWork({ propertyId, readOnly }: { propertyId: string;
   });
   const people = (data?.internal || []).filter(p => p.side === "bgp" && p.source && p.source !== "property");
   if (!people.length) return null;
-  const sources = [...new Set(people.map(p => p.source === "account" ? `the ${p.via}` : "its deals"))];
+  const sources = [...new Set(people.map(p => p.source === "account" ? `the ${p.via}` : "its transactions"))];
   return (
     <div className="mt-1.5 space-y-0.5" data-testid="property-bgp-team-from-work">
       {people.map(p => (
@@ -1997,7 +1997,7 @@ function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
             )}
             <div className="flex gap-3 text-[11px]">
               <Link href="/deals/investment" className="text-primary hover:underline">On the {a.board_type === "Sales" ? "Sales" : "Purchases"} board →</Link>
-              {a.deal_id && <Link href={`/deals/${a.deal_id}`} className="text-primary hover:underline">Deal{a.deal_ref ? ` #${a.deal_ref}` : ""} →</Link>}
+              {a.deal_id && <Link href={`/deals/${a.deal_id}`} className="text-primary hover:underline">Transaction{a.deal_ref ? ` #${a.deal_ref}` : ""} →</Link>}
             </div>
           </div>
         );
@@ -2008,7 +2008,7 @@ function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
           {ownership.map((o, i) => (
             <div key={i} className="text-[11px]">
               {when(o.date)}: {o.fromId ? <Link href={`/companies/${o.fromId}`} className="hover:underline">{o.from || "seller"}</Link> : (o.from || "seller")} → {o.toId ? <Link href={`/companies/${o.toId}`} className="hover:underline font-medium">{o.to || "buyer"}</Link> : (o.to || "buyer")}
-              {o.dealId && <> · <Link href={`/deals/${o.dealId}`} className="text-primary hover:underline">deal</Link></>}
+              {o.dealId && <> · <Link href={`/deals/${o.dealId}`} className="text-primary hover:underline">transaction</Link></>}
             </div>
           ))}
         </div>

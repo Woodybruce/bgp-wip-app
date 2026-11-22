@@ -95,10 +95,10 @@ export function assembleLandlordRelationshipTeam(input: {
     const advisory = /lease advisory|rent review|lease renewal|dilapidation|regear/.test(type) || (deal.team || []).some((name: string) => name.toLowerCase() === 'lease advisory');
     const leasing = /letting|lease disposal|lease acquisition|sub-letting|tenant acquisition/.test(type) || ['temp lease','licence'].includes(type);
     const role = conflictingSide ? null : advisory ? 'Lease advisory' : tenant ? 'Tenant representative' : leasing && side === 'landlord' ? 'Leasing agent' : /investment|acquisition|disposal|sale/.test(type) ? 'Investment' : null;
-    if (conflictingSide && !input.issues?.includes(`Deal ${deal.deal_ref || deal.name || deal.id} has conflicting representation fields; no role was suggested`)) (input.issues ||= []).push(`Deal ${deal.deal_ref || deal.name || deal.id} has conflicting representation fields; no role was suggested`);
+    if (conflictingSide && !input.issues?.includes(`Deal ${deal.deal_ref || deal.name || deal.id} has conflicting representation fields; no role was suggested`)) (input.issues ||= []).push(`Transaction ${deal.deal_ref || deal.name || deal.id} has conflicting representation fields; no role was suggested`);
     if (deal.property_id && deal.property_name) propertyNames.set(deal.property_id, deal.property_name);
-    if (role) addContext(member, role, deal.property_id || null, { kind: 'deal', id: deal.id, label: `${deal.name || 'Deal'}${deal.deal_ref ? ` #${deal.deal_ref}` : ''}${deal.status ? ` · ${deal.status}` : ''}`, url: `/deals/${encodeURIComponent(deal.id)}` },
-      tenant ? `Tenant-side work${deal.tenant_name ? ` for ${deal.tenant_name}` : ''}; does not establish a landlord instruction.` : 'Role suggested by the saved deal; the deal stage does not establish a current landlord mandate.');
+    if (role) addContext(member, role, deal.property_id || null, { kind: 'deal', id: deal.id, label: `${deal.name || 'Transaction'}${deal.deal_ref ? ` #${deal.deal_ref}` : ''}${deal.status ? ` · ${deal.status}` : ''}`, url: `/deals/${encodeURIComponent(deal.id)}` },
+      tenant ? `Tenant-side work${deal.tenant_name ? ` for ${deal.tenant_name}` : ''}; does not establish a landlord instruction.` : 'Role suggested by the saved transaction; the transaction stage does not establish a current landlord mandate.');
   }
   for (const matter of input.advisory) for (const id of new Set([matter.lead_user_id, ...(matter.team_user_ids || [])])) {
     const member = get(id); if (!member) continue;
@@ -142,7 +142,7 @@ export async function getLandlordRelationshipTeam(companyId: string, deps: { q?:
   const propertyIds=properties.map(p=>p.id);
   const [deals, advisory, propertyAgents] = await Promise.all([
     read(`SELECT d.id,d.name,d.deal_ref,d.status,d.property_id,d.deal_type,d.bgp_acting_for,d.team,d.internal_agent,d.internal_agent_ids,tc.name tenant_name,p.name property_name
-      FROM crm_deals d LEFT JOIN crm_companies tc ON tc.id=d.tenant_id LEFT JOIN crm_properties p ON p.id=d.property_id WHERE d.landlord_id=$1 OR d.vendor_id=$1 OR d.purchaser_id=$1 OR d.property_id=ANY($2::text[]) OR EXISTS(SELECT 1 FROM crm_company_deals cd WHERE cd.deal_id=d.id AND cd.company_id=$1)`,[companyId,propertyIds],'Deal history'),
+      FROM crm_deals d LEFT JOIN crm_companies tc ON tc.id=d.tenant_id LEFT JOIN crm_properties p ON p.id=d.property_id WHERE d.landlord_id=$1 OR d.vendor_id=$1 OR d.purchaser_id=$1 OR d.property_id=ANY($2::text[]) OR EXISTS(SELECT 1 FROM crm_company_deals cd WHERE cd.deal_id=d.id AND cd.company_id=$1)`,[companyId,propertyIds],'Transaction history'),
     read(`SELECT id,property_id,matter_type,acting_for,status,lead_user_id,team_user_ids FROM pla_matters WHERE client_company_id=$1 OR property_id=ANY($2::text[])`,[companyId,propertyIds],'Lease advisory history'),
     read(`SELECT property_id,user_id,role FROM crm_property_agents WHERE property_id=ANY($1::text[])`,[propertyIds],'Property teams'),
   ]);

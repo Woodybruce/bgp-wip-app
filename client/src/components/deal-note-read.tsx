@@ -88,7 +88,7 @@ function PartyRow({ party, props }: { party: DealNoteParty; props: DealNoteReadP
 
   let body: ReactNode;
   if (!shown) {
-    body = <p className="text-[11px] text-muted-foreground">A {form.dealType || "deal of this type"} has no {role.toLowerCase()}: change the deal type to use it.</p>;
+    body = <p className="text-[11px] text-muted-foreground">A {form.dealType || "transaction of this type"} has no {role.toLowerCase()}: change the transaction type to use it.</p>;
   } else if (picked) {
     body = <><Done>{picked.companyName}{signs(picked)}</Done>{billingLine()}</>;
   } else if (party.candidates.length) {
@@ -135,9 +135,9 @@ export function DealNoteReadPanel(props: DealNoteReadProps) {
   const placePicked = place?.properties.find(p => p.id === form.propertyId) || null;
   return (
     <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3" data-testid="deal-note-read">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">The deal, from the note</p>
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">The transaction, from the note</p>
 
-      <Row label="Deal type" testId="deal-note-type">
+      <Row label="Transaction type" testId="deal-note-type">
         {type ? (
           form.dealType === type.value
             ? <p><Done>{type.value}</Done><From quote={type.quote} /></p>
@@ -145,7 +145,7 @@ export function DealNoteReadPanel(props: DealNoteReadProps) {
                 <span className="text-sm">{type.value}<From quote={type.quote} /></span>
                 <Act disabled={!!busy} onClick={() => props.onUseType(type.value)} testId="deal-note-type-use">Use</Act>
               </div>
-        ) : <p className="text-[11px] text-muted-foreground">The note does not say what kind of deal: pick it below.</p>}
+        ) : <p className="text-[11px] text-muted-foreground">The note does not say what kind of transaction: pick it below.</p>}
       </Row>
 
       {place && (

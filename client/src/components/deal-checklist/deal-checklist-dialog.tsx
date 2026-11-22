@@ -111,8 +111,8 @@ export function DealChecklistDialog({ unit, open, onClose, onChanged }: {
     const res = await write("assign:deal", "Not saved", "PUT", `/api/deal-checklists/${cl.id}/responsible`, { personKey: person ? person.key : null });
     if (!res) return;
     setPicker(null);
-    if (person) toast({ title: `${person.name} is responsible for the deal`, description: assignedMessage(person, res, false) });
-    else toast({ title: "Nobody is responsible for the deal now" });
+    if (person) toast({ title: `${person.name} is responsible for the transaction`, description: assignedMessage(person, res, false) });
+    else toast({ title: "Nobody is responsible for the transaction now" });
   };
 
   const assign = async (item: ChecklistItem, person: ChecklistPerson | null) => {
@@ -133,7 +133,7 @@ export function DealChecklistDialog({ unit, open, onClose, onChanged }: {
     const res = await write(`waiting:${item.id}`, "Not set", "POST", `/api/deal-checklists/items/${item.id}/waiting`);
     if (!res) return;
     const who = res.waiting?.itemId === item.id ? [res.waiting.party, res.waiting.name].filter(Boolean).join(" · ") : "";
-    toast({ title: "The deal is waiting on this item", description: who ? `Waiting on ${who}. It shows on the deal's clock.` : "Nobody is responsible for it yet, so no one is named on the deal's clock." });
+    toast({ title: "The transaction is waiting on this item", description: who ? `Waiting on ${who}. It shows on the transaction's clock.` : "Nobody is responsible for it yet, so no one is named on the transaction's clock." });
   };
 
   const remind = async (item: ChecklistItem) => {
@@ -172,7 +172,7 @@ export function DealChecklistDialog({ unit, open, onClose, onChanged }: {
   const stageIndex = cl ? CHECKLIST_STAGES.findIndex(s => s.key === cl.stage) : 0;
   const stageLabel = cl ? CHECKLIST_STAGES[stageIndex]?.label || "" : "";
   const described = cl
-    ? [cl.unit.propertyName, cl.unit.dealRef ? `Ref #${cl.unit.dealRef}` : "No deal ref", stageLabel].filter(Boolean).join(" · ")
+    ? [cl.unit.propertyName, cl.unit.dealRef ? `Ref #${cl.unit.dealRef}` : "No transaction ref", stageLabel].filter(Boolean).join(" · ")
     : "What has to happen at each stage of the letting, and who is responsible.";
   const r = cl?.responsible || null;
   const responsibleKey = r ? (r.userId ? `user:${r.userId}` : `brief:${r.briefPersonId}`) : null;
@@ -184,7 +184,7 @@ export function DealChecklistDialog({ unit, open, onClose, onChanged }: {
         data-testid="checklist-dialog"
       >
         <DialogHeader className="pr-8 text-left">
-          <DialogTitle className="break-words" data-testid="checklist-title">Deal checklist: {cl?.unit.unitName || unit?.unitName || "Unit"}</DialogTitle>
+          <DialogTitle className="break-words" data-testid="checklist-title">Transaction checklist: {cl?.unit.unitName || unit?.unitName || "Unit"}</DialogTitle>
           <DialogDescription data-testid="checklist-description">{described}</DialogDescription>
         </DialogHeader>
 
@@ -214,7 +214,7 @@ export function DealChecklistDialog({ unit, open, onClose, onChanged }: {
             <section className="rounded-lg border p-3" data-testid="checklist-responsible">
               <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                 <div className="min-w-0 flex-1 basis-56 space-y-1">
-                  <p className={MICRO_LABEL}>Responsible for the deal</p>
+                  <p className={MICRO_LABEL}>Responsible for the transaction</p>
                   {r ? (
                     <p className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-medium" data-testid="checklist-responsible-name">
                       <span className="min-w-0 break-words">{r.name}</span>
@@ -222,13 +222,13 @@ export function DealChecklistDialog({ unit, open, onClose, onChanged }: {
                     </p>
                   ) : (
                     <p className={cn("text-sm", AMBER_TEXT)} data-testid="checklist-responsible-none">
-                      Nobody is responsible for this deal yet.{cl.viewer.canAssign ? " Choose someone so open items have an owner." : ""}
+                      Nobody is responsible for this transaction yet.{cl.viewer.canAssign ? " Choose someone so open items have an owner." : ""}
                     </p>
                   )}
                 </div>
                 {cl.viewer.canAssign && (
                   <Button type="button" variant="outline" size="sm" disabled={!!busy} aria-expanded={picker === "deal"} onClick={() => setPicker(picker === "deal" ? null : "deal")}
-                    aria-label={r ? "Change who is responsible for the deal" : "Choose who is responsible for the deal"} data-testid="checklist-responsible-change">
+                    aria-label={r ? "Change who is responsible for the transaction" : "Choose who is responsible for the transaction"} data-testid="checklist-responsible-change">
                     {r ? "Change" : "Choose someone"}
                   </Button>
                 )}

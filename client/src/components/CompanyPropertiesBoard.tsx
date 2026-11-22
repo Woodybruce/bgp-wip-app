@@ -289,7 +289,7 @@ function PropertyManageActions({ companyId, property }: { companyId: string; pro
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {property.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently removes the property from the CRM. Any deals stay but are detached from it; units, agent and company links are removed. This can't be undone.
+              This permanently removes the property from the CRM. Any transactions stay but are detached from it; units, agent and company links are removed. This can't be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -716,7 +716,7 @@ export function CompanyPropertiesBoard({
     <>
     {unitsUnavailable && (
       <div role="status" className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs text-muted-foreground" data-testid="company-leasing-unavailable">
-        <span>Leasing schedule unavailable. Property and deal records are still shown.</span>
+        <span>Leasing schedule unavailable. Property and transaction records are still shown.</span>
         <Button type="button" variant="ghost" size="sm" disabled={unitsFetching} onClick={() => void refetchUnits()}>Retry</Button>
       </div>
     )}
@@ -872,7 +872,7 @@ export function CompanyPropertiesBoard({
                     )}
                     {exp > 0 && <span className="text-amber-700"><span className="font-mono tabular-nums">{exp}</span> expiring</span>}
                     {p.deals.length > 0 && (
-                      <span><span className="font-mono tabular-nums">{p.deals.length}</span> deal{p.deals.length !== 1 ? "s" : ""}</span>
+                      <span><span className="font-mono tabular-nums">{p.deals.length}</span> transaction{p.deals.length !== 1 ? "s" : ""}</span>
                     )}
                     {/* Two names, then +N — a row of chips ran off the card. */}
                     {p.agentNames.length > 0 && (
@@ -905,7 +905,7 @@ export function CompanyPropertiesBoard({
                     )}
                     {p.deals.length > 0 && (
                       <div>
-                        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Deals</div>
+                        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Transactions</div>
                         <div className="space-y-0.5">
                           {p.deals.map(d => (
                             <Link key={d.id} href={`/deals/${d.id}`} className="flex items-center gap-2 text-xs py-0.5 hover:bg-muted/50 rounded px-1 -mx-1">
@@ -924,7 +924,7 @@ export function CompanyPropertiesBoard({
                       </div>
                     )}
                     {p.units.length === 0 && p.deals.length === 0 && (
-                      <p className="text-[11px] text-muted-foreground">No units or deals recorded yet.</p>
+                      <p className="text-[11px] text-muted-foreground">No units or transactions recorded yet.</p>
                     )}
                     {kind === "landlord" && <PropertyManageActions companyId={companyId} property={p} />}
                   </div>

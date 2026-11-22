@@ -54,9 +54,9 @@ export function CompanyBgpTeam({ companyId, companyName, coverers, landlord, sta
   };
   const failed = (title: string) => (e: any) => toast({ title, description: e?.message, variant: "destructive" });
 
-  // Who is set on the account: the hand-set list only (a "From deals"
+  // Who is set on the account: the hand-set list only (a "From transactions"
   // fallback is not a saved list, so ticking someone starts one).
-  const setIds = coverers.filter(c => c.role !== "From deals").map(c => c.id);
+  const setIds = coverers.filter(c => c.role !== "From transactions").map(c => c.id);
   const saveTeam = useMutation({
     mutationFn: async (ids: string[]) => { await apiRequest("PUT", `/api/crm/companies/${companyId}`, { bgpContactUserIds: ids.length ? ids : null, bgpContactCrm: null }); },
     onSuccess: refresh, onError: failed("Couldn't save the BGP team"),
@@ -81,14 +81,14 @@ export function CompanyBgpTeam({ companyId, companyName, coverers, landlord, sta
   const people: BgpTeamPerson[] = order.map(id => {
     const cov = coverers.find(c => c.id === id);
     const m = members.get(id);
-    const accountRole = cov ? (cov.role === "From deals" ? "From deals" : canonicalBgpRole(cov.role) || cov.role) : m?.assignedRole || null;
+    const accountRole = cov ? (cov.role === "From transactions" ? "From transactions" : canonicalBgpRole(cov.role) || cov.role) : m?.assignedRole || null;
     const placed = (m?.contexts || []).filter(x => x.origin === "manual").map(x => `${x.role}${x.propertyName ? ` · ${x.propertyName}` : ""}`);
     const suggested = (m?.contexts || []).filter(x => x.origin === "suggested").map(x => `${x.role}${x.propertyName ? ` · ${x.propertyName}` : ""}`);
     const name = cov?.name || m?.name || "BGP";
     const history: BgpTeamPerson["history"] = !staff ? [] : m ? [
       { label: count(m.emailCount, "email"), onOpen: () => setActivity({ person: { userId: id, name }, kind: "emails" }) },
       { label: count(m.meetingCount, "meeting"), onOpen: () => setActivity({ person: { userId: id, name }, kind: "meetings" }) },
-      { label: count(m.dealCount, "deal") },
+      { label: count(m.dealCount, "transaction") },
       { label: count(m.conversationCount, "chat message") },
     ] : [{ label: count(cov?.threads, "email") }];
     return {

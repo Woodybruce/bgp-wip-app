@@ -133,7 +133,7 @@ export function planTeamStructure(input: { users: MigUser[]; deals: MigDeal[]; p
     for (const d of deals) { const t = dealVoteTeam.get(d.id); if (t) votes.set(t, (votes.get(t) || 0) + 1); }
     const ranked = [...votes.entries()].sort((a, b) => b[1] - a[1] || (isLeasingTeam(b[0]) ? 1 : 0) - (isLeasingTeam(a[0]) ? 1 : 0));
     let team: BgpTeamName; let basis: string;
-    if (ranked.length) { team = ranked[0][0]; basis = `deals (${ranked.map(([t, n]) => `${t} ${n}`).join(", ")})`; }
+    if (ranked.length) { team = ranked[0][0]; basis = `transactions (${ranked.map(([t, n]) => `${t} ${n}`).join(", ")})`; }
     else if (currentTeams.length) { team = currentTeams[0]; basis = "existing team"; }
     else if (eng.some(t => isRetired(t) && !/office|corporate/i.test(t))) { team = locationTeam(p, eng.filter(isRetired)); basis = "location / type"; }
     else continue;

@@ -121,7 +121,7 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
     // the checklist gives (worked out below with the Deals page's own rule).
     // to_jsonb reads the 0058 column without failing on a database that has
     // not been given it yet.
-    guarded("Deals waiting on someone", async () => (await q.query(
+    guarded("Transactions waiting on someone", async () => (await q.query(
       `/* brand-diary:deal-clocks */ SELECT d.id AS deal_id, k.waiting_on_party, k.waiting_on_name, ${iso("k.waiting_since")} AS waiting_since, k.waiting_note,
               to_jsonb(k) ->> 'checklist_item_id' AS checklist_item_id, d.status, d.tenant_id,
               c.name AS brand_name, d.property_id, p.name AS property_name, ts.id AS tenancy_unit_id,
@@ -304,7 +304,7 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
   // it is with. So a deal reads the same here as on the Deals page.
   const unset = liveClocks.filter((k: any) => !k.waiting_on_party && !k.waiting_on_name && !k.checklist_item_id).map((k: any) => String(k.deal_id));
   const checklists = unset.length
-    ? await guarded("Deal checklists", async () => (options.waitingChecklists || (await import("./deal-checklist")).waitingChecklistsForDeals)(unset), new Map<string, WaitingChecklist>())
+    ? await guarded("Transaction checklists", async () => (options.waitingChecklists || (await import("./deal-checklist")).waitingChecklistsForDeals)(unset), new Map<string, WaitingChecklist>())
     : new Map<string, WaitingChecklist>();
   for (const k of liveClocks) {
     if (!placed(k.property_id)) continue;
@@ -319,7 +319,7 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
     const person = !jointAgent && clock.waitingOnName ? String(clock.waitingOnName) : null;
     const who = party || person || "a named person";
     item({
-      id: `deal_waiting:${k.deal_id}`, kind: "deal_waiting", title: `Deal waiting on ${who}`, daysWaiting: daysSince(clock.waitingSince, now),
+      id: `deal_waiting:${k.deal_id}`, kind: "deal_waiting", title: `Transaction waiting on ${who}`, daysWaiting: daysSince(clock.waitingSince, now),
       brand: brandOf(k.tenant_id, k.brand_name), scheme: schemeFor(k.property_id, k.property_name), unitLabel: k.unit_label || null, owner: k.owner_name || null,
       waitingOn: { side: party ? sideOf(party) : "other", name: party && person ? `${party} (${person})` : who },
       nouns: everyKind ? ["brand"] : undefined,

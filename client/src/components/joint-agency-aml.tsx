@@ -117,8 +117,8 @@ export function JointAgencyWidget({ value, onChange, defaults, signedBy, showErr
       >
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground"><Handshake className="h-4 w-4" /></span>
         <span className="min-w-0">
-          <span className="block text-sm font-semibold">Joint Agency Lead Deal</span>
-          <span className="block text-xs text-muted-foreground">Click if another agent introduced the tenant and led the negotiations. Records the AML file note against this deal.</span>
+          <span className="block text-sm font-semibold">Joint Agency Lead Transaction</span>
+          <span className="block text-xs text-muted-foreground">Click if another agent introduced the tenant and led the negotiations. Records the AML file note against this transaction.</span>
         </span>
       </button>
     );
@@ -130,8 +130,8 @@ export function JointAgencyWidget({ value, onChange, defaults, signedBy, showErr
         <div className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground"><Check className="h-4 w-4" /></span>
           <div>
-            <p className="text-sm font-semibold leading-tight">Joint Agency Lead Deal</p>
-            <p className="text-xs text-muted-foreground">An AML file note will be saved against this deal.</p>
+            <p className="text-sm font-semibold leading-tight">Joint Agency Lead Transaction</p>
+            <p className="text-xs text-muted-foreground">An AML file note will be saved against this transaction.</p>
           </div>
         </div>
         <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => set({ on: false })} data-testid="joint-agency-off">Not joint agency</Button>
@@ -185,9 +185,9 @@ export function JointAgencyWidget({ value, onChange, defaults, signedBy, showErr
 
       {/* Step 3 — what gets recorded */}
       <div className="rounded-md border bg-background p-3">
-        <p className="text-xs font-semibold">{mode === "existing" ? "3. Recorded when you press Save note" : mode === "existing-form" ? "3. Recorded when you press Save Changes" : "3. Recorded when you create the deal"}</p>
+        <p className="text-xs font-semibold">{mode === "existing" ? "3. Recorded when you press Save note" : mode === "existing-form" ? "3. Recorded when you press Save Changes" : "3. Recorded when you create the transaction"}</p>
         <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-          The file note is saved against this deal and added to the Joint agency AML register. It states that {value.coAgent.trim() || "the co-agent"} is
+          The file note is saved against this transaction and added to the Joint agency AML register. It states that {value.coAgent.trim() || "the co-agent"} is
           HMRC-registered, introduced {value.tenant.trim() || "the tenant"} and managed all dealings with them, and that BGP only advised its client.
           {(rent || 0) >= 120000
             ? ` At £10,000 a month or more it also says ${value.tenant.trim() || "the tenant"} is still checked: HMRC's letting rules have no joint agent exception, so BGP relies on ${value.coAgent.trim() || "the co-agent"}'s checks under a reliance agreement, or checks them itself (Parties & AML).`
@@ -248,7 +248,7 @@ export function JointAgencyNoteCard({ dealId, defaults, signedBy, canAdd = false
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json?.message || res.statusText);
-        toast({ title: "Joint agency AML note saved", description: "Recorded against this deal and added to the register." });
+        toast({ title: "Joint agency AML note saved", description: "Recorded against this transaction and added to the register." });
         setDraft(EMPTY_JOINT_AGENCY);
         setShowErrors(false);
         queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId, "joint-agency-note"] });
@@ -303,25 +303,25 @@ export function JointAgencyRegisterDialog({ open, onOpenChange }: { open: boolea
       <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>Joint agency AML register</DialogTitle>
-          <DialogDescription>Every AML file note saved for a Joint Agency Lead Deal, newest first. Each downloads as a Word file exactly as it was saved.</DialogDescription>
+          <DialogDescription>Every AML file note saved for a Joint Agency Lead Transaction, newest first. Each downloads as a Word file exactly as it was saved.</DialogDescription>
         </DialogHeader>
         {isLoading ? (
           <p className="py-6 text-center text-sm text-muted-foreground">Loading the register…</p>
         ) : notes.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">No joint agency notes yet. They appear here when a deal is created with Joint Agency Lead Deal switched on.</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">No joint agency notes yet. They appear here when a transaction is created with Joint Agency Lead Transaction switched on.</p>
         ) : (
           <div className="max-h-[60vh] overflow-auto rounded border">
             <table className="w-full text-left text-xs">
               <thead className="sticky top-0 bg-muted text-muted-foreground">
                 <tr className="[&>th]:px-2 [&>th]:py-2 [&>th]:font-semibold">
-                  <th>Saved</th><th>Deal</th><th>Property</th><th>Client</th><th>Co-agent</th><th>Tenant</th><th className="text-right">Rent pa</th><th>Signed</th><th>Reviewed</th><th />
+                  <th>Saved</th><th>Transaction</th><th>Property</th><th>Client</th><th>Co-agent</th><th>Tenant</th><th className="text-right">Rent pa</th><th>Signed</th><th>Reviewed</th><th />
                 </tr>
               </thead>
               <tbody>
                 {notes.map(n => (
                   <tr key={n.id} className="border-t align-top [&>td]:px-2 [&>td]:py-2" data-testid={`joint-agency-row-${n.id}`}>
                     <td className="whitespace-nowrap">{day(n.savedAt)}</td>
-                    <td>{n.dealId ? <a href={`/deals/${n.dealId}`} className="text-primary hover:underline">{n.dealRef ? `#${n.dealRef} ` : ""}{n.dealName || "Deal"}</a> : "—"}</td>
+                    <td>{n.dealId ? <a href={`/deals/${n.dealId}`} className="text-primary hover:underline">{n.dealRef ? `#${n.dealRef} ` : ""}{n.dealName || "Transaction"}</a> : "—"}</td>
                     <td>{n.property}</td>
                     <td>{n.client}</td>
                     <td>{n.coAgent}</td>

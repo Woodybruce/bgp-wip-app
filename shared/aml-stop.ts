@@ -26,7 +26,7 @@ export type AmlStopReason = keyof typeof AML_STOP_REASONS;
 export const AML_STOP_NOTE_MIN = 10;
 
 /** What a status move, an invoice or a delete is told while the deal is stopped. Neutral: a client login may read it. */
-export const AML_STOP_REFUSAL = "This deal is on hold by BGP's compliance team: it cannot move on, be invoiced or be deleted until they release it.";
+export const AML_STOP_REFUSAL = "This transaction is on hold by BGP's compliance team: it cannot move on, be invoiced or be deleted until they release it.";
 
 export interface AmlStopView {
   at: string;

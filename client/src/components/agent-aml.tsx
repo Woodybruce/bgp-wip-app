@@ -181,7 +181,7 @@ export function DealAgentsAml({ dealId, bare }: { dealId: string; bare?: boolean
   if (!data?.agents.length) return null;
   return (
     <div className="space-y-1.5" data-testid="deal-agents-aml">
-      {!bare && <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Agents on this deal</div>}
+      {!bare && <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Agents on this transaction</div>}
       {data.agents.map(a => (
         <div key={`${a.role}-${a.companyId}`} className={`rounded-md border p-2.5 text-xs ${TONE_BOX[a.state.tone]}`} data-testid={`deal-agent-aml-${a.role}`}>
           <div className="flex items-start gap-2">
@@ -194,7 +194,7 @@ export function DealAgentsAml({ dealId, bare }: { dealId: string; bare?: boolean
               <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setChecking(a)} data-testid={`deal-agent-aml-check-${a.role}`}>{a.record ? "Check again" : "Check"}</Button>
               {a.state.tone === "red" && (
                 <RaiseReportButton label="Tell the Nominated Officer" kind="agent_unregistered" dealId={dealId} companyId={a.companyId}
-                  seed={`${a.name} (${a.roleWords.toLowerCase()} on this deal) is not on HMRC's register of businesses supervised for anti-money laundering.`}
+                  seed={`${a.name} (${a.roleWords.toLowerCase()} on this transaction) is not on HMRC's register of businesses supervised for anti-money laundering.`}
                   className="h-7 text-xs" testId={`deal-agent-aml-report-${a.role}`} />
               )}
             </div>

@@ -151,7 +151,7 @@ export async function checkCounterpartyAmlShadow(
     [dealId],
   );
   const deal = dealRows[0];
-  if (!deal) throw new Error("deal not found");
+  if (!deal) throw new Error("transaction not found");
 
   const input: AmlGateInput = {
     landlordId: deal.landlord_id, tenantId: deal.tenant_id,

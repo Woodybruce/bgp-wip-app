@@ -78,7 +78,7 @@ test("setting the date: a real day, not in the future, not long before the deal 
   // ... but not by more than the margin (a mistyped year).
   const early = checkStageSinceInput("2023-05-31", opts);
   assert.equal(early.ok, false);
-  assert.match((early as any).error, /before the deal was created/);
+  assert.match((early as any).error, /before the transaction was created/);
   assert.equal(checkStageSinceInput("0206-10-01", opts).ok, false);
   // Nonsense is refused, not guessed at.
   for (const bad of ["yesterday", "01/10/2026", "2026-13-01", "2026-02-30", "2026-10-01T00:00:00Z", 20261001, true, {}, undefined]) {
@@ -106,12 +106,12 @@ test("the figure and its title", () => {
   assert.equal(stageDaysLabel(17, false), "17d");   // no question mark (Woody, 2026-11-13)
   const base = { stage: "Negotiating", stuckDays: 30 };
   assert.equal(stageDaysTitle({ ...base, days: 17, confirmed: false, stuck: false, canSet: true }),
-    "The app does not know when this deal reached Negotiating. Set the date.");
+    "The app does not know when this transaction reached Negotiating. Set the date.");
   assert.equal(stageDaysTitle({ ...base, days: 17, confirmed: false, stuck: false }),
-    "The app does not know when this deal reached Negotiating.");
+    "The app does not know when this transaction reached Negotiating.");
   // Still stuck, and the title says the date is unconfirmed.
   const stuck = stageDaysTitle({ ...base, days: 87, confirmed: false, stuck: true, canSet: true });
-  assert.match(stuck, /^The app does not know when this deal reached Negotiating\./);
+  assert.match(stuck, /^The app does not know when this transaction reached Negotiating\./);
   assert.match(stuck, /87 days, which counts as stuck \(30 days or more\), but that date is unconfirmed\. Set the date\.$/);
   assert.equal(stageDaysTitle({ ...base, days: 45, confirmed: true, stuck: true }), "At Negotiating for 45 days: stuck (30 days or more)");
   assert.equal(stageDaysTitle({ ...base, days: 1, confirmed: true, stuck: false }), "At Negotiating for 1 day");
@@ -160,7 +160,7 @@ test("last contact: a sort treats a date ahead as the newest", () => {
 // The list now says where the date came from (lastContactSource).
 test("last contact: a deal's last edit is never drawn or sorted as a contact", () => {
   const edit = lastContactCell("2026-10-27T09:00:00Z", NOW, "edit");
-  assert.deepEqual(edit, { kind: "unread", label: "No contact read yet", title: "No email or meeting read yet. Deal last changed 27 Oct 2026", days: null });
+  assert.deepEqual(edit, { kind: "unread", label: "No contact read yet", title: "No email or meeting read yet. Transaction last changed 27 Oct 2026", days: null });
   assert.doesNotMatch(edit.title, /reading of emails/);
   // With no edit date at all the words are the same, with no date to give.
   assert.deepEqual(lastContactCell(null, NOW, "edit"), { kind: "unread", label: "No contact read yet", title: "No email or meeting read yet.", days: null });
@@ -177,7 +177,7 @@ test("last contact: a stored reading says so, a deal event says what it is", () 
   const event = lastContactCell("2026-10-12T09:00:00Z", NOW, "event");
   assert.equal(event.kind, "activity");
   assert.equal(event.label, "5w");
-  assert.equal(event.title, "Latest activity on the deal 12 Oct 2026 (a stage change, heads of terms or a document). No email or meeting read yet");
+  assert.equal(event.title, "Latest activity on the transaction 12 Oct 2026 (a stage change, heads of terms or a document). No email or meeting read yet");
   assert.equal(lastContactSortValue("2026-10-12T09:00:00Z", "event")?.toISOString(), "2026-10-12T09:00:00.000Z");
   // A stored date ahead is still Next, whatever the source.
   assert.equal(lastContactCell("2027-02-12T09:00:00Z", NOW, "read").kind, "next");
@@ -201,7 +201,7 @@ test("a blocked, skipped or rejected status line is not a move", () => {
 // The words the mirror really writes open with the words the rule refuses.
 test("the mirror's own refusal lines open with the words the rule knows", () => {
   const mirror = readFileSync(new URL("./lease-status-mirror.ts", import.meta.url), "utf8");
-  assert.match(mirror, /`Skipped — deal is \$\{currentCode\}/);
+  assert.match(mirror, /`Skipped — transaction is \$\{currentCode\}/);
   assert.match(mirror, /`Blocked — gate check failed/);
   assert.match(mirror, /`Blocked — \$\{denial\.error\}/);
 });

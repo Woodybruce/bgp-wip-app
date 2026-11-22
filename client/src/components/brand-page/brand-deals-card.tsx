@@ -68,7 +68,7 @@ export function BrandDealsCard({ list, staff, knownEmpty = true, dealsHref, unit
   if (rows.length === 0) {
     return staff && knownEmpty ? (
       <BrandQuietLine testId="brand-deals-empty">
-        No deals recorded with this brand yet · <Link href={dealsHref} className={brandQuietLink}>Add to deal</Link>
+        No transactions recorded with this brand yet · <Link href={dealsHref} className={brandQuietLink}>Add to transaction</Link>
       </BrandQuietLine>
     ) : null;
   }
@@ -80,8 +80,8 @@ export function BrandDealsCard({ list, staff, knownEmpty = true, dealsHref, unit
   </>;
   const refLine = (d: BrandDealRow) => [d.deal_ref != null ? `#${d.deal_ref}` : null, d.deal_type].filter(Boolean).join(" · ");
   return (
-    <BrandCard title="Deals" count={total} summary={summary} testId="brand-deals-card" className="[container-type:inline-size]"
-      action={staff ? <Link href={dealsHref} className={brandCardAction} data-testid="link-brand-deals-board">Open in Deals</Link> : undefined}>
+    <BrandCard title="Transactions" count={total} summary={summary} testId="brand-deals-card" className="[container-type:inline-size]"
+      action={staff ? <Link href={dealsHref} className={brandCardAction} data-testid="link-brand-deals-board">Open in Transactions</Link> : undefined}>
       {/* One line per deal, the size of the landlord page's deals table: the
           name (cut with an ellipsis, the full name on hover), its Ref and type
           on a small second line. */}
@@ -92,7 +92,7 @@ export function BrandDealsCard({ list, staff, knownEmpty = true, dealsHref, unit
           </colgroup>
           <thead>
             <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border/40">
-              <th className="py-1 pr-4 font-semibold">Deal</th>
+              <th className="py-1 pr-4 font-semibold">Transaction</th>
               <th className="py-1 pr-4 font-semibold">Role</th>
               <th className="py-1 pr-4 font-semibold">Property / unit</th>
               <th className="py-1 pr-4 font-semibold">Stage</th>
@@ -106,8 +106,8 @@ export function BrandDealsCard({ list, staff, knownEmpty = true, dealsHref, unit
                 <tr key={d.id} className="align-top border-b border-border/20 last:border-0 hover:bg-muted/40" data-testid={`brand-deal-row-${d.id}`}>
                   <td className="py-1.5 pr-4">
                     {plain
-                      ? <span className="block truncate text-[13px] font-medium text-foreground" title={d.name || "Deal"}>{d.name || "Deal"}</span>
-                      : <Link href={`/deals/${d.id}`} className="block truncate text-[13px] font-medium text-foreground hover:text-primary hover:underline" title={d.name || "Deal"}>{d.name || "Deal"}</Link>}
+                      ? <span className="block truncate text-[13px] font-medium text-foreground" title={d.name || "Transaction"}>{d.name || "Transaction"}</span>
+                      : <Link href={`/deals/${d.id}`} className="block truncate text-[13px] font-medium text-foreground hover:text-primary hover:underline" title={d.name || "Transaction"}>{d.name || "Transaction"}</Link>}
                     {refLine(d) && <span className="block truncate text-[11px] text-muted-foreground tabular-nums">{refLine(d)}</span>}
                   </td>
                   <td className="py-1.5 pr-4 text-muted-foreground whitespace-nowrap">{d.role ? ROLE_LABEL[d.role] : "—"}</td>
@@ -135,7 +135,7 @@ export function BrandDealsCard({ list, staff, knownEmpty = true, dealsHref, unit
           const detail = [d.role ? ROLE_LABEL[d.role] : null, refLine(d) || null, d.property_name, unitOf(d), lastUpdate(d.updated_at)].filter(Boolean).join(" · ");
           const row = <>
               <span className="flex items-start justify-between gap-2">
-                <span className="min-w-0 text-sm font-medium text-foreground break-words">{d.name || "Deal"}</span>
+                <span className="min-w-0 text-sm font-medium text-foreground break-words">{d.name || "Transaction"}</span>
                 <span className="shrink-0"><StageChip status={d.status} /></span>
               </span>
               <span className="block text-[11px] text-muted-foreground break-words" title={fullDate(d.updated_at)}>{detail}</span>

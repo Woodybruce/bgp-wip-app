@@ -38,7 +38,7 @@ test('each person’s emails and meetings open only their own history', () => {
   const tree = harness();
   const people = group(tree()).props.people;
   assert.deepEqual(plain(people.map(p => p.name)), ['Sam Morgan', 'Jo Reed']);
-  assert.deepEqual(plain(people[0].history.map(h => h.label)), ['12 emails', '3 meetings', '2 deals', '4 chat messages']);
+  assert.deepEqual(plain(people[0].history.map(h => h.label)), ['12 emails', '3 meetings', '2 transactions', '4 chat messages']);
   assert.match(people[0].note, /Suggested from records: Tenant representative · High Street/);
   assert.equal(people[0].email, 'sam@example.test');
   assert.equal(nodes(tree()).some(n => n.type === 'BrandEmailHistory' || n.type === 'LandlordMeetingsHistory'), false);

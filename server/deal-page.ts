@@ -478,7 +478,7 @@ export async function buildDealTimeline(ctx: DealContext): Promise<DealEvent[]> 
   const w = ctx.window;
   const jointAgent = viewer === "joint_agent";
 
-  push({ id: `created:${deal.id}`, at: at(deal.created_at), kind: "created", title: "Deal added", detail: deal.deal_type || null });
+  push({ id: `created:${deal.id}`, at: at(deal.created_at), kind: "created", title: "Transaction added", detail: deal.deal_type || null });
   push({ id: `instructed:${deal.id}`, at: at(deal.instructed_at), kind: "instructed", title: "Instructed" });
   for (const m of moves) {
     push({
@@ -587,7 +587,7 @@ export function setupDealPageRoutes(app: Express) {
       res.json(await buildDealPage(req, ctx));
     } catch (e: any) {
       console.error("[deal-page]", e?.message);
-      res.status(500).json({ error: "The deal page could not be read" });
+      res.status(500).json({ error: "The transaction page could not be read" });
     }
   });
 
@@ -598,7 +598,7 @@ export function setupDealPageRoutes(app: Express) {
       res.json({ events: await buildDealTimeline(ctx), letting: ctx.unit ? { trackerId: ctx.unit.id, current: ctx.current } : null });
     } catch (e: any) {
       console.error("[deal-timeline]", e?.message);
-      res.status(500).json({ error: "The deal's timeline could not be read" });
+      res.status(500).json({ error: "The transaction's timeline could not be read" });
     }
   });
 }

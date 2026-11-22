@@ -460,7 +460,7 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>, sc
           `SELECT d.name, d.status, d.deal_type, d.team, p.name as property_name FROM crm_deals d
            LEFT JOIN crm_properties p ON d.property_id = p.id WHERE d.id = $1`, [id]);
         const d = r.rows[0];
-        if (d) lines.push(`- Deal **${d.name}** (id ${id}) — ${d.deal_type || "deal"}, status ${d.status || "unknown"}${d.property_name ? `, property ${d.property_name}` : ""}${d.team ? `, team ${d.team}` : ""}`);
+        if (d) lines.push(`- Transaction **${d.name}** (id ${id}) — ${d.deal_type || "deal"}, status ${d.status || "unknown"}${d.property_name ? `, property ${d.property_name}` : ""}${d.team ? `, team ${d.team}` : ""}`);
       } else if (type === "company") {
         const r = await pool.query(`SELECT name, company_type FROM crm_companies WHERE id = $1`, [id]);
         const c = r.rows[0];
@@ -2432,7 +2432,7 @@ export async function registerRoutes(
               ORDER BY au.unit_name LIMIT 5`, [jaLike, tagJointAgent.propertyIds]);
           for (const u of unitRows.rows) results.push({ type: "unit", id: u.id, name: u.property_name ? `${u.unit_name} · ${u.property_name}` : u.unit_name });
           for (const d of await liveDealsAt(tagJointAgent.propertyIds, { like: jaLike, limit: 5 })) {
-            results.push({ type: "deal", id: d.id, name: d.name || `Deal ${d.ref ?? ""}`.trim() });
+            results.push({ type: "deal", id: d.id, name: d.name || `Transaction ${d.ref ?? ""}`.trim() });
           }
         }
         return res.json({ results });
@@ -6330,7 +6330,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         [req.params.id]
       );
       if (inUse.rows.length > 0) {
-        return res.status(409).json({ message: "Unit is referenced by listings or deals" });
+        return res.status(409).json({ message: "Unit is referenced by listings or transactions" });
       }
       await pool.query(`DELETE FROM property_units WHERE id = $1`, [req.params.id]);
       res.json({ success: true });
@@ -6515,7 +6515,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       if (remarketing && !freshDealMade) {
         return res.status(409).json({
-          message: "This unit could not be put back on the market, because a new deal could not be made for it. Its status has not been changed. Check the unit is not already live on another tracker row, then try again.",
+          message: "This unit could not be put back on the market, because a new transaction could not be made for it. Its status has not been changed. Check the unit is not already live on another tracker row, then try again.",
           code: "REMARKET_DEAL_FAILED",
         });
       }
@@ -6637,7 +6637,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           await mirrorFromAvailableUnit(req.params.id as string, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null });
         } catch (e: any) {
           console.warn(`[available-units PATCH] status mirror failed for ${req.params.id}:`, e?.message);
-          mirrorWarning = `Status saved, but syncing it to the Deals board / Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
+          mirrorWarning = `Status saved, but syncing it to the Transactions board / Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
         }
       }
 
@@ -7166,7 +7166,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const investment = await backfillInvestmentTrackerDeals();
 
       const created = letting.created + letting.linked + investment;
-      const message = `Letting Tracker: ${letting.scanned} without a deal, ${letting.created} given a new deal, ${letting.linked} linked to a deal already there, ${letting.skipped} left alone, ${letting.failed} failed. Investment Tracker: ${investment} given a deal.`;
+      const message = `Letting Tracker: ${letting.scanned} without a transaction, ${letting.created} given a new transaction, ${letting.linked} linked to a transaction already there, ${letting.skipped} left alone, ${letting.failed} failed. Investment Tracker: ${investment} given a transaction.`;
       res.json({ created, skipped: letting.skipped, letting, investment, message });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Backfill failed" });
@@ -7191,7 +7191,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         );
         updated += result.rowCount ?? 0;
       }
-      res.json({ updated, message: `Renamed team values in ${updated} deal(s)` });
+      res.json({ updated, message: `Renamed team values in ${updated} transaction(s)` });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Rename failed" });
     }
@@ -8376,7 +8376,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
       const deal = await storage.getCrmDeal(dealId);
-      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      if (!deal) return res.status(404).json({ message: "Transaction not found" });
       if (deal.id === existing.dealId) return res.json(existing);
       // Only a letting deal sits on the Letting Tracker, and on one row. An
       // untyped deal (the WIP import's Sage rows carry no type) is typed
@@ -8384,20 +8384,20 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // gives it — and the stamp is on the audit row.
       const typeStamped = !deal.dealType ? DEFAULT_LETTING_TYPE : null;
       if (!typeStamped && !isLettingType(deal.dealType)) {
-        return res.status(409).json({ message: `Only a letting deal (${LETTING_DEAL_TYPES.join(", ")}) can sit on the Letting Tracker — #${deal.dealRef ?? "?"} is ${deal.dealType}` });
+        return res.status(409).json({ message: `Only a letting transaction (${LETTING_DEAL_TYPES.join(", ")}) can sit on the Letting Tracker — #${deal.dealRef ?? "?"} is ${deal.dealType}` });
       }
       // The deal must be this row's unit: same property, and the same unit
       // when both sides name one.
       if (deal.propertyId && existing.propertyId && deal.propertyId !== existing.propertyId) {
-        return res.status(409).json({ message: `Deal #${deal.dealRef ?? "?"} is on another property — it can't sit on this row` });
+        return res.status(409).json({ message: `Transaction #${deal.dealRef ?? "?"} is on another property — it can't sit on this row` });
       }
       if (deal.unitId && existing.unitId && deal.unitId !== existing.unitId) {
-        return res.status(409).json({ message: `Deal #${deal.dealRef ?? "?"} is on another unit — it can't sit on this row` });
+        return res.status(409).json({ message: `Transaction #${deal.dealRef ?? "?"} is on another unit — it can't sit on this row` });
       }
       const elsewhere = await pool.query(`SELECT id FROM available_units WHERE deal_id = $1 AND id <> $2 ORDER BY created_at LIMIT 1`, [dealId, existing.id]);
       if (elsewhere.rows[0]) {
         return res.status(409).json({
-          message: `Deal #${deal.dealRef ?? "?"} is already on the Letting Tracker on another row — merge the rows instead`,
+          message: `Transaction #${deal.dealRef ?? "?"} is already on the Letting Tracker on another row — merge the rows instead`,
           code: "LIVE_LETTING_EXISTS", existingDealId: deal.id, existingDealRef: deal.dealRef ?? null, trackerRowId: elsewhere.rows[0].id,
         });
       }
@@ -8423,7 +8423,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }, { userId: (req.session as any)?.userId || (req as any).tokenUserId || null, source: lettingSource(req) });
       res.json(unit);
     } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Failed to link deal" });
+      res.status(500).json({ message: err?.message || "Failed to link transaction" });
     }
   });
 
@@ -8439,12 +8439,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const backing = await ensureBackingDealForUnit(pool, existing.id);
       if (!backing) {
         return res.status(409).json({ message: isHistoricUnitStatus(existing.marketingStatus)
-          ? "Historic unit — a new letting is a new deal. Set it back to Marketing first."
-          : "A live deal for this unit already sits on another tracker row — merge the duplicate rows instead." });
+          ? "Historic unit — a new letting is a new transaction. Set it back to Marketing first."
+          : "A live transaction for this unit already sits on another tracker row — merge the duplicate rows instead." });
       }
       res.json(backing);
     } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Failed to create deal" });
+      res.status(500).json({ message: err?.message || "Failed to create transaction" });
     }
   });
 
@@ -8565,7 +8565,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       // An agent who answered YES or N/A is told it was not kept (a NO or a
       // blank changes nothing they would notice).
-      const SIGN_OFF_NOT_SAVED = "The AML / KYC answer on this form was not saved: only the MLRO signs off a deal's AML.";
+      const SIGN_OFF_NOT_SAVED = "The AML / KYC answer on this form was not saved: only the MLRO signs off a transaction's AML.";
       const signOffNotSaved = !actor.isMlro && (body.amlChecked === "YES" || body.amlChecked === "N-A") && body.amlChecked !== (signOffStored || "");
 
       const dealFields: Record<string, any> = {
@@ -10769,7 +10769,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (await restrictedLandsecTaskCaller(req)) return res.status(403).json({ error: "Not available for this login" });
       if (!title || !title.trim()) return res.status(400).json({ error: "Title is required" });
       if (!(await taskLinksInScope(req, { linkedPropertyId, linkedDealId }))) {
-        return res.status(403).json({ error: "Linked property or deal is outside your portfolio" });
+        return res.status(403).json({ error: "Linked property or transaction is outside your portfolio" });
       }
 
       // Assignment: the task lands on the ASSIGNEE's list; assigned_by
@@ -10868,7 +10868,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         linkedPropertyId: req.body.linkedPropertyId !== undefined ? req.body.linkedPropertyId : existing.rows[0].linked_property_id,
         linkedDealId: req.body.linkedDealId !== undefined ? req.body.linkedDealId : existing.rows[0].linked_deal_id,
       }))) {
-        return res.status(403).json({ error: "Linked property or deal is outside your portfolio" });
+        return res.status(403).json({ error: "Linked property or transaction is outside your portfolio" });
       }
 
       const fields: string[] = [];
@@ -11061,7 +11061,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       for (const d of stuckDeals.rows) {
         const ms = Date.now() - new Date(d.updated_at).getTime();
         const days = isNaN(ms) ? 30 : Math.floor(ms / 86400000);
-        alerts.push({ type: "stuck_deal", severity: "warning", title: `Stuck deal: ${d.name}`, detail: `No update for ${days}+ days (status: ${d.status})`, entityId: d.id, entityType: "deal" });
+        alerts.push({ type: "stuck_deal", severity: "warning", title: `Stuck transaction: ${d.name}`, detail: `No update for ${days}+ days (status: ${d.status})`, entityId: d.id, entityType: "deal" });
       }
 
       // Requirements by the one live rule (shared/requirement-live.ts): one
@@ -11082,7 +11082,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
          ORDER BY r.last_confirmed_at DESC LIMIT 10`
       ).catch(() => ({ rows: [] as any[] }));
       for (const r of unmatchedReqs.rows) {
-        alerts.push({ type: "unmatched_requirement", severity: "info", title: `Live requirement: ${r.name}`, detail: `${r.company_name || "Unknown"} — ${requirementLive(r).dateLabel}, no deal linked yet`, entityId: r.id, entityType: "requirement" });
+        alerts.push({ type: "unmatched_requirement", severity: "info", title: `Live requirement: ${r.name}`, detail: `${r.company_name || "Unknown"} — ${requirementLive(r).dateLabel}, no transaction linked yet`, entityId: r.id, entityType: "requirement" });
       }
 
       const kycGaps = await pool.query(
@@ -11092,7 +11092,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
          LIMIT 10`
       );
       for (const d of kycGaps.rows) {
-        alerts.push({ type: "kyc_gap", severity: "critical", title: `KYC not approved: ${d.name}`, detail: "Deal is progressing but KYC has not been completed", entityId: d.id, entityType: "deal" });
+        alerts.push({ type: "kyc_gap", severity: "critical", title: `KYC not approved: ${d.name}`, detail: "Transaction is progressing but KYC has not been completed", entityId: d.id, entityType: "deal" });
       }
 
       const coolingContacts = await pool.query(

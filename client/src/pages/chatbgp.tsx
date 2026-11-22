@@ -67,7 +67,7 @@ interface ThreadData {
 const LINKED_TYPES = [
   { value: "instruction", label: "Instruction", icon: FileText },
   { value: "property", label: "Property", icon: Building2 },
-  { value: "deal", label: "Deal", icon: Briefcase },
+  { value: "deal", label: "Transaction", icon: Briefcase },
   { value: "requirement", label: "Requirement", icon: ClipboardList },
   { value: "company", label: "Company", icon: Users },
 ];
@@ -83,7 +83,7 @@ function getLinkedLabel(type: string | null) {
 }
 
 const SUGGESTIONS = [
-  { title: "Show me live deals" },
+  { title: "Show me live transactions" },
   { title: "What's in my calendar today?" },
   { title: "Draft HOTs for a property" },
   { title: "Search CRM contacts" },
@@ -1322,7 +1322,7 @@ function ProjectRightPanel({
 
           {propertyDeals.length > 0 && (
             <div className="border-t border-border/50 pt-5">
-              <h4 className="text-sm font-semibold text-foreground mb-2.5">Linked Deals</h4>
+              <h4 className="text-sm font-semibold text-foreground mb-2.5">Linked Transactions</h4>
               <div className="space-y-0.5">
                 {propertyDeals.map((d: any) => (
                   <button
@@ -1703,7 +1703,7 @@ function ThreadInfoPanel({
           )}
 
           {propertyDeals.length > 0 && (
-            <PropertyContextSection title="Linked Deals" icon={Briefcase}>
+            <PropertyContextSection title="Linked Transactions" icon={Briefcase}>
               <div className="space-y-1">
                 {propertyDeals.map((d: any) => (
                   <button
@@ -1714,7 +1714,7 @@ function ThreadInfoPanel({
                   >
                     <Briefcase className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium truncate">{d.name || d.dealName || "Untitled Deal"}</p>
+                      <p className="text-xs font-medium truncate">{d.name || d.dealName || "Untitled Transaction"}</p>
                       {d.status && <p className="text-[10px] text-muted-foreground">{d.status}</p>}
                     </div>
                     <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
@@ -3917,7 +3917,7 @@ export default function ChatBGP() {
                   <div className="flex-1 flex flex-col items-center px-4 pt-[10vh] pb-6">
                     <h2 className="text-2xl font-semibold mb-1.5 text-center" data-testid="text-home-title">Ask ChatBGP</h2>
                     <p className="text-muted-foreground text-center mb-6 text-sm max-w-md">
-                      ChatBGP will search your CRM, deals, and property data to find exactly what you need.
+                      ChatBGP will search your CRM, transactions, and property data to find exactly what you need.
                     </p>
 
                     <div className="w-full max-w-xl mb-6">

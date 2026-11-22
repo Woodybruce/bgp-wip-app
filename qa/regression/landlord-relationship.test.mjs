@@ -13,7 +13,7 @@ test('landlord relationship starts with dated meeting and participants before te
   assert.match(text,/AEW — next meeting Wed,? 28 Oct, 10:00/);
   assert.ok(text.indexOf('Ben Sykes') < text.indexOf('BGP team'));
   assert.match(text,/Manish, Ben Sykes, Nick, Vics/);
-  assert.match(text,/Will Penfold \(from deal records\)/);
+  assert.match(text,/Will Penfold \(from transaction records\)/);
   assert.match(text,/Dough T2 #3629 — with solicitors/);
   assert.match(text,/Dough T1 #3295 — invoiced/);
   assert.doesNotMatch(text,/warm|cold|momentum|decision-maker|mandate/);
@@ -106,7 +106,7 @@ test('same-property legacy deals are retained as related context with explicit p
  assert.equal(evidence.deals[1].relationship.instruction,false);
  assert.equal(evidence.deals[2].relationship.instruction,false);
  const text=renderLandlordRelationshipBrief({...evidence,conversationUpdates:[{speaker:'Woody',report:'AEW was disinstructed but Dough T2 continues as legacy.',date:'2026-10-27'}]}, {omitMeetingAndTeam:true});
- assert.match(text,/via AEW's deal link; property record links Dulwich Estate/);
+ assert.match(text,/via AEW's transaction link; property record links Dulwich Estate/);
  assert.match(text,/Dough T2 #3629 — with solicitors/);assert.match(text,/Dough T1 #3295 — invoiced/);
  assert.match(text,/DanDan #3327 — negotiating.*tenant representation/);
  assert.doesNotMatch(text,/before the meeting|AEW instruction|AEW ownership/);
@@ -161,7 +161,7 @@ test('human disinstruction and legacy-deal reports stay attributed, while greeti
  const text=renderLandlordRelationshipBrief({...fixture(),conversationUpdates:reports});
  assert.match(text,/Reported in chat.*Woody Bruce, 27 Oct 2026.*disinstructed/);
  assert.match(text,/Dough T2 #3629 — with solicitors/);
- assert.match(text,/Reconcile these staff reports with the saved instruction and deal records/);
+ assert.match(text,/Reconcile these staff reports with the saved instruction and transaction records/);
 });
 
 test('conversation evidence is restricted to the requesting viewer’s linked threads',async()=>{
@@ -243,7 +243,7 @@ test('landlord evidence reads records and exposes failed sources instead of inve
  const queries=[];
  const q={query:async(sql)=>{queries.push(sql); if(sql.includes('AS is_landlord'))return{rows:[{id:'aew',name:'AEW',is_landlord:true}]}; if(sql.includes('LEFT(d.comments'))throw Error('unavailable');return{rows:[]};}};
  const evidence=await getLandlordRelationshipEvidence('aew',{pool:q,relationshipTeam:async()=>null,meetingDigest:async()=>({meetings:[],nextMeeting:null,coverage:{status:'not_synced'}}),interviews:async()=>[],engagement:async()=>({strategies:[],events:[],actions:[]})});
- assert.deepEqual(evidence.issues,['Deal records unavailable']);
+ assert.deepEqual(evidence.issues,['Transaction records unavailable']);
  assert.deepEqual(evidence.deals,[]);
  assert.ok(queries.every(sql=>!/^\s*(UPDATE|INSERT|DELETE)/.test(sql)));
 });

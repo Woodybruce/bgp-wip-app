@@ -121,7 +121,7 @@ export function PropertiesSummary({ companyId, role = "landlord", propertyIds, o
       <div className="text-center py-3" data-testid="properties-summary">
         <Building2 className="w-6 h-6 mx-auto mb-1 text-muted-foreground/30" />
         <p className="text-xs text-muted-foreground">
-          {role === "tenant" && companyId ? "No known occupation or live deals at any property." : "No properties here yet."}
+          {role === "tenant" && companyId ? "No known occupation or live transactions at any property." : "No properties here yet."}
         </p>
       </div>
     );
@@ -134,7 +134,7 @@ export function PropertiesSummary({ companyId, role = "landlord", propertyIds, o
           <span className="font-semibold tabular-nums">{rows.length}</span>
           <span className="text-muted-foreground"> propert{rows.length === 1 ? "y" : "ies"}</span>
           {totalLettings > 0 && <span className="text-muted-foreground"> · {totalLettings} live letting{totalLettings === 1 ? "" : "s"}</span>}
-          {totalDeals > 0 && <span className="text-muted-foreground"> · {totalDeals} live deal{totalDeals === 1 ? "" : "s"}</span>}
+          {totalDeals > 0 && <span className="text-muted-foreground"> · {totalDeals} live transaction{totalDeals === 1 ? "" : "s"}</span>}
         </div>
         <Link href="/properties" className="text-[11px] text-primary hover:underline inline-flex items-center shrink-0">
           Properties <ChevronRight className="w-3 h-3" />

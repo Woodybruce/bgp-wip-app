@@ -163,7 +163,7 @@ const possessive = (name: string) => (/s$/i.test(name) ? `${name}'` : `${name}'s
 
 const NOT_REQUIRED_SHORT: Record<string, string> = {
   joint_agent: "the joint agent's party",
-  no_deal: "no deal with this party",
+  no_deal: "no transaction with this party",
 };
 
 const step = (tone: AmlBoxTone, who: AmlBoxWho, lead: string, words: string, action: AmlBoxAction | null = null): AmlNextStep =>

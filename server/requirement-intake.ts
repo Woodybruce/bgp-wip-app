@@ -754,7 +754,7 @@ export async function markSatisfied(store: IntakeStore, args: { suggestionId: st
     const open = await openRequirements(store, head.company_id, now);
     const named = open.find(r => r.id === head.details?.requirementId);
     if (!named && open.length !== 1) throw new IntakeError(409, "REQUIREMENT_NEEDED",
-      open.length ? "This brand has more than one requirement. Say which one the deal satisfies." : "This brand has no open requirement to mark as satisfied.",
+      open.length ? "This brand has more than one requirement. Say which one the transaction satisfies." : "This brand has no open requirement to mark as satisfied.",
       { existing: open.map(r => requirementBrief(r, now)) });
     requirementId = (named || open[0]).id;
   }

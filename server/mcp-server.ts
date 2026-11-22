@@ -51,7 +51,7 @@ function createBgpMcpServer(): McpServer {
 
   server.tool(
     "search_crm",
-    "Search across the BGP CRM — finds deals, contacts, companies, properties, investment tracker items, available units, requirements, and comps by keyword. Uses fuzzy matching.",
+    "Search across the BGP CRM — finds transactions, contacts, companies, properties, investment tracker items, available units, requirements, and comps by keyword. Uses fuzzy matching.",
     {
       query: z.string().describe("Search term (minimum 2 characters)"),
       entityType: z
@@ -231,9 +231,9 @@ function createBgpMcpServer(): McpServer {
 
   server.tool(
     "get_deal_details",
-    "Get full details for a specific CRM deal by ID, including linked contacts, properties, and fee allocations.",
+    "Get full details for a specific CRM transaction by ID, including linked contacts, properties, and fee allocations.",
     {
-      dealId: z.string().describe("The deal ID"),
+      dealId: z.string().describe("The transaction ID"),
     },
     async ({ dealId }) => {
       const deal = await db
@@ -244,7 +244,7 @@ function createBgpMcpServer(): McpServer {
       if (!deal.length) {
         return {
           content: [
-            { type: "text" as const, text: `No deal found with ID ${dealId}` },
+            { type: "text" as const, text: `No transaction found with ID ${dealId}` },
           ],
         };
       }
@@ -418,7 +418,7 @@ function createBgpMcpServer(): McpServer {
 
   server.tool(
     "get_wip_report",
-    "Get the WIP (Work In Progress) pipeline report showing active deals with fee allocations.",
+    "Get the WIP (Work In Progress) pipeline report showing active transactions with fee allocations.",
     {},
     async () => {
       const deals = await db
@@ -456,12 +456,12 @@ function createBgpMcpServer(): McpServer {
 
   server.tool(
     "get_comps",
-    "Get completed deal comparables (comps) — leasing and investment transactions.",
+    "Get completed transaction comparables (comps) — leasing and investment transactions.",
     {
       dealType: z
         .string()
         .optional()
-        .describe("Filter by deal type (e.g. Letting, Investment)"),
+        .describe("Filter by transaction type (e.g. Letting, Investment)"),
       limit: z.number().optional().default(20).describe("Max results"),
     },
     async ({ dealType, limit }) => {
@@ -1184,7 +1184,7 @@ export function registerMcpRoutes(app: Express) {
   app.get("/mcp/info", (_req: Request, res: Response) => {
     res.json({
       name: "BGP Dashboard MCP Server",
-      description: "Access BGP CRM data, SharePoint filing system, and financial models from Claude — search deals, contacts, companies, properties, investment tracker, comps, browse/search SharePoint files, and run property financial models.",
+      description: "Access BGP CRM data, SharePoint filing system, and financial models from Claude — search transactions, contacts, companies, properties, investment tracker, comps, browse/search SharePoint files, and run property financial models.",
       version: "1.3.0",
       tools: [
         "search_crm",

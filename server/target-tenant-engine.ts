@@ -186,10 +186,10 @@ export async function centreEvidence(pool: any, req: Request, propertyId: string
        AND lower(trim(COALESCE(d.status, ''))) <> ALL($3::text[])`, [propertyId, property.landlord_id || null, statusSpellingsFor(CLOSED_STATUSES)]);
   for (const d of deals) {
     const b = brandFor(d.tenant_id, d.name);
-    if (d.same_landlord && d.property) note(b, `in a live BGP deal at ${d.property}${property.landlord_name ? ` (${property.landlord_name})` : ""} — taking space now`, 14);
+    if (d.same_landlord && d.property) note(b, `in a live BGP transaction at ${d.property}${property.landlord_name ? ` (${property.landlord_name})` : ""} — taking space now`, 14);
     else {
-      note(b, "acquiring elsewhere now (a live BGP deal)", 12);
-      if (d.property) note(b, `live BGP deal at ${d.property}`, 0, true);
+      note(b, "acquiring elsewhere now (a live BGP transaction)", 12);
+      if (d.property) note(b, `live BGP transaction at ${d.property}`, 0, true);
     }
   }
 

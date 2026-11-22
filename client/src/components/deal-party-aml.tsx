@@ -317,7 +317,7 @@ export function NotRequiredDialog({ dealId, role, companyId, partyName, jointRul
   const missing = !reason ? "Choose why." : checked && "problem" in checked ? checked.problem : null;
   const save = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/not-required`, body)).json(),
-    onSuccess: () => { refreshAfterDecision(dealId); queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "joint-agent-checks"] }); toast({ title: "Marked Not required", description: `${partyName} needs no checks on this deal.` }); onClose(); },
+    onSuccess: () => { refreshAfterDecision(dealId); queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "joint-agent-checks"] }); toast({ title: "Marked Not required", description: `${partyName} needs no checks on this transaction.` }); onClose(); },
     onError: (e: any) => toast({ title: "Not marked", description: plain(e), variant: "destructive" }),
   });
   return (
@@ -326,7 +326,7 @@ export function NotRequiredDialog({ dealId, role, companyId, partyName, jointRul
         <DialogHeader>
           <DialogTitle>No checks needed on {partyName}?</DialogTitle>
           <DialogDescription>
-            The joint agent dealt with this party on a sale, or no deal was done. It stays on the deal with your name.
+            The joint agent dealt with this party on a sale, or no transaction was done. It stays on the transaction with your name.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">

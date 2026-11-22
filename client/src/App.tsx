@@ -838,7 +838,7 @@ function AuthenticatedApp() {
               // render their UUID as the title — show a friendly section
               // label instead and let the inner page own the real heading.
               if (landsecRestricted && (location === "/" || location === "/home")) return "Properties";
-              if (landsecRestricted && location.startsWith("/landsec/deals")) return "Deals";
+              if (landsecRestricted && location.startsWith("/landsec/deals")) return "Transactions";
               if (location === "/") return "Dashboard";
               if (location === "/settings/profile") return "My Profile";
               if (location.startsWith("/deals/properties")) return "Properties";
@@ -853,7 +853,7 @@ function AuthenticatedApp() {
               const root = seg[0];
               const hasId = seg.length > 1 && seg[1] && !["letting", "investment", "report", "properties", "list"].includes(seg[1]);
               const DETAIL_LABELS: Record<string, string> = {
-                deals: "Deal", properties: "Property", companies: "Company",
+                deals: "Transaction", properties: "Property", companies: "Company",
                 contacts: "Contact", hr: "Profile", comps: "Comp",
               };
               if (hasId && DETAIL_LABELS[root]) return DETAIL_LABELS[root];
@@ -870,6 +870,8 @@ function AuthenticatedApp() {
                 "map-bgp": "Map", "westminster-restaurants": "London Restaurants",
                 "property-intelligence": "Property Intelligence",
                 "my-bgp": "My BGP", "my-expenses": "My Card & Expenses",
+                // Deals are called transactions (Woody, 22 November 2026); the address stays /deals.
+                deals: "Transactions",
               };
               if (ROUTE_TITLES[root]) return ROUTE_TITLES[root];
               return root.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
@@ -925,7 +927,7 @@ function AuthenticatedApp() {
                 computer (a phone has its tabs). */}
             {backBrand.id === "landsec" && (
               <nav className="hidden md:flex items-center gap-1 mr-2" data-testid="chatbgp-landsec-menu">
-                {([["Properties", LANDSEC_MENU.properties], ["Deals", LANDSEC_MENU.deals], ["Letting Tracker", LANDSEC_MENU.tracker], ["Calendar", LANDSEC_MENU.calendar],
+                {([["Properties", LANDSEC_MENU.properties], ["Transactions", LANDSEC_MENU.deals], ["Letting Tracker", LANDSEC_MENU.tracker], ["Calendar", LANDSEC_MENU.calendar],
                   ["Tasks", currentUser?.role === "Client" ? LANDSEC_MENU.tasks : "/tasks"], ["Brands", LANDSEC_MENU.brands]] as const).map(([label, path]) => (
                   <button key={label} type="button" onClick={() => navigate(path)} data-no-min-touch
                     className="px-2.5 py-1 rounded-md text-xs font-medium hover:bg-accent hover:text-accent-foreground transition-colors"

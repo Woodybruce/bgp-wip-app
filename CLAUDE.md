@@ -3334,9 +3334,10 @@ on the KYC4U pill of My BGP before). Tests: `server/kyc-request.test.ts` (in `np
 - **Clients and joint agents read "transaction", never "deal"** (Woody,
   2026-11-22, on the client's page: "Can we call the deal the
   transaction"): the client's page, the joint agent's page, a person's own
-  link and every email and WhatsApp text to them. BGP's own screens and
-  emails keep "deal", and the deal's name still names the transaction.
-  Tests in `server/kyc-request.test.ts` and `server/joint-agent-checks.test.ts`.
+  link and every email and WhatsApp text to them, and since the same day
+  every BGP screen too (see "The app says transaction" below). The deal's
+  name still names the transaction. Tests in `server/kyc-request.test.ts`
+  and `server/joint-agent-checks.test.ts`.
 - **One email, one page.** The request email has the logo inline (cid), a
   numbered list of what is needed, one **Start your checks** button, the
   agent's note, Why we ask, the agent's phone and email, and the reference
@@ -7517,6 +7518,42 @@ in `shared/party-kyc.ts`; the register: `server/charity-register.ts`; the run:
   the real download of 21 November 2026: Esmée Fairbairn Foundation by name
   with 11 trustees, the Wellcome Trust by number and through its corporate
   trustee, in about 11 seconds).
+
+## The app says "transaction", not "deal" (Woody, 2026-11-22)
+
+Woody, on the client's checks page: "Can we call the deal the transaction",
+then "Everywhere", and asked whether that meant BGP's own screens too, "The
+whole app". Do not re-litigate. Every word a person reads says transaction:
+the side bar and phone tabs (Transactions, on the Landsec and joint agent
+menus too), New Transaction, the transaction page and its pills, the
+Transactions board and WIP report columns, toasts, error messages, emails to
+the team and to clients, Excel sheets and PDFs, and ChatBGP's app map. The
+words were changed by reading the code, not by search and replace: only text
+on screen, in a message or in a document.
+
+- **What keeps "deal", on purpose**: page addresses (`/deals`, `/deals/:id`),
+  API routes and fields (`dealId`, `crm_deals`, `deal_ref`), codes and stored
+  values, history lines already written, test ids (the menu's are built from
+  its labels, so they read `nav-transactions` and `bottom-nav-transactions`
+  and the smoke suites follow), SQL, logs, and the model's own instructions
+  and tool definitions. Also, because each is read back or names something
+  outside the app: Landsec's own heads of terms forms
+  (`shared/hots-standards.ts`), BGP's AML clause in heads of terms
+  (`AML_HOTS_CLAUSE`, compared with copies stored on properties), the letting
+  note reader's word list (`shared/letting-note-parse.ts`: people still write
+  "deal"), Xero's tracking category "Property / Deal"
+  (`server/expense-xero-poster.ts`, `server/xero-chart-setup.ts`), the WIP
+  import's "Deal ID" header and its error message, and ChatBGP's memory
+  categories ("Deals").
+- **A label used as a value changes on both sides**: "From deals" (a BGP
+  person from the account's deals) is now "From transactions" in the SQL
+  that writes it (`server/brand-profile.ts`) and the screen that reads it
+  (`client/src/components/company-bgp-team.tsx`); the sidebar's retitle
+  compares "Untitled Transaction", as `client/src/lib/format.ts` writes it.
+- **ChatBGP** is told the word in its staff and client instructions and the
+  app map (`**Words**` line): it says transaction and understands deal.
+- **A new screen, message or email says transaction.** A new string read
+  back as a value, or naming something outside the app, keeps its own word.
 
 ## Document design preferences (the "house style" pattern)
 

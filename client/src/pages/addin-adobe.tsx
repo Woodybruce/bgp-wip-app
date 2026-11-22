@@ -120,7 +120,7 @@ function AddinAdobe() {
 
                 {searchDeals.length > 0 && (
                   <div>
-                    <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Deals</h2>
+                    <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Transactions</h2>
                     {searchDeals.slice(0, 6).map((d: any) => (
                       <Card key={d.id} className="mb-1.5">
                         <CardContent className="p-2.5">
@@ -135,7 +135,7 @@ function AddinAdobe() {
                               variant="ghost"
                               size="icon"
                               className="h-6 w-6 shrink-0"
-                              onClick={() => copyToClipboard(`${d.name || d.property}${d.tenant ? ` — ${d.tenant}` : ""}`, "Deal")}
+                              onClick={() => copyToClipboard(`${d.name || d.property}${d.tenant ? ` — ${d.tenant}` : ""}`, "Transaction")}
                             >
                               <Copy className="h-3 w-3" />
                             </Button>
@@ -185,7 +185,7 @@ function AddinAdobe() {
               <div className="text-center py-8">
                 <Search className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                 <p className="text-sm text-muted-foreground">Search CRM data for your designs</p>
-                <p className="text-xs text-muted-foreground mt-1">Property names, addresses, contacts, deals</p>
+                <p className="text-xs text-muted-foreground mt-1">Property names, addresses, contacts, transactions</p>
               </div>
             )}
           </ScrollArea>

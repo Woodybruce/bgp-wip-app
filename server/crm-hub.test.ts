@@ -69,14 +69,14 @@ test("a brand is on the list for each reason it is being worked, in a fixed orde
   assert.deepEqual(brandWhy({ hunterPick: true }), ["Super Brand"]);
   assert.deepEqual(brandWhy({ requirement: true, onStrategy: true }), ["On a strategy", "Requirement"]);
   assert.deepEqual(brandWhy({ onStrategy: true, openAction: true, liveDeal: true, requirement: true, hunterPick: true }),
-    ["On a strategy", "Open action", "Live deal", "Requirement", "Super Brand"]);
+    ["On a strategy", "Open action", "Live transaction", "Requirement", "Super Brand"]);
 });
 
 // ── What a row shows ────────────────────────────────────────────────────────
 
 test("the fact lines", () => {
-  assert.equal(landlordLine({ properties: 12, deals: 4 }), "12 properties · 4 live deals");
-  assert.equal(landlordLine({ properties: 1, deals: 1 }), "1 property · 1 live deal");
+  assert.equal(landlordLine({ properties: 12, deals: 4 }), "12 properties · 4 live transactions");
+  assert.equal(landlordLine({ properties: 1, deals: 1 }), "1 property · 1 live transaction");
   assert.equal(landlordLine({ properties: 0, deals: 0 }), null);
   assert.equal(agentLine({ brandsRepresented: 9 }), "Acts for 9 brands");
   assert.equal(agentLine({ brandsRepresented: 1 }), "Acts for 1 brand");
@@ -237,7 +237,7 @@ test("a landlord row is assembled from the reads", async () => {
     strategies: [{ id: "s1", name: "Retail parks 2027" }],
     contactCount: 8,
     people: ["Adam Hill", "Extra a", "Kate Taylor", "Extra b", "Extra c", "Extra d"],
-    counts: { properties: 12, deals: 4 }, line: "12 properties · 4 live deals",
+    counts: { properties: 12, deals: 4 }, line: "12 properties · 4 live transactions",
   });
   assert.deepEqual(first.people.find(p => p.id === "p1"), { id: "p1", name: "Kate Taylor", role: "Head of Leasing", email: "kate@hammerson.example", phone: "07700 900001" });
   // Nobody set on the account: the agents on its deals, marked as such.
@@ -286,7 +286,7 @@ test("a failed side read costs its column, not the list", async () => {
   assert.equal(row.contactCount, 1);
   // A count that could not be read is left out, never shown as nought.
   assert.deepEqual(row.counts, { deals: 2 });
-  assert.equal(row.line, "2 live deals");
+  assert.equal(row.line, "2 live transactions");
 });
 
 test("the company read is the one the list cannot do without", async () => {
@@ -340,14 +340,14 @@ test("brands: only the ones BGP is working, each saying why", async () => {
   const out = await loadCrmHub(q, "brand", NOW);
   // Super Brands first, each part in name order.
   assert.deepEqual(out.rows.map(row => [row.id, row.why, row.superBrand === true]), [
-    ["b-all", ["On a strategy", "Live deal", "Requirement", "Super Brand"], true],
+    ["b-all", ["On a strategy", "Live transaction", "Requirement", "Super Brand"], true],
     ["b-hunter", ["Super Brand"], true],
     ["b-action", ["Open action"], false],
-    ["b-deal", ["Live deal"], false],
+    ["b-deal", ["Live transaction"], false],
     ["b-req", ["Requirement"], false],
   ]);
   const all = out.rows.find(row => row.id === "b-all")!;
-  assert.equal(all.line, "On a strategy · Live deal · Requirement · Super Brand");
+  assert.equal(all.line, "On a strategy · Live transaction · Requirement · Super Brand");
   assert.deepEqual(all.counts, { deals: 2, requirements: 1 });
   assert.deepEqual(all.strategies, [{ id: "s1", name: "Bakeries" }]);
   assert.equal(out.rows.find(row => row.id === "b-action")!.openActions, 1);
@@ -371,7 +371,7 @@ test("brands: a missing plan table loses that reason, not the list", async () =>
     companies: [company("b1", { company_type: "Tenant" }), company("b2", { company_type: "Tenant", hunter_flag: true })],
   });
   const out = await quiet(() => loadCrmHub(q, "brand", NOW));
-  assert.deepEqual(out.rows.map(row => [row.id, row.why, row.counts]), [["b2", ["Super Brand"], { deals: 0 }], ["b1", ["Live deal"], { deals: 1 }]]);
+  assert.deepEqual(out.rows.map(row => [row.id, row.why, row.counts]), [["b2", ["Super Brand"], { deals: 0 }], ["b1", ["Live transaction"], { deals: 1 }]]);
 });
 
 test("everyone at a company, less the private mailbox", async () => {

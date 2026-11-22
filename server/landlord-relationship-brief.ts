@@ -57,7 +57,7 @@ export async function getLandlordRelationshipEvidence(companyId: string, deps: {
         OR EXISTS (SELECT 1 FROM crm_company_deals cd WHERE cd.deal_id=d.id AND cd.company_id=$1)
         OR (${PROPERTY_LINK}) OR (${DEAL_PROPERTY_LINK})
       ORDER BY CASE WHEN lower(trim(COALESCE(d.status, ''))) IN ('inv','com','wit','arch','completed','invoiced','withdrawn','archived') THEN 1 ELSE 0 END,
-        d.updated_at DESC NULLS LAST, d.id LIMIT 16`, [companyId], "Deal records"),
+        d.updated_at DESC NULLS LAST, d.id LIMIT 16`, [companyId], "Transaction records"),
     read(`SELECT p.id, p.name, p.status, p.landlord_id, p.freeholder_id, p.long_leaseholder_id, p.asset_manager_id,
         (${PROPERTY_LINK}) AS direct_company_link, (${DEAL_PROPERTY_LINK}) AS via_company_deal,
         ARRAY(SELECT DISTINCT linked.name FROM crm_companies linked WHERE linked.id<>$1 AND
@@ -132,13 +132,13 @@ export function landlordEngagementEvidence(data: EngagementData, companyId: stri
 export function landlordDealRelationship(deal: any, companyId: string) {
   const actingFor = String(deal.bgp_acting_for || "").trim().toLowerCase();
   const tenantType = ["lease acquisition", "tenant acquisition", "lease disposal", "sub-letting", "tenant rep"].includes(String(deal.deal_type || "").trim().toLowerCase());
-  if (actingFor === "landlord" && tenantType) return { kind: "conflict", label: "representation fields conflict; check the deal", instruction: false };
+  if (actingFor === "landlord" && tenantType) return { kind: "conflict", label: "representation fields conflict; check the transaction", instruction: false };
   if (actingFor === "tenant") return { kind: "tenant_rep", label: "tenant representation", instruction: false };
   if (!actingFor && tenantType) return { kind: "tenant_rep", label: "tenant-side deal type", instruction: false };
   if (actingFor === "landlord" && deal.landlord_id === companyId) return { kind: "landlord_side", label: "recorded landlord-side deal", instruction: true };
   if (deal.vendor_id === companyId) return { kind: "vendor", label: "company linked as vendor", instruction: false };
   if (deal.purchaser_id === companyId) return { kind: "purchaser", label: "company linked as purchaser", instruction: false };
-  return { kind: "related", label: actingFor === "landlord" ? "landlord-side deal; client link unconfirmed" : "representation not recorded", instruction: false };
+  return { kind: "related", label: actingFor === "landlord" ? "landlord-side transaction; client link unconfirmed" : "representation not recorded", instruction: false };
 }
 
 export function landlordCorrespondence(rows: any[]) {
@@ -194,20 +194,20 @@ export function renderLandlordRelationshipBrief(evidence: any, options: { omitMe
   } else if (!options.omitMeetingAndTeam) {
     lines.push(`- **Meetings:** No upcoming linked meeting is available${evidence.coverage?.status !== "current" ? "; the diary check is incomplete" : " in the checked diary window"}.`);
   }
-  const team = (evidence.bgpTeam || []).slice(0, 5).map((p: any) => `${safeText(p.name, 60)}${p.role ? ` (${safeText(p.role, 40)})` : p.source === "deal" ? " (from deal records)" : ""}`);
+  const team = (evidence.bgpTeam || []).slice(0, 5).map((p: any) => `${safeText(p.name, 60)}${p.role ? ` (${safeText(p.role, 40)})` : p.source === "deal" ? " (from transaction records)" : ""}`);
   if (team.length && !options.omitMeetingAndTeam) lines.push(`- **BGP team:** ${team.join("; ")}.`);
   const compact = !!options.omitMeetingAndTeam;
   const properties = (evidence.properties || []).slice(0, compact ? 2 : 3);
   if (properties.length) lines.push(`- **Property links:** ${properties.map((p: any) => {
     const viaDeal = p.via_company_deal && !p.direct_company_link;
     const otherLinks = (p.other_property_companies || []).slice(0,2).map((name:string)=>safeText(name,45));
-    const provenance = viaDeal ? ` (via ${company}'s deal link${otherLinks.length ? `; property record links ${otherLinks.join(" / ")}` : "; property ownership unconfirmed"})` : p.status && !compact ? ` (CRM status: ${safeText(p.status, 45)})` : "";
+    const provenance = viaDeal ? ` (via ${company}'s transaction link${otherLinks.length ? `; property record links ${otherLinks.join(" / ")}` : "; property ownership unconfirmed"})` : p.status && !compact ? ` (CRM status: ${safeText(p.status, 45)})` : "";
     return `${safeText(p.name,65)}${provenance}`;
   }).join("; ")}.${compact ? "" : " Links do not confirm a current instruction."}`);
   const deals = (evidence.deals || []).slice(0, compact ? 3 : 4);
   const relatedTenant = (evidence.deals || []).find((deal: any) => (deal.relationship || landlordDealRelationship(deal, evidence.company.id)).kind === "tenant_rep");
   if (relatedTenant && !deals.includes(relatedTenant)) deals.splice(compact ? 2 : 3, 1, relatedTenant);
-  if (deals.length) lines.push(`- **Deal position:** ${deals.map((deal: any) => dealBrief(deal, evidence.company.id, compact)).join("; ")}.`);
+  if (deals.length) lines.push(`- **Transaction position:** ${deals.map((deal: any) => dealBrief(deal, evidence.company.id, compact)).join("; ")}.`);
   const emails = (evidence.communications?.items || []).slice(0, 2);
   if (emails.length && !compact) lines.push(`- **Recent correspondence:** ${emails.map((email: any) => `${shortDate(email.date)}${email.bgpName || email.contactName ? `, ${[email.bgpName, email.contactName].filter(Boolean).map((name: string) => safeText(name, 35)).join(" / ")}` : ""}: “${safeText(email.subject, 90)}”`).join("; ")}. Saved subjects, not confirmed outcomes.`);
   const reports = (evidence.conversationUpdates || []).slice(0, 2);
@@ -223,7 +223,7 @@ export function renderLandlordRelationshipBrief(evidence: any, options: { omitMe
   if (openActions.length) lines.push(`- **Open follow-ups:** ${openActions.map((action:any) => `[${safeText(action.title,90)}](${action.sourceUrl})${action.ownerName ? ` — ${safeText(action.ownerName,40)}` : ""}${action.dueAt ? `, due ${shortDate(action.dueAt)}` : ", date not set"}`).join("; ")}.`);
   if (!options.omitMeetingAndTeam && evidence.coverage?.status !== "current" && next) lines.push("- **Diary coverage:** Some diaries have not been checked; this may not be the full meeting list.");
   if (evidence.issues?.length) lines.push(`- **Not checked:** ${evidence.issues.map((s: string) => safeText(s, 60)).join("; ")}.`);
-  if (!openActions.length) lines.push(`- **Next step:** ${reports.length ? "Reconcile these staff reports with the saved instruction and deal records; agree and record the next action." : deals.length ? `Confirm the next action on ${deals.slice(0, 2).map((deal: any) => safeText(deal.name, 55)).join(" and ")} with the account team.` : note ? "Check the points raised in the CRM meeting note and record the agreed follow-up." : next ? "Check the meeting agenda and record the agreed follow-up." : "Confirm the next contact and record the agreed action and date."}`);
+  if (!openActions.length) lines.push(`- **Next step:** ${reports.length ? "Reconcile these staff reports with the saved instruction and transaction records; agree and record the next action." : deals.length ? `Confirm the next action on ${deals.slice(0, 2).map((deal: any) => safeText(deal.name, 55)).join(" and ")} with the account team.` : note ? "Check the points raised in the CRM meeting note and record the agreed follow-up." : next ? "Check the meeting agenda and record the agreed follow-up." : "Confirm the next contact and record the agreed action and date."}`);
   return lines.join("\n");
 }
 
@@ -256,5 +256,5 @@ export function guardLandlordSaveClaim(reply: string, outcomes: any[]): string {
   if (saved) return reply;
   const claim = /(?:\bI(?:['’]ve| have)?\s+(?:now\s+)?(?:saved|recorded|updated|added|logged|changed|marked|closed|created|deleted)\b|(?:^|[\n.!?]\s*)(?:Noted[^\n—–]*[—–]\s*)?(?:recorded|saved|updated|logged|marked|closed|created)\s+(?:on\s+|in\s+|the\s+|that\s+|a\s+|it\b))/i;
   if (!claim.test(reply)) return reply;
-  return "I haven’t saved a change to the CRM in this turn. Your message is in this conversation, but a deal, instruction or note update still needs a successful save.";
+  return "I haven’t saved a change to the CRM in this turn. Your message is in this conversation, but a transaction, instruction or note update still needs a successful save.";
 }

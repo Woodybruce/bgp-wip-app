@@ -4206,7 +4206,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       .then(data => { if (data) setMapPins(data); })
       .catch(err => {
         console.error("[map] failed to load CRM pins:", err?.message);
-        toast({ title: "Map layers unavailable", description: "Couldn't load Deals / Comps / Lease Events pins. Check your connection and try again.", variant: "destructive" });
+        toast({ title: "Map layers unavailable", description: "Couldn't load Transactions / Comps / Lease Events pins. Check your connection and try again.", variant: "destructive" });
       });
   }, [toast]);
 
@@ -4240,7 +4240,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
           </div>
           ${d.pricing ? `<p style="margin:2px 0;font-size:11px;color:#333">£${Number(d.pricing).toLocaleString()}</p>` : ""}
           ${d.areaSqft ? `<p style="margin:2px 0;font-size:11px;color:#666">${Number(d.areaSqft).toLocaleString()} sq ft</p>` : ""}
-          <a href="/deals" style="display:inline-block;margin-top:8px;font-size:11px;color:#6366f1;text-decoration:none;border:1px solid #e0e7ff;padding:3px 8px;border-radius:4px">Open Deals →</a>
+          <a href="/deals" style="display:inline-block;margin-top:8px;font-size:11px;color:#6366f1;text-decoration:none;border:1px solid #e0e7ff;padding:3px 8px;border-radius:4px">Open Transactions →</a>
         </div>
       `, { maxWidth: 260 });
       layer.addLayer(marker);
@@ -6128,7 +6128,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
               { key: "search", label: "Search History", count: recentSearches.length, dot: "#ef4444", on: showSearchHistory, set: setShowSearchHistory },
               { key: "crm",    label: "CRM Properties", count: crmProperties.filter((p: any) => !isInvestmentComp(p)).length, dot: "#3b82f6", on: showCrmLayer, set: setShowCrmLayer },
               { key: "icomps", label: "Investment Comps", count: crmProperties.filter((p: any) => isInvestmentComp(p)).length, dot: "#8b5cf6", on: showInvestmentComps, set: setShowInvestmentComps },
-              { key: "deals",  label: "Deals",          count: mapPins?.deals.length ?? 0, dot: "#f59e0b", on: showDeals, set: setShowDeals },
+              { key: "deals",  label: "Transactions",          count: mapPins?.deals.length ?? 0, dot: "#f59e0b", on: showDeals, set: setShowDeals },
               { key: "comps",  label: "Comps",          count: mapPins?.comps.length ?? 0, dot: "#8b5cf6", on: showComps, set: setShowComps },
               { key: "lease",  label: "Lease Events",   count: mapPins?.leaseEvents.length ?? 0, dot: "#ec4899", on: showLeaseEvents, set: setShowLeaseEvents },
               { key: "pathway",label: "Pathway runs",   count: mapPins?.pathway?.length ?? 0, dot: "#10b981", on: showPathway, set: setShowPathway },
@@ -6861,7 +6861,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                 {goadPanelContext && goadPanelContext.deals.length > 0 && (
                   <section className="border-t pt-3">
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
-                      Recent deals ({goadPanelContext.deals.length})
+                      Recent transactions ({goadPanelContext.deals.length})
                     </div>
                     {goadPanelContext.deals.slice(0, 5).map((d) => (
                       <a
@@ -7049,7 +7049,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                             `, the ${label.toLowerCase()} of ${goadPanelUnit?.num || ""} ${goadPanelUnit?.street || ""} ${goadPanelUnit?.postcode || ""}.\n\n` +
                             `Walk the PSC + corporate chain via Companies House, then find the fund / family office / investor cluster behind it via Perplexity and BGP CRM. Output:\n` +
                             `- Who really controls this entity (1-2 sentences)\n` +
-                            `- BGP relationship status (any deals, properties, contacts)\n` +
+                            `- BGP relationship status (any transactions, properties, contacts)\n` +
                             `- Other notable UK properties they hold\n` +
                             `- Risk flags`;
                           window.location.href = `/chatbgp?message=${encodeURIComponent(prompt)}`;

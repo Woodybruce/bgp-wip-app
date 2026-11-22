@@ -335,8 +335,8 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
     return (
       <Card className="p-8 text-center h-full flex flex-col items-center justify-center" data-testid="wip-dashboard-card">
         <BarChart3 className="w-8 h-8 mx-auto mb-2 text-muted-foreground/70" />
-        <p className="text-sm text-muted-foreground">No deals with fees found</p>
-        <p className="text-xs text-muted-foreground/70 mt-1">Add fees to deals on the WIP board to see data here</p>
+        <p className="text-sm text-muted-foreground">No transactions with fees found</p>
+        <p className="text-xs text-muted-foreground/70 mt-1">Add fees to transactions on the WIP board to see data here</p>
         <Link href="/wip-report">
           <Button variant="outline" size="sm" className="mt-3" data-testid="link-wip-upload">
             Go to WIP Report <ArrowRight className="w-3.5 h-3.5 ml-1" />
@@ -366,7 +366,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
         <div>
           <h2 className="text-base font-bold text-foreground" data-testid="wip-dash-title">{title}</h2>
           <p className="text-xs text-muted-foreground">
-            {mergedDetailEntries.length} deal{mergedDetailEntries.length !== 1 ? "s" : ""} · Total net fees: {formatCurrencyFull(totalNetFees)}
+            {mergedDetailEntries.length} transaction{mergedDetailEntries.length !== 1 ? "s" : ""} · Total net fees: {formatCurrencyFull(totalNetFees)}
             <span className="hidden sm:inline"> · WIP {formatCurrencyFull(totalWip)} · <span className="text-green-700">Invoiced {formatCurrencyFull(totalInvoiced)}</span></span>
           </p>
         </div>
@@ -414,7 +414,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
           values={filterFees.agent}
         />
         <FilterDropdown
-          title="Deal Status"
+          title="Transaction Status"
           items={allStatuses}
           selected={selectedStatuses}
           onToggle={(s) => toggleFilter(selectedStatuses, setSelectedStatuses, s)}
@@ -472,7 +472,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
                       disabled={!tappable}
                       className={`flex-1 min-w-0 flex flex-col items-center justify-end gap-1 rounded px-0.5 pt-1 pb-0.5 transition-colors ${active ? "bg-green-50 ring-1 ring-green-300" : tappable ? "hover:bg-muted" : ""}`}
                       onClick={() => tappable && toggleFilter(selectedMonths, setSelectedMonths, m.month)}
-                      title={`${m.month} · ${formatCurrencyFull(m.total)} · ${m.count} deal${m.count !== 1 ? "s" : ""}`}
+                      title={`${m.month} · ${formatCurrencyFull(m.total)} · ${m.count} transaction${m.count !== 1 ? "s" : ""}`}
                       data-testid={`wip-dash-month-${m.month}`}
                     >
                       <span className="text-[10px] font-mono text-muted-foreground">{formatCurrencyBoard(m.total)}</span>
@@ -572,7 +572,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
           data-testid="wip-dash-detail-toggle"
         >
           <div>
-            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Deal Detail</span>
+            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Transaction Detail</span>
             <span className="text-[10px] text-muted-foreground ml-2">({sortedDetailEntries.length} rows)</span>
           </div>
           {detailOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
@@ -594,7 +594,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
                     {e.client && <span className="ml-1.5 text-xs text-muted-foreground">{e.client}</span>}
                   </div>
                   {e.provisional ? (
-                    <span className="text-sm font-mono tabular-nums text-muted-foreground shrink-0" title="Provisional — not counted until the deal is moved to Solicitors">{e.amtProvisional ? formatCurrencyFull(e.amtProvisional) : "—"} <span className="text-[10px] uppercase font-sans">prov.</span></span>
+                    <span className="text-sm font-mono tabular-nums text-muted-foreground shrink-0" title="Provisional — not counted until the transaction is moved to Solicitors">{e.amtProvisional ? formatCurrencyFull(e.amtProvisional) : "—"} <span className="text-[10px] uppercase font-sans">prov.</span></span>
                   ) : (
                     <span className="text-sm font-mono tabular-nums font-semibold shrink-0">{e.amtWip ? formatCurrencyFull(e.amtWip) : "—"}</span>
                   )}
@@ -638,7 +638,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
               <thead className="bg-muted/50 border-b sticky top-0 z-10">
                 <tr>
                   {[
-                    { key: "ref", label: "Deal", width: "w-28" },
+                    { key: "ref", label: "Transaction", width: "w-28" },
                     { key: "client", label: "Client", width: "w-28" },
                     { key: "tenant", label: "Tenant", width: "w-28" },
                     { key: "project", label: "Property", width: "w-28" },
@@ -647,7 +647,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
                     { key: "amtWip", label: "Amt WIP", width: "w-20" },
                     { key: "amtInvoice", label: "Amt Invoice", width: "w-20" },
                     { key: "month", label: "Month", width: "w-14" },
-                    { key: "dealStatus", label: "Deal Status", width: "w-20" },
+                    { key: "dealStatus", label: "Transaction Status", width: "w-20" },
                   ].map((col) => (
                     <th key={col.key} className={`px-2 py-1.5 text-left font-medium text-muted-foreground cursor-pointer hover:text-foreground ${col.width}`} onClick={() => toggleSort(col.key)}>
                       <div className="flex items-center gap-0.5">
@@ -672,7 +672,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
                     <td className="px-2 py-1 text-muted-foreground truncate max-w-[160px]">{e.team || "—"}</td>
                     <td className="px-2 py-1 text-muted-foreground">{e.agent ? (e.agent as string).split(",").map((a: string) => a.trim()).map((a: string) => a.includes(" ") ? a.split(" ").map((p: string) => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>
                     <td className="px-2 py-1 text-foreground font-mono">{e.provisional ? (
-                      <span className="text-muted-foreground" title="Provisional — not counted until the deal is moved to Solicitors">{e.amtProvisional ? formatCurrencyFull(e.amtProvisional) : "—"} <span className="text-[10px] uppercase font-sans">prov.</span></span>
+                      <span className="text-muted-foreground" title="Provisional — not counted until the transaction is moved to Solicitors">{e.amtProvisional ? formatCurrencyFull(e.amtProvisional) : "—"} <span className="text-[10px] uppercase font-sans">prov.</span></span>
                     ) : e.amtWip ? formatCurrencyFull(e.amtWip) : "—"}</td>
                     <td className="px-2 py-1 text-green-700 font-mono">{e.amtInvoice ? formatCurrencyFull(e.amtInvoice) : "—"}</td>
                     <td className="px-2 py-1 text-muted-foreground">{e.month || "—"}</td>

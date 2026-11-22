@@ -137,7 +137,7 @@ test('a brand page on the phone has the desktop page\'s six sections in its orde
   for (const user of [{ role: 'Client', companyScopeId: 'client' }, { role: 'Admin' }]) {
     const app = phoneBrand(user);
     app.input.profile.stores = [{ id: 'store', name: 'Store' }];
-    assert.deepEqual(pills(app.render()), [['chat', 'Overview'], ['deals', 'Deals & space'], ['stores', 'Stores & menu'], ['intel', 'Expansion'], ['contacts', 'People & checks'], ['social', 'News & media']]);
+    assert.deepEqual(pills(app.render()), [['chat', 'Overview'], ['deals', 'Transactions & space'], ['stores', 'Stores & menu'], ['intel', 'Expansion'], ['contacts', 'People & checks'], ['social', 'News & media']]);
   }
   const embedded = componentFixture('client/src/components/mobile-brand-view.tsx', 'MobileBrandView', { companyId: 'brand', embedded: true }, { user: { role: 'Admin' }, profile: profile() });
   assert.deepEqual(pills(embedded.render()).map(pill => pill[1]), ['Overview', 'Contacts', 'Intel', 'Stores', 'Social']);

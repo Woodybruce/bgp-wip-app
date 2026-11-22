@@ -261,7 +261,7 @@ export function charityLines(pc: PrecheckCharity | null | undefined): string[] {
   if (pc.status === "not_found") return [`Not on the Charity Commission's register under ${pc.lookedFor}.`, ...trusteeLine];
   if (pc.status === "ambiguous") {
     return pc.via === "trustee"
-      ? [...trusteeLine, "The charity number is needed to say which one the deal is for."]
+      ? [...trusteeLine, "The charity number is needed to say which one the transaction is for."]
       : [`${pc.candidates} charities on the Charity Commission's register match ${pc.lookedFor}: the charity number is needed to choose.`, ...trusteeLine];
   }
   const c = pc.charity!;

@@ -98,7 +98,7 @@ export function LeasingMinutesImportDialog({ propertyId, source, onClose }: { pr
               <label className="flex items-center gap-2 text-sm" data-testid="minutes-move-status">
                 <Checkbox checked={moveStatus} onCheckedChange={(v) => setMoveStatus(v === true)} />
                 Move statuses to what these minutes say
-                <span className="text-[11px] text-muted-foreground">— untick if the week is older than the deals</span>
+                <span className="text-[11px] text-muted-foreground">— untick if the week is older than the transactions</span>
               </label>
             )}
             <div>

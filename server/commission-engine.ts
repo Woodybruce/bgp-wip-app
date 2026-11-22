@@ -261,9 +261,9 @@ export async function buildCommissionStatements(): Promise<{ fyStart: string; st
     fyStart: fyStartIso,
     statements: statements.map(s => ({ ...s })),
     assumptions: [
-      "Billing = the agent's fee-allocation share (BGP House 15% excluded); deals with no explicit split default to 85% across the deal's agents.",
-      "A deal counts in the FY of its fee-due date — the earlier of exchange / completion.",
-      "Tiers: 0% to 2× salary, 30% to 3×, 40% to 4×, 50% beyond — applied in fee-due order, deals split across thresholds.",
+      "Billing = the agent's fee-allocation share (BGP House 15% excluded); transactions with no explicit split default to 85% across the transaction's agents.",
+      "A transaction counts in the FY of its fee-due date — the earlier of exchange / completion.",
+      "Tiers: 0% to 2× salary, 30% to 3×, 40% to 4×, 50% beyond — applied in fee-due order, transactions split across thresholds.",
       "Payable = client's Xero invoice(s) fully paid; paid in the month-end payroll run.",
       "Mid-year salary changes pro-rated from salary history.",
     ],

@@ -274,7 +274,7 @@ function UnitPersonLine({ person, block, menu, onChanged, propertyId }: { person
         const label = unitDisplayLabel(unit.label, null, unit.floor);
         const dealId = unit.deal?.id || (rel?.deal && block.units.length === 1 ? rel.deal.id : null);
         return <span key={unit.id}>{i > 0 && ", "}{dealId
-          ? <Link href={`/deals/${dealId}`} className="underline decoration-dotted underline-offset-2 hover:decoration-solid text-foreground" title={`Open the deal on ${unit.label}`} data-testid={`people-unit-link-${unit.id}`}>{label}</Link>
+          ? <Link href={`/deals/${dealId}`} className="underline decoration-dotted underline-offset-2 hover:decoration-solid text-foreground" title={`Open the transaction on ${unit.label}`} data-testid={`people-unit-link-${unit.id}`}>{label}</Link>
           : <span title={unit.label}>{label}</span>}</span>;
       })
     : <span className="text-muted-foreground">{block.label || "Not tied to a unit"}</span>;

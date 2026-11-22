@@ -1213,7 +1213,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
               id="exp-purpose"
               value={businessPurpose}
               onChange={(e) => setBusinessPurpose(e.target.value)}
-              placeholder="What was this for? (e.g. 'Pitch dinner with John Smith from BlackRock — Bond St freehold deal')"
+              placeholder="What was this for? (e.g. 'Pitch dinner with John Smith from BlackRock — Bond St freehold transaction')"
               rows={3}
               data-testid="input-expense-purpose"
             />
@@ -1291,12 +1291,12 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
               />
             </div>
             <div>
-              <Label className="text-xs flex items-center gap-1.5"><Briefcase className="w-3 h-3" /> Deal</Label>
+              <Label className="text-xs flex items-center gap-1.5"><Briefcase className="w-3 h-3" /> Transaction</Label>
               <SearchableCombobox
                 items={deals.map(d => ({ value: d.id, label: d.name, sub: d.status || undefined }))}
                 value={relatedDealId}
                 onChange={setRelatedDealId}
-                placeholder="Optional — pick a deal"
+                placeholder="Optional — pick a transaction"
                 testId="combobox-expense-deal"
               />
             </div>

@@ -1137,7 +1137,7 @@ function HungerGamesStrip({ onSelectPerson, className = "" }: { onSelectPerson?:
   const valueOf = (l: IndividualLeader) => {
     if (tab === "billers")  return fmtMoney(l.billedPence);
     if (tab === "pipeline") return fmtMoney(l.pipelinePence);
-    if (tab === "active")   return `${l.activeDeals} deals`;
+    if (tab === "active")   return `${l.activeDeals} transactions`;
     if (tab === "kudos")    return `${l.kudosThisWeek} 👏`;
     return "";
   };
@@ -1157,9 +1157,9 @@ function HungerGamesStrip({ onSelectPerson, className = "" }: { onSelectPerson?:
               <PopoverContent className="w-72 text-xs" align="start">
                 <div className="font-semibold mb-1.5">How each leaderboard is ranked</div>
                 <div className="space-y-1.5 leading-relaxed">
-                  <div><span className="font-semibold">Top biller:</span> sum of fees on deals invoiced this scheme year, pulled from Xero per person.</div>
-                  <div><span className="font-semibold">Pipeline:</span> sum of expected fees on deals not yet closed, weighted by stage.</div>
-                  <div><span className="font-semibold">Most active:</span> count of deals you're internal_agent on with status not in (ARCH, WIT).</div>
+                  <div><span className="font-semibold">Top biller:</span> sum of fees on transactions invoiced this scheme year, pulled from Xero per person.</div>
+                  <div><span className="font-semibold">Pipeline:</span> sum of expected fees on transactions not yet closed, weighted by stage.</div>
+                  <div><span className="font-semibold">Most active:</span> count of transactions you're internal_agent on with status not in (ARCH, WIT).</div>
                   <div><span className="font-semibold">Most kudos:</span> peer shout-outs received in the last 7 days. Anyone can give kudos to anyone (not yourself) from the Brucey Bonus board; the receiver gets +10 Brucey Bonus points and the giver gets +5.</div>
                 </div>
               </PopoverContent>
@@ -1376,14 +1376,14 @@ interface BruceyLeaderboard {
 // Mirrors POINTS and WEEKLY_CAPS in runBruceyPointsScan (server/hr-routes.ts):
 // [label, points, most one source pays one person in a Brucey week].
 const BRUCE_POINTS: Array<{ group: string; rows: Array<[string, number, number | null]> }> = [
-  { group: "Deals", rows: [
-    ["Deal closed", 100, null],
-    ["Deal exchanged", 60, null],
-    ["Deal invoiced", 40, null],
+  { group: "Transactions", rows: [
+    ["Transaction closed", 100, null],
+    ["Transaction exchanged", 60, null],
+    ["Transaction invoiced", 40, null],
     ["HOTs agreed", 30, null],
     ["Solicitors instructed", 30, null],
-    ["Deal advanced", 25, null],
-    ["New deal on the board", 15, 45],
+    ["Transaction advanced", 25, null],
+    ["New transaction on the board", 15, 45],
     ["AML check completed", 15, null],
     ["Fee split entered", 10, null],
     ["Fee or target date filled in", 10, 30],
@@ -1508,7 +1508,7 @@ function BruceBonusBoard({ isAdmin, allStaff, selfId, onSelectPerson, className 
                 </div>
               ))}
             </div>
-            <p className="text-muted-foreground">Deal points go to the agents on the deal; viewings and offers to the unit's agents (or whoever ran the viewing); a 1:1 pays you and your manager once it's marked complete. "max" is the most one source pays one person in a week.</p>
+            <p className="text-muted-foreground">Transaction points go to the agents on the transaction; viewings and offers to the unit's agents (or whoever ran the viewing); a 1:1 pays you and your manager once it's marked complete. "max" is the most one source pays one person in a week.</p>
             <p><span className="font-semibold">The wheel:</span> every week (Monday to Sunday) the person with the most points spins the wheel. One spin a week, run by an admin, and every prize on it is under £{cap}. The winner and their prize go on the Awards feed.</p>
             <p><span className="font-semibold">Kudos:</span> anyone can give kudos to anyone but themselves — use <span className="font-semibold">Give kudos</span> above. They get +10 points, you get +5, and it counts on the Hunger Games Most kudos board.</p>
             <p className="text-muted-foreground italic">Admins can add points by hand and issue coffee / cake / lunch awards; re-scans never double-pay.</p>

@@ -867,7 +867,7 @@ function MatterDetailView({ id }: { id: string }) {
           <DialogHeader>
             <DialogTitle>Promote to Solicitors</DialogTitle>
             <DialogDescription>
-              Capture the deal-handover info — fee, counter-party and compliance — before this instruction goes to solicitors.
+              Capture the transaction-handover info — fee, counter-party and compliance — before this instruction goes to solicitors.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -934,7 +934,7 @@ function MatterDetailView({ id }: { id: string }) {
             const canSubmit = hardMissing.length === 0 && (softMissing.length === 0 || solForm.overrideCompliance);
             const submit = async () => {
               if (!matter.dealId) {
-                toast({ title: "No linked deal — can't promote", variant: "destructive" });
+                toast({ title: "No linked transaction — can't promote", variant: "destructive" });
                 return;
               }
               try {

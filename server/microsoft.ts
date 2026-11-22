@@ -1209,8 +1209,8 @@ export function setupMicrosoftRoutes(app: Express) {
         const totalFees = negotiatingDeals.reduce((sum: number, d: any) => sum + (parseFloat(d.fee) || 0), 0);
         insights.push({
           type: "pipeline",
-          title: "Deal Pipeline",
-          detail: `${negotiatingDeals.length} active deal${negotiatingDeals.length > 1 ? "s" : ""}${totalFees > 0 ? ` — £${Math.round(totalFees).toLocaleString()} potential fees` : ""}`,
+          title: "Transaction Pipeline",
+          detail: `${negotiatingDeals.length} active transaction${negotiatingDeals.length > 1 ? "s" : ""}${totalFees > 0 ? ` — £${Math.round(totalFees).toLocaleString()} potential fees` : ""}`,
           priority: 6,
         });
       }
@@ -1249,11 +1249,11 @@ export function setupMicrosoftRoutes(app: Express) {
       if (activeDealRows.length > 0) {
         insights.push({
           type: "pipeline",
-          title: "CRM Deals",
+          title: "CRM Transactions",
           detail: (() => {
             const n = activeDealRows.length;
             const cats = new Set(activeDealRows.map((d: any) => d.deal_type).filter(Boolean)).size;
-            const dealPart = `${n} active deal${n === 1 ? "" : "s"}`;
+            const dealPart = `${n} active transaction${n === 1 ? "" : "s"}`;
             return cats > 0 ? `${dealPart} across ${cats} categor${cats === 1 ? "y" : "ies"}` : dealPart;
           })(),
           priority: 3,

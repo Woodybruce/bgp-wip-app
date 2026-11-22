@@ -131,7 +131,7 @@ function PanelBody({ row, comments, staff, canUseCentre, canEdit, canDelete, lan
         {comments && <p className="whitespace-pre-wrap text-sm text-muted-foreground">{comments}</p>}
         {r.deal && (
           <p className="text-sm">
-            <span className="text-muted-foreground">Deal </span>
+            <span className="text-muted-foreground">Transaction </span>
             <Link href={`/deals/${r.deal.id}`} className="text-primary hover:underline" data-testid="requirement-panel-deal">{r.deal.name}</Link>
             {r.deal.status && <span className="text-xs text-muted-foreground"> · {r.deal.status}</span>}
           </p>

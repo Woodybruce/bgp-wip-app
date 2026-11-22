@@ -1178,16 +1178,16 @@ function ContactDetail({ id }: { id: string }) {
               <CompanyMiniChat companyId={contact.id} companyName={contact.name || "Contact"} linkedType="contact" fill title="Conversation"
                 starters={[
                   { label: "Where are we?", question: `Where are we with ${contact.name}? Latest emails, meetings and what is next.` },
-                  { label: "Their deals", question: `Which deals and properties is ${contact.name} involved in, and in what role?` },
+                  { label: "Their transactions", question: `Which transactions and properties is ${contact.name} involved in, and in what role?` },
                 ]} />
             ) : (
               <div className="min-h-0 flex-1 overflow-y-auto space-y-3" data-testid="contact-records">
-                {recordCount === 0 && <p className="text-sm text-muted-foreground py-6 text-center">Not on any property, deal or requirement yet.</p>}
+                {recordCount === 0 && <p className="text-sm text-muted-foreground py-6 text-center">Not on any property, transaction or requirement yet.</p>}
                 {recordGroup("Properties", (contactProperties || []).map(prop => recordRow(`/properties/${prop.id}`, <Building className="w-4 h-4" />, prop.name || "Property",
                   [Array.isArray(prop.bgpEngagement) ? prop.bgpEngagement.join(", ") : prop.bgpEngagement, prop.assetClass].filter(Boolean).join(" · "), `link-property-${prop.id}`)))}
-                {recordGroup("Deals as agent", agentDeals.map((deal: any) => recordRow(`/deals/${deal.id}`, <Briefcase className="w-4 h-4" />, deal.name,
+                {recordGroup("Transactions as agent", agentDeals.map((deal: any) => recordRow(`/deals/${deal.id}`, <Briefcase className="w-4 h-4" />, deal.name,
                   [...(deal.agentRoles || []), deal.status, deal.dealType].filter(Boolean).join(" · "), `link-agent-deal-${deal.id}`)))}
-                {recordGroup("Deals", linkedDeals.map((deal: any) => recordRow(`/deals/${deal.id}`, <Handshake className="w-4 h-4" />, deal.name,
+                {recordGroup("Transactions", linkedDeals.map((deal: any) => recordRow(`/deals/${deal.id}`, <Handshake className="w-4 h-4" />, deal.name,
                   [deal.status, deal.dealType].filter(Boolean).join(" · "), `link-deal-${deal.id}`)))}
                 {recordGroup("Requirements", (contactRequirements || []).map((req: any) => recordRow(req.requirementType === "investment" ? `/investment/requirements?requirementId=${encodeURIComponent(req.id)}` : `/requirements?requirementId=${encodeURIComponent(req.id)}`, <ClipboardList className="w-4 h-4" />, req.name,
                   [req.linkSource === "agent" ? "Tenant rep" : null, req.requirementType, req.use?.length ? req.use.join(", ") : null, req.stateLabel].filter(Boolean).join(" · "), `link-requirement-${req.id}`)))}
@@ -2099,7 +2099,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                             entityType="deals"
                             icon={<Handshake className="w-2.5 h-2.5" />}
                             invalidateKey="/api/crm/contact-deal-links"
-                            searchPlaceholder="Search deals..."
+                            searchPlaceholder="Search transactions..."
                             idField="dealId"
                           />
                         </TableCell>

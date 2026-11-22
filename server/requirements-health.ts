@@ -170,7 +170,7 @@ export async function requirementsHealthReport(pool: Pool): Promise<Requirements
       }));
     });
 
-  await section("tenant-rep", "Tenant Rep board", "'Looks auto-made' = made for a deal at Negotiating by the WIP import and never filled in: a deal, but no use, size, location, budget, notes, contact, next action or person.",
+  await section("tenant-rep", "Tenant Rep board", "'Looks auto-made' = made for a transaction at Negotiating by the WIP import and never filled in: a transaction, but no use, size, location, budget, notes, contact, next action or person.",
     async () => {
       const r = (await pool.query(`
         SELECT count(*) AS total,
@@ -185,7 +185,7 @@ export async function requirementsHealthReport(pool: Pool): Promise<Requirements
       const byStatus = await grouped(`SELECT 'Status: ' || coalesce(nullif(btrim(status), ''), '(blank)') AS label, count(*) AS count FROM tenant_rep_searches GROUP BY 1 ORDER BY 2 DESC`);
       return [
         { label: "Rows", count: num(r.total) },
-        { label: "Linked to a deal", count: num(r.with_deal) },
+        { label: "Linked to a transaction", count: num(r.with_deal) },
         { label: "Looks auto-made", count: num(r.auto_made) },
         { label: "No brand link", count: num(r.no_brand) },
         ...byStatus,

@@ -413,7 +413,7 @@ function AddinOutlook() {
               {deals.length > 0 && (
                 <div>
                   <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                    Deals <span className="font-mono tabular-nums">{deals.length}</span>
+                    Transactions <span className="font-mono tabular-nums">{deals.length}</span>
                   </h2>
                   <div className="space-y-1.5">
                     {deals.slice(0, 10).map((d: any) => (
@@ -445,7 +445,7 @@ function AddinOutlook() {
           <div className="text-center py-8">
             <Search className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
             <p className="text-sm text-muted-foreground">
-              {senderEmail ? "Searching for sender..." : "Search for contacts, companies, or deals"}
+              {senderEmail ? "Searching for sender..." : "Search for contacts, companies, or transactions"}
             </p>
           </div>
         )}

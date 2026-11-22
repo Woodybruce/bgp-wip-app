@@ -77,9 +77,9 @@ test("BGP signs off a routine party only; anything else goes to KYC4U or waits",
   assert.match(signOffDenial(facts({ rejected: true }))!, /rejected by the Nominated Officer or KYC4U/);
   assert.match(signOffDenial(facts({ current: { by: "KYC4U", until: "2027-05-19T00:00:00Z" } }))!, /Already approved by KYC4U until 19 May 2027/);
   assert.match(signOffDenial(facts({ unchecked: ["the sanctions screening"] }))!, /could not be checked against the sanctions screening/);
-  assert.match(signOffDenial(facts({ withKyc4u: true }))!, /raised with KYC4U on this deal/);
+  assert.match(signOffDenial(facts({ withKyc4u: true }))!, /raised with KYC4U on this transaction/);
   assert.match(signOffDenial(facts({ redFlags: 1 }))!, /needs enhanced due diligence \(a red flag or a higher-risk factor in the AML policy\): raise it with KYC4U/);
-  assert.match(signOffDenial(facts({ dealRedFlags: 2 }))!, /a red flag or a higher-risk factor on the deal record/);
+  assert.match(signOffDenial(facts({ dealRedFlags: 2 }))!, /a red flag or a higher-risk factor on the transaction record/);
   assert.match(signOffDenial(facts({ higherRisk: true }))!, /higher-risk file/);
   assert.match(signOffDenial(facts({ precheckRunning: true }))!, /still running/);
   assert.match(signOffDenial(facts({ precheck: null }))!, /have not run/);

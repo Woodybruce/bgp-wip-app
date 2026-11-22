@@ -149,7 +149,7 @@ const INVESTIGATOR_TOOLS: any[] = [
   },
   {
     name: "crm_lookup",
-    description: "Look up BGP CRM records. Returns matching properties, deals, companies. Use for: checking if we already have a record for this address, finding linked deals, finding a tenant's company page.",
+    description: "Look up BGP CRM records. Returns matching properties, transactions, companies. Use for: checking if we already have a record for this address, finding linked transactions, finding a tenant's company page.",
     input_schema: {
       type: "object",
       properties: {

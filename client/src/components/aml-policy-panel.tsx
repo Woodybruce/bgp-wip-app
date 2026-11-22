@@ -233,12 +233,12 @@ export function AmlPolicyPanel() {
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">How the app applies it</h3>
           <ul className="space-y-1.5 text-xs text-muted-foreground list-disc pl-4" data-testid="aml-policy-rules">
             <li><span className="text-foreground">Simplified</span>: a listed company, an FCA-authorised fund or a UK public body. No owners to verify.</li>
-            <li><span className="text-foreground">Standard</span>: no higher-risk factor. Owners identified and verified. Signed off by an agent on the deal or an officer.</li>
+            <li><span className="text-foreground">Standard</span>: no higher-risk factor. Owners identified and verified. Signed off by an agent on the transaction or an officer.</li>
             <li><span className="text-foreground">Enhanced</span>: a red flag or a higher-risk factor. {feed.inHouseEdd?.on ? "Signed off by the Nominated Officer or a Deputy, with a note of what was checked." : "Sent to KYC4U; an officer adds KYC4U's result."}</li>
             <li>Approvals last {feed.recheckYears.standard} years ({feed.recheckYears.enhanced} for enhanced).</li>
             <li>Lettings under £{feed.lettingMonthlyRent.toLocaleString("en-GB")} a month: sanctions checks only.</li>
-            <li>Landlord or seller before marketing; tenant or buyer from Heads of Terms; everyone before exchange. A deal that exchanges with checks outstanding still moves, and the officers are emailed.</li>
-            <li>The other side of a deal a joint agent negotiated, or no deal done: an officer can mark it Not required.</li>
+            <li>Landlord or seller before marketing; tenant or buyer from Heads of Terms; everyone before exchange. A transaction that exchanges with checks outstanding still moves, and the officers are emailed.</li>
+            <li>The other side of a transaction a joint agent negotiated, or no transaction done: an officer can mark it Not required.</li>
             <li>Restaurants, bars and pubs are a factor to weigh. High-risk countries follow FATF's lists of {feed.fatfAsOf}.</li>
           </ul>
         </section>

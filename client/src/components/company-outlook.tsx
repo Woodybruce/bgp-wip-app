@@ -81,7 +81,7 @@ export function StageRow({ stage, open, onToggle }: {
     <DisclosureRow
       id={`stage-${stage.code}`}
       title={stage.label}
-      sub={`${stage.count} deal${stage.count === 1 ? "" : "s"} · ${money(stage.unweighted)} at ${stage.weightPct}%`}
+      sub={`${stage.count} transaction${stage.count === 1 ? "" : "s"} · ${money(stage.unweighted)} at ${stage.weightPct}%`}
       headline={money(stage.weighted)}
       open={open}
       onToggle={onToggle}
@@ -100,7 +100,7 @@ export function StageRow({ stage, open, onToggle }: {
             Show all {stage.deals.length}
           </button>
         )}
-        <p className="text-[11px] text-muted-foreground pt-1.5">Fee → weighted at {stage.weightPct}%. Tap a deal to open it.</p>
+        <p className="text-[11px] text-muted-foreground pt-1.5">Fee → weighted at {stage.weightPct}%. Tap a transaction to open it.</p>
       </div>
     </DisclosureRow>
   );
@@ -174,7 +174,7 @@ export function CompanyOutlookSection({ xeroFallback, onOpenPipeline }: { xeroFa
           <TrendingUp className="w-4 h-4" /> Company outlook — {fyLabel}
         </CardTitle>
         <p className="text-xs text-muted-foreground">
-          All ex VAT. What's coming in, what's going out, and what's left — live from Xero, the deal boards and the cost plan.
+          All ex VAT. What's coming in, what's going out, and what's left — live from Xero, the transaction boards and the cost plan.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -184,7 +184,7 @@ export function CompanyOutlookSection({ xeroFallback, onOpenPipeline }: { xeroFa
             <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Income — projected year</p>
             <p className="text-2xl font-semibold tabular-nums mt-1" data-testid="outlook-money-in">{money(income.projectedFy)}</p>
             <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
-              {money(income.fytdActual)} billed so far + {money(income.forwardDeals)} deal book{income.unscheduled.count ? ` + ${money(income.unscheduled.weighted)} Unscheduled / TBC` : ""}{income.legacy ? ` + ${money(income.legacy)} old Sage invoices (Wendy's sheet)` : ""}
+              {money(income.fytdActual)} billed so far + {money(income.forwardDeals)} transaction book{income.unscheduled.count ? ` + ${money(income.unscheduled.weighted)} Unscheduled / TBC` : ""}{income.legacy ? ` + ${money(income.legacy)} old Sage invoices (Wendy's sheet)` : ""}
               {history?.vsLastFyPct != null && lastFy ? ` · ${history.vsLastFyPct >= 0 ? "+" : ""}${history.vsLastFyPct}% vs last year` : ""}
             </p>
           </div>
@@ -201,7 +201,7 @@ export function CompanyOutlookSection({ xeroFallback, onOpenPipeline }: { xeroFa
             <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
               {profit.perPartner > 0
                 ? `${money(profit.perPartner)} each on top of the £145k salary`
-                : "no profit share on today's book yet — deals won through the year fill this in"} · next 6 months: {money(profit.next6)}
+                : "no profit share on today's book yet — transactions won through the year fill this in"} · next 6 months: {money(profit.next6)}
             </p>
           </div>
         </div>
@@ -217,7 +217,7 @@ export function CompanyOutlookSection({ xeroFallback, onOpenPipeline }: { xeroFa
             <div className="border rounded-xl p-3 flex items-start gap-3" data-testid="outlook-deal-book">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium">
-                  Deal book {money(bookWeighted)} <span className="font-normal text-muted-foreground">weighted · {bookCount} live deal{bookCount === 1 ? "" : "s"} · {money(bookFee)} at full fee</span>
+                  Transaction book {money(bookWeighted)} <span className="font-normal text-muted-foreground">weighted · {bookCount} live transaction{bookCount === 1 ? "" : "s"} · {money(bookFee)} at full fee</span>
                 </p>
                 <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">
                   {money(income.forwardDeals + income.unscheduled.weighted)} expected this year{income.unscheduled.count ? ` (incl. ${money(income.unscheduled.weighted)} with no date yet)` : ""}{income.afterYearEnd.count ? ` · ${money(income.afterYearEnd.weighted)} more after 30 April` : ""}
@@ -246,7 +246,7 @@ export function CompanyOutlookSection({ xeroFallback, onOpenPipeline }: { xeroFa
                   <Tooltip formatter={(v: any) => money(Number(v))} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Bar dataKey="billed" name="Billed (Xero)" stackId="fy" fill="#10b981" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="forecast" name="Forecast (deals + legacy)" stackId="fy" fill="#8b5cf6" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="forecast" name="Forecast (transactions + legacy)" stackId="fy" fill="#8b5cf6" radius={[3, 3, 0, 0]} />
                   <Line dataKey="cost" name="Costs" stroke="#f59e0b" strokeWidth={2} dot={false} />
                   {(history?.fyTotals || []).map((h, i) => (
                     <Line key={h.fy} dataKey={`fy${h.fy}`} name={h.label} stroke={HIST_COLOURS[i] || "#94a3b8"} strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
@@ -279,7 +279,7 @@ export function CompanyOutlookSection({ xeroFallback, onOpenPipeline }: { xeroFa
           <CostRow
             id="commission" title="Commissions"
             sub={`${costs.usingEngineCommission
-              ? "Worked out live from each deal's fee splits and the tier bands"
+              ? "Worked out live from each transaction's fee splits and the tier bands"
               : "From the typed plan line — fee splits unavailable"} · ${money(costs.commissionFy)} for the year`}
             headline={`${money(Math.round(costs.commissionFy / 12))}/mo`}
             open={openRow === "commission"} onToggle={() => toggle("commission")}
@@ -301,13 +301,13 @@ export function CompanyOutlookSection({ xeroFallback, onOpenPipeline }: { xeroFa
                   Earned so far {money(costs.commissionEarned)} + {money(costs.commissionForward)} if the weighted book lands.
                   {costs.commissionTypedFy ? ` Wendy's plan line had ${money(costs.commissionTypedFy)}.` : ""}
                   {costs.commissionByAgent.some(a => a.salary == null) ? " ⚠︎ = no salary on file, so no commission can be worked out." : ""}
-                  {" "}Full per-deal statements with band progress are on the Commission pill.
+                  {" "}Full per-transaction statements with band progress are on the Commission pill.
                 </p>
               </div>
             )}
             {costs.missingSplits && (
               <p className="text-[11px] text-amber-600 dark:text-amber-400 pt-1.5">
-                {costs.missingSplits.count} pipeline deal{costs.missingSplits.count === 1 ? " has" : "s have"} no fee split yet ({money(costs.missingSplits.fee)} of fees) — that commission isn't counted until the splits go in on the deal.
+                {costs.missingSplits.count} pipeline transaction{costs.missingSplits.count === 1 ? " has" : "s have"} no fee split yet ({money(costs.missingSplits.fee)} of fees) — that commission isn't counted until the splits go in on the transaction.
               </p>
             )}
           </CostRow>

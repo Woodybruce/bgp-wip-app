@@ -109,7 +109,7 @@ async function renderWeeklyReportPdf(contact: any, activity: any): Promise<Buffe
   const activeCount = activity.deals.filter((d: any) => { const c = legacyToCode(d.status); return !c || !REPORT_CLOSED.includes(c); }).length;
   const eventsThisWeek = activity.recentEvents.length;
   doc.rect(leftM, y, pageW, 50).fill("#F9F4F0");
-  doc.font("Helvetica-Bold").fontSize(7).fillColor("#888").text("ACTIVE DEALS", leftM + 10, y + 10);
+  doc.font("Helvetica-Bold").fontSize(7).fillColor("#888").text("ACTIVE TRANSACTIONS", leftM + 10, y + 10);
   doc.font("Helvetica-Bold").fontSize(18).fillColor(BGP_DARK_GREEN).text(String(activeCount), leftM + 10, y + 22);
   doc.font("Helvetica-Bold").fontSize(7).fillColor("#888").text("EVENTS THIS WEEK", leftM + pageW / 2, y + 10);
   doc.font("Helvetica-Bold").fontSize(18).fillColor(BGP_DARK_GREEN).text(String(eventsThisWeek), leftM + pageW / 2, y + 22);
@@ -122,7 +122,7 @@ async function renderWeeklyReportPdf(contact: any, activity: any): Promise<Buffe
     const dealNameById = new Map(activity.deals.map((d: any) => [d.id, d.name]));
     for (const e of activity.recentEvents) {
       if (y > 770) { doc.addPage(); y = 60; }
-      const dealName = dealNameById.get(e.deal_id) || "Unknown deal";
+      const dealName = dealNameById.get(e.deal_id) || "Unknown transaction";
       const label = e.event_type === "stage_change"
         ? `${dealName}: ${e.from_stage || "?"} → ${e.to_stage || "?"}`
         : `${dealName}: ${e.event_type.replace(/_/g, " ")}`;
@@ -141,7 +141,7 @@ async function renderWeeklyReportPdf(contact: any, activity: any): Promise<Buffe
   // Active deals list
   if (activity.deals.length) {
     if (y > 700) { doc.addPage(); y = 60; }
-    doc.font("Helvetica-Bold").fontSize(10).fillColor(BGP_GREEN).text("ACTIVE DEALS", leftM, y);
+    doc.font("Helvetica-Bold").fontSize(10).fillColor(BGP_GREEN).text("ACTIVE TRANSACTIONS", leftM, y);
     y = doc.y + 6;
     for (const d of activity.deals) {
       if (y > 770) { doc.addPage(); y = 60; }

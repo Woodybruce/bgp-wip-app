@@ -160,7 +160,7 @@ test('deleting a company on the lease is refused while anything points at it, wi
   out = await run([[/crm_entity_kyc/, 1]]);
   assert.equal(out.res.statusCode, 409); assert.match(out.res.body.error, /1 KYC record /); assert.equal(out.deleted, false);
   out = await run([[/FROM crm_deals/, 2]]);
-  assert.equal(out.res.statusCode, 409); assert.match(out.res.body.error, /2 deal/); assert.equal(out.deleted, false);
+  assert.equal(out.res.statusCode, 409); assert.match(out.res.body.error, /2 transaction/); assert.equal(out.deleted, false);
   out = await run([]);
   assert.equal(out.res.statusCode, 200); assert.equal(out.res.body.ok, true); assert.equal(out.deleted, true);
   out = await run([[/crm_entity_kyc/, missing('42P01')], [/billing_entity_id/, missing('42703')], [/tenancy_schedule_units/, missing('42703')]]);

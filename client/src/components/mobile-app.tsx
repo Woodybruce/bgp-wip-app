@@ -177,7 +177,7 @@ function backgroundRunError() {
 const isSharedAiThread = (t: { isAiChat: boolean; members: Array<{ id: string }> }) => t.isAiChat && t.members.length > 0;
 
 const AI_SUGGESTIONS: Array<{ label: string; icon: typeof Sparkles }> = [
-  { label: "Show me live deals", icon: BarChart3 },
+  { label: "Show me live transactions", icon: BarChart3 },
   { label: "What's in my calendar today?", icon: CalendarDays },
   { label: "Draft HOTs for a property", icon: FileText },
   { label: "Search CRM contacts", icon: Users },
@@ -2776,7 +2776,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                   >
                     <Link2 className="w-3 h-3 text-gray-300 shrink-0" />
                     <span className="text-[11px] text-gray-200 truncate">
-                      Open {activeThread.linkedType === "property" ? "property" : activeThread.linkedType === "deal" ? "deal" : activeThread.linkedType}: {activeThread.linkedName}
+                      Open {activeThread.linkedType === "property" ? "property" : activeThread.linkedType === "deal" ? "transaction" : activeThread.linkedType}: {activeThread.linkedName}
                     </span>
                   </button>
                   <button
@@ -2983,7 +2983,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               o.kind === "user" ? "People" :
               o.type === "company" ? "Brands & companies" :
               o.type === "property" ? "Properties" :
-              o.type === "deal" ? "Deals" :
+              o.type === "deal" ? "Transactions" :
               o.type === "unit" ? "Letting tracker" :
               o.type === "folder" ? "Folders" : "Contacts";
             const group = groupOf(opt);
@@ -3089,7 +3089,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           <div className="bg-white border-t border-border p-3">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-semibold text-muted-foreground">
-                Link {showLinkSearch === "property" ? "Property" : "Deal"}
+                Link {showLinkSearch === "property" ? "Property" : "Transaction"}
               </span>
               <button onClick={() => { setShowLinkSearch(null); setLinkSearchQuery(""); }} className="p-1">
                 <X className="w-4 h-4 text-muted-foreground/70" />
@@ -3098,7 +3098,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             <Input
               value={linkSearchQuery}
               onChange={(e) => setLinkSearchQuery(e.target.value)}
-              placeholder={`Search ${showLinkSearch === "property" ? "properties" : "deals"}...`}
+              placeholder={`Search ${showLinkSearch === "property" ? "properties" : "transactions"}...`}
               className="text-[16px] mb-2"
               autoFocus
               data-testid="input-link-search"
@@ -3248,7 +3248,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                       data-testid="button-link-deal"
                     >
                       <Handshake className="w-5 h-5 text-muted-foreground" />
-                      <span>Link Deal</span>
+                      <span>Link Transaction</span>
                     </button>
                     <div className="border-t border-border my-1" />
                     <label className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-muted active:bg-muted cursor-pointer">
@@ -4255,7 +4255,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                     data-testid="menu-new-deal-chat"
                   >
                     <Handshake className="w-4 h-4 mr-2 text-muted-foreground" />
-                    New chat about a deal
+                    New chat about a transaction
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -4373,7 +4373,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                     <p className="text-[15px] font-semibold">ChatBGP</p>
                     <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-semibold uppercase tracking-wide">Pinned</span>
                   </div>
-                  <p className="text-[13px] text-muted-foreground truncate">Ask anything — deals, brands, your portfolio</p>
+                  <p className="text-[13px] text-muted-foreground truncate">Ask anything — transactions, brands, your portfolio</p>
                 </div>
                 <button
                   onClick={(e) => { e.stopPropagation(); setTab("ai"); setChatSearch(""); }}
@@ -4477,7 +4477,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               <div>
                 {aiProjectItems.length > 0 && (
                   <div className="mb-1">
-                    <p className="text-[11px] font-semibold text-[#A8A29E] uppercase tracking-wider px-5 pt-3 pb-1">Properties & deals</p>
+                    <p className="text-[11px] font-semibold text-[#A8A29E] uppercase tracking-wider px-5 pt-3 pb-1">Properties & transactions</p>
                     {aiProjectItems.map(project => {
                       const key = `${project.type}-${project.id}`;
                       const isExpanded = expandedAiProjects.has(key);
@@ -5120,7 +5120,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               </button>
             </div>
             <div className="px-5 py-3 shrink-0">
-              <p className="text-[13px] text-muted-foreground mb-3">Create an AI conversation linked to a property or deal.</p>
+              <p className="text-[13px] text-muted-foreground mb-3">Create an AI conversation linked to a property or transaction.</p>
               <div className="flex gap-2 mb-3">
                 <button
                   className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${mobileNewPropLinkType === "property" ? "bg-[hsl(var(--mobile-chrome))] text-white" : "bg-muted text-muted-foreground"}`}
@@ -5134,13 +5134,13 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   onClick={() => { setMobileNewPropLinkType("deal"); setMobileNewPropSelectedId(""); }}
                   data-testid="button-mobile-link-deal"
                 >
-                  <Handshake className="w-3.5 h-3.5 inline mr-1.5" /> Deal / WIP
+                  <Handshake className="w-3.5 h-3.5 inline mr-1.5" /> Transaction / WIP
                 </button>
               </div>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
                 <Input
-                  placeholder={`Search ${mobileNewPropLinkType === "property" ? "properties" : "deals"}...`}
+                  placeholder={`Search ${mobileNewPropLinkType === "property" ? "properties" : "transactions"}...`}
                   value={mobileNewPropSearch}
                   onChange={e => setMobileNewPropSearch(e.target.value)}
                   className="h-10 pl-9 text-sm rounded-xl bg-[#F5F5F4] border-0"
@@ -5161,7 +5161,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   ? items.filter((i: any) => i.name?.toLowerCase().includes(mobileNewPropSearch.toLowerCase()))
                   : items;
                 return filtered.length === 0 ? (
-                  <p className="text-center text-[13px] text-muted-foreground/70 py-8">No {mobileNewPropLinkType === "property" ? "properties" : "deals"} found</p>
+                  <p className="text-center text-[13px] text-muted-foreground/70 py-8">No {mobileNewPropLinkType === "property" ? "properties" : "transactions"} found</p>
                 ) : (
                   <div className="space-y-1">
                     {filtered.slice(0, 50).map((item: any) => (

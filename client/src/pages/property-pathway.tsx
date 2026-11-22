@@ -1578,7 +1578,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {s1.deals && s1.deals.length > 0 && (
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-sm flex items-center gap-2"><Building2 className="w-4 h-4" /> Deals ({s1.deals.length})</CardTitle>
+                  <CardTitle className="text-sm flex items-center gap-2"><Building2 className="w-4 h-4" /> Transactions ({s1.deals.length})</CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 pb-2">
                   {s1.deals.slice(0, 10).map((d: any) => (
@@ -4706,7 +4706,7 @@ function PropertyDataMarketCard({ tone }: { tone: any }) {
           <Building2 className="w-4 h-4" /> Market tone
           <Badge variant="outline" className="text-[10px] py-0">PropertyData</Badge>
         </CardTitle>
-        <p className="text-[10px] text-muted-foreground">Aggregate quoting rents and £/sqft for this postcode sector — not individual deal comps.</p>
+        <p className="text-[10px] text-muted-foreground">Aggregate quoting rents and £/sqft for this postcode sector — not individual transaction comps.</p>
       </CardHeader>
       <CardContent className="text-[11px] space-y-1 pb-2">
         {rows.map((r, i) => (

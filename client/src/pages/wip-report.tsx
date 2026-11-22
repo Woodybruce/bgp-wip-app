@@ -264,13 +264,13 @@ function HealthTab() {
   if (error || !data) return <p className="text-sm text-muted-foreground p-4">Couldn't load the audit — try again shortly.</p>;
   const b = data.buckets;
   const sections: Array<{ key: string; title: string; why: string; data: any }> = [
-    { key: "noClient", title: "No client linked", why: "Shows as \"Unknown\" in the Client column — set the landlord / tenant / vendor / purchaser on the deal.", data: b.noClient },
+    { key: "noClient", title: "No client linked", why: "Shows as \"Unknown\" in the Client column — set the landlord / tenant / vendor / purchaser on the transaction.", data: b.noClient },
     { key: "noAgent", title: "No BGP agent", why: "Invisible in the Agent Summary and earns nobody commission — add the agent or a fee allocation.", data: b.noAgent },
-    { key: "noDate", title: "No date at all", why: "No target, exchange or completion date — the deal lands in no month and skews the year view.", data: b.noDate },
-    ...(b.noPo ? [{ key: "noPo", title: "Needs a PO number", why: "The client only pays invoices quoting a PO (Canary Wharf Group: No PO No Pay) — add the PO number to the deal before the invoice goes out.", data: b.noPo }] : []),
-    ...(b.noKyc4u ? [{ key: "noKyc4u", title: "Not raised with KYC4U", why: "Parties on new deals with no KYC4U request. Open the deal, then Parties & AML.", data: b.noKyc4u }] : []),
+    { key: "noDate", title: "No date at all", why: "No target, exchange or completion date — the transaction lands in no month and skews the year view.", data: b.noDate },
+    ...(b.noPo ? [{ key: "noPo", title: "Needs a PO number", why: "The client only pays invoices quoting a PO (Canary Wharf Group: No PO No Pay) — add the PO number to the transaction before the invoice goes out.", data: b.noPo }] : []),
+    ...(b.noKyc4u ? [{ key: "noKyc4u", title: "Not raised with KYC4U", why: "Parties on new transactions with no KYC4U request. Open the transaction, then Parties & AML.", data: b.noKyc4u }] : []),
     { key: "invNoXero", title: "Invoiced with no Xero invoice", why: "Status says Invoiced but no Xero invoice is linked — raise or link the invoice so cash tracking works.", data: b.invNoXero },
-    { key: "noFee", title: "Live deal with no fee", why: "In the pipeline but fee is blank — it's excluded from the WIP report entirely (invisible money).", data: b.noFee },
+    { key: "noFee", title: "Live transaction with no fee", why: "In the pipeline but fee is blank — it's excluded from the WIP report entirely (invisible money).", data: b.noFee },
     { key: "noProperty", title: "No property linked", why: "Fine for consultancy mandates; worth linking for everything else.", data: b.noProperty },
   ];
   return (
@@ -278,10 +278,10 @@ function HealthTab() {
       <div className="rounded-lg border bg-amber-50 border-amber-200 px-4 py-3">
         <p className="text-sm font-medium text-amber-900">
           {data.affected.count > 0
-            ? `${data.affected.count} deal(s) worth ${money(data.affected.fee)} have broken links that distort this report and the Finance projections.`
-            : "All linked — every WIP deal has a client, agent and date. Lovely."}
+            ? `${data.affected.count} transaction(s) worth ${money(data.affected.fee)} have broken links that distort this report and the Finance projections.`
+            : "All linked — every WIP transaction has a client, agent and date. Lovely."}
         </p>
-        <p className="text-xs text-amber-800/80 mt-0.5">{data.totalWipDeals} deals checked · tap any row to open the deal and fix it</p>
+        <p className="text-xs text-amber-800/80 mt-0.5">{data.totalWipDeals} transactions checked · tap any row to open the transaction and fix it</p>
       </div>
       {/* Invoices approved / paid in Xero that no deal claims — link or set
           aside by hand (Woody, 2026-10-28). */}
@@ -299,7 +299,7 @@ function HealthTab() {
               <Link key={d.dealId} href={`/deals/${d.dealId}`}>
                 <div className="flex items-center gap-3 px-4 py-2 hover:bg-muted cursor-pointer text-sm">
                   <span className="flex-1 min-w-0 truncate">
-                    {d.name || "(unnamed deal)"}
+                    {d.name || "(unnamed transaction)"}
                     <span className="text-xs text-muted-foreground"> {d.dealType ? `· ${d.dealType}` : ""}{d.team ? ` · ${d.team}` : ""}</span>
                   </span>
                   <Badge variant="secondary" className="text-[10px] shrink-0">{dealStatusLabel(d.status, d.dealType)}</Badge>
@@ -335,7 +335,7 @@ function FeeCheckTab() {
   // silently move a fee. Writes via the normal deal PUT (audited).
   const matchToXero = async (row: FeeReconRow) => {
     if (!window.confirm(
-      `Set the fee on ${row.dealRef ? `deal ${row.dealRef} ` : ""}"${row.name}" to ${money(row.xeroNet)} (Xero net)?\n\nThis updates the WIP report and the agents' commission.`,
+      `Set the fee on ${row.dealRef ? `transaction ${row.dealRef} ` : ""}"${row.name}" to ${money(row.xeroNet)} (Xero net)?\n\nThis updates the WIP report and the agents' commission.`,
     )) return;
     setSavingId(row.dealId);
     try {
@@ -354,7 +354,7 @@ function FeeCheckTab() {
   if (error) return <div className="p-6 text-sm text-muted-foreground">Couldn't load the fee check.</div>;
   if (data.length === 0) return (
     <div className="p-6 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg" data-testid="fee-check-clean">
-      ✅ No discrepancies — every invoiced deal's recorded fee matches its Xero net figure.
+      ✅ No discrepancies — every invoiced transaction's recorded fee matches its Xero net figure.
     </div>
   );
 
@@ -362,14 +362,14 @@ function FeeCheckTab() {
   const fillBlanks = async () => {
     const total = blanks.reduce((s, r) => s + r.xeroNet, 0);
     if (!window.confirm(
-      `Fill ${blanks.length} blank recorded fee${blanks.length === 1 ? "" : "s"} from Xero (${money(total)} total)?\n\nOnly deals with NO recorded fee are touched — each is set to its Xero invoice net and logged on the deal. This updates the WIP report and the agents' commission.`,
+      `Fill ${blanks.length} blank recorded fee${blanks.length === 1 ? "" : "s"} from Xero (${money(total)} total)?\n\nOnly transactions with NO recorded fee are touched — each is set to its Xero invoice net and logged on the transaction. This updates the WIP report and the agents' commission.`,
     )) return;
     setSavingId("__bulk__");
     try {
       const r = await apiRequest("POST", "/api/wip/fill-blank-fees");
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "failed");
-      toast({ title: "Fees filled from Xero", description: `${j.filled} deal${j.filled === 1 ? "" : "s"} updated.` });
+      toast({ title: "Fees filled from Xero", description: `${j.filled} transaction${j.filled === 1 ? "" : "s"} updated.` });
       queryClient.invalidateQueries({ queryKey: ["/api/wip/fee-reconciliation"] });
       invalidateDealCaches();
     } catch (e: any) {
@@ -382,7 +382,7 @@ function FeeCheckTab() {
       {blanks.length > 0 && (
         <div className="flex items-center justify-between gap-3 flex-wrap rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-4 py-3" data-testid="fill-blank-fees-banner">
           <p className="text-sm text-amber-900 dark:text-amber-200">
-            <strong>{blanks.length}</strong> invoiced deal{blanks.length === 1 ? " has" : "s have"} <strong>no recorded fee</strong> but a linked Xero invoice
+            <strong>{blanks.length}</strong> invoiced transaction{blanks.length === 1 ? " has" : "s have"} <strong>no recorded fee</strong> but a linked Xero invoice
             ({money(blanks.reduce((s, r) => s + r.xeroNet, 0))} net) — invisible in the WIP and paying nobody commission.
           </p>
           <Button size="sm" onClick={fillBlanks} disabled={savingId === "__bulk__"} data-testid="button-fill-blank-fees">
@@ -391,8 +391,8 @@ function FeeCheckTab() {
         </div>
       )}
       <p className="text-sm text-muted-foreground">
-        {data.length} deal{data.length === 1 ? "" : "s"} where the recorded fee doesn't match the net invoiced in Xero.
-        The WIP and commission both use the <strong>recorded fee</strong>, so fix these on the Deals page to bring them in line with Xero.
+        {data.length} transaction{data.length === 1 ? "" : "s"} where the recorded fee doesn't match the net invoiced in Xero.
+        The WIP and commission both use the <strong>recorded fee</strong>, so fix these on the Transactions page to bring them in line with Xero.
       </p>
       <div className="bg-card border border-border rounded-lg overflow-hidden">
         {/* Phone: one card per discrepancy (§7) — the table never ships below md. */}
@@ -435,7 +435,7 @@ function FeeCheckTab() {
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-left">
             <tr>
-              <th className="px-3 py-2 font-medium">Deal</th>
+              <th className="px-3 py-2 font-medium">Transaction</th>
               <th className="px-3 py-2 font-medium">Team</th>
               <th className="px-3 py-2 font-medium">Agent</th>
               <th className="px-3 py-2 font-medium text-right">Recorded fee</th>
@@ -535,7 +535,7 @@ function AgentSummaryTab() {
   if (agents.length === 0) {
     return (
       <div className="bg-card border border-border rounded-lg p-8 text-center text-sm text-muted-foreground" data-testid="agent-summary-empty">
-        No fees are attributed to agents yet — assign a BGP contact (or add a fee split) on a deal to see the breakdown here.
+        No fees are attributed to agents yet — assign a BGP contact (or add a fee split) on a transaction to see the breakdown here.
       </div>
     );
   }
@@ -709,11 +709,11 @@ function AgentSummaryTab() {
           <div className="bg-muted/50 border-b px-4 py-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-muted-foreground">
-                Deals for {selectedAgent}
+                Transactions for {selectedAgent}
               </span>
               {drilldownData && (
                 <Badge variant="secondary" className="text-xs">
-                  {drilldownData.length} deals
+                  {drilldownData.length} transactions
                 </Badge>
               )}
             </div>
@@ -725,9 +725,9 @@ function AgentSummaryTab() {
             </button>
           </div>
           {drilldownLoading ? (
-            <div className="px-4 py-8 text-center text-sm text-muted-foreground">Loading deals...</div>
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">Loading transactions...</div>
           ) : !drilldownData || drilldownData.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-muted-foreground">No deals found for this agent</div>
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">No transactions found for this agent</div>
           ) : (
             <>
             {/* Phone: one card per deal (§7) — the table never ships below md. */}
@@ -745,7 +745,7 @@ function AgentSummaryTab() {
                   </p>
                   <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                     {d.provisional ? (
-                      <Badge variant="outline" className="text-[10px] text-muted-foreground whitespace-nowrap" title="Not counted until the deal is moved to Solicitors">Provisional</Badge>
+                      <Badge variant="outline" className="text-[10px] text-muted-foreground whitespace-nowrap" title="Not counted until the transaction is moved to Solicitors">Provisional</Badge>
                     ) : d.stage === "invoiced" ? (
                       <Badge className="text-[10px] bg-green-100 text-green-800 whitespace-nowrap">Invoiced</Badge>
                     ) : d.stage === "wip" ? (
@@ -769,7 +769,7 @@ function AgentSummaryTab() {
               <table className="w-full">
                 <thead className="bg-muted/50 border-b sticky top-0 z-10 text-sm">
                   <tr>
-                    <SortableTableHead sortKey="name" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-muted-foreground">Deal Name</SortableTableHead>
+                    <SortableTableHead sortKey="name" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-muted-foreground">Transaction Name</SortableTableHead>
                     <SortableTableHead sortKey="property" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-muted-foreground">Property</SortableTableHead>
                     <SortableTableHead sortKey="dealType" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-muted-foreground">Type</SortableTableHead>
                     <SortableTableHead sortKey="totalFee" sort={drillSort} raw align="right" className="px-3 py-2 font-medium text-muted-foreground">Total Fee</SortableTableHead>
@@ -818,7 +818,7 @@ function AgentSummaryTab() {
                       </td>
                       <td className="px-3 py-2 text-center">
                         {d.provisional ? (
-                          <Badge variant="outline" className="text-[10px] text-muted-foreground" title="Not counted until the deal is moved to Solicitors">Provisional</Badge>
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground" title="Not counted until the transaction is moved to Solicitors">Provisional</Badge>
                         ) : d.stage === "invoiced" ? (
                           <Badge className="text-[10px] bg-green-100 text-green-800">Invoiced</Badge>
                         ) : d.stage === "wip" ? (
@@ -986,7 +986,7 @@ export default function WipReport() {
   // key groups drive the footer's colSpans so the totals stay column-aligned.
   const WIP_DETAIL_COLS: { key: string; label: string; width: string; title?: string }[] = [
     { key: "dealRef", label: "Ref", width: "w-12" },
-    { key: "ref", label: "Deal", width: "w-32" },
+    { key: "ref", label: "Transaction", width: "w-32" },
     { key: "client", label: "Client", width: "w-24" },
     { key: "tenant", label: "Tenant", width: "w-28" },
     { key: "project", label: "Property", width: "w-28" },
@@ -1007,9 +1007,9 @@ export default function WipReport() {
     // 92px fits the 72px month pill; 128px pushed the pills past the visible
     // edge at 1440 (Woody, 2026-09-28).
     { key: "dealDate", label: "Target", title: "Target month", width: "w-[92px] min-w-[92px]" },
-    { key: "dealType", label: "Deal Type", width: "w-20" },
+    { key: "dealType", label: "Transaction Type", width: "w-20" },
     { key: "agent", label: "BGP Contact", width: "w-20" },
-    { key: "dealStatus", label: "Deal Status", width: "w-20" },
+    { key: "dealStatus", label: "Transaction Status", width: "w-20" },
     { key: "stage", label: "Stage", width: "w-20" },
   ];
   const WIP_LEAD_KEYS = ["dealRef", "ref", "client", "tenant", "project", "billingEntity", "team"];
@@ -1409,7 +1409,7 @@ export default function WipReport() {
     clearTimeout(pending.timer);
     try {
       await apiRequest("PUT", `/api/crm/deals/${dealId}`, { targetDate: `${pending.val}-01` });
-      toast({ title: "Target month updated", description: "Applied to everyone on this deal." });
+      toast({ title: "Target month updated", description: "Applied to everyone on this transaction." });
       invalidateDealCaches();
     } catch (err: any) {
       toast({ title: "Couldn't save target month", description: err?.message || "Please try again.", variant: "destructive" });
@@ -1429,7 +1429,7 @@ export default function WipReport() {
   const handleStatusChange = async (dealId: string, code: string) => {
     try {
       await apiRequest("PUT", `/api/crm/deals/${dealId}`, { status: code });
-      toast({ title: "Deal status updated" });
+      toast({ title: "Transaction status updated" });
       invalidateDealCaches();
     } catch (err: any) {
       toast({ title: "Couldn't update status", description: err?.message || "Please try again.", variant: "destructive" });
@@ -1439,7 +1439,7 @@ export default function WipReport() {
   const handleTeamChange = async (dealId: string, team: string, keepLandsec: boolean) => {
     try {
       await apiRequest("PUT", `/api/crm/deals/${dealId}`, { team: keepLandsec ? [team, "Landsec"] : [team] });
-      toast({ title: "Team updated", description: `The deal's fee now counts to ${team}.` });
+      toast({ title: "Team updated", description: `The transaction's fee now counts to ${team}.` });
       invalidateDealCaches();
       queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
     } catch (err: any) {
@@ -1476,7 +1476,7 @@ export default function WipReport() {
       const res = await apiRequest("POST", "/api/xero/invoices/sync-all");
       const data = await res.json();
       const parts = [`Synced ${data.synced} invoice${data.synced !== 1 ? "s" : ""}`];
-      if (data.promoted) parts.push(`${data.promoted} deal${data.promoted !== 1 ? "s" : ""} auto-invoiced`);
+      if (data.promoted) parts.push(`${data.promoted} transaction${data.promoted !== 1 ? "s" : ""} auto-invoiced`);
       if (data.errors?.length) {
         // Say WHY, not just how many — "12 failed" with no reason sent
         // Woody hunting (2026-09-08; they were all Xero rate-limit 429s).
@@ -1545,7 +1545,7 @@ export default function WipReport() {
         <div role="alert" className="rounded-2xl md:rounded-lg border border-border bg-card p-6 text-center space-y-3">
           <AlertCircle className="h-6 w-6 text-muted-foreground mx-auto" aria-hidden="true" />
           <h1 className="text-2xl font-bold tracking-tight">WIP report unavailable</h1>
-          <p className="text-sm text-muted-foreground">We couldn’t load the report. Try again to see your fees and deals.</p>
+          <p className="text-sm text-muted-foreground">We couldn’t load the report. Try again to see your fees and transactions.</p>
           <Button onClick={() => void refetch()} disabled={isFetching} data-testid="wip-retry-button">
             <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />
             {isFetching ? "Retrying…" : "Retry"}
@@ -1599,13 +1599,13 @@ export default function WipReport() {
               {teamLabel && <span className="hidden md:inline text-base font-normal text-muted-foreground ml-2 whitespace-nowrap">— {teamLabel}</span>}
             </h1>
             <p className="text-sm text-muted-foreground">
-              <span className="md:hidden">{teamLabel && `${teamLabel} · `}<span className="font-mono tabular-nums">{sortedDetailEntries.length.toLocaleString("en-GB")}</span> deal{sortedDetailEntries.length !== 1 ? "s" : ""} in the WIP (pipeline to invoiced)</span>
+              <span className="md:hidden">{teamLabel && `${teamLabel} · `}<span className="font-mono tabular-nums">{sortedDetailEntries.length.toLocaleString("en-GB")}</span> transaction{sortedDetailEntries.length !== 1 ? "s" : ""} in the WIP (pipeline to invoiced)</span>
               <span className="hidden md:inline">
                 {/* Deals, not fee-split entries — the old "945 transactions" never
                     matched Deal Detail's one-row-per-deal count (Woody, 2026-09-27).
                     "in the WIP (pipeline to invoiced)" — /deals counts only its
                     schedule, so a bare "467 deals" read as contradicting its 274. */}
-                <span className="font-mono tabular-nums">{mergedDetailEntries.length.toLocaleString("en-GB")}</span> deal{mergedDetailEntries.length !== 1 ? "s" : ""} in the WIP (pipeline to invoiced) · Total net fees: <span className="font-mono tabular-nums">{formatFullCurrency(totalNetFees)}</span>
+                <span className="font-mono tabular-nums">{mergedDetailEntries.length.toLocaleString("en-GB")}</span> transaction{mergedDetailEntries.length !== 1 ? "s" : ""} in the WIP (pipeline to invoiced) · Total net fees: <span className="font-mono tabular-nums">{formatFullCurrency(totalNetFees)}</span>
               </span>
             </p>
           </div>
@@ -1668,7 +1668,7 @@ export default function WipReport() {
           <Button size="sm" asChild className="min-h-11 md:min-h-8 shrink-0 whitespace-nowrap" data-testid="wip-new-deal-button">
             <Link href="/deals/list?new=1">
               <Plus className="h-4 w-4 mr-1" />
-              Add deal
+              Add transaction
             </Link>
           </Button>
         </div>
@@ -1702,7 +1702,7 @@ export default function WipReport() {
                 type="search"
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
-                placeholder="Search deals…"
+                placeholder="Search transactions…"
                 className="w-full h-11 md:h-8 pl-8 pr-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:border-ring"
                 data-testid="wip-search-input"
               />
@@ -1770,7 +1770,7 @@ export default function WipReport() {
               getLabel={agentLabel}
             />
             <FilterDropdown
-              title="Deal Status"
+              title="Transaction Status"
               items={allStatuses}
               selected={selectedStatuses}
               onToggle={(s) => toggleFilter(selectedStatuses, setSelectedStatuses, s)}
@@ -1816,7 +1816,7 @@ export default function WipReport() {
               <div className="bg-card border border-border rounded-lg p-3" data-testid="wip-phone-tile-wip">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">WIP</p>
                 <p className="text-lg font-mono font-semibold text-foreground">{formatFullCurrency(totalWip)}</p>
-                <p className="text-[10px] text-muted-foreground">{sortedDetailEntries.length} deal{sortedDetailEntries.length !== 1 ? "s" : ""}</p>
+                <p className="text-[10px] text-muted-foreground">{sortedDetailEntries.length} transaction{sortedDetailEntries.length !== 1 ? "s" : ""}</p>
               </div>
               <div className="bg-card border border-border rounded-lg p-3" data-testid="wip-phone-tile-invoiced">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Invoiced</p>
@@ -1833,7 +1833,7 @@ export default function WipReport() {
               }}
               data-testid="wip-phone-view-deals"
             >
-              <span>View <span className="font-mono tabular-nums">{sortedDetailEntries.length}</span> deal{sortedDetailEntries.length !== 1 ? "s" : ""}</span>
+              <span>View <span className="font-mono tabular-nums">{sortedDetailEntries.length}</span> transaction{sortedDetailEntries.length !== 1 ? "s" : ""}</span>
               <ArrowDown className="h-4 w-4" aria-hidden="true" />
             </Button>
             {monthlyFees.length > 0 && (
@@ -1926,7 +1926,7 @@ export default function WipReport() {
                 <div key={board.key} className="bg-card border border-border rounded-lg overflow-hidden" data-testid={`wip-phone-board-${board.key}`}>
                   <div className="bg-muted/50 border-b px-3 py-2 flex items-center justify-between">
                     <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Net fees by {board.title}</span>
-                    <span className="text-[11px] font-mono text-muted-foreground" title={shared ? "Deals shared between teams count in full in each team row" : undefined}>{formatCurrency(boardTotal)}{shared && <span className="font-sans"> · shared deals in each team</span>}</span>
+                    <span className="text-[11px] font-mono text-muted-foreground" title={shared ? "Transactions shared between teams count in full in each team row" : undefined}>{formatCurrency(boardTotal)}{shared && <span className="font-sans"> · shared transactions in each team</span>}</span>
                   </div>
                   <div className={`p-2 ${expanded ? "max-h-96 overflow-y-auto" : ""}`}>
                     {shown.map(r => {
@@ -2006,7 +2006,7 @@ export default function WipReport() {
                             if (next.has(m.month)) next.delete(m.month); else next.add(m.month);
                             return next;
                           })}
-                          title={`${monthLabel(m.month)} · ${formatFullCurrency(m.total)} · ${m.count} deal${m.count !== 1 ? "s" : ""}`}
+                          title={`${monthLabel(m.month)} · ${formatFullCurrency(m.total)} · ${m.count} transaction${m.count !== 1 ? "s" : ""}`}
                           data-testid={`wip-desk-month-${m.month}`}
                         >
                           {/* Filled-in empty months keep the axis honest but don't
@@ -2071,7 +2071,7 @@ export default function WipReport() {
                         (Woody, 2026-09-27). */}
                     <div className="bg-muted/50 border-b px-3 py-2 flex items-center justify-between gap-2 whitespace-nowrap">
                       <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide truncate min-w-0" title={`Net fees by ${board.title}`}>Net fees by {board.title}</span>
-                      <span className="text-[11px] font-mono text-muted-foreground shrink-0" title={shared ? "Deals shared between teams count in full in each team row" : undefined}>{formatCurrency(boardTotal)}{shared && <span className="font-sans"> · shared</span>}</span>
+                      <span className="text-[11px] font-mono text-muted-foreground shrink-0" title={shared ? "Transactions shared between teams count in full in each team row" : undefined}>{formatCurrency(boardTotal)}{shared && <span className="font-sans"> · shared</span>}</span>
                     </div>
                     <div className={`p-2 ${expanded ? "max-h-[70vh] overflow-y-auto" : ""}`}>
                       {shown.map(r => {
@@ -2113,13 +2113,13 @@ export default function WipReport() {
             </div>
           </div>
 
-          <div ref={detailRef} tabIndex={-1} aria-label="WIP deals" className="print-break scroll-mt-4 focus:outline-none" data-testid="wip-detail-table">
+          <div ref={detailRef} tabIndex={-1} aria-label="WIP transactions" className="print-break scroll-mt-4 focus:outline-none" data-testid="wip-detail-table">
             <div className="border-b border-border pb-2 flex flex-wrap gap-2 items-center justify-between">
               <div>
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  Deal Detail
+                  Transaction Detail
                 </span>
-                <span className="text-xs text-muted-foreground ml-2">({sortedDetailEntries.length} deal{sortedDetailEntries.length !== 1 ? "s" : ""})</span>
+                <span className="text-xs text-muted-foreground ml-2">({sortedDetailEntries.length} transaction{sortedDetailEntries.length !== 1 ? "s" : ""})</span>
               </div>
               <div className="flex items-center gap-2">
                 <Button
@@ -2181,7 +2181,7 @@ export default function WipReport() {
                 Desktop keeps the full table below. */}
             <div className="md:hidden divide-y divide-border" data-testid="wip-mobile-cards">
               {sortedDetailEntries.length === 0 && (
-                <p className="py-8 text-center text-sm text-muted-foreground">No deals match the current filters.</p>
+                <p className="py-8 text-center text-sm text-muted-foreground">No transactions match the current filters.</p>
               )}
               {sortedDetailEntries.map((e, i) => (
                 <div key={e.id || i} className="py-3 px-1" data-testid={`wip-card-${i}`}>
@@ -2200,7 +2200,7 @@ export default function WipReport() {
                       {e.stage === "invoiced" ? (
                         <span className="text-sm font-mono font-semibold text-green-700">{e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}</span>
                       ) : e.provisional ? (
-                        <span className="text-sm font-mono text-muted-foreground" title="Provisional — not counted until the deal is moved to Solicitors">
+                        <span className="text-sm font-mono text-muted-foreground" title="Provisional — not counted until the transaction is moved to Solicitors">
                           {e.amtProvisional ? formatFullCurrency(e.amtProvisional) : "—"} <span className="text-[10px] uppercase tracking-wide">provisional</span>
                         </span>
                       ) : (
@@ -2353,7 +2353,7 @@ export default function WipReport() {
                       {colVisible("amtWip") && (
                       <td className="px-2 py-1.5 text-foreground font-mono">
                         {e.provisional ? (
-                          <span className="text-muted-foreground" title="Provisional — not counted until the deal is moved to Solicitors">
+                          <span className="text-muted-foreground" title="Provisional — not counted until the transaction is moved to Solicitors">
                             {e.amtProvisional ? formatFullCurrency(e.amtProvisional) : "—"} <span className="text-[10px] uppercase tracking-wide font-sans">provisional</span>
                           </span>
                         ) : (e.amtWip || 0) + (e.amtInvoice || 0) ? formatFullCurrency((e.amtWip || 0) + (e.amtInvoice || 0)) : "—"}

@@ -53,7 +53,7 @@ export const REGISTER_KIND_INFO: Record<RegisterKind, { short: string; label: st
   agent_unregistered: {
     short: "Unregistered agent", label: "An agent not registered with HMRC for AML supervision",
     reportedTo: "HMRC", staffMayRaise: true,
-    ask: "Which firm, which deal, and how its registration was checked.",
+    ask: "Which firm, which transaction, and how its registration was checked.",
   },
 };
 

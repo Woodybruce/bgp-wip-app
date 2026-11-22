@@ -266,7 +266,7 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
         <span className="min-w-0 break-words">Transaction recommendation: {ws?.unit.unitName || unit.unitName}</span>
       </DialogTitle>
       <DialogDescription className="text-left">
-        {ws ? [ws.unit.propertyName, ws.unit.clientName, ws.unit.dealRef !== null ? `Deal #${ws.unit.dealRef}` : ""].filter(Boolean).join(" · ") || "Letting Tracker unit" : "Loading the recommendation"}
+        {ws ? [ws.unit.propertyName, ws.unit.clientName, ws.unit.dealRef !== null ? `Transaction #${ws.unit.dealRef}` : ""].filter(Boolean).join(" · ") || "Letting Tracker unit" : "Loading the recommendation"}
       </DialogDescription>
     </DialogHeader>
   );

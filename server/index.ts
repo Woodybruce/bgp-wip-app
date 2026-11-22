@@ -4651,7 +4651,7 @@ app.get("/privacy", (_req, res) => {
 <h2>2. Information we collect</h2>
 <ul>
   <li><strong>Account information</strong> &mdash; name, email, role, team membership of authorised users.</li>
-  <li><strong>CRM data</strong> &mdash; contact, company, deal, property and requirement records you create or that we receive in the course of business.</li>
+  <li><strong>CRM data</strong> &mdash; contact, company, transaction, property and requirement records you create or that we receive in the course of business.</li>
   <li><strong>Communications</strong> &mdash; emails, WhatsApp messages, and chat threads sent to or from BGP through the Service. WhatsApp messages are received via the Meta WhatsApp Business API.</li>
   <li><strong>Usage data</strong> &mdash; logs of features used, timestamps, IP address, and device/browser metadata for security and audit purposes.</li>
 </ul>
@@ -5342,7 +5342,7 @@ app.use("/api/branding/assets", express.static(
     const path = routedApiPath(req).toLowerCase().replace(/\/{2,}/g, "/");
     if (clientChecksSwitchOn(process.env.KYC_CLIENT_CHECKS) && KYC_CLIENT_CHECK_ROUTES.some(r => r.test(path))) return next();
     if (RETIRED_AML.some(r => r.test(path))) {
-      return res.status(410).json({ message: "This part of the old in-app AML is switched off. AML runs from the deal's Parties & AML: BGP's checks before asking, the client checks, and KYC4U, BGP's outsourced KYC provider (Request KYC4U check)." });
+      return res.status(410).json({ message: "This part of the old in-app AML is switched off. AML runs from the transaction's Parties & AML: BGP's checks before asking, the client checks, and KYC4U, BGP's outsourced KYC provider (Request KYC4U check)." });
     }
     next();
   });

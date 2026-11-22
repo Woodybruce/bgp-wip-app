@@ -118,7 +118,7 @@ function sourcePills(m: WorkspaceTeamMember) {
   const pills: string[] = [];
   if (m.sources.includes("curated")) pills.push(m.teamGroup || "Client team");
   if (m.sources.includes("property_agent")) pills.push(m.propertyNames.length > 0 ? `Property team · ${m.propertyNames.join(", ")}` : "Property team");
-  if (m.sources.includes("deal_contributor")) pills.push("Deal team");
+  if (m.sources.includes("deal_contributor")) pills.push("Transaction team");
   if (m.sources.includes("recent_contributor")) pills.push("Recent activity");
   return pills;
 }

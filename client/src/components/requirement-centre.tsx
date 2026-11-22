@@ -55,9 +55,9 @@ type BrandOption = { id: string; name: string; companyType?: string | null };
 
 const KIND_LABELS: Record<string, string> = {
   press: "News", chat: "ChatBGP", team_chat: "Team chat", gossip: "Gossip", meeting: "Meeting", viewing: "Viewing", offer: "Offer",
-  deal: "Deal", listing: "Market listing", call: "Call", email: "Email", whatsapp: "WhatsApp", note: "Note",
+  deal: "Transaction", listing: "Market listing", call: "Call", email: "Email", whatsapp: "WhatsApp", note: "Note",
 };
-const KIND_PLURALS: Record<string, string> = { meeting: "Meetings", viewing: "Viewings", offer: "Offers", deal: "Deals", call: "Calls", email: "Emails", note: "Notes" };
+const KIND_PLURALS: Record<string, string> = { meeting: "Meetings", viewing: "Viewings", offer: "Offers", deal: "Transactions", call: "Calls", email: "Emails", note: "Notes" };
 const kindLabel = (kind: string) => KIND_LABELS[kind] || kind;
 
 const microLabel = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
@@ -199,12 +199,12 @@ function AnswerDialog({ state, onClose, onSubmit }: { state: AnswerState; onClos
   const isNew = target === NEW_TARGET;
   const title = mode === "confirm" ? `Confirm a requirement for ${brandName}`
     : mode === "attach" ? "Add to which requirement?"
-    : mode === "satisfied" ? "Which requirement does the deal satisfy?"
+    : mode === "satisfied" ? "Which requirement does the transaction satisfy?"
     : mode === "still_live" ? "Which requirement is still live?"
     : "Which requirement is no longer live?";
   const note = mode === "confirm" ? "You are recorded as confirming it today. Check what was detected before it is saved."
     : mode === "attach" ? "The evidence is added to the requirement. Its confirmed date does not move."
-    : mode === "satisfied" ? "The requirement is closed as Past and the deal is kept on it."
+    : mode === "satisfied" ? "The requirement is closed as Past and the transaction is kept on it."
     : mode === "still_live" ? "You are recorded as confirming it today."
     : "The requirement is archived and the story is kept on it.";
   const sourceHow = s.kind === "press" ? "I read it in the press (stays press-reported)"
@@ -504,7 +504,7 @@ export function SuggestionTray({ suggestions, totalOpen, searching, isLoading, i
   if (!open.length) {
     return (
       <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground" data-testid="requirements-suggestion-tray-empty">
-        {searching ? "No suggestions match the search." : "Nothing is waiting for an answer. Suggestions from chat, viewings, deals, meetings, emails and the news arrive here."}
+        {searching ? "No suggestions match the search." : "Nothing is waiting for an answer. Suggestions from chat, viewings, transactions, meetings, emails and the news arrive here."}
       </p>
     );
   }
@@ -519,7 +519,7 @@ export function SuggestionTray({ suggestions, totalOpen, searching, isLoading, i
           Suggestions to answer <span className="font-mono tabular-nums font-normal text-muted-foreground">{open.length.toLocaleString("en-GB")}</span>
         </h3>
         <p className="mt-0.5 text-[11px] text-muted-foreground">
-          Picked up from chat, viewings, deals, meetings and news. None of these is a requirement until a person confirms it, and this is the only place they are answered.
+          Picked up from chat, viewings, transactions, meetings and news. None of these is a requirement until a person confirms it, and this is the only place they are answered.
           {!searching && totalOpen > suggestions.length ? ` Showing the newest ${suggestions.length.toLocaleString("en-GB")} of ${totalOpen.toLocaleString("en-GB")}.` : ""}
         </p>
       </div>
@@ -545,7 +545,7 @@ export function SuggestionTray({ suggestions, totalOpen, searching, isLoading, i
           const onFile = s.existingRequirements;
           const question = isQuestion(s);
           const prompt = s.proposed === "pick_brand" ? (s.brand.candidates.length ? "More than one brand is possible. Pick the brand to answer this." : "Not matched to a brand in the CRM. Pick the brand to answer this.")
-            : s.proposed === "mark_satisfied" ? "A deal for this brand reached solicitors. Is the requirement now satisfied?"
+            : s.proposed === "mark_satisfied" ? "A transaction for this brand reached solicitors. Is the requirement now satisfied?"
             : s.proposed === "still_live" ? "Is this brand's requirement still live?"
             : s.proposed === "confirm_existing" ? `On file: ${onFile[0].name} · ${onFile[0].stateLabel} · ${onFile[0].dateLabel}`
             : s.proposed === "choose" ? `${countLabel(onFile.length, "requirement")} on file for this brand`
@@ -635,7 +635,7 @@ export function SuggestionTray({ suggestions, totalOpen, searching, isLoading, i
                 ) : s.proposed === "mark_satisfied" ? (
                   <>
                     <Button size="sm" className={btn} title="Mark the requirement satisfied (C)" onClick={() => primary(s)} data-testid={`suggestion-satisfied-${s.id}`}>Mark satisfied</Button>
-                    <Button variant="outline" size="sm" className={btn} title="Keep the deal on the requirement, which stays open (A)" onClick={() => addToExisting(s)} data-testid={`suggestion-attach-${s.id}`}>Not yet: keep the deal on it</Button>
+                    <Button variant="outline" size="sm" className={btn} title="Keep the transaction on the requirement, which stays open (A)" onClick={() => addToExisting(s)} data-testid={`suggestion-attach-${s.id}`}>Not yet: keep the transaction on it</Button>
                   </>
                 ) : s.proposed === "still_live" ? (
                   <>

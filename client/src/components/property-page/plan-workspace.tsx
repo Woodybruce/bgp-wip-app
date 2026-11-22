@@ -445,9 +445,9 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   }
   const unplaced = feed.data.unplacedDeals.length > 0 && (
     <p className="text-[11px] text-muted-foreground" data-testid="property-unplaced-deals">
-      {feed.data.unplacedDeals.length === 1 ? "1 open deal on this property is" : `${feed.data.unplacedDeals.length} open deals on this property are`} not tied to a unit:{" "}
+      {feed.data.unplacedDeals.length === 1 ? "1 open transaction on this property is" : `${feed.data.unplacedDeals.length} open transactions on this property are`} not tied to a unit:{" "}
       {feed.data.unplacedDeals.slice(0, 6).map((deal, i) => {
-        const text = `${deal.ref != null ? `#${deal.ref} ` : ""}${deal.tenant || deal.name || "Deal"}`;
+        const text = `${deal.ref != null ? `#${deal.ref} ` : ""}${deal.tenant || deal.name || "Transaction"}`;
         return <span key={deal.id}>{i > 0 && ", "}{dealHref ? <Link href={dealHref(deal.id)} className="hover:underline text-foreground">{text}</Link> : text}</span>;
       })}
       {feed.data.unplacedDeals.length > 6 && ` and ${feed.data.unplacedDeals.length - 6} more`}.

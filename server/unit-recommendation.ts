@@ -453,7 +453,7 @@ function parseComparable(raw: unknown, n: number): { ok: true; row: Recommendati
   const row: Record<string, unknown> = { id };
   const texts: [keyof RecommendationComparable, string, number][] = [
     ["transaction", "the type of transaction", 120], ["date", "the date", 10], ["tenant", "the tenant", 200], ["unit", "the unit", 300],
-    ["use", "the use", 200], ["breaks", "the breaks", 300], ["rentReview", "the rent review", 300], ["comment", "the comment", 1000], ["dealId", "the deal", 64],
+    ["use", "the use", 200], ["breaks", "the breaks", 300], ["rentReview", "the rent review", 300], ["comment", "the comment", 1000], ["dealId", "the transaction", 64],
   ];
   for (const [key, label, max] of texts) {
     const v = str(key, label, max);

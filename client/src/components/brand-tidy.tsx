@@ -58,7 +58,7 @@ function BrandTidyDialog({ onClose }: { onClose: () => void }) {
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader><DialogTitle>Tidy brands</DialogTitle></DialogHeader>
         <p className="text-sm text-muted-foreground">
-          A brand stays when anything ties it to BGP's or a client's work: a tenancy or a name on a schedule, a deal, a unit target or agreed brief, a requirement, a logged interaction, an offer or viewing, a hunter flag or pipeline stage, a client's own directory, a CRM plan, a Landsec brand case, a current agent representation, KYC work, or it was added in the last 90 days. Everything else is hidden from Brand Explorer, the hub, search and client logins. The record, its deals and tenancies stay, any brand can be unhidden, and adding a hidden brand again brings the old record back.
+          A brand stays when anything ties it to BGP's or a client's work: a tenancy or a name on a schedule, a transaction, a unit target or agreed brief, a requirement, a logged interaction, an offer or viewing, a hunter flag or pipeline stage, a client's own directory, a CRM plan, a Landsec brand case, a current agent representation, KYC work, or it was added in the last 90 days. Everything else is hidden from Brand Explorer, the hub, search and client logins. The record, its transactions and tenancies stay, any brand can be unhidden, and adding a hidden brand again brings the old record back.
         </p>
         {isLoading && <p className="text-sm text-muted-foreground">Checking every brand…</p>}
         {error && <p className="text-sm text-muted-foreground">The check failed. {errorText(error)}</p>}
@@ -193,7 +193,7 @@ export function BrandSelectBar({ picked, onPick, shownIds, onDone }: { picked: S
               <div className="space-y-3">
                 <DialogHeader><DialogTitle>Delete {brandsWord(n)}</DialogTitle></DialogHeader>
                 <p className="text-sm text-muted-foreground">
-                  A brand that nothing else in the app points at is deleted for good and cannot be brought back. A brand with a deal, a schedule, contacts, a requirement, an interaction, a property link, a KYC file or any other history is hidden instead: it leaves the lists and keeps its records, and you can unhide it under Hidden.
+                  A brand that nothing else in the app points at is deleted for good and cannot be brought back. A brand with a transaction, a schedule, contacts, a requirement, an interaction, a property link, a KYC file or any other history is hidden instead: it leaves the lists and keeps its records, and you can unhide it under Hidden.
                 </p>
                 <div className="flex items-center justify-end gap-2">
                   <Input value={confirm} onChange={e => setConfirm(e.target.value)} placeholder={`Type ${n} to confirm`} className="h-8 text-sm max-w-[12rem]" autoFocus data-testid="brand-bulk-confirm" />
@@ -271,7 +271,7 @@ export function HiddenBrands() {
           <DialogContent className="max-w-md">
             <DialogHeader><DialogTitle>Delete hidden brands for good</DialogTitle></DialogHeader>
             <p className="text-sm text-muted-foreground">
-              {data.deletable.toLocaleString("en-GB")} of the {data.total.toLocaleString("en-GB")} hidden brands have nothing pointing at them: no deal, tenancy, target, name on a schedule or brief, contact, property link, requirement, interaction or KYC file. Those are deleted and cannot be brought back. The other hidden brands stay hidden and on file.
+              {data.deletable.toLocaleString("en-GB")} of the {data.total.toLocaleString("en-GB")} hidden brands have nothing pointing at them: no transaction, tenancy, target, name on a schedule or brief, contact, property link, requirement, interaction or KYC file. Those are deleted and cannot be brought back. The other hidden brands stay hidden and on file.
             </p>
             <div className="flex items-center justify-end gap-2 pt-1">
               <Input value={confirm} onChange={e => setConfirm(e.target.value)} placeholder={`Type ${data.deletable} to confirm`} className="h-8 text-sm max-w-[12rem]" data-testid="brand-delete-confirm" />

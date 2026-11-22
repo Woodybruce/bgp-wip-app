@@ -515,15 +515,15 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   token: string; ref: string; link: string; sent: KycSendResult; idCheck: boolean; idCheckNote: string | null; cc: string[];
 }> {
   const found = await dealParties(dealId);
-  if (!found) throw Object.assign(new Error("Deal not found"), { status: 404 });
+  if (!found) throw Object.assign(new Error("Transaction not found"), { status: 404 });
   const party = found.parties.find(p => p.companyId === input.companyId);
-  if (!party) throw Object.assign(new Error("That company is not a party to this deal. Set it on the deal first."), { status: 400 });
+  if (!party) throw Object.assign(new Error("That company is not a party to this transaction. Set it on the transaction first."), { status: 400 });
   // The checks are about the company that signs, not the brand (Woody,
   // 19 November 2026: "We must have the company taking the lease or who owns
   // the property to be able to do a check").
   if (input.kind === "company" && !party.entityId && !party.trust) {
     const what = party.role === "tenant" ? "the company taking the lease" : party.role === "landlord" ? "the company that owns the property" : party.role === "vendor" ? "the company selling" : "the company buying";
-    throw Object.assign(new Error(`Set ${what} on the deal first: the client checks are about that company, not ${party.name}.`), { status: 409 });
+    throw Object.assign(new Error(`Set ${what} on the transaction first: the client checks are about that company, not ${party.name}.`), { status: 409 });
   }
   const email = cleanEmail(input.email);
   if (!isEmail(email)) throw Object.assign(new Error("Enter a valid email address for the person to ask."), { status: 400 });
@@ -667,11 +667,11 @@ export async function createPersonCheck(dealId: string, input: z.infer<typeof pe
   token: string; ref: string; link: string; sent: KycSendResult | null; created: boolean; person: string;
 }> {
   const found = await dealParties(dealId);
-  if (!found) throw Object.assign(new Error("Deal not found"), { status: 404 });
+  if (!found) throw Object.assign(new Error("Transaction not found"), { status: 404 });
   const party = found.parties.find(p => p.companyId === input.companyId);
-  if (!party) throw Object.assign(new Error("That company is not a party to this deal."), { status: 400 });
+  if (!party) throw Object.assign(new Error("That company is not a party to this transaction."), { status: 400 });
   if (party.kind === "company" && !party.entityId && !party.trust) {
-    throw Object.assign(new Error("Set the company that signs on the deal first: the people to check are read from its register."), { status: 409 });
+    throw Object.assign(new Error("Set the company that signs on the transaction first: the people to check are read from its register."), { status: 409 });
   }
   const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
   const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: party.kind, dealId }, await dealPeopleRequests(dealId));
@@ -680,7 +680,7 @@ export async function createPersonCheck(dealId: string, input: z.infer<typeof pe
     // Adding someone by name is for a private individual's side only: a
     // company's people come from its register.
     if (party.kind !== "individual") throw Object.assign(new Error("People are added by hand only alongside a private individual. A company's people come from its register."), { status: 400 });
-    if ("client" in by) throw Object.assign(new Error("Only BGP adds people to a deal."), { status: 403 });
+    if ("client" in by) throw Object.assign(new Error("Only BGP adds people to a transaction."), { status: 403 });
     const name = input.name.replace(/\s+/g, " ").trim();
     if (!personKey(name)) throw Object.assign(new Error("Enter their full name."), { status: 400 });
     person = people.people.find(p => personNamesMatch(p.name, name)) || {
@@ -1184,7 +1184,7 @@ kycRequestRouter.get("/api/aml/deal/:id/client-checks", signedIn, async (req: Re
     if (!(await staffMe(req))) return res.status(403).json({ message: STAFF_ONLY });
     const dealId = String(req.params.id);
     const found = await dealParties(dealId);
-    if (!found) return res.status(404).json({ message: "Deal not found" });
+    if (!found) return res.status(404).json({ message: "Transaction not found" });
     const agents = await dealAgents(dealId);
     const veriff = veriffConfigured();
     // Any proof of address not read yet is read in the background (20 November 2026).
@@ -1243,7 +1243,7 @@ kycRequestRouter.post("/api/aml/deal/:id/client-checks/people/rename", signedIn,
     const name = String(req.body?.name || "").replace(/\s+/g, " ").trim().slice(0, 200);
     if (name.split(" ").length < 2 || !personKey(name)) return res.status(400).json({ message: "Enter their full name, first and last." });
     const row = await tokenRow(String(req.body?.token || ""));
-    if (!row || !row.request || row.is_test || String(row.deal_id || "") !== String(req.params.id)) return res.status(404).json({ message: "That request is not on this deal." });
+    if (!row || !row.request || row.is_test || String(row.deal_id || "") !== String(req.params.id)) return res.status(404).json({ message: "That request is not on this transaction." });
     const person = (row.request as any).person as KycRequestPerson | undefined;
     const typedByBgp = person ? (person.roles || []).every(r => r === "joint") : row.request.kind === "individual";
     if (!typedByBgp) return res.status(409).json({ message: "This name comes from Companies House and is kept as the register gives it." });
@@ -1278,7 +1278,7 @@ kycRequestRouter.post("/api/aml/deal/:id/client-checks/address-proof/read", sign
     if (!me) return res.status(403).json({ message: STAFF_ONLY });
     if (!clientChecksOn()) return res.status(410).json({ message: CHECKS_OFF });
     const found = await addressProofRow(String(req.params.id), req.body?.token, req.body?.documentId);
-    if (!found) return res.status(404).json({ message: "That proof of address is not on this deal." });
+    if (!found) return res.status(404).json({ message: "That proof of address is not on this transaction." });
     const { rereadAddressProof } = await import("./kyc-address-proof");
     const reading = await rereadAddressProof(pool, found.token, found.documentId);
     res.json({ ok: true, reading });
@@ -1298,7 +1298,7 @@ kycRequestRouter.post("/api/aml/deal/:id/client-checks/address-proof/accept", si
     const note = String(req.body?.note || "").replace(/\s+/g, " ").trim().slice(0, 1000);
     if (note.length < ADDRESS_PROOF_ACCEPT_NOTE_MIN) return res.status(400).json({ message: "Say why it is acceptable (at least 10 characters)." });
     const found = await addressProofRow(String(req.params.id), req.body?.token, req.body?.documentId);
-    if (!found) return res.status(404).json({ message: "That proof of address is not on this deal." });
+    if (!found) return res.status(404).json({ message: "That proof of address is not on this transaction." });
     const accepted = { by: me.name || me.email || "BGP", at: new Date().toISOString(), note };
     await pool.query(
       `UPDATE kyc_upload_tokens

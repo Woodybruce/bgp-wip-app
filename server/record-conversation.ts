@@ -128,7 +128,7 @@ router.get("/api/chat/threads/record/deal-comments", requireAuth, async (req: Re
     const dealId = String(req.query.dealId || "").trim();
     const unitId = String(req.query.unitId || "").trim();
     const id = /^[A-Za-z0-9_-]{1,80}$/;
-    if (!id.test(propertyId) || !id.test(dealId) || (unitId && !id.test(unitId))) return res.status(400).json({ message: "Name the property and the deal" });
+    if (!id.test(propertyId) || !id.test(dealId) || (unitId && !id.test(unitId))) return res.status(400).json({ message: "Name the property and the transaction" });
     if (await propertyReadBlocked(req, propertyId)) return res.status(403).json({ message: "Not available for this account" });
     const { rows } = await pool.query(
       `SELECT count(*)::int AS n,

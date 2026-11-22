@@ -12,7 +12,7 @@ export const DIARY_KIND_LABELS: Record<DiaryKind, string> = {
   strategy_review: "Strategy reviews",
   viewing_booked: "Viewings booked",
   viewing_followup: "Viewing follow-ups",
-  deal_waiting: "Deals waiting",
+  deal_waiting: "Transactions waiting",
   brief_signature: "Briefs to sign",
   case_response: "Brand cases",
 };

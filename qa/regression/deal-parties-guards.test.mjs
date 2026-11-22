@@ -136,7 +136,7 @@ test('the deal page and the deal form carry it', () => {
   // (BGP's AML policy, 19 November 2026).
   assert.ok(card.includes('const settled = approved || !!cp.notRequired;'));
   // Four steps per party (22 November 2026): Who signs opens the party's lines, or says it is not set on a settled party.
-  assert.ok(card.includes('{settled && companyMissing\n              ? <p className="text-xs text-muted-foreground">Not set on this deal.</p>\n              : <DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />}'));
+  assert.ok(card.includes('{settled && companyMissing\n              ? <p className="text-xs text-muted-foreground">Not set on this transaction.</p>\n              : <DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />}'));
   assert.ok(card.includes('const aml = partyAmlFacts(data, cp.id);'));
   const form = read('client/src/pages/deals.tsx');
   for (const role of ['landlord', 'tenant', 'vendor', 'purchaser']) {

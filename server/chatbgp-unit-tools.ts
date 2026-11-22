@@ -39,13 +39,13 @@ export const UNIT_TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "get_property_units",
-      description: "Read the units of one property from the property page's own unit list (the tenancy schedule joined to the Letting Tracker and the live deals). For each unit: its label and floor, the tenant and brand in it, size, passing rent, lease start, expiry, breaks and next review, whether it is occupied or vacant, the letting stage, the live deal's ref and tenant, whether it has a Targeting Brief, and for a unit in a live letting who that letting is waiting on. Use this FIRST for 'who is in unit X', 'which unit is <brand> in', 'when does <tenant>'s lease end', 'what is vacant at <property>', 'what is the <brand> unit waiting on'. Give the property by name or id, and a search word (unit number, tenant or brand) to narrow it. This is the current record: prefer it to query_leasing_schedule, which reads the older leasing schedule board and can miss a tenant.",
+      description: "Read the units of one property from the property page's own unit list (the tenancy schedule joined to the Letting Tracker and the live transactions). For each unit: its label and floor, the tenant and brand in it, size, passing rent, lease start, expiry, breaks and next review, whether it is occupied or vacant, the letting stage, the live transaction's ref and tenant, whether it has a Targeting Brief, and for a unit in a live letting who that letting is waiting on. Use this FIRST for 'who is in unit X', 'which unit is <brand> in', 'when does <tenant>'s lease end', 'what is vacant at <property>', 'what is the <brand> unit waiting on'. Give the property by name or id, and a search word (unit number, tenant or brand) to narrow it. This is the current record: prefer it to query_leasing_schedule, which reads the older leasing schedule board and can miss a tenant.",
       parameters: {
         type: "object",
         properties: {
           property: { type: "string", description: "The property's name (part of it is enough, e.g. 'Bluewater') or its id" },
           search: { type: "string", description: "Optional. A unit number or label, a tenant, a trading name or a brand, e.g. 'L057' or 'Burger King'" },
-          filter: { type: "string", enum: ["all", "vacant", "live", "deals", "expiring"], description: "Optional. vacant = vacant units; live = units in a live letting; deals = units with any open deal; expiring = lease expiry or break within 12 months" },
+          filter: { type: "string", enum: ["all", "vacant", "live", "deals", "expiring"], description: "Optional. vacant = vacant units; live = units in a live letting; transactions = units with any open transaction; expiring = lease expiry or break within 12 months" },
           limit: { type: "number", description: "Most units to return (default 25, at most 60)" },
         },
         required: ["property"],
@@ -56,16 +56,16 @@ export const UNIT_TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "get_deal_waiting_on",
-      description: "What a live deal or letting is waiting on, from the deal clock the Deals page shows: its stage, the days at that stage, who it is waiting on (the person and the party), since when, the deal checklist item that points at, what it depends on, and the next open checklist items with who is responsible for each. Find the deal by dealRef or dealId, or by a property with a search word (the unit, the incoming tenant, or the brand in the unit now), or by a search word alone. With waitingOn it lists the deals waiting on that person or party; with nothing it lists every deal that is waiting on someone. Use for 'what is this deal waiting on', 'who is holding up X', 'what is next on the checklist', 'which deals are waiting on me'. For one or two deals it also gives the unit as the property page shows it (who is in it now, size, rent, lease dates, the offers on it). Asked about a unit, say who is in it now and until when, then the letting running on it and who that letting is with (the agreed offer names the incoming tenant when the deal does not yet), then who it is waiting on and for what. The waiting-on is recorded: never say it is not, and never answer this from the leasing schedule.",
+      description: "What a live transaction or letting is waiting on, from the transaction clock the Transactions page shows: its stage, the days at that stage, who it is waiting on (the person and the party), since when, the transaction checklist item that points at, what it depends on, and the next open checklist items with who is responsible for each. Find the transaction by dealRef or dealId, or by a property with a search word (the unit, the incoming tenant, or the brand in the unit now), or by a search word alone. With waitingOn it lists the transactions waiting on that person or party; with nothing it lists every transaction that is waiting on someone. Use for 'what is this transaction waiting on', 'who is holding up X', 'what is next on the checklist', 'which transactions are waiting on me'. For one or two transactions it also gives the unit as the property page shows it (who is in it now, size, rent, lease dates, the offers on it). Asked about a unit, say who is in it now and until when, then the letting running on it and who that letting is with (the agreed offer names the incoming tenant when the transaction does not yet), then who it is waiting on and for what. The waiting-on is recorded: never say it is not, and never answer this from the leasing schedule.",
       parameters: {
         type: "object",
         properties: {
-          dealRef: { type: "string", description: "The deal's Ref number" },
-          dealId: { type: "string", description: "The deal's id" },
+          dealRef: { type: "string", description: "The transaction's Ref number" },
+          dealId: { type: "string", description: "The transaction's id" },
           property: { type: "string", description: "The property's name or id" },
           search: { type: "string", description: "A unit, a tenant or a brand, e.g. 'Burger King' or 'L057'" },
-          waitingOn: { type: "string", description: "A person's name or a party (e.g. 'Tenant', 'Landsec leasing manager') to list the deals waiting on them" },
-          limit: { type: "number", description: "Most deals to return (default 10, at most 25)" },
+          waitingOn: { type: "string", description: "A person's name or a party (e.g. 'Tenant', 'Landsec leasing manager') to list the transactions waiting on them" },
+          limit: { type: "number", description: "Most transactions to return (default 10, at most 25)" },
         },
         required: [],
       },
@@ -205,11 +205,11 @@ export function waitingLine(deal: any, options?: WaitingOptions | null, openItem
       note: clock.waitingNote && clock.waitingNote !== clock.checklistItemLabel ? clock.waitingNote : null,
       source: clock.derived ? "The next open item on the deal checklist" : "Set on the deal",
     } : null,
-    dependsOn: clock?.dependsOnHidden ? "Another deal" : clock?.dependsOn ? [clock.dependsOn.ref != null ? `Ref ${clock.dependsOn.ref}` : null, clock.dependsOn.name, clock.dependsOn.unit].filter(Boolean).join(", ") : null,
+    dependsOn: clock?.dependsOnHidden ? "Another transaction" : clock?.dependsOn ? [clock.dependsOn.ref != null ? `Ref ${clock.dependsOn.ref}` : null, clock.dependsOn.name, clock.dependsOn.unit].filter(Boolean).join(", ") : null,
     brief: deal.brief === "agreed" ? "Agreed" : deal.brief === "drafted" ? "Drafted, not agreed" : deal.brief === undefined ? null : "None",
   };
   if (named) { const w = out.waitingOn as Record<string, unknown>; for (const key of Object.keys(w)) if (w[key] == null) delete w[key]; }
-  else out.waitingOnNote = "Nobody is named as who this deal is waiting on.";
+  else out.waitingOnNote = "Nobody is named as who this transaction is waiting on.";
   if (options) out.checklist = checklistLines(options, openItems);
   for (const key of Object.keys(out)) if (out[key] == null) delete out[key];
   return out;
@@ -217,7 +217,7 @@ export function waitingLine(deal: any, options?: WaitingOptions | null, openItem
 
 /** The open checklist items, in the order the checklist runs, with who has each. */
 export function checklistLines(options: WaitingOptions, openItems = 5) {
-  if (!options.started) return { started: false, note: "No deal checklist has been started for this letting." };
+  if (!options.started) return { started: false, note: "No transaction checklist has been started for this letting." };
   return {
     started: true, stage: checklistStageLabel(options.stage), openItemCount: options.items.length,
     nextOpenItems: options.items.slice(0, openItems).map(i => {
@@ -352,7 +352,7 @@ async function runDealWaitingOn(raw: any, req: Request, deps: UnitToolDeps) {
   const args = waitingToolArgs(raw);
   const clock = await deps.landsecDealsFeed(req);
   const clockDeals: any[] = clock?.deals || [];
-  const source = "The deal clock the Deals page shows, and the deal checklist";
+  const source = "The transaction clock the Transactions page shows, and the transaction checklist";
   const rows = new Map<string, any>();
   const notes: string[] = [];
 
@@ -369,7 +369,7 @@ async function runDealWaitingOn(raw: any, req: Request, deps: UnitToolDeps) {
       const read = deal?.property_id ? await unitsFeedFor(req, deal.property_id, deps) : null;
       const unit = read?.feed.units.find(u => u.deal?.id === deal.id) || null;
       const open = unit?.deal || read?.feed.unplacedDeals.find(d => d.id === deal.id) || null;
-      if (!read || !open) return { found: false, message: "No live deal with that reference is open to this account." };
+      if (!read || !open) return { found: false, message: "No live transaction with that reference is open to this account." };
       rows.set(open.id, unitDealAsClockRow(unit, open as PropertyUnitDeal, read.feed.property.name, read.feed.property.id));
       notes.push("This property has no waiting-on clock: the stage and the checklist are what is recorded.");
     }
@@ -392,9 +392,9 @@ async function runDealWaitingOn(raw: any, req: Request, deps: UnitToolDeps) {
         if (!rows.has(unit.deal.id)) rows.set(unit.deal.id, clockDeals.find(d => d.id === unit.deal!.id) || unitDealAsClockRow(unit, unit.deal, read.feed.property.name, read.feed.property.id));
       }
     }
-    if (noDeal.length) notes.push(`No live deal on: ${noDeal.slice(0, 8).join("; ")}. A unit with no live deal is waiting on no one.`);
+    if (noDeal.length) notes.push(`No live transaction on: ${noDeal.slice(0, 8).join("; ")}. A unit with no live transaction is waiting on no one.`);
   } else {
-    if (!clock) return { found: false, message: "Say which property the deal is at, or give its Ref number." };
+    if (!clock) return { found: false, message: "Say which property the transaction is at, or give its Ref number." };
     for (const d of clockDeals) {
       if (args.search && !textMatches(args.search, d.name, d.tenant, d.unit, d.scheme?.name, d.ref)) continue;
       if (!args.search && !(d.clock?.waitingOnName || d.clock?.waitingOnParty)) continue;
@@ -404,7 +404,7 @@ async function runDealWaitingOn(raw: any, req: Request, deps: UnitToolDeps) {
 
   let list = Array.from(rows.values());
   if (args.waitingOn) list = list.filter(d => textMatches(args.waitingOn, d.clock?.waitingOnName, d.clock?.waitingOnParty));
-  if (list.length === 0) return { found: false, source, message: notes[0] || "No live deal open to this account matches that.", ...(notes.length > 1 ? { notes } : {}) };
+  if (list.length === 0) return { found: false, source, message: notes[0] || "No live transaction open to this account matches that.", ...(notes.length > 1 ? { notes } : {}) };
   const shown = list.slice(0, args.limit);
   const deals = await waitingFor(req, shown, deps, shown.length <= 5 ? 5 : 0);
   // One or two deals: the unit each is on, as the property page shows it (who

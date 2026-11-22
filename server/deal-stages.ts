@@ -63,7 +63,7 @@ export async function autoLaunchAmlForDeal(
     await pool.query(
       `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name)
        VALUES ($1, 'kyc_auto_skipped', $2, $3, $4)`,
-      [dealId, JSON.stringify({ reason: "No counterparty linked to deal (tenant / landlord / vendor / purchaser)" }), actorId, actorName],
+      [dealId, JSON.stringify({ reason: "No counterparty linked to transaction (tenant / landlord / vendor / purchaser)" }), actorId, actorName],
     ).catch(() => {});
     return;
   }
@@ -127,7 +127,7 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
          FROM crm_deals WHERE id = $1`,
       [dealId]
     );
-    if (!current.rows[0]) return res.status(404).json({ error: "Deal not found" });
+    if (!current.rows[0]) return res.status(404).json({ error: "Transaction not found" });
     const fromStage = current.rows[0].stage;
     const c = current.rows[0];
 
@@ -278,7 +278,7 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
               VALUES ($1, 'news', $2, $3, $4, now(), 'medium', 'positive', false)`,
             [
               tRow.tenant_id,
-              `Deal learning: ${tRow.deal_name || dealId}`.slice(0, 500),
+              `Transaction learning: ${tRow.deal_name || dealId}`.slice(0, 500),
               learning,
               `bgp-deal:${dealId}`,
             ]

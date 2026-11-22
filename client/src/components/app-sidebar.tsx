@@ -95,7 +95,7 @@ const coreNavBase = [
   // Properties is reachable as a tab inside Deals (alongside Letting
   // Tracker / Investment / WIP Report), so the standalone sidebar entry
   // was dropped — it duplicated the Deals view.
-  { title: "Deals", url: "/deals", icon: BarChart3 },
+  { title: "Transactions", url: "/deals", icon: BarChart3 },
   // Requirements is a pill inside Brands for every login (Woody, 2026-11-17:
   // "put requirements in the brands section for everyone"); /requirements
   // forwards there.
@@ -131,7 +131,7 @@ const coreNavBase = [
 // (docs/landsec-menu-plan-2026-11-12.md, part 1).
 export const LANDSEC_NAV = [
   { title: "Properties", url: LANDSEC_MENU.properties, icon: Building2 },
-  { title: "Deals", url: LANDSEC_MENU.deals, icon: BarChart3 },
+  { title: "Transactions", url: LANDSEC_MENU.deals, icon: BarChart3 },
   { title: "Letting Tracker", url: LANDSEC_MENU.tracker, icon: Store },
   { title: "Calendar", url: LANDSEC_MENU.calendar, icon: Calendar },
   { title: "Brands", url: LANDSEC_MENU.brands, icon: Handshake },
@@ -143,7 +143,7 @@ export const LANDSEC_NAV = [
 // other than see brands").
 const LANDSEC_RESTRICTED_NAV = [
   { title: "Properties", url: JOINT_AGENT_MENU.properties, icon: Building2 },
-  { title: "Deals", url: JOINT_AGENT_MENU.deals, icon: BarChart3 },
+  { title: "Transactions", url: JOINT_AGENT_MENU.deals, icon: BarChart3 },
 ];
 
 // A joint agent's own working pages, for the schemes on their login
@@ -356,7 +356,7 @@ function QuickAccessSection() {
   // deal page's queries are in the cache (Woody, 2026-09-28).
   const withDealTitle = (item: RecentItem): RecentItem => {
     const deal = queryClient.getQueryData<any>(["/api/crm/deals", item.id]);
-    if (!deal || item.name !== (deal.name || deal.propertyName || "Untitled Deal")) return item;
+    if (!deal || item.name !== (deal.name || deal.propertyName || "Untitled Transaction")) return item;
     const props = queryClient.getQueryData<any[]>(["/api/crm/properties"]) || [];
     const cos = queryClient.getQueryData<any[]>(["/api/crm/companies"]) || [];
     const units = queryClient.getQueryData<any[]>(["/api/property-units"]) || [];
@@ -393,9 +393,9 @@ function QuickAccessSection() {
                   asChild
                   className="h-7"
                   data-testid={`nav-recent-${item.type}-${item.id.substring(0, 8)}`}
-                  tooltip={item.subtitle && item.subtitle !== item.name ? `${item.type === "deal" ? "Deal" : item.type === "property" ? "Property" : item.type === "company" ? "Company" : "Contact"}: ${item.name} · ${item.subtitle}` : item.name}
+                  tooltip={item.subtitle && item.subtitle !== item.name ? `${item.type === "deal" ? "Transaction" : item.type === "property" ? "Property" : item.type === "company" ? "Company" : "Contact"}: ${item.name} · ${item.subtitle}` : item.name}
                 >
-                  <Link href={`${config.path}/${item.id}`} title={`${item.type === "deal" ? "Deal" : item.type === "property" ? "Property" : item.type === "company" ? "Company" : "Contact"} — ${item.name}${item.subtitle && item.subtitle !== item.name ? ` · ${item.subtitle}` : ""}`}>
+                  <Link href={`${config.path}/${item.id}`} title={`${item.type === "deal" ? "Transaction" : item.type === "property" ? "Property" : item.type === "company" ? "Company" : "Contact"} — ${item.name}${item.subtitle && item.subtitle !== item.name ? ` · ${item.subtitle}` : ""}`}>
                     <Icon className={`w-3.5 h-3.5 ${config.color}`} />
                     <span className="truncate text-xs">{item.name}</span>
                   </Link>

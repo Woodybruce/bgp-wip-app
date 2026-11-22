@@ -117,13 +117,13 @@ export function resolveStageSince(code: string | null | undefined, facts: StageF
 export function checkStageSinceInput(value: unknown, opts: { today: string; createdAt?: When }): { ok: true; date: string | null } | { ok: false; error: string } {
   if (value === null || value === "") return { ok: true, date: null };
   if (!isCalendarDay(value)) return { ok: false, error: "Give the date as a day, year first: 2026-10-01" };
-  if (value > opts.today) return { ok: false, error: "The date a deal reached its stage cannot be in the future" };
+  if (value > opts.today) return { ok: false, error: "The date a transaction reached its stage cannot be in the future" };
   const created = time(opts.createdAt);
   if (created !== null) {
     const floor = new Date(created);
     floor.setUTCFullYear(floor.getUTCFullYear() - STAGE_SINCE_EARLIEST_YEARS);
     if (value < floor.toISOString().slice(0, 10)) {
-      return { ok: false, error: `That date is more than ${STAGE_SINCE_EARLIEST_YEARS} years before the deal was created. Check the year` };
+      return { ok: false, error: `That date is more than ${STAGE_SINCE_EARLIEST_YEARS} years before the transaction was created. Check the year` };
     }
   }
   return { ok: true, date: value };
@@ -144,7 +144,7 @@ export function stageDaysTitle(o: {
   const at = o.stage ? `At ${o.stage}` : "At this stage";
   const days = `${o.days} day${o.days === 1 ? "" : "s"}`;
   if (o.confirmed === false) {
-    const lead = `The app does not know when this deal reached ${o.stage || "this stage"}.`;
+    const lead = `The app does not know when this transaction reached ${o.stage || "this stage"}.`;
     const stuck = o.stuck ? ` By the app's own date it has been ${days}, which counts as stuck (${o.stuckDays} days or more), but that date is unconfirmed.` : "";
     return `${lead}${stuck}${o.canSet ? " Set the date." : ""}`;
   }

@@ -397,7 +397,7 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-xs text-muted-foreground">
-                Preview the Landsec demo data set up for Mark Warne. This includes 6 flagship London properties, 38 tenancy entries, 8 active deals, and 29 contacts with character avatars.
+                Preview the Landsec demo data set up for Mark Warne. This includes 6 flagship London properties, 38 tenancy entries, 8 active transactions, and 29 contacts with character avatars.
               </p>
               <div className="flex flex-wrap gap-2">
                 <Link href="/contacts/901d8273-6c67-4860-a23f-ab7152e4666e">
@@ -1066,21 +1066,21 @@ type LettingIntegrityReport = {
 };
 
 const INTEGRITY_BUCKETS: Array<{ key: string; label: string; what: string; headline: (c: any) => number; linkDeals: boolean }> = [
-  { key: "trackerRowsWithoutDeal", label: "Tracker rows without a deal", what: "available_units whose deal_id is empty or points at a deleted deal — live rows need a Ref #; historic rows are expected.", headline: (c) => c?.total ?? 0, linkDeals: false },
-  { key: "liveLettingDealsWithoutTrackerRow", label: "Live letting deals off the tracker", what: "Letting-type deals at Opportunity–Solicitors with no tracker row, with a best guess at which door made them.", headline: (c) => c?.total ?? 0, linkDeals: true },
-  { key: "trackerRowsOnNonLettingDeal", label: "Tracker rows on a non-letting deal", what: "Tracker rows whose backing deal is a Rent Review, Sale, Lease Acquisition etc.", headline: (c) => c?.total ?? 0, linkDeals: true },
-  { key: "dealsOnMultipleTrackerRows", label: "Deals on two tracker rows", what: "One deal carried by more than one tracker row — a dedupe job.", headline: (c) => c?.total ?? 0, linkDeals: true },
-  { key: "stubAndRealPairs", label: "Stub + real pairs", what: "Units with a £0 Marketing stub deal beside another live letting deal on the same property and unit name.", headline: (c) => c?.total ?? 0, linkDeals: true },
-  { key: "statusDisagreements", label: "Status disagreements", what: "Tracker rows whose marketing status maps to a different code from their deal's status.", headline: (c) => c?.total ?? 0, linkDeals: true },
-  { key: "actingForDerivation", label: "Side would change", what: "Lease Disposal / Sub-Letting / Lease Acquisition / Tenant Acquisition deals whose stored side differs from what the type derives (tenant). Nothing moves until Woody has seen this list. Impact counts use stand-in accounts (a landlord-side account owning the deal's parties and property; the tenant's own), the PO party per deal-po.ts without the scheme billing entity, and the WIP report's client chain.", headline: (c) => c?.would_change ?? 0, linkDeals: true },
+  { key: "trackerRowsWithoutDeal", label: "Tracker rows without a transaction", what: "available_units whose deal_id is empty or points at a deleted transaction — live rows need a Ref #; historic rows are expected.", headline: (c) => c?.total ?? 0, linkDeals: false },
+  { key: "liveLettingDealsWithoutTrackerRow", label: "Live letting transactions off the tracker", what: "Letting-type transactions at Opportunity–Solicitors with no tracker row, with a best guess at which door made them.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "trackerRowsOnNonLettingDeal", label: "Tracker rows on a non-letting transaction", what: "Tracker rows whose backing transaction is a Rent Review, Sale, Lease Acquisition etc.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "dealsOnMultipleTrackerRows", label: "Transactions on two tracker rows", what: "One transaction carried by more than one tracker row — a dedupe job.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "stubAndRealPairs", label: "Stub + real pairs", what: "Units with a £0 Marketing stub transaction beside another live letting transaction on the same property and unit name.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "statusDisagreements", label: "Status disagreements", what: "Tracker rows whose marketing status maps to a different code from their transaction's status.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "actingForDerivation", label: "Side would change", what: "Lease Disposal / Sub-Letting / Lease Acquisition / Tenant Acquisition transactions whose stored side differs from what the type derives (tenant). Nothing moves until Woody has seen this list. Impact counts use stand-in accounts (a landlord-side account owning the transaction's parties and property; the tenant's own), the PO party per transaction-po.ts without the scheme billing entity, and the WIP report's client chain.", headline: (c) => c?.would_change ?? 0, linkDeals: true },
   { key: "marketingStatusOutsideCodes", label: "Statuses outside the 12 codes", what: "available_units.marketing_status values that are not one of the canonical codes, with what they map to.", headline: (c) => c?.rows_outside ?? 0, linkDeals: false },
-  { key: "unitsWithMultipleLiveLandlordDeals", label: "Units with two live landlord deals", what: "Units (crm_deals.unit_id) carrying more than one landlord-side deal not at a closed code (EXC / COM / WIT / INV / ARCH — the index's own test, so NULL and unmapped statuses count as live), by type pair. letting+letting must be zero before the one-live-letting-per-unit index is created; letting+advisory and advisory+advisory are expected.", headline: (c) => c?.units ?? 0, linkDeals: true },
-  { key: "archDeals", label: "ARCH deals", what: "crm_deals at ARCH / Archived — not one of the 12 codes, maps to nothing, yet the 0034 index predicate, the stub check and the nightly spine re-link treat it as live because their closed lists omit it.", headline: (c) => c?.total ?? 0, linkDeals: true },
-  { key: "leasingRowsAtMarketingCode", label: "Leasing rows at a deal code", what: "leasing_schedule_units rows whose status is AVA / Available / Marketing — a deal code stored where the leasing enum (Vacant, In Negotiation, Under Offer, Occupied…) belongs.", headline: (c) => c?.total ?? 0, linkDeals: false },
-  { key: "tenancyRowsVacantWithClosedDeal", label: "Vacant on the schedule, deal at Solicitors+", what: "Tenancy rows still Vacant / Marketing while their linked deal is at Solicitors, Exchanged, Completed or Invoiced — and whether the tracker row is on bgp.uk.com (the website leak).", headline: (c) => c?.total ?? 0, linkDeals: true },
-  { key: "bootLoopBornTrackerRows", label: "Boot-loop-born tracker rows", what: "Tracker rows with the deleted deploy-time loop's signature: unit name equals the deal name, status 'Available', blank property, agent names in agent_user_ids. Headline = strong matches (name plus another signal); the list carries every row with any signal.", headline: (c) => c?.strong ?? 0, linkDeals: true },
-  { key: "hotsContent", label: "HOTs documents", what: "Tracker rows carrying a Heads of Terms document (hots_content) and how many sit on a closed deal — the collateral that moves with the row in Phase 5.", headline: (c) => c?.total ?? 0, linkDeals: true },
-  { key: "dealsUnlinkedFromSpine", label: "Live deals off the spine with a match", what: "Live letting deals with no tenancy_unit_id whose property has a tenancy row of the same unit name (the tenancy import's clearExisting casualties), with the candidate spine row. The nightly re-link skips deals without a unit_id.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "unitsWithMultipleLiveLandlordDeals", label: "Units with two live landlord transactions", what: "Units (crm_deals.unit_id) carrying more than one landlord-side transaction not at a closed code (EXC / COM / WIT / INV / ARCH — the index's own test, so NULL and unmapped statuses count as live), by type pair. letting+letting must be zero before the one-live-letting-per-unit index is created; letting+advisory and advisory+advisory are expected.", headline: (c) => c?.units ?? 0, linkDeals: true },
+  { key: "archDeals", label: "ARCH transactions", what: "crm_deals at ARCH / Archived — not one of the 12 codes, maps to nothing, yet the 0034 index predicate, the stub check and the nightly spine re-link treat it as live because their closed lists omit it.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "leasingRowsAtMarketingCode", label: "Leasing rows at a transaction code", what: "leasing_schedule_units rows whose status is AVA / Available / Marketing — a transaction code stored where the leasing enum (Vacant, In Negotiation, Under Offer, Occupied…) belongs.", headline: (c) => c?.total ?? 0, linkDeals: false },
+  { key: "tenancyRowsVacantWithClosedDeal", label: "Vacant on the schedule, transaction at Solicitors+", what: "Tenancy rows still Vacant / Marketing while their linked transaction is at Solicitors, Exchanged, Completed or Invoiced — and whether the tracker row is on bgp.uk.com (the website leak).", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "bootLoopBornTrackerRows", label: "Boot-loop-born tracker rows", what: "Tracker rows with the deleted deploy-time loop's signature: unit name equals the transaction name, status 'Available', blank property, agent names in agent_user_ids. Headline = strong matches (name plus another signal); the list carries every row with any signal.", headline: (c) => c?.strong ?? 0, linkDeals: true },
+  { key: "hotsContent", label: "HOTs documents", what: "Tracker rows carrying a Heads of Terms document (hots_content) and how many sit on a closed transaction — the collateral that moves with the row in Phase 5.", headline: (c) => c?.total ?? 0, linkDeals: true },
+  { key: "dealsUnlinkedFromSpine", label: "Live transactions off the spine with a match", what: "Live letting transactions with no tenancy_unit_id whose property has a tenancy row of the same unit name (the tenancy import's clearExisting casualties), with the candidate spine row. The nightly re-link skips transactions without a unit_id.", headline: (c) => c?.total ?? 0, linkDeals: true },
 ];
 
 function IntegrityCounts({ counts }: { counts: any }) {
@@ -1112,7 +1112,7 @@ function IntegrityRow({ r, linkDeals }: { r: any; linkDeals: boolean }) {
         `${r.stored_effective} → ${r.derived}`,
         r.account_landlord_before !== undefined ? `landlord account ${r.account_landlord_before} → ${r.account_landlord_after}` : null,
         r.account_tenant_before !== undefined ? `tenant account ${r.account_tenant_before} → ${r.account_tenant_after}` : null,
-        r.po_tenant_joins_billing ? `PO: tenant${r.tenant_name ? ` (${r.tenant_name})` : ""} joins the billed parties${r.po_both_set ? " beside the landlord" : ""}` : r.po_tenant_id === null ? "PO: no tenant on the deal" : null,
+        r.po_tenant_joins_billing ? `PO: tenant${r.tenant_name ? ` (${r.tenant_name})` : ""} joins the billed parties${r.po_both_set ? " beside the landlord" : ""}` : r.po_tenant_id === null ? "PO: no tenant on the transaction" : null,
         r.wip_client_before !== undefined ? (r.wip_client_changes ? `WIP client ${r.wip_client_before || "—"} → ${r.wip_client_after || "—"}` : `WIP client stays ${r.wip_client_before || "—"}`) : null,
       ].filter(Boolean).join(" · ")
     : null;
@@ -1123,14 +1123,14 @@ function IntegrityRow({ r, linkDeals }: { r: any; linkDeals: boolean }) {
     (r.pair ? `${r.pair} (${r.letting_deals} letting, ${r.advisory_deals} advisory)` : null) ||
     (r.treated_as_live ? `unit_id ${r.unit_id ? "set" : "—"} · spine ${r.tenancy_unit_id ? "set" : "—"} · tracker row ${r.tracker_row_id ? "yes" : "no"}` : null) ||
     (r.maps_to_code !== undefined ? `leasing status "${r.status}" → ${r.maps_to_code || "no code"} · spine ${r.spine_linked ? "linked" : "unlinked"}` : null) ||
-    (r.effective_status !== undefined ? `schedule ${r.effective_status} vs deal ${r.deal_code} via ${r.via} · website ${r.show_on_website ? "ON" : "off"}${r.tenant_name ? ` · ${r.tenant_name}` : ""}` : null) ||
-    (r.signals ? `${r.strong ? "strong: " : ""}${r.signals.join(", ")}${r.deal_name && !r.name_is_deal_name ? ` · deal "${r.deal_name}"` : ""}` : null) ||
-    (r.hots_chars !== undefined ? `HOTs ${r.hots_chars} chars · deal ${r.no_deal ? "none" : r.deal_code || r.deal_status || "?"}${r.on_closed_deal ? " (closed)" : ""}` : null) ||
+    (r.effective_status !== undefined ? `schedule ${r.effective_status} vs transaction ${r.deal_code} via ${r.via} · website ${r.show_on_website ? "ON" : "off"}${r.tenant_name ? ` · ${r.tenant_name}` : ""}` : null) ||
+    (r.signals ? `${r.strong ? "strong: " : ""}${r.signals.join(", ")}${r.deal_name && !r.name_is_deal_name ? ` · transaction "${r.deal_name}"` : ""}` : null) ||
+    (r.hots_chars !== undefined ? `HOTs ${r.hots_chars} chars · transaction ${r.no_deal ? "none" : r.deal_code || r.deal_status || "?"}${r.on_closed_deal ? " (closed)" : ""}` : null) ||
     (r.spine_candidate_id ? `spine candidate ${r.spine_candidate_id}${r.ambiguous ? ` (${r.spine_matches} same-name rows)` : ""} · ${r.spine_status || r.spine_occupancy_status || "no status"}${r.spine_tenant_name ? ` · ${r.spine_tenant_name}` : ""} · name from ${r.unit_name_source}${r.unit_id ? "" : " · no unit_id"}` : null) ||
     (r.tracker_rows ? `${r.tracker_rows} tracker rows` : null) ||
     (r.count !== undefined ? `${r.count} rows → ${r.maps_to || "no code"}` : null) ||
     (r.stubs ? `${r.stubs.length} stub (${r.stubs.map((s: any) => `#${s.deal_ref ?? "?"}`).join(", ")}) + ${r.real.length} live (${r.real.map((s: any) => `#${s.deal_ref ?? "?"} ${s.status_code}`).join(", ")})` : null) ||
-    (r.tracker_code !== undefined ? `tracker ${r.tracker_code ?? "?"} vs deal ${r.deal_code ?? "?"}` : null) ||
+    (r.tracker_code !== undefined ? `tracker ${r.tracker_code ?? "?"} vs transaction ${r.deal_code ?? "?"}` : null) ||
     (r.dangling ? "dangling deal_id" : null);
   const dealId = linkDeals ? (r.deal_id || (r.deal_ref ? r.id : null)) : null;
   return (
@@ -1182,8 +1182,8 @@ type BackfillJob = "tracker-rows" | "stub-pairs";
 const BACKFILL_JOBS: Array<{ job: BackfillJob; label: string; what: string; groups: Array<{ key: string; label: string; applies: boolean }> }> = [
   {
     job: "tracker-rows",
-    label: "Tracker rows for live letting deals",
-    what: "Every live letting deal (Opportunity–Solicitors) with no tracker row. Would link = a row for that property + unit already exists with no live deal; would create = property + unit present, a row is made keyed to the deal; needs a unit = no property or unit — listed, never placed (each letting needs an actual address); blocked = the unit already carries another live deal on the same side.",
+    label: "Tracker rows for live letting transactions",
+    what: "Every live letting transaction (Opportunity–Solicitors) with no tracker row. Would link = a row for that property + unit already exists with no live transaction; would create = property + unit present, a row is made keyed to the transaction; needs a unit = no property or unit — listed, never placed (each letting needs an actual address); blocked = the unit already carries another live transaction on the same side.",
     groups: [
       { key: "wouldLink", label: "Would link", applies: true },
       { key: "wouldCreate", label: "Would create", applies: true },
@@ -1194,7 +1194,7 @@ const BACKFILL_JOBS: Array<{ job: BackfillJob; label: string; what: string; grou
   {
     job: "stub-pairs",
     label: "Stub + real pairs",
-    what: "A £0 Marketing stub deal beside a real live letting deal on one unit. Would resolve = the tracker row is re-pointed at the real deal (and takes its status code) and the stub is withdrawn through the deal's normal status write (gate, audit, mirrors); needs a decision = several live deals beside the stub, or the real deal already has its own row — merged by hand.",
+    what: "A £0 Marketing stub transaction beside a real live letting transaction on one unit. Would resolve = the tracker row is re-pointed at the real transaction (and takes its status code) and the stub is withdrawn through the transaction's normal status write (gate, audit, mirrors); needs a decision = several live transactions beside the stub, or the real transaction already has its own row — merged by hand.",
     groups: [
       { key: "resolve", label: "Would resolve", applies: true },
       { key: "skip", label: "Needs a decision", applies: false },
@@ -1216,7 +1216,7 @@ function BackfillPreviewRow({ r, job }: { r: any; job: BackfillJob }) {
           stub {r.stubs.map((s: any) => <Link key={s.id} href={`/deals/${s.id}`} className="font-mono underline-offset-2 hover:underline mr-1">#{s.dealRef ?? "?"}</Link>)}
           → {r.real.map((d: any) => <span key={d.id}><Link href={`/deals/${d.id}`} className="font-mono underline-offset-2 hover:underline">#{d.dealRef ?? "?"}</Link> <span className="font-mono">{d.statusCode}</span> </span>)}
         </span>
-        {r.reason ? <span className="text-muted-foreground">{r.reason}</span> : <span className="text-muted-foreground">{r.trackerRowId ? "row re-pointed" : "row made for the real deal"}</span>}
+        {r.reason ? <span className="text-muted-foreground">{r.reason}</span> : <span className="text-muted-foreground">{r.trackerRowId ? "row re-pointed" : "row made for the real transaction"}</span>}
         {real?.id && r.trackerRowId && <span className="font-mono text-[10px] text-muted-foreground/70">{r.trackerRowId}</span>}
       </div>
     );
@@ -1262,7 +1262,7 @@ function LettingBackfillPanel({ job, label, what, groups }: (typeof BACKFILL_JOB
         setPreview(null);
         setConfirming(false);
         setWord("");
-        toast({ title: "Applied", description: `${data.dealIds?.length ?? 0} deals, ${data.trackerRowIds?.length ?? 0} tracker rows (${data.created?.length ?? 0} created, ${data.adopted?.length ?? 0} adopted)${data.failed?.length ? `, ${data.failed.length} failed` : ""}` });
+        toast({ title: "Applied", description: `${data.dealIds?.length ?? 0} transactions, ${data.trackerRowIds?.length ?? 0} tracker rows (${data.created?.length ?? 0} created, ${data.adopted?.length ?? 0} adopted)${data.failed?.length ? `, ${data.failed.length} failed` : ""}` });
       }
     } catch (err: any) {
       toast({ title: dryRun ? "Preview failed" : "Apply failed", description: err.message, variant: "destructive" });
@@ -1317,7 +1317,7 @@ function LettingBackfillPanel({ job, label, what, groups }: (typeof BACKFILL_JOB
         <div className="text-xs space-y-1" data-testid={`text-letting-backfill-run-${job}`}>
           <p>
             Applied {new Date(run.appliedAt).toLocaleString("en-GB")}{run.byName ? ` by ${run.byName}` : ""}:{" "}
-            <span className="font-mono">{run.dealIds.length}</span> deals, <span className="font-mono">{run.trackerRowIds.length}</span> tracker rows
+            <span className="font-mono">{run.dealIds.length}</span> transactions, <span className="font-mono">{run.trackerRowIds.length}</span> tracker rows
             {" "}(<span className="font-mono">{run.created.length}</span> created, <span className="font-mono">{run.adopted.length}</span> adopted)
             {run.failed?.length ? <span className="text-destructive"> · {run.failed.length} failed</span> : null}
             {" "}— recorded under <span className="font-mono">{job === "tracker-rows" ? "tracker_rows_for_letting_deals_v1" : "stub_pairs_resolved_v1"}</span>.
@@ -1646,7 +1646,7 @@ function LettingIntegritySection() {
         )}
         {!report ? (
           <p className="text-sm text-muted-foreground" data-testid="text-letting-integrity-prompt">
-            Read-only. "Run report" counts every way the Letting Tracker and the letting deals disagree (rows without a deal, live deals off the tracker, stub-and-real pairs, status drift, the side-derivation list). "Take snapshot" saves the unit and deal tables to file storage before anything changes.
+            Read-only. "Run report" counts every way the Letting Tracker and the letting transactions disagree (rows without a transaction, live transactions off the tracker, stub-and-real pairs, status drift, the side-derivation list). "Take snapshot" saves the unit and transaction tables to file storage before anything changes.
           </p>
         ) : (
           <>
@@ -1673,11 +1673,11 @@ function LettingIntegritySection() {
             <div className="text-xs space-y-1">
               {idx && (
                 <p>
-                  <span className="text-muted-foreground">One-live-landlord-deal-per-unit index (migrations/0034):</span>{" "}
+                  <span className="text-muted-foreground">One-live-landlord-transaction-per-unit index (migrations/0034):</span>{" "}
                   {idx.error ? <span className="text-destructive">{String(idx.error)}</span> : <>
                     <span className="font-mono">{idx.index_exists ? "present" : "absent"}</span>
                     <span className="text-muted-foreground"> (not applied by any boot path) · bgp_acting_for NULL on </span>
-                    <span className="font-mono">{idx.acting_for_null}</span><span className="text-muted-foreground"> deals</span>
+                    <span className="font-mono">{idx.acting_for_null}</span><span className="text-muted-foreground"> transactions</span>
                   </>}
                 </p>
               )}
@@ -1739,7 +1739,7 @@ function DataHealthSection() {
     try {
       const res = await apiRequest("POST", "/api/admin/backfill-tracker-deals");
       const data = await res.json();
-      toast({ title: "Backfill complete", description: data.message || `${data.created || 0} deals created` });
+      toast({ title: "Backfill complete", description: data.message || `${data.created || 0} transactions created` });
     } catch (err: any) {
       toast({ title: "Backfill failed", description: err.message, variant: "destructive" });
     } finally {
@@ -1832,7 +1832,7 @@ function DataHealthSection() {
           <div className="flex items-center gap-2">
             <Button size="sm" variant="outline" onClick={runBackfill} disabled={backfilling} data-testid="button-backfill-tracker-deals">
               {backfilling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
-              {backfilling ? "Backfilling..." : "Backfill Tracker Deals"}
+              {backfilling ? "Backfilling..." : "Backfill Tracker Transactions"}
             </Button>
             {/* Frozen during the lettings cleanup (shared/feature-flags.ts
                 LETTING_REPAIR_TOOLS_ENABLED, 2026-10-26) — the routes answer

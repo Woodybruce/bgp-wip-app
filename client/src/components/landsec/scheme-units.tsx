@@ -78,7 +78,7 @@ function DealCell({ deal, href }: { deal: SchemeUnit["deal"]; href?: string | nu
       {deal.tenant && (href
         ? <Link href={href} className="truncate max-w-[10rem] hover:underline" data-testid={`landsec-unit-deal-link-${deal.id}`}>{deal.tenant}</Link>
         : <span className="truncate max-w-[10rem]">{deal.tenant}</span>)}
-      {!deal.tenant && href && <Link href={href} className="text-muted-foreground hover:underline" data-testid={`landsec-unit-deal-link-${deal.id}`}>Open deal</Link>}
+      {!deal.tenant && href && <Link href={href} className="text-muted-foreground hover:underline" data-testid={`landsec-unit-deal-link-${deal.id}`}>Open transaction</Link>}
     </span>
   );
 }
@@ -131,7 +131,7 @@ export function SchemeUnitsList({ data, dealHref, currentPropertyId, maxHeight, 
   const otherRecord = (u: SchemeUnit) => (currentPropertyId && u.propertyId !== currentPropertyId ? recordName.get(u.propertyId) || "another record" : null);
 
   const wide = compact ? "hidden min-[1800px]:table-cell" : "";
-  const dealHead = <th className={cn(th, "text-left")}>Deal</th>;
+  const dealHead = <th className={cn(th, "text-left")}>Transaction</th>;
   const dealCell = (u: SchemeUnit) => <td className="px-3 py-2"><DealCell deal={u.deal} href={u.deal && dealHref ? dealHref(u.deal.id) : null} /></td>;
 
   return (

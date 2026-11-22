@@ -192,7 +192,7 @@ export default function LandsecUnit() {
         <div className="flex flex-wrap items-center gap-2">
           {deal && !restricted && (
             <Link href={`/deals/${deal.id}`}>
-              <Button variant="outline" size="sm">Deal{deal.ref ? ` #${deal.ref}` : ""}</Button>
+              <Button variant="outline" size="sm">Transaction{deal.ref ? ` #${deal.ref}` : ""}</Button>
             </Link>
           )}
           {jointAgent && trackerId && (
@@ -201,7 +201,7 @@ export default function LandsecUnit() {
             </Link>
           )}
           {trackerId && <Button variant="outline" size="sm" onClick={() => setHotsOpen(true)} data-testid="landsec-unit-open-hots">Heads of Terms</Button>}
-          {trackerId && <Button variant="outline" size="sm" onClick={() => setChecklistOpen(true)} data-testid="landsec-unit-open-checklist">Deal checklist</Button>}
+          {trackerId && <Button variant="outline" size="sm" onClick={() => setChecklistOpen(true)} data-testid="landsec-unit-open-checklist">Transaction checklist</Button>}
           {trackerId && <Button variant="outline" size="sm" onClick={() => setRecommendationOpen(true)} data-testid="landsec-unit-open-recommendation">Recommendation</Button>}
           {!restricted && <Link href={`/properties/${unit.propertyId}`}><Button variant="outline" size="sm">Property record</Button></Link>}
         </div>
@@ -373,7 +373,7 @@ export default function LandsecUnit() {
               <Row label="Term" value={[deal.terms.leaseLength, deal.terms.breakOption ? `break ${deal.terms.breakOption}${deal.terms.breakParty ? ` (${deal.terms.breakParty})` : ""}` : null].filter(Boolean).join(" · ") || "—"} />
               {!viewer.isClient && deal.fee != null && <Row label="Fee (BGP only)" value={formatCurrency(deal.fee)} />}
             </>
-          ) : <p className="text-sm text-muted-foreground">No deal on this unit yet.</p>}
+          ) : <p className="text-sm text-muted-foreground">No transaction on this unit yet.</p>}
           {tracker?.hotsContent && <Row label="Draft heads" value={`On the tracker${tracker.hotsUpdatedAt ? `, updated ${fmtDate(tracker.hotsUpdatedAt, true)}` : ""}`} />}
           {hotsFiles.length > 0 && (
             <ul className="space-y-1 pt-1">
@@ -414,7 +414,7 @@ export default function LandsecUnit() {
         <Section title="Solicitors & legal progress">
           {deal ? (
             <SolicitorBlock deal={deal} onSave={patch => save.mutate({ dealId: deal.id, solicitors: patch })} />
-          ) : <p className="text-sm text-muted-foreground">Solicitors are recorded on the deal once there is one.</p>}
+          ) : <p className="text-sm text-muted-foreground">Solicitors are recorded on the transaction once there is one.</p>}
           <EditRow label="Legal progress" value={landsec?.legalProgress ?? null} kind="textarea" placeholder="Where the lease is: draft issued, comments returned, engrossments, completion target" onSave={v => saveLandsec({ legalProgress: v })} />
           <Catchups items={landsec?.solicitorCatchups || []} onAdd={note => saveLandsec({ addCatchup: { note } })} />
         </Section>

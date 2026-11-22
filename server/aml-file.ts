@@ -196,7 +196,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
         `SELECT action, performed_by, notes, created_at FROM kyc_audit_log
           WHERE company_id = $1 OR ($2::text <> '' AND entity_kind = 'trading_entity' AND entity_id = $2)
           ORDER BY created_at DESC NULLS LAST, id DESC LIMIT 200`, [brandId, entityId || ""]).then(r => r.rows), [] as any[]),
-      read("the deal's AML history", pool.query(
+      read("the transaction's AML history", pool.query(
         `SELECT field, new_value, reason, changed_by_name, created_at FROM deal_audit_log
           WHERE deal_id = $1 AND (field = ANY($2::text[]) OR field IN ($3, $4))
           ORDER BY created_at DESC NULLS LAST LIMIT 200`,
@@ -508,7 +508,7 @@ function writeJointAgent(w: Writer, j: JointAgentPartyView) {
   w.kv("Screening", c.screening || "not sent", c.screening ? INK : AMBER);
   for (const f of c.flags) w.item("!", f, RED, null);
   if (c.others.length) w.kv("Also named in their files", c.others.join(", "));
-  if (c.unread) w.kv("Not read", `${c.unread} file${c.unread === 1 ? "" : "s"}: open them on the deal`, AMBER);
+  if (c.unread) w.kv("Not read", `${c.unread} file${c.unread === 1 ? "" : "s"}: open them on the transaction`, AMBER);
 }
 
 function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map<string, string>) {
@@ -519,8 +519,8 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
     writeRiskAssessment(w, p.riskAssessment);
     w.sub("The checks in detail");
   }
-  w.kv("Brand on the deal", p.brand.name);
-  w.kv(p.individual ? "Who signs" : "Company that signs", p.individual ? (p.company ? `${p.company.name}, a private individual` : "A private individual") : p.company ? `${p.company.name}${p.company.number ? ` (Companies House ${p.company.number})` : ""}` : "Not set on the deal", p.individual || p.company ? INK : AMBER);
+  w.kv("Brand on the transaction", p.brand.name);
+  w.kv(p.individual ? "Who signs" : "Company that signs", p.individual ? (p.company ? `${p.company.name}, a private individual` : "A private individual") : p.company ? `${p.company.name}${p.company.number ? ` (Companies House ${p.company.number})` : ""}` : "Not set on the transaction", p.individual || p.company ? INK : AMBER);
   w.kv("Person dealing with BGP", p.person ? `${p.person.name}${p.person.email ? `, ${p.person.email}` : ""}` : null);
   const state = amlFileStateWords(p.state, p.notRequired);
   w.kv("Where it stands", state.words, state.tone === "done" ? GREEN : state.tone === "flag" ? RED : AMBER);
@@ -530,7 +530,7 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
     if (p.level.toWeigh.length) w.kv("To weigh", p.level.toWeigh.join("; "));
   }
   if (p.notRequired?.comment) w.kv("Not required because", p.notRequired.comment);
-  if (p.unread.length) w.kv("Could not be read", `${[...new Set(p.unread)].join("; ")}. Make the file again, or check these on the deal.`, RED);
+  if (p.unread.length) w.kv("Could not be read", `${[...new Set(p.unread)].join("; ")}. Make the file again, or check these on the transaction.`, RED);
 
   // The company, as the register gives it.
   const c = p.precheck?.company;
@@ -554,7 +554,7 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
   // BGP's checks before asking.
   w.sub("BGP's checks before asking anyone");
   if (!p.precheck || p.precheck.state === "off") w.para("Not run.", MUTED);
-  else if (p.precheck.state === "needs_company") w.para("Not run: the deal does not name the company that signs, and the checks are about that company.", AMBER);
+  else if (p.precheck.state === "needs_company") w.para("Not run: the transaction does not name the company that signs, and the checks are about that company.", AMBER);
   else {
     if (p.precheck.ranAt) w.para(`Run ${when(p.precheck.ranAt)}: Companies House, the UK, US and EU sanctions lists, ComplyAdvantage where it answered, and a web search for public roles and adverse media.`, MUTED);
     for (const l of p.precheck.lines) {
@@ -676,12 +676,12 @@ export async function renderAmlReport(data: AmlFileData, docNames: Map<string, s
     .text(`${data.deal.name}${data.deal.ref ? ` (Ref ${data.deal.ref})` : ""}. Made ${when(data.madeAt)} by ${data.madeBy}.`, { width: w.width });
   doc.moveDown(0.5);
   doc.font(w.body).fontSize(8.5).fillColor(MUTED).text(
-    "Confidential. Bruce Gillingham Pollard's customer due diligence records for this deal, kept under the Money Laundering Regulations 2017 (reg 40): " +
+    "Confidential. Bruce Gillingham Pollard's customer due diligence records for this transaction, kept under the Money Laundering Regulations 2017 (reg 40): " +
     "what BGP checked, what the client sent, the decisions made and by whom, and the documents held. Internal reports to the Nominated Officer are kept in BGP's AML register and are not part of this file.",
     { width: w.width });
 
-  w.title("The deal");
-  w.kv("Deal", `${data.deal.name}${data.deal.ref ? ` (Ref ${data.deal.ref})` : ""}`);
+  w.title("The transaction");
+  w.kv("Transaction", `${data.deal.name}${data.deal.ref ? ` (Ref ${data.deal.ref})` : ""}`);
   w.kv("Type and stage", [data.deal.type, data.deal.status].filter(Boolean).join(", "));
   w.kv("Property", data.deal.property);
   w.kv("BGP's agents", data.deal.agents.join(", ") || null);
@@ -689,9 +689,9 @@ export async function renderAmlReport(data: AmlFileData, docNames: Map<string, s
   if (data.agents.length) w.kv("Other agents", data.agents.map(a => `${a.roleWords}: ${a.name}. ${a.words}`).join("\n"));
   w.kv("Heads of terms", data.hots?.file ? `${data.hots.file.name}: the final agreed heads of terms${docNames.get("hots") ? `, in this file as ${docNames.get("hots")}` : ""}`
     : data.hots?.text ? `Drawn up in the app${data.hots.version ? ` (version ${data.hots.version})` : ""}${docNames.get("hots") ? `, in this file as ${docNames.get("hots")}` : ""}`
-    : "None held in the app for this deal (any on a party's KYC record are listed with its documents)");
-  for (const f of data.dealFlags) w.item("!", `On the deal record: ${f.label}`, f.factor ? AMBER : RED, f.detail);
-  for (const a of data.dealAside) w.item("•", `Set aside on the deal record: ${a.flag.label}`, MUTED, `${a.review.by || ""}${a.review.at ? `, ${day(a.review.at)}` : ""}: "${a.review.comment}"`);
+    : "None held in the app for this transaction (any on a party's KYC record are listed with its documents)");
+  for (const f of data.dealFlags) w.item("!", `On the transaction record: ${f.label}`, f.factor ? AMBER : RED, f.detail);
+  for (const a of data.dealAside) w.item("•", `Set aside on the transaction record: ${a.flag.label}`, MUTED, `${a.review.by || ""}${a.review.at ? `, ${day(a.review.at)}` : ""}: "${a.review.comment}"`);
   if (data.unchecked.length) w.para(`Red flags could not be checked against: ${data.unchecked.join(", ")}.`, AMBER);
 
   for (const p of data.parties) writeParty(w, data, p, docNames);
@@ -792,8 +792,8 @@ router.get("/api/deals/:id/aml-file", async (req: Request, res: Response) => {
     const roleParam = text(req.query.role);
     if (roleParam && !isDealPartyRole(roleParam)) return res.status(400).json({ message: "Which party?" });
     const data = await gatherAmlFile(String(req.params.id), roleParam ? [roleParam as DealPartyRole] : null, me);
-    if (!data) return res.status(404).json({ message: "No such deal." });
-    if (!data.parties.length) return res.status(404).json({ message: roleParam ? "The deal has no such party." : "The deal has no parties yet." });
+    if (!data) return res.status(404).json({ message: "No such transaction." });
+    if (!data.parties.length) return res.status(404).json({ message: roleParam ? "The transaction has no such party." : "The transaction has no parties yet." });
     if (text(req.query.format) === "pdf") {
       const pdf = await renderAmlReport(data);
       await recordMade(data, me, "made (report)");
@@ -825,9 +825,9 @@ router.get("/api/deals/:id/aml-risk-assessment", async (req: Request, res: Respo
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Which party?" });
     const u = (await pool.query(`SELECT name, email FROM users WHERE id = $1`, [userId])).rows[0];
     const data = await gatherAmlFile(String(req.params.id), [role as DealPartyRole], { id: String(userId), name: text(u?.name) || text(u?.email) || "BGP" });
-    if (!data) return res.status(404).json({ message: "No such deal." });
+    if (!data) return res.status(404).json({ message: "No such transaction." });
     const p = data.parties[0];
-    if (!p) return res.status(404).json({ message: "The deal has no such party." });
+    if (!p) return res.status(404).json({ message: "The transaction has no such party." });
     res.json({ riskAssessment: p.riskAssessment, unread: p.unread });
   } catch (err: any) {
     console.error("[aml-file] risk assessment failed:", err?.message);
@@ -844,9 +844,9 @@ router.post("/api/deals/:id/aml-file/kyc4u", async (req: Request, res: Response)
     const role = text(req.body?.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Which party?" });
     const data = await gatherAmlFile(String(req.params.id), [role], me);
-    if (!data) return res.status(404).json({ message: "No such deal." });
+    if (!data) return res.status(404).json({ message: "No such transaction." });
     const p = data.parties[0];
-    if (!p) return res.status(404).json({ message: "The deal has no such party." });
+    if (!p) return res.status(404).json({ message: "The transaction has no such party." });
     const pdf = await renderAmlReport(data);
     const fileName = `${amlFileName(data, "report")}.pdf`;
     const stored = `aml-file-${data.deal.id.slice(0, 8)}-${role}-${Date.now()}.pdf`;

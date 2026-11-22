@@ -47,7 +47,7 @@ test('My Tasks: Waiting on you first, each task once, with counts', () => {
   assert.match(page, /!overdueIds\.has\(t\.id\) && !waitingIds\.has\(t\.id\)/);
   assert.match(page, /data-testid="tasks-waiting-on-you"/);
   assert.match(page, /<PillCount n=\{statusCount\(f\)\} active=\{filter === f\} \/>/);
-  assert.match(page, /with a deal waiting on \$\{viewAssigned \? "them" : "you"\}/);
+  assert.match(page, /with a transaction waiting on \$\{viewAssigned \? "them" : "you"\}/);
 });
 
 test('My Tasks: checklist rows, instant ticks, a real error and a phone-sized tick', () => {

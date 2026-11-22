@@ -161,7 +161,7 @@ export function isLandlordLinkedConversation(thread?: Pick<ThreadData, "isAiChat
 }
 
 const AI_SUGGESTIONS = [
-  "Show me live deals",
+  "Show me live transactions",
   "What's in my calendar today?",
   "Draft HOTs for a property",
   "Search CRM contacts",
@@ -1287,7 +1287,7 @@ function ThreadList({ threads, onSelect, onNewGroupChat, unseenCount, onOpenAiFu
           <p className="text-[12px] text-muted-foreground truncate">
             {latestAiThread?.lastMessage
               ? <><span className="font-medium">{latestAiThread.lastMessage.senderName.split(" ")[0]}: </span>{latestAiThread.lastMessage.content}</>
-              : "Ask about brands, units, deals — or add it to any chat"}
+              : "Ask about brands, units, transactions — or add it to any chat"}
           </p>
         </div>
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground shrink-0">AI</span>
@@ -1350,7 +1350,7 @@ function ThreadList({ threads, onSelect, onNewGroupChat, unseenCount, onOpenAiFu
         <div className="text-center py-10 flex-1 flex flex-col items-center justify-center px-6">
           <MessageCircle className="w-10 h-10 text-muted-foreground/40 mb-3" />
           <p className="text-sm text-muted-foreground font-medium">No conversations yet</p>
-          <p className="text-xs text-muted-foreground mt-1 mb-4">Message your team about a property, a deal or a brand — tag anything with @.</p>
+          <p className="text-xs text-muted-foreground mt-1 mb-4">Message your team about a property, a transaction or a brand — tag anything with @.</p>
           <Button size="sm" className="gap-1.5 text-xs" onClick={onNewGroupChat} data-testid="button-empty-new-message">
             <Users className="w-3.5 h-3.5" />
             Message your team
@@ -3390,7 +3390,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                               o.kind === "user" ? "People" :
                               o.type === "company" ? "Brands & companies" :
                               o.type === "property" ? "Properties" :
-                              o.type === "deal" ? "Deals" :
+                              o.type === "deal" ? "Transactions" :
                               o.type === "unit" ? "Letting tracker" :
               o.type === "folder" ? "Folders" : "Contacts";
                             const group = groupOf(opt);

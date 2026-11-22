@@ -40,7 +40,7 @@ const refreshPlans = () => Promise.all([
 
 const ROW_LINKS = [
   { key: "tracker", label: "Letting Tracker row", Icon: ClipboardList },
-  { key: "deal", label: "Deal", Icon: Briefcase },
+  { key: "deal", label: "Transaction", Icon: Briefcase },
   { key: "unitPage", label: "Landsec unit page", Icon: Building2 },
 ] as const;
 
@@ -339,7 +339,7 @@ function WishForm({ companyId, brandName, schemeKey: initialScheme, requirements
   const unitOptions = (units.data?.units || []).map(u => ({ id: u.id, name: u.unit || "Unit", meta: u.tenant || u.status }));
   return <Dialog open onOpenChange={open => { if (!open && !saving) onClose(); }}>
     <DialogContent className="max-w-lg max-h-[90dvh] flex flex-col overflow-hidden p-4 sm:p-6" aria-describedby="scheme-plan-wish-description">
-      <DialogHeader><DialogTitle>Add a scheme for {brandName}</DialogTitle><DialogDescription id="scheme-plan-wish-description">Records that we want this brand at the scheme, with a unit if one is picked. It is a Wanted line, not a deal.</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>Add a scheme for {brandName}</DialogTitle><DialogDescription id="scheme-plan-wish-description">Records that we want this brand at the scheme, with a unit if one is picked. It is a Wanted line, not a transaction.</DialogDescription></DialogHeader>
       <form className="min-h-0 flex flex-col gap-4" data-testid="scheme-plan-wish-form" onSubmit={async event => {
         event.preventDefault(); setError("");
         if (!schemeKey) { setError("Choose a scheme."); return; }

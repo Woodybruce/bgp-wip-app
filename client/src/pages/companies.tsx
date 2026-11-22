@@ -1516,7 +1516,7 @@ function CompanyDetail({ id }: { id: string }) {
                 <div className="border rounded-lg overflow-hidden" data-testid="unlinked-deals-group">
                   <div className="flex items-center gap-2 p-2 bg-muted/50">
                     <Handshake className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                    <p className="text-xs font-medium">Other Deals (no property linked)</p>
+                    <p className="text-xs font-medium">Other Transactions (no property linked)</p>
                     <Badge variant="outline" className="text-[11px] shrink-0 ml-auto">{propertiesWithDeals.unlinkedDeals.length}</Badge>
                   </div>
                   <div className="divide-y max-h-[150px] overflow-y-auto">
@@ -2692,7 +2692,7 @@ function CompanyList() {
                             entityType="deals"
                             icon={<Handshake className="w-2.5 h-2.5" />}
                             invalidateKey="/api/crm/company-deal-links"
-                            searchPlaceholder="Search deals..."
+                            searchPlaceholder="Search transactions..."
                           />
                         </TableCell>
                         <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>

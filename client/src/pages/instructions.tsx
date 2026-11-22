@@ -311,7 +311,7 @@ function InlineDeals({
       queryClient.invalidateQueries({ queryKey: ["/api/crm/property-deal-links"] });
       invalidateDealCaches();
     },
-    onError: (err: any) => { toast({ title: "Failed to link deal", description: err.message, variant: "destructive" }); },
+    onError: (err: any) => { toast({ title: "Failed to link transaction", description: err.message, variant: "destructive" }); },
   });
 
   const unlinkMutation = useMutation({
@@ -322,7 +322,7 @@ function InlineDeals({
       queryClient.invalidateQueries({ queryKey: ["/api/crm/property-deal-links"] });
       invalidateDealCaches();
     },
-    onError: (err: any) => { toast({ title: "Failed to unlink deal", description: err.message, variant: "destructive" }); },
+    onError: (err: any) => { toast({ title: "Failed to unlink transaction", description: err.message, variant: "destructive" }); },
   });
 
   return (
@@ -348,11 +348,11 @@ function InlineDeals({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-64">
           <div className="p-2">
-            <Input placeholder="Search deals..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="h-7 text-xs" data-testid={`search-deal-${propertyId}`} />
+            <Input placeholder="Search transactions..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="h-7 text-xs" data-testid={`search-deal-${propertyId}`} />
           </div>
           <div className="max-h-48 overflow-y-auto">
             {filteredDeals.length === 0 ? (
-              <DropdownMenuItem disabled>No deals found</DropdownMenuItem>
+              <DropdownMenuItem disabled>No transactions found</DropdownMenuItem>
             ) : (
               filteredDeals.map(deal => (
                 <DropdownMenuItem key={deal.id} onClick={() => { linkMutation.mutate(deal.id); setSearchTerm(""); }} data-testid={`assign-deal-${deal.id}`}>
@@ -793,7 +793,7 @@ function LinkedDealsPanel({ propertyId }: { propertyId: string }) {
       <CardContent className="p-4">
         <div className="flex items-center gap-2 mb-3">
           <Handshake className="w-4 h-4" />
-          <h3 className="text-sm font-semibold">Linked Deals</h3>
+          <h3 className="text-sm font-semibold">Linked Transactions</h3>
         </div>
         <DealsSummary variant="card" propertyId={propertyId} />
       </CardContent>

@@ -26,8 +26,8 @@ export function retentionCutoff(now = new Date()): string {
 export type RetentionCategory = "party" | "deal" | "archive" | "training" | "register";
 export const RETENTION_CATEGORY_WORDS: Record<RetentionCategory, string> = {
   party: "A party's AML records",
-  deal: "A closed deal's AML fields",
-  archive: "Records kept from a deleted or merged deal or company",
+  deal: "A closed transaction's AML fields",
+  archive: "Records kept from a deleted or merged transaction or company",
   training: "Training records",
   register: "Closed entries in the AML register",
 };
@@ -46,21 +46,21 @@ export interface PartyRetentionFacts {
 
 /** Whether a party's AML records are due for deletion, and why (or why not). */
 export function partyRetention(f: PartyRetentionFacts, cutoff: string): { due: boolean; why: string } {
-  if (f.liveDeals > 0) return { due: false, why: `On ${f.liveDeals} live deal${f.liveDeals === 1 ? "" : "s"}` };
+  if (f.liveDeals > 0) return { due: false, why: `On ${f.liveDeals} live transaction${f.liveDeals === 1 ? "" : "s"}` };
   if (f.openRegisterEntries > 0) return { due: false, why: "An open entry in the AML register is about them" };
   const latest = day(f.latestRecordAt);
   const ended = day(f.lastDealEndedAt);
   if (!latest) return { due: false, why: "No AML records" };
   if (latest > cutoff) return { due: false, why: `Last checked ${words(latest)}, within five years` };
-  if (ended && ended > cutoff) return { due: false, why: `A deal with them ended ${words(ended)}, within five years` };
-  return { due: true, why: `Last checked ${words(latest)}${ended ? `; last deal ended ${words(ended)}` : "; on no deal"}` };
+  if (ended && ended > cutoff) return { due: false, why: `A transaction with them ended ${words(ended)}, within five years` };
+  return { due: true, why: `Last checked ${words(latest)}${ended ? `; last transaction ended ${words(ended)}` : "; on no transaction"}` };
 }
 
 /** Whether a closed deal's AML fields are due: the deal ended more than five years ago. */
 export function dealRetention(f: { closed: boolean; endedAt: string | null }, cutoff: string): { due: boolean; why: string } {
-  if (!f.closed) return { due: false, why: "The deal is still live" };
+  if (!f.closed) return { due: false, why: "The transaction is still live" };
   const ended = day(f.endedAt);
-  if (!ended) return { due: false, why: "When the deal ended is not recorded" };
+  if (!ended) return { due: false, why: "When the transaction ended is not recorded" };
   if (ended > cutoff) return { due: false, why: `Ended ${words(ended)}, within five years` };
   return { due: true, why: `Ended ${words(ended)}` };
 }

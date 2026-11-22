@@ -125,7 +125,7 @@ export function GlobalSearch({ compact }: { compact?: boolean } = {}) {
 
       <CommandDialog open={open} onOpenChange={setOpen}>
         <CommandInput
-          placeholder="Search properties, deals, contacts, companies..."
+          placeholder="Search properties, transactions, contacts, companies..."
           value={query}
           onValueChange={setQuery}
           data-testid="input-global-search"

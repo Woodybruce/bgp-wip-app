@@ -150,7 +150,7 @@ function WebsitePill({ unit, property, code, onToggle, onEdit, onFiles }: { unit
   const missing = websiteMissing(unit, property);
   let label = "Off", cls = "bg-muted text-muted-foreground";
   let header = "Not on the website. Everything below is needed before it can go live on bgp.uk.com:";
-  if (on && !PUBLIC_CODES.has(code)) { label = "Hidden"; cls = "bg-gray-400 text-white"; header = "Ticked for the website, but the deal status keeps it off — only Marketing → Solicitors show publicly."; }
+  if (on && !PUBLIC_CODES.has(code)) { label = "Hidden"; cls = "bg-gray-400 text-white"; header = "Ticked for the website, but the transaction status keeps it off — only Marketing → Solicitors show publicly."; }
   else if (on && missing.length) { label = `Missing ${missing.length}`; cls = "bg-amber-500 text-white"; header = "Ticked for the website but NOT live yet — the amber items are still needed:"; }
   else if (on) { label = "Live"; cls = "bg-emerald-500 text-white"; header = "Live on bgp.uk.com — the website has everything it needs."; }
   const needsEdit = missing.some(k => k === "rent or POA" || k === "size" || k === "lease terms");
@@ -659,7 +659,7 @@ export default function AvailableUnitsPage() {
     { key: "ref", label: "Ref" },
     { key: "existingTenant", label: "Existing Tenant" },
     { key: "unitStatus", label: "Unit Status" },
-    { key: "pipelineStatus", label: "Deal Status" },
+    { key: "pipelineStatus", label: "Transaction Status" },
     { key: "offers", label: "Offers" },
     { key: "website", label: "Website" },
     { key: "client", label: "Client" },
@@ -668,7 +668,7 @@ export default function AvailableUnitsPage() {
     { key: "priority", label: "Priority" },
     { key: "agent", label: "Agent" },
     { key: "comments", label: "Comments" },
-    { key: "checklist", label: "Deal checklist" },
+    { key: "checklist", label: "Transaction checklist" },
     { key: "interest", label: "Interest" },
     { key: "viewings", label: "Viewings" },
     { key: "areaCosts", label: "Area & Costs" },
@@ -1545,7 +1545,7 @@ export default function AvailableUnitsPage() {
       if (unit?.feeAllocationsError) {
         toast({
           title: "Unit added, fee split failed to save",
-          description: `${unit.feeAllocationsError} Open deal #${unit.dealRef ?? "…"} to set it.`,
+          description: `${unit.feeAllocationsError} Open transaction #${unit.dealRef ?? "…"} to set it.`,
           variant: "destructive",
         });
         return;
@@ -1586,7 +1586,7 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
       setDeleteItem(null);
-      toast({ title: "Unit deleted", description: r?.dealWithdrawn ? "Its deal has been moved to Withdrawn." : undefined });
+      toast({ title: "Unit deleted", description: r?.dealWithdrawn ? "Its transaction has been moved to Withdrawn." : undefined });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1720,7 +1720,7 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       setLinkDealOpen(null);
       setLinkDealId("");
-      toast({ title: "Deal linked" });
+      toast({ title: "Transaction linked" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1730,7 +1730,7 @@ export default function AvailableUnitsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       invalidateDealCaches();
-      toast({ title: "Deal reference created" });
+      toast({ title: "Transaction reference created" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -2067,7 +2067,7 @@ export default function AvailableUnitsPage() {
                 const plan = await r.json();
                 const msg = `Focus the tracker on units in play?\n\n` +
                   `Keep: ${plan.keep}\nRemove idle rows: ${plan.prune}\nPull in from strategy boards: ${plan.pullIn}\nTargets to migrate: ${plan.targetsToMigrate}\n\n` +
-                  `Idle rows have no viewings, offers, files, targets, live deal or strategy-board activity. ` +
+                  `Idle rows have no viewings, offers, files, targets, live transaction or strategy-board activity. ` +
                   `Their tenancy (rent roll) rows are untouched and can be re-listed any time.`;
                 if (!window.confirm(msg)) return;
                 const r2 = await apiRequest("POST", "/api/admin/letting-tracker-focus", { dryRun: false });
@@ -2305,10 +2305,10 @@ export default function AvailableUnitsPage() {
         </>)}
         <Select value={targetStatusFilter} onValueChange={setTargetStatusFilter}>
           <SelectTrigger className="w-[170px]" data-testid="select-target-status-filter">
-            <SelectValue placeholder="Deal status" />
+            <SelectValue placeholder="Transaction status" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Deal Statuses</SelectItem>
+            <SelectItem value="all">All Transaction Statuses</SelectItem>
             {BRIEF_TARGET_STATUSES.map(s => (
               <SelectItem key={s} value={s}>{targetStatusLabel(s)}</SelectItem>
             ))}
@@ -2732,7 +2732,7 @@ export default function AvailableUnitsPage() {
                 {/* Left block trimmed so Target Tenant clears the pinned Actions
                     column at 1440 — it read "Target Te" / "+ Target o" once
                     Unit Status was hidden (Woody, 2026-09-28). */}
-                {showCol("pipelineStatus") && <TableHead className="w-[96px] min-w-[96px] px-2">Deal Status</TableHead>}
+                {showCol("pipelineStatus") && <TableHead className="w-[96px] min-w-[96px] px-2">Transaction Status</TableHead>}
                 {/* Offers sit beside Deal Status so they are in view when the
                     tracker opens at 1440, not a sideways scroll away (Woody,
                     2026-11-12 "easy to see"). */}
@@ -2747,7 +2747,7 @@ export default function AvailableUnitsPage() {
                     the table) rather than out past the target-tenant block
                     (Woody, 2026-09-02). */}
                 {showCol("areaCosts") && <TableHead className="w-[116px] min-w-[112px] px-2 whitespace-nowrap">Area &amp; Costs</TableHead>}
-                {showCol("checklist") && <TableHead className="w-[180px] min-w-[180px] px-2" title="The deal checklist: what is done, what is still required at this stage and who is responsible">Deal checklist</TableHead>}
+                {showCol("checklist") && <TableHead className="w-[180px] min-w-[180px] px-2" title="The transaction checklist: what is done, what is still required at this stage and who is responsible">Transaction checklist</TableHead>}
                 {showCol("interest") && <TableHead className="w-[190px] min-w-[190px] px-2">Interest</TableHead>}
                 {showCol("viewings") && <TableHead className="w-[220px] min-w-[220px] px-2">Viewings</TableHead>}
                 <TableHead className="w-[150px] min-w-[150px] px-2">Target Tenant</TableHead>
@@ -2837,7 +2837,7 @@ export default function AvailableUnitsPage() {
                               <a
                                 href={`/deals/${u.dealId}`}
                                 className="text-primary hover:underline"
-                                title={`Open deal ${ref} — fees and the BGP fee split are set on the deal page`}
+                                title={`Open transaction ${ref} — fees and the BGP fee split are set on the transaction page`}
                                 data-testid={`link-deal-ref-${u.id}`}
                               >
                                 #{ref}
@@ -2865,7 +2865,7 @@ export default function AvailableUnitsPage() {
                             <button
                               type="button"
                               className="text-[11px] text-muted-foreground hover:text-primary underline-offset-2 hover:underline"
-                              title="Give this unit its deal reference"
+                              title="Give this unit its transaction reference"
                               onClick={() => createDealMutation.mutate(u.id)}
                               disabled={createDealMutation.isPending}
                               data-testid={`create-deal-ref-${u.id}`}
@@ -3011,7 +3011,7 @@ export default function AvailableUnitsPage() {
                           // through the status mirror.
                           <span
                             className={`${STATUS_LABEL_COLORS["AVA"] || "bg-gray-500"} text-white font-medium rounded-full text-[11px] px-2.5 py-1 inline-block align-middle whitespace-nowrap opacity-60 cursor-default`}
-                            title="Deal in progress — unit status is driven by the deal"
+                            title="Transaction in progress — unit status is driven by the transaction"
                             data-testid="unit-status-locked"
                           >
                             Available
@@ -3575,7 +3575,7 @@ export default function AvailableUnitsPage() {
           <DialogHeader>
             <DialogTitle>Delete Unit</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete "{deleteItem?.unitName}"? Its Targeting Brief and sign-off, offers and their negotiation logs, viewings, interest, Heads of Terms record, deal checklist and files go with it, and so does its deal if that is still at Marketing. This cannot be undone.
+              Are you sure you want to delete "{deleteItem?.unitName}"? Its Targeting Brief and sign-off, offers and their negotiation logs, viewings, interest, Heads of Terms record, transaction checklist and files go with it, and so does its transaction if that is still at Marketing. This cannot be undone.
             </DialogDescription>
             {/* Delete stands in for the row's Withdraw button: say what
                 happens to a deal that has moved past Marketing. */}
@@ -3590,11 +3590,11 @@ export default function AvailableUnitsPage() {
                 <p className={`text-sm ${live ? "text-destructive" : "text-muted-foreground"}`} data-testid="delete-unit-deal-kept">
                   {live
                     ? (isClientTracker
-                      ? `This unit's deal is at ${stage}: it will be marked Withdrawn.`
-                      : `Deal${ref} is at ${stage}: it will be moved to Withdrawn, so it leaves the live Deals board and the WIP forecast. Its Ref #, fee and history are kept.`)
+                      ? `This unit's transaction is at ${stage}: it will be marked Withdrawn.`
+                      : `Transaction${ref} is at ${stage}: it will be moved to Withdrawn, so it leaves the live Transactions board and the WIP forecast. Its Ref #, fee and history are kept.`)
                     : (isClientTracker
-                      ? `This unit's deal is ${stage} and is kept as it is.`
-                      : `Deal${ref} is ${stage} and is kept as it is.`)}
+                      ? `This unit's transaction is ${stage} and is kept as it is.`
+                      : `Transaction${ref} is ${stage} and is kept as it is.`)}
                 </p>
               );
             })()}
@@ -3634,12 +3634,12 @@ export default function AvailableUnitsPage() {
       <Dialog open={!!linkDealOpen} onOpenChange={v => { if (!v) setLinkDealOpen(null); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Link to Existing Deal</DialogTitle>
-            <DialogDescription>Select a deal to link this unit to.</DialogDescription>
+            <DialogTitle>Link to Existing Transaction</DialogTitle>
+            <DialogDescription>Select a transaction to link this unit to.</DialogDescription>
           </DialogHeader>
           <Select value={linkDealId} onValueChange={setLinkDealId}>
             <SelectTrigger data-testid="select-link-deal">
-              <SelectValue placeholder="Select a deal..." />
+              <SelectValue placeholder="Select a transaction..." />
             </SelectTrigger>
             <SelectContent>
               {deals.map(d => (
@@ -3653,7 +3653,7 @@ export default function AvailableUnitsPage() {
               disabled={!linkDealId || linkDealMutation.isPending}
               onClick={() => linkDealOpen && linkDealMutation.mutate({ id: linkDealOpen.id, dealId: linkDealId })}
             >
-              Link Deal
+              Link Transaction
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -5118,12 +5118,12 @@ function UnitFormDialog({
             {/* A client login reads nothing about BGP's fee; on a Landsec
                 unit the split that matters is between the agents. */}
             {isEdit && dealId ? (
-              isClient ? <>Deal <span className="font-mono">#{dealRef ?? "…"}</span>.</>
-              : landsecUnit ? <>Deal <a href={`/deals/${dealId}`} className="underline font-mono">#{dealRef ?? "…"}</a>. Fees are set on the deal page; the split between the agents is on the Targeting Brief.</>
-              : <>Deal <a href={`/deals/${dealId}`} className="underline font-mono">#{dealRef ?? "…"}</a> — fees, % and the BGP fee split are set on the deal page.</>
-            ) : isClient ? "Saving gives the unit its deal reference (#)."
-              : landsecUnit ? "Saving gives the unit its deal reference (#). The split between the agents is set on the Targeting Brief."
-              : "Saving gives the unit its deal reference (#) — fees and the fee split live on that deal."}
+              isClient ? <>Transaction <span className="font-mono">#{dealRef ?? "…"}</span>.</>
+              : landsecUnit ? <>Transaction <a href={`/deals/${dealId}`} className="underline font-mono">#{dealRef ?? "…"}</a>. Fees are set on the transaction page; the split between the agents is on the Targeting Brief.</>
+              : <>Transaction <a href={`/deals/${dealId}`} className="underline font-mono">#{dealRef ?? "…"}</a> — fees, % and the BGP fee split are set on the transaction page.</>
+            ) : isClient ? "Saving gives the unit its transaction reference (#)."
+              : landsecUnit ? "Saving gives the unit its transaction reference (#). The split between the agents is set on the Targeting Brief."
+              : "Saving gives the unit its transaction reference (#) — fees and the fee split live on that transaction."}
           </DialogDescription>
         </DialogHeader>
         {(() => {
@@ -5274,7 +5274,7 @@ function UnitFormDialog({
             )}
           </div>}
           {!(isClient && isEdit) && <div>
-            <Label>Deal Type *</Label>
+            <Label>Transaction Type *</Label>
             <Select value={form.dealType} onValueChange={v => upd("dealType", v)}>
               <SelectTrigger data-testid="select-deal-type"><SelectValue placeholder="Select..." /></SelectTrigger>
               <SelectContent>
@@ -5365,7 +5365,7 @@ function UnitFormDialog({
               if (!UNIT_STAGE_EDITABLE.has(code)) {
                 return (
                   <div className="h-9 flex items-center px-3 text-sm text-muted-foreground border rounded-md bg-muted/40">
-                    {DEAL_STATUS_LABELS[code]} — driven by the deal
+                    {DEAL_STATUS_LABELS[code]} — driven by the transaction
                   </div>
                 );
               }
@@ -5478,13 +5478,13 @@ function UnitFormDialog({
             {(isClient || landsecUnit) ? (
               <div data-testid="unit-form-agent-split-note">
                 <Label className="text-xs">Fee split between the agents</Label>
-                <p className="text-xs text-muted-foreground">Sole agent or joint agents, and each agent's share, are set on the unit's Targeting Brief under People and sign-off.{!isClient && isEdit && dealId ? <> BGP's own split is on <a href={`/deals/${dealId}`} className="underline">deal #{dealRef}</a>.</> : null}</p>
+                <p className="text-xs text-muted-foreground">Sole agent or joint agents, and each agent's share, are set on the unit's Targeting Brief under People and sign-off.{!isClient && isEdit && dealId ? <> BGP's own split is on <a href={`/deals/${dealId}`} className="underline">transaction #{dealRef}</a>.</> : null}</p>
               </div>
             ) : (
             <div>
               <Label className="text-xs">BGP fee split</Label>
               {isEdit ? (
-                <p className="text-xs text-muted-foreground">Fee split is managed on the deal — {dealId ? <a href={`/deals/${dealId}`} className="underline">open deal #{dealRef}</a> : "save once to create the deal, then open it from the Ref column"}.</p>
+                <p className="text-xs text-muted-foreground">Fee split is managed on the transaction — {dealId ? <a href={`/deals/${dealId}`} className="underline">open transaction #{dealRef}</a> : "save once to create the transaction, then open it from the Ref column"}.</p>
               ) : (
                 <div className="border rounded-md p-2.5 bg-muted/30">
                   <FeeAllocationEditor
@@ -5649,7 +5649,7 @@ function UnitFormDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={onSubmit} disabled={isPending || !form.unitName || !form.propertyId || !form.dealType} title={!form.dealType ? "Pick a deal type" : ""}>
+          <Button onClick={onSubmit} disabled={isPending || !form.unitName || !form.propertyId || !form.dealType} title={!form.dealType ? "Pick a transaction type" : ""}>
             {isPending ? "Saving..." : "Save"}
           </Button>
         </DialogFooter>

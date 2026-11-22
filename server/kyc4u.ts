@@ -688,7 +688,7 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
     // A trust needs no company that signs: its trustees sign (Jack, 20 November 2026).
     if (!["individual", "trust"].includes(String(kind?.aml_subject_type || "").toLowerCase())) {
       const what = partyRole === "tenant" ? "the company taking the lease" : partyRole === "landlord" ? "the company that owns the property" : partyRole === "vendor" ? "the company selling" : "the company buying";
-      throw Object.assign(new Error(`Set ${what} on the deal first: KYC4U checks that company, not ${company.name}.`), { status: 409 });
+      throw Object.assign(new Error(`Set ${what} on the transaction first: KYC4U checks that company, not ${company.name}.`), { status: 409 });
     }
   }
   const partyPerson = partyRole && deal?.[`${partyRole}_contact_id`] ? (await pool.query(
@@ -757,7 +757,7 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
       feeEarnerEmails: feeEarners.join("; "),
       clientEmails: isClient && contact?.email ? contact.email : "",
       expectedCompletion: deal?.target_date ? new Date(deal.target_date).toISOString().slice(0, 10) : "",
-      note: [deal ? `BGP deal ${deal.deal_ref ? "#" + deal.deal_ref + " " : ""}${deal.name || ""}`.trim() : "", dt ? `Deal type: ${dt}` : "", role ? `Role: ${role}${isClient ? " (BGP's client)" : " (counterparty)"}` : "",
+      note: [deal ? `BGP transaction ${deal.deal_ref ? "#" + deal.deal_ref + " " : ""}${deal.name || ""}`.trim() : "", dt ? `Transaction type: ${dt}` : "", role ? `Role: ${role}${isClient ? " (BGP's client)" : " (counterparty)"}` : "",
         entity ? (signsAsPerson ? `Contracting party: ${entity.name}, a private individual, for ${company.name}` : `Contracting company: ${entity.name}${entity.companies_house_number ? ` (Companies House ${entity.companies_house_number})` : ""}, trading as ${company.name}`) : "",
         !isClient && partyPerson ? `Person to ask: ${[partyPerson.name, partyPerson.email, partyPerson.mobile].filter(Boolean).join(", ")}` : "",
         trustNote, relianceNote, flagNote, checkedNote].filter(Boolean).join("\n").slice(0, 4000),

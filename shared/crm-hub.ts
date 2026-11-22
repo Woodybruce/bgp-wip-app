@@ -93,7 +93,7 @@ export function lenderSubType(companyType: string | null | undefined): LenderSub
 // ── The brands BGP is working ───────────────────────────────────────────────
 
 export interface BrandWorkSignals { onStrategy: boolean; openAction: boolean; liveDeal: boolean; requirement: boolean; hunterPick: boolean }
-export const BRAND_WHY = { onStrategy: "On a strategy", openAction: "Open action", liveDeal: "Live deal", requirement: "Requirement", hunterPick: "Super Brand" } as const;
+export const BRAND_WHY = { onStrategy: "On a strategy", openAction: "Open action", liveDeal: "Live transaction", requirement: "Requirement", hunterPick: "Super Brand" } as const;
 /**
  * Why a brand is on the CRM list, in a fixed order; an empty answer means it
  * is not on it. On a CRM strategy that is not completed, an open CRM action,
@@ -138,7 +138,7 @@ const trimNumber = (value: number) => String(Math.round(value * 100) / 100);
 export function landlordLine(counts: { properties?: number; deals?: number }): string | null {
   const parts = [
     counts.properties ? plural(counts.properties, "property", "properties") : "",
-    counts.deals ? plural(counts.deals, "live deal", "live deals") : "",
+    counts.deals ? plural(counts.deals, "live transaction", "live transactions") : "",
   ].filter(Boolean);
   return parts.length ? parts.join(" · ") : null;
 }

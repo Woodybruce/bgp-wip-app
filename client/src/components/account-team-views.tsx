@@ -177,11 +177,11 @@ function LeasingTeamView({ leasing }: {leasing: AccountLeasingData}) {
           {agents.length ? agents.map(agent => <div key={agent.userId} className="space-y-1" data-testid={`account-leasing-agent-${agent.userId}`}>
             <p className="text-sm font-medium">{agent.name}</p>
             {groupLeasingContexts(agent.contexts).map(group => <div key={group.key} className="text-[11px] text-muted-foreground space-y-0.5" data-testid="leasing-role-group">
-              <p><Link className="hover:underline" href={group.historyOnly && group.primary.propertyId ? `/properties/${encodeURIComponent(group.primary.propertyId)}` : group.primary.href}>{group.primary.propertyName || "Account"} · {group.primary.role}</Link>{group.historyOnly ? " · Recorded deal involvement" : null}</p>
+              <p><Link className="hover:underline" href={group.historyOnly && group.primary.propertyId ? `/properties/${encodeURIComponent(group.primary.propertyId)}` : group.primary.href}>{group.primary.propertyName || "Account"} · {group.primary.role}</Link>{group.historyOnly ? " · Recorded transaction involvement" : null}</p>
               {(group.dealEvidence.length > 0 || group.savedEvidence.length > 1) && <details>
-                <summary className="cursor-pointer hover:text-foreground">{group.dealEvidence.length > 0 ? <><span className="font-mono tabular-nums">{group.dealEvidence.length}</span> recorded deal{group.dealEvidence.length === 1 ? "" : "s"}{group.savedEvidence.length > 1 ? " · role evidence" : ""}</> : "Role evidence"}</summary>
+                <summary className="cursor-pointer hover:text-foreground">{group.dealEvidence.length > 0 ? <><span className="font-mono tabular-nums">{group.dealEvidence.length}</span> recorded transaction{group.dealEvidence.length === 1 ? "" : "s"}{group.savedEvidence.length > 1 ? " · role evidence" : ""}</> : "Role evidence"}</summary>
                 <ul className="mt-1 space-y-1 border-l pl-2">
-                  {group.evidence.map((evidence, index) => <li key={`${evidence.basis}-${evidence.href}-${index}`}><Link className="hover:underline" href={evidence.href}>{evidence.label || (evidence.basis === "deal_record" ? "Recorded deal" : evidence.role)}</Link></li>)}
+                  {group.evidence.map((evidence, index) => <li key={`${evidence.basis}-${evidence.href}-${index}`}><Link className="hover:underline" href={evidence.href}>{evidence.label || (evidence.basis === "deal_record" ? "Recorded transaction" : evidence.role)}</Link></li>)}
                 </ul>
               </details>}
             </div>)}
@@ -362,8 +362,8 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                     title={spaceTitle(u)} right={<>{u.sqft ? <span className="text-xs font-mono tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}{u.status && <RowPill>{statusLabel(u.status)}</RowPill>}</>} />
                 ))}</div>}
               </Section>
-              <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand (a live tenant rep deal or search) — <Link href="/tenant-rep" className="text-primary hover:underline">Tenant rep board</Link>. A brand with no note has a requirement a BGP person confirmed in the last 90 days; "to confirm" and "listing" (an unconfirmed market listing) are weaker. Hover a brand for the date.</p>
-              <Section title="BGP acting for tenants here" count={tr.deals.length} link="/deals/list?team=Tenant%20Rep" linkLabel="Tenant rep deals" empty="No live tenant rep deals on their schemes.">
+              <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand (a live tenant rep transaction or search) — <Link href="/tenant-rep" className="text-primary hover:underline">Tenant rep board</Link>. A brand with no note has a requirement a BGP person confirmed in the last 90 days; "to confirm" and "listing" (an unconfirmed market listing) are weaker. Hover a brand for the date.</p>
+              <Section title="BGP acting for tenants here" count={tr.deals.length} link="/deals/list?team=Tenant%20Rep" linkLabel="Tenant rep transactions" empty="No live tenant rep transactions on their schemes.">
                 {tr.deals.length > 0 && <div className="space-y-1">{tr.deals.slice(0, 6).map((d: any) => (
                   <Row key={d.id} href={`/deals/${d.id}`} title={d.tenant_name || d.name} sub={[d.property_name, d.deal_type].filter(Boolean).join(" · ")} right={d.status && <RowPill>{statusLabel(d.status)}</RowPill>} />
                 ))}</div>}
@@ -378,13 +378,13 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
 
         {data && tab === "agents" && (
           <div data-testid="team-view-agents">
-            <Section title="Joint / other agents across their estate" count={data.agents.length} link="/contacts?tab=agents" linkLabel="CRM agents" empty="No agents recorded against their properties, deals or account.">
+            <Section title="Joint / other agents across their estate" count={data.agents.length} link="/contacts?tab=agents" linkLabel="CRM agents" empty="No agents recorded against their properties, transactions or account.">
               {data.agents.length > 0 && <div className="grid gap-1 [@container(min-width:720px)]:grid-cols-2">{data.agents.slice(0, 20).map((a: any) => (
                 <Row key={a.firmId} href={`/companies/${a.firmId}`} title={a.name}
                   sub={[
                     a.represents.length ? `Acts for them: ${a.represents.join(", ")}` : null,
                     a.competing.length ? `Instructed on ${a.competing.slice(0, 2).join(", ")}${a.competing.length > 2 ? ` +${a.competing.length - 2}` : ""}` : null,
-                    a.deals ? `${a.deals} deal${a.deals === 1 ? "" : "s"} here${a.openDeals ? `, ${a.openDeals} live` : ""}` : null,
+                    a.deals ? `${a.deals} transaction${a.deals === 1 ? "" : "s"} here${a.openDeals ? `, ${a.openDeals} live` : ""}` : null,
                     a.viewings ? `brought ${a.viewings} viewing${a.viewings === 1 ? "" : "s"}` : null,
                   ].filter(Boolean).join(" · ")}
                   right={<>{Object.keys(a.roles).slice(0, 2).map(r => <RowPill key={r}>{AGENT_ROLES.find(x => x.role === r)?.short || r}</RowPill>)}</>} />

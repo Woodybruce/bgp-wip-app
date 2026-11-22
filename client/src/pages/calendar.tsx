@@ -377,7 +377,7 @@ function findCrmLinks(
     const dProp = (d.property_name || "").toLowerCase();
     const dComp = (d.company_name || "").toLowerCase();
     if (dProp.length > 3 && subject.includes(dProp)) {
-      links.deals.push({ id: d.id, name: d.property_name || "Deal" });
+      links.deals.push({ id: d.id, name: d.property_name || "Transaction" });
     } else if (dComp.length > 3 && links.companies.some(c => c.name.toLowerCase() === dComp)) {
       links.deals.push({ id: d.id, name: `${d.property_name || ""} — ${d.company_name || ""}`.trim() });
     }
@@ -998,7 +998,7 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
                 <Handshake className="w-3 h-3 text-muted-foreground" />
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Deal Context</p>
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Transaction Context</p>
               </div>
               <p className="text-[11px] text-foreground/80 leading-relaxed">{briefing.dealContext}</p>
             </div>

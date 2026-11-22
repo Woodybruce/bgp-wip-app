@@ -47,7 +47,7 @@ export const AML_RULES: AmlRuleGroup[] = [
       { text: "A tenant: once the landlord accepts their offer. ID is checked before anything is signed. No deposit before the checks are done.", refs: ["amlg2300"] },
       { text: "A letting under £10,000 a month is outside HMRC's rules. We still run sanctions checks.", refs: ["amlg2300", "bgp_policy"] },
       { text: "Anyone acting for a party, such as an agent or a director: identify them and check they can act.", refs: ["amlg2200", "amlg2300"] },
-      { text: "Someone else paying our invoice: find out why and check them. No link to the deal is high risk.", refs: ["amlg3200"] },
+      { text: "Someone else paying our invoice: find out why and check them. No link to the transaction is high risk.", refs: ["amlg3200"] },
     ],
   },
   {
@@ -67,7 +67,7 @@ export const AML_RULES: AmlRuleGroup[] = [
       { text: "A company: its register entry, its directors, and anyone who owns more than 25% or controls it.", refs: ["mlr_reg5", "amlg11400"] },
       { text: "A person: photo ID and proof of address from the last 3 months. The online ID check counts as photo ID.", refs: ["amlg11400", "bgp_policy"] },
       { text: "Where the money comes from.", refs: ["amlg11630"] },
-      { text: "Sanctions: everyone, on every deal, at any rent. A match goes to the Nominated Officer, who reports it to OFSI.", refs: ["ofsi", "bgp_policy"] },
+      { text: "Sanctions: everyone, on every transaction, at any rent. A match goes to the Nominated Officer, who reports it to OFSI.", refs: ["ofsi", "bgp_policy"] },
     ],
   },
   {
@@ -102,7 +102,7 @@ export const AML_RULES: AmlRuleGroup[] = [
   {
     title: "Records",
     rules: [
-      { text: "Keep the checks and the deal records for 5 years after the deal or the instruction ends.", refs: ["amlg11700"] },
+      { text: "Keep the checks and the transaction records for 5 years after the transaction or the instruction ends.", refs: ["amlg11700"] },
     ],
   },
 ];

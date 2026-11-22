@@ -63,7 +63,7 @@ const LIST_KIND = { landlords: "landlord", brands: "brand", agents: "agent", len
 const SUBTITLE: Record<PeopleTab, string> = {
   overview: "Events, strategies and the next steps for our relationships.",
   landlords: "Every landlord account: who owns it, when we last spoke and the next step.",
-  brands: "The brands we are working: on a strategy, with an action, a live deal or a requirement.",
+  brands: "The brands we are working: on a strategy, with an action, a live transaction or a requirement.",
   agents: "Every agent firm: who owns it, when we last spoke and the next step.",
   lenders: "Every lender: who owns it, when we last spoke and the next step.",
   diary: "Everything dated across landlords, brands, agents and lenders.",

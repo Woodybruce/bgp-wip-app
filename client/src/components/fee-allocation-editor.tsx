@@ -230,7 +230,7 @@ export function FeeAllocationEditor({
 
       {agentRows.length === 0 && !firmOnly ? (
         <p className="text-[11px] text-muted-foreground italic">
-          {hideHouseNote ? "Add the BGP agents earning on this deal." : `Add the agents earning on this deal — BGP House is already taking ${BGP_HOUSE_PCT}%.`}
+          {hideHouseNote ? "Add the BGP agents earning on this transaction." : `Add the agents earning on this transaction — BGP House is already taking ${BGP_HOUSE_PCT}%.`}
         </p>
       ) : (
         <div className="space-y-1.5">

@@ -136,11 +136,11 @@ async function notRequiredOn(dealId: string, deal: AmlGateInput): Promise<Set<st
 /** What a client login is told when the MLRO's block stops a deal: that it
  *  is held, never which party was rejected or why (the Letting Tracker's
  *  rule, used wherever the block answers a client). BGP staff get the detail. */
-export const AML_HELD_FOR_CLIENT = "This deal cannot move on yet. BGP's compliance team has to clear it first: ask BGP.";
+export const AML_HELD_FOR_CLIENT = "This transaction cannot move on yet. BGP's compliance team has to clear it first: ask BGP.";
 
 export function amlGateOutcome(result: AmlGateResult): { block: string | null; warning: string | null } {
   const rejected = result.notReady.filter(c => c.reason === "rejected");
-  if (rejected.length) return { block: `AML: ${rejected.map(c => `${c.name} (${c.role})`).join(", ")} rejected by the MLRO — the deal can't progress until the MLRO clears it.`, warning: null };
+  if (rejected.length) return { block: `AML: ${rejected.map(c => `${c.name} (${c.role})`).join(", ")} rejected by the MLRO — the transaction can't progress until the MLRO clears it.`, warning: null };
   return { block: null, warning: formatAmlWarning(result) };
 }
 
@@ -202,7 +202,7 @@ async function alertOfficersOfOutstandingChecks(dealId: string, code: "EXC" | "C
   const sent = await sendKycEmail({
     to,
     build: (from) => amlOutstandingAtCompletionEmail({
-      dealName: deal?.name || "A deal", dealRef: deal?.deal_ref ?? null, stage: code === "EXC" ? "Exchanged" : "Completed",
+      dealName: deal?.name || "A transaction", dealRef: deal?.deal_ref ?? null, stage: code === "EXC" ? "Exchanged" : "Completed",
       movedBy: ctx.actorName || null, parties: result.notReady.map(c => ({ name: c.name, role: c.role, reason: c.reason })), link, sentFrom: from,
     }),
   });
@@ -216,7 +216,7 @@ async function alertOfficersOfOutstandingChecks(dealId: string, code: "EXC" | "C
 }
 
 export function formatAmlWarning(result: AmlGateResult): string | null {
-  if (!result.hasCounterparties) return "Deal has no counterparties linked — AML can't run.";
+  if (!result.hasCounterparties) return "Transaction has no counterparties linked — AML can't run.";
   if (result.notReady.length === 0) return null;
   return `AML not complete: ${result.notReady.map(c => `${c.name} (${c.reason})`).join(", ")}.`;
 }
@@ -339,7 +339,7 @@ export async function dealStatusTransitionDenial(
     }
   }
   if (["COM", "INV"].includes(targetCode) && !isSenior) {
-    return { status: 403, error: `Senior approval required to mark deals as ${newStatusRaw}` };
+    return { status: 403, error: `Senior approval required to mark transactions as ${newStatusRaw}` };
   }
   if (["SOL", "EXC", "COM", "INV"].includes(targetCode) && deal.aml_check_completed !== "YES") {
     const parties: AmlGateInput = {

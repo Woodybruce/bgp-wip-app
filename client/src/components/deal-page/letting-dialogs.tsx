@@ -30,7 +30,7 @@ export function LettingDialogs({ dealId, letting, dialog, setDialog }: {
   const toNegotiating = useMutation({
     mutationFn: async () => (await apiRequest("PATCH", `/api/available-units/${letting!.trackerId}`, { marketingStatus: "NEG" })).json(),
     onSuccess: () => { invalidateDealCaches(dealId); refresh(); },
-    onError: (e: any) => toast({ title: "The deal was not moved to Negotiating", description: e?.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title: "The transaction was not moved to Negotiating", description: e?.message, variant: "destructive" }),
   });
   if (!letting) return null;
   const unit = { id: letting.trackerId, unitName: letting.unitName, propertyId: letting.propertyId || "" };

@@ -171,7 +171,7 @@ function fmtMoney(pence: number | undefined | null): string {
 }
 
 const QUICK_LINKS = [
-  { label: "Deals", icon: BarChart3, to: "/deals", tint: "bg-purple-100 text-purple-700" },
+  { label: "Transactions", icon: BarChart3, to: "/deals", tint: "bg-purple-100 text-purple-700" },
   { label: "Expenses", icon: Receipt, to: "/m/expenses", tint: "bg-rose-100 text-rose-700" },
   { label: "Images", icon: ImageIcon, to: "/m/images", tint: "bg-blue-100 text-blue-700" },
   { label: "CRM", icon: Handshake, to: "/contacts", tint: "bg-emerald-100 text-emerald-700" },
@@ -184,7 +184,7 @@ const PORTFOLIO_LINKS = [
   { label: "Tracker", icon: ClipboardList, to: "/available", tint: "bg-emerald-100 text-emerald-700" },
   { label: "Requirements", icon: FileText, to: "/requirements", tint: "bg-violet-100 text-violet-700" },
   { label: "Brands", icon: Store, to: "/brands", tint: "bg-amber-100 text-amber-700" },
-  { label: "Deals", icon: BarChart3, to: "/deals", tint: "bg-purple-100 text-purple-700" },
+  { label: "Transactions", icon: BarChart3, to: "/deals", tint: "bg-purple-100 text-purple-700" },
   { label: "Images", icon: ImageIcon, to: "/m/images", tint: "bg-blue-100 text-blue-700" },
   { label: "CRM", icon: Handshake, to: "/contacts", tint: "bg-emerald-100 text-emerald-700" },
   { label: "Calendar", icon: CalendarIcon, to: "/calendar", tint: "bg-amber-100 text-amber-700" },

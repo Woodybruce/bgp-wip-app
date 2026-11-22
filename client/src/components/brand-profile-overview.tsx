@@ -267,7 +267,7 @@ const plannedSource = (store: OverviewStore): string | null => {
     // the property; keep only what the deal name adds.
     const place = store.name.toLowerCase();
     const rest = String(notes.bgpDeal?.name || "").split(/\s+[-–:]\s+|,\s*/).filter(p => p.trim() && !place.includes(p.trim().toLowerCase()) && !p.trim().toLowerCase().includes(place)).join(" · ");
-    return `BGP deal${notes.bgpDeal?.status ? ` · ${DEAL_STAGE[notes.bgpDeal.status] || notes.bgpDeal.status}` : ""}${rest ? ` · ${rest}` : ""}`;
+    return `BGP transaction${notes.bgpDeal?.status ? ` · ${DEAL_STAGE[notes.bgpDeal.status] || notes.bgpDeal.status}` : ""}${rest ? ` · ${rest}` : ""}`;
   }
   if (notes.openingSignal?.headline) return `News · ${notes.openingSignal.headline}`;
   if (store.source_type === "official_website") return "Brand website";

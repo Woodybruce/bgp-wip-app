@@ -29,7 +29,7 @@ export function TeamStructureDialog({ open, onClose }: { open: boolean; onClose:
   const apply = useMutation({
     mutationFn: async () => (await apiRequest("POST", "/api/admin/team-structure/apply", { force: !!preview.data?.applied })).json(),
     onSuccess: (r: any) => {
-      toast({ title: "New team structure applied", description: `${r.users} people, ${r.properties} properties, ${r.deals} deals, ${r.wip} WIP rows moved. Change any team on the deal or property.` });
+      toast({ title: "New team structure applied", description: `${r.users} people, ${r.properties} properties, ${r.deals} transactions, ${r.wip} WIP rows moved. Change any team on the transaction or property.` });
       queryClient.invalidateQueries();
       onClose();
     },
@@ -44,7 +44,7 @@ export function TeamStructureDialog({ open, onClose }: { open: boolean; onClose:
           <DialogTitle>New team structure</DialogTitle>
           <DialogDescription>
             Shopping Centre, London Estate, High Street and City replace the old leasing teams; Investment, Tenant Rep and Lease Advisory stay.
-            People follow the One to Ones tab. Each property gets one team — a best guess from its deals' agents and its location — and so do its deals.
+            People follow the One to Ones tab. Each property gets one team — a best guess from its transactions' agents and its location — and so do its transactions.
             Fee shares per agent and Xero are not touched. Old values are backed up.
           </DialogDescription>
         </DialogHeader>
@@ -53,7 +53,7 @@ export function TeamStructureDialog({ open, onClose }: { open: boolean; onClose:
           : plan && (
             <div className="space-y-4 text-sm">
               {preview.data?.applied && <p className="text-xs text-muted-foreground">Applied {new Date(preview.data.applied.at).toLocaleString("en-GB")}. Anything below is still on an old team.</p>}
-              <p className="tabular-nums">{plan.userChanges.length} people · {plan.propChanges.length} properties · {plan.dealChanges.length} deals · {plan.wipChanges.length} WIP rows to move</p>
+              <p className="tabular-nums">{plan.userChanges.length} people · {plan.propChanges.length} properties · {plan.dealChanges.length} transactions · {plan.wipChanges.length} WIP rows to move</p>
               {(plan.newStaff?.length || plan.renames?.length || plan.profilesNeeded?.length) ? <section className="text-xs space-y-0.5">
                 {plan.newStaff?.map(n => <p key={n.email}>New login and HR profile: <strong>{n.name}</strong> ({n.email}{n.team ? `, ${n.team}` : ""})</p>)}
                 {plan.renames?.map(r => <p key={r.id}>Renamed: {r.from} → <strong>{r.to}</strong></p>)}

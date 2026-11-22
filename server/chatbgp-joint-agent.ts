@@ -132,7 +132,7 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
-    name: "ja_get_unit", description: "One unit at your schemes in full: its tenancy, tracker row, viewings, offers, Targeting Brief with its target brands, the deal and its clock, and the agreed brief.", idArg: "unitId",
+    name: "ja_get_unit", description: "One unit at your schemes in full: its tenancy, tracker row, viewings, offers, Targeting Brief with its target brands, the transaction and its clock, and the agreed brief.", idArg: "unitId",
     path: id => `/api/landsec/unit/${id}`,
     spec: {
       unit: {
@@ -161,7 +161,7 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
-    name: "ja_list_deals", description: "The live deals at your schemes with the deal clock: stage, days at stage, who each is waiting on, net effective rent and the brief check.",
+    name: "ja_list_deals", description: "The live transactions at your schemes with the transaction clock: stage, days at stage, who each is waiting on, net effective rent and the brief check.",
     path: () => "/api/landsec/deals",
     narrow: (j, s) => ({ deals: atProps(j?.deals, s), ...(s.narrowed ? {} : { parties: j?.parties }) }),
     spec: {
@@ -211,7 +211,7 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
-    name: "ja_get_deal_checklist", description: "The deal checklist on a unit at your schemes: each item by stage, who is responsible and what is done.", idArg: "unitId",
+    name: "ja_get_deal_checklist", description: "The transaction checklist on a unit at your schemes: each item by stage, who is responsible and what is done.", idArg: "unitId",
     path: id => `/api/deal-checklists/unit/${id}`,
     spec: {
       started: P,
@@ -262,7 +262,7 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
-    name: "ja_diary", description: "The shared diary at your schemes: deals waiting on someone, viewings and the actions shared with you, by date.",
+    name: "ja_diary", description: "The shared diary at your schemes: transactions waiting on someone, viewings and the actions shared with you, by date.",
     path: () => "/api/landsec/diary",
     spec: {
       items: [{ kind: P, title: P, date: P, daysWaiting: P, overdue: P, brand: { name: P }, scheme: { name: P }, unitLabel: P, owner: P, waitingOn: { side: P, name: P }, status: P }],
@@ -300,9 +300,9 @@ export const JOINT_AGENT_TOOLS: ReadonlyArray<any> = Object.freeze(TOOLS.map(t =
 })));
 export const JOINT_AGENT_TOOL_NAMES: ReadonlySet<string> = new Set(TOOLS.map(t => t.name));
 
-export const JOINT_AGENT_TOOL_REFUSAL = "This chat can only read your own schemes: their units, briefs, viewings, offers, Heads of Terms, checklists, recommendations, deals, tasks and Brand CRM lines.";
+export const JOINT_AGENT_TOOL_REFUSAL = "This chat can only read your own schemes: their units, briefs, viewings, offers, Heads of Terms, checklists, recommendations, transactions, tasks and Brand CRM lines.";
 export const JOINT_AGENT_UNVERIFIED = "Your account could not be verified. Please try again.";
-export const JOINT_AGENT_SHARED_TOOL_REFUSAL = "In this conversation ChatBGP reads only the schemes every joint agent here shares: their units, briefs, viewings, offers, Heads of Terms, checklists, recommendations and deals.";
+export const JOINT_AGENT_SHARED_TOOL_REFUSAL = "In this conversation ChatBGP reads only the schemes every joint agent here shares: their units, briefs, viewings, offers, Heads of Terms, checklists, recommendations and transactions.";
 
 // Null only for one of the fixed names.
 export function jointAgentToolRefusal(name: unknown): string | null {
@@ -477,7 +477,7 @@ export interface JointAgentChatDeps extends JointAgentRunDeps {
 }
 
 const PROGRESS: Record<string, string> = {
-  ja_my_schemes: "Reading your schemes...", ja_list_units: "Reading your tracker...", ja_get_unit: "Reading the unit...", ja_list_deals: "Reading your deals...",
+  ja_my_schemes: "Reading your schemes...", ja_list_units: "Reading your tracker...", ja_get_unit: "Reading the unit...", ja_list_deals: "Reading your transactions...",
   ja_get_brief: "Reading the brief...", ja_get_offers: "Reading the offers...", ja_get_negotiation: "Reading the negotiation...", ja_get_heads_of_terms: "Reading the Heads of Terms...",
   ja_get_deal_checklist: "Reading the checklist...", ja_get_recommendation: "Reading the recommendation...", ja_list_viewings: "Reading the viewings...",
   ja_my_tasks: "Reading your tasks...", ja_brand_crm_lines: "Reading the Brand CRM...", ja_diary: "Reading the diary...",

@@ -47,7 +47,7 @@ export function AmlRetentionBoard() {
   return (
     <div className="space-y-3" data-testid="aml-retention-board">
       <p className="text-sm text-muted-foreground">
-        The Money Laundering Regulations keep due diligence for five years after the business relationship ends, then the personal data is deleted. A party is due only when its latest check is over five years old and every deal it was on ended over five years ago. Nothing goes by itself: preview, tick, then type {RETENTION_CONFIRM_WORD}. KYC4U keeps its own records; its next sync may copy back what it still holds.
+        The Money Laundering Regulations keep due diligence for five years after the business relationship ends, then the personal data is deleted. A party is due only when its latest check is over five years old and every transaction it was on ended over five years ago. Nothing goes by itself: preview, tick, then type {RETENTION_CONFIRM_WORD}. KYC4U keeps its own records; its next sync may copy back what it still holds.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" size="sm" variant="outline" disabled={preview.isPending} onClick={() => preview.mutate()} data-testid="aml-retention-preview">

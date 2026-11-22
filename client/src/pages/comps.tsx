@@ -694,7 +694,7 @@ function DealCell({
           value={search}
           onChange={e => setSearch(e.target.value)}
           onBlur={() => setTimeout(() => setEditing(false), 150)}
-          placeholder={current?.name || "Search deal..."}
+          placeholder={current?.name || "Search transaction..."}
           className="h-7 text-xs"
         />
         <div className="absolute z-50 mt-1 w-56 max-h-48 overflow-y-auto bg-popover border rounded-md shadow-md">
@@ -703,7 +703,7 @@ function DealCell({
               onMouseDown={() => { onSave(""); setEditing(false); }}
               className="w-full text-left px-2 py-1.5 text-xs hover:bg-muted text-destructive"
             >
-              <X className="w-3 h-3 inline mr-1" /> Unlink deal
+              <X className="w-3 h-3 inline mr-1" /> Unlink transaction
             </button>
           )}
           {filtered.map(d => (
@@ -716,7 +716,7 @@ function DealCell({
             </button>
           ))}
           {filtered.length === 0 && (
-            <div className="px-2 py-2 text-xs text-muted-foreground">No matching deals</div>
+            <div className="px-2 py-2 text-xs text-muted-foreground">No matching transactions</div>
           )}
         </div>
       </div>
@@ -729,7 +729,7 @@ function DealCell({
       className={`text-xs hover:bg-muted/60 rounded px-1.5 py-0.5 truncate block w-full text-left ${current ? "text-blue-700 dark:text-blue-400 font-medium" : "text-muted-foreground italic"}`}
       data-testid="deal-cell"
     >
-      {current?.name || "Link deal"}
+      {current?.name || "Link transaction"}
     </button>
   );
 }
@@ -2685,7 +2685,7 @@ export default function Comps() {
             </h3>
             <p className="text-xs text-muted-foreground mb-4">
               {comps.length > 0 ? "Try adjusting your filters"
-                : isClientComps ? "Your BGP team adds comps as deals complete."
+                : isClientComps ? "Your BGP team adds comps as transactions complete."
                 : "Add your first comparable transaction or ask ChatBGP to extract from your OneDrive files"}
             </p>
             {comps.length === 0 && !isClientComps && (
@@ -2808,7 +2808,7 @@ export default function Comps() {
                 <SortHeader field="ltActStatus">L&T Act</SortHeader>
                 <SortHeader field="sourceUrl">Source</SortHeader>
                 <SortHeader field="contactName">Contact</SortHeader>
-                <SortHeader field="dealId">Deal</SortHeader>
+                <SortHeader field="dealId">Transaction</SortHeader>
                 <SortHeader field="verified">Ver.</SortHeader>
                 <SortHeader field="comments">Comments</SortHeader>
               </tr>
@@ -3607,8 +3607,8 @@ export default function Comps() {
               updateMutation.mutate({ id, field: "verified", value: true });
             });
             toast({
-              title: `${ids.length} comp${ids.length !== 1 ? "s" : ""} added to deal`,
-              description: "Comps marked as verified and linked to the deal pack.",
+              title: `${ids.length} comp${ids.length !== 1 ? "s" : ""} added to transaction`,
+              description: "Comps marked as verified and linked to the transaction pack.",
             });
           }}
         />
@@ -4245,19 +4245,19 @@ function DealCompPackPanel({
         <div>
           <h3 className="text-sm font-semibold flex items-center gap-2">
             <FileDown className="w-4 h-4 text-primary" />
-            Deal Comp Pack
+            Transaction Comp Pack
           </h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Link comps to a live deal, then export a comp pack summary sheet. Adding a comp here marks it verified.
+            Link comps to a live transaction, then export a comp pack summary sheet. Adding a comp here marks it verified.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Select value={selectedDealId || "__none__"} onValueChange={(v) => setSelectedDealId(v === "__none__" ? "" : v)}>
             <SelectTrigger className="h-8 w-64 text-xs">
-              <SelectValue placeholder="Select a deal..." />
+              <SelectValue placeholder="Select a transaction..." />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="__none__">— Choose deal —</SelectItem>
+              <SelectItem value="__none__">— Choose transaction —</SelectItem>
               {deals.map(d => (
                 <SelectItem key={d.id} value={d.id}>
                   {d.name}{d.status ? ` · ${d.status}` : ""}
@@ -4294,7 +4294,7 @@ function DealCompPackPanel({
           </div>
           {linkedComps.length === 0 ? (
             <div className="text-xs text-muted-foreground italic p-3 border border-dashed rounded">
-              No comps linked yet. Click "Add comps" to attach existing comps, or link them individually from the table (Deal column).
+              No comps linked yet. Click "Add comps" to attach existing comps, or link them individually from the table (Transaction column).
             </div>
           ) : (
             <div className="border rounded overflow-hidden">
@@ -4335,7 +4335,7 @@ function DealCompPackPanel({
         </div>
       ) : (
         <div className="text-xs text-muted-foreground italic">
-          Pick a deal above to start building its comp pack.
+          Pick a transaction above to start building its comp pack.
         </div>
       )}
 
@@ -4343,7 +4343,7 @@ function DealCompPackPanel({
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle>
-              Add comps to {selectedDeal?.name || "deal"}
+              Add comps to {selectedDeal?.name || "transaction"}
             </DialogTitle>
           </DialogHeader>
           <div className="px-1 pb-2">

@@ -41,14 +41,14 @@ test('BGP staff get the list grouped by date, the kind pills with counts, Add ac
   const view = draw(true, diary(staffItems, { canAddAction: true, warnings: ['Viewings could not be read.'] }));
   assert.match(view.text, /4 items · 1 overdue · 1 waiting on someone/);
   assert.match(view.text, /Group by Date Person Brand Scheme/);
-  assert.match(view.text, /Everything 4 CRM actions 2 Viewings booked 1 Deals waiting 1 Waiting on Landsec 1/);
+  assert.match(view.text, /Everything 4 CRM actions 2 Viewings booked 1 Transactions waiting 1 Waiting on Landsec 1/);
   // Sections in order: Overdue, This week, Next week, Waiting. No empty Later section.
   const order = ['Overdue 1', 'This week 1', 'Next week 1', 'Waiting 1'].map(label => view.text.indexOf(label));
   assert.ok(order.every((at, i) => at > -1 && (i === 0 || at > order[i - 1])), order.join(','));
   assert.doesNotMatch(view.text, /Later 0|Later 1/);
   assert.match(view.text, /Agree the extraction route CRM actions Test Subs Bluewater · Unit L104 Alex Todd Landsec asset manager/);
   assert.match(view.text, /Send the plans CRM actions Raised by the client · In progress/);
-  assert.match(view.text, /12 days waiting Deal waiting on Tenant Deals waiting Yo Chi White Rose Sam Reed Tenant/);
+  assert.match(view.text, /12 days waiting Deal waiting on Tenant Transactions waiting Yo Chi White Rose Sam Reed Tenant/);
   assert.ok(view.ids.includes('brand-diary-add-action') && !view.ids.includes('brand-diary-add-request'));
   assert.deepEqual(view.ids.filter(id => id.startsWith('brand-diary-done-')), ['brand-diary-done-crm_action:late']);
   for (const id of ['brand-diary-group-date', 'brand-diary-group-person', 'brand-diary-group-brand', 'brand-diary-group-scheme', 'brand-diary-kind-all', 'brand-diary-kind-crm_action',

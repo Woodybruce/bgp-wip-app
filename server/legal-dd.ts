@@ -512,7 +512,7 @@ export function registerLegalDDRoutes(app: Express) {
     const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
 
     if (rawFiles.length === 0) return res.status(400).json({ message: "No files uploaded" });
-    if (!dealName) return res.status(400).json({ message: "Deal name is required" });
+    if (!dealName) return res.status(400).json({ message: "Transaction name is required" });
     if (!userId) return res.status(401).json({ message: "Not signed in" });
 
     try {
@@ -901,7 +901,7 @@ export function registerLegalDDRoutes(app: Express) {
       res.json({ linked: true, crmDealId });
     } catch (err: any) {
       console.error("[legal-dd] dispatch crm-deal error:", err?.message);
-      res.status(500).json({ message: err?.message || "Failed to link CRM deal" });
+      res.status(500).json({ message: err?.message || "Failed to link CRM transaction" });
     }
   });
 

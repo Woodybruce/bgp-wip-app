@@ -357,7 +357,7 @@ router.post("/api/goad/ownership-narrative", requireAuth, async (req: Request, r
       `Walk the Companies House PSC / parent-company chain, check the BGP CRM for any relationship history, and search news if needed. ` +
       `Reply in UNDER 130 words, plain text with these four lines:\n` +
       `Controller: <the fund / family office / individual that ultimately controls it, 1-2 sentences>\n` +
-      `BGP link: <deals, properties or contacts we have with them, or "none found">\n` +
+      `BGP link: <transactions, properties or contacts we have with them, or "none found">\n` +
       `Other holdings: <notable UK property they hold, or "none found">\n` +
       `Flags: <risk flags, or "none">`;
 

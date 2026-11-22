@@ -101,8 +101,8 @@ const TARGETS: Record<IngestTarget, TargetSpec> = {
     // The deal pickers no longer offer Withdrawn (shared/deal-status.ts,
     // INVESTMENT_ONLY_PICKS), but old rows carry it: an import still writes it.
     fields: `
-      name (string, deal name),
-      property_address (string or null — the property this deal is on),
+      name (string, transaction name),
+      property_address (string or null — the property this transaction is on),
       deal_type (one of: ${INGEST_DEAL_TYPES.join(" | ")}),
       status (string — ${[...DEAL_PAGE_STATUSES, "WIT"].join(" | ")}),
       tenant_name (string or null),
@@ -193,7 +193,7 @@ const TARGETS: Record<IngestTarget, TargetSpec> = {
       rent_free (string or null — rent-free period),
       capex (string or null — capital contribution),
       term (string or null — lease term, e.g. "10 years"),
-      completion_date (string or null — date deal completed),
+      completion_date (string or null — date transaction completed),
       comments (string or null)
     `,
     matchKey: ["name"],
@@ -842,7 +842,7 @@ export interface CommitResult {
 // all that stands between a Deals import and the letting rules. Returns the
 // message to refuse with, or null when the commit may go ahead.
 export function ingestCommitRefusal(target: IngestTarget): string | null {
-  if (target === "crm_deals" && !LETTING_REPAIR_TOOLS_ENABLED) return `${LETTING_REPAIR_PAUSED} — create the deal on the Deals board`;
+  if (target === "crm_deals" && !LETTING_REPAIR_TOOLS_ENABLED) return `${LETTING_REPAIR_PAUSED} — create the transaction on the Transactions board`;
   return null;
 }
 

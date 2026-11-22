@@ -370,11 +370,11 @@ export async function postDenialForJointAgent(ja: ChatJointAgent, memberIds: Ite
   if (content.length > JOINT_AGENT_MESSAGE_MAX) return refuse("That message is too long");
   if (hasBrokenTag(content)) return refuse("That tag cannot be used here");
   const ids = tagIdsIn(content);
-  if (ids.other.length) return refuse("You can tag people in this conversation, and units and deals at your schemes");
+  if (ids.other.length) return refuse("You can tag people in this conversation, and units and transactions at your schemes");
   const members = new Set([...memberIds].filter(Boolean));
   if (ids.users.some(id => !members.has(id))) return refuse("You can only tag people who are in this conversation");
   const allow = await allowSetsFor(ja, [content], members);
-  if (ids.units.some(id => !allow.unitIds.has(id)) || ids.deals.some(id => !allow.dealIds.has(id))) return refuse("You can only tag units and live deals at your schemes");
+  if (ids.units.some(id => !allow.unitIds.has(id)) || ids.deals.some(id => !allow.dealIds.has(id))) return refuse("You can only tag units and live transactions at your schemes");
   let attachments: string[] | null = null;
   if (body.attachments !== undefined && body.attachments !== null) {
     if (!Array.isArray(body.attachments) || body.attachments.length > 30) return refuse("Those attachments cannot be sent");

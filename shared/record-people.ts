@@ -14,7 +14,7 @@ export const PEOPLE_GROUPS = [
   { key: "client", label: "Client's team" },
   { key: "owner", label: "Landlord and owner" },
   { key: "units", label: "Tenants and agents, by unit" },
-  { key: "deals", label: "Others on deals" },
+  { key: "deals", label: "Others on transactions" },
   { key: "advisers", label: "Advisers" },
   { key: "added", label: "Added by the team" },
 ] as const;

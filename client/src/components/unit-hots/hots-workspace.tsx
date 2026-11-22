@@ -285,10 +285,10 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
       setBusy(null);
     }
   };
-  const convert = (body: HotsConvertBody) => run("convert", "The deal was not converted", async () => {
+  const convert = (body: HotsConvertBody) => run("convert", "The transaction was not converted", async () => {
     const out = await hotsCall<HotsConversion>("POST", `${api}/convert`, body);
     setConverted(out);
-    toast({ title: "Converted to Solicitors", description: out.dealRef !== null ? `Deal #${out.dealRef} is now at Solicitors.` : "The deal is now at Solicitors." });
+    toast({ title: "Converted to Solicitors", description: out.dealRef !== null ? `Transaction #${out.dealRef} is now at Solicitors.` : "The transaction is now at Solicitors." });
   }, true);
 
   const header = (
@@ -298,7 +298,7 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
         <span className="min-w-0 break-words">Heads of Terms: {ws?.unit.unitName || unit.unitName}</span>
       </DialogTitle>
       <DialogDescription className="text-left">
-        {ws ? [ws.unit.propertyName, ws.unit.dealRef !== null ? `Deal #${ws.unit.dealRef}` : ""].filter(Boolean).join(" · ") || "Letting Tracker unit" : "Loading the Heads of Terms"}
+        {ws ? [ws.unit.propertyName, ws.unit.dealRef !== null ? `Transaction #${ws.unit.dealRef}` : ""].filter(Boolean).join(" · ") || "Letting Tracker unit" : "Loading the Heads of Terms"}
       </DialogDescription>
     </DialogHeader>
   );
@@ -344,7 +344,7 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
     : stage === "agreed" ? "issued" : stage === "issued" ? "final" : "solicitors";
   const waiting = ws.signers.filter(s => !s.agreedAt).map(s => s.name);
   const statusLine =
-    conversion ? `The deal ${conversion.dealRef !== null ? `#${conversion.dealRef} ` : ""}is at Solicitors.`
+    conversion ? `The transaction ${conversion.dealRef !== null ? `#${conversion.dealRef} ` : ""}is at Solicitors.`
     : stage === "no_template" ? (viewer.canManageTemplate ? "Start with this property's standard Heads of Terms." : "BGP or the joint agent adds the standard Heads of Terms for this property first.")
     : stage === "no_draft" ? "The standard is in place. The Heads of Terms are generated from the offer once its terms are agreed."
     : stage === "draft" ? (approval.total === 0 ? `Draft, version ${ws.version}. Nobody is listed on the brief to sign it off.` : `Draft, version ${ws.version}. Still to agree: ${listNames(waiting)}.`)
@@ -647,15 +647,15 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
               <div className="space-y-2 rounded-lg border p-3" data-testid="hots-convert-open">
                 <h3 className="text-sm font-semibold">Convert to Solicitors</h3>
                 <p className="text-xs text-muted-foreground">
-                  Opens the deal form, the same one as New Deal and Promote to Solicitors, with the agreed offer's tenant and terms filled in.
-                  Saving puts them on the deal, moves the unit and the deal to Solicitors and starts AML.
+                  Opens the transaction form, the same one as New Transaction and Promote to Solicitors, with the agreed offer's tenant and terms filled in.
+                  Saving puts them on the transaction, moves the unit and the transaction to Solicitors and starts AML.
                 </p>
                 <Button type="button" size="sm" disabled={!!busy} onClick={() => setConvertOpen(true)} data-testid="hots-convert-start">Convert to Solicitors</Button>
               </div>
             ) : viewer.canConvert && ws.convertDefaults ? (
               <HotsConvertForm defaults={ws.convertDefaults} busy={busy === "convert"} onConvert={convert} crmPicker={false} />
             ) : (
-              <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground" data-testid="hots-convert-wait">BGP or the joint agent converts the deal to Solicitors now that the final Heads of Terms are on file.</p>
+              <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground" data-testid="hots-convert-wait">BGP or the joint agent converts the transaction to Solicitors now that the final Heads of Terms are on file.</p>
             )}
             {ws.content && (
               <div className="space-y-2">

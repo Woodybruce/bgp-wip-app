@@ -162,9 +162,9 @@ export interface DealRuleInput {
  */
 export function dealSatisfiedQuestion(input: DealRuleInput): { ask: boolean; requirementId: string | null; why: string } {
   const no = (why: string) => ({ ask: false, requirementId: null, why });
-  if (!TAKING_SPACE_TYPES.includes(String(input.dealType ?? "").trim())) return no("not a deal in which the brand takes space");
+  if (!TAKING_SPACE_TYPES.includes(String(input.dealType ?? "").trim())) return no("not a transaction in which the brand takes space");
   if (!reachedSolicitors(input.oldStatus, input.newStatus)) return no("did not just reach solicitors");
-  if (!input.tenantId) return no("no brand on the deal");
+  if (!input.tenantId) return no("no brand on the transaction");
   if (!input.openRequirements.length) return no("the brand has no open requirement");
   const linked = input.dealId ? input.openRequirements.find(r => r.dealId && r.dealId === input.dealId) : undefined;
   const only = input.openRequirements.length === 1 ? input.openRequirements[0] : undefined;
@@ -179,7 +179,7 @@ export async function dealStatusChanged(dealId: string, oldStatus: string | null
         `SELECT d.id, d.deal_ref, d.name, d.deal_type, d.tenant_id, d.status, p.name AS property_name, pu.unit_name
            FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id LEFT JOIN property_units pu ON pu.id = d.unit_id
           WHERE d.id = $1`, [dealId])).rows[0];
-      if (!deal?.tenant_id) return skipped("no brand on the deal");
+      if (!deal?.tenant_id) return skipped("no brand on the transaction");
       const [brand] = await store.brandsByIds([deal.tenant_id]);
       if (!brand) return skipped("brand not found");
       const open = await openRequirementsOf(store, brand.id, now);
@@ -187,11 +187,11 @@ export async function dealStatusChanged(dealId: string, oldStatus: string | null
       if (!rule.ask) return skipped(rule.why);
       const where = [deal.unit_name, deal.property_name].filter(Boolean).join(", ") || deal.name || "a unit";
       const out = await suggest(store, {
-        kind: "deal", brand: { companyIds: [brand.id], name: brand.name }, sourceLabel: "Deal", sourceRef: String(deal.id), evidenceDate: now,
-        headline: `${deal.deal_ref ? `Deal #${deal.deal_ref}` : "A deal"} for ${brand.name} at ${where} reached solicitors. Mark the requirement as satisfied?`,
+        kind: "deal", brand: { companyIds: [brand.id], name: brand.name }, sourceLabel: "Transaction", sourceRef: String(deal.id), evidenceDate: now,
+        headline: `${deal.deal_ref ? `Transaction #${deal.deal_ref}` : "A transaction"} for ${brand.name} at ${where} reached solicitors. Mark the requirement as satisfied?`,
         url: `/deals/${encodeURIComponent(String(deal.id))}`,
         details: { proposal: PROPOSAL_MARK_SATISFIED, requirementId: rule.requirementId, dealId: String(deal.id), dealRef: deal.deal_ref ?? null, status: legacyToCode(newStatus) },
-        dedupeKey: `deal-solicitors:${deal.id}`, detectedBy: "Deal status rule",
+        dedupeKey: `deal-solicitors:${deal.id}`, detectedBy: "Transaction status rule",
       }, { now });
       return { ran: true, suggestions: out.outcome === "opened" || out.outcome === "joined" ? 1 : 0 };
     });

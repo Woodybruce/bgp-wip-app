@@ -46,7 +46,7 @@ export function dealNoteTool(): NoteTool {
   const properties: Record<string, unknown> = {
     deal_type: {
       anyOf: [
-        { type: "object", properties: { value: { type: "string", enum: [...DEAL_NOTE_TYPES] }, quote: { type: "string", description: "The words in the note that say what kind of deal it is." } }, required: ["value", "quote"] },
+        { type: "object", properties: { value: { type: "string", enum: [...DEAL_NOTE_TYPES] }, quote: { type: "string", description: "The words in the note that say what kind of transaction it is." } }, required: ["value", "quote"] },
         { type: "null" },
       ],
     },
@@ -59,7 +59,7 @@ export function dealNoteTool(): NoteTool {
   };
   return {
     name: "read_deal_note",
-    description: "Report what the note says about the deal. Every value is copied from the note, with the words it came from.",
+    description: "Report what the note says about the transaction. Every value is copied from the note, with the words it came from.",
     input_schema: { type: "object", properties, required: Object.keys(properties) } as NoteTool["input_schema"],
   };
 }

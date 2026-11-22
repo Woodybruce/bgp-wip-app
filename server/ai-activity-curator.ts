@@ -110,8 +110,8 @@ export function buildActivityQuestion(subject: ActivitySubject, clientScope?: { 
 
   switch (subject.type) {
     case "deal": {
-      label = subject.name || subject.address || `deal ${subject.id}`;
-      seedLines.push(`Deal: ${label}`);
+      label = subject.name || subject.address || `transaction ${subject.id}`;
+      seedLines.push(`Transaction: ${label}`);
       if (subject.address) seedLines.push(`Property address: ${subject.address}${subject.postcode ? `, ${subject.postcode}` : ""}`);
       if (subject.tenantName) seedLines.push(`Tenant: ${subject.tenantName}`);
       if (subject.landlordName) seedLines.push(`Landlord: ${subject.landlordName}`);
@@ -151,7 +151,7 @@ export function buildActivityQuestion(subject: ActivitySubject, clientScope?: { 
   const clientScopeLines = clientScope
     ? [
         ``,
-        `IMPORTANT — CLIENT-FACING ANALYSIS. This summary will be displayed to **${clientScope.companyName}** (a BGP landlord client) in their portal. Search everything, but write up ONLY BGP's activity on this subject as it relates to ${clientScope.companyName}'s schemes, properties, deals and requirements. STRICTLY EXCLUDE from the write-up and citations: other landlords' or clients' confidential matters, BGP fee / commission figures, and BGP-internal strategy, resourcing or staffing discussions. If nothing relates to ${clientScope.companyName}, say so plainly.`,
+        `IMPORTANT — CLIENT-FACING ANALYSIS. This summary will be displayed to **${clientScope.companyName}** (a BGP landlord client) in their portal. Search everything, but write up ONLY BGP's activity on this subject as it relates to ${clientScope.companyName}'s schemes, properties, transactions and requirements. STRICTLY EXCLUDE from the write-up and citations: other landlords' or clients' confidential matters, BGP fee / commission figures, and BGP-internal strategy, resourcing or staffing discussions. If nothing relates to ${clientScope.companyName}, say so plainly.`,
       ]
     : [];
 
@@ -178,7 +178,7 @@ export function buildActivityQuestion(subject: ActivitySubject, clientScope?: { 
     // "T1 fee allocated 100% to Rupert" beside a Fee Allocation panel
     // showing 85/15, and "distribution-list emails not itemised here" over
     // a feed made mostly of them (Woody, 2026-09-28).
-    `Never state fee allocation percentages or splits between BGP people — the deal page shows them.`,
+    `Never state fee allocation percentages or splits between BGP people — the transaction page shows them.`,
     ``,
     `Never say items are "not itemised here", "not listed" or otherwise left out — the reader sees every email beside your text. Write up what the items say; don't comment on what you didn't cover.`,
     ``,

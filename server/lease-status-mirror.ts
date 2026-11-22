@@ -48,7 +48,7 @@ async function mirrorDealStatus(ctx: Ctx, dealId: string, currentStatus: string 
       await startFreshCycle(ctx, dealId, currentStatus, unlinkAvailableUnitId, code);
       return;
     }
-    await auditMirror(ctx, dealId, currentStatus, code, `Skipped — deal is ${currentCode}; tracker row left as-is (${ctx.reason})`);
+    await auditMirror(ctx, dealId, currentStatus, code, `Skipped — transaction is ${currentCode}; tracker row left as-is (${ctx.reason})`);
     return;
   }
   // Gate check fails CLOSED: skipping a mirror write costs a note on the
@@ -97,7 +97,7 @@ export async function startFreshCycle(ctx: Ctx, dealId: string, currentStatus: s
   const { ensureBackingDealForUnit } = await import("./unit-mirror");
   const stub = await ensureBackingDealForUnit(ctx.pool, unitId, { status: code, fee: fee ?? null })
     .catch((e: any) => { console.warn("[lease-status-mirror] fresh-cycle deal failed:", e?.message); return null; });
-  await auditMirror(ctx, dealId, currentStatus, code, `Skipped — deal is ${legacyToCode(currentStatus)}; tracker row unlinked for a fresh cycle (${ctx.reason})`);
+  await auditMirror(ctx, dealId, currentStatus, code, `Skipped — transaction is ${legacyToCode(currentStatus)}; tracker row unlinked for a fresh cycle (${ctx.reason})`);
   // The new letting starts clean: no Heads of Terms, sign-off or agreed
   // offer carried over from the one before.
   const { closePreviousLetting } = await import("./letting-cycle");

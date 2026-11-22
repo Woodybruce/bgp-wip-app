@@ -147,7 +147,7 @@ function dealFallback(d: AccountDealRow, unit: string | null): string {
   const when = d.instructedAt || d.lastActivityAt || d.targetDate;
   const month = when ? gbDate(when, { month: "short", year: "numeric" }) : "";
   const typed = [d.service, month].filter(Boolean).join(" · ");
-  return typed || d.counterparty || "Open deal";
+  return typed || d.counterparty || "Open transaction";
 }
 // Units also restated the property at the END or middle ("Unit 7 Eureka
 // Leisure Park", "R6 - Gunwharf Quays", "146 Queen Street (LK16), Westgate,
@@ -245,7 +245,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
     <Card data-testid={`account-deals-board-${companyId}`} className="min-w-0 [container-type:inline-size]">
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <Briefcase className="w-3.5 h-3.5" /> Deals &amp; activity
+          <Briefcase className="w-3.5 h-3.5" /> Transactions &amp; activity
           {data && <span className="font-mono tabular-nums normal-case tracking-normal">{data.total}</span>}
           {data && data.completedTotal > 0 && (
             <span className="text-[11px] text-muted-foreground normal-case tracking-normal font-normal">
@@ -315,10 +315,10 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
           </div>
         )}
 
-        {isLoading && <p className="text-sm text-muted-foreground italic">Loading deals…</p>}
-        {isError && <p className="text-sm text-muted-foreground italic">Couldn't load the deal list — try again.</p>}
+        {isLoading && <p className="text-sm text-muted-foreground italic">Loading transactions…</p>}
+        {isError && <p className="text-sm text-muted-foreground italic">Couldn't load the transaction list — try again.</p>}
         {data && data.deals.length === 0 && (
-          <p className="text-sm text-muted-foreground italic">{filtersActive ? "No deals match these filters." : "No deals on this account yet."}</p>
+          <p className="text-sm text-muted-foreground italic">{filtersActive ? "No transactions match these filters." : "No transactions on this account yet."}</p>
         )}
 
         {data && data.deals.length > 0 && (

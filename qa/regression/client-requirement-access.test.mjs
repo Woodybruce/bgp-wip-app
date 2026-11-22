@@ -303,7 +303,7 @@ test('a client\'s add names a tenant brand it may see, and contacts and a deal i
   await refused({ ...FORM, status: 'Draft' }, 400, /Status/);
   await refused({ ...FORM, principalContactId: 'other-brand-person' }, 403, /contact at this brand/);
   await refused({ ...FORM, agentContactId: 'rival-person' }, 403, /agent/);
-  await refused({ ...FORM, dealId: 'someone-elses-deal' }, 403, /own deals/);
+  await refused({ ...FORM, dealId: 'someone-elses-deal' }, 403, /own transactions/);
   const ok = requirementRoutes();
   assert.equal((await ok.call('post /api/crm/requirements-leasing', { body: { ...FORM, dealId: 'own-deal' } })).status, 201);
   viewer = UNLINKED;

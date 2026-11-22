@@ -135,8 +135,8 @@ export function checkDealNoteAnswer(note: string, raw: unknown): { proposal: Dea
   const type = r.deal_type;
   if (type && typeof type === "object" && squash(type.value)) {
     const value = canonicalType(type.value), quote = squash(type.quote);
-    if (!value) dropped.push({ what: "Deal type", value: squash(type.value), reason: "not one of the deal form's types" });
-    else if (!inNote(note, quote)) dropped.push({ what: "Deal type", value, reason: "the words it came from are not in the note" });
+    if (!value) dropped.push({ what: "Transaction type", value: squash(type.value), reason: "not one of the transaction form's types" });
+    else if (!inNote(note, quote)) dropped.push({ what: "Transaction type", value, reason: "the words it came from are not in the note" });
     else proposal.dealType = { value, quote };
   }
   proposal.address = read("address", "Address", 160);

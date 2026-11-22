@@ -332,9 +332,9 @@ export function AddBriefDialog({ open, onOpenChange, onStarted, preset }: {
             {(pickedUnit || isNew) && (
               <p className="text-xs text-muted-foreground pt-1" data-testid="add-brief-outcome">
                 {pickedUnit?.trackerRowId ? "This unit is already on the tracker; its brief opens."
-                  : pickedUnit?.tenancyUnitId ? `The brief is tied to this unit on ${property?.name || "the property"}'s tenancy schedule. The unit goes on the tracker with a deal reference.`
-                  : isNew ? `The unit is added to ${property?.name || "the property"}'s tenancy schedule and to the tracker with a deal reference, and its brief starts.`
-                  : "The unit is added to the tracker with a deal reference, and its brief starts."}
+                  : pickedUnit?.tenancyUnitId ? `The brief is tied to this unit on ${property?.name || "the property"}'s tenancy schedule. The unit goes on the tracker with a transaction reference.`
+                  : isNew ? `The unit is added to ${property?.name || "the property"}'s tenancy schedule and to the tracker with a transaction reference, and its brief starts.`
+                  : "The unit is added to the tracker with a transaction reference, and its brief starts."}
               </p>
             )}
           </div>

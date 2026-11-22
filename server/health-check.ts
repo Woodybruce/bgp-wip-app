@@ -86,7 +86,7 @@ async function checkOrphanedRecords(): Promise<CheckResult> {
       `SELECT COUNT(*)::int as c FROM crm_deals d WHERE d.property_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM crm_properties p WHERE p.id = d.property_id)`
     );
     if ((orphanedDeals.rows[0]?.c ?? 0) > 0) {
-      warnings.push(`${orphanedDeals.rows[0]?.c ?? 0} deals reference missing properties`);
+      warnings.push(`${orphanedDeals.rows[0]?.c ?? 0} transactions reference missing properties`);
     }
 
     const orphanedContacts = await pool.query(

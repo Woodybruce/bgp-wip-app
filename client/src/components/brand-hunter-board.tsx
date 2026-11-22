@@ -255,7 +255,7 @@ export default function BrandHunterBoard() {
           <Filter className="w-3.5 h-3.5 text-muted-foreground self-center shrink-0" />
           {[...ALL_FILTERS.slice(0, 1), ...(isClientViewer ? [] : [NO_RELATIONSHIP]), ...ALL_FILTERS.slice(1)].map(f => (
             <button
-              title={f === NO_RELATIONSHIP ? "Expansion score of 10 or more and no deals, offers, viewings or contact with BGP" : undefined}
+              title={f === NO_RELATIONSHIP ? "Expansion score of 10 or more and no transactions, offers, viewings or contact with BGP" : undefined}
               key={f}
               onClick={() => setFilterFlag(f)}
               className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
@@ -320,7 +320,7 @@ export default function BrandHunterBoard() {
                             <div className={`text-[11px] font-medium ${band.color}`}>{band.label}</div>
                           </div>
                           {!isClientViewer && brand.relationship != null && (
-                            <div className="text-right border-l pl-2" title="BGP's own deals, offers, viewings and contact with the brand. Its own figure: not part of the Expansion score." data-testid={`hunter-relationship-${brand.id}`}>
+                            <div className="text-right border-l pl-2" title="BGP's own transactions, offers, viewings and contact with the brand. Its own figure: not part of the Expansion score." data-testid={`hunter-relationship-${brand.id}`}>
                               <div className="text-sm font-semibold leading-none font-mono tabular-nums">{brand.relationship}<span className="text-[11px] font-normal text-muted-foreground">/25</span></div>
                               <div className="text-[11px] text-muted-foreground">Relationship</div>
                             </div>
@@ -450,7 +450,7 @@ export default function BrandHunterBoard() {
               ["Entering UK (rollout status)", "+30"],
               ["Scaling (rollout status)", "+20"],
               ["Dept store entry (Selfridges, HN…)", "+20"],
-              ["Franchise deal abroad", "+15"],
+              ["Franchise transaction abroad", "+15"],
               ["Funding raised (signal)", "+15"],
               ["New store openings (per opening)", "+8"],
               ["European city presence detected", "+5–15"],

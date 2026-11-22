@@ -12,14 +12,14 @@ import { LANDSEC_MENU, JOINT_AGENT_MENU, LANDSEC_STAFF_TASKS, landsecMenuActive,
 const NAV_ITEMS = [
   { label: "Dashboard", icon: LayoutDashboard, path: "/" },
   { label: "Messages", icon: MessageCircle, path: "/messages" },
-  { label: "Deals", icon: BarChart3, path: "/deals" },
+  { label: "Transactions", icon: BarChart3, path: "/deals" },
   { label: "News", icon: Newspaper, path: "/news" },
 ] as const;
 
 const CLIENT_NAV_ITEMS = [
   { label: "Portfolio", icon: LayoutDashboard, path: "/" },
   { label: "Messages", icon: MessageCircle, path: "/messages" },
-  { label: "Deals", icon: BarChart3, path: "/deals" },
+  { label: "Transactions", icon: BarChart3, path: "/deals" },
   { label: "Tasks", icon: CheckSquare, path: "/tasks" },
   { label: "News", icon: Newspaper, path: "/news" },
 ] as const;
@@ -30,7 +30,7 @@ const CLIENT_NAV_ITEMS = [
 // (Woody, 2026-11-13), with the number of open tasks on it.
 const LANDSEC_NAV_ITEMS = [
   { label: "Properties", icon: Building2, path: LANDSEC_MENU.properties },
-  { label: "Deals", icon: BarChart3, path: LANDSEC_MENU.deals },
+  { label: "Transactions", icon: BarChart3, path: LANDSEC_MENU.deals },
   { label: "Tracker", icon: Store, path: LANDSEC_MENU.tracker },
   { label: "Calendar", icon: CalendarDays, path: LANDSEC_MENU.calendar },
   { label: "Tasks", icon: CheckSquare, path: LANDSEC_MENU.tasks },
@@ -53,7 +53,7 @@ const LANDSEC_STAFF_NAV_ITEMS = [
 // Woody 2026-11-13) are added where the tabs are chosen.
 const LANDSEC_JOINT_AGENT_NAV_ITEMS = [
   { label: "Properties", icon: Building2, path: JOINT_AGENT_MENU.properties },
-  { label: "Deals", icon: BarChart3, path: JOINT_AGENT_MENU.deals },
+  { label: "Transactions", icon: BarChart3, path: JOINT_AGENT_MENU.deals },
   { label: "Tracker", icon: Layers, path: JOINT_AGENT_MENU.tracker },
   { label: "Calendar", icon: CalendarDays, path: LANDSEC_MENU.calendar },
   { label: "Tasks", icon: CheckSquare, path: LANDSEC_MENU.tasks },

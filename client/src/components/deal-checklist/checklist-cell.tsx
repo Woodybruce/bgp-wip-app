@@ -28,7 +28,7 @@ export function TrackerChecklistCell({ unitId, summary, onOpen, compact = false 
 }) {
   if (!summary) {
     return (
-      <button type="button" className={`inline-flex items-center gap-1 rounded-md border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/40 ${compact ? "mt-1.5 min-h-8" : ""}`} onClick={onOpen} data-testid={`${compact ? "mobile-checklist" : "cell-checklist"}-${unitId}`} title="Start the deal checklist for this unit">
+      <button type="button" className={`inline-flex items-center gap-1 rounded-md border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/40 ${compact ? "mt-1.5 min-h-8" : ""}`} onClick={onOpen} data-testid={`${compact ? "mobile-checklist" : "cell-checklist"}-${unitId}`} title="Start the transaction checklist for this unit">
         <ListChecks className="h-3 w-3" /> Start the checklist
       </button>
     );
@@ -41,7 +41,7 @@ export function TrackerChecklistCell({ unitId, summary, onOpen, compact = false 
       className={compact ? "mt-1.5 block w-full text-left" : "block w-full rounded-md p-1 -m-1 text-left hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"}
       onClick={onOpen}
       data-testid={`${compact ? "mobile-checklist" : "cell-checklist"}-${unitId}`}
-      aria-label={`Deal checklist: ${l.headline}. ${l.status}. ${l.responsible}. Open the checklist.`}
+      aria-label={`Transaction checklist: ${l.headline}. ${l.status}. ${l.responsible}. Open the checklist.`}
     >
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-[11px] font-semibold tabular-nums">{l.headline}</span>

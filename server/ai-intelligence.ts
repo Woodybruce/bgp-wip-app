@@ -96,7 +96,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
               severity: "high",
               dealId: deal.id,
               dealName: deal.name,
-              message: `Target date was ${Math.abs(daysUntil)} days ago (${targetStr}) but deal is still "${deal.status}"`,
+              message: `Target date was ${Math.abs(daysUntil)} days ago (${targetStr}) but transaction is still "${deal.status}"`,
             });
           }
         }
@@ -123,7 +123,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
             severity: "medium",
             dealId: deal.id,
             dealName: deal.name,
-            message: `Deal is Under Offer but AML check is not completed`,
+            message: `Transaction is Under Offer but AML check is not completed`,
           });
         }
       }
@@ -136,7 +136,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
       res.json({ alerts, count: alerts.length, generatedAt: new Date().toISOString() });
     } catch (err: any) {
       console.error("[ai-intelligence] deal-alerts error:", err?.message);
-      res.status(500).json({ message: "Failed to generate deal alerts" });
+      res.status(500).json({ message: "Failed to generate transaction alerts" });
     }
   });
 
@@ -213,7 +213,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
         })),
         warnings: [
           ...(daysSinceContact && daysSinceContact > 90 ? [{ type: "dormant", message: `No contact for ${daysSinceContact} days` }] : []),
-          ...(activeDeals.length > 3 ? [{ type: "busy", message: `Involved in ${activeDeals.length} active deals` }] : []),
+          ...(activeDeals.length > 3 ? [{ type: "busy", message: `Involved in ${activeDeals.length} active transactions` }] : []),
         ],
         generatedAt: new Date().toISOString(),
       });
@@ -333,7 +333,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
       if (!dealId) return res.status(400).json({ message: "dealId is required" });
 
       const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId));
-      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      if (!deal) return res.status(404).json({ message: "Transaction not found" });
 
       const contacts = await db.select().from(crmContacts);
       const companies = await db.select().from(crmCompanies);
@@ -351,7 +351,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
 
       const summary = await safeAICall({
         system: "You are writing meeting notes for a London property agency (Bruce Gillingham Pollard). Write professional, concise meeting notes suitable for a CRM entry. Include: key discussion points, action items, and next steps. Keep it to 3-5 bullet points.",
-        user: `Deal: ${JSON.stringify(dealContext)}\nMeeting: ${meetingSubject || "Meeting"}\nDate: ${meetingDate || "Today"}\nAttendees: ${attendees || "Not specified"}\nNotes/Context: ${notes || "General progress meeting"}`,
+        user: `Transaction: ${JSON.stringify(dealContext)}\nMeeting: ${meetingSubject || "Meeting"}\nDate: ${meetingDate || "Today"}\nAttendees: ${attendees || "Not specified"}\nNotes/Context: ${notes || "General progress meeting"}`,
         maxTokens: 500,
       }) || "Unable to generate summary";
 
@@ -542,7 +542,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
       if (!dealId) return res.status(400).json({ message: "dealId is required" });
 
       const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId));
-      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      if (!deal) return res.status(404).json({ message: "Transaction not found" });
 
       const contacts = await db.select().from(crmContacts);
       const companies = await db.select().from(crmCompanies);
@@ -576,10 +576,10 @@ export function registerAIIntelligenceRoutes(app: Express) {
 
       const docType = documentType || "client_update";
       const templates: Record<string, string> = {
-        client_update: "Write a professional client update email summarising the current status of this deal. Include key terms, next steps, and any outstanding items. Address it to 'Dear Client' and sign off as the BGP team.",
+        client_update: "Write a professional client update email summarising the current status of this transaction. Include key terms, next steps, and any outstanding items. Address it to 'Dear Client' and sign off as the BGP team.",
         instruction_letter: "Draft a formal instruction letter for this property deal. Include the property details, agreed terms (rent, lease length, break options), fee arrangement, and key conditions. Be formal and precise.",
-        hots_summary: "Summarise the Heads of Terms for this deal in a clear, structured format. Include: parties, property, rent, lease term, break options, rent-free period, capital contribution, and any special conditions.",
-        progress_report: "Write a brief internal progress report for this deal. Cover: current status, recent activity, key milestones achieved, upcoming deadlines, and any risks or blockers.",
+        hots_summary: "Summarise the Heads of Terms for this transaction in a clear, structured format. Include: parties, property, rent, lease term, break options, rent-free period, capital contribution, and any special conditions.",
+        progress_report: "Write a brief internal progress report for this transaction. Cover: current status, recent activity, key milestones achieved, upcoming deadlines, and any risks or blockers.",
       };
 
       const prompt = templates[docType] || templates.client_update;

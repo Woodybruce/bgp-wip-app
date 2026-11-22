@@ -69,7 +69,7 @@ export class LettingRefusal extends Error {
 }
 
 export const liveLettingMessage = (ref: number | null | undefined) =>
-  `Already on the Letting Tracker as #${ref ?? "?"} — open that deal or link to it`;
+  `Already on the Letting Tracker as #${ref ?? "?"} — open that transaction or link to it`;
 export const UNIT_REQUIRED_MESSAGE = "A letting needs a property and a unit (an actual address) — pick or add the unit";
 
 const q = (ctx: LettingCtx): Queryable => ctx.client ?? defaultPool;
@@ -314,7 +314,7 @@ export async function ensureTrackerRowForDeal(db: Queryable, dealId: string, ctx
     if (other.rows[0]) {
       return finish({ trackerRowId: row.id, created: false, adopted: false, stale: { trackerRowId: row.id, rowUnitId: row.unit_id ?? null, dealUnitId: deal.unit_id, otherRowId: other.rows[0].id } });
     }
-    if (!unitName) return finish({ trackerRowId: row.id, created: false, adopted: false, skipped: "deal's unit_id has no property_units row — row not moved" });
+    if (!unitName) return finish({ trackerRowId: row.id, created: false, adopted: false, skipped: "transaction's unit_id has no property_units row — row not moved" });
     const spineId: string | null = deal.tenancy_unit_id || (await findSpineRowId(db, deal.property_id, unitName));
     await db.query(
       `UPDATE available_units SET property_id = $2, unit_id = $3, unit_name = $4, tenancy_unit_id = $5, updated_at = NOW() WHERE id = $1`,
@@ -329,7 +329,7 @@ export async function ensureTrackerRowForDeal(db: Queryable, dealId: string, ctx
 
   // A dangling unit_id (the unit was deleted under an open form) is the
   // backfill's "needs a unit row" bucket: no row named "Unit" is made.
-  if (!unitName) return finish({ ...none, skipped: "deal's unit_id has no property_units row" });
+  if (!unitName) return finish({ ...none, skipped: "transaction's unit_id has no property_units row" });
 
   // The unit's rows: by unit id, by spine row, or by unit-name identity
   // (first comma segment — the tracker's own duplicate-guard key).

@@ -129,10 +129,10 @@ export async function evaluateAutoEdd(signals: AutoEddSignals): Promise<{ requir
   }
   const medHit = codes.find(c => medium.has(c));
   if (medHit && (signals.dealValuePence ?? 0) >= 50_000_000) {
-    return { required: true, reason: `UBO chain touches medium-risk jurisdiction ${medHit} on a deal over £500k — EDD recommended.` };
+    return { required: true, reason: `UBO chain touches medium-risk jurisdiction ${medHit} on a transaction over £500k — EDD recommended.` };
   }
   if (signals.dealValuePence && signals.dealValuePence >= 100_000_000) {
-    return { required: true, reason: `Deal value over £1m (£${(signals.dealValuePence / 100).toLocaleString()}) — EDD recommended for high-value transactions.` };
+    return { required: true, reason: `Transaction value over £1m (£${(signals.dealValuePence / 100).toLocaleString()}) — EDD recommended for high-value transactions.` };
   }
   if ((signals.uboChainDepth ?? 0) >= 3) {
     return { required: true, reason: `UBO chain ${signals.uboChainDepth} levels deep — complex structure, EDD recommended.` };
@@ -170,7 +170,7 @@ export interface AiTriageOutput {
 }
 
 export async function runAiTriage(input: AiTriageInput): Promise<AiTriageOutput> {
-  const sys = `You are the BGP AML triage assistant. The MLRO is reviewing a deal's KYC/AML evidence. Based on the gathered signals, decide:
+  const sys = `You are the BGP AML triage assistant. The MLRO is reviewing a transaction's KYC/AML evidence. Based on the gathered signals, decide:
   - verdict: "clear" (low risk, all checks passed, MLRO can sign off without further review), "review" (proceed but document something), or "escalate" (genuine concern, needs MLRO action before approving).
   - recommendation: 2-3 plain-English sentences for the MLRO file.
   - rationale: bullet list of the 3-5 strongest signals (good or bad).
@@ -244,7 +244,7 @@ export interface SofAnalysisOutput {
 }
 
 export async function analyseSourceOfFundsDoc(input: SofAnalysisInput): Promise<SofAnalysisOutput> {
-  const sys = `You are the BGP AML Source-of-Funds analyst. The MLRO has uploaded a customer document supporting their declared SoF for a property deal. Extract:
+  const sys = `You are the BGP AML Source-of-Funds analyst. The MLRO has uploaded a customer document supporting their declared SoF for a property transaction. Extract:
   - documentType: bank_statement | tax_return | payslip | other
   - summary: 2-3 sentences plain-English
   - declaredSourceMatchesDocument: true if the document supports the declared source (or null if not provided)

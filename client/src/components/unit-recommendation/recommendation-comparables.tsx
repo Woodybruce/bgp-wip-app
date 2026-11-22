@@ -268,7 +268,7 @@ export function RecommendationComparables({ rows, canEdit, api, onChange }: {
               })}
             </ul>
           )}
-          <p className="text-xs text-muted-foreground">Adding one copies its figures into a row. The row does not change if the deal is changed later.</p>
+          <p className="text-xs text-muted-foreground">Adding one copies its figures into a row. The row does not change if the transaction is changed later.</p>
         </div>
       )}
 

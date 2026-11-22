@@ -132,7 +132,7 @@ export async function loadRequirementsBoard(q: Queryable, viewer: BoardViewer, d
     const d = row.deal_id ? dealById.get(String(row.deal_id)) : null;
     // The stage in words ("HOTs", not the stored code).
     const code = legacyToCode(d?.status);
-    return d ? { id: String(d.id), name: String(d.name || "Deal"), status: code ? DEAL_STATUS_LABELS[code] : d.status || null } : null;
+    return d ? { id: String(d.id), name: String(d.name || "Transaction"), status: code ? DEAL_STATUS_LABELS[code] : d.status || null } : null;
   };
 
   // Every requirement read by the one live rule, then grouped by brand.

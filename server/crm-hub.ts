@@ -132,7 +132,7 @@ export async function workedBrandIds(q: Queryable): Promise<string[]> {
   const sides = await Promise.all([
     side(q, "brand actions", actionsSql(ALL_BRANDS), []),
     side(q, "brand strategies", strategiesSql(ALL_BRANDS), []),
-    side(q, "brand live deals", `SELECT d.tenant_id AS company_id FROM crm_deals d WHERE d.tenant_id IS NOT NULL AND ${OPEN_DEAL} GROUP BY d.tenant_id`, []),
+    side(q, "brand live transactions", `SELECT d.tenant_id AS company_id FROM crm_deals d WHERE d.tenant_id IS NOT NULL AND ${OPEN_DEAL} GROUP BY d.tenant_id`, []),
     side(q, "brand requirements", `SELECT x.company_id FROM (SELECT r.company_id, ${requirementStateSql("r")} AS st FROM crm_requirements_leasing r WHERE r.company_id IS NOT NULL) x
       WHERE x.st IN ('live', 'to_confirm') GROUP BY x.company_id`, []),
     side(q, "super brands", `SELECT c.id AS company_id FROM crm_companies c WHERE ${ALL_BRANDS} AND c.hunter_flag IS TRUE`, []),
@@ -149,7 +149,7 @@ export async function loadCrmHub(q: Queryable, kind: CrmHubKind, now: number = D
   const [brandActions, brandStrategies, brandDeals, brandRequirements] = await Promise.all([
     side(q, "brand actions", actionsSql(ALL_BRANDS), [], brand),
     side(q, "brand strategies", strategiesSql(ALL_BRANDS), [], brand),
-    side(q, "brand live deals", `SELECT d.tenant_id AS company_id, count(*)::int AS n FROM crm_deals d
+    side(q, "brand live transactions", `SELECT d.tenant_id AS company_id, count(*)::int AS n FROM crm_deals d
       WHERE d.tenant_id IS NOT NULL AND ${OPEN_DEAL} GROUP BY d.tenant_id`, [], brand),
     side(q, "brand requirements", `SELECT x.company_id, count(*)::int AS n
       FROM (SELECT r.company_id, ${requirementStateSql("r")} AS st FROM crm_requirements_leasing r WHERE r.company_id IS NOT NULL) x
@@ -178,7 +178,7 @@ export async function loadCrmHub(q: Queryable, kind: CrmHubKind, now: number = D
     side(q, "contacts", `SELECT p.id, p.name, p.role, p.email, p.phone, p.phone_mobile, p.is_favourite, p.company_id
       FROM crm_contacts p WHERE p.company_id = ANY($1::text[])`, [ids]),
     side(q, "owners", `SELECT u.id, COALESCE(u.name, u.username, u.email) AS name FROM users u WHERE u.id = ANY($1::text[])`, [ownerIds], ownerIds.length > 0),
-    side(q, "deal owners", DEAL_OWNERS_SQL, [unowned], unowned.length > 0),
+    side(q, "transaction owners", DEAL_OWNERS_SQL, [unowned], unowned.length > 0),
     // A landlord's properties: landlord on the property, or a company link
     // (the set the landlord cards and the landlord board count). A lender's:
     // senior or junior lender on the property.
@@ -189,7 +189,7 @@ export async function loadCrmHub(q: Queryable, kind: CrmHubKind, now: number = D
         SELECT senior_lender_id AS company_id, id AS property_id FROM crm_properties WHERE senior_lender_id = ANY($1::text[])
         UNION SELECT junior_lender_id, id FROM crm_properties WHERE junior_lender_id = ANY($1::text[])) links GROUP BY links.company_id`, [ids])
       : Promise.resolve<Side>({ rows: [], ok: false }),
-    kind === "landlord" ? side(q, "live deals", `SELECT d.landlord_id AS company_id, count(*)::int AS n FROM crm_deals d
+    kind === "landlord" ? side(q, "live transactions", `SELECT d.landlord_id AS company_id, count(*)::int AS n FROM crm_deals d
         WHERE d.landlord_id = ANY($1::text[]) AND ${OPEN_DEAL} GROUP BY d.landlord_id`, [ids])
       : brand ? Promise.resolve(brandDeals) : Promise.resolve<Side>({ rows: [], ok: false }),
     side(q, "brands represented", `SELECT r.agent_company_id AS company_id, count(DISTINCT r.brand_company_id)::int AS n

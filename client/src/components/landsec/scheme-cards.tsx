@@ -110,10 +110,10 @@ export function LandsecStagePills({ tracker, hrefFor, titleFor, stuck, stuckHref
           : <span key={s.code} className={cn(pillMetrics, "border border-border text-muted-foreground")} title={title} data-testid={`${testId}-${s.code.toLowerCase()}`}>{count}</span>;
       })}
       {stuckHref && stuck !== undefined && (stuck > 0
-        ? <Link href={stuckHref} className={link} title={`Deals in negotiation, HOTs or solicitors at the same stage for ${LANDSEC_STUCK_DAYS} days or more`} data-no-min-touch data-testid={`${testId}-stuck`}>
+        ? <Link href={stuckHref} className={link} title={`Transactions in negotiation, HOTs or solicitors at the same stage for ${LANDSEC_STUCK_DAYS} days or more`} data-no-min-touch data-testid={`${testId}-stuck`}>
           Stuck {LANDSEC_STUCK_DAYS}d+ <PillCount n={stuck} />
         </Link>
-        : <span className={cn(pillMetrics, "border border-border text-muted-foreground")} title="No deal has been at the same stage for that long" data-testid={`${testId}-stuck`}>
+        : <span className={cn(pillMetrics, "border border-border text-muted-foreground")} title="No transaction has been at the same stage for that long" data-testid={`${testId}-stuck`}>
           Stuck {LANDSEC_STUCK_DAYS}d+ <PillCount n={0} />
         </span>
       )}
@@ -178,7 +178,7 @@ export function SchemeCard({ scheme, href, isStaff, isAdmin, onMerge }: {
             {scheme.pipeline.oldestLiveDays !== null && (
               <span
                 className={cn("flex items-center gap-1 font-mono tabular-nums shrink-0", scheme.pipeline.oldestLiveDays >= LANDSEC_STUCK_DAYS && "font-semibold text-amber-700 dark:text-amber-400")}
-                title="Longest a deal in negotiation, HOTs or solicitors has been at its stage, in days"
+                title="Longest a transaction in negotiation, HOTs or solicitors has been at its stage, in days"
               >
                 <Clock className="w-3 h-3" /> {scheme.pipeline.oldestLiveDays}d
               </span>
@@ -352,7 +352,7 @@ export function MergeDialog({ scheme, onClose }: { scheme: LandsecHomeScheme; on
           <DialogTitle>Merge {scheme.name} records</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          Pick the record to keep; the ticked records' deals, units, files and links move onto it and the duplicates are removed. This cannot be undone.
+          Pick the record to keep; the ticked records' transactions, units, files and links move onto it and the duplicates are removed. This cannot be undone.
         </p>
         <div className="space-y-1.5">
           {records.map(r => (
@@ -366,7 +366,7 @@ export function MergeDialog({ scheme, onClose }: { scheme: LandsecHomeScheme; on
                 Merge
               </label>
               <span className="truncate flex-1 min-w-[8rem]">{r.name}</span>
-              <span className="text-xs text-muted-foreground font-mono tabular-nums shrink-0">{r.units} units · {r.deals} deals · {r.files} files</span>
+              <span className="text-xs text-muted-foreground font-mono tabular-nums shrink-0">{r.units} units · {r.deals} transactions · {r.files} files</span>
             </div>
           ))}
         </div>
@@ -398,7 +398,7 @@ function OutsideSchemesReport({ data }: { data: LandsecHomeData }) {
   const deals = report?.deals || [];
   const cell = (n: number | null) => (n === null ? "—" : num(n));
   const summary = report
-    ? `${num(report.counts.properties)} property record${report.counts.properties === 1 ? "" : "s"} · ${num(report.counts.deals)} deal${report.counts.deals === 1 ? "" : "s"} (${num(report.counts.liveDeals)} live)`
+    ? `${num(report.counts.properties)} property record${report.counts.properties === 1 ? "" : "s"} · ${num(report.counts.deals)} transaction${report.counts.deals === 1 ? "" : "s"} (${num(report.counts.liveDeals)} live)`
     : `${num(properties.length)} property record${properties.length === 1 ? "" : "s"}`;
 
   return (
@@ -417,11 +417,11 @@ function OutsideSchemesReport({ data }: { data: LandsecHomeData }) {
         <div className="space-y-3">
           <p className="text-xs text-muted-foreground max-w-3xl">
             Landsec-linked records that are not one of the 14 schemes. The property records are already hidden from the Landsec view.
-            The deals {report ? <>(<span className="font-mono tabular-nums">{num(report.counts.onOutsideProperties)}</span> on those records, <span className="font-mono tabular-nums">{num(report.counts.byCompanyLink)}</span> that only name Landsec on the deal)</> : null} still show on Deals in the Landsec view
+            The transactions {report ? <>(<span className="font-mono tabular-nums">{num(report.counts.onOutsideProperties)}</span> on those records, <span className="font-mono tabular-nums">{num(report.counts.byCompanyLink)}</span> that only name Landsec on the transaction)</> : null} still show on Transactions in the Landsec view
             {report && report.counts.trackerRows > 0 ? <>, and <span className="font-mono tabular-nums">{num(report.counts.trackerRows)}</span> Letting Tracker row{report.counts.trackerRows === 1 ? "" : "s"} on those records still show on the tracker</> : null}.
             Nothing has been removed. To open one of these, switch the team picker back to All Teams.
           </p>
-          {report === null && <p className="text-xs text-muted-foreground" data-testid="landsec-outside-schemes-failed">The list of deals could not be loaded. The property records are below.</p>}
+          {report === null && <p className="text-xs text-muted-foreground" data-testid="landsec-outside-schemes-failed">The list of transactions could not be loaded. The property records are below.</p>}
 
           {properties.length > 0 && (
             <>
@@ -431,8 +431,8 @@ function OutsideSchemesReport({ data }: { data: LandsecHomeData }) {
                     <tr>
                       <th className={th}>Property record</th>
                       <th className={cn(th, "text-right")}>Units</th>
-                      <th className={cn(th, "text-right")}>Deals</th>
-                      <th className={cn(th, "text-right")}>Live deals</th>
+                      <th className={cn(th, "text-right")}>Transactions</th>
+                      <th className={cn(th, "text-right")}>Live transactions</th>
                       <th className={cn(th, "text-right")}>Tracker rows</th>
                     </tr>
                   </thead>
@@ -454,7 +454,7 @@ function OutsideSchemesReport({ data }: { data: LandsecHomeData }) {
                   <div key={p.id} className="rounded-2xl border border-border bg-card px-3 py-2">
                     <p className="text-sm font-medium">{p.name}</p>
                     <p className="text-[11px] text-muted-foreground font-mono tabular-nums">
-                      {num(p.units)} units · {num(p.deals)} deals{p.liveDeals !== null ? ` · ${num(p.liveDeals)} live` : ""}{p.trackerRows ? ` · ${num(p.trackerRows)} tracker rows` : ""}
+                      {num(p.units)} units · {num(p.deals)} transactions{p.liveDeals !== null ? ` · ${num(p.liveDeals)} live` : ""}{p.trackerRows ? ` · ${num(p.trackerRows)} tracker rows` : ""}
                     </p>
                   </div>
                 ))}
@@ -465,14 +465,14 @@ function OutsideSchemesReport({ data }: { data: LandsecHomeData }) {
           {deals.length > 0 && (
             <>
               <p className={sectionLabel}>
-                Deals <span className="font-mono tabular-nums font-normal normal-case">{num(report!.counts.listed)}{report!.counts.listed < report!.counts.deals ? ` of ${num(report!.counts.deals)}, live first` : ""}</span>
+                Transactions <span className="font-mono tabular-nums font-normal normal-case">{num(report!.counts.listed)}{report!.counts.listed < report!.counts.deals ? ` of ${num(report!.counts.deals)}, live first` : ""}</span>
               </p>
               <div className="hidden md:block rounded-lg border border-border overflow-x-auto max-h-[420px] overflow-y-auto">
                 <table className="w-full text-sm" data-testid="landsec-outside-deals">
                   <thead className="bg-muted sticky top-0">
                     <tr>
                       <th className={th}>Ref</th>
-                      <th className={th}>Deal</th>
+                      <th className={th}>Transaction</th>
                       <th className={th}>Type</th>
                       <th className={th}>Status</th>
                       <th className={th}>Property</th>
@@ -483,13 +483,13 @@ function OutsideSchemesReport({ data }: { data: LandsecHomeData }) {
                     {deals.map(d => (
                       <tr key={d.id} className="border-t border-border">
                         <td className="px-3 py-1.5 font-mono tabular-nums text-muted-foreground">{d.ref ? `#${d.ref}` : "—"}</td>
-                        <td className="px-3 py-1.5">{d.name || "Untitled deal"}</td>
+                        <td className="px-3 py-1.5">{d.name || "Untitled transaction"}</td>
                         <td className="px-3 py-1.5 text-muted-foreground">{d.dealType || "—"}</td>
                         <td className="px-3 py-1.5">
                           <span className={cn(rowPill, d.live ? "border-border text-foreground" : "border-transparent text-muted-foreground")}>{statusLabel(d.status)}</span>
                         </td>
                         <td className="px-3 py-1.5 text-muted-foreground">{d.propertyName || "No property"}</td>
-                        <td className="px-3 py-1.5 text-muted-foreground">{d.via === "property" ? "On a Landsec record outside the schemes" : "Landsec is named on the deal"}</td>
+                        <td className="px-3 py-1.5 text-muted-foreground">{d.via === "property" ? "On a Landsec record outside the schemes" : "Landsec is named on the transaction"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -499,13 +499,13 @@ function OutsideSchemesReport({ data }: { data: LandsecHomeData }) {
                 {deals.map(d => (
                   <div key={d.id} className="rounded-2xl border border-border bg-card px-3 py-2 space-y-1">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-medium min-w-0">{d.name || "Untitled deal"}</p>
+                      <p className="text-sm font-medium min-w-0">{d.name || "Untitled transaction"}</p>
                       <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0">{d.ref ? `#${d.ref}` : ""}</span>
                     </div>
                     <p className="text-[11px] text-muted-foreground">{[d.propertyName || "No property", d.dealType].filter(Boolean).join(" · ")}</p>
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className={cn(rowPill, d.live ? "border-border text-foreground" : "border-transparent text-muted-foreground")}>{statusLabel(d.status)}</span>
-                      <span className="text-[11px] text-muted-foreground">{d.via === "property" ? "On a record outside the schemes" : "Landsec named on the deal"}</span>
+                      <span className="text-[11px] text-muted-foreground">{d.via === "property" ? "On a record outside the schemes" : "Landsec named on the transaction"}</span>
                     </div>
                   </div>
                 ))}
@@ -540,11 +540,11 @@ export function LandsecAdminBlock({ data, isAdmin }: { data: LandsecHomeData | u
 
       {check && (
         <div className="space-y-1" data-testid="landsec-tracker-check">
-          <p className={sectionLabel}>Letting Tracker against Deals</p>
+          <p className={sectionLabel}>Letting Tracker against Transactions</p>
           {check.differ ? (
             <p className="text-sm">
               <span className={cn(rowPill, "mr-2 border-amber-500/60 text-amber-700 dark:text-amber-400")} data-testid="landsec-tracker-check-chip">They differ</span>
-              The tracker shows <span className="font-mono tabular-nums">{num(check.trackerRows)}</span> live rows and Deals <span className="font-mono tabular-nums">{num(check.liveLettings)}</span> live lettings:{" "}
+              The tracker shows <span className="font-mono tabular-nums">{num(check.trackerRows)}</span> live rows and Transactions <span className="font-mono tabular-nums">{num(check.liveLettings)}</span> live lettings:{" "}
               <span className="font-mono tabular-nums">{num(check.rowsWithoutLetting)}</span> row{check.rowsWithoutLetting === 1 ? " has" : "s have"} no live letting behind {check.rowsWithoutLetting === 1 ? "it" : "them"} and{" "}
               <span className="font-mono tabular-nums">{num(check.lettingsWithoutRow)}</span> live letting{check.lettingsWithoutRow === 1 ? " has" : "s have"} no tracker row.
             </p>
@@ -574,7 +574,7 @@ export function LandsecAdminBlock({ data, isAdmin }: { data: LandsecHomeData | u
               <div key={s.key} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                 <div className="min-w-0">
                   <p className="font-medium">{s.name} <span className="text-xs font-normal text-muted-foreground font-mono tabular-nums">{s.recordCount} records</span></p>
-                  <p className="text-[11px] text-muted-foreground">{(s.records || []).map(r => `${r.name} (${num(r.units)} unit${r.units === 1 ? "" : "s"}, ${num(r.deals)} deal${r.deals === 1 ? "" : "s"})`).join(" · ")}</p>
+                  <p className="text-[11px] text-muted-foreground">{(s.records || []).map(r => `${r.name} (${num(r.units)} unit${r.units === 1 ? "" : "s"}, ${num(r.deals)} transaction${r.deals === 1 ? "" : "s"})`).join(" · ")}</p>
                 </div>
                 {isAdmin
                   ? <Button variant="outline" size="sm" onClick={() => setMergeScheme(s)} data-testid={`landsec-merge-${s.key}`}><Merge className="w-3.5 h-3.5 mr-1.5" /> Merge records</Button>

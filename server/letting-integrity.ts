@@ -145,9 +145,9 @@ export async function lettingIntegrityReport(pool: Pool) {
       const fromTracker = !!r.property_name && name.startsWith(`${r.property_name} – `);
       const door =
         r.monday_item_id ? "Monday import" :
-        fromTracker ? "Add Unit / backing deal (tracker row since removed)" :
-        r.unit_id ? "Deal form (unit picked)" :
-        r.property_id ? "Deal form or ChatBGP (property, no unit)" :
+        fromTracker ? "Add Unit / backing transaction (tracker row since removed)" :
+        r.unit_id ? "Transaction form (unit picked)" :
+        r.property_id ? "Transaction form or ChatBGP (property, no unit)" :
         "ChatBGP, WIP import or import-anything (no property)";
       return { ...r, status_code: legacyToCode(r.status), door };
     });
@@ -471,7 +471,7 @@ export async function lettingIntegrityReport(pool: Pool) {
     const list = rows.map((r: any) => {
       const status_raw_available = String(r.marketing_status || "").trim() === "Available";
       const signals = [
-        r.name_is_deal_name ? "name = deal name" : null,
+        r.name_is_deal_name ? "name = transaction name" : null,
         r.property_blank ? "property blank" : null,
         r.agent_ids_not_users ? "agent_user_ids not user ids" : null,
         status_raw_available ? "status 'Available'" : null,

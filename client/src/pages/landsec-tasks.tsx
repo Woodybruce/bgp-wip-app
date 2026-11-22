@@ -40,8 +40,8 @@ interface LandsecTask {
   source_ref?: string | null; linked_deal_id?: string | null; linked_property_id?: string | null; deal_name?: string | null;
 }
 
-const KIND_LABEL: Record<string, string> = { deal_checklist: "Deal checklist", viewing_followup: "Viewing" };
-const LINK_LABEL: Record<string, string> = { deal_checklist: "Open the checklist", viewing_followup: "Open viewings", deal: "Open the deal", property: "Open the property" };
+const KIND_LABEL: Record<string, string> = { deal_checklist: "Transaction checklist", viewing_followup: "Viewing" };
+const LINK_LABEL: Record<string, string> = { deal_checklist: "Open the checklist", viewing_followup: "Open viewings", deal: "Open the transaction", property: "Open the property" };
 const ROW_CHIP = `${pillMetrics} border border-border px-2 py-[3px] text-[10px] text-muted-foreground`;
 const SECTION_LABEL = "text-xs font-semibold uppercase tracking-wider text-muted-foreground";
 
@@ -199,8 +199,8 @@ export default function LandsecTasks() {
   };
 
   const emptyTodo = restricted
-    ? "Nothing to do. When you are made responsible for an item on a deal checklist, it appears here."
-    : "Nothing to do. When you are made responsible for an item on a deal checklist it appears here, and you can add a task of your own above.";
+    ? "Nothing to do. When you are made responsible for an item on a transaction checklist, it appears here."
+    : "Nothing to do. When you are made responsible for an item on a transaction checklist it appears here, and you can add a task of your own above.";
 
   return (
     <div className="p-4 md:p-6 space-y-4" data-testid="landsec-tasks">
@@ -208,7 +208,7 @@ export default function LandsecTasks() {
         <h1 className="text-2xl font-bold tracking-tight">Tasks</h1>
         <p className="text-sm text-muted-foreground mt-0.5" data-testid="landsec-tasks-summary">
           {data
-            ? `${open.length} to do${waiting.length ? ` · ${waiting.length} with a deal waiting on you` : ""}${overdue ? ` · ${overdue} overdue` : ""} · ${done.length} done`
+            ? `${open.length} to do${waiting.length ? ` · ${waiting.length} with a transaction waiting on you` : ""}${overdue ? ` · ${overdue} overdue` : ""} · ${done.length} done`
             : restricted ? "What you are responsible for on the lettings at your schemes" : "What you are responsible for on the lettings, and your own tasks"}
         </p>
       </div>
@@ -226,7 +226,7 @@ export default function LandsecTasks() {
             <h2 className={SECTION_LABEL}>Waiting on you{waiting.length ? <span className="ml-1.5 font-mono tabular-nums">{waiting.length}</span> : null}</h2>
             {waiting.length > 0
               ? <ul className="rounded-lg border border-amber-500/50 divide-y">{waiting.map(row)}</ul>
-              : <p className="rounded-lg border px-3 py-3 text-sm text-muted-foreground">No deal is waiting on you.</p>}
+              : <p className="rounded-lg border px-3 py-3 text-sm text-muted-foreground">No transaction is waiting on you.</p>}
           </section>
 
           <section className="space-y-1.5" data-testid="landsec-tasks-todo">

@@ -488,7 +488,7 @@ export default function FinancePage() {
                 })}
                 <p className="text-[11px] text-muted-foreground pt-2">
                   The rest of the FYTD income is invoiced but unpaid — it's in Debtors outstanding.
-                  {data.paid.unmatchedCount > 0 ? ` ${data.paid.unmatchedCount} paid invoice(s) aren't linked to a deal in the app (raised directly in Xero).` : ""}
+                  {data.paid.unmatchedCount > 0 ? ` ${data.paid.unmatchedCount} paid invoice(s) aren't linked to a transaction in the app (raised directly in Xero).` : ""}
                 </p>
               </div>
             ) : <p className="text-xs text-muted-foreground">No fully paid invoices this financial year yet.</p>}

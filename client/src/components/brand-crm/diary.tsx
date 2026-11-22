@@ -175,9 +175,9 @@ export function Diary({ staff, scope = "brand" }: { staff: boolean; scope?: Diar
 
     {all.length === 0
       ? <p className="text-sm text-muted-foreground" data-testid="brand-diary-empty">{everyKind
-        ? `Nothing in the diary${noun ? ` for ${NOUN_WORDS[noun].many}` : ""}. CRM actions, events and strategy reviews for every company appear here, with viewings, deals waiting on someone, briefs to sign and brand cases.`
+        ? `Nothing in the diary${noun ? ` for ${NOUN_WORDS[noun].many}` : ""}. CRM actions, events and strategy reviews for every company appear here, with viewings, transactions waiting on someone, briefs to sign and brand cases.`
         : staff
-        ? "Nothing in the diary. Brand actions, booked viewings, viewing follow-ups, deals waiting on someone, briefs to sign and brand cases awaiting a reply appear here."
+        ? "Nothing in the diary. Brand actions, booked viewings, viewing follow-ups, transactions waiting on someone, briefs to sign and brand cases awaiting a reply appear here."
         : "Nothing in the diary for your schemes."}</p>
       : shown.length === 0
         ? <p className="text-sm text-muted-foreground" data-testid="brand-diary-no-match">Nothing matches these filters.</p>

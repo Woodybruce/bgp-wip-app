@@ -144,7 +144,7 @@ export function readEvidence(e: StageEvidence): EvidenceReading | null {
       if (type && !isLettingType(type) && !(TENANT_REP_TYPES as readonly string[]).includes(type)) return null;
       const stage = code ? DEAL_STAGE[code] : undefined;
       if (!code || !stage) return null;
-      const label = `Deal${ref}: ${LETTING_STATUS_LABELS[code]}${tail}`;
+      const label = `Transaction${ref}: ${LETTING_STATUS_LABELS[code]}${tail}`;
       return stage === "not_proceeding" ? { stage, live: false, label, reason: NOT_PROCEEDING_REASONS.withdrawn } : { stage, live: true, label };
     }
     case "hots":

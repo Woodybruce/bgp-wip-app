@@ -57,7 +57,7 @@ export function jointAgencyNoteParagraphs(f: JointAgencyFacts, signedBy: string,
   const date = longDate(on);
   const role = `BGP was instructed with ${f.coAgent} as joint sole agents on this transaction under separate terms of engagement with the client. ${f.coAgent} is registered with HMRC for anti-money laundering supervision. The ${f.tenant}, was introduced by ${f.coAgent}, and ${f.coAgent} managed all dealings and negotiations with them. BGP's role was limited to advising our client. BGP did not introduce the counterparty, did not negotiate with or act as go-between with them, and did not take over the transaction from ${f.coAgent}.`;
   const checks = f.rentPa >= LETTING_SCOPE_PA
-    ? `HMRC's guidance for letting agents (AMLG2300) requires every party to a letting at £10,000 a month or more to be verified, with no exception where a joint agent found the tenant. BGP therefore relies on ${f.coAgent}'s customer due diligence on the ${f.tenant} under a reliance agreement (Money Laundering Regulations 2017, regulation 39), or checks the ${f.tenant} itself, and records which on the deal. BGP remains responsible for those checks.`
+    ? `HMRC's guidance for letting agents (AMLG2300) requires every party to a letting at £10,000 a month or more to be verified, with no exception where a joint agent found the tenant. BGP therefore relies on ${f.coAgent}'s customer due diligence on the ${f.tenant} under a reliance agreement (Money Laundering Regulations 2017, regulation 39), or checks the ${f.tenant} itself, and records which on the transaction. BGP remains responsible for those checks.`
     : `The rent is under £10,000 a month, so the letting is outside the customer due diligence the Money Laundering Regulations 2017 require of letting agents (HMRC, AMLG2300). Every party is still screened against the UK sanctions list.`;
   return [
     "AML file note: joint sole agency",
@@ -103,7 +103,7 @@ export function registerJointAgencyAmlRoutes(app: Express): void {
       if (await isClient(req)) return res.status(403).json({ message: "Not available for client accounts" });
       const dealId = String(req.params.id);
       const { rows: [deal] } = await pool.query(`SELECT id, name FROM crm_deals WHERE id = $1`, [dealId]);
-      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      if (!deal) return res.status(404).json({ message: "Transaction not found" });
       const { facts, missing } = readFacts(req.body);
       if (!facts) return res.status(400).json({ message: "The joint agency note needs every detail filled in", missing });
       const userId = (req as any).session?.userId || (req as any).tokenUserId || null;

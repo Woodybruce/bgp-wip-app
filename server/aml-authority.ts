@@ -112,7 +112,7 @@ export async function amlActor(req: Request): Promise<AmlActor> {
 export const officerRefusal = (actor: Pick<AmlActor, "officers" | "mlroAppointed">, what = "do this"): string =>
   actor.mlroAppointed
     ? `Only ${officerWords(actor.officers)} can ${what}.`
-    : `Only an admin can ${what} until a Nominated Officer is set in the AML policy panel (Deals, AML).`;
+    : `Only an admin can ${what} until a Nominated Officer is set in the AML policy panel (Transactions, AML).`;
 
 /** Route guard: only the Nominated Officer or the Deputy (or admins while none is set). */
 export async function requireMlro(req: Request, res: Response, next: NextFunction) {

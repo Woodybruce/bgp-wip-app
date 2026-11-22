@@ -54,7 +54,7 @@ function entityApiPath(type: EntityType, id: string): string {
 }
 
 const TYPE_LABELS: Record<EntityType, string> = {
-  deal: "Deal",
+  deal: "Transaction",
   company: "Company",
   contact: "Contact",
   property: "Property",
@@ -106,7 +106,7 @@ function CompanyDetails({ data }: { data: any }) {
         <Row label="Contacts" value={contacts.map((c: any) => c.name || `${c.firstName} ${c.lastName}`).join(", ")} />
       )}
       {activeDeals.length > 0 && (
-        <Row label="Active Deals" value={activeDeals.map((d: any) => d.name).join(", ")} />
+        <Row label="Active Transactions" value={activeDeals.map((d: any) => d.name).join(", ")} />
       )}
     </div>
   );
@@ -121,7 +121,7 @@ function ContactDetails({ data }: { data: any }) {
       <Row label="Email" value={data.email} />
       <Row label="Phone" value={data.phone} />
       {activeDeals.length > 0 && (
-        <Row label="Active Deals" value={activeDeals.map((d: any) => d.name).join(", ")} />
+        <Row label="Active Transactions" value={activeDeals.map((d: any) => d.name).join(", ")} />
       )}
     </div>
   );
@@ -139,7 +139,7 @@ function PropertyDetails({ data }: { data: any }) {
         <Row label="Companies" value={linkedCompanies.map((c: any) => c.name).join(", ")} />
       )}
       {activeDeals.length > 0 && (
-        <Row label="Active Deals" value={activeDeals.map((d: any) => d.name).join(", ")} />
+        <Row label="Active Transactions" value={activeDeals.map((d: any) => d.name).join(", ")} />
       )}
     </div>
   );

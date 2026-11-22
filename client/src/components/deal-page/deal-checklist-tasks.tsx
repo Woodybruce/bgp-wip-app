@@ -71,14 +71,14 @@ export function DealChecklistTasks({ dealId, page, onOpen, assignees, canAddTask
     <div className="grid grid-cols-1 gap-3 min-w-0" data-testid="deal-checklist-tasks">
       {page.clock !== null || page.viewer.canSetWaiting ? (
         <div className={sectionCard} data-testid="deal-waiting-card">
-          <h3 className="text-sm font-semibold mb-1">What the deal is waiting on</h3>
+          <h3 className="text-sm font-semibold mb-1">What the transaction is waiting on</h3>
           <DealWaitingOn dealId={dealId} page={page} />
         </div>
       ) : null}
       {letting && (
         <div className={sectionCard} data-testid="deal-checklist">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold">Deal checklist</h3>
+            <h3 className="text-sm font-semibold">Transaction checklist</h3>
             {checklist && <span className="text-xs text-muted-foreground font-mono tabular-nums">{checklist.summary.done}/{checklist.summary.total} done</span>}
             {checklist && checklist.summary.overdue > 0 && <span className="text-xs font-medium text-amber-700 dark:text-amber-400">{checklist.summary.overdue} overdue</span>}
             {live && <Button variant="outline" size="sm" className="ml-auto h-7 text-xs" onClick={() => onOpen({ to: "checklist" })} data-testid="deal-open-checklist">{checklist ? "Open the checklist" : "Start the checklist"}</Button>}
@@ -88,7 +88,7 @@ export function DealChecklistTasks({ dealId, page, onOpen, assignees, canAddTask
             {checklist?.responsibleName ? <>{checklist.responsibleName}{sideLabel(checklist.responsibleSide) ? <span className="text-muted-foreground"> ({sideLabel(checklist.responsibleSide)})</span> : null}</> : <span className="text-muted-foreground italic">nobody yet</span>}
           </p>
           {!checklist ? (
-            <p className="mt-2 text-sm text-muted-foreground">{live ? "No checklist yet. Starting it gives the deal the standard list by stage, each item with someone responsible." : "This letting had no checklist."}</p>
+            <p className="mt-2 text-sm text-muted-foreground">{live ? "No checklist yet. Starting it gives the transaction the standard list by stage, each item with someone responsible." : "This letting had no checklist."}</p>
           ) : (
             <div className="mt-2 space-y-2.5">
               {CHECKLIST_STAGES.map(stage => {
@@ -121,7 +121,7 @@ export function DealChecklistTasks({ dealId, page, onOpen, assignees, canAddTask
       )}
       <div className={sectionCard} data-testid="deal-tasks">
         <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-sm font-semibold">Tasks on this deal</h3>
+          <h3 className="text-sm font-semibold">Tasks on this transaction</h3>
           <span className="text-xs text-muted-foreground font-mono tabular-nums">{openTasks.length} open</span>
           {canAddTask && !adding && <Button variant="outline" size="sm" className="ml-auto h-7 text-xs" onClick={() => setAdding(true)} data-testid="deal-add-task"><Plus className="w-3 h-3 mr-1" />Add a task</Button>}
         </div>
@@ -141,7 +141,7 @@ export function DealChecklistTasks({ dealId, page, onOpen, assignees, canAddTask
             </div>
           </form>
         )}
-        {page.tasks.length === 0 && !adding && <p className="mt-1 text-sm text-muted-foreground">No other tasks are linked to this deal.</p>}
+        {page.tasks.length === 0 && !adding && <p className="mt-1 text-sm text-muted-foreground">No other tasks are linked to this transaction.</p>}
         {page.tasks.length > 0 && (
           <ul className="mt-2 space-y-0.5">
             {[...openTasks, ...doneTasks].map(t => (

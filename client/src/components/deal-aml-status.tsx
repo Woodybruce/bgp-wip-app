@@ -572,7 +572,7 @@ function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus })
         setAside={(data.redFlags?.dealSetAside || []).filter(a => !a.flag.factor)}
         canDecide={!!data.decisions?.canDecide}
         whoDecides={data.decisions?.officerWords}
-        title="Red flag on the deal record"
+        title="Red flag on the transaction record"
         step="It is not tied to one party: Request KYC4U check on the party it concerns carries it in the note."
         testId="kyc-red-flags-deal"
       />
@@ -584,7 +584,7 @@ function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus })
         setAside={(data.redFlags?.dealSetAside || []).filter(a => a.flag.factor)}
         canDecide={!!data.decisions?.canDecide}
         whoDecides={data.decisions?.officerWords}
-        title="Enhanced due diligence on the deal: a higher-risk factor in BGP's AML policy"
+        title="Enhanced due diligence on the transaction: a higher-risk factor in BGP's AML policy"
         step="It applies to every party: Request KYC4U check carries it in the note, and the Nominated Officer or the Deputy approves the result."
         testId="kyc-policy-factors-deal"
       />
@@ -727,7 +727,7 @@ function useDealAmlRows(dealId: string, enabled: boolean) {
     queryKey: ["/api/aml-dashboard", "deal", dealId],
     queryFn: async () => {
       const res = await fetch(`/api/aml-dashboard?dealId=${encodeURIComponent(dealId)}`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("The deal's AML stages could not be read");
+      if (!res.ok) throw new Error("The transaction's AML stages could not be read");
       return res.json();
     },
   });
@@ -746,7 +746,7 @@ function fallbackStage(cp: Counterparty): AmlStage | null {
 const day = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Europe/London" }) : "");
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const LEVEL_WORDS: Record<PartyDueDiligence["level"], string> = { simplified: "Simplified", standard: "Standard", enhanced: "Enhanced" };
-const NOT_REQUIRED_SHORT: Record<string, string> = { joint_agent: "the joint agent's party", no_deal: "no deal with this party" };
+const NOT_REQUIRED_SHORT: Record<string, string> = { joint_agent: "the joint agent's party", no_deal: "no transaction with this party" };
 
 /** A party slot on the deal (the Parties card merged into the box, 22 November 2026). */
 export interface PartySlot {
@@ -1042,7 +1042,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
         <div className="mx-3 mb-3 rounded-md border border-border/70" data-testid={`aml-steps-${cp.role}`}>
           <StepRow id={sid("signs")} testId={tid("signs")} n={1} label="Who signs" state={signs.state} summary={signs.text} open={open.has("signs")} onToggle={() => toggle("signs")}>
             {settled && companyMissing
-              ? <p className="text-xs text-muted-foreground">Not set on this deal.</p>
+              ? <p className="text-xs text-muted-foreground">Not set on this transaction.</p>
               : <DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />}
             {party && !settled && <TrustLine dealId={dealId} party={party} compact />}
             {showAbroad && (
@@ -1159,7 +1159,7 @@ function AmlBoxMenu({ dealId, openAll, onToggleAll, officer, staff }: { dealId: 
           {officer && stop.data && !stop.data.stopped && stop.data.canDecide && (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-red-700 focus:text-red-800 dark:text-red-400" onSelect={() => setStopping(true)} data-testid="aml-stop-open">Stop acting on this deal</DropdownMenuItem>
+              <DropdownMenuItem className="text-red-700 focus:text-red-800 dark:text-red-400" onSelect={() => setStopping(true)} data-testid="aml-stop-open">Stop acting on this transaction</DropdownMenuItem>
             </>
           )}
         </DropdownMenuContent>
@@ -1247,7 +1247,7 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
 
         {!slots && data.counterparties.length < 2 && (
           <p className="text-xs text-muted-foreground" data-testid="deal-aml-status-incomplete">
-            {data.counterparties.length === 0 ? "No parties on this deal yet." : "Only one party on this deal so far."}
+            {data.counterparties.length === 0 ? "No parties on this transaction yet." : "Only one party on this transaction so far."}
           </p>
         )}
 
@@ -1263,7 +1263,7 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
         {staffView && data.counterparties.length > 0 && (
           <div className="rounded-md border border-border/70" data-testid="aml-deal-sections">
             {(dealFlags.length > 0 || dealAside.length > 0) && (
-              <StepRow id={`aml-${dealId}-deal`} testId="aml-section-deal" label="The deal" state={dealFlags.some(f => !f.factor) ? "flag" : dealFlags.length ? "act" : "done"}
+              <StepRow id={`aml-${dealId}-deal`} testId="aml-section-deal" label="The transaction" state={dealFlags.some(f => !f.factor) ? "flag" : dealFlags.length ? "act" : "done"}
                 summary={dealFlags.length ? `${plural(dealFlags.length, "red flag")}: ${shortReason(dealFlags[0].label, 60)}` : `${dealAside.length} set aside`}
                 open={deal.open.has("deal")} onToggle={() => deal.toggle("deal")}>
                 <DealRedFlags dealId={dealId} data={data} />
@@ -1344,7 +1344,7 @@ export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: str
     queryKey: ["/api/crm/deals", dealId, "aml-ai"],
     queryFn: async () => {
       const res = await fetch(`/api/crm/deals/${dealId}`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("deal load failed");
+      if (!res.ok) throw new Error("transaction load failed");
       const d = await res.json();
       return {
         id: d.id, name: d.name,
@@ -1443,7 +1443,7 @@ export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: str
               </SelectContent>
             </Select>
             {scope?.current?.scope === "out_of_scope_below_threshold" && (
-              <span className="text-[10px] text-emerald-700 font-medium">Deal can proceed without full CDD</span>
+              <span className="text-[10px] text-emerald-700 font-medium">Transaction can proceed without full CDD</span>
             )}
           </div>
         </div>

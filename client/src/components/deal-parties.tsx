@@ -749,7 +749,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
         </DialogHeader>
         {isLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div>}
         {error && <p className="text-sm text-red-700">{plain(error)}</p>}
-        {!isLoading && !error && !party && <p className="text-sm text-muted-foreground">Set the {role} on the deal first.</p>}
+        {!isLoading && !error && !party && <p className="text-sm text-muted-foreground">Set the {role} on the transaction first.</p>}
         {party && (
           <div className="space-y-5 text-sm">
             <section className="space-y-2" data-testid="deal-party-company-section">
@@ -863,7 +863,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                 <div className="rounded-md border px-2.5 py-2 text-xs" data-testid="deal-party-person-current">
                   <div className="font-medium">{party.person.name}{party.person.jobTitle ? <span className="font-normal text-muted-foreground"> · {party.person.jobTitle}</span> : null}</div>
                   <div className="text-muted-foreground">{[party.person.email || "no email", party.person.mobile].filter(Boolean).join(" · ")}</div>
-                  {party.person.from === "client" && <div className="text-muted-foreground italic">The deal's client contact</div>}
+                  {party.person.from === "client" && <div className="text-muted-foreground italic">The transaction's client contact</div>}
                 </div>
               )}
               {party.people.length > 0 && (

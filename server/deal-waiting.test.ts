@@ -631,7 +631,7 @@ test("diary: a deal nobody set a waiting-on for shows the one read from its chec
   assert.deepEqual(asked, [[DEAL]]);
   assert.equal(waiting.length, 1);
   assert.equal(waiting[0].id, `deal_waiting:${DEAL}`);
-  assert.equal(waiting[0].title, "Deal waiting on BGP");
+  assert.equal(waiting[0].title, "Transaction waiting on BGP");
   assert.deepEqual(waiting[0].waitingOn, { side: "bgp", name: "BGP (Victoria Broadhead)" });
   assert.equal(waiting[0].daysWaiting, 6);
   // The same party, name and item the Deals page is sent.
@@ -657,7 +657,7 @@ test("diary: what a person set wins, and a deal waiting on nothing is left out",
   // Set by hand: shown as set, and the checklist is not even read for it.
   const set = await diaryFor("staff", [diaryRow({ waiting_on_party: "Tenant's solicitors", waiting_since: ago(3), checklist_item_id: a.id })], [cl]);
   assert.deepEqual(set.asked, []);
-  assert.deepEqual(set.waiting.map(i => [i.title, i.daysWaiting]), [["Deal waiting on Tenant's solicitors", 3]]);
+  assert.deepEqual(set.waiting.map(i => [i.title, i.daysWaiting]), [["Transaction waiting on Tenant's solicitors", 3]]);
   // Linked with no one named: nothing is laid over it from the checklist.
   const linked = await diaryFor("staff", [diaryRow({ checklist_item_id: a.id })], [cl]);
   assert.deepEqual(linked.asked, []); assert.equal(linked.waiting.length, 0);

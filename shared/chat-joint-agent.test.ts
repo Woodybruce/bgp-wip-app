@@ -26,7 +26,7 @@ test("every other tag becomes a neutral word with neither its id nor its name", 
     ["Bluewater", "property", BRAND, "[a property]"],
     ["Secret Folder", "folder", "aHR0cHM6Ly9zaGFyZXBvaW50", "[a folder]"],
     ["Unit Elsewhere", "unit", OTHER_UNIT, "[another unit]"],
-    ["Old Deal", "deal", CLOSED_DEAL, "[another deal]"],
+    ["Old Deal", "deal", CLOSED_DEAL, "[another transaction]"],
     ["Invoice Nine", "invoice", "1", "[a record]"],
     ["ChatBGP", "user", "__chatbgp__", "[someone]"],
   ];

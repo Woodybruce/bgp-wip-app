@@ -253,7 +253,7 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
     else if (d.status === "EXC") { pts = POINTS.dealExchanged; label = "exchanged"; }
     for (const uid of resolvedIds) {
       awarded.push({
-        userId: uid, points: pts, reason: `Deal ${label}: ${d.name}`,
+        userId: uid, points: pts, reason: `Transaction ${label}: ${d.name}`,
         eventKind: `deal-${label}`, eventRef: `${d.id}|${uid}`,
       });
     }
@@ -268,7 +268,7 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
   );
   for (const d of invoiced) {
     for (const uid of dealAgents(d)) {
-      awarded.push({ userId: uid, points: POINTS.dealInvoiced, reason: `Deal invoiced: ${d.name}`, eventKind: "deal-invoiced", eventRef: `${d.id}|${uid}` });
+      awarded.push({ userId: uid, points: POINTS.dealInvoiced, reason: `Transaction invoiced: ${d.name}`, eventKind: "deal-invoiced", eventRef: `${d.id}|${uid}` });
     }
   }
 
@@ -299,7 +299,7 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
   );
   for (const d of newDeals) {
     for (const uid of dealAgents(d)) {
-      awarded.push({ userId: uid, points: POINTS.dealCreated, reason: `New deal: ${d.name}`, eventKind: "deal-created", eventRef: `${d.id}|${uid}` });
+      awarded.push({ userId: uid, points: POINTS.dealCreated, reason: `New transaction: ${d.name}`, eventKind: "deal-created", eventRef: `${d.id}|${uid}` });
     }
   }
 
@@ -3398,7 +3398,7 @@ Return ONLY valid JSON.`,
          WHERE d.id = $1`,
         [dealId]
       );
-      if (!rows[0]) return res.status(404).json({ error: "Deal not found" });
+      if (!rows[0]) return res.status(404).json({ error: "Transaction not found" });
       const d = rows[0];
 
       let drafts: any = null;
@@ -4880,7 +4880,7 @@ Return ONLY JSON.`,
         });
         aiSummary = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
       } catch (e: any) {
-        aiSummary = `(AI coach unavailable — wire ANTHROPIC_API_KEY)\n\nReview draft scaffold:\n\n**Achievements:**\n${dealsRes.rows.slice(0, 5).map((d: any) => `- ${d.name}`).join("\n") || "- (no deals to summarise)"}\n\n**Development areas:**\n- (Add areas to focus on next year)\n\n**Goals for next year:**\n- Hit 3× salary target\n- Win N new instructions\n- Develop one new client relationship`;
+        aiSummary = `(AI coach unavailable — wire ANTHROPIC_API_KEY)\n\nReview draft scaffold:\n\n**Achievements:**\n${dealsRes.rows.slice(0, 5).map((d: any) => `- ${d.name}`).join("\n") || "- (no transactions to summarise)"}\n\n**Development areas:**\n- (Add areas to focus on next year)\n\n**Goals for next year:**\n- Hit 3× salary target\n- Win N new instructions\n- Develop one new client relationship`;
       }
 
       await pool.query("UPDATE staff_reviews SET ai_summary = $2, updated_at = now() WHERE id = $1", [req.params.id, aiSummary]);
@@ -5348,7 +5348,7 @@ Use the language and tone of BGP's review docs.`,
         });
         aiDraft = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
       } catch (e: any) {
-        aiDraft = `(AI coach unavailable — wire ANTHROPIC_API_KEY)\n\nPitch scaffold for ${userName}, ${r.rows[0].from_level} → ${r.rows[0].to_level}:\n\n**Narrative:** [Write 2-3 paragraphs making the case]\n\n**Key wins:**\n${dealsRes.rows.slice(0, 5).map((d: any) => `- ${d.name}`).join("\n") || "- (no deals on file)"}\n\n**Financials:** [target vs achieved, multiple of salary]\n\n**Development plan:** [focus areas at new level]`;
+        aiDraft = `(AI coach unavailable — wire ANTHROPIC_API_KEY)\n\nPitch scaffold for ${userName}, ${r.rows[0].from_level} → ${r.rows[0].to_level}:\n\n**Narrative:** [Write 2-3 paragraphs making the case]\n\n**Key wins:**\n${dealsRes.rows.slice(0, 5).map((d: any) => `- ${d.name}`).join("\n") || "- (no transactions on file)"}\n\n**Financials:** [target vs achieved, multiple of salary]\n\n**Development plan:** [focus areas at new level]`;
       }
 
       await pool.query("UPDATE staff_promotion_pitches SET ai_draft = $2, updated_at = now() WHERE id = $1", [req.params.id, aiDraft]);
@@ -5488,7 +5488,7 @@ Use the language and tone of BGP's review docs.`,
           });
           summary = msg.content?.[0]?.type === "text" ? msg.content[0].text.trim().replace(/^["']|["']$/g, "") : "";
         } catch (e: any) {
-          summary = deals.length > 0 ? `${deals.length} deal${deals.length === 1 ? "" : "s"} active this week.` : "Quiet week.";
+          summary = deals.length > 0 ? `${deals.length} transaction${deals.length === 1 ? "" : "s"} active this week.` : "Quiet week.";
         }
 
         await pool.query(

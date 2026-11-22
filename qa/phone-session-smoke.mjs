@@ -165,7 +165,7 @@ try {
     // Deals is opened from Messages, so there is a screen before it in the app.
     await staff.goto(`${BASE}/messages`, { waitUntil: 'domcontentloaded' });
     await staff.getByTestId('button-mobile-my-profile').waitFor({ state: 'visible', timeout: 20000 });
-    await staff.getByTestId('bottom-nav-deals').click();
+    await staff.getByTestId('bottom-nav-transactions').click();
     await staff.getByTestId('toggle-deals-wip-report').click({ timeout: 20000 });
     await staff.getByTestId('wip-report-page').waitFor({ state: 'visible', timeout: 25000 });
     check('phone WIP tab uses canonical URL', new URL(staff.url()).pathname === '/deals/report', new URL(staff.url()).pathname);
@@ -217,7 +217,7 @@ try {
     const loggedOut = await api(staff, 'POST', '/api/auth/logout');
     check('only this fixture session was logged out', loggedOut.status === 200);
     // Click an actual tab so a new API query detects the expired session.
-    await staff.getByTestId('bottom-nav-deals').click();
+    await staff.getByTestId('bottom-nav-transactions').click();
     await staff.getByTestId('card-login').waitFor({ state: 'visible', timeout: 25000 });
     check('expired session returns to login without a document reload', await staff.evaluate(() => window.__phoneAuditDocument === 'same-document'));
     check('expired session clears the private persisted snapshot', await staff.evaluate(canary => !(localStorage.getItem('bgp-query-cache') || '').includes(canary), CANARY));

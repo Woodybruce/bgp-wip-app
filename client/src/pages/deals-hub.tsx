@@ -117,7 +117,7 @@ export default function DealsHub() {
   const allTabs = useMemo(() => [
     { key: "wip-report" as const, label: "WIP Report", icon: FileText },
     { key: "properties" as const, label: "Properties", icon: Building2 },
-    { key: "deals" as const, label: "Deals", icon: BarChart3 },
+    { key: "deals" as const, label: "Transactions", icon: BarChart3 },
     { key: "letting" as const, label: "Letting Tracker", icon: Store },
     { key: "investment" as const, label: "Investment", icon: TrendingUp },
     // Every party on a live deal and where its checks stand (Woody,
@@ -164,7 +164,7 @@ export default function DealsHub() {
   return (
     <div>
       <div className={`mx-4 pt-3 md:mx-6 md:pt-6 overflow-x-auto overscroll-x-contain shrink-0 ${tabs.length <= 1 || menuHasTabs ? "hidden" : ""}`} data-testid="deals-tabs-scroll">
-        <div className="inline-flex min-w-max rounded-lg border bg-muted p-0.5 gap-0.5" role="group" aria-label="Deals sections" data-testid="toggle-deals-tabs">
+        <div className="inline-flex min-w-max rounded-lg border bg-muted p-0.5 gap-0.5" role="group" aria-label="Transactions sections" data-testid="toggle-deals-tabs">
           {tabs.map(({ key, label, icon: Icon }) => (
             <button
               key={key}

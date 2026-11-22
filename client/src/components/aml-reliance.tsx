@@ -135,7 +135,7 @@ function RelianceDialog({ dealId, role, partyName, joint, gaps = [], onClose }: 
         <DialogHeader>
           <DialogTitle>{partyName}: rely on another firm's checks</DialogTitle>
           <DialogDescription>
-            Another regulated firm on this deal has checked the customer and agrees to BGP relying on its checks. BGP stays responsible, and it doesn't cover a higher-risk party.
+            Another regulated firm on this transaction has checked the customer and agrees to BGP relying on its checks. BGP stays responsible, and it doesn't cover a higher-risk party.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">

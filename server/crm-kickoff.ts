@@ -113,7 +113,7 @@ export async function buildKickoff(q: Queryable, companyId: string, deps: Kickof
   if (reps.length) facts.push(`Represented by ${list(reps.map(r => r.name), 3)}`);
   if (acts.length) facts.push(`Acts for ${list(acts.map(r => r.name), 8)}`);
   if (properties.length) facts.push(`${properties.length} propert${properties.length === 1 ? "y" : "ies"}: ${list(properties.map(p => p.name), 6)}`);
-  if (deals.length) facts.push(`Deals with BGP: ${list(deals.map(d => `${clip(d.property || d.name, 50)} (${d.status || "no status"})`), 5)}`);
+  if (deals.length) facts.push(`Transactions with BGP: ${list(deals.map(d => `${clip(d.property || d.name, 50)} (${d.status || "no status"})`), 5)}`);
   if (signals.length) facts.push(`In the last year: ${signals.slice(0, 4).map(s => clip(s.headline, 90)).join("; ")}`);
   const open = plan.actions.filter(a => a.companyId === companyId && a.status !== "done").length;
   if (open) facts.push(`${open} open CRM action${open === 1 ? "" : "s"}`);

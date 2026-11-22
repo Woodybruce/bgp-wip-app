@@ -361,7 +361,7 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
         await mirrorFromLeasingSchedule(req.params.id as string, body.status, { pool, reason: "leasing_schedule.PUT", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null });
       } catch (e: any) {
         console.warn(`[leasing] status mirror failed for ${req.params.id}:`, e?.message);
-        mirrorWarning = `Status saved, but syncing it to the Letting Tracker / Deals board failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
+        mirrorWarning = `Status saved, but syncing it to the Letting Tracker / Transactions board failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
       }
     }
 

@@ -3,7 +3,7 @@ export const CRM_INTERVIEW_SECTIONS: { title: string; note?: string; questions: 
   {
     title: "Current practice",
     questions: [
-      { id: "cp1", text: "How do you currently track clients, prospects, and deals? (Outlook, Excel, memory, existing CRM?)" },
+      { id: "cp1", text: "How do you currently track clients, prospects, and transactions? (Outlook, Excel, memory, existing CRM?)" },
       { id: "cp2", text: "What does 'the pipeline' look like for your team today — is it written down anywhere?" },
       { id: "cp3", text: "Which 3 clients have paid the most fees to your team in the last 2 years?" },
       { id: "cp4", text: "How do you currently decide who to call/visit and when?" },

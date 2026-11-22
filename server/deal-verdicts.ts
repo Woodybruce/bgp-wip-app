@@ -140,7 +140,7 @@ router.post("/api/deal-verdicts/:dealId", requireAuth, async (req: Request, res:
       [dealId]
     );
     const deal = dealQ.rows[0];
-    if (!deal) return res.status(404).json({ error: "Deal not found" });
+    if (!deal) return res.status(404).json({ error: "Transaction not found" });
 
     let newTargetDate: Date | null = null;
     if (verdict === "slipping") {
@@ -163,7 +163,7 @@ router.post("/api/deal-verdicts/:dealId", requireAuth, async (req: Request, res:
           const { sendPushNotification } = await import("./push-notifications");
           const feeTxt = deal.fee ? `£${Number(deal.fee).toLocaleString()} fee ` : "";
           sendPushNotification(woody.rows[0].id, {
-            title: "Deal ready to invoice",
+            title: "Transaction ready to invoice",
             body: `${feeTxt}on ${deal.name}${deal.property_name ? ` (${deal.property_name})` : ""} — verdict by ${user.name}`,
             tag: `verdict-${dealId}`,
             url: "/deals",
@@ -204,7 +204,7 @@ export async function runMorningVerdictPushes(): Promise<void> {
   const { sendPushNotification } = await import("./push-notifications");
   for (const u of perUser) {
     await sendPushNotification(u.userId, {
-      title: `${u.deals.length} deal${u.deals.length === 1 ? "" : "s"} need your invoice verdict`,
+      title: `${u.deals.length} transaction${u.deals.length === 1 ? "" : "s"} need your invoice verdict`,
       body: u.deals.slice(0, 3).map(d => d.name).join(" · "),
       tag: "deal-verdicts",
       url: "/deals?verdicts=1",
@@ -240,16 +240,16 @@ export async function runVerdictEmailBlast(): Promise<void> {
       try {
         await sendSharedMailboxEmail({
           to: u.email,
-          subject: `🚨 DEAL EMERGENCY — ${d.name} needs your invoice verdict`,
+          subject: `🚨 TRANSACTION EMERGENCY — ${d.name} needs your invoice verdict`,
           body: `<div style="color:#e60000;font-family:Arial,sans-serif;">
-<h1 style="color:#e60000;font-size:26px;margin:0 0 12px;">🚨🔥🚨 DEAL EMERGENCY 🚨🔥🚨</h1>
-<p style="color:#e60000;font-size:15px;"><b>${u.name.split(" ")[0]} — this deal needs your verdict NOW:</b></p>
+<h1 style="color:#e60000;font-size:26px;margin:0 0 12px;">🚨🔥🚨 TRANSACTION EMERGENCY 🚨🔥🚨</h1>
+<p style="color:#e60000;font-size:15px;"><b>${u.name.split(" ")[0]} — this transaction needs your verdict NOW:</b></p>
 <p style="color:#e60000;font-size:17px;"><b>💼 ${d.name}</b>${d.propertyName ? ` — ${d.propertyName}` : ""}</p>
 ${d.fee ? `<p style="color:#e60000;font-size:15px;">💸💸 <b>£${d.fee.toLocaleString()} fee unconfirmed</b> 💸💸</p>` : ""}
 <p style="color:#e60000;font-size:15px;">${overdueLine}</p>
 <p style="color:#e60000;font-size:15px;">Is it 🟢 on track, 🟠 slipping, or 💰 <b>ready to invoice</b>? Nobody knows — because you haven't said! 😱</p>
 <p style="color:#e60000;font-size:15px;">👉 <a href="${APP_URL}/deals?verdicts=1" style="color:#e60000;font-weight:bold;">GIVE YOUR VERDICT — the emails stop the moment you do</a> 👈</p>
-<p style="color:#e60000;font-size:12px;">🚨 You will receive this email 6 times a day until this deal has a verdict. The equity partners receive a daily summary of every unanswered deal. 🚨</p>
+<p style="color:#e60000;font-size:12px;">🚨 You will receive this email 6 times a day until this transaction has a verdict. The equity partners receive a daily summary of every unanswered transaction. 🚨</p>
 </div>`,
         });
         sent++;
@@ -294,7 +294,7 @@ export async function runEquityVerdictSummary(): Promise<void> {
   const totalDeals = perUser.reduce((n, u) => n + u.deals.length, 0);
   const totalFees = perUser.reduce((n, u) => n + u.deals.reduce((m, d) => m + (d.fee || 0), 0), 0);
   const sections = perUser.map(u =>
-    `<p style="margin:10px 0 2px;"><b>${u.name}</b> — ${u.deals.length} deal${u.deals.length === 1 ? "" : "s"} awaiting verdict:</p>
+    `<p style="margin:10px 0 2px;"><b>${u.name}</b> — ${u.deals.length} transaction${u.deals.length === 1 ? "" : "s"} awaiting verdict:</p>
 <ul style="margin:2px 0 8px;">${u.deals.map(d => `<li>${fmtDeal(d)}</li>`).join("")}</ul>`
   ).join("");
   const { sendSharedMailboxEmail } = await import("./shared-mailbox");
@@ -302,17 +302,17 @@ export async function runEquityVerdictSummary(): Promise<void> {
     await sendSharedMailboxEmail({
       to: SUMMARY_EMAIL,
       subject: totalDeals
-        ? `Invoice verdicts outstanding: ${totalDeals} deal${totalDeals === 1 ? "" : "s"}${totalFees ? ` · £${totalFees.toLocaleString()} in fees` : ""}`
-        : `Deal tidy-up list: ${ancient.length} zombie deal${ancient.length === 1 ? "" : "s"} need re-dating or withdrawing`,
+        ? `Invoice verdicts outstanding: ${totalDeals} transaction${totalDeals === 1 ? "" : "s"}${totalFees ? ` · £${totalFees.toLocaleString()} in fees` : ""}`
+        : `Transaction tidy-up list: ${ancient.length} zombie transaction${ancient.length === 1 ? "" : "s"} need re-dating or withdrawing`,
       body: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1F2937;">
-<p>Daily summary of deals due to exchange or complete this month where the assigned agent has not yet given an invoice verdict.</p>
-<p><b>${totalDeals} deal${totalDeals === 1 ? "" : "s"} outstanding${totalFees ? ` · £${totalFees.toLocaleString()} in unconfirmed fees` : ""}</b></p>
+<p>Daily summary of transactions due to exchange or complete this month where the assigned agent has not yet given an invoice verdict.</p>
+<p><b>${totalDeals} transaction${totalDeals === 1 ? "" : "s"} outstanding${totalFees ? ` · £${totalFees.toLocaleString()} in unconfirmed fees` : ""}</b></p>
 ${sections}
 ${ancient.length ? `<hr style="border:none;border-top:1px solid #E5E7EB;margin:14px 0;">
-<p><b>Tidy-up list — ${ancient.length} zombie deal${ancient.length === 1 ? "" : "s"}</b> (target date over ${LOOKBACK_MONTHS} months old, still not invoiced or withdrawn — excluded from the agent alarms; these need re-dating, invoicing or withdrawing):</p>
+<p><b>Tidy-up list — ${ancient.length} zombie transaction${ancient.length === 1 ? "" : "s"}</b> (target date over ${LOOKBACK_MONTHS} months old, still not invoiced or withdrawn — excluded from the agent alarms; these need re-dating, invoicing or withdrawing):</p>
 <ul style="margin:2px 0 8px;">${ancient.map(d => `<li>${d.name}${d.propertyName ? ` (${d.propertyName})` : ""}${d.fee ? ` — £${d.fee.toLocaleString()}` : ""} — target ${new Date(d.targetDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}${d.agents.length ? ` — ${d.agents.join(", ")}` : ""}</li>`).join("")}</ul>` : ""}
-<p><a href="${APP_URL}/deals">Open the deal tracker</a></p>
-<p style="color:#6B7280;font-size:12px;">Agents receive six reminder emails a day per deal until each verdict is given. This summary stops when nothing is outstanding.</p>
+<p><a href="${APP_URL}/deals">Open the transaction tracker</a></p>
+<p style="color:#6B7280;font-size:12px;">Agents receive six reminder emails a day per transaction until each verdict is given. This summary stops when nothing is outstanding.</p>
 </div>`,
     });
     console.log(`[deal-verdicts] equity summary sent: ${totalDeals} deal(s), ${perUser.length} agent(s)`);
@@ -342,12 +342,12 @@ const WIP_HEALTH_HOUR = 8;
 // the ids and the Preview → Apply backfills live. Reports only — and the
 // email still goes if the report fails.
 const LETTING_HEADLINES: Array<{ key: string; label: string; pick: (c: any) => number }> = [
-  { key: "trackerRowsWithoutDeal", label: "Tracker rows without a deal", pick: (c) => c?.total ?? 0 },
-  { key: "liveLettingDealsWithoutTrackerRow", label: "Live letting deals off the tracker", pick: (c) => c?.total ?? 0 },
+  { key: "trackerRowsWithoutDeal", label: "Tracker rows without a transaction", pick: (c) => c?.total ?? 0 },
+  { key: "liveLettingDealsWithoutTrackerRow", label: "Live letting transactions off the tracker", pick: (c) => c?.total ?? 0 },
   { key: "stubAndRealPairs", label: "Stub + real pairs", pick: (c) => c?.total ?? 0 },
   { key: "statusDisagreements", label: "Status disagreements", pick: (c) => c?.total ?? 0 },
   { key: "actingForDerivation", label: "Side would change (Lease Disposal / Sub-Letting)", pick: (c) => c?.would_change ?? 0 },
-  { key: "unitsWithMultipleLiveLandlordDeals", label: "Units with two live landlord deals", pick: (c) => c?.units ?? 0 },
+  { key: "unitsWithMultipleLiveLandlordDeals", label: "Units with two live landlord transactions", pick: (c) => c?.units ?? 0 },
 ];
 
 async function lettingIntegrityEmailSection(): Promise<{ html: string; issues: number }> {
@@ -361,7 +361,7 @@ async function lettingIntegrityEmailSection(): Promise<{ html: string; issues: n
     const issues = rows.reduce((s, r) => s + (r.n || 0), 0);
     const items = rows.map((r) => `<li>${r.label}: <b>${r.n === null ? "check failed" : r.n}</b></li>`).join("");
     const html = `<h3 style="margin:18px 0 2px">Letting integrity (${issues})</h3>` +
-      `<p style="margin:0 0 6px;font-size:13px;color:#555">Where the Letting Tracker and the letting deals disagree. Nothing is repaired by itself — the ids and the Preview → Apply backfills are on <a href="${APP_URL}/settings">Settings → Letting integrity</a>.</p>` +
+      `<p style="margin:0 0 6px;font-size:13px;color:#555">Where the Letting Tracker and the letting transactions disagree. Nothing is repaired by itself — the ids and the Preview → Apply backfills are on <a href="${APP_URL}/settings">Settings → Letting integrity</a>.</p>` +
       `<ul style="margin:0;padding-left:18px;font-size:14px;line-height:1.6">${items}</ul>`;
     return { html, issues };
   } catch (e: any) {
@@ -384,25 +384,25 @@ export async function runWipHealthEmail(): Promise<void> {
   const section = (title: string, why: string, bucket: any) => {
     if (!bucket.count) return "";
     const rows = bucket.deals
-      .map((d: any) => `<li><a href="https://chatbgp.app/deals/${d.dealId}">${d.name || "(unnamed deal)"}</a>${d.team ? ` — ${d.team}` : ""}${d.fee ? ` — ${money(d.fee)}` : ""}</li>`)
+      .map((d: any) => `<li><a href="https://chatbgp.app/deals/${d.dealId}">${d.name || "(unnamed transaction)"}</a>${d.team ? ` — ${d.team}` : ""}${d.fee ? ` — ${money(d.fee)}` : ""}</li>`)
       .join("");
     const more = bucket.count > bucket.deals.length ? `<p style="font-size:12px;color:#666">…and ${bucket.count - bucket.deals.length} more.</p>` : "";
     return `<h3 style="margin:18px 0 2px">${title} (${bucket.count}${bucket.fee ? ` · ${money(bucket.fee)}` : ""})</h3><p style="margin:0 0 6px;font-size:13px;color:#555">${why}</p><ul style="margin:0;padding-left:18px;font-size:14px;line-height:1.6">${rows}</ul>${more}`;
   };
   const html = `
-    <p>Weekly WIP data check — ${h.totalWipDeals} live deals scanned. The rows below look wrong; each name links straight to the deal to fix.</p>
+    <p>Weekly WIP data check — ${h.totalWipDeals} live transactions scanned. The rows below look wrong; each name links straight to the transaction to fix.</p>
     ${section("No client linked", "Shows as “Unknown” on the WIP report — set the landlord / tenant / vendor / purchaser.", b.noClient)}
     ${section("No BGP agent", "Invisible in the Agent Summary and earns nobody commission.", b.noAgent)}
     ${section("No date at all", "No target, exchange or completion date — lands in no month.", b.noDate)}
     ${section("Marked Invoiced but no Xero invoice linked", "Cash tracking can't see these — raise or link the invoice.", b.invNoXero)}
-    ${section("Live deal with no fee", "In the pipeline but the fee is blank, so it's excluded from the WIP report entirely — invisible money.", b.noFee)}
+    ${section("Live transaction with no fee", "In the pipeline but the fee is blank, so it's excluded from the WIP report entirely — invisible money.", b.noFee)}
     ${section("No property linked", "Fine for consultancy mandates; worth linking for everything else.", b.noProperty)}
     ${letting.html}
     <p style="font-size:12px;color:#666;margin-top:18px">Also live in the app: WIP report → Needs Attention. This email only arrives when something needs fixing.</p>`;
   const { sendSharedMailboxEmail } = await import("./shared-mailbox");
   await sendSharedMailboxEmail({
     to: SUMMARY_EMAIL,
-    subject: `WIP data check: ${h.affected.count + b.noFee.count} deal(s) need fixing${h.affected.fee ? ` (${money(h.affected.fee)} affected)` : ""}${letting.issues ? ` · ${letting.issues} letting integrity issue(s)` : ""}`,
+    subject: `WIP data check: ${h.affected.count + b.noFee.count} transaction(s) need fixing${h.affected.fee ? ` (${money(h.affected.fee)} affected)` : ""}${letting.issues ? ` · ${letting.issues} letting integrity issue(s)` : ""}`,
     body: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1F2937;">${html}</div>`,
   });
   console.log(`[deal-verdicts] wip health email sent — affected=${h.affected.count}, noFee=${b.noFee.count}, lettingIntegrity=${letting.issues}`);

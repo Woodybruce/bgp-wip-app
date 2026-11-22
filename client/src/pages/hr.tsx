@@ -528,7 +528,7 @@ function CvTab({ userId, canEdit }: { userId: string; canEdit: boolean }) {
 
         {data.notableDeals.length > 0 && (
           <div className="mb-4">
-            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[#0F4C75] mb-2">Notable BGP deals</h3>
+            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-[#0F4C75] mb-2">Notable BGP transactions</h3>
             <ul className="text-sm list-disc pl-5 space-y-1">
               {data.notableDeals.map((d, i) => (
                 <li key={i}>{d.name}{d.year ? ` — ${d.year}` : ""}</li>
@@ -912,7 +912,7 @@ function CommissionTab({ userId }: { userId: string }) {
                 </div>
               </div>
               <div className="text-[10px] text-muted-foreground italic pt-1.5 border-t">
-                Source: unified commission engine (same numbers as the Finance dashboard). A deal counts toward the FY when its fee falls due — the earlier of exchange / completion — and commission pays at month-end payroll once BGP has been paid in full.
+                Source: unified commission engine (same numbers as the Finance dashboard). A transaction counts toward the FY when its fee falls due — the earlier of exchange / completion — and commission pays at month-end payroll once BGP has been paid in full.
               </div>
             </div>
           )}
@@ -954,7 +954,7 @@ function CommissionTab({ userId }: { userId: string }) {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center justify-between">
               <span className="flex items-center gap-2"><Clock className="w-4 h-4 text-amber-600" /> Awaiting payment</span>
-              <span className="text-[11px] font-normal text-muted-foreground">{data.awaitingPayment.length} deal{data.awaitingPayment.length === 1 ? "" : "s"} · {fmtSalary(data.awaitingPayment.reduce((s, d) => s + d.fee, 0))} unlocks commission</span>
+              <span className="text-[11px] font-normal text-muted-foreground">{data.awaitingPayment.length} transaction{data.awaitingPayment.length === 1 ? "" : "s"} · {fmtSalary(data.awaitingPayment.reduce((s, d) => s + d.fee, 0))} unlocks commission</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
@@ -2106,7 +2106,7 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
                 <Label>Career history (JSON — array of {`{role, employer, startYear, endYear}`})</Label>
                 <Textarea rows={4} value={form.cvCareerHistoryRaw} onChange={f("cvCareerHistoryRaw")} placeholder={'[{"role":"Surveyor","employer":"CBRE","startYear":2018,"endYear":2022}]'} className="font-mono text-xs" />
               </div>
-              <p className="text-[11px] text-muted-foreground">Notable BGP deals are pulled automatically from your top fee-earning closed deals.</p>
+              <p className="text-[11px] text-muted-foreground">Notable BGP transactions are pulled automatically from your top fee-earning closed transactions.</p>
             </div>
           </div>
 
@@ -2742,7 +2742,7 @@ function PromotionPitchesPanel({ userId, isAdmin, isOwn, currentTitle, levels }:
         </div>
 
         {pitches.length === 0 ? (
-          <div className="text-xs text-muted-foreground italic py-2">No pitches yet — when you're ready to make your case, draft one above. AI will pull your deals + reviews into a starter narrative.</div>
+          <div className="text-xs text-muted-foreground italic py-2">No pitches yet — when you're ready to make your case, draft one above. AI will pull your transactions + reviews into a starter narrative.</div>
         ) : (
           <div className="space-y-1.5">
             {pitches.map(p => (
@@ -2985,7 +2985,7 @@ const ONE_TO_ONE_PACK: Array<{ heading: string; intro?: string; fields: Array<{ 
   ] },
   { heading: "Check in reflections & key learnings", fields: [
     { key: "biggestWin", label: "My biggest win since we last met" },
-    { key: "learned", label: "Something I learned, even from a deal that didn't land" },
+    { key: "learned", label: "Something I learned, even from a transaction that didn't land" },
     { key: "goals90", label: "My top three goals for the next 90 days", prev: "Your 90-day goals last time" },
     { key: "needFromYou", label: "One thing I need from you before we next meet" },
     { key: "developSkill", label: "One skill or experience I'd like to develop" },
@@ -2993,7 +2993,7 @@ const ONE_TO_ONE_PACK: Array<{ heading: string; intro?: string; fields: Array<{ 
   { heading: "Pipeline and business development", fields: [
     { key: "relationships", label: "Which landlord or operator relationships do you want to deepen?" },
     { key: "sectors", label: "Which sectors do you see getting more popular or would you like to do more in?" },
-    { key: "stuckDeals", label: "Which deals are stuck, and where do you want my help: an intro, a pitch, a joint meeting, advice?" },
+    { key: "stuckDeals", label: "Which transactions are stuck, and where do you want my help: an intro, a pitch, a joint meeting, advice?" },
     { key: "marketIntel", label: "What are you hearing from the market that BGP should know?" },
     { key: "winOne", label: "If you could win one instruction or client in the next 90 days, what would it be and why?" },
   ] },
@@ -3877,7 +3877,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
             {isMonthly && (
               <div className="space-y-4">
                 <p className="rounded-md border-l-2 border-primary/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                  <span className="font-medium text-foreground">Reminder:</span> this is your meeting, so you set part of the agenda. Please send back at least two topics you'd like to cover, at least 24 hours before we meet. Anything is welcome: deals, ideas, frustrations, career questions, training, or something personal that affects work.
+                  <span className="font-medium text-foreground">Reminder:</span> this is your meeting, so you set part of the agenda. Please send back at least two topics you'd like to cover, at least 24 hours before we meet. Anything is welcome: transactions, ideas, frustrations, career questions, training, or something personal that affects work.
                 </p>
                 {ONE_TO_ONE_PACK.map(section => (
                   <div key={section.heading} className="space-y-2">
@@ -4393,7 +4393,7 @@ function MarketingTrendsPanel({ isAdmin }: { isAdmin: boolean }) {
       <CardContent className="pt-0">
         {!data && !isLoading && (
           <div className="text-xs text-muted-foreground italic py-3 text-center">
-            Click <strong>Generate</strong> — Claude will scan the past 90 days of deals and surface opinion-leader themes, article angles and panel topics for Emmy.
+            Click <strong>Generate</strong> — Claude will scan the past 90 days of transactions and surface opinion-leader themes, article angles and panel topics for Emmy.
           </div>
         )}
         {data?.trends?.note && (
@@ -4402,7 +4402,7 @@ function MarketingTrendsPanel({ isAdmin }: { isAdmin: boolean }) {
         {data?.trends?.themes && data.trends.themes.length > 0 && (
           <div className="space-y-3">
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Themes ({data.dealCount} deals · {data.periodDays}d)</div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Themes ({data.dealCount} transactions · {data.periodDays}d)</div>
               <div className="space-y-2">
                 {data.trends.themes.map((t, i) => (
                   <div key={i} className="rounded-md border p-2.5 bg-violet-50/30 dark:bg-violet-950/10">
@@ -4510,9 +4510,9 @@ function LinkedInDraftPanel() {
       </CardHeader>
       <CardContent className="pt-0 space-y-3">
         <div className="flex gap-2">
-          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search deals..." className="h-8 text-sm flex-1" />
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search transactions..." className="h-8 text-sm flex-1" />
           <Select value={selectedDealId} onValueChange={setSelectedDealId}>
-            <SelectTrigger className="h-8 text-xs w-64"><SelectValue placeholder="Pick a deal…" /></SelectTrigger>
+            <SelectTrigger className="h-8 text-xs w-64"><SelectValue placeholder="Pick a transaction…" /></SelectTrigger>
             <SelectContent>{filteredDeals.map((d: any) => <SelectItem key={d.id} value={d.id}>{d.name} ({d.status})</SelectItem>)}</SelectContent>
           </Select>
           <Button size="sm" disabled={!selectedDealId || draftPost.isPending} onClick={() => draftPost.mutate(selectedDealId)}>
@@ -4621,7 +4621,7 @@ function MarketingHub({ isAdmin }: { isAdmin: boolean }) {
         <Megaphone className="w-5 h-5 text-pink-600 dark:text-pink-300 shrink-0 mt-0.5" />
         <div className="flex-1">
           <div className="text-sm font-semibold mb-0.5">Marketing hub</div>
-          <p className="text-xs text-muted-foreground">Editorial calendar, BGP events, press contacts and campaign pipeline. Charlotte heads up, Emmy drives the day-to-day. AI-powered trend extraction & LinkedIn deal-watcher coming next.</p>
+          <p className="text-xs text-muted-foreground">Editorial calendar, BGP events, press contacts and campaign pipeline. Charlotte heads up, Emmy drives the day-to-day. AI-powered trend extraction & LinkedIn transaction-watcher coming next.</p>
         </div>
         {isAdmin && events.length === 0 && (
           <Button size="sm" variant="outline" onClick={() => seedMutation.mutate()} disabled={seedMutation.isPending}>
@@ -5538,7 +5538,7 @@ function RecognitionPanel({ userId }: { userId: string }) {
       )}
 
       <p className="text-[11px] text-muted-foreground italic">
-        Hunger Games positions are computed live from active deals — no historic snapshot is taken yet.
+        Hunger Games positions are computed live from active transactions — no historic snapshot is taken yet.
       </p>
     </div>
   );

@@ -376,9 +376,9 @@ export function computeExpansionScoreV2(input: {
   if (b.franchise_activity) add("intent", 2, "Franchising abroad");
 
   // ── Relationship — BGP's own work with the brand. Its own figure, never added to Expansion. ──
-  if (bgp.committedDeals) add("engagement", Math.min(bgp.committedDeals * 10, 16), `${bgp.committedDeals} deal${bgp.committedDeals === 1 ? "" : "s"} at HoTs or beyond with BGP`);
-  if (bgp.liveDeals > 0) add("engagement", Math.min(bgp.liveDeals * 6, 12), `${bgp.liveDeals} live deal${bgp.liveDeals === 1 ? "" : "s"} in negotiation with BGP`);
-  if (bgp.completedDeals24m) add("engagement", Math.min(bgp.completedDeals24m * 3, 6), `${bgp.completedDeals24m} deal${bgp.completedDeals24m === 1 ? "" : "s"} completed with BGP in 2 years`);
+  if (bgp.committedDeals) add("engagement", Math.min(bgp.committedDeals * 10, 16), `${bgp.committedDeals} transaction${bgp.committedDeals === 1 ? "" : "s"} at HoTs or beyond with BGP`);
+  if (bgp.liveDeals > 0) add("engagement", Math.min(bgp.liveDeals * 6, 12), `${bgp.liveDeals} live transaction${bgp.liveDeals === 1 ? "" : "s"} in negotiation with BGP`);
+  if (bgp.completedDeals24m) add("engagement", Math.min(bgp.completedDeals24m * 3, 6), `${bgp.completedDeals24m} transaction${bgp.completedDeals24m === 1 ? "" : "s"} completed with BGP in 2 years`);
   if (bgp.offers90d > 0) add("engagement", Math.min(bgp.offers90d * 5, 8), `${bgp.offers90d} offer${bgp.offers90d === 1 ? "" : "s"} in 90 days`);
   if (bgp.viewings90d > 0) add("engagement", Math.min(bgp.viewings90d * 3, 6), `${bgp.viewings90d} viewing${bgp.viewings90d === 1 ? "" : "s"} in 90 days`);
   if (bgp.interactions90d >= 5) add("engagement", 4, `${bgp.interactions90d} touchpoints in 90 days`);

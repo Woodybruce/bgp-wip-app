@@ -6,7 +6,7 @@ const addins = [
   {
     name: "Outlook",
     icon: Mail,
-    description: "ChatBGP inside Outlook — summarises the thread, drafts replies straight into Outlook's reply window (or into the message you're writing), opens new emails and meeting invites, with BGP's CRM, deals and your memory behind it. Plus the Sender & CRM tab: relationship read, matched contacts/companies/deals and one-click Log to CRM. Works on calendar meetings too — brief me, who's coming, prep notes, follow-ups, and agenda writing while you organise an invite. Pinnable; remembers each thread.",
+    description: "ChatBGP inside Outlook — summarises the thread, drafts replies straight into Outlook's reply window (or into the message you're writing), opens new emails and meeting invites, with BGP's CRM, transactions and your memory behind it. Plus the Sender & CRM tab: relationship read, matched contacts/companies/deals and one-click Log to CRM. Works on calendar meetings too — brief me, who's coming, prep notes, follow-ups, and agenda writing while you organise an invite. Pinnable; remembers each thread.",
     manifest: "/manifests/outlook-addin.xml",
     preview: "/addin/outlook",
     adminSteps: "Microsoft 365 Admin Centre → Settings → Integrated Apps → Upload custom apps",
@@ -33,7 +33,7 @@ const addins = [
   {
     name: "PowerPoint",
     icon: Presentation,
-    description: "ChatBGP inside PowerPoint — builds and edits your deck on its own layouts: adds slides, writes titles and bullets, pulls comps and deal data, fact-checks. Plus the CRM data browser. Remembers each deck.",
+    description: "ChatBGP inside PowerPoint — builds and edits your deck on its own layouts: adds slides, writes titles and bullets, pulls comps and transaction data, fact-checks. Plus the CRM data browser. Remembers each deck.",
     manifest: "/manifests/powerpoint-addin.xml",
     preview: "/addin/powerpoint",
     adminSteps: "Microsoft 365 Admin Centre → Settings → Integrated Apps → Upload custom apps",
@@ -42,7 +42,7 @@ const addins = [
   {
     name: "Teams",
     icon: Users,
-    description: "Dashboard overview, active deals, and news as a Teams personal app or channel tab.",
+    description: "Dashboard overview, active transactions, and news as a Teams personal app or channel tab.",
     manifest: "/manifests/teams-manifest.json",
     preview: "/addin/teams",
     adminSteps: "Teams Admin Centre → Teams apps → Manage apps → Upload new app (zip the JSON file first)",

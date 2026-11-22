@@ -36,8 +36,8 @@ export function DealWaitingPill({ days, who, href, className, testId }: {
   days?: number | null; who?: string | null; href?: string | null; className?: string; testId?: string;
 }) {
   const since = waitingDaysText(days);
-  const label = `Deal is waiting on ${who || "you"}`;
-  const title = `${label}${since ? (since === "today" ? ", since today" : `, for ${since}`) : ""}. It is the item on the deal checklist that the deal's waiting-on points at${href ? ": open the checklist" : ""}.`;
+  const label = `Transaction is waiting on ${who || "you"}`;
+  const title = `${label}${since ? (since === "today" ? ", since today" : `, for ${since}`) : ""}. It is the item on the transaction checklist that the transaction's waiting-on points at${href ? ": open the checklist" : ""}.`;
   const body = (
     <span
       className={cn(pillMetrics, "max-w-full border border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400", href && "cursor-pointer hover:bg-amber-500/20", className)}

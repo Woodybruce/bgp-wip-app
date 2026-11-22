@@ -24,7 +24,7 @@ const HOUSE_STYLE_SEED: Array<{ preference: string; category: string }> = [
   { preference: "Use the 2026 BGP rebrand palette (BGP Rebrand v18): Bordeaux #6E0C25 as the signature colour for headlines, stat blocks and emphasis; Nectar #FC9F8D as the single warm accent, used sparingly; Stone #C2BAA3 / stone-tinted off-white grounds for panels and backgrounds. Never green, teal, orange or navy.", category: "branding" },
   { preference: "Put the Bruce Gillingham Pollard wordmark at the top of page 1 and small in every footer — the wordmark, not the name typed out in tracked capitals.", category: "branding" },
   { preference: "Serif headlines with clean sans body text; generous margins; consistent light pages — no alternating dark/light page schemes.", category: "typography" },
-  { preference: "Keep the strong information design of edition one: the six-stat strip up front, status pills on deal tables, the horizontal bar chart for scheme deep-dives, and the closing watch list.", category: "layout" },
+  { preference: "Keep the strong information design of edition one: the six-stat strip up front, status pills on transaction tables, the horizontal bar chart for scheme deep-dives, and the closing watch list.", category: "layout" },
 ];
 
 async function ensureHouseStyle(): Promise<void> {
@@ -97,10 +97,10 @@ export async function runWeeklyLeasingInsights(): Promise<void> {
       `Compile this week's "BGP Insights — Leasing Week in Review (w/e ${weekEnd})".`,
       ``,
       `Structure it like the 21 August 2026 edition:`,
-      `1. BGP deal flow this week — completions, invoicings, exchanges and notable stage moves from the CRM (deals updated in the last 7 days), with fees.`,
+      `1. BGP transaction flow this week — completions, invoicings, exchanges and notable stage moves from the CRM (transactions updated in the last 7 days), with fees.`,
       `2. New instructions this week.`,
       `3. Market week — the most relevant press, expansion and distress signals from the news feeds and Propel briefings of the last 7 days. Where a story meets a requirement on the books, use ONLY the code-built list below: show each overlap with the requirement's state and date exactly as given, call it pitch-ready only when the state is Live, and call the rest "to check with the brand". ${requirementsBlock ? "" : "The code-built list could not be produced this week, so say that no overlap list is available and do not infer one."}`,
-      `4. Pipeline health — live deal count and total fee pipeline.`,
+      `4. Pipeline health — live transaction count and total fee pipeline.`,
       `5. Watch list for next week with named actions.${requirementsBlock ? ` If the block below has a REQUIREMENTS TO RECONFIRM line, put it in the watch list word for word with its link.` : ""}`,
       ``,
       requirementsBlock,

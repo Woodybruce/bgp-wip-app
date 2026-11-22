@@ -107,7 +107,7 @@ const PRIORITY_CONFIG: Record<string, { label: string; color: string; icon: any;
 const CATEGORY_OPTIONS = [
   { value: "follow-up", label: "Follow Up", icon: RefreshCw, color: "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800" },
   { value: "meeting", label: "Meeting", icon: Briefcase, color: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800" },
-  { value: "deal", label: "Deal", icon: Target, color: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800" },
+  { value: "deal", label: "Transaction", icon: Target, color: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800" },
   { value: "admin", label: "Admin", icon: SlidersHorizontal, color: "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800/30 dark:text-slate-300 dark:border-slate-700" },
   { value: "client", label: "Client", icon: User, color: "bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-900/30 dark:text-violet-300 dark:border-violet-800" },
   { value: "research", label: "Research", icon: Brain, color: "bg-cyan-100 text-cyan-700 border-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-300 dark:border-cyan-800" },
@@ -235,7 +235,7 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
           )}
           {checklist ? (
             <>
-              <span className={ROW_CHIP}>Deal checklist</span>
+              <span className={ROW_CHIP}>Transaction checklist</span>
               {stage && <span className={ROW_CHIP} data-testid={`task-stage-${task.id}`}>{stage} stage</span>}
               {(task.priority === "high" || task.priority === "urgent") && <span className={`${ROW_CHIP} text-foreground`}>Required</span>}
             </>
@@ -869,7 +869,7 @@ export default function TasksPage() {
               <div>
                 <h1 className="text-2xl font-bold tracking-tight">My Tasks</h1>
                 <p className="text-sm text-muted-foreground mt-0.5">
-                  {activeTasks.length} open{waitingTasks.length > 0 ? ` · ${waitingTasks.length} with a deal waiting on ${viewAssigned ? "them" : "you"}` : ""}{overdueTasks.length > 0 ? ` · ${overdueTasks.length} overdue` : ""}{todayTasks.length > 0 ? ` · ${todayTasks.length} due today` : ""}
+                  {activeTasks.length} open{waitingTasks.length > 0 ? ` · ${waitingTasks.length} with a transaction waiting on ${viewAssigned ? "them" : "you"}` : ""}{overdueTasks.length > 0 ? ` · ${overdueTasks.length} overdue` : ""}{todayTasks.length > 0 ? ` · ${todayTasks.length} due today` : ""}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -935,7 +935,7 @@ export default function TasksPage() {
                         </span>
                       )}
                       <span className="text-[11px] text-muted-foreground">
-                        {briefingData.stats.activeDeals} deals
+                        {briefingData.stats.activeDeals} transactions
                       </span>
                     </div>
                   )}
@@ -986,7 +986,7 @@ export default function TasksPage() {
               <Card className="border-amber-500/50" data-testid="tasks-waiting-on-you">
                 <CardHeader className="pb-2 pt-3 px-4">
                   <CardTitle className="text-sm font-semibold">
-                    {viewAssigned ? "A deal is waiting on them" : "Waiting on you"}
+                    {viewAssigned ? "A transaction is waiting on them" : "Waiting on you"}
                     <span className="ml-1.5 font-mono tabular-nums text-muted-foreground">{waitingTasks.length}</span>
                   </CardTitle>
                 </CardHeader>
@@ -1052,7 +1052,7 @@ export default function TasksPage() {
                   <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                     <Input
-                      placeholder="Search tasks, deals, descriptions, tags..."
+                      placeholder="Search tasks, transactions, descriptions, tags..."
                       value={searchQuery}
                       onChange={e => setSearchQuery(e.target.value)}
                       className="pl-8 h-8 text-xs"
@@ -1205,7 +1205,7 @@ export default function TasksPage() {
                 </div>
               )}
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Link to Deal</label>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Link to Transaction</label>
                 <Select value={editForm.linkedDealId || "none"} onValueChange={(v) => setEditForm({ ...editForm, linkedDealId: v === "none" ? "" : v })}>
                   <SelectTrigger data-testid="select-task-deal">
                     <SelectValue placeholder="None" />
@@ -1671,7 +1671,7 @@ export default function TasksPage() {
                 <Textarea
                   value={evernoteText}
                   onChange={(e) => setEvernoteText(e.target.value)}
-                  placeholder={"- Review lease agreement for 50 Gresham St\n- Chase solicitors on Fenchurch deal\n- Prep viewing schedule for Thursday\n- Follow up with Knight Frank on comparables"}
+                  placeholder={"- Review lease agreement for 50 Gresham St\n- Chase solicitors on Fenchurch transaction\n- Prep viewing schedule for Thursday\n- Follow up with Knight Frank on comparables"}
                   className="min-h-[160px] text-sm font-mono"
                   data-testid="textarea-evernote-import"
                 />

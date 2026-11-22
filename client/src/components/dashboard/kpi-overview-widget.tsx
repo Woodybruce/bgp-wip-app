@@ -80,7 +80,7 @@ export function KpiOverviewWidget() {
 
   const kpis = [
     {
-      label: "Deals",
+      label: "Transactions",
       value: trends.totalDeals.toLocaleString(),
       change: trends.dealsChange,
       data: trends.dealsPerMonth,

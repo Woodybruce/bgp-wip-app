@@ -225,7 +225,7 @@ export function PipelinePerformanceBoard({ propertyId }: { propertyId: string })
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <BarChart3 className="w-3.5 h-3.5" /> Pipeline &amp; performance
-          <Badge variant="secondary" className="text-[10px]">{dealsReady ? `${data.active_deals.length} active` : "Deals unavailable"}</Badge>
+          <Badge variant="secondary" className="text-[10px]">{dealsReady ? `${data.active_deals.length} active` : "Transactions unavailable"}</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-3">
@@ -280,7 +280,7 @@ export function PipelinePerformanceBoard({ propertyId }: { propertyId: string })
             <div className="text-[10px] text-muted-foreground">rent-weighted to expiry</div>
           </div>
           <div className="rounded border p-2">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Active deals</div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Active transactions</div>
             <div className="text-base font-bold">{dealsReady ? data.active_deals.length : "—"}</div>
             <div className="text-[10px] text-muted-foreground">in pipeline</div>
           </div>
@@ -481,7 +481,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
       const bits: string[] = [];
       bits.push(`${j.resolved} tenants → brand`);
       if (j.unresolved > 0) bits.push(`${j.unresolved} still need a brand`);
-      if (j.deals_linked > 0) bits.push(`${j.deals_linked} deals linked to tenancy unit`);
+      if (j.deals_linked > 0) bits.push(`${j.deals_linked} transactions linked to tenancy unit`);
       if (j.available_linked > 0) bits.push(`${j.available_linked} vacant units linked`);
       if (j.leasing_linked > 0) bits.push(`${j.leasing_linked} leasing rows linked`);
       toast({ title: "Resolution complete", description: bits.join(" · ") });
@@ -561,7 +561,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
           </Badge>
         </div>
         <p className="text-[10px] text-muted-foreground leading-snug mb-1.5">
-          Every tenant row should resolve to a CRM brand. Linked tenants click straight to the brand board; unlinked ones won't surface deals, KYC, or news.
+          Every tenant row should resolve to a CRM brand. Linked tenants click straight to the brand board; unlinked ones won't surface transactions, KYC, or news.
         </p>
         <div className="flex gap-1.5 flex-wrap">
           <Button
@@ -596,7 +596,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
       </div>
 
       <div>
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Deals</div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Transactions</div>
         <Row label="Active, correctly linked" value={data.deals.active_correctly_linked} />
         <Row label="Tagged with property_id" value={data.deals.by_property_id} />
         <Row label="Linked via unit only" value={data.deals.by_unit_id_only} />
@@ -608,15 +608,15 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
       <div>
         <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Tasks</div>
         <Row label="Linked direct to property" value={data.tasks.linked_direct} />
-        <Row label="Via a linked deal" value={data.tasks.linked_via_deal} />
+        <Row label="Via a linked transaction" value={data.tasks.linked_via_deal} />
       </div>
       <div>
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Interactions on deals</div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Interactions on transactions</div>
         <Row label="Last 30 days" value={data.interactions.last_30d} />
         <Row label="Last 90 days" value={data.interactions.last_90d} />
       </div>
       <div>
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Contacts via deals</div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-0.5">Contacts via transactions</div>
         <Row label="Distinct contacts" value={data.contacts.via_deals} />
       </div>
       <div>
@@ -664,9 +664,9 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
               )}
             </div>
           </div>
-          <Row label="Deals with property/unit mismatch" value={data.integrity.deals_with_property_unit_mismatch} warn />
-          <Row label="Available units' deal on other property" value={data.integrity.available_units_deal_on_other_property} warn />
-          <Row label="Active deals not yet on tenancy unit" value={data.integrity.active_deals_no_unit_fk} warn />
+          <Row label="Transactions with property/unit mismatch" value={data.integrity.deals_with_property_unit_mismatch} warn />
+          <Row label="Available units' transaction on other property" value={data.integrity.available_units_deal_on_other_property} warn />
+          <Row label="Active transactions not yet on tenancy unit" value={data.integrity.active_deals_no_unit_fk} warn />
           <Row label="Available units not on tenancy unit" value={data.integrity.available_units_no_unit_fk} warn />
           <Row label="Leasing rows not on tenancy unit" value={data.integrity.leasing_units_no_unit_fk} warn />
         </div>
@@ -681,7 +681,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
         || tr.unresolved > 0
         || (data.integrity && Object.values(data.integrity).some((v: any) => Number(v) > 0))) && (
         <p className="text-[10px] text-muted-foreground italic pt-1 border-t leading-snug">
-          Red numbers = something the dashboard can't see yet. Hit "Resolve unmatched tenants" above — it also stamps the canonical unit FK on every deal / available / leasing row. Then adopt any orphan deals and rename duplicate units on the tenancy schedule.
+          Red numbers = something the dashboard can't see yet. Hit "Resolve unmatched tenants" above — it also stamps the canonical unit FK on every transaction / available / leasing row. Then adopt any orphan transactions and rename duplicate units on the tenancy schedule.
         </p>
       )}
 
@@ -783,7 +783,7 @@ function DuplicateUnitsDialog({ propertyId, onClose }: { propertyId: string; onC
       const m = j.moved || { deals: 0, leasing: 0, available: 0 };
       toast({
         title: "Merged",
-        description: `${m.deals || 0} deal · ${m.leasing || 0} leasing · ${m.available || 0} vacant · ${(m.evidencePlans || 0) + (m.propertyPlans || 0)} plan links moved to primary.`,
+        description: `${m.deals || 0} transaction · ${m.leasing || 0} leasing · ${m.available || 0} vacant · ${(m.evidencePlans || 0) + (m.propertyPlans || 0)} plan links moved to primary.`,
       });
       qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "duplicate-units"] });
       qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "linkage-audit"] });
@@ -809,7 +809,7 @@ function DuplicateUnitsDialog({ propertyId, onClose }: { propertyId: string; onC
             Duplicate unit numbers
           </DialogTitle>
           <DialogDescription className="text-xs">
-            These tenancy rows share a unit name. Pick the primary to keep. A merge transfers their plan, deal and board links together, then removes the duplicate. Conflicting or missing facts must be resolved in the tenancy schedule first.
+            These tenancy rows share a unit name. Pick the primary to keep. A merge transfers their plan, transaction and board links together, then removes the duplicate. Conflicting or missing facts must be resolved in the tenancy schedule first.
           </DialogDescription>
         </DialogHeader>
         {isLoading ? <Skeleton className="h-32 w-full" /> :
@@ -913,7 +913,7 @@ function OrphanDealsList({ propertyId }: { propertyId: string }) {
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
-      toast({ title: "Deal adopted", description: j.unitId ? "Linked to property and unit." : "Linked to property." });
+      toast({ title: "Transaction adopted", description: j.unitId ? "Linked to property and unit." : "Linked to property." });
       qc.invalidateQueries({ queryKey: ["/api/properties", propertyId] });
     } catch (e: any) {
       toast({ title: "Adopt failed", description: e.message, variant: "destructive" });
@@ -928,7 +928,7 @@ function OrphanDealsList({ propertyId }: { propertyId: string }) {
       {data.slice(0, 5).map(d => (
         <div key={d.id} className="flex items-center gap-1.5 text-[11px] py-0.5">
           <span className="font-medium truncate flex-1">
-            {d.tenant_name || d.name || "Untitled deal"}
+            {d.tenant_name || d.name || "Untitled transaction"}
             {d.deal_ref && <span className="ml-1 text-muted-foreground">#{d.deal_ref}</span>}
           </span>
           <Badge variant="outline" className="text-[9px]">{d.status}</Badge>
@@ -943,7 +943,7 @@ function OrphanDealsList({ propertyId }: { propertyId: string }) {
         </div>
       ))}
       {data.length > 5 && (
-        <p className="text-[10px] text-muted-foreground italic">+{data.length - 5} more orphan deals</p>
+        <p className="text-[10px] text-muted-foreground italic">+{data.length - 5} more orphan transactions</p>
       )}
     </div>
   );
@@ -1073,7 +1073,7 @@ export function PropertyRecentActivityCard({ propertyId }: { propertyId: string 
             {a.deal_id && (
               <Link href={`/deals/${a.deal_id}`}>
                 <Badge variant="outline" className="text-[9px] shrink-0 cursor-pointer hover:bg-muted">
-                  deal →
+                  transaction →
                 </Badge>
               </Link>
             )}
@@ -1122,7 +1122,7 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
           <span className="font-semibold uppercase tracking-wider text-muted-foreground shrink-0">BGP take — the asset</span>
           <span className="text-muted-foreground">No commentary yet —</span>
           <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px] shrink-0 -ml-1" onClick={() => regenerate.mutate()} disabled={regenerate.isPending}
-            title="Written by Claude from the live deals, activity, risks and tenancy schedule">
+            title="Written by Claude from the live transactions, activity, risks and tenancy schedule">
             {regenerate.isPending ? "Thinking…" : "Generate"}
           </Button>
         </CardContent>
@@ -1148,7 +1148,7 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
           className="h-6 text-[11px]"
           onClick={() => regenerate.mutate()}
           disabled={regenerate.isPending}
-          title="Re-run Claude over the latest deals / activity / risks"
+          title="Re-run Claude over the latest transactions / activity / risks"
         >
           <Sparkles className={`w-3 h-3 mr-1 ${regenerate.isPending ? "animate-spin" : ""}`} />
           {regenerate.isPending ? "Thinking…" : "Refresh"}

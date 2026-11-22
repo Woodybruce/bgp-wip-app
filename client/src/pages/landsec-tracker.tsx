@@ -251,7 +251,7 @@ export default function LandsecTracker() {
               <tr>
                 <th className={TH}>Unit</th>
                 <th className={TH}>Status</th>
-                <th className={TH}>Deal checklist</th>
+                <th className={TH}>Transaction checklist</th>
                 <th className={TH}>Interest</th>
                 <th className={TH}>Viewings</th>
                 <th className={TH}>Offers</th>

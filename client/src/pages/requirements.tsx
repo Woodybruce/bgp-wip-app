@@ -116,7 +116,7 @@ const LIST_NOTES: Record<ListKey, string> = {
   market: "PIPnet and The Requirement List listings nobody at BGP has confirmed, listed in the last six months. Market listings, not BGP's own requirements.",
   older: "BGP's own records on hold or more than 12 months without a confirmation, and market listings PIPnet has not listed for six months.",
   closed: "Past and archived requirements.",
-  suggestions: "Suggestions waiting for an answer, from chat, viewings, deals, meetings, emails and news. A suggestion is not a requirement until a person confirms it.",
+  suggestions: "Suggestions waiting for an answer, from chat, viewings, transactions, meetings, emails and news. A suggestion is not a requirement until a person confirms it.",
   news: "Brands in the press for opening, raising money or stating a requirement in the last 12 months, with nothing live or to confirm on our books. Press only: nobody at BGP has confirmed it with the brand.",
 };
 const CLIENT_OPEN_NOTE = "Requirements that are not past or archived.";
@@ -2347,7 +2347,7 @@ function DealSearchPicker({
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
         <Input
           ref={inputRef}
-          placeholder="Search deals..."
+          placeholder="Search transactions..."
           className="pl-9"
           value={search}
           onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
@@ -2361,7 +2361,7 @@ function DealSearchPicker({
           className="absolute z-50 mt-1 w-full bg-popover border rounded-md shadow-md max-h-48 overflow-y-auto"
         >
           {filtered.length === 0 ? (
-            <div className="p-3 text-xs text-muted-foreground text-center">No deals found</div>
+            <div className="p-3 text-xs text-muted-foreground text-center">No transactions found</div>
           ) : (
             filtered.map((d) => (
               <button
@@ -2602,7 +2602,7 @@ function LeasingFormDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>Deal</Label>
+            <Label>Transaction</Label>
             <DealSearchPicker
               deals={deals}
               selectedId={form.dealId}

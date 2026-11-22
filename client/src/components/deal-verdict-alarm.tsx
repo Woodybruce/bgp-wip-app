@@ -142,10 +142,10 @@ export default function DealVerdictAlarm() {
         <div className="w-full max-w-xl rounded-lg border-2 border-red-500 bg-card shadow-2xl p-5 space-y-3">
           <div className="flex items-center gap-2 text-red-600">
             <AlertTriangle className="w-5 h-5" />
-            <h2 className="text-base font-bold">Your deals need invoice verdicts before you carry on</h2>
+            <h2 className="text-base font-bold">Your transactions need invoice verdicts before you carry on</h2>
           </div>
           <p className="text-xs text-muted-foreground">
-            {data.count} deal{data.count === 1 ? " has" : "s have"} passed or reached their target date without a verdict —
+            {data.count} transaction{data.count === 1 ? " has" : "s have"} passed or reached their target date without a verdict —
             the longest has waited {data.maxDaysOverdue} days. Answer each one to unlock the dashboard.
           </p>
           {list}
@@ -160,7 +160,7 @@ export default function DealVerdictAlarm() {
       <div className="fixed top-0 left-0 right-0 z-[90] bg-red-600 text-white flex items-center justify-center gap-3 px-3 py-1.5 text-sm shadow-md">
         <AlertTriangle className="w-4 h-4 shrink-0" />
         <span className="font-medium">
-          {data.count} deal{data.count === 1 ? "" : "s"} awaiting your invoice verdict
+          {data.count} transaction{data.count === 1 ? "" : "s"} awaiting your invoice verdict
         </span>
         <button
           onClick={() => setOpen(true)}
@@ -174,7 +174,7 @@ export default function DealVerdictAlarm() {
         <div className="fixed inset-0 z-[95] bg-black/40 flex items-start justify-center pt-16 p-4" onClick={() => setOpen(false)}>
           <div className="w-full max-w-xl rounded-lg border bg-card shadow-2xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-sm font-bold flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-600" /> Deals awaiting your verdict
+              <AlertTriangle className="w-4 h-4 text-red-600" /> Transactions awaiting your verdict
             </h2>
             {list}
           </div>

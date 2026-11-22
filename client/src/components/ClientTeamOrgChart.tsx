@@ -407,7 +407,7 @@ export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: 
   if (quietWhenEmpty && members.length === 0) {
     return (
       <div className="text-xs text-muted-foreground" data-testid="client-team-orgchart">
-        {derivedCount > 0 ? "Not pinned yet — the BGP people above come from deals" : "No team pinned yet"} · <button type="button" className="text-primary hover:underline" onClick={() => setShowAdd(true)} data-testid="btn-add-team-member">Add to team</button>
+        {derivedCount > 0 ? "Not pinned yet — the BGP people above come from transactions" : "No team pinned yet"} · <button type="button" className="text-primary hover:underline" onClick={() => setShowAdd(true)} data-testid="btn-add-team-member">Add to team</button>
         {addDialog}
       </div>
     );

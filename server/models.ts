@@ -59,7 +59,7 @@ const upload = multer({
 });
 
 const DEFAULT_INPUT_MAPPING: Record<string, { sheet: string; cell: string; label: string; type: string; group: string }> = {
-  dealName: { sheet: "Dashboard", cell: "H18", label: "Deal Name", type: "text", group: "General" },
+  dealName: { sheet: "Dashboard", cell: "H18", label: "Transaction Name", type: "text", group: "General" },
   country: { sheet: "Dashboard", cell: "H19", label: "Country", type: "text", group: "General" },
   purchasePrice: { sheet: "Dashboard", cell: "H7", label: "Purchase Price (£000s)", type: "number", group: "Pricing" },
   annualRentalGrowth: { sheet: "Dashboard", cell: "D21", label: "Annual Rental Growth (%)", type: "percent", group: "Income" },
@@ -3011,7 +3011,7 @@ CRITICAL RULES:
         },
         {
           name: "search_crm",
-          description: "Search the BGP CRM for deals, contacts, companies, or properties by keyword. Returns matching records with IDs, names, and key details.",
+          description: "Search the BGP CRM for transactions, contacts, companies, or properties by keyword. Returns matching records with IDs, names, and key details.",
           input_schema: {
             type: "object" as const,
             properties: {
@@ -3023,16 +3023,16 @@ CRITICAL RULES:
         },
         {
           name: "create_deal",
-          description: "Create a new deal in the BGP CRM. Use when asked to add a deal, log a transaction, or start tracking new work.",
+          description: "Create a new transaction in the BGP CRM. Use when asked to add a transaction, log a transaction, or start tracking new work.",
           input_schema: {
             type: "object" as const,
             properties: {
-              name: { type: "string", description: "Deal name (usually the property address)" },
+              name: { type: "string", description: "Transaction name (usually the property address)" },
               team: { type: "array", items: { type: "string" }, description: "Team(s): Shopping Centre, London Estate, High Street, City, Investment, Tenant Rep, Lease Advisory" },
               groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
               dealType: { type: "string", description: `Type: ${[...LETTING_DEAL_TYPES, ...TENANT_REP_TYPES, ...ADVISORY_UNIT_TYPES, "Sale", "Purchase"].join(", ")}` },
-              status: { type: "string", description: "Status of the deal" },
-              pricing: { type: "number", description: "Deal value/price in GBP" },
+              status: { type: "string", description: "Status of the transaction" },
+              pricing: { type: "number", description: "Transaction value/price in GBP" },
               fee: { type: "number", description: "BGP fee in GBP" },
               rentPa: { type: "number", description: "Annual rent in GBP" },
               totalAreaSqft: { type: "number", description: "Total area in sq ft" },
@@ -3043,11 +3043,11 @@ CRITICAL RULES:
         },
         {
           name: "update_deal",
-          description: "Update an existing deal in the CRM. Use when asked to change a deal's status, price, stage, or any other field.",
+          description: "Update an existing transaction in the CRM. Use when asked to change a transaction's status, price, stage, or any other field.",
           input_schema: {
             type: "object" as const,
             properties: {
-              id: { type: "string", description: "The deal ID (UUID)" },
+              id: { type: "string", description: "The transaction ID (UUID)" },
               name: { type: "string" },
               team: { type: "array", items: { type: "string" } },
               groupName: { type: "string" },

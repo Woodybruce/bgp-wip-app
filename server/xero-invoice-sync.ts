@@ -149,13 +149,13 @@ function matchDeal(inv: any, ctx: MatchCtx): { deal: DealRow; by: string } | { a
   if (refNum) {
     const hits = dealsFor(ctx.byWipRef.get(refNum));
     if (hits.length === 1) return { deal: hits[0], by: `Sage job ${refNum} on the WIP (same party / amount)` };
-    if (hits.length > 1) return { ambiguous: `Sage job ${refNum} is on ${hits.length} deals` };
+    if (hits.length > 1) return { ambiguous: `Sage job ${refNum} is on ${hits.length} transactions` };
   }
   const invNo = digits(inv.InvoiceNumber);
   if (invNo) {
     const hits = dealsFor(ctx.byWipInvoice.get(invNo));
     if (hits.length === 1) return { deal: hits[0], by: `invoice ${inv.InvoiceNumber} on the WIP (same party / amount)` };
-    if (hits.length > 1) return { ambiguous: `invoice ${inv.InvoiceNumber} is on ${hits.length} deals` };
+    if (hits.length > 1) return { ambiguous: `invoice ${inv.InvoiceNumber} is on ${hits.length} transactions` };
   }
   const text = [inv.Reference, ...(inv.LineItems || []).map((l: any) => l.Description)].filter(Boolean).join(" \n ");
   const refs = new Set<number>();
@@ -169,8 +169,8 @@ function matchDeal(inv: any, ctx: MatchCtx): { deal: DealRow; by: string } | { a
   const names = [inv.Reference, ...(inv.LineItems || []).map((l: any) => l.Description)].map(norm).filter(n => n.length >= 6);
   if (names.length) {
     const hits = open.filter(d => { const n = norm(d.name); return n.length >= 6 && names.some(x => x === n || x.startsWith(n + " ") || x.includes(` ${n} `) || x.endsWith(` ${n}`)); });
-    if (hits.length === 1) return { deal: hits[0], by: "reference names the deal" };
-    if (hits.length > 1) return { ambiguous: `reference matches ${hits.length} deals` };
+    if (hits.length === 1) return { deal: hits[0], by: "reference names the transaction" };
+    if (hits.length > 1) return { ambiguous: `reference matches ${hits.length} transactions` };
   }
   // The Xero contact is one of the deal's parties (billing entity or
   // CRM company — "c/o …" suffixes allowed) and the net is the fee or half
@@ -182,7 +182,7 @@ function matchDeal(inv: any, ctx: MatchCtx): { deal: DealRow; by: string } | { a
     const feeFits = (fee: number) => Math.abs(fee - net) <= 1 || Math.abs(fee - net * 2) <= 2;
     const hits = open.filter(d => d.fee != null && Number(d.fee) > 0 && feeFits(Number(d.fee)) && d.parties.some(sameParty));
     if (hits.length === 1) return { deal: hits[0], by: `contact ${inv.Contact?.Name} + fee` };
-    if (hits.length > 1) return { ambiguous: `contact + fee matches ${hits.length} deals` };
+    if (hits.length > 1) return { ambiguous: `contact + fee matches ${hits.length} transactions` };
   }
   return null;
 }

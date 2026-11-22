@@ -18,7 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 const GROUPS: Array<{ id: "all" | PortfolioContactGroup; name: string }> = [
   { id: "all", name: "All" },
   { id: "internal", name: "Team" },
-  { id: "deals", name: "Deals & tracker" },
+  { id: "deals", name: "Transactions & tracker" },
   { id: "tenants", name: "In occupation" },
   { id: "consultants", name: "Consultants" },
 ];
@@ -131,7 +131,7 @@ export function PortfolioContactsBoard({ companyId }: { companyId: string }) {
       <div className="relative">
         <label htmlFor={searchId} className="sr-only">Search portfolio contacts and linked records</label>
         <Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-muted-foreground" />
-        <Input id={searchId} type="search" value={filter.search} onChange={event => updateFilter({ search: event.target.value })} placeholder="Search people, companies, properties or deals…" className="h-11 pl-9" data-testid="portfolio-contacts-search" />
+        <Input id={searchId} type="search" value={filter.search} onChange={event => updateFilter({ search: event.target.value })} placeholder="Search people, companies, properties or transactions…" className="h-11 pl-9" data-testid="portfolio-contacts-search" />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Select value={filter.propertyId} onValueChange={propertyId => updateFilter({ propertyId })}>

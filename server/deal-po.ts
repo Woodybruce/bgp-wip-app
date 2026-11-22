@@ -47,5 +47,5 @@ export async function dealPoCheck(db: Queryable, dealId: string): Promise<PoChec
 /** The sentence shown when an invoice is blocked for want of a PO. */
 export function poMissingMessage(check: PoCheck): string {
   const who = check.requiredBy.map(c => c.name).join(", ") || "This client";
-  return `${who} only pays invoices that quote a PO number — add the PO number to the deal before raising the invoice.`;
+  return `${who} only pays invoices that quote a PO number — add the PO number to the transaction before raising the invoice.`;
 }

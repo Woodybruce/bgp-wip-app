@@ -124,7 +124,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
     : level === "simplified" ? { value: "Low", words: "Low: simplified due diligence" }
     : { value: "Standard", words: level ? "Standard due diligence" : "Not worked out yet" };
   const job: RiskRow[] = [
-    { label: "Deal", value: `${deal.name}${deal.ref ? ` (Ref ${deal.ref})` : ""}`, tone: "info" },
+    { label: "Transaction", value: `${deal.name}${deal.ref ? ` (Ref ${deal.ref})` : ""}`, tone: "info" },
     { label: "Property", value: deal.property || "Not recorded", tone: "info" },
     { label: "Party", value: `${p.roleLabel}: ${p.name}${p.brandName && p.brandName !== p.name ? ` (${p.brandName})` : ""}`, tone: "info" },
     { label: "Job type", value: p.client ? "Client: BGP acts for this party" : "Counterparty: the other side of the deal", tone: "info" },
@@ -286,7 +286,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
       ].filter(Boolean),
     };
   });
-  const ownersNote = p.individual ? "A private individual: the people named on the deal."
+  const ownersNote = p.individual ? "A private individual: the people named on the transaction."
     : c?.listing ? "Listed on a regulated market: no beneficial owners to identify (MLR 2017 reg 28(5))."
     : abroad.length && !ownerRows.length ? "The owners are behind a company registered abroad: KYC4U to identify them."
     : !ownerRows.length ? (c ? "The register names no person who owns or controls the company." : "Not known yet: the register has not been read.")
@@ -321,7 +321,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   // ── The counterparty's agent and solicitors.
   const others = input.agents;
   const counterparty: RiskRow[] = [
-    { label: "Agents on the deal", value: others.length ? others.map(a => `${a.roleWords}: ${a.name}`).join("; ") : "None recorded on the deal", tone: "info" },
+    { label: "Agents on the transaction", value: others.length ? others.map(a => `${a.roleWords}: ${a.name}`).join("; ") : "None recorded on the deal", tone: "info" },
     { label: "Agents' HMRC registration", value: others.length ? others.map(a => `${a.name}: ${a.words}`).join("; ") : "Not applicable", tone: others.some(a => /not on|not registered|expired/i.test(a.words)) ? "attention" : "info" },
     ...(input.solicitors.length
       ? input.solicitors.map(sc => { const w = solicitorCheckWords(sc); return { label: "Solicitors", value: `${w.words} (checked ${day(sc.ranAt)})`, tone: w.tone }; })

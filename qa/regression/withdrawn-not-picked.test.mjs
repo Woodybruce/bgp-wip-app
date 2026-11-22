@@ -74,7 +74,7 @@ test('the staff Letting Tracker offers no Withdrawn: bulk Change Status, the row
   const lists = [...tracker.matchAll(/options=\{([A-Z_]+)\}/g)].map(m => m[1]);
   for (const list of lists) assert.ok(['DEAL_PIPELINE_STATUSES', 'UNIT_STATUSES'].includes(list), `options={${list}}`);
   // Deleting a unit is how a letting ends: its deal is still moved to Withdrawn on the server.
-  assert.match(tracker, /r\?\.dealWithdrawn \? "Its deal has been moved to Withdrawn\." : undefined/);
+  assert.match(tracker, /r\?\.dealWithdrawn \? "Its transaction has been moved to Withdrawn\." : undefined/);
   const routes = source('server/routes.ts');
   assert.match(routes, /await mirrorFromAvailableUnit\(unitId, "WIT", \{ pool, reason: "available_units\.DELETE", actorUserId \}\);/);
 });
@@ -105,7 +105,7 @@ test('ChatBGP offers no Withdrawn for a tracker unit, says to delete the unit, a
   const { TRACKER_STATUS_HINT } = evaluate(`${hint}\nexports.TRACKER_STATUS_HINT = TRACKER_STATUS_HINT;`, { LETTING_PICK_STATUSES, SYSTEM_SET_STATUSES, DEAL_STATUS_LABELS });
   assert.equal(TRACKER_STATUS_HINT, 'OPP (Opportunity), AVA (Available), NEG (Negotiating), HOT (HOTs), SOL (Solicitors), EXC (Exchanged), COM (Completed)');
   assert.match(chat, /Withdrawn is not offered \(Woody, 2026-11-20\): when a letting falls through, tell the user to delete the unit on the Letting Tracker/);
-  assert.match(chat, /A deal that falls through is deleted, not withdrawn \(Woody, 2026-11-20\)/);
+  assert.match(chat, /A transaction that falls through is deleted, not withdrawn \(Woody, 2026-11-20\)/);
   assert.equal(chat.split('COM (completed), WIT (withdrawn).').length - 1, 2, 'the two Investment Tracker tools still list Withdrawn');
   // The server still accepts WIT on a save: chat refuses only an unknown or a system-set code.
   assert.match(chat, /if \(SYSTEM_SET_STATUSES\.includes\(code\)\) return/);
@@ -113,6 +113,6 @@ test('ChatBGP offers no Withdrawn for a tracker unit, says to delete the unit, a
   // An import of old data may still write Withdrawn.
   assert.match(source('server/universal-ingest.ts'), /status \(string — \$\{\[\.\.\.DEAL_PAGE_STATUSES, "WIT"\]\.join\(" \| "\)\}\)/);
   const map = source('server/chatbgp-app-map.ts');
-  assert.match(map, /\*\*A deal that falls through is deleted, not withdrawn\*\*/);
+  assert.match(map, /\*\*A transaction that falls through is deleted, not withdrawn\*\*/);
   assert.doesNotMatch(map, /Change Status → Withdrawn/);
 });

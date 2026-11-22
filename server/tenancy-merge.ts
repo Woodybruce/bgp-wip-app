@@ -77,7 +77,7 @@ export async function mergeTenancyUnits(pool: any, propertyId: unknown, primaryI
   } catch (error: any) {
     await db.query("ROLLBACK");
     if (error.code === "23505" || error.code === "23503") throw new TenancyMergeError(409,
-      "These rows have linked records that cannot be combined yet. Review their deals and unit links first. Both tenancy rows and all links are unchanged.");
+      "These rows have linked records that cannot be combined yet. Review their transactions and unit links first. Both tenancy rows and all links are unchanged.");
     throw error;
   } finally { db.release(); }
 }

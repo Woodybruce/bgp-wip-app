@@ -44,7 +44,7 @@ export const SIGNALS: Record<string, { label: string; sql: string; deleteOnly?: 
     UNION SELECT company_name FROM unit_offers
     UNION SELECT company_name FROM unit_viewings
     UNION SELECT operator_name FROM unit_target_operators`) },
-  deal: { label: "On a BGP deal (any party)", sql: `SELECT DISTINCT unnest(ARRAY[tenant_id, landlord_id, vendor_id, purchaser_id, vendor_agent_id, acquisition_agent_id, purchaser_agent_id, leasing_agent_id, joint_agent_id]) AS id FROM crm_deals
+  deal: { label: "On a BGP transaction (any party)", sql: `SELECT DISTINCT unnest(ARRAY[tenant_id, landlord_id, vendor_id, purchaser_id, vendor_agent_id, acquisition_agent_id, purchaser_agent_id, leasing_agent_id, joint_agent_id]) AS id FROM crm_deals
     UNION SELECT DISTINCT company_id FROM crm_company_deals` },
   targeted: { label: "Targeted at a unit", sql: `SELECT DISTINCT unnest(target_company_ids) AS id FROM leasing_schedule_units WHERE target_company_ids IS NOT NULL
     UNION SELECT DISTINCT unnest(target_company_ids) FROM tenancy_schedule_units WHERE target_company_ids IS NOT NULL

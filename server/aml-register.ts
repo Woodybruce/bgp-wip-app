@@ -99,7 +99,7 @@ router.post("/api/aml-register", async (req: Request, res: Response) => {
     let entityId: string | null = null;
     if (v.dealId) {
       const deal = (await pool.query(`SELECT * FROM crm_deals WHERE id = $1`, [v.dealId])).rows[0];
-      if (!deal) return res.status(404).json({ message: "No such deal." });
+      if (!deal) return res.status(404).json({ message: "No such transaction." });
       if (v.role) {
         companyId = deal[PARTY_COLUMN[v.role].brand] || null;
         entityId = deal[PARTY_COLUMN[v.role].entity] || null;

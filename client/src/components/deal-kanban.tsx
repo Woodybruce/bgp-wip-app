@@ -123,7 +123,7 @@ export function DealKanban({ deals, propertyMap, unitMap, tenantMap, amlCompanyM
           <div className="flex-1 overflow-y-auto p-2 space-y-2 max-h-[calc(100vh-280px)]">
             {col.deals.length === 0 && (
               <p className="text-[11px] text-muted-foreground text-center py-6">
-                No deals
+                No transactions
               </p>
             )}
             {col.deals.map((deal) => {
@@ -241,7 +241,7 @@ export function DealKanban({ deals, propertyMap, unitMap, tenantMap, amlCompanyM
           {col.deals.length > 0 && (
             <div className="px-3 py-2 border-t bg-muted/60 rounded-b-lg">
               <p className="text-[10px] text-muted-foreground">
-                {col.deals.length} deal{col.deals.length !== 1 ? "s" : ""}
+                {col.deals.length} transaction{col.deals.length !== 1 ? "s" : ""}
                 {col.totalFee > 0 && <span className="ml-1">· {formatFee(col.totalFee)}</span>}
               </p>
             </div>

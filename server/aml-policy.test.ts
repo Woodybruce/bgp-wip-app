@@ -67,7 +67,7 @@ test("approvals last 3 years, or 1 for enhanced due diligence", () => {
 test("the level: enhanced on any flag or factor that counts, simplified on a basis, else standard", () => {
   const flag = { label: "Possible match on the UK Sanctions List" };
   assert.equal(dueDiligenceLevel({ partyFlags: [flag], dealFlags: [], simplifiedBasis: "Listed" }).level, "enhanced");
-  assert.equal(dueDiligenceLevel({ partyFlags: [], dealFlags: [{ label: "Super-prime sale", factor: true }], simplifiedBasis: null }).why[0], "On the deal: Super-prime sale");
+  assert.equal(dueDiligenceLevel({ partyFlags: [], dealFlags: [{ label: "Super-prime sale", factor: true }], simplifiedBasis: null }).why[0], "On the transaction: Super-prime sale");
   assert.equal(dueDiligenceLevel({ partyFlags: [], dealFlags: [], simplifiedBasis: "Listed on a regulated market" }).level, "simplified");
   const std = dueDiligenceLevel({ partyFlags: [], dealFlags: [], simplifiedBasis: null, toWeigh: ["Restaurants"] });
   assert.equal(std.level, "standard");
@@ -200,7 +200,7 @@ test("factors reach the red flags, the deal's flags and KYC4U's note, listed apa
   assert.equal(deal[0].kind, "super_prime");
   const note = redFlagNote([{ ...flags[0] }], deal);
   assert.match(note, /Higher-risk factors in BGP's AML policy \(enhanced due diligence\):/);
-  assert.match(note, /On the deal: Super-prime sale/);
+  assert.match(note, /On the transaction: Super-prime sale/);
 });
 
 test("BGP's standard heads of terms carry the AML clause; the 37-clause copy is kept to recognise", () => {

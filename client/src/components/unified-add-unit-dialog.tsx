@@ -197,8 +197,8 @@ export function UnifiedAddUnitDialog({ open, onOpenChange, mode, fixedPropertyId
           <DialogTitle>Add Unit</DialogTitle>
           <DialogDescription>
             {form.marketingActive
-              ? "Lands on the Letting Tracker with its deal reference (#) — fees and the fee split live on that deal."
-              : "Lands on the Tenancy Schedule. A vacant unit also goes on the Letting Tracker with its deal reference."}
+              ? "Lands on the Letting Tracker with its transaction reference (#) — fees and the fee split live on that transaction."
+              : "Lands on the Tenancy Schedule. A vacant unit also goes on the Letting Tracker with its transaction reference."}
           </DialogDescription>
         </DialogHeader>
 

@@ -201,7 +201,7 @@ export default function AdminDedupe() {
                         </div>
                         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
                           <span>{co.contact_count} contact{co.contact_count === 1 ? "" : "s"}</span>
-                          <span>{co.deal_count} deal{co.deal_count === 1 ? "" : "s"}</span>
+                          <span>{co.deal_count} transaction{co.deal_count === 1 ? "" : "s"}</span>
                           <span>{co.kyc_doc_count} KYC doc{co.kyc_doc_count === 1 ? "" : "s"}</span>
                         </div>
                         {co.description && <p className="text-[11px] text-muted-foreground mt-1.5 line-clamp-2">{co.description}</p>}

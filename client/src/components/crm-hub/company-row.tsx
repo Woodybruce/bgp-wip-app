@@ -56,7 +56,7 @@ export function OwnersCell({ row }: { row: CrmHubRow }) {
   const names = row.owners.map(owner => owner.name).join(", ");
   return (
     <span className={cn("break-words", row.ownersFromDeals && "text-muted-foreground")}
-      title={row.ownersFromDeals ? `${names}. From its deals: nobody is set on the account` : names}>
+      title={row.ownersFromDeals ? `${names}. From its transactions: nobody is set on the account` : names}>
       {shown}{more > 0 && <span className="text-muted-foreground"> +<span className="font-mono tabular-nums">{more}</span></span>}
     </span>
   );

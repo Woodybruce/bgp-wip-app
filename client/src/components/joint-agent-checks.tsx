@@ -390,7 +390,7 @@ function AskDialog({ dealId, view, party, onClose }: { dealId: string; view: Joi
             <Label htmlFor="joint-note">A note to them (optional)</Label>
             <Textarea id="joint-note" value={note} onChange={e => setNote(e.target.value)} rows={2} maxLength={2000} data-testid="joint-note" />
           </div>
-          <p className="text-[11px] text-muted-foreground">They get an email with a link to upload their checks. The deal's agents are copied.</p>
+          <p className="text-[11px] text-muted-foreground">They get an email with a link to upload their checks. The transaction's agents are copied.</p>
           {missing && <p className="text-[11px] text-muted-foreground" data-testid="joint-ask-missing">{missing}</p>}
         </div>
         <DialogFooter>

@@ -123,7 +123,7 @@ export default function LandsecHome() {
               {data.outOfScope.map(p => (
                 <Link key={p.id} href={`/properties/${p.id}`} className="flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 hover:bg-muted/40">
                   <span className="truncate">{p.name}</span>
-                  <span className="text-xs text-muted-foreground tabular-nums shrink-0">{p.units} units · {p.deals} deals</span>
+                  <span className="text-xs text-muted-foreground tabular-nums shrink-0">{p.units} units · {p.deals} transactions</span>
                 </Link>
               ))}
             </div>

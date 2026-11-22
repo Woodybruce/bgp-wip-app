@@ -71,15 +71,15 @@ export function landlordBriefFromRecords(evidence: any): string {
     ? `${properties.length} linked CRM propert${properties.length === 1 ? "y" : "ies"} shown${properties.length === 30 ? " (up to 30)" : ""}${listedNames}.`
     : "No properties linked in this CRM summary.";
   const dealSummary = deals.length
-    ? `${deals.length} most recently updated deal record${deals.length === 1 ? "" : "s"} shown`
-    : "No deal records in this summary";
+    ? `${deals.length} most recently updated transaction record${deals.length === 1 ? "" : "s"} shown`
+    : "No transaction records in this summary";
   const contactSummary = contacts.length
     ? `${contacts.length} listed CRM contact${contacts.length === 1 ? "" : "s"} included`
     : "no CRM contacts in this summary";
   return `**${name(evidence?.name, "Landlord")} — linked CRM records.**
 - **Properties:** ${propertySummary}
 - **Records:** ${dealSummary}; ${contactSummary}.
-- **Next step:** Review the latest deal stages with the BGP team, agree the next leasing action for each property, and record its owner and follow-up date.`;
+- **Next step:** Review the latest transaction stages with the BGP team, agree the next leasing action for each property, and record its owner and follow-up date.`;
 }
 
 export function brandLegalEvidenceContext(company: any) {

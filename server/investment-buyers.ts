@@ -122,7 +122,7 @@ export async function getBuyersForAsset(trackerId: string, deps: { pool?: Querie
     const b = upsert(key, { name: e.name, companyId: e.companyId });
     b.companyId = b.companyId || e.companyId;
     b.score += score;
-    b.reasons.push(`bought ${e.sameClass} ${classes[0] || "similar"} deal${e.sameClass === 1 ? "" : "s"}${e.sameUse ? ` incl. ${profile.uses[0]}` : ""}${e.sameArea ? (london ? " in London" : " outside London") : ""}${e.nearPrice && guidePrice ? ` around ${fmtM(guidePrice)}` : ""}`);
+    b.reasons.push(`bought ${e.sameClass} ${classes[0] || "similar"} transaction${e.sameClass === 1 ? "" : "s"}${e.sameUse ? ` incl. ${profile.uses[0]}` : ""}${e.sameArea ? (london ? " in London" : " outside London") : ""}${e.nearPrice && guidePrice ? ` around ${fmtM(guidePrice)}` : ""}`);
     b.sources.push("comps");
   }
 

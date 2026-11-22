@@ -137,7 +137,7 @@ export function signOffDenial(f: SignOffFacts): string | null {
   // With the officers doing enhanced checks in-house, an open KYC4U request
   // no longer holds the party (Woody, 22 November 2026: "I dont actually think
   // KYC4U is doing anything we cant").
-  if (f.withKyc4u && !f.inHouseEdd) return "This party was raised with KYC4U on this deal: add KYC4U's result when it comes back.";
+  if (f.withKyc4u && !f.inHouseEdd) return "This party was raised with KYC4U on this transaction: add KYC4U's result when it comes back.";
   const edd = signOffEnhanced(f) && !!f.inHouseEdd;
   if (edd && (f.sanctionsFlags || 0) > 0) return "A possible sanctions match stands: check whether it is the person or company, then set it aside with a comment if it is not, or tell the Nominated Officer (an OFSI report and legal advice follow) before going any further.";
   if (edd) {
@@ -149,7 +149,7 @@ export function signOffDenial(f: SignOffFacts): string | null {
     return null;
   }
   if (f.redFlags > 0) return "This party needs enhanced due diligence (a red flag or a higher-risk factor in the AML policy): raise it with KYC4U; the Nominated Officer or the Deputy adds KYC4U's result.";
-  if (f.dealRedFlags > 0) return "The deal needs enhanced due diligence (a red flag or a higher-risk factor on the deal record): raise it with KYC4U; the Nominated Officer or the Deputy adds KYC4U's result.";
+  if (f.dealRedFlags > 0) return "The transaction needs enhanced due diligence (a red flag or a higher-risk factor on the transaction record): raise it with KYC4U; the Nominated Officer or the Deputy adds KYC4U's result.";
   if (f.higherRisk) return "This is a higher-risk file (high risk, enhanced due diligence or a public role): it goes to KYC4U.";
   if (f.ownersAbroad?.length) return `Owned through a company registered abroad (${f.ownersAbroad.join(", ")}): it goes to KYC4U, who find the people behind it; the Nominated Officer or a Deputy adds KYC4U's result.`;
   if (f.precheckRunning) return "BGP's checks before asking are still running. Sign off once they finish.";

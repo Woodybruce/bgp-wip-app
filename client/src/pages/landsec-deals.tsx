@@ -42,15 +42,15 @@ export default function LandsecDeals() {
     return d;
   }, [data, party, search]);
 
-  if (error) return <div className="p-4 md:p-6"><p className="text-sm text-muted-foreground">The deal clock could not be loaded. {(error as any)?.message || ""}</p></div>;
+  if (error) return <div className="p-4 md:p-6"><p className="text-sm text-muted-foreground">The transaction clock could not be loaded. {(error as any)?.message || ""}</p></div>;
 
   return (
     <div className="p-4 md:p-6 space-y-4" data-testid="landsec-deals">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Deals</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Transactions</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {data ? `${counts.all} live deals · ${counts.stuck} in negotiation at the same stage for ${LANDSEC_STUCK_DAYS}+ days · ${counts.none} in negotiation with no one named as waiting on` : "Every live deal, its stage, its clock and who it is waiting on"}
+            {data ? `${counts.all} live transactions · ${counts.stuck} in negotiation at the same stage for ${LANDSEC_STUCK_DAYS}+ days · ${counts.none} in negotiation with no one named as waiting on` : "Every live transaction, its stage, its clock and who it is waiting on"}
           </p>
         </div>
         {trackerHref && <Link href={trackerHref}><Button variant="outline" size="sm">{restricted ? "Tracker" : "Letting tracker"} <ChevronRight className="w-3 h-3 ml-1" /></Button></Link>}
@@ -64,7 +64,7 @@ export default function LandsecDeals() {
         ))}
         <Pill active={party === "none"} onClick={() => setParty("none")}>No one named <PillCount n={counts.none} active={party === "none"} /></Pill>
       </div>
-      <Input placeholder="Search deal, tenant, unit, scheme or note…" value={search} onChange={e => setSearch(e.target.value)} className="max-w-md" />
+      <Input placeholder="Search transaction, tenant, unit, scheme or note…" value={search} onChange={e => setSearch(e.target.value)} className="max-w-md" />
 
       {isLoading && <Skeleton className="h-64 rounded-lg" />}
 
@@ -74,7 +74,7 @@ export default function LandsecDeals() {
             <table className="w-full text-sm">
               <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
-                  <th className="text-left px-3 py-2 font-medium">Deal</th>
+                  <th className="text-left px-3 py-2 font-medium">Transaction</th>
                   <th className="text-left px-3 py-2 font-medium">Scheme · unit</th>
                   <th className="text-left px-3 py-2 font-medium">Stage</th>
                   <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Days at stage</th>
@@ -86,7 +86,7 @@ export default function LandsecDeals() {
               </thead>
               <tbody>
                 {rows.map(d => <DealRow key={d.id} d={d} restricted={restricted} canSetStage={!!data.canSetStage} />)}
-                {rows.length === 0 && <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">No deals match.</td></tr>}
+                {rows.length === 0 && <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">No transactions match.</td></tr>}
               </tbody>
             </table>
           </div>

@@ -19,7 +19,7 @@ function stepTitle(s: StripStep): string {
   const parts = [`${s.label}: reached ${longDay(s.reachedAt)}`];
   if (s.byName) parts.push(`moved by ${s.byName}`);
   if (s.days != null) parts.push(`${s.days} day${s.days === 1 ? "" : "s"} ${s.state === "current" ? "so far" : "there"}`);
-  if (!s.confirmed) parts.push("the date is not confirmed (a bulk update, or when the deal was added)");
+  if (!s.confirmed) parts.push("the date is not confirmed (a bulk update, or when the transaction was added)");
   return parts.join(", ");
 }
 

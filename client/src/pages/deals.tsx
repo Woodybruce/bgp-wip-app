@@ -248,7 +248,7 @@ const COLUMN_LABELS: Record<string, string> = {
   // top of the column-visibility menu.
   unit: "Unit (standalone)",
   clientXero: "Client / Billing",
-  type: "Deal Type",
+  type: "Transaction Type",
   status: "Status",
   tenant: "Tenant",
   parties: "Parties",
@@ -365,7 +365,7 @@ function PoNumberDatalist() {
 // a neutral pill.
 function LastTouchCell({ iso, source }: { iso: string | null | undefined; source?: LastContactSource | null }) {
   const cell = lastContactCell(iso, Date.now(), source);
-  if (cell.kind === "none") return <span className="text-[10px] text-muted-foreground" title="No email, meeting or deal event has been read for this deal yet">—</span>;
+  if (cell.kind === "none") return <span className="text-[10px] text-muted-foreground" title="No email, meeting or transaction event has been read for this transaction yet">—</span>;
   if (cell.kind === "unread") {
     return <span className="inline-block text-[10px] leading-tight text-muted-foreground/80" title={cell.title} data-testid="deal-last-contact" data-last-contact="unread">{cell.label}</span>;
   }
@@ -401,7 +401,7 @@ function ClosedStage({ deal, code }: { deal: any; code: DealStatusCode }) {
   return (
     <span
       className="inline-block text-[10px] leading-tight text-muted-foreground/80"
-      title={`Closed deal (${name}${at ? ` ${formatDate(at)}` : ""}): no days at stage`}
+      title={`Closed transaction (${name}${at ? ` ${formatDate(at)}` : ""}): no days at stage`}
       data-testid={`deal-closed-stage-${deal.id}`}
     >
       {name}{at ? ` ${formatDate(at)}` : ""}
@@ -942,7 +942,7 @@ function FindUnitSearch({ propertyId, onPick }: { propertyId: string; onPick: (r
           })}
         </div>
       )}
-      <p className="text-[11px] text-muted-foreground mt-1">Units already on the Letting Tracker show their Ref # — open that deal rather than adding another.</p>
+      <p className="text-[11px] text-muted-foreground mt-1">Units already on the Letting Tracker show their Ref # — open that transaction rather than adding another.</p>
     </div>
   );
 }
@@ -961,11 +961,11 @@ function LiveLettingNotice({ row, onUseDeal }: { row: LettingUnitSearchRow; onUs
       </span>
       <Button type="button" variant="outline" size="sm" className="h-7 text-xs" asChild>
         <a href={`/deals/${row.dealId}`} target="_blank" rel="noreferrer" data-testid="live-letting-open-deal">
-          <ExternalLink className="w-3 h-3 mr-1" /> Open deal
+          <ExternalLink className="w-3 h-3 mr-1" /> Open transaction
         </a>
       </Button>
       <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={onUseDeal} data-testid="live-letting-use-deal">
-        Use that deal
+        Use that transaction
       </Button>
     </div>
   );
@@ -1240,7 +1240,7 @@ function PartiesCell({
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-[380px] p-3 space-y-2.5" align="start">
-        <p className="text-xs font-semibold">Parties on this deal</p>
+        <p className="text-xs font-semibold">Parties on this transaction</p>
         {PARTY_ROLES.map(role => (
           <div key={role.key} className="grid grid-cols-[120px_1fr] items-center gap-2">
             <Label className="text-xs text-muted-foreground">{role.label}</Label>
@@ -1592,7 +1592,7 @@ function DatesCell({
         </div>
         <p className="text-[10px] text-muted-foreground leading-tight pt-1 border-t">
           Target Date drives the WIP report's month / fiscal-year bucket
-          until the deal exchanges.
+          until the transaction exchanges.
         </p>
       </PopoverContent>
     </Popover>
@@ -1875,7 +1875,7 @@ function ConsultantCreateBody({
   return (
     <div className="space-y-4">
       <div>
-        <Label>Deal Type *</Label>
+        <Label>Transaction Type *</Label>
         <Select
           value={form.dealType || undefined}
           onValueChange={(v) => {
@@ -1902,7 +1902,7 @@ function ConsultantCreateBody({
       </div>
 
       <div>
-        <Label htmlFor="consultant-deal-name">Deal Name <span className="text-rose-600">*</span></Label>
+        <Label htmlFor="consultant-deal-name">Transaction Name <span className="text-rose-600">*</span></Label>
         <Input
           id="consultant-deal-name"
           value={form.name}
@@ -2034,7 +2034,7 @@ function LiveInvestmentDeals({ propertyId }: { propertyId: string }) {
           return (
             <li key={d.id}>
               <a href={`/deals/${d.id}`} target="_blank" rel="noreferrer" className="underline underline-offset-2" data-testid={`deal-live-investment-${d.id}`}>
-                {d.dealRef ? `#${d.dealRef} ` : ""}{d.name || "Deal"}
+                {d.dealRef ? `#${d.dealRef} ` : ""}{d.name || "Transaction"}
               </a>
               <span className="text-muted-foreground"> · {d.dealType || "No type"} · {code ? DEAL_STATUS_LABELS[code] : d.status || "No status"}</span>
             </li>
@@ -2312,7 +2312,7 @@ function SimplifiedCreateBody({
         title: hotsUnitId ? "Heads of terms filed and read" : "Heads of terms read",
         description: place
           ? `${fields} details filled from ${file.name}${hotsUnitId ? ", now on the unit as the final agreed Heads of Terms" : ""} — check them, then save.`
-          : `${fields} details filled from ${file.name} — check them, then Create. The deal starts at HOTs.`,
+          : `${fields} details filled from ${file.name} — check them, then Create. The transaction starts at HOTs.`,
       });
     } catch (e: any) {
       comboToast({ title: "Couldn't read the heads of terms", description: e?.message || "Try again", variant: "destructive" });
@@ -2360,10 +2360,10 @@ function SimplifiedCreateBody({
           here by mistake. */}
       {!place && (
       <div className="text-[11px] text-muted-foreground bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-md px-3 py-2 leading-snug">
-        New Deal creates a <strong>Solicitors-stage</strong> deal on the CRM kanban.
+        New Transaction creates a <strong>Solicitors-stage</strong> transaction on the CRM kanban.
         For marketing / viewings / negotiating units, use the{" "}
         <a href="/deals/letting" className="underline">Letting Tracker → Add Unit</a> instead.
-        A unit already on the Letting Tracker moves to Solicitors from its row there, never as a new deal.
+        A unit already on the Letting Tracker moves to Solicitors from its row there, never as a new transaction.
       </div>
       )}
       {/* Secondment has no property — the deal is a person placed with a
@@ -2428,10 +2428,10 @@ function SimplifiedCreateBody({
           )}
           <p className="text-[11px] text-muted-foreground">
             {hotsParsed
-              ? <>Read {hotsParsed.fileName}: {hotsParsed.fields} details filled below{place ? "" : " and the deal set to HOTs"} — check them before {place ? "you save" : "Create"}.</>
+              ? <>Read {hotsParsed.fileName}: {hotsParsed.fields} details filled below{place ? "" : " and the transaction set to HOTs"} — check them before {place ? "you save" : "Create"}.</>
               : hotsUnitId
                 ? <>Upload the final agreed HOTs (PDF or Word): they are filed on the unit and the form fills itself.</>
-                : <>Upload the HOTs (PDF or Word) and the form fills itself; the deal starts at HOTs.</>}
+                : <>Upload the HOTs (PDF or Word) and the form fills itself; the transaction starts at HOTs.</>}
           </p>
         </div>
       )}
@@ -2485,7 +2485,7 @@ function SimplifiedCreateBody({
       {!isSecondment && <DealSchemeField form={form} setForm={setForm} />}
 
       <div>
-        <Label>Deal Type *</Label>
+        <Label>Transaction Type *</Label>
         <Select
           value={form.dealType || undefined}
           onValueChange={(v) => {
@@ -2817,14 +2817,14 @@ function SimplifiedCreateBody({
       )}
 
       <div>
-        <Label htmlFor="deal-name">Deal Name {isSecondment
+        <Label htmlFor="deal-name">Transaction Name {isSecondment
           ? <span className="text-rose-600">*</span>
           : <span className="text-muted-foreground text-xs">(auto-fills as {counterpartyKind === "investment" ? "Client – Property" : "Tenant – Property"})</span>}</Label>
         <Input
           id="deal-name"
           value={form.name}
           onChange={(e) => { setNameAutoFilled(false); set("name", e.target.value); }}
-          placeholder={computeAutoName(form) || "Enter deal name"}
+          placeholder={computeAutoName(form) || "Enter transaction name"}
           data-testid="input-deal-name"
         />
       </div>
@@ -3006,14 +3006,14 @@ function SimplifiedCreateBody({
           <Label htmlFor="deal-comments" className="text-xs">Comments{!hideFees ? " / specific wording" : ""}</Label>
           <Textarea id="deal-comments" rows={3} value={form.comments}
             onChange={(e) => set("comments", e.target.value)}
-            placeholder={hideFees ? "Any context or notes on this deal…" : "Anything finance needs to know — special wording, PO process, billing quirks…"} />
+            placeholder={hideFees ? "Any context or notes on this transaction…" : "Anything finance needs to know — special wording, PO process, billing quirks…"} />
         </div>
       </div>
 
       <p className="text-[11px] text-muted-foreground border-t pt-3">
         {hideFees
-          ? <>Extra detail (areas, individual dates) is editable on the deal after creation.</>
-          : <>Anything not here (yield, areas, individual dates, Xero billing address) is editable on the deal board after creation. Click <span className="font-medium text-foreground">Show all fields</span> below if you need the full form now.</>}
+          ? <>Extra detail (areas, individual dates) is editable on the transaction after creation.</>
+          : <>Anything not here (yield, areas, individual dates, Xero billing address) is editable on the transaction board after creation. Click <span className="font-medium text-foreground">Show all fields</span> below if you need the full form now.</>}
       </p>
       {/* Joint Agency Lead Deal (Jack, 2026-11-11): the AML file note for a
           letting where the co-agent introduced and dealt with the tenant.
@@ -3121,7 +3121,7 @@ export function DealHandoverDialog({ open, onOpenChange, handover }: {
   const failed = want && (properties.isError || (!!dealId && deal.isError));
   useEffect(() => {
     if (!failed) return;
-    toast({ title: "The deal could not be loaded", description: "Refresh the page and try again.", variant: "destructive" });
+    toast({ title: "The transaction could not be loaded", description: "Refresh the page and try again.", variant: "destructive" });
     onOpenChange(false);
   }, [failed]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!handover) return null;
@@ -3481,7 +3481,7 @@ export function DealFormDialog({
     } catch (e: any) {
       toast({
         title: `${saved}, fee split failed to save`,
-        description: e?.message || "Open the deal and set the split there.",
+        description: e?.message || "Open the transaction and set the split there.",
         variant: "destructive",
       });
     }
@@ -3525,7 +3525,7 @@ export function DealFormDialog({
         // A tracker row with no deal yet: the tracker's own door gives it its deal first.
         const res = await apiRequest("POST", `/api/available-units/${encodeURIComponent(h.unit.id)}/ensure-deal`);
         dealId = (await res.json())?.dealId || null;
-        if (!dealId) throw new Error("This unit has no deal yet, and one could not be made.");
+        if (!dealId) throw new Error("This unit has no transaction yet, and one could not be made.");
       }
       const res = await apiRequest("PUT", `/api/crm/deals/${dealId}`, payload);
       const warned = res.headers.get("X-AML-Warning");
@@ -3542,7 +3542,7 @@ export function DealFormDialog({
       try {
         conversion = await hotsCall<HotsConversion>("POST", `/api/unit-hots/${encodeURIComponent(h.unit.id)}/convert`, terms);
       } catch (e: any) {
-        throw new Error(dealId ? `The deal's details were saved, but it did not move to Solicitors: ${e?.message || "try again"}` : (e?.message || "The deal was not converted"));
+        throw new Error(dealId ? `The transaction's details were saved, but it did not move to Solicitors: ${e?.message || "try again"}` : (e?.message || "The transaction was not converted"));
       }
       if (!dealId) {
         dealId = conversion.dealId;
@@ -3593,8 +3593,8 @@ export function DealFormDialog({
         if (splitAgents.length > 0) payload.internalAgent = splitAgents;
         const created = await postDeal(payload);
         if (created?.id) {
-          await saveSplit(created.id, "Deal created");
-          await saveJointAgencyNote(created.id, "Deal created");
+          await saveSplit(created.id, "Transaction created");
+          await saveJointAgencyNote(created.id, "Transaction created");
         }
         return created;
       }
@@ -3603,7 +3603,7 @@ export function DealFormDialog({
       if (handover) {
         toast({
           title: handover.kind === "promote" ? "Moved to Solicitors" : "Converted to Solicitors",
-          description: data?.conversion?.dealRef != null ? `Deal #${data.conversion.dealRef} is now at Solicitors.` : undefined,
+          description: data?.conversion?.dealRef != null ? `Transaction #${data.conversion.dealRef} is now at Solicitors.` : undefined,
         });
         if (data?.amlWarning) toast({ title: "At Solicitors — AML follow-up needed", description: data.amlWarning, variant: "destructive" });
         invalidateDealCaches();
@@ -3618,10 +3618,10 @@ export function DealFormDialog({
         return;
       }
       toast({
-        title: isEdit ? "Deal updated" : "Deal created",
+        title: isEdit ? "Transaction updated" : "Transaction created",
         action: !isEdit && data?.id ? (
-          <ToastAction altText="View deal" onClick={() => navigateTo(`/deals/${data.id}`)} data-testid="toast-view-deal">
-            View deal →
+          <ToastAction altText="View transaction" onClick={() => navigateTo(`/deals/${data.id}`)} data-testid="toast-view-deal">
+            View transaction →
           </ToastAction>
         ) : undefined,
       });
@@ -3649,11 +3649,11 @@ export function DealFormDialog({
           variant: "destructive",
           action: (refusal.code === "LIVE_LETTING_EXISTS" || refusal.code === "DUPLICATE_DEAL") && refusal.existingDealId ? (
             <ToastAction
-              altText="Open deal"
+              altText="Open transaction"
               onClick={() => { onOpenChange(false); navigateTo(`/deals/${refusal.existingDealId}`); }}
               data-testid="toast-open-existing-deal"
             >
-              Open deal
+              Open transaction
             </ToastAction>
           ) : undefined,
         });
@@ -3676,7 +3676,7 @@ export function DealFormDialog({
     if (!form.name.trim() && !form.propertyId) {
       // Secondment has no property field, so the name is the only handle.
       toast({
-        title: form.dealType === "Secondment" ? "Deal name required" : "Either a property or deal name is required",
+        title: form.dealType === "Secondment" ? "Transaction name required" : "Either a property or transaction name is required",
         variant: "destructive",
       });
       return;
@@ -3686,7 +3686,7 @@ export function DealFormDialog({
     if (!form.targetDate) {
       toast({
         title: "Target Date required",
-        description: "Set the expected completion month — it's what places the deal on the WIP report.",
+        description: "Set the expected completion month — it's what places the transaction on the WIP report.",
         variant: "destructive",
       });
       return;
@@ -3700,7 +3700,7 @@ export function DealFormDialog({
       return;
     }
     if (blockedByLiveLetting && liveLettingRow) {
-      toast({ title: `Already on the Letting Tracker as #${liveLettingRow.dealRef ?? "…"} — open that deal or link to it`, variant: "destructive" });
+      toast({ title: `Already on the Letting Tracker as #${liveLettingRow.dealRef ?? "…"} — open that transaction or link to it`, variant: "destructive" });
       return;
     }
     // Unit-level advisory work (Lease Renewal / Rent Review / Regear) keeps
@@ -3710,7 +3710,7 @@ export function DealFormDialog({
       ADVISORY_UNIT_TYPES.filter((t) => t !== "Dilapidations" && t !== "Service Charge"),
     );
     if (!handover && UNIT_LEVEL_TYPES.has(form.dealType) && !form.unitId) {
-      toast({ title: `${form.dealType} needs a unit`, description: "Pick or add a unit on this property — leasing deals can't be unit-less.", variant: "destructive" });
+      toast({ title: `${form.dealType} needs a unit`, description: "Pick or add a unit on this property — leasing transactions can't be unit-less.", variant: "destructive" });
       return;
     }
 
@@ -3791,17 +3791,17 @@ export function DealFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[700px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{amlStep ? "Kick off AML" : handover?.kind === "promote" ? "Promote to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Edit Deal" : "New Deal"}</DialogTitle>
+          <DialogTitle>{amlStep ? "Kick off AML" : handover?.kind === "promote" ? "Promote to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Edit Transaction" : "New Transaction"}</DialogTitle>
           <DialogDescription>
             {amlStep ? (clientChecks ? "Send each party's contact the client checks: one email, and a page of their own to do them on." : "Start the checks on each party with KYC4U.") : handover
-              ? `${[handover.unit.propertyName || properties.find(p => p.id === handover.unit.propertyId)?.name, handover.unit.unitName].filter(Boolean).join(" — ")}. Check the deal, then save: it moves to Solicitors.`
-              : isEdit ? "Update deal details below." : "Fill in the details to create a new deal."}
+              ? `${[handover.unit.propertyName || properties.find(p => p.id === handover.unit.propertyId)?.name, handover.unit.unitName].filter(Boolean).join(" — ")}. Check the transaction, then save: it moves to Solicitors.`
+              : isEdit ? "Update transaction details below." : "Fill in the details to create a new transaction."}
           </DialogDescription>
         </DialogHeader>
         {amlStep ? (
           <div className="space-y-4" data-testid="deal-aml-step">
             <p className="text-sm">
-              {amlStep.dealRef != null ? <>Deal <span className="font-mono">#{amlStep.dealRef}</span> is saved.</> : <>The deal is saved.</>}
+              {amlStep.dealRef != null ? <>Transaction <span className="font-mono">#{amlStep.dealRef}</span> is saved.</> : <>The transaction is saved.</>}
             </p>
             <div className="space-y-2">
               {amlStep.parties.map(p => {
@@ -3841,11 +3841,11 @@ export function DealFormDialog({
             </div>
             <p className="text-[11px] text-muted-foreground">
               {clientChecks
-                ? "Each button opens the client checks: pick who to ask, see the email, send. Progress shows on the deal's AML."
-                : "Each button fills in KYC4U's request from the deal: check it and save. Then, on KYC4U's Raise New Service Request page, click your Send to ChatBGP bookmark and press Submit there. KYC4U's answer comes back to the deal after the next sync."}
+                ? "Each button opens the client checks: pick who to ask, see the email, send. Progress shows on the transaction's AML."
+                : "Each button fills in KYC4U's request from the transaction: check it and save. Then, on KYC4U's Raise New Service Request page, click your Send to ChatBGP bookmark and press Submit there. KYC4U's answer comes back to the transaction after the next sync."}
             </p>
             <DialogFooter className="flex items-center gap-2">
-              <Button type="button" variant="outline" onClick={() => { const id = amlStep.dealId; onOpenChange(false); navigateTo(`/deals/${id}`); }} data-testid="deal-aml-open-deal">Open the deal</Button>
+              <Button type="button" variant="outline" onClick={() => { const id = amlStep.dealId; onOpenChange(false); navigateTo(`/deals/${id}`); }} data-testid="deal-aml-open-deal">Open the transaction</Button>
               <Button type="button" onClick={() => onOpenChange(false)} data-testid="deal-aml-done">Done</Button>
             </DialogFooter>
           </div>
@@ -3861,7 +3861,7 @@ export function DealFormDialog({
             unitId={handover?.unit.id || ""}
             readUrl="/api/deal-notes/read"
             readExtra={{ propertyId: form.propertyId || null, trackerUnitId: handover?.unit.id || null }}
-            title="Describe the deal"
+            title="Describe the transaction"
             example="Letting of 55 Wells Street to Acme Ltd. Landlord is Wells Estates Ltd. 10 year lease. Rent £120k pax. 6 MRF"
             startOpen
             autoApply
@@ -3889,7 +3889,7 @@ export function DealFormDialog({
         )}
         {hasLiveChanges && (
           <p role="status" className="rounded-md border border-border bg-muted p-3 text-sm" data-testid="deal-draft-update-notice">
-            This deal was updated while you were editing. Your draft is kept; saving it may replace those changes. Cancel and reopen to load the latest version.
+            This transaction was updated while you were editing. Your draft is kept; saving it may replace those changes. Cancel and reopen to load the latest version.
           </p>
         )}
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -4000,7 +4000,7 @@ export function DealFormDialog({
               const unitOptions = propertyUnits.filter(pu => !form.propertyId || pu.propertyId === form.propertyId);
               return (
                 <div className="sm:col-span-2">
-                  <Label>Unit{needsUnit ? " *" : " (optional for property-level deals)"}</Label>
+                  <Label>Unit{needsUnit ? " *" : " (optional for property-level transactions)"}</Label>
                   <DealUnitPicker
                     propertyId={form.propertyId}
                     unitOptions={unitOptions}
@@ -4032,18 +4032,18 @@ export function DealFormDialog({
             })()}
 
             <div className="sm:col-span-2">
-              <Label htmlFor="deal-name">Deal Name (optional — auto-fills from property)</Label>
+              <Label htmlFor="deal-name">Transaction Name (optional — auto-fills from property)</Label>
               <Input
                 id="deal-name"
                 value={form.name}
                 onChange={(e) => set("name", e.target.value)}
-                placeholder={form.propertyId ? properties.find(p => p.id === form.propertyId)?.name || "" : "Enter deal name"}
+                placeholder={form.propertyId ? properties.find(p => p.id === form.propertyId)?.name || "" : "Enter transaction name"}
                 data-testid="input-deal-name"
               />
             </div>
 
             <div>
-              <Label>Deal Type</Label>
+              <Label>Transaction Type</Label>
               <Select value={form.dealType || undefined} onValueChange={(v) => {
                 const val = v === "__clear__" ? "" : v;
                 set("dealType", val);
@@ -4067,7 +4067,7 @@ export function DealFormDialog({
               </Select>
               {!isEdit && form.dealType === "Leasing" && (
                 <p className="text-[11px] text-muted-foreground mt-1.5">
-                  Tip: for an available unit, start in the <a href="/deals/letting" className="underline">Letting Tracker</a> — adding a unit auto-creates this deal and links them.
+                  Tip: for an available unit, start in the <a href="/deals/letting" className="underline">Letting Tracker</a> — adding a unit auto-creates this transaction and links them.
                 </p>
               )}
             </div>
@@ -4133,10 +4133,10 @@ export function DealFormDialog({
               {isCompletingNow && (
                 <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2">
                   <Label className="text-xs font-medium text-emerald-800 flex items-center gap-1">
-                    <Sparkles className="w-3.5 h-3.5" /> What did we learn from this deal?
+                    <Sparkles className="w-3.5 h-3.5" /> What did we learn from this transaction?
                   </Label>
                   <p className="text-[10px] text-emerald-700 mt-0.5">
-                    1-2 sentences. Attaches to the tenant's brand card so the team builds a deal knowledge bank.
+                    1-2 sentences. Attaches to the tenant's brand card so the team builds a transaction knowledge bank.
                   </p>
                   <Textarea
                     placeholder="e.g. Tenant needed 6m rent free to accept ZoneA £300 — happy to go higher for a pop-up term."
@@ -4210,7 +4210,7 @@ export function DealFormDialog({
                 <p className="text-sm py-1.5" data-testid="deal-bgp-contact-readonly">
                   {form.internalAgent.length > 0 ? form.internalAgent.join(", ") : <span className="text-muted-foreground">Not set</span>}
                 </p>
-                <p className="text-[10px] text-muted-foreground">Set by the BGP fee split — edit the split on the deal to change who's on it.</p>
+                <p className="text-[10px] text-muted-foreground">Set by the BGP fee split — edit the split on the transaction to change who's on it.</p>
               </div>
             ) : (
               <div className="sm:col-span-2">
@@ -4521,7 +4521,7 @@ export function DealFormDialog({
                 {jointAgencyOnFile ? (
                   <div className="flex items-center gap-2 rounded-lg border bg-primary/5 px-3 py-2 text-xs" data-testid="joint-agency-on-file">
                     <ShieldCheck className="h-4 w-4 text-primary shrink-0" />
-                    <span><span className="font-semibold">Joint Agency Lead Deal</span>: AML file note on file (signed {jointAgencyOnFile.signedBy}, {new Date(jointAgencyOnFile.savedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}). It is on the deal page and in the register.</span>
+                    <span><span className="font-semibold">Joint Agency Lead Transaction</span>: AML file note on file (signed {jointAgencyOnFile.signedBy}, {new Date(jointAgencyOnFile.savedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}). It is on the transaction page and in the register.</span>
                   </div>
                 ) : (
                   <JointAgencyWidget
@@ -4563,14 +4563,14 @@ export function DealFormDialog({
               type="submit"
               disabled={mutation.isPending || lettingNeedsUnit || blockedByLiveLetting}
               title={blockedByLiveLetting && liveLettingRow
-                ? `Already on the Letting Tracker as #${liveLettingRow.dealRef ?? "…"} — open that deal or link to it`
+                ? `Already on the Letting Tracker as #${liveLettingRow.dealRef ?? "…"} — open that transaction or link to it`
                 : lettingNeedsUnit
                   ? "A letting needs a property and a unit (an actual address) — pick or add the unit"
                   : undefined}
               data-testid="button-save-deal"
             >
               {mutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              {handover?.kind === "promote" ? "Move to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Save Changes" : "Create Deal"}
+              {handover?.kind === "promote" ? "Move to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Save Changes" : "Create Transaction"}
             </Button>
           </DialogFooter>
         </form>
@@ -5129,7 +5129,7 @@ function HotsChecklistDialog({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (!deal) throw new Error("No deal");
+      if (!deal) throw new Error("No transaction");
       const payload: Record<string, unknown> = {
         status: "HOT",
         xeroContactId: form.xeroContactId || null,
@@ -5170,7 +5170,7 @@ function HotsChecklistDialog({
       await apiRequest("PUT", `/api/crm/deals/${deal.id}`, payload);
     },
     onSuccess: async () => {
-      toast({ title: "HOTs checklist completed", description: "Deal moved to HOTs with all details saved." });
+      toast({ title: "HOTs checklist completed", description: "Transaction moved to HOTs with all details saved." });
       invalidateDealCaches();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/fee-allocations"] });
       onOpenChange(false);
@@ -5191,15 +5191,15 @@ function HotsChecklistDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Receipt className="w-5 h-5" />
-            HOTs Checklist — {deal?.name || "Deal"}
+            HOTs Checklist — {deal?.name || "Transaction"}
           </DialogTitle>
           <DialogDescription>
-            {step === "upload" && "Upload the Heads of Terms document. AI will extract all the deal information."}
-            {step === "parsing" && "Reading the HOTs document and extracting deal information..."}
+            {step === "upload" && "Upload the Heads of Terms document. AI will extract all the transaction information."}
+            {step === "parsing" && "Reading the HOTs document and extracting transaction information..."}
             {step === "form" && (missingFields.length > 0
               ? `Extracted from HOTs — please complete the ${missingFields.length} missing field${missingFields.length > 1 ? "s" : ""} highlighted below.`
               : "All fields extracted from HOTs. Review and confirm the details below.")}
-            {step === "saving" && "Saving deal details..."}
+            {step === "saving" && "Saving transaction details..."}
           </DialogDescription>
         </DialogHeader>
 
@@ -5232,7 +5232,7 @@ function HotsChecklistDialog({
                 Drop a PDF, DOCX, or text file here, or click to browse
               </p>
               <p className="text-xs text-muted-foreground mt-2">
-                AI will read the document and pre-fill all deal details automatically
+                AI will read the document and pre-fill all transaction details automatically
               </p>
             </div>
             <div className="mt-4 text-center">
@@ -5248,7 +5248,7 @@ function HotsChecklistDialog({
             <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" />
             <div>
               <p className="text-sm font-medium">Reading {uploadedFileName}...</p>
-              <p className="text-xs text-muted-foreground mt-1">Extracting deal terms, parties, financials, and lease details</p>
+              <p className="text-xs text-muted-foreground mt-1">Extracting transaction terms, parties, financials, and lease details</p>
             </div>
           </div>
         )}
@@ -5670,7 +5670,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
   const removeMutation = useMutation({
     mutationFn: async (invoiceId: string) => apiRequest("DELETE", `/api/xero/invoices/${invoiceId}`),
     onSuccess: () => {
-      toast({ title: "Invoice removed from this deal" });
+      toast({ title: "Invoice removed from this transaction" });
       refetchInvoices();
       invalidateDealCaches();
     },
@@ -5783,7 +5783,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
                 {billing.source === "party" ? `the ${roleWord}'s billing entity, from Parties`
                   : billing.source === "signing" ? `the ${roleWord}'s company that signs${billing.contactId ? "" : ": its Xero contact is found or made when the invoice is drafted"}`
                   : billing.source === "payer" ? `the third party that pays for the ${roleWord}${billing.contactId ? "" : ": its Xero contact is found or made when the invoice is drafted"}`
-                  : "the invoice contact set on this deal"}
+                  : "the invoice contact set on this transaction"}
                 {billing.source === "deal" && xeroAccountNumber ? ` · A/C ${xeroAccountNumber}` : ""}
               </span>
             </div>
@@ -5793,7 +5793,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
             </p>
           ) : (
             <p className="text-xs text-muted-foreground" data-testid="xero-invoice-billed-missing">
-              Link the {roleWord} on the Parties pill to bill its company, or pick a Xero contact for this deal.
+              Link the {roleWord} on the Parties pill to bill its company, or pick a Xero contact for this transaction.
             </p>
           )}
           {/* Billed as another company than the one that signs, or a third party paying (20 November 2026). */}
@@ -5840,11 +5840,11 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
 
         {creating && (
           <div className="border rounded-md p-3 mb-3 space-y-3 bg-muted/30">
-            {draftLoading && <p className="text-xs text-muted-foreground">Filling the invoice from the deal…</p>}
+            {draftLoading && <p className="text-xs text-muted-foreground">Filling the invoice from the transaction…</p>}
             {liveDraft && (
               <p className="text-xs text-muted-foreground" data-testid="xero-invoice-template-note">
                 {liveDraft.template === "letting"
-                  ? "Filled from the deal. Check it before you create the draft."
+                  ? "Filled from the transaction. Check it before you create the draft."
                   : "The template covers New Lettings for a landlord. Type the invoice text."}
               </p>
             )}
@@ -5862,7 +5862,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
                 <Label className="text-xs block">What the invoice says</Label>
                 {(descriptionTyped || referenceTyped) && liveDraft && (
                   <button type="button" className="text-xs underline underline-offset-2 text-muted-foreground hover:text-foreground" onClick={() => { setDescriptionTyped(false); setReferenceTyped(false); }} data-testid="xero-invoice-refill">
-                    Fill again from the deal
+                    Fill again from the transaction
                   </button>
                 )}
               </div>
@@ -5879,7 +5879,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
               <div className="space-y-1 text-xs" data-testid="xero-invoice-template-gaps">
                 {liveDraft.missing.length > 0 && (
                   <p className="text-amber-800 dark:text-amber-300" data-testid="xero-invoice-template-missing">
-                    Missing from the deal: {liveDraft.missing.join("; ")}.
+                    Missing from the transaction: {liveDraft.missing.join("; ")}.
                   </p>
                 )}
                 {liveDraft.warnings.map(w => (
@@ -5994,8 +5994,8 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7"
-                      title="Remove from this deal"
-                      onClick={() => { if (confirm(`Remove this ${inv.status === "DELETED" ? "deleted" : "voided"} invoice from the deal? Xero is not changed.`)) removeMutation.mutate(inv.id); }}
+                      title="Remove from this transaction"
+                      onClick={() => { if (confirm(`Remove this ${inv.status === "DELETED" ? "deleted" : "voided"} invoice from the transaction? Xero is not changed.`)) removeMutation.mutate(inv.id); }}
                       disabled={removeMutation.isPending}
                       data-testid={`button-xero-remove-${inv.id}`}
                     >
@@ -6009,7 +6009,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
         )}
 
         {!xeroStatus?.connected && invoices.length === 0 && (
-          <p className="text-xs text-muted-foreground">Connect Xero to create and track invoices for this deal.</p>
+          <p className="text-xs text-muted-foreground">Connect Xero to create and track invoices for this transaction.</p>
         )}
       </CardContent>
     </Card>
@@ -6250,7 +6250,7 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
   const formatFieldName = (field: string) => {
     const map: Record<string, string> = {
       status: "status", fee: "fee", internalAgent: "BGP contacts",
-      team: "team", dealType: "deal type", name: "name", pricing: "pricing",
+      team: "team", dealType: "transaction type", name: "name", pricing: "pricing",
       yieldPercent: "yield", feeAgreement: "fee agreement", rentPa: "rent PA",
       capitalContribution: "capital contribution", rentFree: "rent free",
       leaseLength: "lease length", breakOption: "break option",
@@ -6284,7 +6284,7 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
       if (d.trackerConflict) parts.push(`the unit's row carries #${d.trackerConflict.dealRef ?? "?"}`);
       if (d.dealTypeStamped) parts.push(`typed ${d.dealTypeStamped}`);
       if (created.some((x) => x.startsWith("tenancy_schedule_units:"))) parts.push("tenancy row created");
-      if (!parts.length) parts.push(created.some((x) => x.startsWith("crm_deals:")) ? "deal created" : "no tracker change");
+      if (!parts.length) parts.push(created.some((x) => x.startsWith("crm_deals:")) ? "transaction created" : "no tracker change");
       return parts.join(", ") + (d.source ? ` (via ${String(d.source).replace("-", " ")})` : "");
     } catch {
       return "Letting Tracker sync";
@@ -6627,7 +6627,7 @@ function DealReportDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      toast({ title: "Deal report downloaded" });
+      toast({ title: "Transaction report downloaded" });
     } catch (err: any) {
       toast({ title: "Error generating report", description: err?.message, variant: "destructive" });
     }
@@ -6640,10 +6640,10 @@ function DealReportDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="w-5 h-5" />
-            Deal Report — last 2 weeks
+            Transaction Report — last 2 weeks
           </DialogTitle>
           <DialogDescription>
-            BGP-branded PDF of deals added in the last two weeks, organised by team. Click any photo to swap it before generating — tenant logos are used by default, building photos for investment deals.
+            BGP-branded PDF of transactions added in the last two weeks, organised by team. Click any photo to swap it before generating — tenant logos are used by default, building photos for investment transactions.
           </DialogDescription>
         </DialogHeader>
 
@@ -6653,7 +6653,7 @@ function DealReportDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
           </div>
         ) : deals.length === 0 ? (
           <div className="py-10 text-center text-sm text-muted-foreground">
-            No deals have been added in the last two weeks.
+            No transactions have been added in the last two weeks.
           </div>
         ) : (
           <div className="space-y-4">
@@ -7232,7 +7232,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       await apiRequest("DELETE", `/api/crm/deals/${id}`);
     },
     onSuccess: () => {
-      toast({ title: "Deal deleted" });
+      toast({ title: "Transaction deleted" });
       invalidateDealCaches();
       setDeleteListDeal(null);
     },
@@ -7260,7 +7260,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           variant: "destructive",
         });
       } else {
-        toast({ title: "Deals updated" });
+        toast({ title: "Transactions updated" });
       }
     },
     onError: (err: Error) => {
@@ -7276,7 +7276,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       invalidateDealCaches();
       setSelectedIds(new Set());
       setBulkDeleteOpen(false);
-      toast({ title: "Deals deleted" });
+      toast({ title: "Transactions deleted" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -7291,7 +7291,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     // A joint agent reads Deals at its own schemes: changes are made on its
     // Letting Tracker (the server refuses a deal save from it).
     if (jointAgentDeals) {
-      toast({ title: "Read only", description: "Deals are read only for joint agents. Make changes on the Letting Tracker." });
+      toast({ title: "Read only", description: "Transactions are read only for joint agents. Make changes on the Letting Tracker." });
       return;
     }
     if (field === "status" && value === "HOTs") {
@@ -7818,17 +7818,17 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   if (error) {
     return (
       <PageLayout
-        title={isCompsMode ? "Leasing Comps" : "Deals"}
+        title={isCompsMode ? "Leasing Comps" : "Transactions"}
         icon={Handshake}
         fullHeight
-        subtitle={isCompsMode ? "Comparable transactions" : "Deal CRM"}
+        subtitle={isCompsMode ? "Comparable transactions" : "Transaction CRM"}
       >
         <Card>
           <CardContent className="py-12 text-center">
             <EmptyState
               icon={AlertCircle}
-              title={`Could not load ${isCompsMode ? "Leasing Comps" : "Deals"}`}
-              description={(error as Error).message || "An error occurred while loading deals."}
+              title={`Could not load ${isCompsMode ? "Leasing Comps" : "Transactions"}`}
+              description={(error as Error).message || "An error occurred while loading transactions."}
             />
           </CardContent>
         </Card>
@@ -7892,25 +7892,25 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   return (
     <PageLayout
-      title={isCompsMode ? "Leasing Comps" : "Deals"}
+      title={isCompsMode ? "Leasing Comps" : "Transactions"}
       icon={Handshake}
       // Phones scroll the whole page with only the search row sticky — the
       // fixed-height layout pinned tabs, h1, New Deal, chips and search
       // (~365 of 844px) over an inner-scrolling list (Woody, 2026-09-27).
       fullHeight={!isMobile}
       subtitle={isCompsMode
-        ? `${baseDeals.length} completed deal${baseDeals.length !== 1 ? "s" : ""} — comparable transactions`
+        ? `${baseDeals.length} completed transaction${baseDeals.length !== 1 ? "s" : ""} — comparable transactions`
         : urlTeamParam
-          ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} · Filtered by ${urlTeamParam} team`
+          ? `${filteredDeals.length} transaction${filteredDeals.length !== 1 ? "s" : ""} · Filtered by ${urlTeamParam} team`
           : activeTeam && activeTeam !== "all"
-            ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} — ${activeTeam}${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting deal${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`
+            ? `${filteredDeals.length} transaction${filteredDeals.length !== 1 ? "s" : ""} — ${activeTeam}${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting transaction${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`
             // baseDeals, not deals — the raw CRM count includes pre-instruction
             // and withdrawn rows this schedule never shows, so it disagreed
             // with the "All" chip (289 vs 274) (Woody, 2026-09-27).
             // "deal schedule" + the WIP pointer — the WIP Report's bigger
             // count includes pipeline, and bare "deals" read as a
             // contradiction (Woody, 2026-09-27).
-            : `${baseDeals.length.toLocaleString("en-GB")} deal${baseDeals.length !== 1 ? "s" : ""} on the deal schedule (WIP Report adds pipeline)${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting deal${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`}
+            : `${baseDeals.length.toLocaleString("en-GB")} transaction${baseDeals.length !== 1 ? "s" : ""} on the transaction schedule (WIP Report adds pipeline)${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting transaction${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`}
       actions={!isCompsMode ? (
         <>
           {!isMobile && !isClientDeals && (<>
@@ -7920,7 +7920,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             disabled={rentAnalysisRunning}
             onClick={async () => {
               setRentAnalysisRunning(true);
-              toast({ title: "Running rent analysis", description: "Calculating NER for all lease deals and emailing Tom Cater..." });
+              toast({ title: "Running rent analysis", description: "Calculating NER for all lease transactions and emailing Tom Cater..." });
               try {
                 const res = await fetch("/api/crm/deals/bulk-rent-analysis", { method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() }, credentials: "include", body: JSON.stringify({ sendEmail: true }) });
                 if (!res.ok) {
@@ -7929,7 +7929,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                 }
                 const data = await res.json();
                 invalidateDealCaches();
-                toast({ title: "Rent Analysis Complete", description: `${data.analysed} deals analysed, ${data.updated} updated${data.emailSent ? " — report sent to Tom" : ""}` });
+                toast({ title: "Rent Analysis Complete", description: `${data.analysed} transactions analysed, ${data.updated} updated${data.emailSent ? " — report sent to Tom" : ""}` });
               } catch (err: any) { toast({ title: "Error", description: err?.message || "Rent analysis failed", variant: "destructive" }); }
               setRentAnalysisRunning(false);
             }}
@@ -7940,7 +7940,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           </Button>
           <Button variant="outline" onClick={() => setDealReportOpen(true)} data-testid="button-deal-report">
             <FileText className="w-4 h-4 mr-2" />
-            Deal Report
+            Transaction Report
           </Button>
           <Button variant="outline" onClick={() => setJointAgencyRegisterOpen(true)} data-testid="button-joint-agency-register">
             <ShieldCheck className="w-4 h-4 mr-2" />
@@ -7949,7 +7949,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           </>)}
           {!jointAgentDeals && <Button onClick={() => setCreateOpen(true)} data-testid="button-create-deal">
             <Plus className="w-4 h-4 mr-2" />
-            New Deal
+            New Transaction
           </Button>}
         </>
       ) : undefined}
@@ -7989,7 +7989,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                 <Handshake className="w-4 h-4 text-muted-foreground" />
                 <div>
                   <p className="text-lg font-bold">{toolbarFilteredDeals.length}</p>
-                  <p className="text-xs text-muted-foreground">{isCompsMode ? "All Comps" : "All Deals"}</p>
+                  <p className="text-xs text-muted-foreground">{isCompsMode ? "All Comps" : "All Transactions"}</p>
                   {/* Fees are stripped from client responses, so for a client
                       this line could only ever read £0 — looks broken and
                       surfaces the idea of BGP's fee. Staff keep the total. */}
@@ -8039,7 +8039,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder={landsecClock ? "Search deals, or who a deal is waiting on..." : "Search deals..."}
+            placeholder={landsecClock ? "Search transactions, or who a transaction is waiting on..." : "Search transactions..."}
             className="pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -8315,7 +8315,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     ) : undefined,
                   };
                 })}
-                emptyMessage="No deals found"
+                emptyMessage="No transactions found"
                 emptyIcon={BarChart3}
               />
               {isMobile && filteredDeals.length > phoneShown && (
@@ -8345,9 +8345,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
                 <BarChart3 className="w-6 h-6 text-muted-foreground" />
               </div>
-              <p className="text-sm font-semibold text-foreground">{isCompsMode ? "No comps found" : "No deals found"}</p>
+              <p className="text-sm font-semibold text-foreground">{isCompsMode ? "No comps found" : "No transactions found"}</p>
               <p className="text-xs mt-1">
-                {hasFilters ? "Create a deal or adjust your filters" : "Create a deal to get started"}
+                {hasFilters ? "Create a transaction or adjust your filters" : "Create a transaction to get started"}
               </p>
             </div>
           ) : (
@@ -8391,12 +8391,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             narrowed the table (Woody, 2026-09-28). */}
                         <div className="flex items-center gap-1">
                           <ColumnFilterPopover
-                            label="Deal Type"
+                            label="Transaction Type"
                             options={typeValues}
                             activeFilters={columnFilters["type"] || []}
                             onToggleFilter={(val) => toggleFilter("type", val)}
                           />
-                          <button type="button" onClick={() => dealsSort.toggle("type")} title="Sort by deal type" className={`shrink-0 hover:text-foreground transition-colors ${dealsSort.sortKey === "type" ? "text-primary" : "opacity-50"}`} data-testid="sort-type">
+                          <button type="button" onClick={() => dealsSort.toggle("type")} title="Sort by transaction type" className={`shrink-0 hover:text-foreground transition-colors ${dealsSort.sortKey === "type" ? "text-primary" : "opacity-50"}`} data-testid="sort-type">
                             {dealsSort.sortKey === "type" ? (dealsSort.direction === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />) : <ChevronsUpDown className="w-3 h-3" />}
                           </button>
                         </div>
@@ -8406,12 +8406,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       <TableHead className="w-[128px] min-w-[128px] whitespace-nowrap">
                         <div className="flex items-center gap-1">
                           <ColumnFilterPopover
-                            label="Deal Status"
+                            label="Transaction Status"
                             options={statusValues}
                             activeFilters={columnFilters["status"] || []}
                             onToggleFilter={(val) => toggleFilter("status", val)}
                           />
-                          <button type="button" onClick={() => dealsSort.toggle("status")} title="Sort by deal status" className={`shrink-0 hover:text-foreground transition-colors ${dealsSort.sortKey === "status" ? "text-primary" : "opacity-50"}`} data-testid="sort-status">
+                          <button type="button" onClick={() => dealsSort.toggle("status")} title="Sort by transaction status" className={`shrink-0 hover:text-foreground transition-colors ${dealsSort.sortKey === "status" ? "text-primary" : "opacity-50"}`} data-testid="sort-status">
                             {dealsSort.sortKey === "status" ? (dealsSort.direction === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />) : <ChevronsUpDown className="w-3 h-3" />}
                           </button>
                         </div>
@@ -8433,10 +8433,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         screen at 1440 without a sideways scroll (the old
                         Lettings page fitted it; here it was past the right
                         edge). Depends on, rarely filled, comes last. */}
-                    {landsecClock && clockCols.days && <SortableTableHead sortKey="clockDays" sort={dealsSort} align="right" className="w-[84px] min-w-[84px] whitespace-nowrap leading-tight"><span className="text-right" title="Days at the deal's current stage. A greyed figure with a question mark is a date the app cannot confirm: press it to set the date.">Days at<br />stage</span></SortableTableHead>}
+                    {landsecClock && clockCols.days && <SortableTableHead sortKey="clockDays" sort={dealsSort} align="right" className="w-[84px] min-w-[84px] whitespace-nowrap leading-tight"><span className="text-right" title="Days at the transaction's current stage. A greyed figure with a question mark is a date the app cannot confirm: press it to set the date.">Days at<br />stage</span></SortableTableHead>}
                     {landsecClock && clockCols.waiting && <TableHead className="w-[164px] min-w-[164px] whitespace-nowrap">Waiting on</TableHead>}
                     {landsecClock && clockCols.ner && <TableHead className="w-[132px] min-w-[132px] text-right whitespace-nowrap" title="Net Effective Rent: headline rent less the incentives, spread over the term certain">NER</TableHead>}
-                    {landsecClock && clockCols.brief && <TableHead className="w-[116px] min-w-[116px] whitespace-nowrap" title="The deal's Net Effective Rent against the floor on the unit's brief">Brief check</TableHead>}
+                    {landsecClock && clockCols.brief && <TableHead className="w-[116px] min-w-[116px] whitespace-nowrap" title="The transaction's Net Effective Rent against the floor on the unit's brief">Brief check</TableHead>}
                     {landsecClock && clockCols.dependsOn && <TableHead className="w-[150px] min-w-[150px] whitespace-nowrap">Depends on</TableHead>}
                     {effectiveColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="w-[196px] min-w-[196px]">Tenant</SortableTableHead>}
                     {effectiveColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
@@ -8498,7 +8498,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.invoicedAt && <SortableTableHead sortKey="invoicedAt" sort={dealsSort} className="min-w-[110px]">Invoiced</SortableTableHead>}
                     {effectiveColumns.rentAnalysis && <TableHead className="min-w-[100px] text-right">Rent Analysis</TableHead>}
                     {effectiveColumns.sharepoint && <TableHead className="min-w-[140px]">SharePoint Files</TableHead>}
-                    {effectiveColumns.lastInteraction && <SortableTableHead sortKey="lastInteraction" sort={dealsSort} className="w-[110px] min-w-[110px] whitespace-nowrap"><span title="The latest email or meeting the app has read for the deal. A date ahead shows as Next.">Last contact</span></SortableTableHead>}
+                    {effectiveColumns.lastInteraction && <SortableTableHead sortKey="lastInteraction" sort={dealsSort} className="w-[110px] min-w-[110px] whitespace-nowrap"><span title="The latest email or meeting the app has read for the transaction. A date ahead shows as Next.">Last contact</span></SortableTableHead>}
                     {!isClientDeals && <TableHead className="w-[40px]"></TableHead>}
                   </TableRow>
                 </TableHeader>
@@ -8511,7 +8511,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     const dealCode = legacyToCode(deal.status);
                     const dealClosed = !!dealCode && CLOSED_STATUSES.includes(dealCode);
                     const noClock = !ck && !!clocks.data;
-                    const noClockTitle = dealClosed ? "Closed deal: not waiting on anyone" : "This deal's property is not one of the Landsec schemes, so it has no deal clock";
+                    const noClockTitle = dealClosed ? "Closed transaction: not waiting on anyone" : "This transaction's property is not one of the Landsec schemes, so it has no transaction clock";
                     const dealNer = ck ? ck.ner : landsecNer({ headlinePa: deal.rentPa, rentFreeMonths: deal.rentFree, capital: deal.capitalContribution, leaseLength: deal.leaseLength, breakOption: deal.breakOption });
                     const dealIncentives = ck ? ck.incentivesRecorded : landsecIncentivesRecorded(deal.rentFree, deal.capitalContribution);
                     return (
@@ -8602,7 +8602,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       {effectiveColumns.landlord && (
                         <TableCell className="px-1.5 py-1 max-w-[120px]">
                           {isClientDeals ? (
-                            <span className="block truncate text-xs" title="The client on the deal is set by BGP">{deal.landlordId ? companyMap.get(deal.landlordId) || "—" : <span className="text-muted-foreground/60">—</span>}</span>
+                            <span className="block truncate text-xs" title="The client on the transaction is set by BGP">{deal.landlordId ? companyMap.get(deal.landlordId) || "—" : <span className="text-muted-foreground/60">—</span>}</span>
                           ) : (
                           <InlineLinkSelect
                             value={deal.landlordId}
@@ -8674,7 +8674,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       {landsecClock && clockCols.ner && (
                         <TableCell className="px-1.5 py-1 text-right" data-testid={`deal-clock-ner-${deal.id}`}>
                           {!ck && !noClock ? null : dealClosed ? (
-                            dealNer ? <NerFigure ner={dealNer} incentivesRecorded={dealIncentives} dash={false} /> : <ClockDash title="Closed deal: no rent was recorded" />
+                            dealNer ? <NerFigure ner={dealNer} incentivesRecorded={dealIncentives} dash={false} /> : <ClockDash title="Closed transaction: no rent was recorded" />
                           ) : (
                             <LeaseTermsCell
                               deal={deal} align="end" testId={`deal-ner-${deal.id}`}
@@ -8706,9 +8706,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                                 {!ck.brief && !ck.briefCheck ? <AddLabel text="Add brief" /> : <BriefCheck brief={ck.brief} check={ck.briefCheck} />}
                               </button>
                             ) : (
-                              <span title="This deal has no Letting Tracker unit, so it has no brief to open"><BriefCheck brief={ck.brief} check={ck.briefCheck} /></span>
+                              <span title="This transaction has no Letting Tracker unit, so it has no brief to open"><BriefCheck brief={ck.brief} check={ck.briefCheck} /></span>
                             )
-                          ) : noClock ? <ClockDash title={dealClosed ? "Closed deal: the unit's brief now belongs to its next letting" : noClockTitle} /> : null}
+                          ) : noClock ? <ClockDash title={dealClosed ? "Closed transaction: the unit's brief now belongs to its next letting" : noClockTitle} /> : null}
                         </TableCell>
                       )}
                       {landsecClock && clockCols.dependsOn && (
@@ -8718,7 +8718,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               deal={ck} feed={clocks.data} linkDeals
                               onSave={(dealId, patch) => saveClock.mutate({ dealId, patch })} saving={saveClock.isPending}
                             />
-                          ) : noClock ? <ClockDash title={dealClosed ? "Closed deal: it depends on no other deal" : noClockTitle} /> : null}
+                          ) : noClock ? <ClockDash title={dealClosed ? "Closed transaction: it depends on no other transaction" : noClockTitle} /> : null}
                         </TableCell>
                       )}
                       {effectiveColumns.tenant && (
@@ -9073,7 +9073,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.dateAdded && (
                         <TableCell className="px-1.5 py-1">
-                          <span title="When the deal was added to the app">{deal.createdAt ? formatDate(deal.createdAt) : "—"}</span>
+                          <span title="When the transaction was added to the app">{deal.createdAt ? formatDate(deal.createdAt) : "—"}</span>
                         </TableCell>
                       )}
                       {effectiveColumns.instructedAt && (
@@ -9106,7 +9106,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           <Link
                             href={`/deals/${deal.id}?tab=invoice`}
                             className={deal.invoicedAt ? "text-primary hover:underline" : "text-muted-foreground/60 hover:text-foreground"}
-                            title="The invoice date is set when the invoice is raised: open the deal's invoicing"
+                            title="The invoice date is set when the invoice is raised: open the transaction's invoicing"
                             data-testid={`deal-invoiced-${deal.id}`}
                           >
                             {deal.invoicedAt ? formatDate(deal.invoicedAt) : "—"}
@@ -9184,7 +9184,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     <TableRow className="bg-muted/50 font-semibold border-t-2 hover:bg-muted/50">
                       <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length + shownClockCols} className="text-right py-2 text-xs">
                         {/* Fees are stripped from client responses: no "Total fees: £0" for a client. */}
-                        {filteredDeals.length} {isCompsMode ? "comps" : "deals"}{!isClientDeals && <> · Total fees: {formatCurrency(filteredDeals.reduce((s, d) => s + (Number((d as any).fee) || 0), 0))}</>}
+                        {filteredDeals.length} {isCompsMode ? "comps" : "transactions"}{!isClientDeals && <> · Total fees: {formatCurrency(filteredDeals.reduce((s, d) => s + (Number((d as any).fee) || 0), 0))}</>}
                       </TableCell>
                     </TableRow>
                   )}
@@ -9240,7 +9240,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           <DialogHeader>
             <DialogTitle className="text-sm">{feeAllocEditDeal?.name || "Fee Split"}</DialogTitle>
             <DialogDescription className="text-xs">
-              {feeAllocEditDeal?.fee != null ? `Total fee: ${formatCurrency(feeAllocEditDeal.fee)}` : "Set fee on the deal first"}
+              {feeAllocEditDeal?.fee != null ? `Total fee: ${formatCurrency(feeAllocEditDeal.fee)}` : "Set fee on the transaction first"}
             </DialogDescription>
           </DialogHeader>
           {feeAllocEditDeal && !!currentUserForViews && !isClientDeals && (
@@ -9257,7 +9257,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       <AlertDialog open={!!deleteListDeal} onOpenChange={(open) => !open && setDeleteListDeal(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Deal</AlertDialogTitle>
+            <AlertDialogTitle>Delete Transaction</AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to delete "{deleteListDeal?.name}"? This action cannot be undone.
             </AlertDialogDescription>
@@ -9328,9 +9328,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {selectedIds.size} Deal{selectedIds.size !== 1 ? "s" : ""}</AlertDialogTitle>
+            <AlertDialogTitle>Delete {selectedIds.size} Transaction{selectedIds.size !== 1 ? "s" : ""}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete {selectedIds.size} deal{selectedIds.size !== 1 ? "s" : ""}? This action cannot be undone.
+              Are you sure you want to delete {selectedIds.size} transaction{selectedIds.size !== 1 ? "s" : ""}? This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

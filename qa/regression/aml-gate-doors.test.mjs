@@ -76,7 +76,7 @@ test('a deal save: the parties after the save are judged, before the save, and a
   before(save, 'const amlResult = await checkCounterpartyAml(parties);', 'await updateDeal(req.params.id, req.body', 'the gate must run before the save');
   assert.match(save, /if \(editScope\) return res\.status\(409\)\.json\(\{ error: AML_HELD_FOR_CLIENT, code: "AML_GATE_FAILED" \}\);/);
   // Any change to the sign-off is the MLRO's.
-  assert.match(save, /if \(!\(await amlActor\(req\)\)\.isMlro\) \{\s*return res\.status\(403\)\.json\(\{ error: "Only the MLRO can sign off a deal's AML \/ KYC", code: "MLRO_ONLY" \}\);/);
+  assert.match(save, /if \(!\(await amlActor\(req\)\)\.isMlro\) \{\s*return res\.status\(403\)\.json\(\{ error: "Only the MLRO can sign off a transaction's AML \/ KYC", code: "MLRO_ONLY" \}\);/);
 });
 
 test('every other door a client can reach gives the same neutral line', () => {

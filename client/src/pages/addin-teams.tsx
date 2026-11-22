@@ -71,7 +71,7 @@ function AddinTeams() {
             Overview
           </TabsTrigger>
           <TabsTrigger value="deals" className={pillTabsTrigger} data-testid="tab-deals">
-            Deals
+            Transactions
           </TabsTrigger>
           <TabsTrigger value="news" className={pillTabsTrigger} data-testid="tab-news">
             News
@@ -89,7 +89,7 @@ function AddinTeams() {
           ) : (
             <div className="grid grid-cols-2 gap-2">
               <StatCard
-                label="Active deals"
+                label="Active transactions"
                 value={stats?.activeDeals || activeDeals.length || 0}
                 icon={Briefcase}
               />
@@ -169,7 +169,7 @@ function AddinTeams() {
             ) : (
               <div className="text-center py-8">
                 <Briefcase className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm text-muted-foreground">No active deals</p>
+                <p className="text-sm text-muted-foreground">No active transactions</p>
               </div>
             )}
           </ScrollArea>

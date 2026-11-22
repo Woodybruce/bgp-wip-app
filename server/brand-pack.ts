@@ -490,7 +490,7 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
       const STATUS: Record<string, string> = { INV: "Completed & invoiced", COM: "Completed", EXC: "Exchanged", SOL: "With solicitors", HOT: "Heads of terms agreed", NEG: "In negotiation" };
       for (const d of deals) {
         if (y > BOTTOM - 30) break;
-        const title = d.property_name && d.name && !String(d.name).includes(d.property_name) ? `${d.property_name} — ${d.name}` : (d.name || d.property_name || "Deal");
+        const title = d.property_name && d.name && !String(d.name).includes(d.property_name) ? `${d.property_name} — ${d.name}` : (d.name || d.property_name || "Transaction");
         const bits = [d.deal_type, STATUS[legacyToCode(d.status) ?? ""] || d.status, d.rent_pa ? `£${Number(d.rent_pa).toLocaleString("en-GB")} pa` : null,
           d.total_area_sqft ? `${Number(d.total_area_sqft).toLocaleString("en-GB")} sq ft` : null, d.lease_length ? `${d.lease_length} yrs` : null, `as ${d.role}`].filter(Boolean);
         doc.rect(LEFT, y + 2, 2.5, 12).fill(BGP_GREEN);

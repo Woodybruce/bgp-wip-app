@@ -291,8 +291,8 @@ export async function previewStubPairs(pool: Pool): Promise<StubPairsPreview> {
     // not "not WIP"): one a person has worked on is a real deal, not a stub.
     const worked = stubs.filter((x) => x.touched.length);
     if (worked.length) reason = `stub has been worked on (${worked.map((x) => `#${x.dealRef ?? "?"}: ${x.touched.join(", ")}`).join("; ")}) — decide by hand`;
-    else if (real.length > 1) reason = `${real.length} live deals beside the stub — pick the letting by hand`;
-    else if (real[0].trackerRowId) reason = "the live deal already has its own tracker row — merge the two rows by hand";
+    else if (real.length > 1) reason = `${real.length} live transactions beside the stub — pick the letting by hand`;
+    else if (real[0].trackerRowId) reason = "the live transaction already has its own tracker row — merge the two rows by hand";
     if (reason) { lists.skip.push({ ...base, action: "skip", reason, trackerRowId: null }); continue; }
     const rowStub = stubs.find((s) => s.trackerRowId);
     lists.resolve.push({ ...base, action: "resolve", reason: null, trackerRowId: rowStub?.trackerRowId ?? null });
@@ -310,7 +310,7 @@ async function withdrawStub(pool: Pool, stub: PairDeal, realRef: number | null, 
   const { dealStatusTransitionDenial } = await import("./deal-gates");
   const denial = await dealStatusTransitionDenial(by, stub.id, "WIT");
   if (denial) throw new Error(denial.error);
-  const reason = `${STUB_PAIRS_KEY}: £0 Marketing stub beside #${realRef ?? "?"}; tracker row re-pointed at the real deal`;
+  const reason = `${STUB_PAIRS_KEY}: £0 Marketing stub beside #${realRef ?? "?"}; tracker row re-pointed at the real transaction`;
   await pool.query(
     `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by, changed_by_name)
      VALUES ($1, 'status', $2, 'WIT', $3, $4, $5)`,

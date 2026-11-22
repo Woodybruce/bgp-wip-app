@@ -30,7 +30,7 @@ export function CompanyInvoicingControls({ companyId, contactEmails = [], mode =
     mutationFn: async (next: boolean) => (await apiRequest("PUT", `/api/crm/companies/${companyId}`, { requiresPo: next })).json(),
     onSuccess: (_d, next) => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
-      toast({ title: next ? "Invoices need a PO number" : "PO number no longer required", description: next ? "Deals billed to this company warn before an invoice goes out without one." : undefined });
+      toast({ title: next ? "Invoices need a PO number" : "PO number no longer required", description: next ? "Transactions billed to this company warn before an invoice goes out without one." : undefined });
     },
     onError: (e: any) => toast({ title: "Couldn't change the PO setting", description: e?.message, variant: "destructive" }),
   });

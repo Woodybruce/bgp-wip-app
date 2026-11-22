@@ -178,7 +178,7 @@ If anything feels off, escalate to the MLRO same-day. You do NOT need to be cert
       { question: "What is the minimum record-keeping period under MLR 2017?", options: ["1 year", "3 years", "5 years", "7 years"], correct: 2 },
       { question: "Who must you tell if a counterparty triggers your suspicion?", options: ["The counterparty, so they can clarify", "The MLRO — immediately", "Your team lead first", "Nobody until you're 100% sure"], correct: 1, explanation: "Telling the counterparty = tipping-off = criminal offence. Always MLRO first." },
       { question: "The BGP KYC re-check cadence is:", options: ["Monthly", "Every 3 months", "Every 6 months", "Annually"], correct: 2 },
-      { question: "Enhanced Due Diligence is required for:", options: ["Every new client", "PEPs, high-risk countries, complex structures", "Only residential transactions", "Only deals over £10m"], correct: 1 },
+      { question: "Enhanced Due Diligence is required for:", options: ["Every new client", "PEPs, high-risk countries, complex structures", "Only residential transactions", "Only transactions over £10m"], correct: 1 },
       { question: "If a buyer wants to close suddenly with cash from an unrelated third party, you should:", options: ["Proceed — the client is in a hurry", "Raise a same-day MLRO flag", "Ask the buyer to explain in writing and continue", "Escalate only if the amount is over £5m"], correct: 1 },
     ],
   },
@@ -208,15 +208,15 @@ The NCA has 7 working days to refuse consent. If they don't refuse, deemed conse
   },
   {
     title: "Sanctions Screening — UK OFSI + OFAC Basics",
-    description: "What the sanctions lists mean for a BGP deal and when you must stop.",
+    description: "What the sanctions lists mean for a BGP transaction and when you must stop.",
     estimatedMinutes: 10,
     contentMarkdown: `## The lists that matter
 - **UK OFSI Consolidated List** — HM Treasury, legally binding in the UK. Updated daily.
-- **OFAC SDN (USA)** — US persons and USD transactions. If BGP's deal touches a US bank, this applies.
+- **OFAC SDN (USA)** — US persons and USD transactions. If BGP's transaction touches a US bank, this applies.
 - **EU Consolidated List** — post-Brexit less direct but still relevant for EU counterparties.
 
 ## When screening triggers
-Every counterparty goes through Companies House + sanctions at the KYC stage. Hits are flagged RED on the deal page. You must not proceed without MLRO sign-off even if you think it's a false positive.
+Every counterparty goes through Companies House + sanctions at the KYC stage. Hits are flagged RED on the transaction page. You must not proceed without MLRO sign-off even if you think it's a false positive.
 
 ## False positives
 Common names ("John Smith") will hit. The MLRO disambiguates using DOB, nationality, and passport number. If in doubt, stop.
@@ -230,23 +230,23 @@ Common names ("John Smith") will hit. The MLRO disambiguates using DOB, national
 Stop the transaction. Notify the MLRO. Do NOT release any assets or payment already received — frozen means frozen. File a SAR AND a sanctions report to OFSI (the MLRO handles this).`,
     quiz: [
       { question: "A company is owned 40% by a sanctioned individual and 30% by their spouse. The company is:", options: ["Not sanctioned", "Only sanctioned via OFAC", "Treated as sanctioned under the 50% rule", "Sanctioned only if the spouse is also on the list"], correct: 2, explanation: "Ownership is aggregated across connected persons — 40% + 30% = 70% combined control." },
-      { question: "A sanctions hit on the KYC screen turns out to be a common name match. You should:", options: ["Ignore it and proceed", "Ask the client to confirm it's a false positive", "Escalate to MLRO for disambiguation", "Cancel the deal immediately"], correct: 2 },
-      { question: "If you discover sanctions apply to a deal in progress, frozen assets:", options: ["Can be released to the client's solicitor", "Must remain frozen until OFSI licence", "Can be returned to the purchaser", "Can be paid into a third-party escrow"], correct: 1 },
+      { question: "A sanctions hit on the KYC screen turns out to be a common name match. You should:", options: ["Ignore it and proceed", "Ask the client to confirm it's a false positive", "Escalate to MLRO for disambiguation", "Cancel the transaction immediately"], correct: 2 },
+      { question: "If you discover sanctions apply to a transaction in progress, frozen assets:", options: ["Can be released to the client's solicitor", "Must remain frozen until OFSI licence", "Can be returned to the purchaser", "Can be paid into a third-party escrow"], correct: 1 },
     ],
   },
   {
     title: "Source of Funds & Source of Wealth — Practical Verification",
-    description: "How to evidence and challenge the money story on a BGP deal.",
+    description: "How to evidence and challenge the money story on a BGP transaction.",
     estimatedMinutes: 12,
     contentMarkdown: `## Why SoF and SoW are not the same
 - **Source of Funds (SoF)** — the specific pot paying *this* transaction. e.g. "£1.4m from the sale of a flat in Fulham in Feb 2026, sitting in Barclays account ending 4417."
 - **Source of Wealth (SoW)** — the cumulative story of how the client became wealthy overall. Business sale, inheritance, senior role in a listed firm, trust distributions.
 
-Both are required on higher-risk deals (Reg 33). SoF alone without SoW is a red flag.
+Both are required on higher-risk transactions (Reg 33). SoF alone without SoW is a red flag.
 
 ## Evidence that stands up
 **Good:**
-- Bank statement ≤3 months old, full PDF (not screenshot), showing the balance that will fund the deal.
+- Bank statement ≤3 months old, full PDF (not screenshot), showing the balance that will fund the transaction.
 - Solicitor's completion statement for a property sale feeding this one.
 - Share-sale SPA + broker note confirming proceeds received.
 - Trust deed + recent trustee distribution letter.
@@ -263,11 +263,11 @@ Both are required on higher-risk deals (Reg 33). SoF alone without SoW is a red 
 If the money comes from anyone other than the named purchaser, that third party is a counterparty too. You CDD them. Same standard. No exceptions.
 
 ## BGP rule of thumb
-If the size of the deal makes sense against the SoW story, and the SoF evidence traces cleanly into the purchaser's account in the last 12 months, you're usually safe. If either side is vague, escalate.`,
+If the size of the transaction makes sense against the SoW story, and the SoF evidence traces cleanly into the purchaser's account in the last 12 months, you're usually safe. If either side is vague, escalate.`,
     quiz: [
-      { question: "Source of Wealth is:", options: ["The specific account paying this transaction", "The overall story of how the client got wealthy", "Required only for PEPs", "Only needed if the deal exceeds £10m"], correct: 1 },
+      { question: "Source of Wealth is:", options: ["The specific account paying this transaction", "The overall story of how the client got wealthy", "Required only for PEPs", "Only needed if the transaction exceeds £10m"], correct: 1 },
       { question: "A purchaser says the £2m deposit will be wired from their brother's account. You:", options: ["Accept — family money is standard", "CDD the brother as a separate counterparty", "Ask for a signed gift letter and proceed", "Refuse unless it comes from the purchaser's own account"], correct: 1, explanation: "Third-party funders are their own KYC subject — same standard applies." },
-      { question: "A client offers a mobile-banking screenshot as SoF. You should:", options: ["Accept it — it's a bank statement", "Ask for a full PDF statement with account details", "Ask them to email their banker", "Proceed if the balance matches the deal"], correct: 1 },
+      { question: "A client offers a mobile-banking screenshot as SoF. You should:", options: ["Accept it — it's a bank statement", "Ask for a full PDF statement with account details", "Ask them to email their banker", "Proceed if the balance matches the transaction"], correct: 1 },
       { question: "Cryptocurrency as a source of funds requires:", options: ["Nothing extra — crypto is legitimate", "A fiat on-ramp trail (exchange statements, wire receipts)", "Only a wallet address screenshot", "Conversion to fiat before we'll consider it"], correct: 1 },
     ],
   },
@@ -308,7 +308,7 @@ KYC Clouseau screens every named counterparty and officer against the sanctions 
     quiz: [
       { question: "A client retired as a cabinet minister 10 months ago. They are:", options: ["No longer a PEP", "Still a PEP — 12-month window applies", "Only a PEP if they held the role for 5+ years", "A domestic PEP but not a foreign PEP"], correct: 1 },
       { question: "The daughter of a foreign ambassador wants to buy a £4m flat. She is:", options: ["Not relevant to PEP rules", "Treated as a PEP family member — EDD applies", "Only relevant if she uses her father's money", "A PEP only if she's also politically active"], correct: 1 },
-      { question: "EDD on a PEP at BGP requires:", options: ["No extra steps — standard CDD is enough", "MLRO senior-management sign-off before onboarding", "Just a Companies House check", "Only enhanced monitoring after the deal completes"], correct: 1 },
+      { question: "EDD on a PEP at BGP requires:", options: ["No extra steps — standard CDD is enough", "MLRO senior-management sign-off before onboarding", "Just a Companies House check", "Only enhanced monitoring after the transaction completes"], correct: 1 },
       { question: "The CEO of a state-owned sovereign wealth fund is:", options: ["Not a PEP — they work for an investment fund", "A PEP by virtue of the state-owned role", "Only a PEP if the fund is sanctioned", "A PEP only if personally named on a list"], correct: 1 },
     ],
   },
@@ -338,12 +338,12 @@ A nominee director or shareholder acting for an undisclosed principal is a red f
 If the ownership chain is deeper than 3 layers and there's no clean commercial reason (tax, succession, liability ring-fencing), treat the structure as higher risk.
 
 ## What we do at BGP
-KYC Clouseau traces PSC chains and flags layers ≥3 deep. Overseas Entity IDs (OE numbers) are logged on the deal page. No SPV proceeds to invoice without the BO chain resolved to natural persons.`,
+KYC Clouseau traces PSC chains and flags layers ≥3 deep. Overseas Entity IDs (OE numbers) are logged on the transaction page. No SPV proceeds to invoice without the BO chain resolved to natural persons.`,
     quiz: [
       { question: "A Beneficial Owner is a natural person who owns or controls:", options: ["Any percentage of the entity", "More than 10%", "More than 25%", "More than 50%"], correct: 2 },
       { question: "The UK Register of Overseas Entities (ROE) applies to:", options: ["All UK companies", "Overseas entities buying or owning UK property", "Only Panama and BVI companies", "Trusts only"], correct: 1 },
       { question: "A purchaser refuses to disclose the PSCs of their SPV. You should:", options: ["Proceed — Companies House has it already", "Treat as a red flag and escalate", "Accept a lawyer's letter confirming the structure", "Only escalate if they're from a high-risk country"], correct: 1 },
-      { question: "A BVI → Cayman → Jersey → UK SPV structure is:", options: ["Normal for HNW property deals", "Higher risk unless there's a clear commercial rationale", "Automatic sanctions territory", "Fine if the UK SPV is clean"], correct: 1 },
+      { question: "A BVI → Cayman → Jersey → UK SPV structure is:", options: ["Normal for HNW property transactions", "Higher risk unless there's a clear commercial rationale", "Automatic sanctions territory", "Fine if the UK SPV is clean"], correct: 1 },
     ],
   },
   {
@@ -367,13 +367,13 @@ EDD applies if ANY of the following is true:
 1. Senior management approval — MLRO sign-off.
 2. Enhanced source-of-wealth AND source-of-funds evidence.
 3. Enhanced ongoing monitoring — re-check cycle halves to 3 months.
-4. Consider whether the deal should proceed at all.
+4. Consider whether the transaction should proceed at all.
 
 ## The "business rationale" question
 Ask yourself: why is the money coming via this country? If it's a legitimate commercial reason (e.g. the client genuinely lives in Dubai), fine — document it. If there's no clear reason the money had to route through Malta, treat as layering.
 
 ## Practical at BGP
-KYC Clouseau flags counterparties with a listed-country nexus in red on the sanctions card. The MLRO decides go/no-go. If the deal proceeds, the 3-month re-check cadence is automated via the Compliance Board recheck queue.`,
+KYC Clouseau flags counterparties with a listed-country nexus in red on the sanctions card. The MLRO decides go/no-go. If the transaction proceeds, the 3-month re-check cadence is automated via the Compliance Board recheck queue.`,
     quiz: [
       { question: "EDD is required when a counterparty's money transits through a high-risk country, even if the counterparty themselves isn't based there.", options: ["True", "False — only if the counterparty is resident there", "Only if the amount exceeds £5m", "Only for sanctioned countries"], correct: 0 },
       { question: "The FATF blacklist currently includes:", options: ["DPRK, Iran, Myanmar", "Russia, China, Turkey", "Only countries under UN sanctions", "All OFAC-sanctioned countries"], correct: 0 },
@@ -1033,13 +1033,13 @@ const DEFAULT_RISK_ASSESSMENT_TEMPLATE = {
     "Unusually rapid transactions, pressure to exchange quickly — red flag.",
     "Cash-only purchases over £1m — mandatory EDD.",
     "Third-party payors (funds not from the stated purchaser) — mandatory EDD or decline.",
-    "Frequent SPV substitutions during a deal — UBO re-verification required.",
+    "Frequent SPV substitutions during a transaction — UBO re-verification required.",
     "Rent-free periods or fit-out contributions structured unusually — record rationale.",
     "Under-value or over-value transactions vs comps — document with rationale.",
   ].join("\n"),
   mitigatingMeasures: [
     "Nominated Officer (MLRO) appointed per MLR 2017 Reg 21; backup officer named.",
-    "CDD on both counterparties BEFORE invoice is raised — enforced system-side on the deal page.",
+    "CDD on both counterparties BEFORE invoice is raised — enforced system-side on the transaction page.",
     "KYC file reviewed every 6 months or on material change of circumstances (Reg 28).",
     "Staff training: induction, annual refresher, SAR reporting, red-flag recognition — tracked in system.",
     "Sanctions + PEP screening via Companies House + OFAC/UK OFSI lists on every approval.",
@@ -1416,7 +1416,7 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
        FROM crm_deals WHERE id = $1`,
       [req.params.id]
     );
-    if (!dealRow.rows[0]) return res.status(404).json({ error: "Deal not found" });
+    if (!dealRow.rows[0]) return res.status(404).json({ error: "Transaction not found" });
     const d = dealRow.rows[0];
 
     // Pick the counterparties relevant to this deal type
@@ -1565,7 +1565,7 @@ router.post("/api/aml/deal/:id/sof", requireAuth, kycUpload.single("file"), asyn
   if (!req.file) return res.status(400).json({ error: "file required" });
   try {
     const dealRow = await pool.query(`SELECT name, aml_source_of_funds FROM crm_deals WHERE id = $1`, [dealId]);
-    if (!dealRow.rows[0]) return res.status(404).json({ error: "deal not found" });
+    if (!dealRow.rows[0]) return res.status(404).json({ error: "transaction not found" });
     const { extractTextFromFile } = await import("./utils/file-extractor");
     const fileText = await extractTextFromFile(req.file.path, req.file.originalname);
     if (!fileText || fileText.length < 30) {
@@ -1621,7 +1621,7 @@ router.get("/api/aml/deal/:id/mlr-scope", requireAuth, async (req: Request, res:
       [req.params.id],
     );
     const d = r.rows[0];
-    if (!d) return res.status(404).json({ error: "deal not found" });
+    if (!d) return res.status(404).json({ error: "transaction not found" });
 
     let current: any = null;
     try {
@@ -1697,7 +1697,7 @@ async function generateMlroReportBuffer(dealId: string): Promise<{ buffer: Buffe
   doc.fontSize(20).font("Helvetica-Bold").text("MLRO AML Report");
   doc.fontSize(10).font("Helvetica").fillColor("#666").text(`Generated ${new Date().toLocaleString("en-GB")}`).fillColor("black");
 
-  heading("Deal");
+  heading("Transaction");
   line("Name", d.name);
   line("Company", d.company_name);
   line("Type", d.deal_type);
@@ -1772,7 +1772,7 @@ async function generateMlroReportBuffer(dealId: string): Promise<{ buffer: Buffe
 
   doc.moveDown(1);
   doc.font("Helvetica-Oblique").fontSize(8).fillColor("#666")
-     .text("This report compiles the AML evidence held by BGP at the time of generation. Retain in the deal file for FCA / HMRC inspection. Generated by the BGP app — not a substitute for MLRO judgement.");
+     .text("This report compiles the AML evidence held by BGP at the time of generation. Retain in the transaction file for FCA / HMRC inspection. Generated by the BGP app — not a substitute for MLRO judgement.");
 
   doc.end();
 
@@ -1786,7 +1786,7 @@ async function generateMlroReportBuffer(dealId: string): Promise<{ buffer: Buffe
 router.get("/api/aml/deal/:id/mlro-report", requireAuth, async (req: Request, res: Response) => {
   try {
     const result = await generateMlroReportBuffer(req.params.id as string);
-    if (!result) return res.status(404).json({ error: "deal not found" });
+    if (!result) return res.status(404).json({ error: "transaction not found" });
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", contentDispositionFor(result.filename));
     res.send(result.buffer);
@@ -1802,7 +1802,7 @@ router.get("/api/aml/deal/:id/mlro-report", requireAuth, async (req: Request, re
 router.post("/api/aml/deal/:id/mlro-report/save", requireAuth, async (req: any, res: Response) => {
   try {
     const result = await generateMlroReportBuffer(req.params.id);
-    if (!result) return res.status(404).json({ error: "deal not found" });
+    if (!result) return res.status(404).json({ error: "transaction not found" });
     const team = result.deal.team || "Office";
     const dealNameSafe = String(result.deal.name).replace(/[^a-zA-Z0-9 -]/g, "");
     const folderPath = `${team}/AML/MLRO Reports/${dealNameSafe}`;

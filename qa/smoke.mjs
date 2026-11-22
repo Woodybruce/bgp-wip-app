@@ -280,10 +280,10 @@ console.log('── client (Mark, Landsec) ──');
     check('client landing: scheme card for the fixture scheme', await page.locator('[data-testid="landsec-scheme-bluewater"]').count() > 0);
     check('client landing: stage pills', await page.locator('[data-testid="properties-landsec-stages"]').count() > 0);
     const landsecMenu = [];
-    for (const entry of ['properties', 'deals', 'letting-tracker', 'brands']) {
+    for (const entry of ['properties', 'transactions', 'letting-tracker', 'brands']) {
       if (await page.locator(`[data-testid="nav-${entry}"]`).count() === 0) landsecMenu.push(entry);
     }
-    check('client landing: Properties, Deals, Letting Tracker and Brands on the side bar', landsecMenu.length === 0, `missing ${landsecMenu.join(', ')}`);
+    check('client landing: Properties, Transactions, Letting Tracker and Brands on the side bar', landsecMenu.length === 0, `missing ${landsecMenu.join(', ')}`);
     await page.screenshot({ path: `${SHOTS}/client-properties.png` }).catch(() => {});
 
     // Client property page — boards render, no internal team names in Files.

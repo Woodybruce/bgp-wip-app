@@ -227,7 +227,7 @@ export function titleIsOnlyProperty(title: string, propName: string, propAddress
 // bare "Unit 3" never identifies the deal: a unit takes its tenant
 // ("Nando's · Unit 3"), else the full deal name stays (Woody, 2026-09-28).
 export function dealDisplayTitle(d: { name?: string | null; propertyName?: string | null; propertyAddress?: string | null; tenantName?: string | null; unitName?: string | null; isInvestment?: boolean }): string {
-  const full = d.name || d.propertyName || "Untitled Deal";
+  const full = d.name || d.propertyName || "Untitled Transaction";
   if (d.isInvestment) return d.propertyName || full;
   const tenant = (d.tenantName || "").trim();
   const unit = (d.unitName || "").trim();

@@ -68,7 +68,7 @@ export function PropertySchemesPanel({ propertyId }: { propertyId: string }) {
     try {
       const out = await (await apiRequest("PUT", `/api/properties/${propertyId}/schemes/${id}`, patch)).json();
       refresh();
-      if (out?.relabelled) toast({ title: "Scheme renamed", description: `${out.relabelled} unit and deal labels updated.` });
+      if (out?.relabelled) toast({ title: "Scheme renamed", description: `${out.relabelled} unit and transaction labels updated.` });
     } catch (e: any) {
       toast({ title: "Couldn't save", description: e?.message, variant: "destructive" });
       throw e;

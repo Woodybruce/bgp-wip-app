@@ -30,7 +30,7 @@ const FILTERS: Array<{ key: UnitFilter; label: string; title?: string }> = [
   { key: "all", label: "All units" },
   { key: "vacant", label: "Vacant" },
   { key: "live", label: "Live lettings", title: "A letting in progress, from Opportunity to Solicitors" },
-  { key: "deals", label: "Deals", title: "Any open deal on the unit: a letting, a regear, a renewal or a rent review" },
+  { key: "deals", label: "Transactions", title: "Any open transaction on the unit: a letting, a regear, a renewal or a rent review" },
   { key: "expiring", label: "Expiry or break <12m", title: "Lease expiry or a break inside 12 months, on a unit that is not vacant. An expiry that has passed counts." },
   { key: "nobrief", label: "No agreed brief", title: "Vacant or in a live letting, with no agreed Targeting Brief" },
   { key: "notonplan", label: "Not on plan", title: NOT_ON_PLAN },
@@ -134,7 +134,7 @@ function Tag({ tone, title, children }: { tone: "amber" | "muted"; title: string
 // "#1234 Zara": the ref, then the deal's tenant or else its name. The stage is
 // in the State pill, so it is not repeated here.
 function DealLine({ deal, href }: { deal: PropertyUnitDeal; href: string | null }) {
-  const who = deal.tenant || deal.name || (deal.ref ? null : href ? "Open deal" : "Unnamed deal");
+  const who = deal.tenant || deal.name || (deal.ref ? null : href ? "Open transaction" : "Unnamed transaction");
   const title = [deal.type, deal.name].filter(Boolean).join(" · ") || undefined;
   const words = (
     <>
@@ -405,7 +405,7 @@ export function PropertyUnitList({ feed, selectedUnitId, onSelectUnit, onHoverUn
               <th scope="col" className={cn(th, "text-left")}>Unit</th>
               <th scope="col" className={cn(th, "text-left")}>State</th>
               <th scope="col" className={cn(th, "text-left")}>Tenant</th>
-              <th scope="col" className={cn(th, "text-left")}>Deal</th>
+              <th scope="col" className={cn(th, "text-left")}>Transaction</th>
               <th scope="col" className={cn(th, "text-right")}>Sq ft</th>
               <th scope="col" className={cn(th, "text-right")}>Passing rent</th>
               <th scope="col" className={cn(th, "text-right")}>ERV</th>

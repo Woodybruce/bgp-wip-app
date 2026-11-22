@@ -4574,7 +4574,7 @@ function LegalDDTab() {
         </Button>
         <Button variant={mode === "dd" ? "default" : "outline"} onClick={() => setMode("dd")} data-testid="button-mode-dd">
           <Shield className="w-4 h-4 mr-2" />
-          Deal Due Diligence
+          Transaction Due Diligence
         </Button>
       </div>
 
@@ -4738,7 +4738,7 @@ function LegalDDTab() {
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
                 <Shield className="w-5 h-5 text-primary" />
-                Deal Due Diligence
+                Transaction Due Diligence
               </CardTitle>
               <CardDescription>
                 Upload a data room of documents for full DD analysis. AI will review all files, flag issues with traffic lights, and create a SharePoint project folder structure.
@@ -4747,7 +4747,7 @@ function LegalDDTab() {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Deal Name</Label>
+                  <Label>Transaction Name</Label>
                   <Input
                     placeholder="e.g. 67 Pimlico Road Acquisition"
                     value={dealName}

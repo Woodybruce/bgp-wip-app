@@ -163,7 +163,7 @@ export function buildOpenAIRequest(opts: any): any {
       ...(forcedFunction ? [forcedFunction] : []),
       { type: "tool_search" },
       { type: "namespace", name: TOOL_NAMESPACE,
-        description: "BGP commercial property app tools: CRM, contacts, brands, landlords, properties, deals, requirements, lease advisory, Land Registry, documents, email, calendar, tasks, reports and business operations.",
+        description: "BGP commercial property app tools: CRM, contacts, brands, landlords, properties, transactions, requirements, lease advisory, Land Registry, documents, email, calendar, tasks, reports and business operations.",
         tools: functions.filter((fn: any) => fn !== forcedFunction).map((fn: any) => ({ ...fn, defer_loading: true })) },
     ] : functions;
   }

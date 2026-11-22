@@ -197,7 +197,7 @@ function DealLine({ deal, link, withStage }: { deal: PropertyUnitDeal; link: boo
   const name = (
     <>
       {deal.ref != null && <><span className={figure}>#{deal.ref}</span>{" "}</>}
-      {deal.name || "Deal"}
+      {deal.name || "Transaction"}
     </>
   );
   const stage = withStage && deal.code ? statusLabelsFor(deal.type)[deal.code] : null;
@@ -589,7 +589,7 @@ export function PropertyUnitPanel({ propertyId, propertyName, unit, plans, viewe
             <LettingBlock propertyId={propertyId} unit={unit} detail={data} viewer={viewer} card={card} />
             <UnitPeopleBlock propertyId={propertyId} propertyName={propertyName} unit={unit} card={card} />
             {otherDeals.length > 0 && (
-              <Block title="Other deals on this unit" card={card}>
+              <Block title="Other transactions on this unit" card={card}>
                 <ul className="space-y-2">
                   {otherDeals.map(deal => (
                     <li key={deal.id}><DealLine deal={deal} link={linksDeals(viewer)} withStage /></li>

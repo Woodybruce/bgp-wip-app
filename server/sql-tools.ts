@@ -356,7 +356,7 @@ export async function executeSqlWrite(
     }
   }
   if (table.toLowerCase() === "crm_trading_entities" && op === "delete") {
-    return { success: false, error: "A brand's company cannot be deleted via sql_write. Delete it from the brand page, which first checks that no deal, schedule row, property or KYC record points at it." };
+    return { success: false, error: "A brand's company cannot be deleted via sql_write. Delete it from the brand page, which first checks that no transaction, schedule row, property or KYC record points at it." };
   }
 
   if (EVIDENCE_PLAN_READ_TABLES.some(item => item.name === table.toLowerCase())) {

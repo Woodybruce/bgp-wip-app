@@ -29,7 +29,7 @@ declare global {
 const PPT_PROMPTS = [
   { label: "Review this deck", prompt: "Read this deck and tell me what's weak — story, evidence, missing data — slide by slide." },
   { label: "Add a comps slide", prompt: "Add a slide with the most relevant comparable evidence from BGP's comps for the property in this deck." },
-  { label: "Deal summary", prompt: "Add a slide summarising the deal in this deck — key terms, parties and status — from our CRM." },
+  { label: "Transaction summary", prompt: "Add a slide summarising the transaction in this deck — key terms, parties and status — from our CRM." },
   { label: "Check the facts", prompt: "Check every figure, name and date in this deck against BGP's records and tell me what's wrong." },
 ];
 
@@ -147,7 +147,7 @@ function AddinPowerPoint() {
             host="powerpoint" token={token} onUnauthorised={logout}
             readDoc={readDeck} runTool={runPptTool}
             prompts={PPT_PROMPTS}
-            intro="ChatBGP builds and edits this deck with BGP's CRM, comps, deals and your memory behind it."
+            intro="ChatBGP builds and edits this deck with BGP's CRM, comps, transactions and your memory behind it."
             placeholder="Ask ChatBGP, or describe the slides you want…"
             heightOffset={126}
           />
@@ -207,7 +207,7 @@ function AddinPowerPoint() {
                 {deals.length > 0 && (
                   <div>
                     <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
-                      Deals
+                      Transactions
                     </h2>
                     {deals.slice(0, 8).map((d: any) => (
                       <Card key={d.id} className="mb-1.5">
@@ -280,7 +280,7 @@ function AddinPowerPoint() {
               <div className="text-center py-8">
                 <Search className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                 <p className="text-sm text-muted-foreground">Search CRM data to insert into your presentation</p>
-                <p className="text-xs text-muted-foreground mt-1">Properties, deals, contacts, companies</p>
+                <p className="text-xs text-muted-foreground mt-1">Properties, transactions, contacts, companies</p>
               </div>
             )}
           </ScrollArea>

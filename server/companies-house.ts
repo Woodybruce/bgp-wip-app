@@ -658,7 +658,7 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
         const { findTenantEntityInDealRecords } = await import("./brand-entity-deal-docs");
         const found = await findTenantEntityInDealRecords(company);
         if (!found) {
-          diagnostics.push({ step: "deal_records", outcome: "nothing", detail: "No HOTs, lease or deal email naming the tenant entity" });
+          diagnostics.push({ step: "deal_records", outcome: "nothing", detail: "No HOTs, lease or transaction email naming the tenant entity" });
         } else {
           const websiteName = haveSpecificEntityName ? searchName : null;
           const agrees = !!websiteName && normalizeChTitle(websiteName) === normalizeChTitle(found.entityName);

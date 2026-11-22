@@ -84,7 +84,7 @@ export function AgentGlance({ companyId, representing, contacts, staff, onOpen }
   const people = data?.people?.total ?? contacts;
   return <>
     <BandFigure label={`Brand${representing === 1 ? "" : "s"} represented`} value={figure(representing)} onClick={onOpen && representing ? () => onOpen("represents") : undefined} testId="agent-figure-brands" />
-    {data && <BandFigure label={`Live deal${data.openDeals === 1 ? "" : "s"} with us`} value={figure(data.openDeals || 0)} onClick={onOpen && data.deals?.length ? () => onOpen("deals") : undefined} testId="agent-figure-live-deals" />}
+    {data && <BandFigure label={`Live transaction${data.openDeals === 1 ? "" : "s"} with us`} value={figure(data.openDeals || 0)} onClick={onOpen && data.deals?.length ? () => onOpen("deals") : undefined} testId="agent-figure-live-deals" />}
     {data && <BandFigure label={`Viewing${viewings === 1 ? "" : "s"}`} value={figure(viewings)} onClick={onOpen && viewings ? () => onOpen("viewings") : undefined} testId="agent-figure-viewings" />}
     <BandFigure label={people === 1 ? "Person" : "People"} value={figure(people)} onClick={onOpen ? () => onOpen("contacts") : undefined} testId="agent-figure-people" />
   </>;
@@ -108,7 +108,7 @@ export function AgentRelationshipCard({ companyId, part, onOpen }: { companyId: 
   };
   // Who they act for is listed (with add / end) in the representation card
   // below, so it isn't repeated here.
-  const TABS: Array<[Tab, string]> = [["teams", "Teams"], ["deals", "Deals"], ["requirements", "Requirements"], ["instructions", "Instructions"], ["sales", "Sales"], ["leaseAdvisory", "Lease advisory"], ["viewings", "Viewings"]];
+  const TABS: Array<[Tab, string]> = [["teams", "Teams"], ["deals", "Transactions"], ["requirements", "Requirements"], ["instructions", "Instructions"], ["sales", "Sales"], ["leaseAdvisory", "Lease advisory"], ["viewings", "Viewings"]];
   const partTabs: Tab[] | null = part === "dealings" ? DEALING_TABS : part === "viewings" ? ["viewings"] : part === "teams" ? ["teams"] : null;
   const shown = TABS.filter(([t]) => counts[t] > 0 && (!partTabs || partTabs.includes(t)));
   const shared = useContext(AgentTabContext);
@@ -183,7 +183,7 @@ export function AgentRelationshipCard({ companyId, part, onOpen }: { companyId: 
                         // The why lives on hover — "recorded as Leasing — their work
                         // is Tenant Rep" under every name read as working notes.
                         <Button variant="outline" size="sm" className={`h-5 px-1.5 text-[11px] ${toFix.length > 1 ? "hidden group-hover:inline-flex" : ""}`} disabled={setTeam.isPending}
-                          title={p.recordedTeam ? `Recorded as ${p.recordedTeam}; their deals are ${g.team}` : `Their deals are ${g.team}`}
+                          title={p.recordedTeam ? `Recorded as ${p.recordedTeam}; their transactions are ${g.team}` : `Their transactions are ${g.team}`}
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); setTeam.mutate([{ id: p.id, team: g.team }]); }} data-testid="button-agent-team-fix">Set team</Button>
                       )}</>} />
                   ))}
@@ -257,12 +257,12 @@ export function AgentRelationshipCard({ companyId, part, onOpen }: { companyId: 
                     ? <Pill key={r.role} onClick={() => openTab(target)} title={meta?.description} data-testid={`agent-role-${r.role}`}>{chip}</Pill>
                     : <RowPill key={r.role} title={meta?.description}>{chip}</RowPill>;
                 })
-              : <span className="text-xs text-muted-foreground italic">No recorded dealings yet — roles appear as deals, requirements, viewings and matters link to this firm or its people.</span>}
+              : <span className="text-xs text-muted-foreground italic">No recorded dealings yet — roles appear as transactions, requirements, viewings and matters link to this firm or its people.</span>}
           </div>
         )}
   </>;
   const title = <><Handshake className="w-3.5 h-3.5" /> Relationship with BGP</>;
-  const totals = data ? <><span className="font-mono tabular-nums">{data.openDeals}</span> live deal{data.openDeals === 1 ? "" : "s"} · <span className="font-mono tabular-nums">{data.people.total}</span> people</> : undefined;
+  const totals = data ? <><span className="font-mono tabular-nums">{data.openDeals}</span> live transaction{data.openDeals === 1 ? "" : "s"} · <span className="font-mono tabular-nums">{data.people.total}</span> people</> : undefined;
   if (part === "roles") return (
     <BrandCard title={title} summary={totals} testId="agent-relationship">
       <div className="space-y-2">{loading}{rolesChips}</div>
@@ -285,7 +285,7 @@ export function AgentRelationshipCard({ companyId, part, onOpen }: { companyId: 
       <CardHeader className="p-3 pb-2 space-y-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Handshake className="w-3.5 h-3.5" /> Relationship with BGP
-          {data && <span className="normal-case tracking-normal font-normal">{data.openDeals} live deal{data.openDeals === 1 ? "" : "s"} · {data.people.total} people</span>}
+          {data && <span className="normal-case tracking-normal font-normal">{data.openDeals} live transaction{data.openDeals === 1 ? "" : "s"} · {data.people.total} people</span>}
         </CardTitle>
         {rolesChips}
         {tabPills}

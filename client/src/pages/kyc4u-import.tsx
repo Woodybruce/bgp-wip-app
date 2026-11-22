@@ -112,7 +112,7 @@ export default function Kyc4uImport() {
     (async () => {
       try {
         const next = await (await apiRequest("GET", "/api/kyc4u/drafts/next")).json();
-        if (!next.draft) { setState({ phase: "error", text: "No KYC4U request is waiting. On the deal, press Request KYC4U check first, then click the bookmark here again." }); return; }
+        if (!next.draft) { setState({ phase: "error", text: "No KYC4U request is waiting. On the transaction, press Request KYC4U check first, then click the bookmark here again." }); return; }
         setState({ phase: "saving", text: `Filling KYC4U's form for ${next.draft.fields?.partyName || next.draft.company_name || "the party"}…` });
         const files: Array<{ name: string; type: string; data: ArrayBuffer }> = [];
         for (const d of next.docs || []) {

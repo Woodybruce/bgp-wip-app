@@ -1700,10 +1700,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                     </button>
                   )}
                   {unit.deal_id && (
-                    <a href={`/deals/${unit.deal_id}`} className="inline-flex items-center" title={`Open deal${unit.deal_ref ? ` ${unit.deal_ref}` : ""}`}>
+                    <a href={`/deals/${unit.deal_id}`} className="inline-flex items-center" title={`Open transaction${unit.deal_ref ? ` ${unit.deal_ref}` : ""}`}>
                       <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap">
                         <Link2 className="w-2.5 h-2.5" />
-                        {unit.deal_ref ? `#${unit.deal_ref}` : "Deal"}
+                        {unit.deal_ref ? `#${unit.deal_ref}` : "Transaction"}
                       </Badge>
                     </a>
                   )}
@@ -1711,7 +1711,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                     <button
                       onClick={() => {
                         const label = unit.unit_number || unit.premises || "this unit";
-                        if (confirm(`Delete "${label}" from the Letting Tracker?\n\nThis removes the tracker unit (and its stub deal if it never progressed). Real rent-roll rows are unaffected.`)) {
+                        if (confirm(`Delete "${label}" from the Letting Tracker?\n\nThis removes the tracker unit (and its stub transaction if it never progressed). Real rent-roll rows are unaffected.`)) {
                           deleteTrackerUnitMutation.mutate(String(unit.available_unit_id));
                         }
                       }}
@@ -1798,7 +1798,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               </div>
               <div className="flex items-center gap-1.5 mt-1.5">
                 {deal && (
-                  <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-card-${unit.id}`}>
+                  <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Transaction: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-card-${unit.id}`}>
                     <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
                   </a>
                 )}
@@ -2279,10 +2279,10 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               </button>
             )}
             {unit.deal_id && (
-              <a href={`/deals/${unit.deal_id}`} className="inline-flex items-center" title={`Open deal${unit.deal_ref ? ` ${unit.deal_ref}` : ""}`}>
+              <a href={`/deals/${unit.deal_id}`} className="inline-flex items-center" title={`Open transaction${unit.deal_ref ? ` ${unit.deal_ref}` : ""}`}>
                 <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted">
                   <Link2 className="w-2.5 h-2.5" />
-                  {unit.deal_ref ? `#${unit.deal_ref}` : "Deal"}
+                  {unit.deal_ref ? `#${unit.deal_ref}` : "Transaction"}
                 </Badge>
               </a>
             )}
@@ -2290,7 +2290,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               <button
                 onClick={() => {
                   const label = unit.unit_number || unit.premises || "this unit";
-                  if (confirm(`Delete "${label}" from the Letting Tracker?\n\nThis removes the tracker unit (and its stub deal if it never progressed). Real rent-roll rows are unaffected.`)) onDeleteTracker();
+                  if (confirm(`Delete "${label}" from the Letting Tracker?\n\nThis removes the tracker unit (and its stub transaction if it never progressed). Real rent-roll rows are unaffected.`)) onDeleteTracker();
                 }}
                 className="inline-flex items-center text-amber-700/60 hover:text-red-600"
                 title="Delete this Letting Tracker unit"
@@ -2533,7 +2533,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
             plan jump only. */}
         <div className="flex gap-1 justify-center">
           {deal && (
-            <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-${unit.id}`}>
+            <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Transaction: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-${unit.id}`}>
               <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
             </a>
           )}
